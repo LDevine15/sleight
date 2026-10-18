@@ -2173,6 +2173,28 @@ test('Claude\'s own read stands in for the next call\'s first read in the defaul
   }
 });
 
+// word-edit-1, 2026-10-18 (lines 106 to 113): a click's result showed "(selected) Table", and the next call's
+// typeText skipped its read, so the guard had no tree for the menu-trap check.
+test('the previous call\'s final tree of this window, and the call\'s action names, go to the guard', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1000 });
+  const { InputLease } = await import('../plugins/sleight/lib/input-lease.mjs');
+  const h = harness({ changeReview: false, inputLease: new InputLease({ directory: leaseDir('sleight-last-tree-'), holder: 'A' }) });
+  const state = 'Window: "Report", App: Word\n0 standard window Report\n\t1 text entry area Value: hi';
+  const code = id => h.toServer.find(m => m.id === id).params.arguments.code;
+  flowCall(h, 1, 'let app = await cua.getApp("Word")'); await tick();
+  h.fromServer({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: state }], _meta: { 'codex/toolSurface': { app: { appId: 'com.microsoft.Word' } } } } }); await tick();
+  flowCall(h, 2, 'await app.click(1); await app.getAXState()'); await tick();
+  assert.match(code(2), /"actions":\["click"\]/);
+  flowAnswer(h, 2, state + '\n2 menu bar\n\t3 (selected) Table'); await tick();
+  flowCall(h, 3, 'await app.typeText("Item")'); await tick();
+  assert.match(code(3), /"lastTree":"Window: \\"Report\\", App: Word\\n0 standard window Report[^"]*\(selected\) Table"/);
+  flowAnswer(h, 3, 'Window: "Other", App: Word\n0 standard window Other'); await tick();
+  // Only the previous call's tree counts: the lease followed "Other", and that is the tree now.
+  flowCall(h, 4, 'await app.typeText("Item")'); await tick();
+  assert.match(code(4), /"lastTree":"Window: \\"Other\\"/);
+  assert.doesNotMatch(code(4), /"lastTree":"[^"]*\(selected\)/);
+});
+
 test('a first action with keys, text or coordinates reuses a fast read too; a numbered first action reads again', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: 1000 });
   const { InputLease } = await import('../plugins/sleight/lib/input-lease.mjs');
@@ -2188,7 +2210,9 @@ test('a first action with keys, text or coordinates reuses a fast read too; a nu
     assert.equal(/"prior":\{/.test(h.toServer.find(m => m.id === id).params.arguments.code), reused, code);
     flowAnswer(h, id, state); await tick();
   }
-  const { treeFreeFirstAction } = await import('../plugins/sleight/lib/relay.mjs');
+  const { treeFreeFirstAction, guardActions } = await import('../plugins/sleight/lib/relay.mjs');
+  assert.deepEqual(guardActions('await app.click(3); await app.getAXState()'), ['click']);
+  assert.equal(guardActions('for (const n of [3, 5]) await app.click(n)'), undefined);
   assert.equal(treeFreeFirstAction('await app.paste("x"); await app.click(3)'), true);
   assert.equal(treeFreeFirstAction('await app.setValue({ id: "f" }, "x"); await app.pressKey("Return")'), false);
 });

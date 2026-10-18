@@ -278,7 +278,8 @@ const docRows = '\t1 split group\n\t\t29 text entry area (disabled, settable) De
 const docFocus = '29 text entry area (disabled, settable) Description: Page 1 content, Value: **Report**';
 // word-edit-1, 22-03-44 (transcript line 113) and 23-58-39: (selected) Table on every result while typing reached nothing.
 const trapped = docRows + '\n123 menu bar\n\t124 Insert\n\t131 (selected) Table';
-const trapStop = /sleight stopped before (?:typeText\(<4 characters>\)|pressKey\("Tab"\)): menu-bar item 131 \(Table\) is selected and its menu takes the keys\. Cancel it first with await app\.performSecondaryAction\(131, "Cancel"\), or click the item\./;
+// Cancel on 131 alone did nothing at word-edit-1 lines 120 and 150 (2026-10-18); clicking 131 opened the menu, whose Cancel closed it.
+const trapStop = /sleight stopped before (?:typeText\(<4 characters>\)|pressKey\("Tab"\)): menu-bar item 131 \(Table\) is selected and its menu takes the keys\. Click it to open its menu, then close that menu with `await app\.performSecondaryAction\(<its menu>, "Cancel"\)`; Cancel on the menu-bar item alone does nothing\./;
 
 test('typing or keys while a menu-bar title is selected and no menu shows stop before input', async () => {
   for (const code of ['await app.typeText("Item"); await app.pressKey("Tab");', 'await app.pressKey("Tab"); await app.typeText("Item");']) {
@@ -293,6 +294,77 @@ test('typing or keys while a menu-bar title is selected and no menu shows stop b
     { firstOff: true, focused: true, prior: { text: tree(trapped), windows: null } });
   assert.match(error?.message ?? '', trapStop);
   assert.deepEqual(s.inputs, []);
+});
+
+// word-edit-1, 2026-10-18 (lines 106 to 113): the click's result showed (selected) Table, and the next call's
+// typeText skipped its read with no acquisition before it.
+test('the previous call\'s last tree stops the first key when this call reads nothing', async () => {
+  for (const code of ['await app.typeText("Item");', 'await app.pressKey("Tab");']) {
+    const s = guardSession();
+    const error = await s.run(docRows, docFocus, code, { firstOff: true, focused: true, lastTree: tree(trapped) });
+    assert.match(error?.message ?? '', trapStop, code);
+    assert.deepEqual(s.inputs, []);
+  }
+  // Without it the key goes ahead; it counts for the first action only, and Escape still passes.
+  for (const [options, code, sent] of [[{}, 'await app.typeText("Item");', ['Item']],
+    [{ lastTree: tree(docRows) }, 'await app.typeText("Item");', ['Item']],
+    [{ lastTree: tree(trapped) }, 'await app.pressKey("Escape"); await app.typeText("Item");', ['Escape', 'Item']]]) {
+    const s = guardSession();
+    assert.equal(await s.run(docRows, docFocus, code, { firstOff: true, focused: true, ...options }), undefined, code);
+    assert.deepEqual(s.inputs, sent);
+  }
+});
+
+// word-edit-1, 2026-10-18 (line 92): the Insert Table dialog had focus while the menu bar still showed (selected) Table.
+test('a dialog or sheet takes the keys while a menu-bar title shows selected', async () => {
+  const dialog = 'Window: "Insert Table", App: Fixture Editor.\n0 dialog Insert Table\n\t1 text field (settable) 5\n23 menu bar\n\t31 (selected) Table';
+  const sheet = tree('\t1 sheet Save\n\t\t2 text field (settable) Name\n123 menu bar\n\t131 (selected) Table');
+  for (const [text, code, sent] of [[dialog, 'await app.click(1); await app.pressKey("super+a"); await app.typeText("2");', [1, 'super+a', '2']],
+    [sheet, 'await app.typeText("Item");', ['Item']]]) {
+    const inputs = [];
+    const raw = { getAXState: async () => text, click: async n => { inputs.push(n); }, pressKey: async key => { inputs.push(key); }, typeText: async value => { inputs.push(value); } };
+    const scope = text === dialog ? { title: 'Insert Table', app: 'Fixture Editor', url: null } : window;
+    await runInNewContext(`(async () => { ${guardedCode(code, scope, undefined, undefined, { guardStopMark: guardStopMark() })} })()`,
+      { app: raw, cua: { getApp: async () => raw }, nodeRepl: { write: () => {} } });
+    assert.deepEqual(inputs, sent);
+  }
+});
+
+// word-edit-1, 2026-10-18 (line 64): click(3) on Table > Insert alone closed the menu and left the title selected.
+const tableMenu = 'Window: "Draft", App: Fixture Editor.\n0 Table, Secondary Actions: Cancel, Pick\n\t1 menu Secondary Actions: Cancel\n' +
+  '\t\t2 Draw Table, ID: oui_performOfficeSpaceMenuAction:\n\t\t3 Insert\n\t\t\t4 menu Secondary Actions: Cancel\n' +
+  '\t\t\t\t5 Table..., ID: oui_performOfficeSpaceMenuAction:\n\t\t\t\t6 (disabled) Columns to the Left, ID: oui_performOfficeSpaceMenuAction:\n' +
+  '\t\t\t\t7 Rows Above, ID: oui_performOfficeSpaceMenuAction:\n\t\t\t\t8 Rows Below\n\t\t\t\t9 Cells...\n\t\t10 Delete\n' +
+  '11 menu bar\n\t12 (selected) Table\n\t\t13 menu\n\t\t\t14 Formula';
+async function menuCall(code, options = {}) {
+  const inputs = [];
+  const raw = { getAXState: async () => tableMenu, click: async n => { inputs.push(n); }, pressKey: async key => { inputs.push(key); } };
+  let error;
+  try {
+    await runInNewContext(`(async () => { ${guardedCode(code, window, undefined, undefined, { guardStopMark: guardStopMark(), ...options })} })()`,
+      { app: raw, cua: { getApp: async () => raw }, nodeRepl: { write: () => {} } });
+  } catch (e) { error = e; }
+  return { inputs, error };
+}
+
+test('a submenu header clicked with nothing after it in the call stops before input and names its items', async () => {
+  for (const [code, actions] of [['await app.click(3); await app.getAXState();', ['click']], ['await app.click({ label: "Insert" });', ['click']],
+    ['await app.click(2 + 1); await app.typeText("x");', ['click', 'typeText']]]) {
+    const f = await menuCall(code, { actions });
+    assert.match(f.error?.message ?? '', /^sleight stopped before click\([^)]*\): element 3 \(Insert\) opens a submenu; click the item you want inside it in the same call \(e\.g\. 5 Table\.\.\., 7 Rows Above, 8 Rows Below\)\./, code);
+    assert.deepEqual(f.inputs, [], code);
+  }
+});
+
+test('a submenu header followed by a click, a leaf item, a menu-bar title or a call without the action list goes ahead', async () => {
+  for (const [code, actions, sent] of [['await app.click(3); await app.click(5);', ['click', 'click'], [3, 5]],
+    ['await app.click(3); await app.pressKey("Return");', ['click', 'pressKey'], [3, 'Return']],
+    ['await app.click(2);', ['click'], [2]], ['await app.click(10);', ['click'], [10]],
+    ['await app.click(12);', ['click'], [12]], ['await app.click(3);', undefined, [3]]]) {
+    const f = await menuCall(code, { actions });
+    assert.equal(f.error, undefined, code);
+    assert.deepEqual(f.inputs, sent, code);
+  }
 });
 
 test('Escape, a click, a normal tree or a visible menu let keys through', async () => {
