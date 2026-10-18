@@ -11,7 +11,7 @@ import { appKey, createAppBinding, validateAppInstance } from './electron-identi
 // Revocation stops commands by calling each grant's park hook. It never closes the app's pipe.
 const SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 const grants = new WeakMap(), clicks = new WeakSet(), relaunches = new WeakMap();
-const recordKeys = ['key', 'name', 'bundleId', 'signer', 'version', 'runtime', 'profile'];
+const recordKeys = ['key', 'name', 'bundleId', 'signer', 'version', 'runtime', 'profile', 'executable', 'cdhash'];
 const fail = code => { throw Error(code); };
 const text = value => typeof value === 'string' && value.length > 0 && value.length <= 4096;
 export const isDebuggerGrant = value => !!value && grants.has(value);

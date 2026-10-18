@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { isAbsolute, normalize } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { isAbsolute, join, normalize } from 'node:path';
 import { canonical } from './authority.mjs';
 
 // Typed identity for documents inside an opted-in Electron app. The trusted app
@@ -28,10 +29,14 @@ const exactly = (value, keys) => plain(value) && Object.keys(value).length === k
 const absolutePath = value => printable(value) && isAbsolute(value) && normalize(value) === value;
 const bundleId = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(value);
 
-const displayKeys = ['name', 'bundleId', 'signer', 'version', 'runtime', 'profile', 'pid', 'pidBirth'];
+// executable and cdhash bind consent to code: the canonical executable path and the code directory hash
+// from its signature. A changed binary is a different app for every grant and Always record.
+const displayKeys = ['name', 'bundleId', 'signer', 'version', 'runtime', 'profile', 'pid', 'pidBirth', 'executable', 'cdhash'];
+const cdhash = value => typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
 function shown(app) {
   if (!exactly(app, displayKeys) || !printable(app.name, 256) || !bundleId(app.bundleId) || !printable(app.signer, 256) ||
-      !printable(app.version, 128) || !printable(app.runtime, 128) || !absolutePath(app.profile) || !natural(app.pid) || !printable(app.pidBirth, 64))
+      !printable(app.version, 128) || !printable(app.runtime, 128) || !absolutePath(app.profile) || !natural(app.pid) || !printable(app.pidBirth, 64) ||
+      !absolutePath(app.executable) || !cdhash(app.cdhash))
     fail('INVALID_APP_INSTANCE');
   return Object.fromEntries(displayKeys.map(key => [key, app[key]]));
 }
@@ -43,10 +48,53 @@ export function validateAppInstance(app) {
   return Object.freeze({ ...shown(rest), temporary });
 }
 
-// What an Always allow persists: the build and the profile, never a process.
+// What an Always allow persists: the code (executable and cdhash), the build and the profile, never a process.
 export const appKey = app => {
-  const { bundleId: id, signer, version, runtime, profile } = validateAppInstance(app);
-  return 'k' + digest({ bundleId: id, signer, version, runtime, profile });
+  const { bundleId: id, signer, version, runtime, profile, executable, cdhash: hash } = validateAppInstance(app);
+  return 'k' + digest({ bundleId: id, signer, version, runtime, profile, executable, cdhash: hash });
+};
+
+// The fields of `codesign -dvvv` sleight relies on. Anything missing means no code identity.
+export function parseCodesign(text) {
+  const field = name => { const match = String(text).match(new RegExp('^' + name + '=(.+)$', 'm')); return match?.[1].trim(); };
+  const authority = field('Authority'), team = field('TeamIdentifier');
+  const out = { executable: field('Executable'), identifier: field('Identifier'), cdhash: field('CDHash'), team: team === 'not set' ? undefined : team, authority };
+  if (!absolutePath(out.executable) || !bundleId(out.identifier) || !cdhash(out.cdhash)) fail('CODE_IDENTITY_UNAVAILABLE');
+  return out;
+}
+const tool = (path, args) => {
+  const result = spawnSync(path, args, { encoding: 'utf8', timeout: 10000, maxBuffer: 1 << 20, env: { PATH: '/usr/bin:/bin' } });
+  if (result.error) fail('CODE_IDENTITY_UNAVAILABLE');
+  return result;
+};
+const plist = path => {
+  const result = tool('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '--', path]);
+  if (result.status !== 0) return undefined;
+  try { return JSON.parse(result.stdout); } catch { return undefined; }
+};
+// Production facts for one bundle: a strict signature check, the signature's own fields, and the two plists.
+export function inspectCode(bundle) {
+  const verified = tool('/usr/bin/codesign', ['--verify', '--strict', '--', bundle]).status === 0;
+  const shown = tool('/usr/bin/codesign', ['-dvvv', '--', bundle]);
+  return { verified, codesign: shown.status === 0 ? parseCodesign(shown.stderr) : undefined, info: plist(join(bundle, 'Contents', 'Info.plist')),
+    electron: plist(join(bundle, 'Contents', 'Frameworks', 'Electron Framework.framework', 'Resources', 'Info.plist')) };
+}
+// The app instance for a running process. Name, bundle id, signer, version, runtime and cdhash come from the
+// signature and the bundle, and the executable must be the one the signature names. A caller supplies only where
+// the process lives and which process it is.
+export function deriveAppInstance(process, { inspect = inspectCode } = {}) {
+  if (!exactly(process, ['bundle', 'executable', 'profile', 'temporary', 'pid', 'pidBirth']) || !absolutePath(process.bundle) || !process.bundle.endsWith('.app') ||
+      !absolutePath(process.executable) || !process.executable.startsWith(process.bundle + '/Contents/MacOS/') || typeof process.temporary !== 'boolean')
+    fail('INVALID_APP_PROCESS');
+  let facts;
+  try { facts = inspect(process.bundle); } catch { fail('CODE_IDENTITY_UNAVAILABLE'); }
+  const { verified, codesign, info, electron } = facts ?? {};
+  if (verified !== true || !codesign || codesign.executable !== process.executable || !printable(codesign.team, 64) || !plain(info) ||
+      info.CFBundleIdentifier !== codesign.identifier || !plain(electron) || !printable(electron.CFBundleVersion, 64) || !printable(info.CFBundleShortVersionString, 128))
+    fail('CODE_IDENTITY_UNAVAILABLE');
+  return validateAppInstance({ name: info.CFBundleDisplayName ?? info.CFBundleName ?? codesign.identifier, bundleId: codesign.identifier, signer: codesign.team,
+    version: info.CFBundleShortVersionString, runtime: 'electron/' + electron.CFBundleVersion, profile: process.profile, pid: process.pid, pidBirth: process.pidBirth,
+    executable: process.executable, cdhash: codesign.cdhash, temporary: process.temporary });
 };
 
 const recipeSchemes = value => {

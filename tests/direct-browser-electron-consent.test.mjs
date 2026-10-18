@@ -72,17 +72,18 @@ test('Always allow is written only by an authenticated click and follows build a
   assert.equal(result.status, 'granted'); assert.equal(result.grant.scope, 'always'); assert.equal(result.persisted, true);
   assert.equal(statSync(path).mode & 0o777, 0o600); assert.equal(f.store.list().length, 1);
   const saved = JSON.parse(readFileSync(path, 'utf8'));
-  assert.deepEqual(Object.keys(saved.grants[0]).sort(), ['bundleId', 'key', 'name', 'profile', 'runtime', 'signer', 'version'], 'no process facts persist');
+  assert.deepEqual(Object.keys(saved.grants[0]).sort(), ['bundleId', 'cdhash', 'executable', 'key', 'name', 'profile', 'runtime', 'signer', 'version'], 'no process facts persist');
   assert.equal(f.ui.authenticate(event), false, 'the event is spent'); f.presented[0].deliver(event); assert.equal(f.store.list().length, 1);
   // A fresh host process: same file, no card for the same build and profile, any PID.
   const g = fixture({ store: api.createGrantStore({ path }) });
   const again = await ask(g, { ...instance, pid: 99, pidBirth: '1770000000.5' }); assert.equal(again.status, 'granted'); assert.equal(again.grant.scope, 'always'); assert.equal(g.presented.length, 0);
-  for (const change of [{ version: '1.2.4' }, { signer: 'OTHERTEAM' }, { runtime: 'electron/40.0.0' }, { profile: '/Users/fixture/Other' }, { bundleId: 'invalid.fixture.other' }]) {
+  for (const change of [{ version: '1.2.4' }, { signer: 'OTHERTEAM' }, { runtime: 'electron/40.0.0' }, { profile: '/Users/fixture/Other' }, { bundleId: 'invalid.fixture.other' },
+    { cdhash: 'b'.repeat(40) }, { executable: '/Applications/Copy.app/Contents/MacOS/Fixture' }]) {
     const before = g.presented.length, pendingChange = ask(g, { ...instance, ...change });
     assert.equal(g.presented.length, before + 1, 'changed ' + Object.keys(change)[0] + ' asks again'); g.click(before, 'cancel'); await pendingChange;
   }
   g.consent.revokeApp(instance); assert.equal(g.store.list().length, 0); assert.equal(api.createGrantStore({ path }).list().length, 0);
-  const asked = ask(g, { ...instance, pid: 7 }); assert.equal(g.presented.length, 6, 'after revocation it asks again'); g.click(5, 'cancel'); await asked;
+  const asked = ask(g, { ...instance, pid: 7 }); assert.equal(g.presented.length, 8, 'after revocation it asks again'); g.click(7, 'cancel'); await asked;
 });
 test('an Always grant stops when its record is removed elsewhere, without waiting for the session', async () => {
   const f = fixture(), connection = pipe(), pending = ask(f); f.click(0, 'always'); const { grant } = await pending; grant.onRevoke(() => connection.park());
@@ -100,7 +101,7 @@ test('a temporary profile never offers or stores Always', async () => {
 test('an unsafe grant file is never read as consent and never overwritten', async t => {
   const directory = temporary(); t.after(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, 'grants.json'), record = { key: identity.appKey(instance), name: instance.name, bundleId: instance.bundleId, signer: instance.signer,
-    version: instance.version, runtime: instance.runtime, profile: instance.profile };
+    version: instance.version, runtime: instance.runtime, profile: instance.profile, executable: instance.executable, cdhash: instance.cdhash };
   writeFileSync(path, JSON.stringify({ version: 1, grants: [record] }), { mode: 0o600 });
   assert.equal(api.createGrantStore({ path }).list().length, 1);
   chmodSync(path, 0o644); const open = fixture({ store: api.createGrantStore({ path }) });
@@ -115,7 +116,7 @@ test('an unsafe grant file is never read as consent and never overwritten', asyn
 });
 test('the store takes a write only with a receipt from an authenticated Always click', () => {
   const store = api.createGrantStore(), record = { key: identity.appKey(instance), name: instance.name, bundleId: instance.bundleId, signer: instance.signer,
-    version: instance.version, runtime: instance.runtime, profile: instance.profile };
+    version: instance.version, runtime: instance.runtime, profile: instance.profile, executable: instance.executable, cdhash: instance.cdhash };
   for (const receipt of [undefined, null, {}, Object.freeze({}), { receipt: true }, 'click']) assert.throws(() => store.put(receipt, record), /AUTHENTICATED_CLICK_REQUIRED/);
   assert.equal(store.list().length, 0); assert.equal(Object.isFrozen(store), true);
 });

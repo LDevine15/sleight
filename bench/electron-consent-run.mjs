@@ -20,7 +20,8 @@ const doc = name => ({ url: () => 'file:///Applications/Sleight Consent Run.app/
 export async function runConsentRun({ ui, directory, say = console.log, wait = 240000 }) {
   const profile = join(directory, 'profile'), path = join(directory, 'grants', 'turbo-electron.json');
   const app = { name: 'Sleight Consent Run', bundleId: 'invalid.sleight.consent-run', signer: 'NOT-A-REAL-TEAM', version: '1.0.0', runtime: 'electron/0.0.0',
-    profile, temporary: false, pid: 40001, pidBirth: '1700000000.0' };
+    profile, temporary: false, pid: 40001, pidBirth: '1700000000.0',
+    executable: '/Applications/Sleight Consent Run.app/Contents/MacOS/Sleight Consent Run', cdhash: '0'.repeat(40) };
   let engine = 'approved', cards = 0;
   const watched = { authenticate: event => ui.authenticate(event), revoke: () => ui.revoke?.(),
     present(...args) { cards++; return ui.present(...args); } };
