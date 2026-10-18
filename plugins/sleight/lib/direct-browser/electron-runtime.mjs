@@ -125,6 +125,8 @@ export async function selectAppConnection({ bundleId, session, turn, apps, ui, c
   let status = await admin.status();
   // Another session's worker is connected: busy now, before sleight's card asks the user for anything.
   if (Array.isArray(status?.workers) && status.workers.some(other => other !== session)) fail('ELECTRON_BUSY: another session is acting in this app; nothing was sent');
+  // Nothing running and ownership not free: the launch would be refused, so no card asks for it.
+  if (!running(status) && status?.ownership?.state !== 'free') fail('ELECTRON_OWNERSHIP_UNRESOLVED');
   let instance = running(status) ? launchedFrom(status) : d.instanceFromRecipe(recipe, { ...form, pid: 0, pidBirth: UNLAUNCHED });
   // 3. The debugger grant: an existing one for this exact process, else sleight's own card.
   let grant = consent.grantFor(instance, { session, turn });

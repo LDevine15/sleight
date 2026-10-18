@@ -208,8 +208,8 @@ test('a running app reuses its session grant without a card or a launch; a parke
 
 test('unresolved ownership, a declined card and a missing engine approval refuse before any launch or ticket', async () => {
   const unresolved = world({ admin: fakeAdmin({ ownership: 'unresolved' }) });
-  const refusing = unresolved.select(); await tick(); await tick(); unresolved.consent.click(0, 'once');
-  await assert.rejects(refusing, /ELECTRON_OWNERSHIP_UNRESOLVED/);
+  await assert.rejects(unresolved.select(), /ELECTRON_OWNERSHIP_UNRESOLVED/);
+  assert.equal(unresolved.consent.presented.length, 0, 'a launch that would be refused shows no card');
   assert.ok(!unresolved.admin.calls.some(row => row[0] === 'start' || row[0] === 'issue'));
   const declined = world(), asking = declined.select(); await tick(); await tick(); declined.consent.click(0, 'cancel');
   await assert.rejects(asking, /ELECTRON_DEBUGGER_REQUIRED/);
