@@ -25,12 +25,16 @@ const ok = { status: 'ok', matches: 1, window: 1, title: expected.title, url: ex
 // The engine's handle with an observer standing in for the relay: each pressKey arms it, as the
 // engine's press_key approval does, and each observation reports the window as `native(ms since the
 // key)` says. `realistic` uses the shipped timing and the relay's observer defaults (80 ms delay, an
-// observation every 25 ms for 700 ms).
-function fixture({ native = () => ok, current = () => tree(), onKey = () => {}, arm = true, burstMs = 400, realistic = false } = {}) {
+// observation every 25 ms for 700 ms). `virtualClock` gives the observer a clock that starts at the key
+// and moves one tick per reading, so how many observations a burst holds, and when each began relative
+// to the key, doesn't depend on how long the scheduler takes to run its timers.
+function fixture({ native = () => ok, current = () => tree(), onKey = () => {}, arm = true, burstMs = 400, realistic = false, virtualClock = false } = {}) {
   const calls = [], output = [], observed = [];
   let keyAt = 0;
   const since = () => Date.now() - keyAt;
-  const light = createLightReturn({ directory: dir, ...(realistic ? {} : { delayMs: 0, intervalMs: 4, burstMs, timing }),
+  let ticks = 0;
+  const light = createLightReturn({ directory: dir, ...(virtualClock ? { now: () => keyAt + ++ticks } : {}),
+    ...(realistic ? {} : { delayMs: 0, intervalMs: 4, burstMs, timing }),
     observe: async request => { observed.push(request); return native(since()); } });
   const raw = { async getAXState(options) { calls.push(['read', options]); return current(since()); },
     async getScreenshot() { calls.push(['screenshot']); return {}; } };
@@ -96,8 +100,9 @@ test('a dialog window in front, a changed title or focus outside text refuses th
 });
 
 test('observations that began within waitMs of the key do not count', async () => {
-  // The burst ends before waitMs has passed, so every observation is too early.
-  const f = fixture({ burstMs: 5 });
+  // The burst ends before waitMs has passed, so every observation is too early. The observer's clock is
+  // virtual: under load a real 5 ms burst can expire before its timer fires, and then nothing is observed.
+  const f = fixture({ burstMs: 5, virtualClock: true });
   await f.run('await app.pressKey("Return"); await app.typeText("x");');
   assert.ok(f.observed.length >= 1);
   assert.equal(f.reads(), 3);
