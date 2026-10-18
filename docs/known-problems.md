@@ -277,6 +277,11 @@ native reference, and oversized first results defer the browser reference while 
 
 - On an unsorted list, `sleight.pickFromList` can pick a prefix match at its scroll limit before
   reaching a later exact row. Its real-tab scroll and searches past index 360 are fixed.
+- `app.pickFromList` (native, FM1, 2026-10-18) is unit-tested against a fake list and has no live run. A fake
+  1,000-row list finds every row at page sizes 8, 9 and 10 in 15.9 to 18.7 reads on average (most 35). We haven't
+  measured whether Page_Down and Page_Up reach Firefox's list, change its selection, or leave a row that clicks
+  when it is the first or last one rendered (the study's click on such a row failed with `elementHasNoFrame`).
+  It stops, and clicks nothing, when a page key skips every row seen before (a page as long as the rendered window).
 
 ### Turbo (on by default)
 

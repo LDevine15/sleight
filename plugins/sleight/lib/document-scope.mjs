@@ -1,5 +1,6 @@
 import { promptNotice } from './prompt-notice.mjs';
 import { elementWait } from './element-wait.mjs';
+import { listPicker } from './native-list-pick.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -401,6 +402,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
     state.noteFocus = text => { if (focusOn(text) === 'element' && captureKey(parse(text))) state.docFocus.add(captureKey(parse(text))); };
     state.noteFocus(state.prior?.text);
     const wait = ${elementWait.toString()};
+    const pickList = ${listPicker.toString()};
     const checkNative = () => { if (state.nativeDenied) throw new Error(state.nativeDenied); };
     // After Return, Enter, Tab, Escape or Space, typeText or paste goes ahead without the settled tree
     // read (about 470 ms in Excel, 2026-10-17) when two native observations that began at least waitMs
@@ -512,6 +514,39 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             state.reads.set(proxy, { text, emitted: true, modalOpened: pending.modalOpened });
           }
         }); })();
+        // app.pickFromList("<row label>"): pages a focused sorted list by key, then clicks the row. Every key and
+        // the click run through this handle's own checks, so a window change, a lost lease or a renumbered row stops it.
+        if (name === 'pickFromList') return async (label, options) => {
+          checkNative();
+          const superseded = () => { throw new Error('pickFromList stopped: another action or read ran during the search. Read the window again.'); };
+          const result = await pickList({
+            read: async () => {
+              checkNative();
+              state.binding = undefined;
+              const version = state.actionVersion;
+              const text = await timedRead(raw, 'list');
+              if (state.actionVersion !== version) superseded();
+              return text;
+            },
+            // Left unemitted, so a stop ends the call with the tree it stopped on.
+            observe: text => {
+              state.activeApp = proxy;
+              state.noteFocus(text);
+              state.reads.set(proxy, { text, emitted: false });
+            },
+            press: async key => {
+              const version = state.actionVersion;
+              const result = await proxy.pressKey(key);
+              if (state.actionVersion !== version + 1) superseded();
+              return result;
+            },
+            click: line => proxy.click({ line }),
+            parse, sameElement, expected: state.guarded ? state.expected : undefined
+          })(label, options);
+          // A search that did not click ends the call, so later actions in it don't run past the failure.
+          if (!result.clicked) throw new Error('pickFromList stopped (' + result.reason + '): ' + result.note + ' [' + result.reads + ' reads, ' + result.keys + ' keys]');
+          return result;
+        };
         const value = Reflect.get(raw, name);
         if (typeof value !== 'function') return value;
         // Claude's tree reads are full reads the relay turns into changed lines,

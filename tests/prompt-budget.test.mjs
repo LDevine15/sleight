@@ -101,7 +101,7 @@ test('lean calls teach persistent handles and action endings only under the expe
       assert.match(selected, /Keep the app handle across calls/);
       assert.match(selected, /End on the action/);
     } else assert.equal(selected, normal, 'the lean skill has no native call guidance to replace');
-    assert.ok(selected.split(/\s+/).length <= (prompt === 'lean' ? 430 : 930));
+    assert.ok(selected.split(/\s+/).length <= (prompt === 'lean' ? 430 : 950));
     assert.equal(skillRules(skillPath, { SLEIGHT_PROMPT: prompt, SLEIGHT_LEAN_CALLS: '0' }), normal);
   }
 });
@@ -134,7 +134,7 @@ test('the default skill explains masked field reads without claiming a fill succ
 });
 
 test('both skill variants explain browser routing and script input within their word budgets', () => {
-  for (const [env, limit] of [[{}, 930], [{ SLEIGHT_PROMPT: 'lean' }, 430]]) {
+  for (const [env, limit] of [[{}, 950], [{ SLEIGHT_PROMPT: 'lean' }, 430]]) {
     const skill = skillRules(skillPath, env);
     assert.match(skill, /[Ww]eb pages.*tab handle, never `getApp`/);
     assert.match(skill, /[Tt]op-level `await`, no `return`/);

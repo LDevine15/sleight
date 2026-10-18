@@ -50,7 +50,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   with the next/previous-tab key.
 - A confirmed save covers that document's sheets and pages. Don't recheck them. Save again after
   later edits.
-- If scrolling fails, use search or keyboard navigation.
+- If scrolling fails, use search or keyboard navigation. In a focused sorted list, `await app.pickFromList("<exact row label>")` pages by key and clicks the row.
 
 ## When to stop
 
