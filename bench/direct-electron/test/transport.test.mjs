@@ -208,11 +208,16 @@ test('events: session events go to the owner; browser-level events naming a sess
   emit({ method: 'Target.attachedToTarget', params: { targetInfo: { targetId: 'T9' } } });
   emit({ method: 'Target.receivedMessageFromTarget', params: { sessionId: mine, message: '{}' } });
   emit({ method: 'Target.targetCreated', params: { targetInfo: { targetId: 'T3' } } });
+  emit({ method: 'Target.targetInfoChanged', params: { targetInfo: { targetId: 'T1', url: 'app://main/next' } } });
+  emit({ method: 'Target.targetDestroyed', params: { targetId: 'T2' } });
+  emit({ method: 'Target.targetCrashed', params: { targetId: 'T9' } });
+  emit({ method: 'Target.targetInfoChanged', params: {} });
   await tick();
+  // Target lifecycle events go only to the client attached to that target; a target nobody holds tells nobody.
   assert.deepEqual(seen, [
     ['a', 'Page.loadEventFired', mine], ['b', 'Page.loadEventFired', theirs],
     ['b', 'Target.attachedToTarget', theirs], ['a', 'Target.receivedMessageFromTarget', mine],
-    ['all', 'Target.targetCreated', undefined]]);
+    ['a', 'Target.targetInfoChanged', undefined], ['b', 'Target.targetDestroyed', undefined]]);
   emit({ method: 'Target.detachedFromTarget', params: { sessionId: theirs } });
   emit({ method: 'Target.detachedFromTarget', params: { sessionId: mine }, sessionId: 'S404' });
   await tick();

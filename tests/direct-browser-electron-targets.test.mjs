@@ -152,3 +152,15 @@ test('the instance fence keeps one mutation owner; others get busy until release
   assert.equal(fence.parked(), 'takeover');
   assert.throws(() => fence.acquire(''), /INVALID_FENCE_OWNER/);
 });
+
+test('sync finds targets the host never announced (lifecycle events go only to a target\'s holder) and drops vanished ones', async () => {
+  const { f, targets } = await started([page('a')]);
+  const revoked = []; targets.onRevoke(id => revoked.push(id));
+  f.targets.set('b', page('b', 'app://main/b.html'));   // a new window, no event
+  f.targets.delete('a');                                  // gone, no event
+  await targets.sync();
+  assert.deepEqual(targets.members().map(row => row.targetId), ['b']);
+  assert.deepEqual(revoked, ['a']);
+  targets.stop();
+  await assert.rejects(targets.sync(), /ELECTRON_IDENTITY_CHANGED/);
+});

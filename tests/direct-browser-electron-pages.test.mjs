@@ -208,3 +208,13 @@ test('a second window that later matches the same rectangle parks the admitted p
   assert.equal(ran, 0);
   assert.equal((await s.pages.list())[0].reason, 'ambiguous');
 });
+
+test('list admits a window that appeared without a target event', async t => {
+  const f = fakeUpstream([page('a')]); f.geometry.set('a', geometryOf(rect(0, 0)));
+  const w = fakeWindows([nativeWindow(11, rect(0, 0)), nativeWindow(12, rect(900, 0))]);
+  const s = await world({ extra: { upstream: f, windows: w } });
+  t.after(() => s.filter.dispose());
+  await s.pages.seed();
+  f.targets.set('b', page('b', 'app://main/b.html')); f.geometry.set('b', geometryOf(rect(900, 0)));
+  assert.deepEqual((await s.pages.list()).map(row => row.targetId), ['a', 'b']);
+});

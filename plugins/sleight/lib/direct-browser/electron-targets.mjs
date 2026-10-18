@@ -102,6 +102,21 @@ export function createAppTargets({ upstream, identity, expected, recipe, verify,
     // Events that arrived during the read are newer than the reply, so they win.
     for (const info of Array.isArray(targetInfos) ? targetInfos : []) if (plain(info) && id(info.targetId) && !records.has(info.targetId)) see(info);
   }
+  // The host delivers a target's lifecycle events only to the client attached to it, so new windows and
+  // windows that went away while nothing held them are found here.
+  async function sync() {
+    if (!started) fail('ELECTRON_TARGETS_REQUIRED');
+    await live();
+    const { targetInfos } = await upstream.send('Target.getTargets', {});
+    if (stopped) fail('ELECTRON_IDENTITY_CHANGED');
+    const seen = new Set();
+    for (const info of Array.isArray(targetInfos) ? targetInfos : []) {
+      if (!plain(info) || !id(info.targetId)) continue;
+      seen.add(info.targetId);
+      if (!records.has(info.targetId)) see(info);
+    }
+    for (const targetId of [...records.keys()]) if (!seen.has(targetId)) gone(targetId);
+  }
   async function geometry(targetId) {
     const record = member(targetId);
     if (!started || !record) fail('ELECTRON_TARGET_NOT_MEMBER');
@@ -142,7 +157,7 @@ export function createAppTargets({ upstream, identity, expected, recipe, verify,
     current: targetId => { const grant = grants.get(targetId); return !!grant && current(targetId, grant.epoch); },
   });
   return Object.freeze({
-    start, geometry, filterHooks, current, verify: live,
+    start, sync, geometry, filterHooks, current, verify: live,
     record: targetId => records.get(targetId),
     members: () => [...records.values()].filter(row => row.kind === 'member'),
     lifecycle: () => [...records.values()].filter(row => row.kind === 'lifecycle').map(row => Object.freeze({ targetId: row.targetId, type: row.type, epoch: row.epoch })),

@@ -21,7 +21,7 @@ const parkReason = error => {
 
 export function createAppPageRegistry({ browser, filter, targets, join, fence, owner, timeoutMs = 5000 } = {}) {
   if (typeof browser?.contexts !== 'function' || typeof filter?.own !== 'function' || typeof filter?.release !== 'function' ||
-      typeof targets?.geometry !== 'function' || typeof targets?.grant !== 'function' || typeof join?.resolve !== 'function' ||
+      typeof targets?.geometry !== 'function' || typeof targets?.sync !== 'function' || typeof targets?.grant !== 'function' || typeof join?.resolve !== 'function' ||
       typeof join?.check !== 'function' || typeof fence?.acquire !== 'function' || typeof owner !== 'string' ||
       !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) fail('ELECTRON_PAGES_REQUIRED');
   // kept: targets this session released to the user (keep or handoff) at that epoch, never re-admitted this turn.
@@ -87,6 +87,7 @@ export function createAppPageRegistry({ browser, filter, targets, join, fence, o
   // One pass over the graph: admit newly joined pages, park admitted ones whose join no longer holds.
   async function pass() {
     if (ended) fail('turn ended');
+    await targets.sync();
     const candidates = [];
     for (const record of targets.members()) {
       try { candidates.push({ record, geometry: await targets.geometry(record.targetId) }); }

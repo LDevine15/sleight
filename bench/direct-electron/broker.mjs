@@ -271,6 +271,15 @@ export class ElectronBroker extends EventEmitter {
         if (named && frame.method === 'Target.detachedFromTarget') this.routes.delete(params.sessionId);
         return;
       }
+      // A target's lifecycle (created, changed, destroyed, crashed) goes only to the clients attached to it, so one
+      // session never learns another's windows or URLs. Clients find targets they hold nothing on with Target.getTargets.
+      if (frame.method.startsWith('Target.')) {
+        const targetId = params.targetInfo?.targetId ?? params.targetId;
+        if (!sessionPattern(targetId)) return;
+        const owners = new Set([...this.routes.values()].filter(route => route.top && route.targetId === targetId).map(route => route.client));
+        for (const client of owners) this.emit('routed', client, frame);
+        return;
+      }
       this.emit('routed', undefined, frame); return;
     }
     const route = this.routes.get(frame.sessionId);
@@ -316,7 +325,7 @@ export class ElectronBroker extends EventEmitter {
       if (epoch !== this.epoch) throw Object.assign(new Error('authority changed in flight; effect unknown'), { dispatched: true });
       if (method === 'Target.attachToTarget' && sessionPattern(result?.sessionId)) {
         if (this.routes.size >= this.maxRoutes || this.routes.has(result.sessionId)) { this.park('route bank full'); throw new Error('CDP_SESSION_NOT_OWNED'); }
-        this.routes.set(result.sessionId, { client, top: sessionId === undefined });
+        this.routes.set(result.sessionId, { client, top: sessionId === undefined, targetId: params.targetId });
       } else if (method === 'Target.detachFromTarget' && sessionPattern(params.sessionId) && this.routes.get(params.sessionId)?.client === client) {
         this.routes.delete(params.sessionId);
       }

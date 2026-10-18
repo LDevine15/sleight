@@ -313,9 +313,12 @@ test('events reach the owner as v3 session events, frozen and validated', async 
   h.app.emit({ method: 'Target.attachedToTarget', params: { sessionId: mine, targetInfo: { targetId: 'T1' } } });
   h.app.emit({ method: 'Target.detachedFromTarget', params: { sessionId: 'S999' } });
   h.app.emit({ method: 'Target.targetCreated', params: { targetInfo: { targetId: 'T3' } } });
+  h.app.emit({ method: 'Target.targetInfoChanged', params: { targetInfo: { targetId: 'T1' } } });
+  h.app.emit({ method: 'Target.targetInfoChanged', params: { targetInfo: { targetId: 'T2' } } });
   await until(() => seenA.length >= 3 && seenB.length >= 3, 'events');
-  assert.deepEqual(seenA.map(frame => frame.method + ':' + (frame.sessionId ?? frame.params.sessionId ?? '')), ['Page.frameNavigated:' + mine, 'Target.attachedToTarget:' + mine, 'Target.targetCreated:']);
-  assert.deepEqual(seenB.map(frame => frame.method + ':' + (frame.sessionId ?? frame.params.sessionId ?? '')), ['Page.frameNavigated:' + theirs, 'Target.attachedToTarget:' + theirs, 'Target.targetCreated:']);
+  await tick(20);
+  assert.deepEqual(seenA.map(frame => frame.method + ':' + (frame.sessionId ?? frame.params.sessionId ?? frame.params.targetInfo?.targetId ?? '')), ['Page.frameNavigated:' + mine, 'Target.attachedToTarget:' + mine, 'Target.targetInfoChanged:T1']);
+  assert.deepEqual(seenB.map(frame => frame.method + ':' + (frame.sessionId ?? frame.params.sessionId ?? frame.params.targetInfo?.targetId ?? '')), ['Page.frameNavigated:' + theirs, 'Target.attachedToTarget:' + theirs, 'Target.targetInfoChanged:T2']);
   assert.ok(Object.isFrozen(seenA[0]));
   finish(h);
 });
