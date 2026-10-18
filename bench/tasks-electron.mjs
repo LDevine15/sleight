@@ -1,6 +1,8 @@
 import { serveRealPage, serveWebPage, checkForm, checkWeb } from './real-server.mjs';
 import { acquireFixture } from './real-run.mjs';
 import { EDITORS, prepareEditor, setupEditor, checkEditor, openElectron, cleanupElectron, promptEditor } from './real-electron.mjs';
+import { SLACK, SPOTIFY, APP_NAMES, setupSlack, promptSlack, checkSlack, setupSpotify, promptSpotify, checkSpotify,
+  cleanupSpotify } from './real-apps.mjs';
 import { CHAT_APPS, prepareChat, setupChat, promptChat, checkChat, cleanupChat,
   expectedChat, labelsChat } from './real-chat.mjs';
 
@@ -60,4 +62,13 @@ const chatTasks = Object.entries(CHAT_APPS).map(([kind, spec]) => ({
   privateExpected: expectedChat, privateTerms: labelsChat,
 }));
 
-export const electronTasks = [...editorTasks, ...firefoxTasks, ...chatTasks];
+// The claim's Slack and Spotify tasks (owner, 2026-10-18). Slack is the owner's throwaway workspace and Spotify the owner's
+// account, so neither is ownerPresent: setup refuses to run without --owner-away (real-apps.mjs).
+const appTasks = [
+  { id: 'slack-post', app: SLACK.app, bundle: SLACK.bundle, fixtureLifecycle: true, allowedApps: APP_NAMES.slack,
+    prepare: () => {}, setup: ctx => setupSlack(ctx), prompt: promptSlack, check: checkSlack, cleanup: cleanupElectron },
+  { id: 'spotify-play', app: SPOTIFY.app, bundle: SPOTIFY.bundle, fixtureLifecycle: true, allowedApps: APP_NAMES.spotify,
+    prepare: () => {}, setup: ctx => setupSpotify(ctx), prompt: promptSpotify, check: checkSpotify, cleanup: cleanupSpotify },
+];
+
+export const electronTasks = [...editorTasks, ...firefoxTasks, ...chatTasks, ...appTasks];
