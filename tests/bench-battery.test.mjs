@@ -237,7 +237,7 @@ const fixturePath = '/private/tmp/sleight-battery-unit/pair/fixture.txt';
 // Execute the real host against native API doubles. No app, engine or live lock is used.
 function cleanupHost(options = {}) {
   const events = [], presses = [], scripts = [];
-  let command = '', now = 0, opened = false, present = true, terminations = 0, windowReads = 0;
+  let command = '', now = 0, opened = false, present = true, terminations = 0, windowReads = 0, foreignGone = false;
   const path = options.path ?? fixturePath, expected = pathToFileURL(path).href;
   const window = {}, secondWindow = {}, foreignWindow = {}, close = {}, appElement = {};
   const list = values => ({ count: values.length, objectAtIndex: n => values[n] });
@@ -249,7 +249,7 @@ function cleanupHost(options = {}) {
       runningApplicationWithProcessIdentifier: () => app },
     NSWorkspace: { sharedWorkspace: { frontmostApplication: { bundleIdentifier: 'org.example.owner' } } },
     CGWindowListCopyWindowInfo: () => list([]),
-    NSRunLoop: { currentRunLoop: { runUntilDate() { now += 200; } } },
+    NSRunLoop: { currentRunLoop: { runUntilDate() { now += 200; if (options.ownCloseAt && now >= options.ownCloseAt) present = false; } } },
     NSDate: { dateWithTimeIntervalSinceNow: seconds => seconds },
     NSString: { stringWithContentsOfFileEncodingError: () => JSON.stringify({ command }) },
     NSFileHandle: { fileHandleWithStandardOutput: { writeData(data) {
@@ -265,9 +265,13 @@ function cleanupHost(options = {}) {
       if (element === appElement && name === 'AXWindows') {
         windowReads++;
         if (options.windowReadFailure && now >= 10000) return -25204;
-        const foreign = (options.restoredWindow && opened) || (options.restoredOnRead && windowReads >= options.restoredOnRead) ||
-          (options.extraWindowAfterPress && presses.length) || (options.transientWindow && now >= 400 && now < 5000);
+        const foreign = !foreignGone && ((options.restoredWindow && opened) || (options.restoredOnRead && windowReads >= options.restoredOnRead) ||
+          (options.extraWindowAfterPress && presses.length) || (options.transientWindow && now >= 400 && now < 5000));
         out[0] = list([...(opened && present ? options.multipleWindows ? [window, secondWindow] : [window] : []), ...(foreign ? [foreignWindow] : [])]); return 0;
+      }
+      if (element === foreignWindow && options.invalidForeign && now >= (options.invalidForeignAfter ?? 0) && ['AXDocument', 'AXSheets'].includes(name)) {
+        if (!options.foreignStaysPresent) foreignGone = true;
+        return -25201;
       }
       if (element === foreignWindow && name === 'AXDocument') { out[0] = 'file:///private/tmp/another.txt'; return 0; }
       if (element === secondWindow && !present) return -25202;
@@ -451,6 +455,44 @@ test('an unrelated window arriving during cleanup is retained untouched and stop
   assert.equal(result.terminations, 0);
   assert.equal(result.details.windows[1].document, 'file:///private/tmp/another.txt');
   assert.ok(result.details.windows[1].reasons.includes('WINDOW_NOT_RETAINED'));
+});
+
+test('an unretained invalid window absent at finish is recorded as gone without failing cleanup', () => {
+  const result = cleanupHost({ axCloses: true, extraWindowAfterPress: true, invalidForeign: true });
+  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  const row = result.details.windows[1];
+  assert.equal(row.retained, false);
+  assert.equal(row.documentStatus, -25201);
+  assert.equal(row.sheetStatus, -25201);
+  assert.equal(row.present, false);
+  assert.equal(row.stillPresentAfter10s, false);
+  assert.equal(row.gone, true);
+  assert.deepEqual(row.reasons, ['WINDOW_NOT_RETAINED', 'DOCUMENT_NOT_MATCHED', 'SHEETS_READ_FAILED']);
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.scripts.length, 0);
+  assert.equal(result.terminations, 1);
+});
+
+test('an invalid unretained window still present at finish prevents cleanup and app termination', () => {
+  const result = cleanupHost({ axCloses: true, extraWindowAfterPress: true, invalidForeign: true, foreignStaysPresent: true });
+  assert.equal(result.confirmed, false);
+  assert.equal(result.details.windows[1].present, true);
+  assert.notEqual(result.details.windows[1].gone, true);
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.scripts.length, 0);
+  assert.equal(result.terminations, 0);
+});
+
+test('a previously readable foreign window still fails when it expires during close polling', () => {
+  const result = cleanupHost({ extraWindowAfterPress: true, invalidForeign: true, invalidForeignAfter: 10000, ownCloseAt: 10000 });
+  assert.equal(result.confirmed, false);
+  const row = result.details.windows[1];
+  assert.equal(row.present, false);
+  assert.equal(row.documentStatus, -25201);
+  assert.notEqual(row.gone, true);
+  assert.equal(row.documentReads[0].document, 'file:///private/tmp/another.txt');
+  assert.equal(result.scripts.length, 0);
+  assert.equal(result.terminations, 0);
 });
 
 test('a changed document still stops cleanup when its window disappears after revalidation', () => {
