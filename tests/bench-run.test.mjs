@@ -18,6 +18,7 @@ import { LOGIN_ARMS, loginTarget } from '../bench/world/login-readiness.mjs';
 import { packageSkip } from './requirements.mjs';
 import { cleanupContained as realCleanupContained } from '../bench/real-run.mjs';
 import { mergeArmHooks as realMergeArmHooks } from '../bench/arm-hooks.mjs';
+import { codexSleightRunConfig } from '../bench/codex-sleight.mjs';
 const parserSkip = packageSkip('typescript');
 const { dragMethodAudit } = parserSkip ? {} : await import('../bench/world/method-check.mjs');
 
@@ -46,13 +47,13 @@ test('a refused dry run prints one JSON document with its configuration errors',
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError, daemonError, daemonStopError } = {}) {
+async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError, daemonError, daemonStopError, declinedPrompts = [] } = {}) {
   if (!auth) {
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
   }
   const calls = [], saved = [], envs = [], tailScopes = [], directories = [];
-  const logs = [], driverOptions = [], codexRuns = [], files = new Map(), commands = [];
+  const logs = [], driverOptions = [], codexRuns = [], files = new Map(), commands = [], codexConfigs = [];
   let preflightDone = false, calculatorObservations = 0;
   const source = readFileSync(new URL('../bench/run.mjs', import.meta.url), 'utf8')
     .replace(/^#!.*\n/, '').replace(/^import .*;\n/gm, '').replaceAll('import.meta.url', '"file:///fixture/bench/run.mjs"');
@@ -122,6 +123,9 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     quitChess: options => { calls.push('Chess tail'); tailScopes.push(options); },
     quitSimApp: options => { calls.push('Simulator tail'); tailScopes.push(options); },
     approveOnly: ids => { calls.push(['approve', ...ids]); return () => {}; }, codexReady: () => true,
+    CODEX_SLEIGHT_HOME: '/owner/.codex-bench-sleight', ensureCodexSleightHome: () => { calls.push('codex sleight home'); return { ok: true, home: '/owner/.codex-bench-sleight', did: [] }; },
+    writeCodexSleightConfig: (toml, home, copy) => { calls.push(['codex sleight config', home, copy]); codexConfigs.push(toml); },
+    codexSleightRunConfig, approvalSummary: () => ({ accepted: 1, declined: declinedPrompts, toolsRefused: [] }),
     codexConfigServers: () => codexServers ?? [],
     cpuSplit,
     startFootprint: () => async () => footprint,
@@ -158,7 +162,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
   let error;
   try { await runInNewContext(`(async () => { ${source}\n})()`, sandbox); } catch (caught) { error = caught; }
   const plan = logs.filter(text => typeof text === 'string' && text.startsWith('{')).map(text => JSON.parse(text)).at(-1);
-  return { calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, files, commands, exitCode: sandbox.process.exitCode };
+  return { calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, codexConfigs, files, commands, exitCode: sandbox.process.exitCode };
 }
 
 test('pass snapshots under the lock before discovery; temp and image cleanup run before tasks', async () => {
@@ -1009,6 +1013,44 @@ test('the codex-sol arm refuses another model, and luna and sol sit side by side
   assert.equal(both.error, undefined);
   assert.deepEqual(both.saved.at(-1).codexModels, { codex: 'gpt-6-luna', 'codex-sol': 'gpt-6.1-sol' });
   assert.deepEqual([...new Set(both.codexRuns.map(run => run.options.model))].sort(), ['gpt-6-luna', 'gpt-6.1-sol']);
+});
+
+// sleight inside Codex as its MCP plugin (LAWS, 2026-10-18): codex-sleight on gpt-6-luna, codex-sleight-sol on gpt-6.1-sol.
+for (const [label, arm, extraArgs, armLabel, model] of [
+  ['codex-sleight defaults to gpt-6-luna', 'codex-sleight', [], 'codex-sleight', 'gpt-6-luna'],
+  ['codex-sleight with gpt-6.1-sol is recorded as codex-sleight-sol', 'codex-sleight', ['--codex-model', 'gpt-6.1-sol'], 'codex-sleight-sol', 'gpt-6.1-sol'],
+  ['the codex-sleight-sol arm runs gpt-6.1-sol', 'codex-sleight-sol', [], 'codex-sleight-sol', 'gpt-6.1-sol'],
+]) test(`${label}, from its own Codex home with only sleight's server and the engine's list untouched`, async () => {
+  const result = await runner({ arm, drive: true, extraArgs, outcome: { passed: true } });
+  assert.equal(result.error, undefined);
+  assert.ok(result.codexRuns.length > 0);
+  for (const run of result.codexRuns) { assert.equal(run.options.model, model); assert.equal(run.options.home, '/owner/.codex-bench-sleight'); }
+  const file = result.saved.at(-1);
+  assert.deepEqual(file.arms, [armLabel]);
+  assert.deepEqual(file.codexModels, { [armLabel]: model });
+  assert.equal(file.armMetadata[armLabel].codexHome, '~/.codex-bench-sleight');
+  for (const row of file.results) { assert.equal(row.arm, armLabel); assert.equal(row.codexModel, model); }
+  assert.ok(!result.calls.some(call => Array.isArray(call) && call[0] === 'approve'), 'the engine\'s Always allow list is not touched');
+  assert.ok(result.calls.includes('codex sleight home'));
+  assert.equal(result.codexConfigs.length, result.codexRuns.length, 'each run writes its own servers first');
+  for (const toml of result.codexConfigs) {
+    assert.deepEqual(toml.match(/^\[mcp_servers\.[^\].]+\]/gm), ['[mcp_servers.plugin_sleight_computer]']);
+    assert.ok(toml.includes(`model = "${model}"`) && toml.includes('--policy", "bench"') && toml.includes('SLEIGHT_APPROVAL_PROMPT = "client"'));
+  }
+});
+
+test('a prompt outside the allowlist stops a sleight-in-Codex pass as it stops a Claude-hosted arm', async () => {
+  const result = await runner({ arm: 'codex-sleight', drive: true, outcome: { passed: true }, declinedPrompts: ['Allow Computer Use to use "Terminal"?'] });
+  const row = result.saved.at(-1).results[0];
+  assert.equal(row.passed, false);
+  assert.match(row.reason, /^unsupported approval/);
+});
+
+test('the engine list is set once for a native Codex arm beside a sleight-in-Codex arm', async () => {
+  const result = await runner({ arm: 'codex,codex-sleight', drive: true, outcome: { passed: true } });
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls.filter(call => Array.isArray(call) && call[0] === 'approve').length, 1);
+  assert.deepEqual([...new Set(result.codexRuns.map(run => run.options.home))].sort(), ['/owner/.codex-bench-sleight', undefined].sort());
 });
 
 test('a real run where Codex used a shell or edited a file fails even when its check passed', async () => {

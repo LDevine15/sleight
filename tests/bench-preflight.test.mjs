@@ -55,6 +55,13 @@ for (const surface of ['codex', 'codex-sol']) test(`${surface} checks the engine
   });
   assert.ok(calls.includes('engine') && !calls.includes('spend'));
 });
+for (const surface of ['codex-sleight', 'codex-sleight-sol']) test(`${surface} checks the engine sockets and asks for no Claude login or API spend`, async () => {
+  const calls = [];
+  await fowlPreflight({ tasks: selectedTasks([{ name: 'engine', browser: 'firefox', surface }], {}), home: '/fixture' }, {
+    spend() { calls.push('spend'); }, engineSockets() { calls.push('engine'); }, login() { calls.push('login'); }, fowlSocket() {},
+  });
+  assert.ok(calls.includes('engine') && !calls.includes('spend') && !calls.includes('login'));
+});
 test('unsupported API arms do not change funding or socket admission for a runnable account task', async () => {
   const tasks = [{ name: 'login', browser: 'chrome', surface: 'claude-cu' },
     { name: 'unsupported', browser: 'native', surface: 'browser-use' },

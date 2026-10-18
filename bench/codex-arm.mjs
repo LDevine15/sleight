@@ -39,16 +39,27 @@ export function approveOnly(bundleIds, backupPath) {
 }
 
 // The rollout Codex writes for a thread: one token_count event per model response, which is the
-// counterpart of Claude Code's num_turns.
-function modelRequests(threadId, home = CODEX_HOME) {
+// counterpart of Claude Code's num_turns, and one turn_context per turn, which names the model Codex actually ran.
+function rolloutLines(threadId, home = CODEX_HOME) {
   const walk = dir => readdirSync(dir).flatMap(name => {
     const path = join(dir, name);
     return statSync(path).isDirectory() ? walk(path) : name.includes(threadId) ? [path] : [];
   });
   const sessions = join(home, 'sessions');
   const file = existsSync(sessions) && walk(sessions)[0];
-  if (!file) return undefined;
-  return readFileSync(file, 'utf8').split('\n').filter(line => line.includes('"token_count"')).length;
+  return file ? readFileSync(file, 'utf8').split('\n') : undefined;
+}
+function modelRequests(threadId, home = CODEX_HOME) {
+  return rolloutLines(threadId, home)?.filter(line => line.includes('"token_count"')).length;
+}
+// The model ids Codex ran, from the rollout's turn_context events (empty when the rollout has none), not the id asked for.
+export function modelsRan(lines) {
+  const ran = new Set();
+  for (const line of lines ?? []) {
+    if (!line.includes('"turn_context"')) continue;
+    try { const model = JSON.parse(line).payload?.model; if (typeof model === 'string' && model) ran.add(model); } catch { /* a cut line */ }
+  }
+  return [...ran];
 }
 
 // Finds a numeric key anywhere in a tool result, such as the engine's own execution time.
@@ -69,7 +80,7 @@ export function codexExecPlan(prompt, { cwd, model, effort }) {
     '-c', `model_reasoning_effort="${effort}"`, '--skip-git-repo-check', '-C', cwd, prompt];
 }
 
-export async function runCodex(prompt, { cwd, model, effort, timeoutMs, signal, onSpawn, auditDrag = false, home = CODEX_HOME, onEvent }) {
+export async function runCodex(prompt, { cwd, model, effort, timeoutMs, signal, onSpawn, auditDrag = false, home = CODEX_HOME, onEvent, command = 'codex', env = {} }) {
   // No shell and a read-only sandbox: the checks read files and a form server, so a shell could
   // pass them without touching the apps. The Claude arm has no Bash either.
   const args = codexExecPlan(prompt, { cwd, model, effort });
@@ -92,7 +103,8 @@ export async function runCodex(prompt, { cwd, model, effort, timeoutMs, signal, 
       if (['command_execution', 'file_change'].includes(item.type)) forbidden.push(item.type);
     }
   };
-  const run = await runOwned('codex', args, { cwd, env: { ...process.env, CODEX_HOME: home }, timeoutMs, signal, onStdout, onSpawn });
+  const run = await runOwned(command, args, { cwd, env: { ...process.env, ...env, CODEX_HOME: home }, timeoutMs, signal, onStdout, onSpawn });
+  const ran = threadId ? modelsRan(rolloutLines(threadId, home)) : [];
   return {
     code: run.exit.code ?? (run.spawnError ? 127 : 1), stderr: (run.spawnError ?? run.stderr).slice(-2000), forbidden,
     groupClean: run.groupClean, cancelled: run.cancelled, timedOut: run.timedOut,
@@ -100,8 +112,9 @@ export async function runCodex(prompt, { cwd, model, effort, timeoutMs, signal, 
     out: { result: answer, num_turns: threadId ? modelRequests(threadId, home) : undefined,
       usage: usage && { input_tokens: usage.input_tokens, cache_read_input_tokens: usage.cached_input_tokens,
         cache_creation_input_tokens: usage.cache_write_input_tokens, output_tokens: usage.output_tokens },
-      modelUsage: { [model]: {} } },
-    toolCalls, engineMs,
+      // The ids Codex ran when its rollout names them, else the one asked for.
+      modelUsage: Object.fromEntries((ran.length ? ran : [model]).map(id => [id, {}])) },
+    modelRequested: model, modelsRan: ran, toolCalls, engineMs,
     ...(auditDrag && { methodAudit: (await import('./world/method-check.mjs')).dragMethodAudit(run.stdout) }),
   };
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
@@ -56,4 +56,28 @@ test('an abort stops Codex and the processes it started, and says the group is g
     const run = await runCodex('task', { cwd: fake.dir, model: 'm', effort: 'medium', timeoutMs: 10000, signal: controller.signal });
     assert.equal(run.cancelled, true); assert.equal(run.groupClean, true); assert.notEqual(run.code, 0);
   } finally { process.env.PATH = path; fake.done(); }
+});
+
+test('a Codex run reports the model its rollout says it ran, beside the one it was asked for', async () => {
+  const home = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-codex-home-')));
+  const sessions = join(home, 'sessions', '2026', '10', '18');
+  mkdirSync(sessions, { recursive: true });
+  writeFileSync(join(sessions, 'rollout-2026-10-18T10-00-00-thread-ran.jsonl'), [
+    { type: 'session_meta', payload: {} }, { type: 'turn_context', payload: { model: 'gpt-6.1-sol', effort: 'high' } },
+    { type: 'event_msg', payload: { type: 'token_count' } }, { type: 'turn_context', payload: { model: 'gpt-6.1-sol' } },
+    { type: 'event_msg', payload: { type: 'token_count' } }].map(line => JSON.stringify(line)).join('\n'));
+  const fake = fakeCodex([{ type: 'thread.started', thread_id: 'thread-ran' }, { type: 'item.completed', item: { type: 'agent_message', text: 'Done.' } }]);
+  const path = process.env.PATH;
+  process.env.PATH = `${fake.dir}:${path}`;
+  try {
+    const { runCodex, modelsRan } = await import('../bench/codex-arm.mjs');
+    const run = await runCodex('task', { cwd: fake.dir, model: 'gpt-6-luna', effort: 'high', timeoutMs: 10000, home });
+    assert.equal(run.modelRequested, 'gpt-6-luna');
+    assert.deepEqual(run.modelsRan, ['gpt-6.1-sol']);
+    assert.deepEqual(Object.keys(run.out.modelUsage), ['gpt-6.1-sol']);
+    assert.equal(run.out.num_turns, 2);
+    assert.deepEqual(modelsRan(undefined), []);
+    const none = await runCodex('task', { cwd: fake.dir, model: 'gpt-6-luna', effort: 'high', timeoutMs: 10000, home: join(home, 'empty') });
+    assert.deepEqual(none.modelsRan, []); assert.deepEqual(Object.keys(none.out.modelUsage), ['gpt-6-luna']);
+  } finally { process.env.PATH = path; fake.done(); rmSync(home, { recursive: true, force: true }); }
 });
