@@ -220,11 +220,11 @@ function ruleMessage(result) {
 // queues work and returns nothing, and a hand that throws changes nothing here.
 export function createActionRunner({ check, snapshot, backgroundClick = (tab, locator, click) => click({}), actionTimeoutMs = 7000, now = Date.now, sleep = pause, hand } = {}) {
   if (typeof check !== 'function' || typeof snapshot !== 'function') throw Error('action runner needs check and snapshot');
-  return async function runSteps(tab, steps, ctx = {}) {
+  return async function runSteps(tab, steps, ctx = {}, { nextStep } = {}) {
     // A bad step list is refused before any input, so the caller must not report it as an unconfirmed outcome.
     try { validate(steps); } catch (error) { error.notRun = true; throw error; }
     const { page, state } = tab, since = state.snapshotNo > 0 ? state.snapshotNo : undefined, lines = []; let stoppedAt = null;
-    let observed, observeError, confirmation, blocker, carry;
+    let observed, observeError, confirmation, blocker, carry, observeWaitMs = 600;
     const read = async options => { const capturedAt = now(), result = await snapshot(page, options); observed = { ...result, capturedAt }; return observed; };
     for (let index = 0; index < steps.length; index++) {
       // navigate on a link is that link's click, so every click rule, guard and popup rule applies unchanged.
@@ -362,7 +362,9 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // or type settles briefly and the last of the run settles fully. Enter, Return and Space can activate
         // a control, so they always settle in full, and so does any step that starts a submit.
         const quiet = (step.do === 'type' || step.do === 'press' && !enter) && !submits;
-        const batched = quiet && !inputPending && !armed.boundary && ['type', 'press'].includes(steps[index + 1]?.do);
+        // Electron fences one input per invocation; lookahead changes only settling, never sends that next input.
+        const batched = quiet && !inputPending && !armed.boundary && ['type', 'press'].includes((steps[index + 1] ?? nextStep)?.do);
+        observeWaitMs = batched ? 40 : 600;
         // A submit's clock starts when the gate arms the fence (submit.startedAt), which in a trusted turn is after `start`: the
         // delivered read clears the fence only if taken a full second after that moment (rules.mjs deliverSnapshot), so both wait on it.
         const origin = submits && submit ? Math.max(start, submit.startedAt) : start;
@@ -384,7 +386,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           if (submits && overlayShown && !armed.pending.size && now() >= origin + 1000) break;
           await Promise.race([armed.boundaryReady, sleep(Math.min(50, settleUntil - now()))]);
         }
-        if (batched && !armed.boundary) carry = armed;
+        // Carry watchers only across steps this invocation will run. The Electron caller guards its next invocation.
+        if (batched && steps[index + 1] && !armed.boundary) carry = armed;
         const boundary = armed.boundary;
         if (boundary?.kind === 'dialog') state.dialog = boundary.dialog;
         if (submit && state.submitUnconfirmed === submit) {
@@ -466,7 +469,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
     if (observed) {
       const changed = observed.text.split('\n').filter(line => /^[+~-]\s/.test(line)).length;
       const detail = changed ? changed + ' lines changed (batch observation below)'
-        : /no (?:visible )?changes?/i.test(observed.text) ? 'no visible change within 600 ms' : 'input sent; page below';
+        : /no (?:visible )?changes?/i.test(observed.text) ? `no visible change within ${observeWaitMs} ms` : 'input sent; page below';
       for (let i = 0; i < lines.length; i++) lines[i] = lines[i].replace('input sent; observation below', detail);
     }
     if (observeError) lines.push('Read unavailable: ' + observeError + '; use browser_read before retrying.');

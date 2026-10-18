@@ -136,7 +136,7 @@ export function createAppRunners({ pages, invalidateRefs, check, snapshot, inspe
         await pages.guard(entry, async () => {
           await preflight(entry, step);
           phase = 'running';
-          result = await runner(entry, [step], ctx);
+          result = await runner(entry, [step], ctx, { nextStep: steps[index + 1] });
           phase = 'ran';
         });
       } catch (error) {
