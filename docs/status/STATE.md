@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 20:22 UTC, after the clear)
+## Banner (2026-10-18 20:37 UTC, after the clear)
 
 Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
 Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
@@ -62,7 +62,9 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 4. Claude in Chrome: first live smoke of the Allow watcher (bench/fowl/chrome-allow.*) from Terminal, then 3 Chrome rounds; then
    reconnect GitHub (owner item).
 5. Top-ups to 5 rounds for every pair within 20% (Firefox about 16, Chrome and Helium a few, Safari once scored).
-6. sleight's native claim arm on the final build, then the release pass and the 1.3.0 tag (owner's call).
+6. sleight's native claim arm on the final build, then the release pass and the 1.3.0 tag (owner's call). The release pass
+   includes MB1 live with turbo connected in Chrome: the glove, the menu, and each of Pause, Disconnect and Turn Turbo Off
+   (owner, 2026-10-18).
 
 **Owner items:**
 - GitHub Integration on claude.ai was disconnected 14:1xZ for the Claude in Chrome rounds; sleight-arch reconnects it afterwards at
@@ -81,7 +83,8 @@ build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 n
 **MB1 (3660e913 and review fixes 2e194479, owner's order).** Turbo's menu bar item shows only while turbo is in use or a request
 waits, with a menu of status, browser, payment check, Pause, Disconnect and Turn turbo off. A failed opt-out keeps turbo and says
 so, and an opt-out from any session ends every session's turbo at the next 60 s refresh. The owner found the cut-out two-hands
-glyph unreadable at 18 pt. A Fable agent is drawing four vector glove candidates for the owner to pick. race-fx stays on 64396fa5.
+glyph unreadable at 18 pt, so Fable drew four vector gloves and the owner picked the glove with wrist dabs and pointer (423e531c).
+The menu is the owner's approved layout (4579d7b8). It is part of 1.3.0 (CHANGELOG). race-fx stays on 64396fa5.
 
 **Older owner items.** One "Always allow" click on the VS Code debugger card at the Electron turbo qualification (1.3.1). The engine's Always-allow list has listed only Word and Codex since 2026-10-11 (below). The
 Microsoft Error Reporting window from an earlier Office crash is theirs to read or dismiss.
