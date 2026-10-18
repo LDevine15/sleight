@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 18:20 UTC, after the clear)
+## Banner (2026-10-18 19:38 UTC, after the clear)
 
 Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
 Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
@@ -31,11 +31,15 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
   race's own Terminal window over Safari's list, and the engine's background drags miss in a covered window (known-problems,
   Benchmark environment). AXRaise can't lift a background app's window over another app's (1/1). Since fea700fa every task's row
   records the windows over the browser at its start (`cover`, report column "covered by"). Rounds don't raise or move windows.
+  Every task from 18:08Z to 19:35Z had two Finder run-folder windows over 41% of Safari. The owner said they weren't theirs, and
+  sleight-arch closed them by their AX close buttons at 19:35Z. The r2 rounds of all four Terminal arms ran under that cover and
+  are set aside in `race-1017/failed-safari-finder`, so every scored Safari round runs uncovered by them. Codex r1 (19:35Z) is the
+  first uncovered round.
 
 **Running across a clear:**
-- Terminal.app job `race-1017/race-safari-term.command` (log `race-safari-term.log`) runs Safari r2 and r3 for sleight, lcu, cua and
+- Terminal.app job `race-1017/race-safari-term.command` (log `race-safari-term.log`) runs Safari r3 for sleight, lcu, cua and
   peekaboo. When it logs `done`, a waiter in sleight-arch's shell opens `race-safari-r1.command` (log `race-safari-r1.log`), which
-  reruns only the missing r1 rounds. After a clear, if that log doesn't exist once the term log says `done`, open it by hand.
+  reruns only the missing rounds (r1 and r2 for those four arms). After a clear, if that log doesn't exist once the term log says `done`, open it by hand.
 - Safari's Codex x3 (`race-safari-codex.log`) runs from sleight-arch's shell and has not started a round yet, so it runs on the fix.
 - Queued from sleight-arch's shell: sleight's Firefox b6 x3 (`race-firefox-b6.log`, after the safari-term, safari-codex and safari-r1
   logs say `done`), then the sleight-in-Codex smoke in Firefox (both arms, wikipedia and form-checkout, `smoke-codex-sleight.sh`,
@@ -43,7 +47,8 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
   shell jobs: rerun the same commands (in `race-1017`, see each log's name).
 - `nohup` watchdog `race-1017/watchdog.sh` (pid 584, log `watchdog.log`): exits with an ALERT line if the live lock is held with no round
   for 3 min, a round runs over 40 min, or Safari stays up with no round for 3 min. Nobody is woken after the clear, so read its log first.
-- `touch ~/Projects/sleight-wt/race-1017/pause` pauses every race script between rounds.
+- `touch ~/Projects/sleight-wt/race-1017/pause` should pause every race script between rounds, but the Terminal job started
+  peekaboo r2 at 19:10Z with the file present. A test under way at 19:37Z checks whether it honors the file.
 
 **Order from here:**
 1. Safari r2 and r3 are running, with Codex x3 and the r1 reruns queued. Score Safari when they finish.
@@ -56,9 +61,6 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 6. sleight's native claim arm on the final build, then the release pass and the 1.3.0 tag (owner's call).
 
 **Owner items:**
-- Finder windows titled `2026-10-17T23-09-36-785Z` and `2026-10-17T22-45-31-623Z` (run-folder names, 920x436) cover 41% of the race's
-  Safari window in every Safari task since 18:08Z (cover column). They may be benchmark leftovers, but sleight-arch doesn't close
-  windows it can't prove are its own. Closing them uncovers the browser for later rounds. All arms face the same cover until then.
 - GitHub Integration on claude.ai was disconnected 14:1xZ for the Claude in Chrome rounds; sleight-arch reconnects it afterwards at
   claude.ai/customize/connectors/yours/id/integration-github (owner does a passkey if asked).
 - Changed with the owner's OK for Claude in Chrome: its panel mode in the benchmark profile is "Skip all approvals", and claude.ai's
