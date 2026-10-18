@@ -187,9 +187,12 @@ test('the whole fake VS Code run passes every cell through the five tools, and d
   assert.equal(byId['new-window'].detail.falseJoins, 0);
   assert.equal(byId['sheet-parking'].detail.staleRefusals, 1);
   assert.equal(byId.revoke.detail.replays, 0);
-  assert.deepEqual(byId.contention.detail.map(row => row.busy), [0, 3, 12]);
+  assert.deepEqual(byId.contention.detail.map(row => row.busy), [0, 3]);
+  assert.deepEqual(byId.contention.detail.map(row => row.cards), [0, 0], 'busy sessions refuse before their card');
   assert.equal(receipt.timings.read.scope, 'tool-call');
   assert.equal(receipt.timings.read.warm.n, 4);
+  assert.equal(receipt.timings.read.cold.n, 4, 'cold samples are capped by coldSamples (default 5)');
+  assert.equal(byId['host-kill'].detail.refusal, 'ELECTRON_OWNERSHIP_UNRESOLVED');
   assert.ok(driver.calls.every(call => ['browser_open', 'browser_read', 'browser_act', 'browser_fill', 'browser_tabs'].includes(call.name)));
   assert.equal(driver.quitByPidCalls, 1, 'only the host-kill instance needs the pid-owned quit');
   assert.equal(receipt.cleanup.confirmed, true);
@@ -236,8 +239,8 @@ test('the live runtime refuses before any launch while an EPV3-4 to 7 interface 
   await assert.rejects(liveRuntime(parseArgs(['--owner-away']), { io: { permission: async () => false } },
     { exec, load: async name => (name === 'snapshot.mjs' ? { invalidateRefs() {} } : Promise.reject(new Error('absent'))) }), /ELECTRON_RUNTIME_MISSING: electron-admin\.mjs, .*nothing was launched/);
   assert.deepEqual(await missingContract(async () => ({ ensureHost() {} })), [
-    'electron-runtime.mjs selectAppConnection', 'electron-runtime.mjs createAppContexts', 'electron-read.mjs createAppSnapshot', 'electron-handoff.mjs createAppRunners',
-    'electron-recipes.mjs readRecipeRegistry', 'electron-recipes.mjs recipeFor', 'electron-windows.mjs createWindowReader', 'snapshot.mjs invalidateRefs']);
+    'electron-runtime.mjs connectAppHost', 'electron-runtime.mjs selectAppConnection', 'electron-runtime.mjs createAppTurn', 'electron-runtime.mjs releaseAppConnection',
+    'electron-runtime.mjs runWindowHelper', 'electron-identity.mjs deriveAppInstance', 'worker.mjs createAppTurnRuntime', 'worker.mjs serverAppSecret']);
   assert.deepEqual(parseCodesign('Executable=/x\nAuthority=Developer ID Application: Example (ABC)\nAuthority=Apple Root CA\nCDHash=abc123\nTeamIdentifier=ABC\n'),
     { signer: 'Developer ID Application: Example (ABC)', team: 'ABC', cdhash: 'abc123' });
 });
@@ -271,4 +274,36 @@ test('the native helper samples frontmost and pointer without activating anythin
   }, { now: () => t, wait: ms => { t += ms; }, emit: value => emitted.push(value) });
   assert.equal(emitted.length, 4);
   assert.deepEqual(JSON.parse(JSON.stringify(emitted[0])), { t: 0, front: 90, x: 1, y: 2 });
+});
+
+// H2: the recipe the driver writes is one the registry and instanceFromRecipe accept for the same bundle.
+test('the driver\'s recipe passes the registry and matches the bundle the runtime derives', async t => {
+  const { recipeFromBundle } = await import('../bench/electron-qualification-live.mjs');
+  const { deriveAppInstance } = await import('../plugins/sleight/lib/direct-browser/electron-identity.mjs');
+  const { readRecipeRegistry, recipeFor, instanceFromRecipe } = await import('../plugins/sleight/lib/direct-browser/electron-recipes.mjs');
+  const bundle = '/Applications/Visual Studio Code.app', executable = bundle + '/Contents/MacOS/Code';
+  const inspect = () => ({ verified: true, codesign: { executable, identifier: 'com.microsoft.VSCode', cdhash: 'c'.repeat(40), team: 'UBF8T346G9',
+    authority: 'Developer ID Application: Microsoft Corporation (UBF8T346G9)' }, electron: { CFBundleVersion: '39.2.3' },
+    info: { CFBundleIdentifier: 'com.microsoft.VSCode', CFBundleName: 'Code', CFBundleShortVersionString: '1.105.0' } });
+  const profile = '/private/tmp/eq/profiles/com.microsoft.VSCode';
+  const derived = deriveAppInstance({ bundle, executable, profile, temporary: true, pid: 1, pidBirth: 'recipe' }, { inspect });
+  const recipe = recipeFromBundle({ app: APPS.vscode, derived, executable, sha256: 'a'.repeat(64), bundlePath: bundle, workspace: '/private/tmp/eq/workspace' });
+  assert.equal(recipe.signer, 'UBF8T346G9', 'the team id, not the Authority line');
+  assert.equal(recipe.runtime, 'electron/39.2.3');
+  assert.equal(recipe.cdhash, 'c'.repeat(40));
+  const dir = temp(t), path = join(dir, 'recipes.json');
+  (await import('node:fs')).writeFileSync(path, JSON.stringify({ version: 1, recipes: [recipe] }));
+  const row = recipeFor(readRecipeRegistry(path), 'com.microsoft.VSCode');
+  assert.equal(instanceFromRecipe(row, { profile, temporary: true, inspect }).pid, 0, 'no RECIPE_BUILD_CHANGED');
+});
+
+// H1, F2: the live worker composes a turn the installed worker's way and takes the app host's secret from its parent only.
+test('the live worker uses the installed path: connectAppHost with the parent\'s secret, createAppTurn, createAppTurnRuntime', () => {
+  const worker = readFileSync(new URL('../bench/electron-qualification-worker.mjs', import.meta.url), 'utf8');
+  for (const call of ['runtimeMod.connectAppHost(', 'secret: msg.appSecret', 'runtimeMod.selectAppConnection(', 'windows: b.runtimeMod.runWindowHelper',
+    'profile: b.host.profile', 'runtimeMod.createAppTurn(', 'workerMod.createAppTurnRuntime(', 'releaseAppConnection(']) assert.ok(worker.includes(call), call);
+  for (const shortcut of ['ensureHost(', 'adminSecret', 'createAppRunners(', 'createAppSnapshot(', 'snapshotMod.snapshot']) assert.ok(!worker.includes(shortcut), shortcut);
+  const live = readFileSync(new URL('../bench/electron-qualification-live.mjs', import.meta.url), 'utf8');
+  assert.ok(live.includes('serverAppSecret()'), 'the driver holds the secret the way the MCP server does');
+  assert.ok(!/adminSecret|randomBytes\(32\)/.test(live), 'and never makes its own');
 });

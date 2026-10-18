@@ -4,10 +4,14 @@
 // - Ownership: the fixture is the main process whose arguments name this run's temporary root; real-electron.mjs's census
 //   finds it, and its pid-owned quit (NSRunningApplication plus the fixture's own Don't Save) is the fallback. The owner's
 //   instance is counted by pid and never addressed.
-// - Consent: sleight's own debugger card, answered only by the user's click. Grants live in this run's state folder.
+// - Consent: sleight's own debugger card, answered only by the user's click. Grants live in this run's state folder. One
+//   long-lived worker per app serves every reconnect and timing turn, so one "Allow for this session" click covers them;
+//   a new worker or a new app process (restart, worker kill, disconnect, the host-kill instance) shows a new card.
+// - Secret: this process plays the MCP server. It holds worker.mjs's serverAppSecret and hands it to each worker it forks,
+//   the installed path's only source of the app host's admin secret.
 // - No Apple events, no macOS permission prompt answered (the main loop stops and records), no pointer motion.
 import { execFile, fork, spawn } from 'node:child_process';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,15 +30,12 @@ const QUIT_HELPER = fileURLToPath(new URL('./real-electron.js', import.meta.url)
 const WORKER = fileURLToPath(new URL('./electron-qualification-worker.mjs', import.meta.url));
 const D = new URL('../plugins/sleight/lib/direct-browser/', import.meta.url);
 
-// The interfaces EPV3-4 to 7 deliver (epv3-contracts.md and epv3-contract-deltas.md). Missing any refuses before a launch.
+// The installed worker's app path, which the live worker composes the same way. Missing any refuses before a launch.
 export const CONTRACT = Object.freeze([
   ['electron-admin.mjs', ['ensureHost']],
-  ['electron-runtime.mjs', ['selectAppConnection', 'createAppContexts']],
-  ['electron-read.mjs', ['createAppSnapshot']],
-  ['electron-handoff.mjs', ['createAppRunners']],
-  ['electron-recipes.mjs', ['readRecipeRegistry', 'recipeFor']],
-  ['electron-windows.mjs', ['createWindowReader']],
-  ['snapshot.mjs', ['invalidateRefs']],
+  ['electron-runtime.mjs', ['connectAppHost', 'selectAppConnection', 'createAppTurn', 'releaseAppConnection', 'runWindowHelper']],
+  ['electron-identity.mjs', ['deriveAppInstance']],
+  ['worker.mjs', ['createAppTurnRuntime', 'serverAppSecret']],
 ]);
 export async function missingContract(load = name => import(new URL(name, D))) {
   const missing = [];
@@ -50,6 +51,14 @@ export async function missingContract(load = name => import(new URL(name, D))) {
 const RECIPE_ARGS = ['--user-data-dir={profile}/user-data', '--extensions-dir={profile}/extensions', '--shared-data-dir={profile}/shared',
   '--use-inmemory-secretstorage', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-telemetry', '--disable-updates', '--new-window'];
 const SCHEMES = ['vscode-file', 'vscode-webview'];
+
+/** The registry row for one installed bundle. Identity fields come from electron-identity's deriveAppInstance (the same
+ * derivation instanceFromRecipe checks): signer is the team id, runtime 'electron/' + Electron Framework's CFBundleVersion. */
+export function recipeFromBundle({ app, derived, executable, sha256, bundlePath, workspace }) {
+  return { build: `${app.bundleId}@${derived.version}`, name: app.name, bundleId: app.bundleId, signer: derived.signer, runtime: derived.runtime,
+    executable, sha256, cdhash: derived.cdhash, args: [...RECIPE_ARGS, workspace], schemes: [...SCHEMES], fileRoots: [join(bundlePath, 'Contents', 'Resources', 'app')],
+    joinTolerance: 2, focusEmulation: false, zoomLevel: 0, qualified: false };
+}
 
 export function parseCodesign(stderr) {
   const lines = String(stderr).split('\n'), field = key => lines.find(line => line.startsWith(key + '='))?.slice(key.length + 1) ?? null;
@@ -123,28 +132,40 @@ function liveDriver(app, { root, exec, observer }) {
   const tempRoot = join(base, 'profiles'), stateDir = join(base, 'state'), registryPath = join(base, 'recipes.json');
   mkdirSync(tempRoot); mkdirSync(stateDir, { mode: 0o700 });
   const files = prepareWorkspace(join(base, 'workspace'));
-  const adminSecret = randomBytes(32).toString('hex'), session = 'v3' + randomBytes(16).toString('hex');
+  const session = 'v3' + randomBytes(16).toString('hex');
   const launched = [], workers = new Set();
-  let found, build, recipe, active, current, last, otherFront, hostPid;
+  let found, build, recipe, active, current, last, otherFront, hostPid, appSecret;
 
   async function prepare() {
     if (recipe) return;
     found = await editorIdentity(app.path, { exec });
     if (found.bundle !== app.bundleId) throw Error(`${app.path} is ${found.bundle}, not ${app.bundleId}`);
-    const plist = join(found.path, 'Contents', 'Info.plist');
-    const version = String((await exec('/usr/bin/plutil', ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', plist], { timeout: 5000 })).stdout).trim();
+    // codesign and the two plists, read the way the runtime reads them (no launch).
+    const { deriveAppInstance } = await import(new URL('electron-identity.mjs', D));
+    const derived = deriveAppInstance({ bundle: found.path, executable: found.executable, profile: join(tempRoot, app.bundleId), temporary: true, pid: 1, pidBirth: 'recipe' });
     const signed = parseCodesign((await exec('/usr/bin/codesign', ['-dv', '--verbose=4', found.path], { timeout: 20000 })).stderr);
-    build = { version, sha256: await sha256(found.executable), signer: signed.signer, team: signed.team, cdhash: signed.cdhash };
-    recipe = { build: `${app.bundleId}@${version}`, name: app.name, bundleId: app.bundleId, signer: signed.signer, runtime: 'electron', executable: found.executable,
-      sha256: build.sha256, args: [...RECIPE_ARGS, files.root], schemes: SCHEMES, fileRoots: [join(found.path, 'Contents', 'Resources', 'app')],
-      joinTolerance: 2, focusEmulation: false, zoomLevel: 0, qualified: false };
+    build = { version: derived.version, sha256: await sha256(found.executable), signer: signed.signer, team: derived.signer, cdhash: derived.cdhash, runtime: derived.runtime };
+    recipe = recipeFromBundle({ app, derived, executable: found.executable, sha256: build.sha256, bundlePath: found.path, workspace: files.root });
     writeFileSync(registryPath, JSON.stringify({ version: 1, recipes: [recipe] }, null, 2), { mode: 0o600 });
+    appSecret = (await import(new URL('worker.mjs', D))).serverAppSecret();
   }
-  async function startWorker(consentWaitMs, sessionId = session) {
-    const w = worker(); workers.add(w);
-    const reply = await w.send('start', { bundleId: app.bundleId, session: sessionId, turn: 'turn-' + randomUUID(), text: `Qualify turbo in ${app.name}.`,
-      registryPath, stateDir, tempRoot, build: recipe.build, adminSecret, allowlist: [...BENCHMARK_ALLOWLIST], consentWaitMs });
+  const message = (sessionId = session, extra = {}) => ({ bundleId: app.bundleId, session: sessionId, text: `Qualify turbo in ${app.name}.`,
+    registryPath, stateDir, tempRoot, appSecret, allowlist: [...BENCHMARK_ALLOWLIST], ...extra });
+  const seen = reply => { if (reply.ok && reply.hostPid) hostPid = reply.hostPid; return reply; };
+  // A turn in the given worker, or in a new one (a new consent instance, so a new card).
+  async function startWorker(consentWaitMs, sessionId = session, w) {
+    if (!w) { w = worker(); workers.add(w); }
+    const reply = seen(await w.send('start', message(sessionId, { consentWaitMs })));
     return { w, reply };
+  }
+  const drop = async w => { if (!w) return; await w.send('end'); w.kill(); workers.delete(w); if (active === w) active = undefined; };
+  // The driver's own admin connection, once the workers' channels have closed (the host takes one administrator at a time).
+  async function driverAdmin() {
+    const { ensureHost } = await import(new URL('electron-admin.mjs', D));
+    for (let i = 0; ; i++) {
+      try { return await ensureHost({ stateDir, registryPath, tempRoot, build: recipe.build, secret: appSecret }); }
+      catch (error) { if (error.message !== 'ELECTRON_HOST_FOREIGN' || i >= 20) throw error; await new Promise(resolve => setTimeout(resolve, 250)); }
+    }
   }
   const alive = async (pid, birth) => (await listProcesses(exec)).some(p => p.pid === pid && String(p.startedAtMs) === String(birth ?? p.startedAtMs));
   const census = async () => profileProcesses(await listProcesses(exec), tempRoot);
@@ -156,10 +177,10 @@ function liveDriver(app, { root, exec, observer }) {
       await prepare();
       if (!otherFront) { const front = await helper({ mode: 'front' }, exec); if (!BENCHMARK_ALLOWLIST.includes(front.bundle)) otherFront = front; }
       const started = performance.now();
-      const { w, reply } = await startWorker(consentWaitMs);
+      const { w, reply } = await startWorker(consentWaitMs, session, active);
       if (!reply.ok) {
         const card = reply.card ?? { shown: false, status: /DEBUGGER_REQUIRED/.test(reply.error) ? 'timeout' : 'refused', error: reply.error };
-        w.kill(); workers.delete(w);
+        w.kill(); workers.delete(w); if (active === w) active = undefined;
         return { card, launch: {}, connect: {} };
       }
       active = w; current = last = reply.identity;
@@ -193,30 +214,39 @@ function liveDriver(app, { root, exec, observer }) {
     async resume() { await active.send('resume'); },
     async disconnect() {
       const status = (await active.send('status')).status;
-      await active.send('end'); active.kill(); workers.delete(active); active = undefined;
+      await drop(active);
       return { appAlive: await driver.appAlive(), pipeRetained: status?.ownership === 'owned' || status?.broker === 'ready' };
     },
+    // In the live worker: release and select again (a new turn, the session grant). Without one: a new worker and its card.
     async reconnect({ consentWaitMs } = {}) {
-      if (active) { await active.send('end'); active.kill(); workers.delete(active); }
-      const { w, reply } = await startWorker(consentWaitMs);
-      active = reply.ok ? w : undefined;
-      if (reply.ok) current = last = reply.identity;
+      const { w, reply } = await startWorker(consentWaitMs, session, active);
+      if (reply.ok) { active = w; current = last = reply.identity; }
+      else { w.kill(); workers.delete(w); if (active === w) active = undefined; }
       return reply.card ?? { shown: false, status: 'refused', error: reply.error };
     },
     async killWorker() { active?.kill(); workers.delete(active); active = undefined; return { killed: true }; },
     async killHost() {
       const status = (await active.send('status')).status;
-      hostPid = status?.hostPid;
+      hostPid = status?.hostPid ?? hostPid;
       const host = (await listProcesses(exec)).find(p => p.pid === hostPid);
       if (!host || !host.args.includes(stateDir)) throw Error('HOST_PID_UNKNOWN: the host status gave no pid naming this run');
       process.kill(hostPid, 'SIGKILL'); // the host this run started, matched by its state folder
       active.kill(); workers.delete(active); active = undefined;
       return { appAlive: await driver.appAlive() };
     },
-    async reconcile() {
+    // A new worker asks for the app while the dead host's ownership is unresolved: refused before any card or launch.
+    async secondLaunch() {
       const { w, reply } = await startWorker(0);
+      if (reply.ok) await w.send('end');
       w.kill(); workers.delete(w);
       return { code: reply.ok ? null : (/[A-Z_]{6,}/.exec(reply.error)?.[0] ?? reply.error) };
+    },
+    // The host's own ownership recovery once the app is gone; no launch, no card.
+    async reconcile() {
+      const w = worker(); workers.add(w);
+      const reply = await w.send('reconcile', message());
+      w.kill(); workers.delete(w);
+      return { code: !reply.ok ? (/[A-Z_]{6,}/.exec(reply.error)?.[0] ?? reply.error) : reply.resolved ? null : 'ELECTRON_OWNERSHIP_UNRESOLVED', reason: reply.reason ?? null };
     },
     async quitByPid() {
       const target = current ?? last;
@@ -228,23 +258,21 @@ function liveDriver(app, { root, exec, observer }) {
       if (!left.length) for (const name of readdirSync(tempRoot)) rmSync(join(tempRoot, name), { recursive: true, force: true });
       return { absent: left.length === 0 };
     },
-    async contention(n, { consentWaitMs } = {}) {
-      const started = await Promise.all(Array.from({ length: n }, (_, i) => startWorker(consentWaitMs, i ? 'v3' + randomBytes(16).toString('hex') : session)));
-      const row = { ok: 0, busy: 0, other: 0 };
-      for (const { w, reply } of started) {
-        if (reply.ok) row.ok++; else if (/ELECTRON_BUSY/.test(reply.error)) row.busy++; else row.other++;
-        if (w !== active) { await w.send('end'); w.kill(); workers.delete(w); }
-      }
-      return row;
+    // This session keeps acting; n - 1 other sessions over the same host refuse busy, each before its card.
+    async contention(n) {
+      const own = await driver.tool('browser_tabs', { do: 'list' });
+      const reply = n > 1 ? await active.send('contend', message(session, { count: n - 1 })) : { ok: true, row: { busy: 0, other: 0, cards: 0 } };
+      if (!reply.ok) return { ok: own.isError ? 0 : 1, busy: 0, other: n - 1, cards: 0, error: reply.error };
+      return { ok: own.isError ? 0 : 1, busy: reply.row.busy, other: reply.row.other + (own.isError ? 1 : 0), cards: reply.row.cards };
     },
     async quit() {
       const target = current, started = performance.now();
       const status = active ? (await active.send('status')).status : null;
-      hostPid ??= status?.hostPid;
+      hostPid = status?.hostPid ?? hostPid;
       for (const w of workers) { await w.send('end'); w.kill(); }
       workers.clear(); active = undefined;
       // Quit through the app (the host's requestQuit: NSRunningApplication terminate after the birth matches).
-      const admin = await import(new URL('electron-admin.mjs', D)).then(m => m.ensureHost({ stateDir, registryPath, tempRoot, build: recipe.build, adminSecret }));
+      const admin = await driverAdmin();
       await admin.quit();
       const exited = target ? await processExitConfirmed(target.pid) : true;
       await admin.collect?.();

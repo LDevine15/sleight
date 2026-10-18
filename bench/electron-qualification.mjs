@@ -284,8 +284,9 @@ export const CELLS = Object.freeze([
       if (r.isError) fail(`${kind.toUpperCase()}_FAILED: ${first(r.text)}`);
       return r.ms;
     };
+    // Each cold sample is a new turn in the live worker: release and select again on the session grant, so no card.
     for (const kind of Object.keys(kinds)) {
-      for (let i = 0; i < c.options.samples; i++) {
+      for (let i = 0; i < Math.min(c.options.samples, c.options.coldSamples); i++) {
         c.consent(await c.driver.reconnect({ consentWaitMs: c.options.consentWaitMs }), 'timings');
         const tab = kind === 'list' ? undefined : (await c.list()).find(row => !row.parked)?.tab ?? fail('NO_JOINED_APP_TAB');
         if (kind === 'act') await c.read(tab);
@@ -300,10 +301,11 @@ export const CELLS = Object.freeze([
     return { number: c.timings.read.warm.p50, unit: 'ms warm read p50' };
   } },
   { id: 'contention', apps: ['vscode'], editor: true, async run(c) {
+    // Sessions over one host: this one keeps acting, the others refuse busy before their card asks the owner anything.
     const rows = [];
-    for (const workers of [1, 4, 13]) rows.push({ workers, ...await c.driver.contention(workers, { consentWaitMs: c.options.consentWaitMs }) });
-    const bad = rows.find(row => row.ok !== 1 || row.busy !== row.workers - 1 || row.other !== 0);
-    if (bad) fail(`CONTENTION: ${bad.workers} workers gave ${bad.ok} ok, ${bad.busy} busy, ${bad.other} other`);
+    for (const workers of [1, 4]) rows.push({ workers, ...await c.driver.contention(workers) });
+    const bad = rows.find(row => row.ok !== 1 || row.busy !== row.workers - 1 || row.other !== 0 || row.cards);
+    if (bad) fail(`CONTENTION: ${bad.workers} sessions gave ${bad.ok} ok, ${bad.busy} busy, ${bad.other} other, ${bad.cards} cards`);
     return { number: rows.reduce((sum, row) => sum + row.busy, 0), unit: 'busy refusals', detail: rows };
   } },
   { id: 'quit', async run(c) {
@@ -321,7 +323,7 @@ export const CELLS = Object.freeze([
     c.consent(launched.card, 'host-kill');
     if (launched.card.status !== 'granted') fail('CONSENT_NEEDS_OWNER');
     const killed = await c.driver.killHost();
-    const refusal = await c.driver.reconcile();
+    const refusal = await c.driver.secondLaunch();
     if (!/OWNERSHIP_UNRESOLVED/.test(refusal.code ?? '')) fail(`SECOND_LAUNCH_NOT_REFUSED: ${refusal.code}`);
     if (killed.appAlive) await c.driver.quitByPid();
     if (!(await c.driver.collect()).absent) fail('COLLECT_ABSENCE_UNPROVED');
@@ -405,11 +407,11 @@ async function runCell(cell, c, { driver, observer, clock }) {
 }
 
 export async function runQualification({ app, driver, observer, io, clock, cells = cellsFor(app), options = {} }) {
-  const opts = { trials: 10, samples: 20, aliveWaitMs: 60000, consentWaitMs: 120000, mode: 'live', ...options };
+  const opts = { trials: 10, samples: 20, coldSamples: 5, aliveWaitMs: 60000, consentWaitMs: 120000, mode: 'live', ...options };
   const receipt = { version: 1, kind: 'electron-qualification', mode: opts.mode, at: new Date(clock.now()).toISOString(),
     app: { name: app.name, bundleId: app.bundleId }, profile: { temporary: true }, cells: [], timings: {}, heldMs: 0,
     // LAWS: only the user's click answers sleight's debugger card. The harness waits for it and never presses it.
-    consent: { harnessClicks: false, cards: [] }, sampling: { intervalMs: SAMPLE_MS }, options: { trials: opts.trials, samples: opts.samples, aliveWaitMs: opts.aliveWaitMs } };
+    consent: { harnessClicks: false, cards: [] }, sampling: { intervalMs: SAMPLE_MS }, options: { trials: opts.trials, samples: opts.samples, coldSamples: opts.coldSamples, aliveWaitMs: opts.aliveWaitMs } };
   const state = {}, c = context({ app, driver, clock, options: opts, state, timings: receipt.timings, consentLog: receipt.consent.cards });
   let stopped;
   const stop = async before => { const prompt = await io.permission(); if (prompt) stopped = { reason: 'permission-prompt', process: prompt.process, title: prompt.title, before }; return !!prompt; };

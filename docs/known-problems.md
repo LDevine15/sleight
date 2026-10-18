@@ -721,3 +721,6 @@ native reference, and oversized first results defer the browser reference while 
   app's debugging pipe, and Electron quits on pipe EOF, so the window sleight opened quits without its unsaved-work prompt.
   Your own instances of the app aren't affected. Keeping the pipe open past the host needs another process to hold it, and
   that isn't built or measured.
+- A second Claude Code session on the same opted-in app gets that same quit-the-window answer, not ELECTRON_BUSY: its
+  server has another secret, and the host takes one administrator at a time. ELECTRON_BUSY separates sessions only over
+  one host channel, which is what the EPV3-8 contention cell measures.
