@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 17:58 UTC, after the clear)
+## Banner (2026-10-18 18:10 UTC, after the clear)
 
 Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
 Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
@@ -28,9 +28,13 @@ Its full check passed 8073 tests with 0 failures, and lint passed. Race worktree
 
 **Running across the clear:**
 - Terminal.app job `~/Projects/sleight-wt/race-1017/race-safari-term.command` (log `race-safari-term.log`) runs Safari x3 for sleight, lcu,
-  cua and peekaboo on race-fx. sleight r1 finished all 12 tasks (10 of 12; form-settings and form-settings-helium submitted
-  nothing). lcu r1 started 17:42Z.
-- Safari's Codex x3 (`race-safari-codex.log`) runs from sleight-arch's shell and takes the lock between the Terminal job's rounds.
+  cua and peekaboo on race-fx. sleight r1 finished all 12 tasks (10 of 12) and lcu r1 9 of 12. Both failed form-settings and
+  form-settings-helium at the list's drag reorder. The Fable study found the race's own Terminal window over Safari's list, and
+  the engine's background drags miss in a covered window (known-problems, Benchmark environment). AXRaise can't lift a background
+  app's window over another app's (1/1). From fea700fa (harness only, plugin unchanged) every task's row records the windows over the
+  browser at its start (`cover`, report column "covered by"). race-fx moves to fea700fa after cua r1. Rounds aren't raised or
+  re-placed. Every arm faces the same covered window. Its full check was deferred during timed rounds (236 focused tests passed).
+- Safari's Codex x3 (`race-safari-codex.log`) runs from sleight-arch's shell, taking the lock between the Terminal job's rounds.
   Queued behind both: sleight's Firefox b6 x3 (`race-firefox-b6.log`), then the sleight-in-Codex smoke in Firefox (both arms,
   wikipedia and form-checkout, `smoke-codex-sleight.sh`, log `race-smoke-codex-sleight.log`). Its dry run passed, and
   `~/.codex-bench-sleight` was set up 17:53Z. A Fable study of Safari r1's two form-settings failures is running.
