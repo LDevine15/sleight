@@ -179,6 +179,27 @@ test('two sessions on one instance: the second gets busy until the first ends it
   assert.equal(ran, 1);
 });
 
+test('a mutation after 30 s idle renews the host lease first instead of refusing busy', async t => {
+  const { createHostFence } = await import(new URL('electron-runtime.mjs', base));
+  let clock = 0, holder = 'session-a';
+  const ops = [];
+  const fence = createHostFence({ owner: 'session-a', now: () => clock, op: async action => { ops.push(action); return { held: true, holder, leaseMs: 30000 }; } });
+  await fence.renew();
+  const f = fakeUpstream([page('a')]); f.geometry.set('a', geometryOf(rect(0, 0)));
+  const s = await world({ fence, extra: { upstream: f, windows: fakeWindows([nativeWindow(11, rect(0, 0))]) } });
+  t.after(() => s.filter.dispose());
+  await s.pages.seed();
+  const [a] = await s.pages.list();
+  clock = 30001;
+  let ran = 0;
+  await s.pages.enqueue(a.tab, () => { ran++; });
+  assert.equal(ran, 1, 'the idle lease was renewed, so the act ran');
+  assert.deepEqual(ops, ['acquire', 'acquire']);
+  clock = 60002; holder = 'session-b';
+  await assert.rejects(s.pages.enqueue(a.tab, () => { ran++; }), /ELECTRON_BUSY/, 'another holder still refuses');
+  assert.equal(ran, 1);
+});
+
 test('a destroyed or recycled target revokes its tab at once; the recycled ID needs a new admission and a new tab', async t => {
   const f = fakeUpstream([page('a')]); f.geometry.set('a', geometryOf(rect(0, 0)));
   const s = await world({ extra: { upstream: f, windows: fakeWindows([nativeWindow(11, rect(0, 0))]) } });

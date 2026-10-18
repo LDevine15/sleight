@@ -122,6 +122,8 @@ export function createAppPageRegistry({ browser, filter, targets, join, fence, o
   async function fenceEntry(entry) {
     tab(entry.tab);
     if (entry.parked) throw parkedError(entry);
+    // The host fence caches a 30 s lease; after an idle pause it must ask the host again before the synchronous check.
+    if (typeof fence.renew === 'function') { await fence.renew(); tab(entry.tab); }
     if (!fence.acquire(owner)) fail('ELECTRON_BUSY: another session is acting in this app; nothing was sent');
     const start = join.generation();
     try {
