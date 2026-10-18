@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { trustedRead, trustedReadNode, trustedHandle } from './trusted-dom.mjs';
-import { closedDetails, hostsRootEvidence } from './closed-handle.mjs';
+import { closedDetails, hostsRootEvidence, clickListeners } from './closed-handle.mjs';
 import { canonical } from './authority.mjs';
-import { check, inspectElement, intent, expirePaymentDialog, keyClass, activationKey, textChord, deferRefund, endDeferredRefund } from './rules.mjs';
+import { check, inspectElement, releaseNavigation, intent, expirePaymentDialog, keyClass, activationKey, textChord, deferRefund, endDeferredRefund } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
 import { createConsentUi } from './consent-ui.mjs';
 import { isAppBinding } from './electron-identity.mjs';
@@ -752,10 +752,14 @@ export function createV3Context({ binding, browser, app, ui, confirmPayments, no
       targets.set(target, record); live = identity;
       // Last inspection is on the exact pinned element, after all page terms.
       const { seal, ...element } = await trustedRead(handle, inspectElement);
+      // A "checkout" link is navigation only when no script listens on it (one CDP call, and only for that link); any doubt keeps the ask.
+      const freed = element.navigation === true && releaseNavigation(element, await clickListeners(handle));
+      // The act's own earlier read of the same link (legacy classifier) carries the same checkout wording; a released link frees it too.
+      const before = target.prior ?? target.element, prior = freed && before?.checkoutLink === true ? { ...before, payment: false } : before;
       const sealEvidence = { element: seal, ...await foldForwarded(handle, element) };
       if (!current()) throw Error('TRUSTED_TARGET_REQUIRED');
       Object.assign(target, { session: bound.message.session, turn: bound.message.turn, document: doc.id, origin: place.origin,
-        sealEvidence, element, prior: target.prior ?? target.element, locator: handle, terms: { page: observed.page, ...(never && observed.unchecked ? { unchecked: observed.unchecked } : {}), method: requested?.method },
+        sealEvidence, element, prior, locator: handle, terms: { page: observed.page, ...(never && observed.unchecked ? { unchecked: observed.unchecked } : {}), method: requested?.method },
         submit: intent(target.do ?? 'click', { ...target, element }).submit });
       return record;
     } catch (error) { held.delete(handle); await handle.dispose().catch(() => {}); throw error; }

@@ -94,6 +94,22 @@ export async function hostsRootEvidence(handle) {
   } catch { return undefined; }
 }
 
+// CDP evidence about script listeners on a link: false when DOMDebugger lists no click, mousedown, pointerdown, pointerup, auxclick or
+// keydown listener on the element or inside it (depth -1 lists that subtree and nothing above it, so a framework that delegates from an
+// ancestor or the document does not count), true when it lists one, undefined when the enumeration is unavailable or fails.
+export async function clickListeners(handle) {
+  try {
+    const connection = handle?._connection, toImpl = connection?.toImpl;
+    const impl = typeof toImpl === 'function' ? toImpl.call(connection, handle) : undefined;
+    const owner = await handle.ownerFrame(), frameImpl = owner && toImpl.call(connection, owner);
+    const session = frameImpl?._page?.delegate?._sessionForFrame?.(frameImpl);
+    if (typeof impl?._objectId !== 'string' || !session?._client?._sendMayFail) return undefined;
+    const found = await session._client._sendMayFail('DOMDebugger.getEventListeners', { objectId: impl._objectId, depth: -1 });
+    if (!Array.isArray(found?.listeners)) return undefined;
+    return found.listeners.some(listener => ['click', 'mousedown', 'pointerdown', 'pointerup', 'auxclick', 'keydown'].includes(listener?.type));
+  } catch { return undefined; }
+}
+
 const unsupported = name => () => { throw Error(name + ' cannot search inside a closed shadow root; act on the refs from the page read.'); };
 const direct = ['click', 'dblclick', 'fill', 'check', 'uncheck', 'setChecked', 'selectOption', 'hover', 'press', 'focus',
   'scrollIntoViewIfNeeded', 'inputValue', 'isChecked', 'isVisible', 'isEnabled', 'isDisabled', 'isEditable', 'textContent', 'innerText',
