@@ -57,7 +57,7 @@ import { genericTask } from './generic-task.mjs';
 import { guardGenericOperation } from './generic-approval.mjs';
 import { assertCalculatorReady } from './plugin-live.mjs';
 import { WORLD_APPS } from './world/tasks.mjs';
-import { isNativeArm, nativeArmPlan, prepareNativeArm } from './world/native-arms.mjs';
+import { ensureCuaDaemon, isNativeArm, nativeArmPlan, prepareNativeArm } from './world/native-arms.mjs';
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from './world/native-world.mjs';
 import { interactivePlan, runInteractive, verifyInteractiveCLI } from './world/arms/claude-cu/interactive.mjs';
 import { dragMethodAudit } from './world/method-check.mjs';
@@ -343,6 +343,8 @@ for (const name of armNames.filter(n => !ARMS[n].codex && !ARMS[n].unsupported &
     if (!isDryRun) verifyInteractiveCLI(interactivePlan({ armDir: arm.cwd, prompt: 'version preflight only', model, effort }));
     continue;
   }
+  // Cua's MCP command is a proxy that exits unless its daemon listens, and only the race harness started one (CU1).
+  if (name === 'cua') cuaDaemon = await ensureCuaDaemon(arm.cwd);
   const catalog = await armServers(arm);
   if (arm.generic) { acceptGenericCatalog(arm, catalog); continue; }
   const { servers } = catalog;
@@ -498,7 +500,7 @@ const save = (final = false) => {
 };
 // The runner owns the pass lock. Real tasks reuse it, so they cannot wait on
 // themselves. This extends main's pass lock through driver collection.
-let unlock, lockIdentity;
+let unlock, lockIdentity, cuaDaemon;
 function finishRun(result) {
   if (isDryRun) return;
   if (!ARMS[result.arm]?.interactive && auth.mode === 'api' && Number.isFinite(result.costUsd)) {
@@ -766,6 +768,9 @@ pass: for (let run = 1; run <= runs; run++) {
         `STOP: ${disagreements.map(item => `${item.app} pid ${item.pid} (${item.step})`).join(', ')} still running after a JXA helper read it as gone. ` +
         '/tmp/sleight-live.lock is kept: check those processes, then remove it.');
     }
+    // Stops only a daemon this pass started; one already listening was the owner's and stays.
+    try { await cuaDaemon?.stop(); }
+    catch (error) { console.error(`Cua daemon: ${error.message}`); process.exitCode = 1; }
     try { await unlock?.(); }
     catch (error) { console.error(`Live lock: ${error.message}`); process.exitCode = 1; }
     unlock = undefined;
