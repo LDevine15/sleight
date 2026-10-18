@@ -13,14 +13,14 @@ and are never in a hurry. Every trick on stage is a real screen capture.
 ## Main cut, about 40 s
 
 1. Curtain, 2 s. Dark stage, one spotlight, the hands resting on a table, with no text on screen.
-2. The trick, 10 s. The hands fan a deck of painted cards (app names only, no other company's logo), and the backdrop
+2. The trick, 10 s. The hands fan seven blank cards flat, each carrying one app's name (typeset, never painted, no other company's logo), and the backdrop
    dissolves into a real capture: the user keeps typing in one window while sleight fills a form, plays a chess move and saves
    a file behind it. The cursor never moves. Cards: "Pick an app. Any app." then "Your Mac works in the background. Your
    cursor stays where you left it." Sound: one riffle, then silence.
 3. The race, 12 s. sleight and a competitor run the same task on the same model in side-by-side captures, each with its real
    running clock. The runs are separate takes aligned at their start, so a small typeset line sits under the clocks: "Runs
-   recorded separately, aligned at start." Card: "The hand is quicker than the eye." sleight finishes first. Then the hands wait, one tapping the table and
-   the other inspecting its fingernails, while the other clock keeps running. Card: "Same model and task, every run published."
+   recorded separately, aligned at start." Card: "The hand is quicker than the eye." sleight finishes first. Then the upper hand drums its fingers on the
+   table, in close-up on the stage frame, while the other clock keeps running. Card: "Same model and task, every run published."
 4. The playbill, 6 s. A painted theatre program unrolls. Its top line is the act's billing, and the real benchmark table sits
    under it. The hands point at one number. Card: "There is no trick. It reads what the app says, not just what it shows."
 5. The bow, 10 s. The hands rise a little, turn palms out and open, showing them empty, and hold. The curtain falls. Title: SLEIGHT. Under it: "Computer use for your
