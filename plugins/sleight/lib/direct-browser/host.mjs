@@ -306,11 +306,12 @@ export async function prepareHandHost({ cacheRoot = defaultHelperCache(), source
   if (built.status !== 'ready') return Object.freeze({ status: built.status, code: built.code });
   const { receipt } = built;
   // capture is 'hidden' (absent from every capture) or 'visible' (screenshots and recordings show the hand). The host is the
-  // session's shared one: hand frames on stdin, the Ghost Hand toggle on stdout, and fds 3 and 4 kept for turbo's worker.
-  return Object.freeze({ status: 'ready', spawn: ({ capture = 'hidden' } = {}) => {
-    if (!['hidden', 'visible'].includes(capture)) throw Error('HAND_CAPTURE_INVALID');
-    return spawn(executable('consent-host', receipt), ['--hand', '--capture=' + capture, '--consent'],
-      { env: environment(), stdio: ['pipe', 'pipe', 'ignore', 'pipe', 'pipe'] });
+  // session's: hand frames on stdin and the Ghost Hand toggle on stdout. Only a host opened for turbo's fork (consent) has
+  // fds 3 and 4, its consent channel; the hand-only host has none.
+  return Object.freeze({ status: 'ready', spawn: ({ capture = 'hidden', consent = false } = {}) => {
+    if (!['hidden', 'visible'].includes(capture) || typeof consent !== 'boolean') throw Error('HAND_CAPTURE_INVALID');
+    return spawn(executable('consent-host', receipt), ['--hand', '--capture=' + capture, consent ? '--consent' : '--menu'],
+      { env: environment(), stdio: ['pipe', 'pipe', 'ignore', ...consent ? ['pipe', 'pipe'] : []] });
   } });
 }
 

@@ -176,6 +176,20 @@ func hookupFrame(_ glyph: String, _ index: Int) -> String {
 }
 // END HOOKUP
 
+// BEGIN MODAL GUARD
+// The card on screen, if any. When its sender's channel ends the card is aborted, so no button stays up that answers nothing.
+final class ModalGuard {
+    private var abort: (() -> Void)?
+    var active: Bool { abort != nil }
+    func run<T>(abort: @escaping () -> Void, _ body: () -> T) -> T {
+        self.abort = abort
+        defer { self.abort = nil }
+        return body()
+    }
+    func close() { let abort = self.abort; self.abort = nil; abort?() }
+}
+// END MODAL GUARD
+
 // One nonce per channel in the shared host: the hand's sender and turbo's worker each bind their own, and neither binds the other's.
 final class NonceBook {
     let lock = NSLock()
@@ -209,8 +223,11 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
     var pending: [String: [String: Any]] = [:]
     var nonce: String?
     let outputLock = NSLock()
-    // The consent channel: stdin and stdout, or fds 3 and 4 in the shared host, where its end leaves the hand running.
-    var input = FileHandle.standardInput, output = FileHandle.standardOutput, shared = false
+    // The consent channel: stdin and stdout, or fds 3 and 4 in the shared host, where its end leaves the hand running. The
+    // hand-only host (--menu) has none. The shared host ends when both its channels have.
+    var input: FileHandle? = FileHandle.standardInput, output = FileHandle.standardOutput, shared = false
+    var consentOpen = true, handOpen = true
+    let modal = ModalGuard()
     // The hand channel's state in the shared host: its setting, the version for its block, and when sleight last acted.
     var hand: (enabled: Bool, version: String)?
     var lastAct: Date?
@@ -223,10 +240,11 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
         if let image = glyphImage(menuGlyph) { item.button?.image = image } else { item.button?.title = "sleight" }
         item.isVisible = false
         item.menu = NSMenu()
+        guard let input = input else { consentOpen = false; return }
         DispatchQueue.global().async { [weak self] in
             var buffer = Data()
             while let self = self {
-                let chunk = self.input.availableData
+                let chunk = input.availableData
                 if chunk.isEmpty {
                     DispatchQueue.main.async { if self.shared { self.channelClosed() } else { NSApp.terminate(nil) } }
                     return
@@ -327,8 +345,11 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + handIdleWindow - since, execute: check)
         }
     }
-    // The shared host's consent channel ended (its worker exited): its requests and status go, and the hand stays.
-    func channelClosed() { pending.removeAll(); status = nil; rebuildMenu() }
+    // The shared host's consent channel ended (its worker exited): an open card is aborted, its requests and status go, and the
+    // hand stays.
+    func channelClosed() { modal.close(); pending.removeAll(); status = nil; consentOpen = false; rebuildMenu(); if !handOpen { NSApp.terminate(nil) } }
+    // The hand channel ended or faulted: its state goes, and turbo's channel, if open, keeps the host.
+    func handGone() { handOpen = false; hand = nil; lastAct = nil; rebuildMenu(); if !consentOpen { NSApp.terminate(nil) } }
     func noteAct() { lastAct = Date(); rebuildMenu() }
     func handState(enabled: Bool, version: String) { hand = (enabled, version); rebuildMenu() }
     @objc func handToggle(_ sender: NSMenuItem) {
@@ -358,7 +379,8 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
         alert.informativeText = "Turbo stops in every Claude Code session within a minute, and browsers go back to the engine's slower path. Run sleight-mcp turbo on to turn it back on."
         alert.addButton(withTitle: "Turn Off")
         alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn { respond(id, choice) }
+        let answer = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }
+        if answer == .alertFirstButtonReturn { respond(id, choice) }
     }
     @objc func help(_ sender: NSMenuItem) {
         if let url = URL(string: "https://github.com/Land-o-Clusters/sleight/blob/main/docs/settings.md#" + (status == nil ? "ghost-hand" : "turbo")) { NSWorkspace.shared.open(url) }
@@ -394,7 +416,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
             alert.messageText = session.kind == "opt-in" ? "Enable sleight turbo for " + session.session : "Resume sleight turbo for " + session.session
             alert.informativeText = "This choice applies only to this session. Site permissions and action confirmations still apply."
             for choice in choices { alert.addButton(withTitle: choice.capitalized) }
-            let result = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            let result = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
             respond(id, result >= 0 && result < choices.count ? choices[result] : "cancel")
             return
         }
@@ -405,7 +427,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
             alert.informativeText = words.body
             let labels = ["once": "Allow once", "session": "Allow this session", "always": "Always allow", "relaunch": "Quit and reopen", "cancel": "Cancel"]
             for choice in choices { alert.addButton(withTitle: labels[choice] ?? "Cancel") }
-            let result = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            let result = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
             respond(id, result >= 0 && result < choices.count ? choices[result] : "cancel")
             return
         }
@@ -424,7 +446,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
         // payment terms are visible to the person, and never emitted on stdout.
         alert.informativeText = "Page labels are observations. Review this exact operation:\n" + text
         for choice in choices { alert.addButton(withTitle: choice.capitalized) }
-        let result = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        let result = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         if result >= 0 && result < choices.count { respond(id, choices[result]) }
         else { respond(id, "cancel") }
     }
@@ -852,27 +874,37 @@ final class HandHost: NSObject, NSApplicationDelegate {
     }
     // Validation, the nonce binding and the seq order run on this reader thread in frame order. Any bad frame ends the host.
     func read() {
-        var buffer = Data(), last = -1
+        // A bad hand frame ends the host, except while turbo's consent channel is attached: then only the hand's state goes, the
+        // rest of the hand's input is read and dropped, and turbo carries on.
+        var buffer = Data(), last = -1, faulted = false
+        func fault() {
+            faulted = true; buffer.removeAll()
+            DispatchQueue.main.async { if self.consent?.consentOpen == true { self.hide(); self.consent?.handGone() } else { exit(65) } }
+        }
         while true {
             let chunk = FileHandle.standardInput.availableData
-            if chunk.isEmpty { DispatchQueue.main.async { NSApp.terminate(nil) }; return }
+            if chunk.isEmpty {
+                DispatchQueue.main.async { if self.consent?.consentOpen == true { self.hide(); self.consent?.handGone() } else { NSApp.terminate(nil) } }
+                return
+            }
+            if faulted { continue }
             buffer.append(chunk)
-            if buffer.count > 131072 { exit(65) }
-            while let end = buffer.firstIndex(of: 10) {
+            if buffer.count > 131072 { fault(); continue }
+            lines: while !faulted, let end = buffer.firstIndex(of: 10) {
                 let line = buffer.prefix(upTo: end)
                 buffer.removeSubrange(...end)
                 guard line.count <= 8192, let data = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                    let frame = handFrame(data) else { exit(65) }
+                    let frame = handFrame(data) else { fault(); continue lines }
                 switch frame {
                 case let .hide(nonce):
-                    guard nonceBook.admit("hand", nonce) else { exit(65) }
+                    guard nonceBook.admit("hand", nonce) else { fault(); continue lines }
                     DispatchQueue.main.async { self.hide() }
                 case let .act(nonce, act):
-                    guard nonceBook.admit("hand", nonce), act.seq > last else { exit(65) }
+                    guard nonceBook.admit("hand", nonce), act.seq > last else { fault(); continue lines }
                     last = act.seq
                     DispatchQueue.main.async { self.consent?.noteAct(); self.schedule(act) }
                 case let .menu(nonce, enabled, capture, version):
-                    guard nonceBook.admit("hand", nonce) else { exit(65) }
+                    guard nonceBook.admit("hand", nonce) else { fault(); continue lines }
                     DispatchQueue.main.async {
                         self.capture = capture
                         if let panel = self.panel { panel.sharingType = handCaptureModes[capture] ?? NSWindow.SharingType.none }
@@ -1088,9 +1120,10 @@ func handDump(capture: String) -> [String: Any] {
 }
 // END HAND DUMP
 
-// No arguments: the consent host. --hand [--capture=…] [--consent], --hand-demo X,Y,W,H [--capture=…] and
+// No arguments: the consent host. --hand [--capture=…] [--menu|--consent], --hand-demo X,Y,W,H [--capture=…] and
 // --hand-dump [--capture=…]: the hand. With --consent the hand host is the session's shared host: turbo's consent channel
-// runs on fds 3 (in) and 4 (out) beside the hand's stdin, and the menu bar glove serves both.
+// runs on fds 3 (in) and 4 (out) beside the hand's stdin, and the menu bar glove serves both. --menu is the hand-only host: the glove and its
+// hand-only menu, with no consent channel.
 let arguments = Array(CommandLine.arguments.dropFirst())
 let app = NSApplication.shared
 if arguments.isEmpty {
@@ -1102,8 +1135,9 @@ if arguments.isEmpty {
     let mode = arguments[0]
     var rest = Array(arguments.dropFirst()), demo: CGRect?
     if mode == "--hand-demo" { guard let first = rest.first, let rect = handDemoRect(first) else { exit(64) }; demo = rect; rest.removeFirst() }
-    let consent = mode == "--hand" && rest.last == "--consent"
+    let consent = mode == "--hand" && rest.last == "--consent", menuOnly = mode == "--hand" && rest.last == "--menu"
     if consent { rest.removeLast(); guard fcntl(3, F_GETFD) != -1, fcntl(4, F_GETFD) != -1 else { exit(64) } }
+    if menuOnly { rest.removeLast() }
     guard ["--hand", "--hand-demo", "--hand-dump"].contains(mode), let capture = handCapture(rest) else { exit(64) }
     if mode == "--hand-dump" {
         guard let bytes = try? JSONSerialization.data(withJSONObject: handDump(capture: capture), options: [.sortedKeys]) else { exit(70) }
@@ -1112,9 +1146,10 @@ if arguments.isEmpty {
     }
     let hand = HandHost()
     hand.demo = demo; hand.capture = capture
-    if consent {
+    if consent || menuOnly {
         let host = ConsentHost()
-        host.input = FileHandle(fileDescriptor: 3, closeOnDealloc: true); host.output = FileHandle(fileDescriptor: 4, closeOnDealloc: true)
+        host.input = consent ? FileHandle(fileDescriptor: 3, closeOnDealloc: true) : nil
+        if consent { host.output = FileHandle(fileDescriptor: 4, closeOnDealloc: true) }
         host.shared = true
         hand.consent = host
     }

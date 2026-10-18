@@ -26,7 +26,7 @@ test('the Ghost Hand row is a checkmark item that answers with its own choice, w
 });
 
 test('Turn Turbo Off asks first, and Settings & Help opens only the fixed docs address', () => {
-  assert.match(source, /@objc func confirmOff[\s\S]*?if alert\.runModal\(\) == \.alertFirstButtonReturn \{ respond\(id, choice\) \}/);
+  assert.match(source, /@objc func confirmOff[\s\S]*?let answer = modal\.run\(abort: \{ NSApp\.abortModal\(\) \}\) \{ alert\.runModal\(\) \}\n\s*if answer == \.alertFirstButtonReturn \{ respond\(id, choice\) \}/);
   assert.match(source, /URL\(string: "https:\/\/github\.com\/Land-o-Clusters\/sleight\/blob\/main\/docs\/settings\.md#" \+ \(status == nil \? "ghost-hand" : "turbo"\)\)/);
   assert.equal(source.match(/NSWorkspace\.shared\.open/g)?.length, 1);
 });

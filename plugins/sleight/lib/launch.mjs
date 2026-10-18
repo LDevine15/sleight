@@ -796,6 +796,12 @@ export function turboState(readConfig, env = process.env) {
 
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
   directBrowser, ensureTurbo = false } = {}) {
+  // The ghost hand's session client, before turbo's bridge forks its worker so the worker can share the session's one host.
+  // It spawns nothing until sleight acts or turbo forks, and SLEIGHT_HAND=0 leaves it out. The relay's hand hooks take this
+  // same client.
+  let handTrace;
+  const hand = (await import('./hand/client.mjs')).sessionHandClient({ trace: (direction, msg) => handTrace?.(direction, msg) });
+  process.once('exit', () => hand?.close());
   const prepared = directBrowser === undefined ? await prepareInstalledStartup(undefined, undefined, { ensure: ensureTurbo ? ensureInstalledTurbo : undefined }) : { directBrowser };
   directBrowser = prepared.directBrowser;
   const turnHook = prepared.turnHook;
@@ -803,6 +809,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   let flowRules, preapproved;
   try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
   const { trace, grantAudit } = approvalLogging(preapproved);
+  handTrace = trace;
   let s = directBrowserServer(resolveServer(), directBrowser);
   if (s.error) fail(s.error);
   if (!existsSync(s.command)) fail(`server runtime missing: ${s.command}`);
