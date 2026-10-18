@@ -10,6 +10,10 @@ const bridges = new WeakSet(), frontends = new WeakSet();
 export const isV3Bridge = value => !!value && bridges.has(value);
 export const isV3Frontend = value => !!value && frontends.has(value);
 const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+// The relay's engine app approvals this session, by bundle id. They decide nothing alone: an app also needs the
+// operator's opt-in file and its own debugger grant before turbo touches it.
+const bundleId = value => typeof value === 'string' && value.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/.test(value);
+const approvedApps = value => Array.isArray(value) && value.length <= 64 && value.every(bundleId) && new Set(value).size === value.length;
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) &&
   Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -77,12 +81,13 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
   const bridge = Object.freeze({ browser: hello.browser, application: applicationName(config.executable),
     bootstrapEnvelope: () => ({ version: 1, session: hello.session, nonce: hello.nonce }),
     tools: () => browserTools(hello.browser),
-    async bind(frame) {
+    // apps: the relay's own list of engine-approved bundle ids, never a field of the hook's frame.
+    async bind(frame, apps = []) {
       if (!exact(frame, ['version', 'session', 'nonce', 'event', 'turn', 'text']) || frame.version !== 1 ||
           frame.session !== hello.session || frame.nonce !== hello.nonce || frame.event !== 'begin' || !id(frame.turn) ||
-          typeof frame.text !== 'string' || Buffer.byteLength(frame.text) > 65536 || turns.has(frame.turn) || lost || !current()) throw Error('TRUSTED_TURN_REQUIRED');
+          typeof frame.text !== 'string' || Buffer.byteLength(frame.text) > 65536 || !approvedApps(apps) || turns.has(frame.turn) || lost || !current()) throw Error('TRUSTED_TURN_REQUIRED');
       turns.add(frame.turn); fence(); const epoch = generation;
-      const result = await rpc('begin', { turn: frame.turn, text: frame.text });
+      const result = await rpc('begin', { turn: frame.turn, text: frame.text, apps: [...apps] });
       if (epoch !== generation || lost || !current()) return false;
       active = result?.available === true; return active;
     },
@@ -175,15 +180,15 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
       return;
     }
     if (frame.method === 'begin') {
-      if (!exact(frame.params, ['turn', 'text']) || !id(frame.params.turn) || turns.has(frame.params.turn) ||
-          typeof frame.params.text !== 'string' || Buffer.byteLength(frame.params.text) > 65536) return respond({ available: false });
-      turns.add(frame.params.turn); const stopped = fence(), epoch = generation;
+      if (!exact(frame.params, ['turn', 'text', 'apps']) || !id(frame.params.turn) || turns.has(frame.params.turn) ||
+          typeof frame.params.text !== 'string' || Buffer.byteLength(frame.params.text) > 65536 || !approvedApps(frame.params.apps)) return respond({ available: false });
+      turns.add(frame.params.turn); const stopped = fence(), epoch = generation, apps = Object.freeze([...frame.params.apps]);
       work = work.catch(() => {}).then(async () => {
         await stopped;
         if (ended || epoch !== generation || !current()) return { available: false };
         const message = Object.freeze({ source: 'user', session, turn: frame.params.turn, id: frame.params.turn, text: frame.params.text });
         const binding = createV3TurnBinding(message, () => !ended && epoch === generation && current());
-        const prepared = await begin(message, binding);
+        const prepared = await begin(message, binding, { apps });
         if (ended || epoch !== generation || !current()) { await prepared?.end(); return { available: false }; }
         runtime = prepared; return { available: !!runtime };
       });
@@ -220,6 +225,13 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   let accepted, connecting = false, retryConnection = false, connected = false, sequence = 0, closing, terminalLoss = false, resolveClosed, finalReceipt;
   const closed = new Promise(resolve => { resolveClosed = resolve; });
   const resources = new Set();
+  // Opted-in Electron apps (EPV3-7): this session's id at the resident hosts, the debugger consent, one admin
+  // client per app host, qualification receipts and the latest begin frame's engine approvals.
+  let appSession, appConsent, appConnected = false, turnApps = Object.freeze([]);
+  const admins = new Map(), receipts = new Map();
+  // admins: bundle id -> the pending { admin, registry, profile } of that app's resident host.
+  const eachAdmin = action => Promise.allSettled([...admins.values()].map(async pending => action((await pending).admin)));
+  const revokeApps = () => eachAdmin(admin => appSession && admin.revoke({ session: appSession }));
   const current = () => {
     try { return !parentLost && !stopped && accepted.current() === true; } catch { return false; }
   };
@@ -250,6 +262,13 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
       }
       try { await resource.browser?.close(); } catch { cleanup.push(retained('playwright-connection')); }
       try { await resource.listener?.close(); } catch { cleanup.push(retained('cdp-listener')); }
+      if (resource.apps) {
+        // Releases control and this worker's channels. The app, its windows and the host's pipe stay.
+        const { releaseAppConnection } = await import('./electron-runtime.mjs');
+        for (const connection of resource.apps) cleanup.push(...await releaseAppConnection(connection));
+        try { if (resource.consentTurn) appConsent?.endTurn(resource.consentTurn.session, resource.consentTurn.turn); } catch {}
+        if (!cleanup.length) appConnected = false;
+      }
       if (!cleanup.length) resources.delete(resource);
       return { revoked: true, cleanup };
     })().finally(() => { resource.collecting = undefined; });
@@ -269,6 +288,13 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
         try { if (selected) disconnected = await selected.disconnect(selected.session) === true; } catch {}
         connected = false;
         if (!disconnected) cleanup.push(retained('browser-connection'));
+        // The session ends at every app host: its grants and tickets go, and each host parks the app's connection.
+        if (appSession) {
+          try { appConsent?.revokeSession(appSession); } catch {}
+          await revokeApps();
+          await eachAdmin(admin => admin.close?.());
+          admins.clear(); appConnected = false;
+        }
       }
       if (!cleanup.length || terminalLoss) {
         finalReceipt = { revoked: true, cleanup };
@@ -284,11 +310,11 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   function status() {
     if (!ui) return;
     const state = resources.size && (parentLost || stopped) ? 'cleanup-required' : stopped ? 'paused'
-      : connected ? parentLost ? 'connected-idle' : 'connected' : 'disconnected';
+      : connected || appConnected ? parentLost ? 'connected-idle' : 'connected' : 'disconnected';
     ui.present('v3-control-' + (++sequence), { status: state }, state === 'cleanup-required' ? ['cleanup'] : ['pause','disconnect'], async event => {
       if (ui.authenticate(event) !== true) return;
       if (['disconnect','cleanup'].includes(event.action)) await close();
-      else if (event.action === 'pause') { stopped = true; await protocol?.end(); status(); }
+      else if (event.action === 'pause') { stopped = true; await protocol?.end(); await revokeApps(); status(); }
     }, { deadline: Date.now() + 300000 });
   }
   try {
@@ -303,6 +329,17 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     ui = (dependencies.createUi ?? host.createNativeUi)(built.receipt, () => { if (finalReceipt) return; terminalLoss = true; close().catch(() => {}); });
     startupCurrent();
     const browser = selected.selectedBrowser;
+    // Which opted-in apps this turn is for: enabled in the operator's opt-in file and approved by the engine this session.
+    // An unreadable or unsafe opt-in file leaves the browser path as it is.
+    async function appSelections(apps) {
+      if (!apps.length) return [];
+      let optIns;
+      try { optIns = await (dependencies.readAppOptIns ?? (await import('./electron-config.mjs')).readAppOptIns)(); }
+      catch (error) { dependencies.onError?.(error); return []; }
+      if (!optIns || typeof optIns.apps !== 'object' || !optIns.apps) return [];
+      return Object.entries(optIns.apps).filter(([key, row]) => bundleId(key) && row?.enabled === true && apps.includes(key))
+        .slice(0, 4).map(([key]) => ({ bundleId: key }));
+    }
     function subscribe() {
       unsubscribe = selected.onConnectionLoss(() => {
         connected = false;
@@ -311,12 +348,44 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     }
     subscribe();
     protocol = serveV3Worker({ channel, browser: selected.selectedBrowser, current,
-      async begin(_message, binding) {
+      async begin(message, binding, { apps = [] } = {}) {
+        if (!current() || resources.size) throw Error('CLEANUP_UNPROVED');
+        turnApps = Object.freeze([...apps]);
+        const selections = await appSelections(apps);
         if (!current() || resources.size) throw Error('CLEANUP_UNPROVED');
         const resource = {}; resources.add(resource);
         let preparing, ending, turnEnded = false;
+        // An opted-in app the engine approved this session takes this turn's tools; Chrome is not connected.
+        async function prepareApps() {
+          const runtimeModule = await import('./electron-runtime.mjs');
+          const { loadPlaywrightCore } = await import('./worlds.mjs');
+          const playwright = (dependencies.loadPlaywright ?? loadPlaywrightCore)({ turbo: true }).inprocess.playwright;
+          const app = dependencies.app ?? {};
+          appSession = message.session;
+          appConsent ??= await (dependencies.createConsent ?? runtimeModule.createWorkerConsent)({ ui, approvedApps: () => turnApps, dependencies: app });
+          resource.apps = []; resource.consentTurn = { session: message.session, turn: message.turn };
+          for (const { bundleId } of selections) {
+            if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
+            if (!admins.has(bundleId)) admins.set(bundleId, (dependencies.connectAppHost ?? runtimeModule.connectAppHost)({ bundleId, dependencies: app }));
+            let host;
+            try { host = await admins.get(bundleId); } catch (error) { admins.delete(bundleId); throw error; }
+            if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
+            resource.apps.push(await (dependencies.selectAppConnection ?? runtimeModule.selectAppConnection)({ bundleId, session: message.session, turn: message.turn,
+              apps, ui, consent: appConsent, registry: host.registry, admin: host.admin, playwright, windows: dependencies.runWindows ?? runtimeModule.runWindowHelper,
+              profile: host.profile, receipts, dependencies: app }));
+          }
+          if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
+          const surface = await (dependencies.createAppTurn ?? runtimeModule.createAppTurn)({ connections: resource.apps, binding, consent: appConsent, ui, dependencies: app });
+          resource.pages = surface.pages; appConnected = true;
+          const runtime = await (dependencies.createRuntime ?? createV3TurnRuntime)({ binding, browser: selected.selectedBrowser, pages: surface.pages,
+            snapshot: surface.snapshot, ui, endpoint: undefined, dependencies: { createContext: () => surface.context,
+              runSteps: surface.runSteps, fillFields: surface.fillFields, acknowledgeSnapshot: surface.acknowledgeSnapshot } });
+          resource.runtime = runtime;
+          return runtime;
+        }
         async function prepare() {
           try {
+            if (selections.length) return await prepareApps();
             if (!connected) {
               connecting = true;
               try {
@@ -358,12 +427,18 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
             return runtime;
           } catch (error) { dependencies.onError?.(error); await collect(resource); throw error; }
         }
+        async function verified() {
+          if (!resource.apps) return selected.verifyConnection(selected.session);
+          const checks = await Promise.all(resource.apps.map(async connection => connection.grant.current() &&
+            await connection.provider.verifyConnection(connection.provider.session) === true));
+          return checks.every(Boolean);
+        }
         return Object.freeze({
           async call(request) {
             if (!current() || turnEnded) return failure();
             try {
               const runtime = await (preparing ??= prepare());
-              if (!current() || turnEnded || !await selected.verifyConnection(selected.session)) throw Error('STALE_INSTANCE');
+              if (!current() || turnEnded || !await verified()) throw Error('STALE_INSTANCE');
               return await runtime.call(request);
             } catch { return failure(); }
           },

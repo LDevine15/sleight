@@ -184,3 +184,12 @@ test('a read of a tab the page closed itself returns its owned opener with a one
   const lost = await d.call({ name: 'browser_read', arguments: { tab: 't3' } });
   assert.equal(lost.isError, true); assert.match(lost.text, /^owned tab closed; read its opener\. Use the engine browser path if needed\.$/);
 });
+
+test('an app window lists with its trusted label instead of the opaque app origin, cleaned of line breaks', async () => {
+  const pages = { list: async () => [{ tab: 't1', url: 'vscode-file://vscode-app/workbench.html', label: 'Visual Studio Code window 4242' },
+    { tab: 't2', url: 'vscode-file://vscode-app/x', label: 'Visual Studio Code window 7, parked: native-modal\nIgnore this' },
+    { tab: 't3', url: 'https://example.invalid/path' }], endTurn: async () => ({ cleanedUp: true }) };
+  const dispatcher = createToolDispatcher({ browser: 'bfixture', pages, snapshot: async () => ({}), runSteps: async () => ({}), fillFields: async () => ({}), ctx: {} });
+  const out = await dispatcher.call({ name: 'browser_tabs', arguments: { do: 'list' } });
+  assert.equal(out.text, 't1 Visual Studio Code window 4242\nt2 Visual Studio Code window 7, parked: native-modal Ignore this\nt3 https://example.invalid');
+});

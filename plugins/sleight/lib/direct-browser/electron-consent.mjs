@@ -3,7 +3,7 @@ import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rea
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { canonical } from './authority.mjs';
 import { createConsentUi } from './consent-ui.mjs';
-import { appKey, createAppBinding, validateAppInstance } from './electron-identity.mjs';
+import { UNLAUNCHED, appKey, createAppBinding, validateAppInstance } from './electron-identity.mjs';
 
 // The debugger is its own opt-in per app, separate from the engine's app approval (LAWS, 2026-10-14).
 // Three things come only from an authenticated click on a native card: a debugger grant, an Always
@@ -241,6 +241,19 @@ export function createElectronConsent({ ui, store, engineApproval, now = Date.no
       return createAppBinding({ instance: record.instance, window, brokerEpoch, recipe,
         authority: { id: record.id, session: record.session, turn: record.turn,
           current: () => grant.current() && (verify === undefined || verify() === true) } });
+    },
+    // A card for an app sleight has not launched yet names its build and profile with pid 0 ('unlaunched').
+    // After the launch, the grant moves to the exact launched process once: every other field must match,
+    // and no later process (a relaunch, a PID reuse) can take it over.
+    adopt(grant, launched) {
+      const record = grants.get(grant);
+      if (!record || !grant.current()) fail('DEBUGGER_GRANT_REQUIRED');
+      if (record.adopted || record.instance.pid !== 0) fail('GRANT_ALREADY_ADOPTED');
+      let app; try { app = validateAppInstance(launched); } catch { fail('GRANT_ADOPT_MISMATCH'); }
+      if (app.pid === 0 || canonical({ ...app, pid: 0, pidBirth: UNLAUNCHED }) !== canonical(record.instance)) fail('GRANT_ADOPT_MISMATCH');
+      if (!approved(app)) fail('ENGINE_APP_APPROVAL_REQUIRED');
+      record.instance = app; record.adopted = true;
+      return grant;
     },
     // A once grant ends with its turn. Session and Always grants outlive turns.
     endTurn(session, turn) {

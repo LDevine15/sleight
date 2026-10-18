@@ -855,6 +855,16 @@ export function createRelay({
     catch (error) { process.stderr.write(`sleight: couldn't add ${choice.app} to the pre-approved list: ${error.message}\n`); }
   }
   const approved = new Set(); // approval keys the user accepted this session
+  const listApproved = new Set(); // apps the user's pre-approved list answered for the engine this session
+  // Bundle ids of apps the engine approved this session (session cards and the pre-approved list), for turbo's begin
+  // frame. Turbo still needs the operator's per-app opt-in and its own debugger card before it touches an app.
+  function turboApps() {
+    const ids = new Set(listApproved);
+    for (const key of approved) {
+      try { const parts = JSON.parse(key); if (parts.length === 2 && parts[0] !== 'sleight') ids.add(parts[0]); } catch {}
+    }
+    return [...ids].filter(app => typeof app === 'string' && app.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/.test(app)).slice(0, 64);
+  }
   let asking = Promise.resolve(); // `ask` prompts, one at a time
   let clientCanElicit; // undefined until initialize (legacy in-process callers)
   const localNames = new Set(localTools?.tools.map(t => t.name) ?? []);
@@ -1984,6 +1994,7 @@ export function createRelay({
     const grant = { app, riskLevel, tool, source: '~/Library/Application Support/sleight/preapproved.json' };
     // Audit before answering. A failed audit must not grant approval.
     grantAudit(grant);
+    if (tool === 'engine') listApproved.add(app);
     trace('preapproved-app', grant);
     stderr.write(`sleight: ${app} (${riskLevel}, ${tool}) pre-approved by the user's list at ${grant.source}\n`);
     for (const id of ids) {
@@ -2366,7 +2377,7 @@ export function createRelay({
         reply({ isError: false, content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: directHost.bootstrapEnvelope() }) }] }); return;
       }
       if (!installedBootstrapped || frame?.event !== 'begin') { refuse(); return; }
-      directHost.bind(frame).then(available => {
+      directHost.bind(frame, turboApps()).then(available => {
         if (available) { resumeRequested = true; resumeAfterStop(); }
         reply({ isError: !available, content: [] });
       }).catch(refuse);
