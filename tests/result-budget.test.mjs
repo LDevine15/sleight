@@ -477,3 +477,32 @@ for (const kind of ['Window: "Note", App: Example.\n0 standard window Note',
     assert.match(out, /omitted/);
   });
 }
+
+// Firefox's tab strip puts bare `Close tab` lines among the numbered rows (2026-10-17: a 121,124-character Wikipedia tree reached Claude Code untrimmed).
+const firefoxTree = (rows) => 'Window: "Page - Wikipedia", App: Firefox.\n0 standard window Page - Wikipedia, Secondary Actions: Raise\n' +
+  '\t1 container Page - Wikipedia\n\t\t2 toolbar Browser tabs\n\t\t\t3 tab group\n\t\t\t\t4 tab (selectable) Value: Gate\nClose tab\n' +
+  '\t\t\t\t5 tab (selected) Value: Page\nClose tab\n\t\t\t6 button Open a new tab\n' +
+  Array.from({ length: rows }, (_, i) => `${'\t'.repeat(10)}${i + 7} text ${'x'.repeat(40)}`).join('\n') +
+  '\n\nThe focused UI element is 27 HTML Content Description: Page, URL: …\nWindow: "Page - Wikipedia", App: Firefox.\n0 standard window Page\nClose tab';
+const wired = (content) => Buffer.byteLength(JSON.stringify(content));
+
+test('a tree with bare Close tab lines is trimmed to the limit and keeps its first lines', () => {
+  const tree = firefoxTree(2000);
+  assert.ok(tree.length > RESULT_LIMIT);
+  const out = createResultBudget({ platform: 'darwin' }).apply([{ type: 'text', text: tree }, { type: 'text', text: 'Keep caller output.' }]);
+  const text = out[0].text;
+  assert.ok(texts(out).length <= RESULT_LIMIT, `${texts(out).length}`);
+  assert.ok(text.startsWith(tree.slice(0, tree.indexOf('\t\t\t6 button') + 30)), 'tab strip and its Close tab lines stay');
+  assert.match(text, /tree lines omitted/);
+  assert.match(text, /The focused UI element is 27/);
+  assert.equal(out[1].text, 'Keep caller output.');
+});
+
+test('a trimmed tab-heavy tree holds under the serialized size, where tabs count twice', () => {
+  const out = createResultBudget({ platform: 'darwin' }).apply([{ type: 'text', text: firefoxTree(2000) }]);
+  assert.ok(out[0].text.length <= RESULT_LIMIT);
+  assert.ok(wired(out) <= 48000, `${wired(out)} serialized bytes`);
+  const plain = Array.from({ length: 2000 }, (_, i) => `\t${i + 1} text ${'x'.repeat(40)}`).join('\n');
+  const flat = createResultBudget({ platform: 'darwin' }).apply([{ type: 'text', text: `Window: "A", App: B.\n0 standard window A\n${plain}` }]);
+  assert.ok(wired(flat) <= 48000, `${wired(flat)} serialized bytes`);
+});
