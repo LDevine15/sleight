@@ -259,3 +259,80 @@ test('the enabled-label preference still refuses a different document', async ()
   assert.match(f.error?.message ?? '', /Document scope stopped/);
   assert.deepEqual(f.inputs, []);
 });
+
+// One guard across calls, as the engine's session keeps it, with typing and the engine's focus line.
+function guardSession() {
+  let current = '';
+  const inputs = [];
+  const raw = { getAXState: async () => current, click: async n => { inputs.push(n); },
+    pressKey: async key => { inputs.push(key); }, typeText: async value => { inputs.push(value); } };
+  const context = { app: raw, cua: { getApp: async () => raw }, nodeRepl: { write: () => {} } };
+  return { inputs, run: async (rows, focus, code, options = {}) => {
+    current = tree(rows) + '\n\nThe focused UI element is ' + focus;
+    inputs.length = 0;
+    try { await runInNewContext(`(async () => { ${guardedCode(code, window, undefined, undefined, { guardStopMark: guardStopMark(), ...options })} })()`, context); }
+    catch (error) { return error; }
+  } };
+}
+const docRows = '\t1 split group\n\t\t29 text entry area (disabled, settable) Description: Page 1 content, Value: **Report**';
+const docFocus = '29 text entry area (disabled, settable) Description: Page 1 content, Value: **Report**';
+// word-edit-1, 22-03-44 (transcript line 113) and 23-58-39: (selected) Table on every result while typing reached nothing.
+const trapped = docRows + '\n123 menu bar\n\t124 Insert\n\t131 (selected) Table';
+const trapStop = /sleight stopped before (?:typeText\(<4 characters>\)|pressKey\("Tab"\)): menu-bar item 131 \(Table\) is selected and its menu takes the keys\. Cancel it first with await app\.performSecondaryAction\(131, "Cancel"\), or click the item\./;
+
+test('typing or keys while a menu-bar title is selected and no menu shows stop before input', async () => {
+  for (const code of ['await app.typeText("Item"); await app.pressKey("Tab");', 'await app.pressKey("Tab"); await app.typeText("Item");']) {
+    const s = guardSession();
+    const error = await s.run(trapped, docFocus, code);
+    assert.match(error?.message ?? '', trapStop, code);
+    assert.deepEqual(s.inputs, []);
+  }
+  // The call's own acquisition read is the evidence when its first key skips the read.
+  const s = guardSession();
+  const error = await s.run(docRows, docFocus, 'await app.typeText("Item");',
+    { firstOff: true, focused: true, prior: { text: tree(trapped), windows: null } });
+  assert.match(error?.message ?? '', trapStop);
+  assert.deepEqual(s.inputs, []);
+});
+
+test('Escape, a click, a normal tree or a visible menu let keys through', async () => {
+  for (const [rows, code, sent] of [
+    [trapped, 'await app.pressKey("Escape");', ['Escape']],
+    [trapped, 'await app.click(131);', [131]],
+    [docRows + '\n123 menu bar\n\t124 Insert\n\t131 Table', 'await app.typeText("Item");', ['Item']],
+    [trapped + '\n\t\t140 menu\n\t\t\t141 menu item Insert Table...', 'await app.typeText("Item");', ['Item']],
+  ]) {
+    const s = guardSession();
+    assert.equal(await s.run(rows, docFocus, code), undefined, rows + code);
+    assert.deepEqual(s.inputs, sent);
+  }
+});
+
+// word-edit-1 23-30-19 (R24-R29) and excel 23-54 (pressKey("Down") with "0 standard window" focused).
+const windowFocus = '0 standard window Draft';
+const focusStop = /sleight stopped before (?:pressKey\("Down"\)|typeText\(<4 characters>\)|pressKey\("Tab"\)): keyboard focus is on the window itself, so keys have no target\. Click the document or the target field first\./;
+
+test('plain keys and typing stop when the window has focus after its document had it', async () => {
+  for (const code of ['await app.pressKey("Down");', 'await app.typeText("Item");', 'await app.pressKey("Tab");']) {
+    const s = guardSession();
+    assert.equal(await s.run(docRows, docFocus, 'await app.getAXState();'), undefined);
+    const error = await s.run(docRows, windowFocus, code);
+    assert.match(error?.message ?? '', focusStop, code);
+    assert.deepEqual(s.inputs, []);
+  }
+});
+
+test('window focus right after opening, shortcuts, Escape and element focus let keys through', async () => {
+  // Just opened: the document never had focus in this session.
+  const opened = guardSession();
+  assert.equal(await opened.run(docRows, windowFocus, 'await app.pressKey("Down");'), undefined);
+  assert.deepEqual(opened.inputs, ['Down']);
+  const s = guardSession();
+  await s.run(docRows, docFocus, 'await app.getAXState();');
+  for (const [code, sent] of [['await app.pressKey("super+End");', ['super+End']], ['await app.pressKey("Escape");', ['Escape']]]) {
+    assert.equal(await s.run(docRows, windowFocus, code), undefined, code);
+    assert.deepEqual(s.inputs, sent);
+  }
+  assert.equal(await s.run(docRows, docFocus, 'await app.pressKey("Down");'), undefined);
+  assert.deepEqual(s.inputs, ['Down']);
+});

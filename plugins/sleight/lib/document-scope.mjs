@@ -179,6 +179,19 @@ export function selectedMenuEntry(text) {
     }
   }
 }
+// A menu-bar title marked selected and no menu in the tree: the menu is in tracking and takes every key. Word's
+// Table menu stayed so while 13 and 8 calls typed into it (word-edit-1, 22-03-44 and 23-58-39, 2026-10-17).
+function trappingMenu(text) {
+  if (typeof text !== 'string' || /^\t*\d+ menu(?:$|,| (?!bar\b))/m.test(text)) return;
+  return selectedMenuEntry(text);
+}
+// Whether focus is on the window itself ('window'), another root ('root') or an element inside ('element').
+function focusOn(text) {
+  const focus = /^The focused UI element is (\d+) /m.exec(text ?? ''), root = /^(\d+) (.*)$/m.exec(text ?? '');
+  if (!focus || !root) return;
+  return focus[1] !== root[1] ? 'element' : /^(?:standard )?window(?: |,|$)/.test(root[2]) ? 'window' : 'root';
+}
+
 export function menuRoot(text) {
   const lines = String(text ?? '').split('\n'), at = lines.findIndex(line => /^0 /.test(line));
   if (at < 0) return false;
@@ -253,6 +266,7 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   if (guard.activeApp && !last?.emitted && !last?.omit) {
     const split = !guard.acted && guard.activeApp === guard.startApp && guard.prior?.split;
     const text = last?.text ?? (split ? guard.prior.text : await guard.readAfter(guard.activeApp));
+    guard.noteFocus?.(text);
     nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
   }
   if (guard.resultMark && guard.typed.length) nodeRepl.write(guard.resultMark + JSON.stringify({ typed: guard.typed }) + '\\n');
@@ -356,6 +370,14 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
     const disabledLabelNote = ${disabledLabelNote.toString()};
     const sameElement = ${sameElement.toString()};
     const differentFocusTarget = ${differentFocusTarget.toString()};
+    const selectedMenuEntry = ${selectedMenuEntry.toString()};
+    const trappingMenu = ${trappingMenu.toString()};
+    const focusOn = ${focusOn.toString()};
+    // Windows (app and URL or title) whose focus was on an element inside them in a read this session: window-root
+    // focus right after opening a file is normal, but after the document had focus it means keys reach nothing.
+    state.docFocus ||= new Set();
+    state.noteFocus = text => { if (focusOn(text) === 'element' && captureKey(parse(text))) state.docFocus.add(captureKey(parse(text))); };
+    state.noteFocus(state.prior?.text);
     const wait = ${elementWait.toString()};
     const checkNative = () => { if (state.nativeDenied) throw new Error(state.nativeDenied); };
     // After Return, Enter, Tab, Escape or Space, typeText or paste goes ahead without the settled tree
@@ -483,7 +505,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           else nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + text + ${JSON.stringify(GUARD_END)});
           // Input replaces the map; a newer observation replaces this entry.
           if (state.reads === reads && reads.get(proxy) === reading) reads.set(proxy, { text, emitted, omit: !emitted, version, modalOpened: clickOpenedModal(proxy, text) });
-          if (typeof text === 'string' && parse(text)) state.codeReads.set(proxy, elements(text));
+          if (typeof text === 'string' && parse(text)) { state.codeReads.set(proxy, elements(text)); state.noteFocus(text); }
           state.activeApp = proxy;
           return text;
         };
@@ -502,7 +524,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             const modalOpened = clickOpenedModal(proxy, result?.state);
             if (typeof result?.state === 'string' && parse(result.state)) reads.set(proxy, { text: result.state, emitted: options?.emit !== false, omit: options?.emit === false, modalOpened });
           }
-          if (typeof result?.state === 'string' && parse(result.state)) state.codeReads.set(proxy, elements(result.state));
+          if (typeof result?.state === 'string' && parse(result.state)) { state.codeReads.set(proxy, elements(result.state)); state.noteFocus(result.state); }
           state.activeApp = proxy;
           return result;
         };
@@ -522,6 +544,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             if (state.reads === reads && reads.get(proxy) === reading) {
               const modalOpened = clickOpenedModal(proxy, result.state);
               if (typeof result.state === 'string' && parse(result.state)) reads.set(proxy, { text: result.state, emitted: false, omit: options?.emit === false, modalOpened });
+              state.noteFocus(result.state);
             }
             state.activeApp = proxy;
             return result.screenshot;
@@ -576,6 +599,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             (['click', 'drag', 'scroll'].includes(name) && Array.isArray(args[0]));
           const skipFirst = firstAction && state.firstOff && proxy === state.startApp && treeFree &&
             typeof args[0] !== 'number' && !(args[0] && typeof args[0] === 'object' && !Array.isArray(args[0]));
+          // The call's own acquisition read, for the keyboard checks below when the first action skips its read.
+          const priorText = skipFirst ? state.prior?.text : undefined;
           if (skipFirst) state.prior = undefined;
           // The acquisition just before this call read the whole tree. A launching app can take 15 s
           // per read under load (2026-10-09), so reuse it when the app's windows, as the inventory
@@ -819,6 +844,18 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           const cancel = state.fileOnly && isCancel(name, args, text ?? '');
           if (state.cancelOnly && !cancel) throw new Error('Change review: Cancel target changed. Read the current window before retrying.');
           checkWindow(cancel);
+          // Keys while a menu is in tracking or while the window itself has focus reach nothing: positive evidence
+          // from this call's read only. Escape and paste go ahead.
+          const evidence = text ?? priorText;
+          const plainKey = name === 'typeText' || name === 'pressKey' && typeof args[0] === 'string' && !args[0].includes('+') && !/^(?:escape|esc)$/i.test(args[0]);
+          if (evidence !== undefined && (name === 'typeText' || name === 'pressKey' && !/^(?:escape|esc)$/i.test(String(args[0])))) {
+            const trap = trappingMenu(evidence);
+            if (trap) throw stop('sleight stopped before ' + shown + ': menu-bar item ' + trap.number + ' (' + trap.title + ')' + ${quoted(/* lean notice */ ' is selected and its menu takes the keys. Cancel it first with await app.performSecondaryAction(')} + trap.number + ${quoted(/* lean notice */ ', "Cancel"), or click the item.')});
+            if (plainKey && focusOn(evidence) === 'window' && state.docFocus.has(captureKey(parse(evidence)))) {
+              throw stop('sleight stopped before ' + shown + ${quoted(/* lean notice */ ': keyboard focus is on the window itself, so keys have no target. Click the document or the target field first.')});
+            }
+          }
+          if (text !== undefined) state.noteFocus(text);
           // The engine names focus after the tree. Reuse the guard's fresh read; a field's inner
           // node can hold focus too. Only positive evidence of focus elsewhere stops the text.
           if (checkFocus) {

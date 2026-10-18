@@ -76,6 +76,9 @@ export function promptNotice(text, prompt) {
       ' other elements renumbered; sleight refuses actions on changed numbers. Read again with getAXState() before acting on any other.')
     .replace(' button lines returned fewer attributes. Their unique IDs still match; missing descriptions and help are unavailable in this read.', ' button lines returned fewer attributes; IDs still match, descriptions and help are missing.')
     // The document guard's stops (document-scope.mjs).
+    .replace(' is selected and its menu takes the keys. Cancel it first with await app.performSecondaryAction(', ' traps keys; run await app.performSecondaryAction(')
+    .replace(', "Cancel"), or click the item.', ', "Cancel").')
+    .replace(': keyboard focus is on the window itself, so keys have no target. Click the document or the target field first.', ': window has focus, keys go nowhere; click the document or field.')
     .replace(', an [x, y] point, a label or ID string, or { id: "<ID>" }, { label: "<label>" }, both together, or { line: "<whole line after the number>" }.', ', an [x, y] point, a label or ID string, or an { id }, { label } or { line } object.')
     .replace(' Use an element number or another ID from the window below.', ' Use a number or ID from the window below.')
     .replace('. Use the current numbers in the window below.', '. Use the current numbers below.')
