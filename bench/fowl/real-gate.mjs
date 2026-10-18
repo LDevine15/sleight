@@ -16,6 +16,7 @@ import { assertLogin } from '../preflight.mjs';
 import { assertWorldCLI } from '../world/native-world.mjs';
 import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
+import { startRoundAllow, allowPlan } from './chrome-allow.mjs';
 import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure } from './real-gate-grade.mjs';
 import { taskSupport, raceBundles, isCodexSurface, isCodexSleightSurface, runsCodexExec, sleightKind, codexModelFor } from './support.mjs';
 import { CODEX_SLEIGHT_HOME, ensureCodexSleightHome, writeCodexSleightConfig, approvalSummary, PROXY, SLEIGHT_MCP } from '../codex-sleight.mjs';
@@ -263,7 +264,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     if (plan.browser.profileMode === 'benchmark-copy') {
       try { profileFolder = benchmarkProfile(join(plan.browser.profileSource.userDataDir, 'Local State')); } catch (error) { profileFolder = { error: error.message }; }
     }
-    const printable = { ...plan, armPrep: roundArmPrep(plan, { armHome: runtime.armHome }), browser: { ...plan.browser, version: (runtime.readVersion || browserVersion)(plan.browser.executable) ?? plan.browser.version ?? null,
+    const printable = { ...plan, armPrep: roundArmPrep(plan, { armHome: runtime.armHome }), allowWatcher: allowPlan(plan), browser: { ...plan.browser, version: (runtime.readVersion || browserVersion)(plan.browser.executable) ?? plan.browser.version ?? null,
       ...(profileFolder ? { profileFolder } : {}), preflight: (runtime.preflight || gatePreflight)(plan) },
       arms: plan.arms.map(({ env, ...arm }) => ({ ...arm,
       environment: { ...(env.CLAUDE_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR } : {}),
@@ -280,7 +281,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
   mkdirSync(lockPath);
   const controller = new AbortController(), abort = () => controller.abort();
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, abort);
-  let browser, sites, monitor, armPrep, cleanupProven = true;
+  let browser, sites, monitor, armPrep, allow, cleanupProven = true;
   const rows = [];
   try {
     mkdirSync(plan.out, { recursive: true, mode: 0o700 });
@@ -301,6 +302,9 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
     writeFileSync(join(plan.out, 'unsupported.json'), JSON.stringify(plan.unsupported, null, 2));
     if (sleightKind(plan.surface, plan.browser.browser) === 'sleight-turbo') { monitor = await (runtime.startMonitor || startHostMonitor)(join(plan.out, 'monitor.jsonl')); await monitor.ready?.(); }
+    // Claude in Chrome rounds only: press Allow on the extension's own permission prompt for the round's sites (LAWS, 2026-10-18).
+    // It returns null for every other surface and browser, and approvals.jsonl in the round's folder records each decision.
+    allow = await (runtime.startAllow || startRoundAllow)(plan, browser);
     // Claude in Chrome reaches Anthropic's browser bridge about 6 s after launch (smoke 2026-10-17: launch 20:17:53,
     // connected 20:17:59). Starting sooner costs the first task a failed select_browser that other arms never pay.
     if (plan.surface === 'claude-in-chrome') await (runtime.settle || (ms => new Promise(resolve => setTimeout(resolve, ms))))(10000);
@@ -380,6 +384,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     }
     throw error;
   } finally {
+    try { await allow?.stop(); } catch (error) { console.error(`Claude in Chrome prompt watcher did not stop cleanly (${error.message})`); }
     await armPrep?.release();
     try { await monitor?.stop(); } catch { cleanupProven = false; }
     try { await sites?.close(); } catch { cleanupProven = false; }
