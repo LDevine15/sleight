@@ -145,7 +145,7 @@ test('both skill variants explain browser routing and script input within their 
     assert.match(skill, /[Tt]op-level `await`, no `return`/);
     assert.match(skill, /[Ww]rite text with `nodeRepl\.write\(\.\.\.\)`/);
     assert.doesNotMatch(skill, /last expression is the result/);
-    assert.match(skill, /Tab input.*first argument.*element index or `null`/);
+    assert.match(skill, /Tab-handle input.*first argument.*element index or `null`/);
     assert.match(skill, /[Ff]ill every (?:independent )?(?:field you already see|visible field) in one call/);
     assert.match(skill, /nodeRepl\.write\(await sleight\.fillForm\(tab,/);
     assert.match(skill, /takes each field by label or locator \(an index needs a stable ID in the tree\)/);

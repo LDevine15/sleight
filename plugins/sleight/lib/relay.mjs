@@ -73,7 +73,8 @@ import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { guardStopMark, splitMenuActions, takeGuardStop, withoutStopTree, hasWholeTree, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, continuedNote, menuIdentity,
-  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate } from './menu-continuation.mjs';
+  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate,
+  failedActionText } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
@@ -2779,7 +2780,7 @@ export function createRelay({
     const handle = text => tabStop ? text.replace(/Call select_window with \{[^\n]*?\}\./g, 'This window keeps its handle; send the rest on it after reading the result.') : text;
     if (tabStop) for (const item of msg.result.content) if (item?.type === 'text' && typeof item.text === 'string') item.text = handle(item.text);
     const action = resultCalls.get(msg.id);
-    if (action && taken.receipt) action.failure = { message: handle(taken.receipt.error ?? failureReason(taken.content)),
+    if (action && taken.receipt) action.failure = { message: handle(failedActionText(taken.receipt) ?? failureReason(taken.content)),
       noInput: typeof taken.receipt.error === 'string' && taken.receipt.index === 0 && taken.receipt.attempts === 1 && !taken.input &&
         !menuContinued.has(msg.id) && !splitInputs.has(msg.id) };
     // A lease on a dialog or sheet remembers the window it covered (parent), so a stop onto a standard window after the

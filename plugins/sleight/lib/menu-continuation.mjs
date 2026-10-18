@@ -534,6 +534,28 @@ const actionList = plan => {
   return actions => actions.slice(0, 4).map(name).join(', ') + (actions.length > 4 ? ` and ${actions.length - 4} more` : '');
 };
 
+// An action that threw (not a lease stop or refusal, which stopNote words): its error, the methods that ran before it,
+// the action as the guard showed it, and an app handle's argument order when the call used a tab's. Safari mdn r2
+// (race-1017): `pressKey(null, "Return")` after a setValue got only "call failed (partial input possible)", and Claude
+// read the window again before sending Return (6.0 s). Strings show only as named keys or the guard's lengths.
+const APP_SHAPES = { pressKey: ['key', key => key ?? '<key>'], typeText: ['text', () => '<text>'] };
+export function failedActionText(receipt) {
+  const error = typeof receipt?.error === 'string' ? receipt.error : undefined;
+  if (!error || receipt.windowStop === true || receipt.refused === true || /^(?:Input lease|sleight\b)/.test(error) ||
+      typeof receipt.shown !== 'string') return error;
+  // The guard cuts an argument over 40 characters to 37 and "...", which can leave its string open.
+  const shown = receipt.shown.replace(/"(?:[^"\\]|\\.)*"|"[^"]*?\.\.\.(?=, |\)$)/g, literal => {
+    try { const value = JSON.parse(literal); return receipt.name === 'pressKey' && NAMED_KEY.test(value) ? literal : '"…"'; } catch { return '"…"'; }
+  });
+  const ran = (Array.isArray(receipt.ran) ? receipt.ran : []).map(action => /^(\w+)\(/.exec(String(action))?.[1]).filter(Boolean);
+  const shape = APP_SHAPES[receipt.name], tabForm = /^\w+\((?:null|undefined|\d+), /.exec(shown);
+  const key = /^\w+\([^,]+, ("[^"]*")\)$/.exec(shown)?.[1];
+  const hint = shape && tabForm ? /* lean notice */ ` An app handle's ${receipt.name} takes the ${shape[0]} first: ${receipt.name}(${shape[1](key)}).` : '';
+  if (!ran.length && !hint) return error;
+  const list = ran.slice(0, 4).join(', ') + (ran.length > 4 ? ` and ${ran.length - 4} more` : '');
+  return /* lean notice */ `${error.replace(/[.!?]?$/, '.')} ${ran.length ? `${list} ran; ` : ''}${shown} failed.${hint}`;
+}
+
 // The line a call that went on past its own dialog close, menu, tab or navigation opens with. It had opened with the stop
 // it no longer was in 6 of 6 such Office calls (2026-10-17), and 4 cost a turn redoing or checking an action that had run.
 // `n` actions ran before the window changed, `over` is the root the lease held (sheet, dialog, window), `title` the

@@ -669,9 +669,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           checkNative();
           // The action as Claude wrote it, for a stop that lists what ran.
           // Typed, pasted, set or selected text shows as its length only.
+          // typeText's text is masked wherever it sits, as in a tab-style typeText(1, "<text>").
           const textAt = ['typeText', 'paste'].includes(name) ? 0 : ['setValue', 'selectText'].includes(name) ? 1 : -1;
-          const shown = name + '(' + args.slice(0, 2).map((arg, at) => {
-            if (at === textAt && typeof arg === 'string') return '<' + arg.length + ' characters>';
+          const shown = attempt.shown = name + '(' + args.slice(0, 2).map((arg, at) => {
+            if ((at === textAt || textAt === 0) && typeof arg === 'string') return '<' + arg.length + ' characters>';
             let text; try { text = JSON.stringify(arg); } catch {}
             text ??= String(arg);
             return text.length > 40 ? text.slice(0, 37) + '...' : text;
@@ -1073,6 +1074,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ index: attempt.index,
               prev: state.lastAction, root: /^\\d+ .*$/m.exec(attempt.text ?? '')?.[0] ?? null,
               attempts: state.actionIndex, windowStop: !!attempt.windowStop, name, completed: state.completedActions,
+              shown: attempt.shown ?? null, ran: state.ran.slice(0, 10),
               ...(attempt.refused ? { refused: true, bound: !!attempt.bound, fresh: !!attempt.fresh } : {}),
               error: String(error?.message ?? error).split('\\n')[0] }) + '\\n');
             state.failures.push(name + ': ' + (error?.message ?? error));

@@ -79,7 +79,7 @@ doesn't require confirming it. Otherwise stop before the final click.
 Several Chromium browsers report as Chrome: pick `metadata.extensionInstanceId` from
 `await cua.listBrowsers()`. `cua.getBrowser({ extensionInstanceId })` runs in a call of its own.
 Open pages with `cua.createBrowserTab(browser.browserId, url)`.
-Tab input's first argument is an element index or `null`.
+Tab-handle input's first argument: element index or `null`.
 Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` takes each field by label or locator (an index needs a stable ID in the tree).
 List rows: `nodeRepl.write(await sleight.pickFromList(tab, list, "Portland"))`.
 Read once at the end.

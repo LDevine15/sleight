@@ -21,7 +21,7 @@ In a form, fill every independent visible field in one call. Put autocomplete la
 
 ## Browsers
 
-Tab input: first argument, element index or `null`.
+Tab-handle input: first argument, element index or `null`.
 Read once at the end.
 Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` takes each field by label or locator (an index needs a stable ID in the tree).
 Use locators when validation/autocomplete moves fields, indices on static forms.

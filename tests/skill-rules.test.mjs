@@ -118,3 +118,12 @@ test('native sessions learn to navigate a browser outside the Browsers section',
     assert.doesNotMatch(rules, /Safari|Firefox/);
   }
 });
+
+// Safari mdn r2 (race-1017) sent `app.pressKey(null, "Return")`: the null-first form is a tab handle's, and the line saying so
+// named no handle.
+test('the tab input line is scoped to tab handles', () => {
+  for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }]) {
+    const line = skillRules(undefined, env).split('\n').find(line => /^Tab(?:-handle)? input/.test(line));
+    assert.match(line, /^Tab-handle input.*first argument.*element index or `null`/);
+  }
+});
