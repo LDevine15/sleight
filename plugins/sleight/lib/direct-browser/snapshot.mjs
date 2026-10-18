@@ -41,11 +41,19 @@ function stateOf(page) {
         return snapshotRefBinding(page, ref);
       } });
     }
-    page.on('framenavigated', () => {
-      state.generation++; state.rawRefs.clear(); state.deliveredRefs.clear(); state.pending.clear(); state.history.clear(); state.continuations.clear(); state.closed.clear(); state.deliveredClosed.clear();
-    });
+    page.on('framenavigated', () => forget(state));
   }
   return state;
+}
+// A new generation: every ref, continuation and diff baseline of the old document is retired.
+function forget(state) {
+  state.generation++; state.rawRefs.clear(); state.deliveredRefs.clear(); state.pending.clear(); state.history.clear(); state.continuations.clear(); state.closed.clear(); state.deliveredClosed.clear();
+}
+// For a page that reuses its elements without navigating (a virtual list recycles rows on scroll, EPV3-5):
+// old refs then refuse with the browser_read hint, and the next read mints new ones. A page never read has none.
+export function invalidateRefs(page) {
+  const state = pages.get(page);
+  if (state) forget(state);
 }
 
 // Native CDP values and attributes cannot be hidden by MAIN-world getters.

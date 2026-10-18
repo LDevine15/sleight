@@ -152,6 +152,11 @@ export function createAppPageRegistry({ browser, filter, targets, join, fence, o
 
   const api = {
     tab, idle,
+    // The entry for the page object snapshot() was handed (EPV3-4's read header); none once released or revoked.
+    entryOf(page) {
+      for (const entry of records.values()) if (entry.page === page && !entry.released && !entry.revoked) return entry;
+      return undefined;
+    },
     seed: () => refresh(),
     async list() {
       await refresh();
