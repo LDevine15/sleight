@@ -37,21 +37,26 @@ test('named native tasks acquire directly and action results avoid a confirming 
 });
 
 // AN1: posted clicks on sheet tabs dragged them in 6 of 8 runs; next/previous-sheet keys moved nothing (6/6).
-test('the skill switches document tabs by key or go-to control and checks the order, naming no app', () => {
+// excel-edit open-shot runs (2026-10-17): 4/9 clicked a sheet tab only to look before saving, and each dragged it.
+test('the skill skips switching back to look before saving and switches tabs by key, naming no app', () => {
   const rules = skillRules();
-  assert.match(rules, /After finishing any edit, switch sheets or document tabs with the app's next\/previous-tab key or\s+go-to control \(clicks can drag tabs\), then check the order\./);
+  assert.match(rules, /Don't switch back to a sheet or tab just to look at it before saving\. Clicks can drag tabs: switch\s+with the next\/previous-tab key\./);
+  assert.doesNotMatch(rules, /After finishing any edit, switch sheets/);
   assert.doesNotMatch(rules, /Excel|Numbers|Option\+(?:Left|Right)|Name Box/);
   for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) assert.ok(skillRules(undefined, env).trim().split(/\s+/).length <= 930);
 });
 
 // AO1: one rectangular paste entered a known block in 3.82 s mean against 7.53 s cell by cell (3/3 each);
 // a multiline typeText saved a cell wrong. The paste overwrites the block, so the rule names that condition.
-test('the skill enters a known spreadsheet block as one tab and newline paste, only when every value is known', () => {
+// excel-edit (2026-10-17): two pastes with Name Box moves took 6.2-7.0 s (4 runs), one A1:D4 paste 3.8 s (3/3).
+test('the skill enters a known spreadsheet block as one paste from the active cell, only when every value is known', () => {
   for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) {
     const rules = skillRules(undefined, env);
-    assert.match(rules, /Click a block's top-left cell, then fill spreadsheet cells with one paste, tabs between columns,\s+newlines between rows/);
+    assert.match(rules, /Fill spreadsheet cells with one paste from the active cell the tree names, with known headers and\s+blanks, not two pastes or a go-to\. If another cell is active, click the block's top-left first\. Tabs\s+between columns, newlines between rows/);
     assert.ok(rules.includes('`await app.paste("<a>\\t<b>\\n<c>\\t<d>", { format: "text" })`'));
-    assert.match(rules, /It overwrites\s+the whole block: paste only when you know every cell's value, blanks included\./);
+    assert.match(rules, /It overwrites the whole block: paste only when every value is known\./);
+    // A name box given "A2" by setValue kept A1 in 4/9 open-shot runs; click, type and Return moved it every time.
+    assert.match(rules, /`setValue` writes a field without focus or Return; to move through a field, click it, type, Return\./);
     assert.doesNotMatch(rules, /\.typeText\("[^"]*\\n/);
     // The drag tool's description carries its arguments and lost-text recovery; the skill keeps the routing.
     assert.match(rules, /To move selected text, select it in `js`, then call the `drag` tool, not `app\.drag`\./);
@@ -66,6 +71,16 @@ test('the drag and menu_bar descriptions carry what the skill no longer repeats'
     'A lost-text error tells you to press Cmd+Z in the target app and named window.']) assert.ok(drag.description.includes(passage), passage);
   const menuBar = localToolDefinitions({}).find(tool => tool.name === 'menu_bar');
   assert.match(menuBar.description, /status items in the macOS menu bar/);
+  // The skill routes to select_window and hover; their descriptions carry the steps and the user warning.
+  const rules = skillRules();
+  assert.match(rules, /Among windows, use `select_window`\./);
+  assert.match(rules, /Before the `hover` tool, try `Help:`, `Secondary Actions:`,\s+right-click or keys\./);
+  const select = localToolDefinitions({}).find(tool => tool.name === 'select_window');
+  for (const passage of ['by exact title or file URL', 'Then use one standalone js call to acquire the app and verify its full Window/URL header before acting.'])
+    assert.ok(select.description.includes(passage), passage);
+  const hover = localToolDefinitions({}).find(tool => tool.name === 'hover');
+  for (const passage of ['only after Help text, secondary actions, right-click and keys fail.',
+    'Tell the user first that it will move their pointer and bring the app forward']) assert.ok(hover.description.includes(passage), passage);
 });
 
 test('the screenshot skill variant adds a read for textless document panes and tables only when selected', () => {

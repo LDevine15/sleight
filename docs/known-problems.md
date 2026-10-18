@@ -434,6 +434,10 @@ native reference, and oversized first results defer the browser reference while 
   radio button, segment or page siblings, or a tab group, tab bar or layout area parent), so tabs shown as plain buttons in a plain
   group get Undo alone. Whether Haiku picks the right key from that wording is unmeasured.
   A next/previous-tab chord sent during a cell or text field edit can move the text cursor by a word, so finish the edit first.
+- In Excel, `setValue` on the name box followed by Return kept the old cell in 4 of 9 excel-edit runs (2026-10-17), and the paste
+  went over the header. The result now says the setValue didn't hold, but only when the field reads its old, non-empty value
+  afterwards. A call that ends on an alert defers that check for up to 2 calls, until the document's window is read again. Whether
+  the skill's click, type, Return clause prevents the trap is unmeasured.
 - Slack, Firefox and WhatsApp expose thin engine trees (2026-10-10, one read each, no input):
   Slack 15 elements and 483 characters, Firefox 24 / 898, WhatsApp 19 / 940. None of the three had a
   text field, and Discord wasn't thin (251 elements). Whether a settings switch expands them is unverified.

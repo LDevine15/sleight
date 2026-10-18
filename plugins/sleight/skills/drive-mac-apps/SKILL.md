@@ -24,17 +24,18 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   For missing information, use `await app.getAXState()`.
 - If acquisition returns an empty tree, or a result says the user changed the app or a header
   changed, read again before retrying.
-- Among windows, call `select_window` with the app and exact `url` or `title`, then acquire
-  alone and check its Window line.
+- Among windows, use `select_window`.
 - Multiply tap coordinates by the screenshot multiplier.
 
 ## Text, menus and files
 
 - `await app.paste("text")` avoids autocorrect and capitalization. Replace documents with select-all
   and paste in one call.
-- Click a block's top-left cell, then fill spreadsheet cells with one paste, tabs between columns,
-  newlines between rows: `await app.paste("<a>\t<b>\n<c>\t<d>", { format: "text" })`. It overwrites
-  the whole block: paste only when you know every cell's value, blanks included.
+- Fill spreadsheet cells with one paste from the active cell the tree names, with known headers and
+  blanks, not two pastes or a go-to. If another cell is active, click the block's top-left first. Tabs
+  between columns, newlines between rows: `await app.paste("<a>\t<b>\n<c>\t<d>", { format: "text" })`.
+  It overwrites the whole block: paste only when every value is known.
+- `setValue` writes a field without focus or Return; to move through a field, click it, type, Return.
 - Use a menu item's shortcut if it has one. Otherwise open the menu and pick the item by label in one
   call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
 - Acquire a document that's already open. Don't reopen it.
@@ -45,8 +46,8 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
   A full path in the name field becomes a name with slashes. The result's title and URL confirm the
   save.
-- After finishing any edit, switch sheets or document tabs with the app's next/previous-tab key or
-  go-to control (clicks can drag tabs), then check the order.
+- Don't switch back to a sheet or tab just to look at it before saving. Clicks can drag tabs: switch
+  with the next/previous-tab key.
 - A confirmed save covers that document's sheets and pages. Don't recheck them. Save again after
   later edits.
 - If scrolling fails, use search or keyboard navigation.
@@ -84,9 +85,8 @@ Click a button that may open a page dialog (pay, delete, leave) with
 ## sleight's other tools
 
 - To move selected text, select it in `js`, then call the `drag` tool, not `app.drag`.
-- Engine events don't trigger hover. Use `Help:` fields, `Secondary Actions:`, a right-click
-  or a key first. Only then `hover`, after telling the user it moves their pointer and brings the app
-  forward for about two seconds.
+- Engine events don't trigger hover. Before the `hover` tool, try `Help:`, `Secondary Actions:`,
+  right-click or keys.
 - `notifications` presses buttons on banners, which leave in seconds, so act at once.
 - Copy and Cut use the real clipboard unless `SLEIGHT_CLIPBOARD=preserve` (then one clipboard shortcut
   per call). Never clear or replace the user's clipboard to get around a refusal.

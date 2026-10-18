@@ -260,7 +260,22 @@ function actionKind(code, before) {
     aim: firstTyping >= 0 ? lastAim(aims.slice(0, firstTyping)) : undefined, lastAim: lastAim(aims),
     texts: calls.filter(call => call[1] === 'typeText').map(call => literal(argsOf(call))),
   };
-  return { save, opens, deletes, clickAndTyping, typedTarget, typing, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
+  // setValue on a settable field with a literal value, then Return or a paste on the same handle: a name box
+  // given "A2" this way kept A1 in 4/9 excel-edit runs (2026-10-17), and the paste went over the header.
+  const setValues = calls.flatMap((call, index) => {
+    if (call[1] !== 'setValue' || !before) return [];
+    const args = argsOf(call), number = /^\s*(\d+)\s*,/.exec(args)?.[1], locator = !number && clickLocator(args);
+    const value = /,\s*(['"])([^'"\\]*)\1\s*$/.exec(args)?.[2];
+    if ((!number && !locator) || value === undefined) return [];
+    const later = calls.slice(index + 1).filter(next => receiver(next) === receiver(call));
+    if (!later.some(next => next[1] === 'paste' || next[1] === 'pressKey' && /^(?:return|enter)$/i.test(literal(argsOf(next)) ?? ''))) return [];
+    const resolve = locator?.bare !== undefined ? { label: locator.bare } : locator;
+    const matches = before.lines.map(parse).filter(line => line.num !== undefined &&
+      (number ? line.num === Number(number) : locatorMatches(resolve, line.key.trim())));
+    if (matches.length !== 1 || !textField(matches[0].key.trim())) return [];
+    return [{ key: fieldKey(matches[0].key), was: fieldValue(matches[0].key), value, pasted: later.some(next => next[1] === 'paste') }];
+  });
+  return { save, opens, deletes, clickAndTyping, typedTarget, typing, setValues, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
     fileSaveSafe: save && !otherTarget && calls.slice(calls.indexOf(saveCall) + 1).every(call => editableClicks.has(call)) };
 }
 
@@ -423,6 +438,51 @@ function focuslessTypingNote(action, observation) {
     return /* lean notice */ 'sleight: keyboard focus is on the window itself, so typed keys have no target. Click the document first.';
   }
   return /* lean notice */ 'sleight: typing reached nothing; no typed text or value appears. Click the target first.';
+}
+
+// A field that reads its old value after setValue and Return: the write never went through the field's own
+// input, so the Return and a paste acted from wherever the app already was. In excel-edit (2026-10-17, runs
+// 23-30, 23-37, r1, r5) the name box kept A1, the paste went over the header, and r5 took "A,1 Apples" as success.
+function setValueNote(set, observation) {
+  const fields = observation.lines.map(parse).filter(line => line.num !== undefined && textField(line.key) && fieldKey(line.key) === set.key);
+  const wanted = set.value.trim().toLowerCase();
+  if (fields.length !== 1 || !set.was || !wanted || wanted === set.was) return;
+  const field = fields[0], now = fieldValue(field.key);
+  if (now !== set.was || now.includes(wanted)) return;
+  const shown = /\bValue: ?(.*?)(?=, (?:Secondary Actions|ID|Help|Description):|$)/.exec(field.key)?.[1] ?? now;
+  const label = /\bDescription: (.*?)(?=, (?:Value|Secondary Actions|ID|Help):|$)/.exec(field.key)?.[1] ?? /(?:^|, )ID: ([^,]+)/.exec(field.key)?.[1];
+  // Where the input went: a focused element other than the window and the field, else the app's own position,
+  // which a go-to field shows as its value.
+  const focus = /^The focused UI element is (\d+) (.*)$/.exec(observation.lines.find(line => line.startsWith('The focused UI element is ')) ?? '');
+  const root = parse(observation.lines[1] ?? '').num;
+  const focused = focus && ![root, field.num].includes(Number(focus[1])) &&
+    (/\bDescription: (.*?)(?=, (?:Value|Secondary Actions|ID|Help):|$)/.exec(focus[2])?.[1] ?? focus[2].split(', ')[0]);
+  const where = (focused || shown).slice(0, 60), name = `${field.num}${label ? ` (${label})` : ''}`;
+  // Only a paste leaves something to undo.
+  return set.pasted
+    ? /* lean notice */ `sleight: setValue on ${name} didn't hold (Value: ${shown}); the next action began at ${where}. Undo restores. Click the field, type, Return.`
+    : /* lean notice */ `sleight: setValue on ${name} didn't hold (Value: ${shown}); the next action began at ${where}. Click the field, type, Return.`;
+}
+
+// An alert the call ended on, quoted with its buttons: 3 excel-edit runs (2026-10-17) spent a turn matching
+// action-button--999 to Cancel. Only a small dialog or sheet with text and buttons and no field to fill.
+function alertNote(observation) {
+  if (!/^(?:dialog|sheet|alert|system dialog)\b/.test(observation.root)) return;
+  const children = [];
+  for (const line of observation.lines.slice(2)) {
+    const match = ELEMENT.exec(line);
+    if (!match || !match[1].length) break;
+    if (match[1].length === 1) children.push(match[3]);
+  }
+  if (children.length > 10 || children.some(body => textField(body))) return;
+  const texts = children.filter(body => /^(?:static )?text /.test(body)).map(body => body.replace(/^(?:static )?text /, '').replace(/, (?:Value|ID|Help):.*$/, ''));
+  const buttons = children.filter(body => /^button /.test(body)).map(body => {
+    const id = /(?:^|, )ID: ([^,]+)/.exec(body)?.[1], title = body.replace(/^button /, '').split(', ')[0];
+    return id && id !== title ? `${title} ({ id: "${id}" })` : title;
+  });
+  const text = texts.join(' ');
+  if (!text || !buttons.length || buttons.length > 6) return;
+  return /* lean notice */ `sleight: the alert says "${text.length > 300 ? text.slice(0, 297) + '...' : text}" Its buttons: ${buttons.join(', ')}.`;
 }
 
 function tabSelections(lines) {
@@ -1164,6 +1224,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map(), pendingSwaps = new Map(), pendingClicks = new Map();
+  // window key -> { sets, calls }: setValue checks whose call ended in another window, such as an alert.
+  const pendingSetValues = new Map();
   // window key -> { target, calls }: the current run of calls that scrolled one target in that window.
   const scrolls = new Map();
   // window key -> the last element Claude aimed input at there (null: unknown), for where typing should go.
@@ -1537,6 +1599,32 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
           if (typing) out.push({ type: 'text', text: promptNotice(typing, prompt) });
         }
         if (action.typing.lastAim !== undefined) aims.set(key, action.typing.lastAim);
+      }
+      // "this call acted on" only says the call ended in another window; the other stops mean input may not have run.
+      const halted = failed || action?.overlap || content.some(item => item?.type === 'text' && typeof item.text === 'string' &&
+        /sleight: an action in this call failed|engine's JavaScript session restarted|(?:^|\n)(?:sleight: )?the user (?:changed|switched)|(?:Input lease|Document scope|Selected window).*?(?:stopped|changed)|outcome unconfirmed/i.test(item.text));
+      const settled = !halted && observedInResult && !observedInResult.invalid && !observedInResult.incomplete && !observedInResult.degraded;
+      const settledKey = settled && documentKey(observedInResult.window);
+      if (halted) pendingSetValues.clear();
+      else if (action || settled) for (const [key, pending] of pendingSetValues) {
+        // A later call that acts in that window owns its value; an alert's button does not.
+        if (action?.before && documentKey(action.before.window) === key) pendingSetValues.delete(key);
+        else if (key === settledKey) {
+          pendingSetValues.delete(key);
+          const note = pending.sets.map(set => setValueNote(set, observedInResult)).find(Boolean);
+          if (note) out.push({ type: 'text', text: promptNotice(note, prompt) });
+        } else if (++pending.calls > 2) pendingSetValues.delete(key);
+      }
+      if (action?.setValues?.length && action.before && !halted && !action.before.incomplete && !action.before.degraded) {
+        const key = documentKey(action.before.window);
+        if (key === settledKey) {
+          const note = action.setValues.map(set => setValueNote(set, observedInResult)).find(Boolean);
+          if (note) out.push({ type: 'text', text: promptNotice(note, prompt) });
+        } else if (settled) pendingSetValues.set(key, { sets: action.setValues, calls: 0 });
+      }
+      if (action && settled && !(action.before && documentKey(action.before.window) === settledKey && action.before.root === observedInResult.root)) {
+        const alert = alertNote(observedInResult);
+        if (alert) out.push({ type: 'text', text: promptNotice(alert, prompt) });
       }
       if (moved) out.push({ type: 'text', text: promptNotice(moved, prompt) });
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;

@@ -57,6 +57,9 @@ export function promptNotice(text, prompt) {
     .replace('sleight: typing reached nothing; menu-bar item ', 'sleight: typing lost; menu-bar item ')
     .replace(' is still selected: cancel the menu first.', ' selected: cancel its menu first.')
     .replace('sleight: typing reached nothing; no typed text or value appears. Click the target first.', 'sleight: typing lost (nothing changed); click the target first.')
+    .replace(/^sleight: setValue on (.*?) didn't hold \(Value: (.*?)\); the next action began at (.*?)\.(?: Undo restores\.)? Click the field, type, Return\.$/s,
+      'sleight: setValue $1 reverted to $2; input went to $3. Click it, type, Return.')
+    .replace(/^sleight: the alert says "(.*)" Its buttons: /s, 'sleight: alert "$1" buttons: ')
     .replace(' earlier reads of the same window in this call left out; the last is shown. Element numbers refer to the last tree.', ' earlier reads of this window omitted; numbers refer to the last tree.')
     .replace("if that wasn't intended, Undo (Cmd+Z) restores the order; a move dialog is the fallback.", 'if unintended, Cmd+Z (or a move dialog) restores it.')
     .replace(" To switch tabs, use the app's next/previous-tab key or go-to control, not a click.", ' Switch tabs with the next/previous-tab key or a go-to control, not a click.')
