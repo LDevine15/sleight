@@ -99,7 +99,8 @@ export async function pickFromList(tab, list, text, opts = {}) {
         if ((predecessor || atHead) && bounded) return choose(names[0]);
       }
     }
-    if (scrolls >= (opts.scan ? 48 : 24)) return ended('The search reached its 24-scroll cap.');
+    // The cap stops before the whole list was seen, so a prefix there could hide the exact option.
+    if (scrolls >= (opts.scan ? 48 : 24)) return fail('The search reached its scroll cap before seeing the whole list.');
     let next;
     if (!scanning) {
       if (order(state.rows) !== sort) scanning = true;
