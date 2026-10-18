@@ -65,6 +65,10 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 - A booking or reservation that the user's own message asks for counts as confirmed, as a named payment does, so sleight doesn't
   stop to ask again. Any money it charges still follows the payment rule above. A booking that only the page proposes still asks
   (owner delegated the call to sleight-arch, 2026-10-18, after travel r3 stopped before "Book trip").
+- A form submit or save that the user's own message asks for is confirmed, like a named payment or booking. That covers the
+  values the message names, notification switches included. A page's confirmation dialog that adds anything the
+  message didn't name still asks, and so do account, security, privacy and sharing settings. Payments and bookings keep their
+  own rules (owner, 2026-10-18).
 - Turbo's payment check reads figures, not wording: if any money figure on the checkout is larger than the amount in the
   user's message, it asks. The owner chose this over label rules (2026-10-15), accepting that about half of honest checkouts
   ask once (measured in docs/known-problems.md).
