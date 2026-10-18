@@ -1,10 +1,12 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { checkBrowserOwner } from './real-browser.mjs';
+// /Applications/Safari.app links into the Safari cryptex, and the helper reports the resolved path (adcebef9).
+const sameExecutable = (a, b) => { try { return typeof a === 'string' && realpathSync(a) === realpathSync(b); } catch { return false; } };
 
 const execute = promisify(execFile), profile = 'sleight benchmark';
 export function safariProfileEvidence(window) {
@@ -183,7 +185,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     await census();
     launchAttempted = true;
     const launched = await bridge.request('launch');
-    if (!Number.isSafeInteger(launched.pid) || launched.pid <= 0 || launched.executable !== plan.executable ||
+    if (!Number.isSafeInteger(launched.pid) || launched.pid <= 0 || !sameExecutable(launched.executable, plan.executable) ||
         !Number.isFinite(launched.launchDate)) throw Error('BENCH_SAFARI_LAUNCH_UNPROVED');
     Object.assign(browser, launched);
     await reset(); return browser;
