@@ -3,44 +3,35 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 01:58 UTC, flushed before the owner's clear)
+## Banner (2026-10-18 02:21 UTC)
 
-Goal (owner): release 1.3.0 with Electron folded in (owner, 2026-10-18), then the claim post and the video. The owner is away from
-the PC but home and reachable by phone. Quota is not a constraint (owner). Ledger: `~/Projects/sleight-wt/ledger/LEDGER.md`, last
-sections (ASTRA-1017 and later, POST-130, OPEN ITEMS, CLAIM-1018, EPV3, ASTRA-1018) list every result and open item from tonight.
+Goal (owner): release 1.3.0, then the claim post and the video. The owner is away from the PC, reachable by phone, and OK'd live
+runs tonight. Ledger: `~/Projects/sleight-wt/ledger/LEDGER.md` (sections CLAIM-1018, EPV3, APP-CLAIM).
 
-**Native claim: "fastest" (scorer wording), sleight fastest on 8 of 9, 230 s total against claude-cu's 454 s.** Claim build
-`9c836f22` (pushed, full check green). sleight's arm ran 2026-10-18 01:26-01:39Z (27 runs, 26 pass) plus top-ups 01:40Z
-(preview-read and excel-edit to 5). claude-cu's excel-edit top-up ran at 01:50Z. Score: `~/Projects/sleight-wt/sitting-1017c/claim-score-1018.{txt,json}`,
-scored from the competitors' claim files plus only this sleight pass (file list `sitting-1017c/claim-1018-files.txt`; all files are in the
-main checkout's `bench/results`). Lost: preview-read (Peekaboo 4.4 against 5.1). excel-edit 45 (4/5) against claude-cu 48 (5/5); its one
-failure is the tab swap (item MV2). A claude-cu top-up attempt at 01:42Z raised a macOS screen-recording prompt for "zsh" because it ran in a
-detached shell; the harness stopped it, the owner dismissed the prompt, and the rerun as a child process passed 2/2.
+**Native claim: "fastest" (scorer wording), sleight fastest on 8 of 9, 230 s total against claude-cu's 454 s** on claim build
+`9c836f22`. Score: `~/Projects/sleight-wt/sitting-1017c/claim-score-1018.{txt,json}`. Lost: preview-read (Peekaboo 4.4 against 5.1).
 
-**Electron (EPV3), folded into 1.3.0.** All lanes merged on `epv3-int` (pushed to `private`, tip 8f2c621b: EPV3-1 to 3 with security
-fixes, 4, 5, 6, 7a, 7b, 9, the EPV3-8 qualification harness `bench/electron-qualification.mjs`, the write guard for turbo-apps.json,
-electron-grants.json and grant-seal.key, and the Fable review's fixes F1, F2, H1-H4, L1 and L3 from 98ba31ac to 8f2c621b). L2 (keep the
-app running when the host process exits) is documented, not fixed. It isn't on the claim build yet. The full check on `epv3-int` comes
-next. In the live qualification after it, the owner clicks "Allow for this session" on the VS Code card about 4 times, since temporary
-profiles don't offer Always.
-**Owner decision F3 pending:** today's path launches a separate instance with a temporary profile (LAWS: benchmark-only)
-and takes focus. Real-profile use needs the relaunch flow (1.3.1). Options: 1) measure Electron for the claim on the native path users
-get today and release Electron turbo with the relaunch flow, 2) build the relaunch flow now. sleight-arch recommends 1. The Electron claim
-tasks (vscode-edit, cursor-edit; LAWS) have not run for any arm; the Astra Electron lane found `open -n -g` editor launches take focus
-(item EL1), so those runs must start when the owner is away.
+**Owner decisions 2026-10-18 (in LAWS):** F3 decided: 1.3.0's app tasks run on the native path, and Electron turbo comes in 1.3.1 with
+the relaunch flow. The claim's app tasks are VS Code (vscode-edit, temporary profile), Slack (slack-post: one fixed message in
+#new-channel of the owner's throwaway workspace) and Spotify (spotify-play: search "Bohemian Rhapsody" by Queen, play, pause), all six
+arms, 3 runs each with top-ups. Cursor is out of the claim.
 
-**Browser race.** Firefox competitor smokes passed (LCU, Cua, Codex, 01:00Z). Firefox LCU round 1 done (10/12, failing both settings forms).
-`~/Projects/sleight-wt/race-1017/race-firefox-comp.sh` (nohup, pid 46884, kept running through the clear) is paused by
-`~/Projects/sleight-wt/race-1017/pause`. Remove that file to continue Codex and Cua round 1 and rounds 2-3. Race worktree `~/Projects/sleight-wt/race`
-is pinned at 41831a8f (harness only). sleight's own race rounds need a worktree at the final build. Plan and pre-flight:
-`ledger/fable-1017-race-plan.md`, and the scorer is `bench/fowl/race-score.mjs`. Safari, Chrome and Helium rounds not run (Chrome-family and
-Peekaboo from Terminal.app). Helium is closed (owner OK for the race).
+**Release line.** This worktree's branch is pushed to `private` `pane/auto-mode` and the main checkout fast-forwarded. It holds epv3-int
+merged onto the claim line, with MV2 (Excel moved-tab check sees every Window block), FL2 (virtual clock in guard-light-return) and the
+Electron tests' trackTemp fix. Full check green (7739 tests, 7381 pass, 0 fail, 2026-10-18 02:1xZ).
 
-**Next:** 1) the F3 decision; 2) merge the EPV3 fix lane's commits into `epv3-int`, full check, then the live qualification
-with the owner present for the first card; 3) MV2 (Excel moved-tab check sees every tree block) and anything else for the next build;
-4) the race: unpause Firefox competitors, then sleight's Firefox and Safari rounds on the final build, then Chrome and Helium; 5) the
-Codex lease-broker live check (`bench/broker-live.mjs`, owner OK); 6) if any sleight change merges into the claim build, rerun
-sleight's claim arm and top-ups (LAWS).
+**App-claim build (lane running).** It adds slack-post and spotify-play tasks, suite.json rows for the three app tasks, Spotify on the
+allowlist. Live probes tonight found that Slack's tree with AXManualAccessibility has 265 nodes and names the channel list (`new-channel
+(channel)`) and composer; Spotify (CEF) exposes 17 AX nodes, and its window title stays "Spotify Premium" while playing, so the checker
+listens to the `com.spotify.client.PlaybackStateChanged` distributed notification. A probe saw Playing then Paused events with Name and Artist.
+Probe tools are in `~/Projects/sleight-wt/app-claim/`.
+
+**Browser race.** The Firefox competitor rounds resumed 02:20Z with codex r1. Pause them with `touch ~/Projects/sleight-wt/race-1017/pause`,
+which holds between rounds. Pause them before the app-claim runs.
+
+**Next:** 1) review and merge the app-claim lane, dry-run, then sleight smoke on each app task; 2) pause the race, run the three app
+tasks for all six arms (Peekaboo from Terminal.app), score, top-ups; 3) then the race; 4) the Codex lease-broker live check; 5) the
+release pass for 1.3.0.
 
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
