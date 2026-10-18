@@ -101,7 +101,10 @@ native claim and the browser race run as Mac load allows, so that Electron's run
    the target window, flourishes on the action and fades. It never moves the pointer, takes focus or catches clicks. It is drawn
    by the existing consent-host helper, on by default with an off switch, kept out of benchmark timing, and its CPU cost is
    measured. LoC's art director designs the hand to match the video. About a day, after the tag.
-8. Smaller queued work: NP-8 (native-path follow-up), FM3 (forms), TB2, CH1 (Chess save), AS-3 to AS-9, AM1FR.
+8. The open items from the 2026-10-17/18 studies, listed with sources and done criteria in `ledger/LEDGER.md`, section
+   "OPEN ITEMS from the 2026-10-17/18 studies" (Word branch steering, the dialog continuation's stopped remainders, typing receipts,
+   preview and drag paths, harness loose ends, the ghost hand plan).
+9. Smaller queued work: NP-8 (native-path follow-up), FM3 (forms), TB2, CH1 (Chess save), AS-3 to AS-9, AM1FR.
 
 ## 3. Live checks still owed
 
