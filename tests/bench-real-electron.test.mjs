@@ -9,6 +9,7 @@ import { checkEditor, cleanupElectron, editorLaunchArgs, editorMains, makeEditor
 import { checkChat, cleanupChat, expectedChat, labelsChat, observationFromAX, prepareChat,
   promptChat, setupChat } from '../bench/real-chat.mjs';
 import { getTasks } from '../bench/tasks.mjs';
+const { openPidFixture } = await import('../bench/real-electron.mjs');
 
 function context(t) {
   const dir = mkdtempSync(join(tmpdir(), 'electron-check-'));
@@ -175,6 +176,89 @@ function helperClock() {
   return { events, clock: { now: () => now, wait: ms => { now += ms; }, emit: value => events.push(value) } };
 }
 const QUIT = { pid: 900, bundle: 'com.microsoft.VSCode', appPath: '/Applications/Visual Studio Code.app', waitMs: 1000 };
+
+function fakePidFixture({ running = false, ambiguous = false, wrongIdentity = false, noReceipt = false, exitConfirmed = true, exitError = false } = {}) {
+  const bundle = 'org.mozilla.firefox', appPath = '/Applications/Firefox.app', calls = [];
+  let alive = running, now = START;
+  const api = {
+    launch: request => {
+      calls.push(['launch', request.target]); alive = true;
+      return { pid: 900, bundle, path: appPath, launchedAtMs: START };
+    },
+    running: pid => alive ? { pid, bundle: wrongIdentity ? 'org.example.other' : bundle, path: appPath, launchedAtMs: START,
+      terminate() { calls.push(['terminate', pid]); return true; },
+      forceTerminate() { assert.fail('the own sheet should close the app'); } } : null,
+    dontSave: pid => { calls.push(['sheet', pid]); return ['own-button']; },
+    press: button => { calls.push(['press', button]); alive = false; },
+  };
+  const options = {
+    exec: async () => assert.fail('a new fixture needs a launch receipt, not open followed by an inventory guess'),
+    open: async (bundle, target) => calls.push(['open-existing', bundle, target]),
+    exited: async pid => { calls.push(['exited', pid]); if (exitError) throw new Error('process state unreadable'); return exitConfirmed; },
+    run: async (file, args) => {
+      assert.equal(file, '/usr/bin/osascript');
+      assert.deepEqual(args.slice(0, 2), ['-l', 'JavaScript']);
+      const request = JSON.parse(args.at(-1));
+      calls.push(['helper', request.mode]);
+      const helper = editorHelper();
+      helper.nativeElectron = () => ({ ...api,
+        table: () => alive ? Array.from({ length: ambiguous ? 2 : 1 }, (_, i) =>
+          ({ pid: 900 + i, bundle, path: appPath, launchedAtMs: START })) : [],
+      });
+      let stdout = '';
+      helper.$ = Object.assign(value => ({ dataUsingEncoding: () => value }), {
+        NSFileHandle: { fileHandleWithStandardOutput: { writeData: data => { stdout += data; } } },
+      });
+      helper.Date = { now: () => now };
+      helper.waitSeconds = seconds => { now += seconds * 1000; };
+      helper.run([JSON.stringify(request)]);
+      return { groupClean: true, exit: { code: 0 }, stdout: noReceipt && request.mode === 'quit' ? '' : stdout };
+    },
+  };
+  return { calls, options, spec: { app: 'Firefox', bundle, target: 'http://127.0.0.1:9/fixture/' } };
+}
+
+test('Firefox cleanup uses its launched pid and answers only the helper’s own sheet', async () => {
+  const mac = fakePidFixture(), ctx = {};
+  assert.equal(typeof openPidFixture, 'function');
+  await openPidFixture(ctx, mac.spec, mac.options);
+  assert.equal(ctx.electronLease.pid, 900);
+  await cleanupElectron(ctx);
+  assert.deepEqual(mac.calls.filter(call => ['terminate', 'sheet', 'press'].includes(call[0])),
+    [['terminate', 900], ['sheet', 900], ['press', 'own-button']]);
+});
+
+test('Firefox cleanup leaves a pre-existing instance running and rejects ambiguous launches', async () => {
+  assert.equal(typeof openPidFixture, 'function');
+  const existing = fakePidFixture({ running: true }), ctx = {};
+  await openPidFixture(ctx, existing.spec, existing.options);
+  await cleanupElectron(ctx);
+  assert.equal(ctx.electronLease.launched, false);
+  assert.equal(existing.calls.some(call => call[0] === 'terminate'), false);
+  const ambiguous = fakePidFixture({ running: true, ambiguous: true });
+  await assert.rejects(openPidFixture({}, ambiguous.spec, ambiguous.options), /ambiguous/);
+  assert.equal(ambiguous.calls.some(call => call[0] === 'open'), false);
+});
+
+test('Firefox cleanup refuses a changed identity or a missing quit receipt', async () => {
+  assert.equal(typeof openPidFixture, 'function');
+  for (const options of [{ wrongIdentity: true }, { noReceipt: true }]) {
+    const mac = fakePidFixture(options), ctx = {};
+    await openPidFixture(ctx, mac.spec, mac.options);
+    await assert.rejects(cleanupElectron(ctx), options.wrongIdentity ? /identity changed/ : /quit unconfirmed/);
+    if (options.wrongIdentity) assert.equal(mac.calls.some(call => call[0] === 'terminate'), false);
+  }
+});
+
+test('Firefox cleanup retains the stop when AppKit exit and the independent process check disagree', async () => {
+  for (const options of [{ exitConfirmed: false }, { exitError: true }]) {
+    const mac = fakePidFixture(options), ctx = {};
+    await openPidFixture(ctx, mac.spec, mac.options);
+    await assert.rejects(cleanupElectron(ctx), /exit disagreement/);
+    assert.equal(ctx.electronLease.appQuit, undefined);
+    assert.deepEqual(ctx.exitDisagreements, [{ app: 'Firefox', bundle: 'org.mozilla.firefox', step: 'quit', pid: 900 }]);
+  }
+});
 
 test('editor helper answers its own Don\'t Save sheet, forces only after the wait and refuses another identity', () => {
   const { quitElectron, waitReady } = editorHelper();

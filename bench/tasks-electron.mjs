@@ -1,6 +1,6 @@
 import { serveRealPage, serveWebPage, checkForm, checkWeb } from './real-server.mjs';
 import { acquireFixture } from './real-run.mjs';
-import { EDITORS, prepareEditor, setupEditor, checkEditor, openElectron, cleanupElectron, promptEditor } from './real-electron.mjs';
+import { EDITORS, prepareEditor, setupEditor, checkEditor, openPidFixture, cleanupElectron, promptEditor } from './real-electron.mjs';
 import { SLACK, SPOTIFY, APP_NAMES, setupSlack, promptSlack, checkSlack, setupSpotify, promptSpotify, checkSpotify,
   cleanupSpotify } from './real-apps.mjs';
 import { CHAT_APPS, prepareChat, setupChat, promptChat, checkChat, cleanupChat,
@@ -36,7 +36,7 @@ function firefoxTask(kind, serve, check) {
     setup: async ctx => {
       if (kind === 'form') await serve(ctx);
       else await serve(ctx, kind);
-      await acquireFixture(ctx, 'browser', () => openElectron(ctx, {
+      await acquireFixture(ctx, 'browser', () => openPidFixture(ctx, {
         app: 'Firefox', bundle: 'org.mozilla.firefox', target: ctx.url,
       }));
     },
