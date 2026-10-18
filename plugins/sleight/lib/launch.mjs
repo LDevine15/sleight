@@ -601,7 +601,8 @@ export function runScript(script, request, options = {}) {
   const { cleanup = false, run = execFile } = typeof options === 'function' ? { run: options } : options;
   if (helpersClosing && !cleanup) return Promise.resolve({ ok: false, error: 'sleight session is closing' });
   // Base64 PNGs from ordinary app windows can exceed execFile's 1 MiB default.
-  const execOptions = { timeout: script === 'open-file-window.js' ? 1000 : cleanup ? 3000 : 30000,
+  // The ghost hand stops waiting for locate.js after 2 s; a stalled AX app must not leave osascripts running.
+  const execOptions = { timeout: script === 'open-file-window.js' ? 1000 : script === 'hand/locate.js' ? 2500 : cleanup ? 3000 : 30000,
     ...(script === 'hover.js' ? { maxBuffer: 16 * 1024 * 1024 } : {}) };
   if (script === 'drag.js') request = { ...request, deadline: Date.now() + execOptions.timeout };
   return new Promise(resolve => {

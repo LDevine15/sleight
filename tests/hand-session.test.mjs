@@ -169,6 +169,45 @@ test('SLEIGHT_HAND=0, a missing client module or a disabled client means no hand
   assert.equal(sent.length, 2);
 });
 
+test('hide drops calls still in flight, so no frame follows it into a local drag or hover', async () => {
+  const f = fixture();
+  let release;
+  f.setAnswer(() => new Promise(r => { release = r; }));
+  admit(f, 1, 'await app.click([400, 196])');
+  await f.run();
+  f.hand.hide();
+  release(GEOMETRY); await f.run();
+  assert.equal(f.sent.length, 0, 'the click whose geometry came back after hide shows nothing');
+  assert.equal(f.client.hidden, 1);
+  // Held frames waiting for approvals are dropped too, and the approval no longer beats.
+  f.setAnswer(() => GEOMETRY);
+  admit(f, 2, 'await app.click([400, 196])'); approval(f, 'a1', 'click'); f.hand.answered('a1', 'accept'); await f.run(); f.hand.result(2, false);
+  f.sent.length = 0;
+  admit(f, 3, 'await app.click([400, 196])'); await f.run();
+  approval(f, 'a2', 'click');
+  f.hand.hide();
+  f.hand.answered('a2', 'accept');
+  assert.equal(f.sent.length, 0);
+});
+
+test('a hide while the client loads reaches it once loaded, and a declined approval hides', async () => {
+  let finish;
+  const loaded = { enabled: true, sent: [], hidden: 0, send(frame) { this.sent.push(frame); }, hide() { this.hidden++; }, close() {} };
+  const f = fixture({ client: undefined, loadClient: () => new Promise(r => { finish = r; }) });
+  admit(f, 1, 'await app.click([400, 196])');
+  await f.run();
+  f.hand.hide();
+  finish({ createHandClient: () => loaded }); await f.run();
+  assert.equal(loaded.hidden, 1);
+  assert.deepEqual(loaded.sent, [], 'the call admitted before the hide shows nothing');
+  const g = fixture();
+  admit(g, 1, 'await app.click([400, 196]); await app.click([20, 20]);');
+  approval(g, 'a1', 'click'); g.hand.answered('a1', 'decline');
+  assert.equal(g.client.hidden, 1);
+  await g.run();
+  assert.equal(g.sent.length, 0);
+});
+
 test('hide and close reach the client, and a throwing client never reaches the relay', async () => {
   const f = fixture();
   admit(f, 1, 'await app.click([400, 196])'); await f.run();

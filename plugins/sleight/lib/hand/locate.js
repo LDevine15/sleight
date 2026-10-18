@@ -82,14 +82,16 @@ function matches(el, identity, role) {
     (!identity.description || scalar(el, 'AXDescription') === identity.description) &&
     (!identity.title || scalar(el, 'AXTitle') === identity.title || scalar(el, 'AXDescription') === identity.title);
 }
-// Each identity's frame when exactly one element in the window has it; others are left out.
-function elements(win, identities) {
+// Each identity's frame when exactly one element in the window has it; others are left out. A walk cut short
+// by its depth, element or time limit proves nothing unique, so it finds nothing.
+function elements(win, identities, limit = ELEMENT_LIMIT, ms = WALK_MS) {
   const entries = Object.entries(identities ?? {}).map(([number, identity]) => ({ number, identity, found: [] }));
   if (!entries.length) return {};
   const started = Date.now();
-  let visited = 0;
+  let visited = 0, truncated = false;
   const walk = (el, depth) => {
-    if (depth >= 64 || ++visited > ELEMENT_LIMIT || Date.now() - started > WALK_MS) return;
+    if (truncated) return;
+    if (depth >= 64 || ++visited > limit || Date.now() - started > ms) { truncated = true; return; }
     const role = scalar(el, 'AXRole');
     if (role === 'AXToolbar' && depth > 0) return;
     for (const entry of entries) if (entry.found.length < 2 && matches(el, entry.identity, role)) entry.found.push(el);
@@ -97,6 +99,7 @@ function elements(win, identities) {
   };
   walk(win, 0);
   const out = {};
+  if (truncated) return out;
   for (const entry of entries) if (entry.found.length === 1) { const f = frameOf(entry.found[0]); if (f) out[entry.number] = f; }
   return out;
 }

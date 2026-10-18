@@ -18,9 +18,16 @@ export function createRelayHand({ client, loadClient = () => import('./client.mj
   trace = () => {}, now = () => performance.now(), defer = fn => setImmediate(fn), locateTimeoutMs = 2000, lateMs = 1500,
   env = process.env } = {}) {
   if (env.SLEIGHT_HAND === '0' || typeof locate !== 'function') return undefined;
-  let closed = false, locating = false, resolved = client ?? undefined, loading;
+  let closed = false, locating = false, resolved = client ?? undefined, loading, pendingHide = false;
   const load = () => loading ??= (client ? Promise.resolve(client) : Promise.resolve().then(loadClient).then(m => m.createHandClient(clientOptions)))
-    .then(c => (resolved = c && typeof c.send === 'function' ? c : null), () => (resolved = null));
+    .then(c => (resolved = c && typeof c.send === 'function' ? c : null), () => (resolved = null))
+    .then(() => { if (pendingHide) hideClient(); });
+  // Hides now, or as soon as a client still loading arrives.
+  function hideClient() {
+    if (resolved === undefined) { pendingHide = true; return; }
+    pendingHide = false;
+    try { resolved?.hide(); } catch {}
+  }
   const live = () => !closed && resolved && resolved.enabled !== false;
   const calls = new Map(); // call id -> call, admission order
   const approvals = new Map(); // engine request id -> { call, tool }
@@ -121,7 +128,8 @@ export function createRelayHand({ client, loadClient = () => import('./client.mj
       if (!entry) return;
       approvals.delete(requestId);
       const { call, tool } = entry;
-      if (action !== 'accept') { call.dropped = true; forget(call); return; }
+      // A declined action never runs: nothing of this call may still show.
+      if (action !== 'accept') { call.dropped = true; forget(call); hideClient(); return; }
       if (call.beats) call.beats.push(tool); else beat(call, tool);
     }),
     result: guarded((id, failed) => {
@@ -133,13 +141,18 @@ export function createRelayHand({ client, loadClient = () => import('./client.mj
       if (failed) {
         call.dropped = true; calls.delete(id);
         // Frames sent ahead on the schedule may show actions the failure stopped.
-        if (call.entries?.some(e => e.sent && e.due > now())) try { resolved?.hide(); } catch {}
+        if (call.entries?.some(e => e.sent && e.due > now())) hideClient();
         return;
       }
       dispatch(call);
     }),
-    // Before a local pointer tool (drag, hover): its cover checks and the person's view see no hand.
-    hide: guarded(() => { if (resolved) try { resolved.hide(); } catch {} }),
+    // Before a local pointer tool (drag, hover): its cover checks and the person's view see no hand, so every
+    // call still in flight is dropped too, including one whose geometry comes back during the tool.
+    hide: guarded(() => {
+      for (const call of calls.values()) call.dropped = true;
+      calls.clear(); approvals.clear();
+      hideClient();
+    }),
     close: guarded(() => {
       closed = true; calls.clear(); approvals.clear();
       if (resolved) try { resolved.close(); } catch {}
