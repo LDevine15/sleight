@@ -772,12 +772,20 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             : typeof spec?.id === 'string' && typeof spec?.label === 'string' ? ['ID ' + JSON.stringify(spec.id) + ' and label', spec.label, (line, value) => hasIdentifier(line, spec.id) && hasLabel(line, value)]
             : typeof spec?.id === 'string' ? ['ID', spec.id, hasIdentifier]
             : typeof spec?.label === 'string' ? ['label', spec.label, hasLabel] : ['line', spec?.line, (line, value) => line === value];
+          // An element number written as an ID ({ id: "18" }) matches no label or bare line: it may mean element 18 or an
+          // element labeled 18 (a date picker's days), and the guard doesn't choose. The relay sends it as a number when
+          // the tree Claude saw allows only that reading (FT1c, form-travel, race-1017).
+          const numeric = kind === 'ID' && /^\\d+$/.test(target);
+          const bareLine = line => /^[a-z][a-z ]* /.test(line) &&
+            !/,|: /.test(line) && line.slice(/^[a-z][a-z ]*? (?=[^a-z ]|$)/.exec(line)?.[0].length ?? line.length) === target;
           const findTarget = lines => {
             let found = [...lines].filter(([, line]) => match(line, target));
             if (bare !== undefined && !found.length) found = [...lines].filter(([, line]) => hasIdentifier(line, target));
+            // An { id } that no element carries is taken as a label, as { label } would be: { id: "Reference code" } reached
+            // only the field's text label by the bare-line match below, which the engine can't set (form-travel r2, race-1017).
+            if (!found.length && kind === 'ID' && !numeric) return [...lines].filter(([, line]) => hasLabel(line, target) || bareLine(line));
             // A bare line carries no ID, so it can't satisfy { id, label }.
-            if (!found.length && kind !== 'line' && !kind.endsWith(' and label')) found = [...lines].filter(([, line]) => /^[a-z][a-z ]* /.test(line) &&
-              !/,|: /.test(line) && line.slice(/^[a-z][a-z ]*? (?=[^a-z ]|$)/.exec(line)?.[0].length ?? line.length) === target);
+            if (!found.length && kind !== 'line' && !kind.endsWith(' and label') && !numeric) found = [...lines].filter(([, line]) => bareLine(line));
             return found;
           };
           const codeRead = typeof args[0] === 'number' && !byId && state.literals && !state.literals.has(args[0]) ? state.codeReads.get(proxy) : undefined;
@@ -889,9 +897,11 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             // A read on a busy Mac can drop attributes: "button One" for "button Description: 1,
             // ID: One" (2026-10-09). With no match at all, one bare line named exactly that is it.
             let found = findTarget(elements(text));
+            // An { id } that matched by label is looked up as { label } is from here on.
+            const asLabel = kind === 'ID' && found.length > 0 && !found.some(([, line]) => hasIdentifier(line, target));
             const ancestry = found.length > 1 ? contexts(text) : undefined;
             let barItems = [], outside = [];
-            if (found.length > 1 && (kind === 'label' || bare !== undefined && found.every(([, line]) => hasLabel(line, target)))) {
+            if (found.length > 1 && (kind === 'label' || asLabel || bare !== undefined && found.every(([, line]) => hasLabel(line, target)))) {
               // A menu-bar title sharing its label with one element outside the menu bar means that element: { label: "Table" }
               // opened Word's Table menu, which then trapped typing (word-edit-1 and -2, 2026-10-17).
               // A window root named like the title isn't a control, and a disabled one leaves the enabled preference below to choose.
@@ -904,13 +914,20 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
               const content = found.filter(([number]) => ancestry.get(number)?.content);
               if (content.length === 1 && found.every(([number]) => number === content[0][0] || ancestry.get(number)?.menu)) found = content;
             }
+            // A field and its text label share the label, and setValue on the text fails (-10005, not settable): of several
+            // matches, the one settable element is the field (form-travel, race-1017: Reference code, Full name, Email).
+            if (name === 'setValue' && found.length > 1) {
+              const settable = found.filter(([, line]) => /^[a-z][a-z ]* \\([^()]*\\bsettable\\b[^()]*\\)/.test(line));
+              if (settable.length === 1) found = settable;
+            }
             const disabledNote = !found.length && (kind === 'label' || kind === 'label or ID') ? disabledLabelNote(text, target) : undefined;
             if (disabledNote) throw stop('sleight stopped before ' + name + ': ' + disabledNote);
             if (found.length !== 1) {
               const split = barItems.length && outside.length > 1 && found.length > 1;
               const candidates = split ? 'menu-bar item ' + barItems.map(([number]) => number).join(', ') + '; other elements ' + outside.map(([number]) => number + ' (parent ' + ancestry.get(number).parent + ')').join(', ')
                 : found.map(([number]) => 'candidate ' + number + ': parent ' + ancestry.get(number).parent).join('; ');
-              throw stop('sleight stopped before ' + name + ': ' + (found.length ? found.length + ' elements' : 'no element') + ' with ' + kind + ' ' + JSON.stringify(target) + ' in this window.' + (candidates ? ' ' + candidates + '.' : '') + ${quoted(/* lean notice */ ' Use an element number or another ID from the window below.')});
+              throw stop('sleight stopped before ' + name + ': ' + (found.length ? found.length + ' elements' : 'no element') + ' with ' + (asLabel ? 'label' : kind) + ' ' + JSON.stringify(target) + ' in this window.' + (candidates ? ' ' + candidates + '.' : '') + ${quoted(/* lean notice */ ' Use an element number or another ID from the window below.')} +
+                (numeric ? ${quoted(/* lean notice */ ' An element number goes bare: ')} + name + '(' + target + ').' : ''));
             }
             args = [found[0][0], ...args.slice(1)];
           }

@@ -24,8 +24,8 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   Stop at a required confirmation.
 - In a browser, `setValue` the address bar and press Return in one call. Send a new tab's URL in that
   call.
-- After renumbering, prefer stable IDs or labels to element numbers:
-  `await app.click({ id: "<ID from the tree>" }); await app.click({ label: "<label>" })`.
+- After renumbering, prefer an `ID:` value or label to an element number:
+  `await app.click({ id: "<ID: value>" }); await app.click({ label: "<label>" })`.
 - End on the action. Its result includes changed lines. Don't read just to confirm them.
   For missing information, use `await app.getAXState()`.
 - If acquisition returns an empty tree, or a result says the user changed the app or a header

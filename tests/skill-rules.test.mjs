@@ -124,6 +124,13 @@ test('both skills make app.pickFromList the first move on a list with more rows 
   }
 });
 
+// FT1c: "<ID from the tree>" read as any number from the tree: { id: "18" } in 2 of 3 Safari form-travel runs (race-1017).
+test('the skill says { id } takes the line\'s ID: value', () => {
+  const rules = skillRules().replace(/\s+/g, ' ');
+  assert.match(rules, /- After renumbering, prefer an `ID:` value or label to an element number: `await app\.click\(\{ id: "<ID: value>" \}\); await app\.click\(\{ label: "<label>" \}\)`\./);
+  assert.doesNotMatch(rules, /<ID from the tree>/);
+});
+
 // R4: Firefox races (2026-10-18) opened a new tab in 12/12 Haiku runs and called nonexistent cua.listWindows/listBrowsers in 5.
 // Engine-path browser sessions never see the Browsers section, so the navigation line sits outside it.
 test('native sessions learn to navigate a browser outside the Browsers section', () => {

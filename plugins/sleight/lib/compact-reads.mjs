@@ -1831,6 +1831,22 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // A literal number Claude took from an older tree names the element it saw there. When that
     // element's text is on exactly one line of the current tree, the action can name it by that
     // line ({ line }), which the guard looks up fresh, instead of costing Claude a read and a turn.
+    // { id: "18" } written for element 18: 2 of 3 Safari form-travel runs (race-1017), each stop a call. When the
+    // tree Claude last saw has element 18 and no element whose ID or label is "18", the number is the only reading,
+    // so the action names it bare and gets the number checks. Two readings, or a number it never saw, stay as written.
+    numberIds(window, code) {
+      const entry = window && seen.get(documentKey({ title: window.title, app: window.app, url: window.url }));
+      if (!entry || typeof code !== 'string') return undefined;
+      const believed = new Map(entry.believed ?? numbered(entry.lines));
+      const lines = [...believed.values()].map(line => line.replace(/^\t*/, ''));
+      const numbers = [];
+      const out = code.replace(/(\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*)\{\s*(?:id|"id"|'id')\s*:\s*(["'])(\d+)\2\s*\}(?=\s*[,)])/g, (whole, head, quote, digits) => {
+        if (!believed.has(Number(digits)) || lines.some(line => hasIdentifier(line, digits) || hasLabel(line, digits))) return whole;
+        numbers.push(Number(digits));
+        return head + digits;
+      });
+      return numbers.length ? { code: out, numbers } : undefined;
+    },
     // Undefined unless every stale number in the call can be named that way.
     remapStale(window, code) {
       const entry = window && seen.get(documentKey({ title: window.title, app: window.app, url: window.url }));
