@@ -185,6 +185,23 @@ function trappingMenu(text) {
   if (typeof text !== 'string' || /^\t*\d+ menu(?:$|,| (?!bar\b))/m.test(text)) return;
   return selectedMenuEntry(text);
 }
+// A menu item with a menu right below it heads a submenu: its title and its first three enabled items. Clicking
+// Word's Table > Insert alone left the menu-bar title selected and typing reached nothing (word-edit-1, 2026-10-18).
+export function submenuHeader(text, number) {
+  const rows = String(text ?? '').split('\n').map(line => /^(\t*)(\d+) (.*)$/.exec(line))
+    .map(m => m ? { depth: m[1].length, number: Number(m[2]), body: m[3] } : undefined);
+  const at = rows.findIndex(row => row?.number === number), row = rows[at], menu = body => /^menu(?:$|,| (?!bar\b))/.test(body ?? '');
+  if (!row || rows[at + 1]?.depth !== row.depth + 1 || !menu(rows[at + 1].body)) return;
+  let parent;
+  for (let i = at - 1; rows[i] && !parent; i--) if (rows[i].depth < row.depth) parent = rows[i];
+  if (!menu(parent?.body)) return;
+  const name = body => body.replace(/^(?:[a-z][a-z ]* )?(?:\([^()]*\) )*/, '').split(/(?:^|, )(?:Value|ID|Help|Secondary Actions|Description):/)[0].slice(0, 40);
+  const items = [];
+  for (let i = at + 2; rows[i] && rows[i].depth > row.depth + 1 && items.length < 3; i++) {
+    if (rows[i].depth === row.depth + 2 && !/^(?:[a-z][a-z ]* )?\([^()]*\bdisabled\b/.test(rows[i].body) && name(rows[i].body)) items.push(rows[i].number + ' ' + name(rows[i].body));
+  }
+  return { title: name(row.body), items };
+}
 // Whether focus is on the window itself ('window'), another root ('root') or an element inside ('element').
 function focusOn(text) {
   const focus = /^The focused UI element is (\d+) /m.exec(text ?? ''), root = /^(\d+) (.*)$/m.exec(text ?? '');
@@ -302,6 +319,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
     state.boundNumbers = new WeakMap();
     // The previous call's read, when the relay judged it reusable for this call's first action.
     state.prior = update?.prior;
+    // The previous call's final tree of this window, for the menu-trap check when the first key skips its read.
+    state.lastTree = update?.lastTree;
+    // The action names in the call's code, in order, so a click knows whether more follow it.
+    state.actions = update?.actions;
     // Whether this call has acted, and the handle it started on. A call that took no action after the
     // relay split off its acquisition takes that read as its header instead of reading again: 53
     // such reads cost 27 s across the benchmark runs of 2026-10-09.
@@ -372,6 +393,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
     const differentFocusTarget = ${differentFocusTarget.toString()};
     const selectedMenuEntry = ${selectedMenuEntry.toString()};
     const trappingMenu = ${trappingMenu.toString()};
+    const submenuHeader = ${submenuHeader.toString()};
     const focusOn = ${focusOn.toString()};
     // Windows (app and URL or title) whose focus was on an element inside them in a read this session: window-root
     // focus right after opening a file is normal, but after the document had focus it means keys reach nothing.
@@ -601,7 +623,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             typeof args[0] !== 'number' && !(args[0] && typeof args[0] === 'object' && !Array.isArray(args[0]));
           // The call's own acquisition read, for the keyboard checks below when the first action skips its read.
           const priorText = skipFirst ? state.prior?.text : undefined;
+          const lastTree = skipFirst ? state.lastTree : undefined;
           if (skipFirst) state.prior = undefined;
+          if (firstAction) state.lastTree = undefined;
           // The acquisition just before this call read the whole tree. A launching app can take 15 s
           // per read under load (2026-10-09), so reuse it when the app's windows, as the inventory
           // lists them, are exactly what they were then.
@@ -844,13 +868,21 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           const cancel = state.fileOnly && isCancel(name, args, text ?? '');
           if (state.cancelOnly && !cancel) throw new Error('Change review: Cancel target changed. Read the current window before retrying.');
           checkWindow(cancel);
+          // A submenu header clicked as the call's last click, key or secondary action opens nothing anyone acts on.
+          const later = state.actions?.[attempt.index] === name && state.actions.slice(attempt.index + 1);
+          const submenu = name === 'click' && typeof args[0] === 'number' && later && !later.some(next => ['click', 'pressKey', 'performSecondaryAction'].includes(next)) ? submenuHeader(text, args[0]) : undefined;
+          if (submenu) throw stop('sleight stopped before ' + shown + ': element ' + args[0] + ' (' + submenu.title + ')' + ${quoted(/* lean notice */ ' opens a submenu; click the item you want inside it in the same call')} + (submenu.items.length ? ' (e.g. ' + submenu.items.join(', ') + ')' : '') + '.');
           // Keys while a menu is in tracking or while the window itself has focus reach nothing: positive evidence
-          // from this call's read only. Escape and paste go ahead.
+          // from this call's read, or for the menu the previous call's last tree. Escape and paste go ahead.
           const evidence = text ?? priorText;
+          const trapEvidence = evidence ?? lastTree;
           const plainKey = name === 'typeText' || name === 'pressKey' && typeof args[0] === 'string' && !args[0].includes('+') && !/^(?:escape|esc)$/i.test(args[0]);
+          if (trapEvidence !== undefined && (name === 'typeText' || name === 'pressKey' && !/^(?:escape|esc)$/i.test(String(args[0])))) {
+            // Keys go to a dialog or sheet even while the menu bar shows a title selected (word-edit-1, 2026-10-18).
+            const trap = !hasModal(trapEvidence) && trappingMenu(trapEvidence);
+            if (trap) throw stop('sleight stopped before ' + shown + ': menu-bar item ' + trap.number + ' (' + trap.title + ')' + ${quoted(/* lean notice */ ' is selected and its menu takes the keys. Click it to open its menu, then close that menu with `await app.performSecondaryAction(<its menu>, "Cancel")`; Cancel on the menu-bar item alone does nothing.')});
+          }
           if (evidence !== undefined && (name === 'typeText' || name === 'pressKey' && !/^(?:escape|esc)$/i.test(String(args[0])))) {
-            const trap = trappingMenu(evidence);
-            if (trap) throw stop('sleight stopped before ' + shown + ': menu-bar item ' + trap.number + ' (' + trap.title + ')' + ${quoted(/* lean notice */ ' is selected and its menu takes the keys. Cancel it first with await app.performSecondaryAction(')} + trap.number + ${quoted(/* lean notice */ ', "Cancel"), or click the item.')});
             if (plainKey && focusOn(evidence) === 'window' && state.docFocus.has(captureKey(parse(evidence)))) {
               throw stop('sleight stopped before ' + shown + ${quoted(/* lean notice */ ': keyboard focus is on the window itself, so keys have no target. Click the document or the target field first.')});
             }

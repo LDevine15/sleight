@@ -23,14 +23,23 @@ const mark = '[sleight:filtered-read:wm1]';
 const warning = /typed text landed in/;
 
 // word-edit-2 (2026-10-18, lines 104-114): Escape and clicking the menu-bar item reopened the menu; its Cancel closed it.
-const cancelFirst = /Close it(?: with|:) `await app\.performSecondaryAction\(132, "Cancel"\)`, not Escape/;
-test('a selected menu-bar title leads with its Cancel action, not Escape, without promising it will work', () => {
+const cancelItem = /Close it(?: with|:) `await app\.performSecondaryAction\(132, "Cancel"\)`, not Escape/;
+// word-edit-1 (2026-10-18, lines 120 to 150): with no menu showing, Cancel on the title did nothing; clicking it opened
+// its menu, and that menu's Cancel closed it.
+const cancelFirst = /Click 132(?: to open its menu, then close that menu with|, then) `await app\.performSecondaryAction\(<its menu>, "Cancel"\)`/;
+test('a selected menu-bar title with no menu says to open its menu, then cancel that menu', () => {
   for (const prompt of [undefined, 'lean']) {
     const note = openMenuNote(header + '\n' + menu, prompt);
-    assert.match(note, prompt === 'lean' ? /Menu may trap input/ : /a menu may be stuck open; keys and clicks may not reach the document/);
+    assert.match(note, prompt === 'lean' ? /^sleight: menu-bar item 132 traps input\. Click 132, then `await app\.performSecondaryAction\(<its menu>, "Cancel"\)`\.$/
+      : /^sleight: a menu may be stuck open: menu-bar item 132 is selected with no menu showing, and keys may not reach the document\. [^\n]*; Cancel on the menu-bar item alone does nothing\.$/);
     assert.match(note, cancelFirst);
+    assert.doesNotMatch(note, /performSecondaryAction\(132|Try one Escape|Escape once|app\.click\(|closes it|won't land/);
+  }
+  // The title's own Cancel action keeps the direct advice, with its caveat.
+  for (const prompt of [undefined, 'lean']) {
+    const note = openMenuNote(header + '\n' + menu.replace('(selected) Table', '(selected) Table, Secondary Actions: Cancel, Pick'), prompt);
+    assert.match(note, cancelItem);
     assert.match(note, /; if (?:it stays open|still stuck), tell the user\.$/);
-    assert.doesNotMatch(note, /Try one Escape|Escape once|app\.click\(|closes it|won't land/);
   }
 });
 
@@ -41,7 +50,7 @@ test('selected menu-bar items with an explicit role also warn', () => {
 test('a menu element with Cancel for the selected title is the one the note cancels', () => {
   // The menu read as its own root, as in word-edit-2 line 107, and the item's own line carrying Cancel.
   assert.match(openMenuNote(header + '\n' + menu + '\n140 Table, Secondary Actions: Cancel, Pick'), /performSecondaryAction\(140, "Cancel"\)/);
-  assert.match(openMenuNote(header + '\n' + menu.replace('(selected) Table', '(selected) Table, Secondary Actions: Cancel, Pick')), cancelFirst);
+  assert.match(openMenuNote(header + '\n' + menu.replace('(selected) Table', '(selected) Table, Secondary Actions: Cancel, Pick')), cancelItem);
   // Another title's Cancel or a button named like it is not the menu.
   for (const extra of ['140 Insert, Secondary Actions: Cancel, Pick', '\t141 button Table, Secondary Actions: Cancel']) {
     assert.match(openMenuNote(header + '\n' + menu + '\n' + extra), cancelFirst, extra);
@@ -97,6 +106,8 @@ test('the third stuck note for the same window and item says to check typing and
   assert.match(read(menu), cancelFirst);
   assert.doesNotMatch(read(menu), escalated);
   for (let i = 0; i < 3; i++) assert.match(read(menu), escalated);
+  // No menu shows and the title has no Cancel, so the escalation keeps the reopen-then-cancel route.
+  assert.match(read(menu), /instead of repeating Escape or clicks\. Or click 132 to open its menu, then close that menu with `await app\.performSecondaryAction\(<its menu>, "Cancel"\)`/);
   // Another selected title starts its count again, then escalates.
   const other = menu.replace('Table', 'Insert');
   assert.doesNotMatch(read(other), escalated);

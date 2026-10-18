@@ -244,12 +244,15 @@ export function openMenuNote(text, prompt, shown = 0) {
   if (menu) return promptNotice(`sleight: a menu is open (element ${menu[1]}). Escape doesn't always close a menu in a background app; \`await app.performSecondaryAction(${menu[1]}, "Cancel")\` does.`, prompt);
   const entry = selectedMenuEntry(text), number = entry?.number;
   if (!number) return;
-  if (shown >= 2) return promptNotice(`sleight: a menu may still be stuck open (menu-bar item ${number}), and keys may be swallowed while it is. Check that typing landed (a value or count in the tree changed), and switch route (a toolbar or ribbon control, or a keyboard shortcut) instead of repeating Escape or clicks.`, prompt);
   // Escape and clicking the menu-bar item left Word's Table menu open or reopened it, and its Cancel action closed it
   // (word-edit-2, 2026-10-18). The element with Cancel is the item's own line, or its menu read as a root.
-  const cancel = cancelTarget(text, entry.title) ?? number;
-  return shown ? `sleight: a menu may still be stuck open (menu-bar item ${number}).` :
-    promptNotice(`sleight: a menu may be stuck open; keys and clicks may not reach the document. Close it with \`await app.performSecondaryAction(${cancel}, "Cancel")\`, not Escape or a click; if it stays open, tell the user.`, prompt);
+  // With no Cancel on that line, Cancel on the item did nothing; clicking it opened its menu, whose Cancel closed it
+  // (word-edit-1, 2026-10-18, lines 120 to 136).
+  const cancel = cancelTarget(text, entry.title);
+  if (shown >= 2) return promptNotice(`sleight: a menu may still be stuck open (menu-bar item ${number}), and keys may be swallowed while it is. Check that typing landed (a value or count in the tree changed), and switch route (a toolbar or ribbon control, or a keyboard shortcut) instead of repeating Escape or clicks.${cancel === undefined ? ` Or click ${number} to open its menu, then close that menu with \`await app.performSecondaryAction(<its menu>, "Cancel")\`; Cancel on the menu-bar item alone does nothing.` : ''}`, prompt);
+  return shown ? `sleight: a menu may still be stuck open (menu-bar item ${number}).` : cancel === undefined
+    ? promptNotice(`sleight: a menu may be stuck open: menu-bar item ${number} is selected with no menu showing, and keys may not reach the document. Click ${number} to open its menu, then close that menu with \`await app.performSecondaryAction(<its menu>, "Cancel")\`; Cancel on the menu-bar item alone does nothing.`, prompt)
+    : promptNotice(`sleight: a menu may be stuck open; keys and clicks may not reach the document. Close it with \`await app.performSecondaryAction(${cancel}, "Cancel")\`, not Escape or a click; if it stays open, tell the user.`, prompt);
 }
 function cancelTarget(text, title) {
   for (const line of text.split('\n')) {
@@ -409,6 +412,11 @@ export function firstCallBatchSetting(value) {
 // Element numbers written as literals in a call's code. Others were computed in the call.
 export function literalNumbers(code) {
   return [...new Set([...String(code ?? '').matchAll(/\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*(\d+)\s*[,)]/g)].map(m => Number(m[1])))];
+}
+// The action names in a call's code, in order, when the code runs each once: no loops or sleight helpers.
+export function guardActions(code) {
+  if (typeof code !== 'string' || /\b(?:for|while|do)\b|\.(?:forEach|map|reduce|some|every)\(|\bsleight\s*\./.test(code)) return;
+  return [...code.matchAll(/\.(click|drag|scroll|selectText|setValue|performSecondaryAction|paste|pressKey|typeText)\s*\(/g)].map(m => m[1]);
 }
 function numberedHandles(code) {
   return [...new Set([...String(code ?? '').matchAll(/([A-Za-z_$][\w$]*)?\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*\d+\s*[,)]/g)].map(m => m[1]))];
@@ -924,7 +932,7 @@ export function createRelay({
       if (!isCurrent()) throw new Error(/* notice */ 'Engine restart was stopped.');
       clipboard = newClipboard();
       if (!update) { compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
-      resultCalls.clear(); docsShown = backend; priorRead = undefined;
+      resultCalls.clear(); docsShown = backend; priorRead = undefined; lastTree = undefined;
       if (!backend) { deferredEngineDocs = []; clientJsDelivered = false; }
       // Rules held for Claude's first js result go with the next engine docs instead.
       if (deferredRules) { deferredRules = undefined; rulesShown = browserRulesShown = false; }
@@ -1103,6 +1111,8 @@ export function createRelay({
   // Every tools/call gets the next number. An acquisition's read can stand in for the guard's
   // first read only in the call right after it (priorRead.seq + 1).
   let callSeq = 0, priorRead;
+  // The previous call's final tree and its window, for the guard's menu-trap check when the next call's first key reads nothing.
+  let lastTree;
   const callStarts = new Map(); // call id -> when it arrived, so a read's duration is known
   const callSeqs = new Map();
   let docsShown = false;
@@ -3169,6 +3179,8 @@ export function createRelay({
                 quietEdits: !careful && !documentMode && !changeReview,
                 bind: !careful && !documentMode && !changeReview,
                 adoptUrl: !documentMode && !changeReview && !menuBaseline, skipAppWrap: browserHandles.has('app'), prior,
+                lastTree: lastTree && lastTree.seq + 1 === callSeqs.get(msg.id) && sameWindow(lastTree.window, target) ? lastTree.text : undefined,
+                actions: guardActions(originalCode),
                 ...(light ? { lightReturn: light } : {}),
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
@@ -3771,6 +3783,9 @@ export function createRelay({
           split, app: lastWindow.app, title: lastWindow.title, id: appId,
           windows: settled ? null : before ? before[0]?.windows ?? [] : null, text: text.slice(text.indexOf('Window: ')) }
         : undefined;
+      const finalTree = automatic ? undefined : text.slice(Math.max(0, text.lastIndexOf('Window: ')));
+      const finalWindow = finalTree && windowFromText(finalTree);
+      if (!automatic) lastTree = finalWindow && /\n\t*\d+ /.test(finalTree) ? { seq: callSeqs.get(msg.id), window: finalWindow, text: finalTree } : undefined;
       callSeqs.delete(msg.id); callStarts.delete(msg.id); preHealth.delete(msg.id);
       if (!confirmedBrowser && selectedWindow && !call.read && call.target && msg.result &&
           (!lastWindow || ['title', 'app', 'url'].some(key => lastWindow[key] !== call.target[key]))) {
