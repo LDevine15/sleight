@@ -46,7 +46,7 @@ test('a refused dry run prints one JSON document with its configuration errors',
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError } = {}) {
+async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError, daemonError, daemonStopError } = {}) {
   if (!auth) {
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
@@ -87,6 +87,11 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     },
     genericSettings, acceptGenericCatalog() {}, worldCLI, worldArm, worldSettings, assertWorldCLI,
     isNativeArm, nativeArmPlan,
+    ensureCuaDaemon: async dir => {
+      calls.push(['cua daemon', dir]);
+      if (daemonError) throw new Error(daemonError);
+      return { started: true, stop: async () => { calls.push('cua daemon stop'); if (daemonStopError) throw new Error(daemonStopError); } };
+    },
     prepareNativeArm: (name, options) => {
       const plan = nativeArmPlan(name, options);
       if (options.dryRun || plan.unsupported) return plan;
@@ -130,7 +135,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
       return { load: [1, 2, 3], calculatorPid: 123, onScreenWindows: 1 };
     },
     runOwned: async (_command, _args, options) => {
-      commands.push(_command);
+      commands.push(_command); calls.push('arm discovery');
       envs.push(options.env); options.onStdout(JSON.stringify({ type: 'system', subtype: 'init', apiKeySource: keySource, mcp_servers: [{ name: arm === 'lcu' || /\/lcu-arm$/.test(options.cwd ?? '') ? 'lcu' : 'plugin:sleight:computer', status: 'connected' }, ...(extraServer ? [{ name: extraServer, status: 'connected' }] : [])] }) + '\n');
       preflightDone = true;
       return { groupClean: true };
@@ -551,6 +556,55 @@ test('native API arms keep their own config directory while using the benchmark 
   for (const env of result.envs) {
     assert.match(env.CLAUDE_CONFIG_DIR, /mcp-cua-arm\/claude$/);
     assert.equal(env.ANTHROPIC_API_KEY, 'fixture');
+  }
+});
+
+test('the cua arm gets its daemon before preflight and stops it when the pass ends', async () => {
+  const result = await runner({ arm: 'cua', drive: true, outcome: { passed: true }, keySource: 'ANTHROPIC_API_KEY',
+    auth: { mode: 'api', env: { ANTHROPIC_API_KEY: 'fixture' }, unset: [], spent: 0, capUsd: 100 } });
+  assert.equal(result.error, undefined);
+  const names = result.calls.map(call => Array.isArray(call) ? call[0] : call);
+  assert.equal(names.filter(name => name === 'cua daemon').length, 1);
+  assert.equal(result.calls.find(call => call[0] === 'cua daemon')[1], '/owner/Library/Caches/sleight-bench/mcp-cua-arm');
+  assert.ok(names.indexOf('cua daemon') > names.indexOf('lock'));
+  assert.ok(names.indexOf('cua daemon') < names.indexOf('arm discovery'));
+  assert.ok(names.indexOf('cua daemon') < names.indexOf('real run'));
+  assert.deepEqual(names.filter(name => name === 'cua daemon stop'), ['cua daemon stop']);
+  assert.ok(names.indexOf('cua daemon stop') > names.lastIndexOf('real run'));
+  assert.ok(names.indexOf('cua daemon stop') < names.indexOf('unlock'));
+});
+
+test('a refused login never starts the cua daemon and one that will not listen stops the pass before discovery', async () => {
+  const result = await runner({ arm: 'cua', loginError: 'Not logged in',
+    auth: { mode: 'login', env: {}, unset: [], spent: 0, capUsd: 100 } });
+  assert.equal(result.calls.some(call => call[0] === 'cua daemon'), false, 'a refused login never starts the daemon');
+  const failing = await runner({ arm: 'cua', daemonError: 'Cua daemon did not listen' });
+  assert.equal(failing.exitCode, 1);
+  assert.ok(failing.logs.some(line => /Cua daemon did not listen/.test(line)));
+  assert.equal(failing.commands.length, 0);
+  assert.equal(failing.calls.includes('real run'), false);
+  assert.equal(failing.calls.includes('unlock'), true);
+});
+
+test('a task that throws still stops the cua daemon it started', async () => {
+  const result = await runner({ arm: 'cua', throws: true });
+  assert.ok(result.calls.includes('cua daemon stop'));
+  assert.ok(result.calls.indexOf('cua daemon stop') < result.calls.indexOf('unlock'));
+});
+
+test('a failing daemon stop is reported and the live lock is still released', async () => {
+  const result = await runner({ arm: 'cua', daemonStopError: 'stuck', drive: true });
+  assert.equal(result.exitCode, 1);
+  assert.ok(result.logs.some(line => /Cua daemon: stuck/.test(line)));
+  assert.equal(result.calls.at(-1), 'unlock');
+});
+
+test('the cua daemon is neither started for other arms nor in a dry run', async () => {
+  for (const options of [{ arm: 'sleight', drive: true }, { arm: 'peekaboo', drive: true }, { arm: 'cua', suite: 'world', dryRun: true },
+    { arm: 'cua', setupOnly: true }]) {
+    const result = await runner(options);
+    assert.equal(result.calls.some(call => Array.isArray(call) && call[0] === 'cua daemon'), false, JSON.stringify(options));
+    assert.equal(result.calls.includes('cua daemon stop'), false);
   }
 });
 
