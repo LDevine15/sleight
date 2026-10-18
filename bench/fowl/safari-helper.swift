@@ -19,6 +19,10 @@ func string(_ element: AXUIElement, _ name: String) -> String {
 func elements(_ element: AXUIElement, _ name: String = "AXChildren") -> [AXUIElement] {
     attribute(element, name) as? [AXUIElement] ?? []
 }
+// Safari 26 lists a window's sheet as an AXSheet child and leaves the AXSheets attribute empty (2026-10-18).
+func sheets(_ window: AXUIElement) -> [AXUIElement] {
+    elements(window, "AXSheets") + elements(window).filter { string($0, "AXRole") == "AXSheet" }
+}
 func pump(_ seconds: Double) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
 var references: [(String, AXUIElement)] = []
 func identifier(_ element: AXUIElement) -> String {
@@ -164,7 +168,7 @@ func windowById(_ id: String) throws -> AXUIElement {
     let app = try ownedAX()
     guard let entry = references.first(where: { $0.0 == id }),
           elements(app, "AXWindows").contains(where: { CFEqual($0, entry.1) }),
-          elements(entry.1, "AXSheets").isEmpty else { throw refuse("BENCH_SAFARI_WINDOW_UNPROVED") }
+          sheets(entry.1).isEmpty else { throw refuse("BENCH_SAFARI_WINDOW_UNPROVED") }
     guard try profileEvidence(entry.1) != nil else { throw refuse("BENCH_SAFARI_PROFILE_WINDOW_UNPROVED") }
     return entry.1
 }
@@ -307,7 +311,7 @@ func confirmUnsubmittedFormClose(_ window: AXUIElement) throws -> Bool {
     while Date() < deadline {
         guard elements(try ownedAX(), "AXWindows").contains(where: { CFEqual($0, window) }) else { return confirmed }
         if !confirmed {
-            for sheet in elements(window, "AXSheets") where elements(sheet).contains(where: { string($0, "AXValue").hasPrefix("Are you sure you want to close this window?") }) {
+            for sheet in sheets(window) where elements(sheet).contains(where: { string($0, "AXValue").hasPrefix("Are you sure you want to close this window?") }) {
                 for button in elements(sheet) where string(button, "AXRole") == "AXButton" && string(button, "AXTitle") == "Close" {
                     guard AXUIElementPerformAction(button, "AXPress" as CFString) == .success else { throw refuse("BENCH_SAFARI_AX_PRESS_REFUSED") }
                     confirmed = true
@@ -363,7 +367,7 @@ func command(_ input: [String: Any]) throws -> [String: Any] {
         guard !profileRequested, let started = birth, Date().timeIntervalSince(started) < 120 else { throw refuse("BENCH_SAFARI_LAUNCH_WINDOW_UNPROVED") }
         guard let entry = references.first(where: { $0.0 == id }),
               elements(app, "AXWindows").contains(where: { CFEqual($0, entry.1) }),
-              elements(entry.1, "AXSheets").isEmpty else { throw refuse("BENCH_SAFARI_WINDOW_UNPROVED") }
+              sheets(entry.1).isEmpty else { throw refuse("BENCH_SAFARI_WINDOW_UNPROVED") }
         guard try isStartPage(entry.1) else { throw refuse("BENCH_SAFARI_LAUNCH_WINDOW_UNPROVED") }
         guard let closeValue = attribute(entry.1, "AXCloseButton"), CFGetTypeID(closeValue) == AXUIElementGetTypeID() else { throw refuse("BENCH_SAFARI_CLOSE_UNAVAILABLE") }
         try press(closeValue as! AXUIElement); return [:]
