@@ -213,7 +213,9 @@ it never moves the pointer, takes focus or catches a click, and it shows only ov
 by default. The first time sleight acts it compiles in the background, and that session has no hand.
 
 - `sleight-mcp hand off` writes `enabled: false` to `~/Library/Application Support/sleight/hand.json`, and
-  `sleight-mcp hand on` turns it back on. Running sessions follow within a minute.
+  `sleight-mcp hand on` turns it back on. Off hides the hand in running sessions at once.
+- The glove's menu has a Ghost Hand row with a checkmark, which writes the same setting. The menu shows only while turbo
+  is in use, so without turbo use `sleight-mcp hand off`.
 - `sleight-mcp hand capture hidden|visible` sets whether captures show the hand. `hidden`, the default, keeps it out of
   every capture, your own screenshots and recordings included. `visible` lets your screenshots and recordings show it.
   `SLEIGHT_HAND_CAPTURE=hidden|visible` in the server's environment takes precedence over the file.

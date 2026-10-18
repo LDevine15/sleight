@@ -6,8 +6,10 @@
 // (kCGWindowBounds and AX frames). kind is click, double, right, key, type, drag or scroll. The hand glides along path into at
 // and flourishes there beats times; a drag grabs at at and carries along path. path defaults to [at], delayMs to 0 and beats to 1.
 import { randomBytes } from 'node:crypto';
+import { watch as fsWatch } from 'node:fs';
+import { dirname } from 'node:path';
 import { handHostBuilt, prepareHandHost } from '../direct-browser/host.mjs';
-import { handSetting } from './settings.mjs';
+import { handConfigPath, handSetting } from './settings.mjs';
 import { setHandPid } from './pid.mjs';
 
 const kinds = new Set(['click', 'double', 'right', 'key', 'type', 'drag', 'scroll']);
@@ -34,7 +36,8 @@ export function handWireFrame(frame) {
 
 /** `enabled` is true while this session may still show the hand: the settings allow it and the host hasn't failed. */
 export function createHandClient({ env = process.env, setting = () => handSetting({ env }), built = handHostBuilt, prepare = prepareHandHost,
-  trace = () => {}, now = Date.now, defer = setImmediate, recheckMs = 60000, killAfterMs = 2000 } = {}) {
+  trace = () => {}, now = Date.now, defer = setImmediate, recheckMs = 60000, killAfterMs = 2000,
+  watch = (folder, listener) => process.platform === 'darwin' ? fsWatch(folder, { persistent: false }, listener) : undefined } = {}) {
   const nonce = randomBytes(32).toString('hex'), queue = [];
   let seq = 0, child, state, checked = now(), checking = false, capture = 'hidden', running;
   // idle (not started), starting, running, disabled (settings say off; rechecked) or dead (failed this session; final)
@@ -95,10 +98,11 @@ export function createHandClient({ env = process.env, setting = () => handSettin
       for (const { wire, at } of queue.splice(0)) write(act(wire, Math.max(0, wire.delayMs - (now() - at))));
     }).catch(error => die('spawn', { code: error?.code ?? error?.message }));
   }
-  // The settings are read again at most once a minute, off the caller's path: hand off stops this session's host, hand on lets
-  // a disabled session start one, and a new capture mode replaces the running host at the next frame.
-  function recheck() {
-    if (checking || now() - checked < recheckMs) return;
+  // The settings are read again when sleight's settings folder changes (the menu's Ghost Hand row or the hand command), and at
+  // most once a minute otherwise, off the caller's path: hand off stops this session's host at once, hand on lets a disabled
+  // session start one, and a new capture mode replaces the running host at the next frame.
+  function recheck(force = false) {
+    if (checking || !force && now() - checked < recheckMs) return;
     checking = true;
     defer(() => {
       checking = false; checked = now();
@@ -108,6 +112,9 @@ export function createHandClient({ env = process.env, setting = () => handSettin
       else if (on && state === 'running' && running !== capture) { stop(); state = 'idle'; note('hand-restart', { capture }); }
     });
   }
+  let watcher;
+  try { watcher = watch(dirname(handConfigPath()), (_event, name) => { if (!name || String(name) === 'hand.json') recheck(true); }); }
+  catch {} // no settings folder yet: the minute's recheck covers it
 
   return Object.freeze({
     send(frame) {
@@ -123,7 +130,11 @@ export function createHandClient({ env = process.env, setting = () => handSettin
       if (state === 'running') write(JSON.stringify({ hand: 'hide', nonce }) + '\n');
       else queue.length = 0;
     },
-    close() { if (state !== 'dead') { state = 'dead'; stop(); } },
+    close() {
+      try { watcher?.close(); } catch {}
+      watcher = undefined;
+      if (state !== 'dead') { state = 'dead'; stop(); }
+    },
     get enabled() { return state !== 'disabled' && state !== 'dead'; },
   });
 }

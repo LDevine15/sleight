@@ -27,7 +27,7 @@ function harness({ enabled = true, built = true, capture = 'hidden', result, now
   const children = [], traces = [], spawns = [];
   let preparing = 0, setting = { enabled, capture };
   const client = createHandClient({
-    setting: () => setting, built: () => built, now,
+    setting: () => setting, built: () => built, now, watch: () => undefined,
     prepare: async () => { preparing++; return result ?? { status: 'ready', spawn: options => { spawns.push(options); const c = fakeChild(4242 + children.length); children.push(c); return c; } }; },
     trace: (direction, detail) => traces.push([direction, detail]),
   });
@@ -168,6 +168,26 @@ test('settings are read again once a minute: off stops the host, on restarts it,
   h.children[1].emit('exit', 0, null);
   assert.equal(h.children.length, 3); assert.deepEqual(h.spawns.at(-1), { capture: 'hidden' }); assert.equal(handPid(), 4244);
   assert.ok(h.traces.some(([d, detail]) => d === 'hand-restart' && detail.capture === 'hidden'));
+});
+
+test('a change to the settings folder (the menu row or the hand command) hides this session\'s hand at once', async t => {
+  t.after(() => setHandPid(0));
+  let fire, closed = 0, setting = { enabled: true }, watched;
+  const children = [];
+  const client = createHandClient({ setting: () => setting, built: () => true, now: () => 0,
+    watch: (folder, listener) => { watched = folder; fire = listener; return { close() { closed++; }, unref() {} }; },
+    prepare: async () => ({ status: 'ready', spawn: () => { const c = fakeChild(); children.push(c); return c; } }) });
+  assert.match(watched, /Library\/Application Support\/sleight$/);
+  client.send(frame()); await settle();
+  setting = { enabled: false };
+  fire('rename', 'hand.json'); await settle();
+  assert.equal(children[0].ended, true, 'no wait for the minute');
+  assert.equal(client.enabled, false);
+  fire('change', 'turbo.json'); await settle();
+  setting = { enabled: true };
+  fire('rename', 'hand.json'); await settle();
+  assert.equal(client.enabled, true);
+  client.close(); assert.equal(closed, 1);
 });
 
 test('the tools check asks xcode-select, never xcrun, and needs swiftc and clang under the developer folder', async () => {

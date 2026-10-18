@@ -85,21 +85,26 @@ enum StatusRow: Equatable {
     case status(title: String, dot: String, details: [String])
     case action(String, choice: String)
     case confirm(String, choice: String)
+    case toggle(String, choice: String, on: Bool)
     case help
     case separator
     case footer(String)
 }
 let stateWords = ["connected": "Connected", "connected-idle": "Connected", "paused": "Paused", "cleanup-required": "Cleanup needed", "disconnected": "Disconnected"]
 let dotColours = ["connected": "green", "connected-idle": "green", "paused": "orange", "cleanup-required": "red", "disconnected": "gray"]
-let choiceWords = ["pause": "Pause", "resume": "Resume", "disconnect": "Disconnect", "connect": "Connect", "cleanup": "Clean Up", "turbo-off": "Turn Turbo Off…", "cancel": "Cancel"]
+let choiceWords = ["pause": "Pause", "resume": "Resume", "disconnect": "Disconnect", "connect": "Connect", "cleanup": "Clean Up", "turbo-off": "Turn Turbo Off…", "cancel": "Cancel",
+    "hand-on": "Ghost Hand", "hand-off": "Ghost Hand"]
 let paymentWords = ["ask": "Payments: asks unless you named the amount", "always": "Payments: always asks", "never": "Payments: asks only for ones you didn't request"]
 let optOutFailed = "Couldn't turn turbo off. Run sleight-mcp turbo off."
 func statusVisible(_ status: String?, requests: Int) -> Bool {
     requests > 0 || ["connected", "connected-idle", "paused", "cleanup-required"].contains(status ?? "")
 }
 func statusRows(_ data: [String: Any], _ choices: [String]) -> [StatusRow]? {
+    // The Ghost Hand row shows the hand's setting with a checkmark, and its one choice flips it.
+    let hand = data["hand"] as? String, handChoices = choices.filter { $0.hasPrefix("hand-") }
     guard let status = data["status"] as? String, let word = stateWords[status], let dot = dotColours[status],
-        choices.allSatisfy({ choiceWords[$0] != nil }) else { return nil }
+        choices.allSatisfy({ choiceWords[$0] != nil }), data["hand"] == nil || hand == "on" || hand == "off",
+        handChoices.isEmpty || handChoices == [hand == "on" ? "hand-off" : "hand-on"] && hand != nil else { return nil }
     let browser = (data["browser"] as? String).flatMap { name in
         !name.isEmpty && name.count <= 40 && name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " }) ? name : nil }
     let title = browser.map { status.hasPrefix("connected") ? word + " to " + $0 : word + " · " + $0 } ?? word
@@ -109,9 +114,10 @@ func statusRows(_ data: [String: Any], _ choices: [String]) -> [StatusRow]? {
     if let payments = data["payments"] as? String, let words = paymentWords[payments] { details.append(words) }
     if data["optOut"] as? String == "failed" { details.append(optOutFailed) }
     var rows: [StatusRow] = [.status(title: title, dot: dot, details: details)]
-    let session = choices.filter { $0 != "turbo-off" }
+    let session = choices.filter { $0 != "turbo-off" && !$0.hasPrefix("hand-") }
     if !session.isEmpty { rows.append(.separator); rows += session.map { .action(choiceWords[$0]!, choice: $0) } }
     rows.append(.separator)
+    if let choice = handChoices.first { rows.append(.toggle(choiceWords[choice]!, choice: choice, on: hand == "on")) }
     if choices.contains("turbo-off") { rows.append(.confirm(choiceWords["turbo-off"]!, choice: "turbo-off")) }
     rows.append(.help)
     if let version = data["version"] as? String, version.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}$"#, options: .regularExpression) != nil {
@@ -199,6 +205,10 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
                         let entry = NSMenuItem(); entry.view = statusView(title, dot: dot, details: details); menu.addItem(entry)
                     case let .action(title, choice), let .confirm(title, choice):
                         let entry = NSMenuItem(title: title, action: row == .confirm(title, choice: choice) ? #selector(confirmOff(_:)) : #selector(control(_:)), keyEquivalent: "")
+                        entry.target = self; entry.representedObject = ["id": id, "choice": choice]; menu.addItem(entry)
+                    case let .toggle(title, choice, on):
+                        let entry = NSMenuItem(title: title, action: #selector(control(_:)), keyEquivalent: "")
+                        entry.state = on ? .on : .off
                         entry.target = self; entry.representedObject = ["id": id, "choice": choice]; menu.addItem(entry)
                     case .help:
                         let entry = NSMenuItem(title: "Settings & Help…", action: #selector(help(_:)), keyEquivalent: "")

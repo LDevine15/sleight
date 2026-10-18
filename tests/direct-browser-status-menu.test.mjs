@@ -17,6 +17,11 @@ test('the menu bar item starts hidden, carries the glove template glyph and has 
   assert.match(source, /item\.isVisible = statusVisible\(status, requests: requests\)/);
 });
 
+test('the Ghost Hand row is a checkmark item that answers with its own choice, without asking', () => {
+  assert.match(source, /case let \.toggle\(title, choice, on\):[\s\S]*?entry\.state = on \? \.on : \.off/);
+  assert.match(source, /case let \.toggle\(title, choice, on\):[\s\S]*?#selector\(control\(_:\)\)/);
+});
+
 test('Turn Turbo Off asks first, and Settings & Help opens only the fixed docs address', () => {
   assert.match(source, /@objc func confirmOff[\s\S]*?if alert\.runModal\(\) == \.alertFirstButtonReturn \{ respond\(id, choice\) \}/);
   assert.match(source, /URL\(string: "https:\/\/github\.com\/Land-o-Clusters\/sleight\/blob\/main\/docs\/settings\.md#turbo"\)/);
@@ -48,6 +53,20 @@ check(statusRows(["status": "elsewhere"], ["pause"]) == nil, "unknown status ref
 check(statusRows(["status": "connected", "browser": "Chrome<script>"], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: []), "odd browser name dropped")
 check(statusRows(["status": "connected", "payments": "sometimes", "version": "1.3.0; rm"], ["disconnect"])!.last == .help, "unknown payment value and odd version dropped")
 check(statusRows(["status": "connected", "optOut": "failed"], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: [optOutFailed]), "failed opt-out shown")
+// The Ghost Hand row: a checkmark showing the hand's setting, whose one choice flips it.
+check(statusRows(["status": "connected", "hand": "on"], ["pause", "disconnect", "hand-off", "turbo-off"])! == [.status(title: "Connected", dot: "green", details: []),
+  .separator, .action("Pause", choice: "pause"), .action("Disconnect", choice: "disconnect"),
+  .separator, .toggle("Ghost Hand", choice: "hand-off", on: true), .confirm("Turn Turbo Off…", choice: "turbo-off"), .help], "hand on row")
+check(statusRows(["status": "paused", "hand": "off"], ["disconnect", "hand-on", "turbo-off"])!.contains(.toggle("Ghost Hand", choice: "hand-on", on: false)), "hand off row")
+check(statusRows(["status": "cleanup-required", "hand": "on"], ["cleanup", "hand-off"])! == [.status(title: "Cleanup needed", dot: "red", details: []),
+  .separator, .action("Clean Up", choice: "cleanup"), .separator, .toggle("Ghost Hand", choice: "hand-off", on: true), .help], "hand row while cleanup waits")
+check(statusRows(["status": "connected", "hand": "on"], ["hand-on"]) == nil, "the choice must flip the shown state")
+check(statusRows(["status": "connected", "hand": "off"], ["hand-off"]) == nil, "the choice must flip the shown state, off")
+check(statusRows(["status": "connected"], ["disconnect", "hand-off"]) == nil, "a hand choice needs the hand state")
+check(statusRows(["status": "connected", "hand": "on"], ["disconnect", "hand-off", "hand-on"]) == nil, "one hand choice at most")
+check(statusRows(["status": "connected", "hand": "maybe"], ["disconnect"]) == nil, "unknown hand state refused")
+check(statusRows(["status": "connected", "hand": "on"], ["disconnect"])! == [.status(title: "Connected", dot: "green", details: []),
+  .separator, .action("Disconnect", choice: "disconnect"), .separator, .help], "no row without its choice")
 print("pass")
 `);
   const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(), swift, '-o', binary], { encoding: 'utf8' });
