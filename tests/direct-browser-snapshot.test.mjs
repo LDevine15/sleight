@@ -737,7 +737,7 @@ test('RM1: a held ref that a later read no longer lists is refused with a re-rea
   module.acknowledgeSnapshot(page, (await module.snapshot(page)).number);
   set([{ role: 'button', name: 'Saving', ref: 'e7' }, { role: 'button', name: 'Other', ref: 'e3' }]);
   await module.snapshot(page, { find: 'Other' }); // shown only in part: Save's new ref is never delivered
-  assert.throws(() => module.snapshotRefBinding(page, 'e2'), /^Error: Ref e2 changed on the page since it was read; use browser_read again\.$/);
+  assert.throws(() => module.snapshotRefBinding(page, 'e2'), /^Error: Ref changed on the page since it was read; use browser_read again\.$/);
   assert.throws(() => page.getByRef('e2'), /changed on the page/);
   assert.equal(module.snapshotRefBinding(page, 'e3').selector, 'aria-ref=e3');
 });
