@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 20:52 UTC, after the clear)
+## Banner (2026-10-18 21:24 UTC, after the clear)
 
 Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
 Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
@@ -40,8 +40,8 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
   covered to none), and the finished race `.command` Terminal windows close at that switch.
 
 **Running across a clear:**
-- Terminal.app job `race-1017/race-safari-term.command` (log `race-safari-term.log`) runs Safari r3 for sleight, lcu, cua and
-  peekaboo. When it logs `done`, a waiter in sleight-arch's shell opens `race-safari-r1.command`. It reruns the four r1 rounds
+- The Terminal job finished r3 at 21:24Z. cua r3 broke on BENCH_SAFARI_KEY_WINDOW_UNPROVED after 3 tasks (harness), set aside in
+  `race-1017/failed-safari-harness`. Terminal job `race-safari-r1.command` (opened 21:24Z) reruns the four r1 rounds and cua r3
   (log `race-safari-r1a.log`), then the r2f drag-task reruns, and writes `done` to `race-safari-r1.log` only at the end. After a clear, if that log doesn't exist once the term log says `done`, open it by hand.
 - Safari's Codex x3 finished at 20:21Z on the PID fix. r3 ran with the owner's Claude window over 44-75% of Safari, so its two
   drag rows are dropped (`filtered.json`, original in `race-1017/failed-safari-cover`) and rerun as `safari-codex-r3f` from
