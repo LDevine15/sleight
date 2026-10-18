@@ -1834,18 +1834,23 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // { id: "18" } written for element 18: 2 of 3 Safari form-travel runs (race-1017), each stop a call. When the
     // tree Claude last saw has element 18 and no element whose ID or label is "18", the number is the only reading,
     // so the action names it bare and gets the number checks. Two readings, or a number it never saw, stay as written.
+    // So does every { id } after an earlier action in the call, or in a loop: a click can open a picker whose day has
+    // ID 18, and then Claude's tree no longer settles it. Leading zeros go out in decimal ("010" would be octal 8).
     numberIds(window, code) {
       const entry = window && seen.get(documentKey({ title: window.title, app: window.app, url: window.url }));
-      if (!entry || typeof code !== 'string') return undefined;
+      if (!entry || typeof code !== 'string' || /\b(?:for|while|do)\b|\.(?:forEach|map|reduce|some|every)\(/.test(maskCode(code))) return undefined;
       const believed = new Map(entry.believed ?? numbered(entry.lines));
       const lines = [...believed.values()].map(line => line.replace(/^\t*/, ''));
-      const numbers = [];
-      const out = code.replace(/(\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*)\{\s*(?:id|"id"|'id')\s*:\s*(["'])(\d+)\2\s*\}(?=\s*[,)])/g, (whole, head, quote, digits) => {
-        if (!believed.has(Number(digits)) || lines.some(line => hasIdentifier(line, digits) || hasLabel(line, digits))) return whole;
-        numbers.push(Number(digits));
-        return head + digits;
+      const action = /\.\s*(?:click|doubleClick|rightClick|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|press|pressKey|typeText|pickFromList|waitFor)\s*\(/;
+      const sent = [];
+      const out = code.replace(/(\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*)\{\s*(?:id|"id"|'id')\s*:\s*(["'])(\d+)\2\s*\}(?=\s*[,)])/g, (whole, head, quote, digits, at) => {
+        const number = Number(digits), forms = [...new Set([digits, String(number)])];
+        if (action.test(code.slice(0, at)) || !believed.has(number) ||
+            lines.some(line => forms.some(form => hasIdentifier(line, form) || hasLabel(line, form)))) return whole;
+        sent.push({ id: digits, number, line: believed.get(number).replace(/^\t*/, '') });
+        return head + number;
       });
-      return numbers.length ? { code: out, numbers } : undefined;
+      return sent.length ? { code: out, sent } : undefined;
     },
     // Undefined unless every stale number in the call can be named that way.
     remapStale(window, code) {

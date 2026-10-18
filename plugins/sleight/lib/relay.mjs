@@ -3070,12 +3070,16 @@ export function createRelay({
       const ids = compactor.numberIds(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
       if (ids) {
         msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: ids.code } } };
-        trace('id-numbers', { id: msg.id, numbers: ids.numbers });
+        for (const sent of ids.sent) {
+          const line = sent.line.length > 60 ? sent.line.slice(0, 57) + '...' : sent.line;
+          remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + `sleight: { id: "${sent.id}" } was sent as element ${sent.number}, ${line}.`);
+        }
+        trace('id-numbers', { id: msg.id, numbers: ids.sent.map(s => s.number) });
       }
       const stale = compactor.remapStale(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
       if (stale) {
         msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: stale.code } } };
-        remapNotes.set(msg.id, 'sleight: numbers in this window changed since you saw them, so ' +
+        remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + 'sleight: numbers in this window changed since you saw them, so ' +
           stale.remapped.map(r => `${r.number} was found by its line ${JSON.stringify(r.line)}`).join(', ') + promptNotice('. Use the numbers in this result from now on.', prompt));
         trace('stale-remapped', { id: msg.id, numbers: stale.remapped.map(r => r.number) });
       }

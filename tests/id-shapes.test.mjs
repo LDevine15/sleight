@@ -28,8 +28,9 @@ const withDay = form(['\t\t\t\t\t\t\t47 button 18']);
 function relayFixture(t, text) {
   const directory = mkdtempSync(join(tmpdir(), 'sleight-id-shapes-'));
   const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
-  const sent = [];
+  const sent = [], received = [];
   serverIn.on('data', bytes => sent.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  clientOut.on('data', bytes => received.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
     inputLease: new InputLease({ directory, holder: 'id-shapes' }) });
   t.after(() => { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); removeTemp(directory); });
@@ -43,18 +44,20 @@ function relayFixture(t, text) {
     const update = JSON.parse(/__sleightDocumentGuardSetup\((\{[^\n]*\})\);/.exec(forwarded)?.[1] ?? '{}');
     // The relay sends one call at a time: answer this one before the next.
     serverOut.write(JSON.stringify({ id, result: { content: [{ type: 'text', text: GUARD_MARK + text + GUARD_END }] } }) + '\n');
-    return { forwarded, update };
+    const result = (received.find(m => m.id === id)?.result?.content ?? []).map(item => item.text ?? '').join('\n');
+    return { forwarded, update, result };
   };
 }
 
 test('FT1c: a numeric { id } that names no ID or label in the tree Claude saw is sent as that element number', t => {
   const act = relayFixture(t, form());
+  // Only the first: after an action in the call, Claude's tree no longer settles what an { id } means (review F2).
   const { forwarded, update } = act('await app.setValue({ id: "18" }, "p01"); await app.setValue({ id: "20" }, "Mira"); await app.click({ id: "NewTabButton" });');
-  assert.match(forwarded, /await app\.setValue\(18, "p01"\); await app\.setValue\(20, "Mira"\); await app\.click\(\{ id: "NewTabButton" \}\);/);
+  assert.match(forwarded, /await app\.setValue\(18, "p01"\); await app\.setValue\(\{ id: "20" \}, "Mira"\); await app\.click\(\{ id: "NewTabButton" \}\);/);
   assert.doesNotMatch(forwarded, /setValue\(\{ id: "18" \}/);
-  // The numbers then get the ordinary checks: what Claude saw for them, and whether each line was unique.
-  assert.deepEqual(update.literals, [18, 20]);
-  assert.deepEqual(update.seenLines, { 18: 'text field (settable) Reference code', 20: 'text field (settable) Full name' });
+  // The number then gets the ordinary checks: what Claude saw for it, and whether its line was unique.
+  assert.deepEqual(update.literals, [18]);
+  assert.deepEqual(update.seenLines, { 18: 'text field (settable) Reference code' });
 });
 
 test('FT1c: a numeric { id } with two readings, an unseen number or other keys is left for the guard', t => {
@@ -97,4 +100,27 @@ test('FT1c: a label-shaped { id } that two elements carry stops for a click, and
   const two = guardFixture(form(['\t\t\t\t\t\t30 text field (settable) Email']));
   await assert.rejects(two.run('await app.setValue({ label: "Email" }, "m@x");'), /3 elements with label "Email"/);
   assert.deepEqual(two.calls, []);
+});
+
+// Review F2: an earlier action in the call can open a window whose element has ID "18" (a date picker), so the tree
+// Claude saw no longer settles what { id: "18" } means. A rewrite is reported with the element it went to.
+test('FT1c review: no rewrite after an earlier action or in a loop, and every rewrite is named in the result', t => {
+  const act = relayFixture(t, form());
+  for (const code of ['await app.click(24); await app.click({ id: "18" });', 'await app.pressKey("Tab"); await app.setValue({ id: "18" }, "x");',
+    'for (const n of [1, 2]) await app.click({ id: "18" });']) {
+    const { forwarded } = act(code);
+    assert.ok(forwarded.includes(code), code);
+  }
+  const { forwarded, result } = act('await app.setValue({ id: "18" }, "p01"); await app.click(38);');
+  assert.match(forwarded, /await app\.setValue\(18, "p01"\); await app\.click\(38\);/);
+  assert.match(result, /sleight: \{ id: "18" \} was sent as element 18, text field \(settable\) Reference code\./);
+});
+
+// Review F3: a leading zero would reach the engine as an octal literal (010 is 8 in sloppy mode).
+test('FT1c review: a numeric { id } with leading zeros is sent in decimal, or left alone when a label matches either form', t => {
+  const { forwarded } = relayFixture(t, form())('await app.setValue({ id: "018" }, "p01");');
+  assert.match(forwarded, /await app\.setValue\(18, "p01"\);/);
+  assert.doesNotMatch(forwarded, /setValue\(018/);
+  const labeled = relayFixture(t, form(['\t\t\t\t\t\t\t47 button 18']))('await app.click({ id: "018" });');
+  assert.ok(labeled.forwarded.includes('await app.click({ id: "018" });'));
 });
