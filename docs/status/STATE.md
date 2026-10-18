@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 19:58 UTC, after the clear)
+## Banner (2026-10-18 20:25 UTC, after the clear)
 
 Goal (owner): release 1.3.0, then the claim post and the video. The claim has four categories (owner, 2026-10-18). Turbo runs in real
 Chrome and Helium windows and the engine path races in Firefox and Safari, beside the native app claim and the Electron app tasks. Ledger:
@@ -35,7 +35,9 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
   sleight-arch closed them by their AX close buttons at 19:35Z. The cover matters only for the two drag tasks. So each r2 of the
   four Terminal arms is scored without form-settings and form-settings-helium (10 rows, `filtered.json` in the folder, originals in
   `race-1017/failed-safari-finder`), and those two tasks rerun uncovered into `safari-<arm>-r2f`. Codex r1 (19:35Z) was the first
-  uncovered round: 7 of 12, cover "none".
+  uncovered round: 7 of 12, cover "none". The owner added two 2560x1440 displays at about 20:05Z. From 64396fa5 (race-fx after
+  codex r3) each task first moves the round's own browser window to the least-covered spot on any display (TextEdit probe: 53%
+  covered to none), and the finished race `.command` Terminal windows close at that switch.
 
 **Running across a clear:**
 - Terminal.app job `race-1017/race-safari-term.command` (log `race-safari-term.log`) runs Safari r3 for sleight, lcu, cua and
@@ -61,6 +63,8 @@ are outside git. No open PRs. Every lane branch of 2026-10-18 is merged.
 6. sleight's native claim arm on the final build, then the release pass and the 1.3.0 tag (owner's call).
 
 **Owner items:**
+- MB1 (ledger): turbo's menu bar item says "sleight disconnected" whenever a session's turbo worker runs. Proposed: show it only
+  while connected, paused or cleanup-required. Built after the race.
 - GitHub Integration on claude.ai was disconnected 14:1xZ for the Claude in Chrome rounds; sleight-arch reconnects it afterwards at
   claude.ai/customize/connectors/yours/id/integration-github (owner does a passkey if asked).
 - Changed with the owner's OK for Claude in Chrome: its panel mode in the benchmark profile is "Skip all approvals", and claude.ai's
