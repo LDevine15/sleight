@@ -140,3 +140,27 @@ test('turbo on and off are the user\'s commands: no spelling of a model shell ru
   assert.equal(await guard({ tool: 'Read', file_path: '/Users/fixture/Library/Application Support/sleight/turbo.json' }, { stat }), false);
   assert.equal(await guard({ tool: 'Write', file_path: '/Users/fixture/Library/Application Support/sleight/turbo.json' }, { stat }), true);
 });
+
+test('the action log and outcome switches are the user\'s: Claude\'s file and shell tools can\'t set them where sleight reads its environment', async () => {
+  const { loggingSwitchWriteDenied: denied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
+  const env = '{ "env": { "SLEIGHT_ACTION_LOG": "actions.jsonl" } }';
+  for (const file of ['/project/.claude/settings.json', '/project/.claude/settings.local.json', '~/.claude/settings.json', '/Users/fixture/.claude.json',
+    '/project/.mcp.json', '/Library/Application Support/ClaudeCode/managed-settings.json', '~/.zshrc', '/Users/fixture/.bash_profile', '/project/.envrc']) {
+    assert.equal(denied({ tool: 'Write', file_path: file, content: env }), true, file);
+    assert.equal(denied({ tool: 'Edit', file_path: file, old_string: '{}', new_string: 'export SLEIGHT_OUTCOMES=1' }), true, file);
+    assert.equal(denied({ tool: 'Write', file_path: file, content: '{ "env": { "OTHER": "1" } }' }), false, file);
+  }
+  assert.equal(denied({ tool: 'MultiEdit', file_path: '/project/.claude/settings.json', edits: [{ old_string: 'a', new_string: '"SLEIGHT_OUTCOMES": "1"' }] }), true);
+  assert.equal(denied({ tool: 'Write', file_path: '/project/notes.md', content: 'Set SLEIGHT_ACTION_LOG to try the log.' }), false);
+  for (const command of ['echo \'{"env":{"SLEIGHT_OUTCOMES":"1"}}\' > .claude/settings.json', 'tee -a ~/.zshrc <<< "export SLEIGHT_ACTION_LOG=a.jsonl"',
+    'jq \'.env.SLEIGHT_OUTCOMES="1"\' .claude/settings.json > /tmp/s && mv /tmp/s .claude/settings.json',
+    'python3 -c "import json; p=\'.mcp.json\'; d=json.load(open(p)); d[\'env\']={\'SLEIGHT_ACTION_LOG\':\'x\'}; json.dump(d, open(p, \'w\'))"',
+    'claude mcp add sleight -e SLEIGHT_ACTION_LOG=a.jsonl -- sleight-mcp', 'launchctl setenv SLEIGHT_OUTCOMES 1',
+    "sed -i '' 's/{}/{\"SLEIGHT_OUTCOMES\":\"1\"}/' .claude/settings.local.json"]) {
+    assert.equal(denied({ tool: 'Bash', command }), true, command);
+  }
+  for (const command of ['grep SLEIGHT_ACTION_LOG .claude/settings.json', 'echo $SLEIGHT_OUTCOMES', 'SLEIGHT_OUTCOMES=1 node --test tests/action-outcomes.test.mjs',
+    'cat ~/.zshrc']) {
+    assert.equal(denied({ tool: 'Bash', command }), false, command);
+  }
+});

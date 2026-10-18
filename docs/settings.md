@@ -40,17 +40,21 @@ An accessibility change doesn't prove that a file is saved or unsaved. See the
 Set `SLEIGHT_OUTCOMES=1` to add one line per native action to each result, such as
 `1 click 12: sheet "Save" opened` or `3 pressKey "Return": no visible change`. sleight compares its
 own read before the action with its read after it. It looks only at the window, its sheets and menus,
-focus, and the acted-on control's role, name and value line. Typed text never appears, and neither
-does a text area's or secure field's value. Actions with no read between them share one line. It's
-off by default until its A/B.
+focus, and the acted-on control's role, name and value line. A name shows only when it's a generic
+control word such as Save, Cancel or OK. Any other name or window title shows as its length, as in
+receipts. Typed text never appears, and neither does a text area's value. An action on a secure field
+says `ran, unverified`. Actions with no read between them share one line. It's off by default until
+its A/B.
 
-Set `SLEIGHT_ACTION_LOG` to an absolute path, or one starting with `~/`, to append one JSON line per
-action there. A line has the time, the call id, the tool, the app or browser origin, the action kind,
-the target's role (with the label of a button, field or menu item), and the outcome. For an action that
-sleight or you refused, it has the reason as a category, such as `window changed` or `input lease`. Typed text,
-set values, a secure field's value or length, window titles, page text and screenshots stay out.
-The file is private to your account (0600) and rotates at 5 MB, keeping two old files. The `env`
-block of `~/.claude/settings.json` works for both settings.
+Set `SLEIGHT_ACTION_LOG` to a file name, or to a path under `~/Library/Logs/sleight/`, to append one
+JSON line per action to that file in that folder. Any other path is ignored. A line has the time, the
+call id, the tool, the app or browser origin, the action kind, the target's role, and the outcome. A
+name is kept only when it's one of those generic control words. For an action that sleight or you
+refused, the line has the reason as a category, such as `window changed` or `input lease`. Typed text,
+set values, a secure field's value or length, window titles, page text and screenshots stay out. The
+file is private to your account (0600) and rotates at 5 MB, keeping two old files. The `env` block of
+`~/.claude/settings.json` works for both settings, and only you can set them there: sleight's hook
+refuses Claude's file and shell edits that put them in settings, MCP configs or shell startup files.
 
 ## Text drags
 

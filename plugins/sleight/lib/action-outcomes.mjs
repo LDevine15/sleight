@@ -1,10 +1,10 @@
 // What each native action did, from sleight's own read before it and the read after it (SLEIGHT_OUTCOMES=1),
 // and the opt-in JSON Lines action log (SLEIGHT_ACTION_LOG). Only structure, roles, names and the acted-on
 // control's own value line count; typed text, secure values and document text never leave the engine's tree.
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, renameSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, writeSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir, userInfo } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 // The account's short and full names, as receipts scrub them: once per log, on its first write.
 function ownerNames() {
@@ -27,6 +27,16 @@ export function actionOutcome(recs, before, after) {
   const FIELD = Object.fromEntries(['Description', 'Value', 'ID'].map(key => [key, new RegExp('(?:^|, )' + key + ': ?(.*?)(?=, (?:' + FIELDS + '): |$)')]));
   const TITLE_END = new RegExp('(?:^|, )(?:' + FIELDS + '):');
   const cap = (text, n = 40) => text.length > n ? text.slice(0, n - 1) + '…' : text;
+  // Names show only when they are generic control words. Tab, link, menu item and window names can be titles, page text or
+  // file names, so any other name shows as its length, as receipts show titles.
+  const GENERIC = new Set(['ok', 'cancel', 'save', 'save as', "don't save", 'close', 'done', 'submit', 'next', 'back', 'previous',
+    'continue', 'apply', 'delete', 'remove', 'add', 'open', 'new', 'edit', 'replace', 'replace all', 'find', 'find next', 'search',
+    'yes', 'no', 'allow', "don't allow", 'deny', 'accept', 'decline', 'reset', 'clear', 'undo', 'redo', 'copy', 'cut', 'paste',
+    'select all', 'print', 'send', 'upload', 'download', 'share', 'settings', 'preferences', 'options', 'more', 'help', 'file',
+    'view', 'format', 'insert', 'window', 'tools', 'table', 'bold', 'italic', 'underline', 'minimize', 'zoom', 'full screen',
+    'go', 'sign in', 'log in', 'sign out', 'log out', 'name', 'email', 'username', 'password', 'date', 'time', 'title']);
+  const generic = name => GENERIC.has(name.replace(/(?:…|\.\.\.)$/, '').trim().toLowerCase());
+  const shown = name => !name ? '' : generic(name) ? '"' + name + '"' : '[redacted ' + name.length + ' chars]';
   const describe = body => {
     if (typeof body !== 'string') return;
     const role = ROLES.find(r => body === r || body.startsWith(r + ' ') || body.startsWith(r + ',')) ?? /^[a-z]*/.exec(body)[0];
@@ -36,8 +46,11 @@ export function actionOutcome(recs, before, after) {
     const field = key => FIELD[key].exec(rest)?.[1];
     const flags = flagged ? flagged[1].split(/,\s*/) : [];
     const id = field('ID'), name = (field('Description') || rest.split(TITLE_END)[0].trim() || id || '').trim();
-    return { role, flags, name, id, value: field('Value'),
-      secure: /secure/.test(role) || flags.includes('secure') || /password|passcode/i.test(name + ' ' + (id ?? '')) };
+    const value = field('Value');
+    // The platform's secure role or subrole first, then bullets for a value, then names.
+    const secure = /secure/i.test(role) || flags.includes('secure') || /\bAXSecureTextField\b/.test(body) || /^[•●*]+$/.test(value ?? '') ||
+      /password|passcode|passphrase|\bpin\b|recovery (?:key|code|phrase)|secret key|security code|verification code|one-time|\botp\b|\bcv[cv]\b|api key|access token/i.test(name + ' ' + (id ?? ''));
+    return { role, flags, name, id, value, secure };
   };
   const view = text => {
     if (typeof text !== 'string') return;
@@ -55,18 +68,22 @@ export function actionOutcome(recs, before, after) {
     try { title = JSON.parse(header[1]); } catch { title = header[1].replace(/^"|"$/g, ''); }
     return { title: String(title), app: header[2], url: /\bURL: (\S+)/.exec(els.get(0) ?? '')?.[1] ?? '', els, focus };
   };
-  const label = d => d.role + (d.name ? ' "' + cap(d.name, 30) + '"' : '');
+  const label = d => d.role + (d.name ? ' ' + shown(d.name) : '');
   const key = d => d.role + '|' + (d.id || d.name);
   const targets = recs.map(rec => {
     const d = describe(rec.body);
-    return d && { r: d.role, ...(d.name && !d.secure ? { m: cap(d.name) } : {}), ...(d.secure ? { s: true } : {}) };
+    return d && { r: d.role, ...(d.secure ? { s: true } : d.name && generic(d.name) ? { m: d.name } : d.name ? { ml: d.name.length } : {}) };
   });
   const b = view(before), a = view(after);
-  if (!b || !a) return { targets };
+  let rec;
+  for (const item of recs) if (item.body !== undefined) rec = item;
+  const old = rec && describe(rec.body);
+  // What a secure field holds isn't shown, so whether the action took is unknown too.
+  if (!b || !a || old?.secure) return { targets };
   const facts = [];
   if (a.app !== b.app) facts.push({ o: 'app', d: cap(a.app) });
   // A menu tree's root has no URL, so only two reads that both show one can say it changed.
-  else if (a.title !== b.title || a.url && b.url && a.url !== b.url) facts.push({ o: 'window', d: cap(a.title) });
+  else if (a.title !== b.title || a.url && b.url && a.url !== b.url) facts.push({ o: 'window', d: shown(a.title) || '""' });
   // Word trees run to thousands of lines, so only matching lines get parsed: this runs between actions.
   const bodies = (v, pattern) => [...v.els.values()].filter(body => pattern.test(body));
   // The root is the window itself: Word's turns from standard window to dialog while a pane is open.
@@ -81,9 +98,7 @@ export function actionOutcome(recs, before, after) {
   const menus = open(a) - open(b);
   if (menus > 0) facts.push({ o: 'menu', d: String(bodies(a, ITEM).length - bodies(b, ITEM).length) });
   else if (menus < 0) facts.push({ o: 'menu-' });
-  let rec;
-  for (const item of recs) if (item.body !== undefined) rec = item;
-  const old = rec && describe(rec.body), number = rec?.n ?? rec?.focus;
+  const number = rec?.n ?? rec?.focus;
   if (old) {
     let now = number !== undefined && describe(a.els.get(number));
     if (!now || now.role !== old.role) {
@@ -125,7 +140,7 @@ export function actionOutcome(recs, before, after) {
 }
 
 const said = fact => ({
-  app: /* lean notice */ `now in ${fact.d}`, window: /* lean notice */ `window now "${fact.d}"`, opened: /* lean notice */ `${fact.d} opened`,
+  app: /* lean notice */ `now in ${fact.d}`, window: /* lean notice */ `window now ${fact.d}`, opened: /* lean notice */ `${fact.d} opened`,
   closed: /* lean notice */ `${fact.d} closed`, menu: /* lean notice */ fact.d && fact.d !== '0' ? `menu opened (${fact.d} items)` : 'menu opened',
   'menu-': /* lean notice */ 'menu closed',
   value: /* lean notice */ fact.m === true ? 'holds the value' : fact.d !== undefined ? `value reads "${fact.d}"` : fact.m === false ? 'value differs' : 'value changed',
@@ -136,7 +151,7 @@ function actionLabel(rec, i) {
   const typed = /^(?:typeText|paste)$/.test(rec.a) && rec.t?.r;
   return `${i + 1} ${rec.a}` + (rec.l !== undefined ? ' ' + JSON.stringify(rec.l) : rec.n !== undefined ? ' ' + rec.n : '') +
     (rec.k ? ' ' + JSON.stringify(rec.k) : '') + (Number.isSafeInteger(rec.c) ? ` ${rec.c} chars` : '') +
-    (typed ? ` into ${rec.t.r}${rec.t.m ? ` "${rec.t.m}"` : ''}` : '');
+    (typed ? ` into ${rec.t.r}${rec.t.m ? ` "${rec.t.m}"` : Number.isSafeInteger(rec.t.ml) ? ` [redacted ${rec.t.ml} chars]` : ''}` : '');
 }
 function actionResult(rec) {
   if (rec.x === 'refused') return /* lean notice */ `not run (${rec.r ?? 'stopped'})`;
@@ -173,8 +188,8 @@ const logged = fact => ({
   state: /^(?:not )?(?:checked|unchecked|selected|unselected|expanded|collapsed|disabled)$/.test(fact.d) ? `now ${fact.d}` : 'state changed',
   gone: 'element gone', focus: 'focus moved', lines: 'other lines changed', none: 'no visible change',
 })[fact?.o];
-// Names of these roles are labels of controls; the names of rows, cells, text and areas can be document content.
-const NAMED_ROLE = /^(?:button|menu button|menu item|menu bar item|pop up button|radio button|check box|checkbox|toggle button|switch|disclosure triangle|tab|text field|search text field|search field|combo box|slider|stepper|incrementor|link|close button|full screen button|minimize button|zoom button)$/;
+// The log keeps a name only from actionOutcome's generic control words, checked again here.
+const genericName = name => typeof name === 'string' && name.length <= 20 && actionOutcome([{ body: 'button ' + name }]).targets[0]?.m === name;
 const NAMED_KEY = /^(?:return|enter|escape|esc|tab|space|backspace|delete|forwarddelete|left|right|up|down|home|end|pageup|pagedown|f\d{1,2})$/i;
 
 // Why a call or action didn't run, as a category: the notice itself can quote titles and element lines.
@@ -195,15 +210,19 @@ function turboOutcome(text) {
     [/no visible change/, 'no visible change'], [/^set$/, 'set'], [/^request finished/, 'request finished']].find(([pattern]) => pattern.test(text))?.[1] ?? 'sent';
 }
 
+// The log lives under ~/Library/Logs/sleight/: SLEIGHT_ACTION_LOG is a file name there, or a path under it.
+export const logRoot = (home = homedir()) => join(home, 'Library', 'Logs', 'sleight');
 export function actionLogPath(value, home = homedir()) {
-  if (typeof value !== 'string' || !value.trim()) return;
+  if (typeof value !== 'string' || !value.trim() || value.length > 1024) return;
+  const root = logRoot(home);
+  if (!value.includes('/')) return /^[\w.-]+$/.test(value) && !/^\.\.?$/.test(value) ? join(root, value) : undefined;
   const path = value.startsWith('~/') ? join(home, value.slice(2)) : value;
-  return isAbsolute(path) ? path : undefined;
+  return isAbsolute(path) && resolve(path).startsWith(root + '/') ? resolve(path) : undefined;
 }
 
 export class ActionLog {
-  constructor({ path, maxBytes = 5 * 1024 * 1024, keep = 2, now = () => new Date(), home = homedir(), names } = {}) {
-    this.path = path; this.maxBytes = maxBytes; this.keep = keep; this.now = now; this.home = home;
+  constructor({ path, root = logRoot(), maxBytes = 5 * 1024 * 1024, keep = 2, now = () => new Date(), home = homedir(), names } = {}) {
+    this.path = path; this.root = root; this.maxBytes = maxBytes; this.keep = keep; this.now = now; this.home = home;
     this.names = names; this.calls = new Map(); this.origins = new Map(); this.failures = 0;
   }
   scrub(text) {
@@ -242,7 +261,7 @@ export class ActionLog {
     if (call.name === 'js') {
       const app = call.app ? { app: this.scrub(call.app) } : {};
       call.outcomes.forEach((rec, i) => {
-        const target = rec.t?.r ? { role: rec.t.r, ...(rec.t.s ? { secure: true } : rec.t.m && NAMED_ROLE.test(rec.t.r) ? { name: this.scrub(rec.t.m) } : {}) } : undefined;
+        const target = rec.t?.r ? { role: String(rec.t.r).slice(0, 40), ...(rec.t.s ? { secure: true } : genericName(rec.t.m) ? { name: rec.t.m } : {}) } : undefined;
         const facts = Array.isArray(rec.f) ? rec.f.map(logged).filter(Boolean) : [];
         rows.push({ ...base, ...app, kind: rec.a, ...(target ? { target } : {}), ...(Number.isSafeInteger(rec.c) ? { chars: rec.c } : {}),
           ...(rec.k && (NAMED_KEY.test(rec.k) || /(?:^|\+)(?:super|cmd|command|ctrl|control)\+/i.test(rec.k)) ? { key: rec.k } : {}),
@@ -298,17 +317,23 @@ export class ActionLog {
     const text = rows.map(row => JSON.stringify({ time, ...row })).join('\n') + '\n';
     try {
       mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+      // A symlinked folder can't lead the log out of the root, and only a regular file is written.
+      const root = realpathSync(this.root);
+      if (!(realpathSync(dirname(this.path)) + '/').startsWith(root + '/')) throw new Error('action log outside its folder');
       try {
         const stat = lstatSync(this.path);
-        if (stat.isFile() && stat.size + text.length > this.maxBytes) {
+        if (!stat.isFile()) throw new Error('action log is not a regular file');
+        if (stat.size + text.length > this.maxBytes) {
           for (let n = this.keep - 1; n >= 1; n--) try { renameSync(`${this.path}.${n}`, `${this.path}.${n + 1}`); } catch {}
           renameSync(this.path, `${this.path}.1`);
         }
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
-      // O_NOFOLLOW: a symlink at the path can't send the log elsewhere.
-      const fd = openSync(this.path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+      // O_NOFOLLOW: a symlink at the path can't send the log elsewhere. O_NONBLOCK: a FIFO can't hold the open.
+      const fd = openSync(this.path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
       try {
-        if (fstatSync(fd).uid !== process.getuid()) throw new Error('action log has another owner');
+        const stat = fstatSync(fd);
+        if (!stat.isFile() || stat.uid !== process.getuid()) throw new Error('action log is not a regular file of this account');
+        fchmodSync(fd, 0o600);
         writeSync(fd, text);
       } finally { closeSync(fd); }
     } catch { this.failures++; }

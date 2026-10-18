@@ -164,3 +164,26 @@ export async function preapprovedWriteDenied(input, options) {
   }
   return false;
 }
+
+// SLEIGHT_ACTION_LOG and SLEIGHT_OUTCOMES are the user's switches. Claude's file and shell tools may not set them where
+// sleight's MCP server reads its environment: Claude Code settings, MCP configs, shell startup files, launchd.
+const SWITCHES = /\bSLEIGHT_(?:ACTION_LOG|OUTCOMES)\b/;
+const CONFIG = /(?:^|\/)(?:\.claude\/[^/]*\.json|\.claude\.json|\.?mcp\.json|managed-settings\.json|settings(?:\.local)?\.json|\.(?:zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile|envrc))$/;
+const CONFIG_TEXT = /(?:settings(?:\.local)?|\.claude|mcp|managed-settings)\.json|\.(?:zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile|envrc)\b/;
+const SETTERS = /\b(?:claude\s+(?:mcp|config)|launchctl\s+setenv|python\d*(?:\.\d+)?|node|ruby|perl|jq|plutil|defaults)\b/;
+export function loggingSwitchWriteDenied(input) {
+  const { tool } = input ?? {};
+  if (mutations.has(tool)) {
+    const edits = Array.isArray(input.edits) ? input.edits : [];
+    const texts = [input.content, input.new_string, input.new_source, ...edits.map(edit => edit?.new_string)];
+    const paths = [input.file_path, input.notebook_path, ...edits.map(edit => edit?.file_path)];
+    return texts.some(text => typeof text === 'string' && SWITCHES.test(text)) &&
+      paths.some(path => typeof path === 'string' && CONFIG.test(folded(normalize(path))));
+  }
+  if (tool !== 'Bash' || typeof input.command !== 'string' || !SWITCHES.test(input.command)) return false;
+  const { command } = input;
+  if (/\blaunchctl\s+setenv\b|\bclaude\s+(?:mcp|config)\b/.test(command)) return true;
+  // A write to a config file, or an interpreter or editor tool run with one named: reads such as grep pass.
+  return shellWritePaths(command).some(({ path }) => CONFIG.test(folded(normalize(path)))) ||
+    CONFIG_TEXT.test(command) && SETTERS.test(command);
+}

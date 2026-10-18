@@ -798,6 +798,8 @@ export function createRelay({
   }
   const frontRestore = process.env.SLEIGHT_FRONT_RESTORE === '0' ? undefined : restoreFront;
   const readHints = {};
+  // The guard carries its outcome code only in sessions that record outcomes; every install says which.
+  const outcomeSetup = outcomes || actionLog ? { outcomes: true } : {};
   let compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, outcomes });
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
@@ -1100,7 +1102,7 @@ export function createRelay({
   };
   const dropHeldWarmPrompts = () => { for (const timer of heldWarmPrompts.values()) clearTimeout(timer); heldWarmPrompts.clear(); };
   const replWarmup = new ReplWarmup({ enabled: warmRepl,
-    setup: () => replSetupCode({ browserChoice, scope: `${sessionId}:${turnId}`, token: browserWarmToken }),
+    setup: () => replSetupCode({ browserChoice, scope: `${sessionId}:${turnId}`, token: browserWarmToken, ...outcomeSetup }),
     abort: () => { browserWarmConfirmed = false; abortWarm(); },
     request: code => new Promise(resolve => {
       const id = `sleight-warm-${nextInternalId++}`;
@@ -3291,7 +3293,7 @@ export function createRelay({
         changeCalls.set(msg.id, { read, safe, entry, window: lastWindow, expected: documentKey(lastWindow), target: leaseWindow ?? lastWindow,
           observe: !browser && (!read || (!isInventoryRead(originalCode) && /cua\.getApp\(|\.(?:getAXState|getAXStateAndScreenshot)\(/.test(originalCode))) });
         if (typeof originalCode === 'string') {
-          const setup = { reuseSetup: guardReady, acknowledge: true, prompt };
+          const setup = { reuseSetup: guardReady, acknowledge: true, prompt, ...outcomeSetup };
           const modes = guardMode?.split(',').map(mode => mode.trim()) ?? [], careful = modes.includes('careful');
           const target = documentMode ? observedDocument : inputLease ? leaseWindow : lastWindow;
           const reason = /* notice */ documentMode ? undefined : selectedWindow ? `Selected window changed. ${selectionRecovery()}` : inputLease
@@ -3358,7 +3360,7 @@ export function createRelay({
           } else msg.params.arguments.code = swipeCode;
           if (msg.params.arguments.code !== originalCode) guardCalls.set(msg.id, guardGeneration);
           const restore = restoreEngineBindings(originalCode);
-          if (restore) msg.params.arguments.code = readCode(restore, { prompt }) + '\n' + msg.params.arguments.code;
+          if (restore) msg.params.arguments.code = readCode(restore, { prompt, ...outcomeSetup }) + '\n' + msg.params.arguments.code;
           if (clipboard) msg.params.arguments.code = clipboardCode(msg.params.arguments.code, clipboardAction);
           msg.params.arguments.code = fillFormCode(msg.params.arguments.code);
           msg.params.arguments.code = dragToCode(msg.params.arguments.code);

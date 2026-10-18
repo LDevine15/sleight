@@ -64,7 +64,8 @@ function records(code, before, after) {
   });
   return recs.map(({ want, body, focus, ...rec }) => {
     const t = body === undefined ? undefined : actionOutcome([{ body }]).targets[0];
-    if (t?.s) delete rec.c;
+    // As the guard does: a length only for a known plain, non-secure text field.
+    if (!t || t.s || !/^(?:text field|search text field|search field|combo box|text area|text entry area)$/.test(t.r)) delete rec.c;
     return t ? { ...rec, t } : rec;
   });
 }
