@@ -2,6 +2,13 @@
 // osascript -l JavaScript hover.js '{"app":"TextEdit","at":[100,100]}'
 ObjC.import('AppKit');
 ObjC.import('CoreGraphics');
+// sleight's own consent host (its menu bar glove, approval and payment cards) is the binary sleight builds in its helper
+// cache. Only the person's click answers it, so no local tool acts on that process (own-host.mjs).
+const OWN_HOST_LINE = "That is sleight's own confirmation window; only you can answer it.";
+function ownHost(app) {
+  const read = fn => { try { return String(ObjC.unwrap(fn()) ?? ''); } catch (e) { return ''; } };
+  return /\/Library\/Caches\/sleight\/turbo-host\//i.test(read(() => app.executableURL.path)) || /^consent-host$/i.test(read(() => app.localizedName).trim());
+}
 
 function performHover(request, native) {
   const result = { ok: false, takeoverMs: 0 };
@@ -100,6 +107,7 @@ function nativeHover() {
         if ([ObjC.unwrap(app.localizedName), ObjC.unwrap(app.bundleIdentifier),
           app.bundleURL.isNil() ? null : ObjC.unwrap(app.bundleURL.path)].includes(name)) found.push(app);
       }
+      if (found.some(ownHost)) throw new Error(OWN_HOST_LINE);
       if (found.length !== 1) throw new Error('hover needs exactly one running app');
       return { app: found[0], pid: found[0].processIdentifier };
     },

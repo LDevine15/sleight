@@ -12,6 +12,13 @@
 ObjC.import('AppKit');
 ObjC.import('CoreGraphics');
 ObjC.import('ApplicationServices');
+// sleight's own consent host (its menu bar glove, approval and payment cards) is the binary sleight builds in its helper
+// cache. Only the person's click answers it, so no local tool acts on that process (own-host.mjs).
+const OWN_HOST_LINE = "That is sleight's own confirmation window; only you can answer it.";
+function ownHost(app) {
+  const read = fn => { try { return String(ObjC.unwrap(fn()) ?? ''); } catch (e) { return ''; } };
+  return /\/Library\/Caches\/sleight\/turbo-host\//i.test(read(() => app.executableURL.path)) || /^consent-host$/i.test(read(() => app.localizedName).trim());
+}
 
 // The person at the Mac. The foreground path takes the pointer and keyboard
 // focus for a few seconds, and keys typed then land in the target app: a
@@ -608,7 +615,10 @@ function findApp(name) {
     const a = apps.objectAtIndex(i);
     const id = ObjC.unwrap(a.bundleIdentifier);
     const path = ObjC.unwrap(a.bundleURL.path);
-    if (ObjC.unwrap(a.localizedName) === name || id === name || path === name) return a;
+    if (ObjC.unwrap(a.localizedName) === name || id === name || path === name) {
+      if (ownHost(a)) throw new Error(OWN_HOST_LINE);
+      return a;
+    }
   }
   return null;
 }

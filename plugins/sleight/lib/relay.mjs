@@ -84,6 +84,7 @@ import { dropRepeatedText } from './repeated-text.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
 import { createResultBudget, requestsFullDocumentation } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
+import { OWN_HOST_LINE, isOwnHost, mentionsOwnHost, namesOwnHost as appNamesOwnHost, getAppTargets, ownHostPid as isOwnHostPid } from './own-host.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
 import { fillFormCode } from './fill-form.mjs';
 import { dragToCode } from './drag-to.mjs';
@@ -703,6 +704,8 @@ export function createRelay({
   inputLease,
   onLeaseFault = () => {},
   engineForbiddenTargets = false,
+  // Whether a pid is sleight's own consent host (own-host.mjs); tests pass a fake.
+  ownHostPid = isOwnHostPid,
   guardTiming = false,
   // 'careful' reads the window before every action, including keys, text and coordinates later in
   // a call, which skip it by default (owner, 2026-10-09). Document scope is always careful.
@@ -1540,6 +1543,25 @@ export function createRelay({
   const drained = new Set();
   function stopHeartbeat() { clearInterval(leaseTimer); leaseTimer = undefined; }
 
+  // sleight's own consent host (its glove, approval and payment cards) answers only the person's click. No call reaches
+  // it, and a reply whose window is it reaches Claude only as the line (ported from claude/p130-pm1 ba365bcf, ccf2ed6f).
+  const withheld = new Map(); // reply id -> OWN_HOST_LINE
+  const ownWindow = window => !!window && isOwnHost(window.appId, window.app);
+  function ownStop(msg) {
+    toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: OWN_HOST_LINE }] } });
+  }
+  // A local tool's app, a js call's getApp literals (a name, a path or a pid, however spelled), and the windows its
+  // handles hold from reads. A computed getApp reaches the engine, whose approval card for the host is declined.
+  function namesOwnHost(name, args) {
+    if (name !== 'js') return isOwnHost(args.app);
+    const code = String(args.code ?? '');
+    return getAppTargets(code).some(target => appNamesOwnHost(target, ownHostPid)) ||
+      [...codeOnly(code).matchAll(HANDLE_CALL)].some(match => ownWindow(handleBundles.get(match[1])));
+  }
+  // The engine's approval card names the host by its app (a name, alias, path or pid) or in its message.
+  const ownApproval = msg => isAppApproval(msg) &&
+    (appNamesOwnHost(msg.params?._meta?.tool_params?.app, ownHostPid) || mentionsOwnHost(msg.params?.message));
+
   function failLease(error) {
     directBrowser?.end();
     leaseFault = error.message;
@@ -1598,8 +1620,10 @@ export function createRelay({
   }
 
   function prepareLease(msg, browser) {
-    if (!inputLease || msg.method !== 'tools/call') return true;
+    if (msg.method !== 'tools/call') return true;
     const name = msg.params?.name;
+    if ((name === 'js' || localNames.has(name)) && namesOwnHost(name, msg.params.arguments ?? {})) { ownStop(msg); return false; }
+    if (!inputLease) return true;
     if (name === TURN_END_TOOL) {
       if (running.size) { leaseStop(msg, 'an action or read is still running; end the turn after it finishes.'); return false; }
       return true;
@@ -1631,6 +1655,7 @@ export function createRelay({
     if (!read) {
       if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return false; }
       if (leaseFault) { leaseStop(msg, leaseFault); return false; }
+      if (name === 'js' && ownWindow(leaseWindow)) { ownStop(msg); return false; }
       if (name !== 'js') {
         leaseCalls.set(msg.id, { localAction: true }); return true;
       }
@@ -2240,6 +2265,8 @@ export function createRelay({
           // brought TextEdit to the front (2026-10-10 10:58 UTC).
           if (name !== 'open_file' || !/launch it first/.test(String(err?.message))) throw err;
         }
+        // The app the name resolved to may be sleight's own consent host (lease-target.js also checks its pid's executable).
+        if (ownWindow(resolved)) throw new Error(OWN_HOST_LINE);
       }
       current();
       if (leaseCalls.get(msg.id)?.localAction && !(name === 'open_file' && !resolved)) {
@@ -2478,6 +2505,9 @@ export function createRelay({
       toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: write }] } });
       return;
     }
+    // sleight's own consent host stops here, before an acquisition is split off and sent ahead of the call.
+    if (msg.method === 'tools/call' && (msg.params?.name === 'js' || localNames.has(msg.params?.name)) &&
+        namesOwnHost(msg.params.name, msg.params.arguments ?? {})) { finishedCall(msg.id); ownStop(msg); return; }
     if (!splitAcquisition(msg) && !splitSave(msg)) handleClient(msg);
   }
 
@@ -3553,6 +3583,14 @@ export function createRelay({
       return;
     }
     if (stopCollected || (msg.method === undefined && stoppedClients.has(msg.id))) return;
+    if (ownApproval(msg)) {
+      // sleight's own consent host is declined without asking, before any other approval path (document scope, warm-up
+      // prompts, the pre-approved list); the call that asked reaches Claude as the line.
+      trace('own-host-approval', { id: msg.id });
+      for (const id of running) if (!localRunning.has(id)) withheld.set(id, OWN_HOST_LINE);
+      toServer({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline' } });
+      return;
+    }
     // Engine permission tokens have no parent RPC ID. Fail closed until even a late
     // private reply settles, rather than showing or accepting a warm-up prompt.
     if (msg.method === 'elicitation/create' && privateWarmRequests.size) {
@@ -4020,6 +4058,7 @@ export function createRelay({
       const previous = leaseWindow;
       if (guardStop && window && selectedWindow && window.app !== selectedWindow.app) clearSelection();
       leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}) } : undefined;
+      if (ownWindow(leaseWindow)) withheld.set(msg.id, OWN_HOST_LINE);
       if (leaseWindow?.appId) lastConfirmedWindow = leaseWindow;
       else if (!window && !msg.error && !msg.result?.isError && lastConfirmedWindow) {
         // An acquisition of another app, or a last-window close, whose result shows no single window (a write that echoed
@@ -4329,6 +4368,14 @@ export function createRelay({
       resultCalls.delete(msg.id);
     }
     if (msg.method === undefined) filterMarks.delete(msg.id);
+    // A reply whose window is sleight's own consent host, by the engine's app id or the header's app, gives Claude only the line.
+    if (msg.method === undefined && (msg.result || msg.error)) {
+      const shown = (msg.result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+      const own = withheld.get(msg.id) ?? (isOwnHost(msg.result?._meta?.['codex/toolSurface']?.app?.appId) ||
+        ownWindow(lastWindowFromText(shown) || undefined) ? OWN_HOST_LINE : undefined);
+      withheld.delete(msg.id);
+      if (own) { delete msg.error; msg.result = { isError: true, content: [{ type: 'text', text: own }] }; }
+    }
     if (chromeSettle && !chromeSettled.has(msg.id)) {
       const handle = chromeSettleHandle(jsCode);
       const first = lastImageData(msg.result.content);

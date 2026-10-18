@@ -1,6 +1,13 @@
 // AXRaise/AXMain choose a window without activating its app. No input is sent.
 ObjC.import('AppKit');
 ObjC.import('CoreGraphics');
+// sleight's own consent host (its menu bar glove, approval and payment cards) is the binary sleight builds in its helper
+// cache. Only the person's click answers it, so no local tool acts on that process (own-host.mjs).
+const OWN_HOST_LINE = "That is sleight's own confirmation window; only you can answer it.";
+function ownHost(app) {
+  const read = fn => { try { return String(ObjC.unwrap(fn()) ?? ''); } catch (e) { return ''; } };
+  return /\/Library\/Caches\/sleight\/turbo-host\//i.test(read(() => app.executableURL.path)) || /^consent-host$/i.test(read(() => app.localizedName).trim());
+}
 function run(argv) {
   try {
     const request = JSON.parse(argv[0]);
@@ -13,7 +20,10 @@ function run(argv) {
       const app = apps.objectAtIndex(i);
       const appId = ObjC.unwrap(app.bundleIdentifier), name = ObjC.unwrap(app.localizedName);
       const path = app.bundleURL.isNil() ? null : ObjC.unwrap(app.bundleURL.path);
-      if ([appId, name, path].includes(request.app)) matches.push({ app, appId, name });
+      if ([appId, name, path].includes(request.app)) {
+        if (ownHost(app)) throw new Error(OWN_HOST_LINE);
+        matches.push({ app, appId, name });
+      }
     }
     if (matches.length !== 1 || !matches[0].appId) throw new Error('Selection needs one running app with a bundle ID');
     const { app, appId, name } = matches[0];
