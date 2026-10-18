@@ -356,7 +356,10 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // a control, so they always settle in full, and so does any step that starts a submit.
         const quiet = (step.do === 'type' || step.do === 'press' && !enter) && !submits;
         const batched = quiet && !inputPending && !armed.boundary && ['type', 'press'].includes(steps[index + 1]?.do);
-        const settleUntil = batched ? now() + 40 : start + (submits ? 5000 : 600);
+        // A submit's clock starts when the gate arms the fence (submit.startedAt), which in a trusted turn is after `start`: the
+        // delivered read clears the fence only if taken a full second after that moment (rules.mjs deliverSnapshot), so both wait on it.
+        const origin = submits && submit ? Math.max(start, submit.startedAt) : start;
+        const settleUntil = batched ? now() + 40 : origin + (submits ? 5000 : 600);
         while (!armed.boundary && now() < settleUntil) {
           if (submits && locator) {
             // A key can return before the navigation it started has committed, and the node is gone mid-read. Give the
@@ -371,7 +374,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           if ((submits && (formChanged || armed.completed.size)) || (!submits && armed.completed.size && !armed.pending.size)) break;
           // A dialog or panel with no request in flight is the page's answer to the submit. Wait one second
           // from the click, which the delivered read needs to clear the unconfirmed submit, rather than five.
-          if (submits && overlayShown && !armed.pending.size && now() >= start + 1000) break;
+          if (submits && overlayShown && !armed.pending.size && now() >= origin + 1000) break;
           await Promise.race([armed.boundaryReady, sleep(Math.min(50, settleUntil - now()))]);
         }
         if (batched && !armed.boundary) carry = armed;
@@ -403,7 +406,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           : popupTab && foregroundTabs > 0 ? `opened a tab ${popupTab} that probably took the foreground (${why}, and sleight cannot tell which tab was active before); the opener's page is below`
           : popupTab ? `opened background tab ${popupTab} (opener ${tab.tab ?? 'this tab'}); the opener's page is below`
           : typeof result === 'string' ? result
-          : submits && state.submitUnconfirmed && overlayShown && !armed.pending.size ? 'submit unconfirmed: a dialog or panel opened and no request has started; read before resubmitting'
+          : submits && state.submitUnconfirmed && overlayShown && !armed.pending.size ? 'the page answered with a dialog or panel (below) and no request has started; answer it, or read before another submit'
           : submits && state.submitUnconfirmed ? 'submit unconfirmed after 5 s; read before resubmitting'
           : formChanged ? 'form changed' : armed.completed.size ? 'request finished; page below' : 'input sent; observation below';
         // A script that opens a tab after the input (a timer, a fetch) is held in the background, never silently.
