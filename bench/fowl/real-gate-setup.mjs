@@ -12,9 +12,11 @@ import { withManifestBackup } from '../world/arms/chrome.mjs';
 import { claudeHostManifest } from './real-browser.mjs';
 
 // The sleight arm's MCP server gets an explicit env, so a trace the launching shell asked for stopped at the harness
-// (no relay trace in the 36 Firefox b3 runs, 2026-10-18). SLEIGHT_TRACE alone goes through; no other host variable does.
+// (no relay trace in the 36 Firefox b3 runs, 2026-10-18). SLEIGHT_TRACE goes through, and SLEIGHT_TS3=1 for its A/B;
+// no other host variable does.
 export function traceEnv(host = process.env) {
-  return typeof host.SLEIGHT_TRACE === 'string' && host.SLEIGHT_TRACE ? { SLEIGHT_TRACE: host.SLEIGHT_TRACE } : {};
+  return { ...(typeof host.SLEIGHT_TRACE === 'string' && host.SLEIGHT_TRACE ? { SLEIGHT_TRACE: host.SLEIGHT_TRACE } : {}),
+    ...(host.SLEIGHT_TS3 === '1' ? { SLEIGHT_TS3: '1' } : {}) };
 }
 const defaultMcpRoot = () => join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser');
 // The two extension arms run in the round's own browser, which is the whole browser process: no window prompt.

@@ -67,7 +67,7 @@ import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './b
 import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
-import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE } from './engine-app-docs.mjs';
+import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE, withFirstCallWindows } from './engine-app-docs.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
@@ -452,14 +452,15 @@ function reachesGetApp(code) {
 function numberedHandles(code) {
   return [...new Set([...String(code ?? '').matchAll(/([A-Za-z_$][\w$]*)?\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*\d+\s*[,)]/g)].map(m => m[1]))];
 }
-export function batchingDescription(description, variant = true, prompt) {
+export function batchingDescription(description, variant = true, prompt, windows = false) {
   const text = prompt === 'lean' ? (variant === 'merge' ?
     'start with `let app = await cua.getApp("<app>")`; batch known actions: sleight acquires the app and checks its window before they run. Do not end a call only to read the window before an action you already know: sleight waits for the app after each click, shortcut or Return, follows a Save or Open panel, a new window or a document saved under a name the call typed, and stops the rest of the call if any other window appears.' :
     'start with `let app = await cua.getApp("<app>")`; batch known actions: sleight acquires the app and checks its window before they run. Chain known actions, but end the call after a shortcut that opens or names a window (Cmd+N, Cmd+O, or Cmd+S on an untitled document): sleight stops the rest of a call when its window changes.') :
     variant === 'merge' ? FIRST_CALL_MERGE : FIRST_CALL_BATCH;
-  const replacement = variant === 'nosavestop' ? text.replace(
+  const stops = variant === 'nosavestop' ? text.replace(
     ', but end the call after a shortcut that opens or names a window (Cmd+N, Cmd+O, or Cmd+S on an untitled document): sleight stops the rest of a call when its window changes.',
     '. sleight waits for the sheet a shortcut opens.') : text;
+  const replacement = windows ? withFirstCallWindows(stops) : stops;
   return typeof description === 'string' && description.includes(FIRST_CALL_RULE) ? description.replace(FIRST_CALL_RULE, replacement) : description;
 }
 // Both browser-guard sites refuse native access with this text.
@@ -736,6 +737,8 @@ export function createRelay({
   // SLEIGHT_FIRST_CALL_BATCH=0: in 24 runs a side it cut turns 208 to 168 (2026-10-09). 'merge' picks
   // the wording under A/B.
   firstCallBatch = false,
+  // Under A/B (SLEIGHT_TS3=1): the js description says getState lists no windows (FIRST_CALL_WINDOWS).
+  firstCallWindows = process.env.SLEIGHT_TS3 === '1',
   // Under A/B (SLEIGHT_RESULT_TRIM=1): leaves out a split acquisition's tree when its call returns a
   // newer full one. Trimming Save-panel file lists with it lost (11/12, 2026-10-11) and is gone.
   resultTrim = false,
@@ -4335,9 +4338,9 @@ export function createRelay({
         .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t) : t))
         .map(t => {
           if (t.name !== 'js') return t;
-          const compact = compactJsDescription(t.description, firstCallBatch, leanCalls);
+          const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows);
           if (compact !== undefined) return { ...t, description: compact };
-          const description = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt) : t.description;
+          const description = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt, firstCallWindows) : t.description;
           return { ...t, description: leanCalls ? leanCallDescription(description) : description };
         })
         .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [], directBrowser?.tools() ?? [])

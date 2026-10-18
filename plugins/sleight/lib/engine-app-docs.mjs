@@ -15,6 +15,17 @@ export function rewriteBrowserInstructions(text, trace = () => {}) {
 // The native getState lists apps without windows, and 26 of 36 runs then called listWindows, listBrowsers or listTabs
 // (8 paid a separate refused call, 1.0 to 1.5 s each).
 export const WINDOWS_LINE = "Windows: a window's title is the `Window:` header of `cua.getApp(...)`'s tree; there is no listWindows or listBrowsers here.";
+// That line arrives after the turn is spent. Engine-path browser tasks that name a window opened with getState in
+// 37 of 58 race runs (2026-10-18), a mean 2.75 s turn, so SLEIGHT_TS3=1 says it in the js description, before call one.
+export const FIRST_CALL_WINDOWS = "cua.getState() lists no windows: to find a window by its title, start with getApp and read the result's `Window:` header.";
+const GETSTATE_SENTENCE = "Use cua.getState() only to find an app or browser you can't name. ";
+
+// After the description's getState sentence, else after its first sentence.
+export function withFirstCallWindows(text) {
+  if (typeof text !== 'string' || text.includes(FIRST_CALL_WINDOWS)) return text;
+  const at = text.includes(GETSTATE_SENTENCE) ? text.indexOf(GETSTATE_SENTENCE) + GETSTATE_SENTENCE.length : text.indexOf('. ') + 2;
+  return at < 2 ? text : text.slice(0, at) + FIRST_CALL_WINDOWS + ' ' + text.slice(at);
+}
 
 export function isNativeGetState(code, result) {
   if (typeof code !== 'string' || !/(?<![\w$.])cua\s*\.\s*getState\s*\(/.test(code)) return false;
