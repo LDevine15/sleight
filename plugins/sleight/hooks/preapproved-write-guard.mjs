@@ -1,6 +1,7 @@
 const directorySuffix = '/library/application support/sleight';
-// grant-seal.key seals the Electron Always records in electron-grants.json; writing it would forge consent.
-const suffixes = ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key'].map(filename => `${directorySuffix}/${filename}`);
+// grant-seal.key seals the Electron Always records in electron-grants.json; writing it would forge consent. hand.json is the
+// user's ghost hand opt-out.
+const suffixes = ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key', 'hand.json'].map(filename => `${directorySuffix}/${filename}`);
 const mutations = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const folded = path => path.normalize('NFC').toLowerCase();
 const protectedLiteral = path => {
@@ -60,18 +61,19 @@ function shellWords(command) {
 }
 
 const launcher = name => name === 'sleight-mcp' || name === 'launch.mjs';
-const turboArgument = value => value.replace(/^['"]+|[;&|)'"]+$/g, '');
-// True when the words run the launcher's turbo command with anything but status, as separate words or inside a -c string.
-function turboToggle(words) {
+const commandArgument = value => value.replace(/^['"]+|[;&|)'"]+$/g, '');
+// True when the words run the launcher's turbo or hand command with anything but status, as separate words or inside a -c string.
+function launcherToggle(words, command) {
   const names = words.map(word => word.split('/').at(-1)), first = names.findIndex(launcher);
   if (first >= 0) {
-    const turbo = names.indexOf('turbo', first + 1);
-    if (turbo >= 0 && turboArgument(names[turbo + 1] ?? '') !== 'status') return true;
+    const at = names.indexOf(command, first + 1);
+    if (at >= 0 && commandArgument(names[at + 1] ?? '') !== 'status') return true;
   }
   return words.some(word => {
     if (!/\s/.test(word)) return false;
     const hit = /(?<![\w.-])(?:\S*\/)?(?:sleight-mcp|launch\.mjs)(?=[\s'"]|$)/.exec(word);
-    return !!hit && [...word.slice(hit.index).matchAll(/(?<![\w-])turbo(?![\w-])\s*(\S*)/g)].some(match => turboArgument(match[1]) !== 'status');
+    return !!hit && [...word.slice(hit.index).matchAll(new RegExp(`(?<![\\w-])${command}(?![\\w-])\\s*(\\S*)`, 'g'))]
+      .some(match => commandArgument(match[1]) !== 'status');
   });
 }
 
@@ -114,7 +116,9 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
     const operands = texts.filter(text => text && !text.startsWith('-'));
     // `sleight-mcp turbo on|off` writes turbo.json for the user, so a model's shell may not run it. Position-free on purpose:
     // env, nohup, timeout, interpreter flags and sh -c strings all reach it. Only `turbo status` passes. When in doubt, deny.
-    if (turboToggle(allWords)) add('~/Library/Application Support/sleight/turbo.json', true);
+    // `hand on|off|capture` writes hand.json the same way, and only `hand status` passes.
+    if (launcherToggle(allWords, 'turbo')) add('~/Library/Application Support/sleight/turbo.json', true);
+    if (launcherToggle(allWords, 'hand')) add('~/Library/Application Support/sleight/hand.json', true);
     if (xargs && piped) operands.push(...piped.filter(word => !word.operator).map(word => word.text));
     if (executable === 'cd') {
       const next = operands[0];
@@ -139,7 +143,7 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
       const writes = /\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?['"][wax][+bt]*['"]|\b(?:writeFile(?:Sync)?|appendFile(?:Sync)?|unlink(?:Sync)?|rename(?:Sync)?|copyFile(?:Sync)?|rm(?:Sync)?|remove|truncate|File\.write)\s*\(/;
       if (!writes.test(source)) continue;
       // Inline code is scanned as text only, never passed to the filesystem resolver.
-      for (const match of source.matchAll(/(?:~|\$\{?HOME\}?|\/|\.{1,2}\/)[^'"`;\n()<>|]*?(?:(?:preapproved|turbo|turbo-apps|electron-grants)\.json|grant-seal\.key|\/sleight(?=['"`;,)\s]|$))|\b(?:(?:preapproved|turbo|turbo-apps|electron-grants)\.json|grant-seal\.key)\b/gi)) add(match[0], true);
+      for (const match of source.matchAll(/(?:~|\$\{?HOME\}?|\/|\.{1,2}\/)[^'"`;\n()<>|]*?(?:(?:preapproved|turbo|turbo-apps|electron-grants|hand)\.json|grant-seal\.key|\/sleight(?=['"`;,)\s]|$))|\b(?:(?:preapproved|turbo|turbo-apps|electron-grants|hand)\.json|grant-seal\.key)\b/gi)) add(match[0], true);
     }
   }
   return paths;

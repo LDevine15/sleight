@@ -1,8 +1,11 @@
 // Original sleight source. UI choices come only from native button/menu events.
 // No accessibility grant, synthetic input, browser launch or page bridge.
+// With --hand the same binary is the ghost hand's host instead: it only draws, and never writes stdout.
 import AppKit
 import Foundation
 import CoreFoundation
+import QuartzCore
+import Carbon.HIToolbox
 
 // BEGIN SESSION FRAME
 func sessionFrame(_ data: [String: Any], _ choices: [String]) -> (kind: String, session: String)? {
@@ -306,8 +309,385 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
     }
 }
 
+// BEGIN HAND FRAME
+// The ghost hand's stdin frames: a kind and global top-left screen points, nonce-bound and never answered. Exact keys only.
+struct HandAct {
+    let seq: Int, kind: String, pid: Int32, windowId: UInt32, at: CGPoint, path: [CGPoint], delay: Double, beats: Int
+}
+enum HandFrame { case act(String, HandAct), hide(String) }
+let handKinds: Set<String> = ["click", "double", "right", "key", "type", "drag", "scroll"]
+func handFrame(_ data: [String: Any]) -> HandFrame? {
+    func number(_ value: Any?) -> Double? {
+        guard let value = value as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue.isFinite else { return nil }
+        return value.doubleValue
+    }
+    func integer(_ value: Any?, _ range: ClosedRange<Double>) -> Int? {
+        guard let value = number(value), value.rounded() == value, range.contains(value) else { return nil }
+        return Int(value)
+    }
+    func point(_ value: Any?) -> CGPoint? {
+        guard let pair = value as? [Any], pair.count == 2, let x = number(pair[0]), let y = number(pair[1]),
+            abs(x) <= 100000, abs(y) <= 100000 else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+    guard let nonce = data["nonce"] as? String, nonce.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { return nil }
+    if data["hand"] as? String == "hide" { return Set(data.keys) == ["hand", "nonce"] ? .hide(nonce) : nil }
+    guard data["hand"] as? String == "act",
+        Set(data.keys) == ["hand", "nonce", "seq", "kind", "pid", "windowId", "at", "path", "delayMs", "beats"],
+        let seq = integer(data["seq"], 0...9007199254740991), let kind = data["kind"] as? String, handKinds.contains(kind),
+        let pid = integer(data["pid"], 1...2147483647), let windowId = integer(data["windowId"], 1...4294967295),
+        let at = point(data["at"]), let raw = data["path"] as? [Any], (1...64).contains(raw.count),
+        let delay = integer(data["delayMs"], 0...10000), let beats = integer(data["beats"], 1...20) else { return nil }
+    let path = raw.compactMap(point)
+    guard path.count == raw.count else { return nil }
+    return .act(nonce, HandAct(seq: seq, kind: kind, pid: Int32(pid), windowId: UInt32(windowId), at: at, path: path,
+        delay: Double(delay) / 1000, beats: beats))
+}
+// Consecutive repeats dropped, so a one-point route means the hand appears there without a glide.
+func handPoints(_ points: [CGPoint]) -> [CGPoint] {
+    points.enumerated().filter { $0.offset == 0 || points[$0.offset - 1] != $0.element }.map { $0.element }
+}
+// The panel's frame for a route: the route's box plus 48 pt, before clipping to the target window.
+func handBox(_ points: [CGPoint]) -> CGRect {
+    let xs = points.map { $0.x }, ys = points.map { $0.y }
+    guard let left = xs.min(), let right = xs.max(), let top = ys.min(), let bottom = ys.max() else { return .null }
+    return CGRect(x: left - 48, y: top - 48, width: right - left + 96, height: bottom - top + 96)
+}
+// END HAND FRAME
+
+// BEGIN HAND ART
+// The one place for the ghost hand's look. Until the art director's assets land (ROADMAP 2.7, H7) it is the menu bar glove's own
+// shapes, white at 70% opacity with a thin dark outline so it reads on light and dark windows, 32 pt tall at 1x and 2x.
+enum HandArt {
+    static let height: CGFloat = 32, opacity = 0.7
+    // The glyph's 24 by 18 viewBox with room for the outline, at the art's aspect, and its pointer tip: the hand's action point.
+    static let box = CGRect(x: -1, y: -1, width: 26.25, height: 20), tip = CGPoint(x: 16.5, y: 1)
+    static var size: CGSize { CGSize(width: (height * box.width / box.height).rounded(), height: height) }
+    // The layer's anchor sits on the tip (layer y runs up from the bottom).
+    static var anchor: CGPoint { CGPoint(x: (tip.x - box.minX) / box.width, y: 1 - (tip.y - box.minY) / box.height) }
+    static func shapes(_ colour: String, outline: Double) -> String {
+        let fingers: [(Double, Double, Double, Double)] = [(5, 3.5, 5, 10), (8, 2, 8, 10), (11, 2.8, 11, 10), (14, 4.5, 14, 10), (5.5, 12.5, 1.8, 8.5)]
+        let fills = ["M4 9 H15 V11 L14 13.5 H6 L5 11 Z", "M16.5 1 L16.5 9.75 L18.6 7.86 L20.4 11.22 L21.68 10.59 L19.95 7.44 L22.94 7.44 Z"]
+        let dabs: [(Double, Double)] = [(6, 14.5), (9.5, 15), (13, 14.5), (2.5, 16)]
+        let edge = outline > 0 ? " stroke=\"\(colour)\" stroke-width=\"\(outline)\" stroke-linejoin=\"round\"" : ""
+        return "<g fill=\"none\" stroke=\"\(colour)\" stroke-width=\"\(2 + outline)\" stroke-linecap=\"round\">"
+            + fingers.map { "<line x1=\"\($0.0)\" y1=\"\($0.1)\" x2=\"\($0.2)\" y2=\"\($0.3)\"/>" }.joined() + "</g>"
+            + fills.map { "<path fill=\"\(colour)\"\(edge) d=\"\($0)\"/>" }.joined()
+            + dabs.map { "<rect x=\"\($0.0)\" y=\"\($0.1)\" width=\"2\" height=\"2\" fill=\"\(colour)\"\(edge)/>" }.joined()
+    }
+    // The outline is the same shapes drawn wider in dark under the white ones.
+    static var svg: String {
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"\(box.minX) \(box.minY) \(box.width) \(box.height)\" width=\"\(size.width)\" height=\"\(size.height)\">"
+            + shapes("#1d1d1f", outline: 1.2) + shapes("#ffffff", outline: 0) + "</svg>"
+    }
+    static func image(scale: CGFloat) -> CGImage? {
+        guard let data = svg.data(using: .utf8), let picture = NSImage(data: data),
+            let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+            else { return nil }
+        rep.size = size
+        NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        picture.draw(in: NSRect(origin: .zero, size: size))
+        return rep.cgImage
+    }
+}
+// END HAND ART
+
+// BEGIN HAND HOST
+// The ghost hand (ROADMAP 2.7): a glove that glides to where sleight acts in a background window, flourishes and fades. It only
+// draws: the panel never activates, takes key, catches a click or shows in another process's capture, and it is released after
+// the fade, so an idle host has no window and no scheduled work.
+enum HandTiming { static let glide = 0.3, flourish = 0.15, fade = 0.3, silence = 1.5 }
+final class HandPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+// Capture: hidden (.none) keeps the panel out of every capture, the user's own screenshots and recordings included, and
+// visible (.readOnly) lets them show it. The client passes the user's setting as --capture=hidden|visible; hidden is the default.
+let handCaptureModes: [String: NSWindow.SharingType] = ["hidden": NSWindow.SharingType.none, "visible": NSWindow.SharingType.readOnly]
+func handCapture(_ args: [String]) -> String? {
+    if args.isEmpty { return "hidden" }
+    guard args.count == 1, args[0].hasPrefix("--capture="), handCaptureModes[String(args[0].dropFirst(10))] != nil else { return nil }
+    return String(args[0].dropFirst(10))
+}
+func makeHandPanel(capture: String) -> HandPanel {
+    let panel = HandPanel(contentRect: NSRect(x: 0, y: 0, width: 1, height: 1), styleMask: [.borderless, .nonactivatingPanel],
+        backing: .buffered, defer: true)
+    panel.level = .floating
+    panel.ignoresMouseEvents = true
+    panel.hasShadow = false
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.sharingType = handCaptureModes[capture] ?? NSWindow.SharingType.none
+    panel.collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary, .stationary]
+    panel.hidesOnDeactivate = false
+    panel.isReleasedWhenClosed = false
+    panel.animationBehavior = .none
+    panel.setAccessibilityElement(false)
+    let view = NSView()
+    view.wantsLayer = true
+    view.setAccessibilityElement(false)
+    panel.contentView = view
+    return panel
+}
+// Global top-left points to AppKit's bottom-left screen coordinates, which start at the primary display.
+func appKitRect(_ rect: CGRect) -> NSRect {
+    NSRect(x: rect.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - rect.maxY, width: rect.width, height: rect.height)
+}
+// The target window's bounds while it is on screen and still the frame's pid's. Bounds and owner need no recording grant.
+func handWindowBounds(_ windowId: UInt32, pid: Int32) -> CGRect? {
+    guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(windowId)) as? [[String: Any]],
+        let info = list.first, (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value == windowId,
+        (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+        (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true,
+        let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+        let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
+    return rect
+}
+func handDemoRect(_ text: String) -> CGRect? {
+    let parts = text.split(separator: ",", omittingEmptySubsequences: false).map { Double($0) }
+    guard parts.count == 4, let x = parts[0], let y = parts[1], let width = parts[2], let height = parts[3],
+        [x, y, width, height].allSatisfy({ $0.isFinite && abs($0) <= 100000 }), width >= 1, height >= 1 else { return nil }
+    return CGRect(x: x, y: y, width: width, height: height)
+}
+
+final class HandHost: NSObject, NSApplicationDelegate {
+    var panel: HandPanel?
+    var hand: CALayer?
+    var box = CGRect.null       // the panel's frame, global top-left points
+    var windowId: UInt32 = 0
+    var pending: [Int: DispatchWorkItem] = [:]
+    var fading: DispatchWorkItem?
+    var next = 0
+    var demo: CGRect?
+    var capture = "hidden"
+    lazy var images = [HandArt.image(scale: 1), HandArt.image(scale: 2)]
+    var idle: Bool { panel == nil && hand == nil && pending.isEmpty && fading == nil }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if let demo = demo { play(demo); return }
+        DispatchQueue.global().async { self.read() }
+    }
+    // Validation, the nonce binding and the seq order run on this reader thread in frame order. Any bad frame ends the host.
+    func read() {
+        var buffer = Data(), bound: String?, last = -1
+        while true {
+            let chunk = FileHandle.standardInput.availableData
+            if chunk.isEmpty { DispatchQueue.main.async { NSApp.terminate(nil) }; return }
+            buffer.append(chunk)
+            if buffer.count > 131072 { exit(65) }
+            while let end = buffer.firstIndex(of: 10) {
+                let line = buffer.prefix(upTo: end)
+                buffer.removeSubrange(...end)
+                guard line.count <= 8192, let data = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                    let frame = handFrame(data) else { exit(65) }
+                switch frame {
+                case let .hide(nonce):
+                    guard bound == nil || bound == nonce else { exit(65) }
+                    bound = nonce
+                    DispatchQueue.main.async { self.hide() }
+                case let .act(nonce, act):
+                    guard bound == nil || bound == nonce, act.seq > last else { exit(65) }
+                    bound = nonce; last = act.seq
+                    DispatchQueue.main.async { self.schedule(act) }
+                }
+            }
+        }
+    }
+    // A frame plays after its delay unless a hide comes first. Past 64 waiting frames, new ones are dropped.
+    func schedule(_ act: HandAct) {
+        guard pending.count < 64 else { return }
+        let id = next; next += 1
+        let item = DispatchWorkItem { [weak self] in
+            self?.pending[id] = nil
+            if let bounds = handWindowBounds(act.windowId, pid: act.pid) { self?.draw(act, clip: bounds) }
+        }
+        pending[id] = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + act.delay, execute: item)
+    }
+    func hide() {
+        pending.values.forEach { $0.cancel() }; pending.removeAll()
+        if panel != nil { fade(after: 0) }
+    }
+    // The approach glides along the path into the action point. A drag approaches its grab point, then carries along the path.
+    func draw(_ act: HandAct, clip: CGRect) {
+        let start = panel != nil && windowId == act.windowId ? hand.map { global(($0.presentation() ?? $0).position) } : nil
+        let approach = handPoints((start.map { [$0] } ?? []) + (act.kind == "drag" ? [act.at] : act.path + [act.at]))
+        let carry = act.kind == "drag" ? handPoints([act.at] + act.path) : []
+        guard layout(approach + carry, clip: clip), let panel = panel, let hand = hand else { return }
+        fading?.cancel(); fading = nil
+        let now = CACurrentMediaTime(), glide = HandTiming.glide, flourish = HandTiming.flourish
+        func keyframes(_ path: String, _ values: [Any], at begin: Double, for duration: Double, repeats: Int = 1) {
+            let animation = CAKeyframeAnimation(keyPath: path)
+            animation.values = values; animation.beginTime = begin; animation.duration = duration
+            animation.repeatCount = Float(repeats); animation.fillMode = .backwards
+            hand.add(animation, forKey: path)
+        }
+        func route(_ points: [CGPoint], at begin: Double) {
+            let path = CGMutablePath(); path.move(to: local(points[0]))
+            for point in points.dropFirst() { path.addLine(to: local(point)) }
+            let animation = CAKeyframeAnimation(keyPath: "position")
+            animation.path = path; animation.calculationMode = .paced; animation.beginTime = begin; animation.duration = glide
+            animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut); animation.fillMode = .backwards
+            hand.add(animation, forKey: begin == now ? "approach" : "carry")
+        }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        let shown = (hand.presentation() ?? hand).opacity
+        hand.removeAllAnimations()
+        if shown < Float(HandArt.opacity) { keyframes("opacity", [shown, HandArt.opacity], at: now, for: flourish) }
+        hand.opacity = Float(HandArt.opacity)
+        var time = now
+        if approach.count > 1 { route(approach, at: time); time += glide }
+        hand.position = local((carry.count > 1 ? carry : approach).last!)
+        switch act.kind {
+        case "drag":
+            // Grab, carry, release: the glove closes a little for the whole carry.
+            let total = flourish * 2 + (carry.count > 1 ? glide : 0)
+            let scale = CAKeyframeAnimation(keyPath: "transform.scale")
+            scale.values = [1, 0.82, 0.82, 1]; scale.keyTimes = [0, NSNumber(value: flourish / total), NSNumber(value: 1 - flourish / total), 1]
+            scale.beginTime = time; scale.duration = total; scale.fillMode = .backwards
+            hand.add(scale, forKey: "transform.scale")
+            if carry.count > 1 { route(carry, at: time + flourish) }
+            time += total
+        case "type" where IsSecureEventInputEnabled():
+            break // a hand pecking at a password field would mislead
+        default:
+            let moves: [String: (String, [Double])] = ["click": ("transform.scale", [1, 0.82, 1]), "double": ("transform.scale", [1, 0.82, 1, 0.82, 1]),
+                "right": ("transform.rotation.z", [0, -0.3, 0]), "key": ("transform.translation.y", [0, -3, 0]),
+                "type": ("transform.translation.y", [0, -2, 0]), "scroll": ("transform.translation.y", [0, 5, -5, 0])]
+            if let (path, values) = moves[act.kind] { keyframes(path, values, at: time, for: flourish, repeats: act.beats); time += flourish * Double(act.beats) }
+        }
+        CATransaction.commit()
+        if !panel.isVisible { panel.orderFrontRegardless() }
+        windowId = act.windowId
+        fade(after: time - now + HandTiming.silence)
+    }
+    // Sizes the panel (made on first use) to the points' box plus 48 pt clipped to the window, keeping the hand where it is on
+    // screen. It never shows the panel.
+    func layout(_ points: [CGPoint], clip: CGRect) -> Bool {
+        let frame = handBox(points).intersection(clip)
+        guard !frame.isNull, frame.width >= 1, frame.height >= 1, let last = points.last else { return false }
+        let panel = self.panel ?? makeHandPanel(capture: capture), hand = self.hand ?? CALayer()
+        let screen = NSScreen.screens.first { NSPointInRect(NSPoint(x: last.x, y: appKitRect(CGRect(origin: last, size: .zero)).minY), $0.frame) }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        let current = self.hand.map { global(($0.presentation() ?? $0).position) }
+        panel.setFrame(appKitRect(frame), display: false)
+        box = frame
+        if self.hand == nil {
+            hand.bounds = CGRect(origin: .zero, size: HandArt.size); hand.anchorPoint = HandArt.anchor; hand.opacity = 0
+            panel.contentView?.layer?.addSublayer(hand)
+        }
+        if let current = current { hand.removeAllAnimations(); hand.position = local(current) }
+        hand.contentsScale = screen?.backingScaleFactor ?? 2
+        hand.contents = images[hand.contentsScale > 1 ? 1 : 0]
+        CATransaction.commit()
+        self.panel = panel; self.hand = hand
+        return true
+    }
+    func local(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x - box.minX, y: box.maxY - point.y) }
+    func global(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x + box.minX, y: box.maxY - point.y) }
+    func fade(after delay: Double) {
+        fading?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self = self, let hand = self.hand else { self?.release(); return }
+            let animation = CABasicAnimation(keyPath: "opacity")
+            animation.fromValue = (hand.presentation() ?? hand).opacity; animation.toValue = 0; animation.duration = HandTiming.fade
+            hand.opacity = 0; hand.add(animation, forKey: "fade")
+            let done = DispatchWorkItem { [weak self] in self?.release() }
+            self.fading = done
+            DispatchQueue.main.asyncAfter(deadline: .now() + HandTiming.fade, execute: done)
+        }
+        fading = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+    func release() {
+        panel?.orderOut(nil); panel?.close(); hand?.removeFromSuperlayer()
+        panel = nil; hand = nil; box = .null; fading = nil
+    }
+    // --hand-demo X,Y,W,H plays every kind in turn inside that rect (global top-left points) for 30 seconds, then exits. It is
+    // the live capture test's subject, and never reads stdin.
+    func play(_ rect: CGRect) {
+        let kinds = ["click", "double", "right", "key", "type", "drag", "scroll"]
+        var step = 0
+        let spot = { (x: CGFloat, y: CGFloat) in CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y) }
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            let kind = kinds[step % kinds.count], at = spot(0.25 + 0.25 * CGFloat(step % 3), 0.4 + 0.2 * CGFloat(step % 2))
+            self?.draw(HandAct(seq: step, kind: kind, pid: 0, windowId: 0, at: at, path: kind == "drag" ? [spot(0.8, 0.7)] : [at],
+                delay: 0, beats: kind == "type" ? 3 : 1), clip: rect)
+            step += 1
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { exit(0) }
+    }
+}
+// END HAND HOST
+
+// BEGIN HAND DUMP
+// --hand-dump prints the panel's flags, the art, the timings and the box arithmetic as JSON for tests. Nothing is shown.
+func handDump(capture: String) -> [String: Any] {
+    let host = HandHost(), route = [CGPoint(x: 100, y: 100), CGPoint(x: 160, y: 200)]
+    host.capture = capture
+    let rect = { (r: CGRect) in [r.minX, r.minY, r.width, r.height].map { Double($0) } }
+    let unclipped = handBox(route)
+    _ = host.layout(route, clip: CGRect(x: 60, y: 0, width: 200, height: 200))
+    let clipped = host.box
+    guard let panel = host.panel else { return [:] }
+    let behaviours: [(NSWindow.CollectionBehavior, String)] = [(.canJoinAllSpaces, "canJoinAllSpaces"), (.fullScreenAuxiliary, "fullScreenAuxiliary"),
+        (.fullScreenNone, "fullScreenNone"), (.fullScreenPrimary, "fullScreenPrimary"), (.ignoresCycle, "ignoresCycle"), (.managed, "managed"),
+        (.moveToActiveSpace, "moveToActiveSpace"), (.participatesInCycle, "participatesInCycle"), (.stationary, "stationary"), (.transient, "transient")]
+    let sharing: [NSWindow.SharingType: String] = [.none: "none", .readOnly: "readOnly", .readWrite: "readWrite"]
+    let size = HandArt.size, images = host.images
+    // Opaque light and dark pixels at 2x: the white glove and its outline.
+    var tones = [0, 0]
+    if let image = images[1] {
+        let rep = NSBitmapImageRep(cgImage: image)
+        for x in 0..<rep.pixelsWide { for y in 0..<rep.pixelsHigh {
+            guard let colour = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), colour.alphaComponent > 0.9 else { continue }
+            if colour.brightnessComponent > 0.9 { tones[0] += 1 } else if colour.brightnessComponent < 0.3 { tones[1] += 1 }
+        } }
+    }
+    let dump: [String: Any] = [
+        "panel": [
+            "borderless": panel.styleMask.subtracting(.nonactivatingPanel).isEmpty, "nonactivatingPanel": panel.styleMask.contains(.nonactivatingPanel),
+            "canBecomeKey": panel.canBecomeKey, "canBecomeMain": panel.canBecomeMain, "ignoresMouseEvents": panel.ignoresMouseEvents,
+            "hasShadow": panel.hasShadow, "opaque": panel.isOpaque, "backgroundAlpha": Double(panel.backgroundColor.alphaComponent),
+            "level": panel.level.rawValue, "sharingType": sharing[panel.sharingType] ?? "other",
+            "collectionBehavior": behaviours.filter { panel.collectionBehavior.contains($0.0) }.map { $0.1 },
+            "accessibilityElement": panel.isAccessibilityElement(), "contentAccessibilityElement": panel.contentView?.isAccessibilityElement() ?? true,
+            "hidesOnDeactivate": panel.hidesOnDeactivate, "visible": panel.isVisible,
+        ],
+        "timing": ["glide": HandTiming.glide, "flourish": HandTiming.flourish, "fade": HandTiming.fade, "silence": HandTiming.silence],
+        "art": ["width": Double(size.width), "height": Double(size.height), "opacity": HandArt.opacity,
+            "anchor": [Double(HandArt.anchor.x), Double(HandArt.anchor.y)], "pixels": images.map { [$0?.width ?? 0, $0?.height ?? 0] }, "tones": tones],
+        "box": ["unclipped": rect(unclipped), "clipped": rect(clipped)],
+        "capture": host.capture,
+    ]
+    host.release()
+    return dump.merging(["idle": host.idle]) { $1 }
+}
+// END HAND DUMP
+
+// No arguments: the consent host. --hand [--capture=…], --hand-demo X,Y,W,H [--capture=…] and --hand-dump [--capture=…]: the hand.
+let arguments = Array(CommandLine.arguments.dropFirst())
 let app = NSApplication.shared
-let host = ConsentHost()
-app.setActivationPolicy(.accessory)
-app.delegate = host
-app.run()
+if arguments.isEmpty {
+    let host = ConsentHost()
+    app.setActivationPolicy(.accessory)
+    app.delegate = host
+    app.run()
+} else {
+    let mode = arguments[0]
+    var rest = Array(arguments.dropFirst()), demo: CGRect?
+    if mode == "--hand-demo" { guard let first = rest.first, let rect = handDemoRect(first) else { exit(64) }; demo = rect; rest.removeFirst() }
+    guard ["--hand", "--hand-demo", "--hand-dump"].contains(mode), let capture = handCapture(rest) else { exit(64) }
+    if mode == "--hand-dump" {
+        guard let bytes = try? JSONSerialization.data(withJSONObject: handDump(capture: capture), options: [.sortedKeys]) else { exit(70) }
+        FileHandle.standardOutput.write(bytes + Data([10]))
+        exit(0)
+    }
+    let hand = HandHost()
+    hand.demo = demo; hand.capture = capture
+    app.setActivationPolicy(.accessory)
+    app.delegate = hand
+    app.run()
+}
