@@ -1,6 +1,7 @@
 // IN1's design boundary on a real page: Playwright resolves aria-ref against the latest aria snapshot taken in a frame,
 // whoever took it. A read the model never sees (a background prefetch that gets discarded) can retire a ref the model
 // already holds: a button that is briefly renamed during that read gets a new ref, and the old one stops resolving.
+// RM1 makes sleight's ref check refuse such a ref at once with a re-read hint.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -48,14 +49,30 @@ test('without a hidden read, a held ref survives a transient rename', { skip, ti
   assert.equal(await snapshotRefBinding(page, ref).count(), 1);
 });
 
-test('a hidden read during a transient rename retires the held ref, though sleight still accepts it', { skip, timeout: 30000 }, async t => {
+test('a hidden read during a transient rename retires the held ref, and sleight refuses it at once', { skip, timeout: 30000 }, async t => {
   const page = await fixture(t), ref = await delivered(page);
   await page.evaluate(() => window.rename('Saving'));
-  const hidden = await snapshot(page); // never acknowledged, as a discarded prefetch would be
+  const hidden = await snapshot(page); // never acknowledged, as a discarded prefetch or a find read's other rows are
   assert.match(hidden.text, /button "Saving" \[ref=/);
   assert.doesNotMatch(hidden.text, new RegExp('button "Saving" \\[ref=' + ref + '\\]'));
   await page.evaluate(() => window.rename('Save'));
-  // sleight's own generation and delivery check passes, so the failure is inside Playwright's latest-snapshot map.
-  const locator = snapshotRefBinding(page, ref);
-  assert.equal(await locator.count(), 0);
+  // Inside Playwright the ref resolves to nothing (first-generation public refs equal the raw ones)...
+  assert.equal(await page.locator('aria-ref=' + ref).count(), 0);
+  // ...and sleight's own check now says so instead of letting the action wait for its locator.
+  assert.throws(() => snapshotRefBinding(page, ref), /changed on the page since it was read; use browser_read again/);
+});
+
+// RM1: a moved ref never lands on another element. Playwright mints refs from one counter per document and never reuses
+// one, so after two buttons swap names both held refs resolve to nothing, never to the other button.
+test('after two controls swap names under a hidden read, neither held ref reaches the other control', { skip, timeout: 30000 }, async t => {
+  const page = await fixture(t), first = await snapshot(page);
+  assert.equal(acknowledgeSnapshot(page, first.number), true);
+  const save = /button "Save" \[ref=([^\]]+)\]/.exec(first.text)[1], other = /button "Other" \[ref=([^\]]+)\]/.exec(first.text)[1];
+  await page.evaluate(() => { const [a, b] = document.querySelectorAll('button'); a.textContent = 'Other'; b.textContent = 'Save'; });
+  const hidden = await snapshot(page);
+  for (const ref of [save, other]) {
+    assert.doesNotMatch(hidden.text, new RegExp('\\[ref=' + ref + '\\]'));
+    assert.equal(await page.locator('aria-ref=' + ref).count(), 0);
+    assert.throws(() => snapshotRefBinding(page, ref), /changed on the page/);
+  }
 });
