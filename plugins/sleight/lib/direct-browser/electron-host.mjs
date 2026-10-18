@@ -29,8 +29,11 @@ const MAX_SOCKET_PATH = 100;
 export function errorFrame(error) {
   const text = String(error?.message ?? '');
   if (error?.cdp === true) return { code: 'CDP_ERROR', message: text.slice(0, 500), dispatched: true };
-  const known = ['CDP_COMMAND_REFUSED', 'CDP_SESSION_NOT_OWNED', 'CDP_TARGET_NOT_OWNED'].find(code => text === code);
+  const known = ['CDP_COMMAND_REFUSED', 'CDP_SESSION_NOT_OWNED', 'CDP_TARGET_NOT_OWNED', 'ELECTRON_BUSY', 'FENCE_REQUIRED', 'GRANT_NOT_CURRENT',
+    'BUILD_NOT_REGISTERED', 'SESSION_INVALID', 'TICKET_BANK_FULL', 'TICKET_BOUND_INVALID'].find(code => text === code);
   if (known) return { code: known, dispatched: false };
+  if (/^ownership unresolved/.test(text)) return { code: 'OWNERSHIP_UNRESOLVED', dispatched: false };
+  if (/^retained ownership/.test(text)) return { code: 'OWNERSHIP_RETAINED', dispatched: false };
   if (/parked|not ready/i.test(text)) return { code: 'APP_PARKED', dispatched: error?.dispatched === true };
   if (/unauthenticated|detached/i.test(text)) return { code: 'UNAUTHENTICATED', dispatched: false };
   if (/queue full/i.test(text)) return { code: 'QUEUE_FULL', dispatched: false };
@@ -91,12 +94,13 @@ export function createPythonAdapter({ python = 'python3', script, registryPath, 
 }
 
 export async function createElectronHost({
-  stateDir, Broker, createAdapter, builds = [], authorizeLaunch, requestQuit, resumeAuthority, admitTarget, authorizeIssue, brokerOptions = {},
+  stateDir, Broker, createAdapter, builds = [], authorizeLaunch, requestQuit, resumeAuthority, admitTarget, authorizeIssue, prepareProfile, brokerOptions = {},
   maxFrameBytes = DEFAULT_MAX_FRAME_BYTES, maxChannels = 64, maxUnauthenticated = 8, handshakeMs = 2000, maxPendingPerChannel = 64,
-  maxBufferedBytes = 4 * 1024 * 1024, maxTicketTtlMs = 300000, maxTickets = 256, adminSecret, uid = process.getuid?.(),
+  maxBufferedBytes = 4 * 1024 * 1024, maxTicketTtlMs = 300000, maxTickets = 256, fenceLeaseMs = 30000, now = Date.now, adminSecret, uid = process.getuid?.(),
 } = {}) {
-  if (typeof Broker !== 'function' || typeof createAdapter !== 'function') refuse('HOST_DEPENDENCIES_REQUIRED');
-  for (const value of [maxFrameBytes, maxChannels, maxUnauthenticated, handshakeMs, maxPendingPerChannel, maxBufferedBytes, maxTicketTtlMs, maxTickets]) {
+  if (typeof Broker !== 'function' || typeof createAdapter !== 'function' || prepareProfile !== undefined && typeof prepareProfile !== 'function' ||
+      typeof now !== 'function') refuse('HOST_DEPENDENCIES_REQUIRED');
+  for (const value of [maxFrameBytes, maxChannels, maxUnauthenticated, handshakeMs, maxPendingPerChannel, maxBufferedBytes, maxTicketTtlMs, maxTickets, fenceLeaseMs]) {
     if (!Number.isSafeInteger(value) || value < 1) refuse('HOST_BOUND_INVALID');
   }
   privateDirectory(stateDir, uid);
@@ -118,6 +122,17 @@ export async function createElectronHost({
   let adapterSpent = false, adapterHolds = false;
   const channels = new Set(), tickets = new Map();
   const events = new EventEmitter();
+  // One session drives the app at a time: another session's ticket or channel is refused ELECTRON_BUSY while a worker
+  // channel of a different session is open.
+  const busyFor = session => [...channels].some(item => item.role === 'worker' && item.client && !item.dropped && item.session !== session);
+  // The instance mutation fence: one worker channel may send Input.* at a time. It lapses fenceLeaseMs after the
+  // holder's last send or verify (clock: now), and a dropped channel releases it.
+  let fence = null;
+  const fenceHolder = () => {
+    if (fence && (fence.channel.dropped || now() - fence.touched >= fenceLeaseMs)) fence = null;
+    return fence?.channel;
+  };
+  const touchFence = channel => { if (fenceHolder() === channel) fence.touched = now(); };
 
   // --- Ownership -----------------------------------------------------------------------------
   async function inspectLocks() {
@@ -154,6 +169,9 @@ export async function createElectronHost({
         adapterHolds = true;
         record = { state: 'reserved', build: spec.build, nonce: reserved.nonce, root: reserved.root, lock: reserved.lock, observed: [] };
         write({});
+        // The caller fills the reserved profile (a workspace to open) before anything runs in it. A failure here leaves the
+        // reservation held, so ownership is unresolved until reconcile() collects it.
+        if (prepareProfile) await prepareProfile(reserved.root, structuredClone(spec));
         return reserved;
       },
       async record(_owned, identity) { write({ state: 'running', pid: identity.pid, birth: identity.birth }); },
@@ -177,7 +195,13 @@ export async function createElectronHost({
         input: adapter.streams.input, output: adapter.streams.output, events: adapter.events,
         inspect: () => adapter.rpc('inspect'),
         confirmAbsent: async identities => (await adapter.rpc('confirmAbsent', { identities: identities.map(item => [item.pid, item.birth]) })).absent === true,
-        requestQuit: async identity => { if (typeof requestQuit !== 'function') refuse('QUIT_UNAVAILABLE'); await requestQuit(identity); },
+        // The parent quits through the app's own Quit. The birth is checked again right before, so a recycled PID is never asked.
+        requestQuit: async identity => {
+          if (typeof requestQuit !== 'function') refuse('QUIT_UNAVAILABLE');
+          const observed = await broker.inspect();
+          if (observed.parent?.pid !== identity.pid || observed.parent?.birth !== identity.birth) refuse('QUIT_IDENTITY_CHANGED');
+          await requestQuit(Object.freeze({ pid: identity.pid, birth: identity.birth }));
+        },
       };
     };
     return { ownership: ownershipHooks, launch };
@@ -209,6 +233,9 @@ export async function createElectronHost({
     }
   }
 
+  const quit = consent => broker ? broker.quit(consent) : Promise.reject(Error('no app connection'));
+  const collect = () => broker ? broker.collect() : Promise.reject(Error('no app connection'));
+
   // --- Channels ------------------------------------------------------------------------------
   function route(client, frame) {
     for (const channel of channels) {
@@ -233,6 +260,7 @@ export async function createElectronHost({
     const drop = () => {
       if (channel.dropped) return; channel.dropped = true;
       clearTimeout(timer); channels.delete(channel);
+      if (fence?.channel === channel) fence = null;
       for (const [, controller] of channel.pending) controller.abort();
       channel.pending.clear();
       if (channel.client) broker?.detach(channel.client);
@@ -286,6 +314,8 @@ export async function createElectronHost({
       channel.sealed = true;
       if (channel.role === 'worker') {
         if (!broker || broker.state !== 'ready') { channel.open = true; channel.send({ op: 'refused', code: 'APP_PARKED', state: broker?.state ?? 'none' }, true); return; }
+        // A ticket issued before another session connected cannot open beside it.
+        if (busyFor(channel.session)) { channel.open = true; channel.send({ op: 'refused', code: 'ELECTRON_BUSY', state: broker.state }, true); return; }
         channel.client = broker.connect(channel.session);
         channel.open = true;
         channel.send({ op: 'open', epoch: broker.epoch, incarnation: broker.identity, instance: broker.instance });
@@ -308,9 +338,20 @@ export async function createElectronHost({
       };
       if (message.op === 'send') {
         if (Object.keys(message).some(key => !['op', 'id', 'method', 'params', 'sessionId'].includes(key))) refuse('CHANNEL_FRAME_INVALID');
+        // Input reaches the app only from the fence holder. The worker's registry fence is the first check, this is the one
+        // another session's worker cannot skip.
+        if (typeof message.method === 'string' && message.method.startsWith('Input.') && fenceHolder() !== channel) { finish(Error('FENCE_REQUIRED')); return; }
+        touchFence(channel);
         broker.transportSend(channel.client, { method: message.method, params: message.params ?? {}, sessionId: message.sessionId }, { signal: controller.signal })
           .then(result => finish(undefined, result ?? {}), error => finish(error));
+      } else if (message.op === 'fence') {
+        if (Object.keys(message).sort().join() !== 'action,id,op' || !['acquire', 'release'].includes(message.action)) refuse('CHANNEL_FRAME_INVALID');
+        const holder = fenceHolder();
+        if (message.action === 'acquire' && (!holder || holder === channel)) fence = { channel, touched: now() };
+        if (message.action === 'release' && holder === channel) fence = null;
+        finish(undefined, { held: fenceHolder() === channel, holder: fenceHolder()?.session ?? null, leaseMs: fenceLeaseMs });
       } else if (message.op === 'verify') {
+        touchFence(channel);
         broker.fresh().then(() => finish(undefined, { ok: broker.state === 'ready' && broker.epoch === channel.client.epoch && broker.clients.has(channel.client),
           epoch: broker.epoch, instance: broker.instance }), () => finish(undefined, { ok: false, epoch: broker.epoch, instance: broker.instance }));
       } else refuse('CHANNEL_FRAME_INVALID');
@@ -329,6 +370,7 @@ export async function createElectronHost({
     try { current = typeof authorizeIssue === 'function' && await authorizeIssue(Object.freeze({ session })) === true; } catch { current = false; }
     try { if (bound && (bound.revoked || bound.grant.current() !== true)) current = false; } catch { current = false; }
     if (!current || closed) refuse('GRANT_NOT_CURRENT');
+    if (busyFor(session)) refuse('ELECTRON_BUSY');
     for (const [id, item] of tickets) if (item.expires <= Date.now()) tickets.delete(id);
     if (tickets.size >= maxTickets) refuse('TICKET_BANK_FULL');
     const id = randomToken(), secret = Buffer.from(randomToken(32), 'base64url');
@@ -393,6 +435,15 @@ export async function createElectronHost({
       if (message.op === 'status') return JSON.parse(JSON.stringify(status()));
       if (message.op === 'resume') return resume();
       if (message.op === 'reconcile') return reconcileOwnership({ acceptDiskEvidence: message.args?.acceptDiskEvidence === true });
+      // A start names a reviewed build from the registry the host was given; nothing else reaches the launch spec.
+      if (message.op === 'start') {
+        const build = message.args?.build;
+        if (typeof build !== 'string' || !builds.includes(build) || Object.keys(message.args).length !== 1) refuse('BUILD_NOT_REGISTERED');
+        return JSON.parse(JSON.stringify(await start({ build })));
+      }
+      // The parent sends quit only on the user's click; the app's own Quit runs, with its unsaved-work prompts.
+      if (message.op === 'quit') return JSON.parse(JSON.stringify(await quit(async () => true)));
+      if (message.op === 'collect') return JSON.parse(JSON.stringify(await collect()));
       refuse('CHANNEL_FRAME_INVALID');
     };
     run().then(value => reply(value), error => reply(undefined, error));
@@ -439,8 +490,7 @@ export async function createElectronHost({
 
   return Object.freeze({
     hostId, socketPath, start, status, issueTicket, bindGrant, revokeSession, revokeAll, resume, reconcile: reconcileOwnership, close, _crashForTest,
-    quit: consent => broker ? broker.quit(consent) : Promise.reject(Error('no app connection')),
-    collect: () => broker ? broker.collect() : Promise.reject(Error('no app connection')),
+    quit, collect,
     get broker() { return broker; }, events,
   });
 }

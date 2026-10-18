@@ -100,7 +100,7 @@ test('worker loss and a new worker: one app, one writer, no relaunch', { skip },
     const pid = first.identity.pid;
     first.session.send('Browser.getVersion', {}).catch(() => {});
     await first.disconnect();
-    const second = await worker(host, 'b');
+    const second = await worker(host, 'a');   // the next turn of the same session; another session would wait (ELECTRON_BUSY)
     assert.equal(second.identity.pid, pid);
     assert.equal((await second.session.send('Browser.getVersion')).pid, pid);
     assert.equal(alive(pid), true);
