@@ -11,6 +11,9 @@ Both compile locally at first use with Apple's command-line tools. No signed or 
 electron-identity.mjs and electron-consent.mjs use built-in Node modules only. consent-ui, host-files and v3-context import
 electron-identity and use it only when a trusted app binding exists. Nothing on the installed path imports electron-consent yet
 (EPV3-7 wires it).
+electron-channel, electron-connection, electron-host, electron-host-entry and electron-ownership use built-in Node modules,
+cdp-filter.mjs and the pinned Playwright through worlds.mjs. They need bench/direct-electron/broker.mjs and launch.py, which
+are a prototype home outside the package, and nothing on the installed path imports them. EPV3-7 picks the package location.
 
 host.mjs publishes both helpers only after compilation and hash verification, under a private per-user cache.
 Its exclusive build.lock refuses concurrent publication. Source and executable identity are rechecked before each launch.
