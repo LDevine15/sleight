@@ -1,0 +1,140 @@
+// The ghost hand for turbo (H8): the same frames as the relay's planner, from the worker's act runner. act.mjs calls
+// step() when a step's input starts, after its rules allowed it. step() only queues work: the page metrics, the
+// element's CDP box (Playwright's boundingBox) and the browser window's geometry are read on later ticks, and the
+// act path never waits on them or reads anything back. Without a client (no client module, SLEIGHT_HAND=0) there is
+// no hand and no reads.
+//
+// Points: a box is CSS pixels relative to the main frame's viewport. The page's content area sits at the bottom of
+// the browser window (window.screenX/screenY/outerWidth/outerHeight, in screen points), and page zoom is the ratio of
+// the window's width to the viewport's CSS width, refined by devicePixelRatio (display scale times zoom). Pinch zoom
+// goes through the visual viewport. Turbo moves no real pointer, so it has nothing to hide the hand before.
+import { exposure } from './planner.mjs';
+import { trustedLocatorRead } from '../direct-browser/trusted-dom.mjs';
+
+const KINDS = { click: 'click', check: 'click', uncheck: 'click', select: 'click', navigate: 'click', type: 'type', press: 'key', drag: 'drag', scroll: 'scroll' };
+const MAX_TYPE_BEATS = 8, BOX_TIMEOUT_MS = 300, LOCATE_TIMEOUT_MS = 2000, GEOMETRY_MS = 1500;
+
+// Runs in the page's trusted utility world through trustedLocatorRead (closure-free, like act.mjs's readers).
+export function pageMetrics(el, unused, read) {
+  const doc = read(el, 'ownerDocument'), win = read(doc, 'defaultView'), vv = read(win, 'visualViewport');
+  return { screenX: read(win, 'screenX'), screenY: read(win, 'screenY'), outerWidth: read(win, 'outerWidth'), outerHeight: read(win, 'outerHeight'),
+    innerWidth: read(win, 'innerWidth'), innerHeight: read(win, 'innerHeight'), dpr: read(win, 'devicePixelRatio'),
+    visible: read(doc, 'visibilityState') === 'visible', focusOnBody: !read(doc, 'activeElement') || read(doc, 'activeElement') === read(doc, 'body'),
+    vv: vv ? { offsetLeft: vv.offsetLeft, offsetTop: vv.offsetTop, scale: vv.scale } : null };
+}
+
+const finite = (...values) => values.every(Number.isFinite);
+// The page's zoom: window points per CSS pixel. innerWidth is a whole number, so a devicePixelRatio that is a whole
+// display scale (1, 2 or 3) times the measured zoom gives the exact one.
+function zoomOf(m) {
+  const measured = m.outerWidth / m.innerWidth;
+  const scale = Math.round(m.dpr / measured);
+  return Number.isFinite(m.dpr) && [1, 2, 3].includes(scale) && Math.abs(m.dpr / scale - measured) < 0.01 ? m.dpr / scale : measured;
+}
+
+// One frame for an operation, { skip } with the reason, or undefined for an operation the hand doesn't show.
+// geometry is locate.js's answer for the browser window's bounds ({ window, windows, displays, state }).
+// Why the page alone rules the hand out, before any box or window is read.
+function pageSkip(kind, m) {
+  if (!m || !finite(m.screenX, m.screenY, m.outerWidth, m.outerHeight, m.innerWidth, m.innerHeight) || m.outerWidth <= 0 || m.innerWidth <= 0) return 'no-geometry';
+  if (!m.visible) return 'hidden-tab';
+  if (kind === 'key' && m.focusOnBody) return 'no-focus';
+  return undefined;
+}
+
+export function planBrowserFrame({ op, text, box, toBox, metrics: m, geometry, ignorePids = [] } = {}) {
+  const kind = KINDS[op];
+  if (!kind) return undefined;
+  const page = pageSkip(kind, m);
+  if (page) return { skip: page };
+  if (geometry?.state) return { skip: geometry.state };
+  if (!geometry?.ok || !geometry.window?.bounds) return { skip: 'no-geometry' };
+  const zoom = zoomOf(m), originY = m.screenY + m.outerHeight - m.innerHeight * zoom;
+  const vv = m.vv && finite(m.vv.offsetLeft, m.vv.offsetTop, m.vv.scale) && m.vv.scale > 0 ? m.vv : { offsetLeft: 0, offsetTop: 0, scale: 1 };
+  const toScreen = (x, y) => [m.screenX + (x - vv.offsetLeft) * vv.scale * zoom, originY + (y - vv.offsetTop) * vv.scale * zoom].map(n => Math.round(n * 100) / 100);
+  const centre = b => b && finite(b.x, b.y, b.width, b.height) ? [b.x + b.width / 2, b.y + b.height / 2] : undefined;
+  // A box scrolled out of the viewport, or read before the click scrolled it in, would map onto the toolbar or address
+  // bar, which is still inside the window: only a centre in the visible viewport gets a hand.
+  const visible = ([x, y]) => x - vv.offsetLeft >= 0 && x - vv.offsetLeft < m.innerWidth / vv.scale && y - vv.offsetTop >= 0 && y - vv.offsetTop < m.innerHeight / vv.scale;
+  // A scroll with no ref scrolls the viewport, so the hand goes to its middle.
+  const from = kind === 'scroll' && box === undefined ? [vv.offsetLeft + m.innerWidth / vv.scale / 2, vv.offsetTop + m.innerHeight / vv.scale / 2] : centre(box);
+  const end = kind === 'drag' ? centre(toBox) : undefined;
+  if (!from || (kind === 'drag' && !end)) return { skip: 'no-box' };
+  if (!visible(from) || (end && !visible(end))) return { skip: 'offscreen' };
+  const at = toScreen(...from), to = end && toScreen(...end);
+  const reason = exposure(at, geometry.window, geometry.windows, geometry.displays, ignorePids) ??
+    (to ? exposure(to, geometry.window, geometry.windows, geometry.displays, ignorePids) : undefined);
+  if (reason) return { skip: reason };
+  const beats = kind === 'type' ? Math.max(1, Math.min(MAX_TYPE_BEATS, typeof text === 'string' ? text.length : 3)) : 1;
+  return { frame: { kind, pid: geometry.window.pid, windowId: geometry.window.windowId, at, path: to ? [at, to] : [at], delayMs: 0, beats } };
+}
+
+const boxOf = async locator => {
+  try { return typeof locator?.boundingBox === 'function' ? await locator.boundingBox({ timeout: BOX_TIMEOUT_MS }) : null; } catch { return null; }
+};
+const withTimeout = (promise, ms) => {
+  let timer;
+  return Promise.race([promise, new Promise(resolve => { timer = setTimeout(resolve, ms); timer.unref?.(); })]).finally(() => clearTimeout(timer));
+};
+
+export function createBrowserHand({ client, loadClient = () => import('./client.mjs'), clientOptions = {}, locate,
+  readMetrics = page => trustedLocatorRead(page.locator('html'), pageMetrics), trace = () => {}, now = () => performance.now(),
+  defer = fn => setImmediate(fn), env = process.env } = {}) {
+  if (env.SLEIGHT_HAND === '0' || typeof locate !== 'function') return undefined;
+  let closed = false, resolved = client ?? undefined, loading;
+  const load = () => loading ??= (client ? Promise.resolve(client) : Promise.resolve().then(loadClient).then(m => m.createHandClient(clientOptions)))
+    .then(c => (resolved = c && typeof c.send === 'function' ? c : null), () => (resolved = null));
+  const live = () => !closed && resolved && resolved.enabled !== false;
+  // The window's geometry for a burst of steps: one helper run per window position every 1.5 s, shared while it runs.
+  let cached;
+  function geometryFor(bounds) {
+    const key = [bounds.X, bounds.Y, bounds.Width, bounds.Height].join(',');
+    if (cached?.key === key && now() - cached.at < GEOMETRY_MS) return cached.promise;
+    const promise = withTimeout(Promise.resolve().then(() => locate({ bounds })), LOCATE_TIMEOUT_MS).catch(() => undefined);
+    cached = { key, at: now(), promise };
+    return promise;
+  }
+  async function show({ op, page, locator, to, text }) {
+    if (resolved === undefined) await load();
+    if (!live() || !KINDS[op]) return;
+    const skip = reason => trace('hand-skipped', { op, reason });
+    let metrics;
+    try { metrics = await readMetrics(page); } catch { return skip('no-geometry'); }
+    const blocked = pageSkip(KINDS[op], metrics);
+    if (blocked) return skip(blocked);
+    const bounds = { X: metrics.screenX, Y: metrics.screenY, Width: metrics.outerWidth, Height: metrics.outerHeight };
+    const [box, toBox, geometry] = await Promise.all([op === 'scroll' && !locator ? undefined : boxOf(locator), op === 'drag' ? boxOf(to) : undefined, geometryFor(bounds)]);
+    if (!live()) return;
+    const planned = planBrowserFrame({ op, text, box, toBox, metrics, geometry, ignorePids: [resolved.pid].filter(Number.isSafeInteger) });
+    if (planned?.skip) return skip(planned.skip);
+    if (planned?.frame) try { resolved.send(planned.frame); } catch {}
+  }
+  return {
+    // input: { op, page, locator, to, ref, text }, as act.mjs has them when the step's input starts.
+    step(input) {
+      try {
+        if (closed || !input || !KINDS[input.op]) return;
+        defer(() => show(input).catch(() => {}));
+      } catch { /* The hand never reaches the act path. */ }
+    },
+    close() { closed = true; try { resolved?.close(); } catch {} },
+  };
+}
+
+// One hand per worker process, for every runner it builds. The helper is the native hand's locate.js, run by bounds.
+let shared;
+export function sharedBrowserHand(env = process.env) {
+  if (shared !== undefined) return shared ?? undefined;
+  shared = createBrowserHand({ env, locate: request => runLocate(request) }) ?? null;
+  return shared ?? undefined;
+}
+async function runLocate(request) {
+  const [{ execFile }, { fileURLToPath }] = await Promise.all([import('node:child_process'), import('node:url')]);
+  const script = fileURLToPath(new URL('./locate.js', import.meta.url));
+  return new Promise(resolve => {
+    // Stopped after 2.5 s, past the 2 s the hand waits, so a stalled AX app leaves no osascript behind.
+    execFile('osascript', ['-l', 'JavaScript', script, JSON.stringify(request)], { timeout: 2500 }, (error, stdout) => {
+      try { resolve(JSON.parse(stdout)); } catch { resolve({ ok: false }); }
+    });
+  });
+}

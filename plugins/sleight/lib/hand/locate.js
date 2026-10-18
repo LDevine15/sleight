@@ -3,6 +3,7 @@
 //
 //   osascript -l JavaScript locate.js '<json request>'
 //   { app?, appId?, title?, windowNumber?, pid?, identities: { number: { role, id, description, title } }, focus? }
+//   { bounds: { X, Y, Width, Height } } for turbo's browser window (browser-hand.mjs)
 //
 // Prints { ok, pid, window: { pid, windowId, bounds }, windows, displays, state?, elements, focused? }, every
 // frame in global points with a top-left origin. windows is the on-screen list front to back, every layer, cut
@@ -119,10 +120,26 @@ function focusedElement(app, win) {
   return { window: false, inWindow, ...(frame ? { frame } : {}) };
 }
 
+// Turbo's browser window, named by the frame its page reports (window.screenX, screenY, outerWidth, outerHeight):
+// the one layer-0 window with those bounds, within a point. Window Server only, no Accessibility.
+function byBounds(bounds) {
+  const near = w => ['X', 'Y', 'Width', 'Height'].every(k => Math.abs(w.bounds?.[k] - bounds[k]) <= 1);
+  const all = cgWindows(false).filter(w => w.layer === 0 && near(w)), onScreen = cgWindows(true);
+  const shown = all.filter(w => onScreen.some(o => o.id === w.id));
+  if (shown.length > 1) return { ok: false, error: 'several windows have these bounds' };
+  if (shown.length === 1) {
+    const cg = shown[0];
+    return { ok: true, pid: cg.pid, window: { pid: cg.pid, windowId: cg.id, bounds: cg.bounds },
+      windows: onScreen.filter(w => w.bounds && overlaps(w.bounds, cg.bounds)), displays: displays() };
+  }
+  return all.length ? { ok: true, state: stageManager() ? 'side-stage' : 'other-space' } : { ok: false, error: 'no window has these bounds' };
+}
+
 function run(argv) {
   try {
-    if (!$.AXIsProcessTrusted()) return JSON.stringify({ ok: false, error: 'accessibility not granted' });
     const request = JSON.parse(argv[0]);
+    if (request.bounds) return JSON.stringify(byBounds(request.bounds));
+    if (!$.AXIsProcessTrusted()) return JSON.stringify({ ok: false, error: 'accessibility not granted' });
     const running = findApp(request);
     if (!running) return JSON.stringify({ ok: false, error: 'app not running or ambiguous' });
     const pid = Number(running.processIdentifier);

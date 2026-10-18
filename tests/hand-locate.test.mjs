@@ -36,6 +36,33 @@ test('locate.js reports an element only when a whole walk found exactly one', ()
   assert.deepEqual(JSON.parse(JSON.stringify(elements(win, identities, 5))), { 1: { X: 100, Y: 10, Width: 20, Height: 20 } });
 });
 
+test('locate.js finds turbo\'s browser window by the bounds its page reports, or says it is on another Space', () => {
+  const context = locateContext();
+  const { $ } = context;
+  const row = (id, pid, layer, bounds, onScreen) => ({ id, pid, layer, bounds, onScreen });
+  let rows = [];
+  Object.assign($, { kCGWindowListOptionOnScreenOnly: 1, kCGWindowListOptionAll: 0, kCGWindowListExcludeDesktopElements: 16,
+    CGWindowListCopyWindowInfo: options => {
+      const list = rows.filter(r => !(options & 1) || r.onScreen).map(r => ({ objectForKey: key => ({ kCGWindowNumber: r.id, kCGWindowOwnerPID: r.pid,
+        kCGWindowLayer: r.layer, kCGWindowOwnerName: 'App', kCGWindowBounds: r.bounds })[key] }));
+      return { count: list.length, objectAtIndex: i => list[i] };
+    },
+    NSScreen: { screens: { count: 1, objectAtIndex: () => ({ frame: { origin: { x: 0, y: 0 }, size: { width: 1512, height: 982 } } }) } },
+    NSUserDefaults: { alloc: { initWithSuiteName: () => ({ boolForKey: () => false }) } } });
+  const B = { X: 100, Y: 50, Width: 1200, Height: 900 };
+  rows = [row(9, 3, 3, { X: 150, Y: 60, Width: 100, Height: 100 }, true), row(5, 77, 0, { ...B, Width: 1200.5 }, true), row(6, 78, 0, { X: 2000, Y: 0, Width: 10, Height: 10 }, true)];
+  const found = JSON.parse(JSON.stringify(context.byBounds(B)));
+  assert.deepEqual(found.window, { pid: 77, windowId: 5, bounds: { ...B, Width: 1200.5 } });
+  assert.deepEqual(found.windows.map(w => w.id), [9, 5], 'only windows over the browser window');
+  assert.deepEqual(found.displays, [{ X: 0, Y: 0, Width: 1512, Height: 982 }]);
+  rows = [row(5, 77, 0, B, false)];
+  assert.deepEqual(JSON.parse(JSON.stringify(context.byBounds(B))), { ok: true, state: 'other-space' });
+  rows = [row(5, 77, 0, B, true), row(7, 79, 0, B, true)];
+  assert.equal(context.byBounds(B).ok, false, 'two windows with the same bounds name neither');
+  rows = [];
+  assert.equal(context.byBounds(B).ok, false);
+});
+
 test('runScript stops hand/locate.js after 2.5 s, not the 30 s default', async () => {
   const { runScript } = await import('../plugins/sleight/lib/launch.mjs');
   let timeout;

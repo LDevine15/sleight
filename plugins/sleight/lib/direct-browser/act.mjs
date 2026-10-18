@@ -216,7 +216,9 @@ function ruleMessage(result) {
 
 // Dependencies are the other v3 lanes' fixed interfaces. Injecting them keeps unit
 // and host-runner tests independent while those modules are built in parallel.
-export function createActionRunner({ check, snapshot, backgroundClick = (tab, locator, click) => click({}), actionTimeoutMs = 7000, now = Date.now, sleep = pause } = {}) {
+// hand (hand/browser-hand.mjs) hears of each step whose input starts, after its rules allowed it. Its step() only
+// queues work and returns nothing, and a hand that throws changes nothing here.
+export function createActionRunner({ check, snapshot, backgroundClick = (tab, locator, click) => click({}), actionTimeoutMs = 7000, now = Date.now, sleep = pause, hand } = {}) {
   if (typeof check !== 'function' || typeof snapshot !== 'function') throw Error('action runner needs check and snapshot');
   return async function runSteps(tab, steps, ctx = {}) {
     // A bad step list is refused before any input, so the caller must not report it as an unconfirmed outcome.
@@ -274,6 +276,11 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // A script-driven control on the closed name list may be refunded later, if the whole network stays quiet (activity.mjs).
         if (step.do === 'click' && info.scriptButton === true && refundableName(info.accName)) activity = observeActivity(page);
         const options = { timeout: TIMEOUT };
+        // The input starts now: the ghost hand may show it. Never awaited.
+        const begin = () => {
+          started = true;
+          if (hand) try { hand.step({ op: named.do, page, locator, ref: step.ref, text: step.text, to: step.do === 'drag' ? page.getByRef(step.to) : undefined }); } catch {}
+        };
         const perform = async () => {
           if (step.do === 'click') return backgroundClick(tab, locator, async (extra, verifySeal) => {
             // A control under its own label (a visually hidden radio) is clicked at the point placeClear proved is that label, as
@@ -281,7 +288,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             const aim = await aimedAt(locator);
             // The rules read the element inside gate(); the page confirms those words are the ones it sealed.
             if (trusted) { target.verifySeal = verifySeal; await gate(); ctx.beginInput(target); }
-            started = true; return locator.click({ ...options, ...extra, ...aim });
+            begin(); return locator.click({ ...options, ...extra, ...aim });
           });
           const pressKey = keys => trusted ? ctx.pressTarget(target, step.key, options, keys) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
           // Enter and Space can follow a link or submit a form into a new tab: arm the popup hook, as a click does. In a trusted turn
@@ -289,12 +296,12 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           // key it sends share one seal; `extra.between` lets the shield look at the page between the key going down and coming up.
           if (step.do === 'press' && enter) return backgroundClick(tab, locator, async extra => {
             if (trusted) { await gate(); ctx.beginInput(target); }
-            started = true;
+            begin();
             if (extra.modifiers) await page.keyboard.down('ControlOrMeta');
             return pressKey(extra);
           }, { press: activation, keys: trusted });
           if (trusted && step.do !== 'upload') { await gate(); ctx.beginInput(target); }
-          started = true;
+          begin();
           if (step.do === 'type') return locator.fill(step.text, options);
           if (step.do === 'press') return pressKey();
           if (step.do === 'select') return locator.selectOption(step.values, options);
@@ -471,8 +478,9 @@ let defaultRunner;
 export async function runSteps(tab, steps, ctx) {
   if (!isV3Context(ctx)) throw Error('TRUSTED_TURN_REQUIRED');
   if (!defaultRunner) {
-    const [{ check }, { snapshot }, { backgroundClick }] = await Promise.all([import('./rules.mjs'), import('./snapshot.mjs'), import('./page.mjs')]);
-    defaultRunner = createActionRunner({ check, snapshot, backgroundClick });
+    const [{ check }, { snapshot }, { backgroundClick }, { sharedBrowserHand }] = await Promise.all([import('./rules.mjs'), import('./snapshot.mjs'), import('./page.mjs'),
+      import('../hand/browser-hand.mjs')]);
+    defaultRunner = createActionRunner({ check, snapshot, backgroundClick, hand: sharedBrowserHand() });
   }
   return defaultRunner(tab, steps, ctx);
 }

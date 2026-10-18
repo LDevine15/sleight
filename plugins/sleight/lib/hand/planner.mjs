@@ -212,7 +212,7 @@ export function screenshotScale(size, bounds) {
 
 // Why the hand can't show at p over the window, or undefined. As drag.js's exposedEndpoints, any layer
 // on top counts as cover, except the engine's own overlay and the hand host.
-function exposure(p, window, windows, displays, ignorePids) {
+export function exposure(p, window, windows, displays, ignorePids = []) {
   if (!inside(window.bounds, p) || (Array.isArray(displays) && !displays.some(d => inside(d, p)))) return 'offscreen';
   if (!Array.isArray(windows)) return 'no-geometry';
   const top = windows.find(w => w?.bounds && inside(w.bounds, p) && !/Computer Use$/.test(w.owner ?? '') && !ignorePids.includes(w.pid));
