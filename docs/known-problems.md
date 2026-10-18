@@ -54,6 +54,14 @@ our own runs. Dates and engine versions are given where they matter.
 - Over a window without a URL, a dialog or sheet continues only when that window's native identity was certified at its
   read, so a never-saved document usually stops. A window titled Untitled (or Untitled 2) that a click brings to the
   front passes the guard as one the click opened, so "Don't Save" can still end up in another Untitled window.
+- Before the GA1 fix the relay's recovery getApp launched apps nobody asked for (GA1, 2026-10-18, two events in one session).
+  A call that began `app = await cua.getApp("Google Chrome")` after the lease dropped got a getApp of the last app in
+  front of it, and the engine launched that app, Helium, which had quit. A result that echoed a `Window:` line left the
+  old target in place, and a later `h.click` recovered to Chrome and opened its profile picker. The in-engine guard
+  refused the actions in both, so no input was sent. Recovery now skips a call that contains its own getApp, takes
+  the app from the code's handle, and checks the app is running first. Unmeasured: how many quit-app launches the old
+  code caused outside these two events, and whether the 600 ms running check is long enough on a loaded Mac (no answer
+  refuses the call, with the usual advice).
 - The helper quits after about 20 s idle, and its new epoch may refuse a certified identity read before a long gap.
   We haven't seen it happen. The first live Word trace should show whether it does.
 - A standard window counts as covered only if its app's process was known when it was read. The relay probes the

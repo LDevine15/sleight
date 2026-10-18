@@ -419,6 +419,11 @@ export function guardActions(code) {
   if (typeof code !== 'string' || /\b(?:for|while|do)\b|\.(?:forEach|map|reduce|some|every|pickFromList)\(|\bsleight\s*\./.test(code)) return;
   return [...code.matchAll(/\.(click|drag|scroll|selectText|setValue|performSecondaryAction|paste|pressKey|typeText)\s*\(/g)].map(m => m[1]);
 }
+// A call's leading `let h = await cua.getApp("X")`, and the same without the declaration.
+const DECLARED_ACQUISITION = /^\s*((?:let|const|var)\s+[A-Za-z_$][\w$]*\s*=\s*await\s+cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)\s*;?)/;
+const ASSIGNED_ACQUISITION = /^\s*((?:(?:let|const|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*await\s+cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)\s*;?)/;
+// A name an engine method is called on: the handles a call uses.
+const HANDLE_CALL = /\b([A-Za-z_$][\w$]*)\s*\.\s*(?:getAXState|getAXStateAndScreenshot|getScreenshot|waitFor|click|doubleClick|rightClick|setValue|selectText|performSecondaryAction|scroll|drag|pressKey|typeText|paste)\s*\(/g;
 function numberedHandles(code) {
   return [...new Set([...String(code ?? '').matchAll(/([A-Za-z_$][\w$]*)?\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*\d+\s*[,)]/g)].map(m => m[1]))];
 }
@@ -1623,7 +1628,9 @@ export function createRelay({
         // acquired nothing in the Firefox race round (form-travel, 2026-10-17).
         const named = code.match(/cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)/)?.[1] ??
           code.match(/\.id\s*===?\s*("[A-Za-z][\w-]*(?:\.[\w-]+)+"|'[A-Za-z][\w-]*(?:\.[\w-]+)+')/)?.[1];
-        const target = recoveryTarget ?? (named && `cua.getApp(${named})`);
+        // The app the call names, or the one its handle holds, comes before the last app any call read (GA1).
+        const handleApp = [...new Set([...codeOnly(code).matchAll(HANDLE_CALL)].map(m => handleBundles.get(m[1])?.appId))];
+        const target = (named && `cua.getApp(${named})`) || (handleApp.length === 1 && handleApp[0] && `cua.getApp(${JSON.stringify(handleApp[0])})`) || recoveryTarget;
         const recovery = /* notice */ target ? `Send exactly \u0060${constApp ? '' : 'let app = '}await ${target}\u0060 in js.`
           : stateRead ? `Send \u0060${constApp ? '' : 'let app = '}await cua.getApp("<id>")\u0060 in js, with the app's id from getState.`
           : 'Send exactly \u0060await cua.getState()\u0060 in js.';
@@ -2535,7 +2542,41 @@ export function createRelay({
     handleClient({ ...msg, id: prefixId, params: { ...msg.params, arguments: { ...msg.params.arguments, code: plan.head } } });
     return true;
   }
-  function splitAcquisition(msg) {
+  // The recovery re-acquisition for a call that uses engine handles: the bundle of the code's own handle, not the last
+  // app any call read (GA1: `h.click` recovered to Chrome after a Helium read whose result had no single window). An
+  // unknown handle or two apps get no recovery. `app` is the one handle with no entry that recovery itself binds.
+  function recoveryPlan(code) {
+    const handles = [...new Set([...codeOnly(code).matchAll(HANDLE_CALL)].map(m => m[1]))];
+    const windows = handles.map(handle => handleBundles.get(handle) ?? (handle === 'app' ? lastConfirmedWindow : undefined));
+    if (windows.some(window => !window?.appId) || new Set(windows.map(window => window.appId)).size > 1) return;
+    const appId = windows[0]?.appId ?? lastConfirmedWindow.appId, target = `cua.getApp(${JSON.stringify(appId)})`;
+    const expected = appId === lastConfirmedWindow.appId ? lastConfirmedWindow : windows[0];
+    // Another handle's app is acquired under a fresh name, so no binding of Claude's changes.
+    const acquire = handles.every(handle => handle === 'app') ? `${constApp ? '' : 'let app = '}await ${target}`
+      : `let sleightRecovery${nextInternalId} = await ${target}`;
+    return { appId, expected, acquire };
+  }
+  // One native running check, then the call goes on as if it had just arrived. Not running, or no answer: the call gets
+  // the refusal that needs no acquisition, and nothing launches.
+  function probeThenResume(msg, appId) {
+    const generation = stopGeneration;
+    running.add(msg.id); callDetails.set(msg.id, 'recovery running check');
+    let timer;
+    Promise.race([Promise.resolve().then(() => spaceProbe(appId)).catch(() => undefined),
+      new Promise(resolve => { timer = setTimeout(resolve, menuContinuationTimeoutMs); timer.unref?.(); })]).then(health => {
+      clearTimeout(timer); running.delete(msg.id); callDetails.delete(msg.id);
+      if (generation !== stopGeneration || closing || disposed) { leaseStop(msg, 'this call was stopped.'); stoppedClients.add(msg.id); return; }
+      // Running is something the probe saw: a responding app, or a process id with an error. Absent, denied, ambiguous or
+      // no answer all refuse, since a wrong yes launches an app.
+      if (health?.status !== 'responding' && !Number.isSafeInteger(health?.pid)) {
+        trace('recovery-refused', { id: msg.id, reason: health?.status === 'absent' ? 'not-running' : 'unconfirmed' });
+        if (!splitSave(msg)) handleClient(msg);
+        return;
+      }
+      if (!splitAcquisition(msg, appId) && !splitSave(msg)) handleClient(msg);
+    });
+  }
+  function splitAcquisition(msg, probed) {
     if (documentMode || msg.method !== 'tools/call' || msg.params?.name !== 'js' ||
         msg.id === undefined || typeof msg.params.arguments?.code !== 'string') return false;
     const code = msg.params.arguments.code;
@@ -2543,7 +2584,9 @@ export function createRelay({
     if (!inputLease && !saveRead) return false;
     const prefix = selectedWindow
       ? /^\s*((?:(?:(?:let|const|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*)?await\s+cua\.getApp\(\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\{\s*(?:windowId|"windowId")\s*:\s*\d+\s*\})\s*\)\s*;?)/
-      : /^\s*((?:let|const|var)\s+[A-Za-z_$][\w$]*\s*=\s*await\s+cua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)\s*;?)/;
+      : (leaseWindow?.appId || !recoveryKnown || !lastConfirmedWindow ? DECLARED_ACQUISITION : ASSIGNED_ACQUISITION);
+    // With the lease dropped and a recovery target kept, `app = await cua.getApp("Google Chrome")` is an acquisition too.
+    // Recovery used to replace it with a getApp of the last app (GA1, 2026-10-18: Helium launched).
     const m = code.match(prefix);
     let acquire = m?.[1], rest = m && code.slice(m[0].length).trim();
     if (selectedWindow && !rest) return false;
@@ -2568,8 +2611,13 @@ export function createRelay({
     // the window it covered may become the lease (parentLeaseRefusal), judged against what the last result showed.
     let recovered = false;
     const shown = lastShown;
-    if (!rest && !leaseWindow?.appId && recoveryKnown && lastConfirmedWindow && !isLeaseRead(code)) {
-      acquire = `${constApp ? '' : 'let app = '}await ${recoveryTarget}`; rest = code; expected = lastConfirmedWindow; recovered = true;
+    // Never for a call that names its own app (GA1: a recovery getApp of the last app launched it), for an unknown handle, or
+    // for an app that isn't running (the engine launches a quit app on getApp).
+    if (!rest && !leaseWindow?.appId && recoveryKnown && lastConfirmedWindow && !isLeaseRead(code) && !/\bcua\.getApp\(/.test(codeOnly(code))) {
+      const plan = recoveryPlan(code);
+      if (!plan) trace('recovery-refused', { id: msg.id, reason: 'handle' });
+      else if (spaceProbe && probed !== plan.appId) { if (running.size) return false; probeThenResume(msg, plan.appId); return true; }
+      else { acquire = plan.acquire; rest = code; expected = plan.expected; recovered = true; }
     }
     if (!rest) return false;
     // Split even for the app the lease holds: the guard's setup refers to `app` before a `let app`
@@ -3939,6 +3987,20 @@ export function createRelay({
       if (guardStop && window && selectedWindow && window.app !== selectedWindow.app) clearSelection();
       leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}) } : undefined;
       if (leaseWindow?.appId) lastConfirmedWindow = leaseWindow;
+      else if (!window && !msg.error && !msg.result?.isError && lastConfirmedWindow) {
+        // An acquisition of another app, or a last-window close, whose result shows no single window (a write that echoed
+        // only a `Window:` line, or no windows left) says nothing about the app the lease held before it. The old target
+        // would send the next action to an app this call moved off, or launch it (GA1). The next refusal names the app
+        // this call acquired. The same app again keeps its target: only its window is unknown.
+        const acquired = /\bcua\.getApp\(/.test(codeOnly(jsCode ?? ''))
+          ? [...jsCode.matchAll(/\bcua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)/g)].map(m => m[1]) : undefined;
+        const same = literal => [lastConfirmedWindow.appId, lastConfirmedWindow.app].some(name =>
+          typeof name === 'string' && name.toLowerCase() === literal.slice(1, -1).toLowerCase());
+        if (closedLast || acquired && (!acquired.length || !acquired.every(same))) {
+          recoveryKnown = false; lastConfirmedWindow = undefined;
+          if (!closedLast) recoveryTarget = acquired.length === 1 ? `cua.getApp(${acquired[0]})` : undefined;
+        }
+      }
       if (leaseWindow && !call.read && sameWindow(previous, window)) {
         // The parent lease's pin lasts one call; what the window had before it carries on.
         const kept = previous.parentPin?.id === msg.id ? { ...previous, nativeIdentity: previous.parentPin.nativeIdentity,
