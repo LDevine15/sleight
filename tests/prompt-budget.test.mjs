@@ -29,7 +29,7 @@ function placement(t, env = {}) {
   const replies = [];
   clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
-    firstCallRules: skillRules(skillPath, env) });
+    firstCallRules: skillRules(skillPath, env), leanFirst: env.SLEIGHT_LEAN_FIRST === '1' });
   t.after(() => { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); });
   return {
     call(id, code, name = 'js') { clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name, arguments: { code } } }) + '\n'); },
@@ -41,7 +41,7 @@ function placement(t, env = {}) {
   };
 }
 
-for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }, { SLEIGHT_LEAN_CALLS: '1' }]) {
+for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }, { SLEIGHT_LEAN_CALLS: '1' }, { SLEIGHT_LEAN_FIRST: '1' }]) {
   const variant = JSON.stringify(env);
   test(`native acquisition keeps every pinned safety passage and defers browser rules: ${variant}`, t => {
     const h = placement(t, env);

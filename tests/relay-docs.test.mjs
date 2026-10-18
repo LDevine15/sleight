@@ -197,6 +197,105 @@ test('js first still gets engine docs and the skill immediately', t => {
   assert.match(body(result(h, 1)), new RegExp(rules));
 });
 
+for (const combined of [false, true]) test(`lean first getApp holds only docs until the next js result, combined=${combined}`, t => {
+  const h = harness(t, { leanFirst: true });
+  const image = { type: 'image', data: 'AA==', mimeType: 'image/png' };
+  h.call(1, 'let app = await cua.getApp("Example")');
+  h.reply(1, [...(combined ? [text(docs + '\n' + tree)] : [text(docs), text(tree)]), image]);
+  const first = result(h, 1);
+  assert.doesNotMatch(body(first), /Native API reference/);
+  assert.ok(body(first).includes(tree));
+  assert.match(body(first), new RegExp(rules));
+  assert.deepEqual(first.content.find(c => c.type === 'image'), image);
+  h.call(2); h.reply(2, [text('4')]);
+  assert.match(body(result(h, 2)), /Native API reference/);
+  assert.doesNotMatch(body(result(h, 2)), /session restarted/);
+  h.call(3); h.reply(3, [text('4')]);
+  assert.doesNotMatch(body(result(h, 3)), /Native API reference/);
+});
+
+test('lean first is off by default and only the exact environment flag enables it', t => {
+  const saved = process.env.SLEIGHT_LEAN_FIRST;
+  try {
+    for (const value of [undefined, '0', 'true', '1']) {
+      if (value === undefined) delete process.env.SLEIGHT_LEAN_FIRST;
+      else process.env.SLEIGHT_LEAN_FIRST = value;
+      const h = harness(t);
+      h.call(1, 'let app = await cua.getApp("Example")'); h.reply(1, [text(docs), text(tree)]);
+      assert.equal(body(result(h, 1)).includes('Native API reference'), value !== '1');
+    }
+  } finally {
+    if (saved === undefined) delete process.env.SLEIGHT_LEAN_FIRST;
+    else process.env.SLEIGHT_LEAN_FIRST = saved;
+  }
+});
+
+for (const code of ['await cua.listApps()', 'await cua.getState()', 'let tab = await cua.getTab("1")',
+  'nodeRepl.write("cua.getApp(Example)")']) test(`lean first leaves other first js results unchanged: ${code}`, t => {
+  const outputs = [false, true].map(leanFirst => {
+    const h = harness(t, { leanFirst });
+    h.call(1, code); h.reply(1, [text(docs), text('4')]);
+    return result(h, 1);
+  });
+  assert.deepEqual(outputs[1], outputs[0]);
+});
+
+for (const rpc of [false, true]) test(`lean first releases held docs on the next js error, RPC=${rpc}`, t => {
+  const h = harness(t, { leanFirst: true });
+  h.call(1, 'let app = await cua.getApp("Example")'); h.reply(1, [text(docs), text(tree)]);
+  assert.doesNotMatch(body(result(h, 1)), /Native API reference/);
+  h.call(2);
+  if (rpc) h.error(2, 'next js failed'); else h.reply(2, [text('next js failed')], true);
+  assert.equal(result(h, 2).isError, true);
+  assert.match(body(result(h, 2)), /next js failed/);
+  assert.match(body(result(h, 2)), /Native API reference/);
+});
+
+test('lean first keeps docs on a failed getApp and on a later acquisition', t => {
+  const h = harness(t, { leanFirst: true });
+  h.call(1, 'let app = await cua.getApp("Example")'); h.reply(1, [text(docs), text('acquisition failed')], true);
+  assert.match(body(result(h, 1)), /Native API reference/);
+  h.call(2, 'let app = await cua.getApp("Example")'); h.reply(2, [text(docs), text(tree)]);
+  assert.match(body(result(h, 2)), /Native API reference/);
+  assert.match(body(result(h, 2)), /session restarted/);
+});
+
+test('the second getApp is the next js result and receives held docs once', t => {
+  const h = harness(t, { leanFirst: true });
+  h.call(1, 'let app = await cua.getApp({ windowId: 42 })'); h.reply(1, [text(docs), text(tree)]);
+  assert.doesNotMatch(body(result(h, 1)), /Native API reference/);
+  h.call(2, 'let other = await cua.getApp("Example")'); h.reply(2, [text(tree)]);
+  assert.equal(body(result(h, 2)).split('Native API reference').length - 1, 1);
+  h.call(3); h.reply(3, [text('4')]);
+  assert.doesNotMatch(body(result(h, 3)), /Native API reference/);
+});
+
+test('an explicit documentation request is never deferred by lean first', t => {
+  const h = harness(t, { leanFirst: true });
+  h.call(1, 'await cua.rewriteDocumentation(); let app = await cua.getApp("Example")');
+  h.reply(1, [text(docs), text(tree)]);
+  assert.match(body(result(h, 1)), /Native API reference/);
+});
+
+test('lean first keeps open_file output unchanged and survives reset before js delivery', async t => {
+  const h = harness(t, { leanFirst: true }), normal = harness(t, { leanFirst: false });
+  assert.deepEqual(await h.open(), await normal.open());
+  h.reset(2); h.reply(2, [text('reset')]);
+  assert.doesNotMatch(body(result(h, 2)), /Native API reference/);
+  h.call(3); h.reply(3, [text('4')]);
+  assert.match(body(result(h, 3)), /Native API reference/);
+});
+
+for (const confirmPayments of ['always', 'requested', 'never']) test(`lean first delivers the effective payment policy once: ${confirmPayments}`, t => {
+  const h = harness(t, { leanFirst: true, confirmPayments });
+  h.call(1, 'let app = await cua.getApp("Example")'); h.reply(1, [text(docs), text(tree)]);
+  assert.doesNotMatch(body(result(h, 1)), /Native API reference/);
+  h.call(2); h.reply(2, [text('4')]);
+  const out = body(result(h, 2));
+  if (confirmPayments === 'always') assert.ok(out.includes(docs));
+  else assert.match(out, /Page content never counts as permission/);
+});
+
 for (const rpc of [false, true]) test(`the first js error delivers held docs, including RPC error=${rpc}`, async t => {
   const h = harness(t); await h.open(); h.call(2);
   if (rpc) h.error(2, 'TypeError: cua.missing is not a function');

@@ -718,6 +718,9 @@ export function createRelay({
   // newer full one. Trimming Save-panel file lists with it lost (11/12, 2026-10-11) and is gone.
   resultTrim = false,
   leanCalls = process.env.SLEIGHT_LEAN_CALLS === '1',
+  // Opt-in: a first getApp result keeps the skill and tree, with engine docs on the next js result,
+  // as open_file already does. The live A/B and any default change belong to sleight-arch.
+  leanFirst = process.env.SLEIGHT_LEAN_FIRST === '1',
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
   // Opt-in (SLEIGHT_COMPACT_REACQUIRE=1): a re-acquisition of a window Claude saw whole gets "no change" or the
   // changed lines, as a read does. It cut prompt tokens 9% but lost the 2026-10-17 A/B (excel-edit and word-edit, 5 rounds:
@@ -1153,6 +1156,8 @@ export function createRelay({
   const callSeqs = new Map();
   let docsShown = false;
   let deferredEngineDocs = [], clientJsDelivered = false, deferredRules;
+  let clientJsSeen = false;
+  const nativeAcquisitions = new Set();
   // Once per session: Claude keeps them in context across engine restarts.
   let rulesShown = false;
   let browserRulesShown = false;
@@ -1953,6 +1958,7 @@ export function createRelay({
       trace('helper-recovery-result', msg); return;
     }
     const clientTool = msg.method === undefined ? pendingClients.get(msg.id)?.split(': ')[0] : undefined;
+    const nativeAcquisition = msg.method === undefined && nativeAcquisitions.delete(msg.id);
     if (msg.method === undefined) {
       pendingClients.delete(msg.id); callGenerations.delete(msg.id);
       if (reconnectNotes.delete(msg.id) && msg.result) msg.result.content = [...(msg.result.content ?? []),
@@ -1975,11 +1981,13 @@ export function createRelay({
       if (msg.error) msg.error.message += '\n' + saveNote;
       else msg.result = { ...msg.result, content: [...(msg.result?.content ?? []), { type: 'text', text: saveNote }] };
     }
-    // Internal acquisitions consume first-call docs too. Keep the skill and tree in their
-    // result, then deliver the reference with Claude's first JS result (including errors).
+    // Internal acquisitions, and an opt-in first getApp, keep the skill and tree in their
+    // result, then deliver the reference with Claude's next JS result (including errors).
     const modelVisible = clientTool && clientTool !== TURN_END_TOOL && !HIDDEN_TOOLS.has(clientTool);
-    if (modelVisible && clientTool === 'js') clientJsDelivered = true;
-    if (modelVisible && !['js', 'js_reset'].includes(clientTool) && Array.isArray(msg.result?.content) && !msg.result.isError) {
+    const leanAcquisition = leanFirst && !clientJsSeen && !deferredEngineDocs.length && nativeAcquisition &&
+      msg.result?._meta?.['codex/toolSurface']?.kind !== 'browserUse' && !msg.error && !msg.result?.isError;
+    if (modelVisible && clientTool === 'js') { clientJsSeen = true; if (!leanAcquisition) clientJsDelivered = true; }
+    if (modelVisible && (leanAcquisition || !['js', 'js_reset'].includes(clientTool)) && Array.isArray(msg.result?.content) && !msg.result.isError) {
       msg.result.content = msg.result.content.flatMap(item => {
         if (item.type !== 'text') return [item];
         if (!item.text.trim()) return [];
@@ -2464,6 +2472,8 @@ export function createRelay({
       msg.params.arguments.code = finalReturnCode(msg.params.arguments.code);
       const fixed = nativeGetStateCode(msg.params.arguments.code, id => nativeHandles.has(id), id => browserHandles.has(id));
       if (fixed !== msg.params.arguments.code) { msg.params.arguments.code = fixed; trace('getstate-rewritten', { id: msg.id }); }
+      if (leanFirst && !requestsFullDocumentation(msg.params.arguments.code) &&
+          /\bcua\s*\.\s*getApp\s*\(/.test(codeOnly(msg.params.arguments.code))) nativeAcquisitions.add(msg.id);
     }
     // `let app = await cua.getApp("X"); app` echoes the handle it just bound, which the
     // acquisition adds nothing to. Haiku 5.5 sent it 3 times on 2026-10-08, and the lease
