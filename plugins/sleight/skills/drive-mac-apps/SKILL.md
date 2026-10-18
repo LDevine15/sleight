@@ -30,7 +30,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   For missing information, use `await app.getAXState()`.
 - If acquisition returns an empty tree, or a result says the user changed the app or a header
   changed, read again before retrying.
-- Among windows, use `select_window`.
+- A window other than getApp's: `select_window`.
 - Multiply tap coordinates by the screenshot multiplier.
 
 ## Text, menus and files

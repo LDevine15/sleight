@@ -73,7 +73,7 @@ test('the drag and menu_bar descriptions carry what the skill no longer repeats'
   assert.match(menuBar.description, /status items in the macOS menu bar/);
   // The skill routes to select_window and hover; their descriptions carry the steps and the user warning.
   const rules = skillRules();
-  assert.match(rules, /Among windows, use `select_window`\./);
+  assert.match(rules, /A window other than getApp's: `select_window`\./);
   assert.match(rules, /Before the `hover` tool, try `Help:`, `Secondary Actions:`,\s+right-click or keys\./);
   const select = localToolDefinitions({}).find(tool => tool.name === 'select_window');
   for (const passage of ['by exact title or file URL', 'Then use one standalone js call to acquire the app and verify its full Window/URL header before acting.'])
@@ -126,4 +126,15 @@ test('the tab input line is scoped to tab handles', () => {
     const line = skillRules(undefined, env).split('\n').find(line => /^Tab(?:-handle)? input/.test(line));
     assert.match(line, /^Tab-handle input.*first argument.*element index or `null`/);
   }
+});
+
+// mdn (race-1017): Safari r3 spent 5.8 s on select_window for the window getApp had already returned, and Firefox r1 a
+// getState and a listWindows call before getApp. getApp's window needs no selection; only another window does.
+test('the skill sends only a window other than getApp\'s through select_window', () => {
+  const rules = skillRules();
+  assert.match(rules, /^- A window other than getApp's: `select_window`\.$/m);
+  assert.doesNotMatch(rules, /Among windows/);
+  // getApp comes first for a named app, and the select_window tool still verifies the header after selecting.
+  assert.match(rules, /When the task specifies an app, start with `let app = await cua\.getApp/);
+  assert.ok(localToolDefinitions({}).find(tool => tool.name === 'select_window').description.includes('verify its full Window/URL header before acting'));
 });
