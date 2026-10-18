@@ -33,9 +33,13 @@ const bundleId = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._
 // from its signature. A changed binary is a different app for every grant and Always record.
 const displayKeys = ['name', 'bundleId', 'signer', 'version', 'runtime', 'profile', 'pid', 'pidBirth', 'executable', 'cdhash'];
 const cdhash = value => typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
+// The not-yet-launched form names the build and profile a debugger card asks about before any process exists.
+// It is pid 0 with birth 'unlaunched' and nothing else; a real process never carries that birth.
+export const UNLAUNCHED = 'unlaunched';
+const processKnown = app => natural(app.pid) ? app.pidBirth !== UNLAUNCHED : app.pid === 0 && app.pidBirth === UNLAUNCHED;
 function shown(app) {
   if (!exactly(app, displayKeys) || !printable(app.name, 256) || !bundleId(app.bundleId) || !printable(app.signer, 256) ||
-      !printable(app.version, 128) || !printable(app.runtime, 128) || !absolutePath(app.profile) || !natural(app.pid) || !printable(app.pidBirth, 64) ||
+      !printable(app.version, 128) || !printable(app.runtime, 128) || !absolutePath(app.profile) || !processKnown(app) || !printable(app.pidBirth, 64) ||
       !absolutePath(app.executable) || !cdhash(app.cdhash))
     fail('INVALID_APP_INSTANCE');
   return Object.fromEntries(displayKeys.map(key => [key, app[key]]));
@@ -142,7 +146,8 @@ export const documentKind = (href, rules) => scheme(parts(href), rules).kind;
 // any live PID birth or window recheck. A false current() fences every context.
 export function createAppBinding({ instance, window, brokerEpoch, recipe, authority } = {}) {
   const app = validateAppInstance(instance);
-  if (!exactly(window, ['id', 'epoch']) || !natural(window.id) || !natural(window.epoch) || !natural(brokerEpoch) ||
+  // A binding names a running process and its window; the unlaunched form has neither.
+  if (app.pid === 0 || !exactly(window, ['id', 'epoch']) || !natural(window.id) || !natural(window.epoch) || !natural(brokerEpoch) ||
       !plain(recipe) || !plain(authority) || !printable(authority.id, 128) || !SESSION.test(authority.session ?? '') ||
       authority.turn !== null && !printable(authority.turn, 4096) || typeof authority.current !== 'function') fail('INVALID_APP_BINDING');
   const schemes = recipeSchemes(recipe.schemes ?? []), fileRoots = recipeRoots(recipe.fileRoots ?? []), rules = { schemes, fileRoots };

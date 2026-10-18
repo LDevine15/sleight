@@ -35,7 +35,7 @@ function fixture() {
 }
 const settle = async () => { for (let i=0;i<10;i++) await new Promise(resolve => setImmediate(resolve)); };
 const begin = async (f, use = true) => {
-  f.channel.emit('message', { version:3, id:'begin', method:'begin', params:{ turn:'one', text:'read' } });
+  f.channel.emit('message', { version:3, id:'begin', method:'begin', params:{ turn:'one', text:'read', apps:[] } });
   await settle(); assert.equal(f.frames.find(x=>x.id==='begin').result.available,true);
   if(use){f.channel.emit('message',{version:3,id:'first-call',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();}
 };
@@ -64,7 +64,7 @@ test('a connected browser loss fences this turn and permits one new attempt next
     await begin(f);f.selected.loss();await settle();
     f.channel.emit('message',{version:3,id:'lost',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();
     assert.match(f.frames.find(x=>x.id==='lost').result.result.text,/Turbo is unavailable/);
-    f.channel.emit('message',{version:3,id:'again',method:'begin',params:{turn:'two',text:'read'}});await settle();
+    f.channel.emit('message',{version:3,id:'again',method:'begin',params:{turn:'two',text:'read',apps:[]}});await settle();
     assert.equal(f.frames.find(x=>x.id==='again').result.available,true);
     f.channel.emit('message',{version:3,id:'retry',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();
     assert.equal(f.frames.find(x=>x.id==='retry').result.result.text,'No owned tabs.');assert.equal(selections,2);
@@ -94,7 +94,7 @@ test('installed close during begin waits for the owned startup before disconnect
   const f=fixture(); let release;
   f.selected.connect=()=>new Promise(resolve=>{release=()=>{f.events.push('connect');resolve(f.selected.session);};});
   const host=await startInstalledV3Worker({channel:f.channel},f.dependencies);
-  f.channel.emit('message',{version:3,id:'begin',method:'begin',params:{turn:'one',text:'read'}});
+  f.channel.emit('message',{version:3,id:'begin',method:'begin',params:{turn:'one',text:'read',apps:[]}});
   await settle();f.channel.emit('message',{version:3,id:'first-call',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});
   await settle(); const closing=host.close(); await settle();
   assert.ok(!f.events.includes('disconnect'));
@@ -116,7 +116,7 @@ test('retained uploads still collect transport resources and clear on the next c
 test('installed join connects on its first browser call and collects turn resources before its connection', async () => {
   const f = fixture(), host = await startInstalledV3Worker({ channel:f.channel }, f.dependencies);
   assert.equal(f.frames[0].version,3); assert.deepEqual(f.events,[]);
-  f.channel.emit('message',{ version:3,id:'q1',method:'begin',params:{turn:'turn1',text:'read fixture'} });
+  f.channel.emit('message',{ version:3,id:'q1',method:'begin',params:{turn:'turn1',text:'read fixture',apps:[]} });
   await settle(); assert.equal(f.frames.find(x=>x.id==='q1').result.available,true);
   assert.deepEqual(f.events,[]);
   f.channel.emit('message',{ version:3,id:'q2',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}} });
@@ -139,7 +139,7 @@ test('failed turn cleanup is retained and blocks a replacement turn', async () =
   const host = await startInstalledV3Worker({channel:f.channel},f.dependencies);
   await begin(f);
   f.channel.emit('message',{version:3,id:'q2',method:'end',params:{}});await settle();
-  f.channel.emit('message',{version:3,id:'q3',method:'begin',params:{turn:'two',text:'read'}});await settle();
+  f.channel.emit('message',{version:3,id:'q3',method:'begin',params:{turn:'two',text:'read',apps:[]}});await settle();
   assert.equal(f.frames.find(x=>x.id==='q3').result.available,false);
   assert.ok((await host.close()).cleanup.some(x=>x.status==='retained'));
   assert.ok(!f.events.includes('ui-close'));
@@ -188,7 +188,7 @@ for (const choice of ['pause', 'disconnect']) {
     else {
       assert.equal(f.lost(), false);
       assert.equal(f.views.at(-1).data.status, 'paused');
-      f.channel.emit('message', { version: 3, id: 'paused', method: 'begin', params: { turn: 'one', text: 'read' } });
+      f.channel.emit('message', { version: 3, id: 'paused', method: 'begin', params: { turn: 'one', text: 'read', apps: [] } });
       await settle(); assert.equal(f.frames.find(frame => frame.id === 'paused').result.available, false);
       assert.ok(!f.events.includes('connect'));
     }
@@ -252,9 +252,114 @@ test('turns without browser calls never connect and a failed first call retries 
     f.channel.emit('message',{version:3,id:'q1',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();
     assert.match(f.frames.find(x=>x.id==='q1').result.result.text,/Turbo is unavailable.*engine browser path/);
     f.channel.emit('message',{version:3,id:'q2',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();assert.equal(attempts,1);
-    f.channel.emit('message',{version:3,id:'q3',method:'begin',params:{turn:'two',text:'read'}});await settle();
+    f.channel.emit('message',{version:3,id:'q3',method:'begin',params:{turn:'two',text:'read',apps:[]}});await settle();
     assert.equal(f.frames.find(x=>x.id==='q3').result.available,true);
     f.channel.emit('message',{version:3,id:'q4',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();
     assert.equal(f.frames.find(x=>x.id==='q4').result.result.text,'No owned tabs.');assert.equal(attempts,2);assert.equal(selections,2);
   } finally {await host.close();}
+});
+
+// EPV3-7b: an opted-in Electron app the engine approved this session takes the turn's tools; Chrome is not touched.
+const appId = 'invalid.fixture.app';
+function appFixture({ optIns = { version: 1, apps: { [appId]: { enabled: true, build: appId + '@1.2.3' } } } } = {}) {
+  const f = fixture(), admin = { calls: [], async revoke(args) { admin.calls.push(['revoke', args.session]); }, async close() { admin.calls.push(['close']); },
+    async quit() { assert.fail('the worker never quits the app'); } };
+  const consent = { calls: [], endTurn: (...args) => consent.calls.push(['endTurn', ...args]), revokeSession: name => consent.calls.push(['revokeSession', name]) };
+  const app = { selections: [], runtimes: [] };
+  const connection = () => ({ session: undefined, grant: { current: () => true },
+    pages: { endTurn: async () => { f.events.push('app-pages-end'); return { cleanedUp: true }; } },
+    filter: { dispose: async () => { f.events.push('app-filter-dispose'); return true; } },
+    browser: { close: async () => { f.events.push('app-browser-close'); } },
+    targets: { stop: () => f.events.push('app-targets-stop') }, reader: { close: () => f.events.push('app-reader-close') },
+    provider: { session: 'app-upstream', verifyConnection: async value => value === 'app-upstream', disconnect: async value => { f.events.push('app-disconnect'); return value === 'app-upstream'; } } });
+  const rows = [{ tab: 't1', targetId: 'a', url: 'vscode-file://vscode-app/workbench.html', window: { id: 11, epoch: 1 }, status: 'joined', joinNo: 1, label: 'Fixture App window 11' }];
+  Object.assign(f.dependencies, {
+    readAppOptIns: () => optIns,
+    createConsent: async options => { app.approvedApps = options.approvedApps; return consent; },
+    connectAppHost: async ({ bundleId }) => { assert.equal(bundleId, appId); return { admin, registry: 'registry', profile: { path: '/private/tmp/p', temporary: true } }; },
+    selectAppConnection: async options => { app.selections.push(options); return connection(); },
+    createAppTurn: async ({ connections }) => ({ pages: { list: async () => rows, endTurn: async () => ({ cleanedUp: true }), tab: () => ({}),
+      enqueue: async () => { throw Error('unexpected'); } }, snapshot: async () => ({ text: 'x', number: 1 }), runSteps: async () => ({ lines: [] }),
+      fillFields: async () => ({ rows: [] }), acknowledgeSnapshot: () => true, context: Object.assign(() => ({}), { dispose: async () => ({ retained: 0 }) }), connections }),
+  });
+  const real = f.dependencies.createRuntime;
+  f.dependencies.createRuntime = async options => { app.runtimes.push(options); const { createV3TurnRuntime } = await import('../plugins/sleight/lib/direct-browser/worker.mjs'); return (real ?? createV3TurnRuntime)(options); };
+  return { ...f, admin, consent, app };
+}
+const beginApps = async (f, apps, id = 'begin', turn = 'one') => {
+  f.channel.emit('message', { version: 3, id, method: 'begin', params: { turn, text: 'edit the file', apps } }); await settle();
+  return f.frames.find(x => x.id === id).result.available;
+};
+const callList = async (f, id) => { f.channel.emit('message', { version: 3, id, method: 'call', params: { name: 'browser_tabs', arguments: { do: 'list' } } }); await settle();
+  return f.frames.find(x => x.id === id).result; };
+
+test('a begin frame without apps is refused, and bad apps lists too', async () => {
+  const f = fixture(), host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  try {
+    for (const [i, params] of [{ turn: 'a', text: 'read' }, { turn: 'b', text: 'read', apps: ['not a bundle'] }, { turn: 'c', text: 'read', apps: [appId, appId] },
+      { turn: 'd', text: 'read', apps: Array.from({ length: 65 }, (_, n) => 'invalid.app' + n) }].entries()) {
+      f.channel.emit('message', { version: 3, id: 'b' + i, method: 'begin', params }); await settle();
+      assert.equal(f.frames.find(x => x.id === 'b' + i).result.available, false, JSON.stringify(params));
+    }
+  } finally { await host.close(); }
+});
+for (const optIns of [null, { version: 1, apps: { [appId]: { enabled: false, build: 'x' } } }, 'throws']) {
+  test(`opt-in ${optIns === null ? 'absent' : optIns === 'throws' ? 'unsafe' : 'off'}: the browser path is unchanged byte for byte`, async () => {
+    const run = async (apps, readAppOptIns) => {
+      const f = fixture(); if (readAppOptIns) f.dependencies.readAppOptIns = readAppOptIns;
+      f.dependencies.selectAppConnection = () => assert.fail('no app path');
+      const host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+      await beginApps(f, apps); await callList(f, 'list');
+      f.channel.emit('message', { version: 3, id: 'end', method: 'end', params: {} }); await settle(); await host.close();
+      return { frames: f.frames.slice(1).map(frame => JSON.stringify(frame)), events: f.events };
+    };
+    const before = await run([]);
+    const after = await run([appId], () => { if (optIns === 'throws') throw Error('INSTALLED_CONFIG_UNSAFE'); return optIns; });
+    assert.deepEqual(after, before); assert.ok(after.events.includes('connect'), 'Chrome connected as before');
+  });
+}
+test('an opted-in, engine-approved app takes the turn: labeled list, no Chrome, no endpoint, and its end releases control without quitting', async () => {
+  const f = appFixture(), host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  try {
+    assert.equal(await beginApps(f, [appId, 'com.apple.calculator']), true);
+    const list = await callList(f, 'list');
+    assert.equal(list.result.text, 't1 Fixture App window 11');
+    assert.ok(!f.events.includes('connect') && !f.events.includes('filter'), 'Chrome is never connected on an app turn');
+    const [selection] = f.app.selections;
+    assert.equal(selection.bundleId, appId); assert.deepEqual(selection.apps, [appId, 'com.apple.calculator']); assert.equal(selection.turn, 'one');
+    assert.match(selection.session, /^v3[0-9a-f]{32}$/); assert.equal(selection.registry, 'registry');
+    assert.deepEqual(f.app.approvedApps(), [appId, 'com.apple.calculator'], 'the engine approval comes from the begin frame');
+    assert.equal(f.app.runtimes[0].endpoint, undefined, 'an app turn has no DevTools endpoint');
+    f.channel.emit('message', { version: 3, id: 'end', method: 'end', params: {} }); await settle();
+    assert.deepEqual(f.events.filter(event => event.startsWith('app-')), ['app-pages-end', 'app-filter-dispose', 'app-browser-close', 'app-targets-stop', 'app-reader-close', 'app-disconnect']);
+    assert.deepEqual(f.consent.calls, [['endTurn', selection.session, 'one']]);
+    assert.deepEqual(f.admin.calls, [], 'a turn end revokes nothing at the host');
+    // A delivery acknowledgment from the ended turn is ignored.
+    assert.equal(await beginApps(f, [appId], 'again', 'two'), true);
+    f.channel.emit('message', { version: 3, id: 'stale', method: 'delivered', params: { resultId: 'list', hash: 'x' } }); await settle();
+    assert.equal(f.frames.find(x => x.id === 'stale').result, false);
+  } finally { await host.close(); }
+  assert.deepEqual(f.admin.calls, [['revoke', f.app.selections[0].session], ['close']], 'closing the worker ends the session at the host');
+  assert.ok(f.consent.calls.some(row => row[0] === 'revokeSession'));
+});
+test('an app the engine has not approved this session stays on the browser path', async () => {
+  const f = appFixture(), host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  try {
+    assert.equal(await beginApps(f, ['com.apple.calculator']), true);
+    assert.equal((await callList(f, 'list')).result.text, 'No owned tabs.');
+    assert.equal(f.app.selections.length, 0); assert.ok(f.events.includes('connect'));
+  } finally { await host.close(); }
+});
+for (const cause of ['pause', 'parent']) test(`${cause} on an app turn revokes the session at the host and never quits the app`, async t => {
+  const f = appFixture(), read = new PassThrough(), write = new PassThrough(), views = [];
+  write.on('data', data => views.push(JSON.parse(data.toString())));
+  f.dependencies.createUi = (_receipt, onLoss) => { const channel = createUiChannel({ read, write, onLoss }); return { ...channel, close() { f.events.push('ui-close'); channel.close(); } }; };
+  const host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  t.after(() => host.close());
+  assert.equal(await beginApps(f, [appId]), true); await callList(f, 'list');
+  const session = f.app.selections[0].session;
+  if (cause === 'pause') { read.write(JSON.stringify({ id: views[0].id, nonce: views[0].nonce, choice: 'pause' }) + '\n'); await settle(); }
+  else { f.channel.connected = false; f.channel.emit('disconnect'); await settle(); }
+  assert.ok(f.admin.calls.some(row => row[0] === 'revoke' && row[1] === session));
+  assert.ok(f.events.includes('app-disconnect'), 'the worker channel goes; the host keeps the app pipe');
 });

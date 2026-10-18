@@ -167,7 +167,7 @@ test('worker begin creates a private binding and fences it synchronously on end'
   } }); server.ready();
   const request = (id,method,params) => new Promise(resolve => { waits.set(id,resolve); channel.emit('message',{version:3,id,method,params}); });
   assert.equal((await request('q1','begin',{turn:'turn',text:payText(terms),payment:terms})).available,false);
-  assert.equal((await request('q2','begin',{turn:'turn',text:payText(terms)})).available,true);
+  assert.equal((await request('q2','begin',{turn:'turn',text:payText(terms),apps:[]})).available,true);
   assert.equal(privateContext.userMessage().text,payText(terms));
   const ended = request('q3','end',{});
   assert.equal(privateContext.userMessage(),undefined,'end fences before asynchronous cleanup');
