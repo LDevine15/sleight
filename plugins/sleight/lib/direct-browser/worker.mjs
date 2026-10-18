@@ -1,5 +1,5 @@
 import { fork } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
@@ -38,6 +38,13 @@ const failure = (unknown = false) => ({ text: unknown ? 'Input outcome is unconf
 // The name comes only from the operator-owned config's executable path and a fixed list, never a page.
 export const applicationName = browserApplicationName;
 // The person's "Turn turbo off" click in the menu bar: the same opt-out file the launcher writes. turbo-setup loads only then.
+// The menu's footer: the installed plugin's own version.
+const pluginVersion = (() => {
+  try {
+    const { version } = JSON.parse(readFileSync(fileURLToPath(new URL('../../.claude-plugin/plugin.json', import.meta.url)), 'utf8'));
+    return /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(version) ? version : undefined;
+  } catch { return undefined; }
+})();
 async function optOut() {
   const { writeConfigFile } = await import('./turbo-setup.mjs');
   writeConfigFile(installedConfigPath(), { version: 1, enabled: false });
@@ -355,8 +362,9 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     // writes the launcher's opt-out and disconnects; only the person's click in sleight's own window sends it.
     const payments = ['always', 'never'].includes(process.env.SLEIGHT_CONFIRM_PAYMENTS) ? process.env.SLEIGHT_CONFIRM_PAYMENTS : 'ask';
     ui.present('v3-control-' + (++sequence), { status: state, ...(browserName ? { browser: browserName } : {}), payments,
-      ...(optOutFailed ? { optOut: 'failed' } : {}) },
-      state === 'cleanup-required' ? ['cleanup'] : ['pause','disconnect','turbo-off'], async event => {
+      ...(optOutFailed ? { optOut: 'failed' } : {}), ...(pluginVersion ? { version: pluginVersion } : {}) },
+      // Paused has no Pause: turbo resumes when Claude next asks, through the session card.
+      state === 'cleanup-required' ? ['cleanup'] : state === 'paused' ? ['disconnect','turbo-off'] : ['pause','disconnect','turbo-off'], async event => {
       if (ui.authenticate(event) !== true) return;
       if (event.action === 'turbo-off') {
         // A failed write leaves turbo connected and says so in the menu, so nobody believes turbo is off when it isn't.

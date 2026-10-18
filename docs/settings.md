@@ -186,10 +186,11 @@ overwrites it. Claude's own file edits and shell commands can't write the file o
 - `sleight-mcp turbo status` prints whether turbo is on, the browser, its profile folder and whether
   remote debugging is on (the profile's `DevToolsActivePort` file exists while the browser runs with it).
 - `sleight-mcp turbo off` writes the opt-out. Turbo stays off until you run `turbo on`.
-- sleight's two hands sit in the menu bar when turbo is connected, paused or waiting for cleanup, or when a request waits
-  for you. The menu shows the state, the browser and how the payment check is set, with Pause, Disconnect and Turn turbo off.
-  Turn turbo off writes the same opt-out as `turbo off` and disconnects. With turbo disconnected and nothing waiting, the
-  icon is hidden.
+- sleight's glove sits in the menu bar when turbo is connected, paused or waiting for cleanup, or when a request waits
+  for you. The menu shows the state and browser beside a coloured dot, how the payment check is set, Pause (or how a pause
+  ends), Disconnect, Turn Turbo Off…, Settings & Help… and the version. Turn Turbo Off asks once, then writes the same
+  opt-out as `turbo off`, and every session's turbo stops within a minute. With turbo disconnected and nothing waiting,
+  the icon is hidden.
 - `SLEIGHT_TURBO=0` in the MCP server's environment keeps that one server on the engine path without touching the file.
   It can only turn turbo off. The Firefox and Safari benchmark arms set it.
 - `sleight-mcp turbo on` turns turbo on. `--browser chrome` or `--browser helium` picks the browser.

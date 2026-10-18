@@ -223,6 +223,13 @@ test('the menu bar status names the browser and payment check and offers Turn tu
   assert.ok(f.events.includes('disconnect'));
   assert.ok(f.events.includes('ui-close'));
 });
+test('the paused menu drops Pause and every status carries the plugin version', async t => {
+  const f = await controls(t);
+  assert.match(f.views[0].data.version, /^\d+\.\d+\.\d+$/);
+  await f.choose(f.views[0], 'pause');
+  assert.equal(f.views.at(-1).data.status, 'paused');
+  assert.deepEqual(f.views.at(-1).choices, ['disconnect', 'turbo-off']);
+});
 test('a failed Turn turbo off keeps turbo connected and says so in the menu', async t => {
   const f = await controls(t);
   f.dependencies.turboOff = async () => { throw Error('TURBO_CONFIG_UNSAFE'); };

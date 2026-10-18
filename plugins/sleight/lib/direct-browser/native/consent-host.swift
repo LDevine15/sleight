@@ -75,24 +75,45 @@ func appCardText(_ card: (kind: String, app: [String: Any], session: String, tur
 
 // BEGIN STATUS MENU
 // The menu bar item shows only while turbo is in use: connected, idle, paused or waiting for cleanup, or while a request
-// waits for the person. Disconnected with nothing pending, it is hidden. Rows are (title, choice); a nil choice is a
-// plain status line. The worker's choices map to labels here and nowhere else.
-let statusWords = ["connected": "Connected", "connected-idle": "Connected, idle", "paused": "Paused", "cleanup-required": "Cleanup needed", "disconnected": "Disconnected"]
-let choiceWords = ["pause": "Pause", "resume": "Resume", "disconnect": "Disconnect", "connect": "Connect", "cleanup": "Clean up", "turbo-off": "Turn turbo off", "cancel": "Cancel"]
-let paymentWords = ["ask": "ask when the amount isn't in your message", "always": "always ask", "never": "only for payments you didn't ask for"]
+// waits for the person. Disconnected with nothing pending, it is hidden. The menu is a status block (coloured dot, bold
+// state, quiet detail lines), the session controls, Turn Turbo Off… (confirmed first), Settings & Help…, and the version.
+// The worker's choices map to labels here and nowhere else.
+enum StatusRow: Equatable {
+    case status(title: String, dot: String, details: [String])
+    case action(String, choice: String)
+    case confirm(String, choice: String)
+    case help
+    case separator
+    case footer(String)
+}
+let stateWords = ["connected": "Connected", "connected-idle": "Connected", "paused": "Paused", "cleanup-required": "Cleanup needed", "disconnected": "Disconnected"]
+let dotColours = ["connected": "green", "connected-idle": "green", "paused": "orange", "cleanup-required": "red", "disconnected": "gray"]
+let choiceWords = ["pause": "Pause", "resume": "Resume", "disconnect": "Disconnect", "connect": "Connect", "cleanup": "Clean Up", "turbo-off": "Turn Turbo Off…", "cancel": "Cancel"]
+let paymentWords = ["ask": "Payments: asks unless you named the amount", "always": "Payments: always asks", "never": "Payments: asks only for ones you didn't request"]
+let optOutFailed = "Couldn't turn turbo off. Run sleight-mcp turbo off."
 func statusVisible(_ status: String?, requests: Int) -> Bool {
     requests > 0 || ["connected", "connected-idle", "paused", "cleanup-required"].contains(status ?? "")
 }
-func statusRows(_ data: [String: Any], _ choices: [String]) -> [(String, String?)]? {
-    guard let status = data["status"] as? String, let word = statusWords[status],
+func statusRows(_ data: [String: Any], _ choices: [String]) -> [StatusRow]? {
+    guard let status = data["status"] as? String, let word = stateWords[status], let dot = dotColours[status],
         choices.allSatisfy({ choiceWords[$0] != nil }) else { return nil }
-    var rows: [(String, String?)] = [("sleight turbo: " + word, nil)]
-    if let browser = data["browser"] as? String, !browser.isEmpty, browser.count <= 40,
-        browser.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " }) { rows.append(("Browser: " + browser, nil)) }
-    if let payments = data["payments"] as? String, let words = paymentWords[payments] { rows.append(("Payment check: " + words, nil)) }
-    if data["optOut"] as? String == "failed" { rows.append(("Turning turbo off failed. Run sleight-mcp turbo off.", nil)) }
-    rows.append(("-", nil))
-    for choice in choices { rows.append((choiceWords[choice]!, choice)) }
+    let browser = (data["browser"] as? String).flatMap { name in
+        !name.isEmpty && name.count <= 40 && name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " }) ? name : nil }
+    let title = browser.map { status.hasPrefix("connected") ? word + " to " + $0 : word + " · " + $0 } ?? word
+    var details: [String] = []
+    if status == "connected-idle" { details.append("Its Claude Code session has ended") }
+    if status == "paused" { details.append("Resumes when Claude next asks, with your OK") }
+    if let payments = data["payments"] as? String, let words = paymentWords[payments] { details.append(words) }
+    if data["optOut"] as? String == "failed" { details.append(optOutFailed) }
+    var rows: [StatusRow] = [.status(title: title, dot: dot, details: details)]
+    let session = choices.filter { $0 != "turbo-off" }
+    if !session.isEmpty { rows.append(.separator); rows += session.map { .action(choiceWords[$0]!, choice: $0) } }
+    rows.append(.separator)
+    if choices.contains("turbo-off") { rows.append(.confirm(choiceWords["turbo-off"]!, choice: "turbo-off")) }
+    rows.append(.help)
+    if let version = data["version"] as? String, version.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}$"#, options: .regularExpression) != nil {
+        rows += [.separator, .footer("sleight " + version)]
+    }
     return rows
 }
 // END STATUS MENU
@@ -148,7 +169,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
             // Status is broker-owned; page observations belong only in the sheet.
             guard statusRows(data, choices) != nil else { exit(65) }
             self.status = status
-            item.button?.toolTip = "sleight turbo: " + (statusWords[status] ?? status)
+            item.button?.toolTip = "sleight turbo: " + (stateWords[status] ?? status)
             item.button?.appearsDisabled = status == "paused"
             for old in Array(pending.keys) where old != id && (pending[old]?["data"] as? [String: Any])?["status"] != nil {
                 pending.removeValue(forKey: old)
@@ -169,11 +190,19 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
             guard let frame = pending[id], let choices = frame["choices"] as? [String],
                 let data = frame["data"] as? [String: Any] else { continue }
             if data["status"] != nil {
-                for (title, choice) in statusRows(data, choices) ?? [] {
-                    if title == "-" { menu.addItem(NSMenuItem.separator()); continue }
-                    guard let choice = choice else { menu.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: "")); continue }
-                    let row = NSMenuItem(title: title, action: #selector(control(_:)), keyEquivalent: "")
-                    row.target = self; row.representedObject = ["id": id, "choice": choice]; menu.addItem(row)
+                for row in statusRows(data, choices) ?? [] {
+                    switch row {
+                    case let .status(title, dot, details):
+                        let entry = NSMenuItem(); entry.view = statusView(title, dot: dot, details: details); menu.addItem(entry)
+                    case let .action(title, choice), let .confirm(title, choice):
+                        let entry = NSMenuItem(title: title, action: row == .confirm(title, choice: choice) ? #selector(confirmOff(_:)) : #selector(control(_:)), keyEquivalent: "")
+                        entry.target = self; entry.representedObject = ["id": id, "choice": choice]; menu.addItem(entry)
+                    case .help:
+                        let entry = NSMenuItem(title: "Settings & Help…", action: #selector(help(_:)), keyEquivalent: "")
+                        entry.target = self; menu.addItem(entry)
+                    case .separator: menu.addItem(NSMenuItem.separator())
+                    case let .footer(text): menu.addItem(NSMenuItem(title: text, action: nil, keyEquivalent: ""))
+                    }
                 }
             } else {
                 let row = NSMenuItem(title: "Review sleight request", action: #selector(review(_:)), keyEquivalent: "")
@@ -187,6 +216,41 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
     @objc func control(_ sender: NSMenuItem) {
         guard let event = sender.representedObject as? [String: String], let id = event["id"], let choice = event["choice"] else { return }
         respond(id, choice)
+    }
+    // Turning turbo off lasts past this session and reaches every session, so it asks once.
+    @objc func confirmOff(_ sender: NSMenuItem) {
+        guard let event = sender.representedObject as? [String: String], let id = event["id"], let choice = event["choice"] else { return }
+        let alert = NSAlert()
+        alert.messageText = "Turn turbo off?"
+        alert.informativeText = "Turbo stops in every Claude Code session within a minute, and browsers go back to the engine's slower path. Run sleight-mcp turbo on to turn it back on."
+        alert.addButton(withTitle: "Turn Off")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn { respond(id, choice) }
+    }
+    @objc func help(_ sender: NSMenuItem) {
+        if let url = URL(string: "https://github.com/Land-o-Clusters/sleight/blob/main/docs/settings.md#turbo") { NSWorkspace.shared.open(url) }
+    }
+    // The status block: a coloured dot and the state in bold, then quiet detail lines under it. A view, so it never highlights.
+    func statusView(_ title: String, dot: String, details: [String]) -> NSView {
+        let colours: [String: NSColor] = ["green": .systemGreen, "orange": .systemOrange, "red": .systemRed, "gray": .systemGray]
+        let mark = NSImageView()
+        if let circle = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .regular).applying(.init(paletteColors: [colours[dot] ?? .systemGray]))) {
+            mark.image = circle
+        }
+        let heading = NSTextField(labelWithString: title)
+        heading.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        let top = NSStackView(views: [mark, heading]); top.spacing = 6
+        let stack = NSStackView(views: [top]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 3
+        stack.edgeInsets = NSEdgeInsets(top: 6, left: 14, bottom: 6, right: 16)
+        for line in details {
+            let label = NSTextField(labelWithString: line)
+            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize); label.textColor = .secondaryLabelColor
+            let indented = NSStackView(views: [label]); indented.edgeInsets = NSEdgeInsets(top: 0, left: 14, bottom: 0, right: 0)
+            stack.addArrangedSubview(indented)
+        }
+        stack.frame = NSRect(origin: .zero, size: stack.fittingSize)
+        return stack
     }
     @objc func review(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let frame = pending[id],
