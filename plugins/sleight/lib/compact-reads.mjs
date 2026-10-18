@@ -275,7 +275,19 @@ function actionKind(code, before) {
     if (matches.length !== 1 || !textField(matches[0].key.trim())) return [];
     return [{ key: fieldKey(matches[0].key), was: fieldValue(matches[0].key), value, pasted: later.some(next => next[1] === 'paste') }];
   });
-  return { save, opens, deletes, clickAndTyping, typedTarget, typing, setValues, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
+  // WB1: a click on a single-line field, then typing on the same handle (missedFieldNote). Text areas are documents.
+  const fieldTypings = calls.flatMap((call, index) => {
+    const next = calls[index + 1];
+    if (!before || call[1] !== 'click' || next?.[1] !== 'typeText' || receiver(next) !== receiver(call)) return [];
+    const typed = literal(argsOf(next))?.trim().toLowerCase();
+    const args = argsOf(call), number = /^\s*(\d+)\s*$/.exec(args)?.[1], locator = !number && clickLocator(args);
+    if (!typed || typed.length < 3 || (!number && !locator)) return [];
+    const matches = before.lines.map(parse).filter(line => line.num !== undefined &&
+      (number ? line.num === Number(number) : locatorMatches(locator, line.key.trim())));
+    if (matches.length !== 1 || !/^\s*(?:text field|search (?:text )?field|combo box)\b/.test(matches[0].key) || !textField(matches[0].key)) return [];
+    return [{ key: fieldKey(matches[0].key), typed }];
+  });
+  return { save, opens, deletes, clickAndTyping, typedTarget, typing, setValues, fieldTypings, namedURL, mixedSave: save && (otherTarget || calls.at(-1) !== saveCall),
     fileSaveSafe: save && !otherTarget && calls.slice(calls.indexOf(saveCall) + 1).every(call => editableClicks.has(call)) };
 }
 
@@ -440,6 +452,40 @@ function focuslessTypingNote(action, observation) {
   }
   return /* lean notice */ 'sleight: typing reached nothing; no typed text or value appears. Click the target first.';
 }
+
+// WB1 (SLEIGHT_WB1=1): a click on a single-line field followed by typing, where the field doesn't hold the text after the
+// call. In word-edit (2026-10-18, 01-26-39 #1 and 00-52-36 #5) the first of two sidebar fields stayed empty, Replace All
+// ran on nothing, and the result said only "UI changed (element)"; finding out took 3 and 4 calls. setValue is the one
+// route that doesn't depend on focus. The typed text stays out of the note, as in the stop notes.
+function missedFieldNote(action, observation) {
+  const missed = (action.fieldTypings ?? []).flatMap(typing => {
+    const fields = observation.lines.map(parse).filter(line => line.num !== undefined && textField(line.key) && fieldKey(line.key) === typing.key);
+    return fields.length === 1 && !fieldValue(fields[0].key)?.includes(typing.typed) ? [fields[0]] : [];
+  }).filter((field, i, all) => all.findIndex(other => other.num === field.num) === i);
+  if (!missed.length) return;
+  const named = missed.map(describeField).join(' and '), numbers = missed.map(field => `setValue(${field.num}, text)`).join(', ');
+  return /* lean notice */ `sleight: the text typed after clicking ${named} isn't in ${missed.length === 1 ? 'that field' : 'those fields'}. \`${numbers}\` sets a field without typing.`;
+}
+
+// WB2 (SLEIGHT_WB2=1): the app's Undo item, a menu item, button or menu button whose title, Description or Help is "Undo
+// <action>" or "Can't Undo" (English titles; other locales stay silent). One distinct title per read, else none. In
+// word-edit (2026-10-18) Haiku saw "Undo Style" after the heading shortcut and still opened the Styles gallery to check in
+// 11 of 18 runs (Fable study 2026-10-17, 1.7 verification turns and 7.2 s a run).
+const UNDO_TITLE = /^(?:Undo(?: [^,]{1,60})?|Can['’]t Undo)$/;
+function undoTitle(lines) {
+  const titles = new Set();
+  for (const line of lines) {
+    const body = ELEMENT.exec(line)?.[3];
+    const role = body && /^(?:menu item|menu button|button|pop up button)\s+(?:\([^)]*\)\s*)?/.exec(body);
+    if (!role) continue;
+    const rest = body.slice(role[0].length);
+    const found = [rest.split(', ')[0], /(?:^|, )Description: ([^,]*)/.exec(rest)?.[1], /(?:^|, )Help: ([^,]*)/.exec(rest)?.[1]]
+      .map(field => field?.trim()).filter(field => field && UNDO_TITLE.test(field)).sort((a, b) => b.length - a.length)[0];
+    if (found) titles.add(found);
+  }
+  return titles.size === 1 ? [...titles][0] : undefined;
+}
+const undoNote = (was, now) => /* lean notice */ `sleight: the Undo item changed from "${was}" to "${now}", so the app recorded an edit since your last read of this window. Treat that edit as done; don't open a gallery or pane to confirm it.`;
 
 // A field that reads its old value after setValue and Return: the write never went through the field's own
 // input, so the Return and a paste acted from wherever the app already was. In excel-edit (2026-10-17, runs
@@ -1246,12 +1292,16 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
   compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE === '1',
   screenshotReads = process.env.SLEIGHT_SKILL === 'screenshot',
-  compactToolbars = process.env.SLEIGHT_COMPACT_TOOLBARS === '1', readHints = {} } = {}) {
+  compactToolbars = process.env.SLEIGHT_COMPACT_TOOLBARS === '1', readHints = {},
+  // WB1 and WB2, off by default until their held-out A/B: the missed-field note and the changed-Undo note.
+  routeSteering = process.env.SLEIGHT_WB1 === '1', undoReceipts = process.env.SLEIGHT_WB2 === '1' } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map(), pendingSwaps = new Map(), pendingClicks = new Map();
   // window key -> { sets, calls }: setValue checks whose call ended in another window, such as an alert.
   const pendingSetValues = new Map();
+  // window key -> the Undo item's title in that window's last complete read (WB2).
+  const undoSeen = new Map();
   // window key -> { target, calls }: the current run of calls that scrolled one target in that window.
   const scrolls = new Map();
   // window key -> the last element Claude aimed input at there (null: unknown), for where typing should go.
@@ -1711,6 +1761,21 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (action && settled && !(action.before && documentKey(action.before.window) === settledKey && action.before.root === observedInResult.root)) {
         const alert = alertNote(observedInResult);
         if (alert) out.push({ type: 'text', text: promptNotice(alert, prompt) });
+      }
+      // WB2: the Undo item in the call's last complete read against that window's last read before this call. A call that
+      // ends in a dialog or gallery says nothing; the next one that ends in the document compares with the read before it.
+      if (undoReceipts && action && !action.overlap && complete(observedInResult)) {
+        const was = undoSeen.get(documentKey(observedInResult.window)), now = undoTitle(observedInResult.lines);
+        if (was && now && now !== was && /^Undo /.test(now)) out.push({ type: 'text', text: promptNotice(undoNote(was, now), prompt) });
+      }
+      for (const item of resultObservations) {
+        const title = complete(item) && undoTitle(item.lines);
+        if (title) undoSeen.set(documentKey(item.window), title);
+      }
+      if (routeSteering && action?.fieldTypings?.length && action.before && !action.overlap && complete(observedInResult) &&
+          documentKey(action.before.window) === documentKey(observedInResult.window)) {
+        const missed = missedFieldNote(action, observedInResult);
+        if (missed) out.push({ type: 'text', text: promptNotice(missed, prompt) });
       }
       if (moved) out.push({ type: 'text', text: promptNotice(moved, prompt) });
       if (failed || observedInResult?.degraded || (action && (!observedInResult || observedInResult.invalid || action.overlap))) latest = undefined;

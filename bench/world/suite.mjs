@@ -6,7 +6,7 @@ const readTasks = path => JSON.parse(readFileSync(new URL(path, import.meta.url)
 
 // Catalog resolution has no setup side effects. The named runner owns fixtures and grading.
 export async function resolveTask(id) {
-  const row = [...suite.browser, ...suite.native, ...suite.handoff].find(t => t.id === id);
+  const row = [...suite.browser, ...suite.native, ...suite.handoff, ...suite.heldOut ?? []].find(t => t.id === id);
   if (!row) throw new Error(`unknown world task ${id}`);
   let tasks;
   if (row.source === 'fowlbrowser') tasks = readTasks('./tasks/fowlbrowser.json');

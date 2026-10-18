@@ -221,12 +221,26 @@ const stopTree = (receipt, content) => {
   return window && root && receipt.root === root[0] ? { window, tree, line: root[1] } : undefined;
 };
 
-export function menuRemainder(plan, receipt, expected, content) {
+// `palette` (SLEIGHT_WB1=1): a gallery or palette window the call's own label or ID click opened continues the call too.
+// Word's Styles button opened "0 window Styles" and stopped the gallery pick after it in 5 of 107 saved word-edit runs
+// (2026-10-17 and 18), each costing one to three calls. Only a URL-less window, floating window or popover of the same
+// app, titled exactly as the clicked control and holding no document area. The relay then checks that it is the app's
+// focused window in the same process with no user input since the call (paletteRefusal).
+export function menuRemainder(plan, receipt, expected, content, { palette = false } = {}) {
   const n = stoppedAfter(plan, receipt), prev = receipt?.prev;
   if (n === undefined) return;
   const stopped = stopTree(receipt, content);
   if (!stopped || stopped.window.app !== expected.app) return;
   const { window, tree, line } = stopped;
+  if (palette && ['label', 'id'].includes(prev.kind)) {
+    const role = PALETTE_ROLES.find(role => line.startsWith(role + ' '));
+    const title = role && line.slice(role.length + 1).split(/, (?:Secondary Actions|ID|Description|Help|URL): /)[0];
+    const named = !!title && window.title === title && (prev.kind === 'label' ? title === prev.value
+      : typeof prev.line === 'string' && hasIdentifier(prev.line, prev.value) && hasLabel(prev.line, title));
+    if (named && !window.url && !/(?:^|, )URL: /.test(line) && !/^\t*\d+ (?:text area|text entry area|web area|HTML content)\b/im.test(tree)) {
+      return { code: plan.code.slice(plan.actions[n].start).trim(), window, tree, palette: true };
+    }
+  }
   if (/^standard window(?: |,|$)/.test(line)) {
     if (window.title === expected.title || /^\s*\d+ (?:sheet|dialog)\b/m.test(tree)) return;
     // Only windows without editable document content: nothing proves this call's key caused the retitle, and a
@@ -495,6 +509,21 @@ export function returnRefusal(covered, baseline, observed, since, now = performa
   } catch { return 'identity-mismatch'; }
 }
 
+// Why a palette the call's own click opened (menuRemainder's `palette`) can't take the rest of the call, or undefined when
+// it can: the helper must see it as the app's focused window, the only one with its title and no URL, in the process the
+// call's baseline had, with a window number of its own, and no user input since the call was sampled. `expected` is the
+// palette ({ appId, title, url: null }) and `baseline` the leased window's identity from before the call.
+export function paletteRefusal(expected, baseline, observed, since, now = performance.now()) {
+  if (!observed) return 'identity-unavailable';
+  if (!baseline) return 'no-baseline';
+  if (!Number.isSafeInteger(observed.windowNumber) || observed.windowNumber <= 0) return 'no-window-number';
+  if (observed.windowNumber === baseline.windowNumber) return 'same-window';
+  if (!idle(observed, since, now)) return 'hid-input';
+  if (['epoch', 'pid', 'processStart'].some(key => observed[key] !== baseline[key])) return 'process-changed';
+  if (observed.headerMatches !== 1) return `header-matches-${observed.headerMatches ?? 'missing'}`;
+  try { verifyWindowIdentity({ appId: expected.appId, title: expected.title, url: null }, observed); } catch { return 'identity-mismatch'; }
+}
+
 // A key that types nothing: a named key, or a shortcut with a modifier other than Shift.
 const NAMED_KEY = /^(?:(?:shift\+)*(?:return|enter|escape|esc|tab|space|delete|backspace|forwarddelete|home|end|pageup|pagedown|(?:arrow)?(?:up|down|left|right)|f\d{1,2})|(?:[a-z]+\+)*(?:super|cmd|command|meta|ctrl|control|alt|option)\+(?:[a-z]+\+)*[^+]+)$/i;
 
@@ -538,7 +567,7 @@ const actionList = plan => {
 // it no longer was in 6 of 6 such Office calls (2026-10-17), and 4 cost a turn redoing or checking an action that had run.
 // `n` actions ran before the window changed, `over` is the root the lease held (sheet, dialog, window), `title` the
 // window the rest went to, and `failed` whether the rest's result is an error. Names as in stopNote.
-const CHANGED = { menu: 'opened a menu', tab: 'opened a tab', navigation: 'changed the window' };
+const CHANGED = { menu: 'opened a menu', palette: 'opened a panel', tab: 'opened a tab', navigation: 'changed the window' };
 export function continuedNote(plan, n, kind, { over, title, failed } = {}) {
   if (!plan || !Number.isSafeInteger(n) || n < 1 || n >= plan.actions.length) return;
   const list = actionList(plan);

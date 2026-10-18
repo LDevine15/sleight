@@ -3,7 +3,7 @@ import { acquireFixture } from './real-run.mjs';
 import { openFixture, closeFixtures } from './real-fixture.mjs';
 import { prepareOffice, checkWord, checkExcel, checkPowerPoint } from './real-office.mjs';
 
-const guard = 'Work only in that fixture document. Save the same file and leave it open for cleanup. ' +
+export const officeGuard = 'Work only in that fixture document. Save the same file and leave it open for cleanup. ' +
   'Do not open, read, modify or close other documents or windows. If a sign-in, activation, licensing, ' +
   'first-run or permission dialog appears, stop and report its visible text. Do not sign in or dismiss it.';
 const task = (id, kind, app, bundle, instructions, check) => ({
@@ -15,7 +15,7 @@ const task = (id, kind, app, bundle, instructions, check) => ({
       app, bundle, target: ctx.officePath, token: basename(ctx.officePath), mode: 'document', stopOnAppDialog: true,
     }));
   },
-  prompt: ctx => `Using computer use in ${app}, edit only ${ctx.officePath}. ${instructions(ctx)} ${guard}`,
+  prompt: ctx => `Using computer use in ${app}, edit only ${ctx.officePath}. ${instructions(ctx)} ${officeGuard}`,
   check, cleanup: closeFixtures,
 });
 
