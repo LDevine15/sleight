@@ -75,25 +75,36 @@ function leanReference(text, minimal = false) {
 }
 
 const size = (content) => content.reduce((n, c) => n + (c.type === 'text' ? c.text.length : 0), 0);
+// Claude Code measures the serialized result, where each tab and newline is two characters (`\t`, `\n`). A tab-heavy
+// tree of 44,967 characters serialized to 52.5 KB (2026-10-17), over the 52.2 KB spill, so trees are trimmed on both.
+const wire = (text) => Buffer.byteLength(JSON.stringify(text)) - 2;
+const wireSize = (content) => content.reduce((n, c) => n + (c.type === 'text' ? wire(c.text) : 0), 0);
+const WIRE_MARGIN = 2500;
+
+// A tree block runs from its header to the next blank line, `Window:` header or focus line. Firefox's tab strip puts bare
+// `Close tab` lines among the numbered rows, so continuation lines can't be required to start with tabs and a number.
+const TREE = /^(?:Window: |Browser tab: )[^\n]+\n(?:[+~-] )?\d+ [^\n]*(?:\n(?!Window: |Browser tab: |The focused UI element)[^\n]+)*/gm;
 
 function trimResultTrees(content, limit) {
-  let excess = size(content) - limit;
-  if (excess <= 0) return content;
+  let excess = size(content) - limit, wireExcess = wireSize(content) - (limit + WIRE_MARGIN);
+  if (excess <= 0 && wireExcess <= 0) return content;
   const out = content.map(c => {
-    if (excess <= 0 || c.type !== 'text' || /^(?:## Computer Use|# Other Browser APIs|# Computer Use Confirmations Policy|# Browser Safety|# API Reference)\n/.test(c.text)) return c;
-    const text = c.text.replace(/^(?:Window: |Browser tab: )[^\n]+\n(?:[+~-] )?\d+ [^\n]+(?:\n(?:[+~-] )?\t+\d+ [^\n]*)+/gm, tree => {
-      if (excess <= 0) return tree;
+    if ((excess <= 0 && wireExcess <= 0) || c.type !== 'text' || /^(?:## Computer Use|# Other Browser APIs|# Computer Use Confirmations Policy|# Browser Safety|# API Reference)\n/.test(c.text)) return c;
+    const text = c.text.replace(TREE, tree => {
+      if (excess <= 0 && wireExcess <= 0) return tree;
       const lines = tree.split('\n'), total = lines.length;
       const note = () => `\nsleight: ${total - lines.length} tree lines omitted to keep the result and engine docs within the size limit. Use a filtered read for missing information.`;
-      let kept = tree.length;
-      while (lines.length > 2 && tree.length - kept - note().length < excess) kept -= lines.pop().length + 1;
+      let gone = 0, goneWire = 0;
+      const short = () => { const n = note(); return gone - n.length < excess || goneWire - wire(n) < wireExcess; };
+      while (lines.length > 2 && short()) { const line = lines.pop(); gone += line.length + 1; goneWire += wire(line) + 2; }
       const out = lines.join('\n') + note();
       excess -= tree.length - out.length;
+      wireExcess -= wire(tree) - wire(out);
       return out;
     });
     return text === c.text ? c : { ...c, text };
   });
-  return excess > 0 ? content : out;
+  return excess > 0 || wireExcess > 0 ? content : out;
 }
 
 export function createResultBudget({ platform = process.platform, limit = RESULT_LIMIT, fullDocs = process.env.SLEIGHT_ENGINE_DOCS === 'full',
