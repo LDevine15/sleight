@@ -6,26 +6,27 @@ with no winking. The look comes from Land o' Clusters: mid-century gouache and h
 after release 1.3.0 and the claim suite (ROADMAP 1.5 and 2.2).
 
 The stage is a mid-century magic act painted in gouache: the navy of sleight's icon, one warm spotlight and a velvet curtain. The
-only performer is a pair of white gloves, the two hands from sleight's icon. They have no arms. Each wrist breaks into painted
-square dabs, blue on the right glove and ember on the left, as in the icon. The gloves take magic very seriously, are faintly smug
+only performer is a pair of ivory hands, the two hands from sleight's icon. They have no arms. Each wrist breaks into painted
+square dabs, blue on the right hand and ember on the left, as in the icon. The hands take magic very seriously, are faintly smug
 and are never in a hurry. Every trick on stage is a real screen capture.
 
 ## Main cut, about 40 s
 
-1. Curtain, 2 s. Dark stage, one spotlight, the gloves resting on a table, with no text on screen.
-2. The trick, 10 s. The gloves fan a deck of painted cards (app names only, no other company's logo), and the backdrop
+1. Curtain, 2 s. Dark stage, one spotlight, the hands resting on a table, with no text on screen.
+2. The trick, 10 s. The hands fan a deck of painted cards (app names only, no other company's logo), and the backdrop
    dissolves into a real capture: the user keeps typing in one window while sleight fills a form, plays a chess move and saves
    a file behind it. The cursor never moves. Cards: "Pick an app. Any app." then "Your Mac works in the background. Your
    cursor stays where you left it." Sound: one riffle, then silence.
 3. The race, 12 s. sleight and a competitor run the same task on the same model in side-by-side captures, each with its real
-   running clock. Card: "The hand is quicker than the eye." sleight finishes first. Then the gloves wait, one tapping the table and
+   running clock. Card: "The hand is quicker than the eye." sleight finishes first. Then the hands wait, one tapping the table and
    the other inspecting its fingernails, while the other clock keeps running. Card: "Same model and task, every run published."
 4. The playbill, 6 s. A painted theatre program unrolls. Its top line is the act's billing, and the real benchmark table sits
-   under it. The gloves point at one number. Card: "There is no trick. It reads what the app says, not just what it shows."
-5. The bow, 10 s. The gloves bow slowly and formally, and the curtain falls. Title: SLEIGHT. Under it: "Computer use for your
-   Mac. Done behind your back." A smaller line stays up two beats: "Free. Open source. Nothing up our sleeve." The gloves clap
+   under it. The hands point at one number. Card: "There is no trick. It reads what the app says, not just what it shows."
+5. The bow, 10 s. The hands rise a little, turn palms out and open, showing them empty, and hold. The curtain falls. Title: SLEIGHT. Under it: "Computer use for your
+   Mac. Done behind your back." A smaller line stays up two beats: "Free. Open source. Nothing up our sleeve." The hands clap
    once, one beat after it's comfortable. Then they reach toward each other with a cursor between their fingertips (the pose
-   from sleight's icon). The painting resolves into the icon itself, and the film cuts to black.
+   from sleight's icon). The painting resolves into the icon itself, and the film cuts to black. Production rule: the bow never
+   passes through a fingers-down pose.
 
 ## Teaser, about 15 s
 
