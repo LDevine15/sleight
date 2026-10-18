@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { createV3Bridge, createV3Frontend, serveV3Worker, applicationName } from '../plugins/sleight/lib/direct-browser/worker.mjs';
+import { createV3Bridge, createV3Frontend, serveV3Worker, applicationName, serverAppSecret } from '../plugins/sleight/lib/direct-browser/worker.mjs';
 import { prepareInstalledStartup, directBrowserRules, skillRules } from '../plugins/sleight/lib/launch.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { PassThrough } from 'node:stream';
@@ -13,8 +13,8 @@ async function fixture(config = {}) {
   endpoint.send = value => { queueMicrotask(() => child.emit('message', structuredClone(value))); };
   child.disconnect = () => { child.connected = endpoint.connected = false; endpoint.emit('disconnect'); child.emit('disconnect'); };
   child.unref = () => {};
-  const session = serveV3Worker({ channel: endpoint, browser: 'bfixture', async begin(message) {
-    events.push(['begin', message]);
+  const session = serveV3Worker({ channel: endpoint, browser: 'bfixture', async begin(message, _binding, extra) {
+    events.push(['begin', message, extra]);
     return { async call(request) { events.push(['call', request]); return { text: 'plain result', isError: false }; },
       delivered(result) { events.push(['delivered', result]); return true; },
       async end() { events.push(['end']); return { revoked: true, cleanup: [] }; } };
@@ -149,7 +149,7 @@ test('protocol close fences an in-flight begin and waits for its cleanup before 
   let release;
   const worker=serveV3Worker({channel,browser:'bfixture',begin:()=>new Promise(resolve=>{release=()=>resolve({end:async()=>{events.push('turn-end');return{revoked:true,cleanup:[]};}});}),
     close:async()=>{events.push('close');return{revoked:true,cleanup:[]};}});worker.ready();
-  channel.emit('message',{version:3,id:'begin',method:'begin',params:{turn:'one',text:'read'}});
+  channel.emit('message',{version:3,id:'begin',method:'begin',params:{turn:'one',text:'read',apps:[]}});
   await new Promise(resolve=>setImmediate(resolve));
   channel.emit('message',{version:3,id:'close',method:'close',params:{}});
   await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(events,[]);
@@ -167,7 +167,101 @@ test('a parent pipe closing during send fences the worker through the IPC callba
   host.ready();
   assert.equal(typeof callback, 'function','Node IPC must receive a callback so EPIPE does not emit an unhandled error');
   callback(Error('write EPIPE'));
-  channel.emit('message', { version: 3, id: 'late', method: 'begin', params: { turn: 'one', text: 'read' } });
+  channel.emit('message', { version: 3, id: 'late', method: 'begin', params: { turn: 'one', text: 'read', apps: [] } });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(begun, 0,'late work cannot start after the failed send');
+});
+
+// EPV3-7b: the relay's engine approvals ride in the begin frame as bundle ids, never in the hook's frame.
+test('bind forwards the relay\'s approved bundle ids to the worker and refuses a bad list or a hook frame that names apps', async () => {
+  const f = await fixture();
+  try {
+    const frame = turn => ({ ...f.bridge.bootstrapEnvelope(), event: 'begin', turn, text: 'edit' });
+    assert.equal(await f.bridge.bind(frame('t1'), ['com.microsoft.VSCode']), true);
+    assert.deepEqual(f.events.at(-1)[2], { apps: ['com.microsoft.VSCode'], appSecret: serverAppSecret() });
+    assert.equal(await f.bridge.bind(frame('t2')), true); assert.deepEqual(f.events.at(-1)[2], { apps: [], appSecret: serverAppSecret() });
+    for (const [i, apps] of [['Visual Studio Code'], ['a.b', 'a.b'], 'com.x.y', Array.from({ length: 65 }, (_, n) => 'invalid.app' + n)].entries())
+      await assert.rejects(f.bridge.bind(frame('bad' + i), apps), /TRUSTED_TURN_REQUIRED/, JSON.stringify(apps));
+    await assert.rejects(f.bridge.bind({ ...frame('t3'), apps: ['com.microsoft.VSCode'] }), /TRUSTED_TURN_REQUIRED/);
+    const tools = f.bridge.tools();
+    assert.deepEqual(tools.map(tool => tool.name), ['browser_open', 'browser_read', 'browser_act', 'browser_fill', 'browser_tabs']);
+    assert.doesNotMatch(JSON.stringify(tools), /oneOf|anyOf|allOf/);
+  } finally { await f.bridge.detach(); }
+});
+// F2: the app hosts' admin secret lives in this (the MCP server) process, so a new worker reaches a host an earlier worker started.
+test('every worker this server forks gets the same app-host admin secret in its begin frames, over IPC only', async () => {
+  const secret = serverAppSecret();
+  assert.match(secret, /^[A-Za-z0-9_-]{43}$/, '32 random bytes, base64url');
+  assert.equal(serverAppSecret(), secret, 'made once per server process');
+  const first = await fixture(), second = await fixture();
+  try {
+    for (const [i, f] of [first, second].entries()) {
+      assert.equal(await f.bridge.bind({ ...f.bridge.bootstrapEnvelope(), event: 'begin', turn: 'k' + i, text: 'edit' }, ['com.microsoft.VSCode']), true);
+      assert.equal(f.events.at(-1)[2].appSecret, secret);
+      assert.ok(!JSON.stringify(f.forkOptions).includes(secret), 'never in the fork arguments or environment');
+    }
+  } finally { await first.bridge.detach(); await second.bridge.detach(); }
+  // The worker side takes only a well-formed secret; a bad one is dropped, the begin still runs.
+  const channel = new EventEmitter(), frames = [], seen = [];
+  channel.connected = true; channel.send = frame => frames.push(frame);
+  const served = serveV3Worker({ channel, browser: 'bfixture', begin: async (_m, _b, extra) => { seen.push(extra); return { end: async () => ({ revoked: true, cleanup: [] }) }; } });
+  const settled = async () => { for (let i = 0; i < 5; i++) { await served.drain(); await new Promise(resolve => setImmediate(resolve)); } };
+  channel.emit('message', { version: 3, id: 'x1', method: 'begin', params: { turn: 'x1', text: 'read', apps: [], appSecret: 'short' } }); await settled();
+  channel.emit('message', { version: 3, id: 'x2', method: 'begin', params: { turn: 'x2', text: 'read', apps: [] } }); await settled();
+  assert.deepEqual(seen, [{ apps: [] }, { apps: [] }]);
+});
+
+test('the relay\'s begin frame lists the bundle ids the engine approved this session, from cards and the pre-approved list', async () => {
+  const { PreapprovedApps } = await import('../plugins/sleight/lib/preapproved.mjs');
+  const f = await fixture();
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const replies = []; clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const toServer = []; serverIn.on('data', bytes => toServer.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  let relay;
+  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)); };
+  const approval = (id, app) => ({ jsonrpc: '2.0', id, method: 'elicitation/create', params: { message: `Allow ${app}?`, mode: 'form',
+    requestedSchema: { type: 'object', properties: {} }, _meta: { connector_id: 'computer-use', persist: ['session'], riskLevel: 'low', tool_params: { app } } } });
+  try {
+    const prepared = await prepareInstalledStartup(() => f.bridge);
+    relay = createRelay({ clientIn, clientOut, serverIn, serverOut, ...prepared, changeReview: false, ask: async () => 'accept',
+      preapproved: new PreapprovedApps({ version: 1, apps: [{ app: 'com.todesktop.230313mzl4w4u92', riskLevel: 'high' }] }) });
+    for (const [id, app] of [[11, 'com.microsoft.VSCode'], [12, 'Visual Studio Code'], [13, 'com.todesktop.230313mzl4w4u92']]) serverOut.write(JSON.stringify(approval(id, app)) + '\n');
+    await settle();
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_turbo: { event: 'bootstrap' } } } }) + '\n');
+    await settle();
+    const envelope = JSON.parse(replies.find(row => row.id === 1).result.content[0].text).sleightTurbo;
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_turbo: { ...envelope, event: 'begin', turn: 'turn1', text: 'edit' } } } }) + '\n');
+    await settle();
+    assert.equal(replies.find(row => row.id === 2).result.isError, false);
+    assert.deepEqual(f.events.find(row => row[0] === 'begin')[2].apps.toSorted(), ['com.microsoft.VSCode', 'com.todesktop.230313mzl4w4u92']);
+  } finally {
+    relay?.dispose(); await f.bridge.detach();
+    for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy();
+  }
+});
+test('the relay\'s begin frame lists pre-approved bundle ids before the engine asks about them, and never a listed name', async () => {
+  const { PreapprovedApps } = await import('../plugins/sleight/lib/preapproved.mjs');
+  const f = await fixture();
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const replies = []; clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const toServer = []; serverIn.on('data', bytes => toServer.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  let relay;
+  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)); };
+  const approval = (id, app) => ({ jsonrpc: '2.0', id, method: 'elicitation/create', params: { message: `Allow ${app}?`, mode: 'form',
+    requestedSchema: { type: 'object', properties: {} }, _meta: { connector_id: 'computer-use', persist: ['session'], riskLevel: 'low', tool_params: { app } } } });
+  try {
+    const prepared = await prepareInstalledStartup(() => f.bridge);
+    relay = createRelay({ clientIn, clientOut, serverIn, serverOut, ...prepared, changeReview: false, ask: async () => 'accept',
+      preapproved: new PreapprovedApps({ version: 1, apps: [{ app: 'com.todesktop.230313mzl4w4u92', riskLevel: 'low' }, { app: 'Visual Studio Code', riskLevel: 'high' }] }) });
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_turbo: { event: 'bootstrap' } } } }) + '\n');
+    await settle();
+    const envelope = JSON.parse(replies.find(row => row.id === 1).result.content[0].text).sleightTurbo;
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_turbo: { ...envelope, event: 'begin', turn: 'turn1', text: 'edit' } } } }) + '\n');
+    await settle();
+    assert.equal(replies.find(row => row.id === 2).result.isError, false);
+    assert.deepEqual(f.events.find(row => row[0] === 'begin')[2].apps.toSorted(), ['com.todesktop.230313mzl4w4u92']);
+  } finally {
+    relay?.dispose(); await f.bridge.detach();
+    for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy();
+  }
 });

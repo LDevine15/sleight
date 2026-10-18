@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { isAbsolute, normalize, parse, join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { immutableJSON } from './ipc.mjs';
+import { knownAppDocument } from './electron-identity.mjs';
 
 // Port of sleight's reviewed BP2-7 file authority. No third-party source copied.
 const authorities = new WeakSet();
@@ -22,9 +23,13 @@ function bindingKey(binding) {
   binding = immutableJSON(binding);
   if (!binding || Object.keys(binding).length !== keys.length || keys.some(k => !['string', 'number'].includes(typeof binding[k])))
     throw new Error('Incomplete file authority binding');
-  const url = new URL(binding.origin);
-  if (!['https:', 'http:'].includes(url.protocol) || url.origin !== binding.origin)
-    throw new Error('Unsupported file destination');
+  // An Electron app document has no web origin. Only an origin string a trusted app binding derived in this
+  // process passes, so a page, a tool argument or a look-alike string cannot name one.
+  if (!knownAppDocument(binding.origin)) {
+    const url = new URL(binding.origin);
+    if (!['https:', 'http:'].includes(url.protocol) || url.origin !== binding.origin)
+      throw new Error('Unsupported file destination');
+  }
   return JSON.stringify(keys.map(k => binding[k]));
 }
 function snapshot(path, includeData = false) {

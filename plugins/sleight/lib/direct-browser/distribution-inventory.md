@@ -8,6 +8,22 @@ The plugin distributes native/peer-host.c and native/consent-host.swift as sourc
 browser's PID, start time and executable evidence. The consent host supplies authenticated payment and connection controls.
 Both compile locally at first use with Apple's command-line tools. No signed or notarized native binary is distributed.
 
+Electron turbo modules load only on a turn for an app the operator opted in per app (turbo-apps.json, read by
+electron-config). Each uses built-in Node modules and the shared v3 modules named here, never a new dependency.
+- electron-identity and electron-consent: the app instance, typed app documents and the debugger card. consent-ui, host-files
+  and v3-context import electron-identity and use it only when a trusted app binding exists.
+- electron-channel, electron-connection, electron-host, electron-host-entry, electron-host-run, electron-admin and
+  electron-ownership: the resident host process, its authenticated channels and the parent's admin client. Playwright is the
+  pinned copy, loaded through worlds.mjs and connected through cdp-filter.mjs in app mode.
+- electron/: the broker (broker.mjs), the Python launch adapter (launch.py, run with the system python3), the reviewed recipe
+  registry (recipes.json) and their notices. The package receipt hashes them with every other file.
+- electron-targets, electron-native-join and electron-pages: app target admission, the window join and the page registry.
+  cdp-filter's app mode is off unless a caller passes it, so the browser path is unchanged.
+- electron-recipes, electron-capabilities and electron-windows.mjs: registry checks, the qualification dry run and the window
+  reader. electron-windows.js is its JXA helper, run with /usr/bin/osascript, and reads window metadata only.
+- electron-read and electron-handoff: the app read header over snapshot.mjs, and input runners over act.mjs and fill.mjs.
+- electron-runtime: what worker.mjs calls to connect an opted-in app for a turn.
+
 host.mjs publishes both helpers only after compilation and hash verification, under a private per-user cache.
 Its exclusive build.lock refuses concurrent publication. Source and executable identity are rechecked before each launch.
 Only a locally issued receipt object can start a helper. Missing tools or failed compilation leave the engine route available.

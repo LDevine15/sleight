@@ -704,3 +704,27 @@ native reference, and oversized first results defer the browser reference while 
   searched, or loads rows only after a delay, can end as "ran out of time". Not measured on a real infinite-scroll list.
 - A combobox that filters on a different spelling than the option text gets up to three typed queries (the text, without brackets,
   its first two words). After a miss the field is typed back to the asked text.
+
+## Electron debugger consent (not in a release yet)
+
+- Always allow records for an Electron app's debugger are sealed with an HMAC key in a 0600 file beside them
+  (`grant-seal.key`). A hand-written record, an old unsealed one, or one with a changed field is refused (unit-tested,
+  2026-10-17). A process running as you, including Claude's own shell, can still read that key and seal its own record
+  for an app build. That build then gets the debugger without the card until you revoke it. The engine's own app
+  approval is still required. A seal that same-user processes can't read (a keychain item limited to the consent host
+  binary) isn't built. The consent host is compiled on your Mac and its code identity changes with each build. A
+  keychain item bound to it would prompt you after every rebuild.
+- The resident Electron host's ownership journal is sealed with `host.key`, also a 0600 file. A same-user process can
+  forge the journal and make the host refuse a launch or report a wrong owner. It can't open the host's channel,
+  whose admin secret the parent passes for each start and never writes.
+- The MCP server process holds the host's admin secret in memory and hands it to each turbo worker it starts, so a new worker
+  reaches the host an earlier one started (unit-tested, 2026-10-18). The next Claude Code session runs a new server with a
+  new secret. The new server can't administer a host and app from the earlier session, and turbo answers that you should quit the
+  window sleight opened, until you quit that instance with the app's own Quit. Measured live: not yet.
+- Killing the resident host (`kill -9` from Claude's shell is one way, which the write guard doesn't stop) closes the
+  app's debugging pipe, and Electron quits on pipe EOF, so the window sleight opened quits without its unsaved-work prompt.
+  Your own instances of the app aren't affected. Keeping the pipe open past the host needs another process to hold it, and
+  that isn't built or measured.
+- A second Claude Code session on the same opted-in app gets that same quit-the-window answer, not ELECTRON_BUSY: its
+  server has another secret, and the host takes one administrator at a time. ELECTRON_BUSY separates sessions only over
+  one host channel, which is what the EPV3-8 contention cell measures.

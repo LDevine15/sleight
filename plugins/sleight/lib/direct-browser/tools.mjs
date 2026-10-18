@@ -114,7 +114,8 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
         if (ended) throw Error('turn ended');
         let a = request.arguments, closedNote;
         if (request.name === 'browser_tabs') {
-          if (a.do === 'list') return textResult((await pages.list()).map(row => `${clean(row.tab)} ${originOf(row.url)}${row.opener ? ' (opener ' + clean(row.opener) + ')' : ''}`).join('\n') || 'No owned tabs.');
+          // An app window has no web origin to show (vscode-file: is opaque), so its row carries the registry's trusted label.
+          if (a.do === 'list') return textResult((await pages.list()).map(row => `${clean(row.tab)} ${row.label ? clean(row.label) : originOf(row.url)}${row.opener ? ' (opener ' + clean(row.opener) + ')' : ''}`).join('\n') || 'No owned tabs.');
           pages.tab(a.tab); started = true;
           return textResult(`${a.do}: ${JSON.stringify(await pages[a.do](a.tab))}`);
         }
