@@ -163,7 +163,7 @@ test('permissions block, unblock, revoke and sites are the user\'s commands: eve
     'bash -c "sleight-mcp permissions unblock x.y"', 'env A=1 sleight-mcp permissions revoke all', 'nohup sleight-mcp permissions block x.y',
     'sh -c "true; sleight-mcp permissions unblock x.y"', 'true && sleight-mcp permissions unblock x.y', 'echo hi | sleight-mcp permissions unblock x.y',
     'zsh -lc "cd /x && sleight-mcp permissions unblock x.y"', 'sleight-mcp "permissions" "unblock" x.y',
-    'node --no-warnings /x/lib/launch.mjs permissions revoke all', 'sleight-mcp permissions list unblock']) {
+    'node --no-warnings /x/lib/launch.mjs permissions revoke all', 'sleight-mcp permissions list unblock', 'sleight-mcp permissions repair']) {
     assert.equal(await guard({ tool: 'Bash', command }, { stat }), true, command);
   }
   for (const command of ['sleight-mcp permissions', 'sleight-mcp permissions list', 'env sleight-mcp permissions', 'sh -c "sleight-mcp permissions"',

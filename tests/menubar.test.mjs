@@ -73,3 +73,28 @@ test('menu bar does not click if reading recent human input fails', () => {
   assert.throws(f.click, /input state unavailable/);
   assert.deepEqual(f.calls.map(c => c[0]), ['idle']);
 });
+
+// Security: sleight's own glove (the consent host) is never opened, chosen, pressed or listed, by name or by its file in
+// sleight's helper cache. A fake System Events stands in; nothing runs osascript.
+function systemEvents(processes) {
+  const clicked = [];
+  const proc = ([name, file]) => ({ exists: () => true, name: () => name, applicationFile: () => ({ posixPath: () => file }),
+    menuBars: () => [{}, { menuBarItems: () => [{ position: () => [1, 1], size: () => [1, 1], click: () => clicked.push(name), menus: () => [] }] }] });
+  const se = { processes: Object.assign({ byName: name => proc(processes.find(p => p[0] === name) ?? [name, '']) },
+    { name: () => processes.map(p => p[0]), menuBars: () => processes.map(() => [{}, {}]) }) };
+  const context = vm.createContext({ ObjC: { import() {} }, Application: () => se, $: {}, delay() {} });
+  vm.runInContext(source, context);
+  return { run: request => JSON.parse(context.run([JSON.stringify(request)])), clicked };
+}
+
+test('menu_bar refuses sleight\'s own status item by its process name or its file in the helper cache, and leaves it out of apps', () => {
+  const se = systemEvents([['consent-host', '/Users/x/Library/Caches/sleight/turbo-host/k1/consent-host'], ['Renamed', '/Users/x/Library/Caches/sleight/turbo-host/k2/consent-host'], ['Other', '/Applications/Other.app']]);
+  for (const request of [{ op: 'open', app: 'consent-host' }, { op: 'choose', app: 'consent-host', path: ['Turn Turbo Off…'] },
+    { op: 'press', app: 'consent-host', element: 0 }, { op: 'close', app: 'consent-host' }, { op: 'open', app: 'Renamed' }]) {
+    const result = se.run(request);
+    assert.equal(result.ok, false, JSON.stringify(request));
+    assert.match(result.error, /sleight's own, which only the user's click answers/);
+  }
+  assert.deepEqual(se.clicked, []);
+  assert.deepEqual(se.run({ op: 'apps' }).apps, ['Renamed', 'Other'], 'the bare host name is left out of the list');
+});

@@ -2,7 +2,7 @@
 // and `unblock` set where sleight never acts, and `permissions sites only` limits turbo to some sites. The glove's Permissions
 // menu uses the same list and writers (permissionsMenu, applyMenuEvent). Revoking and blocking only remove access, so neither
 // asks. Nothing here grants: Always allow is written only by the user's click on an approval card.
-import { readdirSync, readFileSync, lstatSync } from 'node:fs';
+import { readdirSync, readFileSync, lstatSync, statSync, unlinkSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { listPreapproved, removePreapproved } from './preapproved.mjs';
@@ -106,18 +106,55 @@ function revokeApp(o, name) {
   return removed;
 }
 const revokeTurbo = o => writeConfigFile(installedConfigPath(o.home), { version: 1, enabled: false }, o.uid);
-function revokeAll(o) {
+// The menu's Revoke All leaves turbo alone: Turn Turbo Off… is turbo's one path, with its one confirmation.
+function revokeAll(o, { includeTurbo = true } = {}) {
   let apps = 0, debuggers = 0, turbo = false;
   for (const entry of listPreapproved({ home: o.home, uid: o.uid })) if (removePreapproved(entry.app, { home: o.home, uid: o.uid })) apps++;
   const store = o.grants(), bundles = new Set();
   for (const record of store.list()) if (store.remove(record.key)) bundles.add(record.bundleId);
   debuggers = bundles.size;
-  try { if (readInstalledConfigFile(installedConfigPath(o.home))?.enabled === true) { revokeTurbo(o); turbo = true; } } catch {}
+  if (includeTurbo) try { if (readInstalledConfigFile(installedConfigPath(o.home))?.enabled === true) { revokeTurbo(o); turbo = true; } } catch {}
   return { apps, debuggers, turbo };
 }
 
+/** `permissions repair`: an unsafe permissions.json (a link, another owner, a shared mode or a bad shape) is replaced by a
+ *  private file holding every valid block and allow-only site it had. Everything in it only restricts, so keeping it is safe
+ *  whatever wrote it. A link is removed, never followed for writing. */
+function repair(o) {
+  const before = readPermissions(o.path, o.uid);
+  if (before.state === 'absent') return 'There is no permissions.json to repair.\n';
+  if (before.state === 'ok') return 'permissions.json is fine.\n';
+  let data;
+  try {
+    const stat = statSync(o.path);
+    if (stat.isFile() && stat.size <= PERMISSIONS_BYTES) data = JSON.parse(readFileSync(o.path, 'utf8'));
+  } catch {}
+  const apps = [], sites = [], only = [], seen = new Set();
+  let dropped = 0;
+  for (const app of Array.isArray(data?.apps) ? data.apps : []) {
+    const id = typeof app?.id === 'string' && app.id.length <= 255 && BUNDLE_ID.test(app.id) ? app.id : undefined;
+    if (!id || seen.has(id.toLowerCase()) || apps.length >= LIMIT) { dropped++; continue; }
+    seen.add(id.toLowerCase());
+    const name = typeof app.name === 'string' && app.name.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(app.name) && app.name ? app.name : undefined;
+    apps.push({ id, ...name ? { name } : {} });
+  }
+  const origins = (list, into) => { for (const site of Array.isArray(list) ? list : []) {
+    const origin = siteOrigin(site);
+    if (!origin || into.includes(origin) || into.length >= LIMIT) dropped++; else into.push(origin);
+  } };
+  origins(data?.sites, sites); origins(data?.only, only);
+  // A link or anything but a file goes first; a plain file is replaced in one rename, so a failed write keeps the old blocks.
+  const link = lstatSync(o.path);
+  if (link.isSymbolicLink() || !link.isFile()) unlinkSync(o.path);
+  writeConfigFile(o.path, { version: 1, apps, sites, ...only.length ? { only } : {} }, o.uid);
+  if (readPermissions(o.path, o.uid).state !== 'ok') throw Error('PERMISSIONS_UNSAFE');
+  return `Repaired permissions.json: kept ${count(apps.length, 'blocked app')}, ${count(sites.length, 'blocked site')}` +
+    `${only.length ? ` and ${count(only.length, 'allowed site')}` : ''}${dropped ? `, dropped ${dropped} unreadable ${dropped === 1 ? 'entry' : 'entries'}` : ''}. ` +
+    'sleight acts again from its next action.\n';
+}
+
 const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-const usage = 'usage: sleight-mcp permissions [list]\n       sleight-mcp permissions revoke <app|turbo|all|origin>\n' +
+const usage = 'usage: sleight-mcp permissions [list]\n       sleight-mcp permissions revoke <app|turbo|all|origin>\n       sleight-mcp permissions repair\n' +
   '       sleight-mcp permissions block|unblock <app bundle id|origin>\n       sleight-mcp permissions sites only <origin...>\n' +
   '       sleight-mcp permissions sites all\n';
 const target = value => typeof value === 'string' && value.includes('://') ? (siteOrigin(value) && { site: siteOrigin(value) })
@@ -130,7 +167,7 @@ function listing(o) {
   else lines.push("sleight may act in: nothing beyond this session's approvals");
   for (const problem of problems) lines.push(`  (${problem})`);
   const perms = readPermissions(o.path, o.uid);
-  if (perms.state === 'unsafe') lines.push('Blocked: permissions.json is unsafe, so sleight acts nowhere (sleight-mcp --doctor says how to fix it)');
+  if (perms.state === 'unsafe') lines.push('Blocked: permissions.json is unsafe, so sleight acts nowhere (sleight-mcp permissions repair fixes it, keeping the valid blocks)');
   else if (perms.apps.length || perms.sites.length) lines.push('Blocked', ...perms.apps.map(app => `  ${app.name ? `${app.name} (${app.id})` : app.id}`),
     ...perms.sites.map(site => `  ${site}`), 'sleight-mcp permissions unblock <app bundle id|origin> lifts a block.');
   lines.push(perms.only ? `Turbo sites: only ${perms.only.join(', ')}` : 'Turbo sites: any site (sleight-mcp permissions sites only <origin...> limits turbo to those)');
@@ -145,6 +182,7 @@ export function permissionsCommand(args, options) {
   const o = context(options), [op = 'list', ...rest] = args;
   try {
     if (op === 'list' && !rest.length) { o.out(listing(o)); return 0; }
+    if (op === 'repair' && !rest.length) { o.out(repair(o)); return 0; }
     if (op === 'revoke' && rest.length === 1) {
       const [what] = rest;
       if (what === 'all') {
@@ -205,12 +243,12 @@ export function permissionsMenu(options) {
   const o = context(options), { grants } = standing(o), perms = readPermissions(o.path, o.uid), app = currentApp();
   const rows = grants.filter(g => printable(g.title) && printable(g.target) && HOST_TARGET.test(g.target)).slice(0, 24)
     .map(g => ({ title: clip(g.title), detail: g.detail, used: Number.isFinite(g.used) ? Math.floor(g.used / 1000) : null, target: g.target }));
-  const blocked = perms.state === 'unsafe' ? ['permissions.json is unsafe: sleight acts nowhere'] : [...perms.apps.map(a => clip(a.name ?? a.id)), ...perms.sites.map(clip)].slice(0, 24);
+  const blocked = perms.state === 'unsafe' ? ['permissions.json is unsafe: run sleight-mcp permissions repair'] : [...perms.apps.map(a => clip(a.name ?? a.id)), ...perms.sites.map(clip)].slice(0, 24);
   const offerBlock = app && perms.state !== 'unsafe' && perms.apps.length < LIMIT;
   const current = offerBlock && !perms.apps.some(a => a.id.toLowerCase() === app.bundleId.toLowerCase()) ? { title: clip(app.name), target: app.bundleId } : undefined;
   const payload = { grants: rows, blocked, ...current ? { current } : {}, ...perms.only ? { only: perms.only.slice(0, 12).map(clip) } : {} };
   while (Buffer.byteLength(JSON.stringify(payload)) > 5800 && payload.grants.length) payload.grants.pop();
-  const offered = new Set(payload.grants.map(g => g.target));
+  const offered = new Set(payload.grants.map(g => g.target).filter(target => target !== 'turbo'));
   if (current) offered.add('block:' + current.target);
   return { payload, offered, names: current ? { [current.target]: app.name } : {} };
 }
@@ -219,9 +257,8 @@ export function permissionsMenu(options) {
  *  block the offered app. Returns whether it changed anything. The menu never lifts a block or grants. */
 export function applyMenuEvent(event, offered, options) {
   const o = context(options);
-  if (event?.permissions === 'revoke-all') { revokeAll(o); return true; }
-  if (event?.permissions === 'revoke' && typeof event.target === 'string' && offered?.has(event.target)) {
-    if (event.target === 'turbo') { revokeTurbo(o); return true; }
+  if (event?.permissions === 'revoke-all') { revokeAll(o, { includeTurbo: false }); return true; }
+  if (event?.permissions === 'revoke' && typeof event.target === 'string' && event.target !== 'turbo' && offered?.has(event.target)) {
     const [kind, name] = [event.target.slice(0, event.target.indexOf(':')), event.target.slice(event.target.indexOf(':') + 1)];
     if (kind === 'app') return removePreapproved(name, { home: o.home, uid: o.uid });
     if (kind === 'electron') {
@@ -243,7 +280,7 @@ export function permissionsDoctorLines(options) {
   const o = context(options), perms = readPermissions(o.path, o.uid), lines = ['permissions'];
   if (perms.state === 'unsafe') {
     lines.push('PROBLEM   permissions.json is a link or has another owner, mode or format, so sleight acts nowhere',
-      '          fix: delete ~/Library/Application Support/sleight/permissions.json, then block again with sleight-mcp permissions block');
+      '          fix: sleight-mcp permissions repair (it keeps the valid blocks)');
     return lines;
   }
   const blocks = [perms.apps.length && count(perms.apps.length, 'app'), perms.sites.length && count(perms.sites.length, 'site')].filter(Boolean);

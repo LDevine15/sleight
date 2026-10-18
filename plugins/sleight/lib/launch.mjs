@@ -210,6 +210,24 @@ export async function doctor({ env = process.env, log = console.log, app = proce
   return 1;
 }
 
+// Which apps are web browsers, for site limits on the engine path: the apps LaunchServices lists for https (web-browsers.js).
+// Asked once, in the background, the first time a check needs it; until the answer arrives the relay treats a read with web
+// content as a browser's, and a failed ask keeps it that way.
+export function webBrowserCheck(run = runScript) {
+  let ids, asked = false;
+  return appId => {
+    if (typeof appId !== 'string' || !appId) return undefined;
+    if (ids) return ids.has(appId.toLowerCase());
+    if (!asked) {
+      asked = true;
+      Promise.resolve().then(() => run('web-browsers.js', {})).then(result => {
+        if (result?.ok === true && Array.isArray(result.ids)) ids = new Set(result.ids.filter(id => typeof id === 'string').map(id => id.toLowerCase()));
+      }, () => {});
+    }
+    return undefined;
+  };
+}
+
 // SLEIGHT_TRACE=1 logs every relayed message to
 // ~/Library/Logs/sleight/trace-<pid>.jsonl; any other value is used as the
 // directory. Long strings (screenshots, UI state) are cut to 300 characters, or to
@@ -946,6 +964,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     engineForbiddenTargets: forbiddenTargetsAllowed(readForbiddenTargets),
     // The user's blocks, read again whenever permissions.json changes.
     permissions: { ...createPermissionCheck(), noteApp: noteCurrentApp },
+    webBrowser: webBrowserCheck(),
     onLeaseFault: err => { process.stderr.write(`sleight: ${err.message}; stopping the owned engine.\n`); terminateEngine(); },
     // SLEIGHT_MENU_BAR=0 leaves out the menu bar and notification tools,
     // SLEIGHT_DRAG=0 the drag tool, SLEIGHT_HOVER=0 the hover tool,

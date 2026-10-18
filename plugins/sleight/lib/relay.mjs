@@ -61,6 +61,7 @@ import { Script } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
 import { browserBundleId } from './direct-browser/browsers.mjs';
+import { OWN_HOST_LINE, isOwnHost, pageSite } from './permissions.mjs';
 import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, lastWindowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot, selectedMenuEntry } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
@@ -706,7 +707,10 @@ export function createRelay({
   engineForbiddenTargets = false,
   // The user's blocks (permissions.mjs): app({ bundleId, name }) gives the line to relay for a blocked app, and noteApp records
   // the app sleight acts in for the menu's Never Act in row. The launcher supplies them; without them nothing is blocked.
+  // page(site) and sitesLimited() hold site blocks on the engine path; webBrowser(appId) says whether an app is a web browser
+  // (true, false, or undefined while unknown, when a read with web content counts as one).
   permissions,
+  webBrowser = () => undefined,
   guardTiming = false,
   // 'careful' reads the window before every action, including keys, text and coordinates later in
   // a call, which skip it by default (owner, 2026-10-09). Document scope is always careful.
@@ -1569,22 +1573,27 @@ export function createRelay({
     toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: line }] } });
   }
   // Every app a call names: a local tool's app, a js call's getApp strings, and the apps its handles hold from earlier reads.
+  // sleight's own consent host (its glove, approval and payment cards) is refused with or without the user's blocks.
+  const appLine = (bundleId, name) => isOwnHost(bundleId, name) ? OWN_HOST_LINE : permissions?.app({ bundleId, name });
   function callBlock(name, args) {
-    if (!permissions) return undefined;
-    if (name !== 'js') return typeof args.app === 'string' ? permissions.app({ bundleId: args.app, name: args.app }) : undefined;
+    if (name !== 'js') return typeof args.app === 'string' ? appLine(args.app, args.app) : undefined;
     const code = String(args.code ?? '');
     for (const match of code.matchAll(/\bcua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)/g)) {
       let literal;
       try { literal = match[1].startsWith('"') ? JSON.parse(match[1]) : match[1].slice(1, -1); } catch { literal = match[1].slice(1, -1); }
-      const line = permissions.app({ bundleId: literal, name: literal });
+      const line = appLine(literal, literal);
       if (line) return line;
     }
     for (const match of codeOnly(code).matchAll(HANDLE_CALL)) {
-      const held = handleBundles.get(match[1]), line = held && permissions.app({ bundleId: held.appId, name: held.app });
+      const held = handleBundles.get(match[1]), line = held && appLine(held.appId, held.app);
       if (line) return line;
     }
     return undefined;
   }
+  // Site blocks on the engine path: a browser window's action needs a read that proves an allowed site.
+  const browserish = window => webBrowser(window?.appId) ?? !!window?.page;
+  // webBrowser is asked only once the user has site limits.
+  const pageLine = window => permissions?.sitesLimited?.() && browserish(window) ? permissions.page(window.page) : undefined;
   function leaseStop(msg, reason, browserAdvice = false) {
     const note = browserAdvice && msg.params?.name === 'js' && browserLeaseNote(msg.params.arguments?.code, browserHandles);
     const content = [{ type: 'text', text: reason.startsWith('Input lease:') ? reason : `Input lease: ${reason}` }];
@@ -1649,6 +1658,8 @@ export function createRelay({
     const code = args.code;
     if (name === 'js' && typeof code !== 'string') { leaseStop(msg, 'js needs code.'); return false; }
     if (name === 'js' && browser) {
+      // The engine's browser surface names no page sleight can check, so site limits refuse it.
+      if (permissions?.sitesLimited?.()) { blockStop(msg, "You limited the sites sleight acts on, and it can't check the site of an engine browser call, so it doesn't make one (turbo checks each page; sleight-mcp permissions lists your limits)."); return false; }
       if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return false; }
       // Tabs are isolated by the extension. Never reserve the previous native app for a tab call.
       const nativeDenied = promptNotice(NATIVE_DENIED, prompt);
@@ -1669,6 +1680,7 @@ export function createRelay({
     if (!read) {
       if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return false; }
       if (leaseFault) { leaseStop(msg, leaseFault); return false; }
+      if (isOwnHost(leaseWindow?.appId, leaseWindow?.app)) { blockStop(msg, OWN_HOST_LINE); return false; }
       if (name !== 'js') {
         leaseCalls.set(msg.id, { localAction: true }); return true;
       }
@@ -1710,7 +1722,7 @@ export function createRelay({
         leaseStop(msg, `${leaseWindow.app}'s settings window is refused, so Claude can't change its approval or safety settings. Close it or read another window.`);
         return false;
       }
-      const held = permissions?.app({ bundleId: leaseWindow.appId, name: leaseWindow.app });
+      const held = appLine(leaseWindow.appId, leaseWindow.app) ?? pageLine(leaseWindow);
       if (held) { blockStop(msg, held); return false; }
       try { key = inputLease.acquire(leaseWindow); }
       catch (err) { leaseStop(msg, err.message); return false; }
@@ -2281,7 +2293,7 @@ export function createRelay({
           if (name !== 'open_file' || !/launch it first/.test(String(err?.message))) throw err;
         }
         // The app the name resolved to, which a block by bundle id names.
-        const blocked = resolved?.appId && permissions?.app({ bundleId: resolved.appId, name: resolved.app });
+        const blocked = resolved?.appId && appLine(resolved.appId, resolved.app);
         if (blocked) throw new Error(blocked);
       }
       current();
@@ -4069,10 +4081,14 @@ export function createRelay({
       const previous = leaseWindow;
       if (guardStop && window && selectedWindow && window.app !== selectedWindow.app) clearSelection();
       leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}) } : undefined;
-      if (leaseWindow?.appId && permissions) {
-        const line = permissions.app({ bundleId: leaseWindow.appId, name: leaseWindow.app });
+      if (leaseWindow) {
+        // The site this read shows. A read without web-area lines (a diff) keeps what the same window showed before.
+        const page = pageSite(text, window);
+        if (page) leaseWindow.page = page; else if (previous?.page && sameWindow(previous, window)) leaseWindow.page = previous.page;
+        const line = appLine(leaseWindow.appId, leaseWindow.app) ??
+          (leaseWindow.page && !leaseWindow.page.unproven ? pageLine(leaseWindow) : undefined);
         if (line) withheld.set(msg.id, line);
-        else permissions.noteApp?.({ bundleId: leaseWindow.appId, name: leaseWindow.app });
+        else if (leaseWindow.appId) permissions?.noteApp?.({ bundleId: leaseWindow.appId, name: leaseWindow.app });
       }
       if (leaseWindow?.appId) lastConfirmedWindow = leaseWindow;
       else if (!window && !msg.error && !msg.result?.isError && lastConfirmedWindow) {
@@ -4228,7 +4244,7 @@ export function createRelay({
     }
     if (isAppApproval(msg)) {
       // An app the user blocked is declined without asking them; the read or action then reaches Claude as the user's line.
-      const asked = msg.params?._meta?.tool_params?.app, refusal = permissions?.app({ bundleId: asked, name: asked });
+      const asked = msg.params?._meta?.tool_params?.app, refusal = appLine(asked, asked);
       if (refusal) {
         trace('blocked-app-approval', { id: msg.id });
         for (const id of running) if (!localRunning.has(id)) withheld.set(id, refusal);
@@ -4392,9 +4408,9 @@ export function createRelay({
     }
     if (msg.method === undefined) filterMarks.delete(msg.id);
     // A read of an app the user blocked, reached by a name the call's strings didn't show, gives Claude only the user's line.
-    if (permissions && msg.method === undefined && (msg.result || msg.error)) {
+    if (msg.method === undefined && (msg.result || msg.error)) {
       const appId = msg.result?._meta?.['codex/toolSurface']?.app?.appId;
-      const line = withheld.get(msg.id) ?? (typeof appId === 'string' ? permissions.app({ bundleId: appId }) : undefined);
+      const line = withheld.get(msg.id) ?? (typeof appId === 'string' ? appLine(appId) : undefined);
       withheld.delete(msg.id);
       if (line) { delete msg.error; msg.result = { isError: true, content: [{ type: 'text', text: line }] }; }
     }

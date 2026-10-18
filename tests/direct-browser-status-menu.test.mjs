@@ -124,10 +124,14 @@ let payload: [String: Any] = ["grants": [["title": "Fixture", "detail": "always"
   ["title": "Google Chrome", "detail": "turbo", "used": 4000.0, "target": "turbo"]],
   "blocked": ["Blocked App", "https://blocked.example"], "current": ["title": "Editor", "target": "com.example.editor"], "only": ["https://a.example"]]
 check(permissionRows(permissionsData(payload)!, now: 8200) == [.grant("Fixture · always · used 2h ago", target: "app:Fixture"),
-  .grant("Chat App · debugger, always · not used yet", target: "electron:com.example.chat"), .grant("Google Chrome · turbo · used 1h ago", target: "turbo"),
-  .revokeAll, .separator, .block("Never Act in Editor", target: "com.example.editor"), .separator, .info("Blocked: Blocked App"),
+  .grant("Chat App · debugger, always · not used yet", target: "electron:com.example.chat"), .info("Google Chrome · turbo · used 1h ago"),
+  .info("Turn Turbo Off… or sleight-mcp turbo off stops turbo"), .revokeAll, .separator, .block("Never Act in Editor", target: "com.example.editor"), .separator, .info("Blocked: Blocked App"),
   .info("Blocked: https://blocked.example"), .info("Turbo only on: https://a.example"), .info("sleight-mcp permissions changes these"),
   .separator, .info("ChatGPT's own Always allow list: in ChatGPT's settings")], "permission rows")
+// Turbo's row only points to Turn Turbo Off…: no Revoke, and no Revoke All when it is the only row.
+check(permissionRows(permissionsData(["grants": [["title": "Helium", "detail": "turbo", "used": NSNull(), "target": "turbo"]], "blocked": [Any]()])!, now: 0) ==
+  [.info("Helium · turbo · not used yet"), .info("Turn Turbo Off… or sleight-mcp turbo off stops turbo"),
+  .separator, .info("ChatGPT's own Always allow list: in ChatGPT's settings")], "turbo row points to Turn Turbo Off")
 check(permissionRows(permissionsData(["grants": [Any](), "blocked": [Any]()])!, now: 0) == [.info("Nothing beyond this session's approvals"),
   .separator, .info("ChatGPT's own Always allow list: in ChatGPT's settings")], "nothing standing")
 let grant: [String: Any] = ["title": "Fixture", "detail": "always", "used": NSNull(), "target": "app:Fixture"]

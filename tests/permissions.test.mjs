@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
-import { appRefusal, createPermissionCheck, lastUse, noteCurrentApp, permissionsPath, readPermissions, siteRefusal, stampUse, usedWords }
+import { appRefusal, createPermissionCheck, isOwnHost, lastUse, noteCurrentApp, pageRefusal, pageSite, permissionsPath, readPermissions, siteRefusal, stampUse, usedWords }
   from '../plugins/sleight/lib/permissions.mjs';
 import { applyMenuEvent, grantUses, permissionsCommand, permissionsDoctorLines, permissionsMenu } from '../plugins/sleight/lib/permissions-command.mjs';
 import { livePreapproved, PreapprovedApps } from '../plugins/sleight/lib/preapproved.mjs';
@@ -59,7 +59,7 @@ test('refusal lines: a blocked app by bundle id or name, a blocked site, allow-o
   assert.match(siteRefusal(only, 'https://blocked.example/'), /^You blocked sleight on/);
   const unsafe = { state: 'unsafe', apps: [], sites: [] };
   for (const line of [appRefusal(unsafe, { bundleId: 'com.any.app' }), siteRefusal(unsafe, 'https://any.example/')]) {
-    assert.equal(line, "sleight's permissions file is a link or has another owner, mode or format, so sleight acts nowhere until you fix it (sleight-mcp --doctor says how).");
+    assert.equal(line, "sleight's permissions file is a link or has another owner, mode or format, so sleight acts nowhere until you run sleight-mcp permissions repair.");
   }
 });
 
@@ -232,7 +232,7 @@ test('the doctor: an unsafe file is the one problem, with its fix; otherwise cou
   w.write('permissions.json', { version: 1, apps: [], sites: [] }, 0o666);
   assert.deepEqual(permissionsDoctorLines({ home: w.home }), ['permissions',
     'PROBLEM   permissions.json is a link or has another owner, mode or format, so sleight acts nowhere',
-    '          fix: delete ~/Library/Application Support/sleight/permissions.json, then block again with sleight-mcp permissions block']);
+    '          fix: sleight-mcp permissions repair (it keeps the valid blocks)']);
 });
 
 test('the doctor prints the permissions section after the ghost hand\'s, read-only', async t => {
@@ -266,4 +266,99 @@ test('the launcher runs the permissions command: an unknown op prints the usage,
   assert.equal(run.status, 2, run.stderr);
   assert.match(run.stdout, /^usage: sleight-mcp permissions \[list\]\n/);
   assert.match(run.stdout, /permissions block\|unblock <app bundle id\|origin>/);
+});
+
+test('repair replaces an unsafe file with a private one that keeps every valid block, and leaves a safe file alone', t => {
+  const w = world(t);
+  assert.equal(w.command(['repair']), 0); assert.match(w.output(), /no permissions\.json to repair/);
+  w.write('permissions.json', { version: 1, apps: [{ id: 'com.example.app', name: 'Example' }, { id: 'not a bundle' }, { id: 'com.example.app' }],
+    sites: ['https://blocked.example', 'nope'], only: ['https://a.example'], extra: true }, 0o644);
+  assert.equal(readPermissions(w.path).state, 'unsafe');
+  assert.match(createPermissionCheck({ path: w.path }).app({ bundleId: 'com.any.app' }), /until you run sleight-mcp permissions repair/);
+  assert.equal(w.command(['repair']), 0);
+  assert.match(w.output(), /^Repaired permissions\.json: kept 1 blocked app, 1 blocked site and 1 allowed site, dropped 3 unreadable entries\./);
+  assert.deepEqual(readPermissions(w.path), { state: 'ok', apps: [{ id: 'com.example.app', name: 'Example' }], sites: ['https://blocked.example'], only: ['https://a.example'] });
+  assert.equal(lstatSync(w.path).mode & 0o777, 0o600);
+  assert.equal(w.command(['repair']), 0); assert.match(w.output(), /permissions\.json is fine/);
+  // A link is removed, never written through; its target is read only for blocks to keep.
+  const target = join(w.home, 'elsewhere.json');
+  writeFileSync(target, JSON.stringify({ version: 1, apps: [{ id: 'com.example.kept' }], sites: [] }), { mode: 0o600 });
+  rmSync(w.path); symlinkSync(target, w.path);
+  assert.equal(w.command(['repair']), 0); w.output();
+  assert.equal(lstatSync(w.path).isSymbolicLink(), false);
+  assert.deepEqual(readPermissions(w.path).apps, [{ id: 'com.example.kept' }]);
+  assert.equal(readFileSync(target, 'utf8'), JSON.stringify({ version: 1, apps: [{ id: 'com.example.kept' }], sites: [] }), 'the link target is untouched');
+  w.write('permissions.json', 'not json', 0o600);
+  assert.equal(w.command(['repair']), 0);
+  assert.match(w.output(), /kept 0 blocked apps, 0 blocked sites\./);
+  assert.equal(readPermissions(w.path).state, 'ok');
+});
+
+test('the menu shows turbo\'s row without offering it, and its Revoke All leaves turbo on', t => {
+  const w = world(t);
+  w.write('preapproved.json', { version: 1, apps: [{ app: 'Calculator', riskLevel: 'low' }] });
+  w.write('turbo.json', { version: 1, enabled: true, executable: '/Applications/Helium.app/Contents/MacOS/Helium', profileRoot: '/x' });
+  const menu = permissionsMenu(w.options);
+  assert.deepEqual(menu.payload.grants.map(g => g.target), ['app:Calculator', 'turbo']);
+  assert.deepEqual([...menu.offered], ['app:Calculator']);
+  assert.equal(applyMenuEvent({ permissions: 'revoke', target: 'turbo' }, new Set(['turbo']), w.options), false, 'turbo is never revoked from this menu');
+  assert.equal(applyMenuEvent({ permissions: 'revoke-all' }, menu.offered, w.options), true);
+  assert.deepEqual(JSON.parse(readFileSync(join(w.support, 'preapproved.json'), 'utf8')).apps, []);
+  assert.equal(JSON.parse(readFileSync(join(w.support, 'turbo.json'), 'utf8')).enabled, true);
+});
+
+// Engine tree shapes recorded from real reads: Safari's web area names its page without a scheme (bestbuy.com, 2026-10-11),
+// Firefox's address bar shows a URL the user may have typed and not loaded.
+const safari = url => 'Window: "Personal — HP 24yh 23.8" IPS LED Full HD Monitor (VGA, DVI D, HDMI) Black - Best Buy", App: Safari.\n' +
+  '0 standard window Personal — HP 24yh 23.8" IPS LED Full HD Monitor (VGA, DVI D, HDMI) Black - Best Buy, ID: SafariWindow, Secondary Actions: Raise\n' +
+  `\t5 HTML content Description: HP monitor, URL: ${url}\n\t\t13 link Shop now, Value: bestbuy.com/top-deals`;
+const firefox = 'Window: "Mozilla Firefox", App: Firefox.\n0 standard window Mozilla Firefox\n\t14 container\n' +
+  '\t\t17 combo box (settable) Description: Search with Google or enter address, Value: https://example.test/\n\t\t\t18 text https://example.test/';
+test('the site an engine read shows: a web area\'s URL with or without scheme, nothing from an address bar, and no guess between two', () => {
+  assert.deepEqual(pageSite(safari('bestbuy.com/product/hp-24yh/JJ86HQ9R94')), { host: 'bestbuy.com' });
+  assert.deepEqual(pageSite(safari('https://www.bestbuy.com/x')), { host: 'www.bestbuy.com', scheme: 'https' });
+  assert.deepEqual(pageSite(firefox), undefined, 'no web area: the tree shows no page');
+  assert.deepEqual(pageSite('Window: "x", App: Some App.\n0 standard window x\n\t1 button Save'), undefined);
+  assert.deepEqual(pageSite('Window: "x", App: B.\n0 standard window x\n\t2 HTML content URL: a.example/x\n\t3 HTML content URL: b.example/y'), { unproven: true });
+  assert.deepEqual(pageSite('Window: "x", App: B.\n0 standard window x\n\t2 HTML content URL: a.example/x\n\t\t3 HTML content URL: ads.example/f'), { host: 'a.example' }, 'only the outermost web areas count');
+  for (const bad of ['about:blank', 'file:///Users/x/page.html', 'user@evil.example/x', '']) {
+    assert.deepEqual(pageSite(`Window: "x", App: B.\n0 standard window x\n\t2 HTML content URL: ${bad}`), { unproven: true }, bad);
+  }
+  assert.deepEqual(pageSite('', { url: 'https://header.example/a' }), { host: 'header.example', scheme: 'https' }, 'the window\'s own web URL decides');
+});
+
+test('engine-path site lines: a blocked host whatever its scheme, an unlisted host in allow-only mode, and an unprovable page', () => {
+  const blocks = { state: 'ok', apps: [], sites: ['https://bestbuy.com'] };
+  assert.equal(pageRefusal(blocks, { host: 'bestbuy.com' }), 'You blocked sleight on https://bestbuy.com (sleight-mcp permissions unblock https://bestbuy.com lifts it).');
+  assert.equal(pageRefusal(blocks, { host: 'bestbuy.com', scheme: 'http' }), pageRefusal(blocks, { host: 'bestbuy.com' }));
+  assert.equal(pageRefusal(blocks, { host: 'fine.example' }), undefined);
+  assert.match(pageRefusal(blocks, { unproven: true }), /^You limited the sites sleight acts on, and it can't tell which site this window shows/);
+  assert.match(pageRefusal(blocks, undefined), /can't tell which site/);
+  const only = { state: 'ok', apps: [], sites: [], only: ['https://a.example'] };
+  assert.equal(pageRefusal(only, { host: 'a.example' }), undefined);
+  assert.equal(pageRefusal(only, { host: 'a.example', scheme: 'http' }), 'You allow sleight only on https://a.example, not http://a.example (sleight-mcp permissions lists them).');
+  assert.match(pageRefusal(only, { host: 'b.example' }), /not b\.example/);
+  assert.equal(pageRefusal({ state: 'ok', apps: [], sites: [] }, { unproven: true }), undefined, 'without site limits nothing is checked');
+});
+
+test('sleight\'s own consent host is recognized by its process name or its place in sleight\'s helper cache, and nothing else is', () => {
+  for (const value of ['consent-host', 'Consent-Host', '/Users/x/Library/Caches/sleight/turbo-host/abc/consent-host', '/Users/x/Library/Caches/sleight/turbo-host/k/peer-host']) {
+    assert.equal(isOwnHost(value), true, value);
+  }
+  for (const value of ['com.example.consent', 'Consent Host Pro', 'consent-hosting', undefined, '/Applications/Example.app']) assert.equal(isOwnHost(value), false, String(value));
+});
+
+test('which apps are web browsers is asked of LaunchServices once, in the background, and unknown until it answers', async () => {
+  const { webBrowserCheck } = await import('../plugins/sleight/lib/launch.mjs');
+  const asked = [];
+  const check = webBrowserCheck(async (script, request) => { asked.push([script, request]); return { ok: true, ids: ['com.example.Browser'] }; });
+  assert.equal(check('com.example.browser'), undefined, 'unknown until the answer arrives');
+  await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(check('com.example.browser'), true);
+  assert.equal(check('com.example.editor'), false);
+  assert.equal(check(undefined), undefined);
+  assert.deepEqual(asked, [['web-browsers.js', {}]]);
+  const failed = webBrowserCheck(async () => ({ ok: false, error: 'no' }));
+  failed('com.example.browser'); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(failed('com.example.browser'), undefined, 'a failed ask leaves the web-content rule in place');
 });

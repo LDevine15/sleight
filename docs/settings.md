@@ -145,21 +145,32 @@ nothing, since it only removes access, and running sessions see it at their next
 `sleight-mcp permissions block <bundle id>` or `block <origin>` (such as `https://example.com`) stops sleight in that
 app or on that site, in every session, from its next action. Claude gets one line it can pass on, such as "You blocked
 sleight in Example (sleight-mcp permissions unblock com.example.app lifts it)". An engine approval for a blocked app is
-declined without asking you, and blocking the browser turbo drives stops turbo too. `unblock` lifts a block. Site blocks
-apply to turbo. The engine's browser path doesn't check them.
+declined without asking you, and blocking the browser turbo drives stops turbo too. `unblock` lifts a block.
 
-`sleight-mcp permissions sites only <origin...>` limits turbo to those sites. It is off by default. `sites all` lifts
+`sleight-mcp permissions sites only <origin...>` limits sleight to those sites. It is off by default. `sites all` lifts
 the limit, and `revoke <origin>` takes one site off.
 
-The glove's menu has a Permissions submenu with the same list. Each row has Revoke, and below them are Revoke All, Never
-Act in the app sleight last acted in, your blocks, and a line for ChatGPT's own list. Turbo's menu has Never Act on the
-site turbo last worked on. The menu never grants or lifts a block: granting stays on each app's
+Turbo checks the site of every page before it reads or acts. On the engine path (Safari, Firefox, or Chrome without
+turbo) the relay takes the site from the window's read, from its web address or from the web area's URL. A blocked host
+is refused whatever its scheme. While you have a site block or an allow-only list, sleight doesn't act in a browser
+window whose read doesn't prove one site. It also refuses calls through the engine's browser surface, because those
+don't say which page they act on. An app is a browser when macOS lists it as a handler for https.
+
+The glove's menu has a Permissions submenu with the same list. Each app row has Revoke, and below them are Revoke All,
+Never Act in the app sleight last acted in, your blocks, and a line pointing to ChatGPT's settings for its own list.
+Turbo's row has no Revoke. It points to Turn Turbo Off…, which asks first. Revoke All leaves turbo on. Turbo's menu
+has Never Act on the site turbo last worked on. The menu never grants or lifts a block: granting stays on each app's
 approval card, and only `unblock` lifts a block.
 
 The blocks live in `~/Library/Application Support/sleight/permissions.json`, written only by your clicks in that menu
 and by the command. Claude's own file edits and shell commands can't write it or run `block`, `unblock`, `revoke` or
 `sites`. Plain `sleight-mcp permissions`, which only lists, stays allowed. A `permissions.json` that is a link or has
-another owner, mode or format stops every action until you delete it, and `sleight-mcp --doctor` says so.
+another owner, mode or format stops every action. `sleight-mcp permissions repair` replaces it with a private file that
+keeps every valid block, and `sleight-mcp --doctor` names that fix.
+
+No tool acts on sleight's own glove or its approval and payment cards, which belong to its consent host. The `menu_bar`
+tool refuses that status item and leaves it out of `apps`, and `js`, `drag`, `hover`, `open_file`, `select_window` and
+the engine's approval prompt refuse its process and its windows. Only your click answers them.
 
 ## Turns without a hook
 

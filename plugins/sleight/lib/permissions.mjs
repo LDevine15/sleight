@@ -45,7 +45,7 @@ export function readPermissions(path = permissionsPath(), uid = process.getuid()
   } catch { return empty('unsafe'); }
 }
 
-const UNSAFE = "sleight's permissions file is a link or has another owner, mode or format, so sleight acts nowhere until you fix it (sleight-mcp --doctor says how).";
+const UNSAFE = "sleight's permissions file is a link or has another owner, mode or format, so sleight acts nowhere until you run sleight-mcp permissions repair.";
 const words = list => list.length <= 4 ? list.slice(0, -1).join(', ') + (list.length > 1 ? ' and ' : '') + list.at(-1)
   : `${list.slice(0, 3).join(', ')} and ${list.length - 3} more`;
 
@@ -68,6 +68,49 @@ export function siteRefusal(perms, url) {
   return undefined;
 }
 
+// One site from an engine tree's URL text: `https://host/…` or Safari's scheme-less `host/…`. Anything else proves nothing.
+function webSite(value) {
+  const match = /^(?:(https?):\/\/)?([^/\s?#]+)/i.exec(String(value ?? ''));
+  if (!match || /[:@]/.test(match[2].replace(/:\d{1,5}$/, ''))) return undefined;
+  try { const url = new URL(`${match[1] ?? 'https'}://${match[2]}`); return { host: url.host, ...match[1] ? { scheme: match[1].toLowerCase() } : {} }; }
+  catch { return undefined; }
+}
+
+/** The site a browser window shows, from an engine read: { host, scheme? } when the read proves one site, { unproven: true }
+ *  when it shows web content without one provable site, and undefined when it shows no web content. The window's own URL
+ *  decides when it is a web address. Otherwise the outermost web areas ("HTML content") must all name one site; Safari writes
+ *  theirs without a scheme (bestbuy.com/product/…). An address bar's text proves nothing: it may be typed and not loaded. */
+export function pageSite(text, window) {
+  if (/^https?:\/\//i.test(window?.url ?? '')) return webSite(window.url) ?? { unproven: true };
+  const areas = [...String(text ?? '').matchAll(/^(\t*)\d+ HTML content\b(.*)$/gm)];
+  if (!areas.length) return undefined;
+  const depth = Math.min(...areas.map(area => area[1].length));
+  const sites = areas.filter(area => area[1].length === depth).map(area => webSite(/\bURL: ([^\s,]+)/.exec(area[2])?.[1]));
+  if (sites.some(site => !site) || new Set(sites.map(site => `${site.scheme ?? ''}//${site.host}`)).size !== 1) return { unproven: true };
+  return sites[0];
+}
+
+/** The line for acting in a browser window on the engine path, or undefined. With no site blocks and no allow-only list,
+ *  nothing to check. Otherwise a site the read can't prove refuses, a blocked host refuses whatever its scheme, and in
+ *  allow-only mode the host (and the scheme, when the read shows one) must be listed. */
+export function pageRefusal(perms, page) {
+  if (perms?.state === 'unsafe') return UNSAFE;
+  if (!perms?.sites?.length && !perms?.only) return undefined;
+  if (!page || page.unproven) return "You limited the sites sleight acts on, and it can't tell which site this window shows, so it doesn't act here (sleight-mcp permissions lists your limits).";
+  const blocked = perms.sites.find(origin => new URL(origin).host === page.host);
+  if (blocked) return `You blocked sleight on ${blocked} (sleight-mcp permissions unblock ${blocked} lifts it).`;
+  const listed = origin => { const url = new URL(origin); return url.host === page.host && (!page.scheme || url.protocol === page.scheme + ':'); };
+  if (perms.only && !perms.only.some(listed)) return `You allow sleight only on ${words(perms.only)}, not ${page.scheme ? page.scheme + '://' : ''}${page.host} (sleight-mcp permissions lists them).`;
+  return undefined;
+}
+export const sitesLimited = perms => perms?.state === 'unsafe' || !!perms?.sites?.length || !!perms?.only;
+
+// sleight's own menu bar glove, approval cards and payment cards belong to its consent host: a bare `consent-host` binary in
+// sleight's helper cache. Only the person's click may answer them, so no tool acts on that process.
+export const OWN_HOST_LINE = "That is sleight's own menu or card, which only the user's click answers. Tell the user what it asks; don't act on it.";
+export const isOwnHost = (...values) => values.some(value => typeof value === 'string' &&
+  (/^(?:.*\/)?consent-host$/i.test(value.trim()) || /\/Library\/Caches\/sleight\/turbo-host\//i.test(value)));
+
 /** The checks the relay and turbo run before acting. The file is read again only when its inode, size or time changes. */
 export function createPermissionCheck({ path = permissionsPath(), uid = process.getuid(), read = readPermissions } = {}) {
   let seen, cached;
@@ -77,7 +120,8 @@ export function createPermissionCheck({ path = permissionsPath(), uid = process.
     if (key !== seen || !cached) { seen = key; cached = read(path, uid); }
     return cached;
   };
-  return Object.freeze({ state, app: query => appRefusal(state(), query), site: url => siteRefusal(state(), url) });
+  return Object.freeze({ state, app: query => appRefusal(state(), query), site: url => siteRefusal(state(), url),
+    page: page => pageRefusal(state(), page), sitesLimited: () => sitesLimited(state()) });
 }
 
 // The app sleight last acted in, for the menu's Never Act in row. The relay notes it; the hand client reads it.

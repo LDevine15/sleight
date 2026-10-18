@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
-import { appRefusal } from '../plugins/sleight/lib/permissions.mjs';
+import { appRefusal, pageRefusal, sitesLimited } from '../plugins/sleight/lib/permissions.mjs';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); };
@@ -138,4 +138,93 @@ test('without the launcher\'s permissions nothing is blocked', async t => {
   h.js(1, 'let app = await cua.getApp("com.example.blocked")');
   await settle();
   assert.equal(h.sent(1), true);
+});
+
+// Site limits on the engine path, with tree shapes recorded from real reads (see permissions.test.mjs).
+function siteLimits(perms) {
+  return { app: query => appRefusal(perms, query), page: page => pageRefusal(perms, page), sitesLimited: () => sitesLimited(perms), noteApp() {} };
+}
+const safariTree = url => 'Window: "Best Buy", App: Safari.\n0 standard window Best Buy, ID: SafariWindow, Secondary Actions: Raise\n' +
+  `\t5 HTML content Description: HP monitor, URL: ${url}\n\t\t13 link Shop now, Value: bestbuy.com/top-deals`;
+const firefoxTree = 'Window: "Mozilla Firefox", App: Firefox.\n0 standard window Mozilla Firefox\n\t14 container\n' +
+  '\t\t17 combo box (settable) Description: Search with Google or enter address, Value: https://example.test/';
+const treeReply = (id, text, appId) => ({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], _meta: { 'codex/toolSurface': { app: { appId } } } } });
+const BLOCKED_SITE = 'You blocked sleight on https://bestbuy.com (sleight-mcp permissions unblock https://bestbuy.com lifts it).';
+
+test('engine path: a browser window showing a blocked site gives Claude only the line, and its actions stop before the engine', async t => {
+  const h = harness(t, { permissions: siteLimits({ state: 'ok', apps: [], sites: ['https://bestbuy.com'] }) });
+  h.js(1, 'let app = await cua.getApp("com.apple.Safari")'); await settle();
+  h.fromServer(treeReply(1, safariTree('bestbuy.com/product/hp-24yh'), 'com.apple.Safari')); await settle();
+  assert.deepEqual(h.reply(1).result, { isError: true, content: [{ type: 'text', text: BLOCKED_SITE }] });
+  h.js(2, 'await app.click(13)'); await settle();
+  assert.equal(h.sent(2), false);
+  assert.equal(h.reply(2).result.content[0].text, BLOCKED_SITE);
+});
+
+test('engine path: allow-only refuses an unlisted site and passes a listed one', async t => {
+  const h = harness(t, { permissions: siteLimits({ state: 'ok', apps: [], sites: [], only: ['https://www.bestbuy.com'] }) });
+  h.js(1, 'let app = await cua.getApp("com.apple.Safari")'); await settle();
+  h.fromServer(treeReply(1, safariTree('https://www.bestbuy.com/x'), 'com.apple.Safari')); await settle();
+  assert.equal(h.reply(1).result.isError, undefined);
+  h.js(2, 'await app.click(13)'); await settle();
+  assert.equal(h.sent(2), true, 'a listed site acts');
+  h.fromServer(treeReply(2, safariTree('https://other.example/y'), 'com.apple.Safari')); await settle();
+  assert.match(h.reply(2).result.content[0].text, /^You allow sleight only on https:\/\/www\.bestbuy\.com, not https:\/\/other\.example/);
+  h.js(3, 'await app.click(13)'); await settle();
+  assert.equal(h.sent(3), false);
+});
+
+test('engine path: a browser window whose site no read proves is refused while site limits exist, and acts without them', async t => {
+  for (const [sites, sent] of [[['https://bestbuy.com'], false], [[], true]]) {
+    const h = harness(t, { permissions: siteLimits({ state: 'ok', apps: [], sites }), webBrowser: id => id === 'org.mozilla.firefox' });
+    h.js(1, 'let app = await cua.getApp("org.mozilla.firefox")'); await settle();
+    h.fromServer(treeReply(1, firefoxTree, 'org.mozilla.firefox')); await settle();
+    assert.equal(h.reply(1).result.isError, undefined, 'the read itself still reaches Claude');
+    h.js(2, 'await app.click(17)'); await settle();
+    assert.equal(h.sent(2), sent, JSON.stringify(sites));
+    if (!sent) assert.match(h.reply(2).result.content[0].text, /^You limited the sites sleight acts on, and it can't tell which site this window shows/);
+  }
+});
+
+test('engine path: an app that is no web browser acts with site limits, web content or not', async t => {
+  const h = harness(t, { permissions: siteLimits({ state: 'ok', apps: [], sites: ['https://bestbuy.com'] }), webBrowser: () => false });
+  h.js(1, 'let app = await cua.getApp("com.example.webview")'); await settle();
+  h.fromServer(treeReply(1, safariTree('bestbuy.com/embedded').replace('App: Safari', 'App: Webview App'), 'com.example.webview')); await settle();
+  assert.equal(h.reply(1).result.isError, undefined);
+  h.js(2, 'await app.click(13)'); await settle();
+  assert.equal(h.sent(2), true);
+});
+
+test('engine path: a browser-surface call is refused while site limits exist, since it names no page sleight can check', async t => {
+  const h = harness(t, { permissions: siteLimits({ state: 'ok', apps: [], sites: ['https://bestbuy.com'] }) });
+  h.js(1, 'let tab = await cua.createBrowserTab("abc", "https://example.com")'); await settle();
+  assert.equal(h.sent(1), false);
+  assert.match(h.reply(1).result.content[0].text, /can't check the site of an engine browser call/);
+});
+
+// Security: sleight's own consent host (the glove, approval and payment cards) answers only the person's click.
+const OWN = "That is sleight's own menu or card, which only the user's click answers. Tell the user what it asks; don't act on it.";
+test('no tool reaches sleight\'s own consent host: getApp, a read that turns out to be it, an approval, menu_bar and a resolved target', async t => {
+  const ran = [];
+  const h = harness(t, { permissions: null, ask: async () => 'accept', localTools: {
+    tools: [{ name: 'menu_bar', description: 'x', inputSchema: { type: 'object' } }, { name: 'hover', description: 'x', inputSchema: { type: 'object' } }],
+    target: async () => ({ appId: '/Users/x/Library/Caches/sleight/turbo-host/k1/consent-host', app: 'consent-host', title: 'sleight', url: null }),
+    call: async name => { ran.push(name); return { content: [{ type: 'text', text: 'ok' }] }; } } });
+  h.js(1, 'let card = await cua.getApp("consent-host")'); await settle();
+  assert.equal(h.sent(1), false); assert.equal(h.reply(1).result.content[0].text, OWN);
+  h.js(2, 'let card = await cua.getApp("Some Alias")'); await settle();
+  h.fromServer(treeReply(2, 'Window: "Turn turbo off?", App: consent-host.\n0 dialog Turn turbo off?\n\t1 button Turn Off', undefined)); await settle();
+  assert.equal(h.reply(2).result.content[0].text, OWN);
+  assert.doesNotMatch(JSON.stringify(h.reply(2)), /Turn Off/);
+  h.js(3, 'await card.click(1)'); await settle();
+  assert.equal(h.sent(3), false); assert.equal(h.reply(3).result.content[0].text, OWN);
+  h.fromServer({ jsonrpc: '2.0', id: 'e1', method: 'elicitation/create', params: { message: 'Allow Computer Use to use "consent-host"?',
+    _meta: { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: { app: 'consent-host' } } } });
+  await settle();
+  assert.deepEqual(h.toServer.find(m => m.id === 'e1').result, { action: 'decline' });
+  h.call(4, 'menu_bar', { op: 'choose', app: 'consent-host', path: ['Turn Turbo Off…'] }); await settle();
+  assert.equal(h.reply(4).result.content[0].text, OWN);
+  h.call(5, 'hover', { app: 'sleight', at: [1, 1] }); await settle();
+  assert.equal(h.reply(5).result.content[0].text, OWN, 'a name that resolves to the host is refused too');
+  assert.deepEqual(ran, []);
 });

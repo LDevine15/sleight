@@ -222,8 +222,12 @@ func usedWords(_ used: Double?, now: Double) -> String {
     return "used \(Int(seconds / 86400))d ago"
 }
 func permissionRows(_ data: PermissionsData, now: Double) -> [PermissionRow] {
-    var rows: [PermissionRow] = data.grants.isEmpty ? [.info("Nothing beyond this session's approvals")]
-        : data.grants.map { .grant($0.title + " · " + $0.detail + " · " + usedWords($0.used, now: now), target: $0.target) } + [.revokeAll]
+    // Turbo's row has no Revoke: Turn Turbo Off… is turbo's one path, with its one confirmation. Revoke All leaves turbo too.
+    var rows: [PermissionRow] = data.grants.isEmpty ? [.info("Nothing beyond this session's approvals")] : data.grants.flatMap { grant -> [PermissionRow] in
+        let words = grant.title + " · " + grant.detail + " · " + usedWords(grant.used, now: now)
+        return grant.target == "turbo" ? [.info(words), .info("Turn Turbo Off… or sleight-mcp turbo off stops turbo")] : [.grant(words, target: grant.target)]
+    }
+    if data.grants.contains(where: { $0.target != "turbo" }) { rows.append(.revokeAll) }
     if let current = data.current { rows += [.separator, .block("Never Act in " + current.title, target: current.target)] }
     if !data.blocked.isEmpty || data.only != nil {
         rows.append(.separator)

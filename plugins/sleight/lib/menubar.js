@@ -24,9 +24,17 @@ function attempt(fn, fallback) {
   try { return fn(); } catch (e) { return fallback; }
 }
 
+// sleight's own glove and cards belong to its consent host, a bare binary in sleight's helper cache. Only the person's click
+// answers them, so no op opens, chooses, presses or closes them, and "apps" leaves them out.
+const OWN_HOST = /\/Library\/Caches\/sleight\/turbo-host\//;
+function ownHost(proc, name) {
+  return /^consent-host$/i.test(String(name ?? '')) || OWN_HOST.test(attempt(() => proc.applicationFile().posixPath(), '') ?? '');
+}
+
 function statusItems(app) {
   const proc = se.processes.byName(app);
   if (!attempt(() => proc.exists(), false)) throw new Error(`${app} isn't running`);
+  if (ownHost(proc, attempt(() => proc.name(), app))) throw new Error("That status item is sleight's own, which only the user's click answers. Tell the user what it asks.");
   const bars = proc.menuBars();
   if (bars.length < 2) throw new Error(`${app} has no status item in the menu bar. Its own menus (File, Edit, Format…) are in its tree: use js.`);
   return { proc, items: bars[1].menuBarItems() };
@@ -243,7 +251,7 @@ function run(argv) {
         // find them; accessibility is the only source, and it takes seconds.
         const names = se.processes.name();
         const bars = se.processes.menuBars();
-        result = { apps: names.filter((n, i) => bars[i] && bars[i].length > 1) };
+        result = { apps: names.filter((n, i) => bars[i] && bars[i].length > 1 && !/^consent-host$/i.test(String(n))) };
         break;
       }
       case 'open': result = open(request.app, request.item ?? 0); break;
