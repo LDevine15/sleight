@@ -39,6 +39,26 @@ const begin = async (f, use = true) => {
   await settle(); assert.equal(f.frames.find(x=>x.id==='begin').result.available,true);
   if(use){f.channel.emit('message',{version:3,id:'first-call',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();}
 };
+test('installed phases separate the helper check, selection and lazy connection before the first result', async () => {
+  const f = fixture(), phases = [];
+  f.dependencies.tracePhase = phase => phases.push(phase);
+  const host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  try {
+    assert.deepEqual(phases, ['worker-entry', 'helpers-check-start', 'helpers-check-end', 'connection-select-start', 'connection-select-end', 'worker-ready']);
+    await begin(f);
+    assert.deepEqual(phases.slice(6), ['connection-start', 'connection-end', 'runtime-ready']);
+    assert.equal(f.frames.find(row => row.id === 'first-call').result.result.text, 'No owned tabs.');
+  } finally { await host.close(); }
+});
+
+test('a failed phase sink cannot change startup or a tool result', async () => {
+  const f = fixture(); f.dependencies.tracePhase = () => { throw Error('trace unavailable'); };
+  const host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  try {
+    await begin(f);
+    assert.equal(f.frames.find(row => row.id === 'first-call').result.result.text, 'No owned tabs.');
+  } finally { await host.close(); }
+});
 test('installed open refuses the selected DevTools listener before any page creation', async () => {
   const f = fixture(); let opens = 0;
   f.dependencies.createPages = () => ({ endTurn:async()=>({cleanedUp:true}), openTab:async()=>{opens++;throw Error('unexpected open');} });

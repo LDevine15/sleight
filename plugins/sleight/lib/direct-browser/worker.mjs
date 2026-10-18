@@ -1,5 +1,5 @@
 import { fork } from 'node:child_process';
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
@@ -28,6 +28,34 @@ function traceLoss(reason) {
     const dir = setting === '1' ? join(homedir(), 'Library', 'Logs', 'sleight') : setting;
     appendFileSync(join(dir, `trace-${process.ppid}.jsonl`), JSON.stringify({ t: new Date().toISOString(), direction: 'turbo-connection-lost', msg: { code: lossCode(reason) } }) + '\n');
   } catch {}
+}
+const phases = new Set(('worker-spawn-start worker-spawned bridge-ready tools-registered turn-begin first-call-admitted call-start call-result '
+  + 'turn-end-requested turn-end worker-entry helpers-check-start helpers-check-end connection-select-start connection-select-end '
+  + 'worker-ready connection-start connection-end runtime-ready').split(' '));
+// Numeric ordinals correlate calls without recording user text, tool arguments or page results.
+// Both processes append to the relay's existing trace file. Disabled tracing reads no clock and does no I/O.
+export function createWorkerTrace({ setting = process.env.SLEIGHT_TRACE, relayPid = process.ppid, now = Date.now } = {}) {
+  if (!setting || !Number.isSafeInteger(relayPid) || relayPid < 1) return () => {};
+  const dir = setting === '1' ? join(homedir(), 'Library', 'Logs', 'sleight') : setting;
+  // The bridge starts before launch.mjs initializes relay tracing.
+  let fd;
+  try { mkdirSync(dir, { recursive: true }); fd = openSync(join(dir, `trace-${relayPid}.jsonl`), 'a', 0o600); } catch { return () => {}; }
+  const trace = (phase, turn, call) => {
+    if (fd === undefined) return;
+    if (!phases.has(phase) || [turn, call].some(n => n !== undefined && (!Number.isSafeInteger(n) || n < 0))) return;
+    try {
+      writeSync(fd, JSON.stringify({ t: new Date(now()).toISOString(), direction: 'turbo-phase',
+        msg: { phase, ...(turn !== undefined ? { turn } : {}), ...(call !== undefined ? { call } : {}) } }) + '\n');
+    } catch {}
+  };
+  trace.close = () => { const old = fd; fd = undefined; if (old !== undefined) try { closeSync(old); } catch {} };
+  return trace;
+}
+function phaseTrace(dependencies, relayPid) {
+  const trace = dependencies.tracePhase ?? createWorkerTrace({ relayPid });
+  const emit = (...args) => { try { trace(...args); } catch {} };
+  emit.close = () => { try { trace.close?.(); } catch {} };
+  return emit;
 }
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) &&
@@ -80,15 +108,20 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
   if (![startupTimeoutMs, timeoutMs].every(n => Number.isInteger(n) && n > 0 && n <= 300000)) throw Error('TRUSTED_ROUTE_REQUIRED');
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (/^(?:NODE_|DYLD_|LD_)/.test(key)) delete env[key];
+  const trace = phaseTrace(dependencies, process.pid);
+  trace('worker-spawn-start');
   // The session's shared host (the ghost hand's) serves turbo's consent channel too, so one glove serves both. The worker gets
   // the channel's ends as fds 4 and 5 and talks to the host directly; the relay closes its copies at once and never reads them.
   // Without a shared host the worker opens its own, as before.
-  let shared;
+  let shared, child;
   try { shared = await (dependencies.shareConsent ?? (await import('../hand/client.mjs')).shareConsent)(); } catch {}
-  const child = (dependencies.forkWorker ?? fork)(fileURLToPath(new URL('./worker.mjs', import.meta.url)), shared ? ['--shared-ui'] : [],
-    { env, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc', ...shared ? [shared.write, shared.read] : []], serialization: 'json' });
-  shared?.release();
+  try { child = (dependencies.forkWorker ?? fork)(fileURLToPath(new URL('./worker.mjs', import.meta.url)), shared ? ['--shared-ui'] : [],
+    { env, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc', ...shared ? [shared.write, shared.read] : []], serialization: 'json' }); }
+  catch (error) { trace.close(); throw error; }
+  finally { shared?.release(); }
+  trace('worker-spawned');
   let hello, active = false, lost = false, generation = 0, sequence = 0, ending, callTimeoutMs = timeoutMs;
+  let traceTurn = 0, traceCall = 0, toolsRegistered = false;
   const pending = new Map(), turns = new Set(); let deliveries = new WeakMap(), resolveReady, rejectReady;
   const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
   const timer = setTimeout(() => lose(), startupTimeoutMs);
@@ -100,6 +133,7 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
     for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(Error('V3_WORKER_UNAVAILABLE')); }
     pending.clear();
     try { if (child.connected) child.disconnect(); child.unref?.(); } catch {}
+    trace.close();
   }
   child.on('message', frame => {
     if (lost) return;
@@ -108,7 +142,7 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
     }
     if (!hello && exact(frame, ['version', 'session', 'nonce', 'browser']) && frame.version === 3 && id(frame.session) &&
         /^[a-f0-9]{64}$/.test(frame.nonce) && /^b[A-Za-z0-9_-]{1,63}$/.test(frame.browser)) {
-      hello = frame; clearTimeout(timer); resolveReady(); return;
+      hello = frame; clearTimeout(timer); trace('bridge-ready'); resolveReady(); return;
     }
     if (!hello || !exact(frame, ['version', 'id', 'result']) || frame.version !== 3 || !pending.has(frame.id)) { lose(); return; }
     const entry = pending.get(frame.id); pending.delete(frame.id); clearTimeout(entry.timer); entry.resolve(frame.result);
@@ -128,12 +162,19 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
   if (!current()) { lose(); throw Error('HOST_PACKAGE_MISMATCH'); }
   function endTurn() {
     fence();
-    if (!ending) ending = rpc('end', {}).catch(unproved).finally(() => { ending = undefined; });
+    if (!ending) {
+      const turn = traceTurn; trace('turn-end-requested', turn);
+      ending = rpc('end', {}).catch(unproved).finally(() => { trace('turn-end', turn); ending = undefined; });
+    }
     return ending;
   }
   const bridge = Object.freeze({ browser: hello.browser, application: applicationName(config.executable),
     bootstrapEnvelope: () => ({ version: 1, session: hello.session, nonce: hello.nonce }),
-    tools: () => browserTools(hello.browser),
+    tools: () => {
+      const tools = browserTools(hello.browser);
+      if (!toolsRegistered) { toolsRegistered = true; trace('tools-registered'); }
+      return tools;
+    },
     // apps: the relay's own list of engine-approved bundle ids, never a field of the hook's frame.
     async bind(frame, apps = []) {
       if (!exact(frame, ['version', 'session', 'nonce', 'event', 'turn', 'text']) || frame.version !== 1 ||
@@ -141,6 +182,7 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
           typeof frame.text !== 'string' || Buffer.byteLength(frame.text) > 65536 || !approvedApps(apps) || turns.has(frame.turn) || lost || !current()) throw Error('TRUSTED_TURN_REQUIRED');
       turns.add(frame.turn); fence(); const epoch = generation;
       callTimeoutMs = timeoutMs;
+      trace('turn-begin', ++traceTurn); traceCall = 0;
       const result = await rpc('begin', { turn: frame.turn, text: frame.text, apps: [...apps], appSecret: serverAppSecret() });
       if (epoch !== generation || lost || !current()) return false;
       active = result?.available === true;
@@ -154,6 +196,9 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
       try { request = validateToolCall(input, hello.browser); } catch { return { text: 'Invalid turbo arguments. Use the documented five tool schemas.', isError: true }; }
       if (!active || lost || !current()) return failure();
       const epoch = generation;
+      const turn = traceTurn, call = ++traceCall;
+      if (call === 1) trace('first-call-admitted', turn);
+      trace('call-start', turn, call);
       try {
         const reply = await rpc('call', request, callTimeoutMs);
         if (epoch === generation) callTimeoutMs = timeoutMs;
@@ -164,6 +209,7 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
         if (!result.isError) deliveries.set(result, { id: reply.resultId, hash: hash(result), epoch });
         return result;
       } catch { lose(); return failure(request.name !== 'browser_read'); }
+      finally { trace('call-result', turn, call); }
     },
     delivered(result) {
       const record = deliveries.get(result); deliveries.delete(result);
@@ -289,6 +335,8 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
 // Dependency injection is a module-only test seam; IPC cannot choose a provider,
 // endpoint, package, loader, authority or executable.
 export async function startInstalledV3Worker({ channel }, dependencies = {}) {
+  const trace = phaseTrace(dependencies, process.ppid);
+  trace('worker-entry');
   let parentLost = channel.connected === false, stopped = false, selected, ui, protocol, timer, unsubscribe;
   let accepted, connecting = false, retryConnection = false, connected = false, sequence = 0, closing, terminalLoss = false, resolveClosed, finalReceipt;
   const closed = new Promise(resolve => { resolveClosed = resolve; });
@@ -376,6 +424,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
         unsubscribe?.(); (dependencies.clearSchedule ?? clearInterval)(timer); ui?.close();
         channel.off('disconnect', loss);
         if (terminalLoss && channel.connected) channel.disconnect?.();
+        trace.close();
         resolveClosed(finalReceipt);
       }
       return { revoked: true, cleanup };
@@ -417,10 +466,14 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     accepted = (dependencies.acceptPackage ?? acceptedInstalledPackage)(config); startupCurrent();
     try { browserName = applicationName(config.executable); } catch {}
     const host = await import('./host.mjs'); startupCurrent();
+    trace('helpers-check-start');
     const built = await (dependencies.prepareHelpers ?? host.prepareNativeHelpers)({ inventory: config.receipt }); startupCurrent();
+    trace('helpers-check-end');
     if (built.status !== 'ready') throw Error(built.code);
     const { createSelectedConnection } = await import('./selected-connection.mjs'); startupCurrent();
+    trace('connection-select-start');
     selected = await (dependencies.selectConnection ?? createSelectedConnection)({ config, nativeReceipt: built.receipt }); startupCurrent();
+    trace('connection-select-end');
     ui = (dependencies.createUi ?? (sharedUi ? host.createSharedUi : host.createNativeUi))(built.receipt, () => { if (finalReceipt) return; terminalLoss = true; close().catch(() => {}); });
     startupCurrent();
     const browser = selected.selectedBrowser;
@@ -476,6 +529,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
           resource.pages = surface.pages; appConnected = true;
           const runtime = await createAppTurnRuntime({ surface, binding, browser: selected.selectedBrowser, ui, createRuntime: dependencies.createRuntime });
           resource.runtime = runtime;
+          trace('runtime-ready');
           return runtime;
         }
         async function prepare() {
@@ -491,8 +545,10 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
                   subscribe(); retryConnection = false;
                 }
                 if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
+                trace('connection-start');
                 if (await selected.connect() !== selected.session) throw Error('STALE_INSTANCE');
                 connected = true;
+                trace('connection-end');
               } catch (error) {
                 retryConnection = await selected.disconnect(selected.session).catch(() => false) === true;
                 if (!retryConnection) stopped = true;
@@ -519,6 +575,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
                 acknowledgeSnapshot: snapshots.acknowledgeSnapshot,
               } });
             resource.runtime = runtime;
+            trace('runtime-ready');
             return runtime;
           } catch (error) { dependencies.onError?.(error); await collect(resource); throw error; }
         }
@@ -551,7 +608,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
       if (optedOut()) { close().catch(() => {}); return; }
       try { status(); } catch { terminalLoss = true; close().catch(() => {}); }
     }, 60000);
-    status(); protocol.ready();
+    status(); trace('worker-ready'); protocol.ready();
     return Object.freeze({ close, closed });
   } catch (error) {
     await close(); channel.off('disconnect', loss); throw error;

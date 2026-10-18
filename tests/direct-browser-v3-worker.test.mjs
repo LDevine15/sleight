@@ -6,7 +6,7 @@ import { prepareInstalledStartup, directBrowserRules, skillRules } from '../plug
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { PassThrough } from 'node:stream';
 
-async function fixture(config = {}) {
+async function fixture(config = {}, tracePhase) {
   const child = new EventEmitter(), endpoint = new EventEmitter(), events = [];
   child.connected = endpoint.connected = true;
   child.send = value => { queueMicrotask(() => endpoint.emit('message', structuredClone(value))); };
@@ -20,10 +20,32 @@ async function fixture(config = {}) {
       async end() { events.push(['end']); return { revoked: true, cleanup: [] }; } };
   } });
   let forkOptions;
-  const bridge = await createV3Bridge({}, { readConfig: () => config, acceptPackage: () => ({ current: () => true }),
+  const bridge = await createV3Bridge({}, { readConfig: () => config, acceptPackage: () => ({ current: () => true }), tracePhase,
     forkWorker(path, args, options) { assert.match(path, /worker\.mjs$/); assert.deepEqual(args, []); forkOptions = options; queueMicrotask(() => session.ready()); return child; } });
   return { child, endpoint, events, bridge, forkOptions };
 }
+test('bridge phases bracket startup, first admission and the last result to turn end without tracing content', async () => {
+  const phases = [], f = await fixture({}, (...row) => phases.push(row));
+  try {
+    f.bridge.tools(); f.bridge.tools();
+    await f.bridge.bind({ ...f.bridge.bootstrapEnvelope(), event: 'begin', turn: 'private-turn', text: 'private user message' });
+    for (let i = 0; i < 2; i++) assert.equal((await f.bridge.call({ name: 'browser_read', arguments: { tab: 't1' } })).text, 'plain result');
+    assert.deepEqual(await f.bridge.end(), { revoked: true, cleanup: [] });
+    assert.deepEqual(phases, [
+      ['worker-spawn-start'], ['worker-spawned'], ['bridge-ready'], ['tools-registered'], ['turn-begin', 1],
+      ['first-call-admitted', 1], ['call-start', 1, 1], ['call-result', 1, 1],
+      ['call-start', 1, 2], ['call-result', 1, 2], ['turn-end-requested', 1], ['turn-end', 1],
+    ]);
+    assert.doesNotMatch(JSON.stringify(phases), /private|plain result|browser_read|t1/);
+  } finally { await f.bridge.detach(); }
+});
+test('the bridge releases its trace sink on owned disconnect', async () => {
+  let closed = 0;
+  const trace = () => {}; trace.close = () => { closed++; };
+  const f = await fixture({}, trace);
+  await f.bridge.detach(); await f.bridge.detach();
+  assert.equal(closed, 1);
+});
 test('installed off creates no child and a fork strips loader controls', async () => {
   let forks = 0;
   assert.equal(await createV3Bridge({}, { readConfig: () => null, forkWorker: () => forks++ }), null);
