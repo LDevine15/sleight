@@ -63,11 +63,15 @@ export function raceProblems({ task, site, answer }) {
 // One error class per failed run, for telling a broken round from a slow arm. Order matters: with no tools nothing else ran.
 const DAEMON = /daemon (?:is )?not running|no daemon|daemon[^.]{0,40}(?:unreachable|unavailable|not listening)|ECONNREFUSED|connect ENOENT/i;
 const APPROVAL = /not approved to use|(?:didn't|did not) allow|approval (?:was )?(?:refused|declined|denied)/i;
+const TURBO_UNAVAILABLE = /\bturbo (?:is )?unavailable\b/i;
+const WINDOW_UNAVAILABLE = /\bPID\s+\d+[^.\n]{0,60}\b(?:owns|has|reports|returned) no windows\b|\bPID\s+\d+ (?:is not|isn't|is no longer) (?:a running process|running)\b|\bno process with PID\s+\d+ is running\b|\bwindow PID\s+\d+ not found\b|\b(?:could not|couldn't|cannot|can't) (?:safely )?(?:identify|verify|confirm) (?:the )?(?:(?:dedicated|designated|target|specified) )?(?:[\w.-]+ )?window\b/i;
 const brief = text => String(text).replace(/\s+/g, ' ').trim().slice(0, 160);
 export function runErrorClass({ eventsText = '', stderr = '' } = {}) {
   const errors = [];
+  let answer = '';
   for (const line of String(eventsText).split('\n')) {
     let event; try { event = JSON.parse(line); } catch { continue; }
+    if (event.type === 'result' && typeof event.result === 'string') answer = event.result;
     if (event.type === 'system' && event.subtype === 'init' && event.mcp_servers?.length) {
       const failed = event.mcp_servers.filter(server => server.status !== 'connected');
       if (failed.length === event.mcp_servers.length) return { class: 'no tools', example: `MCP ${failed.map(s => `${s.name} ${s.status}`).join(', ')}` };
@@ -84,6 +88,12 @@ export function runErrorClass({ eventsText = '', stderr = '' } = {}) {
   if (daemon) return { class: 'no daemon', example: brief(daemon) };
   const refused = first(APPROVAL);
   if (refused) return { class: 'approval refused', example: brief(refused) };
+  const turbo = first(TURBO_UNAVAILABLE);
+  if (turbo) return { class: 'turbo unavailable', example: brief(turbo) };
+  // A wrong browser PID can stop the agent after successful inventory calls, with no tool error. Only its final
+  // answer counts here: the prompt's stop instructions and intermediate checks that later recovered do not.
+  const window = first(WINDOW_UNAVAILABLE) ?? (WINDOW_UNAVAILABLE.test(answer) ? answer : undefined);
+  if (window) return { class: 'window unavailable', example: brief(window) };
   return null;
 }
 

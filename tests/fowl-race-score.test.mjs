@@ -56,6 +56,40 @@ test('each failed run gets one error class: no tools, no daemon, approval refuse
   assert.equal(runErrorClass({ eventsText: claudeCall('a', false, 'Computer Use was not approved to use Firefox') }), null);
 });
 
+// RG1: shared setup failures from the 2026-10-18 race, with fixture PIDs and no private paths.
+const agentResult = text => JSON.stringify({ type: 'result', result: text, is_error: false });
+const unavailableTurbo = 'Turbo is unavailable. Use the engine browser path.';
+const unavailableWindow = 'I stopped without browsing because I could not identify the designated window. PID 12345 owns no windows.';
+
+test('unavailable turbo is a shared error class only in a failed tool result', () => {
+  assert.deepEqual(runErrorClass({ eventsText: claudeCall('a', true, unavailableTurbo) }),
+    { class: 'turbo unavailable', example: unavailableTurbo });
+  const codex = JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', status: 'failed', error: { message: unavailableTurbo } } });
+  assert.equal(runErrorClass({ eventsText: codex }).class, 'turbo unavailable');
+  assert.equal(runErrorClass({ eventsText: claudeCall('a', false, unavailableTurbo) }), null);
+  assert.equal(runErrorClass({ eventsText: agentResult('The page says "Turbo is unavailable", but the task completed.') }), null);
+});
+
+for (const answer of [
+  unavailableWindow,
+  'I stopped without signing in because I could not identify the dedicated FixtureBrowser window. PID 12345 has no windows at all.',
+  "I stopped before touching the form because the window's identity doesn't fully match your instructions. No process with PID 12345 is running.",
+  "I couldn't identify the dedicated FixtureBrowser window, so I stopped without acting in any browser. PID 12345 isn't running.",
+  'I stopped without opening the shop. PID 12345 is not running and owns no windows.',
+  'RESULT: not submitted (dedicated FixtureBrowser window PID 12345 not found)',
+]) test(`an agent stopped on an unavailable designated window is classified: ${answer}`, () => {
+  assert.equal(runErrorClass({ eventsText: agentResult(answer) })?.class, 'window unavailable');
+});
+
+test('window classification ignores the prompt and recovered intermediate observations', () => {
+  const prompt = JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: unavailableWindow }] } });
+  const intermediate = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: unavailableWindow }] } });
+  assert.equal(runErrorClass({ eventsText: [prompt, intermediate, agentResult('The form was submitted. Submission id: SUB-1')].join('\n') }), null);
+  assert.equal(runErrorClass({ eventsText: claudeCall('a', false, 'PID 12345 owns no windows') }), null);
+  assert.equal(runErrorClass({ eventsText: agentResult('The page has no windows in stock.') }), null);
+  assert.equal(runErrorClass({ eventsText: [claudeInit('failed'), agentResult(unavailableWindow)].join('\n') }).class, 'no tools');
+});
+
 test('a round is a harness failure only when 10 of its 12 tasks fail with the same class', () => {
   const rows = (n, cls, ok = false) => Array.from({ length: n }, (_, i) => ({ task: `${cls}-${i}`, ok, errorClass: cls ? { class: cls, example: `${cls} text` } : null }));
   const ten = harnessFailure([...rows(10, 'approval refused'), ...rows(2, null, true)], 12);
@@ -131,6 +165,21 @@ test('race-score groups rounds by browser, arm and task with the claim rules, an
   assert.equal(existsSync(join(root, 'real-c9-codex', 'harness-failure.json')), false, 'scoring alone writes nothing');
   spawnSync(process.execPath, [join(repo, 'bench/fowl/race-score.mjs'), root, '--mark'], { encoding: 'utf8' });
   assert.equal(JSON.parse(readFileSync(join(root, 'real-c9-codex', 'harness-failure.json'), 'utf8')).class, 'approval refused');
+});
+
+test('saved rounds detect the new shared failures at ten of twelve and scoring stays read-only', t => {
+  const root = mkdtempSync(join(tmpdir(), 'race-score-shared-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const [cls, events] of [['turbo unavailable', claudeCall('a', true, unavailableTurbo)],
+    ['window unavailable', agentResult(unavailableWindow)]]) {
+    for (const count of [9, 10, 12]) {
+      const dir = round(root, `${cls}-${count}`, 'fixture-browser', 'fixture-arm', Array.from({ length: 12 }, (_, i) =>
+        [`task${i}`, 1, false, { events: i < count ? events : claudeCall('b', true, 'element changed') }]));
+      const loaded = loadRound(dir);
+      assert.equal(loaded.detected?.class ?? null, count >= 10 ? cls : null);
+      assert.equal(loaded.detected?.count ?? null, count >= 10 ? count : null);
+      assert.equal(existsSync(join(dir, 'harness-failure.json')), false);
+    }
+  }
 });
 
 test('a saved row without events keeps its recorded browser-call count', () => {
