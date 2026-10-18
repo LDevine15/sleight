@@ -27,6 +27,9 @@ function fetchMatch(pattern, params) {
   if (escaped) source += '\\\\';
   return new RegExp(source + '$', 's').test(params.request?.url ?? '');
 }
+// An opted-in Electron app's pages are its windows: the filter never creates or closes them, never closes or crashes a
+// renderer, and leaves focus emulation off until a build qualifies it (electron-v3-plan, EPV3-3).
+const appForbidden = new Set(['Target.createTarget', 'Target.closeTarget', 'Page.close', 'Page.crash', 'Emulation.setFocusEmulationEnabled']);
 const domains = new Set(['Page', 'Runtime', 'DOM', 'DOMSnapshot', 'CSS', 'Accessibility', 'Input',
   'Network', 'Fetch', 'Log', 'Emulation', 'Inspector', 'Debugger', 'Performance']);
 // A page session's Fetch can't pause a popup's first request: the browser makes
@@ -58,9 +61,14 @@ function guardBrowser(upstream, port, isProtected) {
   return ready;
 }
 
-export function createCDPFilter({ session: upstream, ownedTargets = [], protectedPort } = {}) {
+// app: { admit(targetInfo), current(targetId) } from electron-targets.mjs. With it, a top-level target is owned only after
+// admit() and current() agree, an initial owned list is refused, and children are frames only.
+export function createCDPFilter({ session: upstream, ownedTargets = [], protectedPort, app } = {}) {
   if (!upstream || !id(upstream.sessionId) || !['send', 'on', 'off'].every(name => typeof upstream[name] === 'function') ||
       !Array.isArray(ownedTargets) || !ownedTargets.every(id)) throw Error('CDP_CONNECTION_REQUIRED');
+  if (app !== undefined && (typeof app?.admit !== 'function' || typeof app?.current !== 'function' || ownedTargets.length || protectedPort !== undefined))
+    throw Error('CDP_CONNECTION_REQUIRED');
+  const childTypes = app ? ['iframe'] : ['iframe', 'worker'];
   if (protectedPort !== undefined && (!Number.isInteger(protectedPort) || protectedPort < 1 || protectedPort > 65535)) throw Error('CDP_CONNECTION_REQUIRED');
   const guardPatterns = protectedPort === undefined ? [] : [{ urlPattern: '*://*:' + protectedPort + '/*', requestStage: 'Request' },
     ...([80,443].includes(protectedPort) ? [{ urlPattern: (protectedPort === 80 ? 'http' : 'https') + '://*/*', requestStage: 'Request' }] : [])];
@@ -77,7 +85,7 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
   const owns = target => owned.has(target) || [...routes.values()].some(route => route.target === target);
   const checkTarget = target => { if (!id(target) || !owns(target)) throw Error('CDP_TARGET_NOT_OWNED'); };
   const autoAttachParams = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
-    filter: [{ type: 'iframe' }, { type: 'worker' }, { exclude: true }] };
+    filter: [...childTypes.map(type => ({ type })), { exclude: true }] };
   const routed = (frame, parent) => {
     const value = { ...frame };
     if (parent === undefined) delete value.sessionId; else value.sessionId = parent;
@@ -157,8 +165,10 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
     if (frame.method === 'Target.attachedToTarget') {
       const info = params.targetInfo;
       if (!object(info) || !id(info.targetId) || !id(params.sessionId)) return;
-      const allowed = parent ? ['iframe', 'worker'].includes(info.type) :
-        (closed ? attachmentParents.has(info.targetId) : owned.has(info.targetId)) && info.type === 'page';
+      // In app mode a top-level session counts only while this filter's own attach for it is in flight, so a
+      // private read session on the same pipe (electron-targets.mjs) never becomes a Playwright route.
+      const allowed = parent ? childTypes.includes(info.type) :
+        (closed ? attachmentParents.has(info.targetId) : owned.has(info.targetId) && (!app || attachmentParents.has(info.targetId))) && info.type === 'page';
       if (!allowed) {
         // Unrelated targets never acquire a route or expose their metadata.
         if (parent && !closed) {
@@ -339,13 +349,19 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
     const { targetInfo } = await upstream.send('Target.getTargetInfo', { targetId: target });
     live();
     if (targetInfo?.targetId !== target || targetInfo.type !== 'page') throw Error('CDP_TARGET_NOT_OWNED');
+    if (app) {
+      const admitted = await app.admit(targetInfo);
+      live();
+      if (admitted !== true || app.current(target) !== true) throw Error('CDP_TARGET_NOT_OWNED');
+    }
     owned.add(target);
     if (autoAttach && ![...routes.values()].some(route => route.target === target)) await attach(target);
   }
   const session = Object.freeze({ sessionId: root,
     async send(method, params = {}, route = root) {
       live();
-      if (typeof method !== 'string' || !/^[A-Za-z]+\.[A-Za-z][A-Za-z0-9]*$/.test(method) || !object(params) || forbidden.has(method)) refuse();
+      if (typeof method !== 'string' || !/^[A-Za-z]+\.[A-Za-z][A-Za-z0-9]*$/.test(method) || !object(params) || forbidden.has(method) ||
+          app && appForbidden.has(method)) refuse();
       const isRoot = route === undefined || route === root || browserRoutes.has(route);
       if (!isRoot && !routes.has(route)) throw Error('CDP_SESSION_NOT_OWNED');
       if (!isRoot) {
@@ -375,7 +391,8 @@ export function createCDPFilter({ session: upstream, ownedTargets = [], protecte
             try { return await upstream.send(method, autoAttachParams, route); }
             catch (error) { ownedRoute.autoAttached = false; throw error; }
           }
-          if (!isRoot) return upstream.send(method, { autoAttach: params.autoAttach, waitForDebuggerOnStart: true, flatten: true }, route);
+          if (!isRoot) return upstream.send(method, { autoAttach: params.autoAttach, waitForDebuggerOnStart: true, flatten: true,
+            ...(app ? { filter: autoAttachParams.filter } : {}) }, route);
           autoAttach = params.autoAttach;
           if (autoAttach) for (const target of owned) if (![...routes.values()].some(r => r.target === target)) await attach(target);
           return {};

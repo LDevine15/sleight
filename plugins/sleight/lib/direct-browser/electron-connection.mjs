@@ -220,9 +220,12 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
     get browserIncarnation() { return browserIncarnation; },
     get selectedBrowser() { return selectedBrowser; },
     get identity() { return identity; },
-    createFilter(ownedTargets = []) {
+    // hooks: electron-targets.mjs's filterHooks. The filter runs in app mode either way, so without hooks it owns nothing,
+    // and a Chrome-style owned list (which would skip admission) is refused.
+    createFilter(hooks) {
       if (!opened || fenced) fail('ELECTRON_CONNECTION_CLOSED');
-      const filter = createCDPFilter({ session, ownedTargets });
+      if (hooks !== undefined && (typeof hooks?.admit !== 'function' || typeof hooks?.current !== 'function')) fail('ELECTRON_ADMISSION_REQUIRED');
+      const filter = createCDPFilter({ session, app: hooks ?? { admit: async () => false, current: () => false } });
       const lost = () => { filter.dispose(); losses.delete(lost); };
       losses.add(lost);
       return Object.freeze({ ...filter,

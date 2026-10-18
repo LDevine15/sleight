@@ -257,6 +257,8 @@ test('the pinned Playwright 1.64.0 connects in-process through the channel, clos
   assert.equal((await cdp.send('Browser.getVersion')).pid, 4100);
   await assert.rejects(cdp.send('Browser.close'), /CDP_COMMAND_REFUSED/);
   await assert.rejects(cdp.send('Target.activateTarget', { targetId: 'x' }), /CDP_COMMAND_REFUSED/);
+  await assert.rejects(cdp.send('Target.createTarget', { url: 'about:blank', background: true }), /CDP_COMMAND_REFUSED/, 'the app filter never makes windows');
+  assert.throws(() => connection.createFilter(['some-target']), /ELECTRON_ADMISSION_REQUIRED/, 'no owned list that skips admission');
   assert.ok(!methods(h).includes('Browser.close'), 'the worker filter refuses it before the host sees it');
   await browser.close();
   assert.equal(h.app.input.destroyed, false);

@@ -14,6 +14,8 @@ electron-identity and use it only when a trusted app binding exists. Nothing on 
 electron-channel, electron-connection, electron-host, electron-host-entry and electron-ownership use built-in Node modules,
 cdp-filter.mjs and the pinned Playwright through worlds.mjs. They need bench/direct-electron/broker.mjs and launch.py, which
 are a prototype home outside the package, and nothing on the installed path imports them. EPV3-7 picks the package location.
+electron-targets, electron-native-join and electron-pages use built-in Node modules and electron-identity. cdp-filter gains an
+app mode for them, which is off unless a caller passes it, so the browser path is unchanged.
 
 host.mjs publishes both helpers only after compilation and hash verification, under a private per-user cache.
 Its exclusive build.lock refuses concurrent publication. Source and executable identity are rechecked before each launch.

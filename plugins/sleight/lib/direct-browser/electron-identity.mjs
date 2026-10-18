@@ -80,6 +80,15 @@ function scheme(url, recipe) {
   return fail('APP_DOCUMENT_UNSUPPORTED');
 }
 
+// Checks a recipe once, for callers that classify many URLs against it.
+export const appRecipe = recipe => {
+  if (!plain(recipe)) fail('INVALID_APP_RECIPE');
+  return Object.freeze({ schemes: Object.freeze(recipeSchemes(recipe.schemes ?? [])), fileRoots: Object.freeze(recipeRoots(recipe.fileRoots ?? [])) });
+};
+// What a top-level URL could be inside the app, before any frame exists: 'web' (real HTTPS) or
+// 'app-document' (a recipe file root or custom scheme). Anything else throws APP_DOCUMENT_UNSUPPORTED.
+export const documentKind = (href, rules) => scheme(parts(href), rules).kind;
+
 // The trusted adapter calls this once per app instance and window. authority
 // carries the debugger grant (session, turn or null for a session-wide grant) and
 // any live PID birth or window recheck. A false current() fences every context.
