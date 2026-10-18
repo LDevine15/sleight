@@ -971,8 +971,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       },
     },
     trace,
-    // The ghost hand, on unless SLEIGHT_HAND=0. Its client loads on the first action call; without one there is no hand.
-    hand: createRelayHand({ locate: request => runScript('hand/locate.js', request), trace: (direction, msg) => trace?.(direction, msg),
+    // The ghost hand, on unless SLEIGHT_HAND=0, on the session's one client (made above, before turbo forks).
+    hand: hand && createRelayHand({ client: hand, locate: request => runScript('hand/locate.js', request), trace: (direction, msg) => trace?.(direction, msg),
       clientOptions: { trace: (direction, msg) => trace?.(direction, msg) } }),
     guardTiming: !!process.env.SLEIGHT_TRACE,
     traceCode: process.env.SLEIGHT_TRACE_CODE === '1',
