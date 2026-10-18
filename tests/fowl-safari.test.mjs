@@ -24,8 +24,9 @@ function fixture(t) {
   const calls = []; let running = false, windows = [], serial = 0;
   const bridge = { request: async (op, input = {}) => {
     calls.push([op, input]);
-    if (op === 'launch') { running = true; return { pid: 4100, executable: plan.executable, launchDate: 123 }; }
+    if (op === 'launch') { running = true; return { pid: 4100, executable: plan.executable, launchDate: Date.now() / 1000 }; }
     if (op === 'snapshot') return { windows: structuredClone(windows) };
+    if (op === 'close-launch-window') { windows = windows.filter(w => w.id !== input.window); return {}; }
     if (op === 'new-profile') { windows.push(window('fresh-' + ++serial)); return { menuEscapePosted: true, menuCleared: true, menuEscapes: 1 }; }
     if (op === 'navigate') { const w = windows.find(w => w.id === input.window); w.title = plan.marker; w.tabs = [{ id: w.id + '-tab', title: plan.marker, url: input.url }]; return {}; }
     if (op === 'close-window') { windows = windows.filter(w => w.id !== input.window); return {}; }
@@ -129,6 +130,61 @@ test('Safari waits for delayed restore and never closes even a restored benchmar
   const g = fixture(t); g.windows([window('restored-profile')]);
   await assert.rejects(launchRealBrowser(g.plan, g.options), /EXTRA_WINDOWS/);
   assert.ok(!g.calls.some(([op]) => ['navigate', 'close-window'].includes(op)));
+});
+
+const startPage = (id, proven = false) => ({ id, startPage: true, ...(proven ? { profileEvidence: { element: id + '-p', role: 'AXMenuButton', attribute: 'AXIdentifier', value: profile } } : { profileEvidence: null }) });
+
+test('Safari closes the Start Page window it opened at launch before creating the benchmark window', async t => {
+  for (const proven of [false, true]) {
+    const f = fixture(t); f.windows([startPage('launch-start', proven)]);
+    const browser = await launchRealBrowser(f.plan, f.options);
+    const ops = f.calls.map(([op]) => op);
+    assert.deepEqual(f.calls.filter(([op]) => op === 'close-launch-window').map(([, data]) => data.window), ['launch-start']);
+    assert.ok(ops.indexOf('close-launch-window') < ops.indexOf('new-profile'));
+    assert.ok(!ops.includes('close-window'));
+    assert.equal(f.windows().length, 1);
+    assert.equal(f.windows()[0].id, 'fresh-1');
+    await browser.stop();
+  }
+});
+
+test('only Start Page windows are closed at launch; anything else stops the round untouched', async t => {
+  // An unproven window that is not a Start Page, next to a Start Page: restored, so nothing is closed.
+  const mixed = fixture(t); mixed.windows([startPage('launch-start'), { id: 'owner', profileEvidence: null }]);
+  await assert.rejects(launchRealBrowser(mixed.plan, mixed.options), /BENCH_SAFARI_RESTORED_WINDOWS/);
+  // A proven profile window with pages (no startPage flag) is extra, not ours to close.
+  const extra = fixture(t); extra.windows([startPage('launch-start'), window('profile-with-pages')]);
+  await assert.rejects(launchRealBrowser(extra.plan, extra.options), /EXTRA_WINDOWS/);
+  for (const f of [mixed, extra]) assert.ok(!f.calls.some(([op]) => ['close-launch-window', 'close-window', 'new-profile', 'navigate'].includes(op)));
+});
+
+test('a Start Page window that does not close stops the round before the profile window is created', async t => {
+  const f = fixture(t), request = f.bridge.request; f.windows([startPage('stuck')]);
+  f.bridge.request = async (op, input) => op === 'close-launch-window' ? (f.calls.push([op, input]), {}) : request(op, input);
+  await assert.rejects(launchRealBrowser(f.plan, f.options), /LAUNCH_WINDOW_UNCLOSED/);
+  assert.ok(!f.calls.some(([op]) => ['new-profile', 'navigate'].includes(op)));
+});
+
+test('a process that predates the launch request is refused before any window is read or closed', async t => {
+  const f = fixture(t), request = f.bridge.request; f.windows([startPage('old')]);
+  f.bridge.request = async (op, input) => { const result = await request(op, input); return op === 'launch' ? { ...result, launchDate: Date.now() / 1000 - 60 } : result; };
+  await assert.rejects(launchRealBrowser(f.plan, f.options), /LAUNCH_UNPROVED/);
+  assert.ok(!f.calls.some(([op]) => ['snapshot', 'close-launch-window', 'new-profile'].includes(op)));
+});
+
+test('profile evidence reads the Safari 26 toolbar identifier and nothing looser', async () => {
+  const { safariProfileEvidence, identifierProfile } = await import('../bench/fowl/safari-browser.mjs');
+  const id = 'TabGroupPickerButton?Profile=sleight%20benchmark&Icon=hammer.fill';
+  assert.equal(identifierProfile(id), profile);
+  assert.equal(identifierProfile('TabGroupPickerButton?Icon=x&Profile=sleight%20benchmark'), profile);
+  for (const other of ['TabGroupPickerButton?Profile=owner', 'Other?Profile=sleight%20benchmark', 'TabGroupPickerButton?Profile=sleight%20benchmark%20x',
+    'TabGroupPickerButton?Profile=%E0%A4%A', 'TabGroupPickerButton', undefined]) assert.notEqual(identifierProfile(other), profile);
+  assert.deepEqual(safariProfileEvidence({ toolbar: [{ id: 'picker', role: 'AXMenuButton', identifier: id }] }),
+    { element: 'picker', role: 'AXMenuButton', identifier: id, attribute: 'AXIdentifier', value: profile });
+  assert.equal(safariProfileEvidence({ toolbar: [{ id: 'picker', role: 'AXStaticText', identifier: id }] }), null);
+  assert.equal(safariProfileEvidence({ toolbar: [{ id: 'picker', role: 'AXMenuButton', identifier: 'TabGroupPickerButton?Profile=owner' }] }), null);
+  const native = { value: profile, element: 'button', role: 'AXMenuButton', attribute: 'AXIdentifier' };
+  assert.deepEqual(safariProfileEvidence({ profileEvidence: native }), native);
 });
 
 test('profile evidence cannot come from page content, window title or a substring', async () => {
@@ -317,6 +373,7 @@ test('native Safari helper compiles and rejects unowned requests before any app 
     missingProfile: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED', verifiedKey: true,
     menuEscapes: 2, menuEscapePosted: true, stuckEscapes: 2, stuckMenu: 'BENCH_SAFARI_MENU_STUCK',
     unsafeEscapes: 0, unsafeMenu: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED',
+    identifierProfile: true, identifierOther: false, identifierPrefix: true,
     preferredElement: 'profile', ambiguousProfile: true, visibleMenuClear: false, selectedMenuClear: false,
     clearMenuEscapes: 1,
     unknownSelectedMenuClear: false, unknownRoleMenuClear: false, bridgedSelectedMenuClear: false,
