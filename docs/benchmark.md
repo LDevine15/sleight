@@ -374,6 +374,15 @@ with the owner watching. Each of the six runs must prove the baseline or record 
 restore AX switches. An already-open app must stay running, and a launched app must quit. Inspect
 frontmost changes and any sign-in, update or permission window without answering it.
 
+`vscode-edit` and `cursor-edit` (owner-approved for fixture content, 2026-10-17) start a new instance of the app with
+`open -n -g -a <app> --args --user-data-dir=<tmp>/profile --extensions-dir=<tmp>/extensions --disable-extensions
+--skip-welcome --skip-release-notes --disable-workspace-trust --disable-telemetry --disable-updates --disable-crash-reporter
+--skip-add-to-recently-opened --new-window <file>`. The fixture is the one main process naming that profile that started
+after the launch. Cleanup quits only that pid through NSRunningApplication (`bench/real-electron.js`) and presses its own Don't
+Save button over AX. A pid still up after 20 seconds gets `forceTerminate`. The kernel must agree the pid is gone, and the
+profile is deleted once no process names it. The scripts send the app no Apple event, and an instance the owner already has open keeps running. The sleight, lcu,
+claude-cu, Codex and native arms share this fixture and prompt, and claude-cu's card may approve only that app's names.
+
 `iphone-mirroring-settings` reports the iOS version from Settings > General > About in iPhone Mirroring. Select it with `--owner-present`. Default passes and the head-to-head skip it. The benchmark approves iPhone Mirroring only in `--owner-present` runs, since headless runs can't show a prompt. Published rows keep the answer and timings with no screenshot. Every owner-present task (iPhone Mirroring, Mail, Mimestream, chat reads) is skipped by default passes and the head-to-head, and an `--owner-away` pass refuses a selected one before any app operation.
 
 ## Time per run
