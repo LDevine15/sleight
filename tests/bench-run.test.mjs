@@ -955,6 +955,15 @@ test('runner binds suite approvals and forces real computer access in preflight 
   for (const env of standard.envs) { assert.equal(env.BENCH_SUITE, 'default'); assert.equal(env.SLEIGHT_SURFACES, 'browser'); }
 });
 
+test('every arm runs with the ghost hand off, even when the host env turns it on', async () => {
+  for (const suite of ['real', 'default']) {
+    const result = await runner({ suite, base: { SLEIGHT_HAND: '1' }, drive: true });
+    assert.equal(result.error, undefined);
+    assert.ok(result.envs.length > 0);
+    for (const env of result.envs) assert.equal(env.SLEIGHT_HAND, '0', suite);
+  }
+});
+
 test('--surfaces browser,computer reaches every real-suite run and the results; anything else is refused', async () => {
   const both = await runner({ drive: true, extraArgs: ['--surfaces', 'browser,computer'] });
   assert.equal(both.error, undefined);

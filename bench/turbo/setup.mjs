@@ -46,7 +46,7 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env, realBro
     command: `node "${join(repo, 'bench/turbo/engine-browser-guard.mjs')}" ${browser}` }] };
   return { command: common.command, args: common.args, settings: { ...common.settings, hooks: { PreToolUse: [guard] } },
     mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'),
-      env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none' } },
+      env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none', SLEIGHT_HAND: '0' } },
       'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/v3-server.mjs')],
       env: { ...(realBrowser ? { SLEIGHT_TURBO_REAL_BROWSER: JSON.stringify(realBrowser) } : {}), SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl') } } },
     allowed: [...browserTools(browser).map(tool => 'mcp__sleight-turbo__' + tool.name),

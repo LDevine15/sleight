@@ -114,7 +114,7 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
     settings: { ...common.settings, ...genericSettings({ servers: ['plugin:sleight:computer'] }, repo) },
     // Turbo off: the round's Firefox or Safari is reachable only on the engine path, and a turbo.json in HOME would add
     // browser_* tools that point at the owner's Chrome or Helium (real round 2026-10-17: 5 of 12 tasks stopped on them).
-    mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0', ...traceEnv() } } },
+    mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0', SLEIGHT_HAND: '0', ...traceEnv() } } },
     env: { ...common.env, SLEIGHT_TURBO: '0', FOWL_GATE_WINDOW: JSON.stringify(gateWindowApps(realBrowser)) },
     allowed: 'mcp__plugin_sleight_computer__js,mcp__plugin_sleight_computer__js_reset,mcp__plugin_sleight_computer__open_file,mcp__plugin_sleight_computer__drag,mcp__plugin_sleight_computer__select_window',
     metadata: { ...common.metadata, surface, connectionMode: 'engine-computer' } }

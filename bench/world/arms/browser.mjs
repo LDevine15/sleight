@@ -22,6 +22,7 @@ export function worldAgentSetup({ surface, dir, armRoot = defaultArmRoot(), host
   env.DISABLE_AUTOUPDATER = '1';
   env.DISABLE_TELEMETRY = '1';
   env.ENABLE_TOOL_SEARCH = 'false';
+  env.SLEIGHT_HAND = '0'; // the ghost hand stays out of timing; the cost pass sets it on the returned env
   return { command: path.join(arm, 'node_modules/.bin/claude'), env,
     args: ['--setting-sources', '', '--disable-slash-commands'],
     settings: { claudeMdExcludes: ['**'], autoMemoryEnabled: false },

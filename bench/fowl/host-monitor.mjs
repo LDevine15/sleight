@@ -21,7 +21,9 @@ async function launchObserver() {
   } catch (error) { rmSync(dir, { recursive: true, force: true }); throw error; }
 }
 
-export async function startHostMonitor(file, { launch = launchObserver, now = Date.now } = {}) {
+// ignorePids, and ignore(pid) once a run has spawned it: the ghost hand host, whose panel is
+// sleight's own overlay. The observer never watches it and reports it once as ignored.
+export async function startHostMonitor(file, { launch = launchObserver, now = Date.now, ignorePids = [] } = {}) {
   const log = [];
   const write = event => {
     const entry = { t: now(), ...event };
@@ -31,7 +33,7 @@ export async function startHostMonitor(file, { launch = launchObserver, now = Da
   try { child = await launch(); }
   catch (error) {
     write({ kind: 'host-error', message: `host observer unavailable: ${error.message}` });
-    return { log, stop: async () => {} };
+    return { log, ignore() {}, stop: async () => {} };
   }
   let pending = '', stopped, ready;
   const initialized = new Promise(resolve => { ready = resolve; });
@@ -63,7 +65,9 @@ export async function startHostMonitor(file, { launch = launchObserver, now = Da
       write({ kind: 'host-error', message: 'host observer readiness timeout' }); resolve();
     }, 5000); })]); } finally { clearTimeout(timer); }
   };
-  return { log, ready: waitReady, stop: () => stopped ??= (async () => {
+  const ignore = pid => { if (!stopped && Number.isSafeInteger(pid) && pid > 0) child.stdin.write(`ignore-pid ${pid}\n`); };
+  for (const pid of ignorePids) ignore(pid);
+  return { log, ready: waitReady, ignore, stop: () => stopped ??= (async () => {
     child.stdin.end();
     let timer;
     try {

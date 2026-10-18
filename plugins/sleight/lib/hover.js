@@ -7,6 +7,7 @@ function performHover(request, native) {
   const result = { ok: false, takeoverMs: 0 };
   let saved, started;
   try {
+    handPid = Number.isSafeInteger(request.handPid) && request.handPid > 0 ? request.handPid : 0;
     const { app, at, windowTitle, waitMs = 1500 } = request;
     if (typeof app !== 'string' || !app.trim() || !Array.isArray(at) || at.length !== 2 ||
         !at.every(n => Number.isFinite(n) && n >= 0) || !Number.isInteger(waitMs) || waitMs < 100 || waitMs > 4000 ||
@@ -72,6 +73,9 @@ function windowList(onScreenOnly = true) {
   return out;
 }
 const inside = (b, p) => p.x >= b.X && p.x < b.X + b.Width && p.y >= b.Y && p.y < b.Y + b.Height;
+// Never cover, as in drag.js: the engine's overlay, and the ghost hand's panel (handPid from the launcher).
+let handPid = 0;
+const overlay = w => /Computer Use$/.test(w.owner) || (handPid > 0 && w.pid === handPid);
 
 function requireOneDisplay(bounds) {
   const screens = $.NSScreen.screens;
@@ -123,7 +127,7 @@ function nativeHover() {
       return point;
     },
     visible(target, point) {
-      const top = windowList().find(w => inside(w.bounds, point) && !/Computer Use$/.test(w.owner));
+      const top = windowList().find(w => inside(w.bounds, point) && !overlay(w));
       const visible = top && top.pid === target.pid && (top.layer !== 0 || top.id === target.windowId);
       target.blocker = visible || !top ? undefined : { owner: top.owner, pid: top.pid, id: top.id, layer: top.layer };
       return visible;

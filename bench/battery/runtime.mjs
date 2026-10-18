@@ -129,7 +129,7 @@ export async function liveRuntime({ pass, option, localFixtures, ownerPresent, c
   try {
     const auth = benchAuth({ mode: option('auth', 'auto') });
     const hostFree = Object.fromEntries(Object.entries(process.env).filter(([key]) => !sessionKey.test(key)));
-    const env = { ...hostFree, ...auth.env, BENCH_ROOT: root, BENCH_SUITE: 'battery', BENCH_OWNER_PRESENT: ownerPresent ? '1' : '',
+    const env = { ...hostFree, ...auth.env, SLEIGHT_HAND: '0', BENCH_ROOT: root, BENCH_SUITE: 'battery', BENCH_OWNER_PRESENT: ownerPresent ? '1' : '',
       BENCH_APPROVAL_STOP: stopFile, BENCH_ARM_SERVERS: JSON.stringify(['plugin:sleight:computer']), SLEIGHT_APPROVAL_PROMPT: 'client',
       ENABLE_CLAUDEAI_MCP_SERVERS: 'false', SLEIGHT_TRACE: '', BENCH_HOOK_LOG: '', SLEIGHT_RECEIPTS: '0',
       DISABLE_TELEMETRY: '1', OTEL_LOG_RAW_API_BODIES: '0', OTEL_LOG_USER_PROMPTS: '0', OTEL_LOG_ASSISTANT_RESPONSES: '0', OTEL_LOG_TOOL_CONTENT: '0' };

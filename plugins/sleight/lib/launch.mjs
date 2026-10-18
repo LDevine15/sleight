@@ -36,6 +36,7 @@ import { SELECT_WINDOW_TOOL, selectWindow } from './select-window.mjs';
 import { probeHelper, staleHelperJobs } from './helper-health.mjs';
 import { replayBridge } from './replay.mjs';
 import { serverFromChatGPTApp, setup } from './setup.mjs';
+import { handPid } from './hand/pid.mjs';
 
 const PLUGIN_DIR = ['plugins', 'cache', 'openai-bundled', 'unified-computer-use'];
 const SERVER_KEY = 'cua_repl';
@@ -603,6 +604,12 @@ export function runScript(script, request, options = {}) {
   const execOptions = { timeout: script === 'open-file-window.js' ? 1000 : cleanup ? 3000 : 30000,
     ...(script === 'hover.js' ? { maxBuffer: 16 * 1024 * 1024 } : {}) };
   if (script === 'drag.js') request = { ...request, deadline: Date.now() + execOptions.timeout };
+  // Their cover checks skip the ghost hand's panel by this pid, which only the launcher sets: a pid
+  // in the call could exempt a window that really covers the point.
+  if (script === 'drag.js' || script === 'hover.js') {
+    const { handPid: _, ...rest } = request;
+    request = handPid() ? { ...rest, handPid: handPid() } : rest;
+  }
   return new Promise(resolve => {
     ownHelper(run('osascript', ['-l', 'JavaScript', join(LIB, script), JSON.stringify(request)], execOptions, (err, stdout, stderr) => {
       const diagnostic = String(stderr ?? '').trim();
