@@ -39,6 +39,10 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
 Before the gate, the owner reloads FowlBrowser's extension in Helium and runs the sleight-arm login. Chrome's Allow and
 `ledger/claim-suite-owner-checklist.md` are the owner's too.
 
+1c. Race order (owner, 2026-10-18). Firefox finishes first, every arm included, and then the race plan's Chrome, Helium and Safari
+   steps run in its order. When Firefox finishes, studies start on every task sleight still loses (native,
+   app and race), and only those get fixes.
+
 1b. Heads-down first (owner, 2026-10-17): build every token, turn and reliability fix found on 2026-10-16 (TT1N to TT4, TK1 to
    TK3, TS1 to TS5), merge and freeze, then one combined A/B (old vs new sleight, claim plus held-out tasks), then the all-arms
    claim run (5 runs where any arm fails, scored by `bench/claim-score.mjs`), then the release pass and the tag. The tag moves
