@@ -26,7 +26,9 @@ export function createProtocol({ output = process.stdout, start, tools = browser
       starting ??= Promise.resolve().then(start); session = await starting;
       result = await session.call(request);
       if (typeof result?.text !== 'string' || typeof result.isError !== 'boolean') throw Error('Invalid v3 result');
-    } catch {
+    } catch (error) {
+      // The model gets no detail, but the round's stderr keeps the reason (a first open failed this way in chrome b5 r3 handoff).
+      process.stderr.write(`turbo bench: ${String(error?.code ?? error?.message ?? error).slice(0, 200)}\n`);
       result = { text: 'Turbo bench unavailable (effect unknown). Read before any retry.', isError: true };
     }
     await send({ id, result: { content: [{ type: 'text', text: result.text }], isError: result.isError } });
