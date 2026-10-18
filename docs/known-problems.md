@@ -25,7 +25,8 @@ our own runs. Dates and engine versions are given where they matter.
 - The tab continuation (a call's own Cmd+T, or a click on the button among the tabs, going on into the new tab) hasn't run
   live; fixtures and a replay of the Firefox rounds' saved trees cover it. It fired 0 of 9 in the 2026-10-18 round (6 Cmd+T,
   3 clicks), and the cause wasn't recorded. It no longer needs HID idle over the call, which the engine's key presses reset
-  (above). The relay trace now records the refusal reason and the idle sample; one traced live round confirms whether idle was the cause.
+  (above); it needs idle since the stop result arrived, so a user typing after the stop still refuses it. The relay trace
+  records the refusal reason and the idle sample; one traced live round confirms whether idle was the cause.
 - A read between the menu click and the next action (`const menu = await app.getAXState()`) doesn't split either, so the
   call stops at the menu, as textedit-save-2 did (2026-10-17). The guard doesn't pass a menu's header (title and app, no
   URL) on its own: only the continuation checks the native window behind it.

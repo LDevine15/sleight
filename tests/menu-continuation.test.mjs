@@ -486,29 +486,69 @@ test('AB1: a click that is not on a button beside the tabs, or opens no single n
     assert.equal(tabRefusal(code, receipt, ffExpected, inPage, ffBefore), 'focus-in-document', name);
 });
 
-test('AB1: HID idle no longer decides a tab continuation, and its sample is what the relay traces', () => {
+test('AB1: a tab continuation asks for HID idle since the stop result, and the sample says what idle saw', () => {
   const expected = { appId: 'org.test', title: 'report', url: null };
   const baseline = { ...expected, status: 'ok', matches: 1, epoch: 'helper', window: 1, windowNumber: 22, pid: 123, processStart: 1, hidIdleSeconds: 1000 };
-  const observed = { ...baseline, hidIdleSeconds: 0.4 };
-  assert.equal(menuWindowRefusal(expected, baseline, observed, 0, 5000), 'hid-input');
-  assert.equal(menuWindowRefusal(expected, baseline, observed, 0, 5000, false), undefined);
-  // Everything else still holds without idle: the window number, the process and the native identity.
-  assert.equal(menuWindowRefusal(expected, baseline, { ...observed, windowNumber: 23 }, 0, 5000, false), 'window-number-changed');
-  assert.equal(menuWindowRefusal(expected, baseline, { ...observed, pid: 456 }, 0, 5000, false), 'identity-mismatch');
-  assert.equal(menuWindowRefusal(expected, baseline, { ...observed, title: 'other' }, 0, 5000, false), 'identity-mismatch');
-  assert.equal(menuWindowRefusal(expected, baseline, undefined, 0, 5000, false), 'identity-unavailable');
-  assert.equal(menuWindowRefusal(expected, { ...baseline, windowNumber: null }, observed, 0, 5000, false), 'no-window-number');
-  assert.deepEqual(idleSample(observed, 0, 5000), { hidIdleSeconds: 0.4, callSeconds: 5, idleCoversCall: false });
-  assert.deepEqual(idleSample({ hidIdleSeconds: 9 }, 0, 5000), { hidIdleSeconds: 9, callSeconds: 5, idleCoversCall: true });
-  assert.deepEqual(idleSample(undefined, 0, 5000), { hidIdleSeconds: null, callSeconds: 5, idleCoversCall: false });
+  // The engine pressed a key at 1.3 s and the stop result came at 1.7 s; the helper looks at 1.8 s and again at 2.0 s.
+  const stopAt = 1700, call = 1000;
+  const engine = { ...baseline, hidIdleSeconds: 0.5 };
+  assert.equal(menuWindowRefusal(expected, baseline, engine, stopAt, 1800), undefined, 'the engine\'s own press came before the stop');
+  assert.equal(menuWindowRefusal(expected, baseline, engine, call, 1800), 'hid-input', 'idle over the whole call fails on it, as the 9 stops did');
+  // The user typed at 1.75 s, after the stop: idle 0.05 s at 1.8 s is less than the 0.1 s since the stop plus the margin.
+  assert.equal(menuWindowRefusal(expected, baseline, { ...baseline, hidIdleSeconds: 0.05 }, stopAt, 1800), 'hid-input');
+  assert.equal(menuWindowRefusal(expected, baseline, { ...baseline, hidIdleSeconds: undefined }, stopAt, 1800), 'hid-input');
+  // Everything else holds as before: the window number, the process and the native identity.
+  assert.equal(menuWindowRefusal(expected, baseline, { ...engine, windowNumber: 23 }, stopAt, 1800), 'window-number-changed');
+  assert.equal(menuWindowRefusal(expected, baseline, { ...engine, pid: 456 }, stopAt, 1800), 'identity-mismatch');
+  assert.equal(menuWindowRefusal(expected, baseline, { ...engine, title: 'other' }, stopAt, 1800), 'identity-mismatch');
+  assert.equal(menuWindowRefusal(expected, baseline, undefined, stopAt, 1800), 'identity-unavailable');
+  assert.equal(menuWindowRefusal(expected, { ...baseline, windowNumber: null }, engine, stopAt, 1800), 'no-window-number');
+  assert.deepEqual(idleSample(engine, stopAt, 1800, call), { hidIdleSeconds: 0.5, sinceStopSeconds: 0.1, idleSinceStop: true, idleCoversCall: false });
+  assert.deepEqual(idleSample({ hidIdleSeconds: 9 }, stopAt, 1800, call), { hidIdleSeconds: 9, sinceStopSeconds: 0.1, idleSinceStop: true, idleCoversCall: true });
+  assert.deepEqual(idleSample(undefined, stopAt, 1800), { hidIdleSeconds: null, sinceStopSeconds: 0.1, idleSinceStop: false });
 });
 
-test('AB1: a tab-open stop says the same app handle addresses the window', () => {
+test('AB1: a tab-open stop says the window keeps its app handle', () => {
   const receipt = { ...ffKey, completed: 1 };
   const plain = stopNote(receipt, ffKeyPlan, 0, { content: ffStop() }), tab = stopNote(receipt, ffKeyPlan, 0, { content: ffStop(), tab: true });
-  assert.match(tab, /^sleight: this call ran 1 action \(pressKey "super\+t"\); not sent: typeText, pressKey "Return"\. After an action that opens a tab or page, end the call there; the next call can send the rest, on the same app handle, to the window shown here with no new read\.$/);
-  assert.doesNotMatch(tab, /select_window/);
-  assert.doesNotMatch(plain, /same app handle/);
+  assert.match(tab, /^sleight: this call ran 1 action \(pressKey "super\+t"\); not sent: typeText, pressKey "Return"\. After an action that opens a tab or page, end the call there; this window keeps its app handle, so send the rest on it after reading the result\.$/);
+  assert.doesNotMatch(tab, /select_window|no new read/);
+  assert.doesNotMatch(plain, /app handle/);
+});
+
+// F2: the tab strip is the window's own. An ARIA tab list inside page content, and a "+" button in it, are the page's.
+const pageTabs = (...labels) => labels.map((label, i) => `\t\t\t\t${30 + i} tab (${i === 0 ? 'selected' : 'selectable'}) Value: ${label}, ${label}\nClose tab\n`).join('') + '\t\t\t\t39 button Add\n';
+const indented = tree => Object.fromEntries([...tree.matchAll(/^(\t*\d+) (.*)$/gm)].map(([, number, line]) => [number.replace(/^\t*/, ''), number.match(/^\t*/)[0] + line]));
+test('AB1: tabs and the button under a page or document do not count as the window\'s own tab strip', () => {
+  const button = ffReceipt({ kind: 'number', value: 39 });
+  const plan = splitMenuActions('await ff.click(39); await ff.typeText("u"); await ff.pressKey("Return");');
+  // The page grew a tab with its "+" button; the window's own strip did not.
+  const pageBefore = indented(ffTree({ title: 'Sleight Gate c1eb', tabs: [{ label: 'Sleight Gate c1eb', selected: true }], page: 'App', extra: pageTabs('One') }));
+  const pageOnly = ffStop({ tabs: [{ label: 'Sleight Gate c1eb', selected: true }], page: 'App', extra: pageTabs('Two', 'One') });
+  assert.equal(tabRefusal(plan, button, ffExpected, pageOnly, pageBefore), 'no-new-tab');
+  // The window grew a tab too, but the clicked "+" is in the page.
+  const both = ffStop({ extra: pageTabs('One') });
+  assert.equal(tabRefusal(plan, button, ffExpected, both, pageBefore), 'not-a-tab-button');
+  // Page tabs present on both sides do not upset the count when the real button opens the tab (the earlier tree keeps its indentation).
+  const real = ffReceipt({ kind: 'number', value: 5 }), realPlan = splitMenuActions('await ff.click(5); await ff.typeText("u"); await ff.pressKey("Return");');
+  assert.equal(tabRefusal(realPlan, real, ffExpected, ffStop({ extra: pageTabs('One') }), pageBefore), undefined);
+  // And a key opener ignores a page tab list the same way.
+  assert.equal(tabRefusal(ffKeyPlan, ffKey, ffExpected, ffStop({ extra: pageTabs('One') }), pageBefore), undefined);
+  assert.equal(tabRefusal(ffKeyPlan, ffKey, ffExpected, pageOnly, pageBefore), 'no-new-tab');
+});
+
+test('AB1: the new tab must be the last one or beside the clicked button', () => {
+  const plan = splitMenuActions('await ff.click(6); await ff.typeText("u"); await ff.pressKey("Return");');
+  const before = linesOf(ffTree({ title: 'A', tabs: [{ label: 'A', selected: true }, { label: 'B' }], page: 'A' }));
+  const click = ffReceipt({ kind: 'number', value: 6 });
+  assert.equal(before[6], 'button Open a new tab (⌘T)');
+  const expected = { ...ffExpected, title: 'A' };
+  // Last tab selected, or the tab just before the button: both fine. A new tab between older ones, away from the button, is not this button's.
+  assert.equal(tabRefusal(plan, click, expected, ffStop({ tabs: [{ label: 'A' }, { label: 'B' }, { label: 'New', selected: true }] }), before), undefined);
+  assert.equal(tabRefusal(plan, click, expected, ffStop({ tabs: [{ label: 'A' }, { label: 'New', selected: true }, { label: 'B' }] }), before), 'not-a-tab-button');
+  assert.equal(tabRefusal(plan, click, expected, ffStop({ tabs: [{ label: 'New', selected: true }, { label: 'A' }, { label: 'B' }] }), before), 'not-a-tab-button');
+  // The key keeps its rule: Cmd+T may open the tab beside the current one.
+  assert.equal(tabRefusal(ffKeyPlan, ffKey, expected, ffStop({ tabs: [{ label: 'A' }, { label: 'New', selected: true }, { label: 'B' }] }), before), undefined);
 });
 
 test('AB1: the helper must see no sheet and a non-password text field or combo box focused in the window', () => {

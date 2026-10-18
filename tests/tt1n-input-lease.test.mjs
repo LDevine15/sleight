@@ -891,9 +891,25 @@ test('AB1: a window that changed during the remainder\'s final check stops it wi
 });
 
 // 2026-10-18: the continuation fired 0 of 9 in the Firefox race. The engine's own key presses reset HID idle, so idle over the
-// whole call refused it. The window number, process, header, sheet and focus checks still decide; the trace keeps the sample.
-test('AB1: HID input during the call no longer stops a tab continuation whose tree and native checks pass, and the trace records why it would have', async t => {
-  const h = await tabFixture(t, { nativeChange: 'focus' });
+// whole call refused it. It now asks for idle since the stop result arrived: the engine's presses all came before, and a user
+// typing in the new tab's address bar afterwards could interleave with the rest's typing. A fake clock puts the call at 1.0 s,
+// the engine's Cmd+T at 1.3 s and the stop result at 1.7 s; `user` makes the helper's check number n see a user key 0.1 s old.
+async function timedTab(t, { user } = {}) {
+  let now = 1000, enginePress, userPress;
+  const script = tabScript();
+  return tabFixture(t, { clock: () => now,
+    onAction: (name, argument, text) => {
+      if (name === 'pressKey' && argument === 'super+t') { now += 300; enginePress = now; now += 400; }
+      return script(name, argument, text);
+    },
+    identity: (expected, native, count) => {
+      if (count === user) { now += 300; userPress = now - 100; }
+      return { ...expected, ...native, matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1,
+        hidIdleSeconds: (now - (userPress ?? enginePress ?? 0)) / 1000 };
+    } });
+}
+test('AB1: the engine\'s own key press before the stop does not stop the tab continuation, and the trace says idle did not cover the call', async t => {
+  const h = await timedTab(t);
   const result = await h.call(tabCall);
   assert.notEqual(result.isError, true, JSON.stringify(result));
   assert.deepEqual(h.keys, ['super+t', 'Return']);
@@ -901,22 +917,46 @@ test('AB1: HID input during the call no longer stops a tab continuation whose tr
   assert.deepEqual(h.continued, ['tab']);
   assert.deepEqual(h.refusals, []);
   const [checked] = h.traces.filter(trace => trace.direction === 'tab-continuation-checked');
-  assert.equal(checked.hidIdleSeconds, 0);
-  assert.equal(checked.idleCoversCall, false, 'idle over the call would have refused it');
-  assert.ok(checked.callSeconds >= 0);
+  assert.deepEqual([checked.hidIdleSeconds, checked.idleSinceStop, checked.idleCoversCall], [0.4, true, false]);
+});
+
+// F2: a tab list inside the page is not the window's strip. The relay passes the earlier tree with its indentation, so the
+// page's tab is left out of the count on both sides.
+test('AB1: an ARIA tab list in the page does not change the tab count either way', async t => {
+  const page = '\t\t7 tab (selected) Value: Page, Page\nClose tab';
+  const h = await tabFixture(t, { base: marker.replace('\n\nThe focused', `\n${page}\n\nThe focused`),
+    opened: newTab.replace('\n\nThe focused', `\n\t\t8 tab (selected) Value: Page, Page\nClose tab\n\nThe focused`) });
+  const result = await h.call(tabCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.continued, ['tab']);
+});
+
+test('AB1: user HID input after the stop refuses the tab continuation at the first check', async t => {
+  const h = await timedTab(t, { user: 2 });
+  stoppedAtTab(h, await h.call(tabCall));
+  assert.deepEqual(h.refusals, ['hid-input']);
+  assert.deepEqual([h.traces.at(-1).hidIdleSeconds, h.traces.at(-1).idleSinceStop], [0.1, false]);
+});
+
+test('AB1: user HID input after the first check refuses the remainder at the final check', async t => {
+  const h = await timedTab(t, { user: 3 });
+  stoppedAtTab(h, await h.call(tabCall));
+  assert.equal(h.identityChecks(), 3);
+  assert.deepEqual(h.refusals, ['final-check']);
+  assert.deepEqual([h.traces.at(-1).hidIdleSeconds, h.traces.at(-1).idleSinceStop], [0.1, false]);
 });
 
 test('AB1: a refusal after the helper answered records the idle sample it saw', async t => {
-  const h = await tabFixture(t, { nativeChange: 'focus', focus: { ...fieldFocus, sheets: 1 } });
+  const h = await tabFixture(t, { focus: { ...fieldFocus, sheets: 1 } });
   stoppedAtTab(h, await h.call(tabCall));
   assert.deepEqual(h.refusals, ['native-sheet']);
-  assert.equal(h.traces.at(-1).hidIdleSeconds, 0);
-  assert.equal(h.traces.at(-1).idleCoversCall, false);
+  assert.deepEqual([h.traces.at(-1).hidIdleSeconds, h.traces.at(-1).idleSinceStop], [1000, true]);
 });
 
 // Item 5 of the 2026-10-18 Firefox study: a selected window's stop told Claude to call select_window with the old title, which
 // the benchmark refused (2 of 9 runs). The retitled window is the selected one, and its app handle addresses it.
-test('AB1: with a selected window, a tab-open stop points at the app handle, not select_window', async t => {
+// The wording holds whether or not the continuation runs: here a lost focus refuses it after the stop was judged a tab opening.
+test('AB1: with a selected window, a tab-open stop says the window keeps its handle, not select_window', async t => {
   const target = { appId: 'org.test.editor', app: 'Fixture Editor', title: 'Marker', url: null };
   const h = await tabFixture(t, { nativeChange: 'unfocused', localTools: { tools: [SELECT_WINDOW_TOOL], target: async () => target,
     call: async () => ({ content: [{ type: 'text', text: JSON.stringify({ ok: true, target }) }] }) } });
@@ -927,8 +967,8 @@ test('AB1: with a selected window, a tab-open stop points at the app handle, not
   const text = result.content.map(item => item.text ?? '').join('\n');
   assert.equal(result.isError, true);
   assert.deepEqual(h.typed, []);
-  assert.match(text, /Selected window changed\. The same app handle addresses this window; send the rest on it, without select_window\./);
-  assert.match(text, /^sleight: this call ran 1 action \(pressKey "super\+t"\); not sent: typeText, pressKey "Return"\. .*on the same app handle/);
+  assert.match(text, /Selected window changed\. This window keeps its handle; send the rest on it after reading the result\./);
+  assert.match(text, /^sleight: this call ran 1 action \(pressKey "super\+t"\); not sent: typeText, pressKey "Return"\. .*this window keeps its app handle/);
   assert.doesNotMatch(text, /Call select_window with/);
 });
 
@@ -981,11 +1021,11 @@ test('AB1: a tab the remainder opens again stops before its next action', async 
 
 test('AB1: a sheet the helper sees only at the final check stops the remainder, and the trace has the idle sample', async t => {
   const h = await tabFixture(t, { identity: (expected, native, count) => ({ ...expected, ...native, matches: 1, epoch: 'helper', window: 1,
-    pid: 123, processStart: 1, ...(count === 3 ? { focus: { ...fieldFocus, sheets: 1 }, hidIdleSeconds: 0 } : {}) }) });
+    pid: 123, processStart: 1, ...(count === 3 ? { focus: { ...fieldFocus, sheets: 1 } } : {}) }) });
   stoppedAtTab(h, await h.call(tabCall));
   assert.equal(h.identityChecks(), 3);
   assert.deepEqual(h.refusals, ['final-check']);
-  assert.deepEqual([h.traces.at(-1).hidIdleSeconds, h.traces.at(-1).idleCoversCall], [0, false]);
+  assert.deepEqual([h.traces.at(-1).hidIdleSeconds, h.traces.at(-1).idleSinceStop], [1000, true]);
 });
 
 const tabIdentity = change => async (expected, native, count) => ({ ...expected, ...native, matches: 1, epoch: 'helper', window: 1,
