@@ -3,9 +3,9 @@
 // (EPV3-7 wires it); it opens no listener or process until createElectronHost() is called.
 //
 // Layers, from the app outwards:
-//   Python adapter (bench/direct-electron/launch.py --adapter): reserves the profile and lock,
+//   Python adapter (electron/launch.py --adapter): reserves the profile and lock,
 //     spawns the app on the pipe ends this process created, reports identity and census.
-//   ElectronBroker (bench/direct-electron/broker.mjs): the only reader/writer of the app's pipe.
+//   ElectronBroker (electron/broker.mjs): the only reader/writer of the app's pipe.
 //   this file: the app owner (journal, reconciliation) and the local channel workers use.
 // Trusted Playwright traffic reaches the broker only through an authenticated channel. The
 // worker's v3 context and the shared rules decide whether an operation may happen at all; the

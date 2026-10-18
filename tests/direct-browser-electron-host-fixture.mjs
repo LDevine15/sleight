@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
-import { ElectronBroker } from '../bench/direct-electron/broker.mjs';
+import { ElectronBroker } from '../plugins/sleight/lib/direct-browser/electron/broker.mjs';
 import { createElectronHost } from '../plugins/sleight/lib/direct-browser/electron-host.mjs';
 import { createElectronConnection } from '../plugins/sleight/lib/direct-browser/electron-connection.mjs';
 

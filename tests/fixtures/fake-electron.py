@@ -11,6 +11,9 @@ import tempfile
 import time
 from unittest.mock import patch
 
+# The launch adapter ships in the plugin package; this fake lives in tests/fixtures.
+LAUNCH = Path(__file__).resolve().parents[2] / 'plugins/sleight/lib/direct-browser/electron/launch.py'
+
 
 def fake():
     # A deliberately inheritable parent file must be absent. The platform
@@ -91,7 +94,7 @@ def fake_host():
 
 
 def census_test():
-    spec = importlib.util.spec_from_file_location('ep2_census', Path(__file__).resolve().parents[1] / 'launch.py')
+    spec = importlib.util.spec_from_file_location('ep2_census', LAUNCH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     if not module.PROCESSES.available:
@@ -123,7 +126,7 @@ def census_test():
 
 
 def recover_test(mode):
-    spec = importlib.util.spec_from_file_location('ep2_recover', Path(__file__).resolve().parents[1] / 'launch.py')
+    spec = importlib.util.spec_from_file_location('ep2_recover', LAUNCH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     executable = Path(sys.executable).resolve()
@@ -203,7 +206,7 @@ def recover_test(mode):
 def adapter_test(mode):
     """Drives launch.py --adapter as a subprocess, the way the resident host does."""
     import subprocess
-    launch = Path(__file__).resolve().parents[1] / 'launch.py'
+    launch = LAUNCH
     executable = Path(sys.executable).resolve()
     build = 'adapter-fixture'
     with tempfile.TemporaryDirectory(prefix='ep2-adapter-test-') as parent:
@@ -275,7 +278,7 @@ def module_lock_state(launch, temporary, build):
 
 
 def self_test():
-    spec = importlib.util.spec_from_file_location('ep2_launch', Path(__file__).resolve().parents[1] / 'launch.py')
+    spec = importlib.util.spec_from_file_location('ep2_launch', LAUNCH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     executable = str(Path(sys.executable).resolve())
@@ -340,7 +343,7 @@ def self_test():
 
 
 def cleanup_test(mode):
-    spec = importlib.util.spec_from_file_location('ep2_cleanup', Path(__file__).resolve().parents[1] / 'launch.py')
+    spec = importlib.util.spec_from_file_location('ep2_cleanup', LAUNCH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     executable = Path(sys.executable).resolve()

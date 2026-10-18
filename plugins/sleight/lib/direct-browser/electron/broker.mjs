@@ -1,4 +1,4 @@
-// Standalone bench prototype. No default app launcher, IPC listener or product grants.
+// The resident host's app pipe owner (electron-host.mjs). No default app launcher, IPC listener or product grants.
 // Trusted host code supplies launch/ownership/authority; model code never gets this object.
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';

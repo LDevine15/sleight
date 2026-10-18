@@ -1,5 +1,5 @@
 // The resident host over the real Python launch adapter, with a Python fake standing in for Electron.
-// No app, no browser, no engine: the fake is test/fake-electron.py --fake-host.
+// No app, no browser, no engine: the fake is tests/fixtures/fake-electron.py --fake-host.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -8,13 +8,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpath
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ElectronBroker } from '../broker.mjs';
-import { createElectronHost, createPythonAdapter } from '../../../plugins/sleight/lib/direct-browser/electron-host.mjs';
-import { parseHostArguments, readAdminSecret, runHostEntry } from '../../../plugins/sleight/lib/direct-browser/electron-host-entry.mjs';
-import { createElectronConnection } from '../../../plugins/sleight/lib/direct-browser/electron-connection.mjs';
+import { ElectronBroker } from '../plugins/sleight/lib/direct-browser/electron/broker.mjs';
+import { createElectronHost, createPythonAdapter } from '../plugins/sleight/lib/direct-browser/electron-host.mjs';
+import { parseHostArguments, readAdminSecret, runHostEntry } from '../plugins/sleight/lib/direct-browser/electron-host-entry.mjs';
+import { createElectronConnection } from '../plugins/sleight/lib/direct-browser/electron-connection.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
-const launch = join(here, '..', 'launch.py'), fake = join(here, 'fake-electron.py');
+const launch = join(here, '../plugins/sleight/lib/direct-browser/electron/launch.py'), fake = join(here, 'fixtures/fake-electron.py');
 const python = spawnSync('python3', ['-c', 'import os,sys,ctypes.util;print(os.path.realpath(sys.executable))'], { encoding: 'utf8' });
 const skip = python.status !== 0 ? 'python3 is unavailable' : process.platform === 'win32' ? 'POSIX launch primitive unavailable' : false;
 const BUILD = 'adapter-fixture';
@@ -140,7 +140,7 @@ test('quit and collect through the adapter: exact descendant census, profile and
 
 test('resident crash: the app is told by pipe EOF, the new host reports possible exit, refuses a launch, and recovers only with proof', { skip }, async () => {
   const e = environment();
-  const child = spawn(process.execPath, [join(here, 'host-process.mjs'), BUILD, '--state-dir', e.stateDir, '--registry', e.registryPath, '--temp-root', e.tempRoot,
+  const child = spawn(process.execPath, [join(here, 'fixtures/electron-host-process.mjs'), BUILD, '--state-dir', e.stateDir, '--registry', e.registryPath, '--temp-root', e.tempRoot,
     '--builds', BUILD, '--adapter-script', launch], { stdio: ['ignore', 'pipe', 'pipe'] });
   let started, text = '';
   child.stdout.on('data', chunk => { text += chunk; });
@@ -182,7 +182,7 @@ test('resident crash: the app is told by pipe EOF, the new host reports possible
 });
 
 test('the host entry is inert without a trusted parent and accepts only exact, absolute arguments', { skip }, async () => {
-  const direct = spawnSync(process.execPath, [fileURLToPath(new URL('../../../plugins/sleight/lib/direct-browser/electron-host-entry.mjs', import.meta.url))], { encoding: 'utf8', timeout: 10000 });
+  const direct = spawnSync(process.execPath, [fileURLToPath(new URL('../plugins/sleight/lib/direct-browser/electron-host-entry.mjs', import.meta.url))], { encoding: 'utf8', timeout: 10000 });
   assert.equal(direct.status, 2);
   assert.match(direct.stderr, /inert/);
   const ok = ['--state-dir', '/tmp/s', '--registry', '/tmp/r.json', '--temp-root', '/tmp/t', '--builds', 'a,b'];

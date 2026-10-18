@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { PassThrough, Writable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
-import { ElectronBroker, PipeTransport } from '../broker.mjs';
+import { ElectronBroker, PipeTransport } from '../plugins/sleight/lib/direct-browser/electron/broker.mjs';
 
 function harness(options = {}) {
   const input = new PassThrough();
@@ -253,7 +253,7 @@ const python = spawnSync('python3', ['--version'], { encoding: 'utf8' });
 test('fake child validates launcher descriptors, EOF, recipe refusal and safe cleanup', {
   skip: python.status === 0 ? false : 'python3 is unavailable',
 }, () => {
-  const result = spawnSync('python3', [new URL('./fake-electron.py', import.meta.url).pathname, '--self-test'], {
+  const result = spawnSync('python3', [new URL('./fixtures/fake-electron.py', import.meta.url).pathname, '--self-test'], {
     encoding: 'utf8', timeout: 10000, env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: '1' },
   });
   assert.equal(result.status, 0, result.stderr + result.stdout);
@@ -265,7 +265,7 @@ for (const mode of ['after-profile', 'after-owner', 'replaced-profile', 'replace
   test('owned Python cleanup resumes with exact evidence: ' + mode, {
     skip: python.status !== 0 ? 'python3 is unavailable' : process.platform === 'win32' ? 'POSIX launch primitive unavailable' : false,
   }, () => {
-    const result = spawnSync('python3', [new URL('./fake-electron.py', import.meta.url).pathname, '--cleanup-test', mode], {
+    const result = spawnSync('python3', [new URL('./fixtures/fake-electron.py', import.meta.url).pathname, '--cleanup-test', mode], {
       encoding: 'utf8', timeout: 10000, env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: '1' },
     });
     assert.equal(result.status, 0, result.stderr + result.stdout);
