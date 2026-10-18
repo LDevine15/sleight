@@ -1,5 +1,5 @@
 const directorySuffix = '/library/application support/sleight';
-const suffixes = ['preapproved.json', 'turbo.json'].map(filename => `${directorySuffix}/${filename}`);
+const suffixes = ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json'].map(filename => `${directorySuffix}/${filename}`);
 const mutations = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const folded = path => path.normalize('NFC').toLowerCase();
 const protectedLiteral = path => {
