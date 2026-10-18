@@ -166,6 +166,25 @@ test('the keeper detaches the sessions the dead host left, so no page of the use
   } finally { second?._crashForTest(); await sleep(100); e.cleanup(); }
 });
 
+test('when a reattached host dies too, the keeper detaches its sessions and the next host reattaches', { skip }, async () => {
+  const e = environment(), secret = randomBytes(32);
+  let second, third;
+  try {
+    const { child, started } = await hostProcess(e, { secret });
+    process.kill(child.pid, 'SIGKILL');
+    await until(() => !alive(child.pid), 'host gone');
+    second = await realHost(e, { adminSecret: secret });
+    await second.resume();
+    await second.broker.pipe.request('Target.attachToTarget', { targetId: 'T2', flatten: true });
+    second._crashForTest(); second = undefined;                           // the second host dies with T2 attached
+    await sleep(500);
+    third = await realHost(e, { adminSecret: secret });
+    await third.resume();
+    assert.deepEqual(await third.broker.pipe.request('Fake.sessions'), { sessions: [] });
+    assert.equal((await third.broker.pipe.request('Browser.getVersion')).pid, started.pid);
+  } finally { second?._crashForTest(); third?._crashForTest(); await sleep(100); e.cleanup(); }
+});
+
 // Every attach a foreign process can try: the keeper's socket, its answer while the host lives, and after the host's death a
 // wrong proof. It passes no descriptor to anyone (SCM_RIGHTS is read for on every message).
 const FOREIGN = `
@@ -183,6 +202,10 @@ try:
     first = recv(); received += first
     if first and sys.argv[2] == 'wrong-proof':
         s.sendall(json.dumps({'t': 'attach', 'cn': 'A' * 22, 'proof': 'B' * 43}).encode() + b'\\0')
+    if first and sys.argv[2] == 'non-ascii':
+        s.sendall(json.dumps({'t': 'attach', 'cn': 'A' * 22, 'proof': '\\u00e9'}).encode() + b'\\0')
+    if first and sys.argv[2] == 'nested':
+        s.sendall(b'[' * 4000 + b'\\0')
     while True:
         chunk = recv()
         if not chunk: break
@@ -206,10 +229,14 @@ test('nothing else obtains the pipe: the keeper refuses while the host lives, re
     process.kill(child.pid, 'SIGKILL');
     await until(() => !alive(child.pid), 'host gone');
     await sleep(200);
-    const wrong = foreign(path, 'wrong-proof');
-    assert.match(wrong.received, /^\{"t": ?"keeper"/, 'the keeper\'s challenge, and nothing after the wrong proof');
-    assert.equal(wrong.received.split('\0').filter(Boolean).length, 1);
-    assert.equal(wrong.fds, 0);
+    for (const mode of ['wrong-proof', 'non-ascii', 'nested']) {
+      const wrong = foreign(path, mode);
+      assert.match(wrong.received, /^\{"t": ?"keeper"/, 'the keeper\'s challenge, and nothing after a bad attach: ' + mode);
+      assert.equal(wrong.received.split('\0').filter(Boolean).length, 1, mode);
+      assert.equal(wrong.fds, 0);
+      assert.equal(alive(started.keeper), true, 'a malformed attach never ends the keeper: ' + mode);
+    }
+    await sleep(300);
     assert.equal(alive(started.pid), true);
     second = await realHost(e, { adminSecret: secret });                   // the owner's host still gets in afterwards
     await second.resume();

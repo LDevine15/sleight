@@ -850,6 +850,10 @@ class Keeper:
             pass
         self.attached, self.partial, self.to_host = None, b'', bytearray()
 
+    def attached_lost(self):
+        self.detach()
+        self.release_sessions()  # that host's sessions went with it, as the first host's did
+
     def barrier(self, deadline):
         """Resynchronises the app's stream. A dead host may have left half a frame in either direction: the keeper's own
         command ends any half frame in the app's input (it is sent again after a second), and everything the app sends up to
@@ -914,7 +918,7 @@ class Keeper:
             message = json.loads(frame.split(b'\0', 1)[0])
             if not isinstance(message, dict) or sorted(message) != ['cn', 'proof', 't'] or message['t'] != 'attach' or \
                     not _token_ok(message['cn']) or not isinstance(message['proof'], str) or \
-                    not hmac.compare_digest(message['proof'], keeper_proof(self.key, 'attach', self.nonce, challenge, message['cn'])):
+                    not hmac.compare_digest(message['proof'].encode(), keeper_proof(self.key, 'attach', self.nonce, challenge, message['cn']).encode()):
                 raise ValueError('attach refused')
             rest = self.barrier(time.monotonic() + 5)
             if rest is None:
@@ -923,7 +927,9 @@ class Keeper:
                                            'proof': keeper_proof(self.key, 'keeper', self.nonce, challenge, message['cn'])}).encode() + b'\0')
             connection.setblocking(False)
             self.attached, self.to_host = connection, bytearray(rest)
-        except (OSError, ValueError, socket.timeout):
+        except AppGone:
+            raise
+        except Exception:  # whatever a caller sends ends only its own connection
             connection.close()
 
     def step(self):
@@ -957,7 +963,7 @@ class Keeper:
             except OSError:
                 chunk = b''
             if chunk == b'':
-                self.detach()
+                self.attached_lost()
             elif chunk:
                 # Only whole frames reach the app, so a host that dies mid-frame leaves nothing half-written.
                 self.partial += chunk
@@ -966,23 +972,32 @@ class Keeper:
                     self.to_app += self.partial[:end + 1]
                     self.partial = self.partial[end + 1:]
                 if len(self.partial) > KEEPER_FRAME:
-                    self.detach()
+                    self.attached_lost()
         if self.attached is not None and self.attached in writable:
             try:
                 del self.to_host[:self.attached.send(self.to_host)]
             except BlockingIOError:
                 pass
             except OSError:
-                self.detach()
+                self.attached_lost()
         if self.listener in readable:
             self.accept()
         if not self.app_alive():
             raise AppGone()
 
     def run(self):
+        # Only the app's end closing ends the keeper. Anything else that goes wrong drops the attached host, if any, and the
+        # keeper goes on holding the pipe: exiting would close it under the app.
         try:
             while True:
-                self.step()
+                try:
+                    self.step()
+                except AppGone:
+                    raise
+                except Exception:
+                    if self.attached is not None:
+                        self.detach()
+                    time.sleep(0.05)
         except AppGone:
             return 0
         finally:
