@@ -18,7 +18,7 @@ import { lstatSync, unlinkSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { CHANNEL_VERSION, DEFAULT_MAX_FRAME_BYTES, FrameReader, HANDSHAKE_MAX_BYTES, bare, deriveChannel, macEqual, opener, plainJson,
   randomToken, sealer, validToken } from './electron-channel.mjs';
-import { classify, createJournal, privateDirectory, privateSecret, reconcile } from './electron-ownership.mjs';
+import { classify, createJournal, privateDirectory, reconcile } from './electron-ownership.mjs';
 
 const refuse = code => { throw Error(code); };
 const SOCKET_NAME = 'host.sock';
@@ -91,7 +91,7 @@ export function createPythonAdapter({ python = 'python3', script, registryPath, 
 }
 
 export async function createElectronHost({
-  stateDir, Broker, createAdapter, builds = [], authorizeLaunch, requestQuit, resumeAuthority, admitTarget, brokerOptions = {},
+  stateDir, Broker, createAdapter, builds = [], authorizeLaunch, requestQuit, resumeAuthority, admitTarget, authorizeIssue, brokerOptions = {},
   maxFrameBytes = DEFAULT_MAX_FRAME_BYTES, maxChannels = 64, maxUnauthenticated = 8, handshakeMs = 2000, maxPendingPerChannel = 64,
   maxBufferedBytes = 4 * 1024 * 1024, maxTicketTtlMs = 300000, maxTickets = 256, adminSecret, uid = process.getuid?.(),
 } = {}) {
@@ -104,9 +104,14 @@ export async function createElectronHost({
   if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH) refuse('STATE_DIR_TOO_LONG');
   const hostId = randomToken(16);
   const journal = createJournal({ dir: stateDir, uid });
-  // The admin secret persists across host restarts, in a file only this user can read, so a new
-  // parent can find the same host again. Worker tickets never persist.
-  const adminKey = adminSecret ?? privateSecret(stateDir, 'admin.key', uid);
+  // The admin secret comes from the trusted parent for this start only (in process, or an inherited
+  // descriptor through electron-host-entry.mjs) and is never written: anything running as this user can
+  // read the state directory, including the model's shell. Without it there is no admin channel.
+  // A restarted host gets a new secret from its parent. Worker tickets never persist either.
+  if (adminSecret !== undefined && (!Buffer.isBuffer(adminSecret) || adminSecret.length < 32)) refuse('ADMIN_SECRET_INVALID');
+  const adminKey = adminSecret === undefined ? undefined : Buffer.from(adminSecret);
+  // session -> { grant, revoked }: the debugger grant the parent bound to a session (bindGrant).
+  const boundGrants = new Map();
 
   let adapter, broker, ownership = { state: 'free' }, closed = false;
   // An adapter process gets exactly one pair of pipe ends (its descriptors 3 and 4), so one launch.
@@ -314,24 +319,46 @@ export async function createElectronHost({
   server.on('connection', handle);
 
   // --- Administration ------------------------------------------------------------------------
-  function issueTicket({ session, ttlMs = 30000, maxUses = 1 } = {}) {
+  // Every ticket asks the parent whether the session's debugger grant is current, and a grant bound
+  // with bindGrant must not be revoked. Holding the admin channel alone grants nothing.
+  async function issueTicket({ session, ttlMs = 30000, maxUses = 1 } = {}) {
     if (typeof session !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(session)) refuse('SESSION_INVALID');
     if (!Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > maxTicketTtlMs || !Number.isSafeInteger(maxUses) || maxUses < 1 || maxUses > 8) refuse('TICKET_BOUND_INVALID');
+    const bound = boundGrants.get(session);
+    let current = false;
+    try { current = typeof authorizeIssue === 'function' && await authorizeIssue(Object.freeze({ session })) === true; } catch { current = false; }
+    try { if (bound && (bound.revoked || bound.grant.current() !== true)) current = false; } catch { current = false; }
+    if (!current || closed) refuse('GRANT_NOT_CURRENT');
     for (const [id, item] of tickets) if (item.expires <= Date.now()) tickets.delete(id);
     if (tickets.size >= maxTickets) refuse('TICKET_BANK_FULL');
     const id = randomToken(), secret = Buffer.from(randomToken(32), 'base64url');
     tickets.set(id, { session, secret, expires: Date.now() + ttlMs, uses: 0, maxUses, failures: 0 });
     return Object.freeze({ socket: socketPath, host: hostId, ticket: id, secret: secret.toString('base64url'), session, expiresAt: Date.now() + ttlMs });
   }
+  // A broker that is ready, resuming or already parked takes the revoke: one that lands during a resume
+  // ends that resume (it sees the new epoch) instead of being lost.
+  const revocable = () => broker && !['new', 'collected', 'authorizing', 'launching', 'retained'].includes(broker.state);
   function revokeSession(session, reason = 'revoked') {
     for (const [id, item] of tickets) if (item.session === session) tickets.delete(id);
     for (const channel of [...channels]) if (channel.session === session) channel.send({ op: 'parked', reason, resumable: true, epoch: broker?.epoch }, true);
     // Revocation stops every command and parks the connection; it never closes the app's pipe.
-    if (broker && broker.state === 'ready') broker.revoke(reason);
+    if (revocable()) broker.revoke(reason);
   }
   function revokeAll(reason = 'revoked') {
     tickets.clear();
-    if (broker && broker.state === 'ready') broker.revoke(reason);
+    if (revocable()) broker.revoke(reason);
+  }
+  // The parent binds a session's debugger grant (electron-consent.mjs). Its revocation (turn end for a once
+  // grant, session or app revoke, a removed Always record) revokes the session here at once.
+  function bindGrant(session, grant) {
+    if (typeof session !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(session)) refuse('SESSION_INVALID');
+    if (typeof grant?.current !== 'function' || typeof grant?.onRevoke !== 'function') refuse('GRANT_INVALID');
+    const entry = { grant, revoked: false };
+    boundGrants.set(session, entry);
+    grant.onRevoke(info => {
+      entry.revoked = true;
+      if (boundGrants.get(session) === entry) revokeSession(session, 'debugger grant revoked: ' + String(info?.reason ?? 'revoked').slice(0, 64));
+    });
   }
   async function resume() {
     if (!broker) refuse('no app connection');
@@ -411,7 +438,7 @@ export async function createElectronHost({
   }
 
   return Object.freeze({
-    hostId, socketPath, start, status, issueTicket, revokeSession, revokeAll, resume, reconcile: reconcileOwnership, close, _crashForTest,
+    hostId, socketPath, start, status, issueTicket, bindGrant, revokeSession, revokeAll, resume, reconcile: reconcileOwnership, close, _crashForTest,
     quit: consent => broker ? broker.quit(consent) : Promise.reject(Error('no app connection')),
     collect: () => broker ? broker.collect() : Promise.reject(Error('no app connection')),
     get broker() { return broker; }, events,

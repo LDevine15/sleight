@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
-import { statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { createElectronConnection, createFilterTransport } from '../plugins/sleight/lib/direct-browser/electron-connection.mjs';
 import { FrameReader, bare, deriveChannel, opener, plainJson, randomToken, sealer } from '../plugins/sleight/lib/direct-browser/electron-channel.mjs';
@@ -48,7 +49,7 @@ test('a worker can end its turn or be lost and a later worker reconnects to the 
   assert.equal(h.host.broker.state, 'ready');
   const lost = await connectWorker(h.host, 'w2');
   lost.connection.session.send('Browser.getVersion', {}).catch(() => {});
-  const raw = (await manualClient(h.host.issueTicket({ session: 'w3' })));
+  const raw = (await manualClient(await h.host.issueTicket({ session: 'w3' })));
   raw.socket.destroy();                                       // parent-worker loss: no goodbye
   await tick(20);
   const again = await connectWorker(h.host, 'w4');
@@ -76,7 +77,7 @@ test('worker sessions are detached when its channel ends; another worker keeps i
 
 test('forged clients: wrong secret, unknown or spent ticket, wrong role, garbage and impostor hosts all fail without effect', async () => {
   const h = await started();
-  const handle = h.host.issueTicket({ session: 'w1' });
+  const handle = await h.host.issueTicket({ session: 'w1' });
   const wrong = await manualClient(handle, { secret: Buffer.alloc(32, 1) });
   wrong.socket.write(wrong.auth);
   assert.equal(await wrong.next(), undefined); assert.equal(wrong.closed, true);
@@ -113,21 +114,21 @@ test('forged clients: wrong secret, unknown or spent ticket, wrong role, garbage
 
 test('handles are exact: extra fields, bad shapes and expired tickets never connect', async () => {
   const h = await started();
-  const handle = h.host.issueTicket({ session: 'w1', ttlMs: 20 });
+  const handle = await h.host.issueTicket({ session: 'w1', ttlMs: 20 });
   for (const bad of [{ ...handle, extra: 1 }, { ...handle, socket: 'relative.sock' }, { ...handle, secret: 'short' }, { ...handle, session: 'a b' }, null, 'x']) {
     await assert.rejects(createElectronConnection({ handle: bad }), /HANDLE_INVALID/);
   }
   await tick(40);
   await assert.rejects(createElectronConnection({ handle }).then(c => c.connect()), /CLOSED|TIMEOUT|closed/);
-  assert.throws(() => h.host.issueTicket({ session: 'bad session' }), /SESSION_INVALID/);
-  assert.throws(() => h.host.issueTicket({ session: 'ok', ttlMs: 10 ** 9 }), /BOUND/);
-  assert.throws(() => h.host.issueTicket({ session: 'ok', maxUses: 99 }), /BOUND/);
+  await assert.rejects(h.host.issueTicket({ session: 'bad session' }), /SESSION_INVALID/);
+  await assert.rejects(h.host.issueTicket({ session: 'ok', ttlMs: 10 ** 9 }), /BOUND/);
+  await assert.rejects(h.host.issueTicket({ session: 'ok', maxUses: 99 }), /BOUND/);
   finish(h);
 });
 
 test('repeated bad proofs revoke a ticket; a replayed handshake from a recorded connection fails', async () => {
   const h = await started({ hostOptions: {} });
-  const handle = h.host.issueTicket({ session: 'w1', maxUses: 3 });
+  const handle = await h.host.issueTicket({ session: 'w1', maxUses: 3 });
   for (let i = 0; i < 5; i++) {
     const bad = await manualClient(handle, { secret: Buffer.alloc(32, i + 1) });
     bad.socket.write(bad.auth); await bad.next();
@@ -135,7 +136,7 @@ test('repeated bad proofs revoke a ticket; a replayed handshake from a recorded 
   const afterBurst = await manualClient(handle);
   afterBurst.socket.write(afterBurst.auth);
   assert.equal(await afterBurst.next(), undefined, 'five failures end the ticket');
-  const fresh = h.host.issueTicket({ session: 'w2', maxUses: 3 });
+  const fresh = await h.host.issueTicket({ session: 'w2', maxUses: 3 });
   const recorded = await manualClient(fresh);
   const channel = await recorded.open();
   assert.equal((await channel.read()).op, 'open');
@@ -160,7 +161,7 @@ test('sealed frames: tampering, a wrong sequence, an unknown op and extra keys d
     channel => channel.write('not an object'),
   ];
   for (const attack of cases) {
-    const client = await manualClient(h.host.issueTicket({ session: 'forger' }));
+    const client = await manualClient(await h.host.issueTicket({ session: 'forger' }));
     const channel = await client.open();
     channel.socket = client.socket;
     assert.equal((await channel.read()).op, 'open');
@@ -186,7 +187,7 @@ test('bounds: oversize frames, silent sockets, connection floods and slow reader
   const third = rawSocket(h.host.socketPath);
   await until(() => third.closed, 'third unauthenticated refused');
   await until(() => holds.every(item => item.closed), 'holders time out');
-  const careful = await createElectronConnection({ handle: h.host.issueTicket({ session: 'careful' }), maxFrameBytes: 2048 });
+  const careful = await createElectronConnection({ handle: await h.host.issueTicket({ session: 'careful' }), maxFrameBytes: 2048 });
   await careful.connect();
   await assert.rejects(careful.session.send('Runtime.evaluate', { text: 'x'.repeat(4000) }), /INVALID_CDP_COMMAND/);
   const oversize = await connectWorker(h.host, 'oversize');
@@ -200,7 +201,7 @@ test('bounds: oversize frames, silent sockets, connection floods and slow reader
   await assert.rejects(worker.connection.session.send('Page.captureScreenshot', {}, ws), /QUEUE_FULL/);
   h.app.hang.clear();
   // A reader that never drains is dropped instead of buffered without bound.
-  const slow = await manualClient(h.host.issueTicket({ session: 'slow' }));
+  const slow = await manualClient(await h.host.issueTicket({ session: 'slow' }));
   const channel = await slow.open();
   assert.equal((await channel.read()).op, 'open');
   slow.socket.pause();
@@ -339,7 +340,7 @@ test('revocation parks the app connection, ends every channel, and a command del
   assert.equal(h.app.input.destroyed, false, 'the writer stays open');
   assert.equal(h.host.status().broker.parked.resumable, true);
   assert.equal(await a.connection.verifyConnection(a.connection.session), false);
-  await assert.rejects(createElectronConnection({ handle: h.host.issueTicket({ session: 'late' }) }).then(c => c.connect()), /PARKED/);
+  await assert.rejects(createElectronConnection({ handle: await h.host.issueTicket({ session: 'late' }) }).then(c => c.connect()), /PARKED/);
   h.adapter.rpc = original;
   assert.equal((await h.host.resume()).event, 'resumed');
   const back = await connectWorker(h.host, 'back');
@@ -381,34 +382,86 @@ test('verifyConnection proves the exact app instance and epoch, and rejects othe
   finish(h);
 });
 
-test('admin channel: one administrator at a time, issued handles work, a wrong admin key does not', async () => {
-  const h = await started();
-  const key = (await import('node:fs')).readFileSync(join(h.state.dir, 'admin.key'));
-  assert.equal(statSync(join(h.state.dir, 'admin.key')).mode & 0o077, 0);
-  const admin = await manualClient({ socket: h.host.socketPath, ticket: 'admin', secret: 'x' }, { secret: key, role: 'admin', ticket: 'admin' });
+test('admin channel: the key is the parent\'s per-start secret, no file in the state directory opens it, and issue asks the parent', async () => {
+  const secret = randomBytes(32), asked = [];
+  let current = true;
+  const h = await started({ hostOptions: { adminSecret: secret, authorizeIssue: async ({ session }) => { asked.push(session); return current; } } });
+  assert.equal(existsSync(join(h.state.dir, 'admin.key')), false, 'no admin key is written');
+  // Anything running as this user can read the state directory. No file there is an admin credential.
+  for (const name of readdirSync(h.state.dir)) {
+    const path = join(h.state.dir, name);
+    if (!statSync(path).isFile()) continue;
+    const bytes = readFileSync(path);
+    for (const candidate of [bytes, Buffer.from(bytes.toString().trim(), 'base64url')]) {
+      const forged = await manualClient({ socket: h.host.socketPath }, { secret: candidate, role: 'admin', ticket: 'admin' });
+      forged.socket.write(forged.auth);
+      assert.equal(await forged.next(), undefined, name + ' does not open the admin channel');
+    }
+  }
+  const admin = await manualClient({ socket: h.host.socketPath, ticket: 'admin', secret: 'x' }, { secret, role: 'admin', ticket: 'admin' });
   const channel = await admin.open();
   assert.equal((await channel.read()).admin, true);
-  const second = await manualClient({ socket: h.host.socketPath }, { secret: key, role: 'admin', ticket: 'admin' });
+  const second = await manualClient({ socket: h.host.socketPath }, { secret, role: 'admin', ticket: 'admin' });
   second.socket.write(second.auth);
   assert.equal(await second.next(), undefined, 'a second administrator is refused');
-  const wrong = await manualClient({ socket: h.host.socketPath }, { secret: Buffer.alloc(32, 9), role: 'admin', ticket: 'admin' });
-  wrong.socket.write(wrong.auth);
-  assert.equal(await wrong.next(), undefined);
   channel.write({ op: 'issue', id: 1, args: { session: 'via-admin' } });
   const issued = await channel.read();
+  assert.deepEqual(asked, ['via-admin']);
   const connection = await createElectronConnection({ handle: issued.result });
   await connection.connect();
   assert.equal((await connection.session.send('Runtime.evaluate', {}, await pageSession(connection))).ok, true);
-  channel.write({ op: 'status', id: 2 });
-  const status = (await channel.read()).result;
-  assert.equal(status.ownership.state, 'owned');
-  channel.write({ op: 'issue', id: 3, args: { session: 'bad session' } });
+  current = false;
+  channel.write({ op: 'issue', id: 2, args: { session: 'stale' } });
+  assert.equal((await channel.read()).error.code, 'FAILED', 'a grant the parent no longer holds issues nothing');
+  await assert.rejects(h.host.issueTicket({ session: 'stale' }), /GRANT_NOT_CURRENT/);
+  current = true;
+  channel.write({ op: 'status', id: 3 });
+  assert.equal((await channel.read()).result.ownership.state, 'owned');
+  channel.write({ op: 'issue', id: 4, args: { session: 'bad session' } });
   assert.equal((await channel.read()).error.code, 'FAILED');
-  channel.write({ op: 'revoke', id: 4, args: { session: 'via-admin' } });
+  channel.write({ op: 'revoke', id: 5, args: { session: 'via-admin' } });
   await channel.read();
   await until(() => h.host.status().broker.state === 'parked', 'parked');
-  channel.write({ op: 'resume', id: 5 });
+  channel.write({ op: 'resume', id: 6 });
   assert.equal((await channel.read()).result.event, 'resumed');
+  finish(h);
+});
+
+test('without the parent\'s secret there is no admin channel, and without its callback no ticket', async () => {
+  const h = await started({ hostOptions: { authorizeIssue: undefined } });
+  assert.equal(existsSync(join(h.state.dir, 'admin.key')), false);
+  const forged = await manualClient({ socket: h.host.socketPath }, { secret: Buffer.alloc(32, 0), role: 'admin', ticket: 'admin' });
+  forged.socket.write(forged.auth);
+  assert.equal(await forged.next(), undefined);
+  await assert.rejects(h.host.issueTicket({ session: 'w1' }), /GRANT_NOT_CURRENT/);
+  finish(h);
+});
+
+test('a revoked debugger grant revokes its session at the host, and a revoke that lands during resume wins', async () => {
+  const h = await started();
+  const hooks = [];
+  h.host.bindGrant('a', { current: () => true, onRevoke: hook => hooks.push(hook) });
+  assert.throws(() => h.host.bindGrant('b', { current: () => true }), /GRANT_INVALID/);
+  let lost = 0;
+  const a = await connectWorker(h.host, 'a');
+  a.connection.onConnectionLoss(() => lost++);
+  assert.equal(hooks.length, 1);
+  hooks[0]({ reason: 'session-revoked' });
+  await until(() => h.host.status().broker.state === 'parked' && lost === 1, 'revoked grant parks');
+  await assert.rejects(h.host.issueTicket({ session: 'a' }), /GRANT_NOT_CURRENT/, 'a revoked grant issues no more tickets');
+  const original = h.adapter.rpc.bind(h.adapter);
+  let release;
+  h.adapter.rpc = (cmd, payload) => cmd === 'inspect' ? new Promise(resolve => { release = () => resolve(original(cmd, payload)); }) : original(cmd, payload);
+  const resuming = h.host.resume();
+  resuming.catch(() => {});
+  await until(() => release, 'resume waiting on the identity check');
+  h.host.revokeSession('b', 'user revoked');
+  release();
+  await assert.rejects(resuming, /interrupted/);
+  assert.equal(h.host.status().broker.state, 'parked', 'the revoke took effect');
+  assert.equal(h.host.status().broker.parked.resumable, true, 'a revoked connection can still be resumed later');
+  h.adapter.rpc = original;
+  assert.equal((await h.host.resume()).event, 'resumed');
   finish(h);
 });
 

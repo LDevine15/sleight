@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ElectronBroker } from '../broker.mjs';
 import { createElectronHost, createPythonAdapter } from '../../../plugins/sleight/lib/direct-browser/electron-host.mjs';
-import { parseHostArguments, runHostEntry } from '../../../plugins/sleight/lib/direct-browser/electron-host-entry.mjs';
+import { parseHostArguments, readAdminSecret, runHostEntry } from '../../../plugins/sleight/lib/direct-browser/electron-host-entry.mjs';
 import { createElectronConnection } from '../../../plugins/sleight/lib/direct-browser/electron-connection.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -40,14 +40,14 @@ async function realHost(e, options = {}) {
   const host = await createElectronHost({
     stateDir: e.stateDir, Broker: ElectronBroker, builds: [BUILD], brokerOptions: { identityMaxAgeMs: 0 },
     createAdapter: async () => createPythonAdapter({ script: launch, registryPath: e.registryPath, tempRoot: e.tempRoot }),
-    authorizeLaunch: async () => true,
+    authorizeLaunch: async () => true, authorizeIssue: async () => true, admitTarget: async info => info.type === 'page',
     requestQuit: async () => { await host.broker.pipe.request('Fake.quit', {}, { sessionId: undefined }).catch(() => {}); },
     ...options,
   });
   return { host, kids };
 }
 async function worker(host, session = 'w') {
-  const connection = await createElectronConnection({ handle: host.issueTicket({ session }) });
+  const connection = await createElectronConnection({ handle: await host.issueTicket({ session }) });
   await connection.connect();
   return connection;
 }
@@ -187,6 +187,11 @@ test('the host entry is inert without a trusted parent and accepts only exact, a
   assert.match(direct.stderr, /inert/);
   const ok = ['--state-dir', '/tmp/s', '--registry', '/tmp/r.json', '--temp-root', '/tmp/t', '--builds', 'a,b'];
   assert.equal(parseHostArguments(ok).builds.length, 2);
+  assert.equal(parseHostArguments([...ok, '--admin-fd', '3']).adminFd, 3);
+  for (const fd of ['1', '2', 'x', '-1', '300']) assert.throws(() => parseHostArguments([...ok, '--admin-fd', fd]), /ARGUMENTS_INVALID/, fd);
+  const line = Buffer.alloc(32, 7).toString('base64url') + '\n';
+  assert.deepEqual(readAdminSecret(3, () => line), Buffer.alloc(32, 7), 'the parent secret arrives on a descriptor, never a file');
+  for (const bad of ['', 'short', Buffer.alloc(16, 1).toString('base64url'), 'not base64url!'.repeat(4)]) assert.throws(() => readAdminSecret(3, () => bad), /ADMIN_SECRET_INVALID/);
   for (const bad of [[], ok.slice(2), [...ok, '--wild', 'x'], [...ok, '--state-dir', '/tmp/s2'], ['--state-dir', 'rel', ...ok.slice(2)], ['--state-dir', '/tmp/../s', ...ok.slice(2)],
     [...ok.slice(0, 6), '--builds', 'a;rm'], [...ok, '--python'], [...ok.slice(0, 6), '--builds', '']]) {
     assert.throws(() => parseHostArguments(bad), /ARGUMENTS_INVALID/, JSON.stringify(bad));

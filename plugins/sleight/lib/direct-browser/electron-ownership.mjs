@@ -51,12 +51,6 @@ function secretFile(path, uid) {
   return key;
 }
 
-/** A 32-byte secret in a file only this user can read (created on first use). */
-export function privateSecret(dir, name, uid = process.getuid?.()) {
-  privateDirectory(dir, uid);
-  return secretFile(join(dir, name), uid);
-}
-
 /** The sealed journal. A record is accepted only if its seal verifies under host.key. */
 export function createJournal({ dir, uid = process.getuid?.() }) {
   privateDirectory(dir, uid);

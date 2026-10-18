@@ -105,6 +105,7 @@ export async function makeHost({ world = fakeWorld(), dir, appFactory, hostOptio
     createAdapter: async () => { current = adapter ?? fakeAdapter(world, { appFactory }); return current; },
     authorizeLaunch: async () => true,
     admitTarget: async info => info.type === 'page',
+    authorizeIssue: async () => true,
     requestQuit: async () => { world.alive = false; world.apps.at(-1)?.output.end(); },
     resumeAuthority: async () => true,
     brokerOptions: { identityMaxAgeMs: 0 },
@@ -117,7 +118,7 @@ export async function makeHost({ world = fakeWorld(), dir, appFactory, hostOptio
 export const pageSession = async connection => (await connection.session.send('Target.attachToTarget', { targetId: 'T1', flatten: true })).sessionId;
 
 export async function connectWorker(host, session = 'worker-1', ticketOptions = {}) {
-  const handle = host.issueTicket({ session, ...ticketOptions });
+  const handle = await host.issueTicket({ session, ...ticketOptions });
   const connection = await createElectronConnection({ handle });
   await connection.connect();
   return { connection, handle };

@@ -251,6 +251,8 @@ export class ElectronBroker extends EventEmitter {
       await this.pipe.request('Browser.getVersion');
       if (this.state !== 'resuming' || epoch !== this.epoch) throw new Error('resume interrupted');
     } catch (error) {
+      // A park during the resume (a revoke, a fault) already set the state and its reason: keep them.
+      if (epoch !== this.epoch) throw new Error('resume interrupted: ' + (this.parkedBy?.reason ?? 'parked'));
       this.state = 'parked'; this.parkedBy = { reason: error.message, resumable: false };
       throw error;
     }
