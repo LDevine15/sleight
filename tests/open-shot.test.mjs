@@ -132,7 +132,7 @@ test('a textless document gets its screenshot in the open result, with no note t
   assert.deepEqual(h.result.content.filter(c => c.type === 'image'), [image]);
   assert.ok(h.result.content.findIndex(c => c.text === sheet) < h.result.content.findIndex(c => c.type === 'image'));
   assert.doesNotMatch(all(h), textlessNote);
-  assert.match(all(h), /screenshot added, the tree has no document text\. Window handle: `(__sleightOpenedApp\d+)`, already acquired \(`let app = \1;`\)\./);
+  assert.match(all(h), /screenshot added, the tree has no document text\. Window handle: `(__sleightOpenedApp\d+)`, already acquired, but `app` isn't set: start the next call with `let app = \1;`\./);
   const calls = h.sent.filter(msg => msg.method === 'tools/call');
   assert.equal(calls.length, 2);
   assert.match(calls[1].params.arguments.code, /^await __sleightOpenedApp\d+\.getScreenshot\(\)$/);

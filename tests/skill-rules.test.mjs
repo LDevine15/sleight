@@ -49,7 +49,7 @@ test('the skill switches document tabs by key or go-to control and checks the or
 test('the skill enters a known spreadsheet block as one tab and newline paste, only when every value is known', () => {
   for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) {
     const rules = skillRules(undefined, env);
-    assert.match(rules, /Fill spreadsheet cells as one paste at the block's top-left cell, tabs between columns and\s+newlines between rows/);
+    assert.match(rules, /Click a block's top-left cell, then fill spreadsheet cells with one paste, tabs between columns,\s+newlines between rows/);
     assert.ok(rules.includes('`await app.paste("<a>\\t<b>\\n<c>\\t<d>", { format: "text" })`'));
     assert.match(rules, /It overwrites\s+the whole block: paste only when you know every cell's value, blanks included\./);
     assert.doesNotMatch(rules, /\.typeText\("[^"]*\\n/);

@@ -407,7 +407,7 @@ test('the open_file screenshot replaces the textless note and is sent with the t
   const out = result(h, 1);
   assert.deepEqual(out.content.filter(c => c.type === 'image'), [shotImage]);
   assert.doesNotMatch(body(out), textlessNote);
-  assert.match(body(out), /screenshot added.*Window handle: `(__sleightOpenedApp\d+)`, already acquired \(`let app = \1;`\)\./);
+  assert.match(body(out), /screenshot added.*Window handle: `(__sleightOpenedApp\d+)`, already acquired, but `app` isn't set: start the next call with `let app = \1;`\./);
 });
 
 for (const [name, options, before] of [['SLEIGHT_TEXTLESS_HINT=0', { textlessHint: false }, false],

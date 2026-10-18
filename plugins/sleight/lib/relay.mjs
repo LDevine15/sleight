@@ -2305,7 +2305,7 @@ export function createRelay({
           const combined = { ...state, content: [...opened, ...(state.content ?? []),
             ...(!state.isError ? [{ type: 'text', text: promptNotice((pictured ? 'sleight: screenshot added, the tree has no document text. ' : '') +
               `Window handle: \`${handle}\`` + (!confirmed ? '.' : constApp ? ', already acquired. Use it in place of `app`.'
-                : `, already acquired (\`let app = ${handle};\`).`), prompt) }] : [])] };
+                : `, already acquired, but \`app\` isn't set: start the next call with \`let app = ${handle};\`.`), prompt) }] : [])] };
           if (pictured) recordScreenshot(combined.content);
           const response = { jsonrpc: '2.0', id: msg.id, result: combined };
           reportPreapprovals(response); toClient(response);

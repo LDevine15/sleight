@@ -32,7 +32,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 
 - `await app.paste("text")` avoids autocorrect and capitalization. Replace documents with select-all
   and paste in one call.
-- Fill spreadsheet cells as one paste at the block's top-left cell, tabs between columns and
+- Click a block's top-left cell, then fill spreadsheet cells with one paste, tabs between columns,
   newlines between rows: `await app.paste("<a>\t<b>\n<c>\t<d>", { format: "text" })`. It overwrites
   the whole block: paste only when you know every cell's value, blanks included.
 - Use a menu item's shortcut if it has one. Otherwise open the menu and pick the item by label in one

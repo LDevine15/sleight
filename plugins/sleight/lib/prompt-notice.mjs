@@ -19,7 +19,7 @@ export function promptNotice(text, prompt) {
     .replace('A failed action without await can end the engine\'s session and lose every handle. ', '')
     .replace('sleight: screenshot added, the tree has no document text. ', 'Screenshot added: no text in tree. ')
     .replace(', already acquired. Use it in place of `app`.', ', acquired; use it for `app`.')
-    .replace(', already acquired (`let app = ', ', acquired (`let app = ')
+    .replace(', already acquired, but `app` isn\'t set: start the next call with `let app = ', ', acquired; start the next call with `let app = ')
     .replace('sleight will make it a full read because automatic recovery consumed the engine\'s UI diff.', '')
     .replace('Change review: an action is still pending, so this read cannot take a later copy. ', 'Change review: pending action. ')
     .replace(/Numbers in this window changed since your last full read, and .*? isn't one you've seen since\. /, '')
