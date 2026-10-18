@@ -17,6 +17,7 @@ import { assertWorldCLI } from '../world/native-world.mjs';
 import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
 import { startRoundAllow, allowPlan } from './chrome-allow.mjs';
+import { windowCover } from './window-cover.mjs';
 import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure } from './real-gate-grade.mjs';
 import { taskSupport, raceBundles, isCodexSurface, isCodexSleightSurface, runsCodexExec, sleightKind, codexModelFor } from './support.mjs';
 import { CODEX_SLEIGHT_HOME, ensureCodexSleightHome, writeCodexSleightConfig, approvalSummary, PROXY, SLEIGHT_MCP } from '../codex-sleight.mjs';
@@ -211,6 +212,16 @@ export function roundCommits({ repo, mcpRoot, harness = repoRoot, head = gitHead
 }
 
 // Writes harness-failure.json when one error class failed 10 or more of the round's 12 tasks; scorers drop the round.
+// The report's cell for a task's start: the covering apps with the share of the browser window each covers.
+export function coverCell(cover) {
+  if (!cover) return 'not measured';
+  if (cover.error) return `unread (${cover.error})`;
+  if (!cover.covering.length) return 'none';
+  const share = new Map();
+  for (const { owner, fraction } of cover.covering) share.set(owner, Math.max(share.get(owner) ?? 0, fraction));
+  return [...share].map(([owner, fraction]) => `${owner} ${Math.round(fraction * 100)}%`).join(', ');
+}
+
 export function markHarnessFailure(out, rows, total) {
   const verdict = harnessFailure(rows.map(row => ({ task: row.task.name, ok: row.outcome?.ok === true, errorClass: row.errorClass })), total);
   if (verdict) writeFileSync(join(out, 'harness-failure.json'), JSON.stringify({ ...verdict, decided: 'automatic', at: new Date().toISOString() }, null, 2));
@@ -334,6 +345,9 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
         writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
       }
       if (controller.signal.aborted) throw Error('Gate interrupted');
+      // The windows over the browser's window as the task starts, beside its outcome. An offline test that injects the browser
+      // never reads the Mac's window list.
+      const cover = await (runtime.windowCover || (runtime.launchBrowser ? async () => null : windowCover))(browser.pid);
       // Chrome and Helium report every page URL while the agent runs; the lookup graders need that visit.
       let watch = null, navigation;
       if (!['firefox', 'safari'].includes(browser.browser)) {
@@ -372,7 +386,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       const errorClass = outcome.ok ? null : runErrorClass({ eventsText: text('events.jsonl'), stderr: text('stderr.txt') });
       const row = { task: arm.task, surface: arm.surface, status: 'ran', wallMs: run.finished - run.started, toolCalls: run.toolCalls, toolErrors: run.toolErrors,
         successfulBrowserCalls: evidence?.successfulCalls ?? null, run: { ...run, tabs: [...run.tabs] }, start, observation, navigation: navigation ?? null,
-        agentConfig: arm.metadata, grade, site, outcome, errorClass };
+        agentConfig: arm.metadata, grade, site, outcome, errorClass, cover };
       rows.push(row);
       writeFileSync(join(arm.dir, 'run.json'), JSON.stringify(row, null, 2));
       writeFileSync(join(plan.out, 'results.json'), JSON.stringify(rows, null, 2));
@@ -412,8 +426,8 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     : `fresh at ${used.profileRoot}`;
   const lines = [`Browser: ${used.browser} ${used.version ?? '(version unknown)'}, profile ${profileText}` +
     `${used.loadedExtensions?.length ? `, loaded ${used.loadedExtensions.join(', ')}` : ''}.`, '',
-    '| task | arm | outcome | focus | ms | calls | errors |', '|---|---|---|---|---:|---:|---:|',
-    ...rows.map(row => `| ${row.task.name} | ${row.surface} | ${row.outcome.cell} | ${row.focusGrade.cell} | ${row.wallMs} | ${row.toolCalls ?? 'unknown'} | ${row.toolErrors ?? 'unknown'} |`),
+    '| task | arm | outcome | focus | covered by | ms | calls | errors |', '|---|---|---|---|---|---:|---:|---:|',
+    ...rows.map(row => `| ${row.task.name} | ${row.surface} | ${row.outcome.cell} | ${row.focusGrade.cell} | ${coverCell(row.cover)} | ${row.wallMs} | ${row.toolCalls ?? 'unknown'} | ${row.toolErrors ?? 'unknown'} |`),
     ...(harness ? ['', `Harness failure, excluded from scoring: ${harness.reason}.`] : [])];
   writeFileSync(join(plan.out, 'report.md'), lines.join('\n') + '\n');
   if (harness) console.error(`Harness failure: ${harness.reason}; rerun this round`);
