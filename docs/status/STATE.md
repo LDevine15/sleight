@@ -17,13 +17,13 @@ main checkout's `bench/results`). Lost: preview-read (Peekaboo 4.4 against 5.1).
 failure is the tab swap (item MV2). A claude-cu top-up attempt at 01:42Z raised a macOS screen-recording prompt for "zsh" because it ran in a
 detached shell; the harness stopped it, the owner dismissed the prompt, and the rerun as a child process passed 2/2.
 
-**Electron (EPV3), folded into 1.3.0.** All lanes merged on `epv3-int` (pushed to `private`, tip 773fe38f: EPV3-1 to 3 with security
-fixes, 4, 5, 6, 7a, 7b, 9, the EPV3-8 qualification harness `bench/electron-qualification.mjs`, write guard for turbo-apps.json and
-electron-grants.json). A Fable review (`ledger/fable-1018-electron-security.md`) found no way to get debugger access without consent, and asks for F1 (fence lease cache),
-F2 (admin secret held by the MCP server), harness blockers H1-H4 and a grant-seal.key guard: an Opus lane was fixing those at the clear
-in `.claude/worktrees/agent-a3ee22eaf443c2f26` (check its branch `worktree-agent-a3ee22eaf443c2f26` for commits; uncommitted work there
-is lost). Not yet on the claim build; needs a full check on `epv3-int`, then the live qualification (owner clicks "Always allow" once on
-the VS Code card). **Owner decision F3 pending:** today's path launches a separate instance with a temporary profile (LAWS: benchmark-only)
+**Electron (EPV3), folded into 1.3.0.** All lanes merged on `epv3-int` (pushed to `private`, tip 8f2c621b: EPV3-1 to 3 with security
+fixes, 4, 5, 6, 7a, 7b, 9, the EPV3-8 qualification harness `bench/electron-qualification.mjs`, the write guard for turbo-apps.json,
+electron-grants.json and grant-seal.key, and the Fable review's fixes F1, F2, H1-H4, L1 and L3 from 98ba31ac to 8f2c621b). L2 (keep the
+app running when the host process exits) is documented, not fixed. It isn't on the claim build yet. The full check on `epv3-int` comes
+next. In the live qualification after it, the owner clicks "Allow for this session" on the VS Code card about 4 times, since temporary
+profiles don't offer Always.
+**Owner decision F3 pending:** today's path launches a separate instance with a temporary profile (LAWS: benchmark-only)
 and takes focus. Real-profile use needs the relaunch flow (1.3.1). Options: 1) measure Electron for the claim on the native path users
 get today and release Electron turbo with the relaunch flow, 2) build the relaunch flow now. sleight-arch recommends 1. The Electron claim
 tasks (vscode-edit, cursor-edit; LAWS) have not run for any arm; the Astra Electron lane found `open -n -g` editor launches take focus
