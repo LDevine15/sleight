@@ -319,3 +319,32 @@ test('a home path in a cell error is scrubbed before the receipt\'s secret check
   assert.ok(!receipt.validation.errors.includes('SECRET_OUTPUT'), receipt.validation.errors.join(' '));
   assert.ok(validateReceipt(receiptWith([], { note: '/Users/pat/x' })).errors.includes('SECRET_OUTPUT'), 'an unscrubbed path still fails');
 });
+
+// H3: the disconnect cell reads the host's own status after the worker is gone. Retained means owned with the pipe
+// ready or resumably parked; an app that quit on the drop or a quit through the app is not retained.
+test('pipeRetained reads the host status after a worker drop: parked and resumable is retained, a closed pipe or a quit is not', async t => {
+  const { pipeRetained } = await import('../bench/electron-qualification-live.mjs');
+  const { makeHost, connectWorker, until } = await import('./direct-browser-electron-host-fixture.mjs');
+  const host = async () => { const h = await makeHost(); t.after(() => { h.host._crashForTest(); h.state.remove(); }); await h.host.start({ build: 'fake-build' }); return h; };
+  let h = await host();
+  const w = await connectWorker(h.host, 'w');
+  assert.equal(pipeRetained(h.host.status()), true, 'connected');
+  await w.connection.disconnect(w.connection.session);
+  await until(() => h.host.status().channels === 0, 'worker dropped');
+  assert.equal(pipeRetained(h.host.status()), true, `after the drop: ${JSON.stringify(h.host.status().broker)}`);
+  h = await host();
+  await connectWorker(h.host, 'w');
+  h.world.alive = false; h.app.output.end(); // the app quits on its own, as on pipe EOF
+  await until(() => h.host.status().broker?.state !== 'ready', 'app gone');
+  assert.equal(pipeRetained(h.host.status()), false, `app gone: ${JSON.stringify(h.host.status())}`);
+  assert.equal(pipeRetained({ ownership: { state: 'free' }, broker: { state: 'collected' } }), false);
+  assert.equal(pipeRetained({ ownership: 'owned', broker: 'ready' }), false, 'the worker row\'s strings are not a host status');
+});
+
+test('the live disconnect cell drops the worker before it reads the host status, through the driver\'s own admin', () => {
+  const live = readFileSync(new URL('../bench/electron-qualification-live.mjs', import.meta.url), 'utf8');
+  const body = live.slice(live.indexOf('async disconnect()'), live.indexOf('async reconnect('));
+  assert.ok(body.indexOf('drop(active)') > 0 && body.indexOf('drop(active)') < body.indexOf('driverAdmin()'), body);
+  assert.ok(body.includes('pipeRetained('), body);
+  assert.ok(body.includes('.close'), 'the driver closes its admin so the reconnecting worker can take the host');
+});

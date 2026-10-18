@@ -60,6 +60,10 @@ export function recipeFromBundle({ app, derived, executable, sha256, bundlePath,
     joinTolerance: 2, focusEmulation: false, zoomLevel: 0, qualified: false };
 }
 
+/** The host's own status (electron-host status()) still holds the app's pipe: owned, and ready or parked resumably. */
+export const pipeRetained = status => status?.ownership?.state === 'owned' &&
+  (status.broker?.state === 'ready' || status.broker?.state === 'parked' && status.broker.parked?.resumable === true);
+
 export function parseCodesign(stderr) {
   const lines = String(stderr).split('\n'), field = key => lines.find(line => line.startsWith(key + '='))?.slice(key.length + 1) ?? null;
   return { signer: field('Authority'), team: field('TeamIdentifier'), cdhash: field('CDHash') };
@@ -212,10 +216,13 @@ function liveDriver(app, { root, exec, observer }) {
     async appAlive() { return !!current && await alive(current.pid); },
     async revoke() { await active.send('revoke'); },
     async resume() { await active.send('resume'); },
+    // Retention is read after the worker is gone, from the host itself; the driver's admin closes before the reconnect.
     async disconnect() {
-      const status = (await active.send('status')).status;
       await drop(active);
-      return { appAlive: await driver.appAlive(), pipeRetained: status?.ownership === 'owned' || status?.broker === 'ready' };
+      const admin = await driverAdmin();
+      let status;
+      try { status = await admin.status(); } finally { await admin.close?.(); }
+      return { appAlive: await driver.appAlive(), pipeRetained: pipeRetained(status) };
     },
     // In the live worker: release and select again (a new turn, the session grant). Without one: a new worker and its card.
     async reconnect({ consentWaitMs } = {}) {
