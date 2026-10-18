@@ -81,6 +81,7 @@ import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode
 import { promptNotice } from './prompt-notice.mjs';
 export { promptNotice };
 import { dropRepeatedText } from './repeated-text.mjs';
+import { ruleDelivery } from './rule-delivery.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
 import { createResultBudget, requestsFullDocumentation } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
@@ -724,6 +725,7 @@ export function createRelay({
   // 156.3 s and 9/10 against 149.4 s and 10/10), with more Excel turns.
   compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE === '1',
   firstCallRules,
+  dedupeRules = process.env.SLEIGHT_DEDUPE_RULES === '1',
   // The first-call rules go before the result's first window tree, so the last thing Claude reads is the
   // answer-bearing tree. With 5 KB of rules after preview-read's 2.3 KB tree, Haiku thought on turn 2 in 5/5
   // sleight runs against 2/5 for Peekaboo (2026-10-17). SLEIGHT_RULES_FIRST=0 keeps them last, for the A/B.
@@ -1154,6 +1156,8 @@ export function createRelay({
   let docsShown = false;
   let deferredEngineDocs = [], clientJsDelivered = false, deferredRules;
   // Once per session: Claude keeps them in context across engine restarts.
+  const ruleBlocks = dedupeRules ? ruleDelivery() : undefined;
+  const ruleItem = text => ruleBlocks ? ruleBlocks.item(text) : ({ type: 'text', text });
   let rulesShown = false;
   let browserRulesShown = false;
   const browserRules = firstCallRules?.match(/## Browsers\n[\s\S]*?(?=\n## |$)/)?.[0];
@@ -2007,6 +2011,7 @@ export function createRelay({
     if (modelVisible && Array.isArray(msg.result?.content)) {
       msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(aliasNotices(dropRepeatedText(msg.result.content)),
         { id: msg.id, native: !!msg.result._meta?.['codex/toolSurface']?.app?.appId }) } };
+      if (ruleBlocks) msg.result.content = ruleBlocks.apply(msg.result.content);
       browserStale.observe(msg.result.content);
       saveReceipted ||= msg.result.content.some(c => c.type === 'text' && /\bsaved: observed [^\n]*; on disk: /.test(c.text ?? ''));
     }
@@ -2894,7 +2899,7 @@ export function createRelay({
         const rendered = result.text;
         const content = [{ type: 'text', text: rendered }];
         const rules = rulesFor(true);
-        if (rules) content.push({ type: 'text', text: rules });
+        if (rules) content.push(ruleItem(rules));
         toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: result.isError,
           content } }, delivered => {
           // Baselines and submit fences advance only after the exact projection
@@ -3881,11 +3886,12 @@ export function createRelay({
         /\bcua\.(?:getBrowser|getTab|createBrowserTab|listBrowsers|listTabs)\s*\(/.test(jsCode ?? ''));
       let rules = (docs || browserResult) && rulesFor(browserResult);
       if (rules && openRules === 'short' && !browserResult && String(msg.id).startsWith('sleight-open-file-')) {
-        deferredRules = { type: 'text', text: rules };
+        deferredRules = ruleItem(rules);
         rules = openFileRules(rules);
       }
       if (rules) {
         const item = { type: 'text', text: rules + (docs ? promptNotice('\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.', prompt) : '') };
+        if (ruleBlocks) Object.assign(item, ruleBlocks.item(item.text));
         msg.result.content = rulesFirst ? beforeFirstTree(msg.result.content, item) : [...msg.result.content, item];
       }
       if (docs) docsShown = true;
