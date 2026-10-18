@@ -84,6 +84,56 @@ const EDITOR_SETTINGS = { 'update.mode': 'none', 'telemetry.telemetryLevel': 'of
   'extensions.autoUpdate': false, 'workbench.enableExperiments': false, 'workbench.tips.enabled': false };
 const EDITOR_HELPER = fileURLToPath(new URL('./real-electron.js', import.meta.url));
 
+// A browser opened by this run may quit only its observed process. Existing instances stay running.
+// Reuse the editor's AppKit/AX helper rather than sending an Automation event to the app.
+export async function openPidFixture(ctx, { app, bundle, target }, {
+  open = openBackground, run = runOwned, exited = processExitConfirmed,
+} = {}) {
+  const helper = async (mode, extra = {}) => {
+    const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', EDITOR_HELPER,
+      JSON.stringify({ mode, bundle, ...extra })], { timeoutMs: 45000,
+      signal: mode === 'table' ? ctx.signal : ctx.cleanupSignal });
+    const event = receipt(result, mode);
+    if (!result.groupClean || result.exit?.code !== 0 || !event) throw new Error(`${app} ${mode === 'quit' ? 'quit' : 'inventory'} unconfirmed`);
+    return event;
+  };
+  const valid = row => row && Number.isSafeInteger(row.pid) && row.pid > 0 && row.bundle === bundle &&
+    typeof row.path === 'string' && row.path.startsWith('/') && Number.isFinite(row.launchedAtMs) && row.launchedAtMs > 0;
+  ctx.signal?.throwIfAborted();
+  const { processes: before } = await helper('table');
+  if (!Array.isArray(before) || !before.every(valid)) throw new Error(`${app} process identity unconfirmed`);
+  if (before.length > 1) throw new Error(`${app} fixture launch ambiguous`);
+  const lease = { app, bundle, launched: before.length === 0, running: before.length > 0,
+    async close() {},
+    async dispose() { return true; },
+    async quit() {
+      if (!lease.launched || lease.appQuit) return;
+      await ctx.beforeFixtureCleanup?.();
+      ctx.cleanupSignal?.throwIfAborted();
+      if (!lease.pid) throw new Error(`${app} launch identity unconfirmed; quit refused`);
+      await helper('quit', { pid: lease.pid, appPath: lease.path, launchedAtMs: lease.launchedAtMs });
+      let gone = false, failure;
+      try { gone = await exited(lease.pid, lease.launchedAtMs); } catch (error) { failure = error.message; }
+      if (!gone) {
+        (ctx.exitDisagreements ??= []).push({ app, bundle, step: 'quit', pid: lease.pid });
+        throw new Error(`Owned ${app} exit disagreement after quit: ${failure || `pid ${lease.pid} is still running`}; live lock kept`);
+      }
+      lease.appQuit = true;
+    },
+  };
+  (ctx.windowLeases ??= []).push(lease);
+  ctx.electronLease = lease;
+  ctx.signal?.throwIfAborted(); ctx.cleanupSignal?.throwIfAborted();
+  if (lease.launched) {
+    // Keep the launch receipt even if the run is cancelled while AppKit is launching it.
+    const { process: row } = await helper('launch', { target });
+    if (!valid(row)) throw new Error(`${app} launch identity unconfirmed`);
+    Object.assign(lease, row);
+  } else if (target !== undefined) await open(bundle, target);
+  ctx.signal?.throwIfAborted();
+  return lease;
+}
+
 // -n starts a new instance even while the owner's runs; its own --user-data-dir keeps it from handing the file to theirs.
 export function editorLaunchArgs(appPath, root, target) {
   return ['-n', '-g', '-a', appPath, '--args', `--user-data-dir=${join(root, 'profile')}`, `--extensions-dir=${join(root, 'extensions')}`,
