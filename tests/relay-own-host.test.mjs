@@ -118,3 +118,59 @@ test('ordinary apps are unaffected: getApp, a read, an action, an approval and t
   h.call(5, 'hover', { app: 'Chess', at: [1, 1] }); await settle();
   assert.deepEqual(h.ran, ['menu_bar', 'hover']);
 });
+
+// Review follow-ups (sleight-arch, 2026-10-18): other spellings, computed names, and approval paths that came first.
+// A computed getApp is an action, so it needs a window read first.
+async function leased(h) {
+  h.js(100, 'let app = await cua.getApp("TextEdit")'); await settle();
+  h.fromServer(read(100, 'TextEdit', 'com.apple.TextEdit')); await settle();
+}
+test('engine: other spellings of the host in getApp are refused before the engine', async t => {
+  const h = harness(t);
+  const spellings = ['cua.getApp ("consent-host")', "cua . getApp ( 'consent-host' )", 'cua["getApp"]("consent-host")',
+    "cua.getApp('consent\\x2dhost')", 'cua.getApp("consent\\u002dhost")', 'cua.getApp("consent\\u{2d}host")', 'cua.getApp(`consent-host`)',
+    'cua.getApp("consent" + "-host")', "cua.getApp('consent' + `-` + \"host\")", 'cua.getApp("Consent Host")', 'cua.getApp("consent_host.app")',
+    'cua.getApp(" 4242 ")', `cua.getApp(${JSON.stringify(HOST_FILE.toUpperCase())})`];
+  for (const [i, spelling] of spellings.entries()) {
+    h.js(i + 1, `let card = await ${spelling}`); await settle();
+    refused(h, i + 1);
+  }
+});
+
+test('engine: a computed getApp goes to the engine, and its approval card is the backstop: declined for a name, alias, file or pid', async t => {
+  for (const app of ['consent-host', 'Consent Host', 'consent_host', HOST_FILE, HOST_PID, String(HOST_PID), undefined]) {
+    const h = harness(t);
+    await leased(h);
+    h.js(1, 'let card = await cua.getApp(names[3])'); await settle();
+    assert.equal(h.sent(1), true, 'a computed name can only be checked when the engine names it');
+    h.fromServer({ jsonrpc: '2.0', id: 'e1', method: 'elicitation/create', params: { message: 'Allow Computer Use to use "consent-host"?',
+      _meta: { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: app === undefined ? {} : { app } } } });
+    await settle();
+    assert.deepEqual(h.toServer.find(m => m.id === 'e1')?.result, { action: 'decline' }, String(app));
+    h.fromServer({ jsonrpc: '2.0', id: 1, result: { isError: true, content: [{ type: 'text', text: 'The user declined.' }] } }); await settle();
+    assert.equal(h.reply(1).result.content[0].text, OWN, String(app));
+  }
+});
+
+test('engine: in document scope the host\'s card is declined before the document question is asked', async t => {
+  const asked = [];
+  const h = harness(t, { relay: { approvalScope: 'document', ask: async (...args) => { asked.push(args); return 'accept'; } } });
+  h.js(1, 'let card = await cua.getApp("Some Alias")'); await settle();
+  assert.equal(h.sent(1), true, 'a window read in document scope, by a name that the engine resolves to the host');
+  h.fromServer({ jsonrpc: '2.0', id: 'e1', method: 'elicitation/create', params: { message: 'Allow Computer Use to use "consent-host"?',
+    _meta: { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: { app: 'consent-host' } } } });
+  await settle();
+  assert.deepEqual(h.toServer.find(m => m.id === 'e1')?.result, { action: 'decline' });
+  assert.deepEqual(asked, []);
+});
+
+test('fuzzy matching stays on the host: near names of ordinary apps are not refused', async t => {
+  for (const value of ['Consent Manager', 'Hostess', 'consent-host-viewer', 'consenthostviewer.app', 'Consent Hosting']) assert.equal(isOwnHost(value), false, value);
+  const h = harness(t);
+  h.js(1, 'let app = await cua.getApp("Consent Manager")'); await settle();
+  assert.equal(h.sent(1), true);
+  h.fromServer({ jsonrpc: '2.0', id: 'e1', method: 'elicitation/create', params: { message: 'Allow Computer Use to use "Consent Manager"?',
+    _meta: { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: { app: 'Consent Manager' } } } });
+  await settle();
+  assert.notDeepEqual(h.toServer.find(m => m.id === 'e1')?.result, { action: 'decline' });
+});

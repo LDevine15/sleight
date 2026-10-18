@@ -84,7 +84,7 @@ import { dropRepeatedText } from './repeated-text.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
 import { createResultBudget, requestsFullDocumentation } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
-import { OWN_HOST_LINE, isOwnHost, ownHostPid as isOwnHostPid } from './own-host.mjs';
+import { OWN_HOST_LINE, isOwnHost, mentionsOwnHost, namesOwnHost as appNamesOwnHost, getAppTargets, ownHostPid as isOwnHostPid } from './own-host.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
 import { fillFormCode } from './fill-form.mjs';
 import { dragToCode } from './drag-to.mjs';
@@ -1550,18 +1550,17 @@ export function createRelay({
   function ownStop(msg) {
     toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: OWN_HOST_LINE }] } });
   }
-  // A local tool's app, a js call's getApp literals (a name, a path or a pid), and the windows its handles hold from reads.
+  // A local tool's app, a js call's getApp literals (a name, a path or a pid, however spelled), and the windows its
+  // handles hold from reads. A computed getApp reaches the engine, whose approval card for the host is declined.
   function namesOwnHost(name, args) {
     if (name !== 'js') return isOwnHost(args.app);
     const code = String(args.code ?? '');
-    for (const match of code.matchAll(/\bcua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`[^`$\\]*`|\d+)\s*\)/g)) {
-      let literal = match[1];
-      if (literal.startsWith('"')) { try { literal = JSON.parse(literal); } catch { literal = literal.slice(1, -1); } }
-      else if (/^['`]/.test(literal)) literal = literal.slice(1, -1);
-      if (isOwnHost(literal) || (/^\s*\d+\s*$/.test(literal) && ownHostPid(Number(literal)))) return true;
-    }
-    return [...codeOnly(code).matchAll(HANDLE_CALL)].some(match => ownWindow(handleBundles.get(match[1])));
+    return getAppTargets(code).some(target => appNamesOwnHost(target, ownHostPid)) ||
+      [...codeOnly(code).matchAll(HANDLE_CALL)].some(match => ownWindow(handleBundles.get(match[1])));
   }
+  // The engine's approval card names the host by its app (a name, alias, path or pid) or in its message.
+  const ownApproval = msg => isAppApproval(msg) &&
+    (appNamesOwnHost(msg.params?._meta?.tool_params?.app, ownHostPid) || mentionsOwnHost(msg.params?.message));
 
   function failLease(error) {
     directBrowser?.end();
@@ -3584,6 +3583,14 @@ export function createRelay({
       return;
     }
     if (stopCollected || (msg.method === undefined && stoppedClients.has(msg.id))) return;
+    if (ownApproval(msg)) {
+      // sleight's own consent host is declined without asking, before any other approval path (document scope, warm-up
+      // prompts, the pre-approved list); the call that asked reaches Claude as the line.
+      trace('own-host-approval', { id: msg.id });
+      for (const id of running) if (!localRunning.has(id)) withheld.set(id, OWN_HOST_LINE);
+      toServer({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline' } });
+      return;
+    }
     // Engine permission tokens have no parent RPC ID. Fail closed until even a late
     // private reply settles, rather than showing or accepting a warm-up prompt.
     if (msg.method === 'elicitation/create' && privateWarmRequests.size) {
@@ -4203,13 +4210,6 @@ export function createRelay({
     if (engineForbiddenTargets && isAppApproval(msg)) {
       const warning = forbiddenTargetWarning(msg.params?._meta?.tool_params?.app);
       if (warning && msg.params) msg.params.message = `${msg.params.message ?? 'Allow Computer Use?'} ${warning}`;
-    }
-    if (isAppApproval(msg) && isOwnHost(msg.params?._meta?.tool_params?.app)) {
-      // sleight's own consent host is declined without asking; the call that asked reaches Claude as the line.
-      trace('own-host-approval', { id: msg.id });
-      for (const id of running) if (!localRunning.has(id)) withheld.set(id, OWN_HOST_LINE);
-      toServer({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline' } });
-      return;
     }
     if (isAppApproval(msg)) {
       // Observation only: the answer below is unchanged. The light check needs the key's time.
