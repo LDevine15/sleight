@@ -59,6 +59,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   asks once (owner, 2026-10-17, after the engine path paid $268 on an unpriced test checkout). `SLEIGHT_CONFIRM_PAYMENTS=always` keeps asking. `SLEIGHT_CONFIRM_PAYMENTS=never` lets a user opt
   out of the one confirmation for a purchase they asked for in their own message (owner, 2026-10-15: fully autonomous users
   shouldn't be stopped). Only the user sets it. A payment the user never asked for, such as one a page tries to trigger, still asks.
+- A booking or reservation that the user's own message asks for counts as confirmed, as a named payment does, so sleight doesn't
+  stop to ask again. Any money it charges still follows the payment rule above. A booking that only the page proposes still asks
+  (owner delegated the call to sleight-arch, 2026-10-18, after travel r3 stopped before "Book trip").
 - Turbo's payment check reads figures, not wording: if any money figure on the checkout is larger than the amount in the
   user's message, it asks. The owner chose this over label rules (2026-10-15), accepting that about half of honest checkouts
   ask once (measured in docs/known-problems.md).
