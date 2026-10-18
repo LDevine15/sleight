@@ -549,6 +549,42 @@ test('AB3: a refusal on a fresh read leaves binding on', async () => {
   assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
 });
 
+// FM2 (Firefox travel, 2026-10-18): a date picker rebuilt its buttons after the first pick, and the batched second click
+// failed with a native error instead of the engine's "invalid element ID".
+test('FM2: AXError.invalidUIElement on a bound click gets the same fresh tree, keeps the error, resends nothing', async () => {
+  let stale = false;
+  const rows = '\t1 button First\n\t2 button Second';
+  const f = fixture({ strict: true, current: () => { stale = false; return tree(expected, rows); },
+    action: () => {
+      if (stale) throw new Error('Accessibility error: AXError.invalidUIElement');
+      stale = true;
+    } });
+  await assert.rejects(f.run('await app.click(1); await app.click({ label: "Second" }); await app.click(1);', { bind: true, guardStopMark: '[stop]' }),
+    /Accessibility error: AXError\.invalidUIElement/);
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
+  assert.equal(f.output.filter(line => typeof line === 'string' && line.startsWith(GUARD_MARK)).length, 1);
+  assert.ok(f.output.includes(GUARD_MARK + tree(expected, rows) + GUARD_END));
+  const receipt = JSON.parse(f.output.find(line => line.startsWith('[stop]{"index"')).slice(6));
+  assert.equal(receipt.refused, true); assert.equal(receipt.bound, true); assert.equal(receipt.fresh, true);
+  assert.match(receipt.error, /AXError\.invalidUIElement/);
+  // The binding is cleared: the next call reads before each action instead of trusting a capture.
+  f.calls.length = 0;
+  await f.run('await app.click(1); await app.click(2);', { bind: true });
+  assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read', 'click', 'read']);
+});
+
+for (const [name, message] of [['elementHasNoFrame', 'Computer Use server error -10005: elementHasNoFrame'],
+  ['an unrelated accessibility error', 'Accessibility error: AXError.cannotComplete'], ['a timeout', 'timed out']])
+  test('FM2: ' + name + ' gets no recovery read and no refusal receipt', async () => {
+    let stale = false;
+    const f = fixture({ strict: true, current: () => { stale = false; return tree(expected, '\t1 button First\n\t2 button Second'); },
+      action: () => { if (stale) throw new Error(message); stale = true; } });
+    await assert.rejects(f.run('await app.click(1); await app.click(2);', { bind: true, guardStopMark: '[stop]' }), error => error.message === message);
+    assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click']);
+    assert.equal(f.output.filter(line => typeof line === 'string' && line.startsWith(GUARD_MARK)).length, 0);
+    assert.equal(JSON.parse(f.output.find(line => line.startsWith('[stop]{"index"')).slice(6)).refused, undefined);
+  });
+
 test('bind checks a computed number against the code read after another action', async () => {
   let acted = false;
   const f = fixture({ strict: true, current: () => tree(expected, acted ? '\t1 button First\n\t2 button Other' : '\t1 button First\n\t2 button Second'),

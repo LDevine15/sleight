@@ -944,8 +944,11 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             // (Firefox travel, 2026-10-17: a diff read, a full read and a lone click followed, 9.4 s). The stop stays
             // and nothing is resent. It carries a fresh tree for the relay's note, when one comes within
             // REFUSAL_READ_MS, and the window reads before each numbered or named action for a while, so the rest
-            // can go in one call.
-            if (/\\bis an invalid element ID\\b/.test(String(error?.message ?? error))) {
+            // can go in one call. The macOS accessibility error "AXError.invalidUIElement" is the same loss seen
+            // from the native side (Firefox travel, 2026-10-18: 6.3 s of reads before the retry). It recovers the same
+            // way. "elementHasNoFrame" does not: an element scrolled out of view has no frame either (a virtual list's
+            // overscan row, same race), so nothing in that text says the element is gone.
+            if (/\\bis an invalid element ID\\b|\\bAXError\\.invalidUIElement\\b/.test(String(error?.message ?? error))) {
               attempt.refused = true;
               if (attempt.bound) state.staleCaptures.set(captureKey(observed), STALE_PASSES);
               state.binding = undefined;

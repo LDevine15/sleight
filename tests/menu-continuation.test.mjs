@@ -317,6 +317,16 @@ test('AB3: a refusal note maps the rest by ID, label and seen line, with ? for a
     'and the element changed (perhaps replaced by an earlier action). Nothing after it was sent. This result\'s window is current. sleight now reads this window before each numbered or named action, so the rest can go in one call.');
 });
 
+test('FM2: a native invalidUIElement refusal gets the same note, with no element number to name', () => {
+  const plan = splitMenuActions('await app.click(1); await app.click({ label: "Second" }); await app.click(3);');
+  const content = [{ type: 'text', text: GUARD_MARK + 'Window: "a", App: A.\n0 standard window a\n\t2 button Second' + GUARD_END }];
+  const refusal = { index: 1, completed: 1, name: 'click', refused: true, bound: true, fresh: true, error: 'Accessibility error: AXError.invalidUIElement' };
+  const note = stopNote(refusal, plan, 0, { content, seen: {}, uniqueSeen: [] });
+  assert.match(note, /^sleight: this call ran 1 action \(click 1\); the engine refused the next click: its number came from/);
+  assert.doesNotMatch(note, /element \d/);
+  assert.match(note, /Not sent after it: click 3\./);
+});
+
 test('AB3 review: a seen line maps only when it was unique and carries an ID, Description or Help', () => {
   const plan = splitMenuActions('await app.click(1); await app.click(15); await app.click(16);');
   const fresh = 'Window: "a", App: A.\n0 standard window a\n\t1 button First\n\t20 button Description: 15\n\t21 button Plain';
