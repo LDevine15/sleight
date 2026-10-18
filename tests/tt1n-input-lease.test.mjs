@@ -847,10 +847,10 @@ for (const [name, options, reason] of [
   ['the baseline flag', { tabContinuation: false }, 'off'],
   ['careful mode', { guardMode: 'careful' }, 'careful'],
   ['user HID input since the call began', { nativeChange: 'focus' }, 'hid-input'],
-  ['another window in front', { nativeChange: 'window' }, 'identity: Input lease: the selected window number changed. Read the intended window again before acting.'],
-  ['the window no longer focused', { nativeChange: 'unfocused' }, 'identity: Input lease: the native window changed. Read the intended window again before acting.'],
+  ['another window in front', { nativeChange: 'window' }, 'identity: Input lease: the selected window number changed. Changed target identity. Read the intended window again before acting. Next: await cua.getApp("org.test.editor").'],
+  ['the window no longer focused', { nativeChange: 'unfocused' }, 'identity: Input lease: the native window changed. Unconfirmed target identity. Read the intended window again before acting. Next: await cua.getApp("org.test.editor").'],
   ['a new process', { identity: (expected, native, count) => ({ ...expected, ...native, matches: 1, epoch: 'helper', window: 1,
-    pid: count === 1 ? 123 : 456, processStart: 1 }) }, 'identity: Input lease: the native window or its process changed. Read the intended window again before acting.'],
+    pid: count === 1 ? 123 : 456, processStart: 1 }) }, 'identity: Input lease: the native window or its process changed. Changed target identity. Read the intended window again before acting. Next: await cua.getApp("org.test.editor").'],
   ['a sheet only the helper sees', { focus: { ...fieldFocus, sheets: 1 } }, 'native-sheet'],
   ['a password field in focus', { focus: { ...fieldFocus, role: 'AXTextField', subrole: 'AXSecureTextField' } }, 'secure-field'],
   ['focus outside the window', { focus: { ...fieldFocus, inWindow: false } }, 'focus-outside-window'],
@@ -916,7 +916,7 @@ test('AB1 review: a helper that matches other than one window never continues', 
   for (const matches of [0, 2]) {
     const h = await tabFixture(t, { identity: tabIdentity(count => count === 2 ? { matches } : {}) });
     stoppedAtTab(h, await h.call(tabCall));
-    assert.deepEqual(h.refusals, [`identity: Input lease: window identity is ambiguous (${matches} matching windows). Read the intended window again before acting.`]);
+    assert.deepEqual(h.refusals, [`identity: Input lease: window identity is ambiguous (${matches} matching windows). Unconfirmed target identity. Read the intended window again before acting. Next: await cua.getApp("org.test.editor").`]);
   }
 });
 

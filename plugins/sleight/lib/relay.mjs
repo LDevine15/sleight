@@ -823,6 +823,8 @@ export function createRelay({
   const internalRequests = new Map();
   let tabsMayNeedCleanup = false;
   const openedReads = new Set();
+  // Results that already got their error notices. The opened-tab probe sends the same result through again.
+  const errorNoted = new WeakSet();
   let tabCleanupPending;
   const tabCleanupNotes = new Map();
   const turnEndCalls = new Map(); // request id -> original turn arguments, until acknowledgement
@@ -3601,6 +3603,8 @@ export function createRelay({
     if (msg.method === undefined && browserCalls.has(msg.id)) {
       pendingBrowser = browserCalls.get(msg.id); browserCalls.delete(msg.id);
     }
+    // The opened-tab note belongs on the engine's own last text, not on a notice sleight adds below.
+    const engineLastText = Array.isArray(msg.result?.content) ? msg.result.content.findLastIndex(c => c.type === 'text') : -1;
     if (turboUnavailable && !turboNoticeShown && pendingBrowser && Array.isArray(msg.result?.content) &&
         (msg.result._meta?.['codex/toolSurface']?.kind === 'browserUse' || msg.result._meta?.['codex/toolSurface']?.app?.appId === undefined &&
           /\bcua\.(?:getBrowser|getTab|createBrowserTab|listBrowsers|listTabs)\s*\(/.test(jsCalls.get(msg.id) ?? ''))) {
@@ -3608,7 +3612,9 @@ export function createRelay({
       msg.result.content.push({ type: 'text', text: promptNotice(`Tell the user: Turbo is off (${turboUnavailable}). The engine browser path is available. Check turbo settings and run sleight-mcp --doctor before retrying turbo.`, prompt) });
     }
     const jsCode = msg.method === undefined ? jsCalls.get(msg.id) : undefined;
-    if (jsCode !== undefined && (msg.error || msg.result?.isError)) {
+    const firstPass = !errorNoted.has(msg);
+    errorNoted.add(msg);
+    if (firstPass && jsCode !== undefined && (msg.error || msg.result?.isError)) {
       const text = msg.error?.message ?? (msg.result.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
       const missing = /^(?:Error: )?TypeError: ([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*) is not a function\b/m.exec(text);
       if (missing && !browserHandles.has(missing[1]) && (missing[1] === 'app' || nativeHandles.has(missing[1]))) {
@@ -3617,7 +3623,7 @@ export function createRelay({
         else msg.result.content.push({ type: 'text', text: advice });
       }
     }
-    const initializationNote = jsCode !== undefined && initializationAdvice(msg.result?.content, !!msg.error || !!msg.result?.isError, jsCode);
+    const initializationNote = firstPass && jsCode !== undefined && initializationAdvice(msg.result?.content, !!msg.error || !!msg.result?.isError, jsCode);
     if (initializationNote) msg.result.content.push({ type: 'text', text: promptNotice(initializationNote, prompt) });
     if (msg.method === undefined && syntaxOrigins.has(msg.id)) {
       const origin = syntaxOrigins.get(msg.id); syntaxOrigins.delete(msg.id);
@@ -3647,7 +3653,7 @@ export function createRelay({
           if (generation !== stopGeneration) return;
           const text = (reply.result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
           const opened = parseOpenedPayload(text, original.id);
-          const lastText = original.result.content.findLastIndex(c => c.type === 'text');
+          const lastText = engineLastText >= 0 ? engineLastText : original.result.content.findLastIndex(c => c.type === 'text');
           original.result.content = original.result.content.map((c, i) => {
             if (c.type !== 'text') return c;
             const text = rewritten(c.text);
