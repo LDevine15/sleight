@@ -108,6 +108,22 @@ test('a sign-in the user asked for is completed, and nothing a page offers count
   }
 });
 
+// FT1a: form-travel (race-1017): 0 of 6 Safari and Firefox runs used app.pickFromList on the 1,000-row airport list,
+// which the skill offered only after scrolling failed; 5 wrote scroll-and-read loops (Safari r2: 18.3 and 16.4 s, the
+// first running to the end without the row). Both prompts make it the first move, outside the deferred Browsers section.
+test('both skills make app.pickFromList the first move on a list with more rows than it shows', () => {
+  for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }]) {
+    const rules = skillRules(undefined, env);
+    const outside = rules.replace(/## Browsers\n[\s\S]*?(?=\n## |$)/, '').replace(/\s+/g, ' ');
+    const first = outside.search(env.SLEIGHT_PROMPT
+      ? /Long list: click it, then `await app\.pickFromList\("<whole row text>"\)`\. Skip scroll loops\./
+      : /more rows than it shows: click it, then `await app\.pickFromList\("<whole row text>"\)` in that call\. Skip scrolling, typed prefixes and read loops\./);
+    assert.ok(first >= 0, JSON.stringify(env));
+    assert.doesNotMatch(outside, /In a focused sorted list/);
+    if (!env.SLEIGHT_PROMPT) assert.ok(outside.indexOf('If it stops, search or use keys.') > first, 'search and keys stay the fallback');
+  }
+});
+
 // R4: Firefox races (2026-10-18) opened a new tab in 12/12 Haiku runs and called nonexistent cua.listWindows/listBrowsers in 5.
 // Engine-path browser sessions never see the Browsers section, so the navigation line sits outside it.
 test('native sessions learn to navigate a browser outside the Browsers section', () => {

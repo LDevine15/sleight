@@ -131,6 +131,18 @@ test('SLEIGHT_PROMPT=lean gives the loop note its lean wording', () => {
   assert.ok(third.includes(lean) && !third.includes(SCROLL_LOOP_NOTE));
 });
 
+// FT1a: the note fired in 2 of 3 Safari form-travel runs (race-1017), and the next call wrote the loop it described
+// (r3: 3 reads, row not found; r2: 18.3 and 16.4 s). It names the paging helper first and the loop only after it stops.
+test('the scroll note names app.pickFromList before any loop, in both prompts', () => {
+  for (const prompt of [undefined, 'lean']) {
+    const note = promptNotice(SCROLL_LOOP_NOTE, prompt);
+    const helper = note.indexOf('`await app.pickFromList("<whole row text>")`'), loop = note.search(/\bloop\b/i);
+    assert.ok(helper > 0, note);
+    assert.ok(loop > helper, note);
+    assert.match(note, /If it stops/);
+  }
+});
+
 test('the third call in a row scrolling one list the same way gets the loop note, once', () => {
   const c = createReadCompactor({ scrollNote: true });
   c.process([text(travel(0))]);

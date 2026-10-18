@@ -269,6 +269,38 @@ test('the confirming read must show the row once and in the same list', async ()
   assert.deepEqual(clicks, []);
 });
 
+// FT1a: the skill now sends a long list here first. Safari's travel list (race-1017 r3) reads "list (settable)" with plain
+// "text <name> <code>" rows, 16 shown, and focus on the list after a row click; the row the task names is a whole label.
+test('the Safari list shape from the travel race is searched and its whole-label row clicked', async () => {
+  const shown = ['Ashbridge International FTZ', 'Ashbridge Point Municipal HBB', 'Norcliff International JUR', 'Norcrest Bay Municipal YLU',
+    'Norcrest Point International MAO', 'Nordale Bay Airport DIT', 'Rosford Valley Field YZB'];
+  const compare = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+  const names = [...new Set([...shown, ...sortedNames(990)])].sort(compare);
+  let position = 0;
+  const keys = [];
+  const tree = async () => {
+    const rows = names.slice(position, position + 16).map((name, i) => `\t\t\t\t\t\t\t${25 + i} text ${name}`);
+    return ['Window: "sleight benchmark — Book a trip · Skyway", App: Safari.', '0 standard window sleight benchmark — Book a trip · Skyway',
+      '\t\t\t\t\t\t23 text Departing from', '\t\t\t\t\t\t24 list (settable) Departing from', ...rows,
+      '\t\t\t\t\t\t41 text Selected: Ashbridge International (FTZ)', '\t\t\t\t\t\t42 button Back', '',
+      'The focused UI element is 24 list (settable) Departing from'].join('\n');
+  };
+  const clicks = [];
+  const run = listPicker({ read: tree, observe() {}, parse: windowFromText, sameElement, sleep: async () => {},
+    expected: { title: 'sleight benchmark — Book a trip · Skyway', app: 'Safari', url: null },
+    press: async key => { keys.push(key); position = Math.max(0, Math.min(names.length - 16, position + (key === 'Page_Down' ? 15 : -15))); },
+    click: async line => { clicks.push(line); } });
+  const result = await run('Norcrest Point International MAO');
+  assert.equal(result.clicked, true, JSON.stringify(result));
+  assert.deepEqual(clicks, ['text Norcrest Point International MAO']);
+  assert.ok(result.reads <= 30, String(result.reads));
+  position = 0; clicks.length = 0;
+  const partial = await run('Norcrest Point');
+  assert.equal(partial.clicked, false);
+  assert.deepEqual(partial.near, ['Norcrest Point International MAO']);
+  assert.deepEqual(clicks, []);
+});
+
 test('a changed window stops the search with its tree and clicks nothing', async () => {
   const names = sortedNames(300), model = fakeList(names);
   const { run, clicks } = picker(model, { read: async () => {

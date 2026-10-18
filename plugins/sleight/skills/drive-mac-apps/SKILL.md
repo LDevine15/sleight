@@ -18,10 +18,10 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - When the task specifies an app, start with `let app = await cua.getApp("<name or bundle ID>")`.
   Use `cua.getState()` only to find an app you can't name. Batch known actions. Re-acquire in a call
   switching apps. Keep the handle and `await` every action.
-- In a form, fill every independent field you already see in one call. Put autocomplete last.
+- In a form, fill every independent visible field in one call. Put autocomplete last.
   `setValue` fields. Observe again after
-  autocomplete, a selection that adds fields or async validation, then use fresh IDs for the next
-  group. Stop at a required confirmation.
+  autocomplete, a field-adding selection or async validation, then use fresh IDs.
+  Stop at a required confirmation.
 - In a browser, `setValue` the address bar and press Return in one call. Send a new tab's URL in that
   call.
 - After renumbering, prefer stable IDs or labels to element numbers:
@@ -56,7 +56,8 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   with the next/previous-tab key.
 - A confirmed save covers that document's sheets and pages. Don't recheck them. Save again after
   later edits.
-- If scrolling fails, use search or keyboard navigation. In a focused sorted list, `await app.pickFromList("<exact row label>")` pages by key and clicks the row.
+- A list with more rows than it shows: click it, then `await app.pickFromList("<whole row text>")` in that call.
+  Skip scrolling, typed prefixes and read loops. If it stops, search or use keys.
 
 ## When to stop
 

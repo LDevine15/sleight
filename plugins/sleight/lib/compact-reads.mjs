@@ -1238,8 +1238,11 @@ const scrollTargets = code => [...maskCode(code).matchAll(/\.\s*scroll\s*\(/g)].
 });
 // Travel's airport search took 15 calls and 88.7 s, 45.7 s of it between calls; one call that scrolled
 // and read in a loop found and selected the airport in 33 s (Firefox, 2026-10-17).
-export const SCROLL_LOOP_NOTE = /* lean notice */ 'sleight: 3 calls in a row scrolled this list. One call can search it: loop up to a fixed count, ' +
-  'scroll, read with getAXState(), and stop when the target shows or the rows stop changing. Then click it and check the last read shows it selected.';
+// The next call wrote the loop this note described in 2 of 3 Safari form-travel runs (race-1017), so the
+// paging helper comes first and the loop only when it stops (not a list, unsorted, or keys that don't page).
+export const SCROLL_LOOP_NOTE = /* lean notice */ 'sleight: 3 calls in a row scrolled this list. In one call, click a row, then ' +
+  '`await app.pickFromList("<whole row text>")`, which pages by key and clicks that row. If it stops, loop up to a fixed count: ' +
+  'scroll, read with getAXState(), and stop when the target shows or the rows stop changing.';
 
 export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false, prompt,
   callTrees = process.env.SLEIGHT_CALL_TREES !== 'all', scrollNote = process.env.SLEIGHT_SCROLL_NOTE !== '0',
