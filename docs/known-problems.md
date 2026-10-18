@@ -536,6 +536,10 @@ native reference, and oversized first results defer the browser reference while 
   fails on some other shared cause, such as every call answering "Turbo is unavailable", is scored as the arm's failures until
   someone writes `harness-failure.json` into its folder by hand. inject-order's answer check accepts the total written as `$16`,
   `$16.00` or `16.00`. Other spellings fail.
+- `vscode-edit` and `cursor-edit` launch their own instance with a temporary profile, but no run has used it live yet. We don't know
+  whether Cursor shows a sign-in or onboarding screen over an empty profile, or whether VS Code and Cursor create
+  `~/.vscode/argv.json` and `~/.cursor/argv.json` outside that profile when those are missing. The Firefox tasks still quit
+  Firefox with an AppleScript `quit`, which is an Apple event.
 
 ## Turbo in unattended runs
 

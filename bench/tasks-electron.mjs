@@ -1,6 +1,6 @@
 import { serveRealPage, serveWebPage, checkForm, checkWeb } from './real-server.mjs';
 import { acquireFixture } from './real-run.mjs';
-import { prepareEditor, setupEditor, checkEditor, openElectron, cleanupElectron } from './real-electron.mjs';
+import { EDITORS, prepareEditor, setupEditor, checkEditor, openElectron, cleanupElectron, promptEditor } from './real-electron.mjs';
 import { CHAT_APPS, prepareChat, setupChat, promptChat, checkChat, cleanupChat,
   expectedChat, labelsChat } from './real-chat.mjs';
 
@@ -9,12 +9,13 @@ const editors = [
   ['cursor-edit', 'Cursor', 'com.todesktop.230313mzl4w4u92'],
 ];
 
+// Each run opens the file in its own instance with a temporary profile (real-electron.mjs). Like the world suite's native
+// tasks, every arm gets the same fixture and a tool-neutral prompt, and claude-cu's card may approve only this app's names.
 const editorTasks = editors.map(([id, app, bundle]) => ({
-  id, app, bundle,
+  id, app, bundle, fixtureLifecycle: true, allowedApps: EDITORS[bundle].names,
   prepare: prepareEditor,
   setup: ctx => setupEditor(ctx, { app, bundle }),
-  prompt: ctx => `Using computer use in the background, open ${ctx.document} in ${app}, replace the word "beta" with "delta", and save that same file. ` +
-    'Leave it open. Do not open, read, modify or close other files or windows.',
+  prompt: ctx => promptEditor(ctx, app),
   check: checkEditor, cleanup: cleanupElectron,
 }));
 
