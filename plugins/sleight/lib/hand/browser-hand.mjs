@@ -52,11 +52,16 @@ export function planBrowserFrame({ op, text, box, toBox, metrics: m, geometry, i
   const zoom = zoomOf(m), originY = m.screenY + m.outerHeight - m.innerHeight * zoom;
   const vv = m.vv && finite(m.vv.offsetLeft, m.vv.offsetTop, m.vv.scale) && m.vv.scale > 0 ? m.vv : { offsetLeft: 0, offsetTop: 0, scale: 1 };
   const toScreen = (x, y) => [m.screenX + (x - vv.offsetLeft) * vv.scale * zoom, originY + (y - vv.offsetTop) * vv.scale * zoom].map(n => Math.round(n * 100) / 100);
-  const centre = b => b && finite(b.x, b.y, b.width, b.height) ? toScreen(b.x + b.width / 2, b.y + b.height / 2) : undefined;
+  const centre = b => b && finite(b.x, b.y, b.width, b.height) ? [b.x + b.width / 2, b.y + b.height / 2] : undefined;
+  // A box scrolled out of the viewport, or read before the click scrolled it in, would map onto the toolbar or address
+  // bar, which is still inside the window: only a centre in the visible viewport gets a hand.
+  const visible = ([x, y]) => x - vv.offsetLeft >= 0 && x - vv.offsetLeft < m.innerWidth / vv.scale && y - vv.offsetTop >= 0 && y - vv.offsetTop < m.innerHeight / vv.scale;
   // A scroll with no ref scrolls the viewport, so the hand goes to its middle.
-  const at = kind === 'scroll' && box === undefined ? toScreen(vv.offsetLeft + m.innerWidth / vv.scale / 2, vv.offsetTop + m.innerHeight / vv.scale / 2) : centre(box);
-  const to = kind === 'drag' ? centre(toBox) : undefined;
-  if (!at || (kind === 'drag' && !to)) return { skip: 'no-box' };
+  const from = kind === 'scroll' && box === undefined ? [vv.offsetLeft + m.innerWidth / vv.scale / 2, vv.offsetTop + m.innerHeight / vv.scale / 2] : centre(box);
+  const end = kind === 'drag' ? centre(toBox) : undefined;
+  if (!from || (kind === 'drag' && !end)) return { skip: 'no-box' };
+  if (!visible(from) || (end && !visible(end))) return { skip: 'offscreen' };
+  const at = toScreen(...from), to = end && toScreen(...end);
   const reason = exposure(at, geometry.window, geometry.windows, geometry.displays, ignorePids) ??
     (to ? exposure(to, geometry.window, geometry.windows, geometry.displays, ignorePids) : undefined);
   if (reason) return { skip: reason };

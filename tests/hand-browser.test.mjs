@@ -49,6 +49,14 @@ test('a hidden tab, a covered or offscreen point, another Space, no box or focus
   assert.deepEqual(plan({ geometry: { ...GEOMETRY, windows: [cover, ...GEOMETRY.windows] } }), { skip: 'covered' });
   assert.equal(plan({ geometry: { ...GEOMETRY, windows: [{ ...cover, pid: 444 }, ...GEOMETRY.windows] }, ignorePids: [444] }).frame.kind, 'click');
   assert.deepEqual(plan({ box: { x: 1500, y: 100, width: 10, height: 10 } }), { skip: 'offscreen' });
+  // Scrolled above the viewport: its centre would map onto the toolbar, inside the window, so the viewport decides.
+  assert.deepEqual(plan({ box: { x: 200, y: -100, width: 100, height: 40 } }), { skip: 'offscreen' });
+  assert.deepEqual(plan({ box: { x: 200, y: 790, width: 100, height: 40 } }), { skip: 'offscreen' }, 'centre at 810, below the 800-pixel viewport');
+  assert.deepEqual(planBrowserFrame({ op: 'drag', box: BOX, toBox: { x: 200, y: -50, width: 10, height: 10 }, metrics: METRICS, geometry: GEOMETRY }), { skip: 'offscreen' });
+  // Under pinch zoom the visible part is innerWidth/scale by innerHeight/scale CSS pixels from the visual viewport's offset.
+  const pinched = { ...METRICS, vv: { offsetLeft: 100, offsetTop: 50, scale: 2 } };
+  assert.deepEqual(plan({ metrics: pinched, box: { x: 750, y: 100, width: 10, height: 10 } }), { skip: 'offscreen' }, '755 is past 100 + 600');
+  assert.equal(plan({ metrics: pinched, box: { x: 650, y: 100, width: 10, height: 10 } }).frame.kind, 'click');
   assert.deepEqual(plan({ geometry: { ok: true, state: 'other-space' } }), { skip: 'other-space' });
   assert.deepEqual(plan({ geometry: { ok: false } }), { skip: 'no-geometry' });
   assert.deepEqual(plan({ box: null }), { skip: 'no-box' });
