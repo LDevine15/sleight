@@ -104,12 +104,13 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
     let outputLock = NSLock()
 
     var status: String?
-    // The two hands from sleight's icon as a menu bar template image (18 points tall), drawn by macOS in the bar's own colour.
-    static let glyph = "iVBORw0KGgoAAAANSUhEUgAAAC0AAAAkCAYAAAAdFbNSAAADj0lEQVR4nM2YW4hNURjHf/ucYyaRXCNGFAnHPfeS3IskSih3UsoDIw9o4oEH18ithCa8IBEPJB6kjFA8Iddi3G/TSJgbbf2Xvra9zaSz95mvVmvvtdZe67/++1vfZUHjlBSQCWn3VBodUM+0tQFWAN2AphqTN9AekBbIMEb7ARuA18Aj4BkwRn2ZsA/ilhRQB9QG2nsDk4EZwDCNs/JD9c9MHtitEbsjgD7AIGCInv1+JzVmfOJq4S9myckCt3zGQkq1QNbp3dU/tUkCG4tdWgJrgQoD8IeKBeqKey+V2jRNgm1Pv9VfbCXwJILdsFKj+kLcIKNU4qwB8wm4DFwBbgKLgYNAlQFaa5jvq7kKkgDtAG8UkLvAfKBEoLcAE4GOGndSIL+bDRYnqcNukaVa/AbQFhgAvAXeAMuBsWKxE/DcgC0HluQD8CABOCWd9uWI2jYB64GhQGfgjtrfS/db/x79t53+I7m0054Wbw+cAy4C86SvHvBQ/WgjHYATQFd5vCnAfbP5oPOJRRwzhcam+tJE9XTprW/2RgMvtYkPUh104Oo1a5G/4D88nS9bge5AmcB6hrFHeq+UWviH8KoO5Cxgrv5KKm7QaWOm6nSofMCT5Dzc4fKAB1KRRQJ3QmwPBPZKt9E8icS6RaqLjTfbbMLJjPpnqr+d3ldocz3N3DmXoAkaLpN2WO+zBapSFqJVIHAvlGPpbAD20KHMeVBk2eoF7JdHc79/sPp8/dwl9zsuYqMF5jk2O2wnniZ76sDeA0apz2epuZ59wNf0bX2/POcMO8BddFgc2OsK1p3jCANWFAHGyyXA4MQO8BrpqAN82jDqUiYLPCu9zQbaYxULuCQQeZ1XezDqcmrQTPHFbdnpxAHvFuAqga4yKdEEHcRtCh+d7Nc3A/IR8Ow02YVLQqu1ESdzxPxNbWaJvjmUD8DjDcNhudpxYIHS/P7AJeCFxnzQXYXLWhIDXSYALpNoaPmmGNrOFatkVE8N5GhR+Vu1eX4KPAaWBeaKVVIqLQTA6fC/WPXHfJVz8W32DqlFOqn7iZTqMyEsOzVx7LpSpf6zxiMmLqXGWgTvHaLKAfN9ojdAGWAh8E4q4QWupMqVCn2WZfBV4gvwCthnrEQiqZEFPVK3PGmx61RgD7BdYKPEecvEZYoWfybwFbpmdZIKXMu6ktfL7SxwDDgKfARWq70hYWXeZR2wSs95vXGvT34BxBkpFy1HC1IAAAAASUVORK5CYII="
+    // Fable's menu bar glove (2026-10-18, picked by the owner): an open glove whose wrist breaks into the icon's square dabs,
+    // with the pointer at its fingertips. A vector template image, drawn by macOS in the bar's own colour.
+    static let glyph = ##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 18" width="24" height="18"><g fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"><line x1="5"  y1="3.5" x2="5"  y2="10"/><line x1="8"  y1="2"   x2="8"  y2="10"/><line x1="11" y1="2.8" x2="11" y2="10"/><line x1="14" y1="4.5" x2="14" y2="10"/><line x1="5.5" y1="12.5" x2="1.8" y2="8.5"/></g><path fill="#000" d="M4 9 H15 V11 L14 13.5 H6 L5 11 Z"/><rect x="6"    y="14.5" width="2"   height="2"   fill="#000"/><rect x="9.5"  y="15"   width="2"   height="2"   fill="#000"/><rect x="13"   y="14.5" width="2"   height="2"   fill="#000"/><rect x="2.5"  y="16"   width="2"   height="2"   fill="#000"/><path fill="#000" d="M16.5 1 L16.5 9.75 L18.6 7.86 L20.4 11.22 L21.68 10.59 L19.95 7.44 L22.94 7.44 Z"/></svg>"##
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if let data = Data(base64Encoded: ConsentHost.glyph), let image = NSImage(data: data) {
-            image.size = NSSize(width: image.size.width * 18 / image.size.height, height: 18)
+        if let data = ConsentHost.glyph.data(using: .utf8), let image = NSImage(data: data) {
+            image.size = NSSize(width: 24, height: 18)
             image.isTemplate = true
             item.button?.image = image
         } else { item.button?.title = "sleight" }
