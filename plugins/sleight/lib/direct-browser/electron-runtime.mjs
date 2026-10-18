@@ -288,10 +288,12 @@ export async function createAppTurn({ connections, binding, consent, ui, depende
   const invalidateRefs = await pick(dependencies, 'invalidateRefs', 'snapshot');
   const base = await pick(dependencies, 'snapshot', 'snapshot'), acknowledgeSnapshot = await pick(dependencies, 'acknowledgeSnapshot', 'snapshot');
   const check = await pick(dependencies, 'check', 'rules'), inspectElement = await pick(dependencies, 'inspectElement', 'rules');
+  // The ghost hand over the app's windows, as over the browser's (hand/browser-hand.mjs). A missing module means no hand.
+  const hand = Object.hasOwn(dependencies, 'hand') ? dependencies.hand : await import('../hand/browser-hand.mjs').then(m => m.sharedBrowserHand(), () => undefined);
   return composeAppTurn(connections.map(connection => {
     const snapshot = createAppSnapshot({ snapshot: base, pages: connection.pages, targets: connection.targets,
       app: { name: connection.instance.name, version: connection.instance.version, pid: connection.instance.pid } });
-    const runners = createAppRunners({ pages: connection.pages, invalidateRefs, check, snapshot, inspectElement, acknowledgeSnapshot });
+    const runners = createAppRunners({ pages: connection.pages, invalidateRefs, check, snapshot, inspectElement, acknowledgeSnapshot, hand });
     const contexts = createAppContexts({ binding, consent, grant: connection.grant, instance: connection.instance, recipe: connection.recipe,
       provider: connection.provider, targets: connection.targets, ui, ...(dependencies.createContext ? { createContext: dependencies.createContext } : {}) });
     return { connection, snapshot, runners, contexts };

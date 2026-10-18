@@ -79,7 +79,7 @@ async function validated(run) {
   throw Error('ELECTRON_HANDOFF_PROBE');
 }
 
-export function createAppRunners({ pages, invalidateRefs, check, snapshot, inspectElement, acknowledgeSnapshot = () => true, now, sleep } = {}) {
+export function createAppRunners({ pages, invalidateRefs, check, snapshot, inspectElement, acknowledgeSnapshot = () => true, now, sleep, hand } = {}) {
   if (typeof pages?.guard !== 'function' || typeof invalidateRefs !== 'function' || typeof check !== 'function' ||
       typeof snapshot !== 'function' || typeof acknowledgeSnapshot !== 'function') throw Error('ELECTRON_HANDOFF_REQUIRED');
   // captures: page -> capture number -> the join it was taken at. delivered: entry state -> the join of the last read the model got.
@@ -107,7 +107,7 @@ export function createAppRunners({ pages, invalidateRefs, check, snapshot, inspe
     return true;
   }
 
-  const runner = createActionRunner({ check, snapshot: read, backgroundClick: (tab, locator, click) => click({}),
+  const runner = createActionRunner({ check, snapshot: read, backgroundClick: (tab, locator, click) => click({}), hand,
     ...(now ? { now } : {}), ...(sleep ? { sleep } : {}) });
   const fill = createFillFields({ check, runSteps, inspectElement, ...(now ? { now } : {}), ...(sleep ? { sleep } : {}) });
 
