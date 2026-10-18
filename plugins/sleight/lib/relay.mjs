@@ -60,7 +60,7 @@ import { randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
-import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot } from './document-scope.mjs';
+import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot, selectedMenuEntry } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './browser-call.mjs';
@@ -225,20 +225,6 @@ const FIRST_CALL_RULE = 'execute exactly one of the API calls shown below, optio
 // entry is cua.getState(), and 50 of 80 runs spent their first turn on it. With this wording 0 of 12
 // did, with turns 7.91 to 7.17 and total time 30.6 s to 27.0 s a run, every run passing (A/B, 2026-10-11).
 const FIRST_CALL_BATCH = 'start with one of the API calls shown below, assigning the app to a variable. For a Mac app you can name, start with `let app = await cua.getApp("Calculator")` (its name or bundle ID): it returns that app\'s UI state. Use cua.getState() only to find an app or browser you can\'t name. When you already know the first actions on that app, put them after it in the same call: sleight acquires the app and checks its window before they run. Chain every later action whose target you already know (keys, text, `{ id }` or `{ label }` clicks) in one call too, but end the call after a shortcut that opens or names a window (Cmd+N, Cmd+O, or Cmd+S on an untitled document): sleight stops the rest of a call when its window changes.';
-// The selected item under the menu bar, as its number and its title.
-function selectedMenuEntry(text) {
-  if (typeof text !== 'string' || /^\d+ menu(?: |$)(?!bar\b)/m.test(text)) return;
-  let bar;
-  for (const line of text.split('\n')) {
-    const item = /^(\t*)(\d+) (.*)$/.exec(line);
-    if (!item) { bar = undefined; continue; }
-    if (bar !== undefined && item[1].length <= bar) bar = undefined;
-    if (/^menu bar(?: |$)/.test(item[3]) && !/^menu bar item\b/.test(item[3])) bar = item[1].length;
-    else if (bar !== undefined && item[1].length === bar + 1 && /\([^)]*\bselected\b[^)]*\)/.test(item[3])) {
-      return { number: item[2], title: item[3].replace(/^menu bar item /, '').replace(/\([^)]*\)\s*/g, '').replace(/,.*$/, '') };
-    }
-  }
-}
 const selectedMenuItem = text => selectedMenuEntry(text)?.number;
 const OPEN_MENU = /^\t*(\d+) menu (?:[^\n]*, )?Secondary Actions: [^\n]*\bCancel\b/m;
 
@@ -249,11 +235,20 @@ const OPEN_MENU = /^\t*(\d+) menu (?:[^\n]*, )?Secondary Actions: [^\n]*\bCancel
 export function openMenuNote(text, prompt, shown = 0) {
   const menu = typeof text === 'string' && OPEN_MENU.exec(text);
   if (menu) return promptNotice(`sleight: a menu is open (element ${menu[1]}). Escape doesn't always close a menu in a background app; \`await app.performSecondaryAction(${menu[1]}, "Cancel")\` does.`, prompt);
-  const number = selectedMenuItem(text);
+  const entry = selectedMenuEntry(text), number = entry?.number;
   if (!number) return;
   if (shown >= 2) return promptNotice(`sleight: a menu may still be stuck open (menu-bar item ${number}), and keys may be swallowed while it is. Check that typing landed (a value or count in the tree changed), and switch route (a toolbar or ribbon control, or a keyboard shortcut) instead of repeating Escape or clicks.`, prompt);
+  // Escape and clicking the menu-bar item left Word's Table menu open or reopened it, and its Cancel action closed it
+  // (word-edit-2, 2026-10-18). The element with Cancel is the item's own line, or its menu read as a root.
+  const cancel = cancelTarget(text, entry.title) ?? number;
   return shown ? `sleight: a menu may still be stuck open (menu-bar item ${number}).` :
-    promptNotice(`sleight: a menu may be stuck open; keys and clicks may not reach the document. Try one Escape; if it stays, click its menu-bar item by number (\`app.click(${number})\`); if it still stays, tell the user.`, prompt);
+    promptNotice(`sleight: a menu may be stuck open; keys and clicks may not reach the document. Close it with \`await app.performSecondaryAction(${cancel}, "Cancel")\`, not Escape or a click; if it stays open, tell the user.`, prompt);
+}
+function cancelTarget(text, title) {
+  for (const line of text.split('\n')) {
+    const m = /^\t*(\d+) (?:\([^)]*\) )*(.*?), (?:[^\n]*, )?Secondary Actions: (?:[^,\n]*, )*Cancel(?:,|$)/.exec(line);
+    if (m && m[2].replace(/^menu bar item (?:\([^)]*\) )*/, '') === title) return m[1];
+  }
 }
 
 // A menu note from earlier in a call (its acquisition, or the part before a menu continuation) is stale when

@@ -15,7 +15,7 @@
 // stale, so the relay tracks which numbers Claude has seen since its last full
 // read and refuses actions on any other (staleIndex).
 
-import { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK, documentKey, windowFromText, hasIdentifier, hasLabel, menuRoot } from './document-scope.mjs';
+import { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK, documentKey, windowFromText, hasIdentifier, hasLabel, menuRoot, selectedMenuEntry } from './document-scope.mjs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -396,17 +396,33 @@ function strayTypingNote(action, observation, lastAim) {
   return /* lean notice */ `sleight: typed text landed in ${describeField(landed[0])}, not the document; click the document before typing.`;
 }
 
-// Keys sent while the window itself has focus reach nothing: after a sidebar closed in word-edit-1 (2026-10-17),
-// 4 calls of typing and Tab changed nothing until a paste. Silent when a value changed or typed text appears.
+// Typing that reached nothing: no typed string of 3+ characters anywhere in the tree after the call, and no value or
+// count line changed ("N words"). After a sidebar closed in word-edit-1 (2026-10-17) the window kept focus and 4 calls
+// of typing changed nothing; in word-edit-2 (2026-10-18) the Table menu stayed selected and typing went nowhere for
+// 10 calls. Silent without a text value in the tree to show typing, or with a secure field, whose value is hidden.
+const valueLines = lines => lines.flatMap(line => {
+  const body = ELEMENT.exec(line)?.[3];
+  if (body === undefined) return [];
+  const fields = stateFields(body).filter(field => !/^(?:selected|checked):/.test(field));
+  const count = /\d/.test(body.replace(/(?:^|, )(?:ID|Help): [^,]*/g, '')) ? [body.replace(/(?:^|, )(?:ID|Help): [^,]*/g, '')] : [];
+  return [...fields, ...count];
+}).sort().join('\n');
 function focuslessTypingNote(action, observation) {
   const texts = action.typing?.texts ?? [];
-  if (!texts.length || texts.some(text => text === undefined) || observation.delta?.semantic || !/\bwindow\b/.test(observation.root)) return;
+  const typed = texts.map(text => text?.trim().toLowerCase()).filter(text => text?.length >= 3);
+  if (!typed.length || texts.some(text => text === undefined) || observation.delta?.semantic) return;
+  // IDs and Help never hold typed text ("WindowMenu_MenuItem" held "item").
+  const tree = observation.lines.join('\n').replace(/(?:^|, )(?:ID|Help): [^,\n]*/gm, '').toLowerCase();
+  if (typed.some(text => tree.includes(text)) || valueLines(observation.lines) !== valueLines(action.before.lines)) return;
+  const shown = [...action.before.lines, ...observation.lines].filter(line => ELEMENT.test(line));
+  if (shown.some(line => /\bsecure\b|\bpassword\b/i.test(line)) || !shown.some(line => textField(ELEMENT.exec(line)[3]) && /\bValue: ?\S/.test(line))) return;
+  const menu = selectedMenuEntry(observation.lines.join('\n'));
+  if (menu) return /* lean notice */ `sleight: typing reached nothing; menu-bar item ${menu.number} is still selected: cancel the menu first.`;
   const focus = /^The focused UI element is (\d+) /.exec(observation.lines.find(line => line.startsWith('The focused UI element is ')) ?? '');
-  if (!focus || Number(focus[1]) !== parse(observation.lines[1] ?? '').num) return;
-  const count = (lines, text) => lines.join('\n').toLowerCase().split(text).length;
-  if (texts.some(text => text.trim().length >= 3 &&
-      count(observation.lines, text.trim().toLowerCase()) > count(action.before.lines, text.trim().toLowerCase()))) return;
-  return /* lean notice */ 'sleight: keyboard focus is on the window itself, so typed keys have no target. Click the document first.';
+  if (focus && /\bwindow\b/.test(observation.root) && Number(focus[1]) === parse(observation.lines[1] ?? '').num) {
+    return /* lean notice */ 'sleight: keyboard focus is on the window itself, so typed keys have no target. Click the document first.';
+  }
+  return /* lean notice */ 'sleight: typing reached nothing; no typed text or value appears. Click the target first.';
 }
 
 function tabSelections(lines) {
