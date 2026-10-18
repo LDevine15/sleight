@@ -8,6 +8,7 @@ import { readInstalledConfig, readInstalledConfigFile, acceptedInstalledPackage,
 import { browserTools, validateToolCall, createToolDispatcher } from './tools.mjs';
 import { createV3TurnBinding, createV3Context } from './v3-context.mjs';
 import { browserApplicationName } from './browsers.mjs';
+import { readHandConfig } from '../hand/settings.mjs';
 
 const bridges = new WeakSet(), frontends = new WeakSet();
 export const isV3Bridge = value => !!value && bridges.has(value);
@@ -49,6 +50,8 @@ async function optOut() {
   const { writeConfigFile } = await import('./turbo-setup.mjs');
   writeConfigFile(installedConfigPath(), { version: 1, enabled: false });
 }
+// The person's click on the menu's Ghost Hand row: hand.json's enabled flag, written as the launcher's hand command writes it.
+async function setHand(enabled) { (await import('../hand/command.mjs')).writeHandSetting({ enabled }); }
 const unsafeStartup = new Set(['HOST_PACKAGE_MISMATCH', 'HOST_SOURCE_MISMATCH', 'HOST_CACHE_UNSAFE', 'INSTALLED_CONFIG_UNSAFE']);
 // The admin secret of the resident Electron app hosts. The MCP server process makes it once and hands it to each worker
 // it forks in the begin frames (IPC only, never argv, env or disk), so a new worker can still administer a host that
@@ -361,12 +364,20 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     // The menu bar shows the state, the browser and the payment check beside the person's own controls. Turning turbo off
     // writes the launcher's opt-out and disconnects; only the person's click in sleight's own window sends it.
     const payments = ['always', 'never'].includes(process.env.SLEIGHT_CONFIRM_PAYMENTS) ? process.env.SLEIGHT_CONFIRM_PAYMENTS : 'ask';
-    ui.present('v3-control-' + (++sequence), { status: state, ...(browserName ? { browser: browserName } : {}), payments,
+    // The Ghost Hand row shows the user's hand setting (an unsafe file keeps the hand off), and its choice flips it.
+    let hand;
+    try { hand = ['off', 'unsafe'].includes((dependencies.readHand ?? readHandConfig)().state) ? 'off' : 'on'; } catch { hand = 'off'; }
+    const handChoice = hand === 'on' ? 'hand-off' : 'hand-on';
+    ui.present('v3-control-' + (++sequence), { status: state, ...(browserName ? { browser: browserName } : {}), payments, hand,
       ...(optOutFailed ? { optOut: 'failed' } : {}), ...(pluginVersion ? { version: pluginVersion } : {}) },
       // Paused has no Pause: turbo resumes when Claude next asks, through the session card.
-      state === 'cleanup-required' ? ['cleanup'] : state === 'paused' ? ['disconnect','turbo-off'] : ['pause','disconnect','turbo-off'], async event => {
+      state === 'cleanup-required' ? ['cleanup', handChoice] : state === 'paused' ? ['disconnect', handChoice, 'turbo-off'] : ['pause', 'disconnect', handChoice, 'turbo-off'], async event => {
       if (ui.authenticate(event) !== true) return;
-      if (event.action === 'turbo-off') {
+      if (['hand-on', 'hand-off'].includes(event.action)) {
+        // A failed write re-presents the row as it was. The relay's hand client sees the file change and hides at once.
+        try { await (dependencies.setHand ?? setHand)(event.action === 'hand-on'); } catch {}
+        status();
+      } else if (event.action === 'turbo-off') {
         // A failed write leaves turbo connected and says so in the menu, so nobody believes turbo is off when it isn't.
         try { await (dependencies.turboOff ?? optOut)(); optOutFailed = false; } catch { optOutFailed = true; status(); return; }
         await close();

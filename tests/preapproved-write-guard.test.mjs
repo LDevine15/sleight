@@ -10,7 +10,7 @@ const guard = async (...args) => {
   return preapprovedWriteDenied(...args);
 };
 const stat = async path => ({ realPath: path });
-for (const filename of ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key']) {
+for (const filename of ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key', 'hand.json']) {
 const policy = '/Users/fixture/Library/Application Support/sleight/' + filename;
 
 test(filename + ': each file mutation denies the policy path and case and tilde spellings', async () => {
@@ -139,4 +139,18 @@ test('turbo on and off are the user\'s commands: no spelling of a model shell ru
   }
   assert.equal(await guard({ tool: 'Read', file_path: '/Users/fixture/Library/Application Support/sleight/turbo.json' }, { stat }), false);
   assert.equal(await guard({ tool: 'Write', file_path: '/Users/fixture/Library/Application Support/sleight/turbo.json' }, { stat }), true);
+});
+
+test('hand on, off and capture are the user\'s commands the same way: every spelling but status denies', async () => {
+  for (const command of ['sleight-mcp hand on', 'sleight-mcp hand off', 'sleight-mcp hand capture visible', '/x/plugins/sleight/bin/sleight-mcp hand off',
+    'node /x/plugins/sleight/lib/launch.mjs hand off', 'cd /tmp && sleight-mcp hand on', 'bash -c "sleight-mcp hand off"', 'env A=1 sleight-mcp hand on',
+    'nohup sleight-mcp hand off', 'timeout 5 sleight-mcp hand capture hidden', 'sh -c "true; sleight-mcp hand on"', 'true && sleight-mcp hand off',
+    'zsh -lc "cd /x && sleight-mcp hand capture visible"', '/bin/bash -lc \'node /x/lib/launch.mjs hand off\'', 'echo hi | sleight-mcp hand on',
+    'sleight-mcp hand', 'sleight-mcp "hand" "off"', 'node --no-warnings /x/lib/launch.mjs hand on']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat }), true, command);
+  }
+  for (const command of ['sleight-mcp hand status', 'env sleight-mcp hand status', 'sh -c "sleight-mcp hand status"', 'node /x/lib/launch.mjs hand status',
+    'sleight-mcp handy', 'sleight-mcp --doctor', 'hand off', 'echo hand on', 'sleight-mcp turbo status']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat }), false, command);
+  }
 });

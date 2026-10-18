@@ -1,8 +1,11 @@
 // Original sleight source. UI choices come only from native button/menu events.
 // No accessibility grant, synthetic input, browser launch or page bridge.
+// With --hand the same binary is the ghost hand's host instead: it only draws, and never writes stdout.
 import AppKit
 import Foundation
 import CoreFoundation
+import QuartzCore
+import Carbon.HIToolbox
 
 // BEGIN SESSION FRAME
 func sessionFrame(_ data: [String: Any], _ choices: [String]) -> (kind: String, session: String)? {
@@ -82,21 +85,26 @@ enum StatusRow: Equatable {
     case status(title: String, dot: String, details: [String])
     case action(String, choice: String)
     case confirm(String, choice: String)
+    case toggle(String, choice: String, on: Bool)
     case help
     case separator
     case footer(String)
 }
 let stateWords = ["connected": "Connected", "connected-idle": "Connected", "paused": "Paused", "cleanup-required": "Cleanup needed", "disconnected": "Disconnected"]
 let dotColours = ["connected": "green", "connected-idle": "green", "paused": "orange", "cleanup-required": "red", "disconnected": "gray"]
-let choiceWords = ["pause": "Pause", "resume": "Resume", "disconnect": "Disconnect", "connect": "Connect", "cleanup": "Clean Up", "turbo-off": "Turn Turbo Off…", "cancel": "Cancel"]
+let choiceWords = ["pause": "Pause", "resume": "Resume", "disconnect": "Disconnect", "connect": "Connect", "cleanup": "Clean Up", "turbo-off": "Turn Turbo Off…", "cancel": "Cancel",
+    "hand-on": "Ghost Hand", "hand-off": "Ghost Hand"]
 let paymentWords = ["ask": "Payments: asks unless you named the amount", "always": "Payments: always asks", "never": "Payments: asks only for ones you didn't request"]
 let optOutFailed = "Couldn't turn turbo off. Run sleight-mcp turbo off."
 func statusVisible(_ status: String?, requests: Int) -> Bool {
     requests > 0 || ["connected", "connected-idle", "paused", "cleanup-required"].contains(status ?? "")
 }
 func statusRows(_ data: [String: Any], _ choices: [String]) -> [StatusRow]? {
+    // The Ghost Hand row shows the hand's setting with a checkmark, and its one choice flips it.
+    let hand = data["hand"] as? String, handChoices = choices.filter { $0.hasPrefix("hand-") }
     guard let status = data["status"] as? String, let word = stateWords[status], let dot = dotColours[status],
-        choices.allSatisfy({ choiceWords[$0] != nil }) else { return nil }
+        choices.allSatisfy({ choiceWords[$0] != nil }), data["hand"] == nil || hand == "on" || hand == "off",
+        handChoices.isEmpty || handChoices == [hand == "on" ? "hand-off" : "hand-on"] && hand != nil else { return nil }
     let browser = (data["browser"] as? String).flatMap { name in
         !name.isEmpty && name.count <= 40 && name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " }) ? name : nil }
     let title = browser.map { status.hasPrefix("connected") ? word + " to " + $0 : word + " · " + $0 } ?? word
@@ -106,9 +114,10 @@ func statusRows(_ data: [String: Any], _ choices: [String]) -> [StatusRow]? {
     if let payments = data["payments"] as? String, let words = paymentWords[payments] { details.append(words) }
     if data["optOut"] as? String == "failed" { details.append(optOutFailed) }
     var rows: [StatusRow] = [.status(title: title, dot: dot, details: details)]
-    let session = choices.filter { $0 != "turbo-off" }
+    let session = choices.filter { $0 != "turbo-off" && !$0.hasPrefix("hand-") }
     if !session.isEmpty { rows.append(.separator); rows += session.map { .action(choiceWords[$0]!, choice: $0) } }
     rows.append(.separator)
+    if let choice = handChoices.first { rows.append(.toggle(choiceWords[choice]!, choice: choice, on: hand == "on")) }
     if choices.contains("turbo-off") { rows.append(.confirm(choiceWords["turbo-off"]!, choice: "turbo-off")) }
     rows.append(.help)
     if let version = data["version"] as? String, version.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}$"#, options: .regularExpression) != nil {
@@ -196,6 +205,10 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
                         let entry = NSMenuItem(); entry.view = statusView(title, dot: dot, details: details); menu.addItem(entry)
                     case let .action(title, choice), let .confirm(title, choice):
                         let entry = NSMenuItem(title: title, action: row == .confirm(title, choice: choice) ? #selector(confirmOff(_:)) : #selector(control(_:)), keyEquivalent: "")
+                        entry.target = self; entry.representedObject = ["id": id, "choice": choice]; menu.addItem(entry)
+                    case let .toggle(title, choice, on):
+                        let entry = NSMenuItem(title: title, action: #selector(control(_:)), keyEquivalent: "")
+                        entry.state = on ? .on : .off
                         entry.target = self; entry.representedObject = ["id": id, "choice": choice]; menu.addItem(entry)
                     case .help:
                         let entry = NSMenuItem(title: "Settings & Help…", action: #selector(help(_:)), keyEquivalent: "")
@@ -306,8 +319,655 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
     }
 }
 
+// BEGIN HAND FRAME
+// The ghost hand's stdin frames: a kind and global top-left screen points, nonce-bound and never answered. Exact keys only.
+struct HandAct {
+    let seq: Int, kind: String, pid: Int32, windowId: UInt32, at: CGPoint, path: [CGPoint], delay: Double, beats: Int
+}
+enum HandFrame { case act(String, HandAct), hide(String) }
+let handKinds: Set<String> = ["click", "double", "right", "key", "type", "drag", "scroll"]
+func handFrame(_ data: [String: Any]) -> HandFrame? {
+    func number(_ value: Any?) -> Double? {
+        guard let value = value as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue.isFinite else { return nil }
+        return value.doubleValue
+    }
+    func integer(_ value: Any?, _ range: ClosedRange<Double>) -> Int? {
+        guard let value = number(value), value.rounded() == value, range.contains(value) else { return nil }
+        return Int(value)
+    }
+    func point(_ value: Any?) -> CGPoint? {
+        guard let pair = value as? [Any], pair.count == 2, let x = number(pair[0]), let y = number(pair[1]),
+            abs(x) <= 100000, abs(y) <= 100000 else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+    guard let nonce = data["nonce"] as? String, nonce.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { return nil }
+    if data["hand"] as? String == "hide" { return Set(data.keys) == ["hand", "nonce"] ? .hide(nonce) : nil }
+    guard data["hand"] as? String == "act",
+        Set(data.keys) == ["hand", "nonce", "seq", "kind", "pid", "windowId", "at", "path", "delayMs", "beats"],
+        let seq = integer(data["seq"], 0...9007199254740991), let kind = data["kind"] as? String, handKinds.contains(kind),
+        let pid = integer(data["pid"], 1...2147483647), let windowId = integer(data["windowId"], 1...4294967295),
+        let at = point(data["at"]), let raw = data["path"] as? [Any], (1...64).contains(raw.count),
+        let delay = integer(data["delayMs"], 0...10000), let beats = integer(data["beats"], 1...20) else { return nil }
+    let path = raw.compactMap(point)
+    guard path.count == raw.count else { return nil }
+    return .act(nonce, HandAct(seq: seq, kind: kind, pid: Int32(pid), windowId: UInt32(windowId), at: at, path: path,
+        delay: Double(delay) / 1000, beats: beats))
+}
+// Consecutive repeats dropped, so a one-point route means the hand appears there without a glide.
+func handPoints(_ points: [CGPoint]) -> [CGPoint] {
+    points.enumerated().filter { $0.offset == 0 || points[$0.offset - 1] != $0.element }.map { $0.element }
+}
+// The panel's frame for a route: the route's box plus 48 pt, before clipping to the target window.
+func handBox(_ points: [CGPoint]) -> CGRect {
+    let xs = points.map { $0.x }, ys = points.map { $0.y }
+    guard let left = xs.min(), let right = xs.max(), let top = ys.min(), let bottom = ys.max() else { return .null }
+    return CGRect(x: left - 48, y: top - 48, width: right - left + 96, height: bottom - top + 96)
+}
+// END HAND FRAME
+
+// BEGIN HAND ART
+// The one place for the ghost hand's look and motion: the art director's H7 deliverables (2026-10-18, approved by the owner at
+// 85% opacity). Every state is a vector SVG on one 48 pt canvas with the hotspot, the index fingertip or the pinch in grab, at
+// (10, 10). The dabs are their own layer under the glove, shared by every state. No arrow: the real cursor is data.
+enum HandState: String, CaseIterable { case rest, point, press, grab, scroll, dabs }
+enum HandArt {
+    static let canvas: CGFloat = 48, hotspot = CGPoint(x: 10, y: 10)
+    static let opacity = 0.85, lifted = 0.6
+    // The hand's axis from tip to wrist in top-left screen points. Entry, hold, lift and fade move along it.
+    static let axis = CGVector(dx: 0.574, dy: 0.819)
+    static var anchor: CGPoint { CGPoint(x: hotspot.x / canvas, y: 1 - hotspot.y / canvas) }
+    // A frame's kind to the glove's content while it approaches and while it acts. After the act it lifts as rest.
+    static let states: [String: (approach: HandState, act: HandState)] = ["click": (.point, .press), "double": (.point, .press),
+        "right": (.point, .press), "key": (.point, .point), "type": (.point, .point), "scroll": (.scroll, .scroll), "drag": (.point, .grab)]
+    // The deliverables verbatim (rest, point, press, grab, scroll, dabs), the way the menu glyph is embedded.
+    static let svg: [HandState: String] = [
+        .rest: ##"""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<!-- sleight ghost hand, state "rest". Canvas 48 pt, hotspot (10,10) = the index fingertip (grab: the pinch). Generated by gen.mjs. -->
+<g transform="translate(0.6 0.6)"><g transform="translate(10 10) rotate(-35)"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M0.83 13.52 L-5.04 7.13 A1.25 1.25 0 0 0 -6.93 8.76 L-1.43 15.48 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M6.15 11.51 L5.17 -0.67 A1.2 1.2 0 0 0 2.77 -0.53 L3.25 11.69 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M9.85 11.59 L9.51 0.29 A1.2 1.2 0 0 0 7.11 0.31 L6.95 11.61 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M13.5 11.68 L13.68 3.81 A1.15 1.15 0 0 0 11.39 3.68 L10.7 11.52 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/>
+<path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M0.83 13.52 L-5.04 7.13 A1.25 1.25 0 0 0 -6.93 8.76 L-1.43 15.48 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M6.15 11.51 L5.17 -0.67 A1.2 1.2 0 0 0 2.77 -0.53 L3.25 11.69 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M9.85 11.59 L9.51 0.29 A1.2 1.2 0 0 0 7.11 0.31 L6.95 11.61 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.5 11.68 L13.68 3.81 A1.15 1.15 0 0 0 11.39 3.68 L10.7 11.52 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M0.83 13.52 L-5.04 7.13 A1.25 1.25 0 0 0 -6.93 8.76 L-1.43 15.48 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M6.15 11.51 L5.17 -0.67 A1.2 1.2 0 0 0 2.77 -0.53 L3.25 11.69 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M9.85 11.59 L9.51 0.29 A1.2 1.2 0 0 0 7.11 0.31 L6.95 11.61 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M13.5 11.68 L13.68 3.81 A1.15 1.15 0 0 0 11.39 3.68 L10.7 11.52 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/></g></g>
+<g transform="translate(10 10) rotate(-35)"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#B9BFC9"/><path d="M-2.02 12.19 Q-2.2 10.8 -0.8 10.8 L10 10.8 Q11.4 10.8 11.24 12.19 L10.86 15.61 Q10.7 17 9.89 18.14 L9.81 18.26 Q9 19.4 7.6 19.4 L5 19.4 Q3.6 19.4 2.34 18.79 L-0.14 17.61 Q-1.4 17 -1.58 15.61 Z" fill="#EFE9DC"/>
+<path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#B9BFC9"/><path d="M-4 14 A2 2.8 0 1 0 0 14 A2 2.8 0 1 0 -4 14 Z" fill="#EFE9DC"/>
+<path d="M0.83 13.52 L-5.04 7.13 A1.25 1.25 0 0 0 -6.93 8.76 L-1.43 15.48 Z" fill="#B9BFC9"/><path d="M0.83 13.51 L-5.21 6.91 A0.78 0.78 0 0 0 -6.38 7.93 L-0.57 14.74 Z" fill="#EFE9DC"/>
+<path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#B9BFC9"/><path d="M1.35 11.58 L0.36 0.91 A0.74 0.74 0 0 0 -1.12 1.03 L-0.45 11.72 Z" fill="#EFE9DC"/>
+<path d="M6.15 11.51 L5.17 -0.67 A1.2 1.2 0 0 0 2.77 -0.53 L3.25 11.69 Z" fill="#B9BFC9"/><path d="M5.05 11.59 L4.24 -0.88 A0.74 0.74 0 0 0 2.75 -0.8 L3.25 11.68 Z" fill="#EFE9DC"/>
+<path d="M9.85 11.59 L9.51 0.29 A1.2 1.2 0 0 0 7.11 0.31 L6.95 11.61 Z" fill="#B9BFC9"/><path d="M8.75 11.6 L8.59 0.04 A0.74 0.74 0 0 0 7.1 0.04 L6.95 11.6 Z" fill="#EFE9DC"/>
+<path d="M13.5 11.68 L13.68 3.81 A1.15 1.15 0 0 0 11.39 3.68 L10.7 11.52 Z" fill="#B9BFC9"/><path d="M12.43 11.63 L12.82 3.52 A0.71 0.71 0 0 0 11.39 3.42 L10.7 11.51 Z" fill="#EFE9DC"/>
+</g>
+</svg>
+"""##,
+        .point: ##"""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<!-- sleight ghost hand, state "point". Canvas 48 pt, hotspot (10,10) = the index fingertip (grab: the pinch). Generated by gen.mjs. -->
+<g transform="translate(0.6 0.6)"><g transform="translate(10 10) rotate(-35)"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M0.81 13.5 L-3.13 9.49 A1.25 1.25 0 0 0 -4.99 11.17 L-1.41 15.5 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M6.2 11.6 L6.05 8.75 A1.35 1.35 0 0 0 3.35 8.75 L3.2 11.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M9.9 11.6 L9.75 9.15 A1.35 1.35 0 0 0 7.05 9.15 L6.9 11.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M13.5 11.6 L13.36 9.76 A1.26 1.26 0 0 0 10.84 9.76 L10.7 11.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/>
+<path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M0.81 13.5 L-3.13 9.49 A1.25 1.25 0 0 0 -4.99 11.17 L-1.41 15.5 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M6.2 11.6 L6.05 8.75 A1.35 1.35 0 0 0 3.35 8.75 L3.2 11.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M9.9 11.6 L9.75 9.15 A1.35 1.35 0 0 0 7.05 9.15 L6.9 11.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.5 11.6 L13.36 9.76 A1.26 1.26 0 0 0 10.84 9.76 L10.7 11.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M0.81 13.5 L-3.13 9.49 A1.25 1.25 0 0 0 -4.99 11.17 L-1.41 15.5 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M6.2 11.6 L6.05 8.75 A1.35 1.35 0 0 0 3.35 8.75 L3.2 11.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M9.9 11.6 L9.75 9.15 A1.35 1.35 0 0 0 7.05 9.15 L6.9 11.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M13.5 11.6 L13.36 9.76 A1.26 1.26 0 0 0 10.84 9.76 L10.7 11.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/></g></g>
+<g transform="translate(10 10) rotate(-35)"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#B9BFC9"/><path d="M-2.02 12.19 Q-2.2 10.8 -0.8 10.8 L10 10.8 Q11.4 10.8 11.24 12.19 L10.86 15.61 Q10.7 17 9.89 18.14 L9.81 18.26 Q9 19.4 7.6 19.4 L5 19.4 Q3.6 19.4 2.34 18.79 L-0.14 17.61 Q-1.4 17 -1.58 15.61 Z" fill="#EFE9DC"/>
+<path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#B9BFC9"/><path d="M-4 14 A2 2.8 0 1 0 0 14 A2 2.8 0 1 0 -4 14 Z" fill="#EFE9DC"/>
+<path d="M0.81 13.5 L-3.13 9.49 A1.25 1.25 0 0 0 -4.99 11.17 L-1.41 15.5 Z" fill="#B9BFC9"/><path d="M0.81 13.49 L-3.32 9.27 A0.78 0.78 0 0 0 -4.45 10.32 L-0.56 14.75 Z" fill="#EFE9DC"/>
+<path d="M6.2 11.6 L6.05 8.75 A1.35 1.35 0 0 0 3.35 8.75 L3.2 11.6 Z" fill="#B9BFC9"/><path d="M4.94 11.61 L4.9 8.41 A0.78 0.78 0 0 0 3.34 8.39 L3.2 11.59 Z" fill="#EFE9DC"/>
+<path d="M9.9 11.6 L9.75 9.15 A1.35 1.35 0 0 0 7.05 9.15 L6.9 11.6 Z" fill="#B9BFC9"/><path d="M8.64 11.61 L8.6 8.81 A0.78 0.78 0 0 0 7.03 8.79 L6.9 11.59 Z" fill="#EFE9DC"/>
+<path d="M13.5 11.6 L13.36 9.76 A1.26 1.26 0 0 0 10.84 9.76 L10.7 11.6 Z" fill="#B9BFC9"/><path d="M12.32 11.62 L12.28 9.45 A0.73 0.73 0 0 0 10.82 9.42 L10.7 11.58 Z" fill="#EFE9DC"/>
+<path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#B9BFC9"/><path d="M1.35 11.58 L0.36 0.91 A0.74 0.74 0 0 0 -1.12 1.03 L-0.45 11.72 Z" fill="#EFE9DC"/>
+<path d="M3.2 11.1 H13.6" stroke="#A3ABB7" stroke-width="0.7" stroke-linecap="round" fill="none"/></g>
+</svg>
+"""##,
+        .press: ##"""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<!-- sleight ghost hand, state "press". Canvas 48 pt, hotspot (10,10) = the index fingertip (grab: the pinch). Generated by gen.mjs. -->
+<g transform="translate(0.6 0.6)"><g transform="translate(10 10) rotate(-35)"><path d="M-2 11.19 Q-2.2 9.6 -0.6 9.6 L12.4 9.6 Q14 9.6 13.82 11.19 L13.48 14.21 Q13.3 15.8 12.56 17.22 L11.94 18.38 Q11.2 19.8 9.6 19.8 L5.2 19.8 Q3.6 19.8 2.35 18.8 L-0.15 16.8 Q-1.4 15.8 -1.6 14.21 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M-3.8 13.4 A2.5 3.3 0 1 0 1.2 13.4 A2.5 3.3 0 1 0 -3.8 13.4 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M0.81 12.3 L-3.13 8.29 A1.25 1.25 0 0 0 -4.99 9.97 L-1.41 14.3 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M6.2 11.6 L6.05 7.55 A1.35 1.35 0 0 0 3.35 7.55 L3.2 11.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M9.9 11.6 L9.75 7.95 A1.35 1.35 0 0 0 7.05 7.95 L6.9 11.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M13.5 11.6 L13.36 8.56 A1.26 1.26 0 0 0 10.84 8.56 L10.7 11.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M2.49 10.26 L1.47 1.21 A1.35 1.35 0 0 0 -1.21 1.47 L-0.49 10.54 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/>
+<path d="M-2 11.19 Q-2.2 9.6 -0.6 9.6 L12.4 9.6 Q14 9.6 13.82 11.19 L13.48 14.21 Q13.3 15.8 12.56 17.22 L11.94 18.38 Q11.2 19.8 9.6 19.8 L5.2 19.8 Q3.6 19.8 2.35 18.8 L-0.15 16.8 Q-1.4 15.8 -1.6 14.21 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M-3.8 13.4 A2.5 3.3 0 1 0 1.2 13.4 A2.5 3.3 0 1 0 -3.8 13.4 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M0.81 12.3 L-3.13 8.29 A1.25 1.25 0 0 0 -4.99 9.97 L-1.41 14.3 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M6.2 11.6 L6.05 7.55 A1.35 1.35 0 0 0 3.35 7.55 L3.2 11.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M9.9 11.6 L9.75 7.95 A1.35 1.35 0 0 0 7.05 7.95 L6.9 11.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.5 11.6 L13.36 8.56 A1.26 1.26 0 0 0 10.84 8.56 L10.7 11.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M2.49 10.26 L1.47 1.21 A1.35 1.35 0 0 0 -1.21 1.47 L-0.49 10.54 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M-2 11.19 Q-2.2 9.6 -0.6 9.6 L12.4 9.6 Q14 9.6 13.82 11.19 L13.48 14.21 Q13.3 15.8 12.56 17.22 L11.94 18.38 Q11.2 19.8 9.6 19.8 L5.2 19.8 Q3.6 19.8 2.35 18.8 L-0.15 16.8 Q-1.4 15.8 -1.6 14.21 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M-3.8 13.4 A2.5 3.3 0 1 0 1.2 13.4 A2.5 3.3 0 1 0 -3.8 13.4 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M0.81 12.3 L-3.13 8.29 A1.25 1.25 0 0 0 -4.99 9.97 L-1.41 14.3 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M6.2 11.6 L6.05 7.55 A1.35 1.35 0 0 0 3.35 7.55 L3.2 11.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M9.9 11.6 L9.75 7.95 A1.35 1.35 0 0 0 7.05 7.95 L6.9 11.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M13.5 11.6 L13.36 8.56 A1.26 1.26 0 0 0 10.84 8.56 L10.7 11.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M2.49 10.26 L1.47 1.21 A1.35 1.35 0 0 0 -1.21 1.47 L-0.49 10.54 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/></g></g>
+<g transform="translate(10 10) rotate(-35)"><path d="M-2 11.19 Q-2.2 9.6 -0.6 9.6 L12.4 9.6 Q14 9.6 13.82 11.19 L13.48 14.21 Q13.3 15.8 12.56 17.22 L11.94 18.38 Q11.2 19.8 9.6 19.8 L5.2 19.8 Q3.6 19.8 2.35 18.8 L-0.15 16.8 Q-1.4 15.8 -1.6 14.21 Z" fill="#B9BFC9"/><path d="M-2.02 10.99 Q-2.2 9.6 -0.8 9.6 L10 9.6 Q11.4 9.6 11.24 10.99 L10.86 14.41 Q10.7 15.8 10.15 17.09 L9.55 18.51 Q9 19.8 7.6 19.8 L5 19.8 Q3.6 19.8 2.51 18.93 L-0.31 16.67 Q-1.4 15.8 -1.58 14.41 Z" fill="#EFE9DC"/>
+<path d="M-3.8 13.4 A2.5 3.3 0 1 0 1.2 13.4 A2.5 3.3 0 1 0 -3.8 13.4 Z" fill="#B9BFC9"/><path d="M-4 12.8 A2 2.8 0 1 0 0 12.8 A2 2.8 0 1 0 -4 12.8 Z" fill="#EFE9DC"/>
+<path d="M0.81 12.3 L-3.13 8.29 A1.25 1.25 0 0 0 -4.99 9.97 L-1.41 14.3 Z" fill="#B9BFC9"/><path d="M0.81 12.29 L-3.32 8.07 A0.78 0.78 0 0 0 -4.45 9.12 L-0.56 13.55 Z" fill="#EFE9DC"/>
+<path d="M6.2 11.6 L6.05 7.55 A1.35 1.35 0 0 0 3.35 7.55 L3.2 11.6 Z" fill="#B9BFC9"/><path d="M4.94 11.61 L4.9 7.21 A0.78 0.78 0 0 0 3.34 7.19 L3.2 11.59 Z" fill="#EFE9DC"/>
+<path d="M9.9 11.6 L9.75 7.95 A1.35 1.35 0 0 0 7.05 7.95 L6.9 11.6 Z" fill="#B9BFC9"/><path d="M8.64 11.61 L8.6 7.61 A0.78 0.78 0 0 0 7.04 7.59 L6.9 11.59 Z" fill="#EFE9DC"/>
+<path d="M13.5 11.6 L13.36 8.56 A1.26 1.26 0 0 0 10.84 8.56 L10.7 11.6 Z" fill="#B9BFC9"/><path d="M12.32 11.61 L12.29 8.24 A0.73 0.73 0 0 0 10.83 8.22 L10.7 11.59 Z" fill="#EFE9DC"/>
+<path d="M2.49 10.26 L1.47 1.21 A1.35 1.35 0 0 0 -1.21 1.47 L-0.49 10.54 Z" fill="#B9BFC9"/><path d="M1.18 10.39 L0.25 0.96 A0.76 0.76 0 0 0 -1.26 1.09 L-0.49 10.54 Z" fill="#EFE9DC"/>
+<path d="M3.2 9.9 H13.6" stroke="#A3ABB7" stroke-width="0.7" stroke-linecap="round" fill="none"/></g>
+</svg>
+"""##,
+        .grab: ##"""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<!-- sleight ghost hand, state "grab". Canvas 48 pt, hotspot (10,10) = the index fingertip (grab: the pinch). Generated by gen.mjs. -->
+<g transform="translate(0.6 0.6)"><g transform="translate(10 10) rotate(-35)"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M-3.1 14.2 A2.5 3.3 0 1 0 1.9 14.2 A2.5 3.3 0 1 0 -3.1 14.2 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M7.5 11.6 L7.35 8.95 A1.35 1.35 0 0 0 4.65 8.95 L4.5 11.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M10.9 11.6 L10.75 9.25 A1.35 1.35 0 0 0 8.05 9.25 L7.9 11.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M13.8 11.6 L13.66 9.86 A1.26 1.26 0 0 0 11.14 9.86 L11 11.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M1.69 13.61 L-0.06 2.14 A1.2 1.2 0 0 0 -2.44 2.44 L-1.29 13.99 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M3.25 11.54 L2.91 5.89 A1.35 1.35 0 0 0 0.21 6.01 L0.35 11.66 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M2.9 5.84 L1.31 0.8 A1.15 1.15 0 0 0 -0.9 1.41 L0.3 6.56 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/>
+<path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M-3.1 14.2 A2.5 3.3 0 1 0 1.9 14.2 A2.5 3.3 0 1 0 -3.1 14.2 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M7.5 11.6 L7.35 8.95 A1.35 1.35 0 0 0 4.65 8.95 L4.5 11.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M10.9 11.6 L10.75 9.25 A1.35 1.35 0 0 0 8.05 9.25 L7.9 11.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.8 11.6 L13.66 9.86 A1.26 1.26 0 0 0 11.14 9.86 L11 11.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M1.69 13.61 L-0.06 2.14 A1.2 1.2 0 0 0 -2.44 2.44 L-1.29 13.99 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M3.25 11.54 L2.91 5.89 A1.35 1.35 0 0 0 0.21 6.01 L0.35 11.66 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M2.9 5.84 L1.31 0.8 A1.15 1.15 0 0 0 -0.9 1.41 L0.3 6.56 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M-3.1 14.2 A2.5 3.3 0 1 0 1.9 14.2 A2.5 3.3 0 1 0 -3.1 14.2 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M7.5 11.6 L7.35 8.95 A1.35 1.35 0 0 0 4.65 8.95 L4.5 11.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M10.9 11.6 L10.75 9.25 A1.35 1.35 0 0 0 8.05 9.25 L7.9 11.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M13.8 11.6 L13.66 9.86 A1.26 1.26 0 0 0 11.14 9.86 L11 11.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M1.69 13.61 L-0.06 2.14 A1.2 1.2 0 0 0 -2.44 2.44 L-1.29 13.99 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M3.25 11.54 L2.91 5.89 A1.35 1.35 0 0 0 0.21 6.01 L0.35 11.66 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M2.9 5.84 L1.31 0.8 A1.15 1.15 0 0 0 -0.9 1.41 L0.3 6.56 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/></g></g>
+<g transform="translate(10 10) rotate(-35)"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#B9BFC9"/><path d="M-2.02 12.19 Q-2.2 10.8 -0.8 10.8 L10 10.8 Q11.4 10.8 11.24 12.19 L10.86 15.61 Q10.7 17 9.89 18.14 L9.81 18.26 Q9 19.4 7.6 19.4 L5 19.4 Q3.6 19.4 2.34 18.79 L-0.14 17.61 Q-1.4 17 -1.58 15.61 Z" fill="#EFE9DC"/>
+<path d="M-3.1 14.2 A2.5 3.3 0 1 0 1.9 14.2 A2.5 3.3 0 1 0 -3.1 14.2 Z" fill="#B9BFC9"/><path d="M-3.3 13.6 A2 2.8 0 1 0 0.7 13.6 A2 2.8 0 1 0 -3.3 13.6 Z" fill="#EFE9DC"/>
+<path d="M7.5 11.6 L7.35 8.95 A1.35 1.35 0 0 0 4.65 8.95 L4.5 11.6 Z" fill="#B9BFC9"/><path d="M6.24 11.61 L6.2 8.61 A0.78 0.78 0 0 0 4.63 8.59 L4.5 11.59 Z" fill="#EFE9DC"/>
+<path d="M10.9 11.6 L10.75 9.25 A1.35 1.35 0 0 0 8.05 9.25 L7.9 11.6 Z" fill="#B9BFC9"/><path d="M9.64 11.61 L9.6 8.91 A0.78 0.78 0 0 0 8.03 8.89 L7.9 11.59 Z" fill="#EFE9DC"/>
+<path d="M13.8 11.6 L13.66 9.86 A1.26 1.26 0 0 0 11.14 9.86 L11 11.6 Z" fill="#B9BFC9"/><path d="M12.62 11.62 L12.58 9.55 A0.73 0.73 0 0 0 11.12 9.52 L11 11.58 Z" fill="#EFE9DC"/>
+<path d="M1.69 13.61 L-0.06 2.14 A1.2 1.2 0 0 0 -2.44 2.44 L-1.29 13.99 Z" fill="#B9BFC9"/><path d="M1.69 13.6 L-0.09 1.87 A0.74 0.74 0 0 0 -1.56 2.07 L-0.16 13.85 Z" fill="#EFE9DC"/>
+<path d="M3.25 11.54 L2.91 5.89 A1.35 1.35 0 0 0 0.21 6.01 L0.35 11.66 Z" fill="#B9BFC9"/><path d="M2.15 11.59 L1.86 5.64 A0.84 0.84 0 0 0 0.19 5.71 L0.35 11.66 Z" fill="#EFE9DC"/>
+<path d="M2.9 5.84 L1.31 0.8 A1.15 1.15 0 0 0 -0.9 1.41 L0.3 6.56 Z" fill="#B9BFC9"/><path d="M1.92 6.12 L0.4 0.8 A0.71 0.71 0 0 0 -0.98 1.16 L0.3 6.55 Z" fill="#EFE9DC"/>
+<path d="M4.4 11.1 H13.9" stroke="#A3ABB7" stroke-width="0.7" stroke-linecap="round" fill="none"/></g>
+</svg>
+"""##,
+        .scroll: ##"""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<!-- sleight ghost hand, state "scroll". Canvas 48 pt, hotspot (10,10) = the index fingertip (grab: the pinch). Generated by gen.mjs. -->
+<g transform="translate(0.6 0.6)"><g transform="translate(10 10) rotate(-35)"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M0.8 13.48 L-2.13 10.67 A1.25 1.25 0 0 0 -3.97 12.37 L-1.4 15.52 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M9.9 11.6 L9.75 9.15 A1.35 1.35 0 0 0 7.05 9.15 L6.9 11.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M13.5 11.6 L13.36 9.76 A1.26 1.26 0 0 0 10.84 9.76 L10.7 11.6 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/><path d="M6.15 11.53 L5.36 0.14 A1.2 1.2 0 0 0 2.96 0.26 L3.25 11.67 Z" fill="#141A26" fill-opacity="0.08" stroke="#141A26" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"/>
+<path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M0.8 13.48 L-2.13 10.67 A1.25 1.25 0 0 0 -3.97 12.37 L-1.4 15.52 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M9.9 11.6 L9.75 9.15 A1.35 1.35 0 0 0 7.05 9.15 L6.9 11.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M13.5 11.6 L13.36 9.76 A1.26 1.26 0 0 0 10.84 9.76 L10.7 11.6 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/><path d="M6.15 11.53 L5.36 0.14 A1.2 1.2 0 0 0 2.96 0.26 L3.25 11.67 Z" fill="#141A26" fill-opacity="0.12" stroke="#141A26" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M0.8 13.48 L-2.13 10.67 A1.25 1.25 0 0 0 -3.97 12.37 L-1.4 15.52 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M9.9 11.6 L9.75 9.15 A1.35 1.35 0 0 0 7.05 9.15 L6.9 11.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M13.5 11.6 L13.36 9.76 A1.26 1.26 0 0 0 10.84 9.76 L10.7 11.6 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/><path d="M6.15 11.53 L5.36 0.14 A1.2 1.2 0 0 0 2.96 0.26 L3.25 11.67 Z" fill="#141A26" fill-opacity="0.2" stroke="#141A26" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"/></g></g>
+<g transform="translate(10 10) rotate(-35)"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#B9BFC9"/><path d="M-2.02 12.19 Q-2.2 10.8 -0.8 10.8 L10 10.8 Q11.4 10.8 11.24 12.19 L10.86 15.61 Q10.7 17 9.89 18.14 L9.81 18.26 Q9 19.4 7.6 19.4 L5 19.4 Q3.6 19.4 2.34 18.79 L-0.14 17.61 Q-1.4 17 -1.58 15.61 Z" fill="#EFE9DC"/>
+<path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#B9BFC9"/><path d="M-4 14 A2 2.8 0 1 0 0 14 A2 2.8 0 1 0 -4 14 Z" fill="#EFE9DC"/>
+<path d="M0.8 13.48 L-2.13 10.67 A1.25 1.25 0 0 0 -3.97 12.37 L-1.4 15.52 Z" fill="#B9BFC9"/><path d="M0.79 13.47 L-2.32 10.45 A0.78 0.78 0 0 0 -3.44 11.52 L-0.55 14.76 Z" fill="#EFE9DC"/>
+<path d="M9.9 11.6 L9.75 9.15 A1.35 1.35 0 0 0 7.05 9.15 L6.9 11.6 Z" fill="#B9BFC9"/><path d="M8.64 11.61 L8.6 8.81 A0.78 0.78 0 0 0 7.03 8.79 L6.9 11.59 Z" fill="#EFE9DC"/>
+<path d="M13.5 11.6 L13.36 9.76 A1.26 1.26 0 0 0 10.84 9.76 L10.7 11.6 Z" fill="#B9BFC9"/><path d="M12.32 11.62 L12.28 9.45 A0.73 0.73 0 0 0 10.82 9.42 L10.7 11.58 Z" fill="#EFE9DC"/>
+<path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#B9BFC9"/><path d="M1.35 11.58 L0.36 0.91 A0.74 0.74 0 0 0 -1.12 1.03 L-0.45 11.72 Z" fill="#EFE9DC"/>
+<path d="M6.15 11.53 L5.36 0.14 A1.2 1.2 0 0 0 2.96 0.26 L3.25 11.67 Z" fill="#B9BFC9"/><path d="M5.05 11.59 L4.43 -0.07 A0.74 0.74 0 0 0 2.94 -0.01 L3.25 11.66 Z" fill="#EFE9DC"/>
+<path d="M3.2 11.1 H13.6" stroke="#A3ABB7" stroke-width="0.7" stroke-linecap="round" fill="none"/></g>
+</svg>
+"""##,
+        .dabs: ##"""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+<!-- sleight ghost hand, state "dabs". Canvas 48 pt, hotspot (10,10) = the index fingertip (grab: the pinch). Generated by gen.mjs. -->
+<g transform="translate(10 10) rotate(-35)"><rect x="-1.95" y="-1.95" width="3.9" height="3.9" rx="0.86" fill="#4E79D9" fill-opacity="0.2" transform="translate(4.2 23) rotate(8)"/><rect x="-1.6" y="-1.6" width="3.2" height="3.2" rx="0.51" fill="#4E79D9" fill-opacity="0.92" transform="translate(4.2 23) rotate(8)"/>
+<rect x="-1.83" y="-1.83" width="3.66" height="3.66" rx="0.81" fill="#7299EA" fill-opacity="0.2" transform="translate(8.8 23.5) rotate(-6)"/><rect x="-1.5" y="-1.5" width="3" height="3" rx="0.48" fill="#7299EA" fill-opacity="0.92" transform="translate(8.8 23.5) rotate(-6)"/>
+<rect x="-1.71" y="-1.71" width="3.42" height="3.42" rx="0.75" fill="#7299EA" fill-opacity="0.2" transform="translate(6.5 26.5) rotate(4)"/><rect x="-1.4" y="-1.4" width="2.8" height="2.8" rx="0.45" fill="#7299EA" fill-opacity="0.92" transform="translate(6.5 26.5) rotate(4)"/>
+<rect x="-1.59" y="-1.59" width="3.17" height="3.17" rx="0.7" fill="#A9C4F5" fill-opacity="0.2" transform="translate(11.5 26.2) rotate(-11)"/><rect x="-1.3" y="-1.3" width="2.6" height="2.6" rx="0.42" fill="#A9C4F5" fill-opacity="0.92" transform="translate(11.5 26.2) rotate(-11)"/>
+<rect x="-1.34" y="-1.34" width="2.68" height="2.68" rx="0.59" fill="#A9C4F5" fill-opacity="0.2" transform="translate(2.6 27.5) rotate(-4)"/><rect x="-1.1" y="-1.1" width="2.2" height="2.2" rx="0.35" fill="#A9C4F5" fill-opacity="0.92" transform="translate(2.6 27.5) rotate(-4)"/>
+<rect x="-1.34" y="-1.34" width="2.68" height="2.68" rx="0.59" fill="#7299EA" fill-opacity="0.2" transform="translate(9.2 29.6) rotate(7)"/><rect x="-1.1" y="-1.1" width="2.2" height="2.2" rx="0.35" fill="#7299EA" fill-opacity="0.92" transform="translate(9.2 29.6) rotate(7)"/>
+<rect x="-1.1" y="-1.1" width="2.2" height="2.2" rx="0.48" fill="#A9C4F5" fill-opacity="0.2" transform="translate(13.9 29.2) rotate(3)"/><rect x="-0.9" y="-0.9" width="1.8" height="1.8" rx="0.29" fill="#A9C4F5" fill-opacity="0.92" transform="translate(13.9 29.2) rotate(3)"/>
+<rect x="-0.98" y="-0.98" width="1.95" height="1.95" rx="0.43" fill="#A9C4F5" fill-opacity="0.2" transform="translate(5.6 30.6) rotate(-8)"/><rect x="-0.8" y="-0.8" width="1.6" height="1.6" rx="0.26" fill="#A9C4F5" fill-opacity="0.92" transform="translate(5.6 30.6) rotate(-8)"/></g>
+</svg>
+"""##,
+    ]
+    static func image(_ state: HandState, scale: CGFloat) -> CGImage? {
+        let pixels = Int(canvas * scale), size = CGSize(width: canvas, height: canvas)
+        guard let data = svg[state]?.data(using: .utf8), let picture = NSImage(data: data),
+            let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4,
+                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        rep.size = size
+        NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        picture.draw(in: NSRect(origin: .zero, size: size))
+        return rep.cgImage
+    }
+}
+typealias HandCurve = (Double, Double, Double, Double)
+// Seconds, points and cubic Bezier curves, from the spec's timing table.
+enum HandTiming {
+    static let entry = 0.16, glideBase = 0.22, glidePerPoint = 0.00025, glideMax = 0.42, flourish = 0.15, scroll = 0.2, grab = 0.09
+    static let lift = 0.22, silence = 1.5, fade = 0.3, crossfade = 0.07, trail = 0.05
+    static let entryOffset: CGFloat = 18, hold: CGFloat = 3, liftOffset: CGFloat = 10, fadeOffset: CGFloat = 14, scrollDrop: CGFloat = 5
+    static let typeStep: CGFloat = 1.5, pecks = 6, pressScale = 0.93, grabScale = 0.95, tilt = -0.22
+    static let out: HandCurve = (0.2, 0.8, 0.2, 1), glideCurve: HandCurve = (0.35, 0, 0.15, 1), fadeCurve: HandCurve = (0.4, 0, 1, 1)
+    static let inOut: HandCurve = (0.42, 0, 0.58, 1)
+    static func glide(_ distance: CGFloat) -> Double { min(glideMax, glideBase + glidePerPoint * Double(distance)) }
+}
+// END HAND ART
+
+// BEGIN HAND MOTION
+// The y of a cubic Bezier easing curve at x, solved by bisection.
+func handEase(_ curve: HandCurve, _ x: Double) -> Double {
+    func bezier(_ a: Double, _ b: Double, _ s: Double) -> Double { 3 * (1 - s) * (1 - s) * s * a + 3 * (1 - s) * s * s * b + s * s * s }
+    var low = 0.0, high = 1.0
+    for _ in 0..<30 { let mid = (low + high) / 2; if bezier(curve.0, curve.2, mid) < x { low = mid } else { high = mid } }
+    return bezier(curve.1, curve.3, (low + high) / 2)
+}
+func handLength(_ points: [CGPoint]) -> CGFloat { zip(points, points.dropFirst()).map { hypot($1.x - $0.x, $1.y - $0.y) }.reduce(0, +) }
+func handMix(_ a: CGPoint, _ b: CGPoint, _ f: Double) -> CGPoint { CGPoint(x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f) }
+// The point a fraction of the way along a route, by length.
+func handAlong(_ points: [CGPoint], _ fraction: Double) -> CGPoint {
+    var left = handLength(points) * fraction
+    for (a, b) in zip(points, points.dropFirst()) {
+        let step = hypot(b.x - a.x, b.y - a.y)
+        if left <= step, step > 0 { return handMix(a, b, Double(left / step)) }
+        left -= step
+    }
+    return points.last ?? .zero
+}
+func handBack(_ point: CGPoint, _ distance: CGFloat) -> CGPoint { CGPoint(x: point.x + HandArt.axis.dx * distance, y: point.y + HandArt.axis.dy * distance) }
+// One property's keyframes from t = 0. Eased moves are sampled into 20 ms linear steps, so one animation carries every beat.
+struct HandTrack<Value> {
+    var times: [Double] = [0], values: [Value]
+    let mix: (Value, Value, Double) -> Value
+    init(_ start: Value, mix: @escaping (Value, Value, Double) -> Value) { values = [start]; self.mix = mix }
+    var end: Double { times.last ?? 0 }
+    var last: Value { values[values.count - 1] }
+    var moved: Bool { times.count > 1 }
+    mutating func wait(until time: Double) { if time > end { times.append(time); values.append(last) } }
+    mutating func move(at start: Double, over duration: Double, curve: HandCurve, _ value: (Double) -> Value) {
+        wait(until: start)
+        let steps = max(1, Int((duration / 0.02).rounded(.up)))
+        for step in 1...steps {
+            let x = Double(step) / Double(steps)
+            times.append(start + duration * x); values.append(value(handEase(curve, x)))
+        }
+    }
+    mutating func move(to value: Value, at start: Double, over duration: Double, curve: HandCurve) {
+        wait(until: start)
+        let from = last, mix = self.mix
+        move(at: start, over: duration, curve: curve) { mix(from, value, $0) }
+    }
+    // A content swap: the old value until start, the new one crossfaded in by the end of the 70 ms.
+    mutating func swap(to value: Value, at start: Double) { wait(until: start); times.append(start + HandTiming.crossfade); values.append(value) }
+    func animation(_ keyPath: String, begin: Double, _ box: (Value) -> Any) -> CAKeyframeAnimation? {
+        guard moved, end > 0 else { return nil }
+        let animation = CAKeyframeAnimation(keyPath: keyPath)
+        animation.values = values.map(box); animation.keyTimes = times.map { NSNumber(value: $0 / end) }
+        animation.duration = end; animation.beginTime = begin; animation.calculationMode = .linear; animation.fillMode = .backwards
+        return animation
+    }
+}
+let handMixDouble: (Double, Double, Double) -> Double = { $0 + ($1 - $0) * $2 }
+// Everything one frame does, as tracks from its start: positions in global top-left points, offsets in layer points.
+struct HandPlan {
+    var position: HandTrack<CGPoint>, opacity: HandTrack<Double>, contents: HandTrack<HandState>
+    var scale = HandTrack<Double>(1, mix: handMixDouble), rotation = HandTrack<Double>(0, mix: handMixDouble)
+    var offset = HandTrack<CGPoint>(.zero, mix: handMix)
+    var rest = CGPoint.zero, fadeTo = CGPoint.zero, points: [CGPoint] = [], total = 0.0
+}
+// start is where the hand is on screen when it is already showing over the same window, with its opacity and content.
+func handPlan(_ act: HandAct, from start: (point: CGPoint, opacity: Double, state: HandState)?, secure: Bool) -> HandPlan {
+    let t = HandTiming.self, kind = act.kind
+    let (lead, acting) = HandArt.states[kind] ?? (.point, .press)
+    let pecking = kind == "key" || kind == "type"
+    let target = handBack(act.at, pecking ? t.hold : 0)
+    let route = handPoints((start.map { [$0.point] } ?? []) + (kind == "drag" ? [act.at] : act.path + [target]))
+    let carry = kind == "drag" ? handPoints([act.at] + act.path) : []
+    let entryFrom = handBack(route[0], t.entryOffset)
+    var plan = HandPlan(position: HandTrack(start?.point ?? entryFrom, mix: handMix), opacity: HandTrack(start?.opacity ?? 0, mix: handMixDouble),
+        contents: HandTrack(start?.state ?? lead, mix: { $2 < 1 ? $0 : $1 }))
+    var time = 0.0
+    plan.opacity.move(to: HandArt.opacity, at: 0, over: t.entry, curve: t.out)
+    if start == nil { plan.position.move(to: route[0], at: 0, over: t.entry, curve: t.out); time = t.entry }
+    else if start?.state != lead { plan.contents.swap(to: lead, at: 0) }
+    if route.count > 1 {
+        let glide = t.glide(handLength(route))
+        plan.position.move(at: time, over: glide, curve: t.glideCurve) { handAlong(route, $0) }
+        time += glide
+    }
+    // The layer's y runs up, so a move down the screen is negative.
+    let peck = CGPoint(x: -HandArt.axis.dx * t.hold, y: HandArt.axis.dy * t.hold)
+    switch kind {
+    case "click", "double", "right":
+        plan.contents.swap(to: acting, at: time)
+        for _ in 0..<act.beats {
+            for _ in 0..<(kind == "double" ? 2 : 1) {
+                if kind == "right" { plan.rotation.move(to: t.tilt, at: time, over: t.flourish * 0.4, curve: t.inOut); plan.rotation.move(to: 0, at: time + t.flourish * 0.4, over: t.flourish * 0.6, curve: t.inOut) }
+                else { plan.scale.move(to: t.pressScale, at: time, over: t.flourish * 0.4, curve: t.inOut); plan.scale.move(to: 1, at: time + t.flourish * 0.4, over: t.flourish * 0.6, curve: t.inOut) }
+                time += t.flourish
+            }
+        }
+    case "key" where !secure, "type" where !secure:
+        // Held 3 pt back, each beat pecks to the point and back; typing steps 1.5 pt right per beat. Secure input skips the pecks.
+        for beat in 0..<min(act.beats, t.pecks) {
+            if kind == "type" && beat > 0 {
+                let next = CGPoint(x: target.x + t.typeStep * CGFloat(beat), y: target.y)
+                plan.position.move(to: next, at: time, over: 0.03, curve: t.inOut)
+            }
+            plan.offset.move(to: peck, at: time, over: t.flourish * 0.35, curve: t.inOut)
+            plan.offset.move(to: .zero, at: time + t.flourish * 0.55, over: t.flourish * 0.45, curve: t.inOut)
+            time += t.flourish
+        }
+    case "scroll":
+        for _ in 0..<act.beats {
+            plan.offset.move(to: CGPoint(x: 0, y: -t.scrollDrop), at: time, over: t.scroll / 2, curve: t.inOut)
+            plan.offset.move(to: .zero, at: time + t.scroll / 2, over: t.scroll / 2, curve: t.inOut)
+            time += t.scroll
+        }
+    case "drag":
+        plan.contents.swap(to: .grab, at: time)
+        plan.scale.move(to: t.grabScale, at: time, over: t.grab, curve: t.inOut); time += t.grab
+        if carry.count > 1 {
+            let glide = t.glide(handLength(carry))
+            plan.position.move(at: time, over: glide, curve: t.glideCurve) { handAlong(carry, $0) }
+            time += glide
+        }
+        plan.contents.swap(to: .rest, at: time)
+        plan.scale.move(to: 1, at: time, over: t.grab, curve: t.inOut); time += t.grab
+    default: break
+    }
+    // The lift: the hand opens and steps 10 pt back at 60%, uncovering the target.
+    let acted = plan.position.last
+    plan.rest = handBack(acted, t.liftOffset); plan.fadeTo = handBack(acted, t.fadeOffset)
+    if plan.contents.last != .rest { plan.contents.swap(to: .rest, at: time) }
+    plan.position.move(to: plan.rest, at: time, over: t.lift, curve: t.out)
+    plan.opacity.move(to: HandArt.lifted, at: time, over: t.lift, curve: t.out)
+    plan.total = time + t.lift
+    plan.points = (start == nil ? [entryFrom] : []) + route + carry + [acted, plan.rest, plan.fadeTo]
+    return plan
+}
+// END HAND MOTION
+
+// BEGIN HAND HOST
+// The ghost hand (ROADMAP 2.7): a glove that glides to where sleight acts in a background window, flourishes and fades. It only
+// draws: the panel never activates, takes key, catches a click or shows in another process's capture unless the user chose
+// visible, and it is released after the fade, so an idle host has no window and no scheduled work.
+final class HandPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+// Capture: hidden (.none) keeps the panel out of every capture, the user's own screenshots and recordings included, and
+// visible (.readOnly) lets them show it. The client passes the user's setting as --capture=hidden|visible; hidden is the default.
+let handCaptureModes: [String: NSWindow.SharingType] = ["hidden": NSWindow.SharingType.none, "visible": NSWindow.SharingType.readOnly]
+func handCapture(_ args: [String]) -> String? {
+    if args.isEmpty { return "hidden" }
+    guard args.count == 1, args[0].hasPrefix("--capture="), handCaptureModes[String(args[0].dropFirst(10))] != nil else { return nil }
+    return String(args[0].dropFirst(10))
+}
+func makeHandPanel(capture: String) -> HandPanel {
+    let panel = HandPanel(contentRect: NSRect(x: 0, y: 0, width: 1, height: 1), styleMask: [.borderless, .nonactivatingPanel],
+        backing: .buffered, defer: true)
+    panel.level = .floating
+    panel.ignoresMouseEvents = true
+    panel.hasShadow = false
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.sharingType = handCaptureModes[capture] ?? NSWindow.SharingType.none
+    panel.collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary, .stationary]
+    panel.hidesOnDeactivate = false
+    panel.isReleasedWhenClosed = false
+    panel.animationBehavior = .none
+    panel.setAccessibilityElement(false)
+    let view = NSView()
+    view.wantsLayer = true
+    view.setAccessibilityElement(false)
+    panel.contentView = view
+    return panel
+}
+// Global top-left points to AppKit's bottom-left screen coordinates, which start at the primary display.
+func appKitRect(_ rect: CGRect) -> NSRect {
+    NSRect(x: rect.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - rect.maxY, width: rect.width, height: rect.height)
+}
+// The target window's bounds while it is on screen and still the frame's pid's. Bounds and owner need no recording grant.
+func handWindowBounds(_ windowId: UInt32, pid: Int32) -> CGRect? {
+    guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(windowId)) as? [[String: Any]],
+        let info = list.first, (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value == windowId,
+        (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+        (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true,
+        let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+        let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
+    return rect
+}
+func handDemoRect(_ text: String) -> CGRect? {
+    let parts = text.split(separator: ",", omittingEmptySubsequences: false).map { Double($0) }
+    guard parts.count == 4, let x = parts[0], let y = parts[1], let width = parts[2], let height = parts[3],
+        [x, y, width, height].allSatisfy({ $0.isFinite && abs($0) <= 100000 }), width >= 1, height >= 1 else { return nil }
+    return CGRect(x: x, y: y, width: width, height: height)
+}
+
+final class HandHost: NSObject, NSApplicationDelegate {
+    var panel: HandPanel?
+    var hand: CALayer?           // holds the opacity; glove over dabs inside it, siblings with one anchor
+    var glove: CALayer?
+    var dabs: CALayer?
+    var shown = HandState.rest   // the glove's content when the last plan ends
+    var fadeTo = CGPoint.zero    // where the idle fade drifts to, global top-left points
+    var box = CGRect.null        // the panel's frame, global top-left points
+    var windowId: UInt32 = 0
+    var pending: [Int: DispatchWorkItem] = [:]
+    var fading: DispatchWorkItem?
+    var next = 0
+    var demo: CGRect?
+    var capture = "hidden"
+    var images: [String: CGImage] = [:]
+    var idle: Bool { panel == nil && hand == nil && glove == nil && dabs == nil && pending.isEmpty && fading == nil }
+
+    func image(_ state: HandState) -> CGImage? {
+        let scale: CGFloat = (glove?.contentsScale ?? 2) > 1 ? 2 : 1, key = state.rawValue + "@\(Int(scale))"
+        if let image = images[key] { return image }
+        let image = HandArt.image(state, scale: scale); images[key] = image
+        return image
+    }
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if let demo = demo { play(demo); return }
+        DispatchQueue.global().async { self.read() }
+    }
+    // Validation, the nonce binding and the seq order run on this reader thread in frame order. Any bad frame ends the host.
+    func read() {
+        var buffer = Data(), bound: String?, last = -1
+        while true {
+            let chunk = FileHandle.standardInput.availableData
+            if chunk.isEmpty { DispatchQueue.main.async { NSApp.terminate(nil) }; return }
+            buffer.append(chunk)
+            if buffer.count > 131072 { exit(65) }
+            while let end = buffer.firstIndex(of: 10) {
+                let line = buffer.prefix(upTo: end)
+                buffer.removeSubrange(...end)
+                guard line.count <= 8192, let data = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                    let frame = handFrame(data) else { exit(65) }
+                switch frame {
+                case let .hide(nonce):
+                    guard bound == nil || bound == nonce else { exit(65) }
+                    bound = nonce
+                    DispatchQueue.main.async { self.hide() }
+                case let .act(nonce, act):
+                    guard bound == nil || bound == nonce, act.seq > last else { exit(65) }
+                    bound = nonce; last = act.seq
+                    DispatchQueue.main.async { self.schedule(act) }
+                }
+            }
+        }
+    }
+    // A frame plays after its delay unless a hide comes first. Past 64 waiting frames, new ones are dropped.
+    func schedule(_ act: HandAct) {
+        guard pending.count < 64 else { return }
+        let id = next; next += 1
+        let item = DispatchWorkItem { [weak self] in
+            self?.pending[id] = nil
+            if let bounds = handWindowBounds(act.windowId, pid: act.pid) { self?.draw(act, clip: bounds) }
+        }
+        pending[id] = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + act.delay, execute: item)
+    }
+    func hide() {
+        pending.values.forEach { $0.cancel() }; pending.removeAll()
+        if panel != nil { fade(after: 0) }
+    }
+    // A frame during the hold cancels the fade and glides on from where the hand is.
+    func draw(_ act: HandAct, clip: CGRect) {
+        let start = panel != nil && windowId == act.windowId ? glove.map { layer in
+            (point: global((layer.presentation() ?? layer).position), opacity: Double((hand?.presentation() ?? hand)?.opacity ?? 0), state: shown) } : nil
+        let plan = handPlan(act, from: start, secure: IsSecureEventInputEnabled())
+        guard layout(plan.points, clip: clip), let panel = panel else { return }
+        fading?.cancel(); fading = nil
+        apply(plan, model: (plan.rest, HandArt.lifted, .rest))
+        shown = .rest; fadeTo = plan.fadeTo; windowId = act.windowId
+        if !panel.isVisible { panel.orderFrontRegardless() }
+        fade(after: plan.total + HandTiming.silence)
+    }
+    // Every animation of a plan on the glove and the dabs, which run the position track 50 ms behind (the trail).
+    func apply(_ plan: HandPlan, model: (CGPoint, Double, HandState)) {
+        guard let hand = hand, let glove = glove, let dabs = dabs else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        for layer in [hand, glove, dabs] { layer.removeAllAnimations() }
+        let begin = CACurrentMediaTime()
+        if let animation = plan.position.animation("position", begin: begin, { NSValue(point: self.local($0)) }) {
+            glove.add(animation, forKey: "position")
+            let trail = animation.copy() as! CAKeyframeAnimation; trail.beginTime = begin + HandTiming.trail
+            dabs.add(trail, forKey: "position")
+        }
+        if let animation = plan.opacity.animation("opacity", begin: begin, { Float($0) }) { hand.add(animation, forKey: "opacity") }
+        if let animation = plan.contents.animation("contents", begin: begin, { self.image($0) as Any }) { glove.add(animation, forKey: "contents") }
+        for (track, path) in [(plan.scale, "transform.scale"), (plan.rotation, "transform.rotation.z")] {
+            if let animation = track.animation(path, begin: begin, { $0 }) { glove.add(animation, forKey: path); dabs.add(animation, forKey: path) }
+        }
+        if let animation = plan.offset.animation("transform.translation", begin: begin, { NSValue(size: NSSize(width: $0.x, height: $0.y)) }) {
+            glove.add(animation, forKey: "transform.translation"); dabs.add(animation, forKey: "transform.translation")
+        }
+        glove.position = local(model.0); dabs.position = local(model.0); hand.opacity = Float(model.1)
+        glove.contents = image(model.2); dabs.contents = image(.dabs)
+        CATransaction.commit()
+    }
+    // Sizes the panel (made on first use) to the points' box plus 48 pt clipped to the window, keeping the hand where it is on
+    // screen. It never shows the panel.
+    func layout(_ points: [CGPoint], clip: CGRect) -> Bool {
+        let frame = handBox(points).intersection(clip)
+        guard !frame.isNull, frame.width >= 1, frame.height >= 1, let last = points.last else { return false }
+        let panel = self.panel ?? makeHandPanel(capture: capture)
+        let screen = NSScreen.screens.first { NSPointInRect(NSPoint(x: last.x, y: appKitRect(CGRect(origin: last, size: .zero)).minY), $0.frame) }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        let current = [glove, dabs].map { $0.map { global(($0.presentation() ?? $0).position) } }
+        panel.setFrame(appKitRect(frame), display: false)
+        box = frame
+        if hand == nil {
+            let hand = CALayer(), glove = CALayer(), dabs = CALayer()
+            hand.opacity = 0
+            for layer in [dabs, glove] {
+                layer.bounds = CGRect(x: 0, y: 0, width: HandArt.canvas, height: HandArt.canvas); layer.anchorPoint = HandArt.anchor
+                hand.addSublayer(layer)
+            }
+            panel.contentView?.layer?.addSublayer(hand)
+            self.hand = hand; self.glove = glove; self.dabs = dabs
+        }
+        hand?.frame = CGRect(origin: .zero, size: frame.size)
+        for (layer, point) in zip([glove, dabs], current) {
+            guard let layer = layer else { continue }
+            layer.contentsScale = screen?.backingScaleFactor ?? 2
+            if let point = point { layer.removeAllAnimations(); layer.position = local(point) }
+        }
+        CATransaction.commit()
+        self.panel = panel
+        return true
+    }
+    func local(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x - box.minX, y: box.maxY - point.y) }
+    func global(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x + box.minX, y: box.maxY - point.y) }
+    // The idle fade: 300 ms to nothing while drifting 4 pt further back, then the panel is released.
+    func fade(after delay: Double) {
+        fading?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self = self, let hand = self.hand, let glove = self.glove else { self?.release(); return }
+            let from = self.global((glove.presentation() ?? glove).position)
+            var plan = HandPlan(position: HandTrack(from, mix: handMix), opacity: HandTrack(Double((hand.presentation() ?? hand).opacity), mix: handMixDouble),
+                contents: HandTrack(self.shown, mix: { $2 < 1 ? $0 : $1 }))
+            plan.position.move(to: self.fadeTo, at: 0, over: HandTiming.fade, curve: HandTiming.fadeCurve)
+            plan.opacity.move(to: 0, at: 0, over: HandTiming.fade, curve: HandTiming.fadeCurve)
+            self.apply(plan, model: (self.fadeTo, 0, self.shown))
+            let done = DispatchWorkItem { [weak self] in self?.release() }
+            self.fading = done
+            DispatchQueue.main.asyncAfter(deadline: .now() + HandTiming.fade + HandTiming.trail, execute: done)
+        }
+        fading = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+    func release() {
+        panel?.orderOut(nil); panel?.close(); hand?.removeFromSuperlayer()
+        panel = nil; hand = nil; glove = nil; dabs = nil; box = .null; fading = nil; shown = .rest
+    }
+    // --hand-demo X,Y,W,H plays every kind in turn inside that rect (global top-left points) for 30 seconds, then exits. It is
+    // the live capture test's subject, and never reads stdin.
+    func play(_ rect: CGRect) {
+        let kinds = ["click", "double", "right", "key", "type", "drag", "scroll"]
+        var step = 0
+        let spot = { (x: CGFloat, y: CGFloat) in CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y) }
+        Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            let kind = kinds[step % kinds.count], at = spot(0.25 + 0.25 * CGFloat(step % 3), 0.3 + 0.2 * CGFloat(step % 2))
+            self?.draw(HandAct(seq: step, kind: kind, pid: 0, windowId: 0, at: at, path: kind == "drag" ? [spot(0.7, 0.6)] : [at],
+                delay: 0, beats: kind == "type" ? 3 : 1), clip: rect)
+            step += 1
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { exit(0) }
+    }
+}
+// END HAND HOST
+
+// BEGIN HAND DUMP
+// --hand-dump prints the panel's flags, the art, the frame-to-state mapping, the timing table, each kind's plan and the box
+// arithmetic as JSON for tests. Nothing is shown.
+func handDump(capture: String) -> [String: Any] {
+    let host = HandHost(), route = [CGPoint(x: 100, y: 100), CGPoint(x: 160, y: 200)]
+    host.capture = capture
+    let rect = { (r: CGRect) in [r.minX, r.minY, r.width, r.height].map { Double($0) } }
+    let unclipped = handBox(route)
+    _ = host.layout(route, clip: CGRect(x: 60, y: 0, width: 200, height: 200))
+    let clipped = host.box
+    guard let panel = host.panel, let hand = host.hand else { return [:] }
+    let behaviours: [(NSWindow.CollectionBehavior, String)] = [(.canJoinAllSpaces, "canJoinAllSpaces"), (.fullScreenAuxiliary, "fullScreenAuxiliary"),
+        (.fullScreenNone, "fullScreenNone"), (.fullScreenPrimary, "fullScreenPrimary"), (.ignoresCycle, "ignoresCycle"), (.managed, "managed"),
+        (.moveToActiveSpace, "moveToActiveSpace"), (.participatesInCycle, "participatesInCycle"), (.stationary, "stationary"), (.transient, "transient")]
+    let sharing: [NSWindow.SharingType: String] = [.none: "none", .readOnly: "readOnly"]
+    // Per state at 2x: pixel size, the most alpha within 1 pt of the hotspot and within 1 pt of a point 4 pt up-left of it
+    // (nothing reaches past the tip), and the opaque ivory and blue pixels.
+    var art: [String: Any] = [:]
+    for state in HandState.allCases {
+        guard let image = HandArt.image(state, scale: 2), let small = HandArt.image(state, scale: 1) else { continue }
+        let rep = NSBitmapImageRep(cgImage: image)
+        func alpha(_ cx: Int, _ cy: Int) -> Double {
+            var most = 0.0
+            for x in (cx - 2)...(cx + 2) { for y in (cy - 2)...(cy + 2) { most = max(most, Double(rep.colorAt(x: x, y: y)?.alphaComponent ?? 0)) } }
+            return most
+        }
+        var ivory = 0, blue = 0
+        for x in 0..<rep.pixelsWide { for y in 0..<rep.pixelsHigh {
+            guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), c.alphaComponent > 0.85 else { continue }
+            if c.redComponent > 0.85 && c.greenComponent > 0.82 && c.blueComponent > 0.75 { ivory += 1 }
+            if c.blueComponent > c.redComponent + 0.2 { blue += 1 }
+        } }
+        let tip = Int(HandArt.hotspot.x * 2)
+        art[state.rawValue] = ["pixels": [[small.width, small.height], [image.width, image.height]], "hotspotAlpha": alpha(tip, tip),
+            "beyondTipAlpha": alpha(tip - 8, tip - 8), "ivory": ivory, "blue": blue]
+    }
+    let t = HandTiming.self
+    // Each kind's plan for the route above, entering fresh, and the content sequence it shows.
+    var plans: [String: Any] = [:]
+    for kind in ["click", "double", "right", "key", "type", "scroll", "drag"] {
+        let act = HandAct(seq: 0, kind: kind, pid: 1, windowId: 1, at: route[1], path: kind == "drag" ? [CGPoint(x: 220, y: 200)] : route,
+            delay: 0, beats: kind == "type" ? 8 : 1)
+        let plan = handPlan(act, from: nil, secure: false), secure = handPlan(act, from: nil, secure: true)
+        let states = plan.contents.values.map { $0.rawValue }.enumerated().filter { $0.offset == 0 || plan.contents.values[$0.offset - 1].rawValue != $0.element }.map { $0.element }
+        plans[kind] = ["total": plan.total, "secureTotal": secure.total, "states": states,
+            "rest": [Double(plan.rest.x), Double(plan.rest.y)], "fadeTo": [Double(plan.fadeTo.x), Double(plan.fadeTo.y)]]
+    }
+    let continuing = handPlan(HandAct(seq: 0, kind: "click", pid: 1, windowId: 1, at: route[1], path: [route[1]], delay: 0, beats: 1),
+        from: (point: route[0], opacity: HandArt.lifted, state: .rest), secure: false)
+    let dump: [String: Any] = [
+        "panel": [
+            "borderless": panel.styleMask.subtracting(.nonactivatingPanel).isEmpty, "nonactivatingPanel": panel.styleMask.contains(.nonactivatingPanel),
+            "canBecomeKey": panel.canBecomeKey, "canBecomeMain": panel.canBecomeMain, "ignoresMouseEvents": panel.ignoresMouseEvents,
+            "hasShadow": panel.hasShadow, "opaque": panel.isOpaque, "backgroundAlpha": Double(panel.backgroundColor.alphaComponent),
+            "level": panel.level.rawValue, "sharingType": sharing[panel.sharingType] ?? "other",
+            "collectionBehavior": behaviours.filter { panel.collectionBehavior.contains($0.0) }.map { $0.1 },
+            "accessibilityElement": panel.isAccessibilityElement(), "contentAccessibilityElement": panel.contentView?.isAccessibilityElement() ?? true,
+            "hidesOnDeactivate": panel.hidesOnDeactivate, "visible": panel.isVisible,
+        ],
+        "layers": (hand.sublayers ?? []).map { layer in ["isGlove": layer === host.glove, "isDabs": layer === host.dabs,
+            "bounds": rect(layer.bounds), "anchor": [Double(layer.anchorPoint.x), Double(layer.anchorPoint.y)]] },
+        "timing": ["entry": t.entry, "glideBase": t.glideBase, "glidePerPoint": t.glidePerPoint, "glideMax": t.glideMax, "flourish": t.flourish,
+            "scroll": t.scroll, "grab": t.grab, "lift": t.lift, "silence": t.silence, "fade": t.fade, "crossfade": t.crossfade, "trail": t.trail,
+            "entryOffset": Double(t.entryOffset), "hold": Double(t.hold), "liftOffset": Double(t.liftOffset), "fadeOffset": Double(t.fadeOffset),
+            "scrollDrop": Double(t.scrollDrop), "typeStep": Double(t.typeStep), "pecks": t.pecks, "pressScale": t.pressScale,
+            "grabScale": t.grabScale, "tilt": t.tilt, "glides": [0, 100, 400, 1000].map { t.glide(CGFloat($0)) },
+            "ease": [0.0, 0.5, 1.0].map { handEase(t.out, $0) }],
+        "states": HandArt.states.mapValues { [$0.approach.rawValue, $0.act.rawValue] },
+        "art": art.merging(["opacity": HandArt.opacity, "lifted": HandArt.lifted, "canvas": Double(HandArt.canvas),
+            "hotspot": [Double(HandArt.hotspot.x), Double(HandArt.hotspot.y)], "anchor": [Double(HandArt.anchor.x), Double(HandArt.anchor.y)],
+            "axis": [Double(HandArt.axis.dx), Double(HandArt.axis.dy)]]) { $1 },
+        "plans": plans, "continuing": ["total": continuing.total],
+        "box": ["unclipped": rect(unclipped), "clipped": rect(clipped)],
+        "capture": host.capture,
+    ]
+    host.release()
+    return dump.merging(["idle": host.idle]) { $1 }
+}
+// END HAND DUMP
+
+// No arguments: the consent host. --hand [--capture=…], --hand-demo X,Y,W,H [--capture=…] and --hand-dump [--capture=…]: the hand.
+let arguments = Array(CommandLine.arguments.dropFirst())
 let app = NSApplication.shared
-let host = ConsentHost()
-app.setActivationPolicy(.accessory)
-app.delegate = host
-app.run()
+if arguments.isEmpty {
+    let host = ConsentHost()
+    app.setActivationPolicy(.accessory)
+    app.delegate = host
+    app.run()
+} else {
+    let mode = arguments[0]
+    var rest = Array(arguments.dropFirst()), demo: CGRect?
+    if mode == "--hand-demo" { guard let first = rest.first, let rect = handDemoRect(first) else { exit(64) }; demo = rect; rest.removeFirst() }
+    guard ["--hand", "--hand-demo", "--hand-dump"].contains(mode), let capture = handCapture(rest) else { exit(64) }
+    if mode == "--hand-dump" {
+        guard let bytes = try? JSONSerialization.data(withJSONObject: handDump(capture: capture), options: [.sortedKeys]) else { exit(70) }
+        FileHandle.standardOutput.write(bytes + Data([10]))
+        exit(0)
+    }
+    let hand = HandHost()
+    hand.demo = demo; hand.capture = capture
+    app.setActivationPolicy(.accessory)
+    app.delegate = hand
+    app.run()
+}

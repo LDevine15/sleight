@@ -23,7 +23,7 @@ function fixture() {
     close() { events.push('ui-close'); } };
   const pages = { endTurn: async () => { events.push('pages-end'); return { cleanedUp:true }; },
     list: async () => [] };
-  const dependencies = { schedule: () => undefined, readConfig: () => ({}), readConfigFile: () => null, acceptPackage: () => ({ current: () => true }),
+  const dependencies = { schedule: () => undefined, readConfig: () => ({}), readConfigFile: () => null, readHand: () => ({ state: 'absent' }), setHand: () => assert.fail('the hand setting was written without a click'), acceptPackage: () => ({ current: () => true }),
     prepareHelpers: async () => ({ status:'ready', receipt:{} }), selectConnection: async () => selected,
     createUi: (_receipt, onLoss) => { ui.loss = onLoss; return ui; }, loadPlaywright: () => ({ inprocess: { playwright: { chromium: { async connectOverCDP(endpoint, options) {
       assert.equal(endpoint, 'private'); assert.equal(options.noDefaults,true);
@@ -213,7 +213,7 @@ for (const choice of ['pause', 'disconnect']) {
 }
 test('the menu bar status names the browser and payment check and offers Turn turbo off, which opts out and disconnects', async t => {
   const f = await controls(t), control = f.views[0];
-  assert.deepEqual(control.choices, ['pause', 'disconnect', 'turbo-off']);
+  assert.deepEqual(control.choices, ['pause', 'disconnect', 'hand-off', 'turbo-off']);
   assert.equal(control.data.payments, 'ask');
   assert.equal(control.data.browser, undefined, 'a config with no executable names no browser');
   let optedOut = 0;
@@ -228,7 +228,7 @@ test('the paused menu drops Pause and every status carries the plugin version', 
   assert.match(f.views[0].data.version, /^\d+\.\d+\.\d+$/);
   await f.choose(f.views[0], 'pause');
   assert.equal(f.views.at(-1).data.status, 'paused');
-  assert.deepEqual(f.views.at(-1).choices, ['disconnect', 'turbo-off']);
+  assert.deepEqual(f.views.at(-1).choices, ['disconnect', 'hand-off', 'turbo-off']);
 });
 test('a failed Turn turbo off keeps turbo connected and says so in the menu', async t => {
   const f = await controls(t);
@@ -237,7 +237,30 @@ test('a failed Turn turbo off keeps turbo connected and says so in the menu', as
   assert.ok(!f.events.includes('disconnect'));
   assert.equal(f.views.at(-1).data.optOut, 'failed');
   assert.equal(f.views.at(-1).data.status, f.views[0].data.status, 'the state is unchanged');
-  assert.deepEqual(f.views.at(-1).choices, ['pause', 'disconnect', 'turbo-off'], 'the person can try again');
+  assert.deepEqual(f.views.at(-1).choices, ['pause', 'disconnect', 'hand-off', 'turbo-off'], 'the person can try again');
+});
+test('the menu\'s Ghost Hand row writes the hand setting on the person\'s click and shows the new state, turbo untouched', async t => {
+  const f = await controls(t);
+  let file = { state: 'absent' }; const writes = [];
+  f.dependencies.readHand = () => file;
+  f.dependencies.setHand = async enabled => { writes.push(enabled); file = { state: enabled ? 'on' : 'off' }; };
+  assert.equal(f.views[0].data.hand, 'on');
+  await f.choose(f.views[0], 'hand-off');
+  assert.deepEqual(writes, [false]);
+  assert.equal(f.views.at(-1).data.hand, 'off'); assert.deepEqual(f.views.at(-1).choices, ['pause', 'disconnect', 'hand-on', 'turbo-off']);
+  await f.choose(f.views.at(-1), 'hand-on');
+  assert.deepEqual(writes, [false, true]);
+  assert.equal(f.views.at(-1).data.hand, 'on');
+  assert.ok(!f.events.includes('disconnect'), 'the hand row never touches turbo');
+});
+test('a failed hand write leaves the row as it was, and an unsafe hand.json shows off', async t => {
+  const f = await controls(t);
+  f.dependencies.setHand = async () => { throw Error('TURBO_CONFIG_LINKED'); };
+  await f.choose(f.views[0], 'hand-off');
+  assert.equal(f.views.at(-1).data.hand, 'on'); assert.ok(f.views.at(-1).choices.includes('hand-off'));
+  f.dependencies.readHand = () => ({ state: 'unsafe' });
+  f.refresh(); await settle();
+  assert.equal(f.views.at(-1).data.hand, 'off'); assert.ok(f.views.at(-1).choices.includes('hand-on'));
 });
 test('an opt-out written by another session or the launcher ends this session\'s turbo at the next refresh', async t => {
   const f = await controls(t); let file = { version: 1, enabled: true };
@@ -264,7 +287,7 @@ test('installed delayed cleanup retains ownership until collection succeeds', as
   f.advance(35000); await f.choose(f.views[0], 'pause');
   assert.equal(f.lost(), false);
   const control = f.views.at(-1);
-  assert.equal(control.data.status, 'cleanup-required'); assert.deepEqual(control.choices, ['cleanup']);
+  assert.equal(control.data.status, 'cleanup-required'); assert.deepEqual(control.choices, ['cleanup', 'hand-off']);
   assert.ok(!f.events.includes('disconnect'));
   cleanedUp = true; f.advance(35000); await f.choose(control, 'cleanup');
   assert.ok(f.events.includes('disconnect'));

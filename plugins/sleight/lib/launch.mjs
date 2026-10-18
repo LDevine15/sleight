@@ -9,6 +9,7 @@
 //   launch.mjs --doctor  print what would run, and check it exists
 //   launch.mjs setup     install the helper, open permission panes, run doctor
 //   launch.mjs turbo on [--browser chrome|helium] | off | status   turbo is on by default; these are the user's controls
+//   launch.mjs hand on | off | capture hidden|visible | status   the ghost hand is on by default; the user's controls
 //   launch.mjs record|replay …  turn a finished run into a script, and run it again (replay.mjs)
 
 import { execFile, execFileSync, spawn } from 'node:child_process';
@@ -141,12 +142,19 @@ async function turboDoctorLines() {
   try { const turbo = await import('./direct-browser/turbo-setup.mjs'); return turbo.doctorLines(turbo.turboDiagnosis()); }
   catch (err) { return ['turbo (direct browser path)', `PROBLEM   could not read turbo state (${err.message})`]; }
 }
+async function handDoctorSection() {
+  try {
+    const [{ handDoctorLines, handSetting }, { handHostBuilt }] = await Promise.all([import('./hand/settings.mjs'), import('./direct-browser/host.mjs')]);
+    return handDoctorLines(handSetting(), handHostBuilt());
+  } catch (err) { return ['ghost hand', `PROBLEM   could not read the hand's state (${err.message})`]; }
+}
 
-export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines } = {}) {
+export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, hand = handDoctorSection } = {}) {
   if (app !== undefined && (typeof app !== 'string' || !app.trim() || app.startsWith('-'))) {
     log('usage: sleight-mcp --doctor [running app name or bundle ID]'); return 1;
   }
   for (const line of await turbo()) log(line);
+  for (const line of await hand()) log(line);
   const s = resolveServer(env);
   if (s.error) { log(`sleight: ${s.error}`); return 1; }
   await probeSurfaces(s, env);
@@ -1079,6 +1087,9 @@ export function allowCommand(args, { list = listPreapproved, remove = removePrea
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === 'turbo') {
     try { process.exitCode = (await import('./direct-browser/turbo-setup.mjs')).turboCommand(process.argv.slice(3)); }
+    catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }
+  } else if (process.argv[2] === 'hand') {
+    try { process.exitCode = (await import('./hand/command.mjs')).handCommand(process.argv.slice(3)); }
     catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }
   } else if (process.argv[2] === 'turbo-state') {
     const { readInstalledConfig } = await import('./direct-browser/installed-config.mjs');

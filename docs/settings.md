@@ -206,6 +206,26 @@ overwrites it. Claude's own file edits and shell commands can't write the file o
 the receipt is current, then whether the native helpers are compiled and whether remote debugging is on,
 each with the one fix. It only reads.
 
+## Ghost hand
+
+When sleight acts in a background window, a translucent glove glides to the spot, flourishes and fades. It only draws:
+it never moves the pointer, takes focus or catches a click, and it shows only over the window sleight is driving. It is on
+by default. The first time sleight acts it compiles in the background, and that session has no hand.
+
+- `sleight-mcp hand off` writes `enabled: false` to `~/Library/Application Support/sleight/hand.json`, and
+  `sleight-mcp hand on` turns it back on. Off hides the hand in running sessions at once.
+- The glove's menu has a Ghost Hand row with a checkmark, which writes the same setting. The menu shows only while turbo
+  is in use, so without turbo use `sleight-mcp hand off`.
+- `sleight-mcp hand capture hidden|visible` sets whether captures show the hand. `hidden`, the default, keeps it out of
+  every capture, your own screenshots and recordings included. `visible` lets your screenshots and recordings show it.
+  `SLEIGHT_HAND_CAPTURE=hidden|visible` in the server's environment takes precedence over the file.
+- `sleight-mcp hand status` prints the state, the capture mode and whether the host is compiled. `sleight-mcp --doctor`
+  prints the same after its turbo section.
+- `SLEIGHT_HAND=0` in the MCP server's environment turns that server's hand off. It can only turn the hand off.
+- A `hand.json` that is a link or has another owner, mode or format keeps the hand off until you delete it.
+
+Claude's own file edits and shell commands can't write `hand.json` or run `hand on`, `hand off` or `hand capture`.
+
 ## Preapproved apps
 
 Write `~/Library/Application Support/sleight/preapproved.json` yourself to allow selected apps without

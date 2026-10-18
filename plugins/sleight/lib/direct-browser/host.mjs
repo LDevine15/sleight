@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { lstatSync, realpathSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync, chmodSync, renameSync, rmSync, rmdirSync } from 'node:fs';
-import { spawn, execFile } from 'node:child_process';
+import { existsSync, lstatSync, realpathSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync, chmodSync, renameSync, rmSync } from 'node:fs';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 import { userInfo } from 'node:os';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { promisify } from 'node:util';
@@ -92,6 +92,59 @@ export function nativeHelpersBuilt({ inventory, cacheRoot = defaultHelperCache()
   } catch { return false; }
 }
 
+// The build lock is a private folder holding its owner's pid, process start and creation time. A session killed mid-compile
+// leaves it behind (the ghost hand builds in the background of any session), so a later build reclaims a lock whose owner is
+// gone, whose pid now belongs to a process that started later, or that is older than two compiles' deadline. A lock with no
+// owner record yet is reclaimed only past that age, since its owner may be between creating it and writing the record.
+const lockLimit = 600000;
+const ownStart = () => Date.now() - process.uptime() * 1000;
+function processStart(pid) {
+  try {
+    process.kill(pid, 0);
+  } catch (error) { return error.code === 'EPERM' ? Infinity : undefined; }
+  try {
+    const text = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], { env: environment(), timeout: 2000, encoding: 'utf8' }).trim();
+    return Date.parse(text) || Infinity;
+  } catch { return Infinity; }
+}
+function staleLock(lock) {
+  const stat = lstatSync(lock);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw Error('HOST_CACHE_UNSAFE');
+  let owner;
+  try { owner = JSON.parse(readFileSync(join(lock, 'owner.json'), 'utf8')); } catch {}
+  if (!Number.isSafeInteger(owner?.pid) || !Number.isFinite(owner?.created)) return Date.now() - stat.mtimeMs > lockLimit && stat;
+  if (Date.now() - owner.created > lockLimit) return stat;
+  const started = processStart(owner.pid);
+  // ps reports start times to the second.
+  return (started === undefined || started !== Infinity && Number.isFinite(owner.started) && Math.abs(started - owner.started) > 2000) && stat;
+}
+function takeLock(lock) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let made = false;
+    try {
+      mkdirSync(lock, { mode: 0o700 }); made = true;
+      writeFileSync(join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, started: ownStart(), created: Date.now() }), { mode: 0o600, flag: 'wx' });
+      return true;
+    } catch (error) {
+      if (made) rmSync(lock, { recursive: true, force: true });
+      if (error.code !== 'EEXIST' || made) throw error;
+    }
+    const stale = attempt === 0 && staleLock(lock);
+    if (!stale) return false;
+    // Move the stale lock aside, then check it is the folder judged stale and not a newer builder's.
+    const aside = `${lock}.stale-${process.pid}-${randomBytes(4).toString('hex')}`;
+    try { renameSync(lock, aside); } catch { return false; }
+    if (lstatSync(aside).ino !== stale.ino) { try { renameSync(aside, lock); } catch {} return false; }
+    rmSync(aside, { recursive: true, force: true });
+  }
+  return false;
+}
+function releaseLock(lock) {
+  try {
+    if (JSON.parse(readFileSync(join(lock, 'owner.json'), 'utf8')).pid === process.pid) rmSync(lock, { recursive: true, force: true });
+  } catch {}
+}
+
 // Internal loader options, never exposed as tool arguments. Compile staged exact
 // source bytes and publish the bank only after both artifacts pass validation.
 export async function prepareNativeHelpers({ inventory, cacheRoot = defaultHelperCache(),
@@ -119,8 +172,8 @@ export async function prepareNativeHelpers({ inventory, cacheRoot = defaultHelpe
       return Object.freeze({ status: 'ready', directory, record, receipt });
     };
     try { return cached(); } catch {}
-    try { mkdirSync(lock, { mode: 0o700 }); locked = true; }
-    catch (error) { if (error.code === 'EEXIST') return unavailable('HOST_BUILD_BUSY'); throw error; }
+    if (!takeLock(lock)) return unavailable('HOST_BUILD_BUSY');
+    locked = true;
     bank = mkdtempSync(join(cacheRoot, 'build-')); chmodSync(bank, 0o700);
     const moduleCache = join(bank, 'module-cache'); mkdirSync(moduleCache, { mode: 0o700 });
     const binaries = {};
@@ -143,7 +196,7 @@ export async function prepareNativeHelpers({ inventory, cacheRoot = defaultHelpe
     return unavailable(['HOST_CACHE_UNSAFE', 'HOST_SOURCE_MISMATCH'].includes(error.message) ? error.message : 'NATIVE_HELPERS_UNAVAILABLE');
   } finally {
     if (bank) rmSync(bank, { recursive: true, force: true });
-    if (locked) rmdirSync(lock);
+    if (locked) releaseLock(lock);
   }
 }
 
@@ -222,6 +275,40 @@ export function createUiChannel({ read, write, onLoss = () => {} }) {
     close() { lose(); write.end(); },
   });
   return channel;
+}
+
+// The ghost hand runs the consent host's binary with --hand, from the same build and cache. Its inventory is the helper sources
+// on disk, hashed now: the hand only draws, so it needs no turbo acceptance, and its handle can start only the hand, never the
+// consent channel or the peer helper. A build for one serves the other when the sources match.
+function handInventory(sourceRoot) {
+  return { accepted: true, protocol: 1, node: process.version, helperMode: 'source',
+    files: Object.values(helperSources).map(name => ({ path: 'native/' + name, sha256: digest(ordinary(join(sourceRoot, name))) })) };
+}
+export function handHostBuilt({ cacheRoot = defaultHelperCache(), sourceRoot = sources } = {}) {
+  try { return nativeHelpersBuilt({ inventory: handInventory(sourceRoot), cacheRoot }); } catch { return false; }
+}
+// Whether Apple's command-line tools are installed, asked through xcode-select: xcrun without them opens macOS's install
+// dialog, which a background build must never put in front of the person.
+export async function appleToolsPresent({ run = promisify(execFile), exists = existsSync } = {}) {
+  try {
+    const { stdout } = await run('/usr/bin/xcode-select', ['-p'], { env: environment(), timeout: 5000, maxBuffer: 4096 });
+    const dir = String(stdout).trim();
+    if (!isAbsolute(dir) || normalize(dir) !== dir) return false;
+    return ['swiftc', 'clang'].every(tool => ['usr/bin', 'Toolchains/XcodeDefault.xctoolchain/usr/bin'].some(folder => exists(join(dir, folder, tool))));
+  } catch { return false; }
+}
+export async function prepareHandHost({ cacheRoot = defaultHelperCache(), sourceRoot = sources, compile = compileNative, tools = appleToolsPresent } = {}) {
+  let inventory;
+  try { inventory = handInventory(sourceRoot); } catch { return Object.freeze({ status: 'unavailable', code: 'HOST_SOURCE_MISMATCH' }); }
+  if (!nativeHelpersBuilt({ inventory, cacheRoot }) && !await tools()) return Object.freeze({ status: 'unavailable', code: 'APPLE_TOOLS_MISSING' });
+  const built = await prepareNativeHelpers({ inventory, cacheRoot, sourceRoot, compile });
+  if (built.status !== 'ready') return Object.freeze({ status: built.status, code: built.code });
+  const { receipt } = built;
+  // capture is 'hidden' (absent from every capture) or 'visible' (screenshots and recordings show the hand).
+  return Object.freeze({ status: 'ready', spawn: ({ capture = 'hidden' } = {}) => {
+    if (!['hidden', 'visible'].includes(capture)) throw Error('HAND_CAPTURE_INVALID');
+    return spawn(executable('consent-host', receipt), ['--hand', '--capture=' + capture], { env: environment(), stdio: ['pipe', 'ignore', 'ignore'] });
+  } });
 }
 
 export function createNativeUi(receipt, onLoss) {
