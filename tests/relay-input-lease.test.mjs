@@ -769,7 +769,9 @@ function setup(t) {
       stream.setEncoding('utf8').on('data', d => d.split('\n').filter(Boolean).forEach(line => output.push(JSON.parse(line))));
     }
     const inputLease = new InputLease({ directory, holder });
-    const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease, changeReview: true, ...options });
+    const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease, changeReview: true,
+      // Recovery needs a running check; unless a test passes its own, every app is running.
+      runningProbe: () => ({ status: 'responding' }), ...options });
     relays.push(relay);
     const send = msg => clientIn.write(JSON.stringify(msg) + '\n');
     const reply = msg => serverOut.write(JSON.stringify(msg).replaceAll('file:///tmp/a.txt', pathToFileURL(path).href) + '\n');
@@ -1773,4 +1775,237 @@ test('the Best Buy lease refusal is one getApp call, and that call satisfies the
   h.reply(bestBuyReply(h.forwarded.at(-1).id));
   h.send(rpc(3, 'js', { code: 'await app.click(13)' }));
   assert.equal(h.forwarded.at(-1).id, 3, JSON.stringify(h.received.at(-1)));
+});
+
+// GA1 (2026-10-18): a recovery getApp launched Helium, then Chrome's profile picker. Recovery acquires an app the lease
+// had; it never launches one, and it never speaks for a call that names its own app or handle.
+const appReply = (id, text, appId) => ({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], _meta: { 'codex/toolSurface': { app: { appId } } } } });
+const chromeTab = 'Window: "New Tab", App: Google Chrome.\n0 standard window New Tab';
+const heliumTab = 'Window: "New Tab", App: Helium.\n0 standard window New Tab';
+const settle = () => new Promise(resolve => setImmediate(resolve));
+const acquisitions = h => h.forwarded.filter(m => String(m.id).startsWith('sleight-acquire'));
+// The lease on Helium dropped by a failed action, with Helium still the recovery target.
+async function droppedOnHelium(t, options = {}) {
+  const probed = [];
+  const h = setup(t).harness('ga1', { fresh: true, changeReview: false, runningProbe: async app => { probed.push(app); return { status: 'responding', windows: 1 }; }, ...options });
+  h.send(rpc(1, 'js', { code: 'let app = await cua.getApp("net.imput.helium")' })); h.reply(appReply(1, heliumTab, 'net.imput.helium'));
+  await settle();
+  h.send(rpc(2, 'js', { code: 'await app.click(1)' }));
+  h.reply({ jsonrpc: '2.0', id: 2, result: { isError: true, content: [{ type: 'text', text: 'Computer Use server error -10005: timeoutReached' }],
+    _meta: { 'codex/toolSurface': { app: { appId: 'net.imput.helium' } } } } });
+  await settle();
+  h.forwarded.length = h.received.length = 0; probed.length = 0;
+  return { h, probed };
+}
+test('GA1: a call that acquires another app with a bare assignment is not replaced by a recovery getApp of the last app', async t => {
+  const { h, probed } = await droppedOnHelium(t);
+  h.send(rpc(3, 'js', { code: 'app = await cua.getApp("Google Chrome"); await app.click(3);' }));
+  await settle();
+  const sent = h.forwarded.map(m => m.params.arguments.code).join('\n');
+  assert.doesNotMatch(sent, /helium/i, 'no getApp of the dropped lease\'s app goes to the engine');
+  assert.equal(acquisitions(h).length, 1);
+  assert.match(acquisitions(h)[0].params.arguments.code, /\napp = await cua\.getApp\("Google Chrome"\);?$/, 'the call\'s own acquisition goes first');
+  assert.equal(probed.filter(app => /helium/i.test(app)).length, 0, 'the call names its own app, so Helium was never checked or launched');
+  h.reply(appReply(acquisitions(h)[0].id, chromeTab, 'com.google.Chrome'));
+  await settle();
+  assert.equal(h.forwarded.at(-1).id, 3);
+  assert.ok(h.forwarded.at(-1).params.arguments.code.includes('await app.click(3);'), 'the call\'s action follows');
+});
+test('GA1: a call with an acquisition anywhere in it never gets a recovery getApp in front', async t => {
+  const { h } = await droppedOnHelium(t);
+  h.send(rpc(3, 'js', { code: 'await sleight.noop?.(); const c = await cua.getApp("Google Chrome"); await c.click(3);' }));
+  await settle();
+  assert.equal(h.forwarded.filter(m => /helium/i.test(m.params.arguments.code)).length, 0);
+  assert.equal(h.received.at(-1)?.result.isError, true);
+  assert.match(h.received.at(-1).result.content.map(c => c.text ?? '').join('\n'), /Send exactly `let app = await cua\.getApp\("Google Chrome"\)`/);
+});
+test('GA1: a result whose acquisition shows no single window forgets the old recovery target', async t => {
+  const h = setup(t).harness('ga1-echo', { fresh: true, changeReview: false, runningProbe: async () => ({ status: 'responding', windows: 1 }) });
+  h.send(rpc(1, 'js', { code: 'let app = await cua.getApp("Google Chrome")' })); h.reply(appReply(1, chromeTab, 'com.google.Chrome'));
+  // A filtered write that echoes a Window: line after the tree: the result has two headers, so no single window.
+  await settle();
+  h.send(rpc(2, 'js', { code: 'const t = 1; let h = await cua.getApp("net.imput.helium"); const s = await h.getAXState({ disableDiffing: true }); nodeRepl.write(s.split("\\n").filter(l => l.startsWith("Window:")).join("\\n"));' }));
+  h.reply(appReply(2, heliumTab + '\nWindow: "Other", App: Helium.', 'net.imput.helium'));
+  await settle();
+  h.forwarded.length = h.received.length = 0;
+  h.send(rpc(3, 'js', { code: 'await h.click(63)' }));
+  await settle();
+  assert.equal(h.forwarded.length, 0, 'no recovery acquisition went to the engine');
+  const refusal = h.received.at(-1).result.content.map(c => c.text ?? '').join('\n');
+  assert.doesNotMatch(refusal, /Chrome/);
+  assert.match(refusal, /net\.imput\.helium/, 'the advice names the app the call acquired');
+});
+test('GA1: a result whose window is unknown but whose app is the same keeps the recovery target', async t => {
+  const h = setup(t).harness('ga1-same', { fresh: true, changeReview: false });
+  h.send(rpc(1, 'js', { code: 'let app = await cua.getApp("TextEdit")' })); h.reply(result(1));
+  h.send(rpc(2, 'js', { code: 'const t = 1; let again = await cua.getApp("TextEdit"); const s = await again.getAXState({ disableDiffing: true }); nodeRepl.write(s);' }));
+  h.reply(result(2, header + '\n0 standard window a.txt\nWindow: "x", App: TextEdit.'));
+  h.forwarded.length = 0;
+  h.send(rpc(3, 'js', { code: 'await app.typeText("x")' }));
+  assert.match(acquisitions(h).at(-1)?.params.arguments.code ?? '', /let app = await cua\.getApp\("com\.apple\.TextEdit"\)$/);
+});
+test('GA1: closing the last window forgets the recovery target, so the next action is not sent to an app with no windows', t => {
+  const { a } = setup(t);
+  a.send(rpc(1, 'js', { code: 'await app.pressKey("super+w")' }));
+  a.reply({ jsonrpc: '2.0', id: 1, result: { isError: true, content: [{ type: 'text', text: 'noWindowsAvailable' }] } });
+  assert.match(a.received.at(-1).result.content[0].text, /no windows left/);
+  a.forwarded.length = 0;
+  a.send(rpc(2, 'js', { code: 'await app.click(1)' }));
+  assert.equal(a.forwarded.length, 0);
+  assert.equal(a.received.at(-1).result.isError, true);
+});
+test('GA1: recovery sends nothing when the app is not running or the check gets no answer', async t => {
+  for (const health of [{ status: 'absent' }, undefined]) {
+    const { h, probed } = await droppedOnHelium(t, { runningProbe: async app => { probes.push(app); return health; } });
+    const probes = probed;
+    h.send(rpc(3, 'js', { code: 'await app.click(1)' }));
+    await settle();
+    assert.equal(h.forwarded.length, 0, 'no getApp reached the engine, which would launch a quit app');
+    assert.equal(h.received.at(-1).result.isError, true);
+    assert.match(h.received.at(-1).result.content.map(c => c.text ?? '').join('\n'), /Send exactly `let app = await cua\.getApp\("net\.imput\.helium"\)`/);
+    assert.deepEqual(probes.filter(app => app === 'net.imput.helium'), ['net.imput.helium']);
+  }
+});
+test('GA1: recovery runs the call when the app is running, after one check', async t => {
+  const { h, probed } = await droppedOnHelium(t);
+  h.send(rpc(3, 'js', { code: 'await app.click(1)' }));
+  assert.equal(h.forwarded.length, 0, 'held for the running check');
+  await settle();
+  assert.equal(probed[0], 'net.imput.helium', 'the running check is the first thing sent');
+  assert.match(acquisitions(h).at(-1).params.arguments.code, /let app = await cua\.getApp\("net\.imput\.helium"\)$/);
+  h.reply(appReply(acquisitions(h).at(-1).id, heliumTab, 'net.imput.helium'));
+  await settle();
+  assert.equal(h.forwarded.at(-1).id, 3);
+});
+test('GA1: a call held for the running check refuses a second call that arrives meanwhile', async t => {
+  let release, hold = false;
+  const { h } = await droppedOnHelium(t, { runningProbe: () => hold ? new Promise(resolve => { release = () => resolve({ status: 'responding', windows: 1 }); }) : Promise.resolve({ status: 'responding', windows: 1 }) });
+  hold = true;
+  h.send(rpc(3, 'js', { code: 'await app.click(1)' }));
+  h.send(rpc(4, 'js', { code: 'await app.click(2)' }));
+  assert.match(h.received.at(-1).result.content[0].text, /pending/);
+  await settle();
+  release(); await settle();
+  assert.match(acquisitions(h).at(-1).params.arguments.code, /getApp\("net\.imput\.helium"\)$/);
+});
+test('GA1: recovery for a handle uses that handle\'s app, not the last app any call read', async t => {
+  const h = setup(t).harness('ga1-handle', { fresh: true, changeReview: false, runningProbe: async () => ({ status: 'responding', windows: 1 }) });
+  h.send(rpc(1, 'js', { code: 'let te = await cua.getApp("com.apple.TextEdit")' })); h.reply(result(1)); await settle();
+  h.send(rpc(2, 'js', { code: 'let ch = await cua.getApp("com.google.Chrome")' })); h.reply(appReply(2, chromeTab, 'com.google.Chrome')); await settle();
+  h.send(rpc(3, 'js', { code: 'await ch.click(1)' }));
+  h.reply({ jsonrpc: '2.0', id: 3, result: { isError: true, content: [{ type: 'text', text: 'Computer Use server error -10005: timeoutReached' }],
+    _meta: { 'codex/toolSurface': { app: { appId: 'com.google.Chrome' } } } } });
+  await settle();
+  h.forwarded.length = 0;
+  h.send(rpc(4, 'js', { code: 'await te.typeText("x")' }));
+  await settle();
+  const acquisition = acquisitions(h).at(-1).params.arguments.code;
+  assert.match(acquisition, /let sleightRecovery\d+ = await cua\.getApp\("com\.apple\.TextEdit"\)$/, 'TextEdit, bound to a fresh name');
+  assert.doesNotMatch(acquisition, /let app =/, 'no binding of Claude\'s changes');
+  h.reply(result(acquisitions(h).at(-1).id));
+  await settle();
+  assert.equal(h.forwarded.at(-1).id, 4);
+});
+test('GA1: recovery refuses a handle it has no app for, and a call that mixes two apps', async t => {
+  const h = setup(t).harness('ga1-unknown', { fresh: true, changeReview: false, runningProbe: async () => ({ status: 'responding', windows: 1 }) });
+  h.send(rpc(1, 'js', { code: 'let te = await cua.getApp("com.apple.TextEdit")' })); h.reply(result(1)); await settle();
+  h.send(rpc(2, 'js', { code: 'let ch = await cua.getApp("com.google.Chrome")' })); h.reply(appReply(2, chromeTab, 'com.google.Chrome')); await settle();
+  h.send(rpc(3, 'js', { code: 'await ch.click(1)' }));
+  h.reply({ jsonrpc: '2.0', id: 3, result: { isError: true, content: [{ type: 'text', text: 'Computer Use server error -10005: timeoutReached' }],
+    _meta: { 'codex/toolSurface': { app: { appId: 'com.google.Chrome' } } } } });
+  await settle();
+  h.forwarded.length = 0;
+  // After a reset the engine has no handles, so `te` has no app of its own; `app` is the name recovery binds.
+  const mixed = 'await te.typeText("x"); await ch.click(1)';
+  h.send(rpc('mixed', 'js', { code: mixed })); await settle();
+  assert.equal(h.forwarded.length, 0, 'two apps in one call get no recovery');
+  assert.equal(h.received.at(-1).result.isError, true);
+  h.send(rpc('reset', 'js_reset')); h.reply(result('reset', 'reset'));
+  h.forwarded.length = 0;
+  h.send(rpc('unknown', 'js', { code: 'await te.typeText("x")' })); await settle();
+  assert.equal(h.forwarded.length, 0, 'a handle with no app of its own gets no recovery');
+  assert.equal(h.received.at(-1).result.isError, true);
+});
+
+// GA1 review: every handle method counts as a handle, an unmappable receiver or a handle bound without a bundle gets no
+// recovery, no running probe means no recovery, and every way to reach getApp skips it.
+async function droppedOnChrome(t, options = {}) {
+  const probed = [];
+  const h = setup(t).harness('ga1-review', { fresh: true, changeReview: false, runningProbe: async app => { probed.push(app); return { status: 'responding', windows: 1 }; }, ...options });
+  h.send(rpc(1, 'js', { code: 'let te = await cua.getApp("com.apple.TextEdit")' })); h.reply(result(1)); await settle();
+  h.send(rpc(2, 'js', { code: 'let ch = await cua.getApp("com.google.Chrome")' })); h.reply(appReply(2, chromeTab, 'com.google.Chrome')); await settle();
+  h.send(rpc(3, 'js', { code: 'await ch.click(1)' }));
+  h.reply({ jsonrpc: '2.0', id: 3, result: { isError: true, content: [{ type: 'text', text: 'Computer Use server error -10005: timeoutReached' }],
+    _meta: { 'codex/toolSurface': { app: { appId: 'com.google.Chrome' } } } } });
+  await settle();
+  h.forwarded.length = h.received.length = 0; probed.length = 0;
+  return { h, probed };
+}
+test('GA1: dragTo, press, pickFromList, getJsDialog, doubleClick, rightClick and waitFor map to their handle like click', async t => {
+  for (const call of ['dragTo(1, 2)', 'press("a")', 'pickFromList("x")', 'getJsDialog()', 'doubleClick(1)', 'rightClick(1)', 'waitFor("x")']) {
+    const { h, probed } = await droppedOnChrome(t);
+    h.send(rpc('m', 'js', { code: `await te.${call}` }));
+    await settle();
+    assert.match(acquisitions(h).at(-1)?.params.arguments.code ?? '', /let sleightRecovery\d+ = await cua\.getApp\("com\.apple\.TextEdit"\)$/, call);
+    assert.deepEqual(probed, ['com.apple.TextEdit'], call);
+  }
+});
+test('GA1: a handle-style call on a receiver recovery cannot name gets no recovery', async t => {
+  const { h, probed } = await droppedOnChrome(t);
+  for (const code of ['await (await cua.listApps())[0].click(1)', 'const hs = [te]; await hs[0].click(1)', 'await te?.click(1)', 'await te.click(1); await hs[0].dragTo(1, 2)']) {
+    h.send(rpc(`r-${code.length}`, 'js', { code })); await settle();
+    assert.equal(acquisitions(h).length, 0, code);
+    assert.equal(probed.length, 0, code);
+  }
+});
+test('GA1: a handle bound by a read with no bundle ID gets no recovery, not the last app\'s', async t => {
+  const h = setup(t).harness('ga1-unconfirmed', { fresh: true, changeReview: false, runningProbe: () => ({ status: 'responding' }) });
+  h.send(rpc(1, 'js', { code: 'let te = await cua.getApp("TextEdit")' })); h.reply(result(1));
+  h.send(rpc(2, 'js', { code: 'let app = await cua.getApp("TextEdit")' })); h.reply(appReply(2, 'nothing to show', 'com.apple.TextEdit'));
+  h.forwarded.length = 0;
+  h.send(rpc(3, 'js', { code: 'await app.typeText("x")' }));
+  assert.equal(acquisitions(h).length, 0, 'app is bound to something unconfirmed');
+  assert.equal(h.received.at(-1).result.isError, true);
+  h.send(rpc(4, 'js', { code: 'await te.typeText("x")' }));
+  assert.match(acquisitions(h).at(-1)?.params.arguments.code ?? '', /getApp\("com\.apple\.TextEdit"\)$/, 'a confirmed handle still recovers');
+});
+test('GA1: a failed acquisition leaves the handle as it was, so recovery still follows it', t => {
+  const h = setup(t).harness('ga1-failed', { fresh: true, changeReview: false, runningProbe: () => ({ status: 'responding' }) });
+  h.send(rpc(1, 'js', { code: 'let app = await cua.getApp("TextEdit")' })); h.reply(result(1));
+  h.send(rpc(2, 'js', { code: 'app = await cua.getApp("nosuchapp")' }));
+  h.reply({ jsonrpc: '2.0', id: 2, result: { isError: true, content: [{ type: 'text', text: 'Invalid app: nosuchapp' }] } });
+  h.forwarded.length = 0;
+  h.send(rpc(3, 'js', { code: 'await app.click(1)' }));
+  assert.match(acquisitions(h).at(-1)?.params.arguments.code ?? '', /let app = await cua\.getApp\("com\.apple\.TextEdit"\)$/);
+});
+test('GA1: with no running probe at all, recovery sends nothing', async t => {
+  const { h } = await droppedOnChrome(t, { runningProbe: undefined });
+  h.send(rpc('n', 'js', { code: 'await te.typeText("x")' })); await settle();
+  assert.equal(acquisitions(h).length, 0, 'no probe, no recovery: nothing could check the app is running');
+  assert.equal(h.received.at(-1).result.isError, true);
+});
+test('GA1: every way to reach getApp skips recovery, so no app gets a getApp it did not ask for', async t => {
+  const { h, probed } = await droppedOnChrome(t);
+  const forms = [
+    'const c = await cua.getApp ("Calculator")',
+    'const c = await cua["getApp"]("Calculator")',
+    "const c = await cua['getApp']('Calculator')",
+    'const { getApp } = cua; const c = await getApp("Calculator")',
+    'const { getApp: g } = cua; const c = await g("Calculator")',
+    'const g = cua.getApp.bind(cua); const c = await g("Calculator")',
+    'const k = "get" + "App"; const c = await cua[k]("Calculator")',
+    'const c = await cua?.getApp("Calculator")',
+  ];
+  for (const [i, code] of forms.entries()) {
+    // `te` is a known handle, so only the getApp in the code keeps recovery from sending a getApp for TextEdit.
+    h.send(rpc(`f${i}`, 'js', { code: `await te.click(1); ${code}` })); await settle();
+    assert.equal(acquisitions(h).length, 0, code);
+    assert.equal(probed.length, 0, code);
+    assert.equal(h.forwarded.some(m => /sleightRecovery|getApp\("com\.(?:apple|google)/.test(m.params.arguments.code ?? '')), false, code);
+  }
+});
+test('GA1: a getApp named only in a comment or typed text does not stop recovery', async t => {
+  const { h } = await droppedOnChrome(t);
+  h.send(rpc('c', 'js', { code: '// cua.getApp is how this was acquired\nawait te.typeText("cua.getApp(x)")' })); await settle();
+  assert.match(acquisitions(h).at(-1)?.params.arguments.code ?? '', /getApp\("com\.apple\.TextEdit"\)$/);
 });

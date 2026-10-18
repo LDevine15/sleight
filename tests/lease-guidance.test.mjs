@@ -19,7 +19,7 @@ for (const [header, missing] of [
   const [clientIn, clientOut, serverIn, serverOut] = streams, sent = [], received = [];
   serverIn.on('data', data => sent.push(JSON.parse(data.toString())));
   clientOut.on('data', data => received.push(JSON.parse(data.toString())));
-  const relay = createRelay({clientIn, clientOut, serverIn, serverOut, inputLease: lease, changeReview: false});
+  const relay = createRelay({clientIn, clientOut, serverIn, serverOut, inputLease: lease, changeReview: false, runningProbe: () => ({ status: 'responding' })});
   t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); lease.close(); removeTemp(directory); });
   const call = (id, code) => clientIn.write(JSON.stringify({id, method: 'tools/call', params: {name: 'js', arguments: {code}}}) + '\n');
   call(1, 'let app = await cua.getApp("Example");');
