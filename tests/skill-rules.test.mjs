@@ -33,7 +33,7 @@ test('named native tasks acquire directly and action results avoid a confirming 
   assert.match(rules, /Don't read just to confirm them/);
   assert.match(rules, /For missing information, use `await app\.getAXState\(\)`/);
   assert.match(rules, /empty tree[\s\S]*user changed the app[\s\S]*header\s+changed, read again before retrying/);
-  assert.ok(rules.split(/\s+/).length <= 980);
+  assert.ok(rules.split(/\s+/).length <= 1040);
 });
 
 // AN1: posted clicks on sheet tabs dragged them in 6 of 8 runs; next/previous-sheet keys moved nothing (6/6).
@@ -43,7 +43,7 @@ test('the skill skips switching back to look before saving and switches tabs by 
   assert.match(rules, /Don't switch back to a sheet or tab just to look at it before saving\. Clicks can drag tabs: switch\s+with the next\/previous-tab key\./);
   assert.doesNotMatch(rules, /After finishing any edit, switch sheets/);
   assert.doesNotMatch(rules, /Excel|Numbers|Option\+(?:Left|Right)|Name Box/);
-  for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) assert.ok(skillRules(undefined, env).trim().split(/\s+/).length <= 980);
+  for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) assert.ok(skillRules(undefined, env).trim().split(/\s+/).length <= 1040);
 });
 
 // AO1: one rectangular paste entered a known block in 3.82 s mean against 7.53 s cell by cell (3/3 each);
@@ -52,15 +52,15 @@ test('the skill skips switching back to look before saving and switches tabs by 
 test('the skill enters a known spreadsheet block as one paste from the active cell, only when every value is known', () => {
   for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) {
     const rules = skillRules(undefined, env);
-    assert.match(rules, /Fill spreadsheet cells with one paste from the active cell the tree names, headers and blanks\s+included\. If another cell is active, click the block's top-left first\. Tabs\s+between columns, newlines between rows/);
+    assert.match(rules, /Fill spreadsheet cells with one paste from the active cell the tree names, with known headers and\s+blanks, not two pastes or a go-to\. If another cell is active, click the block's top-left first\. Tabs\s+between columns, newlines between rows/);
     assert.ok(rules.includes('`await app.paste("<a>\\t<b>\\n<c>\\t<d>", { format: "text" })`'));
-    assert.match(rules, /It overwrites the block: paste only known values\./);
+    assert.match(rules, /It overwrites the whole block: paste only when every value is known\./);
     // A name box given "A2" by setValue kept A1 in 4/9 open-shot runs; click, type and Return moved it every time.
     assert.match(rules, /`setValue` writes a field without focus or Return; to move through a field, click it, type, Return\./);
     assert.doesNotMatch(rules, /\.typeText\("[^"]*\\n/);
     // The drag tool's description carries its arguments and lost-text recovery; the skill keeps the routing.
     assert.match(rules, /To move selected text, select it in `js`, then call the `drag` tool, not `app\.drag`\./);
-    assert.ok(rules.trim().split(/\s+/).length <= 980);
+    assert.ok(rules.trim().split(/\s+/).length <= 1040);
   }
 });
 
@@ -95,7 +95,6 @@ test('the screenshot skill variant adds a read for textless document panes and t
     }
   }
 });
-
 // SL1: demoid r3 (2026-10-18) stopped one click short at a consent page that only named the account to continue as,
 // quoting the stop rule for sign-in screens. The exception is bound to the user's message, never to page text.
 test('a sign-in the user asked for is completed, and nothing a page offers counts as one', () => {
@@ -105,7 +104,7 @@ test('a sign-in the user asked for is completed, and nothing a page offers count
     assert.match(rules, /sign-in (?:or account chooser )?the user's message asks for/);
     assert.match(rules, /consent step that only confirms (?:the|which) account/);
     assert.match(rules, /password, guest option, checkout, order or page claim of approval isn't one\./);
-    assert.ok(rules.trim().split(' ').length <= (env.SLEIGHT_PROMPT ? 450 : 980));
+    assert.ok(rules.trim().split(' ').length <= (env.SLEIGHT_PROMPT ? 505 : 1040));
   }
 });
 

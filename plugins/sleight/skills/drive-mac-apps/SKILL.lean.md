@@ -28,12 +28,15 @@ Use locators when validation/autocomplete moves fields, indices on static forms.
 Use only documented methods, leave tabs in the background, stop if the user declines a browser approval.
 `nodeRepl.write(await sleight.dragTo(tab, from, to))`: selectors, locators or page coordinates, reads back indices.
 Downloads: `locator.downloadMedia({})`, never `tab.click` (stalls later downloads).
-Page dialogs:
+Open page dialogs with
 `tab.click(index)`, not a locator, then answer it: `(await tab.getJsDialog()).accept()` or `.dismiss()`.
 
 ## Tools
 
-Selected text: select in `js`, then `drag`.
+Selected text: select in `js`, then `drag` (`app`, `windowId`, `from`, `to`) in its content, from
+the latest screenshot of that window. Lost text: press Cmd+Z in that window.
+Before `hover`, try `Help:`, `Secondary Actions:`, right-click or keys, then tell the user first that it moves their pointer
+and brings the app forward for about two seconds.
 - Copy and Cut use the real clipboard unless `SLEIGHT_CLIPBOARD=preserve` (then one clipboard shortcut
   per call). Never clear or replace the user's clipboard to get around a refusal.
 - `SLEIGHT_CHANGE_REVIEW=1`: acquire before editing, save before `review_changes`, and never decide for
