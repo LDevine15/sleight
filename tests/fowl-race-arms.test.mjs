@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { benchmarkDecision } from '../bench/approve.mjs';
 import { BENCH_APPS, REAL_APPS } from '../bench/tasks.mjs';
-import { raceApps, raceBundles } from '../bench/fowl/support.mjs';
+import { raceApps, raceBundles, REAL_BROWSER_ARMS, isCodexSurface, taskSupport } from '../bench/fowl/support.mjs';
+import { realAgentSetup } from '../bench/fowl/real-gate-setup.mjs';
 import { prepareRoundArms, roundArmPrep, terminalAncestor, admitRealGate, runGateAgent, realGatePlan } from '../bench/fowl/real-gate.mjs';
 import { cuaDaemonPlan, ensureCuaDaemon } from '../bench/world/native-arms.mjs';
 
@@ -117,4 +118,48 @@ test('a live round prepares its arm before the browser launches and releases it 
       observeBrowser: async () => ({ observed: false, tabs: {}, reason: 'fixture' }) } });
   assert.deepEqual(events, [['prep', 'codex'], 'launch', 'agent', 'release', 'sites closed', 'browser closed']);
   assert.deepEqual(JSON.parse(readFileSync(join(dir, 'out/arm-prep.json'), 'utf8')), { approvals: ['x'] });
+});
+
+// LAWS, 2026-10-18: the Codex arm runs gpt-6-luna and a second Codex arm runs gpt-6.1-sol, both in real browser windows.
+const raceTask = { name: 'fixture', browser: 'firefox', prompt: 'Visit {browser}.', result: 'the answer' };
+const firefox = { browser: 'firefox', profileRoot: '/tmp/profile', executable: '/Applications/Firefox.app/Contents/MacOS/firefox', marker: 'Sleight Gate fixture', pid: 1 };
+for (const [surface, model] of [['codex', 'gpt-6-luna'], ['codex-sol', 'gpt-6.1-sol']]) test(`${surface} plans ${model} with one CODEX_HOME, effort high and the same approvals`, () => {
+  assert.ok(REAL_BROWSER_ARMS.includes(surface) && isCodexSurface(surface));
+  assert.equal(taskSupport(raceTask, surface, { realBrowser: 'firefox' }), null);
+  const setup = realAgentSetup({ task: raceTask, surface, dir: '/tmp/x', realBrowser: firefox, dryRun: true });
+  assert.equal(setup.command, 'codex');
+  assert.equal(setup.args[setup.args.indexOf('-m') + 1], model);
+  assert.ok(setup.args.includes('model_reasoning_effort="high"'));
+  assert.equal(setup.metadata.model, model); assert.equal(setup.metadata.effort, 'high');
+  assert.ok(setup.env.CODEX_HOME.endsWith('/.codex-bench'));
+  const plan = realGatePlan({ args: { surface, 'real-browser': 'firefox', out: '/tmp/never-made' }, tasks: [raceTask], realBrowser: firefox });
+  assert.equal(plan.surface, surface);
+  assert.equal(plan.arms[0].surface, surface);
+  assert.equal(plan.arms[0].metadata.model, model);
+  assert.equal(plan.arms[0].args.at(-1), plan.arms[0].prompt, 'the prompt is the Codex exec argument, not a Claude one');
+  assert.deepEqual(roundArmPrep(plan), { approvals: ['org.mozilla.firefox', 'com.apple.Preview', 'com.apple.TextEdit'] });
+});
+
+test('codex-sol rounds hold and restore the same Always allow list as codex', async t => {
+  const dir = temporary(t), calls = [];
+  const plan = { surface: 'codex-sol', out: '/tmp/fb-rounds/real-x-codex-sol', browser: { browser: 'firefox' } };
+  const { receipt, release } = await prepareRoundArms(plan, { logs: dir, armHome: dir,
+    approve: (ids, backup) => { calls.push(['approve', ids, backup]); return () => calls.push(['restore']); },
+    daemon: () => assert.fail('no daemon for Codex') });
+  assert.deepEqual(calls[0].slice(0, 2), ['approve', ['org.mozilla.firefox', 'com.apple.Preview', 'com.apple.TextEdit']]);
+  assert.equal(receipt.approvalsBackup, join(dir, 'ComputerUseAppApprovals.before-real-x-codex-sol.json'));
+  await release();
+  assert.deepEqual(calls.at(-1), ['restore']);
+});
+
+test('a codex-sol row runs Codex on gpt-6.1-sol and a codex row on gpt-6-luna', async t => {
+  for (const [surface, model] of [['codex', 'gpt-6-luna'], ['codex-sol', 'gpt-6.1-sol']]) {
+    const dir = temporary(t);
+    const plan = { surface, dir: join(dir, 'task'), task: { name: 'fixture' }, prompt: 'fixture' };
+    let seen;
+    await runGateAgent(plan, { runNativeCodex: async (_prompt, options) => {
+      seen = options; return { groupClean: true, code: 0, out: { result: 'RESULT: none' }, stderr: '', forbidden: [], toolCalls: 0 };
+    } });
+    assert.equal(seen.model, model); assert.equal(seen.effort, 'high');
+  }
 });

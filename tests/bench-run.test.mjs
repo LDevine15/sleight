@@ -986,6 +986,31 @@ test('a Codex real run drives through Codex with the real apps approved and the 
   assert.ok(!result.calls.some(c => Array.isArray(c) && c[0] === 'driver'), 'Claude never runs for the Codex arm');
 });
 
+for (const [label, arm, extraArgs, armLabel, model] of [
+  ['codex defaults to gpt-6-luna', 'codex', [], 'codex', 'gpt-6-luna'],
+  ['codex with gpt-6.1-sol is recorded as the codex-sol arm', 'codex', ['--codex-model', 'gpt-6.1-sol'], 'codex-sol', 'gpt-6.1-sol'],
+  ['the codex-sol arm runs gpt-6.1-sol', 'codex-sol', [], 'codex-sol', 'gpt-6.1-sol'],
+]) test(`${label}, and rows say which`, async () => {
+  const result = await runner({ arm, drive: true, extraArgs, outcome: { passed: true } });
+  assert.equal(result.error, undefined);
+  assert.ok(result.codexRuns.length > 0);
+  for (const run of result.codexRuns) assert.equal(run.options.model, model);
+  const file = result.saved.at(-1);
+  assert.deepEqual(file.arms, [armLabel]);
+  assert.deepEqual(file.codexModels, { [armLabel]: model });
+  assert.ok(file.results.length > 0);
+  for (const row of file.results) { assert.equal(row.arm, armLabel); assert.equal(row.codexModel, model); }
+});
+
+test('the codex-sol arm refuses another model, and luna and sol sit side by side as two arms', async () => {
+  const bad = await runner({ arm: 'codex-sol', extraArgs: ['--codex-model', 'gpt-6-luna'] });
+  assert.match(String(bad.error?.message), /codex-sol arm runs gpt-6\.1-sol/);
+  const both = await runner({ arm: 'codex,codex-sol', drive: true, outcome: { passed: true } });
+  assert.equal(both.error, undefined);
+  assert.deepEqual(both.saved.at(-1).codexModels, { codex: 'gpt-6-luna', 'codex-sol': 'gpt-6.1-sol' });
+  assert.deepEqual([...new Set(both.codexRuns.map(run => run.options.model))].sort(), ['gpt-6-luna', 'gpt-6.1-sol']);
+});
+
 test('a real run where Codex used a shell or edited a file fails even when its check passed', async () => {
   const result = await runner({ arm: 'codex', outcome: { passed: true, forbidden: ['command_execution', 'command_execution'] } });
   const row = result.saved.at(-1).results[0];
