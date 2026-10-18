@@ -166,6 +166,45 @@ export function takeGuardStop(content, mark) {
   return { content: cleaned, head, receipt: count === 1 ? receipt : undefined, input, adopted };
 }
 
+// A tab or navigation continuation passes through a stop on a page Claude never asked about (Firefox's New Tab, 381
+// lines). takeGuardStop's head holds that tree one line per item and the stop's own copy follows whole, so the continued
+// result carried it twice, 101,881 characters before the page on MDN (2026-10-18), and Claude Code rejected it. This
+// takes both copies and the notes about the stop's window out and returns them apart, so the result is what the call
+// reached; text around the tree (safety and refusal lines, output before it) stays.
+const STOP_TREE_HEADER = /^(?:Window: |Browser tab: )[^\n]+$/;
+const STOP_TREE_LINE = /^$|^(?:[+~-] )?\t*\d+ |^\t|^Close tab$/;
+const STOP_WINDOW_NOTE = /^sleight: (?:this call acted on |UI changed \()/;
+const FOCUS_LINE = /^The focused UI element/m;
+const stopTreeLine = item => item?.type === 'text' && typeof item.text === 'string' && !item.text.includes('\n') &&
+  (STOP_TREE_LINE.test(item.text) || item.text.startsWith('The focused UI element'));
+export const hasWholeTree = content => (content ?? []).some(item => item?.type === 'text' && /^\n*(?:Window: |Browser tab: )[^\n]*\n0 /.test(item.text ?? ''));
+export function withoutStopTree(content) {
+  const kept = [], tree = [];
+  for (let i = 0; i < content.length; i++) {
+    const item = content[i], text = item?.type === 'text' && typeof item.text === 'string' ? item.text : undefined;
+    if (text === undefined) { kept.push(item); continue; }
+    if (STOP_TREE_HEADER.test(text)) {
+      // One line per item, up to and including the focus line.
+      tree.push(item);
+      while (i + 1 < content.length && stopTreeLine(content[i + 1])) {
+        tree.push(content[++i]);
+        if (content[i].text.startsWith('The focused UI element')) break;
+      }
+      continue;
+    }
+    if (/^\n*(?:Window: |Browser tab: )[^\n]+\n/.test(text)) {
+      // The whole copy, then anything the stop said after its focus line, then the notes about the stop's window.
+      const focus = FOCUS_LINE.exec(text), after = focus ? text.slice(focus.index + text.slice(focus.index).search(/\n|$/)).replace(/^\n+/, '') : '';
+      tree.push(item);
+      if (after.trim()) kept.push({ ...item, text: after });
+      while (i + 1 < content.length && STOP_WINDOW_NOTE.test(content[i + 1]?.text ?? '')) tree.push(content[++i]);
+      continue;
+    }
+    kept.push(item);
+  }
+  return { content: kept, tree };
+}
+
 // The stop came right after plan action n - 1, the one the receipt names, so n indexes the rest.
 function stoppedAfter(plan, receipt) {
   const n = receipt?.index, prev = receipt?.prev;

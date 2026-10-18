@@ -506,3 +506,53 @@ test('a trimmed tab-heavy tree holds under the serialized size, where tabs count
   const flat = createResultBudget({ platform: 'darwin' }).apply([{ type: 'text', text: `Window: "A", App: B.\n0 standard window A\n${plain}` }]);
   assert.ok(wired(flat) <= 48000, `${wired(flat)} serialized bytes`);
 });
+
+// The 2026-10-18 Firefox mdn run (b3 r1): a Cmd+T continuation returned the New Tab tree as 381 one-line items, again whole, and
+// then the MDN page, 101,881 characters that Claude Code rejected at 126,517 bytes. tests/fixtures/mdn-418-tree.txt is the page.
+const mdnTree = readFileSync(new URL('fixtures/mdn-418-tree.txt', import.meta.url), 'utf8');
+const newTabLines = () => ['Window: "Mozilla Firefox", App: Firefox.', '0 standard window Mozilla Firefox, Secondary Actions: Raise',
+  '\t1 container Mozilla Firefox', ...Array.from({ length: 378 }, (_, i) => `\t\t\t\t${i + 2} link ${'Shortcut '.repeat(8)}${i}`)];
+const focusLine = 'The focused UI element is 18 combo box (settable) Search with Google or enter address';
+
+test('a tree with a blank line inside it trims as one block', () => {
+  const lines = mdnTree.split('\n');
+  const blank = lines.indexOf('');
+  assert.ok(blank > 0 && blank < lines.length - 5);
+  const out = createResultBudget({ platform: 'darwin', limit: 8000 }).apply([{ type: 'text', text: mdnTree }]);
+  assert.ok(texts(out).length <= 8000, `${texts(out).length}`);
+  assert.match(out[0].text, /90 text 418 I'm a teapot/);
+  assert.match(out[0].text, /91 container Specifications/, 'rows after the blank line are part of the same block');
+  assert.equal(out[0].text.match(/tree lines omitted/g).length, 1);
+  assert.ok(Number(/(\d+) tree lines omitted/.exec(out[0].text)[1]) > 100);
+});
+
+test('the saved MDN page after two earlier trees: the earlier ones go first and the page is kept whole', () => {
+  const stop = newTabLines();
+  const content = [{ type: 'text', text: 'sleight: all 3 actions ran: pressKey "super+t" opened a tab, then typeText, pressKey "Return" in "Mozilla Firefox".' },
+    ...stop.map(text => ({ type: 'text', text })), { type: 'text', text: focusLine },
+    { type: 'text', text: stop.join('\n') + '\n\n' + focusLine },
+    { type: 'text', text: 'sleight: UI changed (window).' }, { type: 'text', text: mdnTree }];
+  assert.ok(texts(content).length > 70000, `${texts(content).length}`);
+  const out = createResultBudget({ platform: 'darwin' }).apply(content);
+  assert.ok(texts(out).length <= RESULT_LIMIT, `${texts(out).length}`);
+  assert.ok(wired(out) <= RESULT_LIMIT + 4000, `${wired(out)}`);
+  assert.equal(out.find(c => c.text.startsWith('Window: "418')).text, mdnTree, 'the page Claude asked for is not cut while earlier trees can give');
+  assert.match(texts(out), /sleight: all 3 actions ran/);
+  assert.match(texts(out), /tree lines omitted/);
+});
+
+test('when only the last tree can give, it keeps its head with the answer line', () => {
+  const big = mdnTree.replace('\t304 minimize button', Array.from({ length: 1500 }, (_, i) => `\t\t\t\t${400 + i} text ${'filler '.repeat(8)}`).join('\n') + '\n\t304 minimize button');
+  assert.ok(big.length > RESULT_LIMIT);
+  const out = createResultBudget({ platform: 'darwin' }).apply([{ type: 'text', text: newTabLines().join('\n') }, { type: 'text', text: big }]);
+  assert.ok(texts(out).length <= RESULT_LIMIT, `${texts(out).length}`);
+  assert.match(texts(out), /90 text 418 I'm a teapot/);
+});
+
+test('a result the trees cannot bring under the limit still shrinks', () => {
+  const content = [{ type: 'text', text: 'caller output '.repeat(5000) }, { type: 'text', text: newTabLines().join('\n') }];
+  const before = texts(content).length;
+  const out = createResultBudget({ platform: 'darwin' }).apply(content);
+  assert.ok(texts(out).length < before - 20000, `${before} to ${texts(out).length}`);
+  assert.equal(out[0].text, content[0].text);
+});
