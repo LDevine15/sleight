@@ -1773,12 +1773,12 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     },
     // What Claude takes these element numbers to be in this window, from what it was last shown:
     // number -> line text without its number, for the guard to check before the call's first action.
-    seenLines(window, numbers) {
+    seenLines(window, numbers, indented = false) {
       const entry = window && seen.get(documentKey({ title: window.title, app: window.app, url: window.url }));
       if (!entry) return undefined;
       const believed = new Map(entry.believed ?? numbered(entry.lines));
       const out = {};
-      for (const n of numbers ?? believed.keys()) if (believed.has(n)) out[n] = believed.get(n).replace(/^\t*/, '');
+      for (const n of numbers ?? believed.keys()) if (believed.has(n)) out[n] = indented ? believed.get(n) : believed.get(n).replace(/^\t*/, '');
       return Object.keys(out).length ? out : undefined;
     },
     // Each window's last full tree, for numbersMoved to compare a later read against.

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnedWindow, returnRefusal, stopNote, menuIdentity,
-  unchangedMenuWindow, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows, parentLeaseGate, continuedNote } from '../plugins/sleight/lib/menu-continuation.mjs';
+  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows, parentLeaseGate, continuedNote } from '../plugins/sleight/lib/menu-continuation.mjs';
 import { GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
 
 test('menu splitting preserves exact action spans across strings, comments and newlines', () => {
@@ -413,6 +413,142 @@ test('AB1: a tab remainder needs the call\'s own Cmd+T or Ctrl+T, one new select
   assert.equal(remainder.code, 'await app.typeText("u"); await app.pressKey("Return");');
   assert.deepEqual([remainder.tab, remainder.navigation, remainder.window.title], [true, true, 'New Tab']);
   assert.equal(tabRemainder(plan, receipt, expected, content, undefined), undefined);
+});
+
+// The 2026-10-18 Firefox race stops (firefox-sleight-r3/demoid line 18 for Cmd+T, firefox-sleight-r1/handoff line 22 for the
+// click), condensed to the tab strip, the toolbar and a few page lines. The engine names the window by its new tab's title.
+const ffTree = ({ title = 'Mozilla Firefox', tabs, page, focus = 'combo box (settable) Search with Google or enter address', extra = '' }) => {
+  const n = tabs.length, tab = (t, i) => `\t\t\t\t${4 + i} tab (${t.selected ? 'selected' : 'selectable'}) Value: ${t.label}, ${t.label}\nClose tab`;
+  return `Window: "${title}", App: Firefox.\n0 standard window ${title}, Secondary Actions: Raise\n\t1 container ${title}\n\t\t2 toolbar Browser tabs\n\t\t\t3 tab group\n` +
+    `${tabs.map(tab).join('\n')}\n\t\t\t\t${4 + n} button Open a new tab (⌘T)\n\t\t\t${5 + n} separator\n\t\t\t${6 + n} button List all tabs\n` +
+    `\t\t${7 + n} toolbar Navigation\n\t\t\t${8 + n} button Reload\n\t\t\t${9 + n} container\n\t\t\t\t${10 + n} combo box (settable) Search with Google or enter address\n` +
+    `\t\t${11 + n} scroll area\n\t\t\t${12 + n} HTML Content Description: ${page}, URL: about:newtab\n\t\t\t\t${13 + n} link Shortcuts\n\t\t\t\t${14 + n} text field Search\n${extra}` +
+    `\nThe focused UI element is ${focus.startsWith('combo') ? 10 + n : focus.startsWith('link') ? 13 + n : 14 + n} ${focus}`;
+};
+const ffBefore = linesOf(ffTree({ title: 'Sleight Gate c1eb', tabs: [{ label: 'Sleight Gate c1eb', selected: true }], page: 'Sleight Gate c1eb' }));
+const ffTabs = [{ label: 'Sleight Gate c1eb' }, { label: 'New Tab', selected: true }];
+const ffStop = (options = {}) => [{ type: 'text', text: 'sleight: this call ran 1 action.\nInput lease stopped this action: window or URL changed. Observed {"title":"Mozilla Firefox","app":"Firefox","url":null}\n' +
+  ffTree({ tabs: ffTabs, page: 'New Tab', ...options }) }];
+const ffExpected = { title: 'Sleight Gate c1eb', app: 'Firefox', url: null };
+const ffReceipt = prev => ({ index: 1, prev, root: '0 standard window Mozilla Firefox, Secondary Actions: Raise', windowStop: true });
+const ffKey = ffReceipt({ kind: 'key', value: 'super+t' });
+const ffKeyPlan = splitMenuActions('let ff = await cua.getApp("org.mozilla.firefox");\nawait ff.pressKey("super+t");\nawait ff.typeText("http://127.0.0.1:5420/shop");\nawait ff.pressKey("Return");');
+
+test('AB1 replay: the Firefox Cmd+T stop (2026-10-18, 6 of 6) passes the structural checks without HID idle', () => {
+  assert.equal(tabRefusal(ffKeyPlan, ffKey, ffExpected, ffStop(), ffBefore), undefined);
+  assert.equal(tabRemainder(ffKeyPlan, ffKey, ffExpected, ffStop(), ffBefore).code, 'await ff.typeText("http://127.0.0.1:5420/shop");\nawait ff.pressKey("Return");');
+});
+
+test('AB1: a plain click on the button among the tabs opens a tab like the key (2026-10-18, 3 of 3), found by place, not by label', () => {
+  const code = click => `let ff = await cua.getApp("org.mozilla.firefox");\nawait ff.${click};\nawait ff.typeText("http://127.0.0.1:5420/shop");\nawait ff.pressKey("Return");\nawait ff.getAXState();`;
+  // The model clicked element 5 of the tree it had: the button, which is element 6 once the new tab is listed.
+  for (const [click, prev] of [['click(5)', { kind: 'number', value: 5 }],
+    ['click({ label: "Zzz" })', { kind: 'label', value: 'Zzz', line: 'button Open a new tab (⌘T)' }],
+    ['click({ id: "zzz" })', { kind: 'id', value: 'zzz', line: 'button Open a new tab (⌘T)' }]]) {
+    const plan = splitMenuActions(code(click));
+    assert.equal(tabRefusal(plan, ffReceipt(prev), ffExpected, ffStop(), ffBefore), undefined, click);
+    assert.equal(tabRemainder(plan, ffReceipt(prev), ffExpected, ffStop(), ffBefore).code,
+      'await ff.typeText("http://127.0.0.1:5420/shop");\nawait ff.pressKey("Return");\nawait ff.getAXState();', click);
+  }
+});
+
+test('AB1: a click that is not on a button beside the tabs, or opens no single new selected tab, still stops', () => {
+  const plan = splitMenuActions('await ff.click(5); await ff.typeText("u"); await ff.pressKey("Return");');
+  const click = value => ffReceipt({ kind: 'number', value });
+  const button = click(5);
+  const planFor = n => splitMenuActions(`await ff.click(${n}); await ff.typeText("u"); await ff.pressKey("Return");`);
+  const twin = '\t\t\t\t30 button Open a new tab (⌘T)\n';
+  for (const [name, args, reason] of [
+    ['the old tab', [planFor(4), click(4), ffExpected, ffStop(), ffBefore], 'not-a-tab-shortcut'],
+    ['a link', [planFor(14), click(14), ffExpected, ffStop(), ffBefore], 'not-a-tab-shortcut'],
+    ['a number the earlier tree lacks', [planFor(99), click(99), ffExpected, ffStop(), ffBefore], 'not-a-tab-shortcut'],
+    ['a point', [splitMenuActions('await ff.click([1, 2]); await ff.typeText("u");'), ffReceipt({ kind: 'point', value: [1, 2] }), ffExpected, ffStop(), ffBefore], 'not-a-tab-shortcut'],
+    ['a button away from the tabs', [planFor(9), click(9), ffExpected, ffStop(), ffBefore], 'not-a-tab-button'],
+    ['the list-all-tabs button', [planFor(7), click(7), ffExpected, ffStop(), ffBefore], 'not-a-tab-button'],
+    ['a button line that is not unique in the stopped tree', [plan, button, ffExpected, ffStop({ extra: twin }), ffBefore], 'not-a-tab-button'],
+    ['a button that is gone from the stopped tree', [plan, button, ffExpected, [{ type: 'text', text: ffStop()[0].text.replace('button Open a new tab (⌘T)', 'button Add') }], ffBefore], 'not-a-tab-button'],
+    ['no earlier tree', [plan, button, ffExpected, ffStop(), undefined], 'not-a-tab-shortcut'],
+    ['no new tab', [plan, button, ffExpected, ffStop({ tabs: [{ label: 'Sleight Gate c1eb', selected: true }] }), ffBefore], 'no-new-tab'],
+    ['an earlier tab label missing', [plan, button, ffExpected, ffStop({ tabs: [{ label: 'Other' }, { label: 'New Tab', selected: true }] }), ffBefore], 'no-new-tab'],
+    ['two selected tabs', [plan, button, ffExpected, ffStop({ tabs: [{ label: 'Sleight Gate c1eb', selected: true }, { label: 'New Tab', selected: true }] }), ffBefore], 'no-new-tab'],
+    ['two new tabs', [plan, button, ffExpected, ffStop({ tabs: [...ffTabs, { label: 'More' }] }), ffBefore], 'no-new-tab'],
+    ['focus on the page, not a field', [plan, button, ffExpected, ffStop({ focus: 'link Shortcuts' }), ffBefore], 'focus-not-app-field'],
+    ['another app', [plan, button, { ...ffExpected, app: 'Safari' }, ffStop(), ffBefore], 'other-app'],
+    ['a sheet', [plan, button, ffExpected, ffStop({ extra: '\t30 sheet Confirm\n' }), ffBefore], 'sheet'],
+  ]) assert.equal(tabRefusal(...args), reason, name);
+  // A popup is its own window: the sign-in popup of the DemoID task has no tab strip, so nothing in it is a new tab.
+  const popup = 'Window: "Sign in", App: Firefox.\n0 standard window Sign in, Secondary Actions: Raise\n\t1 text field Name\n\t2 button Continue\n\nThe focused UI element is 1 text field Name';
+  for (const [name, receipt, code] of [['a key', ffKey, ffKeyPlan], ['a click', button, plan]])
+    assert.equal(tabRefusal(code, { ...receipt, root: '0 standard window Sign in, Secondary Actions: Raise' }, ffExpected, [{ type: 'text', text: popup }], ffBefore), 'no-new-tab', name);
+  // The field inside the page the new tab shows (the shop's search box) is a document, whichever opener.
+  const inPage = ffStop({ focus: 'text field Search' });
+  for (const [name, receipt, code] of [['a key', ffKey, ffKeyPlan], ['a click', button, plan]])
+    assert.equal(tabRefusal(code, receipt, ffExpected, inPage, ffBefore), 'focus-in-document', name);
+});
+
+test('AB1: a tab continuation asks for HID idle since the stop result, and the sample says what idle saw', () => {
+  const expected = { appId: 'org.test', title: 'report', url: null };
+  const baseline = { ...expected, status: 'ok', matches: 1, epoch: 'helper', window: 1, windowNumber: 22, pid: 123, processStart: 1, hidIdleSeconds: 1000 };
+  // The engine pressed a key at 1.3 s and the stop result came at 1.7 s; the helper looks at 1.8 s and again at 2.0 s.
+  const stopAt = 1700, call = 1000;
+  const engine = { ...baseline, hidIdleSeconds: 0.5 };
+  assert.equal(menuWindowRefusal(expected, baseline, engine, stopAt, 1800), undefined, 'the engine\'s own press came before the stop');
+  assert.equal(menuWindowRefusal(expected, baseline, engine, call, 1800), 'hid-input', 'idle over the whole call fails on it, as the 9 stops did');
+  // The user typed at 1.75 s, after the stop: idle 0.05 s at 1.8 s is less than the 0.1 s since the stop plus the margin.
+  assert.equal(menuWindowRefusal(expected, baseline, { ...baseline, hidIdleSeconds: 0.05 }, stopAt, 1800), 'hid-input');
+  assert.equal(menuWindowRefusal(expected, baseline, { ...baseline, hidIdleSeconds: undefined }, stopAt, 1800), 'hid-input');
+  // Everything else holds as before: the window number, the process and the native identity.
+  assert.equal(menuWindowRefusal(expected, baseline, { ...engine, windowNumber: 23 }, stopAt, 1800), 'window-number-changed');
+  assert.equal(menuWindowRefusal(expected, baseline, { ...engine, pid: 456 }, stopAt, 1800), 'identity-mismatch');
+  assert.equal(menuWindowRefusal(expected, baseline, { ...engine, title: 'other' }, stopAt, 1800), 'identity-mismatch');
+  assert.equal(menuWindowRefusal(expected, baseline, undefined, stopAt, 1800), 'identity-unavailable');
+  assert.equal(menuWindowRefusal(expected, { ...baseline, windowNumber: null }, engine, stopAt, 1800), 'no-window-number');
+  assert.deepEqual(idleSample(engine, stopAt, 1800, call), { hidIdleSeconds: 0.5, sinceStopSeconds: 0.1, idleSinceStop: true, idleCoversCall: false });
+  assert.deepEqual(idleSample({ hidIdleSeconds: 9 }, stopAt, 1800, call), { hidIdleSeconds: 9, sinceStopSeconds: 0.1, idleSinceStop: true, idleCoversCall: true });
+  assert.deepEqual(idleSample(undefined, stopAt, 1800), { hidIdleSeconds: null, sinceStopSeconds: 0.1, idleSinceStop: false });
+});
+
+test('AB1: a tab-open stop says the window keeps its app handle', () => {
+  const receipt = { ...ffKey, completed: 1 };
+  const plain = stopNote(receipt, ffKeyPlan, 0, { content: ffStop() }), tab = stopNote(receipt, ffKeyPlan, 0, { content: ffStop(), tab: true });
+  assert.match(tab, /^sleight: this call ran 1 action \(pressKey "super\+t"\); not sent: typeText, pressKey "Return"\. After an action that opens a tab or page, end the call there; this window keeps its app handle, so send the rest on it after reading the result\.$/);
+  assert.doesNotMatch(tab, /select_window|no new read/);
+  assert.doesNotMatch(plain, /app handle/);
+});
+
+// F2: the tab strip is the window's own. An ARIA tab list inside page content, and a "+" button in it, are the page's.
+const pageTabs = (...labels) => labels.map((label, i) => `\t\t\t\t${30 + i} tab (${i === 0 ? 'selected' : 'selectable'}) Value: ${label}, ${label}\nClose tab\n`).join('') + '\t\t\t\t39 button Add\n';
+const indented = tree => Object.fromEntries([...tree.matchAll(/^(\t*\d+) (.*)$/gm)].map(([, number, line]) => [number.replace(/^\t*/, ''), number.match(/^\t*/)[0] + line]));
+test('AB1: tabs and the button under a page or document do not count as the window\'s own tab strip', () => {
+  const button = ffReceipt({ kind: 'number', value: 39 });
+  const plan = splitMenuActions('await ff.click(39); await ff.typeText("u"); await ff.pressKey("Return");');
+  // The page grew a tab with its "+" button; the window's own strip did not.
+  const pageBefore = indented(ffTree({ title: 'Sleight Gate c1eb', tabs: [{ label: 'Sleight Gate c1eb', selected: true }], page: 'App', extra: pageTabs('One') }));
+  const pageOnly = ffStop({ tabs: [{ label: 'Sleight Gate c1eb', selected: true }], page: 'App', extra: pageTabs('Two', 'One') });
+  assert.equal(tabRefusal(plan, button, ffExpected, pageOnly, pageBefore), 'no-new-tab');
+  // The window grew a tab too, but the clicked "+" is in the page.
+  const both = ffStop({ extra: pageTabs('One') });
+  assert.equal(tabRefusal(plan, button, ffExpected, both, pageBefore), 'not-a-tab-button');
+  // Page tabs present on both sides do not upset the count when the real button opens the tab (the earlier tree keeps its indentation).
+  const real = ffReceipt({ kind: 'number', value: 5 }), realPlan = splitMenuActions('await ff.click(5); await ff.typeText("u"); await ff.pressKey("Return");');
+  assert.equal(tabRefusal(realPlan, real, ffExpected, ffStop({ extra: pageTabs('One') }), pageBefore), undefined);
+  // And a key opener ignores a page tab list the same way.
+  assert.equal(tabRefusal(ffKeyPlan, ffKey, ffExpected, ffStop({ extra: pageTabs('One') }), pageBefore), undefined);
+  assert.equal(tabRefusal(ffKeyPlan, ffKey, ffExpected, pageOnly, pageBefore), 'no-new-tab');
+});
+
+test('AB1: the new tab must be the last one or beside the clicked button', () => {
+  const plan = splitMenuActions('await ff.click(6); await ff.typeText("u"); await ff.pressKey("Return");');
+  const before = linesOf(ffTree({ title: 'A', tabs: [{ label: 'A', selected: true }, { label: 'B' }], page: 'A' }));
+  const click = ffReceipt({ kind: 'number', value: 6 });
+  assert.equal(before[6], 'button Open a new tab (⌘T)');
+  const expected = { ...ffExpected, title: 'A' };
+  // Last tab selected, or the tab just before the button: both fine. A new tab between older ones, away from the button, is not this button's.
+  assert.equal(tabRefusal(plan, click, expected, ffStop({ tabs: [{ label: 'A' }, { label: 'B' }, { label: 'New', selected: true }] }), before), undefined);
+  assert.equal(tabRefusal(plan, click, expected, ffStop({ tabs: [{ label: 'A' }, { label: 'New', selected: true }, { label: 'B' }] }), before), 'not-a-tab-button');
+  assert.equal(tabRefusal(plan, click, expected, ffStop({ tabs: [{ label: 'New', selected: true }, { label: 'A' }, { label: 'B' }] }), before), 'not-a-tab-button');
+  // The key keeps its rule: Cmd+T may open the tab beside the current one.
+  assert.equal(tabRefusal(ffKeyPlan, ffKey, expected, ffStop({ tabs: [{ label: 'A' }, { label: 'New', selected: true }, { label: 'B' }] }), before), undefined);
 });
 
 test('AB1: the helper must see no sheet and a non-password text field or combo box focused in the window', () => {

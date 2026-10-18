@@ -210,15 +210,48 @@ export function menuRemainder(plan, receipt, expected, content) {
   return { code: plan.code.slice(plan.actions[n].start).trim(), window, tree };
 }
 
-// A tab this call's own shortcut opened in the window it leased. In the Firefox race round (2026-10-17) Cmd+T
-// retitled the window to the new tab's in 8 of 12 tasks and stopped the URL's typing. Only Cmd+T or Ctrl+T, and only when the tree shows exactly one tab more
+// A tab this call's own shortcut or new-tab button opened in the window it leased. In the Firefox race round (2026-10-17)
+// Cmd+T retitled the window to the new tab's in 8 of 12 tasks and stopped the URL's typing; the 2026-10-18 round stopped 9
+// of 9 (6 Cmd+T, 3 clicks on the button) with the continuation firing 0 of 9. Only Cmd+T or Ctrl+T, or a plain click on a
+// button that sits among the window's tabs, and only when the tree shows exactly one tab more
 // than the window Claude last saw, that tab selected, no sheet or dialog, and focus on an editable field outside
 // any page or document, where the rest's typing lands. `before` is the earlier tree's lines by element number.
 const TAB_KEY = /^(?:super|cmd|command|meta|ctrl|control)\+t$/i;
-const tabsOf = lines => lines.flatMap(line => {
-  const tab = /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(line);
-  return tab ? [{ label: tab[2] ?? '', selected: /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]) }] : [];
+// The tabs of a tree's entries ({ depth, line }), leaving out any under a page or document: an ARIA tab list inside page
+// content is not the window's own tab strip.
+const tabsOf = entries => entries.flatMap((entry, index) => {
+  const tab = /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(entry.line);
+  return tab && !underDocument(entries, index) ? [{ label: tab[2] ?? '', selected: /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]), index }] : [];
 });
+// The earlier tree as entries. seenLines keeps the indentation when asked, which says what sat under a page; lines without it
+// all count as the window's own.
+const earlierEntries = before => Object.entries(before).filter(([, line]) => typeof line === 'string').sort(([a], [b]) => a - b)
+  .map(([number, line]) => ({ depth: /^\t*/.exec(line)[0].length, number: Number(number), line: line.replace(/^\t*/, '') }));
+function underDocument(entries, at) {
+  for (let i = at - 1, depth = entries[at].depth; i >= 0 && depth > 0; i--) {
+    if (entries[i].depth >= depth) continue;
+    depth = entries[i].depth;
+    if (DOCUMENT_ROLE.test(entries[i].line)) return true;
+  }
+  return false;
+}
+// The line a click named, as Claude saw it before the call: its receipt's line for a label or ID, else the earlier tree's.
+const clickedLine = (prev, before) => {
+  const line = prev.kind === 'number' ? before?.[prev.value] : ['label', 'id'].includes(prev.kind) ? prev.line : undefined;
+  return typeof line === 'string' ? line.replace(/^\t*/, '') : undefined;
+};
+// The new-tab button, by where it is and not by what it says: a button whose line is unique in the stopped tree, outside any
+// page or document, with a tab beside it (same parent), the way Firefox lists "Open a new tab" among its tabs. Its entry index,
+// or -1. The tab count check proves it opened a tab.
+const isTab = line => /^tab(?: |$)/.test(line) && !/^tab group(?: |,|$)/.test(line);
+function tabStripButton(entries, line) {
+  if (!/^button(?: |,|$)/.test(line)) return -1;
+  const at = entries.flatMap((entry, i) => entry.line === line ? [i] : []);
+  if (at.length !== 1 || underDocument(entries, at[0])) return -1;
+  const depth = entries[at[0]].depth;
+  for (const step of [-1, 1]) for (let i = at[0] + step; entries[i]?.depth >= depth; i += step) if (entries[i].depth === depth && isTab(entries[i].line)) return at[0];
+  return -1;
+}
 const DOCUMENT_ROLE = /^(?:web area|HTML content|text area|text entry area)(?: |,|$)/i;
 const APP_FIELD = /^(?:text field|combo box|search field|search text field)(?: |,|$)/i;
 export function tabRefusal(plan, receipt, expected, content, before) {
@@ -227,7 +260,8 @@ export function tabRefusal(plan, receipt, expected, content, before) {
   if (!plan) return 'unsplit-call';
   const n = stoppedAfter(plan, receipt);
   if (n === undefined) return 'receipt-mismatch';
-  if (receipt.prev.kind !== 'key' || !TAB_KEY.test(receipt.prev.value)) return 'not-a-tab-shortcut';
+  const key = receipt.prev.kind === 'key', button = key ? undefined : clickedLine(receipt.prev, before);
+  if (key ? !TAB_KEY.test(receipt.prev.value) : button === undefined || !/^button(?: |,|$)/.test(button)) return 'not-a-tab-shortcut';
   const stopped = stopTree(receipt, content);
   if (!stopped) return 'tree-mismatch';
   if (stopped.window.app !== expected?.app) return 'other-app';
@@ -236,7 +270,7 @@ export function tabRefusal(plan, receipt, expected, content, before) {
   if (/^\s*\d+ (?:sheet|dialog|system dialog)\b/m.test(stopped.tree)) return 'sheet';
   if (!before || typeof before !== 'object') return 'no-earlier-tree';
   const entries = [...stopped.tree.matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
-  const was = tabsOf(Object.values(before).filter(line => typeof line === 'string')), now = tabsOf(entries.map(entry => entry.line));
+  const was = tabsOf(earlierEntries(before)), now = tabsOf(entries);
   const selected = now.filter(tab => tab.selected);
   if (now.length !== was.length + 1 || selected.length !== 1) return 'no-new-tab';
   const left = new Map();
@@ -246,15 +280,18 @@ export function tabRefusal(plan, receipt, expected, content, before) {
     left.set(tab.label, left.get(tab.label) - 1);
   }
   if ([...left].some(([label, count]) => count !== (label === selected[0].label ? 1 : 0))) return 'no-new-tab';
+  if (button !== undefined) {
+    const at = tabStripButton(entries, button);
+    if (at < 0) return 'not-a-tab-button';
+    // The new tab is the last one or the one beside the button; a button that opens a tab elsewhere in the strip is not this one.
+    const near = [now.findLast(tab => tab.index < at), now.find(tab => tab.index > at)];
+    if (selected[0] !== now.at(-1) && !near.includes(selected[0])) return 'not-a-tab-button';
+  }
   // The engine names focus after the tree; it must be an app field, and none of its ancestors a page or document.
   const focused = Number(/^The focused UI element is (\d+) /m.exec(stopped.tree)?.[1]);
   const at = entries.findIndex(entry => entry.number === focused);
   if (at < 0 || !APP_FIELD.test(entries[at].line)) return 'focus-not-app-field';
-  for (let i = at - 1, depth = entries[at].depth; i >= 0 && depth > 0; i--) {
-    if (entries[i].depth >= depth) continue;
-    depth = entries[i].depth;
-    if (DOCUMENT_ROLE.test(entries[i].line)) return 'focus-in-document';
-  }
+  if (underDocument(entries, at)) return 'focus-in-document';
 }
 export function tabRemainder(plan, receipt, expected, content, before) {
   if (tabRefusal(plan, receipt, expected, content, before)) return;
@@ -426,13 +463,17 @@ const NAMED_KEY = /^(?:(?:shift\+)*(?:return|enter|escape|esc|tab|space|delete|b
 // numbers and non-typing keys only: typed or set text, single characters and label text stay out.
 // `closed`: the lease held a dialog, sheet or panel over a standard window, so an action that ran and then a stop onto a
 // standard window means the call's own action closed it (OK, then a click: 6 of 15 Office mid-call stops, 2026-10-17).
-export function stopNote(receipt, plan, earlier = 0, { content, seen, uniqueSeen, closed = false } = {}) {
+// `tab`: the stop is a tab this call opened (tabRefusal passes). Its title changes but the window keeps its app handle, and
+// the select_window advice sent Claude to a refused call in 2 of 9 Firefox runs (2026-10-18). The wording holds whether or
+// not the continuation then runs.
+export function stopNote(receipt, plan, earlier = 0, { content, seen, uniqueSeen, closed = false, tab = false } = {}) {
   if (receipt?.refused === true) return refusalNote(receipt, plan, earlier, content, seen, uniqueSeen);
   if (receipt?.windowStop !== true || /: app changed\./.test(receipt.error ?? '')) return;
   const dialog = closed && /^standard window(?: |,|$)/.test(stopTree(receipt, content ?? [])?.line ?? '');
   // The stop leased the window it shows, so the rest needs no re-read: in the Firefox race round (2026-10-17) Claude
   // spent a call only reading again after 10 of 12 new-tab stops.
   const recipe = ran => /* lean notice */ !ran ? '' : dialog ? ' Closing the dialog stopped the rest; the next call can send it to the window shown here with no new read.'
+    : tab ? ' After an action that opens a tab or page, end the call there; this window keeps its app handle, so send the rest on it after reading the result.'
     : ' After an action that opens a tab or page, end the call there; the next call can send the rest to the window shown here with no new read.';
   const n = receipt.index;
   if (plan && !earlier && Number.isSafeInteger(n) && n >= 0 && n < plan.actions.length) {
@@ -533,3 +574,11 @@ export function menuWindowRefusal(expected, baseline, observed, forwardedAt, now
 }
 export const unchangedMenuWindow = (expected, baseline, observed, forwardedAt, now = performance.now()) =>
   !menuWindowRefusal(expected, baseline, observed, forwardedAt, now);
+// What the HID-idle test saw, for the relay's trace. A tab continuation asks for idle since its stop result arrived (`stopAt`):
+// the engine's own key presses all came before it, and the user's input after it could interleave with the rest's typing.
+// `callAt` adds whether idle also covered the whole call, which the 2026-10-18 Firefox stops (0 of 9) never did.
+export const idleSample = (observed, stopAt, now = performance.now(), callAt) => ({
+  hidIdleSeconds: Number.isFinite(observed?.hidIdleSeconds) ? observed.hidIdleSeconds : null,
+  sinceStopSeconds: Number.isFinite(stopAt) ? Math.round(now - stopAt) / 1000 : null,
+  idleSinceStop: !!observed && idle(observed, stopAt, now),
+  ...(Number.isFinite(callAt) ? { idleCoversCall: !!observed && idle(observed, callAt, now) } : {}) });

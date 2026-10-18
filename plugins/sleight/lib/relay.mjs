@@ -72,7 +72,7 @@ import { isLeaseRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, continuedNote, menuIdentity,
-  unchangedMenuWindow, menuWindowRefusal, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate } from './menu-continuation.mjs';
+  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
@@ -1737,12 +1737,13 @@ export function createRelay({
       // including startup retries, against the original call's forwarding time.
       if (continuation.checking) return;
       continuation.checking = true;
-      const { call, expected, baseline, lease, original, head, current, tab } = continuation;
+      const { call, expected, baseline, lease, original, head, current, tab, stopAt } = continuation;
+      const since = Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt);
       menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
         if (!current() || leaseWindow !== lease ||
-            !unchangedMenuWindow(expected, baseline, observed, Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt), clock()) ||
+            !unchangedMenuWindow(expected, baseline, observed, tab ? stopAt : since, clock()) ||
             tab && tabFocusRefusal(observed)) {
-          if (tab) trace('tab-continuation-refused', { id: msg.id, reason: 'final-check' });
+          if (tab) trace('tab-continuation-refused', { id: msg.id, reason: 'final-check', ...idleSample(observed, stopAt, clock(), since) });
           menuForwards.delete(msg.id); continuedLeads.delete(msg.id);
           menuCalls.delete(msg.id);
           if (head) splitHeads.set(msg.id, head); else splitHeads.delete(msg.id);
@@ -2639,17 +2640,27 @@ export function createRelay({
     const call = menuCalls.get(msg.id);
     if (!call) return false;
     menuCalls.delete(msg.id); menuAdmissions.delete(msg.id);
+    // When the stop result arrived: a tab continuation asks for HID idle since then, not over the call.
+    const stopAt = clock();
     if (!Array.isArray(msg.result?.content)) return false;
     const taken = takeGuardStop(msg.result.content, call.mark);
     msg.result.content = taken.content;
+    // A tab this call opened in its window: the stop tree passes tabRefusal's checks, which tie it to that window.
+    const tabStop = !msg.error && msg.result.isError && taken.receipt?.windowStop === true &&
+      tabRefusal(call.plan, taken.receipt, call.target, taken.content, call.before) === undefined;
+    // The retitled window is still the selected one and keeps its app handle, and select_window with the old title
+    // would be refused (2026-10-18 Firefox race: 2 of 9 runs spent a call on it). The failure line repeats the stop's error.
+    // Worded to hold whether or not the continuation then runs.
+    const handle = text => tabStop ? text.replace(/Call select_window with \{[^\n]*?\}\./g, 'This window keeps its handle; send the rest on it after reading the result.') : text;
+    if (tabStop) for (const item of msg.result.content) if (item?.type === 'text' && typeof item.text === 'string') item.text = handle(item.text);
     const action = resultCalls.get(msg.id);
-    if (action && taken.receipt) action.failure = { message: taken.receipt.error ?? failureReason(taken.content),
+    if (action && taken.receipt) action.failure = { message: handle(taken.receipt.error ?? failureReason(taken.content)),
       noInput: typeof taken.receipt.error === 'string' && taken.receipt.index === 0 && taken.receipt.attempts === 1 && !taken.input &&
         !menuContinued.has(msg.id) && !splitInputs.has(msg.id) };
     // A lease on a dialog or sheet remembers the window it covered (parent), so a stop onto a standard window after the
     // call's own action is that action closing it.
     const note = !msg.error && msg.result.isError && stopNote(taken.receipt, call.plan, menuContinued.get(msg.id), { content: taken.content, seen: call.seen, uniqueSeen: call.uniqueSeen,
-      closed: !!(call.target ?? leaseWindow)?.parent });
+      closed: !!(call.target ?? leaseWindow)?.parent, tab: tabStop });
     // First, not after the tree: in an Office study (2026-10-17) the ran/not-sent line sat at line 134 of a 7 KB result.
     if (note) msg.result.content = [{ type: 'text', text: promptNotice(note, prompt) }, ...msg.result.content];
     const stopped = !msg.error && msg.result.isError;
@@ -2665,12 +2676,13 @@ export function createRelay({
     let remainder = !ineligible && (dialogRemainder(call.plan, taken.receipt, covered, taken.content) ||
       menuRemainder(call.plan, taken.receipt, call.target, taken.content));
     // Every window stop no other continuation took says why no tab continuation ran either.
-    const refuseTab = reason => trace('tab-continuation-refused', { id: msg.id, reason });
+    // `extra` carries what the HID-idle test saw (idleSample), once the helper has been asked.
+    const refuseTab = (reason, extra) => trace('tab-continuation-refused', { id: msg.id, reason, ...extra });
     if (stopped && taken.receipt?.windowStop && !remainder) {
       const reason = ineligible ?? (!tabContinuation ? 'off' : tabRefusal(call.plan, taken.receipt, call.target, taken.content, call.before));
       if (reason) refuseTab(reason);
       else remainder = tabRemainder(call.plan, taken.receipt, call.target, taken.content, call.before);
-    }
+    } else if (stopped && taken.receipt?.windowStop) refuseTab('other-continuation');
     if (remainder?.dialog && !call.baseline) refuse('no-baseline');
     // The helper skips windows without a title, so an untitled popover would look gone while still open.
     if (popoverContinuation && remainder?.closeCheck && !call.target.title) { refuse('palette-untitled'); return false; }
@@ -2679,6 +2691,7 @@ export function createRelay({
     if (remainder?.tab && call.baseline && !(Number.isSafeInteger(call.baseline.windowNumber) && call.baseline.windowNumber > 0)) {
       refuseTab('no-window-number'); return false;
     }
+    if (remainder?.tab && splitCalls.has(msg.id)) refuseTab('split-call');
     if (!remainder || !call.baseline || splitCalls.has(msg.id)) return false;
     const current = () => call.generation === stopGeneration && !closing && !disposed && !stopCollected;
     // A tab continuation also asks the helper for the window's sheets and focused element.
@@ -2691,21 +2704,23 @@ export function createRelay({
     gone.then(closed => closed ? menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs, remainder.dialog ? error => refuse(`identity: ${error}`)
       : remainder.tab ? error => refuseTab(`identity: ${error}`) : undefined)
       : (refuse('palette-still-open'), undefined)).then(observed => {
-      if (!current()) { observeServerMessage(msg); return; }
+      if (!current()) { if (remainder.tab) refuseTab('call-superseded'); observeServerMessage(msg); return; }
       if (remainder.dialog) noteProcess(observed);
       const since = Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt);
       // HID idle from when the covered window was last seen standard, through the dialog, to now.
       // The covered window must have been seen standard in the process the dialog's baseline has.
       const refusal = leaseWindow !== call.target ? 'lease-moved' : remainder.dialog ? observed && (covered.seen?.process !== processKey(call.baseline)
         ? 'covered-process-changed' : returnRefusal(covered, call.baseline, observed, Math.min(since, covered.at, covered.seenAt), clock()))
-        : remainder.tab ? menuWindowRefusal(expected, call.baseline, observed, since) || tabFocusRefusal(observed)
+        : remainder.tab ? menuWindowRefusal(expected, call.baseline, observed, stopAt, clock()) || tabFocusRefusal(observed)
         : !unchangedMenuWindow(expected, call.baseline, observed, since) && 'menu-window-changed';
       if (refusal || !observed) {
         if (remainder.dialog && refusal) refuse(refusal);
         // Without an observation, menuIdentity already traced why.
-        if (remainder.tab && refusal && observed) refuseTab(refusal);
+        if (remainder.tab && refusal && observed) refuseTab(refusal, idleSample(observed, stopAt, clock(), since));
         observeServerMessage(msg); return;
       }
+      // The sample also says whether idle over the whole call held: the cause of 0 of 9 Firefox continuations (2026-10-18) was not recorded.
+      if (remainder.tab) trace('tab-continuation-checked', { id: msg.id, ...idleSample(observed, stopAt, clock(), since) });
       // The rest goes to the covered window under its own lease, pinned to the native window just observed.
       const baseline = remainder.dialog ? observed : call.baseline, lease = remainder.dialog ? covered : call.target;
       const forward = remainder.dialog ? { ...expected, windowNumber: observed.windowNumber } : expected;
@@ -2725,7 +2740,7 @@ export function createRelay({
         splitHeads.set(msg.id, [...(splitHeads.get(msg.id) ?? []), ...(reply.result?.content ?? [])]);
         leaseWindow = lease;
         menuBaselines.set(msg.id, remainder.window);
-        menuForwards.set(msg.id, { call, expected: forward, baseline, lease, original, head, current, tab: !!remainder.tab });
+        menuForwards.set(msg.id, { call, expected: forward, baseline, lease, original, head, current, tab: !!remainder.tab, stopAt });
         nativeChecked.add(msg.id); focusedChecked.add(msg.id);
         handleClient({ ...call.request, params: { ...call.request.params,
           arguments: { ...call.request.params.arguments, code: remainder.code } } });
@@ -2859,7 +2874,7 @@ export function createRelay({
       if (plan && plan.actions.some((action, i) => action.selector && i < plan.actions.length - 1)) {
         const target = leaseWindow, generation = stopGeneration;
         // The window's lines as Claude last saw them, for the tab continuation to count its tabs against.
-        const admission = { plan, target, generation, before: compactor.seenLines(target) };
+        const admission = { plan, target, generation, before: compactor.seenLines(target, undefined, true) };
         menuAdmissions.set(msg.id, admission);
         running.add(msg.id); callDetails.set(msg.id, 'menu window admission');
         // The baseline is sampled before the call is sent, so HID idle has to cover the call from this moment.
