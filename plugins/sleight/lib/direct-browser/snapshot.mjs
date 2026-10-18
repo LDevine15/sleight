@@ -29,7 +29,7 @@ function stateOf(page) {
   if (!state) {
     state = { number: 0, generation: 0, busy: false, history: new Map(), continuations: new Map(),
       closed: new Map(), shadowNumber: 0, deliveredClosed: new Set(), rawRefs: new Map(), usedRefs: new Set(),
-      refBank: new Map(), deliveredRefs: new Set(), pending: new Map(), nextRef: 0 };
+      refBank: new Map(), deliveredRefs: new Set(), pending: new Map(), nextRef: 0, listed: null };
     pages.set(page, state);
     if (typeof page.locator === 'function') {
       Object.defineProperty(page, 'getByRef', { configurable: true, value(ref) {
@@ -47,7 +47,7 @@ function stateOf(page) {
 }
 // A new generation: every ref, continuation and diff baseline of the old document is retired.
 function forget(state) {
-  state.generation++; state.rawRefs.clear(); state.deliveredRefs.clear(); state.pending.clear(); state.history.clear(); state.continuations.clear(); state.closed.clear(); state.deliveredClosed.clear();
+  state.generation++; state.listed = null; state.rawRefs.clear(); state.deliveredRefs.clear(); state.pending.clear(); state.history.clear(); state.continuations.clear(); state.closed.clear(); state.deliveredClosed.clear();
 }
 // For a page that reuses its elements without navigating (a virtual list recycles rows on scroll, EPV3-5):
 // old refs then refuse with the browser_read hint, and the next read mints new ones. A page never read has none.
@@ -281,7 +281,26 @@ export function snapshotRefBinding(page, ref) {
   const state = pages.get(page), record = state?.refBank.get(ref);
   if (!record || record.generation !== state.generation || !state.deliveredRefs.has(ref))
     throw Error('Ref is stale or its snapshot was not delivered; use browser_read again.');
+  // Playwright resolves aria-ref only against the latest read of the ref's frame, whoever took it, and never reuses a ref
+  // in a document. A read the model saw in part (find, observe:none) can retire a held ref whose role or name changed,
+  // which then resolves to nothing; refuse it now rather than wait out the locator.
+  const frame = /^(?:f\d+)?/.exec(record.raw)[0];
+  if (state.listed?.frames.has(frame) && !state.listed.refs.has(record.raw))
+    throw Error('Ref changed on the page since it was read; use browser_read again.');
   return page.locator('aria-ref=' + record.raw);
+}
+// The raw refs one read listed, and the frames it listed any for (the main frame always). Each listed frame's map moved.
+function listedRefs(tree) {
+  const refs = new Set(), frames = new Set(['']);
+  const visit = nodes => {
+    for (const node of nodes) {
+      if (!node || typeof node !== 'object') continue;
+      if (REF.test(node.ref) && !/^s\d+$/.test(node.ref)) { refs.add(node.ref); frames.add(/^(?:f\d+)?/.exec(node.ref)[0]); }
+      if (Array.isArray(node.children)) visit(node.children);
+    }
+  };
+  visit(Array.isArray(tree) ? tree : []);
+  return { refs, frames };
 }
 
 // A ref's box is relative to the viewport, so it says whether the element is in view without scrolling.
@@ -416,6 +435,8 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
     const acquired = await Promise.allSettled([
       bounded(() => page.ariaSnapshotJSON({ mode: 'ai', boxes: true, timeout: TIMEOUT })), closedRoots(page, state),
     ]);
+    // A failed tree read leaves the frames' maps unknown, so the ref check falls back to Playwright's own lookup.
+    state.listed = acquired[0].status === 'fulfilled' && generation === state.generation ? listedRefs(acquired[0].value) : null;
     const failed = acquired.find(result => result.status === 'rejected');
     if (failed) throw failed.reason;
     const tree = acquired[0].value, closed = acquired[1].value, secrets = closed.secrets;

@@ -728,3 +728,43 @@ test('boxes are requested, and no markers appear when the page size is unavailab
   assert.doesNotMatch(result.text, /offscreen/);
   assert.match(result.text, /Far away" \[ref=e1\]/);
 });
+
+// RM1: Playwright resolves aria-ref against the latest read of a frame, so a read the model saw only in part (find,
+// observe:none) retires a held ref whose role or name changed. The check refuses at once instead of a 1 s locator wait.
+test('RM1: a held ref that a later read no longer lists is refused with a re-read hint', async () => {
+  const { page, set } = fixture([{ role: 'button', name: 'Save', ref: 'e2' }, { role: 'button', name: 'Other', ref: 'e3' }]);
+  page.locator = selector => ({ selector });
+  module.acknowledgeSnapshot(page, (await module.snapshot(page)).number);
+  set([{ role: 'button', name: 'Saving', ref: 'e7' }, { role: 'button', name: 'Other', ref: 'e3' }]);
+  await module.snapshot(page, { find: 'Other' }); // shown only in part: Save's new ref is never delivered
+  assert.throws(() => module.snapshotRefBinding(page, 'e2'), /^Error: Ref changed on the page since it was read; use browser_read again\.$/);
+  assert.throws(() => page.getByRef('e2'), /changed on the page/);
+  assert.equal(module.snapshotRefBinding(page, 'e3').selector, 'aria-ref=e3');
+});
+
+test('RM1: an unknown map after a failed read, or a frame the read did not list, falls through to Playwright', async () => {
+  const { page, set } = fixture([{ role: 'button', name: 'Save', ref: 'e2' },
+    { role: 'iframe', ref: 'e4', children: [{ role: 'textbox', name: 'City', ref: 'f2e1' }] }]);
+  page.locator = selector => ({ selector });
+  module.acknowledgeSnapshot(page, (await module.snapshot(page)).number);
+  set([{ role: 'button', name: 'Saving', ref: 'e7' }]);
+  await module.snapshot(page, { find: 'Saving' });
+  assert.equal(module.snapshotRefBinding(page, 'f2e1').selector, 'aria-ref=f2e1');
+  const read = page.ariaSnapshotJSON;
+  page.ariaSnapshotJSON = async () => { throw Error('timeout'); };
+  await assert.rejects(module.snapshot(page));
+  page.ariaSnapshotJSON = read;
+  assert.equal(module.snapshotRefBinding(page, 'e2').selector, 'aria-ref=e2');
+});
+
+test('RM1: a ref the latest read lists again binds once more', async () => {
+  const { page, set } = fixture([{ role: 'button', name: 'Save', ref: 'e2' }]);
+  page.locator = selector => ({ selector });
+  module.acknowledgeSnapshot(page, (await module.snapshot(page)).number);
+  set([{ role: 'button', name: 'Saving', ref: 'e7' }]);
+  await module.snapshot(page, { find: 'zzz' });
+  assert.throws(() => module.snapshotRefBinding(page, 'e2'), /changed on the page/);
+  set([{ role: 'button', name: 'Save', ref: 'e2' }]);
+  await module.snapshot(page, { find: 'zzz' });
+  assert.equal(module.snapshotRefBinding(page, 'e2').selector, 'aria-ref=e2');
+});
