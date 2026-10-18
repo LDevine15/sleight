@@ -292,3 +292,35 @@ test('factory declarations without later assignments still establish recoverable
   assert.equal(recovery.browsers.get('b').extensionInstanceId, 'session-browser');
   assert.equal(recovery.tabs.get('tab').id, '7');
 });
+
+test('a verified session handle names its exact browser selector and tab rebind', async () => {
+  const recovery = known(), h = runtime(); recovery.reset();
+  await run(h.context, recovery.code('await tab.getAXState();'));
+  const note = h.notes.join('\n');
+  assert.ok(note.includes('{"extensionInstanceId":"session-browser"}'));
+  assert.ok(note.includes('await cua.getTab("7", { browser: "actual-browser" })'));
+  assert.deepEqual(h.calls.filter(c => c[0] === 'tab'), [['tab', '7']]);
+  assert.equal(h.calls.some(c => c[0] === 'click'), false);
+});
+
+for (const tabs of [[], [{id: '7', url: 'https://other.test'}]]) {
+  test(`a closed or changed tab gives inventory advice without a rebind: ${JSON.stringify(tabs)}`, async () => {
+    const recovery = known(), h = runtime(tabs); recovery.reset();
+    await assert.rejects(run(h.context, recovery.code('await tab.click(1);')), error => {
+      assert.match(error.message, /await cua.listTabs\(\)/);
+      assert.doesNotMatch(error.message, /cua.getTab\(/);
+      return true;
+    });
+    assert.equal(h.calls.some(c => ['tab', 'click', 'getTab'].includes(c[0])), false);
+  });
+}
+
+test('another recovery session cannot advertise a handle it never observed', async () => {
+  const first = known(), other = new BrowserRecovery(), h = runtime();
+  assert.equal(first.tabs.get('tab').id, '7');
+  other.observe('await tab.click(1)', {result: {isError: true, content: [{type: 'text', text: 'ReferenceError: tab is not defined'}]}});
+  await assert.rejects(run(h.context, other.code('await tab.click(1);')), /tab is not defined/);
+  assert.match(h.notes.join('\n'), /await cua.listTabs\(\)/);
+  assert.doesNotMatch(h.notes.join('\n'), /cua.getTab\(/);
+  assert.deepEqual(h.calls, []);
+});

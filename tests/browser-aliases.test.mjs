@@ -178,3 +178,64 @@ test('failed alias installation does not block a documented browser call', async
   assert.equal(f.calls[0][0], 'key');
   assert.equal(f.calls[0][2], 'Return');
 });
+
+// Only engine methods are present. Calling an absent method on the raw objects throws.
+function strictFixture() {
+  const calls = [], notes = [];
+  const locator = Object.seal({
+    locator: () => locator, getByRole: () => locator, first: () => locator,
+    all: async () => [locator], evaluate: async () => 'read',
+    click: async () => calls.push('click'),
+  });
+  const tab = Object.seal({ id: '1', getAXState: async () => 'tree',
+    playwright: Object.seal({ locator: () => locator, frameLocator: () => locator,
+      domSnapshot: async () => 'snapshot', evaluate: async () => 'read' }),
+    pressKey: async () => calls.push('pressKey'), typeText: async () => calls.push('typeText'),
+  });
+  const context = createContext({ cua: { getTab: async () => tab }, nodeRepl: { write: x => notes.push(x) } });
+  return { calls, notes, tab, locator,
+    run: code => runInContext(`(async () => { ${browserAliasesCode("var tab = await cua.getTab('1'); " + code)} })()`, context) };
+}
+
+for (const [call, receiver, next] of [
+  ['tab.getDOMSnapshot()', 'tab.getDOMSnapshot', 'tab.playwright.domSnapshot()'],
+  ['tab.readDOM()', 'tab.readDOM', 'tab.playwright.domSnapshot()'],
+  ['tab.playwright.getAXState()', 'tab.playwright.getAXState', 'tab.getAXState()'],
+  ['tab.playwright.readState()', 'tab.playwright.readState', 'tab.getAXState()'],
+  ['tab.playwright.locator("input").first().inputValue()', 'locator.inputValue', 'locator.evaluate(el => el.value)'],
+  ['tab.playwright.frameLocator("iframe").getByRole("checkbox").isChecked()', 'locator.isChecked', 'locator.evaluate(el => el.checked)'],
+  ['(await tab.playwright.locator("main").all())[0].innerHTML()', 'locator.innerHTML', 'locator.evaluate(el => el.innerHTML)'],
+  ['tab.playwright.locator("p").allInnerTexts()', 'locator.allInnerTexts', 'locator.evaluateAll(els => els.map(el => el.innerText))'],
+  ['tab.keyboard.type("hello")', 'tab.keyboard.type', 'tab.typeText(null, text)'],
+  ['tab.playwright.keyboard.insertText("hello")', 'tab.playwright.keyboard.insertText', 'tab.typeText(null, text)'],
+]) test(`missing ${call} names one supported next call without sending input`, async () => {
+  const f = strictFixture();
+  await assert.rejects(f.run(`await ${call};`), error => {
+    assert.equal(error.message, `sleight: ${receiver} is unavailable. Use ${next}.`);
+    return true;
+  });
+  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.notes, []);
+});
+
+test('unknown keyboard operations and split key events suggest a read, never a substituted key', async () => {
+  for (const root of ['tab', 'tab.playwright']) for (const action of ['down', 'up', 'madeUp']) {
+    const f = strictFixture();
+    await assert.rejects(f.run(`await ${root}.keyboard.${action}("Shift");`), error => {
+      assert.equal(error.message, `sleight: ${root}.keyboard.${action} is unavailable. Use tab.getAXState() and a documented tab action.`);
+      return true;
+    });
+    assert.deepEqual(f.calls, []);
+  }
+});
+
+test('unlisted guesses stay absent and supported methods keep their engine behavior', async () => {
+  const f = strictFixture();
+  assert.throws(() => f.locator.inputValue(), /is not a function/);
+  assert.throws(() => f.tab.getDOMSnapshot(), /is not a function/);
+  assert.equal(await f.run('return tab.madeUp;'), undefined);
+  assert.equal(await f.run('return tab.playwright.locator("x").madeUp;'), undefined);
+  assert.equal(await f.run('return tab.playwright.domSnapshot();'), 'snapshot');
+  assert.equal(await f.run('return tab.getAXState();'), 'tree');
+  assert.deepEqual(f.calls, []);
+});
