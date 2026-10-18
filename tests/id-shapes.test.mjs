@@ -124,3 +124,34 @@ test('FT1c review: a numeric { id } with leading zeros is sent in decimal, or le
   const labeled = relayFixture(t, form(['\t\t\t\t\t\t\t47 button 18']))('await app.click({ id: "018" });');
   assert.ok(labeled.forwarded.includes('await app.click({ id: "018" });'));
 });
+
+// Re-review: an action of any spelling before the { id }, or an { id } that can run more than once or later (a callback,
+// a function or arrow body, recursion), leaves Claude's tree unable to settle it. Only a top-level statement with nothing
+// but reads before it is rewritten.
+test('FT1c re-review: only a top-level { id } with only reads before it is rewritten', t => {
+  const act = relayFixture(t, form());
+  for (const code of [
+    'await app["click"](24); await app.click({ id: "18" });',
+    'await app[`click`](24); await app.click({ id: "18" });',
+    'const m = "click"; await app[m](24); await app.click({ id: "18" });',
+    'await helper(); await app.click({ id: "18" });',
+    'await Array.from([1, 2], () => app.click({ id: "18" }));',
+    'await Promise.all([1].flatMap(() => [app.click({ id: "18" })]));',
+    '[1].filter(() => app.click({ id: "18" }));',
+    '[1].find(n => app.click({ id: "18" }));',
+    '[1].some(n => app.click({ id: "18" }));',
+    '[1].reduce(async (p) => { await p; await app.click({ id: "18" }); }, null);',
+    'const go = () => app.click({ id: "18" }); await go(); await go();',
+    'async function go(n) { await app.click({ id: "18" }); if (n) await go(n - 1); } await go(2);',
+    '(async () => { await app.click({ id: "18" }); })();',
+    'await app.click(24).then(() => app.click({ id: "18" }));',
+  ]) {
+    const { forwarded } = act(code);
+    assert.ok(forwarded.includes(code), code);
+  }
+  for (const code of ['const s = await app.getAXState(); await app.setValue({ id: "18" }, "p01");',
+    'if (true) await app.setValue({ id: "18" }, "p01");']) {
+    const { forwarded } = act(code);
+    assert.match(forwarded, /setValue\(18, "p01"\)/, code);
+  }
+});

@@ -1841,11 +1841,21 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       if (!entry || typeof code !== 'string' || /\b(?:for|while|do)\b|\.(?:forEach|map|reduce|some|every)\(/.test(maskCode(code))) return undefined;
       const believed = new Map(entry.believed ?? numbered(entry.lines));
       const lines = [...believed.values()].map(line => line.replace(/^\t*/, ''));
-      const action = /\.\s*(?:click|doubleClick|rightClick|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|press|pressKey|typeText|pickFromList|waitFor)\s*\(/;
+      // Only a top-level statement (no enclosing bracket, arrow or function, so it runs once and now) with nothing but
+      // reads before it: any other call, in any spelling (app["click"](24), a helper, an IIFE), may have acted.
+      const masked = maskCode(code), reads = /^(?:getAXState|getAXStateAndScreenshot|getScreenshot|getApp|getState|listApps|write)$/;
+      const settled = at => {
+        const before = masked.slice(0, at);
+        let depth = 0;
+        for (const ch of before) depth += '([{'.includes(ch) ? 1 : ')]}'.includes(ch) ? -1 : 0;
+        if (depth !== 0 || /=>|\bfunction\b/.test(before)) return false;
+        return [...before.matchAll(/([\w$]+|[\])])\s*(?:\?\.\s*)?\(/g)].every(m => /^(?:if|await)$/.test(m[1]) ||
+          (reads.test(m[1]) && before.slice(0, m.index).trimEnd().endsWith('.')));
+      };
       const sent = [];
       const out = code.replace(/(\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*)\{\s*(?:id|"id"|'id')\s*:\s*(["'])(\d+)\2\s*\}(?=\s*[,)])/g, (whole, head, quote, digits, at) => {
         const number = Number(digits), forms = [...new Set([digits, String(number)])];
-        if (action.test(code.slice(0, at)) || !believed.has(number) ||
+        if (!settled(at) || !believed.has(number) ||
             lines.some(line => forms.some(form => hasIdentifier(line, form) || hasLabel(line, form)))) return whole;
         sent.push({ id: digits, number, line: believed.get(number).replace(/^\t*/, '') });
         return head + number;
