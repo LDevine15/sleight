@@ -346,9 +346,9 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
         writeFileSync(join(plan.out, 'browser.json'), JSON.stringify(identity(), null, 2));
       }
       if (controller.signal.aborted) throw Error('Gate interrupted');
-      // The windows over the browser's window as the task starts, beside its outcome. An offline test that injects the browser
-      // never reads the Mac's window list.
-      const cover = await (runtime.windowCover || (runtime.launchBrowser ? async () => null : windowCover))(browser.pid);
+      // The browser's own window goes where the fewest other windows overlap it, and what still covers it is recorded beside the
+      // task's outcome. An offline test that injects the browser never reads or moves the Mac's windows.
+      const cover = await (runtime.windowCover || (runtime.launchBrowser ? async () => null : windowCover))(browser.pid, { place: true });
       // Chrome and Helium report every page URL while the agent runs; the lookup graders need that visit.
       let watch = null, navigation;
       if (!['firefox', 'safari'].includes(browser.browser)) {

@@ -568,7 +568,9 @@ native reference, and oversized first results defer the browser reference while 
   20 extra calls. Rounds launch Safari without activating it, so whatever window is in front stays in front. AXRaise on a background
   app's window returned success and left Terminal over it (1/1, TextEdit). Each task's row now records the windows over the
   browser's window at its start (`cover`, and the report's "covered by" column), so a drag failure can be told apart from a
-  covered window. Rounds before that column have no record.
+  covered window. Rounds before that column have no record. Since the owner added two displays (2026-10-18), each task first
+  moves the round's own browser window to the spot on any display that the fewest other windows overlap (a TextEdit probe went
+  from 53% covered to none). A window the owner moves over it later still covers it, and the column shows that.
 - The race scorer's harness-failure check knows three error classes (`approval refused`, `no daemon`, `no tools`). A round that
   fails on some other shared cause, such as every call answering "Turbo is unavailable", is scored as the arm's failures until
   someone writes `harness-failure.json` into its folder by hand. inject-order's answer check accepts the total written as `$16`,
