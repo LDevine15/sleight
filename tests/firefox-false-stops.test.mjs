@@ -123,7 +123,38 @@ const address = { number: 18, line: 'combo box (settable) Search with Google or 
 
 test('FOC: focus on the window root container after a click on the address bar does not stop', () => {
   assert.equal(differentFocusTarget(mdn('1 container Mozilla Firefox'), address), undefined);
-  assert.equal(differentFocusTarget(mdn('0 standard window Mozilla Firefox, Secondary Actions: Raise'), address), undefined);
+  assert.equal(differentFocusTarget(mdn('1 container Mozilla Firefox'), { ...address, focus: '1 container Mozilla Firefox' }), undefined);
+});
+
+test('FOC: root focus after a click on text inside the field does not stop either', () => {
+  const inner = mdn('1 container Mozilla Firefox').replace('\t\t\t\t18 combo box (settable) Description: Search with Google or enter address',
+    '\t\t\t\t18 combo box (settable) Description: Search with Google or enter address\n\t\t\t\t\t19 text https://example.test/');
+  assert.equal(differentFocusTarget(inner, { number: 19, line: 'text https://example.test/' }), undefined);
+});
+
+test('FOC: focus on the window row itself still stops, as the guard treats it as keys with no target', () => {
+  assert.equal(differentFocusTarget(mdn('0 standard window Mozilla Firefox, Secondary Actions: Raise'), address), 18);
+});
+
+test('FOC: root focus after a click on a button stops', () => {
+  assert.equal(differentFocusTarget(mdn('1 container Mozilla Firefox'), { number: 16, line: 'button Pick a search engine' }), 16);
+});
+
+test('FOC: root focus stops when the root container is one of several children of the window', () => {
+  const several = mdn('1 container Mozilla Firefox').replace('\n\nThe focused', '\n\t40 container Sidebar\n\nThe focused');
+  assert.equal(differentFocusTarget(several, address), 18);
+});
+
+test('FOC: an Electron-like web root titled like the window stops a click on a non-editable node', () => {
+  const docs = ['Window: "Docs", App: Notes.', '0 standard window Docs', '\t1 container Docs', '\t\t5 link Home', '\t\t6 text field (settable) Description: Search', '',
+    'The focused UI element is 1 container Docs'].join('\n');
+  assert.equal(differentFocusTarget(docs, { number: 5, line: 'link Home' }), 5);
+  assert.equal(differentFocusTarget(docs, { number: 6, line: 'text field (settable) Description: Search' }), undefined, 'the editable field in the same tree passes');
+});
+
+test('FOC: root focus stops when focus before the click was on a specific element', () => {
+  assert.equal(differentFocusTarget(mdn('1 container Mozilla Firefox'), { ...address, focus: '16 button Pick a search engine' }), 18);
+  assert.equal(differentFocusTarget(mdn('1 container Mozilla Firefox'), { ...address, focus: '30 HTML Content Description: New Tab, URL: about:newtab' }), 18);
 });
 
 for (const [name, focus] of [
@@ -157,6 +188,20 @@ test('FOC: a field line keeps its identity when setValue adds a description and 
   assert.equal(sameElement(was, now), true);
   assert.equal(sameElement(now, was), true);
   assert.equal(sameElement('combo box Search with Google or enter address', now), true);
+});
+
+test('FOC: an unlisted parenthetical is part of the label, and a line that becomes disabled is another element', () => {
+  assert.equal(sameElement('link next (page 2)', 'link next (page 3)'), false);
+  assert.equal(sameElement('menu item paste', 'menu item (disabled) paste'), false);
+  assert.equal(sameElement('menu item (disabled) paste', 'menu item paste'), false);
+  assert.equal(sameElement('button Description: Save, ID: save', 'button (disabled) Description: Save, ID: save'), false);
+  assert.equal(sameElement('button (disabled, float) Save', 'button Description: Save, ID: save'), false);
+});
+
+test('FOC: other state words, as the engine lists them after the role, still match the label', () => {
+  assert.equal(sameElement('tab (selected) Inbox', 'tab Description: Inbox, ID: inbox'), true);
+  assert.equal(sameElement('tab Inbox', 'tab (selectable, expanded) Description: Inbox, ID: inbox'), true);
+  assert.equal(sameElement('text field (disabled, settable) Name', 'text field (disabled, settable) Description: Name, Value: x'), true);
 });
 
 for (const [name, was, now] of [
@@ -194,7 +239,45 @@ for (const [name, code] of [
   ['another global', 'const s = await ff.getAXState(); console.log(s);'],
   ['eval', 'const s = await ff.getAXState(); eval("ff.click(1)");'],
   ['a loop', 'const s = await ff.getAXState(); while (true) {}'],
+  ['a handle method passed to map', 'const s = await ff.getAXState(); s.split("\\n").map(ff.typeText);'],
+  ['a handle method passed to some', 'const s = await ff.getAXState(); ["x"].some(ff.click);'],
+  ['a destructured handle method', 'const s = await ff.getAXState(); const {click}=ff; [5].map(click);'],
+  ['a handle method passed to replace', 'const s = await ff.getAXState(); "abc".replace(/b/, ff.typeText);'],
+  ['bracket access on the handle', 'const s = await ff.getAXState(); const f = ff["click"]; nodeRepl.write(s);'],
+  ['the handle bound to a name', 'const s = await ff.getAXState(); const h = ff; nodeRepl.write(s);'],
+  ['an unrelated handle passed to map', 'const s = await ff.getAXState(); s.split("x").map(app.typeText);'],
+  ['a read method called through a string', 'const s = await ff.getAXState(); s.getAXState();'],
+  ['an array destructuring', 'const s = await ff.getAXState(); const [a] = s.split("x"); nodeRepl.write(a);'],
   ['a second awaited call', 'const s = await ff.getAXState(); await cua.getApp("Safari"); nodeRepl.write(s);'],
 ]) test(`FOC: ${name} is not read-only`, () => {
   assert.equal(isFilteredRead(code), false);
+});
+
+// Through the guard: the read before the click carries the focus line the root rule compares with.
+function rootFixture({ before, after }) {
+  let clicked = false;
+  const events = [];
+  const raw = {
+    getAXState: async () => 'Window: "Draft", App: Fixture Editor.\n0 standard window Draft\n\t1 container Draft\n\t\t2 combo box (settable) Description: Address\n\t\t3 button Go\n\n' +
+      `The focused UI element is ${clicked ? after : before}`,
+    click: async n => { events.push(['click', n]); clicked = true; },
+    typeText: async text => { events.push(['typeText', text]); return 'typed'; },
+  };
+  const context = createContext({ app: raw, cua: { getApp: async () => raw }, performance: { now: () => 1000 }, nodeRepl: { write() {} }, setTimeout: resolve => resolve() });
+  const window = { title: 'Draft', app: 'Fixture Editor', url: null };
+  const run = code => runInContext(`(async () => { ${guardedCode(code, window, undefined, undefined, { quietEdits: true })} })()`, context,
+    { importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER });
+  return { run, events };
+}
+
+test('FOC: through the guard, typeText runs on root focus when focus was on the root before the click too', async () => {
+  const f = rootFixture({ before: '1 container Draft', after: '1 container Draft' });
+  await f.run('await app.click(2); await app.typeText("https://example.test/");');
+  assert.deepEqual(f.events.map(event => event[0]), ['click', 'typeText']);
+});
+
+test('FOC: through the guard, typeText stops on root focus when focus was on a specific element before the click', async () => {
+  const f = rootFixture({ before: '3 button Go', after: '1 container Draft' });
+  await assert.rejects(f.run('await app.click(2); await app.typeText("https://example.test/");'), /another element has focus/);
+  assert.deepEqual(f.events.map(event => event[0]), ['click']);
 });

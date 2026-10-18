@@ -142,12 +142,16 @@ export function disabledLabelNote(text, label) {
 //
 // The role's parenthetical state is not part of the label: after setValue, Firefox's "combo box (settable)
 // Search with Google or enter address" is "combo box (settable) Description: Search with Google or enter
-// address, Value: https://..." (mdn, 2026-10-18). The state is skipped on both lines when comparing, so
-// a changed label still differs.
+// address, Value: https://..." (mdn, 2026-10-18). Only the engine's state words, listed together right after
+// the role, are skipped, so "link next (page 2)" is not "link next (page 3)". A line that becomes disabled is
+// another element: a click on it does nothing, and Claude should see that instead of a renumbered success.
 export function sameElement(was, now) {
   if (was === now) return true;
   if (typeof was !== 'string' || typeof now !== 'string') return false;
-  const plain = line => line.replace(/^([a-z][a-z ]*?) \([^()]*\)(?= |$)/, '$1');
+  const state = /^([a-z][a-z ]*?) \(((?:settable|selectable|selected|disabled|expanded|float|checked|focused)(?:, (?:settable|selectable|selected|disabled|expanded|float|checked|focused))*)\)(?= |$)/;
+  const plain = line => line.replace(state, '$1');
+  const disabled = line => /(?:^|, )disabled(?:,|$)/.test(state.exec(line)?.[2] ?? '');
+  if (disabled(was) !== disabled(now)) return false;
   const [full, bare] = was.length > now.length ? [plain(was), plain(now)] : [plain(now), plain(was)];
   const role = /^[a-z][a-z ]*/.exec(bare)?.[0] ?? '';
   for (let at = role.indexOf(' '); at >= 0; at = role.indexOf(' ', at + 1)) {
@@ -180,22 +184,27 @@ export function differentFocusTarget(text, before) {
     if (i > start && rows[i].depth <= clicked.depth) break;
     if (rows[i] === focused) return;
   }
-  // Focus on the window's own root container is the engine reporting no specific focus (Firefox's address
-  // bar after a background click, 3 of 3 mdn, wikipedia and size-guide runs); typing there lands in the
-  // field on this engine. Any other element still stops, and the misplaced-text check after typing reports a miss.
-  const root = rows[0], title = root?.line.replace(/^(?:standard )?window /, '').split(', ')[0];
-  if (root?.depth === 0 && /^(?:standard )?window(?: |,|$)/.test(root.line) &&
-      (focused === root || focused === rows[1] && focused.depth === 1 && title !== '' && focused.line === 'container ' + title)) return;
-  // The nearest ancestor that is a field: its text child is the clicked node.
-  let depth = clicked.depth;
-  for (let i = start - 1; i >= 0 && depth > 0; i--) {
+  // The nearest field above the clicked node: its text child is the clicked node.
+  const isField = line => /^(?:text field|text area|text entry area|search (?:text )?field|combo box)(?: |$)/i.test(line) || /^[a-z][a-z ]*\(settable\)/i.test(line);
+  let holder;
+  for (let depth = clicked.depth, i = start - 1; i >= 0 && depth > 0; i--) {
     if (rows[i].depth >= depth) continue;
     depth = rows[i].depth;
-    if (/^(?:text field|text area|text entry area|search (?:text )?field|combo box)(?: |$)/i.test(rows[i].line) || /^[a-z][a-z ]*\(settable\)/i.test(rows[i].line)) {
-      if (rows[i] === focused) return;
-      break;
-    }
+    if (isField(rows[i].line)) { holder = rows[i]; break; }
   }
+  if (holder && holder === focused) return;
+  // Focus on the window's root container is the engine reporting no specific focus (Firefox's address bar after a
+  // background click, 3 of 3 mdn, wikipedia and size-guide runs), and typing there lands in the field on this engine.
+  // It counts only for an editable click (or text inside one), when that container is the window's only child and
+  // carries its title, and when focus before the click was not on a specific element. Focus on the window row itself
+  // stays a stop: the guard's "keyboard focus is on the window itself" check treats that as keys with no target.
+  // The root container is row 1, which that check reads as an element, so the two never overlap.
+  const root = rows[0], title = root?.line.replace(/^(?:standard )?window /, '').split(', ')[0];
+  const container = rows[1];
+  if ((isField(clicked.line) || holder) && root?.depth === 0 && /^(?:standard )?window(?: |,|$)/.test(root.line) &&
+      focused === container && container.depth === 1 && title !== '' && container.line === 'container ' + title &&
+      rows.filter(row => row.depth === 1).length === 1 &&
+      (before.focus === undefined || before.focus === container.number + ' ' + container.line)) return;
   return clicked.number;
 }
 
@@ -995,7 +1004,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             /(?:…|\\.\\.\\.)$/.test(label ?? '') || /^(?:Delete|Remove|Revert|Discard|Erase|Empty|Close|Quit|Exit|Sign Out|Log Out|Reset|Clear|Replace|Don't Save|Do Not Save|Save|OK|Done|Apply|Continue|Proceed|Next|Back|Finish|Confirm|Accept|Cancel|Dismiss)\\b/i.test(label ?? '')) ||
             ['performSecondaryAction', 'setValue', 'scroll'].includes(name) || name === 'pressKey' &&
             (keys.length > 0 || /^(?:return|enter|escape|esc|tab|space)$/i.test(key ?? ''));
-          const previous = { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey, number: editable ? args[0] : undefined, line,
+          const previous = { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey, number: editable ? args[0] : undefined, line, focus: /^The focused UI element is (.+?)\\r?$/m.exec(text ?? '')?.[1],
             textEditing: textEditing && (editable || ['typeText', 'paste'].includes(name) || editKey), opens, modal: text === undefined ? undefined : hasModal(text),
             touches: state.touches };
           state.previous.set(proxy, previous);

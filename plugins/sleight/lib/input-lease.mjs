@@ -45,7 +45,7 @@ export function isFilteredRead(code) {
       let j = i + 1;
       while (j < code.length && code[j] !== c) { if (code[j] === '\\') j++; if (code[j] === '\n') return false; j++; }
       if (j >= code.length) return false;
-      source += '"s"'; last = '"'; i = j + 1;
+      source += '""'; last = '"'; i = j + 1;
     } else if (c === '/') {
       if (code[i + 1] === '/' || code[i + 1] === '*') return false;
       // A slash after an operand divides; after punctuation it can only start a regular expression.
@@ -59,30 +59,42 @@ export function isFilteredRead(code) {
         if (j >= code.length) return false;
         j++;
         while (/[a-z]/i.test(code[j] ?? '')) j++;
-        source += 'R'; last = 'R'; i = j;
+        source += '\u0001'; last = 'R'; i = j;
       } else { source += c; last = c; i++; }
     } else { source += c; if (!/\s/.test(c)) last = c; i++; }
   }
   if (/\b(?:function|class|new|import|eval|with|while|for|do|if|try|throw|delete|void|yield|async|globalThis|window|this|require|process|constructor|prototype|__proto__)\b/.test(source)) return false;
   if (/\.\s*[\w$]+\s*(?:[-+*\/|&]|\?\?)?=(?!=)/.test(source) || /\]\s*=(?!=)/.test(source)) return false;
-  const awaited = [...source.matchAll(/\bawait\b/g)].length;
+  // The handle may appear only as the receiver of a direct awaited read: passing `ff.click` to map, destructuring it
+  // or indexing it would reach an action without a call site named click.
   const handles = new Set();
-  for (const m of source.matchAll(/\bawait\s+([A-Za-z_$][\w$]*)\.(\w+)\(/g)) if (READ_METHODS.includes(m[2])) handles.add(m[1]);
-  const reads = [...source.matchAll(new RegExp(String.raw`\bawait\s+[A-Za-z_$][\w$]*\.(?:${READ_METHODS.join('|')})\(`, 'g'))].length;
-  if (!reads || reads !== awaited) return false;
-  for (const m of source.matchAll(/\(/g)) {
-    const before = source.slice(0, m.index).replace(/\s+$/, '');
+  const readCall = new RegExp(String.raw`\bawait\s+([A-Za-z_$][\w$]*)\.(?:${READ_METHODS.join('|')})\(\s*(?:\{\s*(?:(?:disableDiffing|emit)\s*:\s*(?:true|false)\s*,?\s*)*\})?\s*\)`, 'g');
+  const body = source.replace(readCall, (_, handle) => { handles.add(handle); return 'await \u0002'; });
+  const reads = [...body.matchAll(/\bawait \u0002/g)].length;
+  if (!reads || reads !== [...body.matchAll(/\bawait\b/g)].length) return false;
+  if (/[{}]/.test(body) || /[\w$)\]"\u0001\u0002]\s*\[/.test(body) || /\b(?:const|let|var)\s*[^A-Za-z_$\s]/.test(body)) return false;
+  const locals = new Set([...body.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)].map(m => m[1]));
+  for (const m of body.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*=>/g)) locals.add(m[1]);
+  for (const m of body.matchAll(/\(([^()]*)\)\s*=>/g)) {
+    for (const param of m[1].split(',').map(x => x.trim()).filter(Boolean)) { if (!/^[A-Za-z_$][\w$]*$/.test(param)) return false; locals.add(param); }
+  }
+  if (locals.has('nodeRepl') || [...handles].some(handle => locals.has(handle))) return false;
+  for (const m of body.matchAll(/(?<![\w$])[A-Za-z_$][\w$]*/g)) {
+    if (body.slice(0, m.index).trimEnd().endsWith('.')) continue;
+    if (!['await', 'return', 'const', 'let', 'var', 'true', 'false', 'null', 'undefined', 'nodeRepl'].includes(m[0]) && !locals.has(m[0])) return false;
+  }
+  for (const m of body.matchAll(/\(/g)) {
+    const before = body.slice(0, m.index).replace(/\s+$/, '');
     const name = /[A-Za-z_$][\w$]*$/.exec(before)?.[0];
     if (name === undefined) {
-      if (/[)\]"R.]$/.test(before)) return false;
+      if (/[)\]"\u0001\u0002.]$/.test(before)) return false;
       continue;
     }
     const rest = before.slice(0, before.length - name.length).replace(/\s+$/, '');
     if (!rest.endsWith('.')) { if (name === 'await' || name === 'return') continue; return false; }
     const object = /([A-Za-z_$][\w$]*)$/.exec(rest.slice(0, -1).replace(/\s+$/, ''))?.[1];
-    if (READ_METHODS.includes(name)) continue;
     if (name === 'write' || name === 'emitImage') { if (object !== 'nodeRepl') return false; continue; }
-    if (!PURE_METHODS.has(name) || handles.has(object)) return false;
+    if (!PURE_METHODS.has(name)) return false;
   }
   return true;
 }
