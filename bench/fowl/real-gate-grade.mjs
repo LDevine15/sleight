@@ -101,8 +101,9 @@ export function runErrorClass({ eventsText = '', stderr = '' } = {}) {
 // 2026-10-17). Smaller rounds scale the same share. rows: [{ task, ok, errorClass }].
 export function harnessFailure(rows, total = rows.length) {
   const need = Math.ceil(total * 10 / 12), byClass = {};
-  // Turbo availability is sleight's own failure, even when it affects the whole round.
-  for (const row of rows) if (!row.ok && row.errorClass?.class && row.errorClass.class !== 'turbo unavailable')
+  // Turbo availability and window identity failures stay scored. A reviewed harness-failure.json
+  // can still exclude a round whose setup supplied the wrong window; wording alone cannot prove that.
+  for (const row of rows) if (!row.ok && row.errorClass?.class && !['turbo unavailable', 'window unavailable'].includes(row.errorClass.class))
     (byClass[row.errorClass.class] ??= []).push(row);
   const [cls, hit] = Object.entries(byClass).sort((a, b) => b[1].length - a[1].length)[0] ?? [];
   if (!hit || !total || hit.length < need) return null;

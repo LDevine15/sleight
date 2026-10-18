@@ -167,7 +167,7 @@ test('race-score groups rounds by browser, arm and task with the claim rules, an
   assert.equal(JSON.parse(readFileSync(join(root, 'real-c9-codex', 'harness-failure.json'), 'utf8')).class, 'approval refused');
 });
 
-test('saved rounds detect the new shared failures at ten of twelve and scoring stays read-only', t => {
+test('saved turbo and window failures stay scored at nine, ten and twelve failures', t => {
   const root = mkdtempSync(join(tmpdir(), 'race-score-shared-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const [cls, events] of [['turbo unavailable', claudeCall('a', true, unavailableTurbo)],
     ['window unavailable', agentResult(unavailableWindow)]]) {
@@ -175,12 +175,40 @@ test('saved rounds detect the new shared failures at ten of twelve and scoring s
       const dir = round(root, `${cls}-${count}`, 'fixture-browser', 'fixture-arm', Array.from({ length: 12 }, (_, i) =>
         [`task${i}`, 1, false, { events: i < count ? events : claudeCall('b', true, 'element changed') }]));
       const loaded = loadRound(dir);
-      const excluded = cls === 'window unavailable' && count >= 10;
-      assert.equal(loaded.detected?.class ?? null, excluded ? cls : null);
-      assert.equal(loaded.detected?.count ?? null, excluded ? count : null);
+      assert.equal(loaded.detected, null);
+      assert.equal(loaded.excluded, null);
       assert.equal(existsSync(join(dir, 'harness-failure.json')), false);
     }
   }
+});
+
+test('window identity failures count for competitors and sleight, including recorded classes and tool errors', t => {
+  const root = mkdtempSync(join(tmpdir(), 'race-score-window-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const failures = [unavailableWindow, "I couldn't confirm the target window.", 'PID 99999 owns no windows.'];
+  for (const arm of ['codex', 'sleight']) for (const [index, failure] of failures.entries()) {
+    const dir = round(root, `${arm}-${index}`, 'safari', arm, Array.from({ length: 12 }, (_, i) =>
+      [`task${i}`, 2, false, { events: i % 2 ? agentResult(failure) : claudeCall(String(i), true, failure) }]));
+    // Older results can carry this class even when their event log is absent or later classifiers change.
+    const results = JSON.parse(readFileSync(join(dir, 'results.json'), 'utf8'));
+    results[0].errorClass = { class: 'window unavailable', example: failure };
+    writeFileSync(join(dir, 'results.json'), JSON.stringify(results));
+    const loaded = loadRound(dir), scored = scoreRounds([loaded]);
+    assert.equal(loaded.rows[0].errorClass.class, 'window unavailable');
+    assert.equal(loaded.excluded, null, `${arm}: ${failure}`);
+    assert.equal(scored.safari.table[arm].task0.runs.length, 1);
+    assert.equal(scored.safari.table[arm].task0.passes.length, 0);
+    assert.equal(existsSync(join(dir, 'harness-failure.json')), false);
+  }
+});
+
+test('historical window classes never cause automatic exclusion, but a reviewed marker still does', t => {
+  const rows = Array.from({ length: 12 }, (_, i) => ({ task: `task${i}`, ok: false,
+    errorClass: { class: 'window unavailable', example: unavailableWindow } }));
+  assert.equal(harnessFailure(rows), null);
+  const root = mkdtempSync(join(tmpdir(), 'race-score-reviewed-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = round(root, 'reviewed-window', 'safari', 'codex', [['task0', 2, false, { events: agentResult(unavailableWindow) }]],
+    { 'harness-failure.json': { reason: 'reviewed: wrong PID supplied by harness' } });
+  assert.equal(loadRound(dir).excluded, 'reviewed: wrong PID supplied by harness');
 });
 
 test('eleven unavailable-turbo failures stay classified and count as sleight losses', t => {
