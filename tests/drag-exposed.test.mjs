@@ -43,7 +43,7 @@ test('relocation moves only the covered endpoint and keeps the element, the wind
   const list = [cover(300, 90, 120, 60), win];
   const points = { start: { x: 40, y: 115 }, end: { x: 360, y: 115 } };
   const asked = [];
-  const result = plain(context.relocateCovered(list, win, points, (name, point) => { asked.push(name); return { rect: row, role: 'AXGroup', accepts: () => true }; }));
+  const result = plain(context.relocateCovered(list, win, points, (name, point) => { asked.push(name); return { rect: row, role: 'AXRow', leaf: false, frame: () => row, accepts: () => true }; }));
   assert.deepEqual(asked, ['to']);
   assert.deepEqual(result.moved, ['to']); assert.deepEqual(result.start, points.start);
   assert.equal(exposedIn(list)(result.end), true);
@@ -52,11 +52,16 @@ test('relocation moves only the covered endpoint and keeps the element, the wind
 
 test('relocation refuses a covered element with no exposed part, a container, or an unknown element', () => {
   const points = { start: { x: 40, y: 50 }, end: { x: 360, y: 115 } };
-  const element = (rect, role = 'AXGroup') => () => ({ rect, role, accepts: () => true });
+  const element = (rect, role = 'AXRow', leaf = false) => () => ({ rect, role, leaf, accepts: () => true });
   const full = [cover(0, 90, 800, 60), win];
   assert.match(context.relocateCovered(full, win, points, element(row)).refusal, /to is covered by Finder and no part of that element is exposed/);
   const partial = [cover(300, 90, 120, 60), win];
-  assert.match(context.relocateCovered(partial, win, points, element(row, 'AXOutline')).refusal, /holds other items/);
+  assert.match(context.relocateCovered(partial, win, points, element(row, 'AXOutline')).refusal, /is not a single item/);
+  for (const role of ['AXList', 'AXGroup', 'AXGrid', 'AXBrowser', 'AXTabGroup', 'AXRadioGroup', 'AXLayoutArea', 'AXSheet', 'AXWebArea']) {
+    assert.match(context.relocateCovered(partial, win, points, element(row, role, false)).refusal, /is not a single item/, role);
+  }
+  assert.match(context.relocateCovered(partial, win, points, element(row, 'AXImage', false)).refusal, /is not a single item/);
+  assert.equal(context.relocateCovered(partial, win, points, element(row, 'AXImage', true)).refusal, undefined);
   assert.match(context.relocateCovered(partial, win, points, element({ X: 0, Y: 0, Width: 800, Height: 600 })).refusal, /too large/);
   assert.match(context.relocateCovered(partial, win, points, () => null).refusal, /no element is known/);
 });
@@ -73,4 +78,30 @@ test('the covered refusal names the endpoint and stops a repeated engine fallbac
   assert.match(message, /Finder covers the window at the drag points, and this drag has no selected text; to is covered/);
   assert.match(message, /Use the engine's app\.drag in js once/);
   assert.match(message, /don't repeat it: stop and tell the user.*nothing was pressed$/);
+});
+
+test('exposure keeps four points from another app\'s window edge and counts every layer', () => {
+  const exposed = context.exposedAt;
+  const near = { ...cover(0, 90, 300, 60), layer: 0 };
+  assert.equal(exposed([near, win], win, { x: 303, y: 115 }), false);
+  assert.equal(exposed([near, win], win, { x: 304, y: 115 }), true);
+  assert.equal(exposed([{ ...near, layer: 25 }, win], win, { x: 100, y: 115 }), false);
+  assert.equal(exposed([{ ...near, layer: 20, owner: 'Dock' }, win], win, { x: 310, y: 115 }), true);
+  // A window behind the target, or one of the same app, never counts against clearance.
+  assert.equal(exposed([win, near], win, { x: 100, y: 115 }), true);
+  assert.equal(exposed([{ ...near, pid: 7 }, win], win, { x: 100, y: 115 }), false, 'same-app window on top still covers');
+});
+
+test('recheck refuses when a relocated point is covered again, the element moved, or the hit changed', () => {
+  const list = [cover(300, 90, 120, 60), win];
+  const points = { start: { x: 40, y: 50 }, end: { x: 360, y: 115 } };
+  const state = { frame: row, hit: true };
+  const result = context.relocateCovered(list, win, points, () => ({ rect: row, role: 'AXRow', leaf: true, frame: () => state.frame, accepts: () => state.hit }));
+  assert.equal(result.recheck(list), null);
+  assert.match(result.recheck([cover(0, 90, 800, 60), win]), /covered again/);
+  assert.match(result.recheck([{ ...cover(0, 90, 800, 60), layer: 25 }, win]), /covered again/);
+  state.frame = { ...row, Y: row.Y + 20 };
+  assert.match(result.recheck(list), /moved/);
+  state.frame = row; state.hit = false;
+  assert.match(result.recheck(list), /no longer on the same element/);
 });

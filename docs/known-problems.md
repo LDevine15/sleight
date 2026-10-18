@@ -85,7 +85,9 @@ our own runs. Dates and engine versions are given where they matter.
   exposed point inside the same element and adds one stationary move on the destination before the
   release (raw headless mouse input missed the drop 6/6 without it and landed 6/6 with it). Both are
   unit-tested only. Whether Firefox accepts the drop, and whether Accessibility's hit test answers
-  for a point another app covers, are unmeasured. A row fully covered still refuses.
+  for a point another app covers, are unmeasured. The new point must be on a leaf item (row, cell,
+  button, text, or a childless group or image) and on that element itself, 4 points clear of any
+  other app's window, so a web row with child elements often refuses. A fully covered row refuses.
   `lib/reorder-plan.mjs` plans the shortest drop sequence and refuses to repeat an ineffective
   method. No tool calls it yet.
 - After an Accessibility text write, TextEdit's next Cmd+S deadlocked on the document's save lock in 10
