@@ -435,7 +435,8 @@ export async function runQualification({ app, driver, observer, io, clock, cells
   Object.assign(receipt.app, driver.build?.() ?? {});
   receipt.profile.removed = receipt.cleanup?.profileRemoved === true;
   receipt.qualified = false;
-  receipt.validation = validateReceipt(receipt);
+  // The check reads what writeReceipt writes: the scrubbed receipt, so a home path in error text is not a leak.
+  receipt.validation = validateReceipt(scrubReceipt(receipt));
   receipt.qualified = receipt.validation.qualified;
   return receipt;
 }

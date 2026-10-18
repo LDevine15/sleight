@@ -307,3 +307,15 @@ test('the live worker uses the installed path: connectAppHost with the parent\'s
   assert.ok(live.includes('serverAppSecret()'), 'the driver holds the secret the way the MCP server does');
   assert.ok(!/adminSecret|randomBytes\(32\)/.test(live), 'and never makes its own');
 });
+
+// L3: the written receipt is the scrubbed one, so a home path in an error is not a secret in it.
+test('a home path in a cell error is scrubbed before the receipt\'s secret check', async () => {
+  const c = clock();
+  const driver = fakeDriver({ now: c.now });
+  driver.ownerInstances = async () => { throw Error('ENOENT: /Users/pat/Library/Application Support/Code'); };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now, fixturePid: () => driver.identity()?.pid }),
+    io: quietIo(), clock: c, options: { trials: 2, samples: 2, aliveWaitMs: 0, mode: 'dry-run' } });
+  assert.match(receipt.cells.find(cell => cell.id === 'new-window').error, /ENOENT/);
+  assert.ok(!receipt.validation.errors.includes('SECRET_OUTPUT'), receipt.validation.errors.join(' '));
+  assert.ok(validateReceipt(receiptWith([], { note: '/Users/pat/x' })).errors.includes('SECRET_OUTPUT'), 'an unscrubbed path still fails');
+});
