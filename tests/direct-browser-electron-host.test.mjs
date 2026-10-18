@@ -261,6 +261,10 @@ test('the pinned Playwright 1.64.0 connects in-process through the channel, clos
   await assert.rejects(cdp.send('Target.activateTarget', { targetId: 'x' }), /CDP_COMMAND_REFUSED/);
   await assert.rejects(cdp.send('Target.createTarget', { url: 'about:blank', background: true }), /CDP_COMMAND_REFUSED/, 'the app filter never makes windows');
   assert.throws(() => connection.createFilter(['some-target']), /ELECTRON_ADMISSION_REQUIRED/, 'no owned list that skips admission');
+  assert.throws(() => connection.createFilter({ admit: async () => true, current: () => true }), /ELECTRON_ADMISSION_REQUIRED/, 'hooks go under app');
+  const hooked = connection.createFilter({ app: { admit: async () => false, current: () => false } });
+  await assert.rejects(hooked.own('T1'), /CDP_TARGET_NOT_OWNED/);
+  await hooked.dispose();
   assert.ok(!methods(h).includes('Browser.close'), 'the worker filter refuses it before the host sees it');
   await browser.close();
   assert.equal(h.app.input.destroyed, false);
@@ -364,6 +368,18 @@ test('PID reuse parks the connection without sending, and the workers are told',
   assert.ok(!methods(h).includes('Runtime.evaluate'));
   assert.equal(h.host.status().broker.parked.resumable, false);
   await assert.rejects(h.host.resume(), /not resumable/);
+  finish(h);
+});
+
+test('selectedBrowser is fixed at construction from the host and session, before any connect', async () => {
+  const h = await started();
+  const handle = await h.host.issueTicket({ session: 'early' });
+  const connection = await createElectronConnection({ handle });
+  const { createHash } = await import('node:crypto');
+  assert.equal(connection.selectedBrowser, 'b' + createHash('sha256').update(handle.host + '\0' + handle.session).digest('hex').slice(0, 32));
+  await connection.connect();
+  assert.equal(connection.selectedBrowser, 'b' + createHash('sha256').update(handle.host + '\0' + handle.session).digest('hex').slice(0, 32));
+  await connection.disconnect();
   finish(h);
 });
 

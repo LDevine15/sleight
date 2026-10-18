@@ -31,13 +31,16 @@ function validSnapshot(snapshot) {
 const close = (a, b, tolerance) => ['x', 'y', 'width', 'height'].every(key => Math.abs(a[key] - b[key]) <= tolerance);
 const result = (status, extra = {}) => Object.freeze({ status, ...extra });
 
-/** Pure matching over one validated snapshot. candidates: [{ targetId, geometry }], geometry from electron-targets.geometry(). */
+/** Pure matching over one validated snapshot. candidates: [{ targetId, geometry }], geometry from electron-targets.geometry().
+ * Windows are filtered to the exact PID and birth first. A modal (sheet, dialog, menu, permission) on any on-screen window of
+ * the PID parks every candidate, since app-wide UI can take the keys. Renderer visibility is the page's own claim, so it
+ * never gates the join: a hidden renderer still competes for its window and joins with renderer: 'hidden' for the header. */
 export function matchWindows({ app, snapshot, candidates, tolerance = 2 }) {
   const windows = snapshot.windows.filter(row => row.pid === app.pid && row.pidBirth === app.pidBirth);
   const usable = windows.filter(row => row.onScreen && !row.minimized);
+  if (usable.some(row => row.modal !== false)) return new Map(candidates.map(({ targetId }) => [targetId, result('parked', { reason: 'native-modal' })]));
   const matches = new Map(), uses = new Map();
   for (const { targetId, geometry } of candidates) {
-    if (!geometry.visible) continue;
     const found = usable.filter(row => row.scale === geometry.scale && close(row.frame, geometry, tolerance));
     matches.set(targetId, found);
     for (const row of found) uses.set(row.id, (uses.get(row.id) ?? 0) + 1);
@@ -45,11 +48,9 @@ export function matchWindows({ app, snapshot, candidates, tolerance = 2 }) {
   const out = new Map();
   for (const { targetId, geometry } of candidates) {
     const found = matches.get(targetId);
-    if (!geometry.visible) out.set(targetId, result('hidden', { reason: 'not-visible' }));
-    else if (!found.length) out.set(targetId, result('hidden', { reason: 'no-window' }));
+    if (!found.length) out.set(targetId, result('hidden', { reason: 'no-window' }));
     else if (found.length > 1 || uses.get(found[0].id) > 1) out.set(targetId, result('ambiguous'));
-    else if (found[0].modal) out.set(targetId, result('parked', { reason: 'native-modal', window: Object.freeze({ id: found[0].id, epoch: found[0].epoch }) }));
-    else out.set(targetId, result('joined', { window: Object.freeze({ id: found[0].id, epoch: found[0].epoch }) }));
+    else out.set(targetId, result('joined', { window: Object.freeze({ id: found[0].id, epoch: found[0].epoch }), ...(geometry.visible === false ? { renderer: 'hidden' } : {}) }));
   }
   return out;
 }

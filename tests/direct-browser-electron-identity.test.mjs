@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
@@ -78,8 +79,47 @@ test('only the trusted adapter mints a binding, and the shape is closed', () => 
 test('the persistent app key follows build and profile, never the process', () => {
   const key = api.appKey(instance);
   assert.equal(api.appKey({ ...instance, pid: 1, pidBirth: 'other' }), key);
-  for (const change of [{ version: '1.2.4' }, { signer: 'OTHERTEAM' }, { runtime: 'electron/40.0.0' }, { profile: '/Users/fixture/Other' }, { bundleId: 'invalid.fixture.other' }])
+  for (const change of [{ version: '1.2.4' }, { signer: 'OTHERTEAM' }, { runtime: 'electron/40.0.0' }, { profile: '/Users/fixture/Other' }, { bundleId: 'invalid.fixture.other' },
+    { cdhash: 'b'.repeat(40) }, { cdhash: 'c'.repeat(64) }, { executable: '/Applications/Other.app/Contents/MacOS/Fixture' }])
     assert.notEqual(api.appKey({ ...instance, ...change }), key, JSON.stringify(change));
+  for (const bad of [{ cdhash: 'A'.repeat(40) }, { cdhash: 'a'.repeat(39) }, { executable: 'Fixture' }, { executable: '/Applications/../x' }]) assert.throws(() => api.appKey({ ...instance, ...bad }), /INVALID_APP_INSTANCE/);
+  const { executable, ...missing } = instance;
+  assert.throws(() => api.appKey(missing), /INVALID_APP_INSTANCE/, 'consent is bound to code: no executable, no key');
+});
+
+// What codesign -dvvv prints for a Developer ID signed Electron app (shape only; names are made up).
+const codesignText = `Executable=/Applications/Fixture.app/Contents/MacOS/Fixture
+Identifier=invalid.fixture.app
+Format=app bundle with Mach-O universal (x86_64 arm64)
+CodeDirectory v=20500 size=1234 flags=0x10000(runtime) hashes=27+7 location=embedded
+CandidateCDHash sha256=${'d'.repeat(40)}
+CDHash=${'a'.repeat(40)}
+Authority=Developer ID Application: Fixture Corp (TEAM123456)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+TeamIdentifier=TEAM123456
+`;
+test('the app instance comes from the code signature and bundle plists, never from caller strings', async () => {
+  assert.deepEqual(api.parseCodesign(codesignText), { executable: '/Applications/Fixture.app/Contents/MacOS/Fixture', identifier: 'invalid.fixture.app',
+    cdhash: 'a'.repeat(40), team: 'TEAM123456', authority: 'Developer ID Application: Fixture Corp (TEAM123456)' });
+  assert.throws(() => api.parseCodesign(codesignText.replace(/^CDHash=.*$/m, '')), /CODE_IDENTITY_UNAVAILABLE/);
+  const facts = { verified: true, codesign: api.parseCodesign(codesignText), info: { CFBundleIdentifier: 'invalid.fixture.app', CFBundleName: 'Fixture App',
+    CFBundleShortVersionString: '1.2.3' }, electron: { CFBundleVersion: '39.0.0' } };
+  const process = { bundle: '/Applications/Fixture.app', executable: '/Applications/Fixture.app/Contents/MacOS/Fixture',
+    profile: '/Users/fixture/Library/Application Support/FixtureApp', temporary: false, pid: 4242, pidBirth: '1760000000.25' };
+  const seen = [];
+  const derived = api.deriveAppInstance(process, { inspect: bundle => { seen.push(bundle); return facts; } });
+  assert.deepEqual(seen, ['/Applications/Fixture.app']);
+  assert.deepEqual({ ...derived }, { name: 'Fixture App', bundleId: 'invalid.fixture.app', signer: 'TEAM123456', version: '1.2.3', runtime: 'electron/39.0.0',
+    profile: process.profile, pid: 4242, pidBirth: '1760000000.25', executable: process.executable, cdhash: 'a'.repeat(40), temporary: false });
+  assert.equal(api.appKey(derived), api.appKey(instance));
+  for (const [label, change] of [['unverified', { verified: false }], ['other executable', { codesign: { ...facts.codesign, executable: '/tmp/evil' } }],
+    ['identifier mismatch', { info: { ...facts.info, CFBundleIdentifier: 'invalid.other' } }], ['not electron', { electron: undefined }],
+    ['unsigned', { codesign: { ...facts.codesign, team: undefined } }]])
+    assert.throws(() => api.deriveAppInstance(process, { inspect: () => ({ ...facts, ...change }) }), /CODE_IDENTITY_UNAVAILABLE/, label);
+  assert.throws(() => api.deriveAppInstance({ ...process, signer: 'TEAM123456' }, { inspect: () => facts }), /INVALID_APP_PROCESS/, 'a caller cannot supply the signer');
+  assert.throws(() => api.deriveAppInstance({ ...process, executable: '/Applications/Other.app/Contents/MacOS/Fixture' }, { inspect: () => facts }), /INVALID_APP_PROCESS/,
+    'the executable must be inside the bundle');
 });
 
 // The shared consent now speaks app documents. Web checks stay as they were.
@@ -167,4 +207,14 @@ test('the user file provider keeps two app files apart even though both report t
   const other = createUserFileProvider({ now: () => 100, current: () => current, readUserMessage: () => ({ session: 'session', text: `Upload "${path}" to Resume` }),
     resolveInput: ref => ({ ...binding(app, 'a.html'), ref, name: 'Resume' }) });
   assert.throws(() => other.offer({}, [path], 'e1'), /USER_NAMED_FILE_REQUIRED/);
+});
+
+test('the production inspection reads a real signature without launching anything', { skip: process.platform !== 'darwin' || !existsSync('/usr/bin/codesign') ? 'needs macOS codesign' : false }, () => {
+  const facts = api.inspectCode('/System/Applications/Calculator.app');
+  assert.equal(facts.verified, true);
+  assert.match(facts.codesign.cdhash, /^[0-9a-f]{40}$/);
+  assert.equal(facts.codesign.identifier, facts.info.CFBundleIdentifier);
+  assert.equal(facts.electron, undefined);
+  assert.throws(() => api.deriveAppInstance({ bundle: '/System/Applications/Calculator.app', executable: facts.codesign.executable, profile: '/tmp/p', temporary: true, pid: 1, pidBirth: '1' }),
+    /CODE_IDENTITY_UNAVAILABLE/, 'not an Electron app');
 });

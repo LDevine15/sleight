@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import { app, identity, recipe, page, fakeUpstream } from './fixtures/electron-graph.mjs';
 
 const moduleURL = new URL('../plugins/sleight/lib/direct-browser/electron-targets.mjs', import.meta.url);
@@ -163,4 +164,54 @@ test('sync finds targets the host never announced (lifecycle events go only to a
   assert.deepEqual(revoked, ['a']);
   targets.stop();
   await assert.rejects(targets.sync(), /ELECTRON_IDENTITY_CHANGED/);
+});
+
+// A model of Chromium's worlds: each world has its own wrappers for the same window and document, so a page that
+// redefines a getter in its main world changes only that world. The real-page twin is electron-geometry.real.test.mjs.
+function twoWorlds(truth) {
+  const world = () => vm.createContext({ window: { ...truth.window }, document: { visibilityState: truth.visibility } });
+  const main = world(), isolated = new Map();
+  vm.runInContext(`Object.defineProperty(window, 'screenX', { get: () => -12345 }); Object.defineProperty(window, 'outerWidth', { get: () => 1 });
+    window.devicePixelRatio = 9; Object.defineProperty(document, 'visibilityState', { get: () => 'hidden' });`, main);
+  return { main, isolated, world };
+}
+test('a renderer that overrides screenX, outerWidth, devicePixelRatio and visibility in its main world does not move the isolated-world read', async () => {
+  const { geometryExpression } = await load();
+  const truth = { window: { screenX: 100, screenY: 50, outerWidth: 800, outerHeight: 600, devicePixelRatio: 2 }, visibility: 'visible' };
+  const worlds = twoWorlds(truth);
+  const f = fakeUpstream([page('a')]), send = f.session.send;
+  f.session.send = async (method, params = {}, route) => {
+    if (method === 'Page.createIsolatedWorld') { const id = 500 + worlds.isolated.size; worlds.isolated.set(id, worlds.world()); return { executionContextId: id }; }
+    if (method === 'Runtime.evaluate') {
+      const context = params.contextId === undefined ? worlds.main : worlds.isolated.get(params.contextId);
+      return { result: { type: 'object', value: { ...vm.runInContext(params.expression, context) } } };
+    }
+    return send(method, params, route);
+  };
+  const { createAppTargets } = await load();
+  const targets = createAppTargets({ upstream: f.session, identity, expected: app, recipe, verify: async () => true });
+  await targets.start();
+  assert.deepEqual({ ...(await targets.geometry('a')) }, { x: 100, y: 50, width: 800, height: 600, scale: 2, visible: true });
+  assert.deepEqual({ ...vm.runInContext(geometryExpression, worlds.main) }, { x: -12345, y: 50, width: 1, height: 600, scale: 9, visible: false },
+    'the same expression in the main world would have been fooled');
+  targets.stop();
+});
+
+test('the isolated world is created once per target and frame, and recreated once after a Runtime error', async () => {
+  const { f, targets } = await started([page('a')]);
+  const worlds = () => f.calls.filter(row => row.method === 'Page.createIsolatedWorld').length;
+  await targets.geometry('a'); await targets.geometry('a');
+  assert.equal(worlds(), 1, 'the second read reuses the context');
+  const send = f.session.send;
+  let failures = 1;
+  f.session.send = async (method, params, route) => {
+    if (method === 'Runtime.evaluate' && failures-- > 0) throw Error('Cannot find context with specified id');
+    return send(method, params, route);
+  };
+  assert.equal((await targets.geometry('a')).width, 800);
+  assert.equal(worlds(), 2, 'one new world after the stale context');
+  failures = 2;
+  await assert.rejects(targets.geometry('a'), /Cannot find context|ELECTRON_GEOMETRY_INVALID/, 'only one retry');
+  assert.equal(worlds(), 3);
+  targets.stop();
 });

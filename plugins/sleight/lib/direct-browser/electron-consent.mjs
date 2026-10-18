@@ -1,6 +1,6 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, writeSync } from 'node:fs';
-import { dirname, isAbsolute, normalize } from 'node:path';
+import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { canonical } from './authority.mjs';
 import { createConsentUi } from './consent-ui.mjs';
 import { appKey, createAppBinding, validateAppInstance } from './electron-identity.mjs';
@@ -11,7 +11,7 @@ import { appKey, createAppBinding, validateAppInstance } from './electron-identi
 // Revocation stops commands by calling each grant's park hook. It never closes the app's pipe.
 const SESSION = /^[A-Za-z0-9_-]{1,128}$/;
 const grants = new WeakMap(), clicks = new WeakSet(), relaunches = new WeakMap();
-const recordKeys = ['key', 'name', 'bundleId', 'signer', 'version', 'runtime', 'profile'];
+const recordKeys = ['key', 'name', 'bundleId', 'signer', 'version', 'runtime', 'profile', 'executable', 'cdhash'];
 const fail = code => { throw Error(code); };
 const text = value => typeof value === 'string' && value.length > 0 && value.length <= 4096;
 export const isDebuggerGrant = value => !!value && grants.has(value);
@@ -23,28 +23,61 @@ function validRecord(record) {
   return Object.freeze({ ...record });
 }
 
-// Always allow records. Memory-only without a path. With a path, the file is operator-owned (mode 0600, this
-// user, no links) and read again on every lookup so a revocation elsewhere applies at once. put() needs a
-// receipt that only an authenticated Always click in createElectronConsent mints, and it burns that receipt.
-export function createGrantStore({ path } = {}) {
-  if (path !== undefined && (!isAbsolute(path) || normalize(path) !== path || path.length > 4096)) fail('INVALID_GRANT_STORE');
-  let memory = new Map(), unsafe = false;
+// Always allow records. Memory-only without a path. With a path, the file is operator-owned (mode 0600, this user,
+// no links) and read again on every lookup so a revocation elsewhere applies at once. Each record carries an HMAC
+// seal under a key in its own 0600 file (keyPath, by default grant-seal.key beside the records), so a record written
+// by hand, an old unsealed one or one with a changed field is not consent. put() needs a receipt that only an
+// authenticated Always click in createElectronConsent mints, and it burns that receipt.
+// Limit (docs/known-problems.md): a process running as this user can read the key file and seal its own record.
+export function createGrantStore({ path, keyPath } = {}) {
+  const absolute = value => isAbsolute(value) && normalize(value) === value && value.length <= 4096;
+  if (path !== undefined && !absolute(path) || keyPath !== undefined && (path === undefined || !absolute(keyPath))) fail('INVALID_GRANT_STORE');
+  const sealPath = path === undefined ? undefined : keyPath ?? join(dirname(path), 'grant-seal.key');
+  let memory = new Map(), unsafe = false, key;
+  const safeFile = (file, stat) => stat.isFile() && !stat.isSymbolicLink() && realpathSync(file) === file && stat.uid === process.getuid?.() && (stat.mode & 0o777) === 0o600;
+  // The seal key: read if it exists and is safe, created (exclusively, 0600) only when a sealed write needs it.
+  function sealKey(create) {
+    if (key) return key;
+    let stat;
+    try { stat = lstatSync(sealPath); } catch (error) {
+      if (error.code !== 'ENOENT' || !create) return undefined;
+      mkdirSync(dirname(sealPath), { recursive: true, mode: 0o700 });
+      const fd = openSync(sealPath, 'wx', 0o600);
+      try { writeSync(fd, randomBytes(32).toString('base64url')); fsyncSync(fd); } finally { closeSync(fd); }
+      stat = lstatSync(sealPath);
+    }
+    if (!safeFile(sealPath, stat) || stat.size > 128) fail('GRANT_STORE_UNSAFE');
+    const bytes = Buffer.from(readFileSync(sealPath, 'utf8').trim(), 'base64url');
+    if (bytes.length !== 32) fail('GRANT_STORE_UNSAFE');
+    return (key = bytes);
+  }
+  const sealOf = (secret, record) => createHmac('sha256', secret).update(canonical(record)).digest('base64url');
   function read() {
     if (path === undefined) return memory;
     let stat;
     try { stat = lstatSync(path); } catch (error) { if (error.code === 'ENOENT') { unsafe = false; return new Map(); } unsafe = true; return new Map(); }
     try {
-      if (!stat.isFile() || stat.isSymbolicLink() || realpathSync(path) !== path || stat.uid !== process.getuid?.() || (stat.mode & 0o777) !== 0o600 || stat.size > 1048576) fail('GRANT_STORE_UNSAFE');
+      if (!safeFile(path, stat) || stat.size > 1048576) fail('GRANT_STORE_UNSAFE');
       const data = JSON.parse(readFileSync(path, 'utf8'));
-      if (!data || data.version !== 1 || !Array.isArray(data.grants) || data.grants.length > 4096) fail('GRANT_STORE_UNSAFE');
-      unsafe = false; return new Map(data.grants.map(validRecord).map(record => [record.key, record]));
+      if (!data || data.version !== 2 || !Array.isArray(data.grants) || data.grants.length > 4096) fail('GRANT_STORE_UNSAFE');
+      const secret = sealKey(false);
+      const records = new Map();
+      for (const entry of data.grants) {
+        // A record whose seal does not verify is skipped, never trusted and never kept by a later write.
+        if (!secret || !entry || typeof entry.seal !== 'string' || Object.keys(entry).sort().join() !== 'record,seal') continue;
+        let valid; try { valid = validRecord(entry.record); } catch { continue; }
+        const expected = Buffer.from(sealOf(secret, valid)), given = Buffer.from(entry.seal);
+        if (expected.length === given.length && timingSafeEqual(expected, given)) records.set(valid.key, valid);
+      }
+      unsafe = false; return records;
     } catch { unsafe = true; return new Map(); }
   }
   function write(records) {
     if (path === undefined) { memory = records; return; }
+    const secret = sealKey(true);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = path + '.' + randomBytes(6).toString('hex') + '.tmp', fd = openSync(temporary, 'wx', 0o600);
-    try { writeSync(fd, JSON.stringify({ version: 1, grants: [...records.values()] })); fsyncSync(fd); } finally { closeSync(fd); }
+    try { writeSync(fd, JSON.stringify({ version: 2, grants: [...records.values()].map(record => ({ record, seal: sealOf(secret, record) })) })); fsyncSync(fd); } finally { closeSync(fd); }
     renameSync(temporary, path);
   }
   return Object.freeze({

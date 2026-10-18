@@ -86,7 +86,7 @@ test('seed admits only joined app pages: DevTools, workers, hidden, ambiguous an
   await s.pages.seed();
   const rows = await s.pages.list();
   assert.deepEqual(rows.map(row => [row.targetId, row.status, row.window]), [['a', 'joined', { id: 11, epoch: 1 }]]);
-  assert.match(rows[0].tab, /^a[0-9a-f]{32}$/);
+  assert.match(rows[0].tab, /^t[0-9a-f]{32}$/);
   for (const id of ['d', 'w']) assert.ok(!f.attaches().includes(id), id + ' never gets an attach');
   assert.equal(s.filter.owns('b'), false, 'b and c share a window: ambiguous, so not admitted');
   assert.equal(s.filter.owns('h'), false);
@@ -217,4 +217,17 @@ test('list admits a window that appeared without a target event', async t => {
   await s.pages.seed();
   f.targets.set('b', page('b', 'app://main/b.html')); f.geometry.set('b', geometryOf(rect(900, 0)));
   assert.deepEqual((await s.pages.list()).map(row => row.targetId), ['a', 'b']);
+});
+
+test('a renderer that reports itself hidden joins its window and carries renderer: hidden to the entry and the list row', async t => {
+  const f = fakeUpstream([page('a')]); f.geometry.set('a', { ...geometryOf(rect(0, 0)), visible: false });
+  const s = await world({ extra: { upstream: f, windows: fakeWindows([nativeWindow(11, rect(0, 0))]) } });
+  t.after(() => s.filter.dispose());
+  await s.pages.seed();
+  const [row] = await s.pages.list();
+  assert.equal(row.status, 'joined'); assert.equal(row.renderer, 'hidden');
+  assert.equal(await s.pages.enqueue(row.tab, entry => entry.renderer), 'hidden');
+  f.geometry.set('a', geometryOf(rect(0, 0)));
+  const [shown] = await s.pages.list();
+  assert.equal(shown.renderer, undefined, 'the mark follows the latest read');
 });

@@ -33,7 +33,9 @@ func appFrame(_ data: [String: Any], _ choices: [String]) -> (kind: String, app:
     guard Set(data.keys) == Set(["kind", "app", "session", "turn", "epoch"]),
         let kind = data["kind"] as? String, ["debugger", "relaunch"].contains(kind),
         let app = data["app"] as? [String: Any],
-        Set(app.keys) == Set(["name", "bundleId", "signer", "version", "runtime", "profile", "temporary", "pid", "pidBirth"]),
+        Set(app.keys) == Set(["name", "bundleId", "signer", "version", "runtime", "profile", "temporary", "pid", "pidBirth", "executable", "cdhash"]),
+        text(app["executable"], 4096)?.hasPrefix("/") == true,
+        text(app["cdhash"], 64)?.range(of: "^([0-9a-f]{40}|[0-9a-f]{64})$", options: .regularExpression) != nil,
         text(app["name"], 256) != nil, text(app["signer"], 256) != nil, text(app["version"], 128) != nil, text(app["runtime"], 128) != nil,
         text(app["pidBirth"], 64) != nil, count(app["pid"]),
         let bundle = text(app["bundleId"], 255), bundle.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]*$", options: .regularExpression) != nil,
@@ -51,7 +53,8 @@ func appCardText(_ card: (kind: String, app: [String: Any], session: String, tur
     let name = card.app["name"] as? String ?? "", version = card.app["version"] as? String ?? ""
     let bundle = card.app["bundleId"] as? String ?? "", profile = card.app["profile"] as? String ?? ""
     let pid = (card.app["pid"] as? NSNumber)?.intValue ?? 0
-    let identity = "\(name) \(version)\nBundle: \(bundle)\nProfile: \(profile)\nProcess: \(pid)\nSession: \(card.session)"
+    let executable = card.app["executable"] as? String ?? ""
+    let identity = "\(name) \(version)\nBundle: \(bundle)\nExecutable: \(executable)\nProfile: \(profile)\nProcess: \(pid)\nSession: \(card.session)"
     if card.kind == "relaunch" {
         return ("Quit and reopen " + name + " for sleight?",
             "sleight will ask " + name + " to quit through its own Quit command, then reopen it with the debugger connection. Unsaved work follows the app's own prompts. This approval is for this process only, once.\n\n" + identity)

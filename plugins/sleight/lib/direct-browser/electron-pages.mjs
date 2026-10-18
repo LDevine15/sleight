@@ -69,15 +69,15 @@ export function createAppPageRegistry({ browser, filter, targets, join, fence, o
     fail('ELECTRON_PAGE_UNAVAILABLE');
   }
 
-  async function admit(record, window) {
+  async function admit(record, window, renderer) {
     targets.grant(record.targetId, record.epoch, window);
     try {
       await filter.own(record.targetId);
       const { page, cdp } = await pageFor(record.targetId);
       if (ended || !targets.current(record.targetId, record.epoch)) { await cdp.detach().catch(() => {}); fail('ELECTRON_TARGET_CHANGED'); }
-      const entry = { tab: 'a' + randomUUID().replaceAll('-', ''), targetId: record.targetId, epoch: record.epoch, window, page, cdp,
+      const entry = { tab: 't' + randomUUID().replaceAll('-', ''), targetId: record.targetId, epoch: record.epoch, window, page, cdp,
         state: { snapshotNo: 0, submitUnconfirmed: false }, queue: Promise.resolve(), parked: null, joinNo: 1,
-        released: false, revoked: false, app: true };
+        released: false, revoked: false, app: true, renderer };
       records.set(entry.tab, entry); byTarget.set(entry.targetId, entry);
     } catch {
       targets.ungrant(record.targetId);
@@ -98,9 +98,10 @@ export function createAppPageRegistry({ browser, filter, targets, join, fence, o
       const row = results.get(record.targetId), entry = byTarget.get(record.targetId);
       if (entry) {
         if (row.status === 'joined' && sameWindow(row.window, entry.window)) {
+          entry.renderer = row.renderer;
           if (entry.parked) { entry.parked = null; entry.joinNo++; }
         } else park(entry, row.status === 'joined' ? 'window-changed' : row.reason ?? row.status);
-      } else if (row.status === 'joined' && kept.get(record.targetId) !== record.epoch && targets.current(record.targetId, record.epoch)) await admit(record, row.window);
+      } else if (row.status === 'joined' && kept.get(record.targetId) !== record.epoch && targets.current(record.targetId, record.epoch)) await admit(record, row.window, row.renderer);
     }
   }
   const refresh = () => {
@@ -156,7 +157,7 @@ export function createAppPageRegistry({ browser, filter, targets, join, fence, o
       await refresh();
       return [...records.values()].filter(entry => !entry.revoked && !entry.released).map(entry => ({ tab: entry.tab, targetId: entry.targetId,
         url: targets.record(entry.targetId)?.url, window: { ...entry.window }, status: entry.parked ? 'parked' : 'joined',
-        ...(entry.parked ? { reason: entry.parked } : {}), joinNo: entry.joinNo }));
+        ...(entry.parked ? { reason: entry.parked } : {}), joinNo: entry.joinNo, ...(entry.renderer ? { renderer: entry.renderer } : {}) }));
     },
     // Reads may pass { mutation: false }: they skip the fence and join checks, never the ownership checks.
     enqueue(id, run, { mutation = true } = {}) {
