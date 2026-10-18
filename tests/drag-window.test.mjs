@@ -483,6 +483,21 @@ test('single-window calls still work; a foreign or stale windowId cannot fall ba
   const h = harness({ second: false }); assert.equal(h.run({}).ok, true);
   const stale = harness(); assert.equal(stale.run({ windowId: 999 }).ok, false); assert.equal(stale.events.length, 0);
 });
+test('a windowId that matches no window uses the app\'s only window and says so', () => {
+  // 3 was an open handle's number and 0 the tree's window index (textedit-drag, 2026-10-17).
+  for (const windowId of [3, 0]) {
+    const h = harness({ second: false }); const r = h.run({ windowId });
+    assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.windowId, 11);
+    assert.equal(r.note, `windowId ${windowId} matched no window; used the app's only window 11`);
+  }
+});
+test('with two windows a windowId that matches neither refuses before pressing and lists both IDs', () => {
+  for (const windowId of [3, 0]) {
+    const h = harness(); const r = h.run({ windowId });
+    assert.equal(r.ok, false); assert.equal(h.events.length, 0); assert.equal(h.pidEvents.length, 0);
+    assert.match(r.error, new RegExp(`windowId ${windowId} matches no window of this app; pass one of 22, 11 \\(window IDs, not indexes\\)`));
+  }
+});
 test('non-TextEdit drags also reject title bars and toolbars', () => {
   for (const to of [[119, 10], [119, 25]]) {
     const h = harness({ second: false, appId: 'com.apple.Chess', areaRole: 'AXImage', selection: '' });

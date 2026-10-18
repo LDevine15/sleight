@@ -62,7 +62,7 @@ test('the skill enters a known spreadsheet block as one tab and newline paste, o
 test('the drag and menu_bar descriptions carry what the skill no longer repeats', () => {
   const drag = localToolDefinitions({}).find(tool => tool.name === 'drag');
   for (const passage of ['for what app.drag in the js tool can\'t do, such as moving selected text (select it with js first)',
-    'in the same frame as the app\'s engine screenshot', 'Pass `windowId` when several windows fit',
+    'in the same frame as the app\'s engine screenshot', 'Omit `windowId` for one window',
     'A lost-text error tells you to press Cmd+Z in the target app and named window.']) assert.ok(drag.description.includes(passage), passage);
   const menuBar = localToolDefinitions({}).find(tool => tool.name === 'menu_bar');
   assert.match(menuBar.description, /status items in the macOS menu bar/);

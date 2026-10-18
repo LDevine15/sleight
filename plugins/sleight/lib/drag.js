@@ -84,6 +84,7 @@ function resolveWindow(own, request) {
   const candidates = request.windowId === undefined
     ? own.filter(w => !Array.isArray(request.from) || inside(w.bounds, at(w.bounds, toPoints(request.from, screenshotScale(request, w.bounds, w.title)))))
     : own.filter(w => w.id === request.windowId);
+  if (!candidates.length && request.windowId !== undefined) throw new Error(`windowId ${request.windowId} matches no window of this app; pass one of ${own.map(w => w.id).join(', ')} (window IDs, not indexes). Windows: ${list()}`);
   if (candidates.length !== 1) throw new Error(`drag target is ${candidates.length > 1 ? 'ambiguous; supply windowId' : 'unavailable; read the window again'}. Windows: ${list()}`);
   return candidates[0];
 }
@@ -947,7 +948,7 @@ function run(argv) {
     const { app, from, to, holdMs = 500, steps = 25, settleMs = 1500 } = request;
     if (!(coordinate(from) || elementEndpoint(from) || selectionEndpoint(from)) ||
         !(coordinate(to) || elementEndpoint(to) || lineEndpoint(to)) ||
-        (request.windowId !== undefined && (!Number.isInteger(request.windowId) || request.windowId <= 0)) ||
+        (request.windowId !== undefined && !Number.isSafeInteger(request.windowId)) ||
         !Number.isInteger(steps) || steps < 1 || steps > 100 || !Number.isInteger(holdMs) || holdMs < 0 || holdMs > 5000 ||
         !Number.isInteger(settleMs) || settleMs < 0 || settleMs > 5000) throw new Error('invalid drag points, windowId or timing');
     if (request.toWindowId !== undefined) return runCrossWindow(request);
@@ -959,6 +960,12 @@ function run(argv) {
       const offScreen = windows(false).filter(w => w.pid === pid && w.layer === 0 && (request.windowId === undefined || w.id === request.windowId));
       if (offScreen.length) throw new Error(`${app}'s window is off screen, on another desktop or Space (or hidden/minimized); nothing was pressed. Ask the user to show and unminimize this exact window on the current desktop. Drag needs it on screen. Then acquire the app again, take a fresh window screenshot, and use its current windowId and coordinates. Do not retry the old drag or switch to another window`);
       if (!own.length) throw new Error(`${app} has no window; open one on the current desktop before dragging`);
+      // Claude passed a handle's number (3) and a tree index (0) as windowId in 2 of 4 textedit-drag
+      // runs (2026-10-17), each refused and retried. With one window there is nothing to choose.
+      if (own.length === 1) {
+        units = { note: `windowId ${request.windowId} matched no window; used the app's only window ${own[0].id}` };
+        request.windowId = own[0].id;
+      }
     }
     let main = resolveWindow(own, request);
     const scale = screenshotScale(request, main.bounds, main.title);
@@ -973,8 +980,8 @@ function run(argv) {
     // both Firefox settings runs (2026-10-17) Claude retried drags sent in the shown image's frame,
     // and `screenshotScale: 2` sat beside Claude Code's "multiply by 1.28". The size here is the
     // one Claude Code calls the original.
-    units = scale ? { coordinates: `engine screenshot pixels, ${scale.size[0]} × ${scale.size[1]}` }
-      : { coordinates: request.screenshot ? 'window points: the latest screenshot is of another window size' : 'window points: no engine screenshot of this app yet' };
+    units = { ...units, ...scale ? { coordinates: `engine screenshot pixels, ${scale.size[0]} × ${scale.size[1]}` }
+      : { coordinates: request.screenshot ? 'window points: the latest screenshot is of another window size' : 'window points: no engine screenshot of this app yet' } };
     // A drag no other app lets through is decided before any window scan: without selected text it
     // is refused below anyway, and the raise and scan took 10 to 13 s to get there (2026-10-09).
     const early = coveringApp(windows(true), main, { start: at(main.bounds, pointFrom), end: at(main.bounds, pointTo) });
