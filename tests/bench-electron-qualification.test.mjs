@@ -319,3 +319,62 @@ test('a home path in a cell error is scrubbed before the receipt\'s secret check
   assert.ok(!receipt.validation.errors.includes('SECRET_OUTPUT'), receipt.validation.errors.join(' '));
   assert.ok(validateReceipt(receiptWith([], { note: '/Users/pat/x' })).errors.includes('SECRET_OUTPUT'), 'an unscrubbed path still fails');
 });
+
+// H3: the disconnect cell reads the host's own status after the worker is gone. Retained means owned with the pipe
+// ready or resumably parked; an app that quit on the drop or a quit through the app is not retained.
+test('pipeRetained reads the host status after a worker drop: parked and resumable is retained, a closed pipe or a quit is not', async t => {
+  const { pipeRetained } = await import('../bench/electron-qualification-live.mjs');
+  const { makeHost, connectWorker, until } = await import('./direct-browser-electron-host-fixture.mjs');
+  const host = async () => { const h = await makeHost(); t.after(() => { h.host._crashForTest(); h.state.remove(); }); await h.host.start({ build: 'fake-build' }); return h; };
+  let h = await host();
+  const w = await connectWorker(h.host, 'w');
+  assert.equal(pipeRetained(h.host.status()), true, 'connected');
+  await w.connection.disconnect(w.connection.session);
+  await until(() => h.host.status().channels === 0, 'worker dropped');
+  assert.equal(pipeRetained(h.host.status()), true, `after the drop: ${JSON.stringify(h.host.status().broker)}`);
+  h = await host();
+  await connectWorker(h.host, 'w');
+  h.world.alive = false; h.app.output.end(); // the app quits on its own, as on pipe EOF
+  await until(() => h.host.status().broker?.state !== 'ready', 'app gone');
+  assert.equal(pipeRetained(h.host.status()), false, `app gone: ${JSON.stringify(h.host.status())}`);
+  assert.equal(pipeRetained({ ownership: { state: 'free' }, broker: { state: 'collected' } }), false);
+  assert.equal(pipeRetained({ ownership: 'owned', broker: 'ready' }), false, 'the worker row\'s strings are not a host status');
+});
+
+// The disconnect cell on the live driver with a fake worker: the refused call must go through the same, still running worker,
+// so only a disconnect that really revokes passes. A worker channel left open at the host fails it too.
+test('the live disconnect cell passes only when the disconnect itself refuses the next call through the live worker', async t => {
+  const { liveDriver } = await import('../bench/electron-qualification-live.mjs');
+  const cell = CELLS.find(row => row.id === 'disconnect');
+  const ps = '  501 Sun Oct 18 16:00:00 2026 /Applications/Fake.app/Contents/MacOS/Fake --user-data-dir=/x\n';
+  const exec = async file => ({ stdout: file === '/bin/ps' ? ps : '', stderr: '' });
+  async function attempt({ revokes = true, left = [] } = {}) {
+    const forks = [];
+    const forkWorker = () => {
+      let revoked = false;
+      const w = { lost: false, ops: [], kill() { w.lost = true; }, async send(op) {
+        w.ops.push(op);
+        if (w.lost) return { ok: false, error: 'V3_WORKER_UNAVAILABLE' };
+        if (op === 'start') { revoked = false; return { ok: true, identity, card: { shown: true, status: 'granted', by: 'user', scope: 'session' }, launch: {}, connectMs: 1 }; }
+        if (op === 'call') return { ok: true, result: revoked ? { text: 'Turbo is unavailable for this turn.', isError: true } : { text: 'one app tab', isError: false } };
+        if (op === 'disconnect') {
+          revoked = revokes;
+          return { ok: true, status: { ownership: { state: 'owned' }, broker: { state: 'parked', parked: { resumable: true } }, workers: left } };
+        }
+        return { ok: true };
+      } };
+      forks.push(w); return w;
+    };
+    const driver = liveDriver(APPS.vscode, { root: temp(t), exec, observer: {}, forkWorker });
+    await driver.reconnect({});
+    const c = { driver, state: {}, options: { consentWaitMs: 0 }, consent() {}, tool: (name, args) => driver.tool(name, args), list: async () => [{ tab: 't1' }] };
+    const result = await cell.run(c).then(out => ({ out }), error => ({ error: error.message }));
+    return { ...result, forks };
+  }
+  const good = await attempt();
+  assert.deepEqual(good.out?.detail, { appAlive: true, pipeRetained: true }, good.error);
+  assert.equal(good.forks.length, 1, 'one worker: disconnected, refused, then reconnected in place');
+  assert.deepEqual(good.forks[0].ops, ['start', 'disconnect', 'call', 'start']);
+  assert.match((await attempt({ revokes: false })).error ?? '', /DISCONNECTED_CALL_ANSWERED/, 'a disconnect that leaves calls answered fails the cell');
+  assert.match((await attempt({ left: ['v3other'] })).error ?? '', /DISCONNECT_WORKER_CHANNEL_OPEN/, 'a worker channel still open at the host fails it');
+});

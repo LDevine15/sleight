@@ -235,11 +235,15 @@ function revokeSavedApp(bundleId, home) {
 }
 
 /** `sleight-mcp turbo app on|off <bundle id>`: the per-app opt-in for Electron turbo. on writes the registry's build for
- *  that bundle id; off removes the entry and the app's saved debugger permissions. */
-function turboAppCommand([op, bundleId, ...rest], { out, home, uid, path = appOptInPath(home), registryPath = packagedRegistry,
+ *  that bundle id; off removes the entry and the app's saved debugger permissions. Electron turbo is 1.3.1 (LAWS, F3):
+ *  until then on refuses, except under the benchmark's SLEIGHT_TURBO_UNQUALIFIED=1, and off always works. */
+function turboAppCommand([op, bundleId, ...rest], { out, home, uid, env, path = appOptInPath(home), registryPath = packagedRegistry,
   revokeApp = id => revokeSavedApp(id, home) }) {
   if (!['on', 'off'].includes(op) || typeof bundleId !== 'string' || !BUNDLE_ID.test(bundleId) || rest.length) {
     out('usage: sleight-mcp turbo app on <bundle id>\n       sleight-mcp turbo app off <bundle id>\n'); return 2;
+  }
+  if (op === 'on' && env?.SLEIGHT_TURBO_UNQUALIFIED !== '1') {
+    out(`turbo stays off for ${bundleId}: Electron turbo arrives in 1.3.1; the app stays on the native path.\n`); return 1;
   }
   const code = error => /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'TURBO_APP_FAILED';
   let current;
@@ -267,7 +271,7 @@ function turboAppCommand([op, bundleId, ...rest], { out, home, uid, path = appOp
 export function turboCommand(args, { out = text => process.stdout.write(text), configPath = installedConfigPath(), pluginRoot = INSTALLED_PLUGIN_ROOT,
   home = userInfo().homedir, apps, uid = process.getuid(), diagnose = turboDiagnosis, env = process.env, appOptIns = {} } = {}) {
   const [op, ...rest] = args;
-  if (op === 'app') return turboAppCommand(rest, { out, home, uid, ...appOptIns });
+  if (op === 'app') return turboAppCommand(rest, { out, home, uid, env, ...appOptIns });
   const usage = () => { out(`usage: sleight-mcp turbo on [--browser ${browserChoices()}]\n       sleight-mcp turbo off\n       sleight-mcp turbo status\n` +
     '       sleight-mcp turbo app on|off <bundle id>\n'); return 2; };
   let browser;
