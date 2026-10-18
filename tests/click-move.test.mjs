@@ -151,3 +151,24 @@ test('a move that adds an Edited marker to the title is still reported', () => {
     assert.match(out, moved);
   }
 });
+
+// excel-edit #3 (claim run, 2026-10-18): the call printed a filtered 3-line tree in the same text item after the
+// engine's tree, so remember() kept the printed lines and the later tab move had nothing to compare against.
+const strip = (order, selected) => tree(order, selected).replace('group Pages', 'tab group Sheets').replaceAll(' button ', ' tab ');
+const clickAfter = (c, value) => {
+  const action = c.beginAction('await app.click(2)');
+  return c.process([text(GUARD_MARK + value + GUARD_END)], { action }).map(i => i.text).join('\n');
+};
+
+test('a tree the call printed after the real one in the same text item does not replace it', () => {
+  const c = createReadCompactor(), before = strip(['Alpha', 'Beta', 'Gamma'], 'Beta');
+  c.process([text(before + '\n' + before.split('\n').slice(0, 3).join('\n'))]);
+  assert.match(clickAfter(c, strip(['Beta', 'Gamma', 'Alpha'], 'Alpha')), moved);
+});
+
+test('a degraded block after the real tree in the same text item never becomes the latest read', () => {
+  const c = createReadCompactor(), lines = strip(['Alpha', 'Beta', 'Gamma'], 'Beta').split('\n');
+  // No window root: the shape observe() already marks as degraded.
+  c.process([text(lines.join('\n') + '\n' + [lines[0], ...lines.slice(2, 5)].join('\n'))]);
+  assert.match(clickAfter(c, strip(['Beta', 'Gamma', 'Alpha'], 'Alpha')), moved);
+});
