@@ -193,6 +193,25 @@ test('ensureHost spawns the host detached with the secret on descriptor 3, waits
   await until(() => { try { process.kill(first.pid, 0); return false; } catch { return true; } }, 'host process gone', 5000);
 });
 
+test('ensureHost with a parent-chosen secret (hex) spawns the host with it, and every worker given it reconnects', { skip: skipSpawn }, async t => {
+  const { root } = registryFile(t);
+  const options = { stateDir: join(root, 's'), registryPath: join(root, 'recipes.json'), tempRoot: join(root, 'tmp'), build: 'com.example.Editor@1.2.3' };
+  const adminSecret = randomBytes(32).toString('hex');
+  let first;
+  try {
+    first = await ensureHost({ ...options, adminSecret });
+    assert.equal(first.spawned, true);
+    assert.equal(first.secret.toString('hex'), adminSecret);
+    first.close();
+    const second = await ensureHost({ ...options, adminSecret });
+    assert.equal(second.spawned, false);
+    assert.equal(second.hostId, first.hostId);
+    second.close();
+    await assert.rejects(ensureHost({ ...options, adminSecret: 'abc' }), /ADMIN_SECRET_INVALID/);
+  } finally { if (first?.pid) try { process.kill(first.pid, 'SIGTERM'); } catch { /* gone */ } }
+  await until(() => { try { process.kill(first.pid, 0); return false; } catch { return true; } }, 'host process gone', 5000);
+});
+
 test('ensureHost reports a host that never becomes ready and leaves no process behind', { skip: skipSpawn }, async t => {
   const { root } = registryFile(t);
   const stateDir = join(root, 's');

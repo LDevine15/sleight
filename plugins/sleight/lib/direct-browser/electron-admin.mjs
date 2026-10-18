@@ -85,6 +85,14 @@ export async function connectAdmin({ stateDir, secret, hostId, socketPath = join
   });
 }
 
+function secretBytes(value) {
+  if (value === undefined) return undefined;
+  const bytes = Buffer.isBuffer(value) ? Buffer.from(value) : typeof value === 'string' && /^[0-9a-f]{64,1024}$/i.test(value) ? Buffer.from(value, 'hex')
+    : typeof value === 'string' && /^[A-Za-z0-9_-]{43,1024}$/.test(value) ? Buffer.from(value, 'base64url') : Buffer.alloc(0);
+  if (bytes.length < 32) fail('ADMIN_SECRET_INVALID');
+  return bytes;
+}
+
 const alive = (socketPath, connect) => new Promise(resolve => {
   const probe = connect(socketPath);
   probe.once('connect', () => { probe.destroy(); resolve(true); });
@@ -94,17 +102,20 @@ const alive = (socketPath, connect) => new Promise(resolve => {
 /** Connects to the host for stateDir with the secret this parent holds, or spawns `node electron-host-run.mjs ...` detached
  * and waits for its ready line (timeoutMs, 10 s). Resolves the admin client (connectAdmin's methods) plus secret, spawned and
  * pid, so the caller can keep the secret for its next connection. A running host this
- * parent holds no secret for is ELECTRON_HOST_FOREIGN; it exits on its own once its app is gone (exit rule). */
-export async function ensureHost({ stateDir, registryPath, tempRoot, build, builds = [build], secret, python, spawn = spawnProcess,
+ * parent holds no secret for is ELECTRON_HOST_FOREIGN; it exits on its own once its app is gone (exit rule).
+ * secret (or adminSecret): a parent that serves several workers chooses the secret once (a Buffer, or 64 hex or base64url
+ * characters for at least 32 bytes) and passes it to each; a host it spawns then takes that same secret. */
+export async function ensureHost({ stateDir, registryPath, tempRoot, build, builds = [build], secret: given, adminSecret, python, spawn = spawnProcess,
   connect = path => net.connect(path), node = process.execPath, script = HOST_RUN, timeoutMs = 10000 } = {}) {
   const socketPath = join(stateDir, 'host.sock');
+  const secret = secretBytes(given ?? adminSecret);
   if (secret !== undefined) {
     try { return Object.freeze({ ...await connectAdmin({ stateDir, secret, socketPath, connect }), secret, spawned: false }); }
     catch (error) { if (error.message !== 'ELECTRON_HOST_UNREACHABLE') fail('ELECTRON_HOST_FOREIGN'); }
   } else if (await alive(socketPath, connect)) fail('ELECTRON_HOST_FOREIGN');
   mkdirSync(dirname(stateDir), { recursive: true, mode: 0o700 });
   mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
-  const fresh = randomBytes(32);
+  const fresh = secret ?? randomBytes(32);
   const args = [script, '--state-dir', stateDir, '--registry', registryPath, '--temp-root', tempRoot, '--builds', builds.join(','), '--admin-fd', '3',
     ...(python ? ['--python', python] : [])];
   const child = spawn(node, args, { detached: true, cwd: '/', stdio: ['ignore', 'pipe', 'ignore', 'pipe'], env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' } });
