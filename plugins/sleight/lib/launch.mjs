@@ -364,7 +364,7 @@ const DRAG_TOOL = {
     'moving selected text (select it with js first). `from` accepts an element number from the last window read or "the current text selection"; ' +
     '`to` accepts an element number or "end of line N" (one-based AX visual line in the focused text area). Numbers must identify a unique named AX element. ' +
     'Both also accept coordinate pairs, in the same frame as the app\'s engine ' +
-    'screenshot, from that window\'s top-left corner. Pass `windowId` when several windows fit; an ambiguous target refuses. ' +
+    'screenshot, from that window\'s top-left corner. Omit `windowId` for one window; an ambiguous target refuses. ' +
     'Both points must be in window content. A text drag requires a non-blank selection and both points in the same text area or field. ' +
     'To drop text in another window of the same app, pass `windowId` and a different `toWindowId`; `to` uses the destination window\'s read and screenshot frame. ' +
     'The selection comes from the source window; a line end comes from the destination\'s single text area. Tile overlapping windows and read again. ' +
@@ -379,7 +379,7 @@ const DRAG_TOOL = {
     type: 'object',
     properties: {
       app: { type: 'string', description: 'App name, bundle ID or path' },
-      windowId: { type: 'integer', minimum: 1, description: 'Exact window ID from the engine inventory or app state' },
+      windowId: { type: 'integer', minimum: 1, description: 'Window ID from the engine inventory, not an index or handle' },
       toWindowId: { type: 'integer', minimum: 1, description: 'Different destination window of the same app; requires windowId' },
       from: { description: 'Element number, [x, y], or "the current text selection"' },
       to: { description: 'Element number, [x, y], or "end of line N"' },
@@ -432,7 +432,8 @@ function leanToolDescription(tool) {
     ['The app, as "apps" names it', 'Name from apps'],
     ['How long to hold before moving (default 500)', 'Hold ms (default 500)'],
     ['Moves between start and end (default 25)', 'Steps (default 25)'],
-    ['Exact window ID from the engine inventory or app state', 'Exact engine window ID'],
+    ['Window ID from the engine inventory, not an index or handle', 'Engine window ID, not an index or handle'],
+    ['Different destination window of the same app; requires windowId', 'Same-app destination window; requires windowId'],
     ['Hover dwell, default 1500 ms; increase only if needed', 'Dwell ms (default 1500); increase only if needed'],
     ['click: the element number from read', 'click: number from read'],
     ['click: window-relative [x, y]', 'click: window [x, y]'],
