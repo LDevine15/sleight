@@ -55,7 +55,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 - Don't switch back to a sheet or tab just to look at it before saving. Clicks can drag tabs: switch
   with the next/previous-tab key.
 - A confirmed save covers that document's sheets and pages. Don't recheck them. Save again after
-  later edits.
+  edits.
 - A list with more rows than it shows: click it, then `await app.pickFromList("<whole row text>")` in that call.
   Skip scrolling, typed prefixes and read loops. If it stops, search or use keys.
 
@@ -93,7 +93,7 @@ Click a button that may open a page dialog (pay, delete, leave) with
 
 ## sleight's other tools
 
-- To move selected text, select it in `js`, then call the `drag` tool, not `app.drag`.
+- Reorder rows or move selected text (select it in `js`) with the `drag` tool, not `app.drag`.
 - Engine events don't trigger hover. Before the `hover` tool, try `Help:`, `Secondary Actions:`,
   right-click or keys.
 - `notifications` presses buttons on banners, which leave in seconds, so act at once.

@@ -59,14 +59,19 @@ test('the skill enters a known spreadsheet block as one paste from the active ce
     assert.match(rules, /`setValue` writes a field without focus or Return; to move through a field, click it, type, Return\./);
     assert.doesNotMatch(rules, /\.typeText\("[^"]*\\n/);
     // The drag tool's description carries its arguments and lost-text recovery; the skill keeps the routing.
-    assert.match(rules, /To move selected text, select it in `js`, then call the `drag` tool, not `app\.drag`\./);
+    // Safari form-settings r1 and r3 (race-1017): app.drag moved no priority row in either run; the drag tool moved 6 of 6.
+    assert.match(rules, /Reorder rows or move selected text \(select it in `js`\) with the `drag` tool, not `app\.drag`\./);
     assert.ok(rules.trim().split(/\s+/).length <= 1040);
   }
+  const lean = skillRules(undefined, { SLEIGHT_PROMPT: 'lean' });
+  assert.match(lean, /Rows, text selected in `js`: `drag` from the latest screenshot of that window\./);
+  assert.ok(lean.trim().split(/\s+/).length <= 505);
 });
 
 test('the drag and menu_bar descriptions carry what the skill no longer repeats', () => {
   const drag = localToolDefinitions({}).find(tool => tool.name === 'drag');
-  for (const passage of ['for what app.drag in the js tool can\'t do, such as moving selected text (select it with js first)',
+  assert.match(localToolDefinitions({ SLEIGHT_PROMPT: 'lean' }).find(tool => tool.name === 'drag').description, /^Stepped drag for list rows; select text with js first\./);
+  for (const passage of ['for what app.drag in the js tool can\'t do, such as reordering list rows or moving selected text (select it with js first)',
     'in the same frame as the app\'s engine screenshot', 'Omit `windowId` for one window',
     'A lost-text error tells you to press Cmd+Z in the target app and named window.']) assert.ok(drag.description.includes(passage), passage);
   const menuBar = localToolDefinitions({}).find(tool => tool.name === 'menu_bar');

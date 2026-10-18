@@ -210,7 +210,7 @@ function requireNote(refused, saved, prompt) {
 // The skill's rules for an open_file result under SLEIGHT_OPEN_RULES=short: without what open_file already
 // did (acquiring, choosing a window, opening a document), tap coordinates, the drag, hover and banner tools,
 // and the doctor line. Every safety passage stays word for word, and a heading left empty goes too.
-const OPEN_DROPS = /^(?:- When the task specifies an app|- After renumbering|- If acquisition returns an empty tree|- Among windows|- Multiply tap coordinates|- Acquire a document that's already open|- To move selected text|- Engine events don't trigger hover|(?:- )?In a browser, |- `notifications` presses|Selected text: |If `js` fails to start|Startup failure: )/;
+const OPEN_DROPS = /^(?:- When the task specifies an app|- After renumbering|- If acquisition returns an empty tree|- Among windows|- Multiply tap coordinates|- Acquire a document that's already open|- Reorder rows or move selected text|- Engine events don't trigger hover|(?:- )?In a browser, |- `notifications` presses|Rows, text selected in |If `js` fails to start|Startup failure: )/;
 export function openFileRules(rules) {
   if (typeof rules !== 'string') return rules;
   const blocks = [];

@@ -34,7 +34,7 @@ Open page dialogs with
 
 ## Tools
 
-Selected text: select in `js`, `drag` from the latest screenshot of that window. Lost text: press Cmd+Z in that window.
+Rows, text selected in `js`: `drag` from the latest screenshot of that window. Lost text: press Cmd+Z in that window.
 Before `hover`, try `Help:`, `Secondary Actions:`, right-click or keys, then tell the user first that it moves their pointer
 and brings the app forward for about two seconds.
 - Copy and Cut use the real clipboard unless `SLEIGHT_CLIPBOARD=preserve` (then one clipboard shortcut
