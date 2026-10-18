@@ -54,13 +54,22 @@ export function hostDependencies({ registry, builds, run } = {}) {
   });
 }
 
-/** The host process exits once ownership is free and no channel has been open for idleMs (10 min). */
-export function createExitRule({ status, close, exit, now = Date.now, idleMs = 600000 }) {
+// The parked reasons that mean the app's process ended (broker.mjs): collecting then needs only the census.
+const APP_GONE = new Set(['child exited', 'pipe EOF']);
+
+/** The host process exits once ownership is free and no channel has been open for idleMs (10 min). An app that exited
+ * (the user quit it) while no worker was connected is collected first, census-proved, so its host can go. */
+export function createExitRule({ status, close, exit, collect, now = Date.now, idleMs = 600000 }) {
   let busySince = now(), exiting = false;
   return Object.freeze({
     async check() {
       if (exiting) return;
-      const current = status();
+      let current = status();
+      if (collect && current.channels === 0 && current.ownership?.state === 'owned' && current.broker?.state === 'parked' &&
+          APP_GONE.has(current.broker.parked?.reason)) {
+        try { await collect(); } catch { /* retained: tried again on the next check */ }
+        current = status();
+      }
       if (current.channels > 0 || current.ownership?.state !== 'free') { busySince = now(); return; }
       if (now() - busySince < idleMs) return;
       exiting = true;
@@ -74,8 +83,9 @@ async function main(argv) {
   if (config.adminFd === undefined) fail('ADMIN_FD_REQUIRED');
   const registry = readRecipeRegistry(config.registryPath);
   const host = await runHostEntry({ argv, deps: hostDependencies({ registry, builds: config.builds }) });
-  const rule = createExitRule({ status: () => host.status(), close: () => host.close(), exit: code => process.exit(code) });
+  const rule = createExitRule({ status: () => host.status(), close: () => host.close(), collect: () => host.collect(), exit: code => process.exit(code) });
   setInterval(() => { rule.check().catch(() => {}); }, 30000);
+  host.events.on('parked', () => { setTimeout(() => { rule.check().catch(() => {}); }, 1000); });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

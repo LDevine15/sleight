@@ -125,6 +125,26 @@ test('quitThroughApp asks NSRunningApplication for the exact pid and checks its 
   await assert.rejects(quitThroughApp({ pid: 0, birth: 'b' }, '/x', { run }), /QUIT_TARGET_INVALID/);
 });
 
+test('exit rule: after the app exits with no channel open, the host collects it, and exits 10 min later', async () => {
+  let clock = 0;
+  let status = { channels: 0, ownership: { state: 'owned' }, broker: { state: 'parked', parked: { reason: 'child exited' } } };
+  const events = [];
+  const rule = createExitRule({ status: () => status, now: () => clock, exit: code => events.push(code), close: async () => events.push('closed'),
+    collect: async () => { events.push('collect'); status = { channels: 0, ownership: { state: 'free' }, broker: { state: 'collected' } }; } });
+  await rule.check();
+  assert.deepEqual(events, ['collect']);
+  clock = 10 * 60000; await rule.check();
+  assert.deepEqual(events, ['collect', 'closed', 0]);
+  const kept = [];
+  for (const parked of [{ reason: 'revoked' }, { reason: 'child exited' }]) {
+    const channels = parked.reason === 'revoked' ? 0 : 1;
+    const other = createExitRule({ status: () => ({ channels, ownership: { state: 'owned' }, broker: { state: 'parked', parked } }), now: () => 0,
+      exit: () => kept.push('exit'), close: async () => {}, collect: async () => kept.push('collect') });
+    await other.check();
+  }
+  assert.deepEqual(kept, [], 'a revoked app is never collected, and an open channel defers collection');
+});
+
 test('exit rule: the host exits after 10 min with ownership free and no channel; an owned app or an open channel keeps it', async () => {
   let clock = 0, status = { channels: 0, ownership: { state: 'free' } };
   const exits = [];
@@ -157,14 +177,14 @@ test('ensureHost spawns the host detached with the secret on descriptor 3, waits
     first = await ensureHost({ stateDir, registryPath, tempRoot: tempRootDir, build: 'com.example.Editor@1.2.3' });
     assert.equal(first.spawned, true);
     assert.equal(Buffer.isBuffer(first.secret) && first.secret.length, 32);
-    const status = await first.admin.status();
+    const status = await first.status();
     assert.equal(status.ownership.state, 'free');
     assert.equal(status.hostId, first.hostId);
-    first.admin.close();
+    first.close();
     const again = await ensureHost({ stateDir, registryPath, tempRoot: tempRootDir, build: 'com.example.Editor@1.2.3', secret: first.secret });
     assert.equal(again.spawned, false);
     assert.equal(again.hostId, first.hostId, 'the same host, not a second one');
-    again.admin.close();
+    again.close();
     await assert.rejects(ensureHost({ stateDir, registryPath, tempRoot: tempRootDir, build: 'com.example.Editor@1.2.3' }), /ELECTRON_HOST_FOREIGN/);
     await assert.rejects(ensureHost({ stateDir, registryPath, tempRoot: tempRootDir, build: 'com.example.Editor@1.2.3', secret: randomBytes(32) }), /ELECTRON_HOST_FOREIGN/);
   } finally {

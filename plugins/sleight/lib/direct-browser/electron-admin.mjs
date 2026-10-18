@@ -92,13 +92,14 @@ const alive = (socketPath, connect) => new Promise(resolve => {
 });
 
 /** Connects to the host for stateDir with the secret this parent holds, or spawns `node electron-host-run.mjs ...` detached
- * and waits for its ready line (timeoutMs, 10 s). Resolves { admin, secret, hostId, pid?, spawned }. A running host this
+ * and waits for its ready line (timeoutMs, 10 s). Resolves the admin client (connectAdmin's methods) plus secret, spawned and
+ * pid, so the caller can keep the secret for its next connection. A running host this
  * parent holds no secret for is ELECTRON_HOST_FOREIGN; it exits on its own once its app is gone (exit rule). */
 export async function ensureHost({ stateDir, registryPath, tempRoot, build, builds = [build], secret, python, spawn = spawnProcess,
   connect = path => net.connect(path), node = process.execPath, script = HOST_RUN, timeoutMs = 10000 } = {}) {
   const socketPath = join(stateDir, 'host.sock');
   if (secret !== undefined) {
-    try { const admin = await connectAdmin({ stateDir, secret, socketPath, connect }); return { admin, secret, hostId: admin.hostId, spawned: false }; }
+    try { return Object.freeze({ ...await connectAdmin({ stateDir, secret, socketPath, connect }), secret, spawned: false }); }
     catch (error) { if (error.message !== 'ELECTRON_HOST_UNREACHABLE') fail('ELECTRON_HOST_FOREIGN'); }
   } else if (await alive(socketPath, connect)) fail('ELECTRON_HOST_FOREIGN');
   mkdirSync(dirname(stateDir), { recursive: true, mode: 0o700 });
@@ -132,5 +133,5 @@ export async function ensureHost({ stateDir, registryPath, tempRoot, build, buil
   } finally { child.stdout.destroy(); }
   child.unref();
   const admin = await connectAdmin({ stateDir, secret: fresh, hostId: ready.hostId, socketPath, connect });
-  return { admin, secret: fresh, hostId: ready.hostId, pid: child.pid, spawned: true };
+  return Object.freeze({ ...admin, secret: fresh, pid: child.pid, spawned: true });
 }
