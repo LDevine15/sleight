@@ -1,7 +1,7 @@
 // The resident host's app pipe owner (electron-host.mjs). No default app launcher, IPC listener or product grants.
 // Trusted host code supplies launch/ownership/authority; model code never gets this object.
 import { EventEmitter } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 
 const methodPattern = /^[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*$/;
 const sessionPattern = value => typeof value === 'string' && value.length > 0 && value.length <= 512;
@@ -44,13 +44,15 @@ export function transportMethodAllowed(method) {
 }
 
 export class PipeTransport extends EventEmitter {
-  constructor({ input, output, maxFrameBytes = 1024 * 1024, maxPending = 64, timeoutMs = 5000 }) {
+  // firstId: the id before the first command's. CDP ids are 32-bit; the pipe keeper's own command uses 2**31 - 2.
+  constructor({ input, output, maxFrameBytes = 1024 * 1024, maxPending = 64, timeoutMs = 5000, firstId = 0 }) {
     super();
     for (const value of [maxFrameBytes, maxPending, timeoutMs]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error('invalid pipe bound');
     }
+    if (!Number.isSafeInteger(firstId) || firstId < 0 || firstId > 2 ** 30) throw new Error('invalid pipe bound');
     Object.assign(this, { input, output, maxFrameBytes, maxPending, timeoutMs });
-    this.pending = new Map(); this.routes = new Map(); this.sequence = 0; this.buffer = Buffer.alloc(0);
+    this.pending = new Map(); this.routes = new Map(); this.sequence = firstId; this.buffer = Buffer.alloc(0);
     this.failed = false; this.blocked = false;
     output.on('data', chunk => this.receive(chunk));
     output.on('end', () => this.fail(new Error('pipe EOF')));
@@ -194,6 +196,21 @@ export class ElectronBroker extends EventEmitter {
       this.receipt({ phase: 'unknown', event: 'launch-failed', reason: error.message });
       throw error;
     }
+  }
+
+  // A restarted host takes over an app it did not launch, through the pipe keeper (electron-host.mjs). Nothing is sent
+  // here: the connection waits parked, and resume() checks the process and does a new handshake. Its command ids start
+  // far from the dead host's, so a late reply to one of those is never taken for one of these.
+  adopt(child, owned) {
+    if (this.state !== 'new') throw new Error('retained ownership prevents another launch');
+    if (!identityValid(child?.identity)) throw new Error('launch PID incarnation missing');
+    this.owned = owned; this.child = child; this.identity = Object.freeze({ ...child.identity });
+    this.pipe = new PipeTransport({ ...this.transportOptions, input: child.input, output: child.output, firstId: randomInt(1 << 20, 1 << 30) });
+    this.pipe.on('fault', error => this.park(error.message));
+    this.pipe.on('event', frame => this.routeEvent(frame));
+    child.events.on('exit', code => { this.exitCode = code; this.park('child exited'); });
+    this.state = 'parked'; this.epoch++; this.parkedBy = { reason: 'host restarted', resumable: true };
+    return this.receipt({ phase: 'unknown', event: 'adopted', identity: this.identity });
   }
 
   // This is a host-only in-process channel. The resident host's authenticated channels map each

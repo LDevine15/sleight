@@ -15,7 +15,7 @@ electron-config). Each uses built-in Node modules and the shared v3 modules name
 - electron-channel, electron-connection, electron-host, electron-host-entry, electron-host-run, electron-admin and
   electron-ownership: the resident host process, its authenticated channels and the parent's admin client. Playwright is the
   pinned copy, loaded through worlds.mjs and connected through cdp-filter.mjs in app mode.
-- electron/: the broker (broker.mjs), the Python launch adapter (launch.py, run with the system python3), the reviewed recipe
+- electron/: the broker (broker.mjs), the Python launch adapter and pipe keeper (launch.py, run with the system python3), the reviewed recipe
   registry (recipes.json) and their notices. The package receipt hashes them with every other file.
 - electron-targets, electron-native-join and electron-pages: app target admission, the window join and the page registry.
   cdp-filter's app mode is off unless a caller passes it, so the browser path is unchanged.

@@ -390,12 +390,18 @@ export const RELAUNCH_CELLS = Object.freeze([
     if (!r.profileUntouched) fail('PROFILE_CHANGED');
     return { number: r.ms, unit: 'ms', detail: { collected: true, recordRemoved: true, profileUntouched: true } };
   } },
-  { id: 'relaunch-host-loss', measures: 'what the owner\'s app does when sleight\'s host dies and its pipe closes: quits or stays, and whether its unsaved work and prompt survive', async run(c) {
-    // Reopens the app once more (the owner clicks both cards again), then the driver kills the host. Run with nothing unsaved that matters.
+  { id: 'relaunch-host-loss', measures: 'when sleight\'s host dies, the owner\'s app keeps running with its unsaved work, and the restarted host reattaches or releases it', async run(c) {
+    // Reopens the app once more (the owner clicks both cards again), then the driver kills the host and the next turn restarts
+    // it. The pipe keeper holds the pipe meanwhile. Run with nothing unsaved that matters, in case it does not.
+    // restarted: 'reattached' (the next turn reaches the same process) or 'released' (another server's secret: the app stays
+    // the user's until they quit it, and ownership is then freed).
     const r = await c.driver.hostLoss({ consentWaitMs: c.options.consentWaitMs });
     c.consent(r.card?.debugger, 'relaunch-host-loss'); c.consent(r.card?.relaunch, 'relaunch-host-loss');
-    if (typeof r.appSurvived !== 'boolean' || !['kept', 'lost', 'none'].includes(r.unsaved) || typeof r.prompt !== 'boolean') fail('HOST_LOSS_UNMEASURED');
-    return { number: r.appSurvived ? 1 : 0, unit: 'app survived', detail: { appSurvived: r.appSurvived, unsaved: r.unsaved, prompt: r.prompt } };
+    if (typeof r.appSurvived !== 'boolean' || !['kept', 'lost', 'none'].includes(r.unsaved) || typeof r.prompt !== 'boolean' || typeof r.restarted !== 'string') fail('HOST_LOSS_UNMEASURED');
+    if (!r.appSurvived) fail('APP_QUIT_ON_HOST_LOSS');
+    if (r.unsaved === 'lost') fail('UNSAVED_WORK_LOST');
+    if (!['reattached', 'released'].includes(r.restarted)) fail('HOST_LOSS_NOT_RECOVERED');
+    return { number: 1, unit: 'app survived', detail: { appSurvived: true, unsaved: r.unsaved, prompt: r.prompt, restarted: r.restarted } };
   } },
 ].map(cell => Object.freeze(cell)));
 

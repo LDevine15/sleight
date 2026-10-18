@@ -60,13 +60,19 @@ export function hostDependencies({ registry, builds, run } = {}) {
 const APP_GONE = new Set(['child exited', 'pipe EOF']);
 
 /** The host process exits once ownership is free and no channel has been open for idleMs (10 min). An app that exited
- * (the user quit it) while no worker was connected is collected first, census-proved, so its host can go. */
-export function createExitRule({ status, close, exit, collect, now = Date.now, idleMs = 600000 }) {
+ * (the user quit it) while no worker was connected is collected first, census-proved, so its host can go. Ownership a
+ * restarted host could not take back (its app still held by the pipe keeper) is reconciled on each check: freed once the
+ * user quits the app, never before. */
+export function createExitRule({ status, close, exit, collect, reconcile, now = Date.now, idleMs = 600000 }) {
   let busySince = now(), exiting = false;
   return Object.freeze({
     async check() {
       if (exiting) return;
       let current = status();
+      if (reconcile && current.channels === 0 && current.ownership?.state === 'unresolved') {
+        try { await reconcile(); } catch { /* still held: tried again on the next check */ }
+        current = status();
+      }
       if (collect && current.channels === 0 && current.ownership?.state === 'owned' && current.broker?.state === 'parked' &&
           APP_GONE.has(current.broker.parked?.reason)) {
         try { await collect(); } catch { /* retained: tried again on the next check */ }
@@ -85,7 +91,8 @@ async function main(argv) {
   if (config.adminFd === undefined) fail('ADMIN_FD_REQUIRED');
   const registry = readRecipeRegistry(config.registryPath);
   const host = await runHostEntry({ argv, deps: hostDependencies({ registry, builds: config.builds }) });
-  const rule = createExitRule({ status: () => host.status(), close: () => host.close(), collect: () => host.collect(), exit: code => process.exit(code) });
+  const rule = createExitRule({ status: () => host.status(), close: () => host.close(), collect: () => host.collect(), reconcile: () => host.reconcile(),
+    exit: code => process.exit(code) });
   setInterval(() => { rule.check().catch(() => {}); }, 30000);
   host.events.on('parked', () => { setTimeout(() => { rule.check().catch(() => {}); }, 1000); });
 }

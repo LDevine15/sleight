@@ -61,6 +61,7 @@ function fakeAdmin({ state = 'none', ownership = 'free', start } = {}) {
     async revoke(args) { calls.push(['revoke', args]); },
     async resume() { calls.push('resume'); admin.state = 'ready'; return {}; },
     async collect() { calls.push('collect'); admin.state = 'collected'; admin.ownership = 'free'; admin.parked = undefined; return { cleanup: 'removed' }; },
+    async reconcile(args) { calls.push(['reconcile', args]); if (admin.reconciles) admin.ownership = 'free'; return { resolved: admin.ownership === 'free' }; },
     async quit() { throw Error('the worker never quits the app through the host'); },
   };
   return admin;
@@ -307,6 +308,22 @@ test('an app the user quit after a relaunch is collected at the next turn and op
   const connection = await selecting;
   assert.deepEqual(admin.calls.filter(call => typeof call === 'string' && call !== 'status'), ['collect']);
   assert.equal(starts(w).length, 1); assert.ok(!admin.calls.includes('resume'));
+  await runtime.releaseAppConnection(connection);
+});
+
+// RF2: a restarted host that could not reattach keeps the app's ownership unresolved while the app runs (its keeper holds the
+// pipe). Once the user quits the app, the next turn's reconcile frees it with the census; until then nothing asks or launches.
+test('unresolved ownership is reconciled once before the turn refuses: freed after the user quit, refused while the app runs', async () => {
+  const held = fakeAdmin({ ownership: 'unresolved' });
+  const w1 = world({ admin: held, processes: fakeProcesses({ apps: [] }) });
+  await assert.rejects(w1.select(), /^Error: ELECTRON_OWNERSHIP_UNRESOLVED$/);
+  assert.deepEqual(held.calls.filter(call => Array.isArray(call)), [['reconcile', { acceptDiskEvidence: false }]]);
+  assert.equal(w1.consent.presented.length, 0, 'no card while the app is held');
+  const freed = fakeAdmin({ ownership: 'unresolved' }); freed.reconciles = true;
+  const w2 = world({ admin: freed, processes: fakeProcesses({ apps: [] }) });
+  const selecting = w2.select(); await answer(w2, ['session']);
+  const connection = await selecting;
+  assert.equal(starts(w2).length, 1);
   await runtime.releaseAppConnection(connection);
 });
 

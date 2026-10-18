@@ -145,6 +145,19 @@ test('exit rule: after the app exits with no channel open, the host collects it,
   assert.deepEqual(kept, [], 'a revoked app is never collected, and an open channel defers collection');
 });
 
+test('exit rule: unresolved ownership is reconciled on each check, so a host whose app the user quit frees it and can exit', async () => {
+  let clock = 0, resolves = false, status = { channels: 0, ownership: { state: 'unresolved' } };
+  const events = [];
+  const rule = createExitRule({ status: () => status, now: () => clock, exit: code => events.push(code), close: async () => events.push('closed'),
+    reconcile: async () => { events.push('reconcile'); if (resolves) status = { channels: 0, ownership: { state: 'free' } }; return { resolved: resolves }; } });
+  await rule.check();
+  clock = 20 * 60000; await rule.check();
+  assert.deepEqual(events, ['reconcile', 'reconcile'], 'held while the app runs');
+  resolves = true; await rule.check();
+  clock = 31 * 60000; await rule.check();
+  assert.deepEqual(events, ['reconcile', 'reconcile', 'reconcile', 'closed', 0]);
+});
+
 test('exit rule: the host exits after 10 min with ownership free and no channel; an owned app or an open channel keeps it', async () => {
   let clock = 0, status = { channels: 0, ownership: { state: 'free' } };
   const exits = [];
