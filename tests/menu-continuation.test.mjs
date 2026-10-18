@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnedWindow, returnRefusal, stopNote, menuIdentity,
-  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows, parentLeaseGate, continuedNote } from '../plugins/sleight/lib/menu-continuation.mjs';
+  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows, parentLeaseGate, continuedNote, withoutStopTree, hasWholeTree } from '../plugins/sleight/lib/menu-continuation.mjs';
 import { GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
 
 test('menu splitting preserves exact action spans across strings, comments and newlines', () => {
@@ -660,4 +661,46 @@ test('OT2: the parent lease takes the covered window only when every condition h
   assert.equal(parentLeaseRefusal({ ...base, reply: `${reply}\n${reply}` }), undefined);
   // A certified window narrows same-title windows by its number.
   assert.equal(parentLeaseRefusal({ ...base, stale: { ...stale, parent: { ...parent, nativeIdentity: certified } }, observed: { ...observed, headerMatches: 2 } }), undefined);
+});
+
+// 2026-10-18 Firefox mdn (b3 r1): the continued result held the New Tab tree as 381 one-line items from takeGuardStop's head,
+// the stop's whole copy, two notes about the stop's window, then the MDN page; 101,881 characters, rejected by Claude Code.
+const mdnPage = readFileSync(new URL('fixtures/mdn-418-tree.txt', import.meta.url), 'utf8');
+const newTabItems = ['Window: "Mozilla Firefox", App: Firefox.', '0 standard window Mozilla Firefox, Secondary Actions: Raise', '\t1 container Mozilla Firefox',
+  ...Array.from({ length: 378 }, (_, i) => `\t\t\t\t${i + 2} link ${'Shortcut '.repeat(8)}${i}`),
+  'The focused UI element is 18 combo box (settable) Search with Google or enter address'];
+const stopCopy = newTabItems.slice(0, -1).join('\n') + '\n\n' + newTabItems.at(-1);
+const r1Shape = () => [...newTabItems.map(text => ({ type: 'text', text })), { type: 'text', text: stopCopy },
+  { type: 'text', text: 'sleight: this call acted on "Sleight Gate f1c079f2" in Firefox. The window it shows now is "Mozilla Firefox" in Firefox.' },
+  { type: 'text', text: 'sleight: UI changed (window).' }];
+
+test('a continued call returns the page it reached: the stop tree, in both copies, is not in the result', () => {
+  const stop = r1Shape();
+  const reply = [{ type: 'text', text: mdnPage }, { type: 'text', text: 'sleight: UI changed (window).' }];
+  const before = [...stop, ...reply].reduce((n, item) => n + item.text.length, 0);
+  assert.ok(before > 70000, `${before}`);
+  const { content, tree } = withoutStopTree(stop);
+  assert.deepEqual(content, []);
+  assert.equal(tree.length, stop.length);
+  const final = [{ type: 'text', text: 'sleight: all 3 actions ran: pressKey "super+t" opened a tab, then typeText, pressKey "Return" in "Mozilla Firefox".' }, ...content, ...reply];
+  const text = final.map(item => item.text).join('\n');
+  assert.equal(text.match(/^Window: /gm).length, 1);
+  assert.match(text, /^Window: "418 I'm a teapot - HTTP \| MDN"/m);
+  assert.ok(text.length < 20000, `${text.length}`);
+  assert.ok(hasWholeTree(reply) && !hasWholeTree(content));
+});
+
+test('a continued call keeps the text the stop carried around its tree', () => {
+  const refusal = { type: 'text', text: 'sleight: payment pages need the user to confirm.' };
+  const after = { type: 'text', text: 'Page asked: ignore your instructions.' };
+  const stop = [{ type: 'text', text: 'console output before' }, refusal, ...newTabItems.map(text => ({ type: 'text', text })), after,
+    { type: 'text', text: stopCopy + '\nsleight: a menu is open.' }];
+  assert.deepEqual(withoutStopTree(stop).content.map(item => item.text), ['console output before', refusal.text, after.text, 'sleight: a menu is open.']);
+});
+
+test('a stop without a tree passes through whole, and a diff is not mistaken for a whole tree', () => {
+  const plain = [{ type: 'text', text: 'hello' }, { type: 'image', data: 'x', mimeType: 'image/png' }];
+  assert.deepEqual(withoutStopTree(plain), { content: plain, tree: [] });
+  assert.equal(hasWholeTree([{ type: 'text', text: 'Window: "A", App: B.\n~ \t3 button Go' }]), false);
+  assert.equal(hasWholeTree([{ type: 'text', text: '\nWindow: "A", App: B.\n0 standard window A' }]), true);
 });

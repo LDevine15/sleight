@@ -71,7 +71,7 @@ import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
-import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, continuedNote, menuIdentity,
+import { guardStopMark, splitMenuActions, takeGuardStop, withoutStopTree, hasWholeTree, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, continuedNote, menuIdentity,
   unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
@@ -1913,6 +1913,8 @@ export function createRelay({
         : { jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [...head, { type: 'text', text: msg.error?.message ?? 'error' }] } };
       // A continued call opens with what ran, and a stop's ran/not-sent line rises above an acquisition's tree.
       const lead = continuedLeads.get(msg.id); continuedLeads.delete(msg.id);
+      // Without a tree of its own the reply is a diff or an error against the stop's page, which Claude never saw.
+      if (lead?.stopTree?.length && msg.result && !hasWholeTree(msg.result.content)) msg = { ...msg, result: { ...msg.result, content: [...lead.stopTree, ...msg.result.content] } };
       const leadText = lead && continuedNote(lead.plan, lead.ran, lead.kind, { over: lead.over, title: lead.title, failed: !!msg.result.isError });
       const content = msg.result.content;
       const stop = msg.result.isError ? content.findIndex(item => item?.type === 'text' && /^sleight: this call ran /.test(item.text ?? '')) : -1;
@@ -2776,8 +2778,11 @@ export function createRelay({
       trace('menu-continuation', { id: msg.id, ran: taken.receipt.index, kind });
       splitCalls.set(msg.id, reply => {
         if (!current()) { toClient({ ...reply, result: { ...reply.result, isError: true } }); return; }
-        continuedLeads.set(msg.id, { plan: call.plan, ran: taken.receipt.index, kind, over: covered?.over, title: remainder.window?.title });
-        splitHeads.set(msg.id, [...(splitHeads.get(msg.id) ?? []), ...(reply.result?.content ?? [])]);
+        // A tab or navigation continuation returns the page it reached, not the stop's tree (kept only if the reply has none).
+        const passed = remainder.navigation ? withoutStopTree(reply.result?.content ?? []) : undefined;
+        continuedLeads.set(msg.id, { plan: call.plan, ran: taken.receipt.index, kind, over: covered?.over, title: remainder.window?.title,
+          stopTree: passed?.tree });
+        splitHeads.set(msg.id, [...(splitHeads.get(msg.id) ?? []), ...(passed?.content ?? reply.result?.content ?? [])]);
         leaseWindow = lease;
         menuBaselines.set(msg.id, remainder.window);
         menuForwards.set(msg.id, { call, expected: forward, baseline, lease, original, head, current, tab: !!remainder.tab, stopAt });

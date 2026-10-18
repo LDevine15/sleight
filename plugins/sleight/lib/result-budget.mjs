@@ -81,14 +81,36 @@ const wire = (text) => Buffer.byteLength(JSON.stringify(text)) - 2;
 const wireSize = (content) => content.reduce((n, c) => n + (c.type === 'text' ? wire(c.text) : 0), 0);
 const WIRE_MARGIN = 2500;
 
-// A tree block runs from its header to the next blank line, `Window:` header or focus line. Firefox's tab strip puts bare
-// `Close tab` lines among the numbered rows, so continuation lines can't be required to start with tabs and a number.
-const TREE = /^(?:Window: |Browser tab: )[^\n]+\n(?:[+~-] )?\d+ [^\n]*(?:\n(?!Window: |Browser tab: |The focused UI element)[^\n]+)*/gm;
+// A tree block runs from its header to the next `Window:` header or focus line. Firefox's tab strip puts bare `Close tab`
+// lines among the numbered rows, so continuation lines can't be required to start with tabs and a number. A blank line
+// inside the tree ends nothing when an indented row follows: MDN's tree has one after its answer (2026-10-18), which cut the
+// match to a quarter of the page.
+const TREE = /^(?:Window: |Browser tab: )[^\n]+\n(?:[+~-] )?\d+ [^\n]*(?:\n(?!Window: |Browser tab: |The focused UI element)[^\n]+|\n(?=\n+(?:[+~-] )?\t+\d+ ))*/gm;
 
-function trimResultTrees(content, limit) {
+// A one-line item is a tree row that arrived as its own content item (a continued call's head, 381 items), which no
+// regex over one item can see as a tree. Runs of them behind a one-line header are joined so they trim like any tree.
+const ROW_ITEM = /^$|^(?:[+~-] )?\t*\d+ |^\t|^Close tab$|^The focused UI element/;
+const lineItem = c => c?.type === 'text' && typeof c.text === 'string' && !c.text.includes('\n') && ROW_ITEM.test(c.text);
+function joinTreeItems(content) {
+  const out = [];
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i];
+    if (c?.type !== 'text' || !/^(?:Window: |Browser tab: )[^\n]+$/.test(c.text ?? '') || !lineItem(content[i + 1])) { out.push(c); continue; }
+    const lines = [c.text];
+    while (lineItem(content[i + 1])) { lines.push(content[++i].text); if (content[i].text.startsWith('The focused UI element')) break; }
+    out.push({ ...c, text: lines.join('\n') });
+  }
+  return out;
+}
+
+// Trees are trimmed oldest first, from their last row, so the final page (the one Claude asked for, with its answer near
+// the top) is cut last and keeps its head. `force` returns the shortest result the trees allow when the limit is out of
+// reach, since a result Claude Code rejects (126,517 characters, 2026-10-18) costs a whole re-read.
+function trimResultTrees(content, limit, force = false) {
   let excess = size(content) - limit, wireExcess = wireSize(content) - (limit + WIRE_MARGIN);
   if (excess <= 0 && wireExcess <= 0) return content;
-  const out = content.map(c => {
+  const joined = joinTreeItems(content);
+  const out = joined.map(c => {
     if ((excess <= 0 && wireExcess <= 0) || c.type !== 'text' || /^(?:## Computer Use|# Other Browser APIs|# Computer Use Confirmations Policy|# Browser Safety|# API Reference)\n/.test(c.text)) return c;
     const text = c.text.replace(TREE, tree => {
       if (excess <= 0 && wireExcess <= 0) return tree;
@@ -104,7 +126,7 @@ function trimResultTrees(content, limit) {
     });
     return text === c.text ? c : { ...c, text };
   });
-  return excess > 0 || wireExcess > 0 ? content : out;
+  return excess > 0 || wireExcess > 0 ? (force ? out : content) : out;
 }
 
 export function createResultBudget({ platform = process.platform, limit = RESULT_LIMIT, fullDocs = process.env.SLEIGHT_ENGINE_DOCS === 'full',
@@ -157,7 +179,9 @@ export function createResultBudget({ platform = process.platform, limit = RESULT
       }
       if (pending) { out = [{ type: 'text', text: pending }, ...out]; pending = null; }
       // Spend the tree's rows before delaying reference text; policy and caller prose stay whole.
-      out = trimResultTrees(trimBrowserResults(out, '', { limit, countDocs: true }), limit);
+      // With no reference to delay, the trees are all there is to give.
+      const deferrable = out.some(c => c.type === 'text' && BROWSER_DOCS.test(c.text) && c.text.includes(REFERENCE));
+      out = trimResultTrees(trimBrowserResults(out, '', { limit, countDocs: true }), limit, !deferrable);
       if (size(out) <= limit) return out;
       out = out.map((c) => {
         if (pending || c.type !== 'text' || !BROWSER_DOCS.test(c.text)) return c;
@@ -166,7 +190,7 @@ export function createResultBudget({ platform = process.platform, limit = RESULT
         pending = c.text.slice(at + 1);
         return { ...c, text: `${c.text.slice(0, at)}\n\nsleight: the browser API reference (${pending.length} characters) follows at the start of your next result, to keep this one under Claude Code's size limit. Until then, use only the methods named above.` };
       });
-      return trimResultTrees(trimBrowserResults(out, '', { limit, countDocs: true }), limit);
+      return trimResultTrees(trimBrowserResults(out, '', { limit, countDocs: true }), limit, true);
     },
   };
 }

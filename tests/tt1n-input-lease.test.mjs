@@ -838,6 +838,19 @@ test('AB1: the call\'s own Cmd+T into a new tab of the same window types the URL
   assert.doesNotMatch(JSON.stringify(result), /guard-stop|window or URL changed/);
 });
 
+// 2026-10-18 mdn: the continued result carried the New Tab tree twice before the page (126,517 characters, rejected).
+test('AB1: a continued tab call returns the page it reached once, not the new tab it passed through', async t => {
+  const h = await tabFixture(t);
+  const result = await h.call(tabCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  const all = result.content.map(item => item.text).join('\n');
+  assert.equal(all.match(/^Window: /gm).length, 1, all);
+  assert.match(all, /^Window: "Shop"/m);
+  assert.doesNotMatch(result.content.slice(1).map(item => item.text).join('\n'), /New Tab/);
+  assert.doesNotMatch(all, /this call acted on "Marker" in Fixture Editor\. The window it shows now is "New Tab"/);
+  assert.match(result.content[0].text, /^sleight: all 3 actions ran: pressKey "super\+t" opened a tab, then typeText, pressKey "Return"/);
+});
+
 test('AB1: Ctrl+T without a trailing read continues too', async t => {
   const h = await tabFixture(t, { onAction: (name, argument, text) => name === 'pressKey' && argument === 'ctrl+t' ? newTab : tabScript()(name, argument, text) });
   const result = await h.call('await app.pressKey("ctrl+t"); await app.typeText("example.org"); await app.pressKey("Return");');
