@@ -45,7 +45,7 @@ if (arm === 'raw') {
   command = s.command; cargs = s.args; env = { ...clean, ...s.env, CUA_REPL_ENABLED_SURFACES: 'browser' };
 } else {
   const repo = join(dirname(fileURLToPath(import.meta.url)), '../..');
-  command = join(repo, 'plugins/sleight/bin/sleight-mcp'); cargs = []; env = { ...clean, SLEIGHT_SURFACES: 'browser,computer' };
+  command = join(repo, 'plugins/sleight/bin/sleight-mcp'); cargs = []; env = { ...clean, SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_HAND: '0' };
 }
 const prompts = [];
 const client = new Client({ name: 'download-probe', version: '0' }, { capabilities: { elicitation: {} } });

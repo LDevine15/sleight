@@ -7,17 +7,22 @@ import Foundation
 // Subscription results are coverage evidence, independent of front-app state.
 // The same policy runs with injected registrations in the offline self-test.
 // The ghost hand host's panel is sleight's own overlay over the target window, not a host change. Its
-// host starts lazily inside a run, so the starter names it on stdin ("ignore-pid N"), at launch or later.
+// host starts lazily inside a run, so the starter names it on stdin ("ignore-pid N") when it spawns. A pid
+// is ignored only while that process lives: after it exits, a later app may get the same pid.
 final class IgnoredPids {
     private(set) var pids = Set<Int>()
-    // The pid newly ignored, or nil for a malformed line or one already ignored.
+    private let alive: (Int) -> Bool
+    init(alive: @escaping (Int) -> Bool) { self.alive = alive }
+    // The pid newly ignored, or nil for a malformed line, one already ignored or a process already gone.
     func read(_ line: String) -> Int? {
         let parts = line.split(separator: " ", omittingEmptySubsequences: false)
         guard parts.count == 2, parts[0] == "ignore-pid", let pid = Int(parts[1]), pid > 0, pid <= Int(Int32.max),
-              pids.insert(pid).inserted else { return nil }
+              !pids.contains(pid), alive(pid) else { return nil }
+        pids.insert(pid)
         return pid
     }
     func contains(_ pid: Int) -> Bool { pids.contains(pid) }
+    func forget(_ pid: Int) { pids.remove(pid) }
 }
 
 final class WindowSubscriptions {
@@ -61,7 +66,7 @@ func emit(_ fields: [String: Any]) {
 if Array(CommandLine.arguments.dropFirst()) == ["--self-test"] {
     var permitted: [Int: Bool?] = [10: true, 20: false, 30: true, 50: nil]
     var attempts = [Int](), records = [[String: Any]](), pendingBeforeSubscribe = true
-    let subscriptions = WindowSubscriptions(ignored: IgnoredPids(), subscribe: { pid in
+    let subscriptions = WindowSubscriptions(ignored: IgnoredPids(alive: { _ in true }), subscribe: { pid in
         attempts.append(pid)
         pendingBeforeSubscribe = pendingBeforeSubscribe && records.last?["pending"] as? Bool == true
         return permitted[pid] ?? false
@@ -83,7 +88,7 @@ if Array(CommandLine.arguments.dropFirst()) == ["--self-test"] {
     subscriptions.remove(40)
     let terminated = subscriptions.complete
     // A hand host watched before the starter names it: then dropped from coverage and never watched again.
-    let hand = IgnoredPids()
+    let hand = IgnoredPids(alive: { $0 != 70 })
     var handAttempts = [Int](), handRecords = [[String: Any]]()
     let handSubscriptions = WindowSubscriptions(ignored: hand, subscribe: { pid in handAttempts.append(pid); return false },
                                                 report: { handRecords.append($0) })
@@ -95,10 +100,17 @@ if Array(CommandLine.arguments.dropFirst()) == ["--self-test"] {
     handSubscriptions.watch(60)
     let handIgnored = malformed && named && handSubscriptions.complete && handAttempts == [60] &&
         handRecords.last?["ignored"] as? Bool == true && handRecords.last?["covered"] as? Bool == true
-    guard gone && partial && recovered && launched && failedLaunch && terminated && pendingBeforeSubscribe && handIgnored else { exit(1) }
+    // The hand exits and a later app gets its pid: watched and reported again. A pid already gone is never ignored.
+    handSubscriptions.remove(60)
+    hand.forget(60)
+    handSubscriptions.watch(60)
+    let handReused = !hand.contains(60) && handAttempts == [60, 60] && !handSubscriptions.complete
+    let handGone = hand.read("ignore-pid 70") == nil && !hand.contains(70)
+    guard gone && partial && recovered && launched && failedLaunch && terminated && pendingBeforeSubscribe && handIgnored && handReused && handGone else { exit(1) }
     emit(["kind": "subscription-self-test", "partial": partial, "recovered": recovered,
           "backgroundLaunch": launched, "failedLaunch": failedLaunch, "terminated": terminated,
-          "pendingBeforeSubscribe": pendingBeforeSubscribe, "gone": gone, "handIgnored": handIgnored])
+          "pendingBeforeSubscribe": pendingBeforeSubscribe, "gone": gone, "handIgnored": handIgnored,
+          "handReused": handReused, "handGone": handGone])
     exit(0) // Before any NSWorkspace, AX or window metadata access.
 }
 func windowID(_ pid: pid_t) -> Int? {
@@ -106,7 +118,7 @@ func windowID(_ pid: pid_t) -> Int? {
     return windows.first { ($0[kCGWindowOwnerPID as String] as? Int) == Int(pid) &&
         ($0[kCGWindowLayer as String] as? Int) == 0 }?[kCGWindowNumber as String] as? Int
 }
-let ignored = IgnoredPids()
+let ignored = IgnoredPids(alive: { kill(pid_t($0), 0) == 0 || errno == EPERM })
 var axObservers = [pid_t: AXObserver]()
 var tokens = [NSObjectProtocol]()
 let center = NSWorkspace.shared.notificationCenter
@@ -161,6 +173,7 @@ tokens.append(center.addObserver(forName: NSWorkspace.didTerminateApplicationNot
     if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
         axObservers.removeValue(forKey: app.processIdentifier)
         subscriptions.remove(Int(app.processIdentifier))
+        ignored.forget(Int(app.processIdentifier))
     }
 })
 emit(["kind": "host-ready", "app": true, "space": true, "window": windowReady])

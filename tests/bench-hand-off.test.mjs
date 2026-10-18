@@ -54,6 +54,11 @@ test('private passes keep the hand setting, and the FowlBrowser rounds patch and
   assert.ok(PRIVATE_RUNTIME_KEYS.has('SLEIGHT_HAND'));
   const patch = readFileSync(join(root, 'bench/fowl/sleight-surface.patch'), 'utf8');
   assert.match(patch, /^\+ {4}mcpServers = \{ 'plugin:sleight:computer': .*env: \{ SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_HAND: '0' \} \} \};$/m);
-  // The battery's env is built inside its live runtime, which this test can't start.
+  // Probes that start sleight's server themselves, and the battery, build their env inside live code this test can't start.
+  for (const probe of ['ext-speed', 'coldstart-probe', 'dialog-probe', 'download-probe', 'drag-probe', 'startup-probe']) {
+    const source = readFileSync(join(root, `bench/fowl/${probe}.mjs`), 'utf8');
+    assert.match(source, /SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_HAND: '0' \}/, probe);
+    assert.equal(source.match(/SLEIGHT_SURFACES/g).length, source.match(/SLEIGHT_HAND: '0'/g).length, probe);
+  }
   assert.match(readFileSync(join(root, 'bench/battery/runtime.mjs'), 'utf8'), /const env = \{ \.\.\.hostFree, \.\.\.auth\.env, SLEIGHT_HAND: '0',/);
 });

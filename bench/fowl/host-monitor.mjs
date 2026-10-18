@@ -21,9 +21,9 @@ async function launchObserver() {
   } catch (error) { rmSync(dir, { recursive: true, force: true }); throw error; }
 }
 
-// ignorePids, and ignore(pid) once a run has spawned it: the ghost hand host, whose panel is
-// sleight's own overlay. The observer never watches it and reports it once as ignored.
-export async function startHostMonitor(file, { launch = launchObserver, now = Date.now, ignorePids = [] } = {}) {
+// ignore(pid) when a ghost hand host spawns: its panel is sleight's own overlay. The observer never
+// watches it, reports it once as ignored and forgets the pid when that process exits.
+export async function startHostMonitor(file, { launch = launchObserver, now = Date.now } = {}) {
   const log = [];
   const write = event => {
     const entry = { t: now(), ...event };
@@ -66,7 +66,6 @@ export async function startHostMonitor(file, { launch = launchObserver, now = Da
     }, 5000); })]); } finally { clearTimeout(timer); }
   };
   const ignore = pid => { if (!stopped && Number.isSafeInteger(pid) && pid > 0) child.stdin.write(`ignore-pid ${pid}\n`); };
-  for (const pid of ignorePids) ignore(pid);
   return { log, ready: waitReady, ignore, stop: () => stopped ??= (async () => {
     child.stdin.end();
     let timer;
