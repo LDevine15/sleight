@@ -18,7 +18,7 @@ const shadowRoot = host => ({ nodeType: 11, host, parentNode: null });
 const chain = (depth, top) => { let node = top; for (let i = 0; i < depth; i++) node = element({}, node); return node; };
 const terminalInShadow = () => element({}, element({}, shadowRoot(element({ class: 'xterm xterm-dom-renderer-owner-1' }, element({ class: 'pane-body' })))));
 
-async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, wrapPages = pages => pages, acknowledged = () => true } = {}) {
+async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, onSleep, wrapPages = pages => pages, acknowledged = () => true } = {}) {
   assert.equal(typeof handoff.createAppRunners, 'function', 'EPV3-5 must provide createAppRunners');
   const f = fakeUpstream([target('a')]); f.geometry.set('a', { ...rect(0, 0), scale: 2, visible: true });
   const w = fakeWindows([nativeWindow(11, rect(0, 0))]);
@@ -30,7 +30,7 @@ async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, wrap
   const registry = createAppPageRegistry({ browser: pw.browser, filter, targets, join, fence: createInstanceFence(), owner: 'session-a', timeoutMs: 500 });
   await registry.seed();
   const [row] = await registry.list(), entry = registry.tab(row.tab), page = entry.page;
-  const sends = [], invalidated = [], reads = [];
+  const sends = [], invalidated = [], reads = [], waits = [];
   let clock = 0, number = 0;
   const metadata = ref => ({ name: 'Run', accName: 'Run', tag: 'button', role: null, kind: 'button', button: true, form: false, link: false,
     submit: false, scriptButton: false, payment: false, formPayment: false, formSignature: null, ...inspect[ref] });
@@ -63,8 +63,9 @@ async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, wrap
   // EPV3-4 adds entryOf to the registry; the test adds the same lookup.
   const pages = wrapPages({ ...registry, entryOf: p => p === page && !entry.released && !entry.revoked ? entry : undefined });
   const runners = handoff.createAppRunners({ pages, invalidateRefs: p => invalidated.push(p), check, snapshot, acknowledgeSnapshot: (p, n) => acknowledged(p, n),
-    now: () => clock, sleep: async ms => { clock += ms; } });
-  const s = { f, w, join, filter, registry, entry, page, runners, sends, invalidated, reads,
+    now: () => clock, sleep: async ms => { waits.push(ms); clock += ms; await onSleep?.(clock); } });
+  const s = { f, w, join, filter, registry, entry, page, runners, sends, invalidated, reads, waits,
+    get elapsed() { return clock; },
     // A read whose text reached the client, at the current join: the worker delivers it and acknowledges its number.
     async deliver() {
       const { number: read } = await runners.read(page, { maxChars: 8000 }), capture = captureSnapshot(entry.state, clock);
@@ -78,6 +79,52 @@ async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, wrap
   return s;
 }
 const notRun = pattern => error => { assert.match(error.message, pattern); assert.equal(error.notRun, true); return true; };
+
+test('six adjacent plain keys settle for five short waits and one full final wait', async t => {
+  const s = await world(); t.after(() => s.filter.dispose());
+  const result = await s.act(['a', 'b', 'c', 'd', 'e', 'f'].map(key => ({ do: 'press', key })));
+  assert.equal(result.stoppedAt, null);
+  assert.deepEqual(s.sends, ['a', 'b', 'c', 'd', 'e', 'f'].map(key => ['key', key]));
+  assert.deepEqual(s.waits.slice(0, 5), [40, 40, 40, 40, 40]);
+  assert.equal(s.elapsed, 800);
+  assert.ok(result.lines.slice(0, 5).every(line => line.includes('within 40 ms')));
+  assert.match(result.lines.at(-1), /within 600 ms/);
+});
+
+test('typing and plain keys share short settling, with a full wait after the final type', async t => {
+  const s = await world({ inspect: { e1: { tag: 'input', kind: 'text', button: false } } });
+  t.after(() => s.filter.dispose());
+  const result = await s.act([{ do: 'type', ref: 'e1', text: 'alpha' }, { do: 'press', key: 'Backspace' }, { do: 'type', ref: 'e1', text: 'beta' }]);
+  assert.equal(result.stoppedAt, null);
+  assert.equal(s.elapsed, 680);
+  assert.equal(s.sends.length, 3);
+});
+
+for (const key of ['Enter', 'Return', 'NumpadEnter', 'Space', ' ']) test(`activation key ${JSON.stringify(key)} keeps its full wait before an adjacent key`, async t => {
+  const s = await world(); t.after(() => s.filter.dispose());
+  const result = await s.act([{ do: 'press', key }, { do: 'press', key: 'a' }]);
+  assert.equal(result.stoppedAt, null);
+  assert.equal(s.elapsed, 1200);
+});
+
+test('a submit keeps its five-second observation even before an adjacent key', async t => {
+  const s = await world({ inspect: { focus: { tag: 'input', kind: 'text', button: false, form: true, formSignature: 7 } } });
+  t.after(() => s.filter.dispose());
+  const result = await s.act([{ do: 'press', key: 'Enter' }, { do: 'press', key: 'a' }]);
+  assert.match(result.lines[0], /submit unconfirmed after 5 s/);
+  assert.ok(s.elapsed >= 5000);
+});
+
+test('a native modal arriving in the short wait stops before the next key', async t => {
+  let s;
+  s = await world({ onSleep: () => s.sheet() }); t.after(() => s.filter.dispose());
+  const result = await s.act([{ do: 'press', key: 'a' }, { do: 'press', key: 'b' }]);
+  assert.equal(s.elapsed, 40);
+  assert.deepEqual(s.sends, [['key', 'a']]);
+  assert.equal(result.stoppedAt, 1);
+  assert.equal(result.observe, undefined);
+  assert.match(result.lines.join('\n'), /2 press: not reached/);
+});
 
 test('a sheet that arrives between the pre-check and the click: one send, the sent line, and the batch stops', async t => {
   let s; s = await world({ onClick: () => { s.sheet(); s.join.invalidate('native-change'); } });
