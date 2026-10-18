@@ -30,17 +30,20 @@ Peekaboo 47, Codex 65. spotify-play sleight 27, Codex 41, LCU 55, Cua 112. Total
 `~/Projects/sleight-wt/app-claim/app-score-1018.txt`, failure causes in the ledger (APP-CLAIM). Open owner question: whether "fastest"
 counts the app tasks with the 9 native ones (sleight wins 11 of 12 either way).
 
-**Browser race.** Firefox: sleight's 3 rounds ran on the release build (`~/Projects/sleight-wt/race-rel`, 28e19c99), 04:13-04:50Z.
-After one round per arm, sleight is fastest on 5 of 12 (Codex 4, LCU 2, Cua 1). LCU, Codex and Cua rounds 2-3 run from 04:50Z
-(`race-firefox-comp.sh`), and Peekaboo's 3 rounds wait in a Terminal window (`race-firefox-peekaboo.command`). Chrome's step 1
-(sleight-turbo, FowlBrowser, Claude in Chrome x3) waits in another Terminal window until both Firefox logs say done
-(`race-browser.sh`, log `race-chrome-1.log`). `touch ~/Projects/sleight-wt/race-1017/pause` pauses every script between rounds.
-Loss studies start when Firefox finishes, and only lost tasks get tuned (owner, LAWS).
+**Browser race.** Firefox competitor rounds finished 06:38Z (3 each). sleight is fastest on 6 of 12 by expected time and loses
+form-travel, demoid, handoff, inject-order, wikipedia and mdn, plus checkout, size-guide and inject-mail on best pass (owner's loss
+rule). Ledger section FIREFOX FINAL has the numbers. Peekaboo's Firefox rounds run from 06:40Z in a Terminal window. Chrome step 1
+(sleight-turbo, FowlBrowser, Claude in Chrome x3, `race-chrome-1.log`) starts after them, then sleight's Firefox rounds rerun on
+001f6113 (`race-firefox-sleight-b2.log`). `touch ~/Projects/sleight-wt/race-1017/pause` pauses every script between rounds.
+
+**Loss work.** Merged and pushed at 001f6113 (full check green): FM1 `app.pickFromList` (keyboard search in a sorted list), FM2
+(stale-element recovery for AXError.invalidUIElement), FM3 (native form batching line) and BK1 (a requested booking counts as
+confirmed). Fable studies of the losses report to `ledger/fable-1018-loss-{reads,short,preview}.md`.
+An Astra lane studies the engine-path gap against Codex (`ledger/astra-1018-engine-gap-report.md`).
 
 Order from here:
-1. The Firefox race: competitor rounds (cua r1 overlapped a full check at load 5, so rerun it if it scores within 20% of sleight), then
-   sleight's Firefox rounds from a race worktree at the release build, then the plan's later steps.
-2. The Codex lease-broker live check.
+1. The race in the plan's order (Chrome, Helium, Safari), with sleight's Firefox rerun after Chrome step 1.
+2. Build what the loss studies rank, merge, rerun sleight on the lost tasks.
 3. The release pass for 1.3.0.
 
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
