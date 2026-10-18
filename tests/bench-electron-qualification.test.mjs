@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import {
-  APPS, CELLS, backgroundEvidence, cellsFor, main, parseArgs, percentile, prepareWorkspace, requiredCells, runQualification,
+  APPS, CELLS, RELAUNCH_CELLS, backgroundEvidence, cellsFor, main, parseArgs, percentile, prepareWorkspace, relaunchCellsFor, requiredCells, runQualification,
   scrubReceipt, timingSummary, validateReceipt,
 } from '../bench/electron-qualification.mjs';
 import { fakeDriver, fakeObserver } from '../bench/electron-qualification-fakes.mjs';
@@ -300,7 +300,7 @@ test('the driver\'s recipe passes the registry and matches the bundle the runtim
 // H1, F2: the live worker composes a turn the installed worker's way and takes the app host's secret from its parent only.
 test('the live worker uses the installed path: connectAppHost with the parent\'s secret, createAppTurn, createAppTurnRuntime', () => {
   const worker = readFileSync(new URL('../bench/electron-qualification-worker.mjs', import.meta.url), 'utf8');
-  for (const call of ['runtimeMod.connectAppHost(', 'secret: msg.appSecret', 'runtimeMod.selectAppConnection(', 'windows: b.runtimeMod.runWindowHelper',
+  for (const call of ['runtimeMod.connectAppHost(', 'secret: msg.appSecret', "profile: 'temporary'", 'runtimeMod.selectAppConnection(', 'windows: b.runtimeMod.runWindowHelper',
     'profile: b.host.profile', 'runtimeMod.createAppTurn(', 'workerMod.createAppTurnRuntime(', 'releaseAppConnection(']) assert.ok(worker.includes(call), call);
   for (const shortcut of ['ensureHost(', 'adminSecret', 'createAppRunners(', 'createAppSnapshot(', 'snapshotMod.snapshot']) assert.ok(!worker.includes(shortcut), shortcut);
   const live = readFileSync(new URL('../bench/electron-qualification-live.mjs', import.meta.url), 'utf8');
@@ -318,4 +318,40 @@ test('a home path in a cell error is scrubbed before the receipt\'s secret check
   assert.match(receipt.cells.find(cell => cell.id === 'new-window').error, /ENOENT/);
   assert.ok(!receipt.validation.errors.includes('SECRET_OUTPUT'), receipt.validation.errors.join(' '));
   assert.ok(validateReceipt(receiptWith([], { note: '/Users/pat/x' })).errors.includes('SECRET_OUTPUT'), 'an unscrubbed path still fails');
+});
+
+// The relaunch flow (1.3.1): every app-dependent behaviour is a cell of its own, run dry only; the owner watches any live run.
+test('relaunch cells name what each app decides, run dry on both apps, and a live relaunch run is refused', async t => {
+  assert.deepEqual(RELAUNCH_CELLS.map(cell => cell.id), ['relaunch-card', 'relaunch-quit', 'relaunch-unsaved', 'relaunch-pipe', 'relaunch-background',
+    'relaunch-restore', 'relaunch-reuse', 'relaunch-user-quit']);
+  assert.ok(RELAUNCH_CELLS.every(cell => typeof cell.measures === 'string' && cell.measures.length > 20), 'each cell says what it measures');
+  assert.ok(!RELAUNCH_CELLS.some(cell => CELLS.some(other => other.id === cell.id)));
+  assert.deepEqual(relaunchCellsFor(APPS.cursor).map(cell => cell.id), RELAUNCH_CELLS.map(cell => cell.id));
+  assert.throws(() => parseArgs(['--owner-away', '--relaunch']), /RELAUNCH_NEEDS_OWNER/);
+  assert.equal(parseArgs(['--dry-run', '--relaunch']).relaunch, true);
+  assert.equal(parseArgs(['--dry-run']).relaunch, false);
+  for (const app of [APPS.vscode, APPS.cursor]) {
+    const c = clock(), driver = fakeDriver({ now: c.now, app });
+    const receipt = await runQualification({ app, driver, observer: fakeObserver({ now: c.now, fixturePid: () => driver.identity()?.pid }), io: quietIo(), clock: c,
+      options: { mode: 'dry-run', relaunch: true } });
+    assert.deepEqual(receipt.cells.filter(cell => cell.status !== 'pass').map(cell => `${cell.id}: ${cell.error}`), [], app.key);
+    assert.equal(receipt.kind, 'electron-relaunch'); assert.equal(receipt.profile.temporary, false);
+    assert.deepEqual(receipt.validation.errors, [], 'the own profile is not an isolation failure on a relaunch receipt');
+    assert.ok(receipt.validation.unqualified.includes('DRY_RUN')); assert.equal(receipt.qualified, false);
+    const byId = Object.fromEntries(receipt.cells.map(cell => [cell.id, cell]));
+    assert.equal(byId['relaunch-background'].detail.activated, false);
+    assert.equal(byId['relaunch-unsaved'].detail.outcome, 'kept');
+    assert.deepEqual(receipt.consent.cards.map(card => card.cell), ['relaunch-card', 'relaunch-card', 'relaunch-reuse']);
+  }
+  // An app that refuses or still asks at the deadline fails its quit cell, and the run is not qualified.
+  const c = clock(), driver = fakeDriver({ now: c.now, relaunchQuit: 'running' });
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now, fixturePid: () => driver.identity()?.pid }), io: quietIo(), clock: c,
+    options: { mode: 'dry-run', relaunch: true } });
+  assert.equal(receipt.cells.find(cell => cell.id === 'relaunch-quit').error, 'QUIT_RUNNING');
+  // A relaunch receipt claiming a temporary profile, or a benchmark receipt on the own profile, fails isolation.
+  assert.ok(validateReceipt({ ...receipt, profile: { temporary: true } }).errors.includes('ISOLATION_FAILED'));
+  assert.ok(validateReceipt(receiptWith(requiredCells(APPS.vscode).map(id => passed(id)), { profile: { temporary: false } })).errors.includes('ISOLATION_FAILED'));
+  const out = temp(t);
+  assert.equal(await main(['--dry-run', '--relaunch', '--apps', 'vscode,cursor', '--out', out], { io: quietIo({ acquireLock: async () => { throw Error('took the lock'); } }), log: () => {} }), 0);
+  assert.equal(readdirSync(out).filter(name => name.includes('-relaunch-dry-run-')).length, 2);
 });

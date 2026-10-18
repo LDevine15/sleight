@@ -6,7 +6,7 @@ const REFUSED_KEYS = new Set(['Meta+Q', 'Meta+W', 'Meta+H', 'Meta+M', 'Meta+Shif
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const error = text => ({ text, isError: true, ms: 1 });
 
-export function fakeDriver({ now = Date.now, app = APPS.vscode, overlay = { present: false, clears: true }, pid = 501, otherPid = 90 } = {}) {
+export function fakeDriver({ now = Date.now, app = APPS.vscode, overlay = { present: false, clears: true }, pid = 501, otherPid = 90, relaunchQuit = 'exited' } = {}) {
   let instance = 0, connected = false, revoked = false, alive = false, ownership = 'free', current, last;
   let windows, joinNo, readJoin, parked, ui, editorText;
   const files = { 'a-scratch.txt': '' };
@@ -98,6 +98,15 @@ export function fakeDriver({ now = Date.now, app = APPS.vscode, overlay = { pres
     async quitByPid() { driver.quitByPidCalls++; alive = false; return { exited: true }; },
     async collect() { if (alive) return { absent: false }; ownership = 'free'; return { absent: true }; },
     async contention(n) { return { ok: 1, busy: n - 1, other: 0, cards: 0 }; },
+    // The relaunch flow: the owner's own copy (pid 300) quits through its own Quit and comes back as this driver's process.
+    async relaunch() {
+      launch(); connected = true; revoked = false;
+      return { card: { debugger: card(), relaunch: card() }, before: { pid: 300, pidBirth: 'birth-300', windows: 1 }, pid: current.pid, pidBirth: current.pidBirth,
+        quit: { outcome: relaunchQuit, ms: 900, prompt: false }, unsaved: 'kept', pipe: true, profile: { temporary: false }, tcpListeners: 0,
+        activated: false, wasFront: false, joinedAfter: windows.length, ms: 2400 };
+    },
+    async nextTurn() { connected = true; readJoin = 0; return { card: { shown: false, existing: true, status: 'granted', scope: 'session', by: 'existing' }, launched: false }; },
+    async userQuit() { alive = false; connected = false; ownership = 'free'; return { exited: true, collected: true, recordRemoved: true, profileUntouched: true, ms: 700 }; },
     async quit() { alive = false; connected = false; ownership = 'free'; current = undefined; return { exited: true, ms: 800, censusLeft: 0, profileRemoved: true }; },
     async cleanup() { alive = false; connected = false; return { confirmed: true, appExited: true, profileRemoved: true, left: [] }; },
     build: () => ({ version: '1.141.0', sha256: 'f'.repeat(64), signer: 'fake signer', cdhash: '0'.repeat(40), fake: true }),

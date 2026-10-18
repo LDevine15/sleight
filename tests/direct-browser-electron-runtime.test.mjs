@@ -356,13 +356,14 @@ test('connectAppHost hands the server\'s secret to ensureHost and names the app 
   const deps = (ensureHost) => ({ registryPath: path, ensureHost, instanceFromRecipe: (recipe, options) => instanceFromRecipe(recipe, { ...options, inspect }),
     config: { tempRoot: '/private/tmp/sleight-epv3-f2', hostStateDir: key => '/private/tmp/sleight-epv3-f2/hosts/' + key } });
   const secret = 'S'.repeat(43);
-  const host = await runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret,
+  // The benchmark's temporary profile; the user's own profile, the default, is in direct-browser-electron-relaunch.test.mjs.
+  const host = await runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret, profile: 'temporary',
     dependencies: deps(async options => { asked.push(options); return { pid: 77 }; }) });
   assert.equal(asked[0].secret, secret);
   assert.equal(asked[0].registryPath, path);
   assert.equal(host.admin.pid, 77);
   assert.deepEqual(host.profile, { path: '/private/tmp/sleight-epv3-f2/invalid.fixture.app', temporary: true });
-  await assert.rejects(runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret,
+  await assert.rejects(runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret, profile: 'temporary',
     dependencies: deps(async () => { throw Error('ELECTRON_HOST_FOREIGN'); }) }), error => error.message === 'ELECTRON_HOST_FOREIGN' && error.appName === 'Fixture App');
 });
 

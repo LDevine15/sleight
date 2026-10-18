@@ -38,8 +38,9 @@ async function setup(msg) {
       return result;
     } },
   });
-  // The product's host path: this run's registry, state folder and temporary root, and the parent's secret.
-  const host = await runtimeMod.connectAppHost({ bundleId: msg.bundleId, secret: msg.appSecret,
+  // The product's host path: this run's registry, state folder and temporary root, and the parent's secret. The benchmark's
+  // own instance on a temporary profile (LAWS); the installed default is the user's own profile.
+  const host = await runtimeMod.connectAppHost({ bundleId: msg.bundleId, secret: msg.appSecret, profile: 'temporary',
     dependencies: { registryPath: msg.registryPath, config: { tempRoot: msg.tempRoot, hostStateDir: () => msg.stateDir } } });
   base = { runtimeMod, workerMod, contextMod, ui, consent, card, host, receipts: new Map(), playwright: worldsMod.loadPlaywrightCore({ turbo: true }).inprocess.playwright };
   return base;
