@@ -130,8 +130,28 @@ test('read-only host observer compiles on macOS without starting observation', {
   assert.equal(checked.status, 0, checked.stderr);
   const report = JSON.parse(checked.stdout);
   assert.equal(report.kind, 'subscription-self-test');
-  for (const key of ['partial', 'recovered', 'backgroundLaunch', 'failedLaunch', 'terminated', 'pendingBeforeSubscribe', 'gone'])
+  for (const key of ['partial', 'recovered', 'backgroundLaunch', 'failedLaunch', 'terminated', 'pendingBeforeSubscribe', 'gone', 'handIgnored', 'handReused', 'handGone'])
     assert.equal(report[key], true, key);
+});
+
+test('the starter names the ghost hand host on the observer\'s stdin only when one spawns, and only valid pids', async t => {
+  const { startHostMonitor, gradeHostMonitor } = await moduleUnderTest();
+  const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-host-monitor-')));
+  const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+  child.stdin = new PassThrough(); let sent = '';
+  child.stdin.on('data', chunk => { sent += chunk; }); child.stdin.on('finish', () => child.emit('close', 0));
+  // A pid known at launch may already belong to another app, so there is no launch option for one.
+  const monitor = await startHostMonitor(join(dir, 'monitor.jsonl'), { launch: async () => child, now: () => 500, ignorePids: [4141] });
+  for (const pid of [4242, 0, -1, 1.5, '4444', 4343]) monitor.ignore(pid);
+  // The observer's own record of an ignored pid is coverage, not a gap.
+  child.stdout.write([recorded[0], { t: 120, kind: 'host-window-watch', pid: 4242, covered: true, pending: false, ignored: true }]
+    .map(event => JSON.stringify(event)).join('\n') + '\n');
+  await monitor.stop();
+  monitor.ignore(4545);
+  assert.equal(sent, 'ignore-pid 4242\nignore-pid 4343\n');
+  assert.ok(!sent.includes('4141'));
+  assert.equal(gradeHostMonitor(monitor.log, { name: 'hand', started: 100, finished: 150 }).cell, 'ok');
+  assert.ok(monitor.log.some(event => event.kind === 'host-window-watch' && event.ignored === true));
 });
 
 test('patched rounds grade turbo host events even though extension tab checks remain unobserved', async t => {

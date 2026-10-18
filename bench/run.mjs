@@ -275,7 +275,9 @@ if (armNames.includes('claude-cu') && !isDryRun) console.log('claude-cu uses its
 const HOST_SESSION = suite === 'world' ? /^CLAUDE/ : /^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_AGENT_SDK_|CLAUDE_PID$|CLAUDE_EFFORT$|CLAUDE_PREVIEW_)/;
 const hostFree = Object.fromEntries(Object.entries(process.env).filter(([key]) => !HOST_SESSION.test(key)));
 const armEnv = (arm, extra = {}) => {
-  const env = { ...hostFree, BENCH_ROOT: ROOT, SLEIGHT_APPROVAL_PROMPT: 'client',
+  // The ghost hand off, as the Firefox arms have turbo off: its panel stays out of timing. Only an arm's
+  // own env (the cost pass) turns it on.
+  const env = { ...hostFree, BENCH_ROOT: ROOT, SLEIGHT_APPROVAL_PROMPT: 'client', SLEIGHT_HAND: '0',
     ...arm.env, ...extra, BENCH_SUITE: suite, ENABLE_CLAUDEAI_MCP_SERVERS: 'false', ...auth.env,
     ...(ownerPresent ? { BENCH_OWNER_PRESENT: '1' } : {}),
     ...(['real', 'world'].includes(suite) ? { SLEIGHT_SURFACES: realSurfaces } : {}) };

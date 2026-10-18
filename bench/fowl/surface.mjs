@@ -13,7 +13,7 @@ export function fowlSleightSetup({ dir, mcpRoot, sleightRepo, label, remote = nu
       fowlbrowser: remote ? remoteServer(fowl, { ssh: remote.ssh, dir: remoteDir }) : fowl,
       'plugin:sleight:computer': {
         command: path.join(sleightRepo, 'plugins/sleight/bin/sleight-mcp'),
-        env: { SLEIGHT_SURFACES: 'computer' },
+        env: { SLEIGHT_SURFACES: 'computer', SLEIGHT_HAND: '0' },
       },
     },
     allowed: 'mcp__fowlbrowser,mcp__plugin_sleight_computer__js,mcp__plugin_sleight_computer__js_reset,mcp__plugin_sleight_computer__open_file',

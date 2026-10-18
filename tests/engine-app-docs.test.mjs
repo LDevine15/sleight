@@ -79,10 +79,10 @@ test('the sleight arm gets SLEIGHT_TRACE and no other host variable', () => {
     process.env.SLEIGHT_TRACE = '/tmp/trace-dir';
     const traced = realAgentSetup({ task, surface: 'sleight', dir: '/private/tmp/gate-task', realBrowser: browser, dryRun: true });
     assert.deepEqual(traced.mcpConfig.mcpServers['plugin:sleight:computer'].env,
-      { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0', SLEIGHT_TRACE: '/tmp/trace-dir' });
+      { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0', SLEIGHT_HAND: '0', SLEIGHT_TRACE: '/tmp/trace-dir' });
     delete process.env.SLEIGHT_TRACE;
     const plain = realAgentSetup({ task, surface: 'sleight', dir: '/private/tmp/gate-task', realBrowser: browser, dryRun: true });
-    assert.deepEqual(plain.mcpConfig.mcpServers['plugin:sleight:computer'].env, { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0' });
+    assert.deepEqual(plain.mcpConfig.mcpServers['plugin:sleight:computer'].env, { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0', SLEIGHT_HAND: '0' });
   } finally { if (saved === undefined) delete process.env.SLEIGHT_TRACE; else process.env.SLEIGHT_TRACE = saved; }
 });
 

@@ -66,7 +66,8 @@ export function codexSleightServers({ mcpServers, allowed, dir, policy, gateWind
       servers[key] = { command: node, enabledTools,
         args: [proxy, '--policy', policy, '--log', join(dir, 'approvals.jsonl'), ...(gateWindow ? ['--gate-window'] : []),
           ...(turboBrowser ? ['--turbo-guard', turboBrowser] : []), '--', spec.command, ...(spec.args ?? [])],
-        env: { ...spec.env, ...extraEnv, SLEIGHT_APPROVAL_PROMPT: 'client' } };
+        // Codex passes a server only env_vars and this env, so the ghost hand's off switch goes here; an arm can set it on.
+        env: { SLEIGHT_HAND: '0', ...spec.env, ...extraEnv, SLEIGHT_APPROVAL_PROMPT: 'client' } };
     } else servers[key] = { command: spec.command, args: spec.args ?? [], env: spec.env ?? {}, enabledTools };
   }
   return servers;

@@ -38,7 +38,7 @@ if (arm === 'raw') {
   const s = JSON.parse(readFileSync(join(dir, v, '.mcp.json'), 'utf8')).mcpServers.cua_repl;
   command = s.command; cargs = s.args; env = { ...clean, ...s.env, CUA_REPL_ENABLED_SURFACES: 'browser' };
 } else {
-  command = join(dirname(fileURLToPath(import.meta.url)), '../..', 'plugins/sleight/bin/sleight-mcp'); cargs = []; env = { ...clean, SLEIGHT_SURFACES: 'browser,computer' };
+  command = join(dirname(fileURLToPath(import.meta.url)), '../..', 'plugins/sleight/bin/sleight-mcp'); cargs = []; env = { ...clean, SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_HAND: '0' };
 }
 
 const rows = [];

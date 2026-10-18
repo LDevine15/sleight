@@ -60,6 +60,10 @@ function windows(onScreenOnly) {
 }
 
 const inside = (b, p) => p.x >= b.X && p.x < b.X + b.Width && p.y >= b.Y && p.y < b.Y + b.Height;
+// Windows that are never cover: the engine's own overlay, and the ghost hand's panel (any layer), whose
+// host pid the launcher sends as handPid. The panel ignores mouse events, so a drop passes through it.
+let handPid = 0;
+const overlay = w => /Computer Use$/.test(w.owner) || (handPid > 0 && w.pid === handPid);
 const attempt = (fn, fallback) => { try { return fn(); } catch (e) { if (e?.axCode === -25204) throw e; return fallback; } };
 const axFailure = (name, code) => Object.assign(new Error(`AX ${name} failed (${code})`), { axCode: Number(code) });
 const at = (b, p) => ({ x: b.X + p[0], y: b.Y + p[1] });
@@ -680,7 +684,7 @@ function raiseWindow(win) {
 
 function exposedEndpoints(list, main, points, sameAppOnly, destination = main) {
   for (const [name, point, target] of [['from', points.start, main], ['to', points.end, destination]]) {
-    const top = list.find(w => inside(w.bounds, point) && !/Computer Use$/.test(w.owner) &&
+    const top = list.find(w => inside(w.bounds, point) && !overlay(w) &&
       (!sameAppOnly || w.pid === target.pid));
     if (!top || top.id !== target.id || top.pid !== target.pid) {
       // A window of the same app with no title over the target is usually a dialog: Chess's New Game
@@ -696,7 +700,7 @@ function exposedEndpoints(list, main, points, sameAppOnly, destination = main) {
 // The other app on top at either drag point, or null when the window is exposed at both.
 function coveringApp(list, main, points) {
   for (const point of [points.start, points.end]) {
-    const top = list.find(w => w.layer === 0 && inside(w.bounds, point) && !/Computer Use$/.test(w.owner));
+    const top = list.find(w => w.layer === 0 && inside(w.bounds, point) && !overlay(w));
     if (top && top.pid !== main.pid) return top.owner || 'another app';
   }
   return null;
@@ -704,14 +708,14 @@ function coveringApp(list, main, points) {
 
 // The topmost on-screen window at a point, as the window server would pick the drop target. Every layer
 // counts (Dock, menu bar, floating panels, picture-in-picture, banners), not only layer 0.
-const topAt = (list, p) => list.find(w => inside(w.bounds, p) && !/Computer Use$/.test(w.owner));
+const topAt = (list, p) => list.find(w => inside(w.bounds, p) && !overlay(w));
 // Points of clearance a relocated point keeps from the edge of any window of another app in front of the target.
 const EDGE_CLEARANCE = 4;
 function exposedAt(list, main, p) {
   const top = topAt(list, p);
   if (!top || top.id !== main.id || top.pid !== main.pid) return false;
   const index = list.findIndex(w => w.id === main.id && w.pid === main.pid);
-  return list.slice(0, index).every(w => w.pid === main.pid || /Computer Use$/.test(w.owner) ||
+  return list.slice(0, index).every(w => w.pid === main.pid || overlay(w) ||
     !inside({ X: w.bounds.X - EDGE_CLEARANCE, Y: w.bounds.Y - EDGE_CLEARANCE,
       Width: w.bounds.Width + 2 * EDGE_CLEARANCE, Height: w.bounds.Height + 2 * EDGE_CLEARANCE }, p));
 }
@@ -1054,6 +1058,7 @@ function run(argv) {
   };
   try {
     const request = JSON.parse(argv[0]);
+    handPid = Number.isSafeInteger(request.handPid) && request.handPid > 0 ? request.handPid : 0;
     const { app, from, to, holdMs = 500, steps = 25, settleMs = 1500 } = request;
     if (!(coordinate(from) || elementEndpoint(from) || selectionEndpoint(from)) ||
         !(coordinate(to) || elementEndpoint(to) || lineEndpoint(to)) ||

@@ -66,7 +66,7 @@ client.setRequestHandler(ElicitRequestSchema, async (req) => {
   return { action: ok ? 'accept' : 'decline', content: {} };
 });
 await client.connect(new StdioClientTransport({
-  command: join(repo, 'plugins/sleight/bin/sleight-mcp'), args: [], env: { ...clean, SLEIGHT_SURFACES: 'browser,computer' }, stderr: 'ignore',
+  command: join(repo, 'plugins/sleight/bin/sleight-mcp'), args: [], env: { ...clean, SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_HAND: '0' }, stderr: 'ignore',
 }));
 const js = async (code) => {
   const r = await client.callTool({ name: 'js', arguments: { code, title: 'drag probe' } }, undefined, { timeout: 60000 });

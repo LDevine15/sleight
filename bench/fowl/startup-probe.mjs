@@ -17,7 +17,7 @@ const key = readFileSync(join(homedir(), '.config/sleight-bench/anthropic-api-ke
 const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE'))), ANTHROPIC_API_KEY: key };
 const dir = mkdtempSync(join(tmpdir(), 'sleight-startup-'));
 const mcp = join(dir, 'mcp.json');
-writeFileSync(mcp, JSON.stringify({ mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'browser,computer' } } } }));
+writeFileSync(mcp, JSON.stringify({ mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_HAND: '0' } } } }));
 const empty = join(dir, 'empty.json');
 writeFileSync(empty, JSON.stringify({ mcpServers: {} }));
 const settings = join(dir, 'settings.json');
