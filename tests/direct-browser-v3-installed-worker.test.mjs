@@ -178,8 +178,9 @@ test('v3 unavailability returns the engine route without constructing v2', async
   await assert.rejects(createInstalledBrowserBridge({ v3: async () => { throw Error('HOST_PACKAGE_MISMATCH'); } }), /HOST_PACKAGE_MISMATCH/);
 });
 
-async function controls(t) {
+async function controls(t, setup = () => {}) {
   const f = fixture(), read = new PassThrough(), write = new PassThrough(), views = [];
+  setup(f);
   let clock = 1000, lost = false, refresh, interval;
   t.mock.method(Date, 'now', () => clock);
   write.on('data', data => views.push(JSON.parse(data.toString())));
@@ -473,4 +474,27 @@ for (const cause of ['pause', 'parent']) test(`${cause} on an app turn revokes t
   else { f.channel.connected = false; f.channel.emit('disconnect'); await settle(); }
   assert.ok(f.admin.calls.some(row => row[0] === 'revoke' && row[1] === session));
   assert.ok(f.events.includes('app-disconnect'), 'the worker channel goes; the host keeps the app pipe');
+});
+
+test('while connected the menu offers Never Act on the site turbo last worked on, and the click blocks that site and no other', async t => {
+  const blocked = new Set(), writes = [], used = [];
+  const f = await controls(t, f => {
+    f.dependencies.sites = url => blocked.has(new URL(url).origin) ? 'blocked' : undefined;
+    f.dependencies.blockSite = async site => { writes.push(site); blocked.add(site); };
+    f.dependencies.used = key => used.push(key);
+    f.dependencies.createRuntime = async ({ dependencies: d }) => ({ call: async () => { d.onSite('https://example.com'); return { text: 'ok', isError: false }; },
+      delivered: () => false, end: async () => ({ revoked: true, cleanup: [] }) });
+  });
+  assert.equal(f.views.at(-1).data.site, undefined, 'no site before turbo works on one');
+  await begin(f);
+  const offered = f.views.at(-1);
+  assert.equal(offered.data.status, 'connected');
+  assert.equal(offered.data.site, 'https://example.com');
+  assert.deepEqual(offered.choices, ['pause', 'disconnect', 'block-site', 'hand-off', 'turbo-off']);
+  assert.deepEqual(used, ['turbo'], 'the turn that used turbo is its last use');
+  await f.choose(offered, 'block-site');
+  assert.deepEqual(writes, ['https://example.com']);
+  assert.equal(f.views.at(-1).data.site, undefined, 'a blocked site is not offered again');
+  assert.ok(!f.views.at(-1).choices.includes('block-site'));
+  assert.ok(!f.events.includes('disconnect'), 'blocking a site leaves turbo connected');
 });

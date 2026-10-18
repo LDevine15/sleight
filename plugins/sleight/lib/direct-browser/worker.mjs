@@ -9,6 +9,7 @@ import { browserTools, validateToolCall, createToolDispatcher } from './tools.mj
 import { createV3TurnBinding, createV3Context } from './v3-context.mjs';
 import { browserApplicationName } from './browsers.mjs';
 import { readHandConfig } from '../hand/settings.mjs';
+import { createPermissionCheck, stampUse } from '../permissions.mjs';
 
 const bridges = new WeakSet(), frontends = new WeakSet();
 export const isV3Bridge = value => !!value && bridges.has(value);
@@ -174,7 +175,7 @@ export async function createV3TurnRuntime({ binding, browser, pages, snapshot, u
     import('./act.mjs'), import('./fill.mjs'), import('./rules.mjs'),
   ]);
   const ctx = (dependencies.createContext ?? createV3Context)({ binding, browser, ui });
-  const runtime = createToolDispatcher({ browser, pages, snapshot, ctx, endpoint,
+  const runtime = createToolDispatcher({ browser, pages, snapshot, ctx, endpoint, sites: dependencies.sites, onSite: dependencies.onSite,
     runSteps: dependencies.runSteps ?? runSteps, fillFields: dependencies.fillFields ?? fillFields,
     deliverSnapshot(state, capture) {
       if (capture.state !== state || !Number.isSafeInteger(capture.number) || capture.number < 1 ||
@@ -283,6 +284,11 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   let appSession, appConsent, appConnected = false, turnApps = Object.freeze([]), hostSecret;
   let browserName; // the menu bar's browser line, from the operator-owned config's executable only
   let optOutFailed = false;
+  // The user's site blocks, read again when permissions.json changes, and the site turbo last worked on, for the menu's Never
+  // Act on row. used(key) records a permission's last use (permissions.mjs stampUse); only the installed entry passes it.
+  const sites = dependencies.sites ?? createPermissionCheck().site;
+  let currentSite;
+  const noteSite = origin => { if (origin === currentSite) return; currentSite = origin; try { status(); } catch {} };
   // The relay's shared host holds this session's consent channel, on fds 4 and 5.
   const sharedUi = dependencies.sharedUi ?? process.argv.includes('--shared-ui');
   const optedOut = () => { try { return (dependencies.readConfigFile ?? readInstalledConfigFile)()?.enabled === false; } catch { return false; } };
@@ -377,12 +383,20 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     let hand;
     try { hand = ['off', 'unsafe'].includes((dependencies.readHand ?? readHandConfig)().state) ? 'off' : 'on'; } catch { hand = 'off'; }
     const handChoices = sharedUi ? [] : [hand === 'on' ? 'hand-off' : 'hand-on'];
+    // Never Act on <site>: only while connected, for the site turbo last worked on, unless it is already refused there.
+    let site;
+    try { site = state === 'connected' && currentSite && !sites(currentSite) ? currentSite : undefined; } catch { site = undefined; }
+    const siteChoices = site ? ['block-site'] : [];
     ui.present('v3-control-' + (++sequence), { status: state, ...(browserName ? { browser: browserName } : {}), payments, ...sharedUi ? {} : { hand },
-      ...(optOutFailed ? { optOut: 'failed' } : {}), ...(pluginVersion ? { version: pluginVersion } : {}) },
+      ...(site ? { site } : {}), ...(optOutFailed ? { optOut: 'failed' } : {}), ...(pluginVersion ? { version: pluginVersion } : {}) },
       // Paused has no Pause: turbo resumes when Claude next asks, through the session card.
-      state === 'cleanup-required' ? ['cleanup', ...handChoices] : state === 'paused' ? ['disconnect', ...handChoices, 'turbo-off'] : ['pause', 'disconnect', ...handChoices, 'turbo-off'], async event => {
+      state === 'cleanup-required' ? ['cleanup', ...handChoices] : state === 'paused' ? ['disconnect', ...handChoices, 'turbo-off'] : ['pause', 'disconnect', ...siteChoices, ...handChoices, 'turbo-off'], async event => {
       if (ui.authenticate(event) !== true) return;
-      if (['hand-on', 'hand-off'].includes(event.action)) {
+      if (event.action === 'block-site' && site) {
+        // The person's click blocks the site this frame named, never one from the event. A failed write re-presents the row.
+        try { await (dependencies.blockSite ?? (await import('../permissions-command.mjs')).blockSiteForUser)(site); } catch {}
+        status();
+      } else if (['hand-on', 'hand-off'].includes(event.action)) {
         // A failed write re-presents the row as it was. The relay's hand client sees the file change and hides at once.
         try { await (dependencies.setHand ?? setHand)(event.action === 'hand-on'); } catch {}
         status();
@@ -442,7 +456,8 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
           const playwright = (dependencies.loadPlaywright ?? loadPlaywrightCore)({ turbo: true }).inprocess.playwright;
           const app = dependencies.app ?? {};
           appSession = message.session;
-          appConsent ??= await (dependencies.createConsent ?? runtimeModule.createWorkerConsent)({ ui, approvedApps: () => turnApps, dependencies: app });
+          appConsent ??= await (dependencies.createConsent ?? runtimeModule.createWorkerConsent)({ ui, approvedApps: () => turnApps, dependencies: app,
+            onAlwaysUsed: bundleId => dependencies.used?.('electron:' + bundleId) });
           resource.apps = []; resource.consentTurn = { session: message.session, turn: message.turn };
           for (const { bundleId } of selections) {
             if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
@@ -499,9 +514,10 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
               snapshot: snapshots.snapshot, ui, endpoint: selected.endpoint, dependencies: {
                 // Acknowledgment is coupled to the exact output identity in the
                 // fork protocol. Merely taking a snapshot never admits its refs.
-                acknowledgeSnapshot: snapshots.acknowledgeSnapshot,
+                acknowledgeSnapshot: snapshots.acknowledgeSnapshot, sites, onSite: noteSite,
               } });
             resource.runtime = runtime;
+            dependencies.used?.('turbo');
             return runtime;
           } catch (error) { dependencies.onError?.(error); await collect(resource); throw error; }
         }
@@ -539,7 +555,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     await close(); channel.off('disconnect', loss); throw error;
   }
 }
-async function installedMain() { return startInstalledV3Worker({ channel: process }); }
+async function installedMain() { return startInstalledV3Worker({ channel: process }, { used: key => stampUse(key) }); }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.send) {
   installedMain().catch(error => { if (process.connected) {

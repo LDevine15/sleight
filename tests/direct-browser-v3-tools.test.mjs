@@ -198,3 +198,55 @@ test('browser_fill names the list reorder it already performs', () => {
   const fill = browserTools('bfixture').find(t => t.name === 'browser_fill');
   assert.match(fill.description, /drag-reorderable list takes all its row names in the wanted order/);
 });
+
+// The user's site blocks (permissions.mjs): sites(url) gives the line to relay, and onSite reports the origin turbo acts on.
+function siteFixture(start = 'https://fine.example/') {
+  const calls = [], seen = [], state = { snapshotNo: 0 };
+  let url = start;
+  const page = { url: () => url, title: async () => 'Fixture' }, entry = { page, state };
+  const pages = { openTab: async args => { calls.push(['open', args.url]); url = args.url.endsWith('to=blocked') ? 'https://blocked.example/landed' : args.url; return { tab: 't1' }; },
+    tab: () => entry, enqueue: async (id, fn) => fn(entry), closedOpener: () => undefined,
+    close: async id => { calls.push(['close', id]); return { tab: id, closed: true }; }, endTurn: async () => ({ cleanedUp: true }) };
+  const blocked = new Set(['https://blocked.example']);
+  const sites = value => { const origin = (() => { try { return new URL(value).origin; } catch { return undefined; } })();
+    return blocked.has(origin) ? `You blocked sleight on ${origin} (sleight-mcp permissions unblock ${origin} lifts it).` : undefined; };
+  const dispatcher = createToolDispatcher({ browser: 'bfixture', pages, sites, onSite: origin => seen.push(origin),
+    snapshot: async () => { calls.push(['snapshot', url]); return { text: `page at ${url}`, number: 1 }; },
+    runSteps: async (t, steps) => { calls.push(['act', steps]); if (steps[0].ref === 'e9') url = 'https://blocked.example/next'; return { lines: ['1 click e1: done'], observe: { text: `+ diff at ${url}`, number: 2, capturedAt: Date.now() } }; },
+    fillFields: async () => { calls.push(['fill']); url = 'https://blocked.example/after'; return { rows: [{ ref: 'e1', status: 'set' }] }; } });
+  return { dispatcher, calls, seen, setUrl: value => { url = value; } };
+}
+const LINE = 'You blocked sleight on https://blocked.example (sleight-mcp permissions unblock https://blocked.example lifts it).';
+
+test('a blocked site: open refuses before any tab, a redirect into one closes the tab unread, and a page that moves there stops reads', async () => {
+  const f = siteFixture();
+  assert.deepEqual(await f.dispatcher.call({ name: 'browser_open', arguments: { url: 'https://blocked.example/x' } }), { text: LINE, isError: true });
+  assert.deepEqual(f.calls, []);
+  const r = siteFixture();
+  assert.deepEqual(await r.dispatcher.call({ name: 'browser_open', arguments: { url: 'https://fine.example/go?to=blocked' } }), { text: LINE, isError: true });
+  assert.deepEqual(r.calls, [['open', 'https://fine.example/go?to=blocked'], ['close', 't1']]);
+  const g = siteFixture();
+  assert.equal((await g.dispatcher.call({ name: 'browser_open', arguments: { url: 'https://fine.example/start' } })).isError, false);
+  assert.deepEqual([...new Set(g.seen)], ['https://fine.example']);
+  g.setUrl('https://blocked.example/landing');
+  assert.deepEqual(await g.dispatcher.call({ name: 'browser_read', arguments: { tab: 't1' } }), { text: LINE, isError: true });
+  assert.equal(g.calls.filter(c => c[0] === 'snapshot').length, 1, 'only the allowed page was read');
+});
+
+test('a blocked site: no read or input on its page, and a step that lands on one returns its outcome without the page', async () => {
+  const f = siteFixture('https://blocked.example/');
+  for (const [name, args] of [['browser_read', { tab: 't1' }], ['browser_act', { tab: 't1', steps: [{ do: 'click', ref: 'e1' }] }],
+    ['browser_fill', { tab: 't1', fields: [{ ref: 'e1', value: 'x' }] }]]) {
+    assert.deepEqual(await f.dispatcher.call({ name, arguments: args }), { text: LINE, isError: true }, name);
+  }
+  assert.deepEqual(f.calls, []);
+  const g = siteFixture();
+  const act = await g.dispatcher.call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'click', ref: 'e9' }], observe: 'full' } });
+  assert.equal(act.isError, true);
+  assert.equal(act.text, `1 click e1: done\n${LINE}`);
+  assert.equal(g.dispatcher.delivered(act), false);
+  const h = siteFixture();
+  const fill = await h.dispatcher.call({ name: 'browser_fill', arguments: { tab: 't1', fields: [{ ref: 'e1', value: 'x' }] } });
+  assert.equal(fill.text, `e1: set\n${LINE}`);
+  assert.equal(h.calls.filter(c => c[0] === 'snapshot').length, 0);
+});

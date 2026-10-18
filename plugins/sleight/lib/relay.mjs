@@ -60,6 +60,7 @@ import { randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
+import { browserBundleId } from './direct-browser/browsers.mjs';
 import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, lastWindowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot, selectedMenuEntry } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
@@ -703,6 +704,9 @@ export function createRelay({
   inputLease,
   onLeaseFault = () => {},
   engineForbiddenTargets = false,
+  // The user's blocks (permissions.mjs): app({ bundleId, name }) gives the line to relay for a blocked app, and noteApp records
+  // the app sleight acts in for the menu's Never Act in row. The launcher supplies them; without them nothing is blocked.
+  permissions,
   guardTiming = false,
   // 'careful' reads the window before every action, including keys, text and coordinates later in
   // a call, which skip it by default (owner, 2026-10-09). Document scope is always careful.
@@ -884,6 +888,13 @@ export function createRelay({
   }
   const approved = new Set(); // approval keys the user accepted this session
   const listApproved = new Set(); // apps the user's pre-approved list answered for the engine this session
+  // A revoke from sleight's menu or `sleight-mcp permissions` also ends this session's own approvals of that app.
+  preapproved?.onRemoved?.(apps => {
+    for (const key of [...approved]) {
+      try { const parts = JSON.parse(key); if (apps.includes(parts[0]) || parts[0] === 'sleight' && apps.includes(parts[2])) approved.delete(key); } catch {}
+    }
+    for (const app of apps) listApproved.delete(app);
+  });
   // Bundle ids of apps the engine approved this session (session cards and the pre-approved list), for turbo's begin
   // frame. Turbo still needs the operator's per-app opt-in and its own debugger card before it touches an app.
   // The pre-approved list counts from the session's start, before the engine asks about the app. It comes last, so a
@@ -894,7 +905,9 @@ export function createRelay({
       try { const parts = JSON.parse(key); if (parts.length === 2 && parts[0] !== 'sleight') ids.add(parts[0]); } catch {}
     }
     try { for (const app of typeof preapproved?.list === 'function' ? preapproved.list() : []) ids.add(app); } catch {}
-    return [...ids].filter(app => typeof app === 'string' && app.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/.test(app)).slice(0, 64);
+    // An app the user blocked never reaches turbo either.
+    return [...ids].filter(app => typeof app === 'string' && app.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/.test(app) &&
+      !permissions?.app({ bundleId: app })).slice(0, 64);
   }
   let asking = Promise.resolve(); // `ask` prompts, one at a time
   let clientCanElicit; // undefined until initialize (legacy in-process callers)
@@ -1522,6 +1535,7 @@ export function createRelay({
     return window && fallback && window.app !== fallback.app && numbers.every(n => lines?.[n] !== undefined) ? window : fallback;
   }
   const handleOrigins = new Map(); // handle -> the getApp argument that acquired it
+  const withheld = new Map(); // reply id -> the user's line, for a reply whose window is in an app the user blocked
   const handleSelectors = new Map();
   const selectorWindows = new Map();
   function observedAppId(call, window, result) {
@@ -1550,6 +1564,27 @@ export function createRelay({
     onLeaseFault(error);
   }
 
+  // A blocked app answers with the user's one line and nothing reaches the engine.
+  function blockStop(msg, line) {
+    toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: line }] } });
+  }
+  // Every app a call names: a local tool's app, a js call's getApp strings, and the apps its handles hold from earlier reads.
+  function callBlock(name, args) {
+    if (!permissions) return undefined;
+    if (name !== 'js') return typeof args.app === 'string' ? permissions.app({ bundleId: args.app, name: args.app }) : undefined;
+    const code = String(args.code ?? '');
+    for (const match of code.matchAll(/\bcua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)/g)) {
+      let literal;
+      try { literal = match[1].startsWith('"') ? JSON.parse(match[1]) : match[1].slice(1, -1); } catch { literal = match[1].slice(1, -1); }
+      const line = permissions.app({ bundleId: literal, name: literal });
+      if (line) return line;
+    }
+    for (const match of codeOnly(code).matchAll(HANDLE_CALL)) {
+      const held = handleBundles.get(match[1]), line = held && permissions.app({ bundleId: held.appId, name: held.app });
+      if (line) return line;
+    }
+    return undefined;
+  }
   function leaseStop(msg, reason, browserAdvice = false) {
     const note = browserAdvice && msg.params?.name === 'js' && browserLeaseNote(msg.params.arguments?.code, browserHandles);
     const content = [{ type: 'text', text: reason.startsWith('Input lease:') ? reason : `Input lease: ${reason}` }];
@@ -1598,8 +1633,11 @@ export function createRelay({
   }
 
   function prepareLease(msg, browser) {
-    if (!inputLease || msg.method !== 'tools/call') return true;
+    if (msg.method !== 'tools/call') return true;
     const name = msg.params?.name;
+    const blocked = (name === 'js' || localNames.has(name)) && callBlock(name, msg.params.arguments ?? {});
+    if (blocked) { blockStop(msg, blocked); return false; }
+    if (!inputLease) return true;
     if (name === TURN_END_TOOL) {
       if (running.size) { leaseStop(msg, 'an action or read is still running; end the turn after it finishes.'); return false; }
       return true;
@@ -1672,6 +1710,8 @@ export function createRelay({
         leaseStop(msg, `${leaseWindow.app}'s settings window is refused, so Claude can't change its approval or safety settings. Close it or read another window.`);
         return false;
       }
+      const held = permissions?.app({ bundleId: leaseWindow.appId, name: leaseWindow.app });
+      if (held) { blockStop(msg, held); return false; }
       try { key = inputLease.acquire(leaseWindow); }
       catch (err) { leaseStop(msg, err.message); return false; }
     }
@@ -2240,6 +2280,9 @@ export function createRelay({
           // brought TextEdit to the front (2026-10-10 10:58 UTC).
           if (name !== 'open_file' || !/launch it first/.test(String(err?.message))) throw err;
         }
+        // The app the name resolved to, which a block by bundle id names.
+        const blocked = resolved?.appId && permissions?.app({ bundleId: resolved.appId, name: resolved.app });
+        if (blocked) throw new Error(blocked);
       }
       current();
       if (leaseCalls.get(msg.id)?.localAction && !(name === 'open_file' && !resolved)) {
@@ -2478,6 +2521,9 @@ export function createRelay({
       toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: write }] } });
       return;
     }
+    // A blocked app stops here, before an acquisition is split off and sent ahead of the call.
+    const blocked = msg.method === 'tools/call' && (msg.params?.name === 'js' || localNames.has(msg.params?.name)) && callBlock(msg.params.name, msg.params.arguments ?? {});
+    if (blocked) { finishedCall(msg.id); blockStop(msg, blocked); return; }
     if (!splitAcquisition(msg) && !splitSave(msg)) handleClient(msg);
   }
 
@@ -2887,6 +2933,9 @@ export function createRelay({
         return;
       }
       if (closing || disposed) { leaseStop(msg, 'this session is closing.'); return; }
+      // Turbo acts in its browser app, so blocking that app stops turbo too.
+      const browserBlock = permissions?.app({ name: directBrowser.application, bundleId: browserBundleId(directBrowser.application) });
+      if (browserBlock) { blockStop(msg, browserBlock); return; }
       running.add(msg.id);
       callDetails.set(msg.id, msg.params.name);
       directBrowser.call({ name: msg.params.name, arguments: msg.params.arguments }).then(result => {
@@ -4020,6 +4069,11 @@ export function createRelay({
       const previous = leaseWindow;
       if (guardStop && window && selectedWindow && window.app !== selectedWindow.app) clearSelection();
       leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}) } : undefined;
+      if (leaseWindow?.appId && permissions) {
+        const line = permissions.app({ bundleId: leaseWindow.appId, name: leaseWindow.app });
+        if (line) withheld.set(msg.id, line);
+        else permissions.noteApp?.({ bundleId: leaseWindow.appId, name: leaseWindow.app });
+      }
       if (leaseWindow?.appId) lastConfirmedWindow = leaseWindow;
       else if (!window && !msg.error && !msg.result?.isError && lastConfirmedWindow) {
         // An acquisition of another app, or a last-window close, whose result shows no single window (a write that echoed
@@ -4173,6 +4227,14 @@ export function createRelay({
       if (warning && msg.params) msg.params.message = `${msg.params.message ?? 'Allow Computer Use?'} ${warning}`;
     }
     if (isAppApproval(msg)) {
+      // An app the user blocked is declined without asking them; the read or action then reaches Claude as the user's line.
+      const asked = msg.params?._meta?.tool_params?.app, refusal = permissions?.app({ bundleId: asked, name: asked });
+      if (refusal) {
+        trace('blocked-app-approval', { id: msg.id });
+        for (const id of running) if (!localRunning.has(id)) withheld.set(id, refusal);
+        toServer({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline' } });
+        return;
+      }
       // Observation only: the answer below is unchanged. The light check needs the key's time.
       if (msg.params?._meta?.tool_name === 'press_key') lightReturn?.keyPressed(msg.params._meta.tool_params?.app);
       const diagnostic = [...helperProbes.entries()].filter(([id, probe]) => probe.control && running.has(id));
@@ -4329,6 +4391,13 @@ export function createRelay({
       resultCalls.delete(msg.id);
     }
     if (msg.method === undefined) filterMarks.delete(msg.id);
+    // A read of an app the user blocked, reached by a name the call's strings didn't show, gives Claude only the user's line.
+    if (permissions && msg.method === undefined && (msg.result || msg.error)) {
+      const appId = msg.result?._meta?.['codex/toolSurface']?.app?.appId;
+      const line = withheld.get(msg.id) ?? (typeof appId === 'string' ? permissions.app({ bundleId: appId }) : undefined);
+      withheld.delete(msg.id);
+      if (line) { delete msg.error; msg.result = { isError: true, content: [{ type: 'text', text: line }] }; }
+    }
     if (chromeSettle && !chromeSettled.has(msg.id)) {
       const handle = chromeSettleHandle(jsCode);
       const first = lastImageData(msg.result.content);

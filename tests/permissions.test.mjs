@@ -1,0 +1,269 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
+import { appRefusal, createPermissionCheck, lastUse, noteCurrentApp, permissionsPath, readPermissions, siteRefusal, stampUse, usedWords }
+  from '../plugins/sleight/lib/permissions.mjs';
+import { applyMenuEvent, grantUses, permissionsCommand, permissionsDoctorLines, permissionsMenu } from '../plugins/sleight/lib/permissions-command.mjs';
+import { livePreapproved, PreapprovedApps } from '../plugins/sleight/lib/preapproved.mjs';
+
+const HOUR = 3600000;
+function world(t) {
+  const home = registerTemp(t, trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-permissions-')))));
+  const support = join(home, 'Library/Application Support/sleight'), logs = join(home, 'Library/Logs/sleight');
+  mkdirSync(support, { recursive: true, mode: 0o700 }); mkdirSync(logs, { recursive: true, mode: 0o700 });
+  const path = permissionsPath(home), lines = [];
+  const records = [];
+  const grants = { list: () => [...records], remove: key => { const at = records.findIndex(r => r.key === key); if (at < 0) return false; records.splice(at, 1); return true; } };
+  const engineFile = join(home, 'engine-approvals.json');
+  const options = { home, out: text => lines.push(text), grants: () => grants, logs, engineFile, now: () => 10 * 24 * HOUR };
+  const command = (args, extra = {}) => permissionsCommand(args, { ...options, ...extra });
+  const write = (name, data, mode = 0o600) => { const file = join(support, name); writeFileSync(file, typeof data === 'string' ? data : JSON.stringify(data), { mode }); chmodSync(file, mode); return file; };
+  const output = () => { const text = lines.join(''); lines.length = 0; return text; };
+  return { home, support, logs, path, records, options, command, write, output, engineFile };
+}
+
+test('the permissions file: absent is empty, a link, a shared mode or an odd shape is unsafe', t => {
+  const w = world(t);
+  assert.deepEqual(readPermissions(w.path), { state: 'absent', apps: [], sites: [] });
+  w.write('permissions.json', { version: 1, apps: [{ id: 'com.example.app', name: 'Example' }], sites: ['https://example.com'] });
+  assert.deepEqual(readPermissions(w.path), { state: 'ok', apps: [{ id: 'com.example.app', name: 'Example' }], sites: ['https://example.com'] });
+  w.write('permissions.json', { version: 1, apps: [], sites: [], only: ['https://a.example'] });
+  assert.deepEqual(readPermissions(w.path).only, ['https://a.example']);
+  w.write('permissions.json', { version: 1, apps: [], sites: [] }, 0o644);
+  assert.equal(readPermissions(w.path).state, 'unsafe');
+  for (const bad of [{ version: 2, apps: [], sites: [] }, { version: 1, apps: [{ id: 'not a bundle' }], sites: [] },
+    { version: 1, apps: [], sites: ['example.com'] }, { version: 1, apps: [], sites: [], extra: 1 }, 'not json']) {
+    w.write('permissions.json', bad);
+    assert.equal(readPermissions(w.path).state, 'unsafe', JSON.stringify(bad));
+  }
+  const elsewhere = join(w.home, 'elsewhere.json'); writeFileSync(elsewhere, JSON.stringify({ version: 1, apps: [], sites: [] }), { mode: 0o600 });
+  const linked = join(w.support, 'linked.json'); symlinkSync(elsewhere, linked);
+  assert.equal(readPermissions(linked).state, 'unsafe');
+});
+
+test('refusal lines: a blocked app by bundle id or name, a blocked site, allow-only sites, and an unsafe file refuses everything', () => {
+  const perms = { state: 'ok', apps: [{ id: 'com.example.app', name: 'Example App' }], sites: ['https://blocked.example'] };
+  assert.equal(appRefusal(perms, { bundleId: 'com.example.app' }), 'You blocked sleight in Example App (sleight-mcp permissions unblock com.example.app lifts it).');
+  assert.match(appRefusal(perms, { name: 'example app' }), /^You blocked sleight in Example App/);
+  assert.match(appRefusal(perms, { bundleId: 'COM.EXAMPLE.APP' }), /^You blocked sleight/);
+  assert.equal(appRefusal(perms, { bundleId: 'com.other.app', name: 'Other' }), undefined);
+  assert.equal(siteRefusal(perms, 'https://blocked.example/path?q=1'), 'You blocked sleight on https://blocked.example (sleight-mcp permissions unblock https://blocked.example lifts it).');
+  assert.equal(siteRefusal(perms, 'https://fine.example/'), undefined);
+  assert.equal(siteRefusal(perms, 'vscode-file://vscode-app/x'), undefined, 'app documents have no web origin to block');
+  const only = { ...perms, only: ['https://a.example', 'https://b.example'] };
+  assert.equal(siteRefusal(only, 'https://a.example/x'), undefined);
+  assert.equal(siteRefusal(only, 'https://c.example/'), 'You allow sleight only on https://a.example and https://b.example, not https://c.example (sleight-mcp permissions lists them).');
+  assert.match(siteRefusal(only, 'https://blocked.example/'), /^You blocked sleight on/);
+  const unsafe = { state: 'unsafe', apps: [], sites: [] };
+  for (const line of [appRefusal(unsafe, { bundleId: 'com.any.app' }), siteRefusal(unsafe, 'https://any.example/')]) {
+    assert.equal(line, "sleight's permissions file is a link or has another owner, mode or format, so sleight acts nowhere until you fix it (sleight-mcp --doctor says how).");
+  }
+});
+
+test('block, unblock and sites from the command write a private file that the check reads again at once', t => {
+  const w = world(t);
+  const check = createPermissionCheck({ path: w.path });
+  assert.equal(check.app({ bundleId: 'com.example.app' }), undefined);
+  assert.equal(w.command(['block', 'com.example.app']), 0);
+  assert.match(w.output(), /sleight won't act in com\.example\.app from its next action, in every session\./);
+  assert.equal(lstatSync(w.path).mode & 0o777, 0o600);
+  assert.match(check.app({ bundleId: 'com.example.app' }), /^You blocked sleight in com\.example\.app/);
+  assert.equal(w.command(['block', 'https://Example.COM/some/page']), 0);
+  assert.deepEqual(readPermissions(w.path).sites, ['https://example.com']);
+  assert.match(check.site('https://example.com/other'), /^You blocked sleight on https:\/\/example\.com/);
+  assert.equal(w.command(['block', 'com.example.app']), 0); assert.match(w.output(), /already blocked/);
+  assert.equal(w.command(['unblock', 'com.example.app']), 0); assert.match(w.output(), /sleight may act in com\.example\.app again/);
+  assert.equal(check.app({ bundleId: 'com.example.app' }), undefined);
+  assert.equal(w.command(['unblock', 'com.example.app']), 0); assert.match(w.output(), /isn't blocked/);
+  assert.equal(w.command(['sites', 'only', 'https://a.example', 'https://b.example/x']), 0);
+  assert.deepEqual(readPermissions(w.path).only, ['https://a.example', 'https://b.example']);
+  assert.match(check.site('https://c.example/'), /^You allow sleight only on/);
+  // Revoking a site takes it off the allow-only list.
+  assert.equal(w.command(['revoke', 'https://b.example']), 0);
+  assert.deepEqual(readPermissions(w.path).only, ['https://a.example']);
+  assert.equal(w.command(['sites', 'all']), 0);
+  assert.equal(readPermissions(w.path).only, undefined);
+  assert.equal(check.site('https://c.example/'), undefined);
+  for (const args of [['block'], ['block', 'not a target'], ['block', 'ftp://x.example'], ['sites'], ['sites', 'only'], ['sites', 'only', 'nope'], ['frobnicate']]) {
+    assert.equal(w.command(args), 2, args.join(' ')); w.output();
+  }
+});
+
+test('the listing: always-allowed apps with when sleight last used them, debugger grants, turbo, blocks and ChatGPT\'s own list', t => {
+  const w = world(t);
+  w.write('preapproved.json', { version: 1, apps: [{ app: 'Calculator', riskLevel: 'low', added: '2026-10-01', source: 'always-allow' }, { app: 'com.example.notes', riskLevel: 'high' }] });
+  // The grant audit each relay already writes is the record of use. Two sessions, the newer use wins.
+  const audit = (pid, at, app) => JSON.stringify({ t: new Date(at).toISOString(), pid, direction: 'preapproved-app', grant: { app, riskLevel: 'low', tool: 'engine', source: 'x' } }) + '\n';
+  writeFileSync(join(w.logs, 'preapproved-11.jsonl'), audit(11, 10 * 24 * HOUR - 5 * HOUR, 'Calculator'));
+  writeFileSync(join(w.logs, 'preapproved-12.jsonl.1'), audit(12, 10 * 24 * HOUR - 2 * HOUR, 'Calculator') + 'not json\n');
+  w.records.push({ key: 'k1', name: 'Chat App', bundleId: 'com.example.chat' });
+  w.write('turbo.json', { version: 1, enabled: true, executable: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', profileRoot: '/x' });
+  const folder = join(w.support, 'used');
+  stampUse('turbo', { folder, now: () => 10 * 24 * HOUR - 5 * 60000 });
+  w.write('permissions.json', { version: 1, apps: [{ id: 'com.example.blocked', name: 'Blocked App' }], sites: ['https://blocked.example'] });
+  writeFileSync(w.engineFile, JSON.stringify({ approvedBundleIdentifiers: ['com.apple.TextEdit'] }));
+  assert.equal(w.command([]), 0);
+  const text = w.output();
+  assert.match(text, /^sleight may act in\n/);
+  assert.match(text, /\n {2}Calculator · always · used 2h ago\n/);
+  assert.match(text, /\n {2}com\.example\.notes · always · not used yet\n/);
+  assert.match(text, /\n {2}Chat App · debugger, always · not used yet\n/);
+  assert.match(text, /\n {2}Google Chrome · turbo · used 5m ago\n/);
+  assert.match(text, /sleight-mcp permissions revoke <app\|turbo\|all> takes one away\./);
+  assert.match(text, /\nBlocked\n {2}Blocked App \(com\.example\.blocked\)\n {2}https:\/\/blocked\.example\n/);
+  assert.match(text, /\nChatGPT's own Always allow list, managed in ChatGPT's settings \(sleight can't change it\)\n {2}com\.apple\.TextEdit\n/);
+  assert.equal(w.command(['list']), 0);
+  assert.equal(w.output(), text);
+});
+
+test('revoke takes an app off the list and its debugger grants, turbo writes the opt-out, and all clears every grant but no block', t => {
+  const w = world(t);
+  w.write('preapproved.json', { version: 1, apps: [{ app: 'Calculator', riskLevel: 'low' }, { app: 'com.example.chat', riskLevel: 'high' }] });
+  w.records.push({ key: 'k1', name: 'Chat App', bundleId: 'com.example.chat' }, { key: 'k2', name: 'Other', bundleId: 'com.example.other' });
+  w.write('turbo.json', { version: 1, enabled: true, executable: '/Applications/Helium.app/Contents/MacOS/Helium', profileRoot: '/x' });
+  w.write('permissions.json', { version: 1, apps: [{ id: 'com.example.blocked' }], sites: [] });
+  assert.equal(w.command(['revoke', 'com.example.chat']), 0);
+  assert.match(w.output(), /Revoked com\.example\.chat \(2\)\. It asks again from its next action\./);
+  assert.deepEqual(JSON.parse(readFileSync(join(w.support, 'preapproved.json'), 'utf8')).apps.map(a => a.app), ['Calculator']);
+  assert.deepEqual(w.records.map(r => r.key), ['k2']);
+  assert.equal(w.command(['revoke', 'Nothing Here']), 0); assert.match(w.output(), /Nothing to revoke for Nothing Here/);
+  assert.equal(w.command(['revoke', 'turbo']), 0);
+  assert.deepEqual(JSON.parse(readFileSync(join(w.support, 'turbo.json'), 'utf8')), { version: 1, enabled: false });
+  assert.equal(w.command(['revoke', 'all']), 0);
+  assert.match(w.output(), /Revoked everything sleight may do: 1 app, 1 debugger grant\. Blocks stay\./);
+  assert.deepEqual(JSON.parse(readFileSync(join(w.support, 'preapproved.json'), 'utf8')).apps, []);
+  assert.deepEqual(w.records, []);
+  assert.deepEqual(readPermissions(w.path).apps, [{ id: 'com.example.blocked' }]);
+});
+
+test('running sessions see a revoke at once: the live list reloads when the file changes and allows nothing when it turns unsafe', t => {
+  const w = world(t);
+  const file = w.write('preapproved.json', { version: 1, apps: [{ app: 'Calculator', riskLevel: 'high' }] });
+  const live = livePreapproved(new PreapprovedApps({ version: 1, apps: [{ app: 'Calculator', riskLevel: 'high' }] }), { file, load: () => new PreapprovedApps(JSON.parse(readFileSync(file, 'utf8'))) });
+  assert.equal(live.allows('Calculator', 'low'), true);
+  const removed = [];
+  live.onRemoved(apps => removed.push(...apps));
+  assert.equal(w.command(['revoke', 'Calculator']), 0);
+  assert.equal(live.allows('Calculator', 'low'), false);
+  assert.deepEqual(removed, ['Calculator'], 'the relay hears which apps a reload took off');
+  assert.deepEqual(live.list(), []);
+  const failing = livePreapproved(new PreapprovedApps({ version: 1, apps: [{ app: 'Calculator', riskLevel: 'high' }] }), { file, load: () => { throw Error('Preapproved apps: unsafe'); } });
+  w.write('preapproved.json', { version: 1, apps: [{ app: 'Calculator', riskLevel: 'high' }] }, 0o644);
+  assert.equal(failing.allows('Calculator', 'low'), false);
+  assert.equal(failing.size, 0);
+});
+
+test('use stamps are empty files named by a digest, so they hold a time and nothing else', t => {
+  const w = world(t), folder = join(w.support, 'used');
+  assert.equal(lastUse('electron:com.example.chat', { folder }), undefined);
+  stampUse('electron:com.example.chat', { folder, now: () => 1760000000000 });
+  const [name] = readdirSync(folder);
+  assert.match(name, /^[0-9a-f]{24}$/);
+  assert.equal(lstatSync(join(folder, name)).size, 0);
+  assert.equal(lstatSync(join(folder, name)).mode & 0o777, 0o600);
+  assert.equal(lastUse('electron:com.example.chat', { folder }), 1760000000000);
+  stampUse('electron:com.example.chat', { folder, now: () => 1760000500000 });
+  assert.equal(lastUse('electron:com.example.chat', { folder }), 1760000500000);
+  assert.ok(!existsSync(join(folder, 'electron:com.example.chat')));
+});
+
+test('grant uses come from the newest audit files only and keep the latest time per app', t => {
+  const w = world(t);
+  for (let i = 0; i < 30; i++) {
+    const file = join(w.logs, `preapproved-${100 + i}.jsonl`);
+    writeFileSync(file, JSON.stringify({ t: new Date(i * HOUR).toISOString(), grant: { app: i < 5 ? 'Old' : 'New' } }) + '\n');
+    utimesSync(file, i * 3600, i * 3600);
+  }
+  const uses = grantUses({ directory: w.logs, limit: 24 });
+  assert.equal(uses.get('New'), 29 * HOUR);
+  assert.equal(uses.has('Old'), false, 'files past the newest 24 are not read');
+  assert.equal(grantUses({ directory: join(w.home, 'missing') }).size, 0);
+});
+
+test('relative words for the last use', () => {
+  const now = 100 * 24 * HOUR;
+  assert.equal(usedWords(undefined, now), 'not used yet');
+  assert.equal(usedWords(now - 20000, now), 'used just now');
+  assert.equal(usedWords(now - 5 * 60000, now), 'used 5m ago');
+  assert.equal(usedWords(now - 2 * HOUR, now), 'used 2h ago');
+  assert.equal(usedWords(now - 3 * 24 * HOUR, now), 'used 3d ago');
+});
+
+test('the menu payload offers revokes and a block for the app sleight last acted in, and a click can act only on what it offered', t => {
+  const w = world(t);
+  w.write('preapproved.json', { version: 1, apps: [{ app: 'Calculator', riskLevel: 'low' }] });
+  w.records.push({ key: 'k1', name: 'Chat App', bundleId: 'com.example.chat' });
+  w.write('permissions.json', { version: 1, apps: [], sites: ['https://blocked.example'] });
+  noteCurrentApp({ bundleId: 'com.example.editor', name: 'Editor' });
+  const menu = permissionsMenu(w.options);
+  assert.deepEqual(menu.payload.grants.map(g => [g.title, g.detail, g.target]), [['Calculator', 'always', 'app:Calculator'], ['Chat App', 'debugger, always', 'electron:com.example.chat']]);
+  assert.deepEqual(menu.payload.current, { title: 'Editor', target: 'com.example.editor' });
+  assert.deepEqual(menu.payload.blocked, ['https://blocked.example']);
+  assert.ok(Buffer.byteLength(JSON.stringify(menu.payload)) < 6000);
+  // A target the menu didn't offer does nothing.
+  assert.equal(applyMenuEvent({ permissions: 'revoke', target: 'app:Unlisted' }, menu.offered, w.options), false);
+  assert.equal(applyMenuEvent({ permissions: 'block', target: 'com.example.other' }, menu.offered, w.options), false);
+  assert.equal(applyMenuEvent({ permissions: 'unblock', target: 'https://blocked.example' }, menu.offered, w.options), false, 'the menu never lifts a block');
+  assert.equal(applyMenuEvent({ permissions: 'block', target: 'com.example.editor' }, menu.offered, w.options), true);
+  assert.deepEqual(readPermissions(w.path).apps, [{ id: 'com.example.editor', name: 'Editor' }]);
+  assert.equal(applyMenuEvent({ permissions: 'revoke', target: 'electron:com.example.chat' }, menu.offered, w.options), true);
+  assert.deepEqual(w.records, []);
+  assert.equal(applyMenuEvent({ permissions: 'revoke-all' }, menu.offered, w.options), true);
+  assert.deepEqual(JSON.parse(readFileSync(join(w.support, 'preapproved.json'), 'utf8')).apps, []);
+  // A blocked current app is not offered again, and a long list stays inside the host's frame limit.
+  const again = permissionsMenu(w.options);
+  assert.equal(again.payload.current, undefined);
+  w.write('preapproved.json', { version: 1, apps: Array.from({ length: 200 }, (_, i) => ({ app: `App number ${i} ${'x'.repeat(60)}`, riskLevel: 'low' })) });
+  const long = permissionsMenu(w.options);
+  assert.ok(Buffer.byteLength(JSON.stringify(long.payload)) < 6000);
+  assert.ok(long.payload.grants.length <= 24);
+  assert.ok(long.payload.grants.every(g => g.title.length <= 80));
+  noteCurrentApp(undefined);
+});
+
+test('the doctor: an unsafe file is the one problem, with its fix; otherwise counts', t => {
+  const w = world(t);
+  assert.deepEqual(permissionsDoctorLines({ home: w.home }), ['permissions', 'ok        blocks: none (sleight-mcp permissions lists what sleight may do)', 'ok        turbo sites: any site']);
+  w.write('permissions.json', { version: 1, apps: [{ id: 'com.example.app' }], sites: ['https://a.example'], only: ['https://b.example'] });
+  assert.deepEqual(permissionsDoctorLines({ home: w.home }), ['permissions', 'ok        blocks: 1 app, 1 site (sleight-mcp permissions lists what sleight may do)', 'ok        turbo sites: only https://b.example']);
+  w.write('permissions.json', { version: 1, apps: [], sites: [] }, 0o666);
+  assert.deepEqual(permissionsDoctorLines({ home: w.home }), ['permissions',
+    'PROBLEM   permissions.json is a link or has another owner, mode or format, so sleight acts nowhere',
+    '          fix: delete ~/Library/Application Support/sleight/permissions.json, then block again with sleight-mcp permissions block']);
+});
+
+test('the doctor prints the permissions section after the ghost hand\'s, read-only', async t => {
+  const w = world(t), lines = [];
+  const { doctor } = await import('../plugins/sleight/lib/launch.mjs');
+  const code = await doctor({ env: { CODEX_HOME: '/no-such-sleight-home', SLEIGHT_CHATGPT_APP: '/no-such-ChatGPT.app' }, log: x => lines.push(x),
+    turbo: async () => ['turbo (direct browser path)'], hand: async () => ['ghost hand'], permissions: async () => permissionsDoctorLines({ home: w.home }) });
+  assert.equal(code, 1);
+  assert.deepEqual(lines.slice(0, 4), ['turbo (direct browser path)', 'ghost hand', 'permissions', 'ok        blocks: none (sleight-mcp permissions lists what sleight may do)']);
+  assert.equal(existsSync(w.path), false);
+});
+
+test('a write the reader would refuse never happens, and the menu leaves out a row the host would refuse', t => {
+  const w = world(t);
+  w.write('permissions.json', { version: 1, apps: Array.from({ length: 256 }, (_, i) => ({ id: `com.example.app${i}` })), sites: [] });
+  assert.equal(w.command(['block', 'com.example.one.more']), 1);
+  assert.match(w.output(), /failed: PERMISSIONS_FULL/);
+  assert.equal(readPermissions(w.path).state, 'ok', 'the file stays readable, so sleight still acts');
+  w.write('preapproved.json', { version: 1, apps: [{ app: 'Fine', riskLevel: 'low' }, { app: 'Odd\u0085Name', riskLevel: 'low' }, { app: 'x'.repeat(300), riskLevel: 'low' }] });
+  w.records.push({ key: 'k1', name: 'Underscored', bundleId: 'com.example.under_score' });
+  assert.deepEqual(permissionsMenu(w.options).payload.grants.map(g => g.target), ['app:Fine']);
+  noteCurrentApp({ bundleId: 'com.example.editor', name: 'Bad\u0085Name' });
+  assert.deepEqual(permissionsMenu(w.options).payload.current, undefined, 'a full list offers no block');
+  noteCurrentApp(undefined);
+});
+
+test('the launcher runs the permissions command: an unknown op prints the usage, exit 2, and reads nothing', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const launch = new URL('../plugins/sleight/lib/launch.mjs', import.meta.url).pathname;
+  const run = spawnSync(process.execPath, [launch, 'permissions', 'frobnicate'], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(run.status, 2, run.stderr);
+  assert.match(run.stdout, /^usage: sleight-mcp permissions \[list\]\n/);
+  assert.match(run.stdout, /permissions block\|unblock <app bundle id\|origin>/);
+});

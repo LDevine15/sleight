@@ -12,6 +12,7 @@ import { dirname } from 'node:path';
 import { handHostBuilt, prepareHandHost } from '../direct-browser/host.mjs';
 import { handConfigPath, handSetting } from './settings.mjs';
 import { setHandPid } from './pid.mjs';
+import { currentApp as noted } from '../permissions.mjs';
 
 const kinds = new Set(['click', 'double', 'right', 'key', 'type', 'drag', 'scroll']);
 const round = value => Math.round(value * 100) / 100;
@@ -52,10 +53,17 @@ export async function shareConsent() {
   return share ? share() : undefined;
 }
 
-/** `enabled` is true while this session may still show the hand: the settings allow it and the host hasn't failed. */
+// The files behind the menu's Permissions rows. A change to any of them sends the host a fresh menu frame.
+const permissionFiles = new Set(['preapproved.json', 'permissions.json', 'electron-grants.json', 'turbo.json']);
+const command = async () => import('../permissions-command.mjs');
+
+/** `enabled` is true while this session may still show the hand: the settings allow it and the host hasn't failed.
+ *  permissions: the menu's Permissions rows (menu() gives { payload, offered }) and their clicks (apply), or null for none. */
 export function createHandClient({ env = process.env, setting = () => handSetting({ env }), built = handHostBuilt, prepare = prepareHandHost,
   trace = () => {}, now = Date.now, defer = setImmediate, recheckMs = 60000, killAfterMs = 2000,
   setHand = async enabled => (await import('./command.mjs')).writeHandSetting({ enabled }),
+  permissions = { menu: async () => (await command()).permissionsMenu(), apply: async (event, offered) => (await command()).applyMenuEvent(event, offered) },
+  currentApp = noted,
   watch = (folder, listener) => process.platform === 'darwin' ? fsWatch(folder, { persistent: false }, listener) : undefined } = {}) {
   const nonce = randomBytes(32).toString('hex'), queue = [];
   // host: none, starting, running or dead (failed or closed this session; final). hand: the settings allow the hand.
@@ -77,7 +85,27 @@ export function createHandClient({ env = process.env, setting = () => handSettin
   };
   const act = (wire, delayMs = wire.delayMs) => JSON.stringify({ hand: 'act', nonce, seq: ++seq, kind: wire.kind, pid: wire.pid,
     windowId: wire.windowId, at: wire.at, path: wire.path, delayMs, beats: wire.beats }) + '\n';
-  const menu = () => JSON.stringify({ hand: 'menu', nonce, enabled: hand, capture, version }) + '\n';
+  // perms: the last Permissions rows sent, with the targets a click may act on; permsText detects a change.
+  let perms, permsText, permsApp, refreshing = false, again = false;
+  const menu = () => JSON.stringify({ hand: 'menu', nonce, enabled: hand, capture, version, ...perms?.payload ? { permissions: perms.payload } : {} }) + '\n';
+  async function loadPermissions() {
+    if (!permissions) return false;
+    let next;
+    try { next = await permissions.menu(); } catch (error) { note('permissions-unavailable', { code: error?.code ?? 'read' }); return false; }
+    permsApp = currentApp()?.bundleId;
+    const text = JSON.stringify(next?.payload ?? null);
+    if (text === permsText) return false;
+    perms = next; permsText = text;
+    return true;
+  }
+  // Off the caller's path, one at a time; a change while one runs reads again once it ends.
+  function refreshPermissions() {
+    if (!permissions || host !== 'running') return;
+    if (refreshing) { again = true; return; }
+    refreshing = true;
+    loadPermissions().then(changed => { if (changed && host === 'running') write(menu()); })
+      .finally(() => { refreshing = false; if (again) { again = false; refreshPermissions(); } });
+  }
   const stop = () => {
     queue.length = 0;
     if (!child) return;
@@ -89,6 +117,17 @@ export function createHandClient({ env = process.env, setting = () => handSettin
     try { ending.stdin.end(); } catch {}
   };
   const die = (reason, detail) => { if (host === 'dead') return; host = 'dead'; stop(); note('hand-off', { reason, ...detail }); };
+  // The Permissions rows' clicks: { permissions: 'revoke' | 'block', nonce, target } or { permissions: 'revoke-all', nonce }, with this
+  // session's nonce. apply acts only on a target the last menu offered, and only ever removes access.
+  function permissionEvent(event) {
+    const keys = Object.keys(event).sort().join();
+    if (!permissions || event.nonce !== nonce || !(keys === 'nonce,permissions' && event.permissions === 'revoke-all' ||
+        keys === 'nonce,permissions,target' && ['revoke', 'block'].includes(event.permissions) && typeof event.target === 'string' && event.target.length <= 300)) return false;
+    note('permissions-click', { op: event.permissions });
+    Promise.resolve().then(() => permissions.apply(event, perms?.offered)).then(() => refreshPermissions(),
+      error => note('permissions-failed', { code: /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'PERMISSIONS_FAILED' }));
+    return true;
+  }
   // The Ghost Hand row's clicks: exact { hand: 'toggle', nonce, enabled } lines with this session's nonce, on the host's stdout.
   function onEvents(chunk) {
     events += chunk;
@@ -98,6 +137,7 @@ export function createHandClient({ env = process.env, setting = () => handSettin
       const text = events.slice(0, end); events = events.slice(end + 1);
       let event;
       try { event = JSON.parse(text); } catch {}
+      if (event && typeof event === 'object' && Object.hasOwn(event, 'permissions') && permissionEvent(event)) continue;
       if (!event || typeof event !== 'object' || Object.keys(event).sort().join() !== 'enabled,hand,nonce' || event.hand !== 'toggle' ||
           event.nonce !== nonce || typeof event.enabled !== 'boolean') { note('hand-toggle-refused', {}); continue; }
       Promise.resolve().then(() => setHand(event.enabled)).then(() => recheck(true),
@@ -117,6 +157,9 @@ export function createHandClient({ env = process.env, setting = () => handSettin
       const result = await prepare();
       if (host !== 'starting') return false;
       if (result?.status !== 'ready') { die('unavailable', { code: result?.code }); return false; }
+      // The first menu frame already carries the Permissions rows.
+      await loadPermissions();
+      if (host !== 'starting') return false;
       const started = result.spawn({ capture });
       started.on('error', error => die('spawn', { code: error?.code }));
       started.stdin.on('error', error => note('hand-dropped', { reason: error?.code ?? 'pipe' }));
@@ -155,15 +198,24 @@ export function createHandClient({ env = process.env, setting = () => handSettin
         if (!hand) { write(JSON.stringify({ hand: 'hide', nonce }) + '\n'); note('hand-off', { reason: 'setting' }); }
         write(menu());
       }
+      // Last-use times come from other sessions' records too, so the rows are read again with the minute's recheck.
+      refreshPermissions();
     });
   }
   let watcher;
-  try { watcher = watch(dirname(handConfigPath()), (_event, name) => { if (!name || String(name) === 'hand.json') recheck(true); }); }
+  try {
+    watcher = watch(dirname(handConfigPath()), (_event, name) => {
+      if (!name || String(name) === 'hand.json') recheck(true);
+      if (!name || permissionFiles.has(String(name))) refreshPermissions();
+    });
+  }
   catch {} // no settings folder yet: the minute's recheck covers it
 
   const client = Object.freeze({
     send(frame) {
       recheck();
+      // A new app to act in changes the menu's Never Act in row.
+      if (host === 'running' && currentApp()?.bundleId !== permsApp) refreshPermissions();
       if (!hand || host === 'dead') return;
       const wire = handWireFrame(frame);
       if (typeof wire === 'string') { note('hand-dropped', { reason: wire }); return; }

@@ -10,6 +10,7 @@
 //   launch.mjs setup     install the helper, open permission panes, run doctor
 //   launch.mjs turbo on [--browser chrome|helium] | off | status   turbo is on by default; these are the user's controls
 //   launch.mjs hand on | off | capture hidden|visible | status   the ghost hand is on by default; the user's controls
+//   launch.mjs permissions [list] | revoke … | block|unblock … | sites …   what sleight may do, and where it never acts
 //   launch.mjs record|replay …  turn a finished run into a script, and run it again (replay.mjs)
 
 import { execFile, execFileSync, spawn } from 'node:child_process';
@@ -30,7 +31,8 @@ import { loadFlowRules } from './flow-rules.mjs';
 import { InputLease } from './input-lease.mjs';
 import { lightReturnEnabled } from './light-return.mjs';
 import { collectOwnedEngine } from './checked-stop.mjs';
-import { addPreapproved, listPreapproved, loadPreapproved, removePreapproved } from './preapproved.mjs';
+import { addPreapproved, listPreapproved, livePreapproved, loadPreapproved, removePreapproved } from './preapproved.mjs';
+import { createPermissionCheck, noteCurrentApp } from './permissions.mjs';
 import { createGrantAudit } from './preapproved-audit.mjs';
 import { ALLOW_FORBIDDEN_COMMAND, forbiddenTargetsAllowed, matchBlockedApp } from './blocked-apps.mjs';
 import { SELECT_WINDOW_TOOL, selectWindow } from './select-window.mjs';
@@ -147,13 +149,18 @@ async function handDoctorSection() {
     return handDoctorLines(handSetting(), handHostBuilt());
   } catch (err) { return ['ghost hand', `PROBLEM   could not read the hand's state (${err.message})`]; }
 }
+async function permissionsDoctorSection() {
+  try { return (await import('./permissions-command.mjs')).permissionsDoctorLines(); }
+  catch (err) { return ['permissions', `PROBLEM   could not read the permissions (${err.message})`]; }
+}
 
-export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, hand = handDoctorSection } = {}) {
+export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, hand = handDoctorSection, permissions = permissionsDoctorSection } = {}) {
   if (app !== undefined && (typeof app !== 'string' || !app.trim() || app.startsWith('-'))) {
     log('usage: sleight-mcp --doctor [running app name or bundle ID]'); return 1;
   }
   for (const line of await turbo()) log(line);
   for (const line of await hand()) log(line);
+  for (const line of await permissions()) log(line);
   const s = resolveServer(env);
   if (s.error) { log(`sleight: ${s.error}`); return 1; }
   await probeSurfaces(s, env);
@@ -802,6 +809,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   process.once('exit', () => { turnHook?.close(); });
   let flowRules, preapproved;
   try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
+  // A revoke from the menu or the command reaches this session at once; the startup list is the first copy.
+  preapproved = livePreapproved(preapproved);
   const { trace, grantAudit } = approvalLogging(preapproved);
   let s = directBrowserServer(resolveServer(), directBrowser);
   if (s.error) fail(s.error);
@@ -935,6 +944,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     idleTurnEndMs: Number(process.env.SLEIGHT_IDLE_TURN_END_MS ?? 30000),
     inputLease: new InputLease({ directory: leaseDirectory, holder: `session ${sessionId} (pid ${process.pid})` }),
     engineForbiddenTargets: forbiddenTargetsAllowed(readForbiddenTargets),
+    // The user's blocks, read again whenever permissions.json changes.
+    permissions: { ...createPermissionCheck(), noteApp: noteCurrentApp },
     onLeaseFault: err => { process.stderr.write(`sleight: ${err.message}; stopping the owned engine.\n`); terminateEngine(); },
     // SLEIGHT_MENU_BAR=0 leaves out the menu bar and notification tools,
     // SLEIGHT_DRAG=0 the drag tool, SLEIGHT_HOVER=0 the hover tool,
@@ -1082,6 +1093,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   } else if (process.argv[2] === 'turbo-state') {
     const { readInstalledConfig } = await import('./direct-browser/installed-config.mjs');
     process.stdout.write(JSON.stringify(turboState(readInstalledConfig)) + '\n');
+  } else if (process.argv[2] === 'permissions') {
+    try { process.exitCode = (await import('./permissions-command.mjs')).permissionsCommand(process.argv.slice(3)); }
+    catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }
   } else if (process.argv[2] === 'allow') {
     try { process.exitCode = allowCommand(process.argv.slice(2)); }
     catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }

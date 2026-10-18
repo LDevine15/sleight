@@ -10,7 +10,7 @@ const guard = async (...args) => {
   return preapprovedWriteDenied(...args);
 };
 const stat = async path => ({ realPath: path });
-for (const filename of ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key', 'hand.json']) {
+for (const filename of ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key', 'hand.json', 'permissions.json']) {
 const policy = '/Users/fixture/Library/Application Support/sleight/' + filename;
 
 test(filename + ': each file mutation denies the policy path and case and tilde spellings', async () => {
@@ -151,6 +151,24 @@ test('hand on, off and capture are the user\'s commands the same way: every spel
   }
   for (const command of ['sleight-mcp hand status', 'env sleight-mcp hand status', 'sh -c "sleight-mcp hand status"', 'node /x/lib/launch.mjs hand status',
     'sleight-mcp handy', 'sleight-mcp --doctor', 'hand off', 'echo hand on', 'sleight-mcp turbo status']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat }), false, command);
+  }
+});
+
+test('permissions block, unblock, revoke and sites are the user\'s commands: every spelling but the listing denies', async () => {
+  for (const command of ['sleight-mcp permissions block com.example.app', 'sleight-mcp permissions unblock https://example.com',
+    'sleight-mcp permissions revoke all', 'sleight-mcp permissions revoke Calculator', 'sleight-mcp permissions sites only https://example.com',
+    'sleight-mcp permissions sites all', '/x/plugins/sleight/bin/sleight-mcp permissions unblock com.example.app',
+    'node /x/plugins/sleight/lib/launch.mjs permissions unblock com.example.app', 'cd /tmp && sleight-mcp permissions unblock x.y',
+    'bash -c "sleight-mcp permissions unblock x.y"', 'env A=1 sleight-mcp permissions revoke all', 'nohup sleight-mcp permissions block x.y',
+    'sh -c "true; sleight-mcp permissions unblock x.y"', 'true && sleight-mcp permissions unblock x.y', 'echo hi | sleight-mcp permissions unblock x.y',
+    'zsh -lc "cd /x && sleight-mcp permissions unblock x.y"', 'sleight-mcp "permissions" "unblock" x.y',
+    'node --no-warnings /x/lib/launch.mjs permissions revoke all', 'sleight-mcp permissions list unblock']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat }), true, command);
+  }
+  for (const command of ['sleight-mcp permissions', 'sleight-mcp permissions list', 'env sleight-mcp permissions', 'sh -c "sleight-mcp permissions"',
+    'node /x/lib/launch.mjs permissions list', 'sleight-mcp permissions | head', 'sleight-mcp permissions; echo done', 'sleight-mcp --doctor',
+    'echo permissions unblock', 'permissions unblock x.y', 'sleight-mcp allow list']) {
     assert.equal(await guard({ tool: 'Bash', command }, { stat }), false, command);
   }
 });

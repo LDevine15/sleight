@@ -27,11 +27,11 @@ function fakeChild(pid = 4242) {
   child.lines = lines; child.menus = menus;
   return child;
 }
-function harness({ enabled = true, built = true, capture = 'hidden', result, now, setHand } = {}) {
+function harness({ enabled = true, built = true, capture = 'hidden', result, now, setHand, permissions = null, currentApp = () => undefined, watch = () => undefined } = {}) {
   const children = [], traces = [], spawns = [];
   let preparing = 0, setting = { enabled, capture };
   const client = createHandClient({
-    setting: () => setting, built: () => built, now, watch: () => undefined, setHand,
+    setting: () => setting, built: () => built, now, watch, setHand, permissions, currentApp,
     prepare: async () => { preparing++; return result ?? { status: 'ready', spawn: options => { spawns.push(options); const c = fakeChild(4242 + children.length); children.push(c); return c; } }; },
     trace: (direction, detail) => traces.push([direction, detail]),
   });
@@ -296,4 +296,67 @@ test('prepareHandHost builds through the helper pipeline and its handle starts o
   writeFileSync(join(sourceRoot, 'consent-host.swift'), 'changed', { mode: 0o600 });
   assert.equal(host.handHostBuilt({ cacheRoot, sourceRoot }), false);
   assert.deepEqual(await host.prepareHandHost({ cacheRoot, sourceRoot: join(root, 'missing'), compile }), { status: 'unavailable', code: 'HOST_SOURCE_MISMATCH' });
+});
+
+// The menu's Permissions rows: a fake provider whose payload the test changes, and the clicks it receives.
+function permissionRows() {
+  const applied = [];
+  let payload = { grants: [{ title: 'Fixture', detail: 'always', used: null, target: 'app:Fixture' }], blocked: [] };
+  return { applied, set: next => { payload = next; },
+    provider: { menu: async () => ({ payload, offered: new Set(payload.grants.map(g => g.target)) }), apply: async (event, offered) => { applied.push([event, [...offered]]); } } };
+}
+
+test('the first menu frame carries the Permissions rows, and a click with this nonce reaches the writer with what the menu offered', async t => {
+  t.after(() => setHandPid(0));
+  const rows = permissionRows(), h = harness({ permissions: rows.provider });
+  h.client.send(frame()); await settle();
+  assert.equal(h.children[0].menus.length, 1, 'one menu frame at start, rows included');
+  const [first] = h.children[0].menus;
+  assert.deepEqual(first.permissions, { grants: [{ title: 'Fixture', detail: 'always', used: null, target: 'app:Fixture' }], blocked: [] });
+  const stdout = h.children[0].stdout, send = event => stdout.emit('data', Buffer.from(JSON.stringify(event) + '\n'));
+  rows.set({ grants: [], blocked: [] });
+  send({ permissions: 'revoke', nonce: first.nonce, target: 'app:Fixture' }); await settle();
+  assert.deepEqual(rows.applied, [[{ permissions: 'revoke', nonce: first.nonce, target: 'app:Fixture' }, ['app:Fixture']]]);
+  assert.deepEqual(h.children[0].menus.at(-1).permissions, { grants: [], blocked: [] }, 'the rows are sent again after the click');
+  for (const bad of [{ permissions: 'revoke', nonce: 'f'.repeat(64), target: 'app:Fixture' }, { permissions: 'unblock', nonce: first.nonce, target: 'x' },
+    { permissions: 'revoke-all', nonce: first.nonce, target: 'x' }, { permissions: 'block', nonce: first.nonce }, { permissions: 'revoke', nonce: first.nonce, target: 7 }]) send(bad);
+  await settle();
+  assert.equal(rows.applied.length, 1, 'only exact events with this session\'s nonce reach the writer');
+  assert.equal(h.traces.filter(([d]) => d === 'hand-toggle-refused').length, 5);
+  send({ permissions: 'revoke-all', nonce: first.nonce }); await settle();
+  assert.equal(rows.applied.length, 2);
+  assert.equal(h.traces.filter(([d, detail]) => d === 'permissions-click').map(([, detail]) => detail.op).join(), 'revoke,revoke-all', 'traces name the op, never the app');
+});
+
+test('a new app to act in, a settings file change or the minute\'s reread sends fresh rows, and an unchanged payload sends nothing', async t => {
+  t.after(() => setHandPid(0));
+  let app, listener, clock = 0;
+  const rows = permissionRows(), h = harness({ permissions: rows.provider, currentApp: () => app, now: () => clock, watch: (_folder, fn) => { listener = fn; } });
+  h.client.send(frame()); await settle();
+  assert.equal(h.children[0].menus.length, 1);
+  h.client.send(frame()); await settle();
+  assert.equal(h.children[0].menus.length, 1, 'same app, same rows: nothing sent');
+  app = { bundleId: 'com.example.editor', name: 'Editor' };
+  rows.set({ grants: [], blocked: [], current: { title: 'Editor', target: 'com.example.editor' } });
+  h.client.send(frame()); await settle();
+  assert.deepEqual(h.children[0].menus.at(-1).permissions.current, { title: 'Editor', target: 'com.example.editor' });
+  rows.set({ grants: [], blocked: ['Editor'] });
+  listener('rename', 'permissions.json'); await settle();
+  assert.deepEqual(h.children[0].menus.at(-1).permissions.blocked, ['Editor']);
+  const count = h.children[0].menus.length;
+  listener('rename', 'used'); await settle();
+  assert.equal(h.children[0].menus.length, count, 'a use stamp is not a settings change');
+  rows.set({ grants: [{ title: 'Fixture', detail: 'always', used: 5, target: 'app:Fixture' }], blocked: ['Editor'] });
+  clock = 61000; h.client.send(frame()); await settle();
+  assert.equal(h.children[0].menus.at(-1).permissions.grants[0].used, 5, 'the minute\'s reread picks up a new last use');
+});
+
+test('without a provider the menu frame has no Permissions rows, and a permissions event is refused', async t => {
+  t.after(() => setHandPid(0));
+  const h = harness();
+  h.client.send(frame()); await settle();
+  const [first] = h.children[0].menus;
+  assert.equal(Object.hasOwn(first, 'permissions'), false);
+  h.children[0].stdout.emit('data', Buffer.from(JSON.stringify({ permissions: 'revoke-all', nonce: first.nonce }) + '\n')); await settle();
+  assert.equal(h.traces.filter(([d]) => d === 'hand-toggle-refused').length, 1);
 });

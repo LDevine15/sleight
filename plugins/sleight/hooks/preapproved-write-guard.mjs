@@ -1,7 +1,7 @@
 const directorySuffix = '/library/application support/sleight';
 // grant-seal.key seals the Electron Always records in electron-grants.json; writing it would forge consent. hand.json is the
-// user's ghost hand opt-out.
-const suffixes = ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key', 'hand.json'].map(filename => `${directorySuffix}/${filename}`);
+// user's ghost hand opt-out. permissions.json holds the apps and sites the user told sleight never to act in.
+const suffixes = ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key', 'hand.json', 'permissions.json'].map(filename => `${directorySuffix}/${filename}`);
 const mutations = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const folded = path => path.normalize('NFC').toLowerCase();
 const protectedLiteral = path => {
@@ -62,20 +62,24 @@ function shellWords(command) {
 
 const launcher = name => name === 'sleight-mcp' || name === 'launch.mjs';
 const commandArgument = value => value.replace(/^['"]+|[;&|)'"]+$/g, '');
-// True when the words run the launcher's turbo or hand command with anything but status, as separate words or inside a -c string.
-function launcherToggle(words, command) {
+// True when the words run the launcher's command with arguments `allowed` refuses (by default anything but status), as
+// separate words or inside a -c string, where the arguments run to the next shell operator.
+const statusOnly = rest => rest[0] === 'status';
+function launcherToggle(words, command, allowed = statusOnly) {
   const names = words.map(word => word.split('/').at(-1)), first = names.findIndex(launcher);
   if (first >= 0) {
     const at = names.indexOf(command, first + 1);
-    if (at >= 0 && commandArgument(names[at + 1] ?? '') !== 'status') return true;
+    if (at >= 0 && !allowed(names.slice(at + 1).map(commandArgument))) return true;
   }
   return words.some(word => {
     if (!/\s/.test(word)) return false;
     const hit = /(?<![\w.-])(?:\S*\/)?(?:sleight-mcp|launch\.mjs)(?=[\s'"]|$)/.exec(word);
-    return !!hit && [...word.slice(hit.index).matchAll(new RegExp(`(?<![\\w-])${command}(?![\\w-])\\s*(\\S*)`, 'g'))]
-      .some(match => commandArgument(match[1]) !== 'status');
+    return !!hit && [...word.slice(hit.index).matchAll(new RegExp(`(?<![\\w-])${command}(?![\\w-])([^;&|)\\n]*)`, 'g'))]
+      .some(match => !allowed(match[1].trim().split(/\s+/).filter(Boolean).map(commandArgument)));
   });
 }
+// `permissions` alone or `permissions list` only reads; block, unblock, revoke and sites write permissions.json or a grant.
+const listingOnly = rest => rest.length === 0 || rest.length === 1 && rest[0] === 'list';
 
 function shellWritePaths(command, initialDirectory, depth = 0) {
   if (depth > 8) return [];
@@ -119,6 +123,8 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
     // `hand on|off|capture` writes hand.json the same way, and only `hand status` passes.
     if (launcherToggle(allWords, 'turbo')) add('~/Library/Application Support/sleight/turbo.json', true);
     if (launcherToggle(allWords, 'hand')) add('~/Library/Application Support/sleight/hand.json', true);
+    // `permissions block|unblock|revoke|sites` change what sleight may do, and only the listing passes.
+    if (launcherToggle(allWords, 'permissions', listingOnly)) add('~/Library/Application Support/sleight/permissions.json', true);
     if (xargs && piped) operands.push(...piped.filter(word => !word.operator).map(word => word.text));
     if (executable === 'cd') {
       const next = operands[0];
@@ -143,7 +149,7 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
       const writes = /\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?['"][wax][+bt]*['"]|\b(?:writeFile(?:Sync)?|appendFile(?:Sync)?|unlink(?:Sync)?|rename(?:Sync)?|copyFile(?:Sync)?|rm(?:Sync)?|remove|truncate|File\.write)\s*\(/;
       if (!writes.test(source)) continue;
       // Inline code is scanned as text only, never passed to the filesystem resolver.
-      for (const match of source.matchAll(/(?:~|\$\{?HOME\}?|\/|\.{1,2}\/)[^'"`;\n()<>|]*?(?:(?:preapproved|turbo|turbo-apps|electron-grants|hand)\.json|grant-seal\.key|\/sleight(?=['"`;,)\s]|$))|\b(?:(?:preapproved|turbo|turbo-apps|electron-grants|hand)\.json|grant-seal\.key)\b/gi)) add(match[0], true);
+      for (const match of source.matchAll(/(?:~|\$\{?HOME\}?|\/|\.{1,2}\/)[^'"`;\n()<>|]*?(?:(?:preapproved|turbo|turbo-apps|electron-grants|hand|permissions)\.json|grant-seal\.key|\/sleight(?=['"`;,)\s]|$))|\b(?:(?:preapproved|turbo|turbo-apps|electron-grants|hand|permissions)\.json|grant-seal\.key)\b/gi)) add(match[0], true);
     }
   }
   return paths;

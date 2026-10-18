@@ -86,6 +86,7 @@ enum StatusRow: Equatable {
     case action(String, choice: String)
     case confirm(String, choice: String)
     case toggle(String, choice: String, on: Bool)
+    case permissions([PermissionRow])
     case help
     case separator
     case footer(String)
@@ -93,7 +94,7 @@ enum StatusRow: Equatable {
 let stateWords = ["connected": "Connected", "connected-idle": "Connected", "paused": "Paused", "cleanup-required": "Cleanup needed", "disconnected": "Disconnected"]
 let dotColours = ["connected": "green", "connected-idle": "green", "paused": "orange", "cleanup-required": "red", "disconnected": "gray"]
 let choiceWords = ["pause": "Pause", "resume": "Resume", "disconnect": "Disconnect", "connect": "Connect", "cleanup": "Clean Up", "turbo-off": "Turn Turbo Off…", "cancel": "Cancel",
-    "hand-on": "Ghost Hand", "hand-off": "Ghost Hand"]
+    "hand-on": "Ghost Hand", "hand-off": "Ghost Hand", "block-site": "Never Act on This Site"]
 let paymentWords = ["ask": "Payments: asks unless you named the amount", "always": "Payments: always asks", "never": "Payments: asks only for ones you didn't request"]
 let optOutFailed = "Couldn't turn turbo off. Run sleight-mcp turbo off."
 func statusVisible(_ status: String?, requests: Int) -> Bool {
@@ -102,8 +103,11 @@ func statusVisible(_ status: String?, requests: Int) -> Bool {
 func statusRows(_ data: [String: Any], _ choices: [String]) -> [StatusRow]? {
     // The Ghost Hand row shows the hand's setting with a checkmark, and its one choice flips it.
     let hand = data["hand"] as? String, handChoices = choices.filter { $0.hasPrefix("hand-") }
+    // Never Act on <site>: the site turbo last worked on, a bare http(s) origin, and only with its choice.
+    let site = (data["site"] as? String).flatMap { $0.range(of: #"^https?://[a-z0-9.-]{1,253}(:[0-9]{1,5})?$"#, options: .regularExpression) != nil ? $0 : nil }
     guard let status = data["status"] as? String, let word = stateWords[status], let dot = dotColours[status],
         choices.allSatisfy({ choiceWords[$0] != nil }), data["hand"] == nil || hand == "on" || hand == "off",
+        data["site"] == nil || site != nil, !choices.contains("block-site") || site != nil,
         handChoices.isEmpty || handChoices == [hand == "on" ? "hand-off" : "hand-on"] && hand != nil else { return nil }
     let browser = (data["browser"] as? String).flatMap { name in
         !name.isEmpty && name.count <= 40 && name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " }) ? name : nil }
@@ -114,8 +118,12 @@ func statusRows(_ data: [String: Any], _ choices: [String]) -> [StatusRow]? {
     if let payments = data["payments"] as? String, let words = paymentWords[payments] { details.append(words) }
     if data["optOut"] as? String == "failed" { details.append(optOutFailed) }
     var rows: [StatusRow] = [.status(title: title, dot: dot, details: details)]
-    let session = choices.filter { $0 != "turbo-off" && !$0.hasPrefix("hand-") }
+    let session = choices.filter { $0 != "turbo-off" && $0 != "block-site" && !$0.hasPrefix("hand-") }
     if !session.isEmpty { rows.append(.separator); rows += session.map { .action(choiceWords[$0]!, choice: $0) } }
+    if let site = site, choices.contains("block-site") {
+        if session.isEmpty { rows.append(.separator) }
+        rows.append(.action("Never Act on " + (site.hasPrefix("https://") ? String(site.dropFirst(8)) : site), choice: "block-site"))
+    }
     rows.append(.separator)
     if let choice = handChoices.first { rows.append(.toggle(choiceWords[choice]!, choice: choice, on: hand == "on")) }
     if choices.contains("turbo-off") { rows.append(.confirm(choiceWords["turbo-off"]!, choice: "turbo-off")) }
@@ -132,21 +140,99 @@ let handIdleWindow = 300.0
 func menuVisible(_ status: String?, requests: Int, handEnabled: Bool, sinceAct: Double?) -> Bool {
     statusVisible(status, requests: requests) || handEnabled && (sinceAct.map { $0 >= 0 && $0 < handIdleWindow } ?? false)
 }
-// Without turbo, the hand's own block: its toggle, Settings & Help and the version.
-func handRows(enabled: Bool, version: String?) -> [StatusRow] {
-    var rows: [StatusRow] = [.toggle("Ghost Hand", choice: "hand-toggle", on: enabled), .separator, .help]
+// Without turbo, the hand's own block: its toggle, the Permissions submenu, Settings & Help and the version.
+func handRows(enabled: Bool, version: String?, permissions: [PermissionRow]? = nil) -> [StatusRow] {
+    var rows: [StatusRow] = [.toggle("Ghost Hand", choice: "hand-toggle", on: enabled)]
+    if let permissions = permissions { rows.append(.permissions(permissions)) }
+    rows += [.separator, .help]
     if let version = version, version.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}$"#, options: .regularExpression) != nil {
         rows += [.separator, .footer("sleight " + version)]
     }
     return rows
 }
-// With turbo, the hand channel's toggle joins the turbo menu before Turn Turbo Off, unless a status frame already has one.
-func withHand(_ rows: [StatusRow], enabled: Bool) -> [StatusRow] {
-    guard !rows.contains(where: { if case .toggle = $0 { return true }; return false }),
-        let at = rows.firstIndex(where: { if case .confirm = $0 { return true }; return $0 == .help }) else { return rows }
+// With turbo, the hand channel's toggle (unless a status frame already has one) and its Permissions submenu join the turbo menu
+// before Turn Turbo Off.
+func withHand(_ rows: [StatusRow], enabled: Bool, permissions: [PermissionRow]? = nil) -> [StatusRow] {
+    guard let at = rows.firstIndex(where: { if case .confirm = $0 { return true }; return $0 == .help }) else { return rows }
+    var added: [StatusRow] = []
+    if !rows.contains(where: { if case .toggle = $0 { return true }; return false }) { added.append(.toggle("Ghost Hand", choice: "hand-toggle", on: enabled)) }
+    if let permissions = permissions { added.append(.permissions(permissions)) }
     var merged = rows
-    merged.insert(.toggle("Ghost Hand", choice: "hand-toggle", on: enabled), at: at)
+    merged.insert(contentsOf: added, at: at)
     return merged
+}
+// The Permissions submenu, from the hand channel's menu frame: each standing permission (an always-allowed app, an app's debugger
+// grant, turbo's browser) with its own Revoke, Revoke All, Never Act in the app sleight last acted in, the blocks, and ChatGPT's own
+// list, which only ChatGPT's settings change. Every click removes access; nothing here grants or lifts a block, which only
+// `sleight-mcp permissions unblock` does.
+struct PermissionGrant: Equatable { let title: String, detail: String, used: Double?, target: String }
+struct PermissionApp: Equatable { let title: String, target: String }
+struct PermissionsData: Equatable { let grants: [PermissionGrant], current: PermissionApp?, blocked: [String], only: [String]? }
+enum PermissionRow: Equatable {
+    case grant(String, target: String)
+    case revokeAll
+    case block(String, target: String)
+    case info(String)
+    case separator
+}
+func permissionText(_ value: Any?, _ limit: Int) -> String? {
+    guard let value = value as? String, !value.isEmpty, value.count <= limit,
+        value.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f && !(0x80...0x9f).contains($0.value) }) else { return nil }
+    return value
+}
+let bundlePattern = #"^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$"#
+let grantTargetPattern = #"^(app:.{1,255}|electron:[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+|turbo)$"#
+// Exact keys only; used is seconds since 1970 or null.
+func permissionsData(_ value: Any?) -> PermissionsData? {
+    guard let data = value as? [String: Any], Set(data.keys).isSubset(of: ["grants", "current", "blocked", "only"]),
+        let rawGrants = data["grants"] as? [Any], rawGrants.count <= 24, let rawBlocked = data["blocked"] as? [Any], rawBlocked.count <= 24 else { return nil }
+    var grants: [PermissionGrant] = []
+    for raw in rawGrants {
+        guard let grant = raw as? [String: Any], Set(grant.keys) == ["title", "detail", "used", "target"],
+            let title = permissionText(grant["title"], 80), let detail = permissionText(grant["detail"], 40),
+            let target = permissionText(grant["target"], 300), target.range(of: grantTargetPattern, options: .regularExpression) != nil else { return nil }
+        var used: Double?
+        if let number = grant["used"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite, number.doubleValue >= 0 { used = number.doubleValue }
+        else if !(grant["used"] is NSNull) { return nil }
+        grants.append(PermissionGrant(title: title, detail: detail, used: used, target: target))
+    }
+    let blocked = rawBlocked.compactMap { permissionText($0, 80) }
+    guard blocked.count == rawBlocked.count else { return nil }
+    var current: PermissionApp?
+    if let raw = data["current"] {
+        guard let app = raw as? [String: Any], Set(app.keys) == ["title", "target"], let title = permissionText(app["title"], 80),
+            let target = permissionText(app["target"], 255), target.range(of: bundlePattern, options: .regularExpression) != nil else { return nil }
+        current = PermissionApp(title: title, target: target)
+    }
+    var only: [String]?
+    if let raw = data["only"] {
+        guard let list = raw as? [Any], (1...12).contains(list.count) else { return nil }
+        let sites = list.compactMap { permissionText($0, 80) }
+        guard sites.count == list.count else { return nil }
+        only = sites
+    }
+    return PermissionsData(grants: grants, current: current, blocked: blocked, only: only)
+}
+func usedWords(_ used: Double?, now: Double) -> String {
+    guard let used = used else { return "not used yet" }
+    let seconds = max(0, now - used)
+    if seconds < 60 { return "used just now" }
+    if seconds < 3600 { return "used \(Int(seconds / 60))m ago" }
+    if seconds < 86400 { return "used \(Int(seconds / 3600))h ago" }
+    return "used \(Int(seconds / 86400))d ago"
+}
+func permissionRows(_ data: PermissionsData, now: Double) -> [PermissionRow] {
+    var rows: [PermissionRow] = data.grants.isEmpty ? [.info("Nothing beyond this session's approvals")]
+        : data.grants.map { .grant($0.title + " · " + $0.detail + " · " + usedWords($0.used, now: now), target: $0.target) } + [.revokeAll]
+    if let current = data.current { rows += [.separator, .block("Never Act in " + current.title, target: current.target)] }
+    if !data.blocked.isEmpty || data.only != nil {
+        rows.append(.separator)
+        rows += data.blocked.map { .info("Blocked: " + $0) }
+        if let only = data.only { rows.append(.info("Turbo only on: " + only.joined(separator: ", "))) }
+        rows.append(.info("sleight-mcp permissions changes these"))
+    }
+    rows += [.separator, .info("ChatGPT's own Always allow list: in ChatGPT's settings")]
+    return rows
 }
 // END STATUS MENU
 
@@ -197,6 +283,12 @@ func writeHandToggle(_ enabled: Bool) {
         let bytes = try? JSONSerialization.data(withJSONObject: ["hand": "toggle", "nonce": nonce, "enabled": enabled], options: [.sortedKeys]) else { return }
     FileHandle.standardOutput.write(bytes + Data([10]))
 }
+// A Permissions row's click, on the hand channel's stdout beside the toggle: revoke or block with its target, or revoke-all.
+func writePermissionEvent(_ event: [String: String]) {
+    guard let nonce = nonceBook.nonce("hand"), let op = event["permissions"], ["revoke", "revoke-all", "block"].contains(op),
+        let bytes = try? JSONSerialization.data(withJSONObject: event.merging(["nonce": nonce]) { $1 }, options: [.sortedKeys]) else { return }
+    FileHandle.standardOutput.write(bytes + Data([10]))
+}
 func glyphImage(_ svg: String) -> NSImage? {
     guard let data = svg.data(using: .utf8), let image = NSImage(data: data) else { return nil }
     image.size = NSSize(width: 24, height: 18)
@@ -204,7 +296,7 @@ func glyphImage(_ svg: String) -> NSImage? {
     return image
 }
 
-final class ConsentHost: NSObject, NSApplicationDelegate {
+final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var pending: [String: [String: Any]] = [:]
     var nonce: String?
@@ -213,6 +305,8 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
     var input = FileHandle.standardInput, output = FileHandle.standardOutput, shared = false
     // The hand channel's state in the shared host: its setting, the version for its block, and when sleight last acted.
     var hand: (enabled: Bool, version: String)?
+    // The Permissions submenu's rows from the hand channel; its times are worded again each time the submenu opens.
+    var permissions: PermissionsData?
     var lastAct: Date?
     var visibility: DispatchWorkItem?
     var hookupTimer: Timer?
@@ -288,6 +382,11 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
                 let entry = NSMenuItem(title: title, action: choice == "hand-toggle" ? #selector(handToggle(_:)) : #selector(control(_:)), keyEquivalent: "")
                 entry.state = on ? .on : .off
                 entry.target = self; entry.representedObject = ["id": id, "choice": choice]; menu.addItem(entry)
+            case .permissions:
+                let entry = NSMenuItem(title: "Permissions", action: nil, keyEquivalent: ""), submenu = NSMenu()
+                submenu.delegate = self
+                fillPermissions(submenu)
+                entry.submenu = submenu; menu.addItem(entry)
             case .help:
                 let entry = NSMenuItem(title: "Settings & Help…", action: #selector(help(_:)), keyEquivalent: "")
                 entry.target = self; menu.addItem(entry)
@@ -304,7 +403,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
                 let data = frame["data"] as? [String: Any] else { continue }
             if data["status"] != nil {
                 let rows = statusRows(data, choices) ?? []
-                add(hand.map { withHand(rows, enabled: $0.enabled) } ?? rows, to: menu, id: id)
+                add(hand.map { withHand(rows, enabled: $0.enabled, permissions: permissionMenu) } ?? rows, to: menu, id: id)
                 statusShown = true
             } else {
                 let row = NSMenuItem(title: "Review sleight request", action: #selector(review(_:)), keyEquivalent: "")
@@ -313,7 +412,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
         }
         if !statusShown, let hand = hand {
             if !menu.items.isEmpty { menu.addItem(NSMenuItem.separator()) }
-            add(handRows(enabled: hand.enabled, version: hand.version), to: menu, id: "")
+            add(handRows(enabled: hand.enabled, version: hand.version, permissions: permissionMenu), to: menu, id: "")
         }
         item.menu = menu
         let requests = pending.values.filter { ($0["data"] as? [String: Any])?["status"] == nil }.count
@@ -330,7 +429,35 @@ final class ConsentHost: NSObject, NSApplicationDelegate {
     // The shared host's consent channel ended (its worker exited): its requests and status go, and the hand stays.
     func channelClosed() { pending.removeAll(); status = nil; rebuildMenu() }
     func noteAct() { lastAct = Date(); rebuildMenu() }
-    func handState(enabled: Bool, version: String) { hand = (enabled, version); rebuildMenu() }
+    func handState(enabled: Bool, version: String, permissions: PermissionsData?) { hand = (enabled, version); self.permissions = permissions; rebuildMenu() }
+    var permissionMenu: [PermissionRow]? { permissions.map { permissionRows($0, now: Date().timeIntervalSince1970) } }
+    func fillPermissions(_ submenu: NSMenu) {
+        submenu.removeAllItems()
+        for row in permissionMenu ?? [] {
+            switch row {
+            case let .grant(title, target):
+                let entry = NSMenuItem(title: title, action: nil, keyEquivalent: ""), inner = NSMenu()
+                let revoke = NSMenuItem(title: "Revoke", action: #selector(permissionClick(_:)), keyEquivalent: "")
+                revoke.target = self; revoke.representedObject = ["permissions": "revoke", "target": target]
+                inner.addItem(revoke); entry.submenu = inner; submenu.addItem(entry)
+            case .revokeAll:
+                let entry = NSMenuItem(title: "Revoke All", action: #selector(permissionClick(_:)), keyEquivalent: "")
+                entry.target = self; entry.representedObject = ["permissions": "revoke-all"]; submenu.addItem(entry)
+            case let .block(title, target):
+                let entry = NSMenuItem(title: title, action: #selector(permissionClick(_:)), keyEquivalent: "")
+                entry.target = self; entry.representedObject = ["permissions": "block", "target": target]; submenu.addItem(entry)
+            case let .info(text): submenu.addItem(NSMenuItem(title: text, action: nil, keyEquivalent: ""))
+            case .separator: submenu.addItem(NSMenuItem.separator())
+            }
+        }
+    }
+    // Opening the submenu words the last-use times against the current time. Only Permissions submenus have this delegate.
+    func menuNeedsUpdate(_ menu: NSMenu) { fillPermissions(menu) }
+    // Revoke and block only remove access, so they don't ask.
+    @objc func permissionClick(_ sender: NSMenuItem) {
+        guard let event = sender.representedObject as? [String: String] else { return }
+        writePermissionEvent(event)
+    }
     @objc func handToggle(_ sender: NSMenuItem) {
         guard let hand = hand else { return }
         writeHandToggle(!hand.enabled)
@@ -445,7 +572,8 @@ struct HandAct {
     let seq: Int, kind: String, pid: Int32, windowId: UInt32, at: CGPoint, path: [CGPoint], delay: Double, beats: Int
 }
 // menu: the hand's setting, capture mode and the plugin version, for the shared host's Ghost Hand row.
-enum HandFrame { case act(String, HandAct), hide(String), menu(String, enabled: Bool, capture: String, version: String) }
+// permissions: the Permissions submenu's rows (permissionsData), when the relay has them.
+enum HandFrame { case act(String, HandAct), hide(String), menu(String, enabled: Bool, capture: String, version: String, permissions: PermissionsData?) }
 let handKinds: Set<String> = ["click", "double", "right", "key", "type", "drag", "scroll"]
 func handFrame(_ data: [String: Any]) -> HandFrame? {
     func number(_ value: Any?) -> Double? {
@@ -464,12 +592,15 @@ func handFrame(_ data: [String: Any]) -> HandFrame? {
     guard let nonce = data["nonce"] as? String, nonce.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { return nil }
     if data["hand"] as? String == "hide" { return Set(data.keys) == ["hand", "nonce"] ? .hide(nonce) : nil }
     if data["hand"] as? String == "menu" {
-        guard Set(data.keys) == ["hand", "nonce", "enabled", "capture", "version"],
+        let keys: Set<String> = ["hand", "nonce", "enabled", "capture", "version"]
+        guard Set(data.keys) == keys || Set(data.keys) == keys.union(["permissions"]),
             let enabled = data["enabled"] as? NSNumber, CFGetTypeID(enabled) == CFBooleanGetTypeID(),
             let capture = data["capture"] as? String, ["hidden", "visible"].contains(capture),
             let version = data["version"] as? String, version.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}$"#, options: .regularExpression) != nil
             else { return nil }
-        return .menu(nonce, enabled: enabled.boolValue, capture: capture, version: version)
+        let permissions = data["permissions"].map { permissionsData($0) }
+        if let parsed = permissions, parsed == nil { return nil }
+        return .menu(nonce, enabled: enabled.boolValue, capture: capture, version: version, permissions: permissions ?? nil)
     }
     guard data["hand"] as? String == "act",
         Set(data.keys) == ["hand", "nonce", "seq", "kind", "pid", "windowId", "at", "path", "delayMs", "beats"],
@@ -871,13 +1002,13 @@ final class HandHost: NSObject, NSApplicationDelegate {
                     guard nonceBook.admit("hand", nonce), act.seq > last else { exit(65) }
                     last = act.seq
                     DispatchQueue.main.async { self.consent?.noteAct(); self.schedule(act) }
-                case let .menu(nonce, enabled, capture, version):
+                case let .menu(nonce, enabled, capture, version, permissions):
                     guard nonceBook.admit("hand", nonce) else { exit(65) }
                     DispatchQueue.main.async {
                         self.capture = capture
                         if let panel = self.panel { panel.sharingType = handCaptureModes[capture] ?? NSWindow.SharingType.none }
                         if !enabled { self.hide() }
-                        self.consent?.handState(enabled: enabled, version: version)
+                        self.consent?.handState(enabled: enabled, version: version, permissions: permissions)
                     }
                 }
             }

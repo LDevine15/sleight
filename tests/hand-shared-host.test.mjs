@@ -94,3 +94,28 @@ test('the dump renders every hookup frame as a template image', { skip }, () => 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout).hookup, { frames: 10, rendered: 10, template: true, seconds: 0.8 });
 });
+
+test('the menu frame\'s Permissions rows and the status frame\'s site are admitted exactly, and anything else ends the host', { skip }, async () => {
+  const binary = build();
+  const rows = { grants: [{ title: 'Fixture', detail: 'always', used: 1760000000, target: 'app:Fixture' }, { title: 'Chat', detail: 'debugger, always', used: null, target: 'electron:com.example.chat' },
+    { title: 'Browser', detail: 'turbo', used: null, target: 'turbo' }], blocked: ['Blocked App'], current: { title: 'Editor', target: 'com.example.editor' }, only: ['https://a.example'] };
+  const site = status({ choices: ['connect', 'block-site'], data: { status: 'disconnected', site: 'https://example.com' } });
+  const good = await shared(binary, [[3, site], [0, menu({ permissions: rows })], [0, menu({ permissions: { grants: [], blocked: [] } })], ['wait', 300], ['end', 3], ['end', 0]]);
+  assert.equal(good.code, 0, good.stderr);
+  assert.equal(good.stdout + good.consent, '', 'rows draw nothing and answer nothing without a click');
+  const cases = {
+    'an unknown grant target': menu({ permissions: { grants: [{ ...rows.grants[0], target: 'unblock:Fixture' }], blocked: [] } }),
+    'a grant with an extra key': menu({ permissions: { grants: [{ ...rows.grants[0], grant: true }], blocked: [] } }),
+    'a current app that is no bundle id': menu({ permissions: { grants: [], blocked: [], current: { title: 'x', target: 'x' } } }),
+    'an unknown permissions key': menu({ permissions: { grants: [], blocked: [], unblock: ['x'] } }),
+  };
+  for (const [name, frame] of Object.entries(cases)) {
+    const result = await shared(binary, [[0, frame], ['wait', 200], ['end', 3], ['end', 0]]);
+    assert.equal(result.code, 65, name + ': ' + result.stderr);
+  }
+  for (const [name, frame] of Object.entries({ 'a site that is a path': status({ data: { status: 'disconnected', site: 'https://example.com/x' } }),
+    'a site choice without a site': status({ choices: ['connect', 'block-site'] }) })) {
+    const result = await shared(binary, [[3, frame], ['wait', 200], ['end', 3], ['end', 0]]);
+    assert.equal(result.code, 65, name + ': ' + result.stderr);
+  }
+});

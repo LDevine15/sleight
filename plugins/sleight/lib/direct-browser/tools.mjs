@@ -85,13 +85,25 @@ export function validateToolCall(input, browser) {
 const clean = value => String(value ?? '').replace(/[\r\n\t]/g, ' ').slice(0, 240);
 const textResult = (text, isError = false) => ({ text, isError });
 
-export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillFields, ctx,
+// sites(url) is the user's site blocks (permissions.mjs): the line to relay for a page sleight may not act on, or undefined. It is
+// checked before every open, read and input and after every step, so a blocked page is never read or acted on, and onSite hears
+// each allowed origin turbo works on (the menu's Never Act on row).
+export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillFields, ctx, sites, onSite,
   endpoint, deliverSnapshot = (state, capture) => { state.snapshotNo = Math.max(state.snapshotNo, capture.number); return true; }, now = Date.now } = {}) {
   if (!pages || [snapshot, runSteps, fillFields, deliverSnapshot].some(fn => typeof fn !== 'function')) throw Error('v3 tool dependencies required');
   let ended = false, ending;
   const deliveries = new WeakMap();
+  const pageURL = entry => { try { return typeof entry.page?.url === 'function' ? entry.page.url() : undefined; } catch { return undefined; } };
+  // A failed check refuses: the user's blocks can't be read, so nothing is sent.
+  const siteLine = url => { if (!sites) return undefined; try { return sites(url); } catch { return "sleight couldn't read your site blocks, so nothing was sent."; } };
+  const siteStop = url => {
+    const line = siteLine(url);
+    if (line) throw Object.assign(Error(line), { siteBlocked: true });
+    try { const origin = new URL(url).origin; if (/^https?:/.test(origin)) onSite?.(origin); } catch {}
+  };
   const capture = async (entry, options) => {
     if (entry.state.actionPending || entry.state.dialog) throw Error('input or dialog pending; wait or explicitly answer the dialog');
+    siteStop(pageURL(entry));
     await assertEndpointRead(entry.page, endpoint);
     const capturedAt = now(), value = await snapshot(entry.page, options);
     await assertEndpointRead(entry.page, endpoint);
@@ -121,9 +133,13 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
         }
         if (request.name === 'browser_open') {
           if (endpointURL(a.url, endpoint)) throw Error(endpointBlock);
+          siteStop(a.url);
           started = true;
           const { tab } = await pages.openTab({ url: a.url }), entry = pages.tab(tab);
           await assertEndpointRead(entry.page, endpoint);
+          // A redirect into a blocked site: the tab closes before its title or page is read.
+          const landed = siteLine(pageURL(entry));
+          if (landed) { try { await pages.close(tab); } catch {} return textResult(landed, true); }
           const header = `${tab} ${originOf(entry.page.url())}\nTitle (untrusted page content): ${clean(await entry.page.title())}`;
           try { const observed = await capture(entry, { maxChars: 8000 }); return await finish([header], observed.text, entry, observed); }
           catch (error) { if (error.message === endpointBlock) throw error; return textResult(header + '\nSnapshot unavailable; use browser_read before input.'); }
@@ -137,6 +153,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           const popupStart = entry.popups?.length ?? 0;
           const blocked = () => entry.popups?.slice(popupStart).filter(row => row.blocked).map(() => endpointBlock) ?? [];
           const privateContext = typeof ctx === 'function' ? ctx(entry) : ctx;
+          siteStop(pageURL(entry));
           if (request.name === 'browser_read') {
             const options = { ...(a.ref === undefined ? {} : { ref: a.ref }), ...(a.find === undefined ? {} : { find: a.find }), maxChars: a.max_chars ?? 8000 };
             const observed = await capture(entry, options);
@@ -147,6 +164,9 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
             const result = await runSteps(entry, a.steps, privateContext);
             await assertEndpointRead(entry.page, endpoint);
             const lines = [...result.lines, ...blocked().filter(line => !result.lines.includes(line))];
+            // A step that landed on a blocked site: what ran, then the user's line, and nothing of the page.
+            const landed = siteLine(pageURL(entry));
+            if (landed) return textResult([...lines, landed].join('\n'), true);
             let observed = result.observe;
             if (a.observe === 'full' && observed) {
               try { observed = await capture(entry, { maxChars: 8000 }); }
@@ -161,12 +181,15 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           const lines = result.rows.map(row => `${clean(row.ref)}: ${clean(row.status)}${row.reason ? ': ' + clean(row.reason) : row.note ? ' (' + clean(row.note) + ')' : ''}`);
           lines.push(...blocked());
           if (result.submitted) lines.push('submit: ' + clean(result.submitted.status), ...(result.submitted.lines ?? []));
+          const landed = siteLine(pageURL(entry));
+          if (landed) return textResult([...lines, landed].join('\n'), true);
           let observed;
           try { observed = await capture(entry, { since: entry.state.snapshotNo || undefined, maxChars: 8000 }); } catch { lines.push('Read unavailable; use browser_read before retrying.'); }
           return await finish(lines, observed?.text, entry, observed);
         });
       } catch (error) {
         if (error.message === endpointBlock) return textResult(endpointBlock, true);
+        if (error.siteBlocked) return textResult(error.message, true);
         return textResult(started && !error.notRun ? 'Operation outcome is unconfirmed. Read current state before deciding what remains; do not replay input blindly. Use the engine browser path if needed.'
           : clean(error.message).replace(/\.+$/, '') + (error.notRun ? '. Nothing was sent.' : '. Use the engine browser path if needed.'), !started || !!error.notRun);
       }

@@ -99,7 +99,8 @@ export function createGrantStore({ path, keyPath } = {}) {
 
 // ui is the native consent channel (present/authenticate/revoke). engineApproval(instance) is the engine's own
 // app approval, 'approved' | 'refused' | 'unknown'. Only 'approved' lets a card appear or a grant stay current.
-export function createElectronConsent({ ui, store, engineApproval, now = Date.now, ttlMs = 120000, relaunchTtlMs = 60000 } = {}) {
+// onAlwaysUsed(bundleId) hears each time a saved Always record grants the debugger, for the permissions list's last use.
+export function createElectronConsent({ ui, store, engineApproval, now = Date.now, ttlMs = 120000, relaunchTtlMs = 60000, onAlwaysUsed } = {}) {
   if (typeof ui?.present !== 'function' || typeof ui.authenticate !== 'function' || typeof store?.get !== 'function' || typeof store.put !== 'function' ||
       typeof engineApproval !== 'function' || typeof now !== 'function') fail('TRUSTED_CONTRACT_REQUIRED');
   const live = new Set(), entries = new Map(), requests = new Map();
@@ -207,7 +208,7 @@ export function createElectronConsent({ ui, store, engineApproval, now = Date.no
       if (!approved(app)) return undefined;
       const existing = find(app, session, turn);
       if (existing) return existing;
-      if (!app.temporary && store.get(appKey(app))) return mint(app, session, turn, 'always');
+      if (!app.temporary && store.get(appKey(app))) { try { onAlwaysUsed?.(app.bundleId); } catch {} return mint(app, session, turn, 'always'); }
     } catch {}
     return undefined;
   }
