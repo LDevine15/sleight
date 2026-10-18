@@ -114,3 +114,90 @@ test('all recorded locator errors preserve their full engine diagnostics without
     assert.match(hint, /domSnapshot/, row.id);
   }
 });
+
+test('a selector deadline reports the engine read with zero current matches', () => {
+  const src = failure({ kind: 'no_matches', action: 'click', locator: '#gone', matchCount: 0, matches: [] });
+  const out = rewriteLocatorFailure(src);
+  assert.match(out.split('\n')[0], /Current matches: 0/);
+  assert.match(out.split('\n')[0], /Read before retrying input/);
+  assert.ok(out.endsWith(src));
+});
+
+test('an overlay deadline includes current matching text, role and frame context', () => {
+  const src = failure({ kind: 'intercepted', action: 'click',
+    locator: '#checkout >> internal:control=enter-frame >> button', matchCount: 1,
+    matches: [{ tag: 'button', text: 'Continue', visible: true, disabled: false }] });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  assert.match(hint, /Current matches: 1.*button.*Continue/);
+  assert.match(hint, /Frame:.*#checkout/);
+  assert.match(hint, /covered by another element/);
+});
+
+test('a detached frame deadline reports unavailable diagnostics without an invented cause', () => {
+  const src = 'Error: Playwright selector deadline exceeded\nwaiting on click for selector iframe >> internal:control=enter-frame >> button\nFrame was detached';
+  const out = rewriteLocatorFailure(src), hint = out.split('\n')[0];
+  assert.match(hint, /Current diagnostic unavailable/);
+  assert.match(hint, /Frame:.*iframe/);
+  assert.doesNotMatch(hint, /is missing|is covered|sent no input/);
+  assert.ok(out.endsWith(src));
+});
+
+test('the current diagnostic is bounded and the engine snapshot is preserved', () => {
+  const src = failure({ kind: 'action_failed', action: 'click', locator: '#target', matchCount: 99,
+    matches: Array.from({length: 99}, () => ({tag: 'button', text: 'x'.repeat(10000), visible: true})) });
+  const out = rewriteLocatorFailure(src), hint = out.split('\n')[0];
+  assert.match(hint, /Current matches: 99/);
+  assert.ok(hint.length < 1800, hint.length);
+  assert.ok(out.endsWith(src));
+});
+
+test('strict matches distinguish duplicate text with exact escaped labels without choosing one', () => {
+  const labels = ['Save "draft"\\copy', "Save owner's final"];
+  const src = failure({ ...matched, kind: 'multiple_matches', matchCount: 2,
+    matches: labels.map(ariaLabel => ({ tag: 'button', role: 'button', text: 'Save', ariaLabel, visible: true })) });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  for (const label of labels) assert.ok(hint.includes(`getByLabel(${JSON.stringify(label)}, { exact: true })`), hint);
+  assert.match(hint, /button/);
+  assert.match(hint, /resolve one matching locator/);
+  assert.doesNotMatch(hint, /\.first\(|\.nth\(|\.click\(/);
+  assert.ok(rewriteLocatorFailure(src).endsWith(src));
+});
+
+test('strict diagnostics explicitly report the bounded match listing', () => {
+  const src = failure({ ...matched, kind: 'multiple_matches', matchCount: 8, truncated: true,
+    matches: Array.from({ length: 8 }, (_, i) => ({ tag: 'button', ariaLabel: `Save ${i}` })) });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  assert.match(hint, /showing 5 of 8 matches; truncated/);
+  assert.equal((hint.match(/getByLabel\("/g) ?? []).length, 5);
+});
+
+test('a long label is bounded without suggesting a truncated label as an exact match', () => {
+  const src = failure({ ...matched, kind: 'multiple_matches', matchCount: 2,
+    matches: [{ role: 'button', ariaLabel: 'private'.repeat(100) }, { role: 'button', ariaLabel: 'Done' }] });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  assert.ok(hint.length < 900);
+  assert.match(hint, /label truncated/);
+  assert.doesNotMatch(hint, /getByLabel\("private/);
+});
+
+test('strict errors without structured diagnostics make the suggested locators exact', () => {
+  const raw = "Error: strict mode violation: locator('button') resolved to 2 elements:\n  1) <button>Save</button> aka getByRole('button', { name: 'Save' })\n  2) <button>Save as</button> aka getByRole('button', { name: 'Save as' })";
+  const hint = rewriteLocatorFailure(raw).split('\n')[0];
+  assert.match(hint, /getByRole\('button', \{ name: 'Save', exact: true \}\)/);
+  assert.match(hint, /getByRole\('button', \{ name: 'Save as', exact: true \}\)/);
+  assert.doesNotMatch(hint, /observed full label/);
+  assert.ok(rewriteLocatorFailure(raw).endsWith(raw));
+});
+
+test('a strict error that lists no matches does not claim a truncated listing', () => {
+  const hint = rewriteLocatorFailure("Error: strict mode violation: locator('button') resolved to 14 elements:").split('\n')[0];
+  assert.doesNotMatch(hint, /showing 0 of/);
+});
+
+test('rows without a label or role show their text so identical controls can be told apart', () => {
+  const src = failure({ ...matched, kind: 'multiple_matches', matchCount: 2,
+    matches: [{ tag: 'div', text: 'First card' }, { tag: 'div', text: 'Second card' }] });
+  const hint = rewriteLocatorFailure(src).split('\n')[0];
+  assert.match(hint, /"First card"/);
+  assert.match(hint, /"Second card"/);
+});

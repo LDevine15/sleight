@@ -94,26 +94,29 @@ async function sessionTab(cua, pairs, query, options) {
       }
     }
   }
-  if (found.length !== 1) throw new Error('getTab by URL needs exactly one previously observed session tab. Acquire the intended tab explicitly.');
+  if (found.length !== 1) throw new Error('getTab by URL needs exactly one previously observed session tab. Acquire the intended tab explicitly. Next: await cua.listTabs().');
   nodeRepl.write('sleight: getTab by URL found one previously observed session tab.');
   return cua.getTab(found[0].id, { browser: found[0].browser });
 }
 
 async function restore(cua, records) {
   const restored = [];
-  let browser;
+  let browser, rebind = '';
   if (records.b && typeof b === 'undefined') { browser = await cua.getBrowser(records.b); }
   if (records.tab && typeof tab === 'undefined') {
     const pair = records.tab;
     const owner = browser && JSON.stringify(records.b) === JSON.stringify(pair.selector) ? browser : await cua.getBrowser(pair.selector);
     const tabs = await owner.tabs.list();
     if (tabs.filter(tab => String(tab.id) === pair.id && tab.url === pair.url).length !== 1) {
-      throw new Error('The last session tab is gone or changed. Acquire a tab explicitly before input.');
+      throw new Error('The last session tab is gone or changed. Acquire a tab explicitly before input. Next: await cua.listTabs().');
     }
     globalThis.tab = await owner.tabs.get(pair.id); restored.push('tab');
+    if (typeof owner.browserId === 'string' && owner.browserId.length <= 128 && JSON.stringify(pair.selector).length <= 300) {
+      rebind = ` Browser selector ${JSON.stringify(pair.selector)}. Rebind with await cua.getTab(${JSON.stringify(pair.id)}, { browser: ${JSON.stringify(owner.browserId)} }).`;
+    }
   }
   if (browser) { globalThis.b = browser; restored.unshift('b'); }
-  if (restored.length) nodeRepl.write('sleight: restored session handles ' + restored.join(' and ') + ' after a reset.');
+  if (restored.length) nodeRepl.write('sleight: restored session handles ' + restored.join(' and ') + ' after a reset.' + rebind);
 }
 
 export class BrowserRecovery {
@@ -123,12 +126,14 @@ export class BrowserRecovery {
   pending = false;
   docsShown = false;
   restoring = false;
+  missingTab = false;
 
   reset() { this.pending = true; }
 
   observe(code = '', reply) {
     const texts = (reply.result?.content ?? []).filter(c => c.type === 'text').map(c => c.text);
     const docs = texts.some(text => /^## Computer Use\n/m.test(text));
+    if ((reply.error || reply.result?.isError) && texts.some(text => /\btab is not defined\b/.test(text))) this.missingTab = true;
     if (docs && this.docsShown) this.reset();
     if (docs) this.docsShown = true;
     if ((reply.error || reply.result?.isError) && texts.some(text => /\b(?:b|tab) is not defined\b|(?:kernel|REPL|JavaScript session).*(?:reset|restart)|(?:execution|script) timed out|Timed out after \d+ms waiting for CDP command/i.test(text))) this.reset();
@@ -182,6 +187,9 @@ export class BrowserRecovery {
       for (const name of assignments(source)) declared.add(name);
       const records = { b: declared.has('b') || !/\bb\b/.test(source) ? undefined : this.browsers.get('b'),
         tab: declared.has('tab') || !/\btab\b/.test(source) ? undefined : this.tabs.get('tab') };
+      if (this.missingTab && !declared.has('tab') && /\btab\b/.test(source) && !records.tab) {
+        prefix += 'nodeRepl.write("sleight: no verified session tab is available for a rebind. Next: await cua.listTabs().");\n';
+      }
       if ((records.b && /\bb\b/.test(source)) || (records.tab && /\btab\b/.test(source))) {
         prefix += `await (${restore.toString()})(cua, ${JSON.stringify(records)});\n`;
         this.restoring = true;

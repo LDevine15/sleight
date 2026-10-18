@@ -65,7 +65,27 @@ function locatorAdvice(block) {
     : kind === 'covered' ? `${action} ${target} is covered by ${coveringElement(block) || 'another element'}`
     : kind === 'matched' ? `${action} ${target}: the action failed after the element matched`
     : `${action} ${target} timed out`;
-  return `${causeText}. Next: ${nextCall(kind)}.`;
+  const truncated = kind === 'strict' && matches.length && (diag?.truncated || Number(total) > matches.length)
+    ? ` (showing ${matches.length} of ${total} matches; truncated)` : '';
+  const diagnostic = /Playwright selector deadline exceeded/.test(block) ? ` ${currentDiagnostic(diag, selector)}` : '';
+  return `${causeText}${truncated}.${diagnostic} Next: ${nextCall(kind, matches.some(m => m.includes('exact: true')))}.${diagnostic ? ' Read before retrying input. Do not retry blindly.' : ''}`;
+}
+
+function currentDiagnostic(diag, selector) {
+  // actionError already takes one read-only, bounded engine snapshot. Reuse it
+  // rather than sending another read or replaying the failed action.
+  const short = (value, limit) => typeof value === 'string' ? value.replace(/\s+/g, ' ').slice(0, limit) : '';
+  const frames = typeof selector === 'string' ? selector.split(/\s*>>\s*internal:control=enter-frame\s*>>\s*/).slice(0, -1) : [];
+  const frame = frames.length ? ` Frame: ${JSON.stringify(short(frames.join(' > '), 180))}.` : '';
+  if (!Number.isInteger(diag?.matchCount) || diag.matchCount < 0 || !Array.isArray(diag.matches)) {
+    return `Current diagnostic unavailable.${frame}`;
+  }
+  const rows = diag.matches.slice(0, 5).map(row => [
+    short(row?.role || impliedRole(row ?? {}), 30),
+    JSON.stringify(short(row?.ariaLabel || row?.text, 80)),
+    typeof row?.visible === 'boolean' ? `visible:${row.visible}` : '',
+  ].filter(Boolean).join(' '));
+  return `Current matches: ${diag.matchCount}${rows.length ? ' (up to 5): ' + rows.join('; ') : ''}.${frame}`;
 }
 
 function parseDiag(block) {
@@ -95,9 +115,11 @@ function describeMatches(diag, akas, selector) {
     const row = rows[i] || {};
     const name = row.ariaLabel || /name:\s*['"]([^'"]+)['"]/.exec(akas[i] || '')?.[1] || '';
     const role = row.role || impliedRole(row);
-    const loc = akas[i] || locatorFor(row, i, selector, name, role);
+    const aka = akas[i]?.replace(/(\{ name: '[^']*') \}\)$/, '$1, exact: true })');
+    const loc = row.ariaLabel ? locatorFor(row, name, role) : aka || locatorFor(row, name, role);
     const visible = typeof row.visible === 'boolean' ? `visible:${row.visible}` : '';
-    out.push([role, name && `"${name.replace(/\s+/g, ' ').trim().slice(0, 40)}"`, `via ${loc}`, visible].filter(Boolean).join(' '));
+    const label = name || (typeof row.text === 'string' ? row.text : '');
+    out.push([role, label && `"${label.replace(/\s+/g, ' ').trim().slice(0, 40)}"`, `via ${loc}`, visible].filter(Boolean).join(' '));
   }
   return out;
 }
@@ -108,18 +130,19 @@ function impliedRole(row) {
   return row.tag || '';
 }
 
-function locatorFor(row, i, selector, name, role) {
-  if (role && name) return `getByRole('${role}', { name: '${name.replace(/'/g, "\\'")}' })`;
-  if (selector) return `locator(${JSON.stringify(selector)}).nth(${i})`;
-  return `nth(${i})`;
+function locatorFor(row, name, role) {
+  if (name.length > 120) return 'read the full label (label truncated)';
+  if (row.ariaLabel) return `getByLabel(${JSON.stringify(name)}, { exact: true })`;
+  if (role && name) return `getByRole(${JSON.stringify(role)}, { name: ${JSON.stringify(name)}, exact: true })`;
+  return 'read current labels before selecting';
 }
 
 function coveringElement(block) {
   return /Element does not receive pointer events at the \w+ point; (<[^;\n]+>|[^\n;]+?) intercepts the \w+/.exec(block)?.[1];
 }
 
-function nextCall(kind) {
-  if (kind === 'strict') return `${READ} and resolve one matching locator`;
+function nextCall(kind, exact = false) {
+  if (kind === 'strict') return `${READ} and resolve one matching locator${exact ? '' : '. For an observed full label, use getByLabel(label, { exact: true }) and confirm it is unambiguous'}`;
   if (kind === 'missing') return `${READ} and use a locator that matches now`;
   return READ;
 }

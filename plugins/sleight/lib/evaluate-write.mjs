@@ -1,9 +1,12 @@
 import { EVALUATE_ACTION } from './tab-errors.mjs';
 
 const setters = { value: 'fill', checked: 'check', innerHTML: 'read', textContent: 'read', className: 'read',
-  selected: 'select', selectedIndex: 'select', scrollTop: 'scroll', scrollLeft: 'scroll', fetch: 'read' };
-const methods = { click: 'click', dispatchEvent: 'click', createEvent: 'click', addEventListener: 'read',
+  selected: 'select', selectedIndex: 'select', scrollTop: 'scroll', scrollLeft: 'scroll', fetch: 'read',
+  draggable: 'read', cssText: 'read' };
+const methods = { click: 'click', dispatchEvent: 'read', createEvent: 'read', addEventListener: 'read',
+  append: 'read', prepend: 'read', replaceWith: 'read', remove: 'read', insertAdjacentHTML: 'read',
   setAttribute: 'read', appendChild: 'drag', insertBefore: 'drag', removeChild: 'drag', replaceChild: 'drag' };
+const ambiguousMethods = new Set(['append', 'prepend', 'replaceWith', 'remove', 'insertAdjacentHTML']);
 
 // Like the A3R5 check, ignore literal text. Keep offsets, regex character classes and
 // template expressions so a quoted action cannot hide a later write or become one.
@@ -74,12 +77,13 @@ function argumentEnd(ts, start) {
 
 function callbacks(ts) {
   const ranges = [];
+  const range = (start, end) => Object.assign(ts.slice(start, end), { endAt: ts[end]?.at });
   for (let i = 0; i < ts.length; i++) {
     const computed = ts[i - 1]?.v === '[' && ts[i].string && ts[i + 1]?.v === ']';
     let open = computed ? i + 2 : i + 1;
     if (ts[open]?.v === '?.') open++;
     if (ts[i].v !== 'evaluate' || (!computed && !['.', '?.'].includes(ts[i - 1]?.v)) || ts[open]?.v !== '(') continue;
-    const start = open + 1, end = argumentEnd(ts, start), arg = ts.slice(start, end);
+    const start = open + 1, end = argumentEnd(ts, start), arg = range(start, end);
     if (arg.some(t => !t.string && ['=>', 'function'].includes(t.v))) ranges.push(arg);
     else if (arg.length === 1 && !arg[0].string) {
       const name = arg[0].v;
@@ -88,9 +92,9 @@ function callbacks(ts) {
         if (ts[j - 1]?.v === 'function') {
           const parameters = ts.findIndex((t, k) => k > j && !t.string && t.v === '(');
           const body = closingToken(ts, parameters) + 1;
-          if (ts[body]?.v === '{') ranges.push(ts.slice(body, closingToken(ts, body) + 1));
+          if (ts[body]?.v === '{') ranges.push(range(j - 1, closingToken(ts, body) + 1));
         } else if (ts[j + 1]?.v === '=') {
-          const value = ts.slice(j + 2, argumentEnd(ts, j + 2));
+          const value = range(j + 2, argumentEnd(ts, j + 2));
           if (value.some(t => t.v === '=>' || t.v === 'function')) ranges.push(value);
         }
       }
@@ -128,8 +132,68 @@ function receiverRoot(ts, index) {
   }
 }
 
-function writeIn(ts) {
-  const locals = new Set(), data = new Set();
+function splitTop(ts, separator) {
+  const parts = []; let depth = 0, start = 0;
+  for (let i = 0; i < ts.length; i++) {
+    if (ts[i].string) continue;
+    const v = ts[i].v;
+    if (!depth && v === separator) { parts.push(ts.slice(start, i)); start = i + 1; }
+    if (['(', '[', '{'].includes(v)) depth++;
+    if ([')', ']', '}'].includes(v)) depth--;
+  }
+  return [...parts, ts.slice(start)];
+}
+
+function bindsFetch(ts, depth = 0) {
+  if (depth > 32) return false;
+  const part = splitTop(ts, '=')[0];
+  while (part[0]?.v === '.') part.shift(); // Rest binding.
+  if (part.length === 1) return !part[0].string && part[0].v === 'fetch';
+  if (part[0]?.v === '[') return splitTop(part.slice(1, -1), ',').some(value => bindsFetch(value, depth + 1));
+  if (part[0]?.v === '{') return splitTop(part.slice(1, -1), ',').some(value => {
+    const property = splitTop(value, ':');
+    return bindsFetch(property.length > 1 ? property[1] : property[0], depth + 1);
+  });
+  return false;
+}
+
+function parameterScopes(ts, source) {
+  const ranges = [];
+  const bodyEnd = start => {
+    if (ts[start]?.v === '{') return closingToken(ts, start);
+    const end = argumentEnd(ts, start), candidates = [end]; let depth = 0;
+    for (let i = start; i < end; i++) {
+      if (!ts[i].string) {
+        if (['(', '[', '{'].includes(ts[i].v)) depth++;
+        if ([')', ']', '}'].includes(ts[i].v)) depth--;
+      }
+      if (!depth && i + 1 < end && /[\r\n\u2028\u2029]/.test(source.slice(ts[i].at, ts[i + 1].at))) candidates.push(i + 1);
+    }
+    // The JS parser distinguishes ASI from a multiline call, property, operator
+    // or tagged template. Keep class/private/super context by parenthesizing
+    // the candidate in the original program. Compile only, never invoke it.
+    // Choose the longest complete expression before a possible statement break.
+    for (const candidate of candidates.sort((a, b) => b - a)) {
+      const at = ts[start].at, endAt = ts[candidate]?.at ?? ts.endAt ?? source.length;
+      const program = source.slice(0, at) + '(' + source.slice(at, endAt) + '\n)\n' + source.slice(endAt);
+      try { new Function('return async () => {\n' + program + '\n}'); return candidate; } catch {}
+    }
+    return end;
+  };
+  for (let i = 0; i < ts.length; i++) {
+    if (!ts[i].string && ts[i].v === 'fetch' && ts[i + 1]?.v === '=>') ranges.push([i, bodyEnd(i + 2)]);
+    if (ts[i].string || ts[i].v !== '(') continue;
+    const end = closingToken(ts, i), arrow = ts[end + 1]?.v === '=>';
+    const fn = ts[i - 1]?.v === 'function' || ts[i - 2]?.v === 'function' || ts[i - 3]?.v === 'function' && ts[i - 2]?.v === '*';
+    if (!arrow && (!fn || ts[end + 1]?.v !== '{')) continue;
+    if (splitTop(ts.slice(i + 1, end), ',').some(part => bindsFetch(part))) ranges.push([i, bodyEnd(end + (arrow ? 2 : 1))]);
+  }
+  return ranges;
+}
+
+function writeIn(ts, source) {
+  const locals = new Set(), data = new Set(), parameters = parameterScopes(ts, source);
+  const pageRoots = new Set(['document', 'window', 'globalThis']), pageAliases = new Set();
   for (let i = 0; i < ts.length; i++) {
     if (['const', 'let', 'var', 'function', 'class'].includes(ts[i - 1]?.v) && !ts[i].string) {
       locals.add(ts[i].v);
@@ -154,13 +218,26 @@ function writeIn(ts) {
     if (ts[nextIndex]?.v === '?.') nextIndex++;
     const next = ts[nextIndex]?.v;
     const receiver = receiverRoot(ts, i - 2);
+    if (!token.string && !property && locals.has(v) && next === '=' && !pageRoots.has(v)) {
+      const source = ts[nextIndex + 1]?.v;
+      if (pageAliases.has(source) || pageRoots.has(source) && !data.has(source)) pageAliases.add(v);
+      else pageAliases.delete(v);
+    }
     let constructor = i;
     while (['.', '?.'].includes(ts[constructor - 1]?.v)) constructor -= 2;
     if (!token.string && ts[constructor - 1]?.v === 'new' && next === '(' && !locals.has(v) && !data.has(receiver)) {
-      const action = v === 'DataTransfer' || v === 'DragEvent' ? 'drag' : /Event$/.test(v) ? 'click' : undefined;
+      const action = v === 'DataTransfer' || v === 'DragEvent' ? 'drag' : /Event$/.test(v) ? 'read' : undefined;
       if (action) return { token, action };
     }
-    if (!token.string && v === 'fetch' && next === '(' && !locals.has(v) && !data.has(receiver)) return { token, action: 'read' };
+    const localFetch = !property && !computed && (locals.has(v) || parameters.some(([start, end]) => i >= start && i < end));
+    if (!token.string && v === 'fetch' && next === '(' && !localFetch && !data.has(receiver)) return { token, action: 'read' };
+    if (!token.string && !property && v === 'fetch' && next === '=' && !localFetch) return { token, action: 'read' };
+    if ((property || computed) && next === '(' && ambiguousMethods.has(v)) {
+      // Unknown receivers can be local classes or collection values. The
+      // engine remains the read-only boundary when this preflight cannot tell.
+      if (pageAliases.has(receiver) || pageRoots.has(receiver) && !data.has(receiver)) return { token, action: methods[v] };
+      continue;
+    }
     if ((!property && !computed) || data.has(receiver)) continue;
     if (next === '(' && Object.hasOwn(methods, v)) {
       const attribute = ts[nextIndex + 1];
@@ -176,7 +253,7 @@ function writeIn(ts) {
 
 export function evaluateWrite(code) {
   if (typeof code !== 'string' || !code.includes('evaluate')) return;
-  const writes = callbacks(tokens(code)).map(writeIn).filter(Boolean).sort((a, b) => a.token.at - b.token.at);
+  const writes = callbacks(tokens(code)).map(range => writeIn(range, code)).filter(Boolean).sort((a, b) => a.token.at - b.token.at);
   const write = writes[0];
   if (!write) return;
   const line = code.slice(0, write.token.at).split('\n').length;

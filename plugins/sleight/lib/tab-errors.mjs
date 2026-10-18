@@ -5,7 +5,7 @@
 import { rewriteLocatorFailure } from './locator-errors.mjs';
 
 const READ = 'await tab.getAXState({ disableDiffing: true })';
-const DIALOG = 'const dialog = await tab.getJsDialog(); if (dialog) { await dialog.dismiss(); }';
+const DIALOG = 'nodeRepl.write((await tab.getJsDialog()) ?? "No page dialog")';
 const CONFIRM = /^(?:Error: )?Browser action "([^"]+)" interrupted by JavaScript (confirm|alert|prompt|beforeunload): (.*)$/;
 const LEGACY = /^(?:The action may already have taken effect; do not retry it\.(?: Inspect or dismiss the dialog before continuing\.)?|Inspect or dismiss the dialog before continuing\.)$/;
 export const EVALUATE_ACTION = Object.freeze({
@@ -13,21 +13,21 @@ export const EVALUATE_ACTION = Object.freeze({
   select: 'selectOption(...)', check: 'locator.setChecked(...)',
   read: 'await tab.getAXState()',
 });
-const { drag: DRAG, fill: FILL, click: CLICK, select: SELECT, check: CHECK } = EVALUATE_ACTION;
+const { drag: DRAG, fill: FILL, select: SELECT, check: CHECK } = EVALUATE_ACTION;
 export const EVALUATE_WRITE = [
   [/\binsertBefore is not a function/, 'insertBefore', DRAG],
   [/\bappendChild is not a function/, 'appendChild', DRAG],
   [/\bremoveChild is not a function/, 'removeChild', DRAG],
   [/\breplaceChild is not a function/, 'replaceChild', DRAG],
-  [/\bcreateEvent is not a function/, 'createEvent', CLICK],
-  [/\bdispatchEvent is not a function/, 'dispatchEvent', CLICK],
+  [/\bcreateEvent is not a function/, 'createEvent'],
+  [/\bdispatchEvent is not a function/, 'dispatchEvent'],
   [/DragEvent is not a constructor/, 'DragEvent', DRAG],
   [/DataTransfer is not a constructor/, 'DataTransfer', DRAG],
-  [/CustomEvent is not a constructor/, 'CustomEvent', CLICK],
-  [/PointerEvent is not a constructor/, 'PointerEvent', CLICK],
-  [/MouseEvent is not a constructor/, 'MouseEvent', CLICK],
-  [/KeyboardEvent is not a constructor/, 'KeyboardEvent', CLICK],
-  [/\bEvent is not a constructor/, 'Event', CLICK],
+  [/CustomEvent is not a constructor/, 'CustomEvent'],
+  [/PointerEvent is not a constructor/, 'PointerEvent'],
+  [/MouseEvent is not a constructor/, 'MouseEvent'],
+  [/KeyboardEvent is not a constructor/, 'KeyboardEvent'],
+  [/\bEvent is not a constructor/, 'Event'],
   [/Cannot set property (selectedIndex|selected)\b/, 'setting $1', SELECT],
   [/Cannot set property (value)\b/, 'setting $1', FILL],
   [/Cannot set property (checked)\b/, 'setting $1', CHECK],
@@ -36,8 +36,14 @@ export const EVALUATE_WRITE = [
   [/Cannot add property (on\w+)\b/, 'assigning $1'],
 ];
 
-export function rewriteTabError(text, { read = false } = {}) {
+export function rewriteTabError(text, { read = false, code = '' } = {}) {
   if (typeof text !== 'string') return text;
+  const blocked = browserBlockedAdvice(text);
+  const gap = text.includes('\n') ? '\n' : ' ';
+  if (blocked) return text + gap + blocked;
+  if (/^(?:Error: )?Capability is not available: viewport\s*$/.test(text.split('\n')[0])) {
+    return text + gap + 'Requested capability viewport is unavailable in this backend. Next: await tab.capabilities.list() to read supported capability IDs. Choose only from documented available capabilities.';
+  }
   text = rewriteLocatorFailure(text);
   const lines = text.split('\n'), out = [];
   for (let i = 0; i < lines.length; i++) {
@@ -55,21 +61,63 @@ export function rewriteTabError(text, { read = false } = {}) {
       const accept = confirm[2] === 'prompt' ? 'await dialog.accept(text) or await dialog.dismiss()' :
         confirm[2] === 'confirm' ? 'await dialog.accept() or await dialog.dismiss()' : 'await dialog.dismiss()';
       out.push(`Browser action "${confirm[1]}" interrupted by JavaScript ${confirm[2]}: ${message} Input may already have been sent; do not retry the ${confirm[1]}. Next: const dialog = await tab.getJsDialog(); if (dialog) { ${accept}; }`);
-    } else out.push(rewriteLine(lines[i], read));
+    } else out.push(rewriteLine(lines[i], read, i === 0));
   }
-  const write = evaluateWriteAdvice(text);
+  const write = evaluateWriteAdvice(text), scope = evaluateScopeAdvice(text);
   if (write) out.push(write);
+  else if (scope) out.push(scope);
   else if (/^TypeError: Cannot read properties of (?:null|undefined)\b/m.test(text) &&
       /^\s+at __playwrightEvaluate\b/m.test(text)) {
-    out.push('The page scope is read-only; element ids are not globals, and document.querySelector returns null when nothing matches. Check the element before reading its properties.');
+    out.push('The page scope is read-only; element ids are not globals, and document.querySelector returns null when nothing matches. Check the element before reading its properties. Next read: `await tab.playwright.evaluate(s => document.querySelector(s) !== null, selector)` with a selector you already observed.');
   }
-  return out.join('\n');
+  const shape = inputShapeAdvice(text, code, out.join('\n'));
+  const rewritten = shape ? out.join('\n') + ' ' + shape : out.join('\n');
+  if (/^(?:Error: )?Browser Use rejected this action due to browser security policy\.(?:\n|$)/.test(text)) {
+    return rewritten + '\nPermission or security policy refused this operation. Keep the action stopped. The user must decide whether to continue with an allowed operation. Read-only inventory: await cua.listBrowsers().';
+  }
+  if (/^(?:Error: )?[\w -]{1,40} requested permissions to use a tool, but you haven't granted it yet\.(?:\n|$)/.test(text)) {
+    return rewritten + '\nTool permission has not been granted. Keep the action stopped. The user must decide whether to grant permission in a later request.';
+  }
+  return rewritten;
+}
+
+function inputShapeAdvice(text, code, rewritten) {
+  const first = text.split('\n')[0];
+  const selectors = 'App selectors use cua.getApp(bundleId). Tab selectors use cua.getTab(tabId, { browser: browserId }) with a string tabId.';
+  if (/^(?:(?:Type)?Error: )?Cannot use 'in' operator to search for 'mention' in /.test(first) && /\bcua\s*\.\s*getTab\s*\(/.test(code)) {
+    return `${selectors} Next: await cua.listTabs(); bind an explicitly chosen or previously observed tab before reading its indices.`;
+  }
+  if (!/^(?:Error: )?(?:Browser input requires an element index|Accessibility action requires an element index or point|Accessibility element \d+ is stale or missing|Accessibility capture belongs to a previous page)/.test(first)) return;
+  const read = rewritten.includes('.getAXState(') ? '' : ' Next: await tab.getAXState({ disableDiffing: true }).';
+  if (/stale or missing|previous page/.test(first)) return `Use an index from a fresh read.${read}`;
+  return `Use a current numeric element index (a nonnegative integer) for indexed tab input. Click and scroll also accept documented [x, y] points; null is only the focus form for tab text and key input. ${selectors}${read} Do not guess an index or retry the refused input automatically.`;
+}
+
+function browserBlockedAdvice(text) {
+  const first = text.split('\n')[0];
+  const extension = /^(?:Error: )?Automation is blocking automation because another extension UI is open\.\s*$/.test(first);
+  const client = /^(?:Error: )?(?:page\.goto: )?net::ERR_BLOCKED_BY_CLIENT(?: at \S+)?\s*$/.test(first);
+  if (!extension && !client) return;
+  const reason = extension ? 'An extension UI is blocking browser automation. The user must clear that UI before continuing.'
+    : 'Navigation was blocked by the client. Its cause is unconfirmed. The user must review the block before continuing.';
+  return `${reason} Next read, if available: await cua.listTabs(). Do not retry the refused call or change another session.`;
+}
+
+function evaluateScopeAdvice(text) {
+  if (!/^\s+at __playwrightEvaluate\b/m.test(text)) return;
+  const missing = /^(?:Error: )?(?:TypeError: (parseInt|getEventListeners) is not a function|ReferenceError: (parseInt|getEventListeners) is not defined)$/.exec(text.split('\n')[0]);
+  if (!missing) return;
+  const name = missing[1] || missing[2];
+  if (name === 'getEventListeners') return 'getEventListeners is unavailable in this restricted read-only scope, and no supported read lists event listeners.';
+  return `${name} is unavailable in this restricted read-only scope. Read a string with locator.textContent({}), locator.getAttribute(name, {}) or tab.playwright.domSnapshot(), then apply parseInt to it in the REPL.`;
 }
 
 export function evaluateWriteAdvice(text) {
   if (!/^\s+at __playwrightEvaluate\b/m.test(text)) return;
   const head = text.split('\n').find(line => /TypeError:/.test(line))?.trim();
   if (!head || !/^(?:Error: )?TypeError:/.test(head)) return;
+  const nonextensible = /Cannot add property (fetch|draggable|cssText), object is not extensible\b/.exec(head);
+  if (nonextensible) return `The evaluate page scope is read-only. If this was a page object, assigning ${nonextensible[1]} cannot run there. Read the controls with ${EVALUATE_ACTION.read}.`;
   for (const [pattern, operation, next] of EVALUATE_WRITE) {
     const match = pattern.exec(head);
     if (!match) continue;
@@ -84,7 +132,11 @@ export function isTabBinding(code = '') {
   return !/\b(?:click|dblclick|fill|type|press|pressSequentially|pressKey|setValue|typeText|paste|scroll|selectText|selectOption|setChecked|check|uncheck|drag|dragTo|performSecondaryAction|goto|reload|downloadMedia|dispatchEvent|clear|htmlDrag|back|forward|scrollIntoViewIfNeeded|fillForm|pickFromList|reorder|accept|dismiss|close)\s*(?:\?\.)?\s*\(/.test(source);
 }
 
-function rewriteLine(text, read) {
+function rewriteLine(text, read, firstLine) {
+  const reset = firstLine && /^(?:Error: )?(?:js|JavaScript) execution timed out(?: after (\d+)ms)?;\s*kernel reset\b/i.exec(text);
+  if (reset) {
+    return `${text}.${reset[1] ? ` JavaScript execution timed out after ${reset[1]}ms.` : ''} The input outcome is unknown after the reported kernel reset. Do not rerun the failed action. Next: await cua.listTabs(); rebind only a previously observed session tab with await cua.getTab(tabId, { browser: browserId }) and read it before input.`;
+  }
   const covered = /Accessibility element (\d+) is covered by (\S+) or otherwise not hittable/.exec(text);
   if (covered) {
     return `Accessibility element ${covered[1]} is covered by ${covered[2]}; this action sent no input. Next: ${READ} and click the covering control, or dismiss it.`;
@@ -97,16 +149,17 @@ function rewriteLine(text, read) {
   if (cdp) {
     const command = cdp[2].replace(/\.$/, '');
     if (/^Input\./.test(command)) {
-      return `CDP command ${command} timed out after ${cdp[1]}ms; the input may already have been sent. Next: ${DIALOG} Read the page before retrying input: ${READ}.`;
+      return `CDP command ${command} timed out after ${cdp[1]}ms; the input may already have been sent. A dialog is not confirmed by this timeout. Inspect with ${DIALOG}; if one is open, answer it with dialog.accept() or dialog.dismiss() first. Read the page before retrying input: ${READ}.`;
     }
     const input = /^Emulation\./.test(command) ? 'this command sent no input' : 'whether this command sent input is unknown';
     if (/^Emulation\./.test(command)) {
-      return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${DIALOG} An open page dialog may be blocking the command. ${read ? 'Re-read after the dialog is handled.' : 'Read the page before retrying input; do not retry the timed-out call.'}`;
+      return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${DIALOG}. An open page dialog may be blocking the command; if one is open, answer it with dialog.accept() or dialog.dismiss(). ${read ? 'Re-read after the dialog is handled.' : 'Read the page before retrying input; do not retry the timed-out call.'}`;
     }
     return `CDP command ${command} timed out after ${cdp[1]}ms; ${input}. Next: ${READ} (do not retry the timed-out call).`;
   }
   if (/^(?:Error: )?(?:CDP operation exceeded its deadline\b|Timed out after \d+ms waiting for selector .+: CDP operation exceeded its deadline\b)/.test(text)) {
-    return `${text}; this action sent no input. Next: ${READ}.`;
+    const beforeDispatch = /before command dispatch\b/.test(text);
+    return `${text}; ${beforeDispatch ? 'this action sent no input' : 'the input outcome is unknown'}${/\d+ms/.test(text) ? '' : '; duration not reported'}. Next: ${READ}.${beforeDispatch ? '' : ' Do not retry the timed-out action before reading the page.'}`;
   }
   const download = /^(?:Error: )?Timed out after (\d+)ms (?:downloading media|waiting for download)\.?$/.exec(text.trim());
   if (download) {
