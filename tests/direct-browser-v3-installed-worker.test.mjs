@@ -253,6 +253,16 @@ test('the menu\'s Ghost Hand row writes the hand setting on the person\'s click 
   assert.equal(f.views.at(-1).data.hand, 'on');
   assert.ok(!f.events.includes('disconnect'), 'the hand row never touches turbo');
 });
+test('on the shared host the status frame carries no Ghost Hand row: the hand channel adds its own', async t => {
+  const f = fixture(), views = [];
+  f.dependencies.sharedUi = true;
+  f.dependencies.createUi = () => ({ present(id, data, choices) { views.push({ id, data, choices }); }, authenticate: () => true, close() {} });
+  const host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  t.after(() => host.close());
+  await settle();
+  assert.equal(views[0].data.hand, undefined);
+  assert.deepEqual(views[0].choices, ['pause', 'disconnect', 'turbo-off']);
+});
 test('a failed hand write leaves the row as it was, and an unsafe hand.json shows off', async t => {
   const f = await controls(t);
   f.dependencies.setHand = async () => { throw Error('TURBO_CONFIG_LINKED'); };

@@ -190,7 +190,7 @@ overwrites it. Claude's own file edits and shell commands can't write the file o
   for you. The menu shows the state and browser beside a coloured dot, how the payment check is set, Pause (or how a pause
   ends), Disconnect, Turn Turbo Off…, Settings & Help… and the version. Turn Turbo Off asks once, then writes the same
   opt-out as `turbo off`, and every session's turbo stops within a minute. With turbo disconnected and nothing waiting,
-  the icon is hidden.
+  the icon is hidden unless the ghost hand keeps it. When turbo connects, the glove's dabs flow into place (0.8 s).
 - `SLEIGHT_TURBO=0` in the MCP server's environment keeps that one server on the engine path without touching the file.
   It can only turn turbo off. The Firefox and Safari benchmark arms set it.
 - `sleight-mcp turbo on` turns turbo on. `--browser chrome` or `--browser helium` picks the browser.
@@ -214,8 +214,9 @@ by default. The first time sleight acts it compiles in the background, and that 
 
 - `sleight-mcp hand off` writes `enabled: false` to `~/Library/Application Support/sleight/hand.json`, and
   `sleight-mcp hand on` turns it back on. Off hides the hand in running sessions at once.
-- The glove's menu has a Ghost Hand row with a checkmark, which writes the same setting. The menu shows only while turbo
-  is in use, so without turbo use `sleight-mcp hand off`.
+- The glove's menu has a Ghost Hand row with a checkmark, which writes the same setting. The glove is in the menu bar
+  while turbo is in use, and for five minutes after sleight last acted while the hand is on. Without turbo its menu holds
+  only the Ghost Hand row, Settings & Help and the version.
 - `sleight-mcp hand capture hidden|visible` sets whether captures show the hand. `hidden`, the default, keeps it out of
   every capture, your own screenshots and recordings included. `visible` lets your screenshots and recordings show it.
   `SLEIGHT_HAND_CAPTURE=hidden|visible` in the server's environment takes precedence over the file.

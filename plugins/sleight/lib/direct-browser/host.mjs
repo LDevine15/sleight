@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, realpathSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync, chmodSync, renameSync, rmSync } from 'node:fs';
 import { spawn, execFile, execFileSync } from 'node:child_process';
+import { Socket } from 'node:net';
 import { userInfo } from 'node:os';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { promisify } from 'node:util';
@@ -304,11 +305,21 @@ export async function prepareHandHost({ cacheRoot = defaultHelperCache(), source
   const built = await prepareNativeHelpers({ inventory, cacheRoot, sourceRoot, compile });
   if (built.status !== 'ready') return Object.freeze({ status: built.status, code: built.code });
   const { receipt } = built;
-  // capture is 'hidden' (absent from every capture) or 'visible' (screenshots and recordings show the hand).
+  // capture is 'hidden' (absent from every capture) or 'visible' (screenshots and recordings show the hand). The host is the
+  // session's shared one: hand frames on stdin, the Ghost Hand toggle on stdout, and fds 3 and 4 kept for turbo's worker.
   return Object.freeze({ status: 'ready', spawn: ({ capture = 'hidden' } = {}) => {
     if (!['hidden', 'visible'].includes(capture)) throw Error('HAND_CAPTURE_INVALID');
-    return spawn(executable('consent-host', receipt), ['--hand', '--capture=' + capture], { env: environment(), stdio: ['pipe', 'ignore', 'ignore'] });
+    return spawn(executable('consent-host', receipt), ['--hand', '--capture=' + capture, '--consent'],
+      { env: environment(), stdio: ['pipe', 'pipe', 'ignore', 'pipe', 'pipe'] });
   } });
+}
+
+// The worker's end of the session's shared host: the same consent channel over the fds the relay passed at fork (4 writes to
+// the host's fd 3, 5 reads its fd 4). Only a receipt holder opens it, as with createNativeUi.
+export function createSharedUi(receipt, onLoss, { fds = [4, 5] } = {}) {
+  executable('consent-host', receipt);
+  const write = new Socket({ fd: fds[0], readable: false, writable: true }), read = new Socket({ fd: fds[1], readable: true, writable: false });
+  return createUiChannel({ read, write, onLoss });
 }
 
 export function createNativeUi(receipt, onLoss) {
