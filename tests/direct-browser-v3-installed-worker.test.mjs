@@ -56,6 +56,23 @@ test('installed open refuses the selected DevTools listener before any page crea
     assert.equal(opens,0);
   } finally { await host.close(); }
 });
+test('a connection loss is traced with a sanitized reason code and still reports unavailable', async () => {
+  const f=fixture(),traced=[];
+  f.dependencies.traceLoss=code=>traced.push(code);
+  const host=await startInstalledV3Worker({channel:f.channel},f.dependencies);
+  try {
+    await begin(f);f.selected.loss('REPLY_ROUTE_MISMATCH');await settle();
+    f.channel.emit('message',{version:3,id:'lost',method:'call',params:{name:'browser_tabs',arguments:{do:'list'}}});await settle();
+    assert.match(f.frames.find(x=>x.id==='lost').result.result.text,/Turbo is unavailable/);
+    assert.deepEqual(traced,['REPLY_ROUTE_MISMATCH']);
+  } finally {await host.close();}
+});
+test('a loss reason that is not a code is traced as UNKNOWN', async () => {
+  const f=fixture(),traced=[];
+  f.dependencies.traceLoss=code=>traced.push(code);
+  const host=await startInstalledV3Worker({channel:f.channel},f.dependencies);
+  try { await begin(f);f.selected.loss('<h1>Page text</h1>');await settle();assert.deepEqual(traced,['UNKNOWN']); } finally {await host.close();}
+});
 test('a connected browser loss fences this turn and permits one new attempt next turn',async()=>{
   const f=fixture();let selections=0;
   f.dependencies.selectConnection=async()=>{selections++;return f.selected;};

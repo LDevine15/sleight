@@ -559,6 +559,12 @@ native reference, and oversized first results defer the browser reference while 
   reason (`plugins/sleight/lib/direct-browser/worker.mjs`, the generic `failure()`), so we don't know whether a consent
   prompt in Helium, the connection check or the browser choice refused it. Turbo's live qualification with the owner present
   hasn't happened yet. Until it does, sleight's browser numbers in the claim come from the engine path.
+- A sign-in popup that closed itself ended turbo for the turn in 5 of 5 DemoID runs (2026-10-18). Chromium answers a command
+  sent to a closed popup's session with a -32001 "session not found" error and no `sessionId`, and
+  `selected-connection.mjs` took that reply for a protocol violation and fenced the whole connection. It now fails only that
+  command. The worker also writes the reason code for any connection loss to the relay's trace file (`SLEIGHT_TRACE`,
+  direction `turbo-connection-lost`, a fixed code and nothing from the page). Measured on a headless Chromium fixture, not yet
+  in a real window.
 
 ## Turbo popups, the hook and the click seal
 
