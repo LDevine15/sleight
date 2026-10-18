@@ -20,18 +20,17 @@ arms, 3 runs each with top-ups. Cursor is out of the claim.
 merged onto the claim line, with MV2 (Excel moved-tab check sees every Window block), FL2 (virtual clock in guard-light-return) and the
 Electron tests' trackTemp fix. Full check green (7739 tests, 7381 pass, 0 fail, 2026-10-18 02:1xZ).
 
-**App-claim build (lane running).** It adds slack-post and spotify-play tasks, suite.json rows for the three app tasks, Spotify on the
-allowlist. Live probes tonight found that Slack's tree with AXManualAccessibility has 265 nodes and names the channel list (`new-channel
-(channel)`) and composer; Spotify (CEF) exposes 17 AX nodes, and its window title stays "Spotify Premium" while playing, so the checker
-listens to the `com.spotify.client.PlaybackStateChanged` distributed notification. A probe saw Playing then Paused events with Name and Artist.
-Probe tools are in `~/Projects/sleight-wt/app-claim/`.
+**App tasks (3 of 3, scorer wording "fastest").** Build 995b4855, 02:39-03:20Z, all six arms. Expected s: vscode-edit sleight 17,
+LCU 32, Codex 42, Cua 45 (Peekaboo and claude-cu never pass). slack-post sleight 13.5 (5/5), LCU 14.2 (5/5), claude-cu 16 (5/5), Cua 26,
+Peekaboo 47, Codex 65. spotify-play sleight 27, Codex 41, LCU 55, Cua 112. Totals sleight 57, LCU 101, Codex 147, Cua 183. Score in
+`~/Projects/sleight-wt/app-claim/app-score-1018.txt`, failure causes in the ledger (APP-CLAIM). Open owner question: whether "fastest"
+counts the app tasks with the 9 native ones. sleight's 9 native tasks are rerunning on the release build (MV2 changed sleight).
 
 **Browser race.** The Firefox competitor rounds resumed 02:20Z with codex r1. Pause them with `touch ~/Projects/sleight-wt/race-1017/pause`,
 which holds between rounds. Pause them before the app-claim runs.
 
-**Next:** 1) review and merge the app-claim lane, dry-run, then sleight smoke on each app task; 2) pause the race, run the three app
-tasks for all six arms (Peekaboo from Terminal.app), score, top-ups; 3) then the race; 4) the Codex lease-broker live check; 5) the
-release pass for 1.3.0.
+**Next:** 1) sleight native rerun and top-ups on the release build, then rescore; 2) the Firefox race (paused); 3) CU1, the world
+runner starting Cua's daemon; 4) the Codex lease-broker live check; 5) the release pass for 1.3.0.
 
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
