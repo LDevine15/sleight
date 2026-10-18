@@ -3,66 +3,52 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-18 00:45 UTC)
+## Banner (2026-10-18 01:58 UTC, flushed before the owner's clear)
 
 Goal (owner): release 1.3.0 with Electron folded in (owner, 2026-10-18), then the claim post and the video. The owner is away from
-the PC but home and reachable by phone, so live runs are allowed. Quota is not a constraint tonight (owner).
+the PC but home and reachable by phone. Quota is not a constraint (owner). Ledger: `~/Projects/sleight-wt/ledger/LEDGER.md`, last
+sections (ASTRA-1017 and later, POST-130, OPEN ITEMS, CLAIM-1018, EPV3, ASTRA-1018) list every result and open item from tonight.
 
-**Claim build** `3180e084` (pushed, full check 6902 pass, prose lint clean): tonight's loss fixes and every reviewed follow-up
-(details and numbers in `~/Projects/sleight-wt/ledger/LEDGER.md`, sections ASTRA-1017, AB-LOSS, FS1, FO1, FW2, FX2, POST-130), plus
-Q1-7 to Q1-17 and AS-4, WK1 (menu-bar label preference, Cancel-first stuck-menu advice, dead-typing note, stops before typing into a
-stuck menu or with window focus), XL2 (Excel path skill lines, setValue-didn't-hold note, alert text), MT1, DW1, OT1, OT2, MC1, SP1, PB1.
-- Running: focused passes on `3180e084`, excel-edit x10 then word-edit x5 (`sitting-1017c/focus-2.sh`, logs `focus-2-<task>.log`).
-- Next, sleight's claim arm reruns on the frozen build with the top-up round. The browser race follows
-  `ledger/fable-1017-race-plan.md` as Mac load allows. Its smoke scripts are in `~/Projects/sleight-wt/race-1017/`. After the claim, the lease-broker live check with native Codex
-  (`bench/broker-live.mjs`, about 15 minutes, owner OK 2026-10-18), so the post can say sleight works side by side with Codex.
+**Native claim: "fastest" (scorer wording), sleight fastest on 8 of 9, 230 s total against claude-cu's 454 s.** Claim build
+`9c836f22` (pushed, full check green). sleight's arm ran 2026-10-18 01:26-01:39Z (27 runs, 26 pass) plus top-ups 01:40Z
+(preview-read and excel-edit to 5). claude-cu's excel-edit top-up ran at 01:50Z. Score: `~/Projects/sleight-wt/sitting-1017c/claim-score-1018.{txt,json}`,
+scored from the competitors' claim files plus only this sleight pass (file list `sitting-1017c/claim-1018-files.txt`; all files are in the
+main checkout's `bench/results`). Lost: preview-read (Peekaboo 4.4 against 5.1). excel-edit 45 (4/5) against claude-cu 48 (5/5); its one
+failure is the tab swap (item MV2). A claude-cu top-up attempt at 01:42Z raised a macOS screen-recording prompt for "zsh" because it ran in a
+detached shell; the harness stopped it, the owner dismissed the prompt, and the rerun as a child process passed 2/2.
 
-**Electron (folded into 1.3.0, owner 2026-10-18).** EPV3-1 to EPV3-3 building (Opus lane); Fable reviewing the whole plan and writing
-contracts for EPV3-4 to EPV3-7 (`ledger/fable-1018-electron-review.md`, `ledger/epv3-contracts.md`) so those build in parallel; EH1
-fixes the Electron fixture harness (a separate instance with a temporary profile, quit by pid through NSRunningApplication). The claim suite gains
-vscode-edit and cursor-edit (LAWS). Fixtures use temporary profiles, though the owner doesn't use VS Code. Astra lanes (gpt-6-astra xhigh, headless codex exec) started 00:4xZ: `astra-1018-electron` and
-`astra-1018-firstaction` (reports `ledger/astra-1018-<name>-report.md`). The ghost hand is designed (`ledger/fable-1018-ghost-hand.md`)
-for 1.3.1.
+**Electron (EPV3), folded into 1.3.0.** All lanes merged on `epv3-int` (pushed to `private`, tip 773fe38f: EPV3-1 to 3 with security
+fixes, 4, 5, 6, 7a, 7b, 9, the EPV3-8 qualification harness `bench/electron-qualification.mjs`, write guard for turbo-apps.json and
+electron-grants.json). A Fable review (`ledger/fable-1018-electron-security.md`) found no way to get debugger access without consent, and asks for F1 (fence lease cache),
+F2 (admin secret held by the MCP server), harness blockers H1-H4 and a grant-seal.key guard: an Opus lane was fixing those at the clear
+in `.claude/worktrees/agent-a3ee22eaf443c2f26` (check its branch `worktree-agent-a3ee22eaf443c2f26` for commits; uncommitted work there
+is lost). Not yet on the claim build; needs a full check on `epv3-int`, then the live qualification (owner clicks "Always allow" once on
+the VS Code card). **Owner decision F3 pending:** today's path launches a separate instance with a temporary profile (LAWS: benchmark-only)
+and takes focus. Real-profile use needs the relaunch flow (1.3.1). Options: 1) measure Electron for the claim on the native path users
+get today and release Electron turbo with the relaunch flow, 2) build the relaunch flow now. sleight-arch recommends 1. The Electron claim
+tasks (vscode-edit, cursor-edit; LAWS) have not run for any arm; the Astra Electron lane found `open -n -g` editor launches take focus
+(item EL1), so those runs must start when the owner is away.
 
-**Native claim: the scorer says "fastest"** (`~/Projects/sleight-wt/sitting-1017c/claim-score-final.{txt,json}`). sleight's final
-claim run (bb6f99f6, 2026-10-17 19:07-19:32Z, results copied into the main checkout's `bench/results`) passed 44 of 45, and the one
-failure is the Excel tab swap. After the one top-up round (claude-cu finder-move, Peekaboo preview-read), every pair within 20% has 5
-runs. sleight is fastest on 6 of 9, with a total of 282 s against claude-cu's 460 s. It loses textedit-save (LCU 11 against 14, medians
-10.5 against 10.4), preview-read (Peekaboo 4.4 against 4.6 median) and excel-edit (claude-cu 54 against 74). LAWS ties the
-headline's wording to the browser race, which isn't done.
+**Browser race.** Firefox competitor smokes passed (LCU, Cua, Codex, 01:00Z). Firefox LCU round 1 done (10/12, failing both settings forms).
+`~/Projects/sleight-wt/race-1017/race-firefox-comp.sh` (nohup, pid 46884, kept running through the clear) is paused by
+`~/Projects/sleight-wt/race-1017/pause`. Remove that file to continue Codex and Cua round 1 and rounds 2-3. Race worktree `~/Projects/sleight-wt/race`
+is pinned at 41831a8f (harness only). sleight's own race rounds need a worktree at the final build. Plan and pre-flight:
+`ledger/fable-1017-race-plan.md`, and the scorer is `bench/fowl/race-score.mjs`. Safari, Chrome and Helium rounds not run (Chrome-family and
+Peekaboo from Terminal.app). Helium is closed (owner OK for the race).
 
-**Browser race (real windows), started.** Harness `bench/fowl/rounds.sh --world --real-browser <chrome|helium|firefox|safari>
---surface <arm> --model haiku --effort high`; arms sleight-turbo (Chrome, Helium), sleight (Safari, Firefox: engine path, now with
-`SLEIGHT_TURBO=0`), lcu, cua, peekaboo (from Terminal.app), codex. Firefox, sleight: round 1 5/12 (harness bugs), round 2 12/12
-(`/tmp/fb-rounds/real-f6f636c8-b44e-407e-a37e-d55e1fbfa2c5-sleight`, form-checkout stopped before paying). LCU, Cua and Codex rounds are
-harness failures, being triaged. Safari, Chrome and Helium haven't run. The owner made Safari's "sleight benchmark" profile on 2026-10-16 (owner, 2026-10-17). macOS denies this session's shell reading Chrome's and
-Firefox's data folders (EPERM, App Data protection), so Chrome-family rounds and the Claude in Chrome dry run must run from
-Terminal.app (`open -a Terminal x.command`, output to a file). Firefox now launches through LaunchServices (`open -n -a`); a direct
-spawn showed "Profile Missing".
-
-**Real-window FowlBrowser gate (owner's request), arms built.** Smoke on 2026-10-17: FowlBrowser ok on the Chrome profile copy and on
-Helium; turbo ok on Helium; turbo on Chrome refused (the 775 check above); Claude in Chrome connects (device 44826f70 in the copy) but
-timed out waiting on prompts (see agent-ad5cfb3df41d7b6dc). The wikipedia and mdn graders now fail memory answers.
-
-**Pushed today after the claim build** (`pane/auto-mode` on `private` at 369bc9a2, fast-forwarded into the main checkout):
-- The payment rule needs the amount (owner, LAWS): the engine path paid $268 on an unpriced test checkout in Firefox round 1.
-- LW1 first commit d734b73b (dialog-close lease continuation). It didn't trigger live in two word-edit runs. Follow-ups f3c15d05 and
-  fd834163 (safety-review fixes, refusal traces) are on worktree-agent-ac2392d909bf6200b, unmerged: merge after a re-review, then A/B
-  word-edit. Its build agent warned that the staleness bound may block the Word Replace All flow it targets.
-- TP1 (AX press) dropped. Excel's sheet tabs don't list any AX actions (AXPress -25206), and setting AXSelected, AXSelectedChildren or
-  AXFocused switches nothing. Branch worktree-agent-a65d1243221b4ee23 holds it, unmerged and abandoned. The owner's LAWS exception stays.
-- Real-window harness fixes and arms (399a17aa, 4b91dc50, 0f8cd212, 86f119cf, a1344e8b) and drag allowed in away gate rounds (owner).
-
-**Owner today:** quitting their Chrome and Helium was allowed for tonight's race only. Both are closed now, reopen them yourself, and
-tabs restore. The owner overrode their own rule so sleight-arch could grant Claude in Chrome site access in the benchmark profile;
-nothing was granted, since it turned out not to be needed. The owner declined moving the real pointer for Excel tab clicks.
+**Next:** 1) the F3 decision; 2) merge the EPV3 fix lane's commits into `epv3-int`, full check, then the live qualification
+with the owner present for the first card; 3) MV2 (Excel moved-tab check sees every tree block) and anything else for the next build;
+4) the race: unpause Firefox competitors, then sleight's Firefox and Safari rounds on the final build, then Chrome and Helium; 5) the
+Codex lease-broker live check (`bench/broker-live.mjs`, owner OK); 6) if any sleight change merges into the claim build, rerun
+sleight's claim arm and top-ups (LAWS).
 
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
 `SLEIGHT_COMPACT_CONFIRMATIONS=1` (wording approved by the owner).
 
-**Owner items.** Decide on publishing once the browser race has run. The turbo live check before the tag. The Microsoft Error
-Reporting window from an earlier Office crash is theirs to read or dismiss.
+**Owner items.** The F3 Electron decision (banner). One "Always allow" click on the VS Code debugger card at the live qualification.
+Publishing, once the browser race has run. The engine's Always-allow list has listed only Word and Codex since 2026-10-11 (below). The
+Microsoft Error Reporting window from an earlier Office crash is theirs to read or dismiss.
 
 **Gotchas from 2026-10-17.** Never send Apple events to Office from this session (Excel had no Automation grant and a macOS prompt
 appeared). Quit fixture apps with NSRunningApplication and answer their own Don't Save sheet or dialog by System Events. An

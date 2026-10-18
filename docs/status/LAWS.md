@@ -107,3 +107,5 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 - Screenshots and recordings capture single windows, never the whole screen, and published results show home paths as `~` with the
   owner's name scrubbed.
 - During another project's timed window (`/tmp/sleight-hold`), live runs and heavy checks wait.
+- Live runs that capture the screen start from sleight-arch's own shell, never double-forked (`( … &)`), which hands them to launchd.
+  A claude-cu run started that way made macOS ask the owner to give "zsh" screen and audio recording (2026-10-18).
