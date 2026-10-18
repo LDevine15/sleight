@@ -8,9 +8,22 @@ import { mergeArmHooks } from '../arm-hooks.mjs';
 import { raceApps } from './support.mjs';
 
 export const NATIVE_SURFACES = ['lcu', 'cua', 'peekaboo'];
+const browserNames = { chrome: 'Chrome', helium: 'Helium', firefox: 'Firefox', safari: 'Safari' };
+function isolatedBrowser(browser) {
+  if (!browser?.marker || !browser.profileRoot || !Object.hasOwn(browserNames, browser.browser)) throw Error('Isolated real browser required');
+  return browserNames[browser.browser];
+}
+// The turbo arm's tools show tabs by handle and origin, never a window title or PID, and its arm may not call the engine
+// (engine-browser-guard.mjs), so "identify the window" asks for something it cannot do. This states what its tools do:
+// setup binds browser_open to the round's browser process (BENCH_BROWSER_PROCESS_MISMATCH in v3-worker.mjs refuses
+// any other) and the round's profile. The isolation checks themselves are unchanged.
+export function turboWindowPrompt(browser) {
+  const name = isolatedBrowser(browser);
+  return `Use only the dedicated ${name} browser, profile ${browser.profileName || browser.profileRoot}. Setup has bound browser_open to that browser's process and refuses a connection to any other, so open task pages with browser_open and keep them in your own tabs. ` +
+    `These tools show tabs by handle and origin, not window titles, so there is no window to identify first, and engine js is not allowed in this arm for finding one. Never use any other browser or profile.\n\n`;
+}
 export function windowPrompt(browser) {
-  if (!browser?.marker || !browser.profileRoot || !['chrome', 'helium', 'firefox', 'safari'].includes(browser.browser)) throw Error('Isolated real browser required');
-  const name = { chrome: 'Chrome', helium: 'Helium', firefox: 'Firefox', safari: 'Safari' }[browser.browser];
+  const name = isolatedBrowser(browser);
   return `Use only the dedicated ${name} window initially titled "${browser.marker}"` +
     `${browser.pid ? `, browser PID ${browser.pid}` : ''}, profile ${browser.profileName || browser.profileRoot}. Identify that window before acting, keep task pages in it, and never use any other browser window or profile. If it cannot be identified, stop. User activity still ends the input lease.\n\n`;
 }

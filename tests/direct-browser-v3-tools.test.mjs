@@ -193,3 +193,8 @@ test('an app window lists with its trusted label instead of the opaque app origi
   const out = await dispatcher.call({ name: 'browser_tabs', arguments: { do: 'list' } });
   assert.equal(out.text, 't1 Visual Studio Code window 4242\nt2 Visual Studio Code window 7, parked: native-modal Ignore this\nt3 https://example.invalid');
 });
+
+test('browser_fill names the list reorder it already performs', () => {
+  const fill = browserTools('bfixture').find(t => t.name === 'browser_fill');
+  assert.match(fill.description, /drag-reorderable list takes all its row names in the wanted order/);
+});
