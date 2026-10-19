@@ -45,6 +45,24 @@ test('INSTALL.md exists, the README links it, and it names the steps only the us
     assert.match(install, step);
 });
 
+test('the README carries the agent prompt on a line of its own, as the plan writes it', () => {
+  // bench/agent-install.mjs reads the prompt from this line.
+  assert.match(readme, /^Install sleight from https:\/\/github\.com\/Land-o-Clusters\/sleight and check it with its doctor\.$/m);
+});
+
+test("INSTALL.md's shell commands find the plugin through the host's listing and stay plain", () => {
+  // The agent-install sandbox can't read ~/.claude or ~/.codex, and its allowlist refuses scripts, substitutions and if blocks.
+  const install = readFileSync(new URL('INSTALL.md', root), 'utf8');
+  const shell = [...install.matchAll(/```bash\n([\s\S]*?)```/g)].map(match => match[1]).join('');
+  assert.ok(shell.length > 0);
+  for (const line of shell.trim().split('\n')) {
+    assert.doesNotMatch(line, /\$\(|`|^\s*(if|then|for|while|do)\b|\b(bash|sh|zsh|node|python3?)\s+-c\b|&&|\|\|/, line);
+    assert.doesNotMatch(line, /~\/\.(claude|codex)\b/, line);
+  }
+  assert.match(shell, /^claude plugin list --json$/m);
+  assert.match(shell, /^codex plugin list --json$/m);
+});
+
 test('the hosts table carries a Cursor row, switched off inside the cursor-row comment or switched on', () => {
   // Until Cursor's first live install passes, the row sits in an HTML comment right after the table's last row, so
   // deleting the comment's two marker lines adds it to the table.
