@@ -258,9 +258,9 @@ export async function createV3TurnRuntime({ binding, browser, pages, snapshot, u
 
 /** The tool runtime over an app turn's surface (electron-runtime createAppTurn): the registry read path, the delivered-read
  * acknowledgment and the fenced runners. The installed worker and the EPV3-8 harness both compose an app turn here. */
-export function createAppTurnRuntime({ surface, binding, browser, ui, createRuntime } = {}) {
+export function createAppTurnRuntime({ surface, binding, browser, ui, sites, onSite, createRuntime } = {}) {
   return (createRuntime ?? createV3TurnRuntime)({ binding, browser, pages: surface.pages, snapshot: surface.snapshot, ui, endpoint: undefined,
-    dependencies: { createContext: () => surface.context, runSteps: surface.runSteps, fillFields: surface.fillFields, acknowledgeSnapshot: surface.acknowledgeSnapshot } });
+    dependencies: { createContext: () => surface.context, runSteps: surface.runSteps, fillFields: surface.fillFields, acknowledgeSnapshot: surface.acknowledgeSnapshot, sites, onSite } });
 }
 
 // Only an inherited fork channel reaches this entry. MCP calls carry tool JSON,
@@ -542,7 +542,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
           if (!current() || turnEnded) throw Error('TRUSTED_TURN_REQUIRED');
           const surface = await (dependencies.createAppTurn ?? runtimeModule.createAppTurn)({ connections: resource.apps, binding, consent: appConsent, ui, dependencies: app });
           resource.pages = surface.pages; appConnected = true;
-          const runtime = await createAppTurnRuntime({ surface, binding, browser: selected.selectedBrowser, ui, createRuntime: dependencies.createRuntime });
+          const runtime = await createAppTurnRuntime({ surface, binding, browser: selected.selectedBrowser, ui, sites, onSite: noteSite, createRuntime: dependencies.createRuntime });
           resource.runtime = runtime;
           trace('runtime-ready');
           return runtime;

@@ -7,6 +7,7 @@ import { createAppPageRegistry } from '../plugins/sleight/lib/direct-browser/ele
 import { check as rulesCheck, captureSnapshot, deliverSnapshot } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 import { app, identity, recipe, page as target, rect, fakeUpstream, fakeWindows, nativeWindow, fakeBrowser } from './fixtures/electron-graph.mjs';
 import { utilityLocator } from './direct-browser-utility-fixture.mjs';
+import { siteRefusal } from '../plugins/sleight/lib/permissions.mjs';
 
 // EPV3-5: input to an app page runs one step at a time inside the registry's guard, after a delivered read at the
 // current join, with no hook script in the app's renderer. The registry, join, targets and CDP filter are the real
@@ -73,12 +74,49 @@ async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, onSl
     },
     sheet() { w.windows = [nativeWindow(11, rect(0, 0), { modal: 'sheet' })]; },
     clear() { w.windows = [nativeWindow(11, rect(0, 0))]; },
-    act: (steps, ctx = {}) => runners.runSteps(entry, steps, ctx),
+    act: (steps, ctx = {}, options) => runners.runSteps(entry, steps, ctx, options),
   };
   assert.equal(await s.deliver(), true);
   return s;
 }
 const notRun = pattern => error => { assert.match(error.message, pattern); assert.equal(error.notRun, true); return true; };
+
+test('a site block refuses the first Electron action without sending input', async t => {
+  const s = await world(); t.after(() => s.filter.dispose());
+  const perms = { state: 'ok', sites: ['https://blocked.example'] };
+  const result = await s.act([{ do: 'click', ref: 'e1' }], {}, { siteCheck: () => siteRefusal(perms, 'https://blocked.example/') });
+  assert.deepEqual(s.sends, []);
+  assert.match(result.lines[0], /^1 click e1: not run: You blocked sleight on/);
+  assert.equal(result.stoppedAt, 1);
+});
+
+test('an Electron step reaching a blocked site stops every later input', async t => {
+  let url = 'https://fine.example/';
+  const s = await world({ onClick: () => { url = 'https://blocked.example/'; } }); t.after(() => s.filter.dispose());
+  const perms = { state: 'ok', sites: ['https://blocked.example'] }, seen = [];
+  const result = await s.act([{ do: 'click', ref: 'e1' }, { do: 'type', ref: 'e2', text: 'private' }, { do: 'press', key: 'Enter' }], {},
+    { siteCheck: () => { seen.push(url); return siteRefusal(perms, url); } });
+  assert.deepEqual(s.sends, [['click', 'e1']]);
+  assert.deepEqual(seen, ['https://fine.example/', 'https://blocked.example/']);
+  assert.match(result.lines[1], /^2 type e2: not run: You blocked sleight on/);
+  assert.match(result.lines[2], /^3 press: not reached$/);
+  assert.equal(result.stoppedAt, 2);
+});
+
+test('Electron input fails closed for an unproven site only while site limits exist', async t => {
+  const s = await world(); t.after(() => s.filter.dispose());
+  for (const url of [undefined, 'not a URL', 'app://main/index.html']) {
+    for (const perms of [{ state: 'ok', sites: ['https://blocked.example'] }, { state: 'ok', sites: [], only: ['https://fine.example'] }]) {
+      const result = await s.act([{ do: 'press', key: 'a' }], {}, { siteCheck: () => siteRefusal(perms, url) });
+      assert.equal(result.stoppedAt, 1);
+      assert.match(result.lines[0], /can't tell which site this tab shows/);
+    }
+  }
+  assert.deepEqual(s.sends, []);
+  const result = await s.act([{ do: 'press', key: 'a' }], {}, { siteCheck: () => siteRefusal({ state: 'ok', sites: [] }, undefined) });
+  assert.equal(result.stoppedAt, null);
+  assert.deepEqual(s.sends, [['key', 'a']]);
+});
 
 test('six adjacent plain keys settle for five short waits and one full final wait', async t => {
   const s = await world(); t.after(() => s.filter.dispose());

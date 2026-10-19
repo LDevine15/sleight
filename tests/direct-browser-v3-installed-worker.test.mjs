@@ -410,6 +410,33 @@ const beginApps = async (f, apps, id = 'begin', turn = 'one') => {
 const callList = async (f, id) => { f.channel.emit('message', { version: 3, id, method: 'call', params: { name: 'browser_tabs', arguments: { do: 'list' } } }); await settle();
   return f.frames.find(x => x.id === id).result; };
 
+test('installed Electron turns receive site checks and refuse an unproven page before input', async () => {
+  const f = appFixture(), checks = [];
+  const { siteRefusal } = await import('../plugins/sleight/lib/permissions.mjs');
+  f.dependencies.sites = url => { checks.push(url); return siteRefusal({ state: 'ok', sites: ['https://blocked.example'] }, url); };
+  const createSurface = f.dependencies.createAppTurn;
+  f.dependencies.createAppTurn = async options => {
+    const surface = await createSurface(options);
+    const entry = { page: { url: () => { throw Error('page URL unavailable'); } }, state: { snapshotNo: 1 } };
+    surface.pages.enqueue = async (_tab, run) => run(entry);
+    surface.runSteps = () => assert.fail('an unproven site must not receive input');
+    return surface;
+  };
+  const host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  try {
+    await beginApps(f, [appId]); await callList(f, 'list');
+    const deps = f.app.runtimes[0].dependencies;
+    assert.equal(deps.sites, f.dependencies.sites);
+    assert.equal(typeof deps.onSite, 'function');
+    f.channel.emit('message', { version: 3, id: 'act', method: 'call', params: { name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'press', key: 'a' }] } } });
+    await settle();
+    const result = f.frames.find(row => row.id === 'act').result.result;
+    assert.equal(result.isError, true);
+    assert.match(result.text, /can't tell which site this tab shows/);
+    assert.deepEqual(checks, [undefined]);
+  } finally { await host.close(); }
+});
+
 test('a begin frame without apps is refused, and bad apps lists too', async () => {
   const f = fixture(), host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
   try {

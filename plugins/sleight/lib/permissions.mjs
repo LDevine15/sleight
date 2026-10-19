@@ -86,7 +86,7 @@ export const coveringBlock = (sites, origin) => sites?.find(site => covers(site,
 const TAB_UNPROVEN = "You limited the sites sleight acts on, and it can't tell which site this tab shows, so it doesn't act here (sleight-mcp permissions lists your limits).";
 /** The line Claude relays when the user blocked this page's site, or limited sleight to other sites, or undefined. While any
  *  site limit exists the check fails closed: a URL that isn't http(s), or no URL at all, refuses, except a blank tab. A URL
- *  with credentials is judged by its host. Only turbo's browser runtime checks sites; its Electron app turns don't. */
+ *  with credentials is judged by its host. Turbo checks sites in browsers and opted-in Electron app turns. */
 export function siteRefusal(perms, url) {
   if (stopped(perms)) return stopped(perms);
   if (!sitesLimited(perms)) return undefined;

@@ -304,6 +304,19 @@ test('an app turn has no DevTools endpoint, so the endpoint read guard is a no-o
   assert.deepEqual(touched, []);
 });
 
+test('the composed app turn forwards the dispatcher site check to its handoff runner', async () => {
+  const entry = { page: {}, state: {} }, options = { siteCheck: () => 'site refused' }, received = [];
+  const surface = runtime.composeAppTurn([{
+    connection: { recipe: { name: 'Fixture' }, pages: {
+      list: async () => [{ tab: 't1', window: { id: 11 } }], enqueue: async (_tab, run) => run(entry),
+    } },
+    runners: { runSteps: async (...args) => { received.push(args); return { lines: [] }; } },
+  }]);
+  await surface.pages.list();
+  await surface.pages.enqueue('t1', current => surface.runSteps(current, [{ do: 'press', key: 'a' }], {}, options));
+  assert.equal(received[0][3], options);
+});
+
 test('a real host: worker loss parks this session, the app pipe stays open, and the next turn resumes without a launch', async () => {
   const h = await makeHost();
   try {
