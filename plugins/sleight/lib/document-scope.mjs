@@ -189,6 +189,28 @@ export function samePlace(before, number, after) {
   return hit && hit.line === line && hit.number === number + (at < start ? 0 : size) ? [[hit.number, line]] : [];
 }
 
+// Where element `number` of the tree `before` is in the tree `after`, for a click the engine refused because an earlier action
+// in the call replaced the element: the travel form's date picker rebuilt its day buttons after the check-in click, and the
+// check-out click was refused in 10 of 11 sleight form-travel runs, Safari and Firefox (race-1017). The line stays where it was
+// when its whole line is on exactly one element in each tree, at the same number and depth, under the same parent and after
+// the same row (the nearest row above at its depth or less). A line that moved goes by samePlace's rules. Anything else
+// returns no element, and the refusal stops the call as before.
+export function refusedPlace(before, number, after) {
+  const rows = text => String(text ?? '').split('\n').map(line => /^(\t*)(\d+) (.*?)\r?$/.exec(line)).filter(Boolean)
+    .map(m => ({ depth: m[1].length, number: Number(m[2]), line: m[3] }));
+  const old = rows(before), now = rows(after), at = old.findIndex(row => row.number === number);
+  const line = old[at]?.line;
+  if (line === undefined || /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(line) || old.filter(row => row.line === line).length !== 1 ||
+      now.filter(row => row.line === line).length !== 1) return [];
+  const to = now.findIndex(row => row.line === line);
+  if (now[to].number !== number) return samePlace(before, number, after);
+  if (now[to].depth !== old[at].depth) return [];
+  // The parent (nearest row above with less depth) and the row before (nearest above at its depth or less).
+  const near = (list, i, deeper) => { for (let j = i - 1; j >= 0; j--) if (deeper ? list[j].depth < list[i].depth : list[j].depth <= list[i].depth) return list[j]; };
+  const same = (a, b) => (a === undefined && b === undefined) || (!!a && !!b && a.number === b.number && a.depth === b.depth && sameElement(a.line, b.line));
+  return same(near(old, at, true), near(now, to, true)) && same(near(old, at, false), near(now, to, false)) ? [[number, line]] : [];
+}
+
 // Only a resolved focus outside the clicked field's subtree proves a mismatch. Focus on the settable
 // field that holds the clicked element counts as inside: a click on a field's inner text node focuses
 // the field itself (Firefox address bar, 3 of 9 runs, 2026-10-18). Missing rows or focus leave the
@@ -467,6 +489,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
     const disabledLabelNote = ${disabledLabelNote.toString()};
     const sameElement = ${sameElement.toString()};
     const samePlace = ${samePlace.toString()};
+    const refusedPlace = ${refusedPlace.toString()};
     const differentFocusTarget = ${differentFocusTarget.toString()};
     const selectedMenuEntry = ${selectedMenuEntry.toString()};
     const trappingMenu = ${trappingMenu.toString()};
@@ -590,11 +613,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             state.reads.set(proxy, { text, emitted: true, modalOpened: pending.modalOpened });
           }
         }); })();
-        // app.pickFromList("<row label>"): pages a focused sorted list by key, then clicks the row. Every key and
-        // the click run through this handle's own checks, so a window change, a lost lease or a renumbered row stops it.
+        // app.pickFromList("<row label>"): pages a sorted list by key or wheel, then clicks the row. Every key, wheel
+        // step and the click run through this handle's own checks, so a window change, a lost lease or a renumbered row stops it.
         if (name === 'pickFromList') return async (label, options) => {
           checkNative();
           const superseded = () => { throw new Error('pickFromList stopped: another action or read ran during the search. Read the window again.'); };
+          // A click on this handle that was the call's last action: after it, the read can name the selected row in
+          // place of the focused list (race-1017 b7, Safari and Firefox), and the helper accepts that list only then.
+          const before = state.previous.get(proxy);
+          const clicked = before?.name === 'click' && before.version === state.actionVersion && before.done !== undefined &&
+            Number.isInteger(before.at) && typeof before.line === 'string' ? { number: before.at, line: before.line } : undefined;
           const result = await pickList({
             read: async () => {
               checkNative();
@@ -616,8 +644,15 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
               if (state.actionVersion !== version + 1) superseded();
               return result;
             },
+            // The wheel over the list, named by its whole line in the newest tree.
+            scroll: async (line, direction, ticks) => {
+              const version = state.actionVersion;
+              const result = await proxy.scroll({ line }, direction, ticks);
+              if (state.actionVersion !== version + 1) superseded();
+              return result;
+            },
             click: line => proxy.click({ line }),
-            parse, sameElement, expected: state.guarded ? state.expected : undefined
+            parse, sameElement, clicked, expected: state.guarded ? state.expected : undefined
           })(label, options);
           // A search that did not click ends the call, so later actions in it don't run past the failure.
           if (!result.clicked) throw new Error('pickFromList stopped (' + result.reason + '): ' + result.note + ' [' + result.reads + ' reads, ' + result.keys + ' keys]');
@@ -904,6 +939,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             // An { id } that matched by label is looked up as { label } is from here on.
             const asLabel = kind === 'ID' && found.length > 0 && !found.some(([, line]) => hasIdentifier(line, target));
             const ancestry = found.length > 1 ? contexts(text) : undefined;
+            // A control and its static text share the label ("text Country" above "pop up button (collapsed) Country"), and a
+            // click on the text does nothing: of several matches with static text among them, the one control, or the one
+            // enabled control, is the target (race-1017 b7: Country, City and Dates stopped 2 of 3 Safari form-travel runs, 2.2
+            // to 3.8 s each). This runs before the enabled preference, which would keep the text beside a disabled control.
+            // Two enabled controls still stop.
+            if (name === 'click' && found.length > 1 && (kind === 'label' || asLabel || bare !== undefined)) {
+              const controls = found.filter(([, line]) => !/^text(?: \\([^()]*\\))*(?: |$)/.test(line) || /^text (?:field|area|entry area)(?: |$)/.test(line));
+              const enabled = controls.filter(([, line]) => !/^[a-z][a-z ]* \\([^()]*\\bdisabled\\b[^()]*\\)/.test(line));
+              if (controls.length < found.length) found = controls.length === 1 ? controls : enabled.length === 1 ? enabled : found;
+            }
             let barItems = [], outside = [];
             if (found.length > 1 && (kind === 'label' || asLabel || bare !== undefined && found.every(([, line]) => hasLabel(line, target)))) {
               // A menu-bar title sharing its label with one element outside the menu bar means that element: { label: "Table" }
@@ -949,6 +994,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             }
             args = [to, ...args.slice(1)];
           };
+          const renumbered = (to, was) => nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + to + ', the same ' + JSON.stringify(was) + ${quoted(/* lean notice */ ': an earlier action in this call renumbered the window.')} + '\\n');
           // A number the code computed from its own read in this call (a match over getAXState) means
           // that read's element. Checked against the tree from before the call, correct clicks stopped,
           // and Claude fell back to one action per call in ZCode (2026-10-12).
@@ -989,7 +1035,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
               : /\\b(?:ID|Description|Help): /.test(was) ? [...elements(text)].filter(([, line]) => sameElement(was, line))
               : bound === undefined ? samePlace(state.callTrees.get(proxy), args[0], text) : [];
             if (moved.length === 1) {
-              nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + moved[0][0] + ', the same ' + JSON.stringify(was) + ${quoted(/* lean notice */ ': an earlier action in this call renumbered the window.')} + '\\n');
+              renumbered(moved[0][0], was);
               args = [moved[0][0], ...args.slice(1)];
               if (state.bind && literal !== undefined) {
                 if (!state.boundNumbers.has(proxy)) state.boundNumbers.set(proxy, new Map());
@@ -1054,6 +1100,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             ['performSecondaryAction', 'setValue', 'scroll'].includes(name) || name === 'pressKey' &&
             (keys.length > 0 || /^(?:return|enter|escape|esc|tab|space)$/i.test(key ?? ''));
           const previous = { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey, number: editable ? args[0] : undefined, line, focus: /^The focused UI element is (.+?)\\r?$/m.exec(text ?? '')?.[1],
+            at: name === 'click' && typeof args[0] === 'number' ? args[0] : undefined, version: state.actionVersion,
             textEditing: textEditing && (editable || ['typeText', 'paste'].includes(name) || editKey), opens, modal: text === undefined ? undefined : hasModal(text),
             touches: state.touches };
           state.previous.set(proxy, previous);
@@ -1070,13 +1117,19 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           // Input went out before the engine answered, so a rejected action may have acted.
           let result;
           try { result = await value.apply(raw, args); } catch (error) {
-            state.unknown.push(shown);
+            let fresh, resent = false;
+            const keep = () => {
+              nodeRepl.write(${JSON.stringify(GUARD_MARK)} + fresh + ${JSON.stringify(GUARD_END)});
+              state.reads.set(proxy, { text: fresh, emitted: true, version: state.actionVersion });
+              attempt.fresh = true;
+            };
             // "75 is an invalid element ID" (-10005): the engine's capture no longer holds that element. A date
             // picker re-rendered its days after the first date's click, so the bound capture's next date was gone
-            // (Firefox travel, 2026-10-17: a diff read, a full read and a lone click followed, 9.4 s). The stop stays
-            // and nothing is resent. It carries a fresh tree for the relay's note, when one comes within
-            // REFUSAL_READ_MS, and the window reads before each numbered or named action for a while, so the rest
-            // can go in one call. The macOS accessibility error "AXError.invalidUIElement" is the same loss seen
+            // (Firefox travel, 2026-10-17: a diff read, a full read and a lone click followed, 9.4 s). A click after an
+            // earlier action in the call goes once more when the fresh read has its whole line in the same place
+            // (refusedPlace; the refusal itself sent nothing). Otherwise the stop stays and nothing is resent. It carries
+            // a fresh tree for the relay's note, when one comes within REFUSAL_READ_MS, and the window reads before
+            // each numbered or named action for a while, so the rest can go in one call. The macOS accessibility error "AXError.invalidUIElement" is the same loss seen
             // from the native side (Firefox travel, 2026-10-18: 6.3 s of reads before the retry). It recovers the same
             // way. "elementHasNoFrame" does not: an element scrolled out of view has no frame either (a virtual list's
             // overscan row, same race), so nothing in that text says the element is gone.
@@ -1086,16 +1139,38 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
               state.binding = undefined;
               let timer;
               try {
-                const fresh = await Promise.race([timedRead(raw, 'after-refusal'),
+                const read = await Promise.race([timedRead(raw, 'after-refusal'),
                   new Promise(resolve => { timer = globalThis.setTimeout?.(resolve, REFUSAL_READ_MS); })]);
-                if (typeof fresh === 'string' && parse(fresh)) {
-                  nodeRepl.write(${JSON.stringify(GUARD_MARK)} + fresh + ${JSON.stringify(GUARD_END)});
-                  state.reads.set(proxy, { text: fresh, emitted: true, version: state.actionVersion });
-                  attempt.fresh = true;
-                }
+                if (typeof read === 'string' && parse(read)) fresh = read;
               } catch {} finally { globalThis.clearTimeout?.(timer); }
+              const header = fresh === undefined ? undefined : parse(fresh);
+              // Not for a control that opens or confirms (a lone "button Remove" in a re-rendered cart is another item's),
+              // nor after an action that opens, nor when a sheet or dialog came up over the page since the tree it used.
+              const to = fresh !== undefined && name === 'click' && typeof args[0] === 'number' && state.completedActions > 0 && text !== undefined &&
+                !opens && !before?.opens && !(hasModal(fresh) && !hasModal(text)) &&
+                observed && ['title', 'app', 'url'].every(key => header[key] === observed[key]) ? refusedPlace(text, args[0], fresh) : [];
+              if (to.length === 1) {
+                // The read after the refusal can take REFUSAL_READ_MS: the lease is checked again before anything goes.
+                try { await checkLease(); } catch (lost) { state.unknown.push(shown); keep(); throw lost; }
+                if (to[0][0] !== args[0]) renumbered(to[0][0], to[0][1]);
+                args = [to[0][0], ...args.slice(1)];
+                // The call's last click is this element now, for a pickFromList right after it, and for a bound literal.
+                previous.at = to[0][0]; previous.line = to[0][1];
+                if (state.bind && literal !== undefined) {
+                  if (!state.boundNumbers.has(proxy)) state.boundNumbers.set(proxy, new Map());
+                  state.boundNumbers.get(proxy).set(literal, { number: to[0][0], line: to[0][1] });
+                }
+                try { result = await value.apply(raw, args); resent = true; } catch (again) {
+                  state.unknown.push(shown);
+                  keep();
+                  throw again;
+                }
+              } else if (fresh !== undefined) keep();
             }
-            throw error;
+            if (!resent) {
+              state.unknown.push(shown);
+              throw error;
+            }
           }
           if (unbound) {
             const left = state.staleCaptures.get(staleKey) - 1;

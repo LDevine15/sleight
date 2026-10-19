@@ -90,10 +90,11 @@ test('FT1c: setValue on a label-shaped { id } or { label } goes to the one setta
   assert.deepEqual(g.calls.map(c => c.slice(0, 2)), [['setValue', 18], ['setValue', 20], ['setValue', 22]]);
 });
 
-test('FT1c: a label-shaped { id } that two elements carry stops for a click, and IDs still win', async () => {
+test('FT1c: a label-shaped { id } that a field and its text carry goes to the field for a click (lp1), and IDs still win', async () => {
   const g = guardFixture();
-  await assert.rejects(g.run('await app.click({ id: "Reference code" });'), /2 elements with label "Reference code" in this window/);
-  assert.deepEqual(g.calls, []);
+  await g.run('await app.click({ id: "Reference code" });');
+  assert.deepEqual(g.calls.map(c => c.slice(0, 2)), [['click', 18]]);
+  g.calls.length = 0;
   await g.run('await app.click({ id: "NewTabButton" }); await app.click({ id: "Next" });');
   assert.deepEqual(g.calls.map(c => c.slice(0, 2)), [['click', 52], ['click', 38]]);
   // Two settable fields with one label: no guess.
@@ -154,4 +155,34 @@ test('FT1c re-review: only a top-level { id } with only reads before it is rewri
     const { forwarded } = act(code);
     assert.match(forwarded, /setValue\(18, "p01"\)/, code);
   }
+});
+
+// lp1 (fix 5), race-1017 b7: { label: "Country" } and { label: "City" } (Safari r2 calls 10 and 13) and { label: "Dates" } (r3
+// call 3) each matched the static text above the control and the control, and the guard stopped: 2.2 to 3.8 s a run.
+test('lp1: a click on a label shared by static text and one control goes to the control; two controls still stop', async () => {
+  const destination = form(['\t\t\t\t\t\t25 text Country', '\t\t\t\t\t\t26 pop up button (collapsed) Country, Value: Choose a country, Secondary Actions: Expand',
+    '\t\t\t\t\t\t27 text City', '\t\t\t\t\t\t28 pop up button (collapsed) City, Value: Choose a city, Secondary Actions: Expand']);
+  const g = guardFixture(destination);
+  await g.run('await app.click({ label: "Country" }); await app.click({ label: "City" }); await app.click({ label: "Dates" }); await app.click("Dates");');
+  assert.deepEqual(g.calls.map(c => c.slice(0, 2)), [['click', 26], ['click', 28], ['click', 24], ['click', 24]]);
+  // Two controls stop, and so do two static texts with no control.
+  const two = guardFixture(form(['\t\t\t\t\t\t25 text Country', '\t\t\t\t\t\t26 pop up button Country', '\t\t\t\t\t\t27 button Country']));
+  await assert.rejects(two.run('await app.click({ label: "Country" });'), /3 elements with label "Country"/);
+  assert.deepEqual(two.calls, []);
+  const textOnly = guardFixture(form(['\t\t\t\t\t\t25 text Country, Help: x', '\t\t\t\t\t\t26 text Country']));
+  await assert.rejects(textOnly.run('await app.click({ label: "Country" });'), /2 elements with label "Country"/);
+});
+
+// lp1 review: the control the shared label names is the one clicked, whatever its role, and a disabled control is still the
+// control (before, the enabled filter left only the static text, and the click went to text that does nothing).
+test('lp1 review: checkbox, link, submit and disabled controls that share a label with static text get the click', async () => {
+  const rows = ['\t\t\t\t\t\t25 text Subscribe', '\t\t\t\t\t\t26 checkbox Subscribe, Value: 0', '\t\t\t\t\t\t27 text Terms', '\t\t\t\t\t\t28 link Terms',
+    '\t\t\t\t\t\t29 text Submit', '\t\t\t\t\t\t30 button Submit', '\t\t\t\t\t\t31 text Pay', '\t\t\t\t\t\t32 button (disabled) Pay'];
+  const g = guardFixture(form(rows));
+  await g.run('await app.click({ label: "Subscribe" }); await app.click({ label: "Terms" }); await app.click("Submit"); await app.click({ label: "Pay" });');
+  assert.deepEqual(g.calls.map(c => c.slice(0, 2)), [['click', 26], ['click', 28], ['click', 30], ['click', 32]]);
+  // A disabled control beside an enabled one with the label: two controls, no guess about the text.
+  const two = guardFixture(form(['\t\t\t\t\t\t31 text Pay', '\t\t\t\t\t\t32 button (disabled) Pay', '\t\t\t\t\t\t33 link Pay']));
+  await two.run('await app.click({ label: "Pay" });');
+  assert.deepEqual(two.calls.map(c => c.slice(0, 2)), [['click', 33]], 'the enabled preference still picks among controls');
 });
