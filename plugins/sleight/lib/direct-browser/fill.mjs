@@ -48,15 +48,22 @@ function inspect(el, expected, read = (node, key) => { const value = node?.[key]
   const button = tag === 'button' || role === 'button' || ['submit', 'button', 'reset'].includes(type);
   const submit = !!(type === 'submit' || button && form && attr('type') !== 'button' && attr('type') !== 'reset' || button && payment);
   const rect = read(el, 'getBoundingClientRect')?.(), style = read(read(read(el, 'ownerDocument'), 'defaultView'), 'getComputedStyle')?.(el);
+  const multiList = kind === 'listbox' && attr('aria-multiselectable') === 'true';
   return { kind, type, tag, role, editableText: !read(el, 'readOnly') && (tag === 'input' || tag === 'textarea' || read(el, 'isContentEditable')), submit, payment, form: !!form, formPayment: payment, enabled: !read(el, 'disabled') && attr('aria-disabled') !== 'true',
     hiddenLabel: ['checkbox', 'radio'].includes(type) && !!read(el, 'labels')?.length && (!!style?.clip && style.clip !== 'auto' || rect && (!rect.width || !rect.height)),
-    visible: rect ? rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden' && style?.display !== 'none' : undefined, checked, connected: read(el, 'isConnected'), readonly: !!read(el, 'readOnly'), disabled: !!read(el, 'disabled') || attr('aria-disabled') === 'true',
-    controls: attr('aria-controls'), expanded: attr('aria-expanded'), multiple: !!read(el, 'multiple'),
+    visible: rect ? rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden' && style?.display !== 'none' : undefined, checked, connected: read(el, 'isConnected'), readonly: !!read(el, 'readOnly') || multiList && attr('aria-readonly') === 'true', disabled: !!read(el, 'disabled') || attr('aria-disabled') === 'true',
+    controls: attr('aria-controls'), expanded: attr('aria-expanded'), multiple: !!read(el, 'multiple') || multiList,
     innerInput: tag !== 'input' && !!read(el, 'querySelector')?.('input:not([type="hidden"]), textarea'), current: text.slice(0, 300),
     matched: text === String(expected),
     min: read(el, 'min') || attr('aria-valuemin') || '0', max: read(el, 'max') || attr('aria-valuemax') || '100', step: read(el, 'step') || '1',
     number: Number(type === 'range' ? read(el, 'value') : attr('aria-valuenow')),
-    options: kind === 'select' ? [...read(el, 'options')].map(o => ({ value: read(o, 'value'), label: read(o, 'label'), disabled: read(o, 'disabled') || !!read(read(o, 'parentElement'), 'disabled'), selected: read(o, 'selected') })) : undefined };
+    options: kind === 'select' ? [...read(el, 'options')].map(o => ({ value: read(o, 'value'), label: read(o, 'label'), disabled: read(o, 'disabled') || !!read(read(o, 'parentElement'), 'disabled'), selected: read(o, 'selected') })) :
+      multiList ? [...read(el, 'querySelectorAll')('[role="option"]')].slice(0, 1001).map(o => {
+        const attr = name => read(o, 'getAttribute')(name), selected = attr('aria-selected');
+        return { label: (attr('aria-label') || read(o, 'textContent') || '').trim(),
+          selected: selected === 'true' ? true : selected === 'false' ? false : null,
+          disabled: !!read(o, 'disabled') || attr('aria-disabled') === 'true', size: attr('aria-setsize'), position: attr('aria-posinset') };
+      }) : undefined };
 }
 
 function validate(fields, submit) {
@@ -192,6 +199,35 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
               const after = await trustedLocatorRead(loc, inspect, value), actual = after.options.filter(o => o.selected).map(o => o.value);
               if (actual.length !== selected.length || selected.some(v => !actual.includes(v))) throw new FieldError('selection did not match; read the select');
             }
+          } else if (state.kind === 'listbox' && state.multiple && Array.isArray(value)) {
+            if (new Set(value).size !== value.length) throw new FieldError('multi-select needs distinct option texts');
+            const rowsOf = state => {
+              const rows = state.options;
+              if (state.kind !== 'listbox' || !state.connected || state.disabled || state.readonly || !state.multiple || !rows || rows.length > 1000 ||
+                  rows.some((row, i) => !row.label || row.selected === null ||
+                    row.size !== null && Number(row.size) !== rows.length || row.position !== null && Number(row.position) !== i + 1) ||
+                  new Set(rows.map(row => row.label)).size !== rows.length)
+                throw new FieldError('multi-select options missing, ambiguous or incomplete; read the list');
+              return rows;
+            };
+            const rows = rowsOf(state), wanted = rows.map(row => value.includes(row.label));
+            if (value.some(label => !rows.some(row => row.label === label)) || rows.some((row, i) => row.disabled && (wanted[i] || row.selected !== wanted[i])))
+              throw new FieldError('option missing or disabled; read the list');
+            const matches = (actual, selected) => actual.length === rows.length && actual.every((row, i) =>
+              row.label === rows[i].label && row.selected === selected[i] && row.disabled === rows[i].disabled);
+            let selected = rows.map(row => row.selected);
+            for (let i = 0; i < rows.length && !stopped; i++) {
+              if (selected[i] === wanted[i]) continue;
+              if (!matches(rowsOf(await trustedLocatorRead(loc, inspect, value)), selected)) throw new FieldError('list changed; read it before continuing');
+              // Let the page's handler update its own state. Writing aria-selected would bypass frameworks.
+              const choice = loc.getByRole('option', { name: rows[i].label, exact: true });
+              await send(checked => checked.click({ ...options, modifiers: ['ControlOrMeta'] }), 'click', choice);
+              if (stopped) break;
+              await sleep(60);
+              selected = selected.map((was, j) => j === i ? wanted[i] : was);
+              if (!matches(rowsOf(await trustedLocatorRead(loc, inspect, value)), selected)) throw said('selection did not match; read the list before retrying');
+            }
+            if (stopped) throw said('selection unconfirmed after a page boundary; read the list');
           } else if (state.kind === 'listbox' || state.kind === 'combo') {
             if (typeof value !== 'string') throw new FieldError(state.kind + ' needs the option text');
             const combo = state.kind === 'combo';

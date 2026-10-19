@@ -97,7 +97,7 @@
      },
      {
       "name": "browser_act",
-      "description": "Run 1 to 12 steps on observed refs, returning outcome lines and a diff. Stops at boundaries or failure. Never blindly resend an uncertain submit. viewport with width and height resizes and reports the old size; with neither it restores that size. scroll with until:text finds a row in a long list. navigate with a link ref follows it.",
+      "description": "Run 1 to 12 steps on observed refs, returning outcome lines and a diff. Stops at boundaries or failure. Never blindly resend an uncertain submit. click accepts modifier:cmd/shift/ctrl/alt. viewport with width and height resizes and reports the old size; with neither it restores that size. scroll with until:text finds a row in a long list. navigate with a link ref follows it.",
       "inputSchema": {
        "type": "object",
        "properties": {
@@ -145,6 +145,15 @@
            "key": {
             "type": "string",
             "maxLength": 65536
+           },
+           "modifier": {
+            "type": "string",
+            "enum": [
+             "cmd",
+             "shift",
+             "ctrl",
+             "alt"
+            ]
            },
            "values": {
             "type": [
@@ -224,7 +233,7 @@
      },
      {
       "name": "browser_fill",
-      "description": "Fill 1 to 60 observed fields. Values are text, boolean, number or string array. A select, listbox or combobox takes the option text, even in a long or virtual list. A drag-reorderable list takes all its row names in the wanted order. Optional submit is an observed ref. Returns each field status, submit outcome and diff.",
+      "description": "Fill 1 to 60 observed fields. Values are text, boolean, number or string array. A select, listbox or combobox takes the option text, even in a long or virtual list. For a multi-select, an array sets exactly those option texts; [] clears all. A drag-reorderable list takes all its row names in the wanted order. Optional submit is an observed ref. Returns each field status, submit outcome and diff.",
       "inputSchema": {
        "type": "object",
        "properties": {

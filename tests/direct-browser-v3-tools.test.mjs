@@ -1,10 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { browserTools, createToolDispatcher } from '../plugins/sleight/lib/direct-browser/tools.mjs';
+import { browserTools, createToolDispatcher, validateToolCall } from '../plugins/sleight/lib/direct-browser/tools.mjs';
 import { siteRefusal } from '../plugins/sleight/lib/permissions.mjs';
 import { composeAppTurn } from '../plugins/sleight/lib/direct-browser/electron-runtime.mjs';
 
 const names = ['browser_open', 'browser_read', 'browser_act', 'browser_fill', 'browser_tabs'];
+
+test('tool validation accepts only named click modifiers', () => {
+  const call = step => ({ name: 'browser_act', arguments: { tab: 't1', steps: [step] } });
+  for (const modifier of ['cmd', 'shift', 'ctrl', 'alt']) {
+    const request = call({ do: 'click', ref: 'e1', modifier });
+    assert.deepEqual(validateToolCall(request), request);
+  }
+  for (const step of [{ do: 'click', ref: 'e1', modifier: 'meta' }, { do: 'press', key: 'Enter', modifier: 'cmd' }])
+    assert.throws(() => validateToolCall(call(step)), /modifier|unsupported/);
+});
 
 test('an app-turn browser_read refuses an opaque Electron URL under either kind of site limit', async () => {
   for (const perms of [{ state: 'ok', sites: ['https://blocked.example'] }, { state: 'ok', sites: [], only: ['https://fine.example'] },

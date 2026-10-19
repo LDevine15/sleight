@@ -6,7 +6,7 @@ import { createActionRunner, overlaySignature, inspectTarget, placeClear } from 
 import { deliverSnapshot } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 
 // Playwright boundary only. There is no engine object and no catch-all method fake.
-function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = false, onCheck } = {}) {
+function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = false, onCheck, backgroundClick } = {}) {
   const page = new EventEmitter(), actions = [], states = new Map(); let time = 0, number = 1, overlay = { count: 0, hash: 1 };
   const metadata = { name: 'Continue', submit, payment: false, form: submit, formSignature: 'before' };
   const loc = ref => utilityLocator({
@@ -46,7 +46,7 @@ function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = fa
     if (target.submit && target.state.submitUnconfirmed) return { kind: 'refuse', message: 'Read before resubmitting' };
     return { kind: 'allow' };
   };
-  const run = createActionRunner({ check, now: () => time, sleep: async ms => { time += ms; },
+  const run = createActionRunner({ check, backgroundClick, now: () => time, sleep: async ms => { time += ms; },
     snapshot: async (p, options) => { assert.equal(p, page); if (snapshotFail) throw Error('read unavailable');
       return { text: effect || 'No visible changes.', number: ++number, options }; } });
   return { page, tab, run, checks, actions, states, time: () => time, setOverlay: next => { overlay = next; } };
@@ -57,6 +57,39 @@ test('v3 action reports an unproved click as an observation and returns a diff',
   assert.match(result.lines[0], /no visible change/i); assert.equal(result.stoppedAt, null);
   assert.equal(result.observe.text, 'No visible changes.'); assert.equal(result.observe.options.since, 1);
   assert.equal(f.actions.filter(a => a[0] === 'click').length, 1);
+});
+
+for (const [modifier, want] of [['cmd', 'Meta'], ['shift', 'Shift'], ['ctrl', 'Control'], ['alt', 'Alt']])
+  test(`click modifier ${modifier} reaches the observed element through the background guard`, async () => {
+    let guarded = 0;
+    const f = fixture({ backgroundClick: async (tab, loc, click, opts) => {
+      assert.deepEqual(opts, { modifier: want }); guarded++; return click({ modifiers: ['ControlOrMeta'] });
+    } });
+    const result = await f.run(f.tab, [{ do: 'click', ref: 'e1', modifier }], {});
+    assert.equal(result.stoppedAt, null); assert.equal(guarded, 1);
+    assert.deepEqual(f.actions[0][2].modifiers, ['ControlOrMeta', want]);
+    assert.equal(f.checks[0].target.ref, 'e1');
+  });
+
+test('click modifiers cannot bypass payment refusal, pending input or element cover checks', async () => {
+  const paid = fixture({ submit: true }); paid.states.set('e1', { payment: true });
+  paid.tab.state.submitUnconfirmed = { snapshotNo: 1 };
+  const result = await paid.run(paid.tab, [{ do: 'click', ref: 'e1', modifier: 'cmd' }], {});
+  assert.match(result.lines[0], /not run:.*Read before resubmitting/); assert.deepEqual(paid.actions, []);
+  const pending = fixture(); pending.tab.state.actionPending = {};
+  assert.match((await pending.run(pending.tab, [{ do: 'click', ref: 'e1', modifier: 'alt' }], {})).lines[0], /pending/);
+  assert.deepEqual(pending.actions, []);
+  const covered = fixture({ fail: 'Timeout: covering element intercepts pointer events' });
+  assert.match((await covered.run(covered.tab, [{ do: 'click', ref: 'e1', modifier: 'shift' }], {})).lines[0], /not run:.*cover/);
+  assert.equal(covered.actions.length, 1, 'Playwright checks the hit and refuses without replay');
+});
+
+test('invalid modifiers or modifiers on non-click steps reject the whole batch before input', async () => {
+  const f = fixture();
+  for (const step of [{ do: 'click', ref: 'e1', modifier: 'super' }, { do: 'click', ref: 'e1', modifier: ['cmd'] },
+    { do: 'press', ref: 'e1', key: 'Enter', modifier: 'cmd' }, { do: 'navigate', ref: 'e1', modifier: 'cmd' }])
+    await assert.rejects(f.run(f.tab, [{ do: 'click', ref: 'e1' }, step], {}), /modifier/);
+  assert.deepEqual(f.actions, []);
 });
 
 test('v3 validates the whole batch before input, including every required field', async () => {
@@ -199,12 +232,17 @@ test('v3 upload goes through the private file provider and releases staging afte
 });
 
 test('v3 confirmation is returned without executing input', async () => {
-  const f = fixture();
-  const run = createActionRunner({ check: () => ({ kind: 'confirm', terms: { amount: '25' } }),
+  for (const modifier of [undefined, 'cmd', 'shift', 'ctrl', 'alt']) {
+    const f = fixture({ submit: true }); f.states.set('e1', { payment: true }); let guarded = 0;
+    const run = createActionRunner({ check: (ctx, kind, target) => {
+      assert.equal(kind, 'click'); assert.equal(target.element.payment, true);
+      return { kind: 'confirm', terms: { amount: '25' } };
+    }, backgroundClick: () => { guarded++; throw Error('payment input must not start'); },
     snapshot: async () => ({ text: 'untrusted page', number: 2 }) });
-  const result = await run(f.tab, [{ do: 'click', ref: 'e1' }], { userMessage: 'Read' });
-  assert.match(result.lines[0], /confirm/i); assert.equal(f.actions.length, 0);
-  assert.deepEqual(result.confirmation, { step: 1, terms: { amount: '25' } });
+    const result = await run(f.tab, [{ do: 'click', ref: 'e1', ...(modifier ? { modifier } : {}) }], { userMessage: 'Read' });
+    assert.match(result.lines[0], /confirm/i); assert.equal(f.actions.length, 0); assert.equal(guarded, 0);
+    assert.deepEqual(result.confirmation, { step: 1, terms: { amount: '25' } });
+  }
 });
 
 test('v3 read failure after input remains an observation, with no automatic resend', async () => {

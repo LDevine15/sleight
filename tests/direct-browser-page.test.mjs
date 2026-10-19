@@ -399,6 +399,33 @@ test('CR8 pointer events stay plain when their first modifier read is after disp
   for (const type of types) assert.equal(f.window.captureListeners[type]?.size ?? 0, 0, type + ' listener removed');
 });
 
+for (const modifier of ['Meta', 'Control']) test(`explicit ${modifier} clicks keep the requested modifier visible after retirement`, t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), option = new f.Element('div', { role: 'option' }), events = [];
+  try {
+    f.hook.prepare(option, 'explicit', 1000, false, modifier);
+    for (const key of ['Meta', 'Control']) for (const fn of f.window.listeners.keydown)
+      fn(Object.assign(new f.Event(), { key, type: 'keydown', isTrusted: true }));
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      const event = Object.assign(new f.MouseEvent(), { type, nodes: [option], isTrusted: true, control: true, meta: true });
+      for (const fn of f.window.captureListeners[type] ?? []) fn(event);
+      event.nodes = []; events.push(event);
+    }
+    t.mock.timers.tick(0); f.hook.finish('explicit');
+    f.hook.prepare(option, 'next', 1000);
+    for (const event of events) assert.deepEqual([event.ctrlKey, event.metaKey, event.getModifierState('Control'), event.getModifierState('Meta')],
+      modifier === 'Meta' ? [false, true, false, true] : [true, false, true, false]);
+  } finally { f.hook.off(); }
+});
+
+test('explicit modifier clicks on links refuse before a native foreground action can run', () => {
+  const f = hookFixture();
+  try {
+    const link = new f.Element('a', { href: '/destination' });
+    assert.deepEqual(f.hook.prepare(link, 'explicit-link', 1000, false, 'Shift'), { kind: 'refuse', reason: 'modifier' });
+  } finally { f.hook.off(); }
+});
+
 test('CR8 pointer capture masks only trusted events on the prepared element during its click', t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const f = hookFixture(), button = new f.Element(), other = new f.Element(), retained = [];

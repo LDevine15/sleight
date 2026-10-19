@@ -55,6 +55,97 @@ test('whole-form fill sets text, numbers, dates, checkbox and multi-select with 
   assert.equal(nodes.e4.checked, true); assert.deepEqual(nodes.e5.options.map(o => o.selected), [true, true]);
   assert.equal(r.submitted.status, 'not requested');
 });
+
+test('native multi-select replaces prior choices and an empty array clears every option', async () => {
+  const node = element('SELECT'); node.multiple = true;
+  node.options = [
+    { value: 'en', label: 'English', selected: true },
+    { value: 'pt-BR', label: 'Portuguese (Brazil)', selected: true },
+    { value: 'ja', label: 'Japanese', selected: false },
+  ];
+  const h = harness({ e1: node });
+  assert.equal((await h.fill([{ ref: 'e1', value: ['Portuguese (Brazil)', 'Japanese'] }])).rows[0].status, 'set');
+  assert.deepEqual(node.options.map(o => o.selected), [false, true, true]);
+  assert.equal((await h.fill([{ ref: 'e1', value: [] }])).rows[0].status, 'set');
+  assert.deepEqual(node.options.map(o => o.selected), [false, false, false]);
+});
+
+function multiList({ refuse, broken = false, disabled = false, duplicate = false, incomplete = false, boundary } = {}) {
+  const node = element('DIV', { role: 'listbox', 'aria-multiselectable': 'true' });
+  const attrs = [
+    { role: 'option', 'aria-selected': 'true' },
+    { role: 'option', 'aria-selected': 'true' },
+    { role: 'option', 'aria-selected': 'false', 'aria-disabled': String(disabled), ...(incomplete ? { 'aria-setsize': '100' } : {}) },
+  ];
+  const names = ['English', 'Portuguese (Brazil)', duplicate ? 'Portuguese (Brazil)' : 'Japanese'];
+  node.children = names.map((textContent, i) => Object.assign(element('DIV', attrs[i]), { textContent, closest: () => node }));
+  node.querySelectorAll = selector => { assert.equal(selector, '[role="option"]'); return node.children; };
+  const clicks = [], checks = [], h = harness({ e1: node }, { sleep: async () => {}, check: (ctx, kind, target) => {
+    checks.push(target.element);
+    return refuse ? { status: 'refuse', message: 'payment confirmation required' } : 'allow';
+  } });
+  const base = h.tab.page.locator;
+  h.tab.page.locator = selector => {
+    const list = base(selector);
+    list.getByRole = (role, opts) => {
+      assert.equal(role, 'option'); assert.equal(opts.exact, true);
+      const i = names.indexOf(opts.name);
+        const option = h.locator(node.children[i]);
+        option.click = async opts => {
+          clicks.push([i, opts]);
+          assert.deepEqual(opts.modifiers, ['ControlOrMeta']);
+          if (!broken) attrs[i]['aria-selected'] = String(attrs[i]['aria-selected'] !== 'true');
+          if (boundary) h.emit(boundary);
+        };
+        return option;
+    };
+    return list;
+  };
+  return { ...h, node, attrs, clicks, checks, selection: () => attrs.map(a => a['aria-selected']) };
+}
+
+test('ARIA multi-select sets exactly the requested texts through option clicks, then clears', async () => {
+  const h = multiList();
+  const result = await h.fill([{ ref: 'e1', value: ['Portuguese (Brazil)', 'Japanese'] }]);
+  assert.equal(result.rows[0].status, 'set', JSON.stringify(result));
+  assert.deepEqual(h.selection(), ['false', 'true', 'true']);
+  assert.deepEqual(h.clicks.map(([i]) => i), [0, 2]);
+  assert.equal(h.checks.length, 2);
+  assert.equal((await h.fill([{ ref: 'e1', value: [] }])).rows[0].status, 'set');
+  assert.deepEqual(h.selection(), ['false', 'false', 'false']);
+});
+
+for (const opts of [{ disabled: true }, { duplicate: true }, { incomplete: true }]) test('ARIA multi-select refuses unavailable choices before changing any option: ' + JSON.stringify(opts), async () => {
+  const h = multiList(opts), before = h.selection();
+  const result = await h.fill([{ ref: 'e1', value: ['Japanese'] }]);
+  assert.equal(result.rows[0].status, 'failed');
+  assert.deepEqual(h.selection(), before); assert.deepEqual(h.clicks, []);
+});
+
+test('ARIA multi-select leaves an already correct set alone and rejects missing or repeated texts', async () => {
+  const h = multiList();
+  assert.equal((await h.fill([{ ref: 'e1', value: ['English', 'Portuguese (Brazil)'] }])).rows[0].status, 'set');
+  for (const value of [['Korean'], ['Japanese', 'Japanese']])
+    assert.equal((await h.fill([{ ref: 'e1', value }])).rows[0].status, 'failed');
+  assert.deepEqual(h.clicks, []);
+});
+
+test('ARIA multi-select guards option input and reports a page that ignores a toggle as failed', async () => {
+  const blocked = multiList({ refuse: true });
+  assert.equal((await blocked.fill([{ ref: 'e1', value: [] }])).rows[0].status, 'failed');
+  assert.equal(blocked.checks.length, 1); assert.deepEqual(blocked.clicks, []);
+  const broken = multiList({ broken: true });
+  assert.equal((await broken.fill([{ ref: 'e1', value: [] }])).rows[0].status, 'failed');
+  assert.equal(broken.clicks.length, 1, 'a failed toggle must never be retried');
+});
+
+test('ARIA multi-select stops toggling when a page boundary arrives', async () => {
+  const h = multiList({ boundary: 'dialog' });
+  const result = await h.fill([{ ref: 'e1', value: [] }, { ref: 'e2', value: 'untouched' }]);
+  assert.equal(h.clicks.length, 1);
+  assert.equal(result.rows[0].status, 'failed', 'a partial selection must not be reported as set');
+  assert.equal(result.rows[1].status, 'not reached'); assert.match(result.stopped, /dialog/);
+});
 test('field failure preserves prior results and leaves later fields and submit not reached', async () => {
   const a = element(), b = element(), c = element(); b.readOnly = true;
   const h = harness({ e1: a, e2: b, e3: c });

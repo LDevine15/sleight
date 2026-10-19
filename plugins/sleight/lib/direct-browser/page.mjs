@@ -195,7 +195,7 @@ export function popupHook(options) {
     return own ?? targetOf(form); // An empty formtarget still overrides: it names the current context.
   };
   const plainControl = node => submits(node) || isMultiSelect(node);
-  const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap();
+  const retired = new Set(), replacements = [], events = new WeakMap(), masked = new WeakMap(), visibleModifiers = new WeakMap();
   const nativeOpen = window.open, nativePrevent = Event.prototype.preventDefault;
   const composedPath = Event.prototype.composedPath, now = Date.now;
   const prevented = getOwn(Event.prototype, 'defaultPrevented');
@@ -239,13 +239,13 @@ export function popupHook(options) {
   // A form watch follows its submit control too: Enter in a field clicks the form's default button.
   const matchesWatch = event => event.isTrusted && ((path => onPath(path, arm.element) || onPath(path, arm.anchor))(composedPath.call(event))
     || !!arm.watch?.submitter && onPath(composedPath.call(event), arm.watch.submitter));
-  const hide = event => {
+  const hide = (event, modifier) => {
     // The token was bound while this event matched its arm. Retirement changes
     // which new events can be masked, never a retained event's modifier values.
-    if (masked.has(event)) return arm?.token === masked.get(event) || retired.has(masked.get(event));
+    if (masked.has(event)) return visibleModifiers.get(event) !== modifier && (arm?.token === masked.get(event) || retired.has(masked.get(event)));
     if (!active()) return false;
     if (arm.clicked || !matches(event)) return false;
-    masked.set(event, arm.token); return true;
+    masked.set(event, arm.token); visibleModifiers.set(event, arm.modifier); return arm.modifier !== modifier;
   };
   // Read before the masking getters below replace ctrlKey and metaKey. A script-made click picks its disposition (a new
   // window with Shift, a background tab with Ctrl or Meta or the middle button, a download with Alt) from the event itself.
@@ -263,21 +263,21 @@ export function popupHook(options) {
   const isCancelable = event => { try { return (cancelableGetter ? cancelableGetter.call(event) : event.cancelable) !== false; } catch { return true; } };
   for (const name of ['ctrlKey', 'metaKey']) {
     const descriptor = getOwn(MouseEvent.prototype, name);
-    replace(MouseEvent.prototype, name, { ...descriptor, get() { return hide(this) ? false : descriptor.get.call(this); } });
+    replace(MouseEvent.prototype, name, { ...descriptor, get() { return hide(this, name === 'ctrlKey' ? 'Control' : 'Meta') ? false : descriptor.get.call(this); } });
   }
   const modifierState = MouseEvent.prototype.getModifierState;
   replace(MouseEvent.prototype, 'getModifierState', { configurable: true, writable: true, value(name) {
-    return (name === 'Control' || name === 'Meta') && hide(this) ? false : modifierState.call(this, name);
+    return (name === 'Control' || name === 'Meta') && hide(this, name) ? false : modifierState.call(this, name);
   } });
   // Enter pressed with the modifier held (a keyboard-started link or form) hides it the same way.
   if (globalThis.KeyboardEvent) {
     for (const name of ['ctrlKey', 'metaKey']) {
       const descriptor = getOwn(KeyboardEvent.prototype, name);
-      replace(KeyboardEvent.prototype, name, { ...descriptor, get() { return hide(this) ? false : descriptor.get.call(this); } });
+      replace(KeyboardEvent.prototype, name, { ...descriptor, get() { return hide(this, name === 'ctrlKey' ? 'Control' : 'Meta') ? false : descriptor.get.call(this); } });
     }
     const keyModifierState = KeyboardEvent.prototype.getModifierState;
     replace(KeyboardEvent.prototype, 'getModifierState', { configurable: true, writable: true, value(name) {
-      return (name === 'Control' || name === 'Meta') && hide(this) ? false : keyModifierState.call(this, name);
+      return (name === 'Control' || name === 'Meta') && hide(this, name) ? false : keyModifierState.call(this, name);
     } });
   }
   replace(Event.prototype, 'preventDefault', { configurable: true, writable: true, value() {
@@ -336,6 +336,7 @@ export function popupHook(options) {
   replace(window, 'open', { configurable: true, writable: true, value: open });
   const keyEvent = event => {
     if (!live() || !event.isTrusted || !['Control', 'Meta'].includes(event.key)) return;
+    if (event.key === arm.modifier) { if (event.type === 'keydown' && !arm.clicked) arm.masking = true; return; }
     // Playwright restores its modifiers after dispatch; our explicit release
     // may send another keyup. Keep both hidden until this arm finishes.
     if (event.type === 'keyup' && arm.modifiers.has(event.key)) { event.stopImmediatePropagation(); return; }
@@ -672,7 +673,7 @@ export function popupHook(options) {
   };
   const capture = event => {
     if (!live() || !arm.watch && arm.clicked || !(arm.watch ? matchesWatch(event) : matches(event))) return;
-    if (active()) masked.set(event, arm.token);
+    if (active()) { masked.set(event, arm.token); visibleModifiers.set(event, arm.modifier); }
     // Bind the mask during dispatch, while composedPath still identifies the prepared element. A deferred
     // handler may first read modifiers much later. Only the click starts the dispatch window.
     if (eventType(event) !== 'click') return;
@@ -1338,7 +1339,7 @@ export function popupHook(options) {
       nativeFrame?.(next); nativeTimeout(next, 40);
     },
     verdict(token) { return shield?.token === token ? shield.violation : undefined; },
-    prepare(element, token, capMs, press) {
+    prepare(element, token, capMs, press, modifier) {
       if (retired.has(token)) return false;
       held = 0;
       if (arm) finish(arm.token);
@@ -1348,6 +1349,8 @@ export function popupHook(options) {
         if (CR2_NESTED_DOCUMENT(document.activeElement)) throw Error('document focus is inside a frame');
       }
       if (!isElement(element) || !isConnected(element) || !isFinite(capMs) || capMs <= 0) return false;
+      // Explicit link modifiers can change native window disposition. Refuse them before any input.
+      if (modifier && ancestors(element).some(node => isLinkTag(node) && hasHref(node))) return { kind: 'refuse', reason: 'modifier' };
       // The native getter inherits editability and keeps a non-editable island inside an editor non-editable, so
       // only the element itself is asked, beside document.designMode (read through its captured getter).
       if (inDesignMode() || isEditable(element)) return false;
@@ -1395,7 +1398,7 @@ export function popupHook(options) {
           watch = { kind: 'link', element: linkElement };
         } else link = linkState(linkElement);
       }
-      arm = { element, anchor: armAnchor(element), token, until: now() + capMs, masking: false, modifiers: new Set(), link, linkElement, watch, handlers: [] };
+      arm = { element, anchor: armAnchor(element), token, until: now() + capMs, masking: false, modifiers: new Set(), modifier, link, linkElement, watch, handlers: [] };
       arm.timer = setTimeout(() => finish(token), capMs);
       if (watch) { watchChanges(); return { kind: 'watch' }; }
       return link ? { kind: 'link' } : true;
@@ -1479,7 +1482,7 @@ export function popupHook(options) {
   const sign = (method, nonce, text) => nonce + '.' + hmacHex(method + ':' + nonce + ':' + text) + '.' + text;
   const booleanText = value => value === true ? 't' : 'f';
   const preparedText = value => value === true ? 't' : value === false ? 'f' : value.kind === 'link' ? 'link' : value.kind === 'watch' ? 'watch'
-    : value.kind === 'refuse' ? (value.reason === 'link' ? 'refuse-link' : 'refuse-form') : 'form';
+    : value.kind === 'refuse' ? (value.reason === 'modifier' ? 'refuse-modifier' : value.reason === 'link' ? 'refuse-link' : 'refuse-form') : 'form';
   const requestText = value => {
     if (value === undefined) return 'u';
     if (getOwn(value, 'violation')) return 's' + value.violation;
@@ -1578,7 +1581,7 @@ export function popupHook(options) {
     reveal: (proof, element) => seal('reveal', proof, () => impl.reveal(element), nothing),
     settle: proof => { const nonce = verify('settle', proof); return new Promise(resolve => impl.settle(() => resolve(sign('settle', nonce, 'u')))); },
     verdict: (proof, token) => seal('verdict', proof, () => impl.verdict(token), stringText),
-    prepare: (proof, element, token, capMs, press) => seal('prepare', proof, () => impl.prepare(element, token, capMs, press), preparedText),
+    prepare: (proof, element, token, capMs, press, modifier) => seal('prepare', proof, () => impl.prepare(element, token, capMs, press, modifier), preparedText),
     takeRequest: (proof, token) => seal('takeRequest', proof, () => impl.takeRequest(token), requestText),
     finish: (proof, token) => seal('finish', proof, () => impl.finish(token), stringText),
     cancel: (proof, event) => { verify('cancel', proof); impl.cancel(event); },
@@ -1701,7 +1704,7 @@ export function hookOpen(hook, answer) {
   if (text === 'u') return undefined;
   if (text === 't' || text === 'f') return text === 't';
   if (text === 'link' || text === 'form' || text === 'watch') return { kind: text };
-  if (text === 'refuse-link' || text === 'refuse-form') return { kind: 'refuse', reason: text.slice(7) };
+  if (text === 'refuse-link' || text === 'refuse-form' || text === 'refuse-modifier') return { kind: 'refuse', reason: text.slice(7) };
   if (text === 'n') return { unavailable: true };
   if (text === 'l') return { unavailable: true, lost: true };
   if (text === 'bform' || text === 'blink') return { blocked: text.slice(1) };
@@ -1882,7 +1885,7 @@ export function frameShield(page, owner, { hook, token, capMs, timeoutMs = 1000,
 // and its form, every other frame and every document created while the key is in flight is locked (keyFrames), and the callback's
 // `between` lets the key be sent in two halves so the frames the key's handler created can be locked before it is released. The
 // outcome of a veto then says the key may have activated and must not be resent.
-export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000, press = false, keys = false } = {}) {
+export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000, press = false, keys = false, modifier } = {}) {
   const token = randomUUID(), hook = hookOf(tab), { key } = hook;
   let frame = tab.page, completed = false, others;
   // Concludes the owner frame's shield and releases every other frame; each runs even if the other throws. A key concludes the
@@ -1916,18 +1919,19 @@ export async function backgroundClick(tab, locator, click = options => locator.c
   try {
     let prepared;
     try {
-      prepared = hookOpen(hook, await deadline(() => locator.evaluate((element, { key, prepare, reveal, token, capMs, press }) => {
+      prepared = hookOpen(hook, await deadline(() => locator.evaluate((element, { key, prepare, reveal, token, capMs, press, modifier }) => {
         const hook = window[key];
         if (!hook) throw Error('background popup hook unavailable');
-        const result = hook.prepare(prepare, element, token, capMs, press);
+        const result = hook.prepare(prepare, element, token, capMs, press, modifier);
         hook.reveal(reveal, element);
         return result;
-      }, { key, prepare: hookProof(hook, 'prepare'), reveal: hookProof(hook, 'reveal'), token, capMs: timeoutMs + 1000, press }, { timeout: timeoutMs }), timeoutMs));
+      }, { key, prepare: hookProof(hook, 'prepare'), reveal: hookProof(hook, 'reveal'), token, capMs: timeoutMs + 1000, press, modifier }, { timeout: timeoutMs }), timeoutMs));
     } catch (error) {
       // The one refusal the hook states itself: name it, so the model is not sent to the engine path for a focus it can move.
       throw failure = Error(/document focus is inside a frame/.test(error?.message) ? 'focus is held inside a frame (a card field, say) that would receive the background modifier; click a page element outside it first'
         : 'background popup preparation failed; use the engine browser path');
     }
+    if (prepared?.kind === 'refuse' && prepared.reason === 'modifier') throw Error('modified link clicks cannot guarantee background input; use navigate or a plain click');
     if (prepared?.kind === 'refuse') throw Error(prepared.reason === 'link'
       ? 'Enter would open this link in a new tab, and sleight cannot check where it goes; click the link instead'
       : 'Enter would submit this form into a new tab; click its submit button instead');
