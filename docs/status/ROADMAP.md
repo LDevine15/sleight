@@ -66,7 +66,8 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
    data file, plain HTML and JavaScript) that the README links to. The hub's pages also hold plain Markdown tables for GitHub, which
    doesn't run a repo's JavaScript, and serving the interactive page (GitHub Pages or another host) is the owner's call at release. Then the
    README rewrite on the final numbers. Everything people read goes through the humanizer skill and Vale.
-5. Then the claim post (owner publishes) and the launch video (`docs/design/video-storyboard.md`). No work on the film, art included,
+5. Then the claim post (owner publishes) and the launch video (`docs/design/video-storyboard.md`). The video isn't tied to
+   1.3.0 and can come with any later release (owner, 2026-10-19). No work on the film, art included,
    starts until the claim suite (2.2), native apps included, backs the claim that sleight is the fastest at computer use on macOS, in the world. The film costs
    too much time and tokens to make for a narrower claim (owner, 2026-10-16). Its billing then repeats the claim post's words.
    The owner greenlit the art on 2026-10-18 with the claim measured (native "fastest", 8 of 9). Numbers and captures lock after
