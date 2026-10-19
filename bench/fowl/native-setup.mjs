@@ -22,10 +22,13 @@ export function turboWindowPrompt(browser) {
   return `Use only the dedicated ${name} browser, profile ${browser.profileName || browser.profileRoot}. Setup has bound browser_open to that browser's process and refuses a connection to any other, so open task pages with browser_open and keep them in your own tabs. ` +
     `These tools show tabs by handle and origin, not window titles, so there is no window to identify first, and engine js is not allowed in this arm for finding one. Never use any other browser or profile.\n\n`;
 }
+// "never use any other browser window" with no word on pop-ups lost demoid for every Sol run of sleight inside Codex (6 of 6,
+// race-1017 b16): "Sign in with DemoID" opens a separate window, and Sol called it "your window restriction" and stopped.
+// The pop-up clause is the same for every arm that gets this prompt (engine, Codex, sleight inside Codex, native arms).
 export function windowPrompt(browser) {
   const name = isolatedBrowser(browser);
   return `Use only the dedicated ${name} window initially titled "${browser.marker}"` +
-    `${browser.pid ? `, browser PID ${browser.pid}` : ''}, profile ${browser.profileName || browser.profileRoot}. Identify that window before acting, keep task pages in it, and never use any other browser window or profile. If it cannot be identified, stop. User activity still ends the input lease.\n\n`;
+    `${browser.pid ? `, browser PID ${browser.pid}` : ''}, profile ${browser.profileName || browser.profileRoot}. Identify that window before acting, keep task pages in it, and never use any other browser window or profile, except a pop-up that a page in that window opens during the task (a sign-in window, say). That pop-up is part of the task: act in it, and once it closes, that window is the browser's window again. Never act in a window that was already open, another profile or another browser. If the dedicated window cannot be identified, stop. User activity still ends the input lease.\n\n`;
 }
 export function nativeBrowserSetup({ surface, repo, dir, realBrowser, dryRun = false,
   armHome = join(homedir(), 'Library/Caches/sleight-bench'), env = process.env }) {

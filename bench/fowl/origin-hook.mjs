@@ -34,7 +34,9 @@ export function gateWindowCheck(e, env = process.env) {
   const owned = title === gate?.title || (!!gate && title.endsWith(' — ' + gate.title) && /^[^—]*\S — /.test(title) && title.indexOf(' — ') === title.length - gate.title.length - 3);
   if (gate && gate.apps.includes(input.app) && owned && keys.every(k => ['app', 'title'].includes(k))) return null;
   return `Benchmark: select_window is allowed only for the gate's own window, app ${gate ? gate.apps[0] : '(none)'} with the exact title ` +
-    `"${gate ? gate.title : '(none)'}" (or "<profile> — ${gate ? gate.title : '(none)'}"). Its title changes once a page loads; cua.getApp on the browser then addresses the same window.`;
+    `"${gate ? gate.title : '(none)'}" (or "<profile> — ${gate ? gate.title : '(none)'}"). Its title changes once a page loads; cua.getApp on the browser then addresses the same window. ` +
+    // SOL-L2: after the DemoID pop-up, all six Sol runs asked for the renamed shop window here and stopped on this refusal.
+    'A pop-up a task page opened is part of the task: act in it, and once it closes, cua.getApp on the browser shows the dedicated window again.';
 }
 
 export function answer(e, env = process.env) {

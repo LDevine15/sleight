@@ -739,8 +739,14 @@ native reference, and oversized first results defer the browser reference while 
   window that comes to the front doesn't get it either, since it may be the owner's. In the first live check (FS2,
   2026-10-19) the line never showed. Haiku's Cmd+T call came back as a lease stop on the retitled window, and any stop
   dropped the count. A stop that shows the counted window now keeps it. The trace records every count, and every reason
-  a new window doesn't get the line, as `popup-window`. We haven't measured whether CGWindowList counts Safari's one window as one. The proposed race change is one
-  prompt clause for every arm: "a pop-up that a page in it opens is part of the task".
+  a new window doesn't get the line, as `popup-window`. We haven't measured whether CGWindowList counts Safari's one window as one.
+- sleight inside Codex on gpt-6.1-sol failed demoid 6 of 6 (race-1017 b16, Safari and Firefox), and Codex alone failed it 6 of 6.
+  sleight showed the DemoID pop-up and refused nothing. Sol stopped on the race prompt's "never use any other browser window"
+  ("your window restriction prevents me from using" it), and all six runs then asked `select_window` for the renamed shop
+  window, which the race's guard refuses. The race prompt now makes a pop-up that a page in the dedicated window opens part of
+  the task, for every arm, and the guard's refusal says that `cua.getApp` shows the dedicated window again once the pop-up
+  closes. The guard still accepts only the marker title, so before a pop-up closes the agent has no `select_window` way back to
+  the opener (one Firefox run got back through the Window menu). The change hasn't run live yet.
 - The race scorer's harness-failure check knows three error classes (`approval refused`, `no daemon`, `no tools`). A round that
   fails on some other shared cause, such as every call answering "Turbo is unavailable", is scored as the arm's failures until
   someone writes `harness-failure.json` into its folder by hand. inject-order's answer check accepts the total written as `$16`,
