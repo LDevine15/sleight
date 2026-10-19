@@ -284,12 +284,27 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
 - The amount is the one money figure with a currency in the message. A message with two figures ("$29 overnight", "$268.00") doesn't
   state one, so it asks. Wording isn't read, so "never more than $300" names $300.
 - The words are English only: turbo's pay words plus place (your) order, confirm, submit, complete, reserve, book and buy. A
-  saved-card checkout with no card fields and a pay button in another language isn't a payment page to the check, and neither are
-  card fields labelled only in another language ("Kartennummer").
+  control that says only Continue, Next, Finish, Order, Authorize, Approve, Top up or Pledge isn't a submit to the check unless it
+  sits in the card fields' block. Card fields labelled only in another language ("Kartennummer") aren't card fields.
+- A page counts as a payment page only with card fields, a card-payment frame, or a money figure with a currency sign or code. A
+  bare "268.00", a currency in a separate cell from its number, and currencies outside the list (kr, zł, Kč, Ft, lei, RM, CLP) give
+  no figure, and a figure split across rows isn't joined. A saved-card or wallet checkout that shows neither isn't a payment page.
+  Its Pay button goes through unchecked.
 - It doesn't see a figure drawn in an image or canvas, or a payment in a native app window (only a sheet, dialog or alert whose words
   mention a payment and that shows a figure or card words is checked). setValue, typing without a line break and drags aren't gated,
   so a page that submits on an input event isn't caught. A page with no money figure above zero and no card field (a free booking or
   subscription) isn't a payment page.
+- False stops that remain. On a priced page, Enter in a search or promo field and a multi-line text in a text area stop. Enter in
+  a field beside card fields counts as the payment, and a later Pay then asks again. A field named "Gift card" or "Business card"
+  makes a page a card page. Apply is checked when it is the only button beside the card fields, as on the race checkout. A point
+  click anywhere in a window with a payment page stops too.
+- The browser's own confirm is told apart by structure alone: a sheet, dialog or alert outside the page, or a second top-level web
+  area (Firefox draws its confirm that way). Its 60 s exception after a payment also takes a page's own `confirm()` that shows the same
+  figure, so a page could get one extra charge of the message's amount in that window. Cancel, Close, Back, Apply and the rest of the
+  closed list exempt only a button with no pay word, so a pay button that labels itself "Back" isn't checked unless it's the only one
+  beside the card fields.
+- `dragTo` and `pickFromList` aren't checked by the gate. Engine calls in the browser-extension branch can't act on an app at all
+  (native input is refused there), so the gate doesn't run on that branch.
 - The relay keeps the payment count and resets it with each user message. A link never counts. Codex doesn't send the message, so there
   every later payment in the session asks, and the confirm dialog's exception lasts 60 s. A point click on a payment page stops and
   asks for the element number. The check runs in the engine's JavaScript session like the guard's other checks, so code that edits
