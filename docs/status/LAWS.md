@@ -103,7 +103,11 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   roles' values. The value is only compared, never returned, stored or logged, and clicks and other tools don't get this.
   Select_window may pick the one window of the same app whose title ends with a requested title of 12 or more characters when
   no title matches exactly, and says so (owner, 2026-10-19, LB5). The engine path may reuse a fresh before-action read under
-  the conditions LB7 traces, merged only after a security review (owner, 2026-10-19).
+  the conditions LB7 traces, merged only after a security review (owner, 2026-10-19). Three more guard changes may merge once
+  their A/B and a security review pass (owner, 2026-10-19): CK3 proves window and focus after a tab shortcut with the helper
+  probe instead of reading the New Tab page, CK2 acts on a moved plain line that appears exactly once with the same role, text
+  and parent (never a payment target), and CK1 binds later setValues in a batch to the first read when each is a unique
+  settable field.
 - Electron saves (owner, 2026-10-18): sleight reports a save as confirmed only when the window shows its file path. Otherwise the
   edit is reported done and the save unconfirmed, with no other evidence path. The relaunch flow avoids taking focus, or the card
   says the app comes to the front briefly.
