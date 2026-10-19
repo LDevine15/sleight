@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 17:51 UTC, re-hydrated after the owner's clear; flag A/Bs in round 2 of 5, H7 outside-eyes read running)
+## Banner (2026-10-19 18:20 UTC; flag A/Bs in round 5 of 5, then T1, then block-next with the compat rerun and AS-3 A/B, and 1.4.0 at ab510184 with H7)
 
 Goal (owner, 2026-10-19): push 1.3.1 public today when every check is done (flag A/Bs and AS-3 included, the release push is
 approved), then validate and release 1.4.0 the same day under the LAWS release-validation rule (reuse 1.3.1's runs as the A
@@ -35,7 +35,9 @@ CHANGELOG date, public push with the history rewrite (prepared and dry-run: ledg
 push-rewritten.sh; also rewrite OLD_EMAIL=x for two commits; ruleset toggled around the pushes), tag, GitHub release, update
 the owner's installed copy.
 
-**1.4.0, `claude/p140` e58329e1 (pushed private).** Merged: 1.3.1 60fe1319, analytics, Cursor, AM1 and AM1E, CR1+CR3, CR2,
+**1.4.0, `claude/p140` ab510184 (pushed private, full check owed).** H7 taste pass merged (outside Sonnet read, Sol fixes,
+Sonnet-high review, H7b fixes: README first screen, INSTALL human path, known-problems user top, static hub landing); the owner's
+read of README and INSTALL is the last H7 step. Owner questions in ledger/p140/lanes/h7-REPORT.md. Merged before that: 1.3.1 60fe1319, analytics, Cursor, AM1 and AM1E, CR1+CR3, CR2,
 CC1-CC3 (list helper), CC4/CC5 (X5), CC6, CC7+LB4+LB6 (tabc), CC8 (drag labels by AXValue, LAWS), LB1-LB3 (X6 turbo), LB5 (X8
 select_window suffix), LB8 (X7 census), X3 analytics validation, X4 held-out fixtures, README and hub H1-H6 plus H3 Pages, and
 the CHANGELOG 1.4.0 section. Every branch had a Sonnet-high review; reviews found and fixed a payment-gate bypass on resend
@@ -54,6 +56,8 @@ Cursor sign-in for its first install (Cursor is listed only after it passes).
 - `race-1017/cap-t1b.command` (pid 99021): waits for block-flags' "done", then the film T1 take via the runner in
   `~/Projects/sleight-wt/p131-t1` (c30fcf5d), log `~/Movies/sleight-film/t1-take.log`. Send loc arch the folder, take length and
   frame-delta numbers after.
+- `race-1017/block-next.command` (Terminal): waits for T1's exit, then the compat engine and live rerun from p131-int (logs
+  `race-1017/compat-*-1019b.log`), then the AS-3 A/B (`as3-ab.log`, score `as3-score.txt`), CLEAR closed through it.
 - Worktrees: race-131 at 60fe1319 (the A/B build), race-fx at 1f6efff2 (1.3.0), p131-int, p140, p140-* and p131-* branch worktrees.
 
 **Launch film.** T0b recorded and approved by loc arch (sRGB tagging and name scrubbing added). T1 runner built (plain "Thursday"
