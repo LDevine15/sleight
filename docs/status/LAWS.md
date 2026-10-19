@@ -26,8 +26,10 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   within 20%, measured as the difference over the slower arm's expected time. After sleight's final claim run, the arms that
   land within 20% get one top-up round to 5 runs, and then the results stand; a later sleight change makes a new claim
   (owner, 2026-10-17, so the rule can't loop). They give the median and range, and p90 only at 5 runs. The full suite runs once per release as a regression
-  check. An arm's results stand until that arm, the engine or the model changes, so a new competitor or a sleight fix round
-  reruns only that arm. A fixture cleanup failure skips to the next task when every app the run launched has exited, and any
+  check. An arm's results stand until that arm or the model changes, so a new competitor or a sleight fix round reruns only
+  that arm. ChatGPT updates its app several times a week, so an engine update doesn't force reruns. Every published result
+  names the engine version it ran on and its date, and the benchmarks rerun periodically. What runs after every engine update is
+  an automated compatibility check for breaking changes (owner, 2026-10-19). A fixture cleanup failure skips to the next task when every app the run launched has exited, and any
   other stop still ends the pass (owner, 2026-10-16). Claude's own computer use runs Haiku 5.5 on the owner's login.
   Arms whose code isn't in the repo (the codex-cu and devtools bridges) are named as not run, with the reason.
   A run that stops to ask before a payment the prompt didn't price (form-checkout) counts as done correctly, and an arm that pays
@@ -57,7 +59,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 - Install has two paths: with Computer Use already on in ChatGPT or Codex, installing sleight is enough. Without it,
   `sleight-mcp setup`.
 - Approvals: one card per app (Allow, Always allow, Decline), remembered for the Claude Code session. Only the user's click writes
-  Always allow. The engine refuses terminals and OpenAI's own apps, and sleight never works around that; the refusal tells the user
+  Always allow. For the Electron turbo qualification the owner delegated that one Always allow click on the benchmark VS Code to
+  sleight-arch (owner, 2026-10-19), and the owner let sleight-arch push the compatibility check's CI workflow. The engine refuses terminals and OpenAI's own apps, and sleight never works around that; the refusal tells the user
   about the `ComputerUseAllowForbiddenTargets` switch.
 - In a host the user set to answer approvals automatically (Codex's full-access mode or its auto-review), a session-only app
   approval may be answered by the host. Always allow, payment cards and sleight's own consent cards still need the user's click
@@ -133,7 +136,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   sleight-arch never answers macOS permission prompts for the owner.
 - Scripts never send Apple events to an app this Mac hasn't granted Automation for (Excel raised a prompt on 2026-10-17). Fixture
   apps quit through NSRunningApplication and their own Don't Save sheet, answered through System Events.
-- Apps are approved without the owner only through the benchmark's own allowlist.
+- Apps are approved without the owner only through the benchmark's own allowlist. Cursor may join it for testing (owner,
+  2026-10-19), and Cursor's tests run Grok 4.6 at high effort at normal speed, never fast mode, unless the owner says otherwise.
   For the claude-cu arm, the harness may press Claude Code's "Allow for this session" card in its own terminal only when every
   app the card names is on that allowlist (owner, 2026-10-17). sleight-arch may click Allow on Claude in Chrome's own permission
   prompts in the benchmark Chrome profile for the race's sites only (owner, 2026-10-18).

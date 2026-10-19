@@ -47,10 +47,10 @@ test('the Sol action is stopped: Pay now on the unpriced checkout, with no copy 
 
 test("the Luna run's own actions go ahead: the address, the delivery radio and the cookie banner", () => {
   for (const number of [53, 63, 89, 90]) assert.equal(enginePayment('click', [number], luna, gate('requested', prompt)), undefined, String(number));
-  // Apply is the only button beside the card fields (Pay now sits in another block), so it is checked (review N5); with the
-  // amount named it goes through without spending the payment.
-  assert.equal(enginePayment('click', [82], luna, gate('requested', prompt))?.why, 'none');
-  assert.deepEqual(enginePayment('click', [82], luna, gate('requested', named)), { allowed: 'message', site, shown: '$268.00', control: 'button Apply', modal: false, payment: false });
+  // Apply is the only button beside the card fields, but Pay now sits in the next block as the page's own submit, so Apply goes
+  // ahead (race b9 and b12: the stop left the promo code unapplied in 4 of 4 Firefox runs).
+  assert.equal(enginePayment('click', [82], luna, gate('requested', prompt)), undefined);
+  assert.equal(enginePayment('click', [82], luna, gate('requested', named)), undefined);
   assert.equal(enginePayment('click', [86], luna, gate('requested', prompt))?.why, 'none');
 });
 
@@ -185,7 +185,11 @@ test('N2: the card names the page URL, not a ", URL:" in a title', () => {
 test('N5: an exempt name covers only a button with no pay word that is not the only control near the card fields', () => {
   // Apply beside a Pay button near the card fields goes ahead; Apply as the only button near them is checked.
   assert.equal(enginePayment('click', [82], after(luna, 82, '901 button Pay now'), gate('requested', prompt)), undefined);
-  assert.equal(enginePayment('click', [82], luna, gate('requested', prompt))?.why, 'none');
+  assert.equal(enginePayment('click', [82], luna, gate('requested', prompt)), undefined);
+  // With no pay-worded button anywhere else on the page, Apply as the only button near the card fields is still checked.
+  const noPay = luna.replace(/^(\t*)(\d+) button Pay now\b.*$/m, '$1$2 text Pay now');
+  assert.notEqual(noPay, luna);
+  assert.equal(enginePayment('click', [82], noPay, gate('requested', prompt))?.why, 'none');
   // A pay-worded Update is no exemption, and a div never is.
   assert.equal(enginePayment('click', [82], after(luna, 82, '901 button Pay now').replace('82 button Apply', '82 button Update, Value: Pay $268.00'), gate('requested', prompt))?.why, 'none');
   // A dialog's Cancel that carries a pay word is not exempt.
@@ -523,4 +527,20 @@ test('a checkout-only link on a cart with no card field is navigation, so it goe
     assert.equal(enginePayment('click', [5], cart(link), gate('requested', null))?.why, 'nocopy', link);
   const withCard = cart('link Go to checkout, Value: 127.0.0.1:5420/checkout').replace('\t\t2 text', '\t\t6 text field Card number\n\t\t2 text');
   assert.equal(enginePayment('click', [5], withCard, gate('requested', null))?.why, 'nocopy');
+});
+
+test('PG2: only the page submit that follows Apply, enabled and in the same page, lets Apply go', () => {
+  const noPay = luna.replace(/^(\t*)(\d+) button Pay now\b.*$/m, '$1$2 text Pay now');
+  const go = tree => enginePayment('click', [82], tree, gate('requested', prompt));
+  assert.equal(go(noPay)?.why, 'none');
+  // The fixture's own Pay now, after Apply in the same page, is the submit.
+  assert.equal(go(luna), undefined);
+  for (const [name, tree] of [
+    ['disabled', after(noPay, 90, '200 button (disabled) Pay now')],
+    ['Description only', after(noPay, 90, '200 button Description: Pay')],
+    ['before Apply', noPay.replace(/^(\t*)(\d+) text Northbound Supply$/m, '$1$2 button Pay now')],
+    ['in a third-party frame', after(noPay, 90, '200 HTML Content Description: ad, URL: ad.test/', '\t201 button Pay now')],
+    ['in a dialog', after(noPay, 90, '200 dialog Offer', '\t201 button Pay now')],
+    ['a newsletter Subscribe', after(noPay, 90, '200 button Subscribe')],
+  ]) assert.equal(go(tree)?.why, 'none', name);
 });
