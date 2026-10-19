@@ -4,7 +4,9 @@ function run(argv) {
   var request = JSON.parse(argv[0]), started = Date.now(), retained = [], samples = [];
   var wasRunning = false, target = null, pid = null, launched = false, ready = false;
   var expected = request.targetURL, baselineFront, baselineOwnerWindows;
-  var hostStage = 'baseline', windowCount = null, startupDeadline = null, cleanupReported = false;
+  var hostStage = 'baseline', windowCount = null, windowsWaitUntil = null, cleanupReported = false, startWait = null;
+  // One startup budget, set by the runtime, covers launch, a busy accessibility tree and a window whose identity reads late.
+  var startupMs = Number(request.startupMs) > 0 ? Number(request.startupMs) : 60000;
   function emit(data) { if (data.stage === 'cleanup') cleanupReported = true; $.NSFileHandle.fileHandleWithStandardOutput.writeData($(JSON.stringify(data) + '\n').dataUsingEncoding($.NSUTF8StringEncoding)); }
   function wait() { $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.2)); }
   function active() {
@@ -17,15 +19,10 @@ function run(argv) {
     return { code: code, value: code === 0 ? value[0] : null };
   }
   function attribute(element, name) { return readAttribute(element, name).value; }
-  function windows() {
-    windowCount = null;
-    if (!pid) { windowCount = 0; return []; }
-    var element = ObjC.castRefToObject($.AXUIElementCreateApplication(pid));
-    var read = readAttribute(element, 'AXWindows');
-    // Only an incomplete launching tree is retried, within the readiness budget.
-    while (read.code === -25204 && startupDeadline !== null && Date.now() < startupDeadline) {
-      active(); sample(); wait(); read = readAttribute(element, 'AXWindows');
-    }
+  function readWindows() {
+    return readAttribute(ObjC.castRefToObject($.AXUIElementCreateApplication(pid)), 'AXWindows');
+  }
+  function windowList(read) {
     if (read.code !== 0 || !read.value) {
       var error = new Error('WINDOWS_READ_FAILED'); error.axStatus = read.code; throw error;
     }
@@ -34,6 +31,38 @@ function run(argv) {
     windowCount = out.length;
     return out;
   }
+  function windows() {
+    windowCount = null;
+    if (!pid) { windowCount = 0; return []; }
+    var read = readWindows();
+    // Only a busy tree (-25204, cannot complete) is retried, and only within a wait the caller set.
+    while (read.code === -25204 && windowsWaitUntil !== null && Date.now() < windowsWaitUntil) {
+      active(); sample(); wait(); read = readWindows();
+    }
+    return windowList(read);
+  }
+  // Running instances of the bundle. A terminated instance can stay listed for a moment.
+  function liveInstances() {
+    var list = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(request.bundle), out = [];
+    for (var n = 0; n < list.count; n++) if (!list.objectAtIndex(n).terminated) out.push(list.objectAtIndex(n));
+    return out;
+  }
+  // Apps that embed Electron, CEF or a Chromium framework parse argv themselves and can misread AppKit's switches.
+  function ownArgv() {
+    try {
+      var url = $.NSWorkspace.sharedWorkspace.URLForApplicationWithBundleIdentifier(request.bundle);
+      if (!url || typeof url.isNil === 'function' && url.isNil()) return null;
+      var dir = String(ObjC.unwrap(url.path)) + '/Contents/Frameworks', files = $.NSFileManager.defaultManager;
+      var names = files.contentsOfDirectoryAtPathError(dir, null);
+      if (!names || typeof names.isNil === 'function' && names.isNil()) return false;
+      for (var n = 0; n < names.count; n++) {
+        var name = String(ObjC.unwrap(names.objectAtIndex(n)));
+        if (name === 'Electron Framework.framework' || name === 'Chromium Embedded Framework.framework' ||
+          /\.framework$/.test(name) && files.fileExistsAtPath(dir + '/' + name + '/Versions/Current/Helpers')) return true;
+      }
+      return false;
+    } catch (_) { return null; }
+  }
   function same(a, b) { return !!$.CFEqual(a, b); }
   function markerMatches(w, doc) {
     var document = doc.value ? String(ObjC.unwrap(ObjC.castRefToObject(doc.value))) : '';
@@ -41,9 +70,114 @@ function run(argv) {
     var title = readAttribute(w, 'AXTitle');
     return title.code === 0 && title.value && String(ObjC.unwrap(ObjC.castRefToObject(title.value))).indexOf(request.windowMarker) >= 0;
   }
+  function fileURL(value) {
+    var url = String(value).replace(/^file:\/\/localhost\//, 'file:///').replace(/^file:\/\/\/tmp\//, 'file:///private/tmp/');
+    try { url = decodeURI(url); } catch (_) {}
+    return url.length > 8 && url.slice(-1) === '/' ? url.slice(0, -1) : url;
+  }
+  // The fixture's own document, or a document inside the fixture folder (a unique private temp path).
+  function ownDocument(document) {
+    if (!expected || !document) return false;
+    var own = fileURL(expected), url = fileURL(document);
+    return url === own || url.indexOf(own + '/') === 0;
+  }
+  // match: the fixture window. foreign: a readable different document. pending: identity not readable yet.
+  function identify(w) {
+    var doc = readAttribute(w, 'AXDocument');
+    var document = doc.value ? String(ObjC.unwrap(ObjC.castRefToObject(doc.value))) : null;
+    if (doc.code === 0 && ownDocument(document) || markerMatches(w, doc)) return { kind: 'match' };
+    if (doc.code === 0 && document) return { kind: 'foreign', document: document, documentStatus: doc.code };
+    return { kind: 'pending', documentStatus: doc.code, titleStatus: readAttribute(w, 'AXTitle').code };
+  }
   var before = [];
+  function known(w) {
+    return before.some(function(old) { return same(w, old); }) || retained.some(function(old) { return same(w, old); });
+  }
+  function ambiguous(current) {
+    if (request.windowMarker && current.filter(function(w) {
+      return markerMatches(w, readAttribute(w, 'AXDocument'));
+    }).length > 1) {
+      emit({ stage: 'cleanup', confirmed: false, details: { reasons: ['FIXTURE_WINDOW_AMBIGUOUS'], windows: [] } });
+      throw new Error('FIXTURE_WINDOW_AMBIGUOUS');
+    }
+  }
+  // Startup: decide each new window once its identity reads, and wait while any window is pending.
+  function settle(current) {
+    ambiguous(current);
+    var foreign = [], pending = [];
+    current.forEach(function(w, index) {
+      if (known(w)) return;
+      if (launched && !expected) { retained.push(w); return; }
+      var seen = identify(w);
+      if (seen.kind === 'match') retained.push(w);
+      // An app that was already running may open other windows; only a launch makes them foreign.
+      else if (launched && seen.kind === 'foreign') foreign.push({ index: index, retained: false, expectedURL: expected,
+        document: seen.document, documentStatus: seen.documentStatus, documentReads: [{ document: seen.document, status: seen.documentStatus }],
+        reasons: ['WINDOW_NOT_RETAINED', 'DOCUMENT_NOT_MATCHED'], present: true });
+      else if (launched) pending.push(seen);
+    });
+    if (foreign.length) {
+      emit({ stage: 'cleanup', confirmed: false, details: { reasons: ['FOREIGN_WINDOW_ON_START'], windows: foreign } });
+      throw new Error('FOREIGN_WINDOW_ON_START');
+    }
+    startWait.pending = pending.length;
+    if (pending.length) {
+      startWait.pendingDocumentStatus = pending[0].documentStatus; startWait.pendingTitleStatus = pending[0].titleStatus;
+      return false;
+    }
+    if (!expected) return current.length > 0;
+    return retained.some(function(w) { return current.some(function(now) { return same(w, now); }); });
+  }
+  function startupStep() {
+    startWait.polls++;
+    if (!wasRunning) {
+      var live = liveInstances();
+      startWait.instances = live.length;
+      if (live.length > 1) { startWait.ambiguousPolls++; return false; }
+      if (!live.length) { if (pid) startWait.exited = true; return false; }
+      var current = Number(live[0].processIdentifier);
+      // A launched process can hand over to a new instance of itself; the old pid answers -25204 for good.
+      if (pid && current !== pid) { startWait.relaunches++; retained = []; }
+      target = live[0]; pid = current; launched = true; startWait.exited = false;
+    } else if (target.terminated) { startWait.exited = true; startWait.instances = 0; return false; }
+    if (!target.isFinishedLaunching) { startWait.launchingPolls++; return false; }
+    startWait.finishedLaunching = true;
+    var read = readWindows(), key = String(read.code);
+    startWait.windowsStatus[key] = (startWait.windowsStatus[key] || 0) + 1;
+    startWait.lastWindowsStatus = read.code;
+    if (read.code === -25204) return false;
+    var list = windowList(read);
+    startWait.windowCount = list.length;
+    return settle(list);
+  }
+  function startupSummary() {
+    var summary = {};
+    for (var key in startWait) if (key !== 'startedAt') summary[key] = startWait[key];
+    summary.elapsedMs = Date.now() - startWait.startedAt;
+    return summary;
+  }
+  function startupError() {
+    var w = startWait, code = w.exited && !w.instances ? 'APP_EXITED' : w.instances === 0 ? 'APP_NOT_RUNNING' :
+      w.instances > 1 ? 'APP_INSTANCE_AMBIGUOUS' : !w.finishedLaunching ? 'APP_NOT_FINISHED_LAUNCHING' :
+      w.lastWindowsStatus !== 0 ? 'WINDOWS_READ_FAILED' : w.pending ? 'FIXTURE_WINDOW_UNIDENTIFIED' : 'FIXTURE_WINDOW_ABSENT';
+    var error = new Error(code);
+    if (code === 'WINDOWS_READ_FAILED') error.axStatus = w.lastWindowsStatus;
+    return error;
+  }
+  // After a failed setup, take only windows that prove they are the fixture.
+  function adopt(current) {
+    var found = current.filter(function(w) { return !known(w) && (launched && !expected || identify(w).kind === 'match'); });
+    if (request.windowMarker && found.length > 1) return;
+    found.forEach(function(w) { retained.push(w); });
+  }
   function retain(current) {
-    current = current || windows();
+    if (!current) {
+      if (!pid) return;
+      var read = readWindows();
+      // After readiness a busy tree skips one observation instead of ending the host.
+      if (read.code === -25204) return;
+      current = windowList(read);
+    }
     if (request.windowMarker && current.filter(function(w) {
       var doc = readAttribute(w, 'AXDocument');
       return markerMatches(w, doc);
@@ -53,10 +187,10 @@ function run(argv) {
     }
     var foreign = [];
     current.forEach(function(w, index) {
-      if (before.some(function(old) { return same(w, old); }) || retained.some(function(old) { return same(w, old); })) return;
+      if (known(w)) return;
       var doc = readAttribute(w, 'AXDocument');
       var document = doc.value ? String(ObjC.unwrap(ObjC.castRefToObject(doc.value))) : null;
-      var match = expected && doc.code === 0 && document === expected || markerMatches(w, doc);
+      var match = doc.code === 0 && ownDocument(document) || markerMatches(w, doc);
       // A launch does not grant ownership of restored documents.
       if (match || (launched && !ready && !expected)) retained.push(w);
       else if (launched && !ready && expected) foreign.push({ index: index, retained: false, expectedURL: expected,
@@ -136,11 +270,20 @@ function run(argv) {
       var current = windows(); recordNew(current, entries); return current;
     }
     try {
+      if (recover && launched && !wasRunning) {
+        var live = liveInstances();
+        // The app this run launched has exited: none of its windows or processes is left to close.
+        if (!live.length) {
+          details.app = { pid: pid, exited: true, terminated: true };
+          emit({ stage: 'cleanup', confirmed: true, details: details }); return;
+        }
+        if (live.length === 1) { target = live[0]; pid = Number(target.processIdentifier); }
+      }
       // A setup timeout has a separate bounded chance to establish fixture ownership for cleanup.
-      if (recover) startupDeadline = Date.now() + 10000;
+      if (recover) windowsWaitUntil = Date.now() + 10000;
       var current = windows();
-      startupDeadline = null;
-      if (recover) retain(current);
+      windowsWaitUntil = null;
+      if (recover) adopt(current);
       if (expected && !retained.length) reason(details, 'FIXTURE_WINDOW_NOT_RETAINED');
       var entries = retained.map(function(w) { return { window: w, retained: true }; });
       current.forEach(function(w) {
@@ -228,34 +371,28 @@ function run(argv) {
     emit({ stage: 'cleanup', confirmed: clean, details: details });
   }
   try {
-    var initial = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(request.bundle);
-    wasRunning = initial.count > 0; target = wasRunning ? initial.objectAtIndex(0) : null;
+    var initial = liveInstances();
+    wasRunning = initial.length > 0; target = wasRunning ? initial[0] : null;
     pid = target ? Number(target.processIdentifier) : null;
     before = windows();
-    sample(); emit({ stage: 'armed', wasRunning: wasRunning, windowCount: windowCount });
+    sample(); emit({ stage: 'armed', wasRunning: wasRunning, windowCount: windowCount, ownArgv: ownArgv() });
     var end = Date.now() + 600000;
     while (Date.now() < end) {
       var raw = $.NSString.stringWithContentsOfFileEncodingError(request.control, $.NSUTF8StringEncoding, null);
       var command = raw ? JSON.parse(ObjC.unwrap(raw)).command : '';
       if (command === 'abort') { emit({ stage: 'cleanup', confirmed: false, details: { reasons: ['HOST_ABORTED'], windows: [] } }); return ''; }
       if ((command === 'launched' || command === 'finish') && !ready) {
-        var list = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(request.bundle);
-        if (list.count) {
-          target = list.objectAtIndex(0); pid = Number(target.processIdentifier); launched = !wasRunning;
-          hostStage = 'retain';
-          if (startupDeadline === null) startupDeadline = Date.now() + 30000;
-          retain();
-          hostStage = 'ready';
-          if (target.isFinishedLaunching) {
-            var current = windows();
-            retain(current);
-            if (current.length) { ready = true; startupDeadline = null; emit({ stage: 'ready', launched: launched, pid: pid, windowCount: windowCount }); }
-          }
-        }
-      }
-      if (ready) retain();
+        hostStage = 'retain';
+        if (!startWait) startWait = { budgetMs: startupMs, startedAt: Date.now(), polls: 0, instances: null, relaunches: 0, exited: false,
+          ambiguousPolls: 0, launchingPolls: 0, finishedLaunching: false, windowsStatus: {}, lastWindowsStatus: null, windowCount: null, pending: 0 };
+        if (startupStep()) {
+          ready = true; hostStage = 'ready';
+          emit({ stage: 'ready', launched: launched, pid: pid, windowCount: windowCount, relaunches: startWait.relaunches,
+            waitMs: Date.now() - startWait.startedAt });
+        } else if (command !== 'finish' && Date.now() - startWait.startedAt >= startupMs) throw startupError();
+      } else if (ready) retain();
       if (command === 'finish') {
-        cleanup(); return '';
+        cleanup(!ready); return '';
       }
       sample(); wait();
     }
@@ -264,10 +401,11 @@ function run(argv) {
   } catch (error) {
     var details = { message: String(error.message || error).slice(0, 500), stage: hostStage, windowCount: windowCount };
     if (error.axStatus !== undefined) details.axStatus = error.axStatus;
+    if (startWait && !ready) details.startWait = startupSummary();
     emit({ stage: 'error', error: details });
     // A failed setup still owns its launched fixture. Keep the observer alive to close it.
     if (!cleanupReported) {
-      startupDeadline = null;
+      windowsWaitUntil = null;
       if (pid && hostStage !== 'baseline') cleanup(true);
       else emit({ stage: 'cleanup', confirmed: false, details: { reasons: ['CLEANUP_FAILED'], windows: [] } });
     }
