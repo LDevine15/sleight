@@ -48,6 +48,16 @@ check(statusRows(["status": "elsewhere"], ["pause"]) == nil, "unknown status ref
 check(statusRows(["status": "connected", "browser": "Chrome<script>"], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: []), "odd browser name dropped")
 check(statusRows(["status": "connected", "payments": "sometimes", "version": "1.3.0; rm"], ["disconnect"])!.last == .help, "unknown payment value and odd version dropped")
 check(statusRows(["status": "connected", "optOut": "failed"], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: [optOutFailed]), "failed opt-out shown")
+// The host line, from the relay's label of each host's own clientInfo (fixtures in tests/fixtures/host-client-info.json).
+for (host, label) in [("claude-code", "Claude Code 2.1.289"), ("codex", "Codex 0.160.0"), ("cursor", "Cursor")] {
+  check(statusRows(["status": "connected", "host": label, "payments": "ask"], ["disconnect"])!.first ==
+    .status(title: "Connected", dot: "green", details: ["Host: " + label, "Payments: asks unless you named the amount"]), "host line for " + host)
+}
+check(statusRows(["status": "connected-idle", "host": "Codex 0.160.0"], ["disconnect"])!.first ==
+  .status(title: "Connected", dot: "green", details: ["Host: Codex 0.160.0", "Its session has ended"]), "idle session names no host by guess")
+check(statusRows(["status": "connected-idle"], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: ["Its session has ended"]), "no host, no host line")
+check(statusRows(["status": "connected", "host": "Codex\\nmodel gpt"], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: []), "odd host dropped")
+check(statusRows(["status": "connected", "host": String(repeating: "a", count: 73)], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: []), "long host dropped")
 print("pass")
 `);
   const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(), swift, '-o', binary], { encoding: 'utf8' });

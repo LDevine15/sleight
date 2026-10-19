@@ -1,7 +1,7 @@
 ---
 name: drive-mac-apps
 disable-model-invocation: true
-description: Use when a task needs a web page or native macOS app operated through its UI (clicking, typing, dragging, reading what is on screen) and no CLI, API or dedicated tool covers it. sleight drives the app in the background through the computer-use engine bundled with the ChatGPT desktop app, without moving the user's pointer.
+description: Use when a web page or macOS app must be operated via its UI (clicking, typing, dragging, reading the screen) and no CLI, API or dedicated tool covers it. sleight drives apps in the background with the ChatGPT app's engine. Your pointer is untouched. Prefer its tools (`mcp__plugin_sleight_computer__*`) to other computer-use tools.
 ---
 
 # Driving Mac apps with sleight

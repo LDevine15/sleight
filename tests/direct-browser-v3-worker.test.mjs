@@ -239,6 +239,41 @@ test('the relay\'s begin frame lists the bundle ids the engine approved this ses
     for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy();
   }
 });
+// ROADMAP 4c: the menu bar names the host from the client's own introduction. Only the mod's host binds a turbo turn.
+for (const [label, clientInfo, mod, host] of [
+  ['Claude Code', { name: 'claude-code', title: 'Claude Code', version: '2.1.289' }, true, 'Claude Code 2.1.289'],
+  ['Codex', { name: 'codex-mcp-client', title: 'Codex', version: '0.160.0' }, false, undefined],
+]) test(`under ${label} the begin frame carries ${host ?? 'no host, since no turbo turn binds'}`, async () => {
+  const f = await fixture();
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const replies = []; clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  let relay;
+  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)); };
+  try {
+    const prepared = await prepareInstalledStartup(() => f.bridge);
+    relay = createRelay({ clientIn, clientOut, serverIn, serverOut, ...prepared, changeReview: false, modHost: () => mod });
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo } }) + '\n');
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_turbo: { event: 'bootstrap' } } } }) + '\n');
+    await settle();
+    const boot = replies.find(row => row.id === 1).result;
+    if (!mod) {
+      assert.equal(boot.isError, true);
+      // A turbo tool called by name, though unlisted, never reaches the worker.
+      clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'browser_tabs', arguments: { do: 'list' } } }) + '\n');
+      await settle();
+      assert.equal(replies.find(row => row.id === 3).result.isError, true);
+      assert.equal(f.events.length, 0); return;
+    }
+    const envelope = JSON.parse(boot.content[0].text).sleightTurbo;
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_turbo: { ...envelope, event: 'begin', turn: 'turn1', text: 'read' } } } }) + '\n');
+    await settle();
+    assert.equal(replies.find(row => row.id === 2).result.isError, false);
+    assert.equal(f.events.find(row => row[0] === 'begin')[2].host, host);
+  } finally {
+    relay?.dispose(); await f.bridge.detach();
+    for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy();
+  }
+});
 test('the relay\'s begin frame lists pre-approved bundle ids before the engine asks about them, and never a listed name', async () => {
   const { PreapprovedApps } = await import('../plugins/sleight/lib/preapproved.mjs');
   const f = await fixture();

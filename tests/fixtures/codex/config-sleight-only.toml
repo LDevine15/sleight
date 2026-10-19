@@ -1,0 +1,8 @@
+[plugins."sleight@sleight-dev"]
+enabled = true
+
+[plugins."computer-use@openai-bundled"]
+enabled = false
+
+[features]
+computer_use = true
