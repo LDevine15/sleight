@@ -50,6 +50,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   writes the idea from a behavior spec (owner, 2026-10-14). Bundled libraries such as playwright-core are included unmodified, with their
   notices. Going public, money, scope changes, and redistributing anything that depends on another vendor's app or engine
   are the owner's calls. The ChatGPT engine dependency is cleared for release.
+- Everything people read (docs, the README, benchmark pages, the post, commit messages) goes through the humanizer skill and
+  Vale before it's published or committed (owner, 2026-10-19).
 - The name is sleight, and its icon is the two-hands image. Branding uses only sleight's own marks.
 - sleight is app-agnostic, like Codex. Its mechanisms are generic and work in any app.
 - Install has two paths: with Computer Use already on in ChatGPT or Codex, installing sleight is enough. Without it,
