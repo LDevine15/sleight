@@ -686,6 +686,19 @@ native reference, and oversized first results defer the browser reference while 
   covered window. Rounds before that column have no record. Since the owner added two displays (2026-10-18), each task first
   moves the round's own browser window to the spot on any display that the fewest other windows overlap (a TextEdit probe went
   from 53% covered to none). A window the owner moves over it later still covers it, and the column shows that.
+- Safari demoid lost 2 runs to the sign-in pop-up, Claude Code b9-r2 on Haiku and Codex b12-r3 on gpt-6-luna. Neither the
+  engine nor sleight lost the dedicated window. "Sign in with DemoID" opens a separate Safari window, and the engine's next read
+  shows that window, as it does in Firefox. When the pop-up closes, the next read shows the dedicated window again under its old
+  ID (3 of 3 b10 runs). Safari prints each window's ID on its root line and gives the pop-up no tab bar or profile button, so
+  Haiku couldn't tie it to the dedicated window. It read `safari.windows`, which an app handle doesn't have, took the empty
+  result for a window list without the dedicated window, and stopped before the consent click. gpt-6-luna said it wouldn't use
+  the pop-up, then called `select_window` on the dedicated window's loaded title. The race's own PreToolUse hook
+  (`bench/fowl/origin-hook.mjs`) refused that, because it allows only the gate's marker title. The prompt says "never use any
+  other browser window", and it doesn't mention pop-ups. In 1.3.1 the window note says a pop-up is part of the task in the
+  window it came from, and later says when a window has the opener's ID. That needs a window ID on the root line (Firefox
+  prints none) and an app read since which the app had one window. With more windows open, a window that comes to the front
+  doesn't get that line, since it may be the owner's. No live run has checked the new note yet. The proposed race change is one
+  prompt clause for every arm: "a pop-up that a page in it opens is part of the task".
 - The race scorer's harness-failure check knows three error classes (`approval refused`, `no daemon`, `no tools`). A round that
   fails on some other shared cause, such as every call answering "Turbo is unavailable", is scored as the arm's failures until
   someone writes `harness-failure.json` into its folder by hand. inject-order's answer check accepts the total written as `$16`,

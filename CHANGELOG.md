@@ -15,6 +15,14 @@
   tool Codex hides from the model, and the Stop and Interrupt hooks end it. The plugin no longer sets
   `SLEIGHT_TURBO=0`. Trust the new hook when Codex asks. Not yet run live.
 
+### Windows
+
+- When an action brings up a pop-up window, such as a sign-in window in Safari, the result says it is part of the task in
+  the window it came from. A later result says when the window in front has that window's ID again. This needs an app that
+  prints window IDs and a read since which the app had one window. Not yet run live.
+- When `select_window` doesn't find a match, it lists window titles whole up to 120 characters. It cut them at 60, and a Safari
+  profile window's 69-character title couldn't be copied.
+
 ## 1.3.0 (TODO: release date)
 
 Native actions read the app less, and browsers get a turbo path, on by default, beside the engine's tools.

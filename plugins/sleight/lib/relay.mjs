@@ -120,6 +120,7 @@ import { compactJsDescription } from './tool-description.mjs';
 import { createLightReturn, lightReturnCode } from './light-return.mjs';
 import { hostLabel } from './host-label.mjs';
 import { TURN_START, TURN_START_TOOL, codexCallTurn, codexTurnClient, codexTurnFrame } from './codex-turn.mjs';
+import { rootWindowId, popupWindows } from './popup-window.mjs';
 
 // App handles have getAXState but no getState; only cua has getState. 13 of 27 sleight runs wrote app.getState
 // in their first call and 8 errored, losing a turn each (Fable study, 2026-10-17 11:53Z pass).
@@ -1588,6 +1589,7 @@ export function createRelay({
     }
   }
   let leaseWindow;
+  const popups = popupWindows(); // the window IDs results showed, and which window each pop-up came up from
   let recoveryTarget, recoveryKnown = false; // recoveryKnown: the target is a bundle ID the engine confirmed
   let stateRead = false; // a getState read went to the engine this session, so its app ids are Claude's to use
   let lastConfirmedWindow; // the lease's last window with a confirmed bundle ID, kept when the lease drops
@@ -4177,6 +4179,8 @@ export function createRelay({
     let windowNote;
     // The tree Claude saw before this result, which the change block below replaces.
     const treeBefore = lastTree;
+    // The app's window count this read's health probe took (preHealth is cleared before the input-lease block).
+    const readHealth = msg.method === undefined ? preHealth.get(msg.id) : undefined;
     const confirmedBrowser = msg.method === undefined && browserCalls.has(msg.id) && browserReply(msg);
     if (confirmedBrowser && !resultFailed) clickResults.observe(msg.result);
     if (browserCalls.has(msg.id) && msg.result?.content?.some(item => item.type === 'text' &&
@@ -4453,22 +4457,28 @@ export function createRelay({
       const call = leaseCalls.get(msg.id);
       const text = (msg.result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
       lastShown = msg.error ? new Set() : shownStandardWindows(text);
+      const shownId = msg.error ? undefined : rootWindowId(text);
       // A guard stop happens before its action and carries the header it just read.
       // A window-change stop carries the window it saw, and the lease moves to it. Leasing that
       // window still refuses if another session holds it.
       const guardStop = msg.result?.isError && /^(?:Error: )?(?:sleight stopped before |Input lease stopped this action: (?:window or URL|app) changed)/m.test(text);
       const window = !msg.error && (!msg.result?.isError || guardStop) && lastWindowFromText(text);
       const known = observedAppId(call, window, msg.result);
+      // A pop-up the action brought up, or the window it returns to (SW1, popup-window.mjs). It gets the note below even
+      // under its opener's title and URL, and the selected-window path's "outcome unconfirmed" note gets the same line.
+      const popupLine = call.key && window && !msg.result?.isError ? popups.note(leaseWindow, { ...window, rootId: shownId }) : popups.see(shownId);
+      if (call.read && window && !msg.result?.isError) popups.count(window.app, readHealth, window.title, shownId);
       // An action whose result shows another window of the same app (a close, a new window). Said
       // plainly, or a "no change" about the window now in front reads as a failed action: Claude
       // probed after closing a Chess game in 4/6 runs (2026-10-08).
-      if (call.key && !windowNote && window && !msg.result?.isError && leaseWindow?.app === window.app &&
-          !sameWindow(leaseWindow, window) && !newTabOf(leaseWindow, treeBefore, window, text.slice(text.lastIndexOf('Window: ')))) {
+      if (call.key && !windowNote && window && !msg.result?.isError && leaseWindow?.app === window.app && (popupLine ||
+          !sameWindow(leaseWindow, window) && !newTabOf(leaseWindow, treeBefore, window, text.slice(text.lastIndexOf('Window: '))))) {
         windowNote = `sleight: this call acted on ${documentLabel(leaseWindow)}. The window it shows now is ${documentLabel(window)}.`;
       }
+      if (popupLine && windowNote) windowNote += ' ' + popupLine;
       const previous = leaseWindow;
       if (guardStop && window && selectedWindow && window.app !== selectedWindow.app) clearSelection();
-      leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}) } : undefined;
+      leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}), ...(shownId ? { rootId: shownId } : {}) } : undefined;
       if (ownWindow(leaseWindow)) withheld.set(msg.id, OWN_HOST_LINE);
       else if (leaseWindow) {
         // The site this read shows. A read without web-area lines (a diff) keeps what the same window showed before.
