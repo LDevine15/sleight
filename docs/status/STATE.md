@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 17:58 UTC, flushed before the owner's clear)
+## Banner (2026-10-19 17:51 UTC, re-hydrated after the owner's clear; flag A/Bs in round 2 of 5, H7 outside-eyes read running)
 
 Goal (owner, 2026-10-19): push 1.3.1 public today when every check is done (flag A/Bs and AS-3 included, the release push is
 approved), then validate and release 1.4.0 the same day under the LAWS release-validation rule (reuse 1.3.1's runs as the A
