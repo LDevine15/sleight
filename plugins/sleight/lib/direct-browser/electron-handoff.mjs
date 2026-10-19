@@ -125,7 +125,7 @@ export function createAppRunners({ pages, invalidateRefs, check, snapshot, inspe
     for (const locator of locators) if (await isTerminal(locator)) throw refused(APP_REFUSALS.terminal);
   }
 
-  async function runSteps(entry, steps, ctx) {
+  async function runSteps(entry, steps, ctx, { siteCheck } = {}) {
     await validated(tab => runner(tab, steps, ctx));
     for (const step of steps) { const message = staticRefusal(step); if (message) throw refused(message); }
     const lines = []; let observe, confirmation, stoppedAt = null;
@@ -136,7 +136,7 @@ export function createAppRunners({ pages, invalidateRefs, check, snapshot, inspe
         await pages.guard(entry, async () => {
           await preflight(entry, step);
           phase = 'running';
-          result = await runner(entry, [step], ctx, { nextStep: steps[index + 1] });
+          result = await runner(entry, [step], ctx, { nextStep: steps[index + 1], siteCheck });
           phase = 'ran';
         });
       } catch (error) {

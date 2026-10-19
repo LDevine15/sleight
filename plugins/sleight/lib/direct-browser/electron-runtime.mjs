@@ -324,7 +324,7 @@ export function composeAppTurn(apps) {
     // The handoff runners' read records the join each capture was taken at; their acknowledgment marks it delivered.
     snapshot: (page, options) => pageOwner(page).runners.read(page, options),
     acknowledgeSnapshot(page, number) { const app = byPage.get(page); return !!app && app.runners.acknowledgeSnapshot(page, number) === true; },
-    runSteps: (entry, steps, ctx) => entryOwner(entry).runners.runSteps(entry, steps, ctx),
+    runSteps: (entry, steps, ctx, options) => entryOwner(entry).runners.runSteps(entry, steps, ctx, options),
     fillFields: (entry, fields, options, ctx) => entryOwner(entry).runners.fillFields(entry, fields, options, ctx),
   });
 }
