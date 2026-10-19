@@ -99,7 +99,11 @@ export function enginePayment(name, args, text, payment, probe = false) {
   // A name the page sets can exempt only a button (never a div or group) with no pay or submit word, and not the only button
   // near the card fields (review N5): turbo's closed list (Apply, Remove, a stepper) and Cancel-like names.
   const exemptName = row => BUTTON.test(row.body) && (refundableName(row.name) || LEAVE.test(row.name.trim())) && !payWords(row);
-  const exempt = row => exemptName(row) && !(near && buttons(near).length === 1 && under(near, row));
+  // The only button near the card fields stays checked unless the page has a pay-worded button of its own elsewhere, which is
+  // then the submit (a promo code's Apply beside "Pay now" in the next block, race b9 and b12, 2026-10-19).
+  const payButton = row => BUTTON.test(row.body) && (paymentWords(row.label) || PAYS.test(row.label));
+  const exempt = row => exemptName(row) && !(near && buttons(near).length === 1 && under(near, row) &&
+    !page.some(other => other !== row && other.web && !under(near, other) && payButton(other)));
   // The card fields' block: climbed until it holds a button without an exempt name; with none, the buttons near the fields.
   let block = near;
   while (block && !buttons(block).some(row => !exemptName(row))) block = block.ancestors[0];

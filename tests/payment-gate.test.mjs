@@ -47,10 +47,10 @@ test('the Sol action is stopped: Pay now on the unpriced checkout, with no copy 
 
 test("the Luna run's own actions go ahead: the address, the delivery radio and the cookie banner", () => {
   for (const number of [53, 63, 89, 90]) assert.equal(enginePayment('click', [number], luna, gate('requested', prompt)), undefined, String(number));
-  // Apply is the only button beside the card fields (Pay now sits in another block), so it is checked (review N5); with the
-  // amount named it goes through without spending the payment.
-  assert.equal(enginePayment('click', [82], luna, gate('requested', prompt))?.why, 'none');
-  assert.deepEqual(enginePayment('click', [82], luna, gate('requested', named)), { allowed: 'message', site, shown: '$268.00', control: 'button Apply', modal: false, payment: false });
+  // Apply is the only button beside the card fields, but Pay now sits in the next block as the page's own submit, so Apply goes
+  // ahead (race b9 and b12: the stop left the promo code unapplied in 4 of 4 Firefox runs).
+  assert.equal(enginePayment('click', [82], luna, gate('requested', prompt)), undefined);
+  assert.equal(enginePayment('click', [82], luna, gate('requested', named)), undefined);
   assert.equal(enginePayment('click', [86], luna, gate('requested', prompt))?.why, 'none');
 });
 
@@ -185,7 +185,11 @@ test('N2: the card names the page URL, not a ", URL:" in a title', () => {
 test('N5: an exempt name covers only a button with no pay word that is not the only control near the card fields', () => {
   // Apply beside a Pay button near the card fields goes ahead; Apply as the only button near them is checked.
   assert.equal(enginePayment('click', [82], after(luna, 82, '901 button Pay now'), gate('requested', prompt)), undefined);
-  assert.equal(enginePayment('click', [82], luna, gate('requested', prompt))?.why, 'none');
+  assert.equal(enginePayment('click', [82], luna, gate('requested', prompt)), undefined);
+  // With no pay-worded button anywhere else on the page, Apply as the only button near the card fields is still checked.
+  const noPay = luna.replace(/^(\t*)(\d+) button Pay now\b.*$/m, '$1$2 text Pay now');
+  assert.notEqual(noPay, luna);
+  assert.equal(enginePayment('click', [82], noPay, gate('requested', prompt))?.why, 'none');
   // A pay-worded Update is no exemption, and a div never is.
   assert.equal(enginePayment('click', [82], after(luna, 82, '901 button Pay now').replace('82 button Apply', '82 button Update, Value: Pay $268.00'), gate('requested', prompt))?.why, 'none');
   // A dialog's Cancel that carries a pay word is not exempt.
