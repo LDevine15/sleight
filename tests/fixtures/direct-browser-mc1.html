@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Click settling fixture</title>
+<style>
+  label { display: block; padding: 24px; border: 1px solid; width: 240px; }
+  input { position: absolute; width: 1px; height: 1px; clip: rect(0 0 0 0); }
+</style>
+<label><input id="shipping" type="radio" name="delivery" value="overnight"><span>Overnight delivery</span></label>
+<button id="move" type="button">Other control</button>
+<script>
+  window.received = [];
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+    addEventListener(type, event => received.push([type, event.target.id]));
+  }
+  window.rerender = () => {
+    const radio = document.querySelector('#shipping');
+    radio.setAttribute('value', 'rendering');
+    requestAnimationFrame(() => radio.setAttribute('value', 'overnight'));
+  };
+</script>

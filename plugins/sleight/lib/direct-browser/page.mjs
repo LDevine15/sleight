@@ -1036,6 +1036,24 @@ export function popupHook(options) {
     for (let i = 0; i < at; i++) if (path[i] !== forwarded && shieldIsElement(path[i]) && matchesNode(path[i], interactive)) return true;
     return false;
   };
+  // A clipped radio receives its initial press on its own label, then HTML forwards a click to the radio.
+  // Seal that label too. A nested interactive control or a label reassigned to another input still refuses.
+  const ownLabel = element => {
+    const control = shieldControlOf(element);
+    if (control?.type !== 'radio' && control?.type !== 'checkbox') return null;
+    const label = closest(element, 'label');
+    return label && labelOf(label) === element ? label : null;
+  };
+  const labelPath = (current, path) => {
+    const label = current.label, at = label ? pathIndex(path, label) : -1;
+    return at >= 0 && labelOf(label) === current.element && describe(label) === current.labelSignature
+      && !interactiveBetween(path, at, current.element);
+  };
+  const geometryOf = element => { const r = rectOf(element); return r.x + ',' + r.y + ',' + r.width + ',' + r.height; };
+  const clearCentre = current => {
+    const r = rectOf(current.element), hit = pointHit(document, r.x + r.width / 2, r.y + r.height / 2);
+    return !!hit && (hit === current.element || pathIndex(ancestors(hit), current.element) >= 0 || labelPath(current, ancestors(hit)));
+  };
   const keyOf = getter(globalThis.KeyboardEvent, 'key'), bodyOf = getter(globalThis.Document, 'body'), rootElementOf = getter(globalThis.Document, 'documentElement');
   const modifierKey = event => { const key = keyOf(event); return key === 'Control' || key === 'Shift' || key === 'Meta' || key === 'Alt' || key === 'AltGraph'; };
   // A locked frame lets no key through. A key release alone is reported separately: a page that navigates on the key leaves the
@@ -1056,7 +1074,8 @@ export function popupHook(options) {
       // Enter in a field (keys, or a press the caller made: activation) clicks the form's default submitter, which must be the sealed one.
       const at = pathIndex(path, anchor);
       if (at < 0) {
-        if (!(forwarded && pathIndex(path, forwarded) >= 0) && !listHas(areas, path[0]) && !((keys || activation) && submitter && pathIndex(path, submitter) >= 0)) return elsewhereReason;
+        if (!(forwarded && pathIndex(path, forwarded) >= 0) && !listHas(areas, path[0]) && !((keys || activation) && submitter && pathIndex(path, submitter) >= 0)
+          && !labelPath(shield, path)) return elsewhereReason;
       } else if (anchor === element && interactiveBetween(path, at, forwarded)) return elsewhereReason;
     }
     // Until the activation key goes down the whole seal must match. From then on only the routing facts must: what a handler
@@ -1096,6 +1115,10 @@ export function popupHook(options) {
       }
     } catch { bad = changedReason; }
     if (!bad) return;
+    if (current.mc1 && !current.violation) {
+      try { current.retryBlocked = !clearCentre(current) || bad === elsewhereReason && geometryOf(current.element) === current.geometry; }
+      catch { current.retryBlocked = true; }
+    }
     if (!quiet && (!current.violation || current.violation === RELEASED && bad !== RELEASED)) current.violation = bad;
     try { stopNow(event); } catch { /* The prevent below still cancels the default. */ }
     try { cancel(event); } catch { /* Nothing further can be done to this event. */ }
@@ -1234,7 +1257,7 @@ export function popupHook(options) {
   };
   const impl = {
     // See the key-shield API above. Any throw here reaches the caller as a rejected call, which reads as "page changed".
-    guard(element, token, capMs, { keys = false, press = false } = {}) {
+    guard(element, token, capMs, { keys = false, press = false, mc1 = false } = {}) {
       if (retired.has(token) || !isFinite(capMs) || capMs <= 0 || !shieldIsElement(element) || !connected(element)) return false;
       const withKeys = keys === true, activation = press === true, control = shieldControlOf(element), form = withKeys || activation ? control?.form ?? null : null;
       const forwarded = forwardedOf(element), areas = areasOf(element);
@@ -1244,6 +1267,12 @@ export function popupHook(options) {
       shield = holdShield({ token, element, anchor: anchorOf(element), forwarded, areas, keys: withKeys, activation, form, submitter: form ? submitterOf(form) : null,
         parts, signature: sealed(element, forwarded, areas, withKeys), routing: withKeys ? routed(element, forwarded, areas) : undefined, down: false,
         until, landed: false, passed: false, reports: !activation && !swallowsInput(element) }, capMs);
+      if (mc1 && !withKeys && !activation) {
+        shield.mc1 = true;
+        shield.geometry = geometryOf(element);
+        shield.label = ownLabel(element);
+        shield.labelSignature = shield.label ? describe(shield.label) : '';
+      }
       if (shield.anchor !== element) {
         shield.roots = closedRootsOf(element);
         for (let i = 0; i < shield.roots.length; i++) for (let j = 0; j < guarded.length; j++) addOn(shield.roots[i].root, guarded[j], shield.roots[i].listener, true);
@@ -1336,6 +1365,45 @@ export function popupHook(options) {
       let waiting = true;
       const next = () => { if (waiting) { waiting = false; nativeTimeout(done, 0); } };
       nativeFrame?.(next); nativeTimeout(next, 40);
+    },
+    // Keep the old seal while waiting. Only the very same node with the same classification can earn one retry.
+    // Both mutation quiet and stable geometry are required, with a hard 300 ms cap after the next frame.
+    retry(element, token, done) {
+      const current = shield;
+      const eligible = () => shield === current && current?.token === token && current.element === element
+        && !current.keys && !current.activation && current.passed === false && current.reports
+        && current.mc1 && !current.retryBlocked
+        && (!current.label || ownLabel(element) === current.label)
+        && (current.violation === changedReason || current.violation === elsewhereReason)
+        && connected(element) && now() < current.until;
+      if (!eligible()) { done(false); return; }
+      let observer, timer, cap, finished = false, quietAt = now(), geometry = '';
+      const finish = value => {
+        if (finished) return;
+        finished = true; nativeClear(timer); nativeClear(cap);
+        if (observer) nativeDisconnect.call(observer);
+        done(value);
+      };
+      const sample = () => {
+        try {
+          if (!eligible()) return finish(false);
+          const r = rectOf(element), next = r.x + ',' + r.y + ',' + r.width + ',' + r.height;
+          if (next !== geometry) { geometry = next; quietAt = now(); }
+          const style = styleOf(element), clear = clearCentre(current);
+          if (now() - quietAt >= 50 && r.width > 0 && r.height > 0 && r.top >= 0 && r.left >= 0
+            && r.bottom <= innerHeight && r.right <= innerWidth && style.visibility === 'visible' && style.display !== 'none' && clear
+            && (!current.label || describe(current.label) === current.labelSignature)
+            && sealed(element, forwardedOf(element), areasOf(element), false) === current.signature) return finish(true);
+          timer = nativeTimeout(sample, 25);
+        } catch { finish(false); }
+      };
+      try {
+        observer = new NativeObserver(() => { quietAt = now(); });
+        nativeObserve.call(observer, document, { subtree: true, childList: true, attributes: true, characterData: true });
+        const root = rootOf(element);
+        if (root !== document) nativeObserve.call(observer, root, { subtree: true, childList: true, attributes: true, characterData: true });
+        this.settle(() => { if (finished) return; quietAt = now(); cap = nativeTimeout(() => finish(false), 300); sample(); });
+      } catch { finish(false); }
     },
     verdict(token) { return shield?.token === token ? shield.violation : undefined; },
     prepare(element, token, capMs, press) {
@@ -1577,6 +1645,7 @@ export function popupHook(options) {
     guard: (proof, element, token, capMs, options) => seal('guard', proof, () => impl.guard(element, token, capMs, options), booleanText),
     reveal: (proof, element) => seal('reveal', proof, () => impl.reveal(element), nothing),
     settle: proof => { const nonce = verify('settle', proof); return new Promise(resolve => impl.settle(() => resolve(sign('settle', nonce, 'u')))); },
+    retry: (proof, element, token) => { const nonce = verify('retry', proof); return new Promise(resolve => impl.retry(element, token, value => resolve(sign('retry', nonce, booleanText(value))))); },
     verdict: (proof, token) => seal('verdict', proof, () => impl.verdict(token), stringText),
     prepare: (proof, element, token, capMs, press) => seal('prepare', proof, () => impl.prepare(element, token, capMs, press), preparedText),
     takeRequest: (proof, token) => seal('takeRequest', proof, () => impl.takeRequest(token), requestText),
@@ -1882,7 +1951,24 @@ export function frameShield(page, owner, { hook, token, capMs, timeoutMs = 1000,
 // and its form, every other frame and every document created while the key is in flight is locked (keyFrames), and the callback's
 // `between` lets the key be sent in two halves so the frames the key's handler created can be locked before it is released. The
 // outcome of a veto then says the key may have activated and must not be resent.
-export async function backgroundClick(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000, press = false, keys = false } = {}) {
+export async function backgroundClick(tab, locator, click, options = {}) {
+  if (process.env.SLEIGHT_MC1 === '0' || options.press || options.keys)
+    return backgroundClickOnce(tab, locator, click, options);
+  const pinned = typeof locator.ownerFrame !== 'function' && typeof locator.elementHandle === 'function'
+    ? await locator.elementHandle({ timeout: options.timeoutMs ?? 1000 }) : undefined;
+  try {
+    const target = pinned ?? locator;
+    try { return await backgroundClickOnce(tab, target, click, { ...options, mc1: true }); }
+    catch (error) {
+      if (error.code !== 'MC1_RETRY') throw error;
+      options.onRetry?.();
+      try { return await backgroundClickOnce(tab, target, click, { ...options, mc1: true, retried: true }); }
+      catch (retryError) { if (retryError.message === changedMidClick) retryError.message += ' (after one settled click retry)'; throw retryError; }
+    }
+  } finally { await pinned?.dispose().catch(() => {}); }
+}
+
+async function backgroundClickOnce(tab, locator, click = options => locator.click({ ...options, timeout: timeoutMs }), { timeoutMs = 1000, press = false, keys = false, mc1 = false, retried = false, recover = true } = {}) {
   const token = randomUUID(), hook = hookOf(tab), { key } = hook;
   let frame = tab.page, completed = false, others;
   // Concludes the owner frame's shield and releases every other frame; each runs even if the other throws. A key concludes the
@@ -1947,11 +2033,11 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       // The shield outlives the click timeout: a click delayed by a busy page is still checked, and one that
       // arrives after this cap is cancelled. The other frames are armed in the same step. Enter in a field makes the
       // browser click the form's default button: for a press that click is the press working.
-      const [armed, othersArmed] = await Promise.all([deadline(() => locator.evaluate(async (element, { key, settle, guard, token, capMs, press, keys }) => {
+      const [armed, othersArmed] = await Promise.all([deadline(() => locator.evaluate(async (element, { key, settle, guard, token, capMs, press, keys, mc1 }) => {
         const hook = window[key];
         await hook.settle(settle);
-        return hook.guard(guard, element, token, capMs, { press, keys });
-      }, { key, settle: hookProof(hook, 'settle'), guard: hookProof(hook, 'guard'), token, capMs: timeoutMs + 4000, press: !!press, keys: keys === true }, { timeout: timeoutMs }), timeoutMs), others.arm()]);
+        return hook.guard(guard, element, token, capMs, { press, keys, ...(mc1 ? { mc1: true } : {}) });
+      }, { key, settle: hookProof(hook, 'settle'), guard: hookProof(hook, 'guard'), token, capMs: timeoutMs + 4000, press: !!press, keys: keys === true, ...(mc1 ? { mc1: true } : {}) }, { timeout: timeoutMs }), timeoutMs), others.arm()]);
       if (hookOpen(hook, armed) !== true) throw Error('click guard unavailable');
       if (!othersArmed) throw others.unarmable ? Error('background popup hook unavailable') : Error('frame unavailable');
     } catch (error) {
@@ -1997,6 +2083,13 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     if (failure || !hookFailed(error)) throw error;
     throw failure = Error(hookUnavailable);
   } finally {
+    let retry = false;
+    if (mc1 && recover && !retried && !failure && !reported && !press && !keys) {
+      try {
+        retry = hookOpen(hook, await deadline(() => locator.evaluate((element, { key, proof, token }) => window[key].retry(proof, element, token),
+          { key, proof: hookProof(hook, 'retry'), token }, { timeout: timeoutMs }), timeoutMs)) === true;
+      } catch { /* An absent, late or unverified answer grants no retry. */ }
+    }
     // A hook that cannot vouch for its own answer, or refused the call, may have vetoed the input: say so rather than
     // report a click delivered. A page that navigated away or closed just ends the evaluate, which is not a veto.
     try { report = await disarm(); } catch { report = {}; }
@@ -2006,7 +2099,11 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     // confirms that no press, release or click reached the page before the veto. An error already on its way out that
     // names the hook (refused proof, unavailable hook) or the change the page made (a flipped link or form) is clearer
     // than this and stays.
-    if (cancelled && !failure && !reported) throw Error(keys ? keyMessage(cancelled) : report.passed === false ? changedMidClick : changedAfterPress);
+    if (cancelled && !failure && !reported) {
+      const error = Error(keys ? keyMessage(cancelled) : report.passed === false ? changedMidClick : changedAfterPress);
+      if (retry && report.passed === false && (cancelled === 'the checked element changed' || cancelled === 'the input landed on a different element')) error.code = 'MC1_RETRY';
+      throw error;
+    }
     // A click was sent and no press or click reached the sealed element's document: it went somewhere else.
     if (completed && report.landed === false && !failure && !reported) throw Error(missedClick);
   }

@@ -243,7 +243,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
     for (let index = 0; index < steps.length; index++) {
       // navigate on a link is that link's click, so every click rule, guard and popup rule applies unchanged.
       const named = steps[index], step = named.do === 'navigate' ? { ...named, do: 'click' } : named, label = `${index + 1} ${named.do}${step.ref ? ' ' + step.ref : ''}`;
-      let locator, target, started = false, armed, activity, deferred = false, staging, submit, inputPending = false, stepFinished = false, settleCapped = false, settleNote;
+      let locator, target, started = false, armed, activity, deferred = false, staging, submit, inputPending = false, stepFinished = false, settleCapped = false, settleNote, clickRetry = '';
       try {
         if (state.dialog && step.do !== 'dialog') throw Error('a page dialog is waiting; answer it with the dialog operation');
         if (step.do === 'dialog' && !state.dialog) throw Error('no waiting dialog; read the page');
@@ -305,7 +305,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             // The rules read the element inside gate(); the page confirms those words are the ones it sealed.
             if (trusted) { target.verifySeal = verifySeal; await gate(); ctx.beginInput(target); }
             begin(); return locator.click({ ...options, ...extra, ...aim });
-          });
+          }, { recover: !submits && !info.payment, onRetry: () => { clickRetry = '; waited for the page to settle and retried the click once'; } });
           const pressKey = keys => trusted ? ctx.pressTarget(target, step.key, options, keys) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
           // Enter and Space can follow a link or submit a form into a new tab: arm the popup hook, as a click does. In a trusted turn
           // the key also goes through the key shield (armed before the key, every other frame locked), so the gate's verdict and the
@@ -471,7 +471,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         const heldOpenings = clicked ? await tab.takeHeld?.().catch(() => 0) : 0;
         // A page can raise a window it opened from another origin with focus(); no patch in the page, and no CDP call, stops or reports that.
         const raisable = clicked ? (await tab.raisablePopups?.().catch(() => []) ?? []) : [];
-        lines.push(label + ': ' + outcome + (foregroundTabs > 0 && boundary?.kind !== 'popup' && !popupTab ? `. A tab the page opened probably took the foreground (${why})` : '')
+        lines.push(label + ': ' + outcome + clickRetry + (foregroundTabs > 0 && boundary?.kind !== 'popup' && !popupTab ? `. A tab the page opened probably took the foreground (${why})` : '')
           + (raisable.length ? `. ${raisable.length > 1 ? 'Tabs' : 'Tab'} ${raisable.join(', ')} (opened by this page, another origin) can be raised to the foreground by the page at any time, and sleight cannot block or detect that` : '') + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
         if (boundary || settleCapped) { stoppedAt = index + 1; break; }
       } catch (error) {
@@ -497,7 +497,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // The shield cancelled the input before the page saw the click (backgroundClick says so); nothing was sent.
         // Playwright's hit-target check also blocks the page's pointer events when a cover appears mid-action, so a covered target got no input.
         const unsent = step.do === 'click' && /^page changed during the click; read again/.test(error.message) || /intercepts pointer events/i.test(error.message);
-        lines.push(label + ': ' + (started && !unsent ? 'effect unconfirmed; read before retrying. ' : 'not run: ') + detail);
+        lines.push(label + ': ' + (started && !unsent ? 'effect unconfirmed; read before retrying. ' : 'not run: ') + detail + clickRetry);
         stoppedAt = index + 1; break;
       } finally {
         stepFinished = true;
