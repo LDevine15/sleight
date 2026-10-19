@@ -9,17 +9,19 @@ export const TAB_URL_SENTENCE = 'Open the tab and send its URL in the same call.
 // new tab's address field, and the tab continuation carries the call there when the window's strip shows its selected tab
 // (selectedTabShown, the earlier-tree half of tabRefusal; the stop and the native checks can still refuse). Safari's one-tab
 // window shows no strip, its Cmd+T stopped 6 of 6 times, and its new-tab button and address field by ID ran in one call in
-// 15 of 21 openings, so a tree without that strip keeps the plain sentence. SLEIGHT_FS=1, under A/B. `tree` is the result's
-// text after this item, for an engine that sends the tree as an item of its own.
+// 15 of 21 openings, so a tree without that strip keeps the plain sentence. Default since the race A/B (2026-10-19): Firefox
+// rounds with it took 474.2, 450.8 and 440.1 s against 517.8, 488.5 and 512.0 s, all 12/12. Every Safari `browser-instructions`
+// trace said `plain` (36 of 36), so Safari's text didn't change. Only a browser's instructions block carries it, so native sessions never
+// read it. `tree` is the result's text after this item, for an engine that sends the tree as an item of its own.
 export const KEYBOARD_TAB_SENTENCE = 'Open the tab and send its URL in the same call: `app.pressKey("super+t")`, then `app.typeText(url)` and `app.pressKey("Return")`; the new tab focuses its address field.';
 
 const BLOCK = /(<app_specific_instructions>\r?\n## Browser Computer Use\b[\s\S]*?)(\r?\n<\/app_specific_instructions>)/;
 
-export function rewriteBrowserInstructions(text, trace = () => {}, { keyboardTab = false, tree = '' } = {}) {
+export function rewriteBrowserInstructions(text, trace = () => {}, { tree = '' } = {}) {
   const m = BLOCK.exec(text);
   if (!m || m[1].includes(TAB_URL_SENTENCE) || m[1].includes(KEYBOARD_TAB_SENTENCE)) return text;
-  const keyboard = keyboardTab && selectedTabShown(text.slice(m.index + m[0].length) + '\n' + tree);
-  trace('browser-instructions', { status: 'rewritten', ...(keyboardTab ? { route: keyboard ? 'keyboard' : 'plain' } : {}) });
+  const keyboard = selectedTabShown(text.slice(m.index + m[0].length) + '\n' + tree);
+  trace('browser-instructions', { status: 'rewritten', route: keyboard ? 'keyboard' : 'plain' });
   return text.slice(0, m.index) + m[1].trimEnd() + ' ' + (keyboard ? KEYBOARD_TAB_SENTENCE : TAB_URL_SENTENCE) + m[2] + text.slice(m.index + m[0].length);
 }
 

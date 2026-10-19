@@ -772,11 +772,13 @@ export function createRelay({
   // SLEIGHT_FIRST_CALL_BATCH=0: in 24 runs a side it cut turns 208 to 168 (2026-10-09). 'merge' picks
   // the wording under A/B.
   firstCallBatch = false,
-  // Under A/B (SLEIGHT_FS=1, loss study 2026-10-19 fixes 3 and 4): the js description notes at the engine's inventory
-  // sentence that getState lists no windows (INVENTORY_NOTE), FIRST_CALL_WINDOWS goes on, and a browser getApp result whose
-  // tab strip shows its selected tab names Cmd+T, typeText and Return for a new tab (KEYBOARD_TAB_SENTENCE). An engine
-  // description that matches a pin gets the compact text, which has no inventory sentence, so only TS3's goes there. The
-  // flag also turns on the pins of the engine's current descriptions (tool-description.mjs COMPUTER_JS_HASH).
+  // Under A/B (SLEIGHT_FS=1, loss study 2026-10-19 fix 3): the js description notes at the engine's inventory sentence that
+  // getState lists no windows (INVENTORY_NOTE) and FIRST_CALL_WINDOWS goes on. An engine description that matches a pin gets
+  // the compact text, which has no inventory sentence, so only TS3's goes there. The flag also turns on the pins of the
+  // engine's current descriptions (tool-description.mjs COMPUTER_JS_HASH). Every engine session reads this description, and
+  // on 10 native held-out tasks x3 (2026-10-19) it lost passes (word-memo 2/3, textedit-notes-table 1/3 against 2/3) and
+  // word-brief went 67.2 to 100.2 s, so it stays behind the flag. Fix 4, the browser's keyboard new-tab sentence, is default
+  // (engine-app-docs.mjs KEYBOARD_TAB_SENTENCE).
   firstCallSteering = process.env.SLEIGHT_FS === '1',
   // Under A/B (SLEIGHT_TS3=1): the js description says getState lists no windows (FIRST_CALL_WINDOWS).
   firstCallWindows = process.env.SLEIGHT_TS3 === '1' || firstCallSteering,
@@ -4339,8 +4341,8 @@ export function createRelay({
         ? { ...c, text: rewritePaymentPolicy(c.text, confirmPayments, trace) } : c);
       if (msg.result._meta?.['codex/toolSurface']?.kind !== 'browserUse')
         msg.result.content = msg.result.content.map((c, i, all) => c.type === 'text' && c.text?.includes('<app_specific_instructions>')
-          ? { ...c, text: rewriteBrowserInstructions(c.text, trace, { keyboardTab: firstCallSteering,
-            tree: firstCallSteering ? all.slice(i + 1).map(item => item.type === 'text' ? item.text ?? '' : '').join('\n') : '' }) } : c);
+          ? { ...c, text: rewriteBrowserInstructions(c.text, trace,
+            { tree: all.slice(i + 1).map(item => item.type === 'text' ? item.text ?? '' : '').join('\n') }) } : c);
       if (docs && docsShown && !requestsFullDocumentation(jsCode)) {
         // An un-awaited action that fails can end the engine's session (reproduced 2026-10-07).
         invalidateDiagnostics(); forgetHandles(); helperHandles.clear(); helperControls.clear(); helperActive = undefined;
