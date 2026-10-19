@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sleight benchmark explorer</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --wash: rgba(11, 11, 11, 0.04);
+  --series: #2a78d6;
+  --fail: #d03b3b;
+  --link: #1c5cab;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --text: #f0efec;
+    --text-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --wash: rgba(255, 255, 255, 0.05);
+    --series: #3987e5;
+    --fail: #e66767;
+    --link: #86b6ef;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --text: #f0efec;
+  --text-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --wash: rgba(255, 255, 255, 0.05);
+  --series: #3987e5;
+  --fail: #e66767;
+  --link: #86b6ef;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--page); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--link); }
+main { max-width: 72rem; margin: 0 auto; padding: 24px 16px 64px; }
+header { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+h1 { font-size: 1.4rem; margin: 0; }
+h2 { font-size: 1.1rem; margin: 2rem 0 0.5rem; }
+p { margin: 0.4rem 0; }
+.note { color: var(--text-2); font-size: 0.9rem; }
+button, select, input { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+button { cursor: pointer; }
+button:hover { background: var(--wash); }
+.filters { display: flex; flex-wrap: wrap; gap: 8px 12px; margin: 16px 0; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.filters label { display: flex; flex-direction: column; font-size: 0.8rem; color: var(--text-2); gap: 2px; min-width: 9rem; flex: 1 1 9rem; }
+.filters select, .filters input { width: 100%; }
+.study { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.study dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 8px 0 0; font-size: 0.9rem; }
+.study dt { color: var(--text-2); }
+.study dd { margin: 0; overflow-wrap: anywhere; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.85rem; color: var(--text-2); margin: 8px 0; align-items: center; }
+.legend svg { vertical-align: middle; margin-right: 4px; }
+.charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); gap: 12px; }
+.chart { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 10px 4px; min-width: 0; }
+.chart h3 { font-size: 0.95rem; margin: 0 0 4px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart text.arm { fill: var(--text-2); font-size: 12px; }
+.chart text.value { fill: var(--text); font-size: 11px; }
+.chart .grid { stroke: var(--grid); stroke-width: 1; }
+.chart .base { stroke: var(--axis); stroke-width: 1; }
+.chart .pass { fill: var(--series); stroke: var(--surface); stroke-width: 2; }
+.chart .fail { fill: var(--surface); stroke: var(--fail); stroke-width: 2; }
+.chart .exp { stroke: var(--text); stroke-width: 2; stroke-linecap: round; }
+.chart .hit { fill: transparent; cursor: default; }
+.chart .hit:hover + circle, .chart .hit:focus + circle { stroke: var(--text); }
+.chart .hit:focus { outline: none; }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+td.wrap { white-space: normal; min-width: 14rem; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+th { position: sticky; top: 0; background: var(--surface); color: var(--text-2); font-weight: 600; cursor: pointer; user-select: none; }
+th[aria-sort="ascending"]::after { content: " \2191"; }
+th[aria-sort="descending"]::after { content: " \2193"; }
+tr:hover td { background: var(--wash); }
+.status { display: inline-flex; align-items: center; gap: 4px; }
+.status svg { flex: none; }
+#tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 0.8rem; box-shadow: 0 2px 8px rgba(0,0,0,0.15); max-width: 18rem; display: none; z-index: 10; }
+#tip strong { font-size: 0.95rem; display: block; }
+#tip span { color: var(--text-2); display: block; }
+.more { margin: 8px; }
+@media (max-width: 480px) { .charts { grid-template-columns: 1fr; } .filters label { min-width: 7rem; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>sleight benchmark explorer</h1>
+  <button id="theme" type="button" aria-label="Color theme">Theme: auto</button>
+</header>
+<p class="note">Every run the hub scores, from the same data files as the <a href="README.md">results pages</a>. Expected time is the mean seconds per attempt divided by the pass rate; a task an arm never passed has none. Filters apply to the charts and both tables.</p>
+
+<div class="filters" id="filters">
+  <label>Family<select id="f-family"></select></label>
+  <label>Study<select id="f-study"></select></label>
+  <label>Browser<select id="f-browser"></select></label>
+  <label>Task<select id="f-task"></select></label>
+  <label>Arm<select id="f-arm"></select></label>
+  <label>Model<select id="f-model"></select></label>
+  <label>Result<select id="f-result"><option value="">all runs</option><option value="pass">passed</option><option value="fail">failed</option></select></label>
+</div>
+
+<section class="study" id="study"></section>
+
+<h2>Per task: every run, and expected time</h2>
+<div class="legend" aria-hidden="true">
+  <span><svg width="14" height="14"><circle cx="7" cy="7" r="4.5" class="pass" style="fill:var(--series);stroke:var(--surface);stroke-width:2"/></svg>passed run</span>
+  <span><svg width="14" height="14"><circle cx="7" cy="7" r="4" style="fill:var(--surface);stroke:var(--fail);stroke-width:2"/></svg>failed run</span>
+  <span><svg width="14" height="14"><line x1="7" y1="1" x2="7" y2="13" style="stroke:var(--text);stroke-width:2;stroke-linecap:round"/></svg>expected time</span>
+</div>
+<div class="charts" id="charts"></div>
+
+<h2>Per task and arm</h2>
+<div class="tablewrap"><table id="cells"></table></div>
+
+<h2>Every run</h2>
+<div class="tablewrap"><table id="runs"></table></div>
+<button class="more" id="more" type="button" hidden></button>
+</main>
+<div id="tip" role="tooltip"></div>
+<script>
+const DATA = /*__DATA__*/null;
+const S = DATA.strings;
+const $ = id => document.getElementById(id);
+const el = (tag, attrs = {}, text) => { const node = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v); if (text !== undefined) node.textContent = text; return node; };
+const svgEl = (tag, attrs = {}) => { const node = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v); return node; };
+const f1 = v => (v === null || v === undefined ? '' : (Math.round(v * 10) / 10).toFixed(1));
+const ARM = { sleight: 'sleight', 'sleight-turbo': 'sleight turbo', lcu: 'LCU', codex: 'Codex', cua: 'Cua', peekaboo: 'Peekaboo', 'claude-cu': 'Claude computer use', fowlbrowser: 'FowlBrowser', 'claude-in-chrome': 'Claude in Chrome' };
+const armName = a => ARM[a] || a;
+
+// Theme: auto follows the OS; light and dark are stamped on <html> and remembered when storage allows.
+const THEMES = ['auto', 'light', 'dark'];
+let theme = 'auto';
+try { theme = localStorage.getItem('sleight-theme') || 'auto'; } catch (e) { /* storage blocked */ }
+function applyTheme() {
+  if (theme === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', theme);
+  $('theme').textContent = 'Theme: ' + theme;
+}
+$('theme').addEventListener('click', () => { theme = THEMES[(THEMES.indexOf(theme) + 1) % 3]; try { localStorage.setItem('sleight-theme', theme); } catch (e) { /* ignore */ } applyTheme(); });
+applyTheme();
+
+// Flatten the studies once.
+const studies = DATA.studies;
+const famTitle = Object.fromEntries(DATA.families.map(f => [f.id, f.title]));
+const modelsOf = (s, arm) => (s.models && s.models[arm]) || [];
+const allRuns = [];
+const allCells = [];
+studies.forEach((s, si) => {
+  for (const r of s.runs) allRuns.push({ si, task: S[r[0]], arm: S[r[1]], round: S[r[2]], seconds: r[3], passed: r[4] === 1, problem: r[5] >= 0 ? S[r[5]] : '' });
+  for (const c of s.cells) allCells.push({ si, task: S[c[0]], arm: S[c[1]], runs: c[2], passes: c[3], expected: c[4], median: c[5], min: c[6], max: c[7], p90: c[8] });
+});
+
+const state = { family: 'native-claim', study: '0', browser: '', task: '', arm: '', model: '', result: '' };
+function fillSelect(id, options, value, allLabel) {
+  const select = $(id);
+  select.replaceChildren();
+  if (allLabel) select.appendChild(el('option', { value: '' }, allLabel));
+  for (const [v, label] of options) select.appendChild(el('option', { value: v }, label));
+  select.value = options.some(([v]) => v === value) || (allLabel && value === '') ? value : (allLabel ? '' : (options[0] ? options[0][0] : ''));
+  return select.value;
+}
+const studyMatches = (s) => (!state.family || s.family === state.family) && (!state.browser || (s.browser || '').split(', ').includes(state.browser));
+function refreshFilters() {
+  state.family = fillSelect('f-family', DATA.families.map(f => [f.id, f.title]), state.family, 'All families');
+  const inFamily = studies.map((s, i) => [s, i]).filter(([s]) => !state.family || s.family === state.family);
+  state.browser = fillSelect('f-browser', [...new Set(inFamily.flatMap(([s]) => (s.browser || '').split(', ').filter(Boolean)))].sort().map(b => [b, b]), state.browser, 'All browsers');
+  const pool = inFamily.filter(([s]) => studyMatches(s));
+  state.study = fillSelect('f-study', pool.map(([s, i]) => [String(i), `${s.title} (${s.date})`]), state.study, 'All studies matching');
+  const scoped = state.study === '' ? pool.map(([s]) => s) : [studies[Number(state.study)]];
+  state.task = fillSelect('f-task', [...new Set(scoped.flatMap(s => s.tasks))].sort().map(t => [t, t]), state.task, 'All tasks');
+  state.arm = fillSelect('f-arm', [...new Set(scoped.flatMap(s => s.arms))].sort().map(a => [a, armName(a)]), state.arm, 'All arms');
+  state.model = fillSelect('f-model', [...new Set(scoped.flatMap(s => s.arms.flatMap(a => modelsOf(s, a))))].sort().map(m => [m, m]), state.model, 'All models');
+  $('f-result').value = state.result;
+}
+for (const key of ['family', 'study', 'browser', 'task', 'arm', 'model', 'result']) {
+  $('f-' + key).addEventListener('change', e => {
+    state[key] = e.target.value;
+    if (key === 'family') { state.study = ''; state.browser = ''; }
+    if (key === 'family' || key === 'study' || key === 'browser') { state.task = ''; state.arm = ''; state.model = ''; }
+    refresh();
+  });
+}
+
+function visibleStudyIdx() {
+  return studies.map((s, i) => i).filter(i => studyMatches(studies[i]) && (state.study === '' || String(i) === state.study));
+}
+const runOk = r => (!state.task || r.task === state.task) && (!state.arm || r.arm === state.arm) &&
+  (!state.model || modelsOf(studies[r.si], r.arm).includes(state.model)) &&
+  (!state.result || (state.result === 'pass') === r.passed);
+// A cell has runs of both kinds, so the result filter keeps cells with at least one run of the chosen kind.
+const cellOk = c => (!state.task || c.task === state.task) && (!state.arm || c.arm === state.arm) && (!state.model || modelsOf(studies[c.si], c.arm).includes(state.model)) &&
+  (!state.result || (state.result === 'pass' ? c.passes > 0 : c.passes < c.runs));
+
+function renderStudy(ids) {
+  const box = $('study');
+  box.replaceChildren();
+  if (ids.length !== 1) {
+    box.appendChild(el('p', {}, `${ids.length} studies match the filters. Pick one study to see its charts.`));
+    return;
+  }
+  const s = studies[ids[0]];
+  box.appendChild(el('strong', {}, s.title));
+  const dl = el('dl');
+  const row = (k, v) => { dl.appendChild(el('dt', {}, k)); dl.appendChild(el('dd', {}, v)); };
+  row('Family', famTitle[s.family]);
+  row('Dates', s.date || 'not recorded');
+  if (s.browser) row('Browser', s.browser);
+  row('Arms', s.arms.map(armName).join(', '));
+  row('Models', s.arms.map(a => `${armName(a)}: ${modelsOf(s, a).join(', ') || 'not recorded'}`).join('; '));
+  if (s.effort && s.effort.length) row('Effort', s.effort.join(', '));
+  if (s.wording) row('Scorer wording', s.wording);
+  dl.appendChild(el('dt', {}, 'Method'));
+  const dd = el('dd'); dd.appendChild(el('a', { href: s.page }, s.page)); dl.appendChild(dd);
+  box.appendChild(dl);
+}
+
+// Tooltip: values lead, labels follow; text only through textContent.
+const tip = $('tip');
+function showTip(evt, lines) {
+  tip.replaceChildren();
+  tip.appendChild(el('strong', {}, lines[0]));
+  for (const line of lines.slice(1)) tip.appendChild(el('span', {}, line));
+  tip.style.display = 'block';
+  const rect = evt.target.getBoundingClientRect ? evt.target.getBoundingClientRect() : { left: evt.clientX, top: evt.clientY, width: 0 };
+  const x = evt.clientX || rect.left + rect.width / 2, y = evt.clientY || rect.top;
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, x + 12)) + 'px';
+  tip.style.top = Math.max(8, y - h - 12) + 'px';
+}
+const hideTip = () => { tip.style.display = 'none'; };
+
+function niceMax(v) {
+  if (!(v > 0)) return 10;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
+  return 10 * p;
+}
+
+function renderCharts(ids) {
+  const box = $('charts');
+  box.replaceChildren();
+  if (ids.length !== 1) return;
+  const si = ids[0], s = studies[si];
+  const arms = s.arms.filter(a => !state.arm || a === state.arm).filter(a => !state.model || modelsOf(s, a).includes(state.model));
+  for (const task of s.tasks.filter(t => !state.task || t === state.task)) {
+    const runs = allRuns.filter(r => r.si === si && r.task === task && arms.includes(r.arm) && runOk(r));
+    const cells = allCells.filter(c => c.si === si && c.task === task && arms.includes(c.arm));
+    if (!runs.length && !cells.length) continue;
+    const card = el('div', { class: 'chart' });
+    card.appendChild(el('h3', {}, task));
+    const top = Math.max(...runs.map(r => r.seconds), ...cells.map(c => c.expected || 0), 1);
+    const max = niceMax(top);
+    const W = 420, left = 132, right = 44, rowH = 30, topPad = 6, axisH = 22;
+    const H = topPad + arms.length * rowH + axisH;
+    const x = v => left + (Math.min(v, max) / max) * (W - left - right);
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `${task}: seconds per run by arm, expected time marked` });
+    for (let i = 0; i <= 4; i++) {
+      const v = (max * i) / 4, gx = x(v);
+      svg.appendChild(svgEl('line', { x1: gx, x2: gx, y1: topPad, y2: H - axisH, class: i === 0 ? 'base' : 'grid' }));
+      const t = svgEl('text', { x: gx, y: H - 6, 'text-anchor': 'middle' }); t.textContent = (v >= 1000 ? (v / 1000) + 'K' : String(Math.round(v * 10) / 10)) + (i === 4 ? ' s' : ''); svg.appendChild(t);
+    }
+    arms.forEach((arm, ai) => {
+      const cy = topPad + ai * rowH + rowH / 2;
+      const label = svgEl('text', { x: left - 8, y: cy + 4, 'text-anchor': 'end', class: 'arm' }); label.textContent = armName(arm); svg.appendChild(label);
+      const cell = cells.find(c => c.arm === arm);
+      const mine = runs.filter(r => r.arm === arm);
+      mine.forEach((r, k) => {
+        const dy = mine.length > 1 ? ((k % 5) - 2) * 2.5 : 0;
+        const cx = x(r.seconds);
+        const hit = svgEl('circle', { cx, cy: cy + dy, r: 12, class: 'hit', tabindex: '0' });
+        const lines = [`${f1(r.seconds)} s, ${r.passed ? 'passed' : 'failed'}`, `${armName(arm)}, ${r.round}`];
+        if (r.problem) lines.push(r.problem);
+        hit.addEventListener('pointermove', e => showTip(e, lines));
+        hit.addEventListener('pointerleave', hideTip);
+        hit.addEventListener('focus', e => showTip(e, lines));
+        hit.addEventListener('blur', hideTip);
+        svg.appendChild(hit);
+        svg.appendChild(svgEl('circle', { cx, cy: cy + dy, r: r.passed ? 4.5 : 4, class: r.passed ? 'pass' : 'fail', 'pointer-events': 'none' }));
+      });
+      if (cell && cell.expected !== null) {
+        const ex = x(cell.expected);
+        svg.appendChild(svgEl('line', { x1: ex, x2: ex, y1: cy - 9, y2: cy + 9, class: 'exp', 'pointer-events': 'none' }));
+      }
+      const val = svgEl('text', { x: W - right + 6, y: cy + 4, class: 'value' });
+      val.textContent = !cell ? '' : cell.expected === null ? 'never' : f1(cell.expected);
+      svg.appendChild(val);
+    });
+    card.appendChild(svg);
+    box.appendChild(card);
+  }
+  if (!box.children.length) box.appendChild(el('p', { class: 'note' }, 'No runs match the filters.'));
+}
+
+// Sortable table: click a header to sort, again to reverse. Numbers sort as numbers, blanks last.
+function sortableTable(id, columns, rows, limit) {
+  const table = $(id);
+  const sort = table._sort || { key: null, dir: 1 };
+  if (sort.key !== null) {
+    const col = columns.find(c => c.key === sort.key);
+    rows = [...rows].sort((a, b) => {
+      const va = col.sort ? col.sort(a) : a[col.key], vb = col.sort ? col.sort(b) : b[col.key];
+      const ea = va === null || va === undefined || va === '', eb = vb === null || vb === undefined || vb === '';
+      if (ea || eb) return ea === eb ? 0 : ea ? 1 : -1;
+      return (typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb))) * sort.dir;
+    });
+  }
+  table.replaceChildren();
+  const thead = el('thead'), tr = el('tr');
+  for (const col of columns) {
+    const th = el('th', { scope: 'col', class: col.num ? 'num' : '', tabindex: '0' }, col.label);
+    if (sort.key === col.key) th.setAttribute('aria-sort', sort.dir > 0 ? 'ascending' : 'descending');
+    const go = () => { table._sort = { key: col.key, dir: sort.key === col.key ? -sort.dir : 1 }; refresh(); };
+    th.addEventListener('click', go);
+    th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    tr.appendChild(th);
+  }
+  thead.appendChild(tr); table.appendChild(thead);
+  const tbody = el('tbody');
+  for (const row of rows.slice(0, limit)) {
+    const tr2 = el('tr');
+    for (const col of columns) {
+      const td = el('td', { class: (col.num ? 'num' : '') + (col.wrap ? ' wrap' : '') });
+      if (col.render) td.appendChild(col.render(row)); else td.textContent = col.fmt ? col.fmt(row[col.key], row) : (row[col.key] ?? '');
+      tr2.appendChild(td);
+    }
+    tbody.appendChild(tr2);
+  }
+  table.appendChild(tbody);
+  return rows.length;
+}
+
+function statusNode(passed) {
+  const span = el('span', { class: 'status' });
+  const svg = svgEl('svg', { width: 12, height: 12, 'aria-hidden': 'true' });
+  svg.appendChild(svgEl('circle', passed ? { cx: 6, cy: 6, r: 4.5, style: 'fill:var(--series)' } : { cx: 6, cy: 6, r: 4, style: 'fill:none;stroke:var(--fail);stroke-width:2' }));
+  span.appendChild(svg);
+  span.appendChild(document.createTextNode(passed ? 'passed' : 'failed'));
+  return span;
+}
+
+let runLimit = 300;
+function refresh() {
+  refreshFilters();
+  const ids = visibleStudyIdx();
+  const idSet = new Set(ids);
+  renderStudy(ids);
+  renderCharts(ids);
+  const cellRows = allCells.filter(c => idSet.has(c.si) && cellOk(c)).map(c => ({ ...c, study: studies[c.si].title, armLabel: armName(c.arm), model: modelsOf(studies[c.si], c.arm).join(', ') }));
+  sortableTable('cells', [
+    { key: 'study', label: 'Study' }, { key: 'task', label: 'Task' }, { key: 'armLabel', label: 'Arm' }, { key: 'model', label: 'Model' },
+    { key: 'passes', label: 'Passed', num: true, fmt: (v, r) => `${r.passes}/${r.runs}`, sort: r => r.passes / r.runs },
+    { key: 'expected', label: 'Expected s', num: true, fmt: v => (v === null ? 'never' : f1(v)) },
+    { key: 'median', label: 'Median s', num: true, fmt: f1 }, { key: 'min', label: 'Fastest s', num: true, fmt: f1 },
+    { key: 'max', label: 'Slowest s', num: true, fmt: f1 }, { key: 'p90', label: 'p90 s', num: true, fmt: f1 },
+  ], cellRows, Infinity);
+  const runRows = allRuns.filter(r => idSet.has(r.si) && runOk(r)).map(r => ({ ...r, study: studies[r.si].title, armLabel: armName(r.arm), model: modelsOf(studies[r.si], r.arm).join(', ') }));
+  const total = sortableTable('runs', [
+    { key: 'study', label: 'Study' }, { key: 'task', label: 'Task' }, { key: 'armLabel', label: 'Arm' }, { key: 'model', label: 'Model' },
+    { key: 'round', label: 'Round or file' }, { key: 'seconds', label: 's', num: true, fmt: f1 },
+    { key: 'passed', label: 'Result', render: r => statusNode(r.passed), sort: r => (r.passed ? 1 : 0) }, { key: 'problem', label: 'Problem', wrap: true },
+  ], runRows, runLimit);
+  const more = $('more');
+  more.hidden = total <= runLimit;
+  more.textContent = `Show all ${total} runs`;
+}
+$('more').addEventListener('click', () => { runLimit = Infinity; refresh(); });
+refresh();
+</script>
+</body>
+</html>
