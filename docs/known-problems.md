@@ -8,8 +8,9 @@ our own runs. Dates and engine versions are given where they matter.
 - The H6 cost pass (2026-10-19) measured textedit-drag at 31-37 s with the hand on against 23-26 s off. Peak hand host RSS
   was 51.2 MB against a 50 MB budget. The report is `~/Library/Logs/sleight/h6-2026-10-19T20-40-23-315Z/cost-pass.md`
   with the measurements in the adjacent `cost-pass.json`. The hand is off by default in 1.3.1; turn it on through the menu bar,
-  `sleight-mcp hand on` or the settings file. The H5 capture test is not proven, so we cannot claim sleight's own screenshots
-  exclude the hand when captures are set to visible.
+  `sleight-mcp hand on` or the settings file. In the H5 capture test (2026-10-19, 5 samples a mode) the engine's window
+  screenshots left the hand out 5 of 5 in both capture modes, but the screenshots sleight takes for hover showed it in 3 of 3,
+  so with the hand on, Claude can see the hand in a hover screenshot.
 
 ## Flag A/B limits
 
