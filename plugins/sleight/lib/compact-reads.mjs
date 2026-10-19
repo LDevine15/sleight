@@ -1316,7 +1316,10 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   // WB1 and WB2, off by default until their held-out A/B: the missed-field note and the changed-Undo note.
   routeSteering = process.env.SLEIGHT_WB1 === '1', undoReceipts = process.env.SLEIGHT_WB2 === '1',
   // SLEIGHT_OUTCOMES=1 (A/B, off by default): one line per action from the guard's records (action-outcomes.mjs).
-  outcomes = false } = {}) {
+  outcomes = false,
+  // CC6: a call that acted shows renumbered elements Claude knew on + lines with their current numbers, as a call that ends
+  // on getAXState() does, so ending on the action loses nothing (the relay sets it with SLEIGHT_WORKFLOW_DOCS).
+  actionNumbers = false } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map(), pendingSwaps = new Map(), pendingClicks = new Map();
@@ -1612,7 +1615,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         .replace(/\[sleight:guard-read(?:-omitted)?\]\n[\s\S]*?(?:\n\[\/sleight:guard-read\]\n|$)/g, '')).join('\n') : '';
       observedInResult = undefined; textlessNoted = false; resultObservations = []; callCount++;
       const full = forceFull || explicitFull && !filter;
-      const refreshNumbers = typeof code === 'string' && /\.\s*getAXState\s*\(/.test(maskCode(code));
+      const refreshNumbers = actionNumbers && !!action || typeof code === 'string' && /\.\s*getAXState\s*\(/.test(maskCode(code));
       const shownTrees = new Set();
       if (action && full) for (const item of content) {
         if (item?.type !== 'text') continue;

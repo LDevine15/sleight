@@ -11,6 +11,7 @@ import { runInNewContext } from 'node:vm';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { guardedCode, GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
+import { createReadCompactor } from '../plugins/sleight/lib/compact-reads.mjs';
 import { rewriteWorkflow, WORKFLOW_PINS } from '../plugins/sleight/lib/workflow-docs.mjs';
 import { checkWorkflowRewrite } from '../bench/compat/contract.mjs';
 import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
@@ -123,6 +124,37 @@ test('a trailing read after a batch reads once, after the last action, and a rea
   // The mid-call read serves the second click's check; the call still ends on a read after that click.
   assert.deepEqual(g.ops, ['read', 'click', 'read', 'click', 'read']);
   assert.equal(g.output.at(-1), GUARD_MARK + g.tree() + GUARD_END);
+});
+
+// What Claude sees: a call that ends on the action gets the renumbered lines with current numbers, as a trailing read does.
+test('an action result shows renumbered lines as a trailing read would, and no number goes stale', () => {
+  const window = { title: 'list', app: 'Finder', url: null };
+  const rows = names => [`Window: "list", App: Finder.`, '0 standard window list, Secondary Actions: Raise',
+    ...names.map((name, i) => `\t${i + 1} row (selectable) Value: ${name}`)].join('\n');
+  const before = Array.from({ length: 50 }, (_, i) => `File ${i}`);
+  const after = [...before.slice(0, 46), 'File new', ...before.slice(46)];
+  const result = (actionNumbers, code) => {
+    const c = createReadCompactor({ actionNumbers });
+    c.process([{ type: 'text', text: rows(before) }]);
+    const [out] = c.process([{ type: 'text', text: GUARD_MARK + rows(after) + GUARD_END }], { code, action: c.beginAction(code) }).map(item => item.text);
+    return { out, stale: c.staleIndex(window, 'await app.click(49);') };
+  };
+  const ended = result(true, 'await app.click(3);'), trailing = result(true, 'await app.click(3);\nawait app.getAXState();');
+  assert.equal(ended.out, trailing.out);
+  assert.match(ended.out, /\+ \t49 row \(selectable\) Value: File 47/);
+  assert.equal(ended.stale, undefined);
+  // SLEIGHT_WORKFLOW_DOCS=0: the action result counts the renumbered rows and the old number is refused.
+  const baseline = result(false, 'await app.click(3);');
+  assert.match(baseline.out, /other elements have new numbers/);
+  assert.doesNotMatch(baseline.out, /\+ \t49 row/);
+  assert.deepEqual(baseline.stale, { number: 49 });
+});
+
+test('an unawaited last action finishes before the call reads, so the tree is the one after it', async () => {
+  const f = engineApp(apps[0]);
+  await f.run('app.click(1);');
+  assert.deepEqual(f.ops, ['read', 'click', 'read']);
+  assert.equal(f.output.at(-1), GUARD_MARK + f.tree() + GUARD_END);
 });
 
 // The relay rewrites the docs only on the computer surface, with the guard on, unless SLEIGHT_WORKFLOW_DOCS=0.

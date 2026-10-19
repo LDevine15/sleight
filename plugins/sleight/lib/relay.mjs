@@ -919,7 +919,7 @@ export function createRelay({
   const readHints = {};
   // The guard carries its outcome code only in sessions that record outcomes; every install says which.
   const outcomeSetup = outcomes || actionLog ? { outcomes: true } : {};
-  let compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, routeSteering, undoReceipts, outcomes });
+  let compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, routeSteering, undoReceipts, outcomes, actionNumbers: workflowDocs });
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
@@ -936,7 +936,7 @@ export function createRelay({
       // The engine's computer-only description says its browser APIs are disabled (cua-repl's browser-disabled part).
       computerSurface = typeof t.description === 'string' &&
         (engineJsVariant(t.description)?.variant === 'computer' || /(?:^|\n)Browser APIs are disabled\.(?:\n|$)/.test(t.description));
-      const compact =compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows, { current: firstCallSteering });
+      const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows, { current: firstCallSteering });
       if (compact !== undefined) return { ...t, description: compact };
       const batched = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt, firstCallWindows) : t.description;
       const description = firstCallSteering ? withInventoryNote(batched) : batched;
@@ -1129,7 +1129,7 @@ export function createRelay({
       }
       if (!isCurrent()) throw new Error(/* notice */ 'Engine restart was stopped.');
       clipboard = newClipboard();
-      if (!update) { compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, routeSteering, undoReceipts, outcomes }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
+      if (!update) { compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, routeSteering, undoReceipts, outcomes, actionNumbers: workflowDocs }); selectorWindows.clear(); helperHandles.clear(); helperAliases.clear(); }
       resultCalls.clear(); docsShown = backend; priorRead = undefined; lastTree = undefined;
       if (!backend) { deferredEngineDocs = []; clientJsDelivered = false; }
       // Rules held for Claude's first js result go with the next engine docs instead.

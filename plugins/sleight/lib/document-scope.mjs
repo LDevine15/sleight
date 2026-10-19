@@ -371,10 +371,12 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   // last action already wrote one, so the guard reads again only without it.
   const { reuseSetup, acknowledge, prompt, outcomes, kernel, ...checks } = options;
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
+  // The tail first waits (guard.settle, which resolves to undefined) for an action or pick the code left unawaited, as its
+  // last statement may be, so the call's read can't run beside it and return the window from before it (CC6 review).
   return guardSetup({ window, reason, lease, ...checks }, { reuseSetup, acknowledge, prompt, outcomes, kernel }) +
     (options.browserCandidate ? '\nglobalThis.__sleightDocumentGuard.activeApp = undefined;' : '') + /* generated code */ `\n${code}
 {
-  const guard = globalThis.__sleightDocumentGuard, last = guard.activeApp && guard.reads.get(guard.activeApp);
+  const guard = globalThis.__sleightDocumentGuard, last = await guard.settle?.() ?? (guard.activeApp && guard.reads.get(guard.activeApp));
   // The call finished, so any failed action was one it didn't await or caught itself.
   if (guard.failures?.length) nodeRepl.write('sleight: an action in this call failed' + ${quoted(/* lean notice */ ', and the call went on without it: ')} + guard.failures.join('; ') + '. Read the window, then redo it with await.\\n');
   // A caught getApp failure sent no input, so it isn't a failed action; a later getApp that worked cleared it.
@@ -440,6 +442,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     state.actionVersion ??= 0;
     state.actionIndex = 0; state.completedActions = 0; state.ran = []; state.unknown = []; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
     state.inputSent = false;
+    // This call's actions and picks still running, for the read that ends the call.
+    state.inflight = new Set();
+    const track = promise => { const done = () => state.inflight.delete(promise); state.inflight.add(promise); promise.then(done, done); return promise; };
+    state.settle = async () => { await Promise.allSettled([...state.inflight]); };
     // Text this call typed, pasted or set, so a window it named (a saved or opened file) is its own.
     state.typed = [];
     state.resultMark = update?.resultMark;
@@ -704,7 +710,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
         }); })();
         // app.pickFromList("<row label>"): pages a sorted list by key or wheel, then clicks the row. Every key, wheel
         // step and the click run through this handle's own checks, so a window change, a lost lease or a renumbered row stops it.
-        if (name === 'pickFromList') return async (label, options) => {
+        if (name === 'pickFromList') return (label, options) => track((async () => {
           checkNative();
           const superseded = () => { throw new Error('pickFromList stopped: another action or read ran during the search. Read the window again.'); };
           // A click on this handle that was the call's last action: after it, the read can name the selected row in
@@ -746,7 +752,11 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           // A search that did not click ends the call, so later actions in it don't run past the failure.
           if (!result.clicked) throw new Error('pickFromList stopped (' + result.reason + '): ' + result.note + ' [' + result.reads + ' reads, ' + result.keys + ' keys]');
           return result;
-        };
+        })().catch(error => {
+          // Listed for the call's result, as a failed action is, in case the code didn't await the pick.
+          state.failures.push('pickFromList: ' + (error?.message ?? error));
+          throw error;
+        }));
         const value = Reflect.get(raw, name);
         if (typeof value !== 'function') return value;
         // Claude's tree reads are full reads the relay turns into changed lines,
@@ -1318,7 +1328,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
         // promise here, still returning it, so an await sees the error and nothing is unhandled.
         return (...args) => {
           const attempt = { index: state.actionIndex++ };
-          const pending = act(attempt, ...args);
+          const pending = track(act(attempt, ...args));
           pending.catch(error => {${O ? '\n            ' + `// Ahead of the stop mark: a continued call keeps only the output before it. An action that completed
             // keeps its outcome when a later check throws.
             if (state.outcomeMark) {

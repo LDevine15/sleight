@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 export const WORKFLOW_PINS = Object.freeze({
   // The opening line: call getAXState() after actions, for fresh element indices.
   '2b162a8d5f14b2b4515bbf10e9adcff12d0048e0d8c289082dd4f25564ff11f5':
-    "After UI actions, sleight's result shows the window header and the lines that changed, with current element indices; take indices from it, not from an older tree.",
+    "After UI actions, sleight's result shows the window header and the lines that changed, with current element indices; take indices from it, not from an older tree. After an error, read again.",
   // The batching bullet: batch actions and the resulting getAXState() into one call.
   '8373015e65783172f1a556e3a196cd3524a76e1b7720586eaf020249f45c3bff':
     '- Batch deterministic actions into one call and end it on the last action: its result already shows the updated state, so a trailing `getAXState()` only repeats it.',

@@ -479,10 +479,11 @@ result instead of before it. `SLEIGHT_TEXTLESS_HINT=0` (A/B baseline) leaves out
 document area doesn't show text values and should be read with a screenshot.
 
 When the engine runs with `CUA_REPL_ENABLED_SURFACES=computer`, its Workflow lines that ask for a
-`getAXState()` after actions say instead that the result already shows the window header and changed lines. A call that ends on a
-read makes the same engine reads as one that ends on its action (3 operations for a one-action call
-in the race-1017 traces), so this shortens the docs by 148 characters and its effect on time isn't
-measured yet. `SLEIGHT_WORKFLOW_DOCS=0` (A/B baseline) keeps the engine's lines.
+`getAXState()` after actions say instead that the result already shows the window header and changed lines.
+A call that ends on its action also shows renumbered elements on `+` lines with their current numbers,
+as a call that ends on a read does. Both forms make the same engine reads (3 operations for a one-action
+call in the race-1017 traces). The docs get 120 characters shorter, and the effect on time isn't
+measured yet. `SLEIGHT_WORKFLOW_DOCS=0` (A/B baseline) keeps the engine's lines and the old numbering.
 
 When the window `open_file` opened is such a document (a sheet with no cell values, a page with no
 body text, from a file that isn't empty), its result also includes the window's screenshot, taken by
