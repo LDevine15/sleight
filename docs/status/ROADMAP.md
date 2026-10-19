@@ -89,7 +89,7 @@ Before the gate, the owner reloads FowlBrowser's extension in Helium and runs th
    (2026-10-17). It is publishable only if sleight leads the native claim run and turbo leads lcu, Cua, Peekaboo and Codex on browser
    tasks in a real window (about 150 to 250 lines of gate harness and an estimated 2 to 8 hour away window). An unqualified headline
    needs Safari and Firefox raced too, where sleight runs on the engine path. That race comes before the launch post, not
-   before the tag. Turbo for Firefox, Safari and other Chromium browsers is being studied (2026-10-17). Each must be as
+   before the tag. Turbo for Firefox, Safari and other Chromium browsers was studied (2026-10-17). Safari turbo is dropped, and Safari stays on the engine path (owner, 2026-10-19). Each must be as
    smooth as Chrome's consent, with no forced restart, relaunch or extension install (owner). Studies, 2026-10-17. Firefox
    (157) can't meet that today. Its CDP support ended in 141, and WebDriver BiDi needs a launch flag and has no consent page.
    Safari's one fit is a hybrid behind Develop > Allow JavaScript from Apple Events (page script for reads and fills, the engine
