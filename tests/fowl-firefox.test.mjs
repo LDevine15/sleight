@@ -61,7 +61,8 @@ function fixture(t) {
       requests.push(browser.pid);
       for (const name of ['sessionstore.jsonlz4']) {
         const file = join(plan.profileRoot, name);
-        if (existsSync(file)) writeFileSync(file, readFileSync(file));
+        // Stamp the rewrite with Date.now(): Linux file times come from the kernel's coarse clock and can trail it by a tick.
+        if (existsSync(file)) { writeFileSync(file, readFileSync(file)); const now = new Date(); utimesSync(file, now, now); }
       }
       setImmediate(() => current.emit('close'));
     } };
@@ -90,7 +91,9 @@ test('Firefox owner census refuses an external process but accepts owned ancestr
 });
 
 test('Firefox launches with offline prefs, relaunches a clean profile, and inventories after graceful quit', async t => {
-  const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
+  // A graceful quit ends the wait as soon as the fake exits. 5 ms lost to node --test's own reporter work on Linux,
+  // which ran 10 to 13 ms ahead of the fake's setImmediate exit (2026-10-19).
+  const f = fixture(t), browser = await launchRealBrowser(f.plan, { ...f.options, quitMs: 1000 });
   assert.equal(browser.pid, 4000);
   const prefs = readFileSync(join(f.plan.profileRoot, 'user.js'), 'utf8');
   for (const key of ['browser.shell.checkDefaultBrowser', 'toolkit.telemetry.enabled', 'app.update.staging.enabled', 'browser.sessionstore.resume_from_crash'])

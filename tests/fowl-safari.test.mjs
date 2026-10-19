@@ -13,6 +13,10 @@ import { realBrowserPlan, checkBrowserOwner, launchRealBrowser, resetRealBrowser
 import { realGatePlan, runRealGate } from '../bench/fowl/real-gate.mjs';
 import { taskSupport } from '../bench/fowl/support.mjs';
 import { answer } from '../bench/fowl/origin-hook.mjs';
+import { macCommandSkip } from './requirements.mjs';
+
+// The launch proof resolves the real /Applications/Safari.app executable, so launches through the fake bridge need macOS.
+const launchSkip = process.platform !== 'darwin' && 'the Safari launch proof resolves /Applications/Safari.app';
 
 const task = { name: 'fixture', browser: 'chrome', prompt: 'Visit {browser}.', result: 'the answer' };
 const profile = 'sleight benchmark';
@@ -89,7 +93,7 @@ test('Safari dry plans support all five arms with plain sleight, explicit limits
   assert.equal(answer({ mcp_server_name: 'plugin:sleight:computer', message: 'Allow Computer Use to use "Safari"?' }), 'accept');
 });
 
-test('Safari gives each task its own Safari, quit by pid before the next launch, and never closes a window between tasks', async t => {
+test('Safari gives each task its own Safari, quit by pid before the next launch, and never closes a window between tasks', { skip: launchSkip }, async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   assert.equal(browser.pid, 4101);
   assert.equal(browser.profileEvidence.attribute, 'AXDescription');
@@ -120,7 +124,7 @@ test('Safari gives each task its own Safari, quit by pid before the next launch,
   assert.ok(browser.launches.every(row => Number.isFinite(row.launchMs) && Number.isFinite(row.readyMs)));
 });
 
-test('Safari refuses owner restored windows before opening a profile or mutating windows', async t => {
+test('Safari refuses owner restored windows before opening a profile or mutating windows', { skip: launchSkip }, async t => {
   for (const restored of [[{ id: 'owner', toolbar: [] }], [window('profile'), { id: 'owner', toolbar: [] }]]) {
     const f = fixture(t); f.windows(restored);
     await assert.rejects(launchRealBrowser(f.plan, f.options), /BENCH_SAFARI_RESTORED_WINDOWS: Safari restored windows from another profile; close your Safari windows or turn off window restore, then retry/);
@@ -129,7 +133,7 @@ test('Safari refuses owner restored windows before opening a profile or mutating
   }
 });
 
-test('Safari waits for delayed restore and never closes even a restored benchmark window', async t => {
+test('Safari waits for delayed restore and never closes even a restored benchmark window', { skip: launchSkip }, async t => {
   const f = fixture(t), request = f.bridge.request; let snapshots = 0;
   f.bridge.request = async (op, input) => {
     if (op === 'snapshot' && ++snapshots === 1) f.windows([{ id: 'late-owner', toolbar: [] }]);
@@ -144,7 +148,7 @@ test('Safari waits for delayed restore and never closes even a restored benchmar
 
 const startPage = (id, proven = false) => ({ id, startPage: true, ...(proven ? { profileEvidence: { element: id + '-p', role: 'AXMenuButton', attribute: 'AXIdentifier', value: profile } } : { profileEvidence: null }) });
 
-test('Safari closes the Start Page window it opened at launch before creating the benchmark window', async t => {
+test('Safari closes the Start Page window it opened at launch before creating the benchmark window', { skip: launchSkip }, async t => {
   for (const proven of [false, true]) {
     const f = fixture(t); f.windows([startPage('launch-start', proven)]);
     const browser = await launchRealBrowser(f.plan, f.options);
@@ -158,7 +162,7 @@ test('Safari closes the Start Page window it opened at launch before creating th
   }
 });
 
-test('only Start Page windows are closed at launch; anything else stops the round untouched', async t => {
+test('only Start Page windows are closed at launch; anything else stops the round untouched', { skip: launchSkip }, async t => {
   // An unproven window that is not a Start Page, next to a Start Page: restored, so nothing is closed.
   const mixed = fixture(t); mixed.windows([startPage('launch-start'), { id: 'owner', profileEvidence: null }]);
   await assert.rejects(launchRealBrowser(mixed.plan, mixed.options), /BENCH_SAFARI_RESTORED_WINDOWS/);
@@ -168,7 +172,7 @@ test('only Start Page windows are closed at launch; anything else stops the roun
   for (const f of [mixed, extra]) assert.ok(!f.calls.some(([op]) => ['close-launch-window', 'close-window', 'new-profile', 'navigate'].includes(op)));
 });
 
-test('a Start Page window that does not close stops the round before the profile window is created', async t => {
+test('a Start Page window that does not close stops the round before the profile window is created', { skip: launchSkip }, async t => {
   const f = fixture(t), request = f.bridge.request; f.windows([startPage('stuck')]);
   f.bridge.request = async (op, input) => op === 'close-launch-window' ? (f.calls.push([op, input]), {}) : request(op, input);
   await assert.rejects(launchRealBrowser(f.plan, f.options), /LAUNCH_WINDOW_UNCLOSED/);
@@ -225,7 +229,7 @@ test('ambiguous toolbar matches and malformed native evidence cannot prove a pro
   assert.deepEqual(safariProfileEvidence({ profileEvidence: evidence }), evidence);
 });
 
-test('missing or ambiguous new profile evidence stops before navigating or closing restored windows', async t => {
+test('missing or ambiguous new profile evidence stops before navigating or closing restored windows', { skip: launchSkip }, async t => {
   for (const ambiguous of [false, true]) {
     const f = fixture(t), original = f.bridge.request;
     f.bridge.request = async (op, input) => {
@@ -239,7 +243,7 @@ test('missing or ambiguous new profile evidence stops before navigating or closi
   }
 });
 
-test('missing tab URLs and duplicate IDs report unobserved rather than certifying partial inventory', async t => {
+test('missing tab URLs and duplicate IDs report unobserved rather than certifying partial inventory', { skip: launchSkip }, async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   f.windows()[0].tabs.push({ id: 'new', title: 'page without URL' });
   let observed = await observeRealBrowser(browser);
@@ -251,7 +255,7 @@ test('missing tab URLs and duplicate IDs report unobserved rather than certifyin
   await browser.stop();
 });
 
-test('a task that opened a second tab still observes: the marker tab keeps its known URL, any other unselected tab does not', async t => {
+test('a task that opened a second tab still observes: the marker tab keeps its known URL, any other unselected tab does not', { skip: launchSkip }, async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   const w = f.windows()[0];
   w.tabs = [{ id: 'marker', title: f.plan.marker, url: '' }, { id: 'page', title: 'Mount Kilimanjaro - Wikipedia', url: 'en.wikipedia.org/wiki/Mount_Kilimanjaro' }];
@@ -267,7 +271,7 @@ test('a task that opened a second tab still observes: the marker tab keeps its k
 const unproven = (id, subrole) => ({ id, profileEvidence: null, role: 'AXWindow', ...(subrole ? { subrole } : {}),
   frame: { x: 1060, y: 40, width: 400, height: 300 }, minimized: false, focused: false, childRoles: ['AXButton', 'AXGroup'] });
 
-test('an unproven non-standard window during a task is recorded as auxiliary and the profile window still observes', async t => {
+test('an unproven non-standard window during a task is recorded as auxiliary and the profile window still observes', { skip: launchSkip }, async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   const profileTabs = Object.keys(await observeRealBrowser(browser).then(row => row.tabs));
   f.windows().push(unproven('aux', 'AXFloatingWindow'));
@@ -281,7 +285,7 @@ test('an unproven non-standard window during a task is recorded as auxiliary and
   await browser.stop();
 });
 
-test('an unproven standard window (or one with no subrole) is an extra window and its shape is reported', async t => {
+test('an unproven standard window (or one with no subrole) is an extra window and its shape is reported', { skip: launchSkip }, async t => {
   for (const subrole of ['AXStandardWindow', undefined]) {
     const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
     f.windows().push(unproven('second', subrole));
@@ -298,7 +302,7 @@ test('an unproven standard window (or one with no subrole) is an extra window an
   }
 });
 
-test('a second window with profile evidence stays an extra window whatever its subrole', async t => {
+test('a second window with profile evidence stays an extra window whatever its subrole', { skip: launchSkip }, async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   f.windows().push({ ...window('size-guide', 'Size guide'), subrole: 'AXFloatingWindow' });
   const observed = await observeRealBrowser(browser);
@@ -310,13 +314,13 @@ test('a second window with profile evidence stays an extra window whatever its s
   await browser.stop();
 });
 
-test('an unproven non-Start-Page window at launch still stops the round even with a non-standard subrole', async t => {
+test('an unproven non-Start-Page window at launch still stops the round even with a non-standard subrole', { skip: launchSkip }, async t => {
   const f = fixture(t); f.windows([startPage('launch-start'), unproven('owner', 'AXFloatingWindow')]);
   await assert.rejects(launchRealBrowser(f.plan, f.options), /BENCH_SAFARI_RESTORED_WINDOWS/);
   assert.ok(!f.calls.some(([op]) => ['close-launch-window', 'close-window', 'new-profile', 'navigate'].includes(op)));
 });
 
-test('profile changes during a task and owner arrivals invalidate observation', async t => {
+test('profile changes during a task and owner arrivals invalidate observation', { skip: launchSkip }, async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   f.windows()[0].toolbar = [];
   assert.equal((await observeRealBrowser(browser)).observed, false);
@@ -339,7 +343,7 @@ test('owner arriving during bridge preparation prevents launch', async t => {
   assert.ok(!f.calls.some(([op]) => ['launch', 'quit'].includes(op)));
 });
 
-test('failed Safari collection retains the harness and never deletes the dedicated profile', async t => {
+test('failed Safari collection retains the harness and never deletes the dedicated profile', { skip: launchSkip }, async t => {
   const f = fixture(t), original = f.bridge.request;
   const browser = await launchRealBrowser(f.plan, f.options);
   f.bridge.request = async (op, input) => { if (op === 'quit') throw Error('quit refused'); return original(op, input); };
@@ -348,14 +352,14 @@ test('failed Safari collection retains the harness and never deletes the dedicat
   assert.ok(!f.calls.some(([op]) => op === 'bridge-closed'));
 });
 
-test('a quit that needed the unsubmitted-form alert confirmed is recorded in the collection receipt', async t => {
+test('a quit that needed the unsubmitted-form alert confirmed is recorded in the collection receipt', { skip: launchSkip }, async t => {
   const f = fixture(t), request = f.bridge.request, browser = await launchRealBrowser(f.plan, f.options);
   f.bridge.request = async (op, input) => op === 'quit' ? (await request(op, input), { browserClosed: true, unsubmittedFormQuitConfirmed: true }) : request(op, input);
   await browser.stop();
   assert.equal(browser.collections.at(-1).unsubmittedFormQuitConfirmed, true);
 });
 
-test('a failed fresh launch still quits the launched Safari, and a forced termination is recorded', async t => {
+test('a failed fresh launch still quits the launched Safari, and a forced termination is recorded', { skip: launchSkip }, async t => {
   const f = fixture(t), request = f.bridge.request, browser = await launchRealBrowser(f.plan, f.options);
   await resetRealBrowser(browser);
   f.bridge.request = async (op, input) => {
@@ -369,7 +373,7 @@ test('a failed fresh launch still quits the launched Safari, and a forced termin
   assert.equal(f.calls.filter(([op]) => op === 'quit').length, 2);
 });
 
-test('Safari stop is idempotent after proven collection', async t => {
+test('Safari stop is idempotent after proven collection', { skip: launchSkip }, async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   const first = await browser.stop();
   assert.deepEqual(await browser.stop(), first);
@@ -407,7 +411,7 @@ test('each Safari task\'s prompt names the PID of the Safari launched for that t
   assert.match(prompts[1], /browser PID 42\b/); assert.doesNotMatch(prompts[1], /browser PID 41\b/);
 });
 
-test('a previous Safari still shutting down delays the next launch until its services are gone', async t => {
+test('a previous Safari still shutting down delays the next launch until its services are gone', { skip: launchSkip }, async t => {
   const f = fixture(t); let lingering = 0;
   const options = { ...f.options, settleMs: 2000, listProcesses: async () => [...await f.options.listProcesses(), ...(lingering-- > 0 ? [{ pid: 7777, ppid: 1, executable: 'Safari Web Content' }] : [])] };
   const browser = await launchRealBrowser(f.plan, options);
@@ -457,14 +461,14 @@ test('WebKit services count for Safari only when a Safari process is responsible
   assert.deepEqual(asked, []);
 });
 
-test('the live responsibility lookup answers for this process and leaves pid 1 unknown', async () => {
+test('the live responsibility lookup answers for this process and leaves pid 1 unknown', { skip: macCommandSkip('osascript') }, async () => {
   const { responsiblePids } = await import('../bench/fowl/real-browser.mjs');
   const result = await responsiblePids([process.pid, 1]);
   assert.ok(Number.isSafeInteger(result.get(process.pid)) && result.get(process.pid) > 0);
   assert.equal(result.has(1), false);
 });
 
-test('native Safari helper compiles and rejects unowned requests before any app lookup or input', t => {
+test('native Safari helper compiles and rejects unowned requests before any app lookup or input', { skip: macCommandSkip('xcrun') }, t => {
   const root = mkdtempSync(join(tmpdir(), 'br2s-native-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   const executable = join(root, 'helper');
   const build = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(),
@@ -496,7 +500,7 @@ test('native Safari helper compiles and rejects unowned requests before any app 
   });
 });
 
-test('an Escape post without verified menu dismissal cannot navigate or close windows', async t => {
+test('an Escape post without verified menu dismissal cannot navigate or close windows', { skip: launchSkip }, async t => {
   for (const receipt of [{ menuEscapePosted: true }, { menuEscapePosted: true, menuCleared: false, menuEscapes: 2 },
     { menuEscapePosted: true, menuCleared: true, menuEscapes: 3 }]) {
     const f = fixture(t), request = f.bridge.request;
@@ -529,7 +533,7 @@ test('Safari CLI dry plans enumerate pinned tasks for all five arms without crea
   }
 });
 
-test('a profile menu without its pid-directed Escape receipt cannot navigate or close windows', async t => {
+test('a profile menu without its pid-directed Escape receipt cannot navigate or close windows', { skip: launchSkip }, async t => {
   const f = fixture(t), request = f.bridge.request;
   f.bridge.request = async (op, input) => { const result = await request(op, input); return op === 'new-profile' ? {} : result; };
   await assert.rejects(launchRealBrowser(f.plan, f.options), /MENU_ESCAPE_UNPROVED/);
@@ -544,7 +548,9 @@ test('a broken helper transport collects its own helper through EOF and rejects 
   child.stdout = new PassThrough(); child.stderr = new PassThrough();
   child.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); },
     final(callback) { ended = true; callback(); setImmediate(() => child.emit('close', 0)); } });
-  const bridge = await prepareSafariBridge(root, { compile: async () => {}, spawnBrowser: () => child, timeoutMs: 10 });
+  // close() resolves on the fake's close event; the budget only bounds a missing one. 10 ms lost the race on Linux,
+  // where node --test's own reporter work ran 10 to 13 ms ahead of the fake's setImmediate (2026-10-19).
+  const bridge = await prepareSafariBridge(root, { compile: async () => {}, spawnBrowser: () => child, timeoutMs: 1000 });
   const pending = bridge.request('snapshot');
   child.stdout.write('not JSON\n');
   await assert.rejects(pending, /JSON/);

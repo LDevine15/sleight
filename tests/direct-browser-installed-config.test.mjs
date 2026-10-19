@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
+import { writableTreeSkip } from './requirements.mjs';
+const checkoutSkip = writableTreeSkip(fileURLToPath(new URL('../plugins/sleight', import.meta.url)));
 const config = await import('../plugins/sleight/lib/direct-browser/installed-config.mjs').catch(() => ({}));
 function fixture(t) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'sleight-installed-config-')); trackTemp(root);
@@ -32,7 +34,7 @@ test('project and environment opt-in values do not replace the absent user confi
     if (prior === undefined) delete process.env.SLEIGHT_TURBO; else process.env.SLEIGHT_TURBO = prior;
   }
 });
-test('installed acceptance covers the whole plugin including relay, hook and vendored dependencies', () => {
+test('installed acceptance covers the whole plugin including relay, hook and vendored dependencies', { skip: checkoutSkip }, () => {
   const root = fileURLToPath(new URL('../plugins/sleight/', import.meta.url)), files = [];
   function walk(prefix = '') {
     for (const name of readdirSync(join(root, prefix))) {
