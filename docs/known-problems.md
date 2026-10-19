@@ -743,9 +743,10 @@ native reference, and oversized first results defer the browser reference while 
 - sleight inside Codex on gpt-6.1-sol failed demoid 6 of 6 (race-1017 b16, Safari and Firefox), and Codex alone failed it 6 of 6.
   sleight showed the DemoID pop-up and refused nothing. Sol stopped on the race prompt's "never use any other browser window"
   ("your window restriction prevents me from using" it), and all six runs then asked `select_window` for the renamed shop
-  window, which the race's guard refuses. The race prompt now makes a pop-up that a page in the dedicated window opens part of
-  the task, for every arm, and the guard's refusal says that `cua.getApp` shows the dedicated window again once the pop-up
-  closes. The guard still accepts only the marker title, so before a pop-up closes the agent has no `select_window` way back to
+  window, which the race's guard refuses. The race prompt now allows, for every arm, a pop-up window of the same browser and
+  profile that a page in the dedicated window opened after a step the task asked for, and nothing in another app, profile or
+  browser. The guard's refusal says the same and that `cua.getApp` shows the dedicated window again once the pop-up closes.
+  The payment gate reads whichever window an action acts on, so a card form in a pop-up stops the same way. The guard still accepts only the marker title, so before a pop-up closes the agent has no `select_window` way back to
   the opener (one Firefox run got back through the Window menu). The change hasn't run live yet.
 - The race scorer's harness-failure check knows three error classes (`approval refused`, `no daemon`, `no tools`). A round that
   fails on some other shared cause, such as every call answering "Turbo is unavailable", is scored as the arm's failures until

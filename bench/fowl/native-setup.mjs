@@ -28,7 +28,7 @@ export function turboWindowPrompt(browser) {
 export function windowPrompt(browser) {
   const name = isolatedBrowser(browser);
   return `Use only the dedicated ${name} window initially titled "${browser.marker}"` +
-    `${browser.pid ? `, browser PID ${browser.pid}` : ''}, profile ${browser.profileName || browser.profileRoot}. Identify that window before acting, keep task pages in it, and never use any other browser window or profile, except a pop-up that a page in that window opens during the task (a sign-in window, say). That pop-up is part of the task: act in it, and once it closes, that window is the browser's window again. Never act in a window that was already open, another profile or another browser. If the dedicated window cannot be identified, stop. User activity still ends the input lease.\n\n`;
+    `${browser.pid ? `, browser PID ${browser.pid}` : ''}, profile ${browser.profileName || browser.profileRoot}. Identify that window before acting, keep task pages in it, and never use any other browser window or profile, except a pop-up window of that same browser and profile, opened by a page in that window as a result of a step the task asked for (a sign-in window, say). Once that pop-up closes, the dedicated window is the browser's window again. Never act in a window that was already open, another profile, another browser, or another app. If the dedicated window cannot be identified, stop. User activity still ends the input lease.\n\n`;
 }
 export function nativeBrowserSetup({ surface, repo, dir, realBrowser, dryRun = false,
   armHome = join(homedir(), 'Library/Caches/sleight-bench'), env = process.env }) {
