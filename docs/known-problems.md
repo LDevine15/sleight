@@ -713,7 +713,10 @@ native reference, and oversized first results defer the browser reference while 
   stopped when macOS handed focus to Finder as Cursor quit, which now counts as `quit-handoff`. The 09:31 UTC rerun measured
   Cursor 10/10 that way and the Excel cohort 40/40, but Excel's sequential cells passed 2/10. All eight failures were at the
   scroll, which went to the formula bar field because Excel's tree doesn't list its cells. The engine's error text wasn't
-  kept, so its code is unknown. Excel now scrolls its workbook canvas, and failed calls keep their step and AX codes.
+  kept, so its code is unknown. The Excel-only run (09:44 UTC) failed all 10 canvas scrolls and 5 of 10 four-session cohorts
+  at acquisition, each cohort losing all four sessions together. That pattern points to the fixture's state in those cohorts,
+  not contention among sessions. The cause isn't known, because the receipt kept only the error kinds (timeout, unsupported,
+  lease, approval). Excel's action is now a Page Down key, and the log keeps the error template.
 
 ## Turbo in unattended runs
 

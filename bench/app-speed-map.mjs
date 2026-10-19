@@ -158,14 +158,23 @@ const errorKinds = ['not scrollable', 'not found', 'timed out', 'timeout', 'inva
   'offscreen', 'not visible', 'approval', 'busy', 'cannot complete'];
 export function engineError(reply) {
   const text = (reply?.content ?? []).filter(item => item.type === 'text').map(item => item.text).join('\n').toLowerCase();
-  return { codes: [...new Set((text.match(/-25\d{3}\b/g) ?? []).map(Number))].slice(0, 5), kinds: errorKinds.filter(kind => text.includes(kind)) };
+  // The first line as a template: quoted values, paths and numbers replaced, other characters dropped. Unquoted words
+  // can still be labels, so the template only goes to the local log, and the report gets its hash (same template, same hash).
+  const template = (text.split('\n').find(line => line.trim()) ?? '').replace(/"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|`[^`]*`/g, '_q_')
+    .replace(/(?:~|\/)[^\s)]*/g, '_p_').replace(/-?\d+(?:\.\d+)?/g, '_n_').replace(/[^_a-z ,.:;()-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 100);
+  let hash = 0x811c9dc5;
+  for (const char of template) hash = Math.imul(hash ^ char.charCodeAt(0), 0x01000193) >>> 0;
+  return { template, published: { codes: [...new Set((text.match(/-25\d{3}\b/g) ?? []).map(Number))].slice(0, 5),
+    kinds: errorKinds.filter(kind => text.includes(kind)), signature: hash.toString(16).padStart(8, '0') } };
 }
+const engineFailure = reply => { const { template, published } = engineError(reply); return { engine: published, template }; };
 const steps = { acquireMs: 'acquire', firstReadMs: 'firstRead', warmReadMs: 'warmRead', actionMs: 'action', afterReadMs: 'afterRead' };
 
 export async function runSpeedMap(plan, runtime) {
   const report = { startedUTC: new Date().toISOString(), runs: plan.runs, concurrency: plan.concurrency,
     ownerPresent: plan.ownerPresent, rows: [], cohorts: [], note: plan.note };
   const boundary = () => { if (runtime.held()) throw Error('HOLD'); };
+  const sleep = runtime.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
   async function cohort(task, trial, mode) {
     boundary();
     let fixture, scope, preparationStarted = false;
@@ -197,7 +206,7 @@ export async function runSpeedMap(plan, runtime) {
       async function timed(key, code) {
         boundary(); const start = runtime.now();
         const reply = await session.js(code);
-        if (reply?.isError) throw Object.assign(Error('ENGINE_CALL_FAILED'), { step: steps[key], engine: engineError(reply) });
+        if (reply?.isError) throw Object.assign(Error('ENGINE_CALL_FAILED'), { step: steps[key], ...engineFailure(reply) });
         row[key] = runtime.now() - start;
       }
       try {
@@ -206,7 +215,16 @@ export async function runSpeedMap(plan, runtime) {
         const handle = browser ? 'am1Tab' : 'am1App';
         const acquire = browser ? `var am1Choices = (await cua.listBrowsers({emit:false})).filter(b => b.name === ${JSON.stringify(task.app)} && b.id === ${JSON.stringify(fixture.browserId)} && b.profileName === ${JSON.stringify(fixture.profileName)}); if(am1Choices.length !== 1) throw Error('BROWSER_IDENTITY'); var am1Tab = await cua.createBrowserTab(am1Choices[0].id, ${JSON.stringify(fixture.url)}, {visible:false});` :
           `var am1App = await cua.getApp(${JSON.stringify(task.bundle)});`;
-        await timed('acquireMs', acquire);
+        // An engine that says it is busy (-25204, cannot complete) gets at most two more tries, counted in the row.
+        row.acquireRetries = 0;
+        for (;;) {
+          try { await timed('acquireMs', acquire); break; }
+          catch (error) {
+            const busy = error.engine && (error.engine.codes.includes(-25204) || error.engine.kinds.some(kind => kind === 'busy' || kind === 'cannot complete'));
+            if (!busy || row.acquireRetries >= 2) throw error;
+            row.acquireRetries++; await sleep(500);
+          }
+        }
         const read = `var am1Tree = await ${handle}.getAXState({ disableDiffing: true, emit: false }); am1Tree;`;
         async function measuredRead(key) {
           // A bound standalone read follows the native lease rule and lets
@@ -214,7 +232,7 @@ export async function runSpeedMap(plan, runtime) {
           await timed(key, read);
           boundary();
           const reply = await session.js(`nodeRepl.write('AM1METRICS:' + JSON.stringify((${treeMetrics.toString()})(am1Tree, ${JSON.stringify({ marker: fixture.marker, requiredText: fixture.requiredText, scrollMarker: fixture.scrollMarker, anyRegion: fixture.anyRegion === true })})));`);
-          if (reply?.isError) throw Object.assign(Error('ENGINE_CALL_FAILED'), { step: steps[key] + 'Metrics', engine: engineError(reply) });
+          if (reply?.isError) throw Object.assign(Error('ENGINE_CALL_FAILED'), { step: steps[key] + 'Metrics', ...engineFailure(reply) });
           return metrics(reply);
         }
         const first = await measuredRead('firstReadMs');
@@ -222,16 +240,23 @@ export async function runSpeedMap(plan, runtime) {
         const warm = await measuredRead('warmReadMs');
         if (warm.shape) row.treeShape = warm.shape;
         if (mode === 'sequential' && !plan.ownerPresent && !task.readOnly) {
-          if (!browser && warm.scrollTarget === null) throw Error('NO_UNIQUE_SCROLL_AREA');
+          // A document the tree doesn't show (tier 4, Excel's canvas) doesn't scroll through the engine (10/10 failed,
+          // 2026-10-19), so its action is a Page Down the app handles itself, published as a key action.
+          const key = !browser && warm.shape?.tier === 4;
+          if (!browser && !key && warm.scrollTarget === null) throw Error('NO_UNIQUE_SCROLL_AREA');
+          row.actionKind = key ? 'key' : 'scroll';
           await timed('actionMs', browser ? 'await am1Tab.cua.scroll({x:120,y:200,scrollX:0,scrollY:400});' :
-            `await am1App.scroll(${warm.scrollTarget}, 'down', 1);`);
+            key ? `await am1App.pressKey('Page_Down');` : `await am1App.scroll(${warm.scrollTarget}, 'down', 1);`);
           const after = await measuredRead('afterReadMs');
           row.afterChars = after.chars; row.afterNodes = after.nodes;
         }
         row.status = 'complete';
       } catch (error) {
         row.failure = failureCode(error); if (!session) row.cleanupConfirmed = error.cleanupConfirmed === true;
-        if (error.step) { row.failedStep = error.step; row.engineError = error.engine; }
+        if (error.step) {
+          row.failedStep = error.step; row.engineError = error.engine;
+          runtime.log?.(`AM1_ENGINE_ERROR ${task.id} ${error.step} ${error.template}`);
+        }
       }
       finally {
         if (session) {
@@ -293,6 +318,7 @@ export function summarizeSpeedMap({ rows, cohorts = [] }) {
       attention: group.rows.filter(row => !row.sessionIndex).flatMap(row => row.attention ?? [])
         .reduce((counts, event) => ({ ...counts, [event.class]: (counts[event.class] ?? 0) + 1 }), {}),
       cohortWallMs: stats(qualifiedCohorts.map(cohort => cohort.wallMs)), attempted: group.rows.length, completed: completed.length,
+      actionKinds: [...new Set(completed.map(row => row.actionKind).filter(Boolean))],
       ...Object.fromEntries(['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes']
         .map(key => [key, stats(completed.map(row => row[key]))])) };
   });
@@ -306,7 +332,8 @@ export function speedMarkdown(report) {
     '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' + selected.map(row =>
       `| ${row.class} | ${row.app} | ${row.mode} | ${row.scope ?? 'unknown'} | ${(row.failures ?? []).join(', ') || 'none'} | ` +
       `${Object.entries(row.attention ?? {}).map(([name, count]) => `${name} ${count}`).join(', ') || 'none'} | ${row.completed}/${row.attempted} | ` +
-      ['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes', 'cohortWallMs'].map(key => cell(row[key] ?? { n: 0 })).join(' | ') + ' |').join('\n') + '\n';
+      ['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes', 'cohortWallMs'].map(key =>
+        cell(row[key] ?? { n: 0 }) + (key === 'actionMs' && (row.actionKinds ?? []).includes('key') ? ' (key)' : '')).join(' | ') + ' |').join('\n') + '\n';
   const account = rows.filter(row => row.ownerAccount), background = rows.filter(row => !row.ownerAccount);
   return '# App-class speed map\n\nTimes in ms, median / p90 (nearest rank). Counts describe the first explicit full read. ' +
     'Only complete trials contribute to these summaries. Setup wait runs from the return of the open command to an identified fixture window. ' +
@@ -337,7 +364,8 @@ export async function simulateSpeedMap(plan) {
       return { async close() {}, async js(code) {
         totals.engineCalls++;
         if (code.includes('AM1METRICS')) return { content: [{ type: 'text', text: 'AM1METRICS:' + JSON.stringify({ chars: 0, nodes: 0, scrollTarget: 1 }) }] };
-        const step = /getApp|createBrowserTab/.test(code) ? 'acquire' : /scroll\(/.test(code) ? 'scroll' : /getAXState/.test(code) ? 'read' : 'other';
+        const step = /getApp|createBrowserTab/.test(code) ? 'acquire' : /scroll\(/.test(code) ? 'scroll' : /pressKey\(/.test(code) ? 'key'
+          : /getAXState/.test(code) ? 'read' : 'other';
         if (step === 'scroll') totals.scrolls++;
         if (!index) steps.get(fixture.cell).push(step);
         return { content: [] };

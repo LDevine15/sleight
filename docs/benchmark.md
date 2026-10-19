@@ -117,10 +117,12 @@ short flags and `-s` (`--status`) quits a first instance.
 The scroll target comes from the fixture's own text. It is the one scroll area around a row with the fixture marker.
 When no scroll area holds the marker, it is the nearest list, outline, table, grid, layout area or text region that
 does, and a tie goes to the largest (a sheet's cell table, an editor's explorer list). An editable field that shows the
-text, such as a formula bar, doesn't count. When the document's text isn't in the tree at all, the document canvas (a
-layout area) takes the scroll. An instance proven to be the run's own may fall back to its largest scrollable region.
-Each row's `treeShape` records which rule applied (`tier`) and counts of fixed role words, never labels or values. A
-failed engine call records its step and only AX codes and fixed error kinds.
+text, such as a formula bar, doesn't count. When the document's text isn't in the tree at all, the action is a Page Down
+key sent to the app instead of a scroll, and the Action column marks it `(key)`. An instance proven to be the run's own
+may fall back to its largest scrollable region. Each row's `treeShape` records which rule applied (`tier`) and counts of
+fixed role words, never labels or values. A failed engine call records its step, AX codes, fixed error kinds and a hash
+of the message template. The template itself goes only to the local log as an `AM1_ENGINE_ERROR` line. Acquisition
+retries an engine that answers busy (-25204) at most twice and counts the retries.
 
 Every cell records focus and cover changes from the host's 200 ms samples. Each record gives the phase, the host stage,
 the time and the frontmost bundle ID before and after. Before the first engine call the only actor is the fixture app's

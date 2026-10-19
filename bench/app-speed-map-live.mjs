@@ -153,7 +153,7 @@ export async function liveSpeedRuntime(plan, options, {
   const held = () => controller.signal.aborted || attentionFault || approvalStopped || existsSync('/tmp/sleight-hold');
   const boundary = () => { if (held()) throw Error('HOLD'); };
   return {
-    held, now: () => performance.now(),
+    held, now: () => performance.now(), log: line => console.error(line),
     async prepare(task) {
       boundary();
       speedScope(plan, task);

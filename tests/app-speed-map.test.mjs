@@ -9,7 +9,7 @@ import { PassThrough } from 'node:stream';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
-import { speedPlan, readMetrics, runSpeedMap, summarizeSpeedMap, speedMarkdown, simulateSpeedMap } from '../bench/app-speed-map.mjs';
+import { speedPlan, readMetrics, runSpeedMap, summarizeSpeedMap, speedMarkdown, simulateSpeedMap, engineError } from '../bench/app-speed-map.mjs';
 
 function closed(values) {
   return new Proxy(values, { get(t, key) {
@@ -18,21 +18,22 @@ function closed(values) {
     return t[key];
   } });
 }
-function runtime({ badCleanup = false, badRead = false, held = false, ownerPresent = false, relayTest, folder = false } = {}) {
+function runtime({ badCleanup = false, badRead = false, held = false, ownerPresent = false, relayTest, folder = false, canvas = false } = {}) {
   const calls = [], outputs = []; let time = 0, active = 0, peak = 0;
   const directory = relayTest && mkdtempSync(join(tmpdir(), 'sleight-am1-relay-'));
   if (directory) relayTest.after(() => removeTemp(directory));
   return { calls, outputs, get peak() { return peak; }, held: () => held, now: () => time += 5,
-    async prepare(task, cohort) { calls.push(['prepare', task.id, cohort]); return { marker: 'AM1-fixture', url:'http://127.0.0.1:45123/fixture', browserId:'bench-id', profileName:'benchmark', requiredText: ownerPresent ? undefined : 'AM1-fixture', ...(folder && { scrollMarker: 'AM1-row.txt' }) }; },
+    async prepare(task, cohort) { calls.push(['prepare', task.id, cohort]); return { marker: 'AM1-fixture', url:'http://127.0.0.1:45123/fixture', browserId:'bench-id', profileName:'benchmark', requiredText: ownerPresent ? undefined : 'AM1-fixture', ...(folder && { scrollMarker: 'AM1-row.txt' }), ...(canvas && { scrollMarker: 'AM1-fixture' }) }; },
     async openSession(task) {
       const outputs = [];
       active++; peak = Math.max(peak, active); calls.push(['session', task.id]);
       const app = closed({ getAXState: async options => {
         assert.deepEqual(JSON.parse(JSON.stringify(options)), { disableDiffing: true, emit: false });
         if (badRead) throw Error('private account content must not be published');
+        if (canvas) return 'Window: "AM1-fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t\t2 button\n\t3 text entry area Value: AM1-fixture\n\t4 layout area';
         return folder ? 'Window: "AM1-fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t\t2 outline Sidebar\n\t3 scroll area\n\t\t4 row\n\t\t\t5 text Value: AM1-row.txt' :
           'Window: "AM1-fixture", App: Fixture.\n0 standard window\n\t1 scroll area\n\t\t2 static text AM1-fixture';
-      }, scroll: async (...args) => { calls.push(['scroll', ...args]); } });
+      }, scroll: async (...args) => { calls.push(['scroll', ...args]); }, pressKey: async key => { calls.push(['key', key]); } });
       const tab = closed({ getAXState:app.getAXState, cua:closed({scroll:async options=>calls.push(['browser-scroll',JSON.parse(JSON.stringify(options))])}), close:async()=>calls.push(['tab-close']) });
       const ctx = { cua: closed({ getApp: async () => app, listBrowsers:async()=>[{id:'owner-id',name:'Helium',profileName:'owner'},{id:'bench-id',name:'Helium',profileName:'benchmark'}], createBrowserTab:async(id,url,options)=>{assert.equal(id,'bench-id');assert.equal(url,'http://127.0.0.1:45123/fixture');assert.equal(options.visible,false);return tab;} }), nodeRepl: { write: value => outputs.push(value) } };
       const sent = [], received = [], codes = [];
@@ -473,7 +474,8 @@ test('when only a field shows the fixture text, the document canvas (layout area
 });
 
 test('a failed engine call records its step and only AX codes and fixed error kinds', async () => {
-  const r = runtime(), open = r.openSession;
+  const r = runtime(), open = r.openSession, logged = [];
+  r.log = line => logged.push(line);
   r.openSession = async (...args) => {
     const session = await open(...args);
     return { ...session, js: async code => /\.scroll\(/.test(code)
@@ -483,8 +485,53 @@ test('a failed engine call records its step and only AX codes and fixed error ki
   const row = report.rows.find(item => item.mode === 'sequential');
   assert.equal(row.failure, 'ENGINE_CALL_FAILED');
   assert.equal(row.failedStep, 'action');
-  assert.deepEqual(row.engineError, { codes: [-25205], kinds: ['not scrollable'] });
+  assert.deepEqual({ ...row.engineError, signature: undefined }, { codes: [-25205], kinds: ['not scrollable'], signature: undefined });
+  assert.match(row.engineError.signature, /^[0-9a-f]{8}$/);
+  assert.deepEqual(logged, ['AM1_ENGINE_ERROR textedit action ax error _n_: element is not scrollable (private label)']);
   assert.ok(Number.isFinite(row.warmReadMs) && row.actionMs === null);
   assert.deepEqual(report.summary.find(item => item.mode === 'sequential').failures, ['ENGINE_CALL_FAILED:action']);
   assert.doesNotMatch(JSON.stringify(report), /private label/);
+});
+
+// Excel-only run (2026-10-19 09:44Z): the canvas scroll failed 10/10 (no AX code, no known kind in the engine's text).
+test('a document whose text the tree does not show is measured with a Page Down key, labelled as a key action', async () => {
+  const r = runtime({ canvas: true });
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r);
+  const row = report.rows.find(item => item.mode === 'sequential');
+  assert.equal(row.status, 'complete', JSON.stringify(row));
+  assert.equal(row.actionKind, 'key');
+  assert.equal(row.treeShape.tier, 4);
+  assert.deepEqual(r.calls.filter(call => call[0] === 'key'), [['key', 'Page_Down']]);
+  assert.equal(r.calls.filter(call => call[0] === 'scroll').length, 0);
+  assert.ok(Number.isFinite(row.actionMs) && Number.isFinite(row.afterReadMs));
+  assert.deepEqual(report.summary.find(item => item.mode === 'sequential').actionKinds, ['key']);
+  assert.match(speedMarkdown(report), /\(key\)/);
+  const scrolled = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), runtime());
+  assert.equal(scrolled.rows.find(item => item.mode === 'sequential').actionKind, 'scroll');
+});
+
+test('an engine error keeps a local template without quoted values, paths or numbers, and publishes only its hash', () => {
+  const reply = { isError: true, content: [{ type: 'text', text: 'Timed out after 30 s waiting for "Microsoft Excel" at /Users/x/AM1.xlsx (lease 4)\nsecond line' }] };
+  const error = engineError(reply);
+  assert.equal(error.template, 'timed out after _n_ s waiting for _q_ at _p_ (lease _n_)');
+  assert.deepEqual(error.published, { codes: [], kinds: ['timed out', 'lease'], signature: error.published.signature });
+  assert.match(error.published.signature, /^[0-9a-f]{8}$/);
+  assert.equal(engineError({ content: [{ type: 'text', text: 'Timed out after 9 s waiting for "Word" at /tmp/y (lease 1)' }] }).published.signature,
+    error.published.signature, 'the same template hashes the same');
+});
+
+test('acquisition retries only an engine that says it is busy, at most twice, and counts the retries', async () => {
+  for (const [text, failures, expected] of [['AX error -25204: cannot complete', 2, { retries: 2, status: 'complete' }],
+    ['AX error -25204: cannot complete', 3, { retries: 2, status: 'failed' }], ['Lease refused', 1, { retries: 0, status: 'failed' }]]) {
+    const r = runtime(), open = r.openSession; let left = failures;
+    r.sleep = async () => {};
+    r.openSession = async (...args) => {
+      const session = await open(...args);
+      return { ...session, js: async code => /getApp/.test(code) && left-- > 0 ? { isError: true, content: [{ type: 'text', text }] } : session.js(code) };
+    };
+    const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r);
+    const row = report.rows.find(item => item.mode === 'sequential');
+    assert.equal(row.acquireRetries, expected.retries, text);
+    assert.equal(row.status, expected.status, text);
+  }
 });
