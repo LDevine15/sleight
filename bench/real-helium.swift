@@ -64,6 +64,16 @@ func safariWindowCommand(_ titles: [String]) throws -> Int {
     return profile
 }
 
+// With Safari profiles, File > New Window can be a submenu of "New <Profile> Window" items (Safari 26 and later,
+// bench/fowl/safari-helper.swift, 2026-10-17). Pressing that parent opens the submenu and creates no window, which
+// failed the compat check's fixture with "Browser creation ownership unconfirmed" (2026-10-19). `submenu` opens a
+// submenu item and returns its items, or returns nil for a plain command.
+func safariNewWindowTarget<Item>(_ items: [Item], title: (Item) throws -> String, submenu: (Item) throws -> [Item]?) throws -> Item {
+    let item = items[try safariWindowCommand(try items.map(title))]
+    guard let nested = try submenu(item) else { return item }
+    return nested[try safariWindowCommand(try nested.map(title))]
+}
+
 func emit(_ object: [String: Any]) throws {
     let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     FileHandle.standardOutput.write(data + Data([10]))
@@ -235,6 +245,25 @@ func navigatedFixture(document: String, title: String, target: String, token: St
 }
 
 func regression(_ scenario: String) throws {
+    if scenario == "safari-profile-submenu" {
+        let submenus = ["New Window": ["New Private Window", "New Personal Window", "New sleight benchmark Window"]]
+        var opened: [String] = []
+        let open: (String) throws -> [String]? = { item in
+            guard let nested = submenus[item] else { return nil }
+            opened.append(item); return nested
+        }
+        guard try safariNewWindowTarget(["New Window", "New Private Window", "New Tab"], title: { $0 }, submenu: open) == "New Personal Window",
+              opened == ["New Window"] else { throw FixtureError("Profile submenu not followed") }
+        opened = []
+        guard try safariNewWindowTarget(["New Tab", "New Window", "New Private Window"], title: { $0 }, submenu: { _ in nil }) == "New Window",
+              try safariNewWindowTarget(["New Private Window", "New Work Window"], title: { $0 }, submenu: open) == "New Work Window",
+              opened.isEmpty else { throw FixtureError("Plain command changed") }
+        var privateOnlyRefused = false
+        do { _ = try safariNewWindowTarget(["New Window"], title: { $0 }, submenu: { _ in ["New Private Window"] }) } catch { privateOnlyRefused = true }
+        guard privateOnlyRefused else { throw FixtureError("Private window admitted") }
+        try emit(["scenario": scenario, "passed": true])
+        return
+    }
     if scenario.hasPrefix("window-cleanup-") {
         let kind = String(scenario.dropFirst("window-cleanup-".count))
         var listed = ["owned", "owner"]
@@ -519,10 +548,16 @@ func newSafariWindow(_ app: AXUIElement, beforeCreate: () throws -> Void) throws
         try press(files[0])
         menus = try children(files[0]).filter { try text($0, kAXRoleAttribute) == kAXMenuRole }
         guard menus.count == 1 else { throw FixtureError("\(fixtureAppName) File menu contents unconfirmed") }
-        let items = try children(menus[0])
-        let index = try safariWindowCommand(items.map { try text($0, kAXTitleAttribute) })
+        let target = try safariNewWindowTarget(try children(menus[0]), title: { try text($0, kAXTitleAttribute) }, submenu: { item in
+            let nested = try children(item).filter { try text($0, kAXRoleAttribute) == kAXMenuRole }
+            guard !nested.isEmpty else { return nil }
+            guard nested.count == 1 else { throw FixtureError("\(fixtureAppName) New Window submenu ambiguous") }
+            try press(item)
+            wait()
+            return try children(nested[0])
+        })
         try beforeCreate()
-        try press(items[index])
+        try press(target)
     } catch {
         guard AXUIElementPerformAction(menus.first ?? files[0], "AXCancel" as CFString) == .success else { throw FixtureError("\(fixtureAppName) failed-menu cancellation unconfirmed: \(error)") }
         try emit(["stage": "menu-cancel", "menuCancelled": true, "menuCancelMethod": "AXCancel"])

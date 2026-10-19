@@ -63,7 +63,9 @@ export function keypadPlan(tree) {
   return { numbers, expected: '391', code: numbers.map(n => `await app.click(${n})`).join('; ') };
 }
 
-const readCode = handle => `nodeRepl.write(await ${handle}.getAXState({ disableDiffing: true }))`;
+// getAXState prints its tree itself unless emit is false, so writing it too printed the tree twice. The first live run
+// (2026-10-19) then found two edit fields and failed on a display that read 391.
+const readCode = handle => `nodeRepl.write(await ${handle}.getAXState({ emit: false, disableDiffing: true }))`;
 
 export async function runCalculator(client, { appState, launchApp, quitApp }) {
   const started = Date.now();
@@ -107,15 +109,16 @@ export async function runCalculator(client, { appState, launchApp, quitApp }) {
 
 // One engine-path page read: a page served on 127.0.0.1 in a Safari window this run created, chosen by its title through
 // sleight's select_window, then acquired and read with getApp as Claude would.
-export async function runBrowserRead(client, { appState, openPage, axTrusted }) {
+export async function runBrowserRead(client, { appState, openPage, axTrusted, quitLaunchedSince }) {
   const started = Date.now();
   const before = await appState(SAFARI);
   if (before.running) return result('live-browser-read', 'skip', 'Safari was already running, so it may be the owner\'s; the check uses only a Safari it launches');
   // The fixture helper reads Safari's windows through Accessibility. Without a grant (a launchd job has none) macOS would
   // ask the owner, so the check skips instead.
   if (axTrusted && !(await axTrusted())) return result('live-browser-read', 'skip', 'this process has no Accessibility grant, so the fixture window can\'t be opened without a macOS prompt; run npm run compat -- --owner-away from a terminal');
-  let page, outcome;
+  let page, outcome, opening;
   try {
+    opening = Date.now();
     page = await openPage();
     const listed = await client.call('js', { code: `const rows = (await cua.listApps({ emit: false })).filter(row => row.id === ${JSON.stringify(SAFARI)});
 nodeRepl.write(${JSON.stringify(MARK)} + JSON.stringify(rows.flatMap(row => row.windows ?? []).map(window => window.title).filter(title => typeof title === 'string' && title.includes(${JSON.stringify(page.marker)}))))`, timeout_ms: 30000 });
@@ -137,8 +140,17 @@ nodeRepl.write(${JSON.stringify(MARK)} + JSON.stringify(rows.flatMap(row => row.
   } catch (error) {
     outcome = result('live-browser-read', 'error', 'the check stopped', firstLine(error.message));
   } finally {
-    const cleanup = page ? await page.close().then(() => undefined, error => error.message) : undefined;
+    const closed = page ? await page.close().then(() => undefined, error => error.message) : undefined;
+    // The fixture quits Safari only after closing the window it created. A setup that failed before it had one left
+    // Safari and its Start Page window running (2026-10-19), so the check then quits the Safari it launched itself.
+    let cleanup = closed, quitSafari;
+    if (opening !== undefined && quitLaunchedSince) {
+      const quit = await quitLaunchedSince(SAFARI, opening).then(done => { quitSafari = done; }, error => error.message);
+      cleanup = quit ? [closed, quit].filter(Boolean).join('; ') : undefined;
+    }
     outcome ??= result('live-browser-read', 'fail', 'no result');
+    if (quitSafari) outcome = { ...outcome, quitSafari: true };
+    if (closed && !cleanup) outcome = { ...outcome, fixtureCleanup: closed };
     if (cleanup) outcome = { ...outcome, cleanup, ...(outcome.status === 'pass' ? { status: 'fail', reason: 'passed, but closing the fixture window or Safari failed' } : {}) };
   }
   return { ...outcome, ms: Date.now() - started };
@@ -160,16 +172,32 @@ export async function launchApp(bundle, { state = appState, run = execute, sleep
   }
   throw new Error(`${bundle} did not start`);
 }
-export async function quitApp(bundle, launched, { state = appState, run = execute, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+export async function quitApp(bundle, launched, { state = appState, run = execute, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), waitMs = 5000 } = {}) {
   const now = await state(bundle);
   if (!now.running) return;
   if (now.pids?.length !== 1 || now.pids[0] !== launched?.pid) throw new Error(`${bundle} is not the one process this run launched; left running`);
-  await run('/usr/bin/osascript', ['-l', 'JavaScript', FIXTURE_SCRIPT, JSON.stringify({ op: 'quit', appId: bundle })], { timeout: 15000 });
-  for (let i = 0; i < 50; i++) {
+  // The script checks the pid (and the launch date, when given) again just before it quits.
+  await run('/usr/bin/osascript', ['-l', 'JavaScript', FIXTURE_SCRIPT, JSON.stringify({ op: 'quit', appId: bundle, pid: launched.pid,
+    ...(launched.launchedAtMs !== undefined ? { launchedAtMs: launched.launchedAtMs } : {}) })], { timeout: 15000 });
+  for (let i = 0; i < waitMs / 100; i++) {
     if (!(await state(bundle)).running) return;
     await sleep(100);
   }
   throw new Error(`${bundle} quit unconfirmed`);
+}
+
+// Quits an app that one process of this run launched: the only process for the bundle, launched (by macOS's date) no
+// earlier than sinceMs, after a check that found the app not running. Anything else stays running and throws.
+// Returns true when it quit something.
+export async function quitLaunchedSince(bundle, sinceMs, { state = appState, run, sleep, waitMs = 25000 } = {}) {
+  const now = await state(bundle);
+  if (!now.running) return false;
+  const launchedAtMs = now.launchDates?.[0];
+  if (now.pids?.length !== 1 || !(launchedAtMs >= sinceMs)) {
+    throw new Error(`${bundle} is not one process launched by this check (pids ${(now.pids ?? []).join(', ')}); left running`);
+  }
+  await quitApp(bundle, { pid: now.pids[0], launchedAtMs: sinceMs }, { state, run, sleep, waitMs });
+  return true;
 }
 
 // AXIsProcessTrusted() without options never prompts.
