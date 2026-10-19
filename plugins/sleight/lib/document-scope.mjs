@@ -1,7 +1,7 @@
 import { promptNotice } from './prompt-notice.mjs';
 import { elementWait } from './element-wait.mjs';
 import { listPicker } from './native-list-pick.mjs';
-import { actionOutcome } from './action-outcomes.mjs';
+import { actionOutcome, outcomeRecord } from './action-outcomes.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -533,12 +533,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
       : /names no element/.test(message) ? 'bad locator' : /opens a submenu/.test(message) ? 'submenu' : /its menu takes the keys/.test(message) ? 'menu open'
       : /focus/.test(message) ? 'no focus target' : /close button/.test(message) ? 'close button' : /^Native access/.test(message) ? 'native access' : 'stopped';
     // A record as it leaves the engine: no set value, element line or focus number.
-    const outcomeOut = ({ want, body, focus, ...rec }) => {
-      const { p, ...t } = body === undefined ? {} : actionOutcome([{ body }]).targets[0] ?? {};
-      // Only known plain text areas expose length; single-line fields may hold private values with no label.
-      if (t.s || p || !/^(?:text area|text entry area)$/.test(t.r)) delete rec.c;
-      return t.r ? { ...rec, t } : rec;
-    };
+    const outcomeOut = ${outcomeRecord.toString()};
     const outcomeExtra = () => ({ ...(state.actions ? { planned: state.actions.length } : {}), ...(state.expected?.app ? { app: state.expected.app } : {}),
       ...(state.outcomeDropped ? { dropped: state.outcomeDropped } : {}) });
     // Each record goes out as it changes, so a throw in Claude's own code after an action can't lose it. The call's

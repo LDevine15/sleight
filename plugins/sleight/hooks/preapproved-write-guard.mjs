@@ -223,7 +223,10 @@ export async function preapprovedWriteDenied(input, options) {
 // (docs/known-problems.md).
 // The switches' stems, so an edit of part of a name counts; matched after JSON and shell escapes and quotes are folded out.
 const SWITCHES = /OUTCOMES|ACTION_LOG/;
-const unescaped = text => text.replace(/\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})/g, (_, u, x) => String.fromCharCode(parseInt(u ?? x, 16))).replace(/['"]\s*(?:\+\s*)?['"]/g, '').replace(/['"\\]/g, '');
+const unescaped = (text, concatenate = true) => {
+  const decoded = text.replace(/\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})/g, (_, u, x) => String.fromCharCode(parseInt(u ?? x, 16)));
+  return (concatenate ? decoded.replace(/['"]\s*(?:\+\s*)?['"]/g, '') : decoded).replace(/['"\\]/g, '');
+};
 const switched = text => typeof text === 'string' && SWITCHES.test(unescaped(text));
 // Paths are matched lowercased (folded).
 const CONFIG = /(?:^|\/)(?:\.claude\/[^/]*\.json|\.claude\.json|\.?mcp\.json|managed-settings\.json|settings(?:\.local)?\.json|\.claude-plugin\/plugin\.json|bin\/sleight-mcp|launchagents\/[^/]+\.plist|\.config\/fish\/(?:[^/]+\/)*[^/]+\.fish|\.(?:zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile|envrc)|\.zshrc\.d\/[^/]+)$/;
@@ -239,9 +242,10 @@ export function loggingSwitchWriteDenied(input) {
     return texts.some(switched) && paths.some(path => typeof path === 'string' && CONFIG.test(folded(normalize(path))));
   }
   if (tool !== 'Bash' || !switched(input.command)) return false;
-  const { command } = input, foldedCommand = unescaped(command);
-  if (/\blaunchctl\s+setenv\b|\bclaude\s+(?:mcp|config)\b/.test(foldedCommand)) return true;
+  const { command } = input, candidates = [command, unescaped(command), unescaped(command, false)];
+  // Keep the raw spelling and argument spaces too: folding adjacent literals can join separate shell arguments.
+  if (candidates.some(text => /\blaunchctl\s+setenv\b|\bclaude\s+(?:mcp|config)\b/.test(text))) return true;
   // A write to a config file, or an interpreter or editor tool run with one named: reads such as grep pass.
   return shellWritePaths(command).some(({ path }) => CONFIG.test(folded(normalize(path)))) ||
-    CONFIG_TEXT.test(foldedCommand) && SETTERS.test(foldedCommand);
+    candidates.some(text => CONFIG_TEXT.test(text) && SETTERS.test(text));
 }

@@ -54,7 +54,8 @@ export function actionOutcome(recs, before, after) {
       /password|passcode|passphrase|\bpin\b|recovery (?:key|code|phrase)|secret key|security code|verification code|one-time|\botp\b|\bcv[cv]2?\b|api key|access token|protected|passwort|kennwort|mot de passe|contrase[ñn]a|senha|wachtwoord|l[öo]senord|adgangskode|salasana|has[łl]o|пароль|密码|パスワード|비밀번호|jelsz[óo]/i.test(name + ' ' + (id ?? ''));
     // Only these plain field kinds may expose typed length. A single-line field's label may be absent or
     // held elsewhere in the tree, so its name cannot prove that a length is safe to keep.
-    const plain = !secure && ['text area', 'text entry area'].includes(role);
+    const sensitive = /\bcard|carte|tarjeta|karte|cart[aã]o|\bcarta\b|kaart|\bkort|karta|カード|卡|account|konto|compte|cuenta|\bconta\b|rekening|\bconto\b|\bssn\b|social security|s[ée]curit[ée] sociale|seguridad social|sozialversicherung|national insurance|\bnino\b|\bsin\b|\bbsn\b|\bnir\b|\bnif\b|\bnie\b|\bdni\b|\bcpf\b|codice fiscale|personnummer|pesel|\biban\b|\bbic\b|\bswift\b|routing|sort code|\bblz\b|bankleitzahl|\baba\b|\brib\b|\bnip\b|geheimzahl|\bcid\b|\bcc-|verification|pr[üu]fnummer|cryptogramme|\btax|\btin\b|\bein\b|\bvat\b|steuer|impuesto|fiscal|imposto|passport|reisepass|passeport|pasaporte|passaporto|paspoort|passaporte|expir|\bexp\b|ablauf|vencimiento|scadenza|birth|geburt|\bdob\b|secret|token|\bkey\b|code|national id|\bid no|number|nummer|num[ée]ro|n[úu]mero/i.test(body);
+    const plain = !secure && !sensitive && ['text area', 'text entry area'].includes(role);
     return { role, flags, name, id, value, secure, plain };
   };
   const view = text => {
@@ -144,6 +145,14 @@ export function actionOutcome(recs, before, after) {
     facts.push(changed ? { o: 'lines', d: String(changed) } : { o: 'none' });
   }
   return { targets, facts: facts.slice(0, 2) };
+}
+
+// Shared by the engine guard and the offline character analyzer. The guard injects this function's source
+// beside actionOutcome, so private target lines and typed values never leave the engine.
+export function outcomeRecord({ want, body, focus, ...rec }) {
+  const { p, ...t } = body === undefined ? {} : actionOutcome([{ body }]).targets[0] ?? {};
+  if (t.s || p || !/^(?:text area|text entry area)$/.test(t.r)) delete rec.c;
+  return t.r ? { ...rec, t } : rec;
 }
 
 const said = fact => ({
@@ -365,7 +374,7 @@ export class ActionLog {
       try {
         const stat = lstatSync(this.path);
         if (!stat.isFile()) throw new Error('action log is not a regular file');
-        if (stat.size + text.length > this.maxBytes) this.rotate(text.length);
+        if (stat.size + text.length > this.maxBytes) try { this.rotate(text.length); } catch { /* Rotation is optional; keep the row. */ }
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
       // O_NOFOLLOW: a symlink at the path can't send the log elsewhere. O_NONBLOCK: a FIFO can't hold the open.
       const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK;
@@ -402,7 +411,11 @@ export class ActionLog {
       const reclaim = lock + '.reclaim';
       let claim;
       try { claim = openSync(reclaim, flags, 0o600); } catch (error) {
-        if (error.code === 'EEXIST') return;
+        if (error.code === 'EEXIST') {
+          // A recovery holder can die too. Leave live holders alone; retry recovery on the next write.
+          if (Date.now() - lstatSync(reclaim).mtimeMs >= 30000) unlinkSync(reclaim);
+          return;
+        }
         throw error;
       }
       try {
@@ -413,8 +426,8 @@ export class ActionLog {
           throw error;
         }
       } finally {
-        closeSync(claim);
-        unlinkSync(reclaim);
+        try { closeSync(claim); } catch {}
+        try { unlinkSync(reclaim); } catch {}
       }
     }
     try {

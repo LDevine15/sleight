@@ -788,3 +788,74 @@ test('a stale-lock contender rechecks age after claiming recovery and leaves a s
     if (existsSync(lock)) unlink(lock);
   }
 });
+
+test('a dead recovery holder expires and a later write rotates without losing either row', () => {
+  const root = mkdtempSync(join(dir, 'dead-reclaim-')), path = join(root, 'shared.jsonl'), lock = path + '.lock', reclaim = lock + '.reclaim';
+  writeFileSync(path, 'x'.repeat(390) + '\n', { mode: 0o600 });
+  for (const file of [lock, reclaim]) {
+    writeFileSync(file, '', { mode: 0o600 });
+    utimesSync(file, new Date(0), new Date(0));
+  }
+  const log = new ActionLog({ path, root, maxBytes: 400 });
+  log.write([{ call: 'first' }]);
+  log.write([{ call: 'second' }]);
+  assert.ok(existsSync(path + '.1'), 'rotation resumes after the dead recovery holder');
+  const all = readFileSync(path, 'utf8') + readFileSync(path + '.1', 'utf8');
+  for (const call of ['first', 'second']) assert.ok(all.includes(JSON.stringify({ call }).slice(1, -1)), call);
+  assert.equal(log.failures, 0);
+  assert.ok(!existsSync(reclaim));
+});
+
+test('a fresh recovery holder is left alone while rows keep appending', () => {
+  const root = mkdtempSync(join(dir, 'fresh-reclaim-')), path = join(root, 'shared.jsonl'), lock = path + '.lock', reclaim = lock + '.reclaim';
+  writeFileSync(path, 'x'.repeat(390) + '\n', { mode: 0o600 });
+  writeFileSync(lock, '', { mode: 0o600 }); utimesSync(lock, new Date(0), new Date(0));
+  writeFileSync(reclaim, 'holder', { mode: 0o600 });
+  new ActionLog({ path, root, maxBytes: 400 }).write([{ call: 'next' }]);
+  assert.equal(readFileSync(reclaim, 'utf8'), 'holder');
+  assert.ok(!existsSync(path + '.1'));
+  assert.match(readFileSync(path, 'utf8'), /"call":"next"/);
+});
+
+for (const fault of ['lock open', 'lock stat', 'recheck stat', 'reclaim open', 'reclaim unlink']) {
+  test(`rotation ${fault} failure skips rotation, never the log row`, async t => {
+    const fs = (await import('node:fs')).default, { syncBuiltinESMExports } = await import('node:module');
+    const root = mkdtempSync(join(dir, 'lock-fault-')), path = join(root, 'shared.jsonl'), lock = path + '.lock', reclaim = lock + '.reclaim';
+    writeFileSync(path, 'x'.repeat(390) + '\n', { mode: 0o600 });
+    writeFileSync(lock, '', { mode: 0o600 }); utimesSync(lock, new Date(0), new Date(0));
+    const method = fault.endsWith('stat') ? 'lstatSync' : fault.endsWith('unlink') ? 'unlinkSync' : 'openSync';
+    const original = fs[method];
+    let hits = 0;
+    t.mock.method(fs, method, (...args) => {
+      const target = fault.startsWith('reclaim') ? reclaim : lock;
+      if (args[0] === target && ++hits === (fault === 'recheck stat' ? 2 : 1)) throw Object.assign(new Error('fixture'), { code: 'EACCES' });
+      return original(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      const log = new ActionLog({ path, root, maxBytes: 400 });
+      log.write([{ call: fault }]);
+      assert.ok(hits > 0, 'the fault site was reached');
+      assert.ok(readFileSync(path, 'utf8').includes(JSON.stringify({ call: fault }).slice(1, -1)), 'the row was appended');
+      assert.equal(log.failures, 0);
+    } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+  });
+}
+
+test('sensitive names and IDs suppress typed lengths in both plain text area kinds', async () => {
+  for (const role of ['text area', 'text entry area']) {
+    for (const label of ['Description: Card number', 'Description: Passport', 'ID: cc-exp', 'Description: IBAN',
+      'Description: Date of birth', 'Description: Numéro de carte', 'Description: Account']) {
+      const text = tree(`\t1 ${role} ${label}`, { focus: `1 ${role} ${label}` });
+      const f = engine([text, text]);
+      await f.run('await app.typeText("4111111111111111");', { outcomeMark: MARK, actions: ['typeText'] });
+      const rec = f.records(MARK).at(-1).outcomes[0];
+      assert.equal(rec.c, undefined, `${role} ${label}`);
+      assert.doesNotMatch(JSON.stringify(rec), /"p":/);
+      const path = join(dir, 'sensitive-area.jsonl'), log = new ActionLog({ path, root: dir });
+      log.request({ id: 1, method: 'tools/call', params: { name: 'js' } });
+      log.outcomes(1, { outcomes: [rec] }); log.reply({ id: 1, result: {} });
+      assert.equal(JSON.parse(readFileSync(path, 'utf8').trim().split('\n').at(-1)).chars, undefined);
+    }
+  }
+});

@@ -266,3 +266,13 @@ test('the logging switch hook folds config paths and setter names as well as swi
   ]) assert.equal(denied({ tool: 'Bash', command }), true, command);
   assert.equal(denied({ tool: 'Bash', command: `grep SLEIGHT_OUTCOMES ~/.zsh'rc'` }), false);
 });
+
+test('the logging switch hook checks raw commands when quote folding joins separate arguments', async () => {
+  const { loggingSwitchWriteDenied: denied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
+  for (const command of [
+    `env 'A=1' 'python3' -c "open('/Users/u/.zshrc','a').write('SLEIGHT_OUTCOMES=1')"`,
+    `env 'A=1' 'node' -e "require('fs').appendFileSync('/Users/u/.zshrc','SLEIGHT_ACTION_LOG=a')"`,
+    `env 'A=1' 'launchctl' 'setenv' SLEIGHT_OUTCOMES 1`,
+  ]) assert.equal(denied({ tool: 'Bash', command }), true, command);
+  assert.equal(denied({ tool: 'Bash', command: `env 'A=1' 'grep' SLEIGHT_OUTCOMES ~/.zshrc` }), false);
+});

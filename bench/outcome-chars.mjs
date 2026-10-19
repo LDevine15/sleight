@@ -8,7 +8,7 @@
 // acquisition, no action) right after a call that acted, the turns outcome lines are meant to save.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { actionOutcome, renderOutcomes } from '../plugins/sleight/lib/action-outcomes.mjs';
+import { actionOutcome, outcomeRecord, renderOutcomes } from '../plugins/sleight/lib/action-outcomes.mjs';
 import { promptNotice } from '../plugins/sleight/lib/prompt-notice.mjs';
 
 const files = paths => paths.flatMap(path => statSync(path).isDirectory()
@@ -62,12 +62,7 @@ function records(code, before, after) {
     rec.f = actionOutcome(group, before?.join('\n'), after?.join('\n')).facts;
     group = [];
   });
-  return recs.map(({ want, body, focus, ...rec }) => {
-    const { p, ...t } = body === undefined ? {} : actionOutcome([{ body }]).targets[0] ?? {};
-    // As the guard does: a length only for a known plain, non-secure text field whose line names nothing sensitive.
-    if (!t.r || t.s || p || !/^(?:text field|search text field|search field|combo box|text area|text entry area)$/.test(t.r)) delete rec.c;
-    return t.r ? { ...rec, t } : rec;
-  });
+  return recs.map(outcomeRecord);
 }
 
 const rows = [], rereads = [];
