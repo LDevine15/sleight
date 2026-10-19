@@ -262,7 +262,7 @@ export function actionLogPath(value, home = homedir()) {
 export class ActionLog {
   constructor({ path, root = logRoot(), maxBytes = 5 * 1024 * 1024, keep = 2, now = () => new Date(), home = homedir(), names } = {}) {
     this.path = path; this.root = root; this.maxBytes = maxBytes; this.keep = keep; this.now = now; this.home = home;
-    this.names = names; this.calls = new Map(); this.origins = new Map(); this.failures = 0;
+    this.names = names; this.calls = new Map(); this.origins = new Map(); this.failures = 0; this.rotationFailures = 0;
   }
   scrub(text) {
     this.names ??= ownerNames().filter(Boolean).sort((a, b) => b.length - a.length);
@@ -375,7 +375,10 @@ export class ActionLog {
       try {
         const stat = lstatSync(this.path);
         if (!stat.isFile()) throw new Error('action log is not a regular file');
-        if (stat.size + text.length > this.maxBytes) try { this.rotate(text.length); } catch { /* Rotation is optional; keep the row. */ }
+        if (stat.size + text.length > this.maxBytes) try { this.rotate(text.length); } catch {
+          // Rotation is optional; report its failure separately and keep appending the row.
+          if (++this.rotationFailures === 1) try { process.stderr.write('sleight: could not rotate the action log; check its folder permissions and rotation lock.\n'); } catch {}
+        }
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
       // O_NOFOLLOW: a symlink at the path can't send the log elsewhere. O_NONBLOCK: a FIFO can't hold the open.
       const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK;

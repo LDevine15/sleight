@@ -851,6 +851,32 @@ test('reclaim expiry never removes a fresh successor after observing a dead hold
   } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 });
 
+test('rotation failures are counted and warn once per session while every row still appends', async t => {
+  const fs = (await import('node:fs')).default, { syncBuiltinESMExports } = await import('node:module');
+  const root = mkdtempSync(join(dir, 'rotation-warning-')), path = join(root, 'private-owner.jsonl');
+  writeFileSync(path, 'x'.repeat(390) + '\n', { mode: 0o600 });
+  const said = [], rename = fs.renameSync;
+  t.mock.method(process.stderr, 'write', text => { said.push(text); return true; });
+  t.mock.method(fs, 'renameSync', (...args) => {
+    if (args[0] === path) throw Object.assign(Error('private fixture path'), { code: 'EACCES' });
+    return rename(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const log = new ActionLog({ path, root, maxBytes: 400 });
+    log.write([{ call: 'first' }]); log.write([{ call: 'second' }]);
+    assert.equal(log.rotationFailures, 2);
+    assert.equal(log.failures, 0, 'the writes themselves succeeded');
+    assert.equal(said.length, 1);
+    assert.match(said[0], /^sleight: .*rotate the action log.*\n$/);
+    assert.ok(!said[0].includes(root));
+    const all = readFileSync(path, 'utf8');
+    for (const call of ['first', 'second']) assert.ok(all.includes(JSON.stringify({ call }).slice(1, -1)));
+    new ActionLog({ path, root, maxBytes: 400 }).write([{ call: 'third' }]);
+    assert.equal(said.length, 2, 'a new session warns independently');
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+});
+
 for (const fault of ['lock open', 'lock stat', 'recheck stat', 'reclaim open', 'reclaim unlink']) {
   test(`rotation ${fault} failure skips rotation, never the log row`, async t => {
     const fs = (await import('node:fs')).default, { syncBuiltinESMExports } = await import('node:module');
