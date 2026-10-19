@@ -11,7 +11,7 @@
 
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CODEX_HOME } from './codex-arm.mjs';
 import { CODEX_SLEIGHT_ARM_MODELS } from './fowl/support.mjs';
@@ -80,7 +80,23 @@ export function approvalSummary(file) {
   const asked = entries.filter(entry => entry.kind === 'elicitation');
   return { accepted: asked.filter(entry => entry.action === 'accept').length,
     declined: asked.filter(entry => entry.action !== 'accept').map(entry => entry.message),
-    toolsRefused: entries.filter(entry => entry.kind === 'tool-refused').map(entry => entry.tool) };
+    toolsRefused: entries.filter(entry => entry.kind === 'tool-refused').map(entry => entry.tool),
+    // The log itself goes into the run's row: the run folder is temporary. Its lines hold prompt text, never page content.
+    log: entries };
+}
+
+// A sleight-in-Codex home is never the owner's ~/.codex or the codex arm's engine-only ~/.codex-bench.
+export function assertArmHome(home) {
+  const target = resolve(home);
+  for (const [other, name] of [[join(homedir(), '.codex'), "the owner's Codex home"], [CODEX_HOME, "the codex arm's home"]])
+    if (target === resolve(other)) throw Error(`the sleight-in-Codex home ${home} is ${name}; set CODEX_SLEIGHT_BENCH_HOME to a folder of its own`);
+  return target;
+}
+
+// After a run's config is written: the home must list exactly the servers that run planned, so nothing else reaches the model.
+export function assertOnlyServers(found, planned) {
+  if (found.length !== planned.length || found.some((name, i) => name !== planned[i]))
+    throw Error(`the sleight-in-Codex home configures ${found.join(', ') || 'no servers'}, not only ${planned.join(', ')}`);
 }
 
 // The world and claim runner's version of the same arm: sleight's local tools behind the proxy with the claim's approve.mjs
@@ -99,6 +115,7 @@ export function codexSleightRunConfig({ model, effort = 'high', dir, suite, owne
 // a config with no servers so `codex login` and `codex mcp list` work. Idempotent. Returns what it did, or why it cannot.
 export function ensureCodexSleightHome({ home = CODEX_SLEIGHT_HOME, loginHome = CODEX_HOME } = {}) {
   const did = [];
+  try { assertArmHome(home); } catch (error) { return { ok: false, home, did, problem: error.message }; }
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const auth = join(home, 'auth.json');
   if (!existsSync(auth)) {
@@ -114,7 +131,7 @@ export function ensureCodexSleightHome({ home = CODEX_SLEIGHT_HOME, loginHome = 
 // Writes one run's config. Rounds run one at a time under the live lock, so the home holds one run's servers at a time.
 // copyTo names a file in the run's folder that keeps the same text as evidence.
 export function writeCodexSleightConfig(toml, home = CODEX_SLEIGHT_HOME, copyTo) {
-  const file = join(home, 'config.toml');
+  const file = join(assertArmHome(home), 'config.toml');
   mkdirSync(home, { recursive: true, mode: 0o700 });
   writeFileSync(file, toml, { mode: 0o600 });
   if (copyTo) writeFileSync(copyTo, toml, { mode: 0o600 });

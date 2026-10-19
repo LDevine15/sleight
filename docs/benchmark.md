@@ -981,6 +981,25 @@ for a pass with this arm the runner sets the engine's "Always allow" list to the
 and puts the previous list back when it exits. Model requests come from Codex's session log, and
 the two arms' token counts aren't comparable.
 
+For ROADMAP 4b (does sleight make GPT faster too?), the native claim has four GPT arms: `codex` (gpt-6-luna) and
+`codex-sol` (gpt-6.1-sol) run Codex's own computer use, and `codex-sleight` and `codex-sleight-sol` run the same two models
+with sleight as Codex's MCP plugin, all at effort high. The sleight arms use `~/.codex-bench-sleight`, whose `config.toml`
+each run rewrites to list only sleight's server and reads back before Codex starts, and sleight runs behind
+`bench/codex-sleight-proxy.mjs`, which answers its approval forms from `bench/approve.mjs`, the allowlist the Claude arms'
+hook uses, and never answers Always allow. The runner leaves the engine's own list unchanged unless the pass also runs a plain Codex arm,
+and the results record which (`engineAllowList`), so claim passes run one arm each. Each row records sleight's commit, and a
+Codex row records the model ids, effort and Codex CLI version from Codex's session log (`modelsRan`, `effortsRan`,
+`codexCliVersion`), which MCP server each call went to, and for a sleight arm the proxy's whole approval log.
+`--dry-run` lists each row's `codex exec` arguments, Codex home and servers without starting anything:
+
+```bash
+node bench/run.mjs --suite world --arm codex,codex-sol,codex-sleight,codex-sleight-sol --runs 3 --dry-run \
+  --tasks "$(cat bench/claim-tasks.txt),vscode-edit,slack-post,spotify-play"
+```
+
+`bench/claim-score.mjs` scores these arms like any other, and adds a section that compares each sleight arm with Codex on
+its own model, under the same claim rules. `--rules <file>` scores another task set, such as the app claim's three tasks.
+
 A live run waits for and holds `/tmp/sleight-live.lock`, the lock every live check takes, so nothing
 else drives apps during a pass. `--dry-run` doesn't take it.
 
