@@ -3,6 +3,8 @@
 // race-1017) spent a model turn on a lone getApp before its first tab, a median 3.6 to 4.1 s; this opens in one call.
 // The relay runs it as two ordinary js calls (relay.mjs, engineOpen): the acquisition, then the keys, so every guard,
 // lease and the tab continuation apply as they do to Claude's own js.
+import { underDocument } from './menu-continuation.mjs';
+
 const json = JSON.stringify;
 
 export const engineBrowserOpen = (env = process.env) => env.SLEIGHT_BROWSER_CORE === '1';
@@ -28,8 +30,9 @@ export function turboRoute(args, turbo) {
   if (!turbo || !args || typeof args !== 'object') return undefined;
   if (args.browser === undefined) return args;
   const name = typeof args.browser === 'string' ? args.browser.trim().toLowerCase() : undefined;
-  if (name && [turbo.browser, turbo.application].some(value => typeof value === 'string' && value.toLowerCase() === name)) return { ...args, browser: turbo.browser };
-  return undefined;
+  if (!name || ![turbo.browser, turbo.application].some(value => typeof value === 'string' && value.toLowerCase() === name)) return undefined;
+  const { browser: _, ...rest } = args;
+  return turbo.browser === undefined ? rest : { ...rest, browser: turbo.browser };
 }
 
 const fail = message => { throw new Error(`browser_open: ${message}`); };
@@ -43,6 +46,9 @@ export function parseEngineOpen(args) {
   if (typeof browser !== 'string' || !browser.trim() || browser.length > 128 || /[\p{Cc}\p{Zl}\p{Zp}]/u.test(browser)) fail('browser must name a browser app.');
   if (typeof url !== 'string' || url.length > 2048) fail('url must be an http(s) URL of at most 2,048 characters.');
   if (/[\s\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(url)) fail('url must not contain spaces or control characters.');
+  // The address field reads the typed text, not the parsed URL: `https:host` or a backslash can turn it into a search or
+  // another host than the one the site limits judged.
+  if (!/^https?:\/\/[^/?#\\]/i.test(url) || url.includes('\\')) fail('url must start with http:// or https:// and a host, with no backslashes.');
   let parsed;
   try { parsed = new URL(url); } catch { fail('url must be an http(s) URL.'); }
   if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) fail('url must be an http(s) URL.');
@@ -60,6 +66,21 @@ export const openCode = (handle, url) => [`await ${handle}.pressKey("super+t");`
 export const openedNote = handle => `browser_open: the new tab is in the window below. In js, \`${handle}\` is its app handle (await ${handle}.click(N)).`;
 export const notBrowserNote = app => `browser_open: ${app || 'that app'} isn't a web browser, so nothing was typed. Name a browser app.`;
 export const unknownBrowserNote = app => `browser_open: sleight doesn't know yet whether ${app || 'that app'} is a web browser, so nothing was typed. Try again in a moment.`;
+// Nobody has seen the window before the keys go, so the acquisition's own tree must show a browser window ready for a
+// tab: a standard window root, a tab strip outside any page, and no sheet, dialog or alert, which Return could answer.
+// A settings window has no tab strip. Undefined when it may take the keys, else the reason.
+export function browserWindowProblem(text, app) {
+  const at = typeof text === 'string' ? text.lastIndexOf('Window: ') : -1;
+  const entries = at < 0 ? [] : [...text.slice(at).matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
+  const name = app || 'the browser';
+  if (!entries.length || entries[0].number !== 0) return `browser_open: ${name} shows no window, so nothing was typed.`;
+  if (!/^standard window(?: |,|$)/.test(entries[0].line)) return `browser_open: ${name}'s front window isn't a standard window, so nothing was typed.`;
+  if (entries.some(entry => /^(?:sheet|dialog|system dialog|alert)(?: |,|$)/.test(entry.line))) return `browser_open: ${name} has a sheet or dialog open, so nothing was typed. Read it with js.`;
+  if (!entries.some((entry, i) => /^tab group(?: |,|$)/.test(entry.line) && !underDocument(entries, i))) return `browser_open: ${name}'s front window shows no tab strip, so nothing was typed.`;
+  return undefined;
+}
+// js's own wording while a turn's tab cleanup runs.
+export const CLEANUP_NOTE = 'Wait for turn_ended, tab cleanup is pending.';
 export const DOCUMENT_SCOPE_NOTE = 'browser_open: not in document scope. Use js.';
 // The wording leaseStop gives every call a Stop ended.
 export const STOPPED_NOTE = 'Input lease: this call was stopped.';

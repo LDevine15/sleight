@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
+import { createContext, runInContext, constants } from 'node:vm';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,6 +47,9 @@ test('parseEngineOpen accepts an http(s) URL and a browser name, and refuses eve
     { url: `https://example.com/${'a'.repeat(2048)}`, browser: 'B' }, { url: 'https://example.com', browser: '' },
     { url: 'https://example.com', browser: 7 }, { url: 'https://example.com', browser: 'B'.repeat(129) },
     { url: 'https://example.com', browser: 'B\nC' }, { url: 7, browser: 'B' }, null, 'https://example.com',
+    { url: 'https:example.com', browser: 'B' }, { url: 'https:\\\\example.com', browser: 'B' }, { url: 'https://example.com\\@evil.test/', browser: 'B' },
+    { url: 'https:/example.com', browser: 'B' }, { url: 'https://example.com/\u200b', browser: 'B' }, { url: 'https://example.com/\u00a0', browser: 'B' },
+    { url: 'https://example.com/\ufeff', browser: 'B' },
   ];
   for (const args of bad) assert.throws(() => parseEngineOpen(args), /^Error: browser_open: /, JSON.stringify(args));
 });
@@ -63,6 +67,7 @@ test('turboRoute sends turbo its own browser, by its value or app name, and ever
   assert.deepEqual(turboRoute({ url: 'https://e.test', browser: 'fixture browser' }, turbo), { url: 'https://e.test', browser: 'bfixture' });
   assert.equal(turboRoute({ url: 'https://e.test', browser: 'Other' }, turbo), undefined);
   assert.equal(turboRoute({ url: 'https://e.test', browser: 'bfixture' }, undefined), undefined);
+  assert.deepEqual(turboRoute({ url: 'https://e.test', browser: 'Fixture Browser' }, { application: 'Fixture Browser' }), { url: 'https://e.test' });
 });
 
 test('the widened turbo tool keeps its url field and description, and takes any browser name', () => {
@@ -96,7 +101,7 @@ function harness(t, options = {}) {
   t.after(() => { relay.close(); removeTemp(directory); });
   const call = (id, name, args) => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n');
   return {
-    toServer, toClient, call,
+    toServer, toClient, call, relay,
     open: (id, args) => call(id, 'browser_open', args),
     list: id => { clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/list' }) + '\n'); },
     fromServer: msg => serverOut.write(JSON.stringify(msg) + '\n'),
@@ -104,7 +109,7 @@ function harness(t, options = {}) {
     engineCalls: () => toServer.filter(m => m.method === 'tools/call'),
   };
 }
-const tree = (id, app, appId, title, body = '\t1 tab (selected) Start\n\t2 text field Address') => ({ jsonrpc: '2.0', id, result: {
+const tree = (id, app, appId, title, body = '\t1 tab group\n\t\t2 tab (selected) Start\n\t3 text field Address') => ({ jsonrpc: '2.0', id, result: {
   content: [{ type: 'text', text: `Window: ${JSON.stringify(title)}, App: ${app}.\n0 standard window ${title}\n${body}` }],
   _meta: { 'codex/toolSurface': { app: { appId } } } } });
 const code = msg => msg.params.arguments.code;
@@ -235,6 +240,7 @@ test('relay: Stop between the two calls ends browser_open without the tab keys',
   h.call(2, 'turn_ended', { sleight_stop: true }); await settle();
   h.fromServer(tree(first.id, 'Example Browser', 'com.example.browser', 'Start Page')); await settle();
   assert.equal(h.engineCalls().some(m => m.id === 1), false);
+  assert.equal(h.toClient.filter(m => m.id === 1).length, 1, 'Claude\'s call is answered once');
 });
 
 // Turbo on: its own browser stays on turbo, any other browser takes the engine path.
@@ -300,4 +306,143 @@ test('relay: as the first call of a session, browser_open still delivers the ski
   const all = text(h.reply(1));
   assert.match(all, /Top-level `await`, no `return`/);
   for (const passage of safety) assert.ok(all.includes(passage), passage);
+});
+
+test('relay: keys go only to a standard browser window with a tab strip and no sheet or dialog', async t => {
+  for (const [label, title, body] of [
+    ['no tab strip', 'General', '\t1 toolbar\n\t\t2 button General\n\t3 text field Homepage'],
+    ['a sheet', 'Start Page', '\t1 tab group\n\t\t2 tab (selected) Start\n\t3 sheet Save changes?\n\t\t4 button Save'],
+    ['a dialog', 'Start Page', '\t1 tab group\n\t\t2 tab (selected) Start\n\t3 dialog Allow notifications?'],
+    ['a tab strip only inside the page', 'Docs', '\t1 HTML content URL: https://docs.test/\n\t\t2 tab group\n\t\t\t3 tab (selected) Intro'],
+  ]) {
+    const h = harness(t);
+    h.open(1, { url: 'https://example.com/', browser: 'Example Browser' }); await settle();
+    const [first] = h.engineCalls();
+    h.fromServer(tree(first.id, 'Example Browser', 'com.example.browser', title, body)); await settle();
+    assert.equal(h.engineCalls().length, 1, label);
+    assert.equal(h.reply(1).result.isError, true, label);
+    assert.match(text(h.reply(1)), /browser_open: .*nothing was typed/, label);
+  }
+  const h = harness(t);
+  h.open(1, { url: 'https://example.com/', browser: 'Example Browser' }); await settle();
+  const [first] = h.engineCalls();
+  const dialogRoot = tree(first.id, 'Example Browser', 'com.example.browser', 'Start Page');
+  dialogRoot.result.content[0].text = dialogRoot.result.content[0].text.replace('0 standard window', '0 dialog');
+  h.fromServer(dialogRoot); await settle();
+  assert.equal(h.engineCalls().length, 1, 'a dialog root');
+});
+
+test('relay: a stage-one failure uses up a flow exception, so only the identical retry that reaches the keys was allowed', async t => {
+  const h = harness(t, { flowRules: new FlowRules({ version: 1, rules: [{ id: 'private', kind: 'pattern', pattern: 'SECRET', destinations: ['*'] }] }),
+    ask: async () => 'accept' });
+  const args = { url: 'https://example.com/?q=SECRET', browser: 'Example Browser' };
+  h.open(1, args); await settle();
+  h.fromServer(tree(h.engineCalls()[0].id, 'Example Browser', 'com.example.browser', 'Start Page')); await settle();
+  h.call(2, 'flow_exception', {}); await settle(); await settle();
+  h.open(3, args); await settle();
+  h.fromServer(tree(h.engineCalls().at(-1).id, 'Shell', 'com.example.terminal', 'Shell')); await settle();
+  assert.match(text(h.reply(3)), /isn't a web browser/);
+  h.open(4, args); await settle();
+  h.fromServer(tree(h.engineCalls().at(-1).id, 'Example Browser', 'com.example.browser', 'Start Page')); await settle();
+  assert.equal(h.engineCalls().some(m => m.id === 4), false);
+  assert.match(text(h.reply(4)), /private.*flow_exception/s);
+});
+
+test('relay: an engine that ends during the acquisition answers Claude\'s call once', async t => {
+  const h = harness(t);
+  h.open(1, { url: 'https://example.com/', browser: 'Example Browser' }); await settle();
+  assert.equal(h.engineCalls().length, 1);
+  h.relay.engineEnded('Engine exited (25).'); await settle();
+  assert.equal(h.toClient.filter(m => m.id === 1).length, 1);
+  assert.equal(h.reply(1).result?.isError ?? !!h.reply(1).error, true);
+  assert.equal(h.engineCalls().some(m => m.id === 1), false);
+});
+
+test('relay: browser_open waits for a pending tab cleanup like js does', async t => {
+  const h = harness(t, { stopGraceMs: 50 });
+  h.call(1, 'js', { code: 'let tab = await cua.createBrowserTab("chrome", "https://example.com/")' }); await settle();
+  h.fromServer({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: 'Browser tab: Example' }], _meta: { 'codex/toolSurface': { kind: 'browserUse' } } } });
+  await settle();
+  h.call(2, 'turn_ended', {}); await settle();
+  assert.ok(h.engineCalls().some(m => String(m.id).startsWith('sleight-tab-cleanup-')), 'the cleanup is pending');
+  h.open(3, { url: 'https://example.com/', browser: 'Example Browser' }); await settle();
+  assert.match(text(h.reply(3)), /tab cleanup is pending/);
+  assert.equal(h.engineCalls().some(m => String(m.id).startsWith('sleight-browser-open-')), false);
+});
+
+// End to end with the guard: the relay's injected code runs in a VM against a fake browser (tt1n-input-lease's fixture,
+// trimmed). Cmd+T adds a selected tab and retitles the window, so the guard stops and the tab continuation types the rest.
+const startTree = 'Window: "Marker", App: Fixture Browser.\n0 standard window Marker, Secondary Actions: Raise\n\t1 tab group\n' +
+  '\t\t2 tab (selected) Value: Marker, Marker\nClose tab\n\t\t3 button Open a new tab\n\t4 combo box (settable) Address\n' +
+  '\t5 HTML Content Description: Marker\n\t\t6 link Home\n\nThe focused UI element is 1 tab group';
+const newTabTree = 'Window: "New Tab", App: Fixture Browser.\n0 standard window New Tab, Secondary Actions: Raise\n\t1 tab group\n' +
+  '\t\t2 tab (selectable) Value: Marker, Marker\nClose tab\n\t\t3 tab (selected) Value: New Tab, New Tab\nClose tab\n\t\t4 button Open a new tab\n' +
+  '\t5 combo box (settable) Address\n\t6 HTML Content Description: New Tab\n\t\t7 link Shortcuts\n\nThe focused UI element is 5 combo box (settable) Address';
+const shopTree = newTabTree.replaceAll('New Tab', 'Shop').replace(/The focused UI element is .*/, 'The focused UI element is 7 link Shortcuts');
+async function guarded(t, options = {}) {
+  let text = startTree, writes = [];
+  const keys = [], typed = [], sent = [], received = [];
+  const app = { getAXState: async () => text, getAXStateAndScreenshot: async () => ({ state: text }), click: async () => {},
+    pressKey: async key => { keys.push(key); text = key === 'super+t' ? newTabTree : key === 'Return' ? shopTree : text; },
+    setValue: async () => {}, typeText: async value => { typed.push(value); } };
+  const context = createContext({ cua: { getApp: async () => app, listApps: async () => [{ id: 'com.example.browser', windows: [{ title: 'Marker' }] }] },
+    nodeRepl: { write: value => writes.push(String(value)) } });
+  const streams = Array.from({ length: 4 }, () => new PassThrough());
+  const [clientIn, clientOut, serverIn, serverOut] = streams;
+  const directory = mkdtempSync(join(tmpdir(), 'sleight-engine-open-vm-'));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease: new InputLease({ directory, holder: 'engine open' }),
+    changeReview: false, engineBrowserOpen: true, webBrowser: id => id === 'com.example.browser', ownHostPid: () => false,
+    runningProbe: () => ({ status: 'responding' }),
+    windowIdentity: async expected => ({ ...expected, windowNumber: 22, hidIdleSeconds: 1000, status: 'ok', matches: 1, epoch: 'helper', window: 1, pid: 123,
+      processStart: 1, focus: { sheets: 0, role: 'AXComboBox', subrole: null, inWindow: true, inPage: false } }), ...options });
+  t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); removeTemp(directory); });
+  clientOut.on('data', data => received.push(...data.toString().trim().split('\n').map(JSON.parse)));
+  serverIn.on('data', data => sent.push(...data.toString().trim().split('\n').map(JSON.parse)));
+  let cursor = 0;
+  const call = async (id, name, args) => {
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n');
+    for (let i = 0; i < 200; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1));
+      while (cursor < sent.length) {
+        const request = sent[cursor++]; writes = [];
+        if (request.method !== 'tools/call') continue;
+        // The engine's REPL keeps a top-level let across calls; the VM wrapper would scope it to the call.
+        const code = request.params.arguments.code.replace(/\blet (sleightBrowser\d+) =/g, 'globalThis.$1 =');
+        let error;
+        try { await runInContext(`(async () => { ${code} })()`, context, { importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER }); }
+        catch (e) { error = e; }
+        if (/cua\.getApp\(/.test(code) && !error) writes.push(text);
+        if (error) writes.push(String(error));
+        serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { isError: !!error, content: [{ type: 'text', text: writes.join('\n') }],
+          _meta: { 'codex/toolSurface': { app: { appId: 'com.example.browser' } } } } }) + '\n');
+      }
+      const reply = received.find(msg => msg.id === id);
+      if (reply) return reply.result;
+    }
+    throw new Error('no client result');
+  };
+  return { keys, typed, sent, call };
+}
+
+test('guard: browser_open as the first call opens the tab and types the URL in the same model turn', async t => {
+  const h = await guarded(t);
+  const result = await h.call(1, 'browser_open', { url: 'http://127.0.0.1:5420/shop', browser: 'Fixture Browser' });
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.keys, ['super+t', 'Return']);
+  assert.deepEqual(h.typed, ['http://127.0.0.1:5420/shop']);
+  assert.match(result.content.map(item => item.text).join('\n'), /^Window: "Shop"/m);
+});
+
+test('guard: a flow exception covers the identical browser_open through the tab continuation', async t => {
+  const h = await guarded(t, { flowRules: new FlowRules({ version: 1, rules: [{ id: 'private', kind: 'pattern', pattern: 'SECRET', destinations: ['*'] }] }),
+    ask: async () => 'accept' });
+  const args = { url: 'http://127.0.0.1:5420/shop?q=SECRET', browser: 'Fixture Browser' };
+  const refused = await h.call(1, 'browser_open', args);
+  assert.match(refused.content.map(item => item.text).join('\n'), /private.*flow_exception/s);
+  assert.deepEqual(h.keys, []);
+  await h.call(2, 'flow_exception', {});
+  const result = await h.call(3, 'browser_open', args);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.typed, ['http://127.0.0.1:5420/shop?q=SECRET']);
+  assert.deepEqual(h.keys, ['super+t', 'Return']);
 });

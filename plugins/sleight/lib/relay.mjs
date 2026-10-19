@@ -62,7 +62,7 @@ import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
 import { browserBundleId } from './direct-browser/browsers.mjs';
 import { engineBrowserOpen as engineBrowserOpenSetting, engineOpenTool, widenTurboOpen, turboRoute, parseEngineOpen, siteOf, acquisitionCode, openCode,
-  openedNote, notBrowserNote, unknownBrowserNote, DOCUMENT_SCOPE_NOTE, STOPPED_NOTE } from './engine-browser-open.mjs';
+  openedNote, notBrowserNote, unknownBrowserNote, browserWindowProblem, CLEANUP_NOTE, DOCUMENT_SCOPE_NOTE, STOPPED_NOTE } from './engine-browser-open.mjs';
 import { pageSite } from './permissions.mjs';
 import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, lastWindowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot, selectedMenuEntry } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
@@ -1436,7 +1436,8 @@ export function createRelay({
   let flowAsking = false;
   // An engine-path browser_open's keys carry the tool's own arguments, so a flow exception allows its identical retry.
   const fingerprint = msg => engineOpenPrints.get(msg.id) ?? JSON.stringify([msg.params.name, msg.params.arguments ?? {}]);
-  const engineOpenPrints = new Map(), engineOpenAcquisitions = new Set();
+  // engineOpenAllowed: a browser_open whose keys a flow exception allowed, so a tab continuation's rest is covered too.
+  const engineOpenPrints = new Map(), engineOpenAcquisitions = new Set(), engineOpenAllowed = new Map();
   function flowStop(msg, reason) {
     toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: `Flow rules: ${reason}. Stop. Ask the user with flow_exception for one identical retry; never work around the rule.` }] } });
   }
@@ -2076,7 +2077,7 @@ export function createRelay({
     if (msg.method === undefined && splitCalls.has(msg.id)) {
       const next = splitCalls.get(msg.id); splitCalls.delete(msg.id); callGenerations.delete(msg.id); next(msg); return;
     }
-    if (msg.method === undefined) { engineOpenPrints.delete(msg.id); continuedOutcomes.delete(msg.id); menuAdmissions.delete(msg.id); menuBaselines.delete(msg.id); menuContinued.delete(msg.id); menuForwards.delete(msg.id); splitInputs.delete(msg.id); }
+    if (msg.method === undefined) { engineOpenPrints.delete(msg.id); engineOpenAllowed.delete(msg.id); continuedOutcomes.delete(msg.id); menuAdmissions.delete(msg.id); menuBaselines.delete(msg.id); menuContinued.delete(msg.id); menuForwards.delete(msg.id); splitInputs.delete(msg.id); }
     if (msg.method === undefined && splitHeads.has(msg.id)) {
       let head = splitHeads.get(msg.id); splitHeads.delete(msg.id);
       // The call re-acquired and then showed the same window whole: its acquisition tree is a duplicate. Word runs sent
@@ -2783,6 +2784,7 @@ export function createRelay({
     let open;
     try { open = parseEngineOpen(msg.params.arguments); } catch (error) { refuse(error.message); return; }
     if (documentMode) { refuse(DOCUMENT_SCOPE_NOTE); return; }
+    if (tabCleanupPending) { refuse(promptNotice(CLEANUP_NOTE, prompt)); return; }
     // The user's site limits judge the destination before anything is sent, as turbo's open does.
     const site = permissions?.sitesLimited?.() ? permissions.page(siteOf(open.url)) : undefined;
     if (site) { refuse(site); return; }
@@ -2792,13 +2794,17 @@ export function createRelay({
     callGenerations.set(id, generation);
     splitCalls.set(id, reply => {
       engineOpenAcquisitions.delete(id);
-      const end = message => { engineOpenPrints.delete(msg.id); toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: message }] } }); };
+      // A failed attempt was still the identical retry a flow exception allowed, so it uses the exception up.
+      const spent = () => { engineOpenPrints.delete(msg.id); if (flowPermit?.fingerprint === print) flowPermit = undefined; };
+      const end = message => { spent(); toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: message }] } }); };
       if (generation !== stopGeneration || closing || disposed) { end(STOPPED_NOTE); stoppedClients.add(msg.id); return; }
-      if (reply.error || reply.result?.isError) { engineOpenPrints.delete(msg.id); toClient({ ...reply, id: msg.id }); return; }
+      if (reply.error || reply.result?.isError) { spent(); toClient({ ...reply, id: msg.id }); return; }
       const shown = windowFromText((reply.result?.content ?? []).filter(item => item?.type === 'text').map(item => item.text).join('\n'));
       const appId = reply.result?._meta?.['codex/toolSurface']?.app?.appId, app = shown?.app ?? open.browser;
       const browser = typeof appId === 'string' && appId ? webBrowser(appId) : false;
       if (browser !== true) { end(promptNotice(browser === undefined ? unknownBrowserNote(app) : notBrowserNote(app), prompt)); return; }
+      const problem = browserWindowProblem((reply.result?.content ?? []).filter(item => item?.type === 'text').map(item => item.text).join('\n'), app);
+      if (problem) { end(promptNotice(problem, prompt)); return; }
       // The acquisition's own read moved the flow revision; a permit for this exact call still covers its keys.
       if (flowRules && flowPermit?.fingerprint === print) flowPermit = { ...flowPermit, revision: flowRules.revision };
       splitHeads.set(msg.id, [{ type: 'text', text: promptNotice(openedNote(handle), prompt) }, ...(reply.result?.content ?? [])]);
@@ -3380,7 +3386,9 @@ export function createRelay({
       if (msg.id === undefined || (msg.params.name === 'js' && typeof originalCode !== 'string')) { flowStop(msg, 'a request id and JavaScript code are required'); return; }
       flowPlan = flowRules.analyze(msg.params.name, msg.params.arguments, lastWindow);
       const print = fingerprint(msg);
-      const permitted = flowPermit?.fingerprint === print && flowPermit.revision === flowRules.revision;
+      const permitted = flowPermit?.fingerprint === print && flowPermit.revision === flowRules.revision ||
+        engineOpenAllowed.has(msg.id) && engineOpenAllowed.get(msg.id) === print;
+      if (permitted && engineOpenPrints.has(msg.id)) engineOpenAllowed.set(msg.id, print);
       // browser_open's own acquisition is part of the call a permit names, so it leaves the permit for the keys.
       if (!engineOpenAcquisitions.has(msg.id)) flowPermit = undefined;
       if (flowPlan.violations.length && !permitted) {
@@ -4785,6 +4793,7 @@ export function createRelay({
         for (const pending of clipboardReplies.values()) pending.reject(new Error(/* notice */ 'Stopped: engine collected.'));
         clipboardReplies.clear();
         menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear(); menuForwards.clear(); continuedLeads.clear(); splitInputs.clear();
+        engineOpenPrints.clear(); engineOpenAcquisitions.clear(); engineOpenAllowed.clear();
         filterMarks.clear(); splitCalls.clear(); splitHeads.clear(); splitCodes.clear(); rawHeads.clear(); openShots.clear(); openReads.clear(); textlessOpens.clear(); helperDiagnosticReplies.clear(); promptFailures.clear(); callGenerations.clear();
         for (const id of [...pendingClients.keys()].filter(id => id !== msg.id)) {
           leaseStop({ id }, 'stopped while in flight; its input outcome is unconfirmed.');
@@ -4857,6 +4866,12 @@ export function createRelay({
     rememberEngineBindings();
     startup?.close(); startup = undefined;
     cancelInternalRequests(message);
+    // browser_open's acquisition is sleight's own call, so Claude's call waits on it: answer it through the acquisition.
+    for (const id of [...engineOpenAcquisitions]) {
+      const next = splitCalls.get(id);
+      splitCalls.delete(id); finishedCall(id);
+      next?.({ jsonrpc: '2.0', id, error: { code: -32000, message } });
+    }
     for (const id of [...pendingClients.keys()]) {
       if (!running.has(id)) continue;
       finishedCall(id); restartRetries.delete(id);
