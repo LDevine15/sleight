@@ -3,48 +3,57 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 04:15 UTC)
+## Banner (2026-10-19 02:40 UTC, flushed before the owner's clear)
 
 Goal (owner): release 1.3.0, then the claim post and the launch video, then 1.3.1, then hold at 1.3.1 while the owner uses it.
-Owner (2026-10-19): everything to build for 1.3.0 and 1.3.1 is in flight now. AM1, local performance analytics and Cursor plugin
-support are 1.4.0 (ROADMAP 4c-4e). The ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`) has every result and ruling of the night.
+Owner (2026-10-19): everything to build for 1.3.0 and 1.3.1 is in flight. AM1, local performance analytics and Cursor plugin
+support are 1.4.0 (ROADMAP 4c-4e). The ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`) records every result and ruling. Its
+timestamps from about 03:0xZ to 04:4xZ on 2026-10-19 were guessed too late. The night ended at 02:40Z, so read those entries in order, not by clock.
 
-**Release line** `pane/auto-mode` = main checkout at fd786d64. The full check passed 8252 tests with no failures, and lint is clean.
-Merged tonight:
-- the race fixes ft1, fs1 and md1;
-- sec130, es1, ff1, rg1r2 and fl3;
-- form-2fa (a security switch your message names counts when it makes the account safer);
-- the Safari harness fixes (profile-prefixed gate title, census of unproven windows);
-- mdn-note (no false "window changed" note for a new tab);
-- OH1 (more own-host getApp spellings);
-- the FM3 port (engine Chromium tab path only);
-- list-pick (pickFromList on web lists);
-- the native sleight-in-Codex claim arms with the Calculator reader fix;
-- the benchmark hub (`node bench/results-hub.mjs`).
+**Release line** `pane/auto-mode` = main checkout. It holds the race fixes ft1, fs1 and md1, plus sec130, es1, ff1, rg1r2, fl3,
+form-2fa, the Safari harness fixes, mdn-note, OH1, the FM3 port (engine Chromium tab path only), list-pick, the native
+sleight-in-Codex claim arms with the Calculator reader fix, the benchmark hub, and the Codex plugin with the dropdown's host line
+(`claude/codex-plugin` c8ac627b, merged at the clear; one live Codex rerun with the owner is still owed, as cxp1-REPORT.md describes). The flush full check, with the Codex plugin merged, ran 8279 tests
+with no failures, and lint is clean. LAWS gained the Codex auto-approval rule.
 
-**Still to merge into 1.3.0:**
-- `claude/pay-gate` 6c85dc27: the engine-path payment gate with sleight's own card. Security fixes are done and a re-review is running.
-- `claude/codex-plugin`: sleight as a Codex plugin, plus the host line in the dropdown. Its review fixes are in progress.
-  The owner checked it live on 2026-10-19, where Calculator and TextEdit worked, and the approval showed as Codex's own prompt with
-  "one time or always".
-- `claude/insights-readme` b92792ff: the insights page and the README draft, which take the final numbers.
+**In flight at the clear** (Opus agents in the old session, which may stop at the clear: check each branch first):
+- `claude/pay-gate` 6c85dc27: the engine-path payment gate with sleight's consent card. Its last fix round, for pg1-REVIEW2 N1, N2,
+  N4, N5, N7 and the lows, was running. Merge into 1.3.0 once pg1-REPORT.md shows "Re-review fixes" and the focused and
+  adversarial headless tests pass. If the round didn't land, do it from pg1-REVIEW2.md.
+- `claude/codex-turbo` (no pushed commit yet): turbo inside Codex for 1.3.1, in the worktree `~/Projects/sleight-wt/codex-turbo`.
+  The report goes to ledger/p130/cxt1-REPORT.md. If nothing was pushed, restart it from the ROADMAP 4e brief.
+- `codex/fu1` 50438a18: the Sol lane is DONE (claims/FU1). It needs a Sonnet-high review, then a merge into `claude/p131-integration`.
 
-**1.3.1:** `claude/p131-integration` holds every 1.3.1 branch (pm1, so1+SF1R, OH2, EL4, AS-3's `browser_open` behind
-`SLEIGHT_BROWSER_CORE=1`). Its full check hasn't run yet. Turbo inside Codex is building on `claude/codex-turbo`, a Sol lane
-has the review follow-ups (FU1), and the AS-9 runner (`claude/as9`) is getting its review fixes before a quiet-window run. AS-8 and TB2 are
-closed (owner).
+**1.3.1 branch** `claude/p131-integration` 199bf5c7 holds every 1.3.1 branch: pm1, so1 with SF1R, OH2, EL4, and AS-3's
+`browser_open` behind `SLEIGHT_BROWSER_CORE=1`. Its full check hasn't run. Still to come: FU1 and codex-turbo. AS-9's runner is
+`claude/as9` fc9ce104 (ledger/p130/as9-PLAN.md). It needs an away window with every other engine client closed (11 were running at
+02:25Z), so it's the owner's to schedule. AS-8 and TB2 are closed (owner).
 
-**Engine changed mid-race.** ChatGPT updated from 26.1007.71326 to 26.1013.40934 on 2026-10-18 at 21:47Z. Per action it now takes
-about 1.0-1.1 s, against about 0.6 s before. The latency A/B showed it on both the old and new builds, so sleight didn't regress.
-Under LAWS, the engine arms' results (codex, lcu, sleight, codex-sleight) must be rerun on the new engine, while cua's and Peekaboo's results stand.
-The new engine also leaves an unproven non-standard window (AXDialog) in driven apps: the harness now skips it, and the
-Calculator reader ignores it.
+**Owner checks done on 2026-10-19.** The owner ran the Codex plugin interactively in `~/.codex-sleight-check`. Calculator gave
+144 and TextEdit typed its line. The approval appeared as Codex's own prompt offering one time or always, and the owner chose
+always, which put TextEdit in preapproved.json. com.apple.Terminal joined the same list through always-allow while sleight-arch
+read the Terminal window.
 
-**Tonight's runs, on the new engine:**
-- Safari b8 r1 on fd54c0ac: 12 of 12 passed.
-- Safari b7 and Firefox b7: fastest on 9 of 12 each.
-- In the first sleight-in-Codex smoke, Luna asked before the unpriced checkout and Sol paid it, so the payment gate was built.
-- Plain Codex Luna paid in 1 of 3 earlier runs.
+**Engine changed mid-race.** ChatGPT went from 26.1007.71326 to 26.1013.40934 on 2026-10-18 at 21:47Z. An action now takes about
+1.0-1.1 s, against about 0.6 s before, and the latency A/B saw the same on the old and new builds. The engine arms' results
+(codex, lcu, sleight, codex-sleight) must be rerun on the new engine, while cua's and Peekaboo's results stand. The new engine
+leaves an unproven AXDialog window in driven apps, which the harness and the Calculator reader now skip.
+
+**Next steps:**
+1. Merge pay-gate, run the full check, push, and move race-fx.
+2. Finish 1.3.1: merge FU1 and codex-turbo, then run the integration branch's full check.
+3. Final runs on the new engine, in an away window, through one queue-runner Terminal window rather than one window per job
+   (the owner flagged the pile-up):
+   - Safari and Firefox x3 for sleight, codex and lcu;
+   - codex-sleight and codex-sleight-sol x3 against codex and a new codex-sol baseline (ROADMAP 4b);
+   - the native claim rerun, including the Codex arms;
+   - top-ups to 5 where an arm is within 20%;
+   - live checks for pay-gate (one Sol and one Haiku Firefox form-checkout, plus a Safari confirm sheet), Codex turbo, and the AS-3 A/B.
+4. Regenerate the hub (`node bench/results-hub.mjs`), merge `claude/insights-readme` b92792ff, fill its README `TODO(final)`
+   markers through the humanizer, run the release pass, and tag (owner's call).
+
+**Running across the clear:** the race watchdog (`race-1017/watchdog.sh`, pid 63290, nohup), harmless while idle. Nothing else
+runs, since the Codex lanes have exited and the live lock and `/tmp/sleight-hold` are both clear.
 
 **Where the claim stands (Haiku 5.5 high, real windows).** Native 9 tasks "fastest", 8 of 9, 251 s against claude-cu's 454 s (lost
 preview-read to Peekaboo). App tasks 3 of 3. Chrome and Helium turbo 12 of 13 each. Firefox 10 of 12 (older build). Safari is complete (3 rounds an arm, all reruns done 23:35Z): sleight fastest on 9 of 12
