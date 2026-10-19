@@ -195,3 +195,24 @@ test('with the engine\'s own document, the relay delivers the rewritten Workflow
   const browser = await firstResult(t, { description: BROWSER, docs: engine });
   assert.match(browser.text, /and the resulting `getAXState\(\)`/);
 });
+
+test('the live check counts trailing reads and times one-action calls by how they end', async () => {
+  const { trailingReads, callTimes } = await import('../bench/trailing-reads.mjs');
+  const use = code => ({ message: { content: [{ type: 'tool_use', input: { code } }] } });
+  assert.deepEqual(trailingReads([use('await app.click(5);\nawait app.getAXState();'), use('await app.click(5);'),
+    use('await app.getAXState();'), use('await app.click(1);\nconst s = await app.getAXState();\nnodeRepl.write(s.slice(0, 9));')]), { calls: 4, trailing: 2 });
+  const at = ms => new Date(Date.UTC(2026, 9, 19, 0, 0, 0, ms)).toISOString();
+  const call = (id, start, end, phases) => [{ t: at(start), direction: 'to-server', msg: { id, method: 'tools/call' } },
+    ...[0, 1, 2].map(i => ({ t: at(start + i), direction: 'from-server', msg: { id: 100 + i, method: 'elicitation/create' } })),
+    ...phases.map(phase => ({ t: at(end), direction: 'guard-read', msg: { id, phase } })),
+    { t: at(end), direction: 'to-client', msg: { id, result: {} } }];
+  assert.deepEqual(callTimes([...call(1, 0, 900, ['before-action', 'after-call']), ...call(2, 1000, 1950, ['before-action'])]), { ended: [900], read: [950] });
+});
+
+test('an unawaited chain of actions settles before the call reads', async () => {
+  const f = engineApp({ app: 'Firefox', title: 'Book a trip', rows: v => `\t1 button Next\n\t2 button Back\n\t3 text Chosen ${v}` });
+  await f.run('app.click(1).then(() => app.click(2));');
+  assert.equal(f.ops.at(-1), 'read');
+  assert.equal(f.ops.filter(op => op === 'click').length, 2);
+  assert.equal(f.output.at(-1), GUARD_MARK + f.tree() + GUARD_END);
+});

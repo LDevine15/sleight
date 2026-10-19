@@ -560,7 +560,7 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: '9a1b92b16b4bd8a4', guardedLean: '22dec540a0ee67df', reuse: 'a119c9db1f5d54fe', read: '7b3e16dca82110d1', repl: '7b3e16dca82110d1' });
+  }, { guarded: '3c5e1ef660d9d3a2', guardedLean: '57a29e536cd63d50', reuse: 'a119c9db1f5d54fe', read: '99bbbb0d2225ee4f', repl: '99bbbb0d2225ee4f' });
 });
 
 test('with both switches off the guard carries none of the outcome code', () => {

@@ -445,7 +445,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     // This call's actions and picks still running, for the read that ends the call.
     state.inflight = new Set();
     const track = promise => { const done = () => state.inflight.delete(promise); state.inflight.add(promise); promise.then(done, done); return promise; };
-    state.settle = async () => { await Promise.allSettled([...state.inflight]); };
+    // Until none is left: an unawaited chain (click(1).then(() => app.click(2))) starts its next action as one settles.
+    state.settle = async () => { while (state.inflight.size) await Promise.allSettled([...state.inflight]); };
     // Text this call typed, pasted or set, so a window it named (a saved or opened file) is its own.
     state.typed = [];
     state.resultMark = update?.resultMark;
