@@ -504,7 +504,7 @@ function leanToolDescription(tool) {
     notifications: 'Banners. The user approves notifications once per session.',
   };
   const replacements = [
-    ['If no title matches exactly, a unique ending of at least 12 characters may match within that app.', 'No exact title: one same-app suffix, 12+ chars.'],
+    ['If no title matches exactly, a unique ending may match within that app only at the title start or after whitespace. The request must contain at least 12 Unicode code points after trim(), excluding format (Cf) and combining (M) characters from the count. Matching still uses the original request.', 'No exact title: unique same-app suffix after whitespace; 12+ code points after trim(), excluding Cf/M. Match original request.'],
     ['Use windowNumber to distinguish equal titles. ', ''],
     ['`at` is relative to the selected window\'s top-left corner.', '`at`: window-relative.'],
     ['Supply an exact `windowTitle` when more than one window is on screen.', 'Pass an exact `windowTitle` when several windows show.'],

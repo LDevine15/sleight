@@ -106,6 +106,63 @@ test('11 Unicode characters never qualify as a suffix through surrogate pairs', 
   assert.equal(result.ok, false);
   assert.deepEqual(events, []);
 });
+for (const [label, title] of [
+  ['12 spaces', ' '.repeat(12)],
+  ['outer whitespace padding', ' 12345678901 '],
+  ['zero-width padding', '12345678901\u200B'],
+  ['combining padding', '12345678901\u0301'],
+  ['an emoji sequence', '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}\uFE0F'.repeat(2)],
+]) {
+  test(`${label} cannot inflate a suffix to 12 characters`, () => {
+    const { result, events } = select({ app: 'TextEdit', title }, [{ AXTitle: 'Work: ' + title }]);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /found 0/);
+    assert.deepEqual(events, []);
+    assert.equal(select({ app: 'TextEdit', title }, [{ AXTitle: title }]).result.ok, true);
+  });
+}
+test('12 dots and 12 base characters with marks still qualify as suffixes', () => {
+  for (const title of ['............', '123456789012\u0301\u200B']) {
+    const { result } = select({ app: 'TextEdit', title }, [{ AXTitle: 'Work: ' + title }]);
+    assert.equal(result.ok, true);
+    assert.equal(result.target.title, 'Work: ' + title);
+  }
+});
+test('a suffix must start after whitespace rather than inside a word', () => {
+  const title = 'report-final.docx';
+  for (const prefix of ['my-', 'my', '.']) {
+    const { result, events } = select({ app: 'TextEdit', title }, [{ AXTitle: prefix + title }]);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /found 0/);
+    assert.deepEqual(events, []);
+  }
+  for (const prefix of ['', 'Work: ', 'Work:\t', 'Work:\u2003']) {
+    assert.equal(select({ app: 'TextEdit', title }, [{ AXTitle: prefix + title }]).result.ok, true);
+  }
+});
+test('seven suffix candidates list only five titles and the omitted count', () => {
+  const windows = Array.from({ length: 7 }, (_, i) => ({ AXTitle: `Profile ${i}: ${suffix}`, AXWindowNumber: i + 1 }));
+  const { result, events } = select({ app: 'TextEdit', title: suffix }, windows);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /found 7/);
+  assert.match(result.error, /and 2 more/);
+  for (const window of windows.slice(0, 5)) assert.ok(result.error.includes(window.AXTitle));
+  for (const window of windows.slice(5)) assert.ok(!result.error.includes(window.AXTitle));
+  assert.match(result.error, /Window numbers: \[1,2,3,4,5\]$/);
+  assert.deepEqual(events, []);
+});
+test('ambiguous title previews stop at 200 characters without splitting emoji', () => {
+  const long = 'A'.repeat(196) + '\u{1F4C4}'.repeat(10) + ' ' + suffix;
+  const windows = [{ AXTitle: 'B'.repeat(200) + ' ' + suffix }, { AXTitle: long },
+    { AXTitle: 'C'.repeat(187) + ' ' + suffix }];
+  const { result, events } = select({ app: 'TextEdit', title: suffix }, windows);
+  assert.equal(result.ok, false);
+  const titles = JSON.parse(/windows: (\[[^\n]*?\])/.exec(result.error)[1]);
+  assert.equal(titles[0], 'B'.repeat(197) + '...');
+  assert.equal(titles[1], 'A'.repeat(196) + '\u{1F4C4}...');
+  assert.equal(titles[2], 'C'.repeat(187) + ' Project page');
+  assert.deepEqual(events, []);
+});
 test('an ineligible document window still makes a same-app suffix ambiguous', () => {
   const windows = [{ AXTitle: 'Work: Project page' },
     { AXTitle: 'Personal: Project page', AXDocument: 'https://example.com' }];
@@ -200,7 +257,14 @@ test('local selection validates and asks before running its helper', async () =>
   const args = { app: 'TextEdit', title: 'left.txt' };
   const options = { approve: async key => { events.push(key); return true; },
     runScript: async (script, request) => { events.push([script, request]); return { ok: true, target: left }; } };
-  assert.equal((await selectWindow({ app: 'TextEdit' }, options)).isError, true);
+  const invalid = await selectWindow({ app: 'TextEdit' }, options);
+  assert.equal(invalid.isError, true);
+  assert.match(invalid.content[0].text, /title or file URL/);
+  assert.match(invalid.content[0].text, /unique.*ending/);
+  assert.match(invalid.content[0].text, /12/);
+  assert.match(invalid.content[0].text, /trim/);
+  assert.match(invalid.content[0].text, /Cf.*M/);
+  assert.match(invalid.content[0].text, /whitespace/);
   assert.equal(events.length, 0);
   assert.equal((await selectWindow(args, { ...options, approve: async () => false })).isError, true);
   assert.equal(events.length, 0);

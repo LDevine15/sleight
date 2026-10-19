@@ -59,13 +59,14 @@ function run(argv) {
     };
     const wantedURL = hasURL ? canonical(request.url) : null;
     if (hasURL && !wantedURL) throw new Error('URL must be a file URL');
-    const allowEnding = hasTitle && Array.from(request.title).length >= 12;
+    const allowEnding = hasTitle && Array.from(request.title.trim().replace(/[\p{Cf}\p{M}]/gu, '')).length >= 12;
     for (const window of windows) {
       const title = attribute(window, 'AXTitle');
       if (hasTitle && title === request.title) exactTitle = true;
       const document = attribute(window, 'AXDocument');
       const file = document && canonical(document);
-      if (allowEnding && typeof title === 'string' && title.endsWith(request.title)) {
+      if (allowEnding && typeof title === 'string' && title.endsWith(request.title) &&
+          (title.length === request.title.length || /\s/.test(title[title.length - request.title.length - 1]))) {
         suffixes.push({ window, title, url: document || null, validDocument: !document || !!file });
       }
       if (document && !file) continue;
@@ -75,7 +76,14 @@ function run(argv) {
       }
     }
     if (hasTitle && !exactTitle) {
-      if (suffixes.length > 1) throw new Error(/* notice */ `Title ending found ${suffixes.length} windows: ${JSON.stringify(suffixes.map(target => target.title))}. Window numbers: ${JSON.stringify(suffixes.map(target => windowNumber(target.window)))}`);
+      if (suffixes.length > 1) {
+        const shown = suffixes.slice(0, 5);
+        const titles = shown.map(target => {
+          const chars = Array.from(target.title);
+          return chars.length > 200 ? chars.slice(0, 197).join('') + '...' : target.title;
+        });
+        throw new Error(/* notice */ `Title ending found ${suffixes.length} windows: ${JSON.stringify(titles)}${suffixes.length > 5 ? ` and ${suffixes.length - 5} more` : ''}. Window numbers: ${JSON.stringify(shown.map(target => windowNumber(target.window)))}`);
+      }
       if (suffixes.length === 1 && suffixes[0].validDocument &&
           (request.windowNumber === undefined || windowNumber(suffixes[0].window) === request.windowNumber)) {
         selected.push(suffixes[0]);
