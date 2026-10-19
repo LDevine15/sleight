@@ -43,9 +43,15 @@ our own runs. Dates and engine versions are given where they matter.
   3 clicks), and the cause wasn't recorded. It no longer needs HID idle over the call, which the engine's key presses reset
   (above). It needs idle since the stop result arrived, so a user typing after the stop still refuses it. The relay trace
   records the refusal reason and the idle sample, but no traced round has run since.
-- Safari's tab continuation never fired in the b10 to b12 rounds (2026-10-19), where Cmd+T followed by typing stopped 6
-  of 6 times, a turn each. A one-tab window doesn't show a tab bar, and Safari marks its tabs `Value: on` or `off`, not
-  selected. `SLEIGHT_FS=1` names the keyboard route only for a window whose strip shows a selected tab.
+- Safari's tab continuation never fired in race-1017, where Cmd+T followed by typing stopped 36 of 36 runs inside Codex and 19 of 19
+  Claude Code chains. Safari's Start Page has no page content, so the navigation continuation took the stop first and then
+  failed its idle check. In 1.4.0 the tab checks run first, a `Value: on` tab counts as selected, and a window that showed
+  no tab bar may show two tabs, the old one named as the window was. None of this has run live yet. Safari's toolbar New Tab
+  button still stops, since it sits apart from the tabs. `SLEIGHT_FS=1` still names the keyboard route only for a window
+  whose strip shows a selected tab, so Safari's one-tab window keeps the plain sentence. `SLEIGHT_TABC=0` turns all of it off.
+- After a tab continuation's Return, a result whose tree still names the new tab under the page's header reads again,
+  every 150 ms for up to 1.5 s (Firefox mdn inside Codex showed the New Tab tree in 2 of 37). It compares only the root's
+  title with the header, so a window whose root title never matches its header waits the full 1.5 s. Not run live yet.
 - sleight's shorter js description hasn't matched the engine's text since its 2026-10-16 update, and never matched the
   computer-only text most sessions get, so Claude reads the engine's description with only its first-call rule rewritten.
   That text lists `cua.getState()` before `cua.getApp()`, and 39 of 72 b10 race runs opened with getState. `SLEIGHT_FS=1`
