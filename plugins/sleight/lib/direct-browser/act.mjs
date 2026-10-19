@@ -218,7 +218,9 @@ function ruleMessage(result) {
 // and host-runner tests independent while those modules are built in parallel.
 export function createActionRunner({ check, snapshot, backgroundClick = (tab, locator, click) => click({}), actionTimeoutMs = 7000, now = Date.now, sleep = pause } = {}) {
   if (typeof check !== 'function' || typeof snapshot !== 'function') throw Error('action runner needs check and snapshot');
-  return async function runSteps(tab, steps, ctx = {}) {
+  // siteCheck() gives the user's line when the page now shows a site sleight may not act on (permissions.mjs). It runs in the
+  // gate, right before each step's input, so a step that moved the page to such a site stops every step after it.
+  return async function runSteps(tab, steps, ctx = {}, { siteCheck } = {}) {
     // A bad step list is refused before any input, so the caller must not report it as an unconfirmed outcome.
     try { validate(steps); } catch (error) { error.notRun = true; throw error; }
     const { page, state } = tab, since = state.snapshotNo > 0 ? state.snapshotNo : undefined, lines = []; let stoppedAt = null;
@@ -246,6 +248,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           ...(step.do === 'dialog' ? { type: state.dialog.type(), message: state.dialog.message(), accept: step.accept } : {}) };
         const trusted = isV3Context(ctx);
         const gate = async () => {
+          const refused = siteCheck?.();
+          if (refused) throw Error(refused);
           const verdict = trusted ? await ctx.check(step.do, target) : await check(ctx, step.do, target);
           if (verdict?.verdict === 'confirm' || verdict?.kind === 'confirm') confirmation = { step: index + 1, terms: verdict.terms };
           const message = ruleMessage(verdict);
@@ -468,11 +472,11 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
 }
 
 let defaultRunner;
-export async function runSteps(tab, steps, ctx) {
+export async function runSteps(tab, steps, ctx, options) {
   if (!isV3Context(ctx)) throw Error('TRUSTED_TURN_REQUIRED');
   if (!defaultRunner) {
     const [{ check }, { snapshot }, { backgroundClick }] = await Promise.all([import('./rules.mjs'), import('./snapshot.mjs'), import('./page.mjs')]);
     defaultRunner = createActionRunner({ check, snapshot, backgroundClick });
   }
-  return defaultRunner(tab, steps, ctx);
+  return defaultRunner(tab, steps, ctx, options);
 }

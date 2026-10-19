@@ -268,3 +268,16 @@ test('with the real site check, a page whose URL can\'t be read, a credentials l
     assert.deepEqual(calls, []);
   }
 });
+
+test('browser_act hands runSteps a site check that refuses once the page moves to a blocked site mid-call', async () => {
+  const f = siteFixture(), seen = [];
+  const dispatcher = createToolDispatcher({ browser: 'bfixture', pages: { tab: () => ({ page: { url: () => url }, state: { snapshotNo: 0 } }), enqueue: async (id, fn) => fn({ page: { url: () => url }, state: { snapshotNo: 0 } }),
+    closedOpener: () => undefined, endTurn: async () => ({ cleanedUp: true }) },
+    sites: value => value?.startsWith('https://blocked.example') ? LINE : undefined, snapshot: async () => ({ text: 'x', number: 1 }), fillFields: async () => ({ rows: [] }),
+    runSteps: async (entry, steps, ctx, options) => { seen.push(options?.siteCheck?.()); url = 'https://blocked.example/x'; seen.push(options?.siteCheck?.()); return { lines: ['1 click e1: done', '2 type e2: not run: ' + seen[1]] }; } });
+  let url = 'https://fine.example/';
+  const act = await dispatcher.call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'click', ref: 'e1' }, { do: 'type', ref: 'e2', text: 'x' }] } });
+  assert.deepEqual(seen, [undefined, LINE]);
+  assert.equal(act.isError, true);
+  assert.equal(f.calls.length, 0);
+});

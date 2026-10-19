@@ -161,7 +161,8 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           }
           started = true;
           if (request.name === 'browser_act') {
-            const result = await runSteps(entry, a.steps, privateContext);
+            // The site is checked again before each step's input, so a step that lands on a blocked site stops the rest there.
+            const result = await runSteps(entry, a.steps, privateContext, { siteCheck: () => siteLine(pageURL(entry)) });
             await assertEndpointRead(entry.page, endpoint);
             const lines = [...result.lines, ...blocked().filter(line => !result.lines.includes(line))];
             // A step that landed on a blocked site: what ran, then the user's line, and nothing of the page.
