@@ -14,6 +14,7 @@ import { FlowRules } from '../plugins/sleight/lib/flow-rules.mjs';
 import { createV3Bridge, createV3Frontend, serveV3Worker } from '../plugins/sleight/lib/direct-browser/worker.mjs';
 import { localToolDefinitions } from '../plugins/sleight/lib/launch.mjs';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
+import { splitMenuActions } from '../plugins/sleight/lib/menu-continuation.mjs';
 import { ENGINE_OPEN_TOOL, LEAN_ENGINE_OPEN_DESCRIPTION, parseEngineOpen, turboRoute, acquisitionCode, openCode, widenTurboOpen,
   engineBrowserOpen, browserWindowProblem } from '../plugins/sleight/lib/engine-browser-open.mjs';
 
@@ -172,6 +173,7 @@ const tree = (id, app, appId, title, body = '\t1 tab group\n\t\t2 tab (selected)
   _meta: { 'codex/toolSurface': { app: { appId } } } } });
 const code = msg => msg.params.arguments.code;
 const text = msg => msg.result.content.map(item => item.text ?? '').join('\n');
+const firefoxSmoke = JSON.parse(readFileSync(new URL('./fixtures/browser-open-firefox-smoke.json', import.meta.url)));
 
 async function listed(t, options) {
   const h = harness(t, options);
@@ -238,6 +240,53 @@ test('relay: a failed acquisition answers Claude with its error and sends nothin
   assert.equal(h.engineCalls().length, 1);
   assert.equal(h.reply(1).result.isError, true);
   assert.match(text(h.reply(1)), /App not found/);
+});
+
+test('AOd: the recorded invalid-app response puts the browser retry before the engine documentation', async t => {
+  const h = harness(t);
+  h.open(1, firefoxSmoke.request); await settle();
+  h.fromServer({ jsonrpc: '2.0', id: h.engineCalls()[0].id, result: structuredClone(firefoxSmoke.invalidApp) }); await settle();
+  const reply = h.reply(1);
+  assert.equal(reply.result.isError, true);
+  assert.match(reply.result.content[0].text, /^browser_open: .*nothing was opened or typed/);
+  assert.match(reply.result.content[0].text, /browser.*app name or bundle ID.*window title/);
+  assert.match(reply.result.content[0].text, /Retry browser_open directly/);
+  assert.deepEqual(reply.result.content.slice(1), firefoxSmoke.invalidApp.content.filter(item => item.text), 'retain engine errors and first-call instructions');
+  assert.doesNotMatch(text(reply), /Complete the documented initialization/);
+  assert.equal(h.engineCalls().length, 1, 'no guessed app, inventory or input');
+  h.open(2, { ...firefoxSmoke.request, browser: 'Firefox' }); await settle();
+  const acquired = tree(h.engineCalls().at(-1).id, 'Firefox', 'com.example.browser', 'Gate');
+  acquired.result.content[0].text = firefoxSmoke.acquired;
+  h.fromServer(acquired); await settle();
+  const keys = h.engineCalls().at(-1);
+  assert.equal(keys.id, 2, 'a corrected browser_open retries directly in the same session');
+  assert.match(code(keys), /pressKey\("super\+t"\)/);
+  const landed = tree(2, 'Firefox', 'com.example.browser', 'Tidewell Demo Shop');
+  landed.result.content[0].text = firefoxSmoke.landed;
+  h.fromServer(landed); await settle();
+  assert.notEqual(h.reply(2).result.isError, true);
+  assert.match(text(h.reply(2)), /Ember mug[\s\S]*red · \$16\.00/);
+});
+
+test('AOd: an app permission refusal keeps its error without a retry instruction', async t => {
+  const h = harness(t);
+  h.open(1, firefoxSmoke.request); await settle();
+  const result = { isError: true, content: [{ type: 'text', text: 'Computer Use is not allowed to use this app for safety reasons.' }] };
+  h.fromServer({ jsonrpc: '2.0', id: h.engineCalls()[0].id, result }); await settle();
+  assert.deepEqual(h.reply(1).result, result);
+  assert.equal(h.engineCalls().length, 1);
+});
+
+test('AOd: invalid-app advice requires the exact standalone target error', async t => {
+  for (const error of ['Invalid app: Other', `Example error mentions Invalid app: ${firefoxSmoke.request.browser}`]) {
+    const h = harness(t);
+    h.open(1, firefoxSmoke.request); await settle();
+    const result = { isError: true, content: [{ type: 'text', text: '## Computer Use\nReference.' }, { type: 'text', text: error }] };
+    h.fromServer({ jsonrpc: '2.0', id: h.engineCalls()[0].id, result }); await settle();
+    assert.doesNotMatch(text(h.reply(1)), /Retry browser_open directly/);
+    assert.match(text(h.reply(1)), /Complete the documented initialization/);
+    assert.equal(h.engineCalls().length, 1);
+  }
 });
 
 test('relay: a bad URL, a blocked app, sleight\'s own host and a blocked site never reach the engine', async t => {
@@ -439,10 +488,11 @@ const newTabTree = 'Window: "New Tab", App: Fixture Browser.\n0 standard window 
   '\t5 combo box (settable) Address\n\t6 HTML Content Description: New Tab\n\t\t7 link Shortcuts\n\nThe focused UI element is 5 combo box (settable) Address';
 const shopTree = newTabTree.replaceAll('New Tab', 'Shop').replace(/The focused UI element is .*/, 'The focused UI element is 7 link Shortcuts');
 async function guarded(t, options = {}) {
-  let text = startTree, writes = [];
+  const { trees = { acquired: startTree, opened: newTabTree, landed: shopTree }, ...relayOptions } = options;
+  let text = trees.acquired, writes = [];
   const keys = [], typed = [], sent = [], received = [];
   const app = { getAXState: async () => text, getAXStateAndScreenshot: async () => ({ state: text }), click: async () => {},
-    pressKey: async key => { keys.push(key); text = key === 'super+t' ? newTabTree : key === 'Return' ? shopTree : text; },
+    pressKey: async key => { keys.push(key); text = key === 'super+t' ? trees.opened : key === 'Return' ? trees.landed : text; },
     setValue: async () => {}, typeText: async value => { typed.push(value); } };
   const context = createContext({ cua: { getApp: async () => app, listApps: async () => [{ id: 'com.example.browser', windows: [{ title: 'Marker' }] }] },
     nodeRepl: { write: value => writes.push(String(value)) } });
@@ -453,7 +503,7 @@ async function guarded(t, options = {}) {
     changeReview: false, engineBrowserOpen: true, webBrowser: id => id === 'com.example.browser', ownHostPid: () => false,
     runningProbe: () => ({ status: 'responding' }),
     windowIdentity: async expected => ({ ...expected, windowNumber: 22, hidIdleSeconds: 1000, status: 'ok', matches: 1, epoch: 'helper', window: 1, pid: 123,
-      processStart: 1, focus: { sheets: 0, role: 'AXComboBox', subrole: null, inWindow: true, inPage: false } }), ...options });
+      processStart: 1, focus: { sheets: 0, role: 'AXComboBox', subrole: null, inWindow: true, inPage: false } }), ...relayOptions });
   t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); removeTemp(directory); });
   clientOut.on('data', data => received.push(...data.toString().trim().split('\n').map(JSON.parse)));
   serverIn.on('data', data => sent.push(...data.toString().trim().split('\n').map(JSON.parse)));
@@ -490,6 +540,19 @@ test('guard: browser_open as the first call opens the tab and types the URL in t
   assert.deepEqual(h.keys, ['super+t', 'Return']);
   assert.deepEqual(h.typed, ['http://127.0.0.1:5420/shop']);
   assert.match(result.content.map(item => item.text).join('\n'), /^Window: "Shop"/m);
+});
+
+test('AOd: recorded Firefox trees open through the keyboard continuation in one model call', async t => {
+  const h = await guarded(t, { trees: firefoxSmoke });
+  const result = await h.call(1, 'browser_open', { ...firefoxSmoke.request, browser: 'Firefox' });
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.keys, ['super+t', 'Return']);
+  assert.deepEqual(h.typed, [firefoxSmoke.request.url]);
+  assert.match(result.content.map(item => item.text).join('\n'), /Ember mug[\s\S]*red · \$16\.00/);
+  assert.equal(h.sent.filter(msg => msg.method === 'tools/call').length, 3, 'acquisition, new tab stop, guarded URL continuation');
+  const manual = 'await ff.pressKey("super+t"); await ff.typeText("https://example.com/"); await ff.pressKey("Return"); await new Promise(r => setTimeout(r, 2000)); await ff.getAXState()';
+  assert.equal(splitMenuActions(manual), undefined, 'the recorded sleep prevents admission of the manual batch');
+  assert.ok(splitMenuActions(openCode('ff', firefoxSmoke.request.url, firefoxSmoke.acquired)));
 });
 
 test('guard: a flow exception covers the identical browser_open through the tab continuation', async t => {

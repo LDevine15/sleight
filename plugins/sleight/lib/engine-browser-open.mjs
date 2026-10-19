@@ -137,6 +137,9 @@ export const openCode = (handle, url, text) => {
 };
 
 export const openedNote = handle => `browser_open: the new tab is in the window below. In js, \`${handle}\` is its app handle (await ${handle}.click(N)).`;
+export const invalidAppReply = (reply, browser) => reply.result?.isError && reply.result.content?.some(item =>
+  item?.type === 'text' && typeof item.text === 'string' && item.text.trim() === `Invalid app: ${browser}`);
+export const invalidAppNote = browser => `browser_open: no app matched ${json(browser)}, so nothing was opened or typed. Set browser to the app name or bundle ID. A window title doesn't identify an app. Retry browser_open directly with the browser app the task names. The result includes its window header. If the app name is unknown, send exactly \`await cua.getState()\` in js.`;
 export const notBrowserNote = app => `browser_open: ${app || 'that app'} isn't a web browser, so nothing was typed. Name a browser app.`;
 export const unknownBrowserNote = app => `browser_open: sleight doesn't know yet whether ${app || 'that app'} is a web browser, so nothing was typed. Try again in a moment.`;
 // Nobody has seen the window before the keys go, so the acquisition's own tree must show a browser window ready for a

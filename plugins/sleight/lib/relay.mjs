@@ -62,7 +62,7 @@ import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge, failure as turboFailure } from './direct-browser/worker.mjs';
 import { browserBundleId } from './direct-browser/browsers.mjs';
 import { engineBrowserOpen as engineBrowserOpenSetting, engineOpenTool, widenTurboOpen, turboRoute, parseEngineOpen, siteOf, acquisitionCode, openCode,
-  openedNote, notBrowserNote, unknownBrowserNote, browserWindowProblem, withBrowserOpenFirst, CLEANUP_NOTE, DOCUMENT_SCOPE_NOTE, STOPPED_NOTE } from './engine-browser-open.mjs';
+  openedNote, invalidAppReply, invalidAppNote, notBrowserNote, unknownBrowserNote, browserWindowProblem, withBrowserOpenFirst, CLEANUP_NOTE, DOCUMENT_SCOPE_NOTE, STOPPED_NOTE } from './engine-browser-open.mjs';
 import { pageSite } from './permissions.mjs';
 import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, lastWindowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot, selectedMenuEntry } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
@@ -2960,7 +2960,15 @@ export function createRelay({
       const spent = () => { engineOpenPrints.delete(msg.id); if (flowPermit?.fingerprint === print) flowPermit = undefined; };
       const end = message => { spent(); toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: message }] } }); };
       if (generation !== stopGeneration || closing || disposed) { end(STOPPED_NOTE); stoppedClients.add(msg.id); return; }
-      if (reply.error || reply.result?.isError) { spent(); toClient({ ...reply, id: msg.id }); return; }
+      if (reply.error || reply.result?.isError) {
+        spent();
+        // The engine puts first-call documentation before Invalid app. Claude Code can truncate that error away
+        // (AOd Firefox smoke), so explain the failed target first and retain all engine instructions after it.
+        const invalid = invalidAppReply(reply, open.browser);
+        toClient({ ...reply, id: msg.id, ...(invalid ? { result: { ...reply.result,
+          content: [{ type: 'text', text: promptNotice(invalidAppNote(open.browser), prompt) }, ...reply.result.content] } } : {}) });
+        return;
+      }
       const acquiredText = (reply.result?.content ?? []).filter(item => item?.type === 'text').map(item => item.text).join('\n');
       const shown = windowFromText(acquiredText);
       const appId = reply.result?._meta?.['codex/toolSurface']?.app?.appId, app = shown?.app ?? open.browser;
@@ -4353,7 +4361,10 @@ export function createRelay({
         else msg.result.content.push({ type: 'text', text: advice });
       }
     }
-    const initializationNote = firstPass && jsCode !== undefined && initializationAdvice(msg.result?.content, !!msg.error || !!msg.result?.isError, jsCode);
+    // browser_open's acquisition sends no input. Its explicit Invalid app gets a direct correction below,
+    // so a generic initialization read would send Claude through inventory before retrying a known browser.
+    const invalidOpen = engineOpenAcquisitions.has(msg.id) && jsCode !== undefined && getAppTargets(jsCode).some(browser => invalidAppReply(msg, browser));
+    const initializationNote = firstPass && jsCode !== undefined && !invalidOpen && initializationAdvice(msg.result?.content, !!msg.error || !!msg.result?.isError, jsCode);
     if (initializationNote) msg.result.content.push({ type: 'text', text: promptNotice(initializationNote, prompt) });
     if (msg.method === undefined && syntaxOrigins.has(msg.id)) {
       const origin = syntaxOrigins.get(msg.id); syntaxOrigins.delete(msg.id);
