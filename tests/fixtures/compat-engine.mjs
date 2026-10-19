@@ -1,6 +1,7 @@
 // A stdio MCP server standing in for the raw engine (or sleight's launcher) in the compatibility suite's tests.
 // COMPAT_FAKE_MODE: ok, launcher, no-turn-end (tools/list lacks turn_ended), new-policy (the policy text changed),
-// probe-missing (cua.getTab gone), hang (never answers a tool call).
+// probe-missing (cua.getTab gone), hang (never answers a tool call). As the real engine does, it defines the browser
+// methods only when CUA_REPL_ENABLED_SURFACES includes browser (unset: all of them).
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
@@ -16,7 +17,10 @@ const tools = [
   ...(mode === 'no-turn-end' ? [] : [{ name: 'turn_ended', inputSchema: { type: 'object', properties: {} }, _meta: { ui: { visibility: [] } } }]),
   ...(mode === 'launcher' ? [{ name: 'select_window', inputSchema: { type: 'object', properties: {} } }] : []),
 ];
-const methods = ['getApp', 'getState', 'listApps', 'listBrowsers', 'getBrowser', 'getTab', 'createBrowserTab', 'listTabs'];
+const surfaces = process.env.CUA_REPL_ENABLED_SURFACES;
+const browser = surfaces === undefined || surfaces.split(',').includes('browser');
+const methods = ['getApp', 'getState', 'listApps', ...(browser ? ['listBrowsers', 'getBrowser', 'getTab', 'createBrowserTab', 'listTabs'] : [])];
+const absent = browser ? [] : ['listBrowsers', 'getBrowser', 'getTab', 'createBrowserTab', 'listTabs'];
 
 createInterface({ input: process.stdin }).on('line', line => {
   const msg = JSON.parse(line);
@@ -28,7 +32,8 @@ createInterface({ input: process.stdin }).on('line', line => {
     if (msg.params.name === 'turn_ended') return send({ id: msg.id, result: { content: [] } });
     if (code.includes('no-such-app')) return send({ id: msg.id, result: { isError: true, content: [{ type: 'text', text: docs }, { type: 'text', text: 'Invalid app: com.landoclusters.sleight.no-such-app' }] } });
     if (code.includes('sleight-compat-probe:')) {
-      const kinds = Object.fromEntries(methods.map(name => [name, mode === 'probe-missing' && name === 'getTab' ? 'undefined' : 'function']));
+      const kinds = Object.fromEntries([...methods.map(name => [name, mode === 'probe-missing' && name === 'getTab' ? 'undefined' : 'function']),
+        ...absent.map(name => [name, 'undefined'])]);
       const probe = { kinds: { ...kinds, 'nodeRepl.write': 'function', 'nodeRepl.emitImage': 'function' },
         state: { apps: { '[]': { id: 'string', isRunning: 'boolean', windows: { '[]': { id: 'number', app: 'string', title: 'string' } } } }, browsers: { '[]': {} } },
         apps: { '[]': { id: 'string', windows: { '[]': { id: 'number', app: 'string', title: 'string' } } } } };

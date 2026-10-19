@@ -565,6 +565,11 @@ native reference, and oversized first results defer the browser reference while 
   Otherwise the session keeps the old tool descriptions, and its calls run on the live engine. The next session gets the
   new replies. Unit-tested only.
 - When the engine's own initialize fails, every call in that session fails with the engine's error, cached or not.
+- `npm run compat` checks the engine's browser methods only on a Mac where sleight would start the engine with `CUA_REPL_ENABLED_SURFACES=browser,computer`: a
+  Codex browser extension in the extension cache, or `SLEIGHT_SURFACES=browser,computer` set for the run. Without one the
+  REPL probe checks 3 of the 8 `cua` methods. The static check (`bench/compat-static.mjs`) still checks that the engine's
+  JavaScript defines all 8. The Mac suite's first run on 2026-10-19 failed because the suite started the engine with computer alone
+  and required all 8 (fixed in 1.3.1).
 
 ## Specific apps
 
