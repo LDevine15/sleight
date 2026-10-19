@@ -3,7 +3,15 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 02:40 UTC, flushed before the owner's clear)
+## Banner (2026-10-19 03:00 UTC)
+
+**Since the clear (03:00Z).** Pay-gate is merged into the release line (`pane/auto-mode` 7a129a4a; full check 8317 tests 0
+fail, lint 0). Codex turbo finished (`claude/codex-turbo` 9612ea86, 570/570 focused, Sonnet review fixed, never run live;
+ledger/p130/cxt1-REPORT.md has the seven live-check steps). FU1's review found a Python/Ruby adjacent-literal bypass of the
+logging-switch guard and a false rotation warning. Both are fixed on `codex/fu1` ca7ab807. `claude/p131-integration` now holds
+the release line, codex-turbo and FU1 (69f89995), and its full check is running. Ruling: the codex-sleight arms measure 1.3.0, which
+has no turbo in Codex, so they run with `SLEIGHT_TURBO=0` once 1.3.1 carries cxt1. Items below marked as in flight at the clear
+are superseded by this paragraph.
 
 Goal (owner): release 1.3.0, then the claim post and the launch video, then 1.3.1, then hold at 1.3.1 while the owner uses it.
 Owner (2026-10-19): everything to build for 1.3.0 and 1.3.1 is in flight. AM1, local performance analytics and Cursor plugin
@@ -41,8 +49,8 @@ read the Terminal window.
 leaves an unproven AXDialog window in driven apps, which the harness and the Calculator reader now skip.
 
 **Next steps:**
-1. Merge pay-gate (resolve its launch.mjs and relay.mjs conflicts with the Codex plugin), run the full check, push, and move race-fx.
-2. Finish 1.3.1: merge FU1 and codex-turbo, then run the integration branch's full check.
+1. Done 03:00Z: pay-gate merged (7a129a4a).
+2. 1.3.1: FU1 and codex-turbo merged into the integration branch (69f89995). Push it once its full check passes.
 3. Final runs on the new engine, in an away window, through one queue-runner Terminal window rather than one window per job
    (the owner flagged the pile-up):
    - Safari and Firefox x3 for sleight, codex and lcu;
