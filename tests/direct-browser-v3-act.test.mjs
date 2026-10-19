@@ -6,7 +6,7 @@ import { createActionRunner, overlaySignature, inspectTarget, placeClear } from 
 import { deliverSnapshot } from '../plugins/sleight/lib/direct-browser/rules.mjs';
 
 // Playwright boundary only. There is no engine object and no catch-all method fake.
-function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = false, onCheck } = {}) {
+function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = false, onCheck, backgroundClick } = {}) {
   const page = new EventEmitter(), actions = [], states = new Map(); let time = 0, number = 1, overlay = { count: 0, hash: 1 };
   const metadata = { name: 'Continue', submit, payment: false, form: submit, formSignature: 'before' };
   const loc = ref => utilityLocator({
@@ -46,7 +46,7 @@ function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = fa
     if (target.submit && target.state.submitUnconfirmed) return { kind: 'refuse', message: 'Read before resubmitting' };
     return { kind: 'allow' };
   };
-  const run = createActionRunner({ check, now: () => time, sleep: async ms => { time += ms; },
+  const run = createActionRunner({ check, ...(backgroundClick ? { backgroundClick } : {}), now: () => time, sleep: async ms => { time += ms; },
     snapshot: async (p, options) => { assert.equal(p, page); if (snapshotFail) throw Error('read unavailable');
       return { text: effect || 'No visible changes.', number: ++number, options }; } });
   return { page, tab, run, checks, actions, states, time: () => time, setOverlay: next => { overlay = next; } };
@@ -57,6 +57,21 @@ test('v3 action reports an unproved click as an observation and returns a diff',
   assert.match(result.lines[0], /no visible change/i); assert.equal(result.stoppedAt, null);
   assert.equal(result.observe.text, 'No visible changes.'); assert.equal(result.observe.options.since, 1);
   assert.equal(f.actions.filter(a => a[0] === 'click').length, 1);
+});
+
+test('MC1 action reports the settled retry in the same step and disables recovery for submits', async () => {
+  for (const submit of [false, true]) {
+    const f = fixture({ submit, backgroundClick: async (tab, locator, click, options) => {
+      const result = await click({});
+      assert.equal(options.recover(), !submit);
+      if (options.recover()) options.onRetry();
+      return result;
+    } });
+    const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
+    if (submit) assert.doesNotMatch(result.lines[0], /retried/);
+    else assert.match(result.lines[0], /waited for the page to settle and retried the click once/);
+    assert.equal(f.actions.filter(action => action[0] === 'click').length, 1);
+  }
 });
 
 test('v3 validates the whole batch before input, including every required field', async () => {

@@ -624,6 +624,13 @@ can remove it.
 
 ## Benchmark and development settings
 
+`SLEIGHT_MC1=0` disables turbo's own-label click handling and settled click retry. Both are on by default.
+A retry needs the signed page hook to confirm that it cancelled every press, release and click, then the same node must
+settle with its original classification and a clear centre. Submit and payment targets never retry.
+Removed, replaced or covered targets still refuse. Clipped controls can also fail the clear-centre check.
+The retry runs the trusted rules again, and the action result includes a retry notice. The race harness and
+Codex plugin pass `SLEIGHT_MC1` through. Use `1` and `0` for the two A/B arms.
+
 `SLEIGHT_BENCH_API_CAP_USD` caps a benchmark pass's model spend for the month in dollars; the pass
 refuses to start at the cap (default 200). `SLEIGHT_ARM_DIR` moves the benchmark's sleight arm
 folder (default `~/Library/Caches/sleight-bench/sleight-arm`). `SLEIGHT_STUB_OSASCRIPT=1` stubs

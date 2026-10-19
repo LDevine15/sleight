@@ -46,7 +46,8 @@ if [ -n "$REAL" ]; then
   exec env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
     SLEIGHT_REPO="$REPO" ${SLEIGHT_TRACE:+SLEIGHT_TRACE="$SLEIGHT_TRACE"} ${SLEIGHT_TS3:+SLEIGHT_TS3="$SLEIGHT_TS3"} ${SLEIGHT_FS:+SLEIGHT_FS="$SLEIGHT_FS"} ${SLEIGHT_RS+SLEIGHT_RS="$SLEIGHT_RS"} \
     ${SLEIGHT_BENCH_HAND:+SLEIGHT_BENCH_HAND="$SLEIGHT_BENCH_HAND"} ${SLEIGHT_BROWSER_CORE:+SLEIGHT_BROWSER_CORE="$SLEIGHT_BROWSER_CORE"} \
-    ${SLEIGHT_WORKFLOW_DOCS:+SLEIGHT_WORKFLOW_DOCS="$SLEIGHT_WORKFLOW_DOCS"} ${SLEIGHT_LB12:+SLEIGHT_LB12="$SLEIGHT_LB12"} node tools/rounds.mjs "$@" --model "$MODEL"
+    ${SLEIGHT_WORKFLOW_DOCS:+SLEIGHT_WORKFLOW_DOCS="$SLEIGHT_WORKFLOW_DOCS"} ${SLEIGHT_LB12:+SLEIGHT_LB12="$SLEIGHT_LB12"} \
+    ${SLEIGHT_MC1:+SLEIGHT_MC1="$SLEIGHT_MC1"} node tools/rounds.mjs "$@" --model "$MODEL"
 fi
 # Every Claude arm runs on the owner's account login, never the API credit (owner, 2026-10-15, LAWS). Browser Use
 # needs an API key by design, so it runs only in a round of its own (computer use keeps its login beside it), and the
