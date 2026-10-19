@@ -234,7 +234,7 @@ test('only a positive Claude Code signal counts as the mod\'s host, and every ot
   ]) assert.equal(hostWording(info, env).claudeCode, want, JSON.stringify([info, env]));
 });
 
-test('an Always from a Codex reviewer, not the user, never writes the pre-approved list', async t => {
+test('Always counts only from the user: no reviewer marker, or the marker user', async t => {
   const added = [];
   const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
   const toServer = [], toClient = [];
@@ -251,11 +251,17 @@ test('an Always from a Codex reviewer, not the user, never writes the pre-approv
   ask('a1', 'TextEdit'); await tick();
   const form = toClient.find(m => m.id === 'a1');
   assert.ok(form.params.requestedSchema.properties.remember, 'the user\'s form offers Always');
-  send(clientIn, { id: 'a1', result: { action: 'accept', content: { remember: 'Always' }, _meta: { approvals_reviewer: 'auto_review' } } }); await tick();
-  assert.deepEqual(added, [], 'a reviewer\'s answer is not the user\'s click');
-  ask('a2', 'Notes'); await tick();
-  send(clientIn, { id: 'a2', result: { action: 'accept', content: { remember: 'Always' } } }); await tick();
-  assert.deepEqual(added, [['Notes', 'low']], 'the user\'s own Always is written, as a click is in Claude Code');
+  // Always counts only when Codex says nothing about a reviewer or says the user answered; any other marker is a session allow.
+  const cases = [['TextEdit', { approvals_reviewer: 'auto_review' }, false], ['Notes', undefined, true], ['Mail', { approvals_reviewer: 'user' }, true],
+    ['Maps', { approvals_reviewer: 'guardian_subagent' }, false], ['Music', { approvals_reviewer: null }, false]];
+  for (const [n, [app, meta, written]] of cases.entries()) {
+    if (n) { ask('a' + (n + 1), app); await tick(); }
+    send(clientIn, { id: 'a' + (n + 1), result: { action: 'accept', content: { remember: 'Always' }, ...(meta ? { _meta: meta } : {}) } }); await tick();
+    assert.equal(added.some(([name]) => name === app), written, JSON.stringify(meta));
+    const answer = toServer.find(m => m.id === 'a' + (n + 1));
+    assert.equal(answer.result.action, 'accept', 'still allowed for the session');
+    assert.equal('remember' in answer.result.content, false);
+  }
 });
 
 test('a change in Codex\'s sandbox state means a new engine kernel: full guard setup, and the relay\'s own calls follow it', async () => {
@@ -285,14 +291,33 @@ test('a change in Codex\'s sandbox state means a new engine kernel: full guard s
   } finally { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); }
 });
 
+function leaseHarness(t, inputLease) {
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const toServer = [], toClient = [];
+  for (const [stream, records] of [[serverIn, toServer], [clientOut, toClient]])
+    stream.on('data', chunk => chunk.toString().trim().split('\n').forEach(line => records.push(JSON.parse(line))));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, modHost: () => false, ...(inputLease ? { inputLease } : {}) });
+  t.after(() => relay.close());
+  const send = (stream, msg) => stream.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
+  return { toServer, toClient, client: msg => send(clientIn, msg), engine: msg => send(serverOut, msg) };
+}
+const fakeLease = () => ({ acquire: () => 'fixture-key', renew() {}, grant() {}, close() {} });
 test('an Interrupt hook during a running call is answered at once and ends the turn when the call finishes', async t => {
-  const h = harness(t, false);
-  h.client({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'await new Promise(r => setTimeout(r, 1e9))' } } }); await tick();
+  const h = leaseHarness(t, fakeLease());
+  h.client({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'await cua.getState()' } } }); await tick();
+  assert.ok(h.toServer.some(m => m.id === 1), 'the call is running');
   h.client({ id: 2, method: 'tools/call', params: { name: 'turn_ended', arguments: { hook_event_name: 'Interrupt' } } }); await tick();
   assert.deepEqual(h.toClient.find(m => m.id === 2).result, { content: [] }, 'within Codex\'s 3-second hook limit');
-  h.engine({ id: 1, result: { isError: true, content: [{ type: 'text', text: 'cancelled' }] } }); await tick();
+  assert.equal(h.toServer.filter(m => m.params?.name === 'turn_ended').length, 0, 'not while the call runs');
+  h.engine({ id: 1, result: { isError: true, content: [{ type: 'text', text: 'cancelled' }] } }); await tick(); await tick();
   const end = h.toServer.findLast(m => m.params?.name === 'turn_ended');
   assert.equal(end?.params.arguments.hook_event_name, 'Interrupt');
+});
+test('without an input lease an Interrupt is not answered early, so nobody ends a turn under a running call that way', async t => {
+  const h = leaseHarness(t);
+  h.client({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'await cua.getState()' } } }); await tick();
+  h.client({ id: 2, method: 'tools/call', params: { name: 'turn_ended', arguments: { hook_event_name: 'Interrupt' } } }); await tick();
+  assert.notDeepEqual(h.toClient.find(m => m.id === 2)?.result, { content: [] });
 });
 
 test('an unused turn\'s hook still lets go of any input lease, and an unexpanded event name reads as Stop', async t => {
@@ -313,17 +338,80 @@ test('an unused turn\'s hook still lets go of any input lease, and an unexpanded
   assert.equal(h.toServer.findLast(m => m.params?.name === 'turn_ended').params.arguments.hook_event_name, 'Stop');
 });
 
-test('outside the mod\'s host a model can\'t stop, resume or call turbo tools through the relay', async t => {
-  const h = harness(t, false);
-  for (const [id, args] of [[1, { sleight_stop: true }], [2, { sleight_resume: true }]]) {
-    h.client({ id, method: 'tools/call', params: { name: 'turn_ended', arguments: args } }); await tick();
-    assert.equal(h.toClient.find(m => m.id === id).result.isError, true, JSON.stringify(args));
+test('stop and resume, the user\'s own controls, work on every host; only a turbo turn needs the mod', async t => {
+  for (const mod of [false, true]) {
+    const h = harness(t, mod);
+    h.client({ id: 1, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_resume: true } } }); await tick();
+    assert.deepEqual(h.toClient.find(m => m.id === 1).result, { content: [] }, `resume with mod ${mod}`);
+    h.client({ id: 2, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_stop: true } } }); await tick();
+    assert.notEqual(h.toClient.find(m => m.id === 2)?.result?.content?.[0]?.text, 'Trusted turn binding unavailable.', `stop with mod ${mod}`);
+    h.client({ id: 3, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_turbo: { event: 'bootstrap' } } } }); await tick();
+    assert.equal(h.toClient.find(m => m.id === 3).result.isError, true, 'no turbo bridge here, and none binds without the mod');
   }
-  assert.equal(h.toServer.filter(m => m.params?.name === 'turn_ended').length, 0);
 });
 
 test('the doctor reads dotted plugin keys too', () => {
   const states = pluginStates('plugins."computer-use@openai-bundled".enabled = false\n\n[plugins]\n"sleight@sleight".enabled = true\n');
   assert.equal(states.get('sleight@sleight'), true);
   assert.equal(states.get('computer-use@openai-bundled'), false);
+});
+
+test('the kernel identity is the sandbox policy itself: key order and launcher changes keep handles and setup', async () => {
+  const { GUARD_READY } = await import('../plugins/sleight/lib/document-scope.mjs');
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const sent = [];
+  serverIn.on('data', bytes => sent.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, modHost: () => false });
+  try {
+    const call = (id, meta, code = 'await cua.getState();') => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code }, _meta: meta } }) + '\n');
+    const respond = id => serverOut.write(JSON.stringify({ id, result: { content: [{ type: 'text', text: GUARD_READY }] } }) + '\n');
+    const full = id => /globalThis\.__sleightDocumentGuardSetup = /.test(sent.find(m => m.id === id).params.arguments.code);
+    const kernel = id => /__sleightGuardKernel = (\d+)/.exec(sent.find(m => m.id === id).params.arguments.code)?.[1];
+    const A = { permissionProfile: 'workspace-write', sandboxCwd: '/p' }, A2 = { sandboxCwd: '/p', permissionProfile: 'workspace-write' };
+    const B = { permissionProfile: 'danger-full-access', sandboxCwd: '/p' };
+    call(1, { 'codex/sandbox-state': A, 'codex/sandbox-launcher': { codexExecutable: '/a/codex' } }); await tick(); respond(1); await tick();
+    assert.ok(full(1)); const a = kernel(1);
+    call(2, { 'codex/sandbox-state-meta': A2, 'codex/sandbox-launcher': { codexExecutable: '/b/codex' } }); await tick(); respond(2); await tick();
+    assert.equal(full(2), false, 'same policy, other key order and launcher: same kernel');
+    call(3, { 'codex/sandbox-state': B }); await tick(); respond(3); await tick();
+    assert.ok(full(3)); const b = kernel(3);
+    call(4, { 'codex/sandbox-state': A }); await tick(); respond(4); await tick();
+    assert.ok(full(4), 'back to A: set up again');
+    const back = kernel(4);
+    assert.ok(a && b && back && new Set([a, b, back]).size === 3, 'each switch gets a new kernel epoch, so A\'s old guard state is replaced');
+    call(5, {}); await tick(); respond(5); await tick();
+    assert.ok(full(5), 'a call without sandbox state after calls with it is another kernel');
+  } finally { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); }
+});
+
+test('in the kernel, setup for a newer epoch replaces old guard state and keeps the raw getApp; the same epoch keeps it', async () => {
+  const { readCode } = await import('../plugins/sleight/lib/document-scope.mjs');
+  const { createContext, runInContext } = await import('node:vm');
+  const raw = async name => ({ name, getAXState: async () => 'Window: "W", App: X.' });
+  const context = createContext({ cua: { getApp: raw, listApps: async () => [] }, nodeRepl: { write() {} } });
+  const run = code => runInContext('(async () => {' + code + '})()', context);
+  await run(readCode('void 0;', { kernel: 1 }));
+  runInContext('globalThis.__sleightDocumentGuard.marker = "A1"', context);
+  await run(readCode('void 0;', { kernel: 1 }));
+  assert.equal(runInContext('globalThis.__sleightDocumentGuard.marker', context), 'A1', 'same epoch keeps state');
+  await run(readCode('void 0;', { kernel: 3 }));
+  assert.equal(runInContext('globalThis.__sleightDocumentGuard.marker', context), undefined, 'newer epoch starts clean');
+  assert.equal(runInContext('globalThis.__sleightDocumentGuard.getApp.name', context), 'bound raw', 'the raw getApp, not a wrapper');
+});
+
+test('a sandbox state that arrives while the warm-up is still running gets the full setup', async () => {
+  const { GUARD_READY } = await import('../plugins/sleight/lib/document-scope.mjs');
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const sent = [];
+  serverIn.on('data', bytes => sent.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, warmRepl: true, changeReview: false, modHost: () => false });
+  try {
+    const send = msg => clientIn.write(JSON.stringify(msg) + '\n'), respond = msg => serverOut.write(JSON.stringify(msg) + '\n');
+    send({ id: 1, method: 'initialize', params: {} }); respond({ id: 1, result: { capabilities: {} } }); send({ method: 'notifications/initialized' }); await tick();
+    const warm = sent.find(m => String(m.id).startsWith('sleight-warm-'));
+    send({ id: 2, method: 'tools/call', params: { name: 'js', arguments: { code: 'let app = await cua.getApp("Calculator");' }, _meta: { 'codex/sandbox-state': { p: 1 } } } }); await tick();
+    assert.equal(sent.some(m => m.id === 2), false, 'held behind the warm-up');
+    respond({ id: warm.id, result: { content: [{ type: 'text', text: GUARD_READY }] } }); await tick(); await tick();
+    assert.match(sent.find(m => m.id === 2).params.arguments.code, /globalThis\.__sleightDocumentGuardSetup = /);
+  } finally { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); }
 });

@@ -56,7 +56,7 @@
 //
 // `trace`, when given, receives every message as it passes, for debugging.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
@@ -795,10 +795,21 @@ export function createRelay({
   // kernel, and a change in it means a fresh kernel: no guard setup and no handles (the first getApp in Codex failed on
   // the warm kernel's setup, 2 of 2 live tasks, 2026-10-19).
   const ENGINE_CONTEXT_KEYS = ['codex/sandbox-state', 'codex/sandbox-state-meta', 'codex/sandbox-launcher'];
-  let engineContext = {}, engineContextKey = '{}';
+  let engineContext = {}, engineContextKey = '';
   const engineMeta = () => ({ ...engineContext, [META_KEY]: turnMeta() });
-  // Codex marks an answer its auto-reviewer gave (approvals_reviewer in _meta). Only the user's own answer writes Always.
-  const reviewerAnswer = result => !!result?._meta && typeof result._meta === 'object' && Object.hasOwn(result._meta, 'approvals_reviewer');
+  // Codex marks who answered a form (approvals_reviewer in _meta; its auto-review writes "auto_review"). Only an answer with
+  // no marker or the marker "user" writes Always. Any other marker, unknown ones included, is a session allow.
+  const reviewerAnswer = result => {
+    const meta = result?._meta;
+    return !!meta && typeof meta === 'object' && Object.hasOwn(meta, 'approvals_reviewer') && meta.approvals_reviewer !== 'user';
+  };
+  // The kernel identity is the sandbox policy itself (codex/sandbox-state, or its alias), hashed over sorted keys. The launcher
+  // and key order don't change it. Each change gets a new epoch, which the guard setup checks in the kernel, so a return
+  // to an earlier kernel starts from clean guard state.
+  const stableJson = value => Array.isArray(value) ? '[' + value.map(stableJson).join(',') + ']'
+    : value && typeof value === 'object' ? '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + stableJson(value[key])).join(',') + '}'
+    : JSON.stringify(value);
+  let kernelEpoch = 0;
   const HOOK_ARGS = ['hook_event_name', 'session_id', 'turn_id'];
   // Turbo in Codex (codex-turn.mjs): Codex's prompt hook binds a turn through turn_started, its Stop and Interrupt hooks
   // release it. Set from initialize's clientInfo, and never under the mod, whose own handshake stays as it was.
@@ -2476,10 +2487,9 @@ export function createRelay({
     }
     if (msg.method === 'initialize') codexClient = codexTurnClient(msg.params?.clientInfo);
     if (msg.method === 'tools/call' && msg.params?.name === TURN_START_TOOL && !modHost()) { codexTurnStart(msg); return; }
-    // Only the mod stops or resumes sleight and binds turbo's turns. In another host only a model could send these, so
-    // they take the same refusal. (A turbo tool called by name there reaches a bridge no turn ever bound, which fails it.)
-    const modOnly = ['sleight_stop', 'sleight_resume'].some(key => Object.hasOwn(msg.params?.arguments ?? {}, key)) && !modHost();
-    if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && (Object.hasOwn(msg.params.arguments ?? {}, 'sleight_turbo') || modOnly)) {
+    // Stop and resume are the user's controls and work on every host. Only binding a turbo turn needs the mod. (A turbo
+    // tool called by name in another host reaches a bridge no turn ever bound, which fails it.)
+    if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && Object.hasOwn(msg.params.arguments ?? {}, 'sleight_turbo')) {
       // Host-protected own hook calls only. Bypass journals, tracing, result
       // compaction and the engine so the private bootstrap never reaches them.
       const reply = result => {
@@ -2488,7 +2498,7 @@ export function createRelay({
       };
       const refuse = () => reply({ isError: true, content: [{ type: 'text', text: 'Trusted turn binding unavailable.' }] });
       // Without the mod nothing stops the model from calling turn_ended, so no host but the mod's binds a turbo turn.
-      if (modOnly || !directHost || !modHost() || disposed || msg.id === undefined || Object.keys(msg.params.arguments).length !== 1) { refuse(); return; }
+      if (!directHost || !modHost() || disposed || msg.id === undefined || Object.keys(msg.params.arguments).length !== 1) { refuse(); return; }
       const frame = msg.params.arguments.sleight_turbo;
       if (frame && Object.keys(frame).length === 1 && frame.event === 'bootstrap' && !installedBootstrapped) {
         installedBootstrapped = true;
@@ -2519,8 +2529,10 @@ export function createRelay({
     if (msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name)) {
       const next = {};
       for (const key of ENGINE_CONTEXT_KEYS) if (msg.params._meta && Object.hasOwn(msg.params._meta, key)) next[key] = msg.params._meta[key];
-      const key = JSON.stringify(next);
-      if (key !== engineContextKey) { engineContext = next; engineContextKey = key; trace('engine-context', { keys: Object.keys(next) }); forgetHandles(); }
+      const policy = next['codex/sandbox-state'] ?? next['codex/sandbox-state-meta'];
+      const key = policy === undefined ? '' : createHash('sha256').update(stableJson(policy)).digest('hex').slice(0, 16);
+      engineContext = next;
+      if (key !== engineContextKey) { engineContextKey = key; kernelEpoch++; trace('engine-context', { key, epoch: kernelEpoch }); forgetHandles(); }
     }
     // Claude sometimes sends js the Bash tool's parameter name (6 of 437 calls, 2026-10-07).
     const jsArgs = msg.method === 'tools/call' && msg.params?.name === 'js' ? msg.params.arguments : undefined;
@@ -3064,9 +3076,10 @@ export function createRelay({
       }
       // Codex fires Interrupt while the interrupted call may still run, and gives the hook 3 seconds. Answer now and end
       // the turn once the call finishes, instead of refusing it and leaving the turn to the 30-second idle end.
-      if (running.size && msg.params.arguments?.hook_event_name === 'Interrupt') {
+      // Only with an input lease, whose drain wait keeps the turn open until the call has finished.
+      if (running.size && inputLease && msg.params.arguments?.hook_event_name === 'Interrupt') {
         toClient({ jsonrpc: '2.0', id: msg.id, result: { content: [] } });
-        void endOpenTurn(true, undefined, 'Interrupt'); return;
+        endOpenTurn(true, undefined, 'Interrupt').catch(error => trace('interrupt-end-error', { error: error?.message })); return;
       }
     }
     if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.params.arguments?.sleight_stop === true && stopEngine) {
@@ -3419,7 +3432,7 @@ export function createRelay({
         changeCalls.set(msg.id, { read, safe, entry, window: lastWindow, expected: documentKey(lastWindow), target: leaseWindow ?? lastWindow,
           observe: !browser && (!read || (!isInventoryRead(originalCode) && /cua\.getApp\(|\.(?:getAXState|getAXStateAndScreenshot)\(/.test(originalCode))) });
         if (typeof originalCode === 'string') {
-          const setup = { reuseSetup: guardReady, acknowledge: true, prompt };
+          const setup = { reuseSetup: guardReady, acknowledge: true, prompt, ...(kernelEpoch ? { kernel: kernelEpoch } : {}) };
           const modes = guardMode?.split(',').map(mode => mode.trim()) ?? [], careful = modes.includes('careful');
           const target = documentMode ? observedDocument : inputLease ? leaseWindow : lastWindow;
           const reason = /* notice */ documentMode ? undefined : selectedWindow ? `Selected window changed. ${selectionRecovery()}` : inputLease

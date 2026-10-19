@@ -38,10 +38,11 @@ Approvals follow the same rules as in Claude Code. Each app gets one card with A
 and Decline. Allow lasts as long as Codex keeps sleight's server running, which can span more than one
 thread. Codex shows the card as its own prompt. Picking Always there writes sleight's pre-approved
 list, exactly as clicking Always allow does in Claude Code, and the owner saw that happen for TextEdit
-on 2026-10-19. Codex never fills in that choice for you. Its own auto-review and its full-access mode
-answer only cards without fields, and sleight's card has one, so they decline it or ask you. A headless
-`codex exec` run declines it, so it can only use apps you've pre-approved. sleight also ignores an
-Always that Codex marks as its reviewer's.
+on 2026-10-19. In the Codex source we read (openai/codex at 89461ea6, newer than the installed
+0.160.0), Codex never fills in that choice for you. Its auto-review and its full-access mode answer
+only cards without fields, and sleight's card has one, so they decline it or ask you. A headless
+`codex exec` run declines it, so it can only use apps you've pre-approved. sleight writes Always only
+from an answer Codex doesn't mark or marks as the user's. Any other marker counts as Allow.
 
 When Codex's own Computer Use plugin is on too, the model sees two computer-use surfaces. sleight's
 skill listing tells it to use sleight's tools. To start a session without Codex's plugin:
@@ -65,8 +66,9 @@ to it except the benchmark ones. Export a setting in the shell that starts Codex
 
 Live checks so far on 2026-10-19 used Codex 0.160.0 and gpt-6.1-sol with the owner at the Mac.
 Calculator worked out 12 × 12 = 144 in 22.5 s, and a new plain TextEdit document took 44.4 s, including the
-approval. In both, the first `getApp` failed and the model retried. Codex's sandbox state sends each call
-to its own engine kernel, and sleight now sets that kernel up first.
+approval. In both, the first `getApp` failed and the model retried. We think Codex's sandbox state
+sends each call to an engine kernel of its own. sleight now sets up again whenever that state changes,
+which unit tests cover but no live run has checked yet.
 
 ## Cursor and generic clients
 
