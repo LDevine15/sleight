@@ -1,0 +1,35 @@
+{
+  "mcpServers": {
+    "plugin_sleight_computer": {
+      "command": "./bin/sleight-mcp",
+      "cwd": ".",
+      "startup_timeout_sec": 120,
+      "tool_timeout_sec": 600,
+      "env": {
+        "SLEIGHT_TURBO": "0"
+      },
+      "env_vars": [
+        "CODEX_HOME",
+        "SLEIGHT_APPROVAL_PROMPT",
+        "SLEIGHT_APPROVAL_SCOPE",
+        "SLEIGHT_CHANGE_REVIEW",
+        "SLEIGHT_CHATGPT_APP",
+        "SLEIGHT_CLIPBOARD",
+        "SLEIGHT_CONFIRM_PAYMENTS",
+        "SLEIGHT_DRAG",
+        "SLEIGHT_FLOW_RULES",
+        "SLEIGHT_HOVER",
+        "SLEIGHT_IDLE_TURN_END_MS",
+        "SLEIGHT_MENU_BAR",
+        "SLEIGHT_OPEN_FILE",
+        "SLEIGHT_RECEIPTS",
+        "SLEIGHT_RECEIPT_REDACT_TITLES",
+        "SLEIGHT_SELECT_WINDOW",
+        "SLEIGHT_SURFACES",
+        "SLEIGHT_TRACE",
+        "SLEIGHT_TRACE_CODE",
+        "SLEIGHT_TRACE_CUT"
+      ]
+    }
+  }
+}

@@ -110,6 +110,7 @@ import { initializationAdvice } from './initialization-guidance.mjs';
 import { syntaxErrorHint, syntaxOrigin } from './syntax-errors.mjs';
 import { compactJsDescription } from './tool-description.mjs';
 import { createLightReturn, lightReturnCode } from './light-return.mjs';
+import { hostLabel } from './host-label.mjs';
 
 // App handles have getAXState but no getState; only cua has getState. 13 of 27 sleight runs wrote app.getState
 // in their first call and 8 errored, losing a turn each (Fable study, 2026-10-17 11:53Z pass).
@@ -646,14 +647,16 @@ function windowsInText(text) {
 
 // The server marks turn_ended with `_meta.ui.visibility: []`, which Claude Code
 // reads as "callable by no one", the mod included. Drop that, and describe it
-// as internal; the mod refuses model calls to it.
-function internalTurnEnd(tool) {
+// as internal; the mod refuses model calls to it. Other hosts keep the mark:
+// Codex hides the tool from the model and its plugin hooks still call it.
+function internalTurnEnd(tool, keepHidden = false) {
   const { _meta, ...rest } = tool;
   const { ui, ...otherMeta } = _meta ?? {};
+  const meta = keepHidden && ui !== undefined ? { ...otherMeta, ui } : otherMeta;
   return {
     ...rest,
     description: TURN_END_DESCRIPTION,
-    ...(Object.keys(otherMeta).length ? { _meta: otherMeta } : {}),
+    ...(Object.keys(meta).length ? { _meta: meta } : {}),
   };
 }
 
@@ -661,6 +664,10 @@ export function createRelay({
   directBrowser,
   turboUnavailable,
   directHost,
+  // Whether sleight's mod runs in this host (Claude Code). Only the mod can call turn_ended for the model, end a turn
+  // after a used one only, and bind a turbo turn to the user's message. Elsewhere (Codex, Cursor) turn_ended stays hidden
+  // from the model as the engine marks it, turbo's tools are left out, and a turn sleight sat out ends here.
+  modHost = () => true,
   // Lists apps holding keyboard filter taps ([{ app, bundleId }]), checked when a turn ends.
   keyboardTaps,
   windowIdentity,
@@ -781,6 +788,7 @@ export function createRelay({
   if (directBrowser !== undefined && !isV3Frontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
   if (directHost !== undefined && !(isV3Bridge(directHost) && isV3Frontend(directBrowser))) throw Error('TRUSTED_ROUTE_REQUIRED');
   let installedBootstrapped = false;
+  let clientHost; // the menu bar's host line, from initialize's clientInfo (host-label.mjs)
   let turboNoticeShown = false;
   const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ??
     (turboUnavailable ? ['browser_open','browser_read','browser_act','browser_fill','browser_tabs'] : []));
@@ -2455,14 +2463,15 @@ export function createRelay({
           clientOut.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\n');
       };
       const refuse = () => reply({ isError: true, content: [{ type: 'text', text: 'Trusted turn binding unavailable.' }] });
-      if (!directHost || disposed || msg.id === undefined || Object.keys(msg.params.arguments).length !== 1) { refuse(); return; }
+      // Without the mod nothing stops the model from calling turn_ended, so no host but the mod's binds a turbo turn.
+      if (!directHost || !modHost() || disposed || msg.id === undefined || Object.keys(msg.params.arguments).length !== 1) { refuse(); return; }
       const frame = msg.params.arguments.sleight_turbo;
       if (frame && Object.keys(frame).length === 1 && frame.event === 'bootstrap' && !installedBootstrapped) {
         installedBootstrapped = true;
         reply({ isError: false, content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: directHost.bootstrapEnvelope() }) }] }); return;
       }
       if (!installedBootstrapped || frame?.event !== 'begin') { refuse(); return; }
-      directHost.bind(frame, turboApps()).then(available => {
+      directHost.bind(frame, turboApps(), clientHost).then(available => {
         if (available) { resumeRequested = true; resumeAfterStop(); }
         reply({ isError: !available, content: [] });
       }).catch(refuse);
@@ -2946,6 +2955,7 @@ export function createRelay({
     if (msg.method === 'tools/call' && msg.id !== undefined && !callGenerations.has(msg.id)) callGenerations.set(msg.id, stopGeneration);
     if (msg.method === 'initialize') {
       onInitialize(msg.params?.clientInfo);
+      clientHost = hostLabel(msg.params?.clientInfo);
       const capabilities = msg.params?.capabilities ?? {};
       const elicitation = capabilities.elicitation;
       // MCP 2025-06-18 used {}; later versions distinguish form and URL prompts.
@@ -2972,6 +2982,13 @@ export function createRelay({
     }
     if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.params.arguments?.sleight_resume === true) {
       resumeRequested = true; resumeAfterStop();
+      toClient({ jsonrpc: '2.0', id: msg.id, result: { content: [] } }); return;
+    }
+    // Codex's Stop hook ends every turn, including the ones sleight sat out. With nothing to end, answer here, so an
+    // unused turn neither reaches the engine nor writes a receipt. The mod calls only after a used turn.
+    if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.id !== undefined && !modHost() &&
+        !turnUsed && !failedTurnEnds.size && !running.size && !tabsMayNeedCleanup && !tabCleanupPending &&
+        Object.keys(msg.params.arguments ?? {}).every(key => ['hook_event_name', 'session_id', 'turn_id'].includes(key))) {
       toClient({ jsonrpc: '2.0', id: msg.id, result: { content: [] } }); return;
     }
     if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.params.arguments?.sleight_stop === true && stopEngine) {
@@ -4290,7 +4307,7 @@ export function createRelay({
       msg.result.tools = msg.result.tools
         .filter(t => !HIDDEN_TOOLS.has(t.name))
         .filter(t => !documentMode || t.name === 'js' || t.name === TURN_END_TOOL)
-        .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t) : t))
+        .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t, !modHost()) : t))
         .map(t => {
           if (t.name !== 'js') return t;
           const compact = compactJsDescription(t.description, firstCallBatch, leanCalls);
@@ -4298,7 +4315,7 @@ export function createRelay({
           const description = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt) : t.description;
           return { ...t, description: leanCalls ? leanCallDescription(description) : description };
         })
-        .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [], directBrowser?.tools() ?? [])
+        .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [], (modHost() && directBrowser?.tools()) || [])
         // Claude Code defers MCP tools behind a search, which cost a turn before the first call, and
         // again before the first drag (3/3 textedit-drag runs, 2026-10-08). sleight's descriptions
         // are short, so all but the internal turn_ended load up front, local tools included.

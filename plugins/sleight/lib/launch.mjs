@@ -36,6 +36,7 @@ import { SELECT_WINDOW_TOOL, selectWindow } from './select-window.mjs';
 import { probeHelper, staleHelperJobs } from './helper-health.mjs';
 import { replayBridge } from './replay.mjs';
 import { serverFromChatGPTApp, setup } from './setup.mjs';
+import { codexDoctorLines, codexStatus } from './codex-host.mjs';
 
 const PLUGIN_DIR = ['plugins', 'cache', 'openai-bundled', 'unified-computer-use'];
 const SERVER_KEY = 'cua_repl';
@@ -135,17 +136,24 @@ const readForbiddenTargets = () => execFileSync(process.execPath, [join(LIB, 'pr
 const listLaunchdJobs = () => new Promise((resolve, reject) =>
   execFile(process.execPath, [join(LIB, 'probe-supervisor.mjs'), '--launchd-jobs'], { timeout: 6000 }, (err, stdout) => (err ? reject(err) : resolve(stdout))));
 
+// Read-only, like the turbo lines: is sleight a Codex plugin here, and is Codex's own Computer Use on beside it.
+function codexDoctor(env) {
+  try { return codexDoctorLines(codexStatus({ env })); }
+  catch (err) { return ['Codex', `PROBLEM   could not read Codex's config (${err.message})`]; }
+}
+
 // Read-only. The doctor prints it first so it shows even when the engine checks below stop early.
 async function turboDoctorLines() {
   try { const turbo = await import('./direct-browser/turbo-setup.mjs'); return turbo.doctorLines(turbo.turboDiagnosis()); }
   catch (err) { return ['turbo (direct browser path)', `PROBLEM   could not read turbo state (${err.message})`]; }
 }
 
-export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines } = {}) {
+export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, codex = codexDoctor } = {}) {
   if (app !== undefined && (typeof app !== 'string' || !app.trim() || app.startsWith('-'))) {
     log('usage: sleight-mcp --doctor [running app name or bundle ID]'); return 1;
   }
   for (const line of await turbo()) log(line);
+  for (const line of codex(env)) log(line);
   const s = resolveServer(env);
   if (s.error) { log(`sleight: ${s.error}`); return 1; }
   await probeSurfaces(s, env);
@@ -926,6 +934,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     // End the engine's turn after 30 s without a running call, so the app it
     // holds is released even where the mod doesn't run. 0 turns this off.
     idleTurnEndMs: Number(process.env.SLEIGHT_IDLE_TURN_END_MS ?? 30000),
+    // The mod runs only in Claude Code, which initialize's clientInfo names (hostWording).
+    modHost: () => wording().claudeCode,
     inputLease: new InputLease({ directory: leaseDirectory, holder: `session ${sessionId} (pid ${process.pid})` }),
     engineForbiddenTargets: forbiddenTargetsAllowed(readForbiddenTargets),
     onLeaseFault: err => { process.stderr.write(`sleight: ${err.message}; stopping the owned engine.\n`); terminateEngine(); },

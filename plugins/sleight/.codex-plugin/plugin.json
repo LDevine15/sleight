@@ -1,0 +1,74 @@
+{
+  "name": "sleight",
+  "version": "1.2.5",
+  "description": "Unofficial: lets Codex drive macOS apps in the background through the computer-use engine bundled with the ChatGPT desktop app, without taking over your cursor.",
+  "author": {
+    "name": "Land o' Clusters",
+    "url": "https://github.com/Land-o-Clusters"
+  },
+  "homepage": "https://github.com/Land-o-Clusters/sleight",
+  "repository": "https://github.com/Land-o-Clusters/sleight",
+  "license": "MIT",
+  "keywords": [
+    "computer-use",
+    "macos",
+    "automation",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.codex-plugin/mcp.json",
+  "hooks": {
+    "hooks": {
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "mcp_tool",
+              "server": "plugin_sleight_computer",
+              "tool": "turn_ended",
+              "input": {
+                "hook_event_name": "${hook_event_name}"
+              },
+              "timeout": 30,
+              "statusMessage": "sleight is releasing the apps it used"
+            }
+          ]
+        }
+      ],
+      "Interrupt": [
+        {
+          "hooks": [
+            {
+              "type": "mcp_tool",
+              "server": "plugin_sleight_computer",
+              "tool": "turn_ended",
+              "input": {
+                "hook_event_name": "${hook_event_name}"
+              },
+              "timeout": 3,
+              "statusMessage": "sleight is releasing the apps it used"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "interface": {
+    "displayName": "sleight",
+    "shortDescription": "Drive Mac apps in the background",
+    "longDescription": "sleight drives macOS apps through the computer-use engine bundled with the ChatGPT desktop app. The target app can stay behind your other windows, and your pointer stays yours. Unofficial: OpenAI and Anthropic don't endorse or support it.",
+    "developerName": "Land o' Clusters",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/Land-o-Clusters/sleight",
+    "logo": "./assets/icon.png",
+    "defaultPrompt": [
+      "Use sleight to open Calculator in the background and work out 12 × 12 by clicking its buttons"
+    ],
+    "brandColor": "#E8622C"
+  }
+}

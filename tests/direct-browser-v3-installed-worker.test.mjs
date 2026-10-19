@@ -257,6 +257,23 @@ test('the menu bar status reads the browser from the operator config only', asyn
   await settle();
   assert.equal(views[0].data.browser, 'Google Chrome');
 });
+test('the menu bar status names the host the relay labelled from clientInfo, and an odd host refuses the turn', async t => {
+  const f = fixture(), views = [];
+  f.dependencies.createUi = () => ({ present(id, data, choices) { views.push({ id, data, choices }); }, authenticate: () => true, close() {} });
+  const host = await startInstalledV3Worker({ channel: f.channel }, f.dependencies);
+  t.after(() => host.close());
+  await settle();
+  assert.equal(views[0].data.host, undefined, 'no host before a turn names one, and none is guessed');
+  f.channel.emit('message', { version: 3, id: 'odd', method: 'begin', params: { turn: 'zero', text: 'read', apps: [], host: 'Codex\nmodel: gpt' } });
+  await settle();
+  assert.equal(f.frames.find(frame => frame.id === 'odd').result.available, false);
+  assert.equal(views.at(-1).data.host, undefined);
+  f.channel.emit('message', { version: 3, id: 'named', method: 'begin', params: { turn: 'one', text: 'read', apps: [], host: 'Claude Code 2.1.289' } });
+  await settle();
+  assert.equal(f.frames.find(frame => frame.id === 'named').result.available, true);
+  assert.equal(views.at(-1).data.host, 'Claude Code 2.1.289');
+  assert.equal(Object.hasOwn(views.at(-1).data, 'model'), false);
+});
 test('installed delayed cleanup retains ownership until collection succeeds', async t => {
   const f = await controls(t); let cleanedUp = false;
   f.dependencies.createPages = () => ({ endTurn: async () => ({ cleanedUp }), list: async () => [] });

@@ -101,7 +101,13 @@ func statusRows(_ data: [String: Any], _ choices: [String]) -> [StatusRow]? {
         !name.isEmpty && name.count <= 40 && name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " }) ? name : nil }
     let title = browser.map { status.hasPrefix("connected") ? word + " to " + $0 : word + " · " + $0 } ?? word
     var details: [String] = []
-    if status == "connected-idle" { details.append("Its Claude Code session has ended") }
+    // The host as the session's MCP client introduced itself ("Claude Code 2.1.289"), never a guess, and no model:
+    // no host reports one through MCP.
+    if let host = (data["host"] as? String).flatMap({ name in
+        name.count <= 72 && name.range(of: "^[A-Za-z0-9][A-Za-z0-9 ._+-]*$", options: .regularExpression) != nil ? name : nil }) {
+        details.append("Host: " + host)
+    }
+    if status == "connected-idle" { details.append("Its session has ended") }
     if status == "paused" { details.append("Resumes when Claude next asks, with your OK") }
     if let payments = data["payments"] as? String, let words = paymentWords[payments] { details.append(words) }
     if data["optOut"] as? String == "failed" { details.append(optOutFailed) }

@@ -1,0 +1,20 @@
+{
+  "name": "sleight",
+  "interface": {
+    "displayName": "sleight"
+  },
+  "plugins": [
+    {
+      "name": "sleight",
+      "source": {
+        "source": "local",
+        "path": "./plugins/sleight"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
