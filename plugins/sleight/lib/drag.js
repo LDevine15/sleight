@@ -64,6 +64,18 @@ const inside = (b, p) => p.x >= b.X && p.x < b.X + b.Width && p.y >= b.Y && p.y 
 // host pid the launcher sends as handPid. The panel ignores mouse events, so a drop passes through it.
 let handPid = 0;
 let dp7 = true, dp2 = true;
+// The launcher enables these only with SLEIGHT_TRACE. Uptime is monotonic and shared
+// across helper processes. End means the phase unwound, including a thrown error.
+let tracePhases = false;
+function dragPhase(phase, edge) {
+  if (!tracePhases) return;
+  try { console.error('sleight-drag-phase ' + JSON.stringify({ phase, edge, monoMs: $.NSProcessInfo.processInfo.systemUptime * 1000 })); } catch (_) {}
+}
+function inDragPhase(phase, fn) {
+  dragPhase(phase, 'start');
+  try { return fn(); } finally { dragPhase(phase, 'end'); }
+}
+const settleDrag = seconds => inDragPhase('settle', () => delay(seconds));
 const overlay = w => /Computer Use$/.test(w.owner) || (handPid > 0 && w.pid === handPid);
 const attempt = (fn, fallback) => { try { return fn(); } catch (e) { if (e?.axCode === -25204) throw e; return fallback; } };
 const axFailure = (name, code) => Object.assign(new Error(`AX ${name} failed (${code})`), { axCode: Number(code) });
@@ -437,7 +449,7 @@ function textDropSpace(before, word, after, selected) {
 }
 
 function repairTextDrop(snapshot) {
-  const settle = () => { if (snapshot?.pid) attempt(() => settleAfterTextWrite(snapshot.pid)); };
+  const settle = () => { if (snapshot?.pid) attempt(() => inDragPhase('settle', () => settleAfterTextWrite(snapshot.pid))); };
   if (!snapshot || snapshot.preserveFormatting) return { spaceInserted: false };
   try {
     const after = snapshot.el.value();
@@ -661,7 +673,7 @@ function accessibilityMove(area, snapshot, end, window) {
     try { area.replace(...edits[1]); } catch (_) {}
     after = attempt(() => area.value(), null);
   }
-  attempt(() => area.settle());
+  attempt(() => inDragPhase('settle', () => area.settle()));
   // Safari's web text areas accept the writes and change nothing (2026-10-09). Nothing to undo,
   // so another path may try.
   if (after === before) throw new Error('the app ignored the Accessibility text writes');
@@ -742,8 +754,10 @@ function focusedSelection(pid) {
 const COVERED_NO_TEXT = (cover, detail = '') => `${cover} covers the window at the drag points, and this drag has no selected text${detail}. If the app offers this move without a drag (a button or menu command on the item, or keys it names), use that. Otherwise use the engine's app.drag in js once if the content may change; if the order or content is unchanged afterwards, don't repeat it: stop and tell the user that part of the window needs uncovering; nothing was pressed`;
 
 function raiseWindow(win) {
-  attempt(() => { win.attributes.byName('AXMain').value = true; });
-  win.actions.byName('AXRaise').perform();
+  return inDragPhase('raise', () => {
+    attempt(() => { win.attributes.byName('AXMain').value = true; });
+    win.actions.byName('AXRaise').perform();
+  });
 }
 
 // The process the window server gives a click at p to, from the system-wide Accessibility hit test, or null
@@ -1000,7 +1014,7 @@ function accessibilityCrossWindowMove(sourceArea, destinationArea, source, desti
       if (!sameRange(current, destinationSelection)) destinationArea.select(destinationSelection.location, destinationSelection.length);
       throw error;
     }
-  } finally { if (attempted) attempt(() => sourceArea.settle()); }
+  } finally { if (attempted) attempt(() => inDragPhase('settle', () => sourceArea.settle())); }
   const outcome = finishCrossWindowDrop(source, destination, a, b);
   if (sourceArea.value() !== before.slice(0, cutFrom) + before.slice(cutTo) || destinationArea.value() !== expected) {
     outcome.error = `Partial Accessibility text move between ${names}. Read both windows before continuing; undo the destination insertion there if the source still has its text.`;
@@ -1054,7 +1068,7 @@ function runCrossWindow(request) {
       }
     };
     previous = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-    if (!dp2) { raiseWindow(aw); delay(settleMs / 1000); }
+    if (!dp2) { raiseWindow(aw); settleDrag(settleMs / 1000); }
     const checkBoth = () => { checkWindow(a, pid, aw); return checkWindow(b, pid, bw); };
     checkBoth(); verifySemantic();
     const points = { start: at(a.bounds, startState.from), end: at(b.bounds, endState.to) };
@@ -1093,8 +1107,8 @@ function runCrossWindow(request) {
     if (globalThis.SLEIGHT_ACCESSIBILITY_MOVE !== false) {
       try {
         withinBudget(); validate();
-        const outcome = accessibilityCrossWindowMove(axTextArea(pid, points.start, source.el.reference),
-          axTextArea(pid, points.end, destination.el.reference), source, destination, end, a, b, progress);
+        const outcome = inDragPhase('ax-move', () => accessibilityCrossWindowMove(axTextArea(pid, points.start, source.el.reference),
+          axTextArea(pid, points.end, destination.el.reference), source, destination, end, a, b, progress));
         return JSON.stringify({ ok: !outcome.error, app, windowId: a.id, toWindowId: b.id, from, to, path: 'accessibility',
           ...(dp7 ? { fallbackReason: outcome.error ? `accessibility move failed: ${outcome.error}` : null } : {}), ...outcome });
       } catch (error) {
@@ -1108,7 +1122,7 @@ function runCrossWindow(request) {
       return JSON.stringify({ ok: false, app, windowId: a.id, toWindowId: b.id, from, to, path: 'none',
         fallbackReason, deliveryVerified: false, error: `${fallbackReason}; cross-window posting can copy text, so nothing was pressed` });
     }
-    if (dp2) { raiseWindow(aw); delay(settleMs / 1000); validate(); }
+    if (dp2) { raiseWindow(aw); settleDrag(settleMs / 1000); validate(); }
     let sequence;
     if (!cover) try {
       const build = backgroundBuilder(), event = (type, p) => build(type, p, a);
@@ -1125,7 +1139,7 @@ function runCrossWindow(request) {
       try {
         post(sequence[0]); delay(0.05);
         if (coveringApp(validate(), a, points)) throw new Error('another app now covers a drag endpoint; background mouse-down was skipped');
-        pressed = true; didPress = true; post(sequence[1]); delay(holdMs / 1000);
+        pressed = true; didPress = true; inDragPhase('posted-press', () => post(sequence[1])); delay(holdMs / 1000);
         for (const item of sequence.slice(2, -1)) { post(item); delay(0.02); }
       } catch (error) { postingError = String(error.message || error); }
       finally { if (pressed) { try { post(release); pressed = false; } catch (error) { throw new Error(`background release failed: ${error.message}; read both windows before continuing`); } } }
@@ -1138,13 +1152,13 @@ function runCrossWindow(request) {
     unchanged(); waitForIdle(); unchanged();
     path = 'foreground'; saved = $.CGEventGetLocation($.CGEventCreate(null));
     const focusedAt = Date.now();
-    target.activateWithOptions(0); raiseWindow(aw); delay(settleMs / 1000);
+    target.activateWithOptions(0); raiseWindow(aw); settleDrag(settleMs / 1000);
     validate(true); withinBudget();
     post = e => $.CGEventPost($.kCGHIDEventTap, e);
     const event = (type, p) => { const e = $.CGEventCreateMouseEvent(null, type, $.CGPointMake(p.x, p.y), $.kCGMouseButtonLeft); $.CGEventSetIntegerValueField(e, 1, 1); return e; };
     post(event(5, points.start)); delay(0.05);
     if (typedSince(focusedAt)) throw new Error('the user typed while the app was in front; nothing was pressed. Read both windows again and tell the user');
-    validate(true); release = event(2, points.start); pressed = true; didPress = true; post(event(1, points.start)); delay(holdMs / 1000);
+    validate(true); release = event(2, points.start); pressed = true; didPress = true; inDragPhase('posted-press', () => post(event(1, points.start))); delay(holdMs / 1000);
     for (let i = 1; i <= steps; i++) {
       const p = { x: points.start.x + (end.x - points.start.x) * i / steps, y: points.start.y + (end.y - points.start.y) * i / steps };
       release = event(2, p); post(event(6, p)); delay(0.02);
@@ -1183,6 +1197,7 @@ function run(argv) {
   };
   try {
     const request = JSON.parse(argv[0]);
+    tracePhases = request.trace === true;
     dp7 = request.dp7 !== false; dp2 = request.dp2 !== false;
     handPid = Number.isSafeInteger(request.handPid) && request.handPid > 0 ? request.handPid : 0;
     const { app, from, to, holdMs = 500, steps = 25, settleMs = 1500 } = request;
@@ -1244,7 +1259,7 @@ function run(argv) {
     catch (e) { fallbackReason = `background unavailable: ${e.message || e}`; }
     if (build || globalThis.SLEIGHT_ACCESSIBILITY_MOVE !== false) {
       previous = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-      if (!dp2) { raiseWindow(chosenWindow); delay(settleMs / 1000); }
+      if (!dp2) { raiseWindow(chosenWindow); settleDrag(settleMs / 1000); }
       checkWindow(main, pid, chosenWindow);
       verifySemantic();
       scanned = { info: dragContent(pid, chosenWindow, main.bounds, pointFrom, pointTo), bounds: main.bounds };
@@ -1294,11 +1309,11 @@ function run(argv) {
       };
       // Selected text uses the same pointer-free path in every app.
       if (points.text) {
-        const moved = byAccessibility();
+        const moved = globalThis.SLEIGHT_ACCESSIBILITY_MOVE === false ? null : inDragPhase('ax-move', byAccessibility);
         if (moved) return moved;
       }
       if (dp2 && !cover && build) {
-        raiseWindow(chosenWindow); delay(settleMs / 1000);
+        raiseWindow(chosenWindow); settleDrag(settleMs / 1000);
         const fresh = checkWindow(main, pid, chosenWindow);
         verifySemantic();
         const rechecked = validatePoints(dragContent(pid, chosenWindow, main.bounds, pointFrom, pointTo), main.bounds, pointFrom, pointTo, app);
@@ -1342,7 +1357,7 @@ function run(argv) {
           post(sequence[0]); delay(0.05);
           // Mark down before posting, so a posting exception still releases.
           pressed = true; didPress = true; current = sequence[sequence.length - 1];
-          post(sequence[1]); delay(holdMs / 1000);
+          inDragPhase('posted-press', () => post(sequence[1])); delay(holdMs / 1000);
           for (const item of sequence.slice(2, -1)) { post(item); delay(0.02); }
           post(current); pressed = false;
         } catch (e) { postingError = String(e.message || e); }
@@ -1391,7 +1406,7 @@ function run(argv) {
     raiseWindow(chosenWindow);
     // Right after the engine acts (say, selecting the text), a press that comes
     // at once doesn't take; 2 s later it does (2026-10-04). Wait for things to settle.
-    delay(settleMs / 1000);
+    settleDrag(settleMs / 1000);
     main = windows(true).find(w => w.id === main.id && w.pid === pid && w.layer === 0);
     if (!main || !sameBounds(frame(chosenWindow), main.bounds)) throw new Error('the chosen window changed or disappeared; read it again');
     verifySemantic();
@@ -1418,7 +1433,7 @@ function run(argv) {
     if (typedSince(focusedAt)) throw new Error(`the user typed while ${app} was in front, so their keys may have gone into it; nothing was pressed. Read the window again before continuing, and tell the user`);
     unchangedText();
     verifySemantic();
-    post($.kCGEventLeftMouseDown, start);
+    inDragPhase('posted-press', () => post($.kCGEventLeftMouseDown, start));
     pressed = true; didPress = true;
     delay(holdMs / 1000);
     for (let i = 1; i <= steps; i++) {

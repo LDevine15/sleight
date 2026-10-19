@@ -148,7 +148,9 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     AXUIElementSetAttributeValue: (el, name, value) => { el.attributes.byName(name).value = value; return 0; },
     AXUIElementPerformAction: (el, name) => { el.actions.byName(name).perform(); return 0; },
   });
-  const context = vm.createContext({ SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $: native, Ref: () => [], ObjC: { import() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); onDelay?.({ values, selected }); if (slowDelays) clock += 30000; },
+  const traces = [];
+  Object.defineProperty(native.NSProcessInfo.processInfo, 'systemUptime', { get: () => 1 + ++clock / 1000 });
+  const context = vm.createContext({ console: { error: line => traces.push(JSON.parse(line.replace(/^sleight-drag-phase /, ''))) }, SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $: native, Ref: () => [], ObjC: { import() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); onDelay?.({ values, selected }); if (slowDelays) clock += 30000; },
     Date: { now: () => clock },
     Application: () => ({ processes: { whose: () => [proc] } }) });
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8'), context);
@@ -193,7 +195,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     ...order.filter(id => second || id === 11).map(id => ({ id, pid: 7, owner: 'TextEdit', title: `${id}.txt`, layer: 0, bounds: { ...frames.get(id) } })),
   ];
   const run = changes => JSON.parse(context.run([JSON.stringify({ app: defaultAppId, from: [26.6, 38.5], to: [119, 38.5], dp2: false, ...changes })]));
-  return { run, events, restored, activations, pidEvents, values, mainWrites, delays, axWrites, textWrites, visits: () => visited };
+  return { run, traces, events, restored, activations, pidEvents, values, mainWrites, delays, axWrites, textWrites, visits: () => visited };
 }
 // Window 11's text area starts at x 105, so [150, 38.5] is past the line's end.
 const pastEnd = { windowId: 11, to: [150, 38.5] };
@@ -337,6 +339,31 @@ test('DP2 moves text without a raise or pre-move settle, with a same-app overlap
     assert.equal(h.pidEvents.length + h.events.length, 0);
   }
 });
+test('DP2 trace proves AX starts before any raise, while DP2 off preserves raise and settle first', () => {
+  for (const dp2 of [true, false]) {
+    for (const failArea of [false, true]) {
+      const h = harness({ background: true, ax: { failArea } });
+      const result = h.run({ ...pastEnd, dp2, trace: true });
+      assert.equal(result.ok, true, result.error);
+      const phases = h.traces.map(e => `${e.phase}:${e.edge}`);
+      const prefix = ['raise:start', 'raise:end', 'settle:start', 'settle:end'];
+      assert.deepEqual(phases, dp2
+        ? failArea ? ['ax-move:start', 'ax-move:end', ...prefix, 'posted-press:start', 'posted-press:end', 'settle:start', 'settle:end']
+          : ['ax-move:start', 'settle:start', 'settle:end', 'ax-move:end']
+        : failArea ? [...prefix, 'ax-move:start', 'ax-move:end', 'posted-press:start', 'posted-press:end', 'settle:start', 'settle:end']
+          : [...prefix, 'ax-move:start', 'settle:start', 'settle:end', 'ax-move:end']);
+      h.traces.forEach((e, i) => {
+        assert.deepEqual(Object.keys(e).sort(), ['edge', 'monoMs', 'phase']);
+        assert.ok(Number.isFinite(e.monoMs) && e.monoMs >= 0);
+        if (i) assert.ok(e.monoMs > h.traces[i - 1].monoMs);
+      });
+      assert.equal(JSON.stringify(h.traces).includes('alpha'), false);
+      const quiet = harness({ background: true, ax: { failArea } });
+      assert.deepEqual(quiet.run({ ...pastEnd, dp2 }), result);
+      assert.deepEqual(quiet.traces, []);
+    }
+  }
+});
 test('DP2 keeps raise and settle for posted presses and refuses a failed overlap raise', () => {
   const h = harness({ background: true });
   assert.equal(h.run({ ...pastEnd, dp2: true }).path, 'background');
@@ -344,6 +371,25 @@ test('DP2 keeps raise and settle for posted presses and refuses a failed overlap
   const blocked = harness({ background: true, stacked: true, raiseWorks: false, ax: {} });
   assert.equal(blocked.run({ ...pastEnd, dp2: true }).ok, false);
   assert.equal(blocked.axWrites.length + blocked.pidEvents.length + blocked.events.length, 0);
+});
+test('drag trace records the same-app overlap raise exception before the AX attempt', () => {
+  const h = harness({ background: true, stacked: true, ax: {} });
+  assert.equal(h.run({ ...pastEnd, dp2: true, trace: true }).path, 'accessibility');
+  assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), [
+    'raise:start', 'raise:end', 'ax-move:start', 'settle:start', 'settle:end', 'ax-move:end',
+  ]);
+});
+test('foreground and failed posted presses have paired phase events without changing results', () => {
+  for (const options of [{ ax: { failArea: true } }, { background: true, ax: { failArea: true }, postFails: true }]) {
+    const h = harness(options), r = h.run({ ...pastEnd, dp2: true, trace: true });
+    const quiet = harness(options);
+    assert.deepEqual(quiet.run({ ...pastEnd, dp2: true }), r);
+    assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), [
+      'ax-move:start', 'ax-move:end', 'raise:start', 'raise:end', 'settle:start', 'settle:end',
+      'posted-press:start', 'posted-press:end',
+      ...(options.background ? ['settle:start', 'settle:end'] : []),
+    ]);
+  }
 });
 test('DP2 posted fallback rechecks owner text and selection after its settle', () => {
   for (const change of ['text', 'selection']) {

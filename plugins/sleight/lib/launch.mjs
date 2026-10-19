@@ -342,6 +342,7 @@ const ASK_SECONDS = 300;
 const ownedHelpers = new Set();
 const pendingDrags = new Set();
 let helpersClosing = false;
+let helperTrace;
 function ownHelper(child) {
   ownedHelpers.add(child);
   child.once('close', () => ownedHelpers.delete(child));
@@ -709,7 +710,7 @@ export const HOVER_TOOL = {
 
 export function runScript(script, request, options = {}) {
   // Tests pass a stand-in for execFile directly; the drag cleanup path passes { cleanup: true }.
-  const { cleanup = false, run = execFile } = typeof options === 'function' ? { run: options } : options;
+  const { cleanup = false, run = execFile, trace = helperTrace } = typeof options === 'function' ? { run: options } : options;
   if (helpersClosing && !cleanup) return Promise.resolve({ ok: false, error: 'sleight session is closing' });
   // Base64 PNGs from ordinary app windows can exceed execFile's 1 MiB default.
   // The ghost hand stops waiting for locate.js after 2 s; a stalled AX app must not leave osascripts running.
@@ -717,7 +718,7 @@ export function runScript(script, request, options = {}) {
     script === 'stuck-escape.js' ? 5000 : 30000,
     ...(script === 'hover.js' ? { maxBuffer: 16 * 1024 * 1024 } : {}) };
   if (script === 'drag.js') request = { ...request, deadline: Date.now() + execOptions.timeout,
-    dp7: process.env.SLEIGHT_DP7 !== '0', dp2: process.env.SLEIGHT_DP2 !== '0' };
+    dp7: process.env.SLEIGHT_DP7 !== '0', dp2: process.env.SLEIGHT_DP2 !== '0', trace: !!process.env.SLEIGHT_TRACE };
   // Their cover checks skip the ghost hand's panel by this pid, which only the launcher sets: a pid
   // in the call could exempt a window that really covers the point.
   if (script === 'drag.js' || script === 'hover.js') {
@@ -725,8 +726,17 @@ export function runScript(script, request, options = {}) {
     request = handPid() ? { ...rest, handPid: handPid() } : rest;
   }
   return new Promise(resolve => {
-    ownHelper(run('osascript', ['-l', 'JavaScript', join(LIB, script), JSON.stringify(request)], execOptions, (err, stdout, stderr) => {
-      const diagnostic = String(stderr ?? '').trim();
+    let child;
+    child = ownHelper(run('osascript', ['-l', 'JavaScript', join(LIB, script), JSON.stringify(request)], execOptions, (err, stdout, stderr) => {
+      const diagnostic = String(stderr ?? '').split('\n').filter(line => {
+        if (script !== 'drag.js' || !line.startsWith('sleight-drag-phase ')) return true;
+        if (request.trace) try {
+          const { phase, edge, monoMs } = JSON.parse(line.slice('sleight-drag-phase '.length));
+          if (['ax-move', 'raise', 'settle', 'posted-press'].includes(phase) && ['start', 'end'].includes(edge) &&
+              Number.isFinite(monoMs) && monoMs >= 0) trace?.('drag-phase', { phase, edge, monoMs, helperPid: child?.pid });
+        } catch {}
+        return false;
+      }).join('\n').trim();
       try {
         resolve(JSON.parse(stdout));
       } catch {
@@ -964,6 +974,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   if (permissionCheck.sitesLimited()) webBrowser.ask();
   const appBlocked = (bundleId, app) => permissionCheck.app({ bundleId, name: app });
   const { trace, grantAudit } = approvalLogging(preapproved);
+  helperTrace = trace;
   handTrace = trace;
   let s = directBrowserServer(resolveServer(), directBrowser);
   if (s.error) fail(s.error);

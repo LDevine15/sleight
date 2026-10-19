@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 // Replace only AX/CG and the native text-area adapter; run() keeps the real guards and path ordering.
 function fixture(options = {}) {
-  const events = [], writes = [], activations = [], settles = [], restored = [];
+  const events = [], writes = [], activations = [], settles = [], restored = [], traces = [];
   const frames = [{ X: 100, Y: 100, Width: 600, Height: 400 }, { X: 750, Y: 100, Width: 500, Height: 400 }];
   if (options.stacked) frames[1] = { ...frames[0] };
   const area = (id, value, selected) => ({ id, AXRole: 'AXTextArea', AXValue: value, AXSelectedText: selected,
@@ -64,7 +64,7 @@ function fixture(options = {}) {
       if (e.type === 2 && !options.postedUnchanged) applyDrop();
     },
   });
-  const context = vm.createContext({ $, Ref: () => [], ObjC: { import() {}, bindFunction() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v },
+  const context = vm.createContext({ console: { error: line => traces.push(JSON.parse(line.replace(/^sleight-drag-phase /, ''))) }, $, Ref: () => [], ObjC: { import() {}, bindFunction() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v },
     delay: () => { if (++delayed === 1) options.onSettle?.({ a, b, frames }); },
     Application: () => assert.fail('cross-window selection must not use app focus or Apple events'),
     SLEIGHT_ACCESSIBILITY_MOVE: options.ax !== false });
@@ -107,7 +107,7 @@ function fixture(options = {}) {
   };
   const run = (change = {}) => JSON.parse(context.run([JSON.stringify({ app: 'Editor', windowId: 11, toWindowId: 12,
     dp7: options.dp7 ?? false, dp2: options.dp2 ?? false, from: 'the current text selection', to: 'end of line 1', holdMs: 0, settleMs: 0, steps: 2, ...change })]));
-  return { run, context, a, b, frames, wins, events, writes, activations, settles, restored };
+  return { run, context, a, b, frames, wins, events, writes, activations, settles, restored, traces };
 }
 
 test('cross-window AX move finds A selection while B has focus and inserts at B line end', () => {
@@ -118,6 +118,24 @@ test('cross-window AX move finds A selection while B has focus and inserts at B 
   assert.equal(h.settles.length, 1); assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0);
   // Like the single-window AX move, the moved text ends selected in its new place.
   assert.deepEqual(h.b.range, { location: 12, length: 5 }); assert.equal(h.b.AXSelectedText, 'alpha');
+});
+
+test('cross-window traces preserve DP2 ordering for AX and its posted fallback', () => {
+  for (const dp2 of [true, false]) {
+    for (const formatted of [false, true]) {
+      const h = fixture({ dp2, formatted }), r = h.run({ trace: true });
+      assert.equal(r.ok, true, r.error);
+      assert.equal(r.path, formatted ? 'background' : 'accessibility');
+      const pre = ['raise:start', 'raise:end', 'settle:start', 'settle:end'];
+      const ax = ['ax-move:start', ...(formatted ? [] : ['settle:start', 'settle:end']), 'ax-move:end'];
+      assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), [
+        ...(!dp2 ? pre : []), ...ax, ...(formatted ? [...(dp2 ? pre : []), 'posted-press:start', 'posted-press:end'] : []),
+      ]);
+      assert.ok(h.traces.every(e => e.monoMs === 1000));
+      const quiet = fixture({ dp2, formatted });
+      assert.deepEqual(quiet.run(), r); assert.deepEqual(quiet.traces, []);
+    }
+  }
 });
 
 test('destination coordinates use B screenshot scale even when A and B differ in size', () => {
