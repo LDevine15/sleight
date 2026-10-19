@@ -789,7 +789,7 @@ test('Safari records launch ownership before acquiring a new fixture window', as
     run: async (_command, _args, options) => {
       assert.deepEqual(actions, [], 'running state must be observed before launching');
       options.onStdout('{"stage":"launch","running":false}\n');
-      setTimeout(() => options.onStdout('{"stage":"armed","running":false}\n{"stage":"ready","pid":123}\n'), 5);
+      setTimeout(() => options.onStdout('{"stage":"armed","running":false}\n{"stage":"ready","pid":123,"fixtureWindow":{"title":"sleight benchmark \\u2014 fixture test","profile":"sleight benchmark","pid":123}}\n'), 5);
       return new Promise(resolve => { finish = resolve; });
     },
   });
@@ -798,6 +798,7 @@ test('Safari records launch ownership before acquiring a new fixture window', as
   ]);
   assert.equal(lease.running, false);
   assert.equal(lease.pid, 123);
+  assert.deepEqual(lease.diagnostics.fixtureWindow, { title: 'sleight benchmark \u2014 fixture test', profile: 'sleight benchmark', pid: 123 });
   const closed = lease.close();
   finish({ exit: { code: 0 }, stdout: '{"stage":"closed"}\n', groupClean: true });
   await closed;

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runOwned } from '../bench/preapproved-process.mjs';
 import { macCommandSkip } from './requirements.mjs';
 
-for (const scenario of ['fixture-navigation', 'safari-address', 'safari-recovery', 'safari-profile-submenu', 'control-command', 'timeout-recovery', 'shop-smoke',
+for (const scenario of ['fixture-navigation', 'safari-address', 'safari-recovery', 'safari-profile-submenu', 'safari-profile-proof', 'safari-menu-release', 'safari-retained-close', 'control-command', 'timeout-recovery', 'shop-smoke',
   'window-cleanup-tab', 'window-cleanup-sheet', 'window-cleanup-dialog', 'window-cleanup-refused',
   'window-cleanup-still-listed', 'window-cleanup-second', 'window-cleanup-system',
   'window-cleanup-cancel-refused', 'window-cleanup-dialog-changed', 'window-cleanup-late-sheet',

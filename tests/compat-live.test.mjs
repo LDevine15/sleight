@@ -88,32 +88,61 @@ test('quitApp quits only the process this run launched', async () => {
   assert.equal(quits.length, 1);
 });
 
-function browserClient(page, { titles, header = `Window: "${page.marker}", App: Safari.`, body = page.body } = {}) {
+function browserClient(page, { header = `Window: "${page.marker}", App: Safari.`, body = page.body } = {}) {
   const calls = [];
   return { calls, call: async (name, args) => {
     calls.push([name, args.code ?? args]);
     if (name === 'select_window') return text('{"ok":true}');
-    if (args.code.includes('listApps')) return text('sleight-compat:' + JSON.stringify(titles ?? [`Work — ${page.marker}`]));
     if (args.code.includes('cua.getApp')) return text(`${header}\n0 standard window x\n\t1 HTML content ${body}`);
     throw new Error('unexpected');
   } };
 }
 
 test('the browser read selects the fixture window by its title and finds the page text', async () => {
-  const page = { ...fixturePage('abc'), close: async () => { page.closed = true; } };
+  const page = { ...fixturePage('abc'), window: { title: 'sleight benchmark — sleight compat abc', profile: 'sleight benchmark' }, close: async () => { page.closed = true; } };
   const client = browserClient(page);
   const outcome = await runBrowserRead(client, { appState: async () => ({ running: false }), openPage: async () => page, axTrusted: async () => true });
   assert.equal(outcome.status, 'pass', outcome.reason);
-  assert.deepEqual(client.calls[1], ['select_window', { app: 'Safari', title: 'Work — sleight compat abc' }]);
-  assert.equal(client.calls[2][1], `var page = await cua.getApp("${SAFARI}")`);
+  assert.deepEqual(client.calls[0], ['select_window', { app: 'Safari', title: page.window.title }]);
+  assert.equal(client.calls[1][1], `var page = await cua.getApp("${SAFARI}")`);
   assert.equal(page.closed, true);
 });
 
+test('compat selects the retained benchmark window even when native listApps has no windows', async () => {
+  const p = { ...fixturePage('8f0eab068986'),
+    window: { title: 'sleight benchmark — sleight compat 8f0eab068986', profile: 'sleight benchmark' }, close: async () => {} };
+  const calls = [];
+  const client = { call: async (name, args) => {
+    calls.push([name, args]);
+    if (name === 'select_window') return text('{"ok":true}');
+    if (args.code.includes('listApps')) return text('sleight-compat:[]');
+    return text(`Window: "${p.window.title}", App: Safari.\n0 standard window\n1 text ${p.body}`);
+  } };
+  const outcome = await runBrowserRead(client, { appState: async () => ({ running: false }), openPage: async () => p });
+  assert.equal(outcome.status, 'pass', JSON.stringify(outcome));
+  assert.deepEqual(calls[0], ['select_window', { app: 'Safari', title: p.window.title }]);
+  assert.ok(calls.every(([, args]) => !args.code?.includes('listApps')));
+});
+
+test('compat refuses the recorded Personal-profile marker and a mismatched engine header', async () => {
+  for (const personalReceipt of [true, false]) {
+    const p = { ...fixturePage('8f0eab068986'), window: {
+      title: `${personalReceipt ? 'Personal' : 'sleight benchmark'} — sleight compat 8f0eab068986`,
+      profile: personalReceipt ? 'Personal' : 'sleight benchmark' }, close: async () => {} };
+    const client = browserClient(p, { header: 'Window: "Personal — sleight compat 8f0eab068986", App: Safari.' });
+    const outcome = await runBrowserRead(client, { appState: async () => ({ running: false }), openPage: async () => p });
+    assert.equal(outcome.status, 'fail');
+    assert.match(outcome.reason, personalReceipt ? /no verified benchmark/ : /another window or profile/);
+    if (personalReceipt) assert.equal(client.calls.length, 0, 'no engine action on Personal');
+  }
+});
+
 test('the browser read fails or skips with its reason and always closes the page', async () => {
-  const page = () => { const p = { ...fixturePage('abc'), close: async () => { p.closed = true; } }; return p; };
+  const page = () => { const p = { ...fixturePage('abc'), window: { title: 'sleight benchmark — sleight compat abc', profile: 'sleight benchmark' }, close: async () => { p.closed = true; } }; return p; };
   const host = p => ({ appState: async () => ({ running: false }), openPage: async () => p, axTrusted: async () => true });
   let p = page();
-  assert.match((await runBrowserRead(browserClient(p, { titles: [] }), host(p))).reason, /found 0/);
+  delete p.window;
+  assert.match((await runBrowserRead(browserClient(p), host(p))).reason, /no verified benchmark/);
   assert.equal(p.closed, true);
   p = page();
   assert.match((await runBrowserRead(browserClient(p, { header: 'Window: "Start Page", App: Safari.' }), host(p))).reason, /another window/);
@@ -132,7 +161,11 @@ test('the browser read fails or skips with its reason and always closes the page
 
 test('openSafariPage serves the page on 127.0.0.1 and hands the fixture an owner-away context', async () => {
   const seen = [];
-  const page = await openSafariPage({ nonce: 'n1', dir: '/tmp/x', open: async (ctx, request) => seen.push({ ctx, request }), close: async ctx => seen.push({ closed: ctx.nonce }) });
+  const window = { title: 'sleight benchmark — sleight compat n1', profile: 'sleight benchmark' };
+  const page = await openSafariPage({ nonce: 'n1', dir: '/tmp/x', open: async (ctx, request) => {
+    seen.push({ ctx, request }); return { diagnostics: { fixtureWindow: window } };
+  }, close: async ctx => seen.push({ closed: ctx.nonce }) });
+  assert.deepEqual(page.window, window);
   assert.match(page.url, /^http:\/\/127\.0\.0\.1:\d+\/n1\/$/);
   const html = await (await fetch(page.url)).text();
   assert.ok(html.includes(`<title>${page.marker}</title>`) && html.includes(page.body));
@@ -190,10 +223,11 @@ test('a browser check whose fixture setup failed still quits the Safari it launc
   const kept = await runBrowserRead(browserClient(fixturePage('abc')), host(async () => { throw new Error('com.apple.Safari is not one process launched by this check (pids 7); left running'); }));
   assert.match(kept.cleanup, /left running/);
   // A window close the fixture refused, followed by a quit of the whole Safari it launched, leaves nothing behind.
-  const p = { ...fixturePage('abc'), close: async () => { throw new Error('Owned Safari fixture window cleanup unconfirmed'); } };
+  const p = { ...fixturePage('abc'), window: { title: 'sleight benchmark — sleight compat abc', profile: 'sleight benchmark' }, close: async () => { throw new Error('Owned Safari fixture window cleanup unconfirmed'); } };
   const closed = await runBrowserRead(browserClient(p), { ...host(), openPage: async () => p });
   assert.deepEqual([closed.status, closed.cleanup, closed.fixtureCleanup, closed.quitSafari], ['pass', undefined, 'Owned Safari fixture window cleanup unconfirmed', true]);
   // A normal run whose fixture already quit Safari has nothing to quit.
-  const normal = await runBrowserRead(browserClient(fixturePage('abc')), { ...host(async () => false), openPage: async () => ({ ...fixturePage('abc'), close: async () => {} }) });
+  const normal = await runBrowserRead(browserClient(fixturePage('abc')), { ...host(async () => false), openPage: async () => ({
+    ...fixturePage('abc'), window: { title: 'sleight compat abc', profile: 'sleight benchmark' }, close: async () => {} }) });
   assert.deepEqual([normal.status, normal.quitSafari, normal.cleanup], ['pass', undefined, undefined]);
 });
