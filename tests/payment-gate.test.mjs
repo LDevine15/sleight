@@ -509,3 +509,18 @@ test('N7: a resend while the card is open waits on that card, and one card gives
   f.call('after', 'await app.click(88)'); await f.settle();
   assert.equal(f.update('after').payment.allow, null, 'the second waiter on the same card adds no allowance');
 });
+
+test('a checkout-only link on a cart with no card field is navigation, so it goes without a copy of the message', () => {
+  // The handoff task's cart in race b9 (2026-10-19): Haiku's "Go to checkout" stopped as a payment and the task failed.
+  const cart = link => ['Window: "Cart · Shop", App: Firefox.', '0 standard window Cart · Shop, Secondary Actions: Raise',
+    '\t1 HTML Content Description: Cart · Shop, URL: 127.0.0.1:5420/t/handoff/shop/cart', '\t\t2 text Fjord mug, blue', '\t\t3 text $14.00',
+    '\t\t4 text Total $14.00', '\t\t5 ' + link].join('\n');
+  for (const link of ['link Go to checkout, Value: 127.0.0.1:5420/t/handoff/shop/checkout/address', 'link Proceed to checkout, Value: https://shop.example/checkout'])
+    assert.equal(enginePayment('click', [5], cart(link), gate('requested', null)), undefined, link);
+  // Still gated: another payment or submit word, a figure in its words, no address, a button, or a page with a card field.
+  for (const link of ['link Buy now and checkout, Value: 127.0.0.1:5420/checkout', 'link Complete checkout, Value: 127.0.0.1:5420/checkout',
+    'link Checkout $14.00, Value: 127.0.0.1:5420/checkout', 'link Go to checkout', 'link Go to checkout, Value: javascript:pay()', 'button Go to checkout'])
+    assert.equal(enginePayment('click', [5], cart(link), gate('requested', null))?.why, 'nocopy', link);
+  const withCard = cart('link Go to checkout, Value: 127.0.0.1:5420/checkout').replace('\t\t2 text', '\t\t6 text field Card number\n\t\t2 text');
+  assert.equal(enginePayment('click', [5], withCard, gate('requested', null))?.why, 'nocopy');
+});
