@@ -939,6 +939,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             // An { id } that matched by label is looked up as { label } is from here on.
             const asLabel = kind === 'ID' && found.length > 0 && !found.some(([, line]) => hasIdentifier(line, target));
             const ancestry = found.length > 1 ? contexts(text) : undefined;
+            // A control and its static text share the label ("text Country" above "pop up button (collapsed) Country"), and a
+            // click on the text does nothing: of several matches with static text among them, the one control, or the one
+            // enabled control, is the target (race-1017 b7: Country, City and Dates stopped 2 of 3 Safari form-travel runs, 2.2
+            // to 3.8 s each). This runs before the enabled preference, which would keep the text beside a disabled control.
+            // Two enabled controls still stop.
+            if (name === 'click' && found.length > 1 && (kind === 'label' || asLabel || bare !== undefined)) {
+              const controls = found.filter(([, line]) => !/^text(?: \\([^()]*\\))*(?: |$)/.test(line) || /^text (?:field|area|entry area)(?: |$)/.test(line));
+              const enabled = controls.filter(([, line]) => !/^[a-z][a-z ]* \\([^()]*\\bdisabled\\b[^()]*\\)/.test(line));
+              if (controls.length < found.length) found = controls.length === 1 ? controls : enabled.length === 1 ? enabled : found;
+            }
             let barItems = [], outside = [];
             if (found.length > 1 && (kind === 'label' || asLabel || bare !== undefined && found.every(([, line]) => hasLabel(line, target)))) {
               // A menu-bar title sharing its label with one element outside the menu bar means that element: { label: "Table" }
@@ -952,13 +962,6 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
               if (enabled.length === 1) found = enabled;
               const content = found.filter(([number]) => ancestry.get(number)?.content);
               if (content.length === 1 && found.every(([number]) => number === content[0][0] || ancestry.get(number)?.menu)) found = content;
-            }
-            // A control and its static text share the label ("text Country" above "pop up button (collapsed) Country"), and a
-            // click on the text does nothing: of several matches, the one that isn't static text is the control (race-1017 b7:
-            // Country, City and Dates stopped 2 of 3 Safari form-travel runs, 2.2 to 3.8 s each). Two controls still stop.
-            if (name === 'click' && found.length > 1 && (kind === 'label' || asLabel || bare !== undefined)) {
-              const controls = found.filter(([, line]) => !/^text(?: \\([^()]*\\))*(?: |$)/.test(line) || /^text (?:field|area|entry area)(?: |$)/.test(line));
-              if (controls.length === 1) found = controls;
             }
             // A field and its text label share the label, and setValue on the text fails (-10005, not settable): of several
             // matches, the one settable element is the field (form-travel, race-1017: Reference code, Full name, Email).

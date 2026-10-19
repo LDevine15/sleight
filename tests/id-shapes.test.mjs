@@ -172,3 +172,17 @@ test('lp1: a click on a label shared by static text and one control goes to the 
   const textOnly = guardFixture(form(['\t\t\t\t\t\t25 text Country, Help: x', '\t\t\t\t\t\t26 text Country']));
   await assert.rejects(textOnly.run('await app.click({ label: "Country" });'), /2 elements with label "Country"/);
 });
+
+// lp1 review: the control the shared label names is the one clicked, whatever its role, and a disabled control is still the
+// control (before, the enabled filter left only the static text, and the click went to text that does nothing).
+test('lp1 review: checkbox, link, submit and disabled controls that share a label with static text get the click', async () => {
+  const rows = ['\t\t\t\t\t\t25 text Subscribe', '\t\t\t\t\t\t26 checkbox Subscribe, Value: 0', '\t\t\t\t\t\t27 text Terms', '\t\t\t\t\t\t28 link Terms',
+    '\t\t\t\t\t\t29 text Submit', '\t\t\t\t\t\t30 button Submit', '\t\t\t\t\t\t31 text Pay', '\t\t\t\t\t\t32 button (disabled) Pay'];
+  const g = guardFixture(form(rows));
+  await g.run('await app.click({ label: "Subscribe" }); await app.click({ label: "Terms" }); await app.click("Submit"); await app.click({ label: "Pay" });');
+  assert.deepEqual(g.calls.map(c => c.slice(0, 2)), [['click', 26], ['click', 28], ['click', 30], ['click', 32]]);
+  // A disabled control beside an enabled one with the label: two controls, no guess about the text.
+  const two = guardFixture(form(['\t\t\t\t\t\t31 text Pay', '\t\t\t\t\t\t32 button (disabled) Pay', '\t\t\t\t\t\t33 link Pay']));
+  await two.run('await app.click({ label: "Pay" });');
+  assert.deepEqual(two.calls.map(c => c.slice(0, 2)), [['click', 33]], 'the enabled preference still picks among controls');
+});
