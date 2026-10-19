@@ -2444,9 +2444,42 @@ test('runtime helper startup advice stays unchanged with no stale jobs or a fail
   }
 });
 
+test('crash retries from sessions that crashed together are spread by a random extra delay of up to 1.5 s', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const crash = { content: [{ type: 'text', text: 'Sky Computer Use native pipe closed before response' }], isError: true };
+  // Two sessions met the same crash; their injected jitters differ, so their retries reach the next helper apart.
+  const sessions = [harness({ changeReview: false, helperCrashJitterMs: () => 100 }), harness({ changeReview: false, helperCrashJitterMs: () => 1400 })];
+  for (const h of sessions) { helperRead(h, 1); await tick(); h.fromServer({ jsonrpc: '2.0', id: 1, result: crash }); }
+  await tick();
+  t.mock.timers.tick(2050); await tick();
+  assert.deepEqual(sessions.map(h => h.toServer.filter(m => m.id === 1).length), [1, 1], 'no retry before 2 s plus jitter');
+  t.mock.timers.tick(100); await tick();
+  assert.deepEqual(sessions.map(h => h.toServer.filter(m => m.id === 1).length), [2, 1]);
+  t.mock.timers.tick(1300); await tick();
+  assert.deepEqual(sessions.map(h => h.toServer.filter(m => m.id === 1).length), [2, 2]);
+
+  // The default draws from Math.random: 0.999 waits 3498 ms, never longer.
+  t.mock.method(Math, 'random', () => 0.999);
+  const h = harness({ changeReview: false });
+  helperRead(h, 2); await tick(); h.fromServer({ jsonrpc: '2.0', id: 2, result: crash }); await tick();
+  t.mock.timers.tick(3497); await tick();
+  assert.equal(h.toServer.filter(m => m.id === 2).length, 1);
+  t.mock.timers.tick(1); await tick();
+  assert.equal(h.toServer.filter(m => m.id === 2).length, 2);
+});
+
+test('a helper restart retry keeps its fixed 1 s delay, without the crash jitter', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness({ changeReview: false, helperCrashJitterMs: () => 1400 });
+  const failure = { content: [{ type: 'text', text: 'Sky Computer Use native pipe startup failed' }], isError: true };
+  helperRead(h, 1); await tick(); h.fromServer({ jsonrpc: '2.0', id: 1, result: failure }); await tick();
+  t.mock.timers.tick(1001); await tick();
+  assert.equal(h.toServer.filter(m => m.id === 1).length, 2);
+});
+
 test('a read that met a helper crash is sent again once; a call with actions never is', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const h = harness({ changeReview: false });
+  const h = harness({ changeReview: false, helperCrashJitterMs: () => 0 });
   const crash = { content: [{ type: 'text', text: 'Sky Computer Use native pipe closed before response' }], isError: true };
   helperRead(h, 1); await tick();
   h.fromServer({ jsonrpc: '2.0', id: 1, result: crash }); await tick();

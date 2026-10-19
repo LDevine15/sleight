@@ -8,6 +8,9 @@ engine does, so recheck them after an engine update.
 - Real pointer activity in an app counts as a person taking over.
 - One engine helper serves every Codex and sleight session on the Mac. Restarting ChatGPT ends every Codex thread, so it's never a
   test step.
+- The helper quits soon after its last client leaves. Several clients calling `getApp` on a helper that has just started
+  can crash it (21 crashes in 30 four-session Excel cohorts and none in 30 single-session trials, 2026-10-19). Its crash reports are
+  `~/Library/Logs/DiagnosticReports/SkyComputerUseService-*.ips`.
 - Finishing an app's File > Open panel can bring the app to the front (TextEdit, 3 of about 21 runs). `open_file` uses `open -g`.
 - macOS picks a drag's drop target from what's on screen at the drop point, so a background drag can't drop into a covered window.
 - A read right after input waits for the UI to settle, and only after that wait does the next key go to a sheet the action opened.

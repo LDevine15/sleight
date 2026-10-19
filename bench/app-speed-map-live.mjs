@@ -1,4 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { createServer } from 'node:http';
 import { join, basename, dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -129,10 +130,18 @@ export function speedOutput(root, requested) {
   return output;
 }
 
+// The engine helper's crash reports, by name only: a report is written as .SkyComputerUseService-<time>.ips and then
+// renamed without the dot. The helper segfaulted 21 times in concurrent Excel acquisitions on 2026-10-19, and only these
+// reports showed it, since sleight resends a read that met the crash once.
+export const crashReportDirectory = join(homedir(), 'Library', 'Logs', 'DiagnosticReports');
+export function helperCrashReports(list = () => readdirSync(crashReportDirectory)) {
+  return new Set(list().filter(name => /^\.?SkyComputerUseService-[\d-]+(?:\.\d+)?\.ips$/.test(name)).map(name => name.replace(/^\./, '')));
+}
+
 export async function liveSpeedRuntime(plan, options, {
   platform = process.platform, repositoryRoot = fileURLToPath(new URL('..', import.meta.url)),
   takeLock = acquireLiveLock, makeBank = () => mkdtempSync('/private/tmp/sleight-battery-am1-'),
-  startFixtureHost = startHost, makeClient = probeClient,
+  startFixtureHost = startHost, makeClient = probeClient, crashReports = () => helperCrashReports(),
 } = {}) {
   if (platform !== 'darwin') throw Error('MACOS_REQUIRED');
   if (existsSync('/tmp/sleight-hold')) throw Error('HOLD');
@@ -154,6 +163,8 @@ export async function liveSpeedRuntime(plan, options, {
   const boundary = () => { if (held()) throw Error('HOLD'); };
   return {
     held, now: () => performance.now(), log: line => console.error(line),
+    helperCrashMark: () => crashReports(),
+    helperCrashesSince: mark => [...crashReports()].filter(name => !mark.has(name)).length,
     async prepare(task) {
       boundary();
       speedScope(plan, task);

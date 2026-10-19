@@ -836,6 +836,7 @@ export function createRelay({
   trace: writeTrace = () => {},
   traceCode = false,
   now = Date.now,
+  helperCrashJitterMs = () => Math.floor(Math.random() * 1500),
   chromeSettleMs = CHROME_SETTLE_MS,
   chromeSettleIntervalMs = 100,
   chromeSettleSleep = ms => new Promise(r => setTimeout(r, ms)),
@@ -3888,6 +3889,9 @@ export function createRelay({
   // WindowServer callback, 4 times from 2026-10-05 to 2026-10-11) and launchd relaunches it within
   // seconds: a read that met the crash is sent again too, but never a call with actions, which may
   // have run. Values are the call as sent and whether it only reads; true means it was resent.
+  // Several sessions starting a cold helper together can crash it (21 SIGSEGVs in concurrent
+  // getApp calls, 2026-10-19), and every session's retry then lands at the same instant on the next
+  // cold helper. A random extra delay spreads those retries out.
   const restartRetries = new Map();
   const debuggerDocs = new Map();
   const HELPER_RESTARTING = /Sky Computer Use native pipe startup failed/;
@@ -3935,7 +3939,7 @@ export function createRelay({
     const generation = stopGeneration, epoch = engineEpoch;
     setTimeout(() => {
       if (generation === stopGeneration && epoch === engineEpoch && !closing && !disposed && restartRetries.has(msg.id)) toServer(JSON.parse(entry.sent));
-    }, crashed ? 2000 : 1000).unref?.();
+    }, crashed ? 2000 + helperCrashJitterMs() : 1000).unref?.();
     return true;
   }
 
