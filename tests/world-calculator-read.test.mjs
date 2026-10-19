@@ -65,3 +65,18 @@ test('permission loss, dialogs, multiple fields and cyclic trees refuse a displa
   f.window.children = [f.window];
   assert.throws(() => read(f.api, { pid: 42 }), /cycle/);
 });
+
+// Engine 26.1013 (2026-10-19): the driven app gained an unproven AXDialog window beside its own, and every native smoke row
+// failed "window absent or ambiguous" with the right product on the display.
+test('an extra non-modal non-standard window beside the one standard window is ignored; a modal one still stops', () => {
+  const { app, window, api } = fixture();
+  window.subrole = 'AXStandardWindow';
+  const extra = { role: 'AXWindow', subrole: 'AXDialog', children: [] };
+  app.element.windows = [window, extra];
+  const withSubrole = { ...api, subrole: element => element.subrole };
+  assert.equal(read(withSubrole, { pid: 42 }).value, '144');
+  extra.modal = true;
+  assert.throws(() => read({ ...withSubrole, modal: element => Boolean(element.modal) }, { pid: 42 }), /dialog present/);
+  extra.modal = false; extra.subrole = 'AXStandardWindow';
+  assert.throws(() => read(withSubrole, { pid: 42 }), /absent or ambiguous/);
+});

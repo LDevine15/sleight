@@ -6,7 +6,10 @@ function readCalculatorField(api, request) {
     !Number.isFinite(apps[0].start) || apps[0].start <= 0 || (request.start !== undefined && apps[0].start !== request.start)) {
     throw new Error('Calculator fixture process absent or changed');
   }
-  const windows = api.windows(apps[0].element);
+  // Since engine 26.1013 a driven app can carry an extra non-standard window beside its own; a modal one is still a dialog.
+  const all = api.windows(apps[0].element), subrole = element => api.subrole?.(element);
+  if (all.some(item => api.modal?.(item))) throw new Error('Calculator dialog present');
+  const windows = all.length === 1 ? all : all.filter(item => subrole(item) === 'AXStandardWindow');
   if (windows.length !== 1) throw new Error('Calculator window absent or ambiguous');
   const window = windows[0];
   if (api.role(window) !== 'AXWindow' || api.sheets(window).length || api.modal?.(window)) throw new Error('Calculator dialog present');
@@ -57,6 +60,7 @@ function nativeAPI() {
     description: element => scalar(attr(element, 'AXDescription', true)), identifier: element => scalar(attr(element, 'AXIdentifier', true)),
     hidden: element => scalar(attr(element, 'AXHidden', true)) === true,
     modal: element => scalar(attr(element, 'AXModal', true)) === true,
+    subrole: element => scalar(attr(element, 'AXSubrole', true)),
     children: element => array(attr(element, 'AXChildren', true)), same: (a, b) => Boolean($.CFEqual(a, b)),
   };
 }
