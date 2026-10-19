@@ -4,7 +4,7 @@
 // and prints a table.
 //
 //   node bench/run.mjs [--arm sleight|lcu|codex|all|a,b] [--suite default|real] [--tasks id,id] [--runs N] [--model M] [--effort E]
-//     [--codex-model M] [--codex-effort E] [--dry-run] [--setup-only] [--owner-away] [--owner-present] [--clean-arms]
+//     [--codex-model M] [--codex-effort E] [--dry-run] [--setup-only] [--owner-away] [--owner-present] [--clean-arms] [--analytics-config BANK]
 //
 // --clean-arms publishes the CPU comparison without the owner's setup (LAWS, 2026-10-10): the
 // sleight arm runs with strict MCP configuration and empty setting sources, so only sleight's
@@ -63,6 +63,8 @@ import { ensureCuaDaemon, isNativeArm, nativeArmPlan, prepareNativeArm } from '.
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from './world/native-world.mjs';
 import { interactivePlan, runInteractive, verifyInteractiveCLI } from './world/arms/claude-cu/interactive.mjs';
 import { dragMethodAudit } from './world/method-check.mjs';
+import { analyticsArm, writeAnalyticsMcp } from './analytics-validation.mjs';
+import { actionLogPath } from '../plugins/sleight/lib/action-outcomes.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TIMEOUT_MS = 5 * 60 * 1000;
@@ -102,6 +104,17 @@ const armOption = option('arm', 'sleight');
 // The world suite runs its Claude arms on the owner's account login by default (LAWS, 2026-10-15): each arm
 // has its own isolated config dir and its own login, checked before any task. --auth api stays available.
 const authMode = option('auth', world ? 'login' : 'auto');
+// X3 is a short native validation pass, with the switch only in this bank's MCP descriptor.
+const analyticsBank = option('analytics-config', undefined);
+if (process.argv.includes('--analytics-config') && (!analyticsBank || analyticsBank.startsWith('--'))) throw new Error('--analytics-config needs a prepared bank');
+if (analyticsBank && (suite !== 'default' || armOption !== 'sleight' || !cleanArms || authMode !== 'login' ||
+    option('tasks', '') !== 'calculator-click' || option('runs', '1') !== '1' || isSetupOnly)) {
+  throw new Error('--analytics-config requires --suite default --arm sleight --clean-arms --auth login --tasks calculator-click --runs 1');
+}
+const analytics = analyticsBank ? analyticsArm(analyticsBank, { root: ROOT }) : undefined;
+if (analytics && ['', '.1', '.2', '.lock'].some(suffix => existsSync(actionLogPath(analytics.log) + suffix))) {
+  throw new Error('ANALYTICS_BANK_USED: prepare a fresh bank for each pass');
+}
 const ARM_HOME = process.env.BENCH_ARM_HOME || join(homedir(), 'Library', 'Caches', 'sleight-bench');
 const ARMS = {
   // Each arm runs from its own empty folder outside any git repo, so neither
@@ -111,14 +124,14 @@ const ARMS = {
   // the git root, so both arms got them.
   sleight: {
     cwd: (() => {
-      const dir = process.env.SLEIGHT_ARM_DIR || join(ARM_HOME, 'sleight-arm');
+      const dir = analytics?.cwd ?? process.env.SLEIGHT_ARM_DIR ?? join(ARM_HOME, 'sleight-arm');
       if (!isDryRun) mkdirSync(dir, { recursive: true });
       return dir;
     })(),
     args: ['--plugin-dir', join(ROOT, 'plugins', 'sleight'), // Every sleight tool, as a user who approves its prompts would have. Without
     // them Claude lost 8 turns to refused select_window and menu_bar calls (2026-10-07).
     '--allowedTools', ['js', 'js_reset', 'drag', 'hover', 'menu_bar', 'notifications', 'select_window', 'open_file'].map(t => `mcp__plugin_sleight_computer__${t}`).join(',')],
-    env: {},
+    env: analytics?.env ?? {},
     server: 'plugin:sleight:computer',
   },
   // Native Codex computer use, for the head-to-head (owner, 2026-10-08). See codex-arm.mjs.
@@ -210,7 +223,10 @@ for (const name of armNames) {
     // Clean arms keep the owner's user plugins, settings and MCP servers out of the CPU comparison:
     // strict MCP with only sleight's server, the mod still loaded through --plugin-dir.
     const mcp = join(arm.cwd, 'bench-mcp.json');
-    if (!isDryRun) writeFileSync(mcp, JSON.stringify({ mcpServers: { [arm.server]: { command: join(ROOT, 'plugins/sleight/bin/sleight-mcp') } } }), { mode: 0o600 });
+    if (!isDryRun) {
+      if (analytics) writeAnalyticsMcp(analyticsBank, { root: ROOT });
+      else writeFileSync(mcp, JSON.stringify({ mcpServers: { [arm.server]: { command: join(ROOT, 'plugins/sleight/bin/sleight-mcp') } } }), { mode: 0o600 });
+    }
     arm.args.push('--mcp-config', mcp, '--strict-mcp-config', '--setting-sources', '');
   }
   if (isDryRun) continue;
@@ -292,6 +308,7 @@ const armEnv = (arm, extra = {}) => {
   env.DO_NOT_TRACK = '1';
   if (arm.native || arm.world) env.CLAUDE_CONFIG_DIR = arm.env.CLAUDE_CONFIG_DIR;
   else env.CLAUDE_CONFIG_DIR = auth.env.CLAUDE_CONFIG_DIR ?? arm.env.CLAUDE_CONFIG_DIR ?? CONFIG_DIR;
+  if (analytics && arm === ARMS.sleight) env.CLAUDE_CONFIG_DIR = analytics.env.CLAUDE_CONFIG_DIR;
   return env;
 };
 
