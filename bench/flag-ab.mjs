@@ -3,7 +3,7 @@
 // reach the flag's code. bench/flag-ab.command runs the plan and writes a manifest, and `score` reads it back.
 //   node bench/flag-ab.mjs plan [--rounds 5] [--start 1] [--arms preview-read,office]
 //   node bench/flag-ab.mjs score [--manifest ~/Projects/sleight-wt/race-1017/flags-manifest.tsv] [--min-runs 3] [--json]
-// A plan line is one bench/run.mjs invocation: round, arm, side, runs, tasks, env (tab-separated, env empty for "off").
+// A plan line is one bench/run.mjs invocation: round, arm, side, runs, tasks, env (tab-separated, explicit zero for "off").
 // Verdict, per flag over its tasks' summed expected time (mean seconds per attempt over the pass rate, as claim-score):
 //   default on   faster than off by more than one standard error, no task with a lower pass rate, and no task more than
 //                10% slower beyond that task's own standard error
@@ -21,9 +21,8 @@ export const WORSE = 0.1;
 
 export const FLAGS = {
   'open-shot': 'SLEIGHT_OPEN_SHOT=1',
-  'compact-confirmations': 'SLEIGHT_COMPACT_CONFIRMATIONS=1',
   'compact-toolbars': 'SLEIGHT_COMPACT_TOOLBARS=1',
-  'skill-screenshot': 'SLEIGHT_SKILL=screenshot',
+  'skill-screenshot': 'SLEIGHT_SCREENSHOT_READS=1',
 };
 
 // Tasks in world-suite order (bench/run.mjs runs them in that order whatever --tasks says). Arms with the same task list
@@ -33,14 +32,11 @@ export const ARMS = [
   { id: 'open-shot', block: 'native', tasks: ['textedit-edit', 'preview-pdf', 'textedit-replace-save'], runs: 1, flags: ['open-shot'] },
   // preview-read is a claim task, and sleight's only native loss (to Peekaboo), so LAWS allows it. PV4 asks for 10 runs.
   { id: 'preview-read', block: 'native', tasks: ['preview-read'], runs: 2, flags: ['open-shot'] },
-  // The shorter policy reaches every native-first session once, with the engine docs. Finder, TextEdit and Preview, each saving or creating.
-  { id: 'confirmations', block: 'native', tasks: ['textedit-edit', 'preview-pdf', 'finder-create-folder', 'textedit-insert-line'], runs: 1,
-    flags: ['compact-confirmations'] },
   // No native window outside Office has a toolbar over 20 controls (TextEdit 15, Preview 13, Finder 11), so off Office
   // the flag only removes repeated trees: multi-read TextEdit tasks.
   { id: 'toolbars-text', block: 'native', tasks: ['textedit-replace-all', 'textedit-insert-line'], runs: 1, flags: ['compact-toolbars'] },
   // Word's ribbon (50 controls) is where the fold cost word-edit ~40% before FL1; Word's document area is the textless
-  // window SLEIGHT_SKILL=screenshot is about. No held-out Excel task exists, and excel-edit is a claim task sleight leads.
+  // window the screenshot guidance covers. No held-out Excel task exists, and excel-edit is a claim task sleight leads.
   { id: 'office', block: 'office', tasks: ['word-memo', 'word-brief'], runs: 1, flags: ['compact-toolbars', 'skill-screenshot'] },
 ];
 
@@ -53,7 +49,8 @@ export function plan({ rounds = 5, start = 1, arms = ARMS.map(arm => arm.id) } =
       const sides = ['off', ...arm.flags];
       // Odd rounds run "off" first, even rounds last, so neither side always runs first.
       for (const side of round % 2 ? sides : sides.toReversed()) {
-        lines.push({ round, arm: arm.id, side, runs: arm.runs, tasks: arm.tasks.join(','), env: side === 'off' ? '' : FLAGS[side] });
+        const env = arm.flags.map(flag => FLAGS[flag].replace(/=1$/, flag === side ? '=1' : '=0')).join(' ');
+        lines.push({ round, arm: arm.id, side, runs: arm.runs, tasks: arm.tasks.join(','), env });
       }
     }
   }

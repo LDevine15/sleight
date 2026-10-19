@@ -64,7 +64,7 @@ test('the skill enters a known spreadsheet block as one paste from the active ce
     assert.ok(rules.trim().split(/\s+/).length <= 1040);
   }
   const lean = skillRules(undefined, { SLEIGHT_PROMPT: 'lean' });
-  assert.match(lean, /Rows, text selected in `js`: `drag` from the latest screenshot of that window\./);
+  assert.match(lean, /Rows, text selected in `js`: `drag` from that window's latest screenshot\./);
   assert.ok(lean.trim().split(/\s+/).length <= 505);
 });
 
@@ -89,16 +89,18 @@ test('the drag and menu_bar descriptions carry what the skill no longer repeats'
     'Tell the user first that it will move their pointer and bring the app forward']) assert.ok(hover.description.includes(passage), passage);
 });
 
-test('the screenshot skill variant adds a read for textless document panes and tables only when selected', () => {
+test('both shipped skills teach screenshots by default, with one A/B off switch', () => {
+  const guidance = 'When a document pane or table doesn\'t expose text, read the window with `nodeRepl.emitImage(await app.getScreenshot())`.';
   for (const prompt of [undefined, 'lean']) {
-    const normal = skillRules(undefined, { SLEIGHT_PROMPT: prompt });
-    const selected = skillRules(undefined, { SLEIGHT_PROMPT: prompt, SLEIGHT_SKILL: 'screenshot' });
-    const guidance = 'When a document pane or table exposes no text, read the window with `nodeRepl.emitImage(await app.getScreenshot())`.';
-    assert.ok(selected.includes(guidance));
-    assert.equal(selected.replace(guidance + '\n\n', ''), normal, 'all other guidance and safety stay identical');
-    for (const value of [undefined, 'none', 'default', 'SCREENSHOT']) {
-      assert.equal(skillRules(undefined, { SLEIGHT_PROMPT: prompt, SLEIGHT_SKILL: value }), normal);
+    const env = { SLEIGHT_PROMPT: prompt }, normal = skillRules(undefined, env);
+    assert.ok(normal.includes(guidance));
+    const off = skillRules(undefined, { ...env, SLEIGHT_SCREENSHOT_READS: '0' });
+    assert.equal(normal.replace(guidance + '\n\n', ''), off);
+    for (const value of [undefined, '1', 'false', '']) {
+      assert.equal(skillRules(undefined, { ...env, SLEIGHT_SCREENSHOT_READS: value }), normal);
     }
+    assert.equal(skillRules(undefined, { ...env, SLEIGHT_SKILL: 'none' }), undefined);
+    assert.equal(skillRules(undefined, { ...env, SLEIGHT_SKILL: 'screenshot', SLEIGHT_SCREENSHOT_READS: '0' }), off);
   }
 });
 // SL1: demoid r3 (2026-10-18) stopped one click short at a consent page that only named the account to continue as,
@@ -143,7 +145,7 @@ test('native sessions learn to navigate a browser outside the Browsers section',
   for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }]) {
     const rules = skillRules(undefined, env);
     const outside = rules.replace(/## Browsers\n[\s\S]*?(?=\n## |$)/, '');
-    assert.match(outside.replace(/\s+/g, ' '), /In a browser, `setValue` the address bar and press Return in one call\. Send a new tab's URL in that call\./);
+    assert.match(outside.replace(/\s+/g, ' '), /In a browser, `setValue` the address bar and press Return in one call\. (?:Send a new tab's URL in that call|Include a new tab's URL)\./);
     assert.doesNotMatch(rules, /Safari|Firefox/);
   }
 });

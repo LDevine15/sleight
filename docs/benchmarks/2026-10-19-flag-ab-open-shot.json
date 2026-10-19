@@ -1,0 +1,688 @@
+{
+ "study": "Flag A/B, open-shot, 2026-10-19",
+ "date": "2026-10-19",
+ "commit": "60fe1319820053db382b26bdaecbc1db83e0c895",
+ "model": "claude-haiku-5-5, high",
+ "engineVersion": "26.1013.40934",
+ "flag": "SLEIGHT_OPEN_SHOT=1",
+ "verdict": {
+  "flag": "open-shot",
+  "env": "SLEIGHT_OPEN_SHOT=1",
+  "tasks": [
+   {
+    "task": "textedit-edit",
+    "off": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 23.88,
+     "sd": 3.54429118442602,
+     "expected": 23.88
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 20.36,
+     "sd": 6.061600448726393,
+     "expected": 20.36
+    },
+    "se": 3.1402229220232125,
+    "change": -0.1474036850921273
+   },
+   {
+    "task": "preview-pdf",
+    "off": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 27.240000000000002,
+     "sd": 8.40017856953053,
+     "expected": 27.240000000000002
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 25,
+     "sd": 3.519232870953554,
+     "expected": 25
+    },
+    "se": 4.0730332677256635,
+    "change": -0.08223201174743033
+   },
+   {
+    "task": "textedit-replace-save",
+    "off": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 9.4,
+     "sd": 1.698528775146303,
+     "expected": 9.4
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 9.62,
+     "sd": 1.3292855223765887,
+     "expected": 9.62
+    },
+    "se": 0.9645724441429996,
+    "change": 0.023404255319148914
+   },
+   {
+    "task": "preview-read",
+    "off": {
+     "runs": 10,
+     "passes": 10,
+     "mean": 5.2700000000000005,
+     "sd": 1.0832564075252193,
+     "expected": 5.2700000000000005
+    },
+    "on": {
+     "runs": 10,
+     "passes": 10,
+     "mean": 4.99,
+     "sd": 0.7651434142985514,
+     "expected": 4.99
+    },
+    "se": 0.41939109300137606,
+    "change": -0.05313092979127143
+   }
+  ],
+  "total": {
+   "off": 65.79,
+   "on": 59.97,
+   "se": 5.249465581265286,
+   "diff": -5.820000000000007
+  },
+  "commits": [
+   "60fe1319820053db382b26bdaecbc1db83e0c895"
+  ],
+  "engines": [
+   "26.1013.40934"
+  ],
+  "verdict": "default on",
+  "reasons": [
+   "faster by 5.8 s (-8.8%, ±5.2 s), no lost pass"
+  ]
+ },
+ "rounds": [
+  {
+   "round": 1,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 19.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 19.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-replace-save",
+     "seconds": 10,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 4.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 5.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 1,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 13.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 22,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-replace-save",
+     "seconds": 10.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 4.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 20.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 41.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-replace-save",
+     "seconds": 8.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 18,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 26.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-replace-save",
+     "seconds": 9.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 4.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 3.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 24.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 22.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-replace-save",
+     "seconds": 12.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 4.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 28.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 27.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-replace-save",
+     "seconds": 7.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 5.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 5.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 4,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 26.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 25.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-replace-save",
+     "seconds": 8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 4.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 5.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 4,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 17.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 28.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-replace-save",
+     "seconds": 8.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 5.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 5.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 5,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 27.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 27.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-replace-save",
+     "seconds": 8.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 5.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 5.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 5,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 24.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 20.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-replace-save",
+     "seconds": 11.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 3.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-read",
+     "seconds": 4.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  }
+ ]
+}

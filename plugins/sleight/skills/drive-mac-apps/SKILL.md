@@ -7,7 +7,7 @@ description: Use when a web page or macOS app must be operated via its UI (click
 # Driving Mac apps with sleight
 
 `mcp__plugin_sleight_computer__js` runs persistent JavaScript with `cua`. `js_reset` restarts it.
-Follow engine docs and app instructions.
+Follow engine/app instructions.
 Top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.
 
 Never create or edit `~/Library/Application Support/sleight/preapproved.json`; only the user writes
@@ -42,20 +42,17 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   between columns, newlines between rows: `await app.paste("<a>\t<b>\n<c>\t<d>", { format: "text" })`.
   It overwrites the whole block: paste only when every value is known.
 - `setValue` writes a field without focus or Return; to move through a field, click it, type, Return.
-- Use a menu item's shortcut if any. Otherwise open the menu and pick the item by label in one
-  call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
-- Acquire a document that's already open. Don't reopen it.
+- Use menu shortcuts; otherwise open the menu and pick by label in one call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
+- Acquire open documents. Don't reopen them.
 - Open a file with `open_file`, not the app's Open panel, which can bring the app to the front.
 - Transfer numbers as digits.
 - Move files with Copy, then the menu's Move item, not Cut or a drag.
-- In a Save panel, send Go to Folder, the folder, Return, the name and the final Return in one call,
-  such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
+- In Save panels, send Go to Folder, folder, Return, name and final Return in one call: `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
   A full path in the name field becomes a name with slashes. The result's title and URL confirm the
   save.
 - Don't switch back to a sheet or tab to look at it before saving. Clicks can drag tabs: switch
   with the next/previous-tab key.
-- A confirmed save covers that document's sheets and pages. Don't recheck them. Save again after
-  edits.
+- A confirmed save covers its sheets and pages. Don't recheck them. Save after edits.
 - A list with more rows than it shows: click it, then `await app.pickFromList("<whole row text>")` in that call.
   Skip scrolling, typed prefixes and read loops. If it stops, search or use keys.
 
@@ -74,6 +71,8 @@ With a connected ChatGPT extension, web pages use the tab handle, never `getApp`
 The engine masks protected field reads as `<redacted>`. This does not mean input was replaced. Use validation or submission results. Never try to unmask it.
 Submit in that call only when the user asked for that submit and the engine's confirmation policy
 doesn't require confirming it. Otherwise stop before the final click.
+
+When a document pane or table doesn't expose text, read the window with `nodeRepl.emitImage(await app.getScreenshot())`.
 
 ## Browsers
 

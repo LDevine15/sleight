@@ -1300,7 +1300,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   callTrees = process.env.SLEIGHT_CALL_TREES !== 'all', scrollNote = process.env.SLEIGHT_SCROLL_NOTE !== '0',
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
   compactReacquire = process.env.SLEIGHT_COMPACT_REACQUIRE === '1',
-  screenshotReads = process.env.SLEIGHT_SKILL === 'screenshot',
+  screenshotReads = process.env.SLEIGHT_SCREENSHOT_READS !== '0',
   compactToolbars = process.env.SLEIGHT_COMPACT_TOOLBARS === '1', readHints = {},
   // WB1 and WB2, off by default until their held-out A/B: the missed-field note and the changed-Undo note.
   routeSteering = process.env.SLEIGHT_WB1 === '1', undoReceipts = process.env.SLEIGHT_WB2 === '1',

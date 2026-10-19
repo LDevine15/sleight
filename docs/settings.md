@@ -452,16 +452,26 @@ prompt tokens 9% but lost its 2026-10-17 A/B on excel-edit and word-edit (156.3 
 over 5 rounds, 9/10 against 10/10 passes).
 
 `SLEIGHT_RULES_FIRST=0` (A/B baseline) puts the skill's rules after the first window tree in a
-result instead of before it. `SLEIGHT_TEXTLESS_HINT=0` (A/B baseline) leaves out the note that a
+result instead of before it. `SLEIGHT_SCREENSHOT_READS=0` (A/B baseline) leaves out the note that a
 document area doesn't show text values and should be read with a screenshot.
 
 When the window `open_file` opened is such a document (a sheet with no cell values, a page with no
-body text, from a file that isn't empty), its result also includes the window's screenshot, taken by
-one more engine read, in place of that note. It comes only where the note would, and only when the
-window's URL is the opened file, so `SLEIGHT_TEXTLESS_HINT=0` leaves it out too. In 10 of 10 excel-edit and word-edit runs (2026-10-17),
+body text, from a file that isn't empty), its result includes the window's screenshot in place of that note. When the open-shot A/B
+switch leaves the initial screenshot out, the fallback takes one more engine read. It comes only where the note would, and only when the
+window's URL is the opened file, so `SLEIGHT_SCREENSHOT_READS=0` leaves it out too. In 10 of 10 excel-edit and word-edit runs (2026-10-17),
 Claude spent two turns on a second read and a screenshot before its first edit.
-`SLEIGHT_OPEN_AUTO_SHOT=0` (A/B baseline) leaves the screenshot out. `SLEIGHT_OPEN_SHOT=1` adds one to
-every `open_file` result.
+`open_file` includes a screenshot by default. Its held-out A/B totaled 60.0 s against 65.8 s without
+(SE 5.2 s), with no lost pass. `SLEIGHT_OPEN_SHOT=0` is the A/B off switch; it leaves the textless
+fallback above active. `SLEIGHT_OPEN_AUTO_SHOT=0` disables that fallback for A/Bs.
+
+Screenshot guidance, read compaction and the textless hint are on by default. On word-memo and
+word-brief, the screenshot A/B totaled 162.0 s against 196.2 s without (34.2 s faster, SE 22.7 s),
+with no lost pass. `SLEIGHT_SCREENSHOT_READS=0` is their single A/B off switch, including the
+sentence in both skills. `SLEIGHT_SKILL=none` omits the skill for A/Bs.
+
+`SLEIGHT_COMPACT_TOOLBARS=1` stays opt-in. Textedit-replace-all took 26.9 s against 23.2 s
+(+16.2%, SE 2.4 s), despite the gain on Word. The full confirmation policy remains unchanged.
+See the [four flag A/Bs](benchmarks/2026-10-19-flag-ab.md) for the method and every task.
 
 `SLEIGHT_OPEN_RULES=short` (for an A/B, off by default) gives an `open_file` result the skill's rules
 without the lines about acquiring an app, choosing a window, tap coordinates, the drag, hover and

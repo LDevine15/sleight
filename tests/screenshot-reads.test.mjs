@@ -49,10 +49,9 @@ test('first-call rules quoting a user-changed stop do not suppress the textless 
   assert.ok(!output(stop.process([text(value), text('sleight: the user changed the app.')])).includes(note), 'a real stop still suppresses it');
 });
 
-test('the default read and unselected variants remain unchanged', () => {
+test('the explicit A/B baseline leaves the read unchanged', () => {
   const value = tree(pane);
   assert.deepEqual(read(createReadCompactor({ screenshotReads: false }), value), [text(value)]);
-  assert.deepEqual(read(createReadCompactor(), value), [text(value)]);
 });
 
 test('text inside the document area makes the screenshot hint unnecessary', () => {
@@ -144,29 +143,32 @@ test('a prior textless observation does not add hints to unrelated results or co
   assert.doesNotMatch(output(read(c, GUARD_MARK + value + GUARD_END)), /Read the window with/);
 });
 
-test('the environment selects the screenshot compactor variant with an exact value', () => {
-  const original = process.env.SLEIGHT_SKILL;
+test('screenshot reads default on and only the A/B zero turns them off', () => {
+  const original = process.env.SLEIGHT_SCREENSHOT_READS;
   try {
-    for (const variant of ['screenshot', 'none', 'SCREENSHOT', 'default']) {
-      process.env.SLEIGHT_SKILL = variant;
-      assert.equal(output(read(createReadCompactor(), tree(pane))).includes(note), variant === 'screenshot');
+    for (const value of [undefined, '0', '1', 'false', '']) {
+      if (value === undefined) delete process.env.SLEIGHT_SCREENSHOT_READS;
+      else process.env.SLEIGHT_SCREENSHOT_READS = value;
+      assert.equal(output(read(createReadCompactor(), tree(pane))).includes(note), value !== '0');
     }
   } finally {
-    if (original === undefined) delete process.env.SLEIGHT_SKILL;
-    else process.env.SLEIGHT_SKILL = original;
+    if (original === undefined) delete process.env.SLEIGHT_SCREENSHOT_READS;
+    else process.env.SLEIGHT_SCREENSHOT_READS = original;
   }
 });
 
-for (const mismatch of [false, true]) test('the relay associates a screenshot-only result with its acquired handle, mismatch=' + mismatch, async t => {
-  const original = process.env.SLEIGHT_SKILL;
-  process.env.SLEIGHT_SKILL = 'screenshot';
-  t.after(() => { if (original === undefined) delete process.env.SLEIGHT_SKILL; else process.env.SLEIGHT_SKILL = original; });
+for (const flag of [undefined, '0']) for (const mismatch of [false, true]) test(`the relay associates screenshot-only results and honors the A/B switch: flag=${flag}, mismatch=${mismatch}`, async t => {
   const directory = trackTemp(mkdtempSync('/tmp/sleight-fl1-'));
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams, replies = [];
   clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const previous = process.env.SLEIGHT_SCREENSHOT_READS;
+  if (flag === undefined) delete process.env.SLEIGHT_SCREENSHOT_READS;
+  else process.env.SLEIGHT_SCREENSHOT_READS = flag;
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
     inputLease: new InputLease({ directory, holder: 'fl1-fixture' }) });
+  if (previous === undefined) delete process.env.SLEIGHT_SCREENSHOT_READS;
+  else process.env.SLEIGHT_SCREENSHOT_READS = previous;
   t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); removeTemp(directory); });
   const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
   const call = async (id, code, content, appId = 'example.fixture') => {
@@ -182,7 +184,7 @@ for (const mismatch of [false, true]) test('the relay associates a screenshot-on
   await call(2, 'nodeRepl.emitImage(await app.getScreenshot())', [{ type: 'image', mimeType: 'image/png', data: 'fixture' }], mismatch ? 'example.other' : 'example.fixture');
   const result = await call(3, 'await app.getAXState()', [text(GUARD_MARK + tree(pane) + GUARD_END)]);
   assert.equal(result?.isError, undefined);
-  assert.equal(/Read the window with/.test(output(result.content)), mismatch);
+  assert.equal(/Read the window with/.test(output(result.content)), flag !== '0' && mismatch);
 });
 
 test('windows with one title and no URL keep separate hint and screenshot state when the tree carries an ID', () => {

@@ -1,0 +1,588 @@
+{
+ "study": "Flag A/B, compact-toolbars, 2026-10-19",
+ "date": "2026-10-19",
+ "commit": "60fe1319820053db382b26bdaecbc1db83e0c895",
+ "model": "claude-haiku-5-5, high",
+ "engineVersion": "26.1013.40934",
+ "flag": "SLEIGHT_COMPACT_TOOLBARS=1",
+ "verdict": {
+  "flag": "compact-toolbars",
+  "env": "SLEIGHT_COMPACT_TOOLBARS=1",
+  "tasks": [
+   {
+    "task": "textedit-replace-all",
+    "off": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 23.18,
+     "sd": 1.739827577663948,
+     "expected": 23.18
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 26.939999999999998,
+     "sd": 5.082617435928068,
+     "expected": 26.939999999999998
+    },
+    "se": 2.40249869927124,
+    "change": 0.16220880069025023
+   },
+   {
+    "task": "textedit-insert-line",
+    "off": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 34.9,
+     "sd": 8.96799866190891,
+     "expected": 34.9
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 36.42,
+     "sd": 13.959477067569544,
+     "expected": 36.42
+    },
+    "se": 7.420134769665575,
+    "change": 0.04355300859598854
+   },
+   {
+    "task": "word-memo",
+    "off": {
+     "runs": 5,
+     "passes": 4,
+     "mean": 97.17999999999999,
+     "sd": 20.551934215542826,
+     "expected": 121.47499999999998
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 87.06,
+     "sd": 19.016650598883075,
+     "expected": 87.06
+    },
+    "se": 12.522100462781793,
+    "change": -0.28330932290594757
+   },
+   {
+    "task": "word-brief",
+    "off": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 74.72,
+     "sd": 14.940448453778084,
+     "expected": 74.72
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 70.1,
+     "sd": 17.3900833810537,
+     "expected": 70.1
+    },
+    "se": 10.25311659935651,
+    "change": -0.0618308351177731
+   }
+  ],
+  "total": {
+   "off": 254.27499999999998,
+   "on": 220.52,
+   "se": 17.965516970017866,
+   "diff": -33.75499999999997
+  },
+  "commits": [
+   "60fe1319820053db382b26bdaecbc1db83e0c895"
+  ],
+  "engines": [
+   "26.1013.40934"
+  ],
+  "verdict": "stay opt-in",
+  "reasons": [
+   "textedit-replace-all 26.9 s against 23.2 s (+16%, ±2.4 s)"
+  ]
+ },
+ "rounds": [
+  {
+   "round": 1,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-replace-all",
+     "seconds": 25.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 24,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-memo",
+     "seconds": 132.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 73.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 1,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-replace-all",
+     "seconds": 26.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 47.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-memo",
+     "seconds": 80.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 94.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-replace-all",
+     "seconds": 23.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 40.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-memo",
+     "seconds": 80.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 62.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-replace-all",
+     "seconds": 35.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 45.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-memo",
+     "seconds": 92.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 72.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-replace-all",
+     "seconds": 22.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 27.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-memo",
+     "seconds": 89.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 97.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-replace-all",
+     "seconds": 21.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 42.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-memo",
+     "seconds": 58.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 55.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 4,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-replace-all",
+     "seconds": 20.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 36.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-memo",
+     "seconds": 87.2,
+     "passed": false,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 60.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 4,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-replace-all",
+     "seconds": 26.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 33.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-memo",
+     "seconds": 110.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 76.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 5,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-replace-all",
+     "seconds": 23.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 45.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-memo",
+     "seconds": 95.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 80.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 5,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-replace-all",
+     "seconds": 25.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 13.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-memo",
+     "seconds": 92.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 51.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  }
+ ]
+}

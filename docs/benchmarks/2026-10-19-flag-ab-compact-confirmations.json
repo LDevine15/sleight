@@ -1,0 +1,588 @@
+{
+ "study": "Flag A/B, compact-confirmations, 2026-10-19",
+ "date": "2026-10-19",
+ "commit": "60fe1319820053db382b26bdaecbc1db83e0c895",
+ "model": "claude-haiku-5-5, high",
+ "engineVersion": "26.1013.40934",
+ "flag": "SLEIGHT_COMPACT_CONFIRMATIONS=1",
+ "verdict": {
+  "flag": "compact-confirmations",
+  "env": "SLEIGHT_COMPACT_CONFIRMATIONS=1",
+  "tasks": [
+   {
+    "task": "textedit-edit",
+    "off": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 16.160000000000004,
+     "sd": 5.592226747906419,
+     "expected": 16.160000000000004
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 18.48,
+     "sd": 2.104043725781382,
+     "expected": 18.48
+    },
+    "se": 2.6720778431774774,
+    "change": 0.14356435643564325
+   },
+   {
+    "task": "preview-pdf",
+    "off": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 24.12,
+     "sd": 4.896120913539616,
+     "expected": 24.12
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 22.08,
+     "sd": 2.2917242417009946,
+     "expected": 22.08
+    },
+    "se": 2.4176021178018523,
+    "change": -0.08457711442786076
+   },
+   {
+    "task": "finder-create-folder",
+    "off": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 20.6,
+     "sd": 7.18087738371851,
+     "expected": 20.6
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 18.3,
+     "sd": 2.873151579711728,
+     "expected": 18.3
+    },
+    "se": 3.4589015597440755,
+    "change": -0.11165048543689327
+   },
+   {
+    "task": "textedit-insert-line",
+    "off": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 29.979999999999997,
+     "sd": 6.0866246803955315,
+     "expected": 29.979999999999997
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 33.4,
+     "sd": 11.103603018840326,
+     "expected": 33.4
+    },
+    "se": 5.662808490493035,
+    "change": 0.114076050700467
+   }
+  ],
+  "total": {
+   "off": 90.86,
+   "on": 92.25999999999999,
+   "se": 7.5509072302604805,
+   "diff": 1.3999999999999915
+  },
+  "commits": [
+   "60fe1319820053db382b26bdaecbc1db83e0c895"
+  ],
+  "engines": [
+   "26.1013.40934"
+  ],
+  "verdict": "remove",
+  "reasons": [
+   "no win: 92.3 s with the flag against 90.9 s without"
+  ]
+ },
+ "rounds": [
+  {
+   "round": 1,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 13.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 18,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "finder-create-folder",
+     "seconds": 21.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 35,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 1,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 16.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 25.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "finder-create-folder",
+     "seconds": 16.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 22.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 12.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 23.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "finder-create-folder",
+     "seconds": 21.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 22.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 21,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 19.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "finder-create-folder",
+     "seconds": 16,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 29.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 14.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 25.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "finder-create-folder",
+     "seconds": 16.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 34.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 16.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 22,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "finder-create-folder",
+     "seconds": 19.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 45.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 4,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 15.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 21.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "finder-create-folder",
+     "seconds": 31.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 23.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 4,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 19.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 21,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "finder-create-folder",
+     "seconds": 22.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 45.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 5,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 26,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 31.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "finder-create-folder",
+     "seconds": 12,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 33.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 5,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "textedit-edit",
+     "seconds": 19.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "preview-pdf",
+     "seconds": 22.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "finder-create-folder",
+     "seconds": 16.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "textedit-insert-line",
+     "seconds": 23.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  }
+ ]
+}

@@ -52,7 +52,7 @@ for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }, { SLEIGHT_LEAN_CALLS: '1' }, 
     assert.match(first, /Write text with `nodeRepl\.write\(\.\.\.\)`/);
     assert.doesNotMatch(first, /sleight\.fillForm|sleight\.dragTo|downloadMedia|tab\.getJsDialog/);
     // Engine-path browser sessions (Firefox, Safari) never see the Browsers section, so the form batching rule is outside it.
-    assert.match(first, /In a form, fill every independent (?:visible )?field(?: you already see)? in one call\./);
+    assert.match(first, /(?:In a form, fill|Forms: fill) every independent (?:visible )?field(?: you already see)? in one call\./);
     assert.match(first, /Observe again after\s+autocomplete, a (?:field-adding|selection that adds fields)/);
     assert.match(first, /async validation/);
     assert.match(first, /Stop at a required confirmation\./);
@@ -65,7 +65,7 @@ for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }, { SLEIGHT_LEAN_CALLS: '1' }, 
     h.call(3, 'let tab = await cua.getTab("1")');
     const browser = h.reply(3, 'Browser result', true);
     assert.match(browser, /sleight\.fillForm/);
-    assert.match(browser, /stop if the user declines a browser approval/);
+    assert.match(browser, /stop if the user declines a browser approval/i);
     assert.match(browser, /downloadMedia/);
     assert.match(browser, /tab\.getJsDialog/);
     assert.doesNotMatch(browser, /Never create or edit/);
@@ -152,10 +152,10 @@ test('both skill variants explain browser routing and script input within their 
     if (!env.SLEIGHT_PROMPT) assert.match(skill, /nodeRepl\.write\(await sleight\.pickFromList\(tab, list, "Portland"\)\)/);
     else assert.doesNotMatch(skill, /sleight\.pickFromList/);
     assert.match(skill, /[Rr]ead once at the end/);
-    assert.match(skill, /Submit in (?:that|the same) call only when the user asked[^.]*confirmation policy\sdoesn't require confirming it\./);
+    assert.match(skill, /Submit in (?:that|the same) call only when the user asked[^.]*(?:confirmation policy\sdoesn't require confirming it|the engine's confirmation policy allows it)\./);
     assert.match(skill, /Otherwise stop before the final click\./);
     assert.doesNotMatch(skill, /submit in (?:that|the same) call when nothing is uncertain/i);
-    assert.match(skill, /Use locators when validation(?: or |\/)autocomplete (?:can add or move|moves) fields, indices on static forms\./);
+    assert.match(skill, /(?:Use locators when validation(?: or |\/)autocomplete (?:can add or move|moves) fields, indices on static forms|Validation\/autocomplete moves fields: use locators\. Static forms: indices)\./);
     assert.match(skill, /nodeRepl\.write\(await sleight\.dragTo\(tab, from, to\)\)/);
     assert.match(skill, /selectors, locators or page coordinates.*reads back/s);
     if (env.SLEIGHT_PROMPT === 'lean') assert.doesNotMatch(skill, /sleight\.reorder/);
@@ -174,15 +174,15 @@ test('the default skill retains extension selection and lean retains precise saf
   assert.match(normal, /nodeRepl\.write\(await sleight\.pickFromList\(tab, list, "Portland"\)\)/);
   assert.doesNotMatch(lean, /sleight\.pickFromList/);
   assert.match(normal, /cua\.getBrowser\(\{ extensionInstanceId \}\).*in a call of its own/s);
-  assert.match(lean, /tell the user first that it moves their pointer/i);
+  assert.match(lean, /tell the user first(?::| that) it moves their pointer/i);
   assert.match(lean, /ask the user to run `bin\/sleight-mcp --doctor` from the plugin folder/);
-  assert.match(lean, /the latest screenshot of that window/);
-  assert.match(lean, /press Cmd\+Z in that window/);
+  assert.match(lean, /(?:the latest screenshot of that window|that window's latest screenshot)/);
+  assert.match(lean, /(?:press Cmd\+Z in that window|Lost text: press Cmd\+Z there)/);
   assert.match(lean, /Use only documented methods/);
   assert.match(lean, /leave tabs in the background/i);
   assert.match(lean, /stop if the user declines a browser approval/i);
   assert.match(lean, /brings the app forward for about two seconds/);
-  assert.match(lean, /the engine's confirmation policy/);
+  assert.match(lean, /(?:the engine's confirmation policy|the engine's confirmation policy allows it)/);
   assert.match(lean, /Before `hover`, try `Help:`/);
 });
 

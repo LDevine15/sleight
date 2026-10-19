@@ -498,8 +498,7 @@ native reference, and oversized first results defer the browser reference while 
 
 ## The engine and its helper
 
-- After a switch that changes sleight's tool list (an opt-in flag such as `SLEIGHT_COMPACT_CONFIRMATIONS`, or
-  `SLEIGHT_APPROVAL_SCOPE`), the first session can answer every call with an error that says the engine's tools changed,
+- After a switch that changes sleight's tool list (such as `SLEIGHT_APPROVAL_SCOPE`), the first session can answer every call with an error that says the engine's tools changed,
   because sleight's startup cache kept the old list. Starting a new session fixes it. Seen in 2 of 2 races on
   2026-10-19 that flipped such a switch. 1.3.1 caches only the engine's own replies.
 - An action called without `await` that fails used to end the engine's JavaScript session, and every

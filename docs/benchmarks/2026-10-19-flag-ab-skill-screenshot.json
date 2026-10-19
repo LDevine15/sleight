@@ -1,0 +1,350 @@
+{
+ "study": "Flag A/B, skill-screenshot, 2026-10-19",
+ "date": "2026-10-19",
+ "commit": "60fe1319820053db382b26bdaecbc1db83e0c895",
+ "model": "claude-haiku-5-5, high",
+ "engineVersion": "26.1013.40934",
+ "flag": "SLEIGHT_SKILL=screenshot",
+ "verdict": {
+  "flag": "skill-screenshot",
+  "env": "SLEIGHT_SKILL=screenshot",
+  "tasks": [
+   {
+    "task": "word-memo",
+    "off": {
+     "runs": 5,
+     "passes": 4,
+     "mean": 97.17999999999999,
+     "sd": 20.551934215542826,
+     "expected": 121.47499999999998
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 95.47999999999999,
+     "sd": 37.7574760809035,
+     "expected": 95.47999999999999
+    },
+    "se": 19.225030559143462,
+    "change": -0.21399464910475408
+   },
+   {
+    "task": "word-brief",
+    "off": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 74.72,
+     "sd": 14.940448453778084,
+     "expected": 74.72
+    },
+    "on": {
+     "runs": 5,
+     "passes": 5,
+     "mean": 66.55999999999999,
+     "sd": 22.368124641998936,
+     "expected": 66.55999999999999
+    },
+    "se": 12.029546957387879,
+    "change": -0.10920770877944341
+   }
+  ],
+  "total": {
+   "off": 196.195,
+   "on": 162.03999999999996,
+   "se": 22.678443509200537,
+   "diff": -34.15500000000003
+  },
+  "commits": [
+   "60fe1319820053db382b26bdaecbc1db83e0c895"
+  ],
+  "engines": [
+   "26.1013.40934"
+  ],
+  "verdict": "default on",
+  "reasons": [
+   "faster by 34.2 s (-17.4%, ±22.7 s), no lost pass"
+  ]
+ },
+ "rounds": [
+  {
+   "round": 1,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "word-memo",
+     "seconds": 132.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 73.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 1,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "word-memo",
+     "seconds": 109.9,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 65.3,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "word-memo",
+     "seconds": 80.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 62.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "word-memo",
+     "seconds": 57.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 105.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "word-memo",
+     "seconds": 89.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 97.1,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "word-memo",
+     "seconds": 130.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 51.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 4,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "word-memo",
+     "seconds": 87.2,
+     "passed": false,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 60.2,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 4,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "word-memo",
+     "seconds": 126.8,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 53.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 5,
+   "arm": "off",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "word-memo",
+     "seconds": 95.6,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 80.4,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  },
+  {
+   "round": 5,
+   "arm": "on",
+   "model": "claude-haiku-5-5",
+   "effort": "high",
+   "results": [
+    {
+     "task": "word-memo",
+     "seconds": 52.7,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    },
+    {
+     "task": "word-brief",
+     "seconds": 57.5,
+     "passed": true,
+     "models": [
+      "claude-haiku-5-5"
+     ],
+     "engineVersion": "26.1013.40934",
+     "sleightCommit": "60fe1319820053db382b26bdaecbc1db83e0c895"
+    }
+   ]
+  }
+ ]
+}

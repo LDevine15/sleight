@@ -3,7 +3,6 @@
 // code starts calling a cua method this file doesn't list, so a new dependency can't skip the check.
 import { engineJsVariant } from '../../plugins/sleight/lib/tool-description.mjs';
 import { rewritePaymentPolicy } from '../../plugins/sleight/lib/payment-policy.mjs';
-import { compactConfirmationsPolicy } from '../../plugins/sleight/lib/compact-confirmations.mjs';
 
 // cua methods the relay, guard and helpers call (relay.mjs, document-scope.mjs, helper-health.mjs, browser-*.mjs).
 export const CUA_METHODS = ['getApp', 'getState', 'listApps', 'listBrowsers', 'getBrowser', 'getTab', 'createBrowserTab', 'listTabs'];
@@ -153,8 +152,8 @@ export function jsDescriptionResult(pin, mode) {
   return result('js-description', 'pass', "sleight's shorter js description applies");
 }
 
-// sleight rewrites the engine's confirmations policy for payments and forms the user asked for (payment-policy.mjs) and
-// shortens it (compact-confirmations.mjs). Both match the engine's exact text, so a new wording turns them off.
+// sleight rewrites the engine's confirmations policy for payments and forms the user asked for (payment-policy.mjs).
+// It matches the engine's exact text, so a new wording turns it off.
 // The relay rewrites only a text item that starts with "## Computer Use" (relay.mjs, near rewritePaymentPolicy).
 export function checkPolicyRewrite(texts) {
   const strings = texts.filter(text => typeof text === 'string');
@@ -164,13 +163,11 @@ export function checkPolicyRewrite(texts) {
   const item = strings.find(text => text.startsWith('## Computer Use\n'));
   if (!item) return [result('policy-rewrite', 'warn', 'no result item starts with "## Computer Use", so sleight skips its policy rewrite')];
   let status = 'unmatched';
-  const rewritten = rewritePaymentPolicy(item, 'requested', (_, info) => { status = info?.status ?? status; });
+  rewritePaymentPolicy(item, 'requested', (_, info) => { status = info?.status ?? status; });
   if (status !== 'rewritten') {
     return [result('policy-rewrite', 'warn', "the engine's confirmations policy changed, so sleight leaves it whole: payments and form submits the user named ask again")];
   }
-  return compactConfirmationsPolicy(rewritten) === undefined
-    ? [result('policy-rewrite', 'warn', 'the payment rewrite applies, but the compact policy no longer matches it, so the full policy is sent')]
-    : [result('policy-rewrite', 'pass')];
+  return [result('policy-rewrite', 'pass')];
 }
 
 // One js call on the raw engine with no app: which cua methods exist, and the shape (key names and value types, never

@@ -179,7 +179,7 @@ test('textless document windows keep the entire ribbon and its element receipts'
     '100 split group Document Pane\n\t\t101 scroll area']) {
     const value = tree().replace('100 text entry area (settable) Value: Draft', document);
     const c = enabled();
-    assert.equal(run(c, value), value);
+    assert.equal(c.process([text(value)])[0].text, value);
     assert.equal(c.staleIndex(window, 'app.click(3)'), undefined);
   }
 });
