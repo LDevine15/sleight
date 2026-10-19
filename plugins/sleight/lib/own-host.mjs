@@ -32,6 +32,7 @@ export function namesOwnHost(app, pidCheck = ownHostPid) {
 // A computed argument is left out: only the engine's approval card can name it, and the relay declines the host's card.
 const LITERAL = String.raw`"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|\x60(?:[^\x60\\$]|\\[\s\S]|\$(?!\{))*\x60`;
 const PLAIN = new RegExp(String.raw`\s*((?:${LITERAL})(?:\s*\+\s*(?:${LITERAL}))*|\d+)\s*\)`, 'y');
+const GET_APP = String.raw`\bcua\s*(?:(?:\?\.|\.)\s*getApp\b|(?:\?\.\s*)?\[\s*(["'\x60])getApp\1\s*\])`;
 const decode = body => body.replace(/\\(?:x([0-9a-fA-F]{2})|u\{([0-9a-fA-F]{1,6})\}|u([0-9a-fA-F]{4})|(\r\n|[\n\r])|([\s\S]))/g,
   (_, x, braced, u, line, other) => {
     if (x || braced || u) { try { return String.fromCodePoint(parseInt(x ?? braced ?? u, 16)); } catch { return ''; } }
@@ -40,7 +41,23 @@ const decode = body => body.replace(/\\(?:x([0-9a-fA-F]{2})|u\{([0-9a-fA-F]{1,6}
   });
 export function getAppTargets(code) {
   const source = String(code ?? ''), literals = [];
-  for (const call of source.matchAll(/\bcua\s*(?:\.\s*getApp|\[\s*(["'\x60])getApp\1\s*\])\s*\(/g)) {
+  const aliases = new Set();
+  // Keep function aliases local to this code. Computed targets still rely on the engine's approval card.
+  // GET_APP's quote backreference is group 1, so capture the alias after matching the assignment separately.
+  for (const assignment of source.matchAll(new RegExp(String.raw`[A-Za-z_$][\w$]*\s*=\s*${GET_APP}(?=\s*(?:[;,}\n]|$))`, 'g'))) {
+    aliases.add(assignment[0].match(/^[A-Za-z_$][\w$]*/)[0]);
+  }
+  for (const binding of source.matchAll(/\b(?:const|let|var)\s*\{([^{}]*)\}\s*=\s*cua\b/g)) {
+    for (const field of binding[1].split(',')) {
+      const alias = field.match(/^\s*getApp\s*(?::\s*([A-Za-z_$][\w$]*))?\s*$/);
+      if (alias) aliases.add(alias[1] ?? 'getApp');
+    }
+  }
+  const calls = [...source.matchAll(new RegExp(String.raw`${GET_APP}\s*(?:\?\.\s*)?\(`, 'g'))];
+  for (const call of source.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*(?:\?\.\s*)?\(/g)) {
+    if (aliases.has(call[1])) calls.push(call);
+  }
+  for (const call of calls.sort((a, b) => a.index - b.index)) {
     PLAIN.lastIndex = call.index + call[0].length;
     const plain = PLAIN.exec(source);
     if (!plain) continue;

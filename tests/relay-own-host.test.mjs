@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
-import { OWN_HOST_LINE, isOwnHost, ownHostPid } from '../plugins/sleight/lib/own-host.mjs';
+import { OWN_HOST_LINE, isOwnHost, ownHostPid, getAppTargets } from '../plugins/sleight/lib/own-host.mjs';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 
 // Security: sleight's own consent host (the menu bar glove, approval and payment cards) answers only the person's click.
@@ -125,6 +125,42 @@ async function leased(h) {
   h.js(100, 'let app = await cua.getApp("TextEdit")'); await settle();
   h.fromServer(read(100, 'TextEdit', 'com.apple.TextEdit')); await settle();
 }
+const getAppSpellings = [
+  target => `await cua?.getApp(${target})`,
+  target => `await cua?.["getApp"](${target})`,
+  target => `await cua.getApp?.(${target})`,
+  target => `await cua?.['getApp']?.(${target})`,
+  target => `const g = cua.getApp; await g(${target})`,
+  target => `const g = cua["getApp"]; await g(${target})`,
+  target => `const g = cua?.getApp; await g?.(${target})`,
+  target => `const { getApp } = cua; await getApp(${target})`,
+  target => `const { getApp: g } = cua; await g(${target})`,
+];
+for (const [i, spelling] of getAppSpellings.entries()) {
+  test(`engine: optional or aliased getApp spelling ${i + 1} refuses the host`, async t => {
+    const h = harness(t);
+    await leased(h);
+    h.js(1, spelling('"consent-host"')); await settle();
+    refused(h, 1);
+  });
+  test(`engine: optional or aliased getApp spelling ${i + 1} allows an ordinary app`, async t => {
+    const h = harness(t);
+    await leased(h);
+    h.js(1, spelling('"TextEdit"')); await settle();
+    assert.equal(h.sent(1), true);
+  });
+}
+test('optional and aliased getApp keep literal decoding and leave computed targets to approval', () => {
+  for (const spelling of getAppSpellings) {
+    assert.deepEqual(getAppTargets(spelling('"consent" + "\\x2dhost"')), ['consent-host']);
+    assert.deepEqual(getAppTargets(spelling('4242')), ['4242']);
+    assert.deepEqual(getAppTargets(spelling('names[3]')), []);
+  }
+});
+test('a getApp result and another object\'s method are not function aliases', () => {
+  assert.deepEqual(getAppTargets('const g = cua.getApp("TextEdit"); g("consent-host")'), ['TextEdit']);
+  assert.deepEqual(getAppTargets('const g = cua.getApp; other.g("consent-host")'), []);
+});
 test('engine: other spellings of the host in getApp are refused before the engine', async t => {
   const h = harness(t);
   const spellings = ['cua.getApp ("consent-host")', "cua . getApp ( 'consent-host' )", 'cua["getApp"]("consent-host")',
