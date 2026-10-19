@@ -1,0 +1,19 @@
+turbo (direct browser path)
+known     Google Chrome: installed, qualified
+known     Helium: not installed, qualified
+ok        config: on
+ok        browser: Google Chrome, /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+ok        native helpers: compiled
+PROBLEM   remote debugging: off (no DevToolsActivePort)
+          fix: turn on remote debugging in Google Chrome: chrome://inspect/#remote-debugging
+Codex
+note      no Codex config at <HOME>/.codex/config.toml. To use sleight in Codex: codex plugin marketplace add Land-o-Clusters/sleight && codex plugin add sleight@sleight
+Codex computer-use 1.0.0
+config    <HOME>/Library/Group Containers/2DC432GLL2.com.openai.sky.CUAService/config.toml
+surfaces  native
+refused apps  refused by the engine (the user can run defaults write ...)
+ok        node: /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node
+ok        server script: /Applications/ChatGPT.app/Contents/Resources/cua/server.js
+ok        node_repl: /Applications/ChatGPT.app/Contents/Resources/cua/node_repl
+ok        computer-use helper: /Applications/ChatGPT.app/Contents/Resources/SkyComputerUseService.app
+live read ok (helper inventory)

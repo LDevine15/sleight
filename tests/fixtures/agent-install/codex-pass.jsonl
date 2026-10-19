@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"0000-agent-install"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"i1","type":"command_execution","command":"/bin/zsh -lc 'cat <CLONE>/INSTALL.md'","aggregated_output":"# Installing sleight","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"i2","type":"command_execution","command":"/bin/zsh -lc 'codex plugin marketplace add <CLONE>'","aggregated_output":"Added marketplace `sleight`","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"i3","type":"command_execution","command":"/bin/zsh -lc 'codex plugin add sleight@sleight'","aggregated_output":"Added plugin `sleight`","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"i4","type":"command_execution","command":"/bin/zsh -lc '\"$CODEX_HOME/plugins/cache/sleight/sleight/1.3.0/bin/sleight-mcp\" --doctor'","aggregated_output":"live read ok (helper inventory)","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"i5","type":"agent_message","text":"Installed sleight as a Codex plugin (sleight@sleight 1.3.0) and ran its doctor, which reports the engine reachable.\n\nLeft for you: start a new Codex session and trust sleight's hooks when Codex asks. The first time sleight uses an app, click Allow or Always allow on its card. Chrome's remote debugging switch (chrome://inspect/#remote-debugging) is off, so turn it on for turbo."}}
+{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}

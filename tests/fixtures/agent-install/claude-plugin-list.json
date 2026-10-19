@@ -1,0 +1,20 @@
+[
+  {
+    "id": "sleight@sleight",
+    "version": "1.3.0",
+    "scope": "user",
+    "enabled": true,
+    "installPath": "<CONFIG>/plugins/cache/sleight/sleight/1.3.0",
+    "readFromFolder": "<CLONE>/plugins/sleight",
+    "folderVersion": "1.3.0",
+    "installedAt": "2026-10-19T15:42:49.099Z",
+    "lastUpdated": "2026-10-19T15:42:49.099Z",
+    "mcpServers": {
+      "computer": {
+        "command": "${CLAUDE_PLUGIN_ROOT}/bin/sleight-mcp",
+        "args": []
+      }
+    },
+    "projectEnabled": false
+  }
+]

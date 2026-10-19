@@ -719,6 +719,16 @@ native reference, and oversized first results defer the browser reference while 
 
 ## Benchmark environment
 
+- The agent-install test (`bench/agent-install.mjs`) confines writes, exec and Apple events, not reads. Its sandbox profile
+  refuses reads of the owner's host configs and credentials folders (`~/.claude`, `~/.codex*`, `~/.cursor`, `~/.ssh`, `~/.aws`,
+  `~/.gnupg`, `~/.netrc`, `~/.config/gh`). Any other file the owner's account can read, the arm can read too. Claude Code's hook
+  keeps its file tools inside the run's folders, but in either arm an allowed command such as `cat` can print another owner file
+  into the transcript. Claude Code's arm can still run `/usr/bin/security`, since the CLI
+  reads its own login with it. The hook refuses it to the agent.
+- The agent-install owner-path check skips files that changed by themselves within 2 minutes on 2026-10-19 with the owner's
+  own Claude Code, Codex and sleight sessions open: session transcripts, caches, plugin caches, Codex's databases and
+  `~/Library/Application Support/sleight/leases`. A change there doesn't fail a run.
+
 - The world suite's browser tasks opened their fixture pages in Helium, and on 2026-10-16 some opened as tabs in the owner's own
   Helium window beside logged-in mail and other tabs. The benchmark's leftovers were closed by exact fixture origin. Until browser
   tasks run only in an isolated browser, the native claim runs native tasks only and browser comparisons run in the gate's
