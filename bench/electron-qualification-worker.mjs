@@ -5,14 +5,19 @@
 // The debugger card appears in sleight's own consent window and only the user's click answers it; nothing here presses it.
 // Grants go to a grant store in the run's temporary state folder, never the owner's. Engine approval is the benchmark
 // allowlist (LAWS). Killing this process is the worker-loss cell; the app and its pipe belong to the resident host.
+// For the live runner (electron-live-runner.mjs): each card shown and answered is a line in msg.cardLog, so the person
+// who clicks learns when the card is up and what to choose. msg.profile 'user' runs the relaunch flow on the runner's
+// benchmark copy (msg.home names the profile identity). msg.rehost reconnects to the host after the host-loss cell.
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { CARD_TTL_MS, cardLine } from './electron-cards.mjs';
 
 const D = '../plugins/sleight/lib/direct-browser/';
 const load = name => import(new URL(D + name, import.meta.url));
 const unavailable = { text: 'Turbo is unavailable for this turn. Use the engine browser path.', isError: true };
-let base, turn;
+let base, turn, cards = 0;
+const cardStatus = status => status === 'expired' ? 'timeout' : status === 'approved' ? 'granted' : status ?? 'refused';
 
 // Once per worker: modules, the native UI, consent (observed, never answered) and the app's host.
 async function setup(msg) {
@@ -26,31 +31,40 @@ async function setup(msg) {
   const allow = new Set(msg.allowlist);
   const consentBase = consentMod.createElectronConsent({ ui, store: consentMod.createGrantStore({ path: join(msg.stateDir, 'grants.json'), keyPath: join(msg.stateDir, 'grant-seal.key') }),
     engineApproval: instance => (allow.has(instance.bundleId) ? 'approved' : 'unknown') });
-  const card = {};
-  // Observes the card; the reply still comes only from the native window's authenticated click.
+  const card = {}, relaunchCard = {};
+  // Observes the cards; the reply still comes only from the native window's authenticated click.
+  const watched = (kind, target, ask) => async (...args) => {
+    const shownAt = performance.now(), id = `${process.pid}-${++cards}`, at = Date.now();
+    target.shown = true;
+    cardLine(msg.cardLog, { event: 'shown', id, kind, at, deadlineAt: at + CARD_TTL_MS, temporary: args[0]?.temporary === true, app: String(args[0]?.name ?? '') });
+    const result = await ask(...args);
+    Object.assign(target, { ms: Math.round(performance.now() - shownAt), status: cardStatus(result?.status),
+      scope: result?.grant?.scope ?? null, by: ['granted', 'approved'].includes(result?.status) ? 'user' : null });
+    cardLine(msg.cardLog, { event: 'answered', id, kind, at: Date.now(), status: target.status, scope: target.scope });
+    return result;
+  };
   const consent = Object.create(consentBase, {
     grantFor: { value(...args) { const grant = consentBase.grantFor(...args); if (grant) Object.assign(card, { existing: true, status: 'granted', scope: grant.scope, by: 'existing' }); return grant; } },
-    requestDebugger: { async value(...args) {
-      const shownAt = performance.now(); card.shown = true;
-      const result = await consentBase.requestDebugger(...args);
-      Object.assign(card, { ms: Math.round(performance.now() - shownAt), status: result?.status === 'expired' ? 'timeout' : result?.status ?? 'refused',
-        scope: result?.grant?.scope ?? null, by: result?.status === 'granted' ? 'user' : null });
-      return result;
-    } },
+    requestDebugger: { value: watched('debugger', card, (...args) => consentBase.requestDebugger(...args)) },
+    requestRelaunch: { value: watched('relaunch', relaunchCard, (...args) => consentBase.requestRelaunch(...args)) },
   });
-  // The product's host path: this run's registry, state folder and temporary root, and the parent's secret. The benchmark's
-  // own instance on a temporary profile (LAWS); the installed default is the user's own profile.
-  const host = await runtimeMod.connectAppHost({ bundleId: msg.bundleId, secret: msg.appSecret, profile: 'temporary',
-    dependencies: { registryPath: msg.registryPath, config: { tempRoot: msg.tempRoot, hostStateDir: () => msg.stateDir } } });
-  base = { runtimeMod, workerMod, contextMod, ui, consent, card, host, receipts: new Map(), playwright: worldsMod.loadPlaywrightCore({ turbo: true }).inprocess.playwright };
+  base = { runtimeMod, workerMod, contextMod, ui, consent, card, relaunchCard, receipts: new Map(), memory: Object.freeze({ declined: new Set() }),
+    playwright: worldsMod.loadPlaywrightCore({ turbo: true }).inprocess.playwright };
+  base.host = await connectHost(msg);
   return base;
 }
+
+// The product's host path: this run's registry, state folder and temporary root, and the parent's secret. The benchmark's
+// own instance on a temporary profile (LAWS); with profile 'user', the runner's own benchmark copy on its own profile.
+const connectHost = msg => base.runtimeMod.connectAppHost({ bundleId: msg.bundleId, secret: msg.appSecret, profile: msg.profile === 'user' ? 'user' : 'temporary',
+  dependencies: { registryPath: msg.registryPath, config: { tempRoot: msg.tempRoot, hostStateDir: () => msg.stateDir }, ...(msg.home ? { home: msg.home } : {}) } });
 
 // One turn, as the installed worker's prepareApps composes it.
 async function select(msg, b) {
   const id = 'turn-' + randomUUID();
   const connection = await b.runtimeMod.selectAppConnection({ bundleId: msg.bundleId, session: msg.session, turn: id, apps: msg.allowlist, ui: b.ui, consent: b.consent,
-    registry: b.host.registry, admin: b.host.admin, playwright: b.playwright, windows: b.runtimeMod.runWindowHelper, profile: b.host.profile, receipts: b.receipts });
+    registry: b.host.registry, admin: b.host.admin, playwright: b.playwright, windows: b.runtimeMod.runWindowHelper, profile: b.host.profile, receipts: b.receipts,
+    memory: b.memory });
   const message = Object.freeze({ source: 'user', session: msg.session, turn: id, id, text: msg.text });
   const binding = b.contextMod.createV3TurnBinding(message, () => true);
   try {
@@ -76,14 +90,18 @@ const ops = {
   async start(msg) {
     const b = await setup(msg);
     await endTurn();
-    for (const key of Object.keys(b.card)) delete b.card[key];
-    Object.assign(b.card, { shown: false, existing: false, by: null, status: null, scope: null, ms: null });
+    if (msg.rehost) b.host = await connectHost(msg);
+    for (const target of [b.card, b.relaunchCard]) {
+      for (const key of Object.keys(target)) delete target[key];
+      Object.assign(target, { shown: false, existing: false, by: null, status: null, scope: null, ms: null });
+    }
     const started = performance.now();
     turn = await select(msg, b);
     const connectMs = Math.round(performance.now() - started);
     const { instance, provider, receipt } = turn.connection;
     return { card: { ...b.card }, identity: provider.identity && { pid: provider.identity.pid, pidBirth: provider.identity.birth, instance: provider.identity.instance, epoch: provider.identity.epoch },
-      launch: { pid: instance.pid, pidBirth: instance.pidBirth, ms: null }, connectMs, receipt: receipt ?? null, hostPid: b.host.admin.pid ?? null };
+      launch: { pid: instance.pid, pidBirth: instance.pidBirth, ms: null }, connectMs, receipt: receipt ?? null, hostPid: b.host.admin.pid ?? null,
+      relaunchCard: { ...b.relaunchCard }, relaunch: turn.connection.relaunch ? { ...turn.connection.relaunch } : null };
   },
   // The installed worker's call: refuse unless the grant and the host channel still verify, then the dispatcher.
   async call(msg) {
@@ -132,13 +150,20 @@ const ops = {
     const outcome = await b.host.admin.reconcile({}).catch(error => ({ resolved: false, reason: error.message }));
     return { resolved: outcome?.resolved === true, reason: outcome?.reason ?? null };
   },
+  // The host's own collect after the app exited (the user's Quit), then its status: ownership free means the record went.
+  async collect() {
+    await base.host.admin.collect?.().catch(() => {});
+    const s = await base.host.admin.status();
+    return { status: { ownership: s?.ownership?.state ?? null, broker: s?.broker?.state ?? null } };
+  },
   async receipt() { return { receipt: turn?.connection.receipt ?? null, recipe: turn && { zoomLevel: turn.connection.recipe.zoomLevel, joinTolerance: turn.connection.recipe.joinTolerance } }; },
   end: () => endTurn(),
 };
 
-process.on('message', async msg => {
+if (process.send) process.on('message', async msg => {
   const reply = value => process.send?.({ id: msg.id, ...value });
   try { reply({ ok: true, ...await (ops[msg.op] ?? (() => { throw Error('UNKNOWN_OP'); }))(msg) }); }
-  catch (error) { reply({ ok: false, error: String(error?.message ?? error).slice(0, 300), ...(base?.card.shown || base?.card.existing ? { card: { ...base.card } } : {}) }); }
+  catch (error) { reply({ ok: false, error: String(error?.notice ?? error?.message ?? error).slice(0, 300), ...(base?.card.shown || base?.card.existing ? { card: { ...base.card } } : {}),
+    ...(base?.relaunchCard.shown ? { relaunchCard: { ...base.relaunchCard } } : {}) }); }
 });
-process.on('disconnect', () => process.exit(0));
+if (process.send) process.on('disconnect', () => process.exit(0));

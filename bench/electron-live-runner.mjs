@@ -1,0 +1,376 @@
+// The live Electron runner for sleight-arch (1.3.1 validation, ledger p130 g4). One command, owner away, three phases:
+//   qualify   the 22 EPV3-8 cells (electron-qualification.mjs) on the benchmark VS Code instance: a temporary profile and the
+//             fixture folder, launched by sleight's resident host through the installed worker's app path.
+//   arm       a Claude Code arm (Haiku 5.5, high effort) doing three fixture tasks through the five production turbo tools,
+//             served by electron-arm-server.mjs over the same worker path, on its own benchmark instance.
+//   relaunch  the relaunch cells (RELAUNCH_CELLS) on a clone of the installed VS Code with its own portable profile
+//             (electron-relaunch-live.mjs). Skipped while the owner's own VS Code runs: the runner never quits it.
+// Cards: sleight's consent cards are the only human steps. The runner never clicks them. Each card is announced on stdout
+// and in <out>/CARD.json (what to click, where, and by when), and every card's latency lands in summary.json.
+// Cleanup ends only what this run launched. A cleanup it cannot confirm keeps the live lock and stops the run.
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
+import { APPS, HOLD, LOCK, RELAUNCH_CELLS, relaunchCellsFor, runQualification, scrubReceipt, waitForHold } from './electron-qualification.mjs';
+
+const execute = promisify(execFile);
+const ARM_SERVER = fileURLToPath(new URL('./electron-arm-server.mjs', import.meta.url));
+export const PHASES = Object.freeze(['qualify', 'arm', 'relaunch']);
+// The consent card's own deadline (electron-consent ttlMs). A later click is refused by the card itself.
+export const CARD_WINDOW_MS = 120000;
+// The live order runs host-loss on the app the relaunch reopened, before the stand-in for the owner's Quit, so one
+// relaunch card covers every cell. The fake order in RELAUNCH_CELLS reopens the app for host-loss instead.
+export const LIVE_RELAUNCH_ORDER = Object.freeze(['relaunch-card', 'relaunch-quit', 'relaunch-unsaved', 'relaunch-pipe', 'relaunch-background',
+  'relaunch-restore', 'relaunch-reuse', 'relaunch-host-loss', 'relaunch-user-quit']);
+export const liveRelaunchCells = app => LIVE_RELAUNCH_ORDER.map(id => relaunchCellsFor(app).find(cell => cell.id === id)).filter(Boolean);
+// Expected wall time per phase, without card waits (estimates; summary.json records the measured ones).
+export const EXPECTED_MS = Object.freeze({ qualify: 15 * 60000, arm: 5 * 60000, relaunch: 5 * 60000 });
+// The cards each phase shows, from the worker's consent rules: a new worker or process asks, a reconnect in the same worker
+// reuses its session grant, and an Always record (persistent profiles only) answers later debugger cards by itself.
+export const EXPECTED_CARDS = Object.freeze({
+  qualify: ['Allow this session (first launch)', 'Allow this session (after Disconnect)', 'Allow this session (new worker after the kill)', 'Allow this session (host-kill instance)'],
+  arm: ['Allow this session (the arm\'s worker)'],
+  relaunch: ['Always allow (debugger, the delegated click)', 'Quit and reopen (relaunch)'],
+});
+
+export function parseRunnerArgs(argv) {
+  const out = { phases: [...PHASES], out: undefined, consentWaitMs: CARD_WINDOW_MS, model: 'claude-haiku-5-5', effort: 'high', samples: 20, trials: 10,
+    aliveWaitMs: 60000, armTimeoutMs: 15 * 60000, mode: undefined };
+  const numbers = { '--consent-wait-ms': 'consentWaitMs', '--samples': 'samples', '--trials': 'trials', '--alive-wait-ms': 'aliveWaitMs', '--arm-timeout-ms': 'armTimeoutMs' };
+  let dry = false, away = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i], value = argv[i + 1];
+    if (arg === '--dry-run') { dry = true; continue; }
+    if (arg === '--owner-away') { away = true; continue; }
+    if (!(arg in numbers) && !['--phases', '--out', '--model', '--effort'].includes(arg) || value === undefined || value.startsWith('--')) throw Error('INVALID_OPTIONS');
+    i++;
+    if (arg === '--phases') {
+      out.phases = value.split(',');
+      if (!out.phases.length || out.phases.some(p => !PHASES.includes(p))) throw Error('UNKNOWN_PHASE');
+      out.phases = PHASES.filter(p => out.phases.includes(p));
+    } else if (arg === '--out') out.out = value;
+    else if (arg === '--model') { if (!/^claude-[a-z0-9-]+$/.test(value)) throw Error('INVALID_OPTIONS'); out.model = value; }
+    else if (arg === '--effort') { if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(value)) throw Error('INVALID_OPTIONS'); out.effort = value; }
+    else { const n = Number(value); if (!Number.isSafeInteger(n) || n < 0) throw Error('INVALID_OPTIONS'); out[numbers[arg]] = n; }
+  }
+  if (dry && away) throw Error('CONFLICTING_MODE');
+  if (!dry && !away) throw Error('OWNER_AWAY_REQUIRED: the run shows VS Code windows and sleight\'s cards; pass --owner-away in the away window, or --dry-run');
+  if (out.consentWaitMs > CARD_WINDOW_MS) throw Error('CONSENT_WAIT_TOO_LONG: the card refuses a click after 120 s');
+  out.mode = dry ? 'dry-run' : 'live';
+  return out;
+}
+
+// ---- preflight: every check reads only. A problem stops the run before anything launches; a skip drops one phase.
+export async function preflight({ phases, io }) {
+  const problems = [], skips = {}, app = APPS.vscode;
+  if (io.platform !== 'darwin') problems.push('MACOS_REQUIRED');
+  if (!io.exists(app.path)) problems.push(`APP_MISSING: ${app.path}`);
+  if (!await io.turboInstalled()) problems.push('TURBO_NOT_INSTALLED: sleight-mcp turbo on first (the worker builds its native helpers from it)');
+  if (!io.exists(io.inspector)) problems.push('PERMISSION_OBSERVER_MISSING: codex-macos-inspect');
+  if (phases.includes('arm') && !io.exists(io.armClaude)) problems.push(`ARM_MISSING: ${io.armClaude}`);
+  if (phases.includes('relaunch')) {
+    const running = await io.ownerCopies(app.bundleId);
+    if (running.length) skips.relaunch = `OWNER_APP_RUNNING: ${running.length} VS Code process(es) of the owner; the relaunch cells need it closed, and the runner never quits it`;
+    else if (await io.quarantined(app.path)) skips.relaunch = 'SOURCE_QUARANTINED: the installed VS Code carries a quarantine flag';
+  }
+  return { ok: problems.length === 0, problems, skips };
+}
+
+// ---- cards
+export function parseCardLog(text) {
+  return String(text).split('\n').flatMap(line => { try { const e = JSON.parse(line); return e && typeof e.id === 'string' && ['shown', 'answered'].includes(e.event) ? [e] : []; } catch { return []; } });
+}
+/** What to click on a card, and whether the owner's delegation (Always allow on the benchmark VS Code, LAWS 2026-10-19) covers it. */
+export function cardInstruction(event) {
+  if (event.kind === 'relaunch') return { click: 'Quit and reopen', delegated: false,
+    note: 'The relaunch card of the benchmark copy. The owner delegated only Always allow; the owner clicks this, or extends the delegation to it first.' };
+  if (event.temporary) return { click: 'Allow this session', delegated: false,
+    note: 'A temporary profile offers no Always allow. The owner delegated Always allow only; confirm the delegation covers Allow this session on the benchmark instance before clicking.' };
+  return { click: 'Always allow', delegated: true, note: 'The owner delegated this click on the benchmark VS Code to sleight-arch (LAWS, 2026-10-19).' };
+}
+const center = r => ({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });
+/** Screen points (global, top-left origin) for the three clicks: the glove, the menu row, the card's button. */
+export function locateCard(geometry, click) {
+  const windows = (geometry?.windows ?? []).filter(w => w.onScreen && w.width > 0 && w.height > 0), buttons = geometry?.buttons ?? [];
+  const glove = windows.filter(w => w.layer === 25).sort((a, b) => b.x - a.x)[0];
+  const menu = windows.find(w => w.layer === 101);
+  const alert = windows.filter(w => w.layer >= 0 && w.layer < 25 && w.width >= 200).sort((a, b) => b.width * b.height - a.width * a.height)[0];
+  const button = buttons.find(b => b.title === click), review = buttons.find(b => b.title === 'Review sleight request');
+  return { glove: glove ? center(glove) : null, menu: menu ? { x: menu.x, y: menu.y, width: menu.width, height: menu.height } : null,
+    review: review ? center(review) : null, alert: alert ? { x: alert.x, y: alert.y, width: alert.width, height: alert.height } : null,
+    button: button ? center(button) : null, ax: geometry?.ax === true };
+}
+/** The consent hosts under this run: processes named consent-host whose parent chain reaches rootPid. */
+export function consentHostPids(rows, rootPid) {
+  const parent = new Map(rows.map(r => [r.pid, r.ppid]));
+  const under = pid => { for (let p = pid, n = 0; p && n < 64; p = parent.get(p), n++) if (p === rootPid) return true; return false; };
+  return rows.filter(r => /(^|\/)consent-host$/.test(r.args.split(' ')[0]) && under(r.pid)).map(r => r.pid);
+}
+export function parseTree(stdout) {
+  return String(stdout).split('\n').map(line => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line)).filter(Boolean).map(([, pid, ppid, args]) => ({ pid: +pid, ppid: +ppid, args: args.trim() }));
+}
+const iso = ms => new Date(ms).toISOString();
+const where = (loc, click) => [
+  loc.glove ? `the sleight glove in the menu bar at (${loc.glove.x}, ${loc.glove.y})` : 'the sleight glove in the menu bar (not located yet)',
+  loc.review ? `"Review sleight request" at (${loc.review.x}, ${loc.review.y})` : '"Review sleight request" (the first row of its menu)',
+  loc.button ? `"${click}" at (${loc.button.x}, ${loc.button.y})` : `"${click}" in the card that opens${loc.alert ? ` (card window at ${loc.alert.x}, ${loc.alert.y}, ${loc.alert.width} x ${loc.alert.height})` : ''}`,
+].join(', then ');
+
+export function createCardWatcher({ cardLog, outDir, read = path => { try { return readFileSync(path, 'utf8'); } catch { return ''; } }, locate = async () => null,
+  write = (path, text) => writeFileSync(path, text), remove = path => rmSync(path, { force: true }), log = console.log, now = Date.now }) {
+  const cards = [], pending = new Map();
+  let consumed = 0;
+  const cardFile = join(outDir, 'CARD.json');
+  async function refresh(card) {
+    let loc;
+    try { loc = locateCard(await locate(), card.click); } catch { loc = locateCard(null, card.click); }
+    const key = JSON.stringify(loc);
+    if (key !== card.lastKey) {
+      card.lastKey = key;
+      if (card.announced) log(`CARD ${card.n}: ${where(loc, card.click)}`);
+    }
+    const left = Math.max(0, Math.round((card.deadlineAt - now()) / 1000));
+    write(cardFile, JSON.stringify({ n: card.n, kind: card.kind, app: card.app, shownAt: iso(card.shownAt), answerBy: iso(card.deadlineAt), secondsLeft: left,
+      click: card.click, delegated: card.delegated, note: card.note, steps: where(loc, card.click), location: loc }, null, 2) + '\n');
+    return loc;
+  }
+  async function poll() {
+    const events = parseCardLog(read(cardLog));
+    for (const e of events.slice(consumed)) {
+      if (e.event === 'shown') {
+        const card = { n: cards.length + 1, id: e.id, kind: e.kind, app: e.app, temporary: e.temporary === true, shownAt: e.at, deadlineAt: e.deadlineAt ?? e.at + CARD_WINDOW_MS,
+          ...cardInstruction(e), status: 'pending' };
+        cards.push(card); pending.set(e.id, card);
+        const loc = await refresh(card);
+        card.announced = true;
+        log(`CARD ${card.n} (${card.kind}, ${card.app}) shown ${iso(card.shownAt)}; answer by ${iso(card.deadlineAt)}. Click ${where(loc, card.click)}. ${card.note}`);
+      } else {
+        const card = pending.get(e.id);
+        if (!card) continue;
+        pending.delete(e.id);
+        Object.assign(card, { status: e.status, scope: e.scope ?? null, answeredAt: e.at, latencyMs: e.at - card.shownAt,
+          inTime: e.status === 'granted' && e.at <= card.deadlineAt });
+        if (!pending.size) remove(cardFile);
+        log(`CARD ${card.n} answered: ${e.status}${e.scope ? ` (${e.scope})` : ''} after ${(card.latencyMs / 1000).toFixed(1)} s`);
+      }
+    }
+    consumed = events.length;
+    for (const card of pending.values()) await refresh(card);
+  }
+  const summary = () => cards.map(({ lastKey, announced, ...card }) => ({ ...card, shownAt: iso(card.shownAt), deadlineAt: iso(card.deadlineAt),
+    ...(card.answeredAt ? { answeredAt: iso(card.answeredAt) } : {}) }));
+  return { poll, cards, summary, pending: () => pending.size };
+}
+
+// ---- the arm
+export const ARM_ALLOWED = ['browser_open', 'browser_read', 'browser_act', 'browser_fill', 'browser_tabs'].map(name => 'mcp__sleight-electron__' + name);
+export function armPrompt({ marker, skill = '' }) {
+  return `${skill ? skill + '\n\n' : ''}Visual Studio Code is open with a folder of fixture files. Use only the browser_* tools: browser_tabs list shows its ` +
+    `window as a tab labelled Visual Studio Code. Do these three tasks in order:\n` +
+    `1. Open b-big.txt and report its last line.\n` +
+    `2. Open a-scratch.txt, type exactly ${marker} into it, and save it.\n` +
+    `3. Open a-notes.md and report its top-level heading.\n` +
+    `End your answer with three lines: "RESULT1: <last line of b-big.txt>", "RESULT2: done", "RESULT3: <heading>".`;
+}
+export function parseStream(stdout) {
+  let result, tools = {};
+  for (const line of String(stdout).split('\n')) {
+    let e; try { e = JSON.parse(line); } catch { continue; }
+    if (e?.type === 'assistant') for (const block of e.message?.content ?? []) if (block?.type === 'tool_use') tools[block.name] = (tools[block.name] ?? 0) + 1;
+    if (e?.type === 'result') result = e;
+  }
+  return { text: typeof result?.result === 'string' ? result.result : '', isError: result ? result.is_error === true : true, durationMs: result?.duration_ms ?? null,
+    turns: result?.num_turns ?? null, toolCalls: tools, model: result?.modelUsage ? Object.keys(result.modelUsage) : null };
+}
+export function gradeArm({ text, scratch, marker }) {
+  const line = n => new RegExp(`^RESULT${n}:\\s*(.*)$`, 'mi').exec(text)?.[1]?.trim() ?? '';
+  const tasks = [
+    { id: 'read-last-line', pass: /\bline 1500\b/i.test(line(1)), got: line(1).slice(0, 80) },
+    { id: 'type-and-save', pass: String(scratch).includes(marker), got: String(scratch).slice(0, 80) },
+    { id: 'read-heading', pass: /^#?\s*notes\b/i.test(line(3)), got: line(3).slice(0, 80) },
+  ];
+  return { tasks, passed: tasks.filter(t => t.pass).length, pass: tasks.every(t => t.pass) };
+}
+
+// ---- phases
+const phaseRecord = (id, started, now, rest) => ({ id, startedAt: iso(started), ms: now() - started, ...rest });
+function receiptPath(dir, receipt, key) { return join(dir, `${key}-${receipt.kind === 'electron-relaunch' ? 'relaunch-' : ''}${receipt.mode}-${receipt.at.replace(/[:.]/g, '-')}.json`); }
+export function writeReceipt(dir, receipt, key) {
+  mkdirSync(dir, { recursive: true });
+  const path = receiptPath(dir, receipt, key);
+  writeFileSync(path, JSON.stringify(scrubReceipt(receipt), null, 2) + '\n');
+  return path;
+}
+
+/** Runs the chosen phases in order under one lock. deps supplies each phase (live or fake) and the run's io. */
+export async function runPhases({ options, deps }) {
+  const { log, now, sleep, io } = deps, app = APPS.vscode, phases = [], started = now();
+  const watcher = deps.watcher;
+  const pump = deps.pump ?? (async work => {
+    let done = false;
+    const loop = (async () => { while (!done) { await watcher.poll().catch(() => {}); await sleep(500); } })();
+    try { return await work; } finally { done = true; await loop; await watcher.poll().catch(() => {}); }
+  });
+  const check = await deps.preflight({ phases: options.phases, io });
+  for (const p of check.problems) log(`preflight: ${p}`);
+  if (!check.ok) return { code: 2, summary: { version: 1, kind: 'electron-live-run', mode: options.mode, at: iso(started), preflight: check, phases: [], cards: [] } };
+  const expected = options.phases.filter(id => !check.skips[id]).flatMap(id => EXPECTED_CARDS[id].map(card => `${id}: ${card}`));
+  log(`cards to click, in order (each within 120 s of its CARD line): ${expected.join('; ')}`);
+  let held = await waitForHold(io, { now, sleep }), release, keep = false;
+  release = await deps.lock();
+  try {
+    for (const id of options.phases) {
+      if (check.skips[id]) { log(`${id}: skipped, ${check.skips[id]}`); phases.push({ id, status: 'skipped', reason: check.skips[id] }); continue; }
+      held += await waitForHold(io, { now, sleep });
+      const t = now();
+      log(`${id}: started ${iso(t)} (expected about ${Math.round(EXPECTED_MS[id] / 60000)} min plus card waits)`);
+      let record;
+      try {
+        const r = await pump(deps[id]({ app, options }));
+        record = phaseRecord(id, t, now, r);
+      } catch (error) { record = phaseRecord(id, t, now, { status: 'fail', error: String(error?.message ?? error).slice(0, 300), cleanup: { confirmed: false } }); }
+      phases.push(record);
+      log(`${id}: ${record.status} in ${(record.ms / 60000).toFixed(1)} min${record.error ? `, ${record.error}` : ''}${record.receipt ? ` (${record.receipt})` : ''}`);
+      if (record.cleanup?.confirmed !== true) { keep = true; log(`${id}: cleanup unconfirmed; the run stops and keeps ${LOCK}`); break; }
+      if (record.stopped) { log(`${id}: stopped (${record.stopped}); later phases do not run`); break; }
+    }
+  } finally {
+    if (!keep) await release();
+  }
+  const cards = watcher.summary();
+  const summary = { version: 1, kind: 'electron-live-run', mode: options.mode, at: iso(started), ms: now() - started, heldMs: held, build: deps.build?.() ?? null,
+    model: { id: options.model, effort: options.effort }, preflight: check, phases, cards,
+    clicks: { total: cards.length, delegated: cards.filter(c => c.delegated).length, late: cards.filter(c => c.status !== 'pending' && !c.inTime).length,
+      unanswered: cards.filter(c => c.status === 'pending' || c.status === 'timeout').length } };
+  const pass = phases.length > 0 && phases.every(p => p.status === 'pass' || p.status === 'skipped') && !keep;
+  return { code: pass ? 0 : 1, summary, keep };
+}
+
+// ---- live phases
+async function livePhases({ options, root, out, cardLog, exec }) {
+  const { liveRuntime, liveDriver } = await import('./electron-qualification-live.mjs');
+  const { observePermission } = await import('./real-permission.mjs');
+  const permission = () => observePermission({ stopOnLiveHold: false });
+  const io = { exists: existsSync, permission };
+  const clock = { now: Date.now, sleep: ms => delay(ms) };
+  const runOptions = { trials: options.trials, samples: options.samples, aliveWaitMs: options.aliveWaitMs, consentWaitMs: options.consentWaitMs, mode: 'live' };
+  return {
+    async qualify({ app }) {
+      const runtime = await liveRuntime(options, { io, clock });
+      try {
+        const driver = runtime.driverFor(app, { cardLog });
+        const receipt = await runQualification({ app, driver, observer: runtime.observer, io, clock, options: runOptions });
+        return { status: receipt.qualified ? 'pass' : 'fail', receipt: writeReceipt(out, receipt, app.key), qualified: receipt.qualified,
+          cells: `${receipt.cells.filter(c => c.status === 'pass').length}/${receipt.cells.length}`, failed: receipt.cells.filter(c => c.status === 'fail').map(c => `${c.id}: ${c.error}`),
+          cleanup: receipt.cleanup, ...(receipt.stopped ? { stopped: receipt.stopped.reason } : {}) };
+      } finally { await runtime.close().catch(() => {}); }
+    },
+    async arm({ app }) {
+      const { worldAgentSetup } = await import('./world/arms/browser.mjs');
+      const { runOwned } = await import('./preapproved-process.mjs');
+      const base = mkdtempSync(join(root, 'arm-')), armDir = join(base, 'claude');
+      mkdirSync(armDir);
+      const driver = liveDriver(app, { root: base, exec, observer: null, cardLog });
+      let result, grade, cleanup;
+      try {
+        await driver.prepare();
+        const config = driver.armConfig(), configPath = join(config.stateDir, 'arm.json');
+        writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
+        const marker = 'arm' + Math.random().toString(36).slice(2, 8);
+        const skill = readFileSync(new URL('../plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo-v3.md', import.meta.url), 'utf8').trimEnd()
+          .replace('{browser}', 'bbench').replace('{application}', ` (${app.name})`);
+        const prompt = armPrompt({ marker, skill });
+        const setup = worldAgentSetup({ surface: 'sleight', dir: armDir });
+        const mcpPath = join(armDir, 'mcp.json'), settingsPath = join(armDir, 'settings.json');
+        writeFileSync(mcpPath, JSON.stringify({ mcpServers: { 'sleight-electron': { command: process.execPath, args: [ARM_SERVER],
+          env: { SLEIGHT_EQ_ARM_CONFIG: configPath, SLEIGHT_EQ_ARM_TASK: prompt.split('\n').slice(-5).join('\n') } } } }));
+        writeFileSync(settingsPath, JSON.stringify(setup.settings));
+        const args = [...setup.args, '-p', '--model', options.model, '--effort', options.effort, '--permission-mode', 'default', '--output-format', 'stream-json', '--verbose',
+          '--strict-mcp-config', '--mcp-config', mcpPath, '--settings', settingsPath, '--allowedTools', ARM_ALLOWED.join(','), '--tools', '', '--no-chrome', prompt];
+        const t = Date.now();
+        // The first tool call waits on the card and the launch, so Claude Code's tool timeout must outlast both.
+        const run = await runOwned(setup.command, args, { cwd: armDir, env: { ...setup.env, ANTHROPIC_SMALL_FAST_MODEL: options.model, MCP_TOOL_TIMEOUT: '600000' },
+          timeoutMs: options.armTimeoutMs });
+        result = { ...parseStream(run.stdout), wallMs: Date.now() - t, exit: run.exit, timedOut: run.timedOut };
+        writeFileSync(join(out, `arm-${iso(t).replace(/[:.]/g, '-')}.jsonl`), String(scrubReceipt(run.stdout)));
+        grade = gradeArm({ text: result.text, scratch: driver.readFile('a-scratch.txt'), marker });
+      } finally {
+        await driver.adoptRunning().catch(() => 0);
+        cleanup = await driver.cleanup().catch(error => ({ confirmed: false, error: error.message }));
+        if (cleanup.confirmed) rmSync(base, { recursive: true, force: true });
+      }
+      return { status: grade?.pass && !result?.isError ? 'pass' : 'fail', model: options.model, effort: options.effort, result: scrubReceipt({ ...result, text: result?.text?.slice(-600) }),
+        grade, cleanup: scrubReceipt(cleanup) };
+    },
+    async relaunch({ app }) {
+      const { liveRelaunchDriver } = await import('./electron-relaunch-live.mjs');
+      const observerRuntime = await liveRuntime(options, { io, clock });
+      try {
+        const driver = liveRelaunchDriver(app, { root, io, cardLog });
+        const receipt = await runQualification({ app, driver, observer: observerRuntime.observer, io, clock, cells: liveRelaunchCells(app), options: { ...runOptions, relaunch: true } });
+        // Honest labels: the relaunch ran on the runner's clone with its own portable profile, never the owner's app or profile.
+        receipt.profile = { ...receipt.profile, copy: 'benchmark clone with its own portable profile', owners: false };
+        return { status: receipt.qualified ? 'pass' : 'fail', receipt: writeReceipt(out, receipt, app.key), qualified: receipt.qualified,
+          cells: `${receipt.cells.filter(c => c.status === 'pass').length}/${receipt.cells.length}`, failed: receipt.cells.filter(c => c.status === 'fail').map(c => `${c.id}: ${c.error}`),
+          cleanup: receipt.cleanup, ...(receipt.stopped ? { stopped: receipt.stopped.reason } : {}) };
+      } finally { await observerRuntime.close().catch(() => {}); }
+    },
+  };
+}
+
+async function liveIo(exec) {
+  const { homedir } = await import('node:os');
+  return {
+    platform: process.platform, exists: existsSync, inspector: join(homedir(), '.codex/bin/codex-macos-inspect'),
+    armClaude: join(homedir(), '.config/sleight-bench/world/arms/sleight/node_modules/.bin/claude'),
+    async turboInstalled() { try { return !!(await import('../plugins/sleight/lib/direct-browser/installed-config.mjs')).readInstalledConfig(); } catch { return false; } },
+    async ownerCopies(bundle) { const { helper } = await import('./electron-qualification-live.mjs'); return (await helper({ mode: 'pids', bundle }, exec)).pids; },
+    quarantined: path => exec('/usr/bin/xattr', ['-p', 'com.apple.quarantine', path], { timeout: 5000 }).then(() => true, () => false),
+    permission: async () => (await import('./real-permission.mjs')).observePermission({ stopOnLiveHold: false }),
+  };
+}
+
+export async function main(argv = process.argv.slice(2), deps = {}) {
+  const options = parseRunnerArgs(argv), log = deps.log ?? console.log, exec = deps.exec ?? execute;
+  const out = resolve(options.out ?? fileURLToPath(new URL(`./results/electron/${new Date().toISOString().slice(0, 10)}/`, import.meta.url)));
+  mkdirSync(out, { recursive: true });
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'sleight-elr-')), cardLog = join(root, 'cards.jsonl');
+  writeFileSync(cardLog, '', { mode: 0o600 });
+  let result;
+  try {
+    if (options.mode === 'dry-run') {
+      const { fakeRunnerDeps } = await import('./electron-live-runner-fakes.mjs');
+      result = await runPhases({ options, deps: { ...fakeRunnerDeps({ cardLog, out }), log } });
+    } else {
+      const io = { ...await liveIo(exec), ...deps.io };
+      const watcher = createCardWatcher({ cardLog, outDir: out, log, locate: async () => {
+        const { helper } = await import('./electron-qualification-live.mjs');
+        const pids = consentHostPids(parseTree((await exec('/bin/ps', ['-axww', '-o', 'pid=', '-o', 'ppid=', '-o', 'args='], { timeout: 10000, maxBuffer: 32 << 20 })).stdout), process.pid);
+        return pids.length ? helper({ mode: 'card', pids }, exec) : null;
+      } });
+      const { acquireLiveLock } = await import('./live-lock.mjs');
+      const commit = await exec('/usr/bin/git', ['-C', fileURLToPath(new URL('..', import.meta.url)), 'rev-parse', 'HEAD'], { timeout: 5000 }).then(r => r.stdout.trim(), () => null);
+      result = await runPhases({ options, deps: { log, now: Date.now, sleep: ms => delay(ms), io, watcher, preflight, build: () => ({ commit }),
+        lock: () => acquireLiveLock(LOCK, { wait: true, interval: 15000 }), ...await livePhases({ options, root, out, cardLog, exec }), ...deps.phases } });
+    }
+    const path = join(out, `live-run-${result.summary.at.replace(/[:.]/g, '-')}.json`);
+    writeFileSync(path, JSON.stringify(scrubReceipt(result.summary), null, 2) + '\n');
+    log(`summary: ${path}`);
+    for (const p of result.summary.phases) log(`  ${p.id}: ${p.status}${p.cells ? ` (${p.cells} cells)` : ''}${p.grade ? ` (${p.grade.passed}/3 arm tasks)` : ''}`);
+    const c = result.summary.clicks;
+    if (c) log(`  cards: ${c.total} shown, ${c.late} answered late or refused, ${c.unanswered} unanswered`);
+  } finally {
+    if (!result?.keep) rmSync(root, { recursive: true, force: true });
+    else log(`run folder kept for the leftovers: ${root}`);
+  }
+  return result.code;
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().then(code => { process.exitCode = code; }, error => { console.error(error.message); process.exitCode = 1; });
+}
+export { HOLD, RELAUNCH_CELLS };
