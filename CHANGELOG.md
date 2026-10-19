@@ -234,11 +234,13 @@ TODO: full release pass result.
   An unrequested payment, a second payment in the same request and a different amount still ask.
 - On the engine path a guard check now applies turbo's payment rule before the input goes out. Before a
   click, Enter or Space that could submit on a page showing a payment (card fields, or a pay, buy or
-  checkout control), it reads the money figures in the accessibility tree the guard already read. It stops
-  when your message didn't state an amount or the page shows a larger figure, and says what to ask you. A
-  reply that states the amount goes through. It needs sleight's copy of your message, which only Claude
-  Code with turbo on has, so in Codex every engine-path payment stops. On the recorded race trees it stops the
-  unasked $268.00 payment and passes the same click when the message states $268.00. Not run live yet.
+  checkout control), it reads the money figures in the accessibility tree the guard already read. A payment
+  goes through when your message stated its amount, the page shows that amount and no larger figure, and
+  it's the request's first payment (the confirm dialog right after it counts as the same one). Any other
+  payment opens sleight's own payment card, the one turbo uses, naming the site, the largest figure and the
+  button. Allow once lets Claude send that one action again, and Cancel keeps the stop. This works in Codex and
+  with turbo off. With no card to show, the stop says what to ask you. On the recorded race trees it stops
+  the unasked $268.00 payment and passes the same click when the message states $268.00. Not run live yet.
 - No tool can answer sleight's own menu or its approval and payment cards. The menu bar tool, hover,
   drag, window selection and every engine call refuse the process that shows them (sleight's consent
   host), matched by name, by its file and by its pid, so only your click answers them.
