@@ -142,13 +142,12 @@ password, the sign-up still asks. Saving a password or
 card in the browser and login or OAuth grants to another site still ask. The payment, booking,
 security-setting and page-dialog rules keep their existing confirmations.
 
-`SLEIGHT_RS=0` restores the account-policy text and submit instruction from before this change,
-byte for byte, in both skill variants. Only an explicit `0` turns RS off. RS is on when unset or
-exactly `1`. Any other value keeps the previous, stricter account and submit wording and logs a
-startup warning. `SLEIGHT_CONFIRM_PAYMENTS=always` keeps the engine policy unchanged, including
-account creation, and restores the original submit instruction. A changed engine policy is also
-left unchanged and gets the original submit instruction. The shorter instruction always defers to
-the engine's confirmation policy, including its rules for messages, comments and job applications.
+`SLEIGHT_RS=0` restores the account-policy text from before this change, byte for byte. RS is on
+when unset or exactly `1`. An unrecognized value keeps the previous, stricter account wording and logs a
+startup warning. Both skill variants keep their original submit safety passage in every mode.
+`SLEIGHT_CONFIRM_PAYMENTS=always` keeps the engine policy unchanged, including account creation.
+A changed engine policy is also left unchanged. The submit instruction defers to the engine's
+confirmation policy, including its rules for messages, comments and job applications.
 The Codex plugin and benchmark arms forward `SLEIGHT_RS` for the A/B. Live sign-up results with this
 wording have not been measured.
 

@@ -129,7 +129,7 @@ test('delivered skills defer to strict or unmatched policy, and [9] messages and
     }
     const out = reply(t, docs, { firstCallRules, prompt, rs: '1' });
     const all = out.content.map(c => c.text ?? '').join('\n');
-    assert.match(all, /Submit in that call when requested and the engine's confirmation policy permits it/);
+    assert.ok(all.includes(original), 'requested account policy preserves the original submit safety passage');
     assert.match(out.text.slice(out.text.indexOf('### 2)'), out.text.indexOf('### 3)')), /low-stakes messages\/comments,.*high-stakes submissions \(job app,/);
     assert.doesNotMatch(all, /\[9\], \[10\] confirm it/);
   }

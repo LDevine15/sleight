@@ -421,8 +421,8 @@ test('tab-cleanup refusal is model-visible and delivers held docs once', async t
   assert.doesNotMatch(body(result(h, 5)), /Native API reference/);
 });
 
-for (const kind of ['browser', 'native']) test(`held docs share the result budget with a ${kind} tree`, async t => {
-  const h = harness(t);
+for (const rs of ['0', '1']) for (const kind of ['browser', 'native']) test(`held docs share the result budget with a ${kind} tree, RS=${rs}`, async t => {
+  const h = harness(t, { rs });
   const largeDocs = docs.replace('Native API reference.', 'Native API reference. ' + 'reference '.repeat(3700));
   await h.open(1, [text(largeDocs), text(tree)]);
   const header = kind === 'browser' ? 'Browser tab: 1, Title: "Page", URL: "https://example.test".\n0 AXWebArea Page' : tree;

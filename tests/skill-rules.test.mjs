@@ -192,12 +192,13 @@ test('skill sources preserve every byte of ab510184 outside RS2 and the measured
   assert.equal(hash(requestedSubmitRules(readFileSync(new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.lean.md', import.meta.url), 'utf8'), { SLEIGHT_RS: '0', SLEIGHT_PROMPT: 'lean' })), '62502136c34e67375904132bce9418bdda9275cb2f11a3b2fb1210d0619008a0');
 });
 
-test('RS2 prioritizes requested submits within the original budgets and RS off restores both skills byte for byte', () => {
+test('both RS settings preserve the original submit safety passage and skill budgets byte for byte', () => {
   for (const [prompt, limit, hash] of [[undefined, 1055, '27ef178a69d561519cfe87bf39f15f7a64bd15b64f2f71e531fdc8c93cb92140'],
     ['lean', 505, '244d4d7a168e5c8dea9325b87a23290ef4044c3ed0d20ee33431bbb30218d6a2']]) {
     const env = { SLEIGHT_PROMPT: prompt };
     const on = skillRules(undefined, env), off = skillRules(undefined, { ...env, SLEIGHT_RS: '0' });
-    assert.match(on, /Submit in that call when requested and the engine's confirmation policy permits it\. Otherwise stop before the final click\./);
+    assert.match(on, /Submit in that call only when the user asked(?: for that submit)? and the engine's confirmation policy\s+doesn't require confirming it\. Otherwise stop before the final click\./);
+    assert.equal(on, off);
     assert.ok(on.trim().split(/\s+/).length <= limit);
     assert.equal(createHash('sha256').update(off).digest('hex'), hash);
     for (const value of [undefined, '1']) assert.equal(skillRules(undefined, { ...env, SLEIGHT_RS: value }), on);

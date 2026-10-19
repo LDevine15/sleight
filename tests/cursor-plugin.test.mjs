@@ -3,7 +3,8 @@
 // Cursor lines. Installs go only into throwaway homes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { accessSync, constants, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -193,8 +194,8 @@ test('doctor: an unreadable mcp.json is a problem line, not a crash', () => {
 });
 
 test('a copy of the plugin in a throwaway Cursor home is found, and its server command resolves to the launcher', t => {
-  const home = mkdtempSync(join(tmpdir(), 'sleight-cursor-home-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const home = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-cursor-home-')));
+  t.after(() => removeTemp(home));
   const installed = join(home, '.cursor/plugins/local/sleight');
   mkdirSync(installed, { recursive: true });
   for (const part of ['.cursor-plugin', 'skills', 'bin', 'assets']) cpSync(join(plugin, part), join(installed, part), { recursive: true });

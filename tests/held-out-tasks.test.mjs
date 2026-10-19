@@ -131,13 +131,16 @@ test('held out: the world suite runs them only by name, as rows outside the clai
   }
   assert.equal(selectSuiteTasks(world).some(t => t.heldOut), false, 'a pass without --tasks leaves them out');
   assert.deepEqual(selectSuiteTasks(world, ['word-memo']).map(t => t.id), ['word-memo']);
-  assert.deepEqual(suite.heldOut.map(row => row.task), heldOut.HELD_OUT_TASKS);
+  const ccTasks = JSON.parse(readFileSync(new URL('../bench/world/tasks/cc-held-out.json', import.meta.url)));
+  assert.deepEqual(suite.heldOut.map(row => row.task), [...heldOut.HELD_OUT_TASKS, ...ccTasks.map(row => row.task)]);
   for (const row of suite.heldOut) {
     assert.equal(row.claim, false);
     assert.equal((await resolveTask(row.id)).id, row.task);
     assert.match(row.runner, /^bench\/run\.mjs --suite world --tasks /);
+    assert.equal(world.find(task => task.id === row.task)?.heldOut, true, row.task);
+    assert.deepEqual(selectSuiteTasks(world, [row.task]).map(task => task.id), [row.task]);
   }
-  assert.equal(planSuite().some(row => heldOut.HELD_OUT_TASKS.includes(row.task)), false);
+  assert.equal(planSuite().some(row => suite.heldOut.some(held => held.task === row.task)), false);
 });
 
 test('held out: a dry run prepares and checks each fixture without driving an app', async t => {

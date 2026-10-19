@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
-import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Script, createContext } from 'node:vm';
@@ -324,8 +325,8 @@ test('benchmark site routes the held-out namespace without changing handoff page
 });
 
 test('native sorted list grader checks the renamed target and every other file', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-cc-native-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-cc-native-')));
+  t.after(() => removeTemp(dir));
   const task = ccHeldOutTasks().find(task => task.id === 'cc-list-native');
   const ctx = { dir, nonce: 'native', seed: 'fixed' };
   await task.prepare(ctx);

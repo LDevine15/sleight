@@ -370,6 +370,33 @@ for (const kind of ['Window: "Note", App: Example.\n0 standard window Note',
   });
 }
 
+for (const header of ['Window: "Note", App: Example.\n0 standard window Note',
+  'Browser tab: 1, Title: "Page", URL: "https://example.test".\n0 AXWebArea Page']) {
+  test(`near-full policy keeps its bytes and tree identity with a short omission notice: ${header.split('\n')[0]}`, () => {
+    const docs = '## Computer Use\nNative API reference. ' + 'reference '.repeat(3700) + '\n\n' + confirmationPolicy;
+    const policy = rewritePaymentPolicy(docs, 'requested', () => {}, { SLEIGHT_RS: '1' });
+    const tree = header + '\n' + Array.from({ length: 300 }, (_, i) => `\t${i + 1} text ${pad(100)}`).join('\n');
+    const caller = '4';
+    const content = createResultBudget().apply([{ type: 'text', text: policy }, { type: 'text', text: tree }, { type: 'text', text: caller }]);
+    assert.equal(content[0].text, policy);
+    assert.equal(content.at(-1).text, caller);
+    assert.ok(content[1].text.startsWith(header + '\n'));
+    assert.match(content[1].text, /sleight: 300 tree lines omitted\.$/);
+    assert.ok(texts(content).length <= RESULT_LIMIT, `${texts(content).length}`);
+  });
+}
+
+test('the character budget includes separators between result items', () => {
+  const policy = '## Computer Use\npolicy';
+  const tree = 'Window: "Note", App: Example.\n0 standard window Note\n\t1 text ' + pad(100) + '\n\t2 text ' + pad(100);
+  const caller = 'Keep this caller output.';
+  const limit = policy.length + tree.length + caller.length;
+  const content = createResultBudget({ limit }).apply([{ type: 'text', text: policy }, { type: 'text', text: tree }, { type: 'text', text: caller }]);
+  assert.ok(texts(content).length <= limit, `${texts(content).length}`);
+  assert.equal(content[0].text, policy);
+  assert.equal(content.at(-1).text, caller);
+});
+
 // Firefox's tab strip puts bare `Close tab` lines among the numbered rows (2026-10-17: a 121,124-character Wikipedia tree reached Claude Code untrimmed).
 const firefoxTree = (rows) => 'Window: "Page - Wikipedia", App: Firefox.\n0 standard window Page - Wikipedia, Secondary Actions: Raise\n' +
   '\t1 container Page - Wikipedia\n\t\t2 toolbar Browser tabs\n\t\t\t3 tab group\n\t\t\t\t4 tab (selectable) Value: Gate\nClose tab\n' +

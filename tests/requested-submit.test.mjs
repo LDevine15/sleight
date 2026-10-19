@@ -1,10 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { requestedSubmitRules } from '../plugins/sleight/lib/requested-submit.mjs';
 import { skillRules } from '../plugins/sleight/lib/launch.mjs';
 import { traceEnv, abFlags } from '../bench/fowl/real-gate-setup.mjs';
 import { turboSetup } from '../bench/turbo/setup.mjs';
 import { codexSleightRunConfig, codexSleightServers } from '../bench/codex-sleight.mjs';
+
+test('legacy RS2 skill text regains the original submit safety passage in every mode', () => {
+  const shortened = "Submit in that call when requested and the engine's confirmation policy permits it. Otherwise stop before the final click.";
+  for (const prompt of [undefined, 'lean']) for (const rs of [undefined, '0', '1', '', 'off']) {
+    const original = skillRules(undefined, { SLEIGHT_PROMPT: prompt, SLEIGHT_RS: '0' })
+      .match(/Submit in that call[\s\S]*?Otherwise stop before the final click\./)[0];
+    assert.equal(requestedSubmitRules(shortened, { SLEIGHT_PROMPT: prompt, SLEIGHT_RS: rs }), original);
+  }
+});
 
 test('the race preserves invalid RS settings so they cannot become the enabled default', () => {
   for (const value of ['0', '1', '', 'false', '00', 'off']) {

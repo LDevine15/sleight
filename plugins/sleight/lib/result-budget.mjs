@@ -73,7 +73,7 @@ function leanReference(text, minimal = false) {
     block[0].replace(block[1], index) + rest.slice(block.index + block[0].length);
 }
 
-const size = (content) => content.reduce((n, c) => n + (c.type === 'text' ? c.text.length : 0), 0);
+const size = (content) => content.reduce((n, c) => n + (c.type === 'text' ? c.text.length : 0), 0) + Math.max(0, content.length - 1);
 // Claude Code measures the serialized result, where each tab and newline is two characters (`\t`, `\n`). A tab-heavy
 // tree of 44,967 characters serialized to 52.5 KB (2026-10-17), over the 52.2 KB spill, so trees are trimmed on both.
 const wire = (text) => Buffer.byteLength(JSON.stringify(text)) - 2;
@@ -113,11 +113,19 @@ function trimResultTrees(content, limit, force = false) {
     if ((excess <= 0 && wireExcess <= 0) || c.type !== 'text' || /^(?:## Computer Use|# Other Browser APIs|# Computer Use Confirmations Policy|# Browser Safety|# API Reference)\n/.test(c.text)) return c;
     const text = c.text.replace(TREE, tree => {
       if (excess <= 0 && wireExcess <= 0) return tree;
-      const lines = tree.split('\n'), total = lines.length;
-      const note = () => `\nsleight: ${total - lines.length} tree lines omitted to keep the result and engine docs within the size limit. Use a filtered read for missing information.`;
-      let gone = 0, goneWire = 0;
+      const lines = tree.split('\n');
+      const previous = /^sleight: (\d+) (?:browser )?tree lines omitted\b/.exec(lines.at(-1));
+      const previousNote = previous ? lines.pop() : undefined;
+      const total = lines.length + Number(previous?.[1] ?? 0);
+      let compactNote = false;
+      const note = () => `\nsleight: ${total - lines.length} tree lines omitted` + (compactNote ? '.' :
+        ' to keep the result and engine docs within the size limit. Use a filtered read for missing information.');
+      let gone = previousNote ? previousNote.length + 1 : 0, goneWire = previousNote ? wire(previousNote) + 2 : 0;
       const short = () => { const n = note(); return gone - n.length < excess || goneWire - wire(n) < wireExcess; };
       while (lines.length > 2 && short()) { const line = lines.pop(); gone += line.length + 1; goneWire += wire(line) + 2; }
+      // Policy can leave less room than the omission advice itself needs. Keep the header and root,
+      // and shorten only that advice after every removable row has gone.
+      if (short()) compactNote = true;
       const out = lines.join('\n') + note();
       excess -= tree.length - out.length;
       wireExcess -= wire(tree) - wire(out);
