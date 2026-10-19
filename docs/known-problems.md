@@ -787,8 +787,12 @@ native reference, and oversized first results defer the browser reference while 
   at acquisition, each cohort losing all four sessions together. That pattern points to the fixture's state in those cohorts,
   not contention among sessions. The cause isn't known, because the receipt kept only the error kinds (timeout, unsupported,
   lease, approval). Excel's action is now a Page Down key, and the log keeps the error template. At 09:55 UTC Excel completed
-  10/10 with the key, and its cohorts lost 11 of 40 acquisitions to one engine error, whose cause is unknown. The engine
-  didn't answer busy or give an AX code, so the harness didn't retry. Results: docs/benchmarks/2026-10-19-speed-map.md.
+  10/10 with the key, and its cohorts lost 11 of 40 acquisitions. The engine's helper had crashed (SIGSEGV, 10 crash
+  reports in that run and 11 at 09:44, one stack): concurrent `getApp` calls on a helper that has just started can crash
+  it, and sleight's one resend from every session then met the next new helper together. The harness had logged the
+  engine docs ahead of the error, which hid it. Crash resends now wait a random 0 to 1.5 s more, and cells count the
+  helper's crash reports. Whether the spread resends stop the second crash isn't measured yet. Results:
+  docs/benchmarks/2026-10-19-speed-map.md.
 
 ## Turbo in unattended runs
 

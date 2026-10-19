@@ -536,8 +536,74 @@ test('acquisition retries only an engine that says it is busy, at most twice, an
   }
 });
 
-// Excel rerun (2026-10-19 09:55Z): all 11 acquire failures logged only "computer use", the message's heading line.
 test('the logged template keeps the first lines of an error and treats apostrophes inside words as text', () => {
   const reply = { isError: true, content: [{ type: 'text', text: 'Computer Use\n\nCouldn\'t acquire "Microsoft Excel": the app\'s lease timed out after 30 s.\nRetry later.\nfourth line' }] };
   assert.equal(engineError(reply).template, "computer use / couldn't acquire _q_: the app's lease timed out after _n_ s. / retry later.");
+});
+
+// Excel rerun (2026-10-19 09:55Z): all 11 acquire failures logged "computer use" and the kinds timeout, unsupported, lease
+// and approval. Both came from the engine docs ahead of the error. The helper had crashed (SIGSEGV crash reports).
+test('an engine error skips the engine docs and the relay notices, and names a helper crash', () => {
+  const docs = '## Computer Use\n\nControl apps. A timeout, an unsupported call, a lease or an approval can stop a call.\n\n## API\n';
+  const policy = '# Computer Use Confirmations Policy\nAsk for approval before risky actions.';
+  const notice = "sleight: the engine's helper (SkyComputerUseService) crashed during this call; a read alone is safe to repeat.";
+  const reply = { isError: true, content: [{ type: 'text', text: docs }, { type: 'text', text: policy },
+    { type: 'text', text: 'Error: Sky Computer Use native pipe closed before response' }, { type: 'text', text: notice }] };
+  const error = engineError(reply);
+  assert.equal(error.template, 'error: sky computer use native pipe closed before response');
+  assert.deepEqual(error.published, { codes: [], kinds: [], signature: error.published.signature, helper: 'crash' });
+  // Docs that share an item with the error are cut at their heading.
+  assert.equal(engineError({ isError: true, content: [{ type: 'text', text: 'Sky Computer Use native pipe startup failed\n' + docs }] }).published.helper, 'start');
+  assert.equal(engineError({ isError: true, content: [{ type: 'text', text: 'Sky Computer Use service startup request failed' }] }).published.helper, 'start');
+  // An ordinary engine error has no helper field.
+  assert.equal('helper' in engineError({ isError: true, content: [{ type: 'text', text: 'AX error -25205' }] }).published, false);
+  // Docs alone leave an empty template, never the docs' heading.
+  assert.equal(engineError({ isError: true, content: [{ type: 'text', text: docs }] }).template, '');
+});
+
+test('a helper crash at acquisition is published as ENGINE_CALL_FAILED:acquire:helper-crash', async () => {
+  const r = runtime(), open = r.openSession;
+  r.openSession = async (...args) => {
+    const session = await open(...args);
+    return { ...session, js: async code => /getApp/.test(code) ? { isError: true, content: [{ type: 'text', text: '## Computer Use\nDocs.\n' },
+      { type: 'text', text: 'Sky Computer Use native pipe closed before response' }] } : session.js(code) };
+  };
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r);
+  const row = report.rows.find(item => item.mode === 'sequential');
+  assert.equal(row.acquireRetries, 0, 'a crash is not a busy answer: the relay already retried it once');
+  assert.equal(row.engineError.helper, 'crash');
+  assert.deepEqual(report.summary.find(item => item.mode === 'sequential').failures, ['ENGINE_CALL_FAILED:acquire:helper-crash']);
+});
+
+// Excel rerun (2026-10-19 09:55Z): 10 helper crash reports in 10 cohorts, 3 of them cohorts with no failed session.
+test('a cell counts the helper crash reports it added, once per fixture, and the map names them', async () => {
+  const r = runtime(); let reports = 0, cell = 0;
+  r.helperCrashMark = () => reports;
+  r.helperCrashesSince = mark => reports - mark;
+  const open = r.openSession;
+  r.openSession = async (...args) => { const session = await open(...args); return { ...session, js: async code => {
+    // The first fixture's acquisition sees one crash (the relay's resend succeeded); the cohort sees two.
+    if (/getApp/.test(code)) reports += ++cell === 1 ? 1 : cell === 2 ? 2 : 0;
+    return session.js(code);
+  } }; };
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r);
+  const sequential = report.rows.filter(row => row.mode === 'sequential'), concurrent = report.rows.filter(row => row.mode === 'concurrent');
+  assert.equal(sequential[0].helperCrashes, 1);
+  assert.ok(concurrent.every(row => row.helperCrashes === 2));
+  assert.equal(report.cohorts[0].helperCrashes, concurrent[0].helperCrashes);
+  const summary = Object.fromEntries(report.summary.map(item => [item.mode, item.helperCrashes]));
+  assert.equal(summary.sequential, 1);
+  assert.equal(summary.concurrent, 2, 'one count per cohort, not per session');
+  assert.match(speedMarkdown(report), /Engine helper crash reports written during the cells \(SkyComputerUseService, any client\): .*textedit concurrent 2, textedit sequential 1|textedit sequential 1, textedit concurrent 2/);
+});
+
+test('a runtime without crash reports, or one whose read throws, leaves the count out', async () => {
+  const plain = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), runtime());
+  assert.ok(plain.rows.every(row => !('helperCrashes' in row)));
+  assert.ok(plain.summary.every(item => item.helperCrashes === null));
+  assert.doesNotMatch(speedMarkdown(plain), /crash reports/);
+  const r = runtime(); r.helperCrashMark = () => { throw Error('EPERM'); }; r.helperCrashesSince = () => 0;
+  const failed = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r);
+  assert.ok(failed.rows.every(row => !('helperCrashes' in row)));
+  assert.ok(failed.rows.some(row => row.status === 'complete'));
 });

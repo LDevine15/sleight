@@ -156,11 +156,19 @@ const failureCode = error => failures.has(error?.message) ? error.message : 'REA
 // A failed engine call keeps only AX codes and fixed error kinds, never its text.
 const errorKinds = ['not scrollable', 'not found', 'timed out', 'timeout', 'invalid', 'unsupported', 'denied', 'lease', 'stale', 'covered',
   'offscreen', 'not visible', 'approval', 'busy', 'cannot complete'];
+// A failed first call carries the engine's API docs ahead of its error, and sleight's relay adds its own notices after
+// it. Neither is the error: on 2026-10-19 the docs' heading ("## Computer Use") became every Excel template, and words in
+// the docs (timeout, unsupported, lease, approval) became its kinds, hiding 21 helper crashes.
+const engineDocs = /(?:^|\n)(?:## Computer Use|# Other Browser APIs|# Computer Use Confirmations Policy|# Browser Safety|# API Reference)\n/;
+const relayNotice = /^\s*sleight(?:-[a-z]+)?:/;
+const helperFailures = [['crash', /sky computer use native pipe closed before response/], ['start', /sky computer use (?:native pipe|service) startup (?:request )?failed/]];
 export function engineError(reply) {
-  const text = (reply?.content ?? []).filter(item => item.type === 'text').map(item => item.text).join('\n').toLowerCase();
+  const text = (reply?.content ?? []).filter(item => item.type === 'text' && typeof item.text === 'string' && !relayNotice.test(item.text))
+    .map(item => { const docs = engineDocs.exec(item.text); return docs ? item.text.slice(0, docs.index) : item.text; })
+    .filter(item => item.trim()).join('\n').toLowerCase();
   // A template of the message: quoted values, paths and numbers replaced, other characters dropped. Unquoted words
   // can still be labels, so the template only goes to the local log, and the report gets its hash (same template, same hash).
-  // The first three non-empty lines: an engine message can open with a bare heading ("Computer Use", 2026-10-19).
+  // The first three non-empty lines, since a message can run over several.
   // A quote opens only after a space or line start, so apostrophes inside words (can't, app's) stay text.
   const template = text.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 3).join(' / ')
     .replace(/(^|[\s(:])(?:"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|`[^`]*`)/g, '$1_q_')
@@ -168,8 +176,10 @@ export function engineError(reply) {
     .replace(/[^_a-z ,.:;()'/-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 200);
   let hash = 0x811c9dc5;
   for (const char of template) hash = Math.imul(hash ^ char.charCodeAt(0), 0x01000193) >>> 0;
+  // The engine helper's own failures are named by a fixed word: the crash and start messages are the engine's, not the app's.
+  const helper = helperFailures.find(([, pattern]) => pattern.test(text))?.[0];
   return { template, published: { codes: [...new Set((text.match(/-25\d{3}\b/g) ?? []).map(Number))].slice(0, 5),
-    kinds: errorKinds.filter(kind => text.includes(kind)), signature: hash.toString(16).padStart(8, '0') } };
+    kinds: errorKinds.filter(kind => text.includes(kind)), signature: hash.toString(16).padStart(8, '0'), ...(helper && { helper }) } };
 }
 const engineFailure = reply => { const { template, published } = engineError(reply); return { engine: published, template }; };
 const steps = { acquireMs: 'acquire', firstReadMs: 'firstRead', warmReadMs: 'warmRead', actionMs: 'action', afterReadMs: 'afterRead' };
@@ -201,6 +211,9 @@ export async function runSpeedMap(plan, runtime) {
       return;
     }
     const count = mode === 'concurrent' ? plan.concurrency : 1, start = runtime.now();
+    // The engine helper's crash reports present before the cell, so the cell can count the ones it adds (null: unreadable).
+    let crashMark = null;
+    try { crashMark = runtime.helperCrashMark?.() ?? null; } catch { crashMark = null; }
     const rows = await Promise.all(Array.from({ length: count }, async (_, sessionIndex) => {
       let session;
       const row = { app: task.id, class: task.class, ownerAccount: plan.ownerPresent || task.ownerPresent,
@@ -272,10 +285,14 @@ export async function runSpeedMap(plan, runtime) {
     }));
     let cleanup;
     try { cleanup = await runtime.closeFixture(fixture); } catch { cleanup = { confirmed: false }; }
+    // Counted after cleanup: macOS writes a crash report about half a second after the crash. A count, never a name or path.
+    let helperCrashes = null;
+    try { if (crashMark !== null) helperCrashes = runtime.helperCrashesSince(crashMark); } catch { helperCrashes = null; }
     for (const row of rows) {
       row.cleanupConfirmed &&= cleanup?.confirmed === true;
       row.cleanupReasons = cleanup?.reasons ?? [];
       row.attention = cleanup?.attention ?? [];
+      if (Number.isInteger(helperCrashes)) row.helperCrashes = helperCrashes;
       if (Array.isArray(cleanup?.windows)) row.cleanupWindows = cleanup.windows;
       if (cleanup?.focusChanged) {
         if (row.failure && row.failure !== 'FOCUS_CHANGED') row.sessionFailure = row.failure;
@@ -283,7 +300,8 @@ export async function runSpeedMap(plan, runtime) {
       }
     }
     report.rows.push(...rows);
-    if (mode === 'concurrent') report.cohorts.push({ app: task.id, trial, sessions: count, wallMs: runtime.now() - start });
+    if (mode === 'concurrent') report.cohorts.push({ app: task.id, trial, sessions: count, wallMs: runtime.now() - start,
+      ...(Number.isInteger(helperCrashes) && { helperCrashes }) });
     report.summary = summarizeSpeedMap(report);
     await runtime.publish(report);
     if (rows.some(row => !row.cleanupConfirmed)) throw Error('CLEANUP_UNCONFIRMED');
@@ -317,12 +335,15 @@ export function summarizeSpeedMap({ rows, cohorts = [] }) {
     return { app: group.app, class: group.class, ownerAccount: group.ownerAccount, mode: group.mode,
       scope: [...new Set(group.rows.map(row => row.scope ?? 'unknown'))].join(', '),
       failures: [...new Set(group.rows.filter(row => row.failure).map(row => row.setup?.message ? `${row.failure}:${row.setup.message}`
-        : row.failedStep ? `${row.failure}:${row.failedStep}` : row.failure))],
+        : row.failedStep ? `${row.failure}:${row.failedStep}${row.engineError?.helper ? `:helper-${row.engineError.helper}` : ''}` : row.failure))],
       // One fixture per cell: count its attention events once, not once per concurrent session.
       attention: group.rows.filter(row => !row.sessionIndex).flatMap(row => row.attention ?? [])
         .reduce((counts, event) => ({ ...counts, [event.class]: (counts[event.class] ?? 0) + 1 }), {}),
       cohortWallMs: stats(qualifiedCohorts.map(cohort => cohort.wallMs)), attempted: group.rows.length, completed: completed.length,
       actionKinds: [...new Set(completed.map(row => row.actionKind).filter(Boolean))],
+      // One count per fixture cell, like attention; null when no cell could read the crash reports.
+      helperCrashes: group.rows.some(row => !row.sessionIndex && Number.isInteger(row.helperCrashes))
+        ? group.rows.filter(row => !row.sessionIndex && Number.isInteger(row.helperCrashes)).reduce((sum, row) => sum + row.helperCrashes, 0) : null,
       ...Object.fromEntries(['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes']
         .map(key => [key, stats(completed.map(row => row[key]))])) };
   });
@@ -339,10 +360,14 @@ export function speedMarkdown(report) {
       ['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes', 'cohortWallMs'].map(key =>
         cell(row[key] ?? { n: 0 }) + (key === 'actionMs' && (row.actionKinds ?? []).includes('key') ? ' (key)' : '')).join(' | ') + ' |').join('\n') + '\n';
   const account = rows.filter(row => row.ownerAccount), background = rows.filter(row => !row.ownerAccount);
+  const crashed = rows.filter(row => row.helperCrashes > 0);
+  const crashes = crashed.length ? '\nEngine helper crash reports written during the cells (SkyComputerUseService, any client): ' +
+    crashed.map(row => `${row.app} ${row.mode} ${row.helperCrashes}`).join(', ') + '. sleight resends a read that met a crash once, so a crash can ' +
+    'show up as a slower acquisition instead of a failure.\n' : '';
   return '# App-class speed map\n\nTimes in ms, median / p90 (nearest rank). Counts describe the first explicit full read. ' +
     'Only complete trials contribute to these summaries. Setup wait runs from the return of the open command to an identified fixture window. ' +
     'Cohort lifecycle includes session startup, reads and cleanup.\n\n' +
-    (background.length ? table(background) : '') +
+    (background.length ? table(background) : '') + crashes +
     (account.length ? '\n## Owner-present reads\n\nTiming and tree counts only. Local-container membership is unproved.\n\n' + table(account) : '');
 }
 

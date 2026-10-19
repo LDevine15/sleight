@@ -4,16 +4,16 @@ import { mkdtempSync, mkdirSync, existsSync, readFileSync, symlinkSync, writeFil
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
-import { liveSpeedRuntime, speedOutput, setupDiagnosis, editorProfileArgs, attentionTracker } from '../bench/app-speed-map-live.mjs';
+import { liveSpeedRuntime, speedOutput, setupDiagnosis, editorProfileArgs, attentionTracker, helperCrashReports } from '../bench/app-speed-map-live.mjs';
 import { speedPlan } from '../bench/app-speed-map.mjs';
 
-async function setup(t, { confirmed = true, focusChanged = false, startupFailure = false, details, id = 'textedit', hostError, hosts, base = tmpdir(), samples } = {}) {
+async function setup(t, { confirmed = true, focusChanged = false, startupFailure = false, details, id = 'textedit', hostError, hosts, base = tmpdir(), samples, crashReports } = {}) {
   const root = mkdtempSync(join(base, 'sleight-am1-test-'));
   t.after(() => removeTemp(root));
   const bank = join(root, 'bank'), calls = []; let unlocks = 0, approver;
   const plan = speedPlan({ ids: [id], runs: 1 });
   const runtime = await liveSpeedRuntime(plan, {}, {
-    platform:'darwin', repositoryRoot:root,
+    platform:'darwin', repositoryRoot:root, ...(crashReports && { crashReports }),
     takeLock:async()=>{calls.push('lock');return async()=>{unlocks++;};},
     makeBank:()=>{mkdirSync(bank);return bank;},
     startFixtureHost:async(task, fixture)=>{
@@ -375,4 +375,22 @@ test('focus leaving a self-activated fixture app during cleanup is quit-handoff;
   measured.observe({ front: app, stage: 'retain', atMs: 2000 });
   measured.setPhase('measure');
   assert.equal(measured.observe({ front: 'com.apple.finder', stage: 'ready', atMs: 3000 }), true);
+});
+
+test('helper crash reports are matched by name, a report still being written counts once, and other reports never', () => {
+  const names = ['SkyComputerUseService-2026-10-19-055603.ips', '.SkyComputerUseService-2026-10-19-055616.ips',
+    'SkyComputerUseService-2026-10-19-055616.ips', 'SkyComputerUseService-2026-10-13-195932.000.ips', 'Microsoft Excel-2026-10-19-055603.ips',
+    'SkyComputerUseService_2026-10-19-055603_host.diag', 'SkyComputerUseService-x.ips'];
+  assert.deepEqual([...helperCrashReports(() => names)].sort(), ['SkyComputerUseService-2026-10-13-195932.000.ips',
+    'SkyComputerUseService-2026-10-19-055603.ips', 'SkyComputerUseService-2026-10-19-055616.ips']);
+});
+
+test('the live runtime counts only crash reports added after its mark', async t => {
+  let names = ['SkyComputerUseService-2026-10-19-055603.ips'];
+  const { runtime } = await setup(t, { crashReports: () => helperCrashReports(() => names) });
+  t.after(() => runtime.close().catch(() => {}));
+  const mark = runtime.helperCrashMark();
+  assert.equal(runtime.helperCrashesSince(mark), 0);
+  names = [...names, '.SkyComputerUseService-2026-10-19-055616.ips', 'SkyComputerUseService-2026-10-19-055623.ips'];
+  assert.equal(runtime.helperCrashesSince(mark), 2);
 });
