@@ -1,0 +1,18 @@
+# Held-out tasks for CC1 to CC7. Explicit selection only; excluded from race and claim passes.
+# CC1, CC2, CC3, CC6: list. CC2: list-pop-up. CC5, CC6: calendar. CC5: calendar-ambiguous.
+# CC4, CC6: dropdown. CC4: dropdown-slow. CC7: new-tab. CC1, CC2, CC3, CC6: native list.
+cc-list-firefox
+cc-list-safari
+cc-list-pop-up-firefox
+cc-list-pop-up-safari
+cc-calendar-firefox
+cc-calendar-safari
+cc-calendar-ambiguous-firefox
+cc-calendar-ambiguous-safari
+cc-dropdown-firefox
+cc-dropdown-safari
+cc-dropdown-slow-firefox
+cc-dropdown-slow-safari
+cc-new-tab-firefox
+cc-new-tab-safari
+cc-list-native

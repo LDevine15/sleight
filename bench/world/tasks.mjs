@@ -9,10 +9,11 @@ import { calculatorValue } from '../calculator-value.mjs';
 import { runOwned } from '../preapproved-process.mjs';
 import { browserKinds, serveWorldPage, checkBrowserFixture } from './browser-fixtures.mjs';
 import { heldOutTasks } from '../tasks-held-out.mjs';
+import { ccHeldOutTasks } from './cc-held-out.mjs';
 
 export const WORLD_APPS = ['Calculator', 'com.apple.calculator', 'TextEdit', 'com.apple.TextEdit', 'Chess', 'com.apple.Chess',
   'Finder', 'com.apple.finder', 'Preview', 'com.apple.Preview', 'Microsoft Word', 'Word', 'com.microsoft.Word',
-  'Microsoft Excel', 'Excel', 'com.microsoft.Excel', 'Helium', 'net.imput.helium',
+  'Microsoft Excel', 'Excel', 'com.microsoft.Excel', 'Helium', 'net.imput.helium', 'Safari', 'com.apple.Safari', 'Firefox', 'org.mozilla.firefox',
   // The claim's app tasks (owner, 2026-10-18): VS Code, Slack's throwaway workspace and Spotify.
   'Visual Studio Code', 'VS Code', 'Code', 'com.microsoft.VSCode', 'Slack', 'com.tinyspeck.slackmacgap', 'Spotify', 'com.spotify.client'];
 const fixtureApps = {
@@ -20,6 +21,7 @@ const fixtureApps = {
   Finder: ['Finder', 'com.apple.finder'], Preview: ['Preview', 'com.apple.Preview'],
   'Microsoft Word': ['Microsoft Word', 'Word', 'com.microsoft.Word'], 'Microsoft Excel': ['Microsoft Excel', 'Excel', 'com.microsoft.Excel'],
   Helium: ['Helium', 'net.imput.helium'],
+  Safari: ['Safari', 'com.apple.Safari'], Firefox: ['Firefox', 'org.mozilla.firefox'],
   'Visual Studio Code': ['Visual Studio Code', 'VS Code', 'Code', 'com.microsoft.VSCode'], Slack: ['Slack', 'com.tinyspeck.slackmacgap'],
   Spotify: ['Spotify', 'com.spotify.client'],
 };
@@ -237,7 +239,7 @@ export function getWorldTasks({ defaults, real, open = openFixture }) {
   const added = ['finder-rename', 'finder-move', 'finder-create-folder'].map(id => finderTask(id, open)).concat(
     ['textedit-two-windows', 'textedit-window-drag', 'textedit-replace-save', 'textedit-replace-all', 'textedit-insert-line'].map(id => textTask(id, open)), previewTask(open));
   // The held-out document tasks run only by name (--tasks), never in a pass without it.
-  return [...original, ...retained, ...apps, ...added, ...browserKinds.map(id => browserTask(id, open)), ...heldOutTasks(open)].map(task => ({ ...task, fixtureLifecycle: true,
+  return [...original, ...retained, ...apps, ...added, ...browserKinds.map(id => browserTask(id, open)), ...heldOutTasks(open), ...ccHeldOutTasks(open)].map(task => ({ ...task, fixtureLifecycle: true,
     allowedApps: (task.id === 'textedit-calculator' ? ['TextEdit', 'Calculator'] : [task.app]).flatMap(app => fixtureApps[app] ?? []),
     // The cross-app task copies a number: Claude Code's computer use asks for the clipboard with its apps (live 2026-10-17 15:58Z).
     // Finder's own card always carries "can read/write any file": that is the app, not an extra grant (live 15:59Z).
