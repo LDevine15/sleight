@@ -158,10 +158,14 @@ const errorKinds = ['not scrollable', 'not found', 'timed out', 'timeout', 'inva
   'offscreen', 'not visible', 'approval', 'busy', 'cannot complete'];
 export function engineError(reply) {
   const text = (reply?.content ?? []).filter(item => item.type === 'text').map(item => item.text).join('\n').toLowerCase();
-  // The first line as a template: quoted values, paths and numbers replaced, other characters dropped. Unquoted words
+  // A template of the message: quoted values, paths and numbers replaced, other characters dropped. Unquoted words
   // can still be labels, so the template only goes to the local log, and the report gets its hash (same template, same hash).
-  const template = (text.split('\n').find(line => line.trim()) ?? '').replace(/"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|`[^`]*`/g, '_q_')
-    .replace(/(?:~|\/)[^\s)]*/g, '_p_').replace(/-?\d+(?:\.\d+)?/g, '_n_').replace(/[^_a-z ,.:;()-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 100);
+  // The first three non-empty lines: an engine message can open with a bare heading ("Computer Use", 2026-10-19).
+  // A quote opens only after a space or line start, so apostrophes inside words (can't, app's) stay text.
+  const template = text.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 3).join(' / ')
+    .replace(/(^|[\s(:])(?:"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|`[^`]*`)/g, '$1_q_')
+    .replace(/(?:~|\/)[^\s)]*/g, match => match === '/' ? match : '_p_').replace(/-?\d+(?:\.\d+)?/g, '_n_')
+    .replace(/[^_a-z ,.:;()'/-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 200);
   let hash = 0x811c9dc5;
   for (const char of template) hash = Math.imul(hash ^ char.charCodeAt(0), 0x01000193) >>> 0;
   return { template, published: { codes: [...new Set((text.match(/-25\d{3}\b/g) ?? []).map(Number))].slice(0, 5),

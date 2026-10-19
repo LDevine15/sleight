@@ -513,10 +513,10 @@ test('a document whose text the tree does not show is measured with a Page Down 
 test('an engine error keeps a local template without quoted values, paths or numbers, and publishes only its hash', () => {
   const reply = { isError: true, content: [{ type: 'text', text: 'Timed out after 30 s waiting for "Microsoft Excel" at /Users/x/AM1.xlsx (lease 4)\nsecond line' }] };
   const error = engineError(reply);
-  assert.equal(error.template, 'timed out after _n_ s waiting for _q_ at _p_ (lease _n_)');
+  assert.equal(error.template, 'timed out after _n_ s waiting for _q_ at _p_ (lease _n_) / second line');
   assert.deepEqual(error.published, { codes: [], kinds: ['timed out', 'lease'], signature: error.published.signature });
   assert.match(error.published.signature, /^[0-9a-f]{8}$/);
-  assert.equal(engineError({ content: [{ type: 'text', text: 'Timed out after 9 s waiting for "Word" at /tmp/y (lease 1)' }] }).published.signature,
+  assert.equal(engineError({ content: [{ type: 'text', text: 'Timed out after 9 s waiting for "Word" at /tmp/y (lease 1)\nsecond line' }] }).published.signature,
     error.published.signature, 'the same template hashes the same');
 });
 
@@ -534,4 +534,10 @@ test('acquisition retries only an engine that says it is busy, at most twice, an
     assert.equal(row.acquireRetries, expected.retries, text);
     assert.equal(row.status, expected.status, text);
   }
+});
+
+// Excel rerun (2026-10-19 09:55Z): all 11 acquire failures logged only "computer use", the message's heading line.
+test('the logged template keeps the first lines of an error and treats apostrophes inside words as text', () => {
+  const reply = { isError: true, content: [{ type: 'text', text: 'Computer Use\n\nCouldn\'t acquire "Microsoft Excel": the app\'s lease timed out after 30 s.\nRetry later.\nfourth line' }] };
+  assert.equal(engineError(reply).template, "computer use / couldn't acquire _q_: the app's lease timed out after _n_ s. / retry later.");
 });
