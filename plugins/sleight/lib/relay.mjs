@@ -74,7 +74,7 @@ import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { guardStopMark, splitMenuActions, takeGuardStop, withoutStopTree, hasWholeTree, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, continuedNote, menuIdentity,
   unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate,
-  failedActionText } from './menu-continuation.mjs';
+  failedActionText, oneTabAdded } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
@@ -213,7 +213,7 @@ function requireNote(refused, saved, prompt) {
 // The skill's rules for an open_file result under SLEIGHT_OPEN_RULES=short: without what open_file already
 // did (acquiring, choosing a window, opening a document), tap coordinates, the drag, hover and banner tools,
 // and the doctor line. Every safety passage stays word for word, and a heading left empty goes too.
-const OPEN_DROPS = /^(?:- When the task specifies an app|- After renumbering|- If acquisition returns an empty tree|- Among windows|- A window other than getApp's|- Multiply tap coordinates|- Acquire a document that's already open|- Reorder rows or move selected text|- Engine events don't trigger hover|(?:- )?In a browser, |- `notifications` presses|Rows, text selected in |If `js` fails to start|Startup failure: )/;
+const OPEN_DROPS = /^(?:- When the task specifies an app|- After renumbering|- If acquisition returns an empty tree|- Among windows|- A window other than the one getApp shows|- Multiply tap coordinates|- Acquire a document that's already open|- Reorder rows or move selected text|- Engine events don't trigger hover|(?:- )?In a browser, |- `notifications` presses|Rows, text selected in |If `js` fails to start|Startup failure: )/;
 export function openFileRules(rules) {
   if (typeof rules !== 'string') return rules;
   const blocks = [];
@@ -638,6 +638,15 @@ function approvalKey(msg) {
 function isAppApproval(msg) {
   return msg.method === 'elicitation/create' && msg.params?._meta?.connector_id === 'computer-use';
 }
+
+// A window whose title follows its active tab (a browser) is retitled by a new tab. When the tree Claude last saw for the
+// intended window is still there with exactly one selected tab added, it is the same window and gets no window note:
+// "outcome unconfirmed" there read as "my keys went to another window", and Haiku stopped (Firefox mdn b7 r2, 2026-10-19;
+// 12 of 60 Firefox task-runs got that note, every one this case). The tree already shows both tabs. A line saying so would
+// put the lean prompt over 0.71 of the default's size.
+const newTabOf = (intended, earlier, observed, tree) => !!intended && !!observed && observed.app === intended.app &&
+  !!earlier && sameHeader(earlier.window, intended) && oneTabAdded(earlier.text, tree, intended.title);
+const sameHeader = (a, b) => ['title', 'app', 'url'].every(key => a?.[key] === b?.[key]);
 
 function windowsInText(text) {
   const starts = [...text.matchAll(/^Window: /gm)].map(m => m.index);
@@ -3784,6 +3793,8 @@ export function createRelay({
     }
     const automatic = msg.method === undefined && helperProbes.has(msg.id);
     let windowNote;
+    // The tree Claude saw before this result, which the change block below replaces.
+    const treeBefore = lastTree;
     const confirmedBrowser = msg.method === undefined && browserCalls.has(msg.id) && browserReply(msg);
     if (confirmedBrowser && !resultFailed) clickResults.observe(msg.result);
     if (browserCalls.has(msg.id) && msg.result?.content?.some(item => item.type === 'text' &&
@@ -4000,7 +4011,8 @@ export function createRelay({
       if (!automatic) lastTree = finalWindow && /\n\t*\d+ /.test(finalTree) ? { seq: callSeqs.get(msg.id), window: finalWindow, text: finalTree } : undefined;
       callSeqs.delete(msg.id); callStarts.delete(msg.id); preHealth.delete(msg.id);
       if (!confirmedBrowser && selectedWindow && !call.read && call.target && msg.result &&
-          (!lastWindow || ['title', 'app', 'url'].some(key => lastWindow[key] !== call.target[key]))) {
+          (!lastWindow || ['title', 'app', 'url'].some(key => lastWindow[key] !== call.target[key])) &&
+          !(lastWindow && newTabOf(call.target, treeBefore, finalWindow, finalTree))) {
         windowNote = `Sleight: outcome unconfirmed. Intended ${documentLabel(call.target)}. ` +
           (lastWindow ? `Observed ${documentLabel(lastWindow)}.` : 'Result missing full window header.');
       }
@@ -4065,7 +4077,7 @@ export function createRelay({
       // plainly, or a "no change" about the window now in front reads as a failed action: Claude
       // probed after closing a Chess game in 4/6 runs (2026-10-08).
       if (call.key && !windowNote && window && !msg.result?.isError && leaseWindow?.app === window.app &&
-          !sameWindow(leaseWindow, window)) {
+          !sameWindow(leaseWindow, window) && !newTabOf(leaseWindow, treeBefore, window, text.slice(text.lastIndexOf('Window: ')))) {
         windowNote = `sleight: this call acted on ${documentLabel(leaseWindow)}. The window it shows now is ${documentLabel(window)}.`;
       }
       const previous = leaseWindow;

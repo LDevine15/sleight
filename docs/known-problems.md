@@ -28,11 +28,17 @@ our own runs. Dates and engine versions are given where they matter.
   continuation also needs HID idle since the document was last seen as a standard window, so any mouse or key input
   after that stops the rest. It also stops when the app has a second window with the same title and URL, when the
   dialog's own native identity couldn't be read before the call, and when a palette closed by a button can't be shown gone.
-- The tab continuation (a call's own Cmd+T, or a click on the button among the tabs, going on into the new tab) hasn't run
-  live. Fixtures and a replay of the Firefox rounds' saved trees cover it. In the 2026-10-18 round it ran 0 of 9 times (6 Cmd+T,
+- The tab continuation (a call's own Cmd+T, or a click on the button among the tabs, going on into the new tab) ran live in
+  3 Firefox mdn runs, all Cmd+T: b7-r1, b3-r1 and b3-r3 (2026-10-19). In the 2026-10-18 round it ran 0 of 9 times (6 Cmd+T,
   3 clicks), and the cause wasn't recorded. It no longer needs HID idle over the call, which the engine's key presses reset
   (above). It needs idle since the stop result arrived, so a user typing after the stop still refuses it. The relay trace
-  records the refusal reason and the idle sample, and one traced live round will show whether idle was the cause.
+  records the refusal reason and the idle sample, but no traced round has run since.
+- A key call whose window comes back retitled doesn't get a window note when its tab strip is the one Claude last saw for
+  that window plus exactly one selected tab (a new tab in Firefox, 12 of 60 b3 and b7 task-runs). A tab switch or a new
+  window keeps the note. Another window of the same app also loses it when its strip lists every tab of the last-seen one
+  plus one selected tab. The old title must be a whole tab label, plain or Firefox's `Value: <title>, <title>`. Tabs count
+  only from the window's own tab group, before any page. Only Firefox's strip is tested, and Safari and Chrome may still
+  get the note.
 - A read between the menu click and the next action (`const menu = await app.getAXState()`) doesn't split either, so the
   call stops at the menu, as textedit-save-2 did (2026-10-17). The guard doesn't pass a menu's header (title and app, no
   URL) on its own: only the continuation checks the native window behind it.
