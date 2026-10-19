@@ -11,6 +11,7 @@ import { browserKinds, serveWorldPage, checkBrowserFixture } from './browser-fix
 import { heldOutTasks } from '../tasks-held-out.mjs';
 import { ccHeldOutTasks } from './cc-held-out.mjs';
 
+// Test constant only. Runtime approvals use the selected tasks through worldPassApps.
 export const WORLD_APPS = ['Calculator', 'com.apple.calculator', 'TextEdit', 'com.apple.TextEdit', 'Chess', 'com.apple.Chess',
   'Finder', 'com.apple.finder', 'Preview', 'com.apple.Preview', 'Microsoft Word', 'Word', 'com.microsoft.Word',
   'Microsoft Excel', 'Excel', 'com.microsoft.Excel', 'Helium', 'net.imput.helium',

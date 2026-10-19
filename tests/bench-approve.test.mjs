@@ -18,11 +18,13 @@ test('benchmark menu approvals cover the original apps and exclude unapproved ta
 });
 
 test('world claims approve only their fixture apps and refuse owner containers and settings', () => {
+  const env = { BENCH_WORLD_TASKS: JSON.stringify(['finder-rename', 'preview-pdf', 'word-edit', 'excel-edit',
+    'local-wikipedia', 'textedit-save', 'calculator-click']) };
   for (const app of ['Finder', 'Preview', 'Microsoft Word', 'Microsoft Excel', 'Helium', 'TextEdit', 'Calculator']) {
-    assert.equal(approve(`Allow Computer Use to use "${app}"?`, 'world'), 'accept');
+    assert.equal(approve(`Allow Computer Use to use "${app}"?`, 'world', env), 'accept');
   }
   for (const app of ['Notes', 'Reminders', 'Calendar', 'System Settings', 'Mail', 'Mimestream', 'Microsoft PowerPoint']) {
-    assert.equal(approve(`Allow Computer Use to use "${app}"?`, 'world'), null);
+    assert.equal(approve(`Allow Computer Use to use "${app}"?`, 'world', env), null);
   }
 });
 test('benchmark drags approve the three apps by bundle ID too, exact case only', () => {
