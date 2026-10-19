@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createStartupCache, startupIdentity } from '../plugins/sleight/lib/startup-cache.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { INVENTORY_NOTE, INVENTORY_SENTENCE } from '../plugins/sleight/lib/engine-app-docs.mjs';
 import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 
 const init = { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } };
@@ -31,14 +32,15 @@ function fixture(t, identity = { engine: '1', sleight: '1' }) {
   };
   return { directory, connect };
 }
-function warm(h) {
+function warm(h, list = tools, result = init) {
   h.send(initialization(1));
-  h.reply({ jsonrpc: '2.0', id: 1, result: structuredClone(init) });
+  h.reply({ jsonrpc: '2.0', id: 1, result: structuredClone(result) });
   h.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
   h.send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
-  h.reply({ jsonrpc: '2.0', id: 2, result: structuredClone(tools) });
+  h.reply({ jsonrpc: '2.0', id: 2, result: structuredClone(list) });
   return structuredClone(h.client);
 }
+const listChanged = msg => msg.method === 'notifications/tools/list_changed';
 test('warm replies equal fresh rewritten replies, use current IDs and do not wait for the engine', t => {
   const { connect } = fixture(t);
   const fresh = warm(connect({ firstCallBatch: true }));
@@ -99,36 +101,135 @@ for (const leanCalls of [false, true]) test(`lean calls ${leanCalls} reuses its 
   assert.ok(h.server.some(msg => msg.id === 12));
   assert.equal(h.client.some(msg => msg.id === 12 && msg.error), false);
 });
-for (const [label, options, identity, params] of [
-  ['engine version', {}, { engine: '2', sleight: '1' }],
-  ['sleight version', {}, { engine: '1', sleight: '2' }],
-  ['surface environment', {}, { engine: '1', sleight: '1', env: { SURFACES: 'browser' } }],
-  ['document scope', { approvalScope: 'document' }],
-  ['batch description', { firstCallBatch: true }],
-  ['prompt variant', { prompt: 'lean' }],
-  ['local tool schema', { localTools: { tools: [{ name: 'local', inputSchema: { type: 'object' } }] } }],
-  ['change review', { changeReview: false }],
-  ['client protocol', {}, undefined, { protocolVersion: 'different' }],
-  ['client capabilities', {}, undefined, { capabilities: { sampling: {} } }],
+for (const [label, identity, params] of [
+  ['engine version', { engine: '2', sleight: '1' }],
+  ['sleight version', { engine: '1', sleight: '2' }],
+  ['surface environment', { engine: '1', sleight: '1', env: { SURFACES: 'browser' } }],
+  ['client protocol', undefined, { protocolVersion: 'different' }],
+  ['client capabilities', undefined, { capabilities: { sampling: {} } }],
 ]) test(`${label} change misses the cache`, t => {
   const { connect } = fixture(t); warm(connect());
-  const h = connect(options, identity); const msg = initialization(3);
+  const h = connect({}, identity); const msg = initialization(3);
   Object.assign(msg.params, params); h.send(msg);
   assert.equal(h.client.length, 0);
   h.reply({ jsonrpc: '2.0', id: 3, result: structuredClone(init) });
   assert.equal(h.client.length, 1);
 });
-test('mismatching live tools invalidate the cache and refuse queued calls', t => {
+// The cache holds the engine's own replies, and the relay rewrites them for each session, so a relay setting changed
+// between sessions answers as a cold session with that setting would (SLEIGHT_FS race, 2026-10-19).
+for (const [label, options] of [
+  ['document scope', { approvalScope: 'document' }],
+  ['batch description', { firstCallBatch: true }],
+  ['prompt variant', { prompt: 'lean' }],
+  ['local tool schema', { localTools: { tools: [{ name: 'local', inputSchema: { type: 'object' } }] } }],
+  ['change review', { changeReview: false }],
+  ['first-call steering (SLEIGHT_FS)', { firstCallSteering: true }],
+  ['first-call windows (SLEIGHT_TS3)', { firstCallWindows: true }],
+]) test(`${label} change reuses the cached engine handshake and answers as a cold session`, t => {
+  const steering = { tools: [{ ...tools.tools[0], description: `Run code. ${INVENTORY_SENTENCE} Then act.` }, tools.tools[1]] };
+  const cold = warm(fixture(t).connect(options), steering);
+  const { connect } = fixture(t); warm(connect(), steering);
+  const h = connect(options);
+  h.send(initialization(1));
+  h.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  h.send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+  assert.deepEqual(h.client, cold, 'answered from the cache before the engine replies');
+  h.reply({ jsonrpc: '2.0', id: 1, result: structuredClone(init) });
+  h.reply({ jsonrpc: '2.0', id: 2, result: structuredClone(steering) });
+  assert.deepEqual(h.client, cold, 'the live replies verify without an error or a second answer');
+});
+test('SLEIGHT_FS flipped on between sessions keeps every call working (race 2026-10-19)', t => {
+  const steering = { tools: [{ ...tools.tools[0], description: `Run code. ${INVENTORY_SENTENCE} Then act.` }] };
+  const { connect } = fixture(t); warm(connect({ firstCallSteering: false }), steering);
+  const h = connect({ firstCallSteering: true });
+  h.send(initialization(10));
+  h.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  h.send({ jsonrpc: '2.0', id: 11, method: 'tools/list' });
+  h.send({ jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
+  assert.match(h.client.find(msg => msg.id === 11).result.tools[0].description, new RegExp(INVENTORY_NOTE.slice(0, 20)));
+  h.reply({ jsonrpc: '2.0', id: 10, result: structuredClone(init) });
+  h.reply({ jsonrpc: '2.0', id: 11, result: structuredClone(steering) });
+  assert.ok(h.server.some(msg => msg.id === 12));
+  assert.equal(h.client.some(msg => msg.error), false, JSON.stringify(h.client));
+});
+for (const advertised of [true, false]) test(`stale cached tools (${advertised ? 'listChanged advertised' : 'no listChanged'}): the session continues on the live list and the cache is rewritten`, t => {
+  const result = advertised ? { ...init, capabilities: { tools: { listChanged: true } } } : init;
+  const { connect } = fixture(t); warm(connect(), tools, result);
+  const h = connect(); h.send(initialization(10));
+  h.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  h.send({ jsonrpc: '2.0', id: 11, method: 'tools/list' });
+  h.send({ jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
+  h.reply({ jsonrpc: '2.0', id: 10, result: structuredClone(result) });
+  const live = { tools: [...tools.tools, { name: 'new_tool', inputSchema: { type: 'object' } }] };
+  h.reply({ jsonrpc: '2.0', id: 11, result: structuredClone(live) });
+  assert.ok(h.server.some(msg => msg.id === 12), 'the queued call runs on the live engine');
+  assert.equal(h.client.some(msg => msg.error), false, JSON.stringify(h.client));
+  assert.equal(h.client.filter(msg => msg.id === 11).length, 1);
+  assert.equal(h.client.filter(listChanged).length, advertised ? 1 : 0, 'only a client told the list can change hears that it did');
+  h.send({ jsonrpc: '2.0', id: 13, method: 'tools/list' });
+  assert.equal(h.client.some(msg => msg.id === 13), false, 'the refetch goes to the engine');
+  h.reply({ jsonrpc: '2.0', id: 13, result: structuredClone(live) });
+  assert.ok(h.client.find(msg => msg.id === 13).result.tools.some(tool => tool.name === 'new_tool'));
+  h.reply({ jsonrpc: '2.0', id: 12, result: { content: [{ type: 'text', text: 'done' }] } });
+  h.send({ jsonrpc: '2.0', id: 14, method: 'tools/call', params: { name: 'js', arguments: { code: '2' } } });
+  assert.ok(h.server.some(msg => msg.id === 14));
+  const next = connect(); next.send(initialization(20));
+  next.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  next.send({ jsonrpc: '2.0', id: 21, method: 'tools/list' });
+  assert.ok(next.client.find(msg => msg.id === 21).result.tools.some(tool => tool.name === 'new_tool'), 'the cache holds the live list');
+});
+test('a stale cached initialize answer keeps calls working and the next session gets the live answer', t => {
   const { connect } = fixture(t); warm(connect());
   const h = connect(); h.send(initialization(10));
   h.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
   h.send({ jsonrpc: '2.0', id: 11, method: 'tools/list' });
   h.send({ jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
-  h.reply({ jsonrpc: '2.0', id: 10, result: structuredClone(init) });
-  h.reply({ jsonrpc: '2.0', id: 11, result: { tools: [] } });
-  assert.equal(h.server.filter(msg => msg.method === 'tools/call').length, 0);
-  assert.match(h.client.find(msg => msg.id === 12).error.message, /changed.*reconnect/i);
-  const next = connect(); next.send(initialization(20)); assert.equal(next.client.length, 0);
+  const live = { ...init, serverInfo: { name: 'fixture', version: '2' }, instructions: 'changed' };
+  h.reply({ jsonrpc: '2.0', id: 10, result: structuredClone(live) });
+  h.reply({ jsonrpc: '2.0', id: 11, result: structuredClone(tools) });
+  assert.equal(h.client.filter(msg => msg.id === 10).length, 1, 'one initialize answer');
+  assert.ok(h.server.some(msg => msg.id === 12));
+  assert.equal(h.client.some(msg => msg.error), false, JSON.stringify(h.client));
+  const next = connect(); next.send(initialization(20));
+  assert.equal(next.client.find(msg => msg.id === 20).result.serverInfo.version, '2');
+});
+test('a changed protocol version fails only the calls queued during startup, with a retry message', t => {
+  const { connect } = fixture(t); warm(connect());
+  const h = connect(); h.send(initialization(10));
+  h.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  h.send({ jsonrpc: '2.0', id: 11, method: 'tools/list' });
+  h.send({ jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
+  h.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 12 } });
+  h.reply({ jsonrpc: '2.0', id: 10, result: { ...structuredClone(init), protocolVersion: '2025-11-25' } });
+  assert.equal(h.server.some(msg => msg.method === 'notifications/cancelled'), false, 'a refused call\'s cancellation stays here');
+  h.send({ jsonrpc: '2.0', id: 15, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
+  h.reply({ jsonrpc: '2.0', id: 11, result: structuredClone(tools) });
+  assert.match(h.client.find(msg => msg.id === 12).error.message, /again/i);
+  assert.equal(h.server.some(msg => msg.id === 12), false);
+  assert.match(h.client.find(msg => msg.id === 15).error.message, /again/i, 'a call sent while the cached list waited');
+  assert.equal(h.server.some(msg => msg.id === 15), false);
+  h.send({ jsonrpc: '2.0', id: 13, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
+  assert.ok(h.server.some(msg => msg.id === 13), 'the retry runs');
+  const next = connect(); next.send(initialization(20));
+  assert.equal(next.client.find(msg => msg.id === 20).result.protocolVersion, '2025-11-25');
+});
+test('a cached list the session cannot rewrite is answered live', t => {
+  const { directory } = fixture(t);
+  const cache = createStartupCache({ identity: { engine: '1', sleight: '1' }, directory });
+  const cold = cache.bind({ send() {}, forward() {} });
+  cold.initialize(initialization(1)); cold.request({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+  cold.reply({ jsonrpc: '2.0', id: 1, result: structuredClone(init) }); cold.reply({ jsonrpc: '2.0', id: 2, result: structuredClone(tools) });
+  const sent = [], forwarded = [];
+  const startup = cache.bind({
+    send: msg => sent.push(msg), forward: msg => forwarded.push(msg), present: { tools: () => { throw new Error('fixture'); } } });
+  startup.initialize(initialization(10));
+  assert.equal(sent.length, 1, 'the initialize answer comes from the cache');
+  startup.request({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  startup.request({ jsonrpc: '2.0', id: 11, method: 'tools/list' });
+  assert.equal(sent.length, 1, 'no cached list');
+  assert.equal(startup.reply({ jsonrpc: '2.0', id: 10, result: structuredClone(init) }), true);
+  assert.equal(startup.reply({ jsonrpc: '2.0', id: 11, result: structuredClone(tools) }), false, 'the live list goes to the client');
+  assert.deepEqual(forwarded.map(msg => msg.method), ['notifications/initialized', 'tools/list']);
 });
 test('initialization failure fails pending calls without forwarding them', t => {
   const { connect } = fixture(t); warm(connect()); const h = connect();
@@ -158,14 +259,6 @@ test('a writable cache directory cannot supply or publish a handshake', t => {
   const { connect, directory } = fixture(t); warm(connect()); chmodSync(directory, 0o777);
   const h = connect(); h.send(initialization(3)); assert.equal(h.client.length, 0);
   warm(connect());
-});
-test('a mismatching initialized response refuses calls and does not send a second initialize reply', t => {
-  const { connect } = fixture(t); warm(connect()); const h = connect(); h.send(initialization(10));
-  h.send({ jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
-  h.reply({ jsonrpc: '2.0', id: 10, result: { ...init, instructions: 'changed' } });
-  assert.equal(h.client.filter(msg => msg.id === 10).length, 1);
-  assert.ok(h.client.find(msg => msg.id === 12).error);
-  assert.equal(h.server.length, 1);
 });
 test('the identity covers inherited settings and fails back when the build cannot be read', t => {
   const root = new URL('../plugins/sleight/', import.meta.url).pathname;
@@ -344,6 +437,9 @@ test('a failed warm first tool-list verification preserves the engine error for 
   h.reply({ jsonrpc: '2.0', id: 10, result: structuredClone(init) });
   h.reply({ jsonrpc: '2.0', id: 11, error: { code: -32000, message: 'Fixture tool registration failed' } });
   assert.match(h.client.find(msg => msg.id === 12).error.message, /Fixture tool registration failed/);
+  h.send({ jsonrpc: '2.0', id: 13, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
+  assert.ok(h.server.some(msg => msg.id === 13), 'later calls reach the engine');
+  const next = connect(); next.send(initialization(20)); assert.equal(next.client.length, 0, 'the entry is dropped');
 });
 
 test('per-run trace, idle and browser access values hit the same cached handshake', t => {
