@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseRecording, loadRecording } from '../bench/replay/recording.mjs';
 import { TargetMapper, elementMapping, divergence, refreshCode, resultText } from '../bench/replay/mapping.mjs';
 import { replayCalls, parseEnv, schedule, summarize } from '../bench/replay/engine.mjs';
 import { options, loadCheck, main } from '../bench/replay/run.mjs';
+import * as runner from '../bench/replay/run.mjs';
 import { checkEvidence } from '../bench/replay/checks.mjs';
 import { replayApprovalStorage } from '../bench/replay/server.mjs';
 import { nativePlan } from '../bench/replay/fixtures.mjs';
@@ -262,7 +264,7 @@ test('check evidence never passes absent targets, missing traces or one selected
   row.result = text('option Japanese [selected]\noption Portuguese [selected]');
   assert.equal(checkEvidence(ms, { calls: [row] }).verdict, 'pass');
   const dp = loadCheck('DP2'); row.name = 'drag'; row.result = text('{"path":"accessibility"}');
-  assert.equal(checkEvidence(dp, { calls: [row] }).verdict, 'inconclusive');
+  assert.equal(checkEvidence(dp, { calls: [row] }).verdict, 'skip');
 });
 
 test('tab-chain check requires both metadata probes and rejects intermediate tree reads', () => {
@@ -283,6 +285,10 @@ test('CLI parsing never interprets unknown flags as a live opt-in', () => {
   assert.throws(() => loadCheck('../x'), /Invalid/);
 });
 
+test('MS1 requires a worktree comparison instead of an invented switch', async () => {
+  await assert.rejects(main(['--check', 'MS1', '--plan']), /MS1 requires --old-worktree OLD --new-worktree NEW/);
+});
+
 test('read-only plan does not call live setup or create output', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'sr2-plan-'));
   try {
@@ -293,4 +299,82 @@ test('read-only plan does not call live setup or create output', async () => {
     assert.deepEqual((await import('node:fs')).readdirSync(dir), ['events.jsonl']);
     await assert.rejects(main([dir]), /requires --owner-away/);
   } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('worktree comparison plans alternate the same recording across two identified builds', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sr2-build-plan-'));
+  try {
+    writeFileSync(join(dir, 'events.jsonl'), fixture('turbo'));
+    const builds = ['old', 'new'].map(label => {
+      const path = join(dir, label); mkdirSync(join(path, 'plugins/sleight/lib'), { recursive: true });
+      mkdirSync(join(path, 'bench/turbo'), { recursive: true });
+      writeFileSync(join(path, 'plugins/sleight/lib/launch.mjs'), 'export async function run({ approvalStorage, paymentCardFactory } = {}) {}');
+      writeFileSync(join(path, 'bench/turbo/v3-server.mjs'), '// offline fixture');
+      const git = args => execFileSync('/usr/bin/git', ['-C', path, ...args], { stdio: 'pipe' });
+      git(['init']); git(['add', '--', 'plugins/sleight/lib/launch.mjs', 'bench/turbo/v3-server.mjs']);
+      git(['-c', 'user.name=Offline test', '-c', 'user.email=offline@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-m', 'Offline build fixture', '--', 'plugins/sleight/lib/launch.mjs', 'bench/turbo/v3-server.mjs']);
+      return path;
+    });
+    const log = console.log; console.log = () => {};
+    try {
+      const plan = await main([dir, '--plan', '--old-worktree', builds[0], '--new-worktree', builds[1], '--repeat', '2']);
+      assert.equal(plan.mode, 'worktrees');
+      assert.deepEqual(plan.schedule.map(s => [s.variant, s.build.label]), [['A', 'old'], ['B', 'new'], ['A', 'old'], ['B', 'new']]);
+      assert.ok(plan.schedule.every(s => /^[a-f0-9]{40}$/.test(s.build.commit)));
+      assert.deepEqual(plan.schedule.slice(0, 2).map(s => s.build.worktree), builds.map(p => realpathSync(p)));
+      assert.equal(plan.calls, 2);
+      await assert.rejects(main([dir, '--plan', '--old-worktree', '.']), /both --old-worktree and --new-worktree/);
+      await assert.rejects(main([dir, '--plan', '--old-worktree', '.', '--new-worktree', '.', '--compare', 'SLEIGHT_DP2=0']), /cannot combine/);
+      await assert.rejects(main([dir, '--plan', '--old-worktree', dir, '--new-worktree', '.']), /Git worktree/);
+      await assert.rejects(main([dir, '--plan', '--old-worktree', '.', '--new-worktree', '.']), /distinct worktrees/);
+    } finally { console.log = log; }
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('native replay shim loads the selected build with empty approvals and no payment card', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sr2-offline-server-'));
+  try {
+    mkdirSync(join(dir, 'plugins/sleight/lib'), { recursive: true });
+    writeFileSync(join(dir, 'plugins/sleight/lib/launch.mjs'), `export async function run({ approvalStorage, paymentCardFactory, directBrowser } = {}) {
+      console.log(JSON.stringify({ build: 'old fixture', grants: approvalStorage.load().list(),
+        cardSuppressed: paymentCardFactory() === undefined, directBrowser }));
+    }`);
+    const output = execFileSync(process.execPath, ['bench/replay/server.mjs', '--worktree', dir], { encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(output), { build: 'old fixture', grants: [], cardSuppressed: true, directBrowser: false });
+    writeFileSync(join(dir, 'plugins/sleight/lib/launch.mjs'), 'export async function run() { console.log("unsafe launcher ran"); }');
+    assert.throws(() => execFileSync(process.execPath, ['bench/replay/server.mjs', '--worktree', dir], { encoding: 'utf8', stdio: 'pipe' }), error => {
+      assert.equal(error.stdout, ''); assert.match(error.stderr, /requires SR2 launcher injection/); return true;
+    });
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('DP2 validates helper phase order and skips only when phase tracing is absent', () => {
+  const spec = loadCheck('DP2');
+  const replay = { calls: [{ index: 0, name: 'drag', result: text('{"path":"accessibility"}'), toolMs: 10,
+    startedAt: '2026-10-19T00:00:00.000Z', finishedAt: '2026-10-19T00:00:01.000Z' }] };
+  const trace = ['ax-move:start', 'settle:start', 'settle:end', 'ax-move:end'].map((s, i) => {
+    const [phase, edge] = s.split(':');
+    return { t: '2026-10-19T00:00:00.500Z', direction: 'drag-phase', msg: { phase, edge, monoMs: 100 + i, helperPid: 123 } };
+  });
+  assert.equal(checkEvidence(spec, replay, trace).verdict, 'pass');
+  const skipped = checkEvidence(spec, replay, []);
+  assert.equal(skipped.verdict, 'skip'); assert.match(skipped.reason, /build lacks.*drag-phase/i);
+  for (const bad of [trace.slice(0, -1), trace.map(e => ({ ...e, t: '2026-10-19T00:00:02.000Z' }))])
+    assert.notEqual(checkEvidence(spec, replay, bad).verdict, 'pass');
+  const earlyRaise = ['raise', 'settle'].flatMap((phase, i) => ['start', 'end'].map((edge, n) =>
+    ({ ...trace[0], msg: { phase, edge, monoMs: 90 + i * 2 + n, helperPid: 123 } })));
+  assert.equal(checkEvidence(spec, replay, [...earlyRaise, ...trace]).verdict, 'fail');
+  const posted = ['start', 'end'].map((edge, i) => ({ ...trace[0], msg: { phase: 'posted-press', edge, monoMs: 104 + i, helperPid: 123 } }));
+  assert.equal(checkEvidence(spec, replay, [...trace, ...posted]).verdict, 'fail');
+  const backwards = structuredClone(trace); backwards[2].msg.monoMs = 1;
+  assert.equal(checkEvidence(spec, replay, backwards).verdict, 'fail');
+  const mixed = structuredClone(trace); mixed[3].msg.helperPid = 999;
+  assert.equal(checkEvidence(spec, replay, mixed).verdict, 'fail');
+});
+
+test('comparison routes the native companion and turbo worker entry to the selected build', () => {
+  const specs = runner.replayServers({ 'sleight-turbo': { command: process.execPath, args: ['/harness/bench/turbo/v3-server.mjs'], env: { SLEIGHT_TURBO_TASK: 'fixed task' } } }, '/build/old');
+  assert.equal(specs['sleight-turbo'].args[0], '/build/old/bench/turbo/v3-server.mjs');
+  assert.equal(specs['sleight-turbo'].env.SLEIGHT_TURBO_TASK, 'fixed task');
+  assert.deepEqual(specs['plugin:sleight:computer'].args.slice(-2), ['--worktree', '/build/old']);
 });

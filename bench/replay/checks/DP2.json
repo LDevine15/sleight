@@ -5,5 +5,5 @@
   "switch": "SLEIGHT_DP2",
   "tool": "drag", "resultIncludes": "\"path\"\\s*:\\s*\"accessibility\"",
   "toolMsBelow": 1500, "needsInternalOrder": true,
-  "assertion": "Accessibility drag under 1500 ms; AX-before-raise ordering needs helper trace events that are not currently emitted."
+  "assertion": "Accessibility drag under 1500 ms, with paired drag-phase ax-move start/end before any raise and no posted-press. Missing phase events skip ordering; malformed or incomplete evidence fails."
 }

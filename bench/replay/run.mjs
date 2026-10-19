@@ -4,14 +4,16 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { loadRecording } from './recording.mjs';
 import { replayCalls, parseEnv, schedule, summarize } from './engine.mjs';
 import { TargetMapper } from './mapping.mjs';
+import { requireReplayLauncher } from './launcher-contract.mjs';
 
 const repo = fileURLToPath(new URL('../..', import.meta.url));
 export function options(argv) {
   const out = { repeat: 1 };
-  const values = new Set(['task', 'arm', 'run', 'evidence', 'env', 'compare', 'repeat', 'out', 'check']);
+  const values = new Set(['task', 'arm', 'run', 'evidence', 'env', 'compare', 'old-worktree', 'new-worktree', 'repeat', 'out', 'check']);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (['--owner-away', '--plan', '--help'].includes(arg)) out[arg.slice(2)] = true;
@@ -24,6 +26,8 @@ export function options(argv) {
   }
   out.repeat = Number(out.repeat);
   if (out.run !== undefined) { out.run = Number(out.run); if (!Number.isSafeInteger(out.run) || out.run < 1) throw Error('Invalid --run'); }
+  if ((out['old-worktree'] !== undefined) !== (out['new-worktree'] !== undefined)) throw Error('Supply both --old-worktree and --new-worktree');
+  if (out['old-worktree'] !== undefined && out.compare !== undefined) throw Error('Worktree comparison cannot combine with --compare; --env applies to both builds');
   return out;
 }
 
@@ -33,17 +37,41 @@ export function loadCheck(id) {
   return JSON.parse(readFileSync(new URL(`./checks/${id}.json`, import.meta.url), 'utf8'));
 }
 
-async function clientsFor({ servers, policy, env, turbo, gateWindow }, switches, dir, record) {
+export function buildIdentity(path, label) {
+  let worktree, commit, trackedDirty, trackedDiffSHA256;
+  try {
+    worktree = realpathSync(expand(path));
+    const git = args => execFileSync('/usr/bin/git', ['-C', worktree, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    if (realpathSync(git(['rev-parse', '--show-toplevel'])) !== worktree) throw Error('Expected worktree root');
+    commit = git(['rev-parse', 'HEAD']);
+    trackedDirty = Boolean(git(['status', '--porcelain', '--untracked-files=no']));
+    trackedDiffSHA256 = createHash('sha256').update(git(['diff', 'HEAD', '--binary', '--no-ext-diff', '--no-textconv'])).digest('hex');
+  } catch { throw Error(`Expected Git worktree root with a commit: ${path}`); }
+  for (const file of ['plugins/sleight/lib/launch.mjs', 'bench/turbo/v3-server.mjs'])
+    if (!existsSync(join(worktree, file))) throw Error(`Build missing ${file}: ${worktree}`);
+  requireReplayLauncher(worktree);
+  return { label, worktree, commit, trackedDirty, trackedDiffSHA256 };
+}
+
+// The safety shim belongs to the harness; both product servers belong to the selected build.
+export function replayServers(servers, worktree = repo) {
+  const specs = { ...(servers ?? {}), 'plugin:sleight:computer': {
+    command: process.execPath, args: [join(repo, 'bench/replay/server.mjs'), '--worktree', worktree],
+    env: { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0' },
+  } };
+  if (specs['sleight-turbo']) specs['sleight-turbo'] = { ...specs['sleight-turbo'],
+    command: process.execPath, args: [join(worktree, 'bench/turbo/v3-server.mjs')] };
+  return specs;
+}
+
+async function clientsFor({ servers, policy, env, turbo, gateWindow }, switches, dir, record, worktree) {
   const { probeClient } = await import('../double-keys-client.mjs');
   const { answerElicitation, guardReason } = await import('../codex-sleight-proxy.mjs');
   const host = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'TERM'].flatMap(k => process.env[k] ? [[k, process.env[k]]] : []));
   const base = { ...host, ...env, ...switches, CLAUDE_CONFIG_DIR: mkdtempSync(join(tmpdir(), 'lane-claude-')),
     SLEIGHT_HAND: '0', SLEIGHT_APPROVAL_PROMPT: 'client', SLEIGHT_TRACE: dir, SLEIGHT_TRACE_CODE: '1', SLEIGHT_REPLAY_ENV: JSON.stringify(switches) };
   // Arm environments can carry a reused Claude config. Only our private config reaches children.
-  const specs = { ...(servers ?? {}), 'plugin:sleight:computer': {
-    command: process.execPath, args: [join(repo, 'bench/replay/server.mjs')],
-    env: { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0' },
-  } };
+  const specs = replayServers(servers, worktree);
   const clients = new Map(), exits = new Map();
   let declined = false;
   const close = async () => {
@@ -87,16 +115,16 @@ async function clientsFor({ servers, policy, env, turbo, gateWindow }, switches,
   } catch (error) { await close(); throw error; }
 }
 
-export async function liveIteration(recording, { env, dir, signal, beforeCall, record }) {
+export async function liveIteration(recording, { env, dir, signal, beforeCall, record, worktree = repo }) {
   const { withNative, withRace } = await import('./fixtures.mjs');
   const mapper = new TargetMapper();
   const drive = async config => {
-    const clients = await clientsFor(config, env, dir, record);
+    const clients = await clientsFor(config, env, dir, record, worktree);
     try { return await replayCalls(recording.calls, { mapper, call: clients.call, beforeCall, record }); }
     finally { await clients.close(); }
   };
   const fixture = await (recording.kind === 'race' ? withRace : withNative)(recording,
-    { dir: join(dir, 'fixture'), repo, mapper, signal, beforeCall, drive, env });
+    { dir: join(dir, 'fixture'), repo: worktree, mapper, signal, beforeCall, drive, env });
   const result = fixture.replay ?? { verdict: 'diverge', reason: fixture.lifecycle.reason ?? fixture.lifecycle.cleanupError ?? 'fixture failed', calls: [], totalToolMs: 0 };
   if (!fixture.cleanupConfirmed) result.verdict = 'diverge';
   result.cleanupConfirmed = fixture.cleanupConfirmed;
@@ -108,19 +136,27 @@ export async function main(argv = process.argv.slice(2)) {
   const opts = options(argv);
   if (opts.help) {
     console.log('node bench/replay/run.mjs TASK_FOLDER | RESULTS.json --task ID [--arm ARM --run N --evidence DIR]\n' +
-      '  [--check DP1] [--plan | --owner-away] [--repeat N] [--env SLEIGHT_X=1] [--compare SLEIGHT_X=0] [--out DIR]');
+      '  [--check DP1] [--plan | --owner-away] [--repeat N] [--env SLEIGHT_X=1]\n' +
+      '  [--compare SLEIGHT_X=0 | --old-worktree OLD --new-worktree NEW] [--out DIR]');
     return;
   }
   const check = opts.check && loadCheck(opts.check);
+  if (check?.comparison === 'worktrees' && opts['old-worktree'] === undefined)
+    throw Error(`${check.id} requires --old-worktree OLD --new-worktree NEW; it has no feature switch`);
   const input = opts.input ?? (check && expand(check.source));
   if (!input) throw Error('A task folder, results file or --check is required');
   const recording = loadRecording(expand(input), { task: opts.task ?? check?.task, arm: opts.arm ?? check?.arm,
     run: opts.run ?? check?.run, evidence: opts.evidence });
-  const variants = [{ variant: 'A', env: parseEnv(opts.env ?? (check?.switch ? `${check.switch}=1` : '')) },
-    ...(opts.compare !== undefined ? [{ variant: 'B', env: parseEnv(opts.compare) }] : [])];
+  const env = parseEnv(opts.env ?? (check?.switch ? `${check.switch}=1` : ''));
+  const comparingBuilds = opts['old-worktree'] !== undefined;
+  const variants = comparingBuilds ? [
+    { variant: 'A', env, build: buildIdentity(opts['old-worktree'], 'old') },
+    { variant: 'B', env, build: buildIdentity(opts['new-worktree'], 'new') },
+  ] : [{ variant: 'A', env }, ...(opts.compare !== undefined ? [{ variant: 'B', env: parseEnv(opts.compare) }] : [])];
+  if (comparingBuilds && variants[0].build.worktree === variants[1].build.worktree) throw Error('Comparison requires distinct worktrees');
   const order = schedule(opts.repeat, variants);
   const plan = { source: recording.transcript, transcriptSHA256: recording.transcriptSHA256, kind: recording.kind, task: recording.task, calls: recording.calls.length,
-    schedule: order, check, model: false, worktree: repo,
+    schedule: order, check, model: false, mode: comparingBuilds ? 'worktrees' : 'switches', worktree: repo,
     commit: execFileSync('/usr/bin/git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     trackedDirty: Boolean(execFileSync('/usr/bin/git', ['-C', repo, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim()),
     recordedCommit: recording.row?.sleightCommit ?? recording.metadata?.sleight?.commit ?? null };
@@ -155,14 +191,20 @@ export async function main(argv = process.argv.slice(2)) {
       await beforeCall();
       const dir = join(out, `${runs.length + 1}-${step.variant}`); mkdirSync(dir, { mode: 0o700 });
       const record = event => appendFileSync(join(dir, 'trace.jsonl'), JSON.stringify({ t: new Date().toISOString(), ...event }) + '\n', { mode: 0o600 });
+      if (step.build) {
+        const current = buildIdentity(step.build.worktree, step.build.label);
+        if (current.commit !== step.build.commit || current.trackedDirty !== step.build.trackedDirty || current.trackedDiffSHA256 !== step.build.trackedDiffSHA256)
+          throw Error(`Build identity changed: ${step.build.label}`);
+      }
       // From setup until cleanup proves otherwise, the lock belongs to this iteration.
       cleanupConfirmed = false;
-      const result = await liveIteration(recording, { env: step.env, dir, signal: controller.signal, beforeCall, record });
+      const result = await liveIteration(recording, { env: step.env, dir, signal: controller.signal, beforeCall, record, worktree: step.build?.worktree });
       cleanupConfirmed = result.cleanupConfirmed;
       if (check) result.check = assertCheck(check, result, dir);
       const row = { ...step, ...result }; runs.push(row);
       writeFileSync(join(dir, 'result.json'), JSON.stringify(row, null, 2), { mode: 0o600 });
       console.log(`${step.variant} #${step.iteration}: ${row.verdict}, ${row.calls.length}/${recording.calls.length} calls, ${row.totalToolMs.toFixed(1)} tool ms${row.reason ? ` (${row.reason})` : ''}`);
+      if (row.check) console.log(`${check.id}: ${row.check.verdict}${row.check.reason ? ` (${row.check.reason})` : ''}${row.check.failures ? ` (${row.check.failures.join('; ')})` : ''}`);
       if (!cleanupConfirmed) break;
     }
   } catch (error) {
@@ -173,7 +215,8 @@ export async function main(argv = process.argv.slice(2)) {
     for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.removeListener(sig, abort);
     const summary = summarize(runs);
     writeFileSync(join(out, 'summary.json'), JSON.stringify({ runs, summary, cleanupConfirmed, failure,
-      verdict: failure || !runs.length || runs.some(r => r.verdict !== 'pass') ? 'diverge' : 'pass' }, null, 2), { mode: 0o600 });
+      verdict: failure || !runs.length || runs.some(r => r.verdict !== 'pass') ? 'diverge'
+        : runs.some(r => r.check && r.check.verdict !== 'pass') ? 'check-incomplete' : 'pass' }, null, 2), { mode: 0o600 });
     console.log(JSON.stringify(summary, null, 2)); console.log(`Evidence: ${out}`);
     if (cleanupConfirmed) await unlock();
     else console.error('Cleanup unproved. Retained /tmp/sleight-live.lock and fixture evidence.');

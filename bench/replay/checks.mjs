@@ -2,16 +2,47 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resultText } from './mapping.mjs';
 
+function dragOrder(events) {
+  const phases = events.filter(e => e.direction === 'drag-phase').map(e => e.msg);
+  if (!phases.length) return { verdict: 'skip', reason: 'Selected build lacks DP2 drag-phase events; use the DPc build with SLEIGHT_TRACE enabled' };
+  const stack = [], axStarts = [], axEnds = [];
+  let previous = -Infinity;
+  const helperPid = phases[0]?.helperPid;
+  for (const [index, event] of phases.entries()) {
+    if (!event || !['ax-move', 'raise', 'settle', 'posted-press'].includes(event.phase) ||
+        !['start', 'end'].includes(event.edge) || !Number.isFinite(event.monoMs) || event.monoMs < 0 || event.monoMs < previous ||
+        !Number.isSafeInteger(helperPid) || helperPid < 1 || event.helperPid !== helperPid)
+      return { verdict: 'fail', failures: ['Invalid or mixed-helper DP2 phase evidence'] };
+    previous = event.monoMs;
+    if (event.edge === 'start') stack.push(event.phase);
+    else if (stack.pop() !== event.phase) return { verdict: 'fail', failures: ['Unpaired DP2 phase events'] };
+    if (event.phase === 'ax-move') (event.edge === 'start' ? axStarts : axEnds).push(index);
+  }
+  if (stack.length || axStarts.length !== 1 || axEnds.length !== 1)
+    return { verdict: 'fail', failures: ['Incomplete or ambiguous DP2 AX-move phase evidence'] };
+  if (phases.some((e, i) => e.phase === 'raise' && i < axEnds[0]))
+    return { verdict: 'fail', failures: ['DP2 raised the window before AX-move completed'] };
+  if (phases.some(e => e.phase === 'posted-press'))
+    return { verdict: 'fail', failures: ['Accessibility drag emitted posted-press evidence'] };
+  return { verdict: 'pass' };
+}
+
 export function checkEvidence(spec, replay, trace = []) {
   const calls = replay.calls.filter(row => (!spec.tool || row.name === spec.tool) &&
     (!spec.argumentPattern || new RegExp(spec.argumentPattern, 'i').test(JSON.stringify(row.recordedArguments))));
   if (!calls.length) return { verdict: 'inconclusive', reason: 'Replay stopped before the check target, or recording has no such call' };
   const failures = [];
+  const skipped = [];
   const selectedEvents = [];
   for (const row of calls) {
     const text = resultText(row.result);
     const events = trace.filter(e => e.t >= row.startedAt && e.t <= row.finishedAt);
     selectedEvents.push(...events);
+    if (spec.needsInternalOrder) {
+      const order = dragOrder(events);
+      if (order.verdict === 'fail') failures.push(...order.failures.map(f => `call ${row.index}: ${f}`));
+      if (order.verdict === 'skip') skipped.push(`call ${row.index}: ${order.reason}`);
+    }
     const responses = events.filter(e => e.direction === 'from-server' || e.direction === 'guard-read');
     if (spec.resultIncludes && !new RegExp(spec.resultIncludes, 'i').test(text)) failures.push(`call ${row.index}: expected result evidence missing`);
     if (spec.alsoResultIncludes && !new RegExp(spec.alsoResultIncludes, 'i').test(text)) failures.push(`call ${row.index}: second result evidence missing`);
@@ -31,7 +62,7 @@ export function checkEvidence(spec, replay, trace = []) {
     failures.push('No selected call emitted the required trace evidence');
   if (spec.fixturePass && replay.lifecycle?.taskPassed !== true) failures.push('Benchmark fixture check did not pass');
   if (failures.length) return { verdict: 'fail', failures };
-  if (spec.needsInternalOrder) return { verdict: 'inconclusive', reason: 'Drag tool reports path and timing, but does not emit AX-move/raise ordering events' };
+  if (skipped.length) return { verdict: 'skip', reason: skipped.join('; ') };
   return { verdict: 'pass', coveredCalls: calls.map(c => c.index) };
 }
 

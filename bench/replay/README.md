@@ -1,6 +1,6 @@
 # Recorded tool replay
 
-Replay sends recorded MCP requests to the current worktree's sleight server, in tool-use emission order. It does not start a model. Each iteration creates the benchmark fixture again and starts fresh servers. Elapsed tool time still varies with the engine, browser and host load.
+Replay sends recorded MCP requests to a worktree's sleight server, in tool-use emission order. It does not start a model. Each iteration creates the benchmark fixture again and starts fresh servers. Elapsed tool time still varies with the engine, browser and host load.
 
 Preview a check without starting fixtures, servers or a live lock:
 
@@ -15,6 +15,20 @@ CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node bench/replay/run.mjs
 ```
 
 `--env` and `--compare` take comma-separated boolean sleight feature switches. Approval, payment, surface, turbo activation, trace, hand, hold and live controls cannot be supplied there. The settings run A, B, A, B, with N iterations of each. Using `--env` alone runs one setting N times.
+
+For a capability without a switch, use two distinct worktree roots. Set `MS1_OLD_WORKTREE` and `MS1_NEW_WORKTREE` to prepared baseline and candidate paths, then preview the comparison:
+
+```sh
+CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node bench/replay/run.mjs --check MS1 --old-worktree "$MS1_OLD_WORKTREE" --new-worktree "$MS1_NEW_WORKTREE" --plan
+```
+
+Both builds must include the original SR2 launcher injection (`bfe6cf44`), which supplies an empty approval store and suppresses the headless payment card. A launcher without those parameters is refused before startup. Both need their dependencies installed. The replay driver stays in the harness checkout; the selected worktree supplies the native launcher, turbo server and turbo worker. The harness supplies the same fixture lifecycle for both builds. Each iteration starts and collects its own servers before the next build starts.
+
+Worktree mode alternates A (old) and B (new) against the same loaded recording. Its plan and results identify each build's canonical path, commit, tracked dirty state and tracked diff hash. These are checked again before each iteration. Untracked dependencies are outside that identity check. `--env` applies equally to both builds. Combining worktree mode with the switch-based `--compare` is refused. MS1 requires worktree mode. A future live command for the qualification owner is:
+
+```sh
+CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node bench/replay/run.mjs --check MS1 --old-worktree "$MS1_OLD_WORKTREE" --new-worktree "$MS1_NEW_WORKTREE" --owner-away --repeat 5
+```
 
 Inputs can be a race task folder containing `run.json` and `events.jsonl`, or a native results file:
 
@@ -52,7 +66,11 @@ Pass a new directory to `--out`. Otherwise replay creates a private temporary ou
 
 Per-call medians include the reached prefixes, with sample counts. Total tool-time medians include complete passing replays only. Mapping-read milliseconds are reported separately. Setup, server startup, cleanup and model time do not enter tool time. Missing or divergent runs never appear as a faster total.
 
-`checks/` pins recorded runs and assertions for DP1, DP2, DP7, CK2, CK3, MC1, MS1 and LB1. Run each with `--check ID`. The default sets its switch to 1 when the code has one. MS1 has no switch, so compare baseline and candidate worktrees separately. A check whose target was not reached is `inconclusive`. DP2 checks Accessibility delivery and drag milliseconds, but its internal AX-move/raise ordering remains `inconclusive`: the helper does not emit ordering events. DP7 also requires the world fixture's saved-file check to pass. The selected MS1 recording contains the two-language array, whereas rel131-r1 used click and key recovery. LB1 times the viewport-only restore with `observe:none`, which excludes a full snapshot's cost. Any failed or inconclusive check exits nonzero.
+`checks/` pins recorded runs and assertions for DP1, DP2, DP7, CK2, CK3, MC1, MS1 and LB1. Run each with `--check ID`. The default sets its switch to 1 when the code has one. A check whose target was not reached is `inconclusive`. DP7 also requires the world fixture's saved-file check to pass. The selected MS1 recording contains the two-language array, whereas rel131-r1 used click and key recovery. LB1 times the viewport-only restore with `observe:none`, which excludes a full snapshot's cost. Any failed, skipped or inconclusive check exits nonzero. The campaign summary cannot report a pass when a check is incomplete.
+
+DP2 checks Accessibility delivery under 1500 ms and the DPc phase events under `SLEIGHT_TRACE`. The launcher writes `direction: "drag-phase"`, with `msg.phase` equal to `ax-move`, `raise`, `settle` or `posted-press`. `msg.edge` is `start` or `end`. `msg.monoMs` is monotonic milliseconds, and `msg.helperPid` identifies the helper. The helper's stderr prefix is `sleight-drag-phase `, which the launcher converts to those JSON trace entries. No document content belongs in a phase event.
+
+For each selected drag call, phase pairs must nest correctly, use one helper and have nondecreasing monotonic times. Exactly one complete AX move must finish before any raise. An Accessibility result must have no posted press. Nested settle events during the AX write are allowed. A build without phase events reports `skip` and specifies the missing events. Partial, malformed, mixed-helper or reversed evidence fails. The `SLEIGHT_DP2=0` baseline keeps its old raise/settle-first behavior and can fail the candidate's path, timing or ordering predicates. Its calls and timings remain in the evidence.
 
 Offline unit coverage:
 
