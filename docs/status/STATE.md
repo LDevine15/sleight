@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 12:45 UTC, flushed before the owner's clear)
+## Banner (2026-10-19 13:05 UTC)
 
 Goal (owner): 1.3.0 is out. 1.3.1 validation runs now, then sleight holds at 1.3.1 while the owner uses it. 1.4.0 (analytics,
 Cursor plugin, AM1 speed map) builds on its own branch. The video isn't tied to any release (owner, 2026-10-19). Published results show their engine
@@ -22,9 +22,10 @@ since: the startup cache (HS1) and the promo-code Apply stop (PG2), both in know
 **1.3.1, `claude/p131-integration` bc9ac747 (pushed; 327fa383 had a full check of 8949 tests, 0 fail).** Merged: codex-turbo
 9612ea86, FU1 ca7ab807, PG2 b8020ea5 (promo Apply, security reviewed), 4f compatibility check 948554e1 (static half for ci-box or
 GitHub, with the workflow file at ledger/p130/cf1-engine-compat.yml, okayed by the owner but not pushed yet), FS ddb51401 (behind
-`SLEIGHT_FS=1`), SW1 f98ef207, TU1 0de1cf41, HS1 bafd37b1. In flight: PG3 on `claude/p131-pg3` (an Opus builder makes Enter on a
-combo box with its suggestion list open select instead of submit, with its own security review, report in ledger/p130/pg3-REPORT.md). Merge it when it
-reports, after a read of its review. The owner said no more subagents after PG3.
+`SLEIGHT_FS=1`), SW1 f98ef207, TU1 0de1cf41, HS1 bafd37b1, and PG3 3eb4d33b (Return that picks an open suggestion list's
+selected option goes ahead on a payment page; the security review's fixes are in, report in ledger/p130/pg3-REPORT.md). Local
+`claude/p131-integration` is fast-forwarded to 3eb4d33b (payment-gate and action-outcomes tests pass, lint 0); its full check and
+push wait until the race blocks end. The owner said no more subagents after PG3.
 In the FS A/B race half, Firefox with FS was faster in all 3 rounds (474.2, 450.8, 440.1 s against 517.8, 488.5, 512.0 s), Safari mixed (one
 round lost 2 tasks). The candidate default is FS2's Firefox keyboard new-tab route. FS1 (the description text) waits on the native half.
 1.3.1 live checks still owed are the FS native half (queued), SW1 (its first live check failed; the follow-up f98ef207 traces every
@@ -40,7 +41,7 @@ apps 10 of 10, Excel cohorts 29 of 40). Its full check hasn't run.
 **Running across the clear (Terminal windows, they survive it).**
 - `race-1017/block-sol.command` (pid 64675): ROADMAP 4b Sol pair on race-131 (1.3.1 327fa383), codex-sleight-sol and codex-sol,
   Safari and Firefox x3, log `race-1017/block-sol.log`. So far codex-sol paid the unpriced checkout in 3 of 3 rounds; sleight
-  inside Codex never paid.
+  inside Codex never paid (Firefox r2: 9 of 12, 870.8 s, form-checkout stopped before the unpriced payment).
 - `race-1017/block-fsnative.command` (pid 4324): waits for block-sol's done, runs the FS native half (10 held-out tasks x3 per
   side, logs `race-1017/native-fs3-*.log`), then touches `race-1017/CLEAR`, loc arch's render window for the film.
 - The race watchdog `race-1017/watchdog.sh` (pid 63290, nohup), harmless while rounds run.
