@@ -2,8 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { runProbeTrials, nativeProbe, fixtureDriver, main } from '../bench/xd1-probe.mjs';
+
+// main() accepts a results path only below macOS /private/tmp; the driver tests need any private dir.
+const mainSkip = process.platform !== 'darwin' && 'the probe writes results only below macOS /private/tmp';
+const scratch = process.platform === 'darwin' ? '/private/tmp' : tmpdir();
 
 function fixture(pass = []) {
   const closed = [], moved = [], snapshots = [];
@@ -84,7 +89,7 @@ const passingNative = async request => request.op === 'place' ? { ok: true, pid:
   : request.op === 'snapshot' ? { source: ' beta\n', destination: 'gamma delta alpha\n' } : { ok: true };
 
 test('each trial opens its own nonce documents through openFixture and closes them through closeFixtures', async () => {
-  const dir = mkdtempSync('/private/tmp/xd1r-driver-'), f = fakeFixtures();
+  const dir = mkdtempSync(join(scratch, 'xd1r-driver-')), f = fakeFixtures();
   try {
     const driver = fixtureDriver({ dir, nonce: 'n0nce', native: passingNative, open: f.open, close: f.close, settleMs: 0 });
     const pair = await driver.setup('V1', 2);
@@ -100,7 +105,7 @@ test('each trial opens its own nonce documents through openFixture and closes th
 });
 
 test('a setup failure closes what opened; an unconfirmed close is marked so the lock stays', async () => {
-  const dir = mkdtempSync('/private/tmp/xd1r-driver-');
+  const dir = mkdtempSync(join(scratch, 'xd1r-driver-'));
   try {
     for (const closeFails of [false, true]) {
       const f = fakeFixtures({ openFails: 2, closeFails });
@@ -124,7 +129,7 @@ function liveHarness({ holdChecks = 0, closeFails = false, holdAfterTrial = 0 } 
   return { deps, events, f, dir, output: `${dir}/results.json`, done: () => { process.exitCode = undefined; rmSync(dir, { recursive: true, force: true }); } };
 }
 
-test('main waits out the hold, then takes the live lock and releases it after confirmed cleanup', async () => {
+test('main waits out the hold, then takes the live lock and releases it after confirmed cleanup', { skip: mainSkip }, async () => {
   const h = liveHarness({ holdChecks: 3 });
   try {
     const rows = await main(h.output, h.deps);
@@ -135,7 +140,7 @@ test('main waits out the hold, then takes the live lock and releases it after co
   } finally { h.done(); }
 });
 
-test('main keeps the live lock when fixture cleanup is unconfirmed', async () => {
+test('main keeps the live lock when fixture cleanup is unconfirmed', { skip: mainSkip }, async () => {
   const h = liveHarness({ closeFails: true });
   try {
     await assert.rejects(main(h.output, h.deps), /cleanup unconfirmed/);
@@ -143,7 +148,7 @@ test('main keeps the live lock when fixture cleanup is unconfirmed', async () =>
   } finally { h.done(); }
 });
 
-test('a hold that appears mid-run stops before the next trial and still releases after cleanup', async () => {
+test('a hold that appears mid-run stops before the next trial and still releases after cleanup', { skip: mainSkip }, async () => {
   const h = liveHarness({ holdAfterTrial: 1 });
   try {
     await assert.rejects(main(h.output, h.deps), /interrupted/);

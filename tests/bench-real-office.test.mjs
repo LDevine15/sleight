@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { accessSync, constants, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
@@ -20,8 +20,13 @@ const ctxFor = t => {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return { dir, nonce: 'abc123', officePath: join(dir, 'fixture.zip') };
 };
+const executable = path => { try { accessSync(path, constants.X_OK); return true; } catch { return false; } };
+// Info-ZIP's writer where the host has it (macOS does); otherwise the independent writer below.
+const infoZip = executable('/usr/bin/zip');
+const unzipSkip = !executable('/usr/bin/unzip') && 'needs /usr/bin/unzip to read the archive independently';
 // These saved outcomes are hand-derived; ZIP is only a transport for the XML.
 function save(ctx, parts) {
+  if (!infoZip) return builtZip(ctx, parts);
   rmSync(ctx.officePath, { force: true });
   const stage = mkdtempSync(join(ctx.dir, 'package-'));
   for (const [name, data] of Object.entries(parts)) {
@@ -204,7 +209,7 @@ test('Office readers refuse external/traversing relationships, malformed XML and
   assert.notEqual(office.checkExcel({ ...ctx, officePath: '/etc/passwd' }), true);
 });
 
-test('Office prepares nonce-scoped documents that fail until edited and never overwrite', async t => {
+test('Office prepares nonce-scoped documents that fail until edited and never overwrite', { skip: unzipSkip }, async t => {
   assert.ok(Array.isArray(tasks.officeTasks));
   for (const task of tasks.officeTasks) {
     const ctx = ctxFor(t);

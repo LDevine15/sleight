@@ -10,12 +10,14 @@
 // otherwise inferred from the task's recorded start and end against bench/engine-versions.json (bench/engine-version.mjs). A row
 // without times takes the birth time of the round's commits.json, marked as an inferred date. Per browser, the output names each
 // arm's versions with their dates and says when the arms that drive the engine ran on different versions.
+// The sleight-in-Codex arms (claim-score.mjs SAME_MODEL, ROADMAP 4b) are sleight itself under GPT, so they never count against
+// sleight: each is scored only against Codex's own computer use on the same model, by the same rules, in its own section.
 //   node bench/fowl/race-score.mjs [round folders or <dir>/<prefix>*] [--json] [--mark]
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { claim, score } from '../claim-score.mjs';
+import { SAME_MODEL, claim, sameModel, score } from '../claim-score.mjs';
 import { browserEvidence, harnessFailure, raceProblems, runErrorClass } from './real-gate-grade.mjs';
 import { currentTimeline, dayRange, engineForRun, engineMix, engineNote, engineText, loadTimeline, summarizeEngines } from '../engine-version.mjs';
 
@@ -73,24 +75,32 @@ export function loadRound(dir, { timeline = staticTimeline ??= loadTimeline() } 
 }
 
 const sleightArm = browser => ['firefox', 'safari'].includes(browser) ? 'sleight' : 'sleight-turbo';
+const HOSTED = SAME_MODEL.map(([hosted]) => hosted);
+
+// Per task the one arm with the strictly lowest expected time, and each arm's total when it passed every task.
+function rank(table, tasks, arms) {
+  const fastest = Object.fromEntries(arms.map(a => [a, []]));
+  for (const task of tasks) {
+    const ranked = arms.filter(a => table[a]?.[task]?.expected != null).sort((a, b) => table[a][task].expected - table[b][task].expected);
+    if (ranked.length && (ranked.length === 1 || table[ranked[0]][task].expected < table[ranked[1]][task].expected)) fastest[ranked[0]].push(task);
+  }
+  const totals = Object.fromEntries(arms.map(a => [a, tasks.every(t => table[a]?.[t]?.expected != null) ? tasks.reduce((s, t) => s + table[a][t].expected, 0) : null]));
+  return { fastest, totals };
+}
 
 export function scoreRounds(rounds) {
   const browsers = {};
   for (const round of rounds) if (!round.excluded) for (const row of round.rows) (browsers[round.browser] ??= []).push({ ...row, file: round.name });
   const out = {};
   for (const [browser, rows] of Object.entries(browsers)) {
-    const me = sleightArm(browser), tasks = [...new Set(rows.map(r => r.task))];
-    const arms = [me, ...[...new Set(rows.map(r => r.arm))].filter(a => a !== me).sort()];
+    const me = sleightArm(browser), tasks = [...new Set(rows.map(r => r.task))], seen = [...new Set(rows.map(r => r.arm))];
+    const arms = [me, ...seen.filter(a => a !== me && !HOSTED.includes(a)).sort()], hosted = HOSTED.filter(a => seen.includes(a));
     const table = score(rows), verdict = claim(table, { tasks, arms }, me);
-    const fastest = Object.fromEntries(arms.map(a => [a, []]));
-    for (const task of tasks) {
-      const ranked = arms.filter(a => table[a]?.[task]?.expected != null).sort((a, b) => table[a][task].expected - table[b][task].expected);
-      if (ranked.length && (ranked.length === 1 || table[ranked[0]][task].expected < table[ranked[1]][task].expected)) fastest[ranked[0]].push(task);
-    }
-    const totals = Object.fromEntries(arms.map(a => [a, tasks.every(t => table[a]?.[t]?.expected != null) ? tasks.reduce((s, t) => s + table[a][t].expected, 0) : null]));
-    const counted = summarizeEngines(rows), engines = Object.fromEntries(arms.filter(a => counted[a]).map(a => [a, counted[a]]));
-    out[browser] = { me, tasks, arms, table, stats: verdict.stats, pairs: verdict.pairs, topUps: verdict.pairs.filter(p => p.short?.length), fastest, totals,
-      engines, engineMix: engineMix(engines) };
+    const counted = summarizeEngines(rows), engines = Object.fromEntries([...arms, ...hosted].filter(a => counted[a]).map(a => [a, counted[a]]));
+    const same = sameModel(table, { tasks }).filter(p => table[p.hosted]).map(p => ({ ...p, arms: [p.hosted, p.base], stats: p.stats ?? {},
+      topUps: p.pairs.filter(x => x.short?.length), ...rank(table, tasks, [p.hosted, p.base]) }));
+    out[browser] = { me, tasks, arms, hosted, table, stats: verdict.stats, pairs: verdict.pairs, topUps: verdict.pairs.filter(p => p.short?.length),
+      ...rank(table, tasks, arms), engines, engineMix: engineMix(engines), sameModel: same };
   }
   return out;
 }
@@ -104,20 +114,32 @@ function print(rounds, scored) {
   const roundEngine = e => (e.version ? `engine ${e.version} ${e.provenance}` : `engine ${e.provenance}${e.candidates ? ` (${e.candidates.join(' or ')})` : ''}`) +
     (e.startedAt ? `, ${dayRange(e.startedAt, e.endedAt)}${e.dated === 'inferred' ? ' (date inferred)' : ''}` : ', no date');
   for (const r of rounds) console.log(`  ${r.name} (${r.browser}, ${r.arm ?? 'no arm'}, ${r.rows.length} rows${r.commits?.build?.commit ? `, build ${r.commits.build.commit.slice(0, 8)}` : ''}, ${roundEngine(r.engine)}): ${r.excluded ? `excluded, ${r.excluded}` : 'scored'}`);
-  for (const [browser, s] of Object.entries(scored)) {
-    console.log(`\n${browser}. Cell: expected s (passes/runs), median [min-max] of passes, p90 at 5+ runs.`);
-    console.log('task'.padEnd(22) + s.arms.map(col).join(''));
-    for (const task of s.tasks) console.log(task.padEnd(22) + s.arms.map(a => {
-      const t = s.table[a]?.[task], st = s.stats[a]?.[task];
+  const grid = (s, arms, stats, fastest, totals) => {
+    console.log('task'.padEnd(22) + arms.map(col).join(''));
+    for (const task of s.tasks) console.log(task.padEnd(22) + arms.map(a => {
+      const t = s.table[a]?.[task], st = stats[a]?.[task];
       if (!t) return col('no runs');
       if (!t.passes.length) return col(`never (0/${t.runs.length})`);
       return col(`${n(t.expected)} (${t.passes.length}/${t.runs.length}) ${n(st.median)} [${n(st.range[0])}-${n(st.range[1])}]${st.p90 != null ? ` p90 ${n(st.p90)}` : ''}`);
     }).join(''));
-    console.log('fastest on'.padEnd(22) + s.arms.map(a => col(`${s.fastest[a].length} of ${s.tasks.length}`)).join(''));
-    console.log('total expected s'.padEnd(22) + s.arms.map(a => col(s.totals[a] == null ? 'none (a task has no pass)' : n(s.totals[a]))).join(''));
-    console.log(`Engine and UTC dates per arm (runs): ${s.arms.map(a => `${a} ${s.engines[a] ? engineText(s.engines[a], a) : 'no runs'}`).join(' | ')}.`);
+    console.log('fastest on'.padEnd(22) + arms.map(a => col(`${fastest[a].length} of ${s.tasks.length}`)).join(''));
+    console.log('total expected s'.padEnd(22) + arms.map(a => col(totals[a] == null ? 'none (a task has no pass)' : n(totals[a]))).join(''));
+  };
+  const topUpLine = (me, topUps) => topUps.length ? `Within 20% of ${me}, need 5 runs: ${topUps.map(p => `${p.task}/${p.arm} (${p.short.join(', ')})`).join('; ')}` : `No pair within 20% of ${me} is short of 5 runs.`;
+  for (const [browser, s] of Object.entries(scored)) {
+    console.log(`\n${browser}. Cell: expected s (passes/runs), median [min-max] of passes, p90 at 5+ runs.`);
+    grid(s, s.arms, s.stats, s.fastest, s.totals);
+    const all = [...s.arms, ...s.hosted];
+    console.log(`Engine and UTC dates per arm (runs): ${all.map(a => `${a} ${s.engines[a] ? engineText(s.engines[a], a) : 'no runs'}`).join(' | ')}.`);
     console.log(engineNote(s.engines, s.engineMix));
-    console.log(s.topUps.length ? `Within 20% of ${s.me}, need 5 runs: ${s.topUps.map(p => `${p.task}/${p.arm} (${p.short.join(', ')})`).join('; ')}` : `No pair within 20% of ${s.me} is short of 5 runs.`);
+    console.log(topUpLine(s.me, s.topUps));
+    for (const p of s.sameModel) {
+      console.log(`\nSame model: ${p.hosted} (sleight inside Codex) against ${p.base} (Codex's own computer use), left out of ${s.me}'s columns above.`);
+      if (p.wording === 'no comparison') { console.log(p.reasons.join('; ')); continue; }
+      grid(s, p.arms, p.stats, p.fastest, p.totals);
+      console.log(topUpLine(p.hosted, p.topUps));
+      console.log(`Wording for ${p.hosted}: ${p.wording}`);
+    }
   }
   const flips = flipped(rounds);
   console.log(`\nPasses as recorded that fail under the race rules (${flips.length}):`);

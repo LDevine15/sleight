@@ -10,6 +10,8 @@ import { expandRounds, flipped, loadRound, regradeRow, scoreRounds } from '../be
 import { runRealGate } from '../bench/fowl/real-gate.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
+// A round records the checkout's commits, so a source tree without .git (an exported archive) cannot check that.
+const gitSkip = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).status !== 0 && 'needs a git checkout to record commits';
 // Event lines in the shapes the saved Firefox rounds hold (/tmp/fb-rounds/real-29077030-*, real-4693816f-*, real-a61bdeb2-*).
 const codexRefused = JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', status: 'failed', error: null,
   result: { content: [{ type: 'text', text: 'Computer Use was not approved to use Firefox' }] } } });
@@ -167,6 +169,38 @@ test('race-score groups rounds by browser, arm and task with the claim rules, an
   assert.equal(JSON.parse(readFileSync(join(root, 'real-c9-codex', 'harness-failure.json'), 'utf8')).class, 'approval refused');
 });
 
+test('sleight inside Codex is left out of sleight\'s verdict and scored against Codex on the same model', t => {
+  const root = mkdtempSync(join(tmpdir(), 'race-same-model-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const i of [1, 2, 3]) {
+    round(root, `real-s${i}-sleight`, 'safari', 'sleight', [['form-travel', 30, true], ['mdn', 20, true]]);
+    round(root, `real-c${i}-codex`, 'safari', 'codex', [['form-travel', 50, true], ['mdn', 40, true]]);
+    // sleight inside Codex is the fastest arm on form-travel; it must not take that task from sleight.
+    round(root, `real-h${i}-codex-sleight`, 'safari', 'codex-sleight', [['form-travel', 25, true], ['mdn', 45, true]]);
+  }
+  const rounds = expandRounds([join(root, 'real-*')]).map(dir => loadRound(dir));
+  const s = scoreRounds(rounds).safari;
+  assert.deepEqual(s.arms, ['sleight', 'codex']);
+  assert.deepEqual(s.hosted, ['codex-sleight']);
+  assert.deepEqual(s.fastest, { sleight: ['form-travel', 'mdn'], codex: [] });
+  assert.deepEqual(s.totals, { sleight: 50, codex: 90 });
+  assert.deepEqual(s.pairs.map(p => p.arm), ['codex', 'codex']);
+  assert.deepEqual(s.topUps, [], 'codex-sleight within 20% of sleight asks for no top-up');
+  assert.equal(s.sameModel.length, 1);
+  const p = s.sameModel[0];
+  assert.deepEqual([p.hosted, p.base, p.arms], ['codex-sleight', 'codex', ['codex-sleight', 'codex']]);
+  assert.deepEqual(p.fastest, { 'codex-sleight': ['form-travel'], codex: ['mdn'] });
+  assert.deepEqual(p.totals, { 'codex-sleight': 70, codex: 90 });
+  // |45-40|/45 = 11%: within 20%, so the pair needs 5 runs.
+  assert.deepEqual(p.topUps.map(x => [x.task, x.arm, x.short]), [['mdn', 'codex', ['codex-sleight 3/5', 'codex 3/5']]]);
+  assert.equal(p.wording, 'completed every task, fastest on 1 of 2');
+  const cli = spawnSync(process.execPath, [join(repo, 'bench/fowl/race-score.mjs'), join(root, 'real-*')], { encoding: 'utf8' });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.match(cli.stdout, /No pair within 20% of sleight is short of 5 runs\./);
+  assert.match(cli.stdout, /Same model: codex-sleight \(sleight inside Codex\) against codex/);
+  assert.match(cli.stdout, /Within 20% of codex-sleight, need 5 runs: mdn\/codex \(codex-sleight 3\/5, codex 3\/5\)/);
+  assert.match(cli.stdout, /Wording for codex-sleight: completed every task, fastest on 1 of 2/);
+});
+
 test('saved turbo and window failures stay scored at nine, ten and twelve failures', t => {
   const root = mkdtempSync(join(tmpdir(), 'race-score-shared-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const [cls, events] of [['turbo unavailable', claudeCall('a', true, unavailableTurbo)],
@@ -241,7 +275,7 @@ function gateRuntime(dir, events) {
     observeBrowser: async () => ({ observed: false, tabs: {}, reason: 'fixture' }) };
 }
 
-test('a live round records the build and harness commits and marks itself a harness failure', async t => {
+test('a live round records the build and harness commits and marks itself a harness failure', { skip: gitSkip }, async t => {
   const dir = mkdtempSync(join(tmpdir(), 'race-gate-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
   const tasks = Array.from({ length: 12 }, (_, i) => ({ ...gateTask, name: `task${i}` }));
   const out = join(dir, 'out');

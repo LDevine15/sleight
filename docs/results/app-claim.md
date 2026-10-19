@@ -10,14 +10,16 @@ The app tasks run on the native path with the same arms and rules as the native 
 - Rows come from `~/Projects/sleight-wt/app-claim/results-1018` with the exclusions in `~/Projects/sleight-wt/app-claim/scorer/bench/claim-exclusions.json`. Scoring starts at file stamp `2026-10-18T02-39`, and the reason given is `the first app-task claim pass`.
 - The results files don't record sleight's commit or the Codex CLI version.
 
-| Arm | Model ids in the runs | Effort | Versions recorded |
-| --- | --- | --- | --- |
-| sleight | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
-| LCU | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
-| Codex | `gpt-6-luna` | high | not recorded |
-| Cua | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
-| Peekaboo | `claude-haiku-5-5` | high | @steipete/peekaboo 4.9.2, Claude Code 2.1.289 |
-| Claude computer use | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
+| Arm | Model ids in the runs | Effort | Versions recorded | ChatGPT engine and UTC dates |
+| --- | --- | --- | --- | --- |
+| sleight | `claude-haiku-5-5` | high | Claude Code 2.1.289 | engine 26.1007.71326 (11 inferred), 2026-10-18 (dates inferred) |
+| LCU | `claude-haiku-5-5` | high | Claude Code 2.1.289 | not used, 2026-10-18 |
+| Codex | `gpt-6-luna` | high | not recorded | engine 26.1007.71326 (9 inferred), 2026-10-18 (dates inferred) |
+| Cua | `claude-haiku-5-5` | high | Claude Code 2.1.289 | not used, 2026-10-18 |
+| Peekaboo | `claude-haiku-5-5` | high | @steipete/peekaboo 4.9.2, Claude Code 2.1.289 | not used, 2026-10-18 |
+| Claude computer use | `claude-haiku-5-5` | high | Claude Code 2.1.289 | not used, 2026-10-18 |
+
+The arms that use the engine ran on one engine version, 26.1007.71326. A version is "recorded" when the runner read it and "inferred" from the timeline in `bench/engine-versions.json` otherwise, and a date is inferred when it comes from a file's stamp or modification time. LCU, Cua, Peekaboo, FowlBrowser, Claude in Chrome and Claude's computer use don't use the engine.
 
 No rows were left out.
 

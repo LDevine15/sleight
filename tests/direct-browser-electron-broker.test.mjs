@@ -4,12 +4,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createElectronConnection } from '../plugins/sleight/lib/direct-browser/electron-connection.mjs';
 import { FrameReader, bare, deriveChannel, opener, plainJson, randomToken, sealer } from '../plugins/sleight/lib/direct-browser/electron-channel.mjs';
 import { errorFrame } from '../plugins/sleight/lib/direct-browser/electron-host.mjs';
 import { parseHostArguments } from '../plugins/sleight/lib/direct-browser/electron-host-entry.mjs';
 import { buildReceipt } from '../plugins/sleight/lib/direct-browser/turbo-setup.mjs';
 import { connectWorker, fakeWorld, makeHost, pageSession, until } from './direct-browser-electron-host-fixture.mjs';
+import { writableTreeSkip } from './requirements.mjs';
+
+const checkoutSkip = writableTreeSkip(fileURLToPath(new URL('../plugins/sleight', import.meta.url)));
 
 async function started(options) {
   const h = await makeHost(options);
@@ -180,7 +184,7 @@ test('worker-visible error codes are a closed set that now names busy, fence and
   assert.deepEqual(errorFrame(Error('/Users/someone/secret path')), { code: 'FAILED', dispatched: false });
 });
 
-test('the broker, launch adapter, registry and notices are package files the receipt hashes, and the host entry finds them there', () => {
+test('the broker, launch adapter, registry and notices are package files the receipt hashes, and the host entry finds them there', { skip: checkoutSkip }, () => {
   const paths = buildReceipt().receipt.files.map(file => file.path);
   for (const name of ['broker.mjs', 'launch.py', 'recipes.json', 'THIRD_PARTY_NOTICES.md']) assert.ok(paths.includes('lib/direct-browser/electron/' + name), name);
   const parsed = parseHostArguments(['--state-dir', '/tmp/s', '--registry', '/tmp/r.json', '--temp-root', '/tmp/t', '--builds', 'a']);

@@ -84,6 +84,39 @@
     "claude-cu": ["Claude Code 2.1.289"],
     "sleight": ["Claude Code 2.1.289"]
    },
+   "engines": {
+    "sleight": {
+     "versions": {"26.1007.71326":{"runs":33,"recorded":0,"first":"2026-10-18T03:17:17.752Z","last":"2026-10-18T03:41:13.120Z","datesInferred":33,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    },
+    "lcu": {
+     "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-17T04:20:31.416Z","last":"2026-10-18T03:41:13.118Z","datesInferred":39,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    },
+    "codex": {
+     "versions": {"26.1007.71326":{"runs":31,"recorded":0,"first":"2026-10-17T04:43:59.223Z","last":"2026-10-17T06:54:15.661Z","datesInferred":31,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    },
+    "cua": {
+     "versions": {"26.1007.71326":{"runs":29,"recorded":0,"first":"2026-10-17T05:19:45.267Z","last":"2026-10-17T06:46:27.438Z","datesInferred":29,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    },
+    "peekaboo": {
+     "versions": {"26.1007.71326":{"runs":29,"recorded":0,"first":"2026-10-17T06:13:07.674Z","last":"2026-10-17T19:34:47.358Z","datesInferred":29,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    },
+    "claude-cu": {
+     "versions": {"26.1007.71326":{"runs":36,"recorded":0,"first":"2026-10-17T15:51:43.164Z","last":"2026-10-18T01:51:26.728Z","datesInferred":36,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    }
+   },
+   "engineMix": null,
    "runs": [
     {"task":"calculator-click","arm":"lcu","run":1,"round":null,"seconds":10.8,"passed":true,"problem":null,"file":"2026-10-17T04-20-31-416Z.json"},
     {"task":"calculator-menu","arm":"lcu","run":1,"round":null,"seconds":14.7,"passed":true,"problem":null,"file":"2026-10-17T04-20-31-416Z.json"},

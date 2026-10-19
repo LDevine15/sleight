@@ -132,9 +132,9 @@ test('summaries give each arm its versions with UTC dates, read "not used" off t
     { arm: 'sleight', engine: run('26.1013.40934', 'recorded', '2026-10-19') }, { arm: 'sleight', engine: run('26.1013.40934', 'recorded', '2026-10-20') },
     { arm: 'sleight', engine: { ...run(null, 'ambiguous', '2026-10-18'), candidates: [] } }, { arm: 'lcu', engine: run('26.1013.40934', 'inferred', '2026-10-19') },
     { arm: 'codex', engine: run('26.1007.71326', 'inferred', '2026-10-18') }, { arm: 'codex', engine: { version: null, provenance: 'unknown' } }]);
-  assert.equal(engineText(byArm.sleight, 'sleight'), 'engine 26.1007.71326 (1 inferred), 2026-10-18 (dates inferred); ' +
-    'engine 26.1013.40934 (2 recorded), 2026-10-19 to 2026-10-20; 1 ambiguous, 2026-10-18');
-  assert.equal(engineText(byArm.codex, 'codex'), 'engine 26.1007.71326 (1 inferred), 2026-10-18; 1 unknown, no date');
+  assert.equal(engineText(byArm.sleight, 'sleight'), 'engine 26.1007.71326 (1 inferred), 2026-10-18 (dates inferred) plus ' +
+    'engine 26.1013.40934 (2 recorded), 2026-10-19 to 2026-10-20 plus 1 ambiguous, 2026-10-18');
+  assert.equal(engineText(byArm.codex, 'codex'), 'engine 26.1007.71326 (1 inferred), 2026-10-18 plus 1 unknown, no date');
   assert.equal(engineText(byArm.lcu, 'lcu'), 'not used, 2026-10-19');
   assert.equal(engineText(undefined, 'sleight'), 'not recorded');
   assert.deepEqual(engineMix(byArm), { versions: ['26.1007.71326', '26.1013.40934'], arms: { sleight: ['26.1007.71326', '26.1013.40934'], codex: ['26.1007.71326'] } });
@@ -213,10 +213,10 @@ test('rounds.sh records the engine into --out around a FowlBrowser runner round 
 test('the note under a table counts engine runs with no settled version, and never claims one version for them', () => {
   const run = (version, provenance = 'inferred') => ({ version, provenance, startedAt: '2026-10-18T10:00:00.000Z', endedAt: '2026-10-18T10:01:00.000Z', dated: 'recorded' });
   const one = summarizeEngines([{ arm: 'sleight', engine: run('26.1013.40934') }, { arm: 'codex', engine: run('26.1013.40934') }, { arm: 'lcu', engine: run('26.1007.71326') }]);
-  assert.equal(engineNote(one), 'The arms that drive the engine ran on one engine version, 26.1013.40934.');
+  assert.equal(engineNote(one), 'The arms that use the engine ran on one engine version, 26.1013.40934.');
   const open = summarizeEngines([{ arm: 'sleight', engine: run('26.1013.40934') }, { arm: 'codex', engine: run(null, 'ambiguous') }]);
-  assert.equal(engineNote(open), 'The arms that drive the engine ran on one engine version, 26.1013.40934. 1 of their runs have no settled version (ambiguous or unknown).');
-  assert.equal(engineNote(summarizeEngines([{ arm: 'lcu', engine: run('x') }])), 'No arm here drives the engine with a known version.');
+  assert.equal(engineNote(open), 'The arms that use the engine ran on one engine version, 26.1013.40934. 1 of their runs have no settled version (ambiguous or unknown).');
+  assert.equal(engineNote(summarizeEngines([{ arm: 'lcu', engine: run('x') }])), 'No arm here uses the engine with a known version.');
 });
 
 test('a copied file\'s mtime is ignored, an end before the start is clamped, and refresh extends or grows the timeline', () => {

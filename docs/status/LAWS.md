@@ -114,6 +114,10 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   connected indicator with Pause and Disconnect, and never hides Chrome's own indicators. Chrome and Helium are qualified separately.
   Each Claude Code session has its own turbo worker, and its Chrome connection is released when the session ends (owner,
   2026-10-15, replacing design v2's shared connection kept until Disconnect).
+- Names (owner, 2026-10-19). Sol is OpenAI's gpt-6.1-sol, run only in headless Codex lanes (`codex exec`). Astra is OpenAI's
+  gpt-6-astra, a Fable-class model for deep performance work and investigations, also in Codex lanes. Fable, Opus, Sonnet and
+  Haiku are Claude models, and subagents run Claude models, never Sol or Astra. Item, branch and agent names never reuse "Sol"
+  or "Astra". Work items get their own IDs, such as CR1 for a Codex race fix.
 - Build work runs in parallel Codex lanes, and sleight-arch also builds, merges and tests directly whenever that is faster or
   better. Claude reviewers take reviews and the investigations sleight-arch or the owner needs. Claude usage isn't quota-limited
   (owner, 2026-10-15), within reason.
