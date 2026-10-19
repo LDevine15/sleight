@@ -178,7 +178,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
             // proves its opener is still owned. Queue and capture there, with the same guards as a read.
             const opener = lossFixes && result.closed ? pages.closedOpener?.(a.tab) : undefined;
             if (opener) return await pages.enqueue(opener, async parent => {
-              const lines = result.lines.map(line => line.replace(/: tab closed$/, ': ' + closedTabOutcome.replace('<tab>', opener)));
+              const lines = result.lines.map(line => line.replace(/: tab closed(?=$|[;.])/, ': ' + closedTabOutcome.replace('<tab>', opener)));
               let observed;
               try { observed = await capture(parent, { maxChars: 8000 }); }
               catch (error) {

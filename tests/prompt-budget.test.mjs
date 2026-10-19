@@ -10,6 +10,7 @@ import { compactJsDescription } from '../plugins/sleight/lib/tool-description.mj
 import { guardedCode } from '../plugins/sleight/lib/document-scope.mjs';
 import { SCROLL_LOOP_NOTE, TEXTLESS_NOTE } from '../plugins/sleight/lib/compact-reads.mjs';
 import { closedTabOutcome } from '../plugins/sleight/lib/direct-browser/tools.mjs';
+import { closedSubmitWarning, shortStepOutcomes } from '../plugins/sleight/lib/direct-browser/act.mjs';
 // The budget script parses relay.mjs with the typescript dev dependency, which CI doesn't install.
 const budget = await import('../bench/prompt-budget.mjs').catch(error => {
   if (error.code === 'ERR_MODULE_NOT_FOUND') return null;
@@ -28,6 +29,12 @@ const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
 test('the self-closed popup outcome has a reviewed prompt budget', () => {
   assert.equal(hash(closedTabOutcome), baseline.browserClosedOutcome);
   assert.ok(closedTabOutcome.length <= 80);
+});
+
+test('wait and closed-submit review outcomes have a reviewed prompt budget', () => {
+  const outcomes = [...Object.values(shortStepOutcomes), closedSubmitWarning];
+  assert.equal(hash(JSON.stringify(outcomes)), baseline.browserReviewOutcomes);
+  assert.ok(outcomes.reduce((sum, text) => sum + text.length, 0) <= 165);
 });
 
 function placement(t, env = {}) {

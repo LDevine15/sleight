@@ -5,7 +5,7 @@ import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mj
 import { createToolDispatcher } from '../plugins/sleight/lib/direct-browser/tools.mjs';
 import { utilityLocator } from './direct-browser-utility-fixture.mjs';
 
-function fixture() {
+function fixture(options = {}) {
   const page = new EventEmitter(), events = [], snapshots = [];
   let time = 0, number = 1, closed = false;
   const schedule = (at, fn) => events.push({ at, fn });
@@ -28,8 +28,8 @@ function fixture() {
     click: async () => { closed = true; page.emit('close'); throw Error('Target page has been closed'); } });
   const tab = { page, state: { snapshotNo: 1 } };
   const snapshot = async p => { snapshots.push([p, time]); return { text: 'snapshot', number: ++number }; };
-  const run = createActionRunner({ check: () => 'allow', snapshot, now: () => time, sleep });
-  return { page, tab, run, snapshot, snapshots, schedule, time: () => time };
+  const run = createActionRunner({ check: () => 'allow', snapshot, now: () => time, sleep, ...options });
+  return { page, tab, run, snapshot, snapshots, schedule, sleep, time: () => time };
 }
 
 for (const step of [{ do: 'viewport', width: 390, height: 844 }, { do: 'scroll', dy: 500 }, { do: 'back' }, { do: 'forward' }]) {
@@ -77,14 +77,135 @@ test('wait carries a request from the preceding click instead of declaring the p
   assert.ok(f.snapshots[0][1] >= 1200);
 });
 
-test('a short step with a request that never ends reports uncertainty and stops the batch', async () => {
+test('a short step caps a streaming fetch and returns a read without an input failure', async () => {
   const f = fixture();
   f.schedule(10, () => f.page.emit('request', { resourceType: () => 'fetch' }));
-  const result = await f.run(f.tab, [{ do: 'viewport', width: 390, height: 844 }, { do: 'forward' }], {});
+  const result = await f.run(f.tab, [{ do: 'viewport', width: 390, height: 844 }, { do: 'forward' }], {}, { observe: 'none' });
   assert.equal(result.stoppedAt, 1);
-  assert.match(result.lines[0], /effect unconfirmed.*activity still pending/);
+  assert.match(result.lines[0], /activity still pending.*cap/);
+  assert.doesNotMatch(result.lines.join('\n'), /effect unconfirmed/);
   assert.match(result.lines[1], /not reached/);
+  assert.ok(f.time() >= 1500 && f.time() < 1600, `settle took ${f.time()} ms`);
+  assert.ok(result.observe);
   assert.equal(f.page.listenerCount('request'), 0);
+});
+
+for (const step of [{ do: 'viewport', width: 390, height: 844 }, { do: 'scroll', dy: 500 }, { do: 'back' }, { do: 'forward' }]) {
+  test(`${step.do} falls back to a host timer when the page never renders a frame`, async () => {
+    const f = fixture({ actionTimeoutMs: 50 });
+    f.page.evaluate = () => new Promise(() => {});
+    const result = await f.run(f.tab, [step], {}, { observe: 'none' });
+    assert.equal(result.stoppedAt, null, result.lines.join('\n'));
+    assert.doesNotMatch(result.lines.join('\n'), /unconfirmed/);
+  });
+}
+
+test('an unconfirmed submit keeps the full next-call wait before reading the old page', async () => {
+  const f = fixture(), request = { resourceType: () => 'fetch' };
+  f.page.getByRef = () => utilityLocator({ evaluate: async fn => fn.name === 'inspectTarget' ? { submit: true } : null,
+    click: async () => f.page.emit('request', request) });
+  const submitted = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {}, { observe: 'none' });
+  assert.match(submitted.lines[0], /submit unconfirmed/);
+  assert.ok(f.tab.state.submitUnconfirmed);
+  const start = f.time();
+  f.schedule(start + 2000, () => f.page.emit('requestfinished', request));
+  const waited = await f.run(f.tab, [{ do: 'wait', ms: 3000 }], {});
+  assert.ok(f.time() >= start + 3000, `wait ended at ${f.time() - start} ms`);
+  assert.match(waited.lines[0], /page quiet after 3000 ms/);
+  assert.ok(f.snapshots[0][1] >= start + 3000);
+});
+
+for (const type of ['eventsource', 'ping', 'websocket', 'media', 'other']) test(`a persistent ${type} does not delay a no-input step`, async () => {
+  const f = fixture();
+  f.schedule(10, () => f.page.emit('request', { resourceType: () => type }));
+  const result = await f.run(f.tab, [{ do: 'viewport', width: 390, height: 844 }], {});
+  assert.equal(result.stoppedAt, null, result.lines.join('\n'));
+  assert.ok(f.time() < 150, `settle took ${f.time()} ms`);
+});
+
+for (const type of ['document', 'xhr', 'fetch', 'script', 'stylesheet', 'image']) test(`a no-input step waits for ${type} completion`, async () => {
+  const f = fixture(), request = { resourceType: () => type };
+  f.schedule(10, () => f.page.emit('request', request));
+  f.schedule(350, () => f.page.emit('requestfinished', request));
+  const result = await f.run(f.tab, [{ do: 'viewport', width: 390, height: 844 }], {});
+  assert.equal(result.stoppedAt, null, result.lines.join('\n'));
+  assert.ok(f.snapshots[0][1] >= 350);
+});
+
+test('the frame fallback retains the navigation boundary race', async () => {
+  const f = fixture();
+  f.page.evaluate = async () => { f.page.emit('framenavigated', f.page); throw Error('context destroyed'); };
+  const result = await f.run(f.tab, [{ do: 'viewport', width: 390, height: 844 }], {});
+  assert.equal(result.stoppedAt, 1);
+  assert.match(result.lines[0], /navigated/);
+  assert.doesNotMatch(result.lines[0], /unconfirmed/);
+});
+
+test('a quiet wait reports its elapsed quiet time', async () => {
+  const f = fixture();
+  const result = await f.run(f.tab, [{ do: 'wait', ms: 3000 }], {}, { observe: 'none' });
+  assert.match(result.lines[0], /page quiet after 150 ms/);
+});
+
+test('an unconfirmed submit keeps the wait cap and reports it', async () => {
+  const f = fixture();
+  f.tab.state.submitUnconfirmed = { startedAt: 0 };
+  const result = await f.run(f.tab, [{ do: 'wait', ms: 10000 }], {});
+  assert.equal(f.time(), 5000);
+  assert.match(result.lines[0], /page quiet after 5000 ms \(cap\)/);
+});
+
+test('observe none explicitly loses click change counts without taking a comparison snapshot', async () => {
+  const f = fixture();
+  f.page.getByRef = () => utilityLocator({ evaluate: async () => ({}), click: async () => {} });
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {}, { observe: 'none' });
+  assert.equal(result.lines[0], '1 click e1: input sent');
+  assert.equal(f.snapshots.length, 0);
+  assert.equal(result.observe, undefined);
+});
+
+test('history load waiting has a usable timeout even when commit uses the step deadline', async () => {
+  const f = fixture();
+  f.page.goBack = async () => { await f.sleep(6990); f.page.emit('framenavigated', f.page); };
+  f.page.waitForLoadState = async (state, { timeout }) => {
+    assert.equal(state, 'domcontentloaded');
+    assert.ok(timeout >= 1000, `load timeout was ${timeout} ms`);
+  };
+  const result = await f.run(f.tab, [{ do: 'back' }], {});
+  assert.doesNotMatch(result.lines.join('\n'), /effect unconfirmed/);
+});
+
+test('a late dialog interrupts the final read and is reported without being answered', async () => {
+  const f = fixture();
+  let answered = false;
+  const dialog = { type: () => 'alert', message: () => 'Late alert', accept: () => { answered = true; } };
+  const run = createActionRunner({ check: () => 'allow', now: f.time, sleep: async () => {}, snapshot: async () => {
+    f.page.emit('dialog', dialog);
+    return new Promise(() => {});
+  } });
+  const result = await Promise.race([run(f.tab, [{ do: 'wait', ms: 0 }], {}),
+    new Promise(resolve => setTimeout(() => resolve(null), 100))]);
+  assert.ok(result, 'final read hung on the late alert');
+  assert.match(result.lines.join('\n'), /dialog alert is waiting.*Late alert/);
+  assert.equal(result.observe, undefined);
+  assert.equal(f.tab.state.dialog, dialog);
+  assert.equal(answered, false);
+  assert.equal(f.page.listenerCount('dialog'), 0);
+});
+
+for (const rejects of [false, true]) test(`a closing submit retains its warning and opener through outcome suffixes (rejects=${rejects})`, async () => {
+  const f = fixture(), opener = { page: { url: () => 'https://fixture.invalid/app' }, state: {} };
+  f.page.getByRef = () => utilityLocator({ evaluate: async fn => fn.name === 'inspectTarget' ? { submit: true } : null,
+    click: async () => { f.page.emit('close'); if (rejects) throw Error('Target page has been closed'); } });
+  f.tab.raisablePopups = async () => ['t3'];
+  const d = createToolDispatcher({ browser: 'bfixture',
+    pages: { closedOpener: () => 't1', enqueue: async (id, fn) => fn(id === 't2' ? f.tab : opener) },
+    snapshot: f.snapshot, runSteps: f.run, fillFields: async () => {} });
+  const out = await d.call({ name: 'browser_act', arguments: { tab: 't2', steps: [{ do: 'click', ref: 'e1' }] } });
+  assert.equal(out.isError, false, out.text);
+  assert.match(out.text, /tab closed itself.*opener t1 below/);
+  assert.match(out.text, /its submit is unconfirmed; check the opener or the account before paying again/);
+  if (!rejects) assert.match(out.text, /t3.*can be raised/);
 });
 
 test('history navigation waits for its document and stops before the next step', async () => {
