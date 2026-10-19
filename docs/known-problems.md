@@ -737,8 +737,12 @@ native reference, and oversized first results defer the browser reference while 
   window that comes to the front doesn't get it either, since it may be the owner's. In the first live check (FS2,
   2026-10-19) the line never showed. Haiku's Cmd+T call came back as a lease stop on the retitled window, and any stop
   dropped the count. A stop that shows the counted window now keeps it. The trace records every count, and every reason
-  a new window doesn't get the line, as `popup-window`. We haven't measured whether CGWindowList counts Safari's one window as one. The proposed race change is one
-  prompt clause for every arm: "a pop-up that a page in it opens is part of the task".
+  a new window doesn't get the line, as `popup-window`. The second live check (6ba7204b, 3 rounds) showed the line 0 times.
+  CGWindowList counted 2 windows for Safari's one, because Safari keeps a 500x500 window from launch that it never shows and no Space
+  holds. The count now leaves out windows no Space holds (the private `CGSCopySpacesForWindows`) and keeps another Space's.
+  Not yet rerun live. We haven't measured whether a minimized window on another Space counts. Haiku stopped at the pop-up
+  in 1 of those 3 rounds. The proposed race change is one prompt clause for every arm: "a pop-up that a page in it opens is
+  part of the task".
 - The race scorer's harness-failure check knows three error classes (`approval refused`, `no daemon`, `no tools`). A round that
   fails on some other shared cause, such as every call answering "Turbo is unavailable", is scored as the arm's failures until
   someone writes `harness-failure.json` into its folder by hand. inject-order's answer check accepts the total written as `$16`,

@@ -33,6 +33,17 @@ test('popupWindows names a new ID as a pop-up after a one-window count of the wi
     p.count('Safari', health, 'A');
     assert.equal(p.note(shop, popup), undefined, JSON.stringify(health));
   }
+  // CGWindowList's count with a window no Space holds (Safari's ordered-out launch window, SW1b): the Space count decides,
+  // and it must agree with what is on screen. Without a Space count, a second window still stops it.
+  for (const [health, counts] of [[{ ...one, allWindows: 2, spaceWindows: 1, onScreen: 1 }, true],
+    [{ ...one, allWindows: 2, spaceWindows: 1, onScreen: 0 }, true], [{ ...one, allWindows: 2, spaceWindows: 2, onScreen: 1 }, false],
+    [{ ...one, allWindows: 2, onScreen: 1 }, false], [{ ...one, allWindows: 2, spaceWindows: 0, onScreen: 1 }, false],
+    [{ ...one, allWindows: 2, spaceWindows: 1, onScreen: 2 }, false], [{ ...one, allWindows: 2, spaceWindows: 1 }, false],
+    [{ ...one, windows: 2, allWindows: 3, spaceWindows: 1, onScreen: 1 }, false], [{ ...one, allWindows: 2, spaceWindows: '1', onScreen: 1 }, false]]) {
+    const p = popupWindows();
+    p.count('Safari', health, 'A');
+    assert.equal(p.note(shop, popup) !== undefined, counts, JSON.stringify(health));
+  }
   let p = popupWindows();
   p.count('Safari', one, undefined);
   assert.equal(p.note(shop, popup), undefined);
@@ -73,7 +84,8 @@ test('popupWindows traces every census and every reason a new ID gets no line', 
   const shop = { title: 'Shop', app: 'Safari', url: null, rootId: 'A' };
   const reasons = () => events.filter(e => e.event === 'no-line').map(e => e.reason);
   p.count('Safari', null, 'A');
-  assert.deepEqual(events.at(-1), { event: 'census', app: 'Safari', id: 'A', counted: false, status: null, windows: null, allWindows: null, onScreen: null });
+  assert.deepEqual(events.at(-1), { event: 'census', app: 'Safari', id: 'A', counted: false, status: null, windows: null, allWindows: null,
+    spaceWindows: null, onScreen: null });
   p.note(shop, { ...shop, rootId: 'B' });
   p.count('Safari', { status: 'responding', windows: 1, allWindows: 3, onScreen: 1 }, 'A');
   assert.equal(events.at(-1).allWindows, 3);
