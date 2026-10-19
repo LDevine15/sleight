@@ -1,14 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import vm from 'node:vm';
-import { exploreData, FAMILIES } from '../bench/results-hub.mjs';
-import { renderResultsIndex } from '../bench/results-index.mjs';
+import { render, FAMILIES } from '../bench/results-hub.mjs';
+import { chartCaption } from '../bench/results-charts.mjs';
 
 const read = name => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8');
 const templatePath = new URL('../bench/results-index.html', import.meta.url);
 const all = () => Object.fromEntries(FAMILIES.map(f => [f.id, JSON.parse(read(`docs/results/data/${f.id}.json`))]));
-const captions = { 'headline-native': 'Native claim caption from the chart module.', overview: 'Overview caption from the chart module.' };
 const homePath = /\/Users\/[^\s,"'<>\\]/;
 
 test('the privacy scan allows the Users root and rejects home paths', () => {
@@ -53,25 +51,13 @@ function checkRequests(html) {
   }
 }
 
-class Node {
-  constructor(tag) { this.tag = tag; this.children = []; this.attrs = {}; this.text = ''; }
-  setAttribute(key, value) { this.attrs[key] = String(value); }
-  appendChild(node) { this.children.push(node); return node; }
-  replaceChildren(...nodes) { this.children = nodes; }
-  set textContent(text) { this.text = String(text); this.children = []; }
-  get textContent() { return this.text + this.children.map(node => node.textContent).join(''); }
-  find(tag) { return [...(this.tag === tag ? [this] : []), ...this.children.flatMap(node => node.find(tag))]; }
-}
-
 function landing(data) {
-  assert.ok(existsSync(templatePath), 'H3 landing template is present');
-  const html = renderResultsIndex(data);
+  assert.ok(existsSync(templatePath), 'landing template is present');
+  const files = render(data), html = files['index.html'];
   checkRequests(html);
-  const nodes = Object.fromEntries([...html.matchAll(/\bid="([^"]+)"/g)].map(([, id]) => [id, new Node('div')]));
-  const document = { getElementById: id => nodes[id], createElement: tag => new Node(tag) };
-  for (const [, script] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) vm.runInNewContext(script, { document });
-  return { html, nodes };
+  return { html, files };
 }
+const escape = text => String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 
 test('Pages serves unprocessed files and has a root link to results', () => {
   const marker = new URL('../docs/.nojekyll', import.meta.url);
@@ -106,46 +92,44 @@ test('the request guard rejects remote resources and allows only GitHub navigati
   ]) assert.throws(() => checkRequests(markup), undefined, markup);
 });
 
-test('the landing consumes exploreData and chart captions without fetching data', () => {
-  const data = { ...exploreData(all()), chartCaptions: captions };
-  const { html, nodes } = landing(data);
-  assert.doesNotMatch(html, /http-equiv="refresh"/);
+test('the landing renders family links and chart captions without scripts or fetched data', () => {
+  const data = all(), { html } = landing(data);
+  assert.doesNotMatch(html, /http-equiv="refresh"|<script\b|<!--__/);
   assert.match(html, /href="explore.html"/);
-  for (const [id, caption] of Object.entries(captions)) {
-    assert.equal(nodes[`${id}-caption`].textContent, caption);
-    assert.equal(nodes[id].attrs.alt, caption);
-    assert.match(html, new RegExp(`img/${id}-light\\.svg`));
-    assert.match(html, new RegExp(`img/${id}-dark\\.svg`));
+  for (const id of ['headline-native', 'overview']) {
+    const caption = escape(chartCaption(id, data));
+    assert.ok(html.includes(`<figcaption id="${id}-caption">${caption}</figcaption>`));
+    assert.ok(html.includes(`alt="${caption}"`));
+    assert.ok(html.includes(`img/${id}-light.svg`));
+    assert.ok(html.includes(`img/${id}-dark.svg`));
   }
-  const rows = nodes.families.find('tr');
-  assert.equal(rows.length, FAMILIES.length);
-  for (const family of data.families) {
-    const row = rows.find(row => row.textContent.includes(family.title));
-    assert.ok(row, family.title);
-    assert.equal(row.find('a')[0].attrs.href, `https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/${family.page}`);
-    assert.equal(row.find('a')[1].attrs.href, `data/${family.id}.json`);
-    for (const link of row.find('a')) checkURL(link.attrs.href, { navigation: true });
+  const table = /<tbody id="families">([\s\S]*?)<\/tbody>/.exec(html)[1];
+  assert.equal([...table.matchAll(/<tr>/g)].length, FAMILIES.length);
+  for (const family of FAMILIES) {
+    assert.ok(table.includes(escape(family.title)), family.title);
+    assert.ok(table.includes(`href="https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/${family.page}"`));
+    assert.ok(table.includes(`href="data/${family.id}.json"`));
   }
-  assert.ok(nodes.families.textContent.includes(data.studies.find(study => study.family === 'native-claim').wording));
 });
 
-test('the landing handles H1 stubs and an empty study list', () => {
-  const data = { families: [{ id: 'native-claim', title: 'Native claim', page: 'native-claim.md' }], strings: [], studies: [] };
-  const { nodes } = landing(data);
-  assert.match(nodes.families.textContent, /No studies/);
-  assert.equal(nodes['headline-native-caption'].textContent, 'Native claim');
-  assert.equal(nodes['overview-caption'].textContent, 'Benchmark overview');
-  assert.equal(nodes['headline-native'].attrs.alt, 'Native claim');
+test('the landing renders when the browser race has no complete studies', () => {
+  const data = all();
+  data['browser-race'].studies = [];
+  const { html, files } = landing(data);
+  assert.match(html, /data\/browser-race\.json/);
+  for (const browser of ['safari', 'firefox']) assert.match(files[`img/family-browser-race-${browser}-light.svg`], /No complete set/);
+  assert.doesNotMatch(html, /<!--__/);
 });
 
-test('the landing treats benchmark wording and captions as text', () => {
+test('the landing escapes benchmark wording in family summaries and chart captions', () => {
   const unsafe = '</script><img src=//x> <!-- $&';
-  const { html, nodes } = landing({ families: [{ id: 'native-claim', title: 'Native claim', page: 'native-claim.md' }], strings: [],
-    studies: [{ family: 'native-claim', wording: unsafe }], chartCaptions: { 'headline-native': unsafe } });
-  assert.equal([...html.matchAll(/<script\b/gi)].length, 1);
-  assert.equal([...html.matchAll(/<\/script\s*>/gi)].length, 1);
-  assert.doesNotMatch(html, /<img src=\/\/x>|<!--/);
-  assert.ok(nodes.families.textContent.includes(unsafe));
-  assert.equal(nodes.families.find('img').length, 0);
-  assert.equal(nodes['headline-native-caption'].textContent, unsafe);
+  const data = all();
+  const study = data['browser-race'].studies.find(s => s.latest);
+  assert.ok(study);
+  study.verdict.wording = unsafe;
+  data['native-claim'].studies[0].models.sleight = [unsafe];
+  const { html } = landing(data);
+  assert.doesNotMatch(html, /<script\b|<\/script\s*>|<img src=\/\/x>|<!--/i);
+  assert.ok(html.includes(escape(unsafe)), 'the family summary escapes run wording');
+  assert.ok(html.includes(escape(chartCaption('headline-native', data))), 'the chart caption is escaped');
 });

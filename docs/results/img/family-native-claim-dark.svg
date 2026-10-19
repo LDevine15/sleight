@@ -31,191 +31,191 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <text x="24" y="135" class="b">calculator-click</text>
 <line class="g" x1="340.5" y1="122" x2="340.5" y2="226"/>
 <text x="183.3" y="135" class="b">sleight</text>
-<path class="me" d="M341.5 125h68.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-68.1z"/>
-<text x="419.6" y="135" data-task="calculator-click" data-arm="sleight" data-kind="cell" data-section="main">6.5 (3/3)</text>
+<path class="me" d="M341.5 125h65.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-65.6z"/>
+<text x="417.1" y="135" data-task="calculator-click" data-arm="sleight" data-kind="cell" data-section="main">6.5 (3/3)</text>
 <text x="183.3" y="153" class="m">LCU</text>
-<path class="sl" d="M341.5 143h111.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-111.7z"/>
-<text x="463.2" y="153" data-task="calculator-click" data-arm="lcu" data-kind="cell" data-section="main">10.4 (5/5)</text>
+<path class="sl" d="M341.5 143h107.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-107.7z"/>
+<text x="459.2" y="153" data-task="calculator-click" data-arm="lcu" data-kind="cell" data-section="main">10.4 (5/5)</text>
 <text x="183.3" y="171" class="m">Codex</text>
-<path class="sl" d="M341.5 161h140.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-140.1z"/>
-<text x="491.6" y="171" data-task="calculator-click" data-arm="codex" data-kind="cell" data-section="main">12.9 (3/3)</text>
+<path class="sl" d="M341.5 161h135.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-135.2z"/>
+<text x="486.7" y="171" data-task="calculator-click" data-arm="codex" data-kind="cell" data-section="main">12.9 (3/3)</text>
 <text x="183.3" y="189" class="m">Cua</text>
-<path class="sl" d="M341.5 179h436.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-436.5z"/>
-<text x="788.1" y="189" data-task="calculator-click" data-arm="cua" data-kind="cell" data-section="main">39.5 (3/3)</text>
+<path class="sl" d="M341.5 179h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="773" y="189" data-task="calculator-click" data-arm="cua" data-kind="cell" data-section="main">39.5 (3/3)</text>
 <text x="183.3" y="207" class="m">Peekaboo</text>
-<path class="sl" d="M341.5 197h260.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-260.5z"/>
-<text x="612" y="207" data-task="calculator-click" data-arm="peekaboo" data-kind="cell" data-section="main">23.7 (3/3)</text>
+<path class="sl" d="M341.5 197h251.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-251.4z"/>
+<text x="602.9" y="207" data-task="calculator-click" data-arm="peekaboo" data-kind="cell" data-section="main">23.7 (3/3)</text>
 <text x="183.3" y="225" class="m">Claude computer use</text>
-<path class="sl" d="M341.5 215h165.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-165.8z"/>
-<text x="517.3" y="225" data-task="calculator-click" data-arm="claude-cu" data-kind="cell" data-section="main">15.2 (3/3)</text>
+<path class="sl" d="M341.5 215h159.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-159.9z"/>
+<text x="511.5" y="225" data-task="calculator-click" data-arm="claude-cu" data-kind="cell" data-section="main">15.2 (3/3)</text>
 <line class="g" x1="24" y1="237" x2="876" y2="237"/>
 <text x="24" y="257" class="b">calculator-menu</text>
 <line class="g" x1="340.5" y1="244" x2="340.5" y2="348"/>
 <text x="183.3" y="257" class="b">sleight</text>
-<path class="me" d="M341.5 247h58.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-58.7z"/>
-<text x="410.2" y="257" data-task="calculator-menu" data-arm="sleight" data-kind="cell" data-section="main">9.6 (3/3)</text>
+<path class="me" d="M341.5 247h56.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-56.5z"/>
+<text x="408.1" y="257" data-task="calculator-menu" data-arm="sleight" data-kind="cell" data-section="main">9.6 (3/3)</text>
 <text x="183.3" y="275" class="m">LCU</text>
-<path class="sl" d="M341.5 265h96.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-96.2z"/>
-<text x="447.7" y="275" data-task="calculator-menu" data-arm="lcu" data-kind="cell" data-section="main">15.4 (3/3)</text>
+<path class="sl" d="M341.5 265h92.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-92.8z"/>
+<text x="444.3" y="275" data-task="calculator-menu" data-arm="lcu" data-kind="cell" data-section="main">15.4 (3/3)</text>
 <text x="183.3" y="293" class="m">Codex</text>
-<path class="sl" d="M341.5 283h436.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-436.5z"/>
-<text x="788.1" y="293" data-task="calculator-menu" data-arm="codex" data-kind="cell" data-section="main">67.7 (1/3)</text>
+<path class="sl" d="M341.5 283h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="773" y="293" data-task="calculator-menu" data-arm="codex" data-kind="cell" data-section="main">67.7 (1/3)</text>
 <text x="183.3" y="311" class="m">Cua</text>
-<path class="sl" d="M341.5 301h255.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-255.2z"/>
-<text x="606.7" y="311" data-task="calculator-menu" data-arm="cua" data-kind="cell" data-section="main">39.8 (3/3)</text>
+<path class="sl" d="M341.5 301h246.3a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-246.3z"/>
+<text x="597.9" y="311" data-task="calculator-menu" data-arm="cua" data-kind="cell" data-section="main">39.8 (3/3)</text>
 <text x="183.3" y="329" class="m">Peekaboo</text>
-<path class="sl" d="M341.5 319h272.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-272.8z"/>
-<text x="624.3" y="329" data-task="calculator-menu" data-arm="peekaboo" data-kind="cell" data-section="main">42.5 (3/3)</text>
+<path class="sl" d="M341.5 319h263.3a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-263.3z"/>
+<text x="614.8" y="329" data-task="calculator-menu" data-arm="peekaboo" data-kind="cell" data-section="main">42.5 (3/3)</text>
 <text x="183.3" y="347" class="m">Claude computer use</text>
-<path class="sl" d="M341.5 337h193.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-193.6z"/>
-<text x="545.1" y="347" data-task="calculator-menu" data-arm="claude-cu" data-kind="cell" data-section="main">30.4 (3/3)</text>
+<path class="sl" d="M341.5 337h186.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186.8z"/>
+<text x="538.4" y="347" data-task="calculator-menu" data-arm="claude-cu" data-kind="cell" data-section="main">30.4 (3/3)</text>
 <line class="g" x1="24" y1="359" x2="876" y2="359"/>
 <text x="24" y="379" class="b">textedit-save</text>
 <line class="g" x1="340.5" y1="366" x2="340.5" y2="470"/>
 <text x="183.3" y="379" class="b">sleight</text>
-<path class="me" d="M341.5 369h2.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-2.7z"/>
-<text x="354.2" y="379" data-task="textedit-save" data-arm="sleight" data-kind="cell" data-section="main">8.2 (3/3)</text>
+<path class="me" d="M341.5 369h2.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-2.5z"/>
+<text x="354" y="379" data-task="textedit-save" data-arm="sleight" data-kind="cell" data-section="main">8.2 (3/3)</text>
 <text x="183.3" y="397" class="m">LCU</text>
-<path class="sl" d="M341.5 387h5.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-5.2z"/>
-<text x="356.7" y="397" data-task="textedit-save" data-arm="lcu" data-kind="cell" data-section="main">11.3 (5/5)</text>
+<path class="sl" d="M341.5 387h4.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-4.9z"/>
+<text x="356.4" y="397" data-task="textedit-save" data-arm="lcu" data-kind="cell" data-section="main">11.3 (5/5)</text>
 <text x="183.3" y="415" class="m">Codex</text>
-<path class="sl" d="M341.5 405h13.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-13.1z"/>
-<text x="364.6" y="415" data-task="textedit-save" data-arm="codex" data-kind="cell" data-section="main">20.9 (3/3)</text>
+<path class="sl" d="M341.5 405h12.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-12.5z"/>
+<text x="364" y="415" data-task="textedit-save" data-arm="codex" data-kind="cell" data-section="main">20.9 (3/3)</text>
 <text x="183.3" y="433" class="m">Cua</text>
-<path class="sl" d="M341.5 423h436.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-436.5z"/>
-<text x="788.1" y="433" data-task="textedit-save" data-arm="cua" data-kind="cell" data-section="main">540.6 (1/3)</text>
+<path class="sl" d="M341.5 423h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="773" y="433" data-task="textedit-save" data-arm="cua" data-kind="cell" data-section="main">540.6 (1/3)</text>
 <text x="183.3" y="451" class="m">Peekaboo</text>
 <rect class="sl" fill-opacity="0.16" x="341.5" y="441" width="22" height="12"/><rect fill="url(#h-sl)" x="341.5" y="441" width="22" height="12"/>
-<text x="369.5" y="451" class="m" data-task="textedit-save" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
+<text x="369.5" y="451" class="m" data-task="textedit-save" data-arm="peekaboo" data-kind="cell" data-section="main">no pass (0/3)</text>
 <text x="183.3" y="469" class="m">Claude computer use</text>
-<path class="sl" d="M341.5 459h80.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-80.8z"/>
-<text x="432.3" y="469" data-task="textedit-save" data-arm="claude-cu" data-kind="cell" data-section="main">104.0 (3/3)</text>
+<path class="sl" d="M341.5 459h77.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-77.9z"/>
+<text x="429.4" y="469" data-task="textedit-save" data-arm="claude-cu" data-kind="cell" data-section="main">104.0 (3/3)</text>
 <line class="g" x1="24" y1="481" x2="876" y2="481"/>
 <text x="24" y="501" class="b">textedit-drag</text>
 <line class="g" x1="340.5" y1="488" x2="340.5" y2="592"/>
 <text x="183.3" y="501" class="b">sleight</text>
-<path class="me" d="M341.5 491h269.3a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-269.3z"/>
-<text x="620.8" y="501" data-task="textedit-drag" data-arm="sleight" data-kind="cell" data-section="main">35.5 (3/3)</text>
+<path class="me" d="M341.5 491h259.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-259.9z"/>
+<text x="611.4" y="501" data-task="textedit-drag" data-arm="sleight" data-kind="cell" data-section="main">35.5 (3/3)</text>
 <text x="183.3" y="519" class="m">LCU</text>
 <rect class="sl" fill-opacity="0.16" x="341.5" y="509" width="22" height="12"/><rect fill="url(#h-sl)" x="341.5" y="509" width="22" height="12"/>
-<text x="369.5" y="519" class="m" data-task="textedit-drag" data-arm="lcu" data-kind="cell" data-section="main">never (0/3)</text>
+<text x="369.5" y="519" class="m" data-task="textedit-drag" data-arm="lcu" data-kind="cell" data-section="main">no pass (0/3)</text>
 <text x="183.3" y="537" class="m">Codex</text>
 <rect class="sl" fill-opacity="0.16" x="341.5" y="527" width="22" height="12"/><rect fill="url(#h-sl)" x="341.5" y="527" width="22" height="12"/>
-<text x="369.5" y="537" class="m" data-task="textedit-drag" data-arm="codex" data-kind="cell" data-section="main">never (0/3)</text>
+<text x="369.5" y="537" class="m" data-task="textedit-drag" data-arm="codex" data-kind="cell" data-section="main">no pass (0/3)</text>
 <text x="183.3" y="555" class="m">Cua</text>
 <rect class="sl" fill-opacity="0.16" x="341.5" y="545" width="22" height="12"/><rect fill="url(#h-sl)" x="341.5" y="545" width="22" height="12"/>
-<text x="369.5" y="555" class="m" data-task="textedit-drag" data-arm="cua" data-kind="cell" data-section="main">never (0/3)</text>
+<text x="369.5" y="555" class="m" data-task="textedit-drag" data-arm="cua" data-kind="cell" data-section="main">no pass (0/3)</text>
 <text x="183.3" y="573" class="m">Peekaboo</text>
 <rect class="sl" fill-opacity="0.16" x="341.5" y="563" width="22" height="12"/><rect fill="url(#h-sl)" x="341.5" y="563" width="22" height="12"/>
-<text x="369.5" y="573" class="m" data-task="textedit-drag" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
+<text x="369.5" y="573" class="m" data-task="textedit-drag" data-arm="peekaboo" data-kind="cell" data-section="main">no pass (0/3)</text>
 <text x="183.3" y="591" class="m">Claude computer use</text>
-<path class="sl" d="M341.5 581h436.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-436.5z"/>
-<text x="788.1" y="591" data-task="textedit-drag" data-arm="claude-cu" data-kind="cell" data-section="main">57.2 (4/5)</text>
+<path class="sl" d="M341.5 581h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="773" y="591" data-task="textedit-drag" data-arm="claude-cu" data-kind="cell" data-section="main">57.2 (4/5)</text>
 <line class="g" x1="24" y1="603" x2="876" y2="603"/>
 <text x="24" y="623" class="b">finder-move</text>
 <line class="g" x1="340.5" y1="610" x2="340.5" y2="714"/>
 <text x="183.3" y="623" class="b">sleight</text>
-<path class="me" d="M341.5 613h62.3a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-62.3z"/>
-<text x="413.8" y="623" data-task="finder-move" data-arm="sleight" data-kind="cell" data-section="main">23.2 (3/3)</text>
+<path class="me" d="M341.5 613h60a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-60z"/>
+<text x="411.5" y="623" data-task="finder-move" data-arm="sleight" data-kind="cell" data-section="main">23.2 (3/3)</text>
 <text x="183.3" y="641" class="m">LCU</text>
-<path class="sl" d="M341.5 631h436.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-436.5z"/>
-<text x="788.1" y="641" data-task="finder-move" data-arm="lcu" data-kind="cell" data-section="main">154.0 (1/3)</text>
+<path class="sl" d="M341.5 631h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="773" y="641" data-task="finder-move" data-arm="lcu" data-kind="cell" data-section="main">154.0 (1/3)</text>
 <text x="183.3" y="659" class="m">Codex</text>
-<path class="sl" d="M341.5 649h111.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-111.4z"/>
-<text x="462.9" y="659" data-task="finder-move" data-arm="codex" data-kind="cell" data-section="main">40.3 (5/5)</text>
+<path class="sl" d="M341.5 649h107.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-107.4z"/>
+<text x="459" y="659" data-task="finder-move" data-arm="codex" data-kind="cell" data-section="main">40.3 (5/5)</text>
 <text x="183.3" y="677" class="m">Cua</text>
-<path class="sl" d="M341.5 667h185.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-185.5z"/>
-<text x="537" y="677" data-task="finder-move" data-arm="cua" data-kind="cell" data-section="main">66.2 (3/3)</text>
+<path class="sl" d="M341.5 667h179a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-179z"/>
+<text x="530.5" y="677" data-task="finder-move" data-arm="cua" data-kind="cell" data-section="main">66.2 (3/3)</text>
 <text x="183.3" y="695" class="m">Peekaboo</text>
-<path class="sl" d="M341.5 685h213.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-213.1z"/>
-<text x="564.6" y="695" data-task="finder-move" data-arm="peekaboo" data-kind="cell" data-section="main">75.9 (1/3)</text>
+<path class="sl" d="M341.5 685h205.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-205.7z"/>
+<text x="557.2" y="695" data-task="finder-move" data-arm="peekaboo" data-kind="cell" data-section="main">75.9 (1/3)</text>
 <text x="183.3" y="713" class="m">Claude computer use</text>
-<path class="sl" d="M341.5 703h102.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-102.6z"/>
-<text x="454.2" y="713" data-task="finder-move" data-arm="claude-cu" data-kind="cell" data-section="main">37.3 (5/5)</text>
+<path class="sl" d="M341.5 703h99a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-99z"/>
+<text x="450.5" y="713" data-task="finder-move" data-arm="claude-cu" data-kind="cell" data-section="main">37.3 (5/5)</text>
 <line class="g" x1="24" y1="725" x2="876" y2="725"/>
 <text x="24" y="745" class="b">preview-read</text>
 <line class="g" x1="340.5" y1="732" x2="340.5" y2="836"/>
 <text x="183.3" y="745" class="b">sleight</text>
-<path class="me" d="M341.5 735h143.3a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-143.3z"/>
-<text x="494.9" y="745" data-task="preview-read" data-arm="sleight" data-kind="cell" data-section="main">5.3 (5/5)</text>
+<path class="me" d="M341.5 735h138.3a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-138.3z"/>
+<text x="489.8" y="745" data-task="preview-read" data-arm="sleight" data-kind="cell" data-section="main">5.3 (5/5)</text>
 <text x="183.3" y="763" class="m">LCU</text>
-<path class="sl" d="M341.5 753h150a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-150z"/>
-<text x="501.5" y="763" data-task="preview-read" data-arm="lcu" data-kind="cell" data-section="main">5.6 (5/5)</text>
+<path class="sl" d="M341.5 753h144.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-144.7z"/>
+<text x="496.2" y="763" data-task="preview-read" data-arm="lcu" data-kind="cell" data-section="main">5.6 (5/5)</text>
 <text x="183.3" y="781" class="m">Codex</text>
-<path class="sl" d="M341.5 771h227.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-227.8z"/>
-<text x="579.3" y="781" data-task="preview-read" data-arm="codex" data-kind="cell" data-section="main">8.4 (3/3)</text>
+<path class="sl" d="M341.5 771h219.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-219.8z"/>
+<text x="571.3" y="781" data-task="preview-read" data-arm="codex" data-kind="cell" data-section="main">8.4 (3/3)</text>
 <text x="183.3" y="799" class="m">Cua</text>
-<path class="sl" d="M341.5 789h193.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-193.5z"/>
-<text x="545.1" y="799" data-task="preview-read" data-arm="cua" data-kind="cell" data-section="main">7.2 (5/5)</text>
+<path class="sl" d="M341.5 789h186.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186.8z"/>
+<text x="538.3" y="799" data-task="preview-read" data-arm="cua" data-kind="cell" data-section="main">7.2 (5/5)</text>
 <text x="183.3" y="817" class="m">Peekaboo</text>
-<path class="sl" d="M341.5 807h116.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-116.8z"/>
-<text x="468.4" y="817" data-task="preview-read" data-arm="peekaboo" data-kind="cell" data-section="main">4.4 (5/5)</text>
+<path class="sl" d="M341.5 807h112.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-112.7z"/>
+<text x="464.2" y="817" data-task="preview-read" data-arm="peekaboo" data-kind="cell" data-section="main">4.4 (5/5)</text>
 <text x="183.3" y="835" class="m">Claude computer use</text>
-<path class="sl" d="M341.5 825h436.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-436.5z"/>
-<text x="788.1" y="835" data-task="preview-read" data-arm="claude-cu" data-kind="cell" data-section="main">16.0 (3/3)</text>
+<path class="sl" d="M341.5 825h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="773" y="835" data-task="preview-read" data-arm="claude-cu" data-kind="cell" data-section="main">16.0 (3/3)</text>
 <line class="g" x1="24" y1="847" x2="876" y2="847"/>
 <text x="24" y="867" class="b">textedit-calculator</text>
 <line class="g" x1="340.5" y1="854" x2="340.5" y2="958"/>
 <text x="183.3" y="867" class="b">sleight</text>
-<path class="me" d="M341.5 857h167.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-167.4z"/>
-<text x="518.9" y="867" data-task="textedit-calculator" data-arm="sleight" data-kind="cell" data-section="main">30.1 (3/3)</text>
+<path class="me" d="M341.5 857h161.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-161.5z"/>
+<text x="513" y="867" data-task="textedit-calculator" data-arm="sleight" data-kind="cell" data-section="main">30.1 (3/3)</text>
 <text x="183.3" y="885" class="m">LCU</text>
-<path class="sl" d="M341.5 875h358.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-358.8z"/>
-<text x="710.3" y="885" data-task="textedit-calculator" data-arm="lcu" data-kind="cell" data-section="main">63.8 (4/5)</text>
+<path class="sl" d="M341.5 875h346.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-346.4z"/>
+<text x="697.9" y="885" data-task="textedit-calculator" data-arm="lcu" data-kind="cell" data-section="main">63.8 (4/5)</text>
 <text x="183.3" y="903" class="m">Codex</text>
-<path class="sl" d="M341.5 893h327.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-327.9z"/>
-<text x="679.4" y="903" data-task="textedit-calculator" data-arm="codex" data-kind="cell" data-section="main">58.4 (3/3)</text>
+<path class="sl" d="M341.5 893h316.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-316.6z"/>
+<text x="668.1" y="903" data-task="textedit-calculator" data-arm="codex" data-kind="cell" data-section="main">58.4 (3/3)</text>
 <text x="183.3" y="921" class="m">Cua</text>
-<path class="sl" d="M341.5 911h436.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-436.5z"/>
-<text x="788.1" y="921" data-task="textedit-calculator" data-arm="cua" data-kind="cell" data-section="main">77.5 (3/3)</text>
+<path class="sl" d="M341.5 911h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="773" y="921" data-task="textedit-calculator" data-arm="cua" data-kind="cell" data-section="main">77.5 (3/3)</text>
 <text x="183.3" y="939" class="m">Peekaboo</text>
 <rect class="sl" fill-opacity="0.16" x="341.5" y="929" width="22" height="12"/><rect fill="url(#h-sl)" x="341.5" y="929" width="22" height="12"/>
-<text x="369.5" y="939" class="m" data-task="textedit-calculator" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
+<text x="369.5" y="939" class="m" data-task="textedit-calculator" data-arm="peekaboo" data-kind="cell" data-section="main">no pass (0/3)</text>
 <text x="183.3" y="957" class="m">Claude computer use</text>
-<path class="sl" d="M341.5 947h253.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-253.5z"/>
-<text x="605" y="957" data-task="textedit-calculator" data-arm="claude-cu" data-kind="cell" data-section="main">45.3 (4/4)</text>
+<path class="sl" d="M341.5 947h244.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-244.7z"/>
+<text x="596.2" y="957" data-task="textedit-calculator" data-arm="claude-cu" data-kind="cell" data-section="main">45.3 (4/4)</text>
 <line class="g" x1="24" y1="969" x2="876" y2="969"/>
 <text x="24" y="989" class="b">word-edit</text>
 <line class="g" x1="340.5" y1="976" x2="340.5" y2="1080"/>
 <text x="183.3" y="989" class="b">sleight</text>
-<path class="me" d="M341.5 979h48.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-48.9z"/>
-<text x="400.4" y="989" data-task="word-edit" data-arm="sleight" data-kind="cell" data-section="main">87.9 (5/5)</text>
+<path class="me" d="M341.5 979h47.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-47.1z"/>
+<text x="398.6" y="989" data-task="word-edit" data-arm="sleight" data-kind="cell" data-section="main">87.9 (5/5)</text>
 <text x="183.3" y="1007" class="m">LCU</text>
-<path class="sl" d="M341.5 997h58.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-58.9z"/>
-<text x="410.5" y="1007" data-task="word-edit" data-arm="lcu" data-kind="cell" data-section="main">104.7 (5/5)</text>
+<path class="sl" d="M341.5 997h56.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-56.8z"/>
+<text x="408.3" y="1007" data-task="word-edit" data-arm="lcu" data-kind="cell" data-section="main">104.7 (5/5)</text>
 <text x="183.3" y="1025" class="m">Codex</text>
-<path class="sl" d="M341.5 1015h78.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-78.1z"/>
-<text x="429.6" y="1025" data-task="word-edit" data-arm="codex" data-kind="cell" data-section="main">136.6 (2/3)</text>
+<path class="sl" d="M341.5 1015h75.3a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-75.3z"/>
+<text x="426.8" y="1025" data-task="word-edit" data-arm="codex" data-kind="cell" data-section="main">136.6 (2/3)</text>
 <text x="183.3" y="1043" class="m">Cua</text>
-<path class="sl" d="M341.5 1033h436.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-436.5z"/>
-<text x="788.1" y="1043" data-task="word-edit" data-arm="cua" data-kind="cell" data-section="main">732.9 (1/3)</text>
+<path class="sl" d="M341.5 1033h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="773" y="1043" data-task="word-edit" data-arm="cua" data-kind="cell" data-section="main">732.9 (1/3)</text>
 <text x="183.3" y="1061" class="m">Peekaboo</text>
 <rect class="sl" fill-opacity="0.16" x="341.5" y="1051" width="22" height="12"/><rect fill="url(#h-sl)" x="341.5" y="1051" width="22" height="12"/>
-<text x="369.5" y="1061" class="m" data-task="word-edit" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
+<text x="369.5" y="1061" class="m" data-task="word-edit" data-arm="peekaboo" data-kind="cell" data-section="main">no pass (0/3)</text>
 <text x="183.3" y="1079" class="m">Claude computer use</text>
-<path class="sl" d="M341.5 1069h56.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-56.5z"/>
-<text x="408" y="1079" data-task="word-edit" data-arm="claude-cu" data-kind="cell" data-section="main">100.7 (5/5)</text>
+<path class="sl" d="M341.5 1069h54.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-54.4z"/>
+<text x="406" y="1079" data-task="word-edit" data-arm="claude-cu" data-kind="cell" data-section="main">100.7 (5/5)</text>
 <line class="g" x1="24" y1="1091" x2="876" y2="1091"/>
 <text x="24" y="1111" class="b">excel-edit</text>
 <line class="g" x1="340.5" y1="1098" x2="340.5" y2="1202"/>
 <text x="183.3" y="1111" class="b">sleight</text>
-<path class="me" d="M341.5 1101h55.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-55.7z"/>
-<text x="407.2" y="1111" data-task="excel-edit" data-arm="sleight" data-kind="cell" data-section="main">44.8 (5/5)</text>
+<path class="me" d="M341.5 1101h53.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-53.6z"/>
+<text x="405.1" y="1111" data-task="excel-edit" data-arm="sleight" data-kind="cell" data-section="main">44.8 (5/5)</text>
 <text x="183.3" y="1129" class="m">LCU</text>
-<path class="sl" d="M341.5 1119h196.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-196.2z"/>
-<text x="547.7" y="1129" data-task="excel-edit" data-arm="lcu" data-kind="cell" data-section="main">150.4 (3/5)</text>
+<path class="sl" d="M341.5 1119h189.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-189.4z"/>
+<text x="540.9" y="1129" data-task="excel-edit" data-arm="lcu" data-kind="cell" data-section="main">150.4 (3/5)</text>
 <text x="183.3" y="1147" class="m">Codex</text>
-<path class="sl" d="M341.5 1137h177.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-177.6z"/>
-<text x="529.1" y="1147" data-task="excel-edit" data-arm="codex" data-kind="cell" data-section="main">136.4 (4/5)</text>
+<path class="sl" d="M341.5 1137h171.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-171.4z"/>
+<text x="522.9" y="1147" data-task="excel-edit" data-arm="codex" data-kind="cell" data-section="main">136.4 (4/5)</text>
 <text x="183.3" y="1165" class="m">Cua</text>
-<path class="sl" d="M341.5 1155h436.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-436.5z"/>
-<text x="788.1" y="1165" data-task="excel-edit" data-arm="cua" data-kind="cell" data-section="main">330.9 (2/3)</text>
+<path class="sl" d="M341.5 1155h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="773" y="1165" data-task="excel-edit" data-arm="cua" data-kind="cell" data-section="main">330.9 (2/3)</text>
 <text x="183.3" y="1183" class="m">Peekaboo</text>
 <rect class="sl" fill-opacity="0.16" x="341.5" y="1173" width="22" height="12"/><rect fill="url(#h-sl)" x="341.5" y="1173" width="22" height="12"/>
-<text x="369.5" y="1183" class="m" data-task="excel-edit" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
+<text x="369.5" y="1183" class="m" data-task="excel-edit" data-arm="peekaboo" data-kind="cell" data-section="main">no pass (0/3)</text>
 <text x="183.3" y="1201" class="m">Claude computer use</text>
-<path class="sl" d="M341.5 1191h59.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-59.7z"/>
-<text x="411.2" y="1201" data-task="excel-edit" data-arm="claude-cu" data-kind="cell" data-section="main">47.9 (5/5)</text>
+<path class="sl" d="M341.5 1191h57.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-57.5z"/>
+<text x="409.1" y="1201" data-task="excel-edit" data-arm="claude-cu" data-kind="cell" data-section="main">47.9 (5/5)</text>
 <text x="24" y="1234" class="m">The scorer's wording is &quot;fastest&quot;. sleight has the lowest expected time on 8 of 9 tasks.</text>
 <text x="24" y="1252" class="m">ChatGPT engine for sleight and Codex: 26.1007.71326 (2026-10-17 to 2026-10-18, inferred). Dates are UTC.</text>
 <text x="24" y="1270" class="m">Models: claude-haiku-5-5 (sleight, LCU, Cua, Peekaboo and Claude computer use), gpt-6-luna (Codex). Effort:</text>

@@ -40,7 +40,7 @@ const ARM_NAMES = { sleight: 'sleight', 'sleight-turbo': 'sleight turbo', lcu: '
   fowlbrowser: 'FowlBrowser', 'claude-in-chrome': 'Claude in Chrome', 'codex-sleight': 'sleight inside Codex' };
 export const armName = arm => ARM_NAMES[arm] ?? arm;
 const f1 = value => (value === null || value === undefined ? 'n/a' : (Math.round(value * 10) / 10).toFixed(1));
-const cellText = cell => (!cell ? 'no runs' : cell.passes === 0 ? `never (0/${cell.runs})` : `${f1(cell.expected)} (${cell.passes}/${cell.runs})`);
+const cellText = cell => (!cell ? 'no runs' : cell.passes === 0 ? `no pass (0/${cell.runs})` : `${f1(cell.expected)} (${cell.passes}/${cell.runs})`);
 const joinAnd = items => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
 const cap = word => word[0].toUpperCase() + word.slice(1);
 const uniq = list => [...new Set(list)];
