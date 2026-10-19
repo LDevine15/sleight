@@ -122,8 +122,8 @@ test('both skills make app.pickFromList the first move on a list with more rows 
     const rules = skillRules(undefined, env);
     const outside = rules.replace(/## Browsers\n[\s\S]*?(?=\n## |$)/, '').replace(/\s+/g, ' ');
     const first = outside.search(env.SLEIGHT_PROMPT
-      ? /Long list: click it, then `await app\.pickFromList\("<whole row text>"\)`\. Skip scroll loops\./
-      : /more rows than it shows: click it, then `await app\.pickFromList\("<whole row text>"\)` in that call\. Skip scrolling, typed prefixes and read loops\./);
+      ? /Long list: `await app\.pickFromList\(<list number>, "<whole row text>"\)`\. Skip scroll loops\./
+      : /more rows than it shows: `await app\.pickFromList\(<list number>, "<whole row text>"\)`\. Skip scrolling, typed prefixes and read loops\./);
     assert.ok(first >= 0, JSON.stringify(env));
     assert.doesNotMatch(outside, /In a focused sorted list/);
     if (!env.SLEIGHT_PROMPT) assert.ok(outside.indexOf('If it stops, search or use keys.') > first, 'search and keys stay the fallback');

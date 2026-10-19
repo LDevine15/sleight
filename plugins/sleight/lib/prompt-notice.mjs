@@ -58,6 +58,7 @@ export function promptNotice(text, prompt) {
     .replace(/ An app handle's [^ ]+ takes the ([^ ]+) first: /, ' App handle: $1 first: ')
     .replace('sleight: 3 calls in a row scrolled this list. In one call, click a row, then `await app.pickFromList("<whole row text>")`, which pages by key and clicks that row. If it stops, loop up to a fixed count: scroll, read with getAXState(), and stop when the target shows or the rows stop changing.',
       'sleight: 3 scroll calls in a row. In one call, click a row, then `await app.pickFromList("<whole row text>")`. If it stops, loop scroll and getAXState() (fixed count) until the target shows or rows stop.')
+    .replace(/^sleight: (\S+) is a sorted list\. Pick its row in one call: (`[^`]*`)\.$/, 'sleight: sorted list: $2.')
     .replace(', not the document; click the document before typing.', '; click the document first.')
     .replace('sleight: keyboard focus is on the window itself, so typed keys have no target.', 'sleight: window has focus; keys have no target.')
     .replace('sleight: typing reached nothing; menu-bar item ', 'sleight: typing lost; menu-bar item ')

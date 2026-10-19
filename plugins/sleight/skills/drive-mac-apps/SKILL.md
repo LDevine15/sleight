@@ -22,6 +22,8 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   `setValue` fields. Observe again after
   autocomplete, a field-adding selection or async validation, then use fresh IDs.
   Stop at a required confirmation.
+- A list with more rows than it shows: `await app.pickFromList(<list number>, "<whole row text>")`.
+  Skip scrolling, typed prefixes and read loops. If it stops, search or use keys.
 - In a browser, `setValue` the address bar and press Return in one call. Send a new tab's URL in that
   call.
 - After renumbering, prefer an `ID:` value or label to an element number:
@@ -56,8 +58,6 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   with the next/previous-tab key.
 - A confirmed save covers that document's sheets and pages. Don't recheck them. Save again after
   edits.
-- A list with more rows than it shows: click it, then `await app.pickFromList("<whole row text>")` in that call.
-  Skip scrolling, typed prefixes and read loops. If it stops, search or use keys.
 
 ## When to stop
 

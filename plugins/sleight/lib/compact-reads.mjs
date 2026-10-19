@@ -26,6 +26,7 @@ import { trimBrowserResults } from './browser-read-cap.mjs';
 import { bareValue, finalExpression, printValueCode } from './no-output.mjs';
 import { promptNotice } from './prompt-notice.mjs';
 import { unchangedListClicks } from './offscreen-click.mjs';
+import { sortedListShift } from './native-list-pick.mjs';
 import { underDocument } from './menu-continuation.mjs';
 import { renderOutcomes } from './action-outcomes.mjs';
 
@@ -1296,6 +1297,10 @@ export const SCROLL_LOOP_NOTE = /* lean notice */ 'sleight: 3 calls in a row scr
   '`await app.pickFromList("<whole row text>")`, which pages by key and clicks that row. If it stops, loop up to a fixed count: ' +
   'scroll, read with getAXState(), and stop when the target shows or the rows stop changing.';
 
+// CC1: the first call that scrolls or pages a sorted list names the helper, once per list (codex-vs-cc-1019: Haiku scrolled
+// first in 5 of 6 Firefox travel runs, and the scroll calls cost 19 to 33 s against one pick).
+export const listPickNote = (handle, number) => /* lean notice */ `sleight: ${number} is a sorted list. Pick its row in one call: \`await ${handle}.pickFromList(${number}, "<whole row text>")\`.`;
+
 // The guard trees in a call's output that answer Claude's own reads and went out compacted or were left out (omitted). Without
 // a read in the code every guard tree is the guard's; a call whose last action comes after its last read ends on the guard's
 // own read.
@@ -1326,6 +1331,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const undoSeen = new Map();
   // window key -> { target, calls }: the current run of calls that scrolled one target in that window.
   const scrolls = new Map();
+  // Lists (window key and list line) whose sorted rows a scroll already moved once, with the helper named (CC1).
+  const listsNoted = new Set();
   // window key -> the last element Claude aimed input at there (null: unknown), for where typing should go.
   const aims = new Map();
   const omissionHints = readHints.omissionHints ??= new Set();
@@ -1718,6 +1725,14 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       const checked = complete(observation) ? observation : trailingDegraded ? resultObservations.findLast(item =>
         complete(item) && swapDocumentKey(item.window) === swapDocumentKey(observation.window)) : undefined;
       const clickHalted = failed || stopped || forceFull || action?.overlap;
+      const lister = scrollNote && action?.before && !action.before.incomplete && !action.before.degraded && checked &&
+        documentKey(action.before.window) === documentKey(checked.window) && typeof code === 'string' && !/\.\s*pickFromList\s*\(/.test(code)
+        ? /([A-Za-z_$][\w$]*)\s*\.\s*(?:scroll\s*\(|pressKey\s*\(\s*["']Page_(?:Down|Up)["'])/.exec(code)?.[1] : undefined;
+      const shifted = lister && sortedListShift(action.before.lines, checked.lines);
+      if (shifted && !listsNoted.has(documentKey(checked.window) + '\n' + shifted.body)) {
+        listsNoted.add(documentKey(checked.window) + '\n' + shifted.body);
+        out.push({ type: 'text', text: promptNotice(listPickNote(lister, shifted.number), prompt) });
+      }
       // List rows a numbered click left unchanged, compared against the tree the call started from.
       listClicks = !clickHalted && action?.before && !action.before.incomplete && !action.before.degraded && complete(observation) &&
         observation.delta?.baseline === action.before.id && documentKey(action.before.window) === documentKey(observation.window)
