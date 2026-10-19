@@ -4,6 +4,9 @@
 Claude Code ──MCP──▶ bin/sleight-mcp ──▶ ChatGPT.app's cua-repl server ──▶ native helper ──▶ your apps
 ```
 
+The [architecture diagram](assets/architecture-light.svg) ([dark](assets/architecture-dark.svg)) draws the same path, with
+turbo's lane to Chrome and Helium beside it.
+
 1. The ChatGPT app writes its computer-use server config to
    `~/.codex/plugins/cache/openai-bundled/unified-computer-use/<version>/.mcp.json`, and replaces that
    folder on almost every update.

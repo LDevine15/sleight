@@ -1,7 +1,8 @@
 # Other MCP hosts
 
 sleight is a Claude Code plugin first. It also installs as a Codex plugin and a Cursor plugin, and its
-MCP server works with generic stdio clients. Each needs the same [Mac and ChatGPT app setup](../README.md#install).
+MCP server works with generic stdio clients. [INSTALL.md](../INSTALL.md) has the install steps for each, and they all need
+the same Mac and ChatGPT app setup.
 
 ## Codex
 
@@ -18,8 +19,9 @@ codex plugin add sleight@sleight
 Then start a new Codex session from a project folder. Started in your home folder, Codex reads
 `~/.codex/hooks.json` as that folder's project config too, and runs any hooks you keep there.
 
-The first time, Codex asks you to review sleight's two hooks. Trust them. At the end of a turn,
-interrupted or not, they call sleight's `turn_ended` tool, which should release the apps sleight used.
+The first time, Codex asks you to review sleight's three hooks. Trust them. At the end of a turn,
+interrupted or not, the Stop and Interrupt hooks call sleight's `turn_ended` tool, which should release the apps sleight
+used. The prompt hook is turbo's (below).
 We have seen Codex list and trust them, but no log yet shows one running. Codex skips untrusted hooks,
 and then sleight ends a used turn after 30 idle seconds.
 
@@ -72,14 +74,8 @@ which unit tests cover but no live run has checked yet.
 
 ## Cursor
 
-The repo is also a Cursor plugin marketplace. Signed in to cursor-agent (2026.09.10 or later), run:
-
-```bash
-cursor-agent plugin marketplace add https://github.com/Land-o-Clusters/sleight
-```
-
-Then install sleight from `/plugins` in cursor-agent, or from Customize in the Cursor app, and start
-a new chat. Nobody has run this install yet. It needs the 1.4.0 release on the public repo.
+The repo is also a Cursor plugin marketplace ([install](../INSTALL.md#cursor)). Nobody has run this install yet. It needs
+the 1.4.0 release on the public repo.
 
 If sleight is installed in Claude Code, Cursor may run it already. Cursor 3.25.6 loads Claude Code's
 plugins while "Include Third-Party Plugins, Skills, and Other Configs" is on in its settings, which is
@@ -98,27 +94,9 @@ get the pane, the status line, `/sleight` or turbo.
 
 ## Generic clients
 
-Clone the repo and use its launcher. It runs on the Node bundled with ChatGPT, without npm install.
-
-```bash
-git clone https://github.com/Land-o-Clusters/sleight.git ~/sleight
-~/sleight/plugins/sleight/bin/sleight-mcp --doctor
-```
-
-To use [Cursor](https://cursor.com/docs/context/mcp) without the plugin, put this in `~/.cursor/mcp.json`.
-The same `mcpServers` entry works in a generic client that accepts this JSON format. Replace the command
-with your clone's absolute path. JSON doesn't expand `~` or `${CLAUDE_PLUGIN_ROOT}`. Keep one route:
-with the plugin installed too, Cursor starts two sleight servers.
-
-```json
-{
-  "mcpServers": {
-    "sleight": {
-      "command": "/absolute/path/to/sleight/plugins/sleight/bin/sleight-mcp"
-    }
-  }
-}
-```
+[INSTALL.md](../INSTALL.md#other-mcp-clients) has the clone and the `mcpServers` entry. The launcher runs on the Node
+bundled with ChatGPT, without npm install. To use [Cursor](https://cursor.com/docs/context/mcp) without the plugin, put
+that entry in `~/.cursor/mcp.json`. Keep one route: with the plugin installed too, Cursor starts two sleight servers.
 
 After reconnecting the client, ask it to use sleight's `js` tool.
 
