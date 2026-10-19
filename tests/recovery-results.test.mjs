@@ -116,9 +116,12 @@ test('select_window that finds no window names the titles the app has now', () =
   };
   assert.equal(select(['Archive', 'Downloads']).error, 'Expected exactly one matching window, found 0. Files has 2 windows now: "Archive", "Downloads". ' +
     'A window that navigated or was renamed is still the same window: select it by the title it has now, or act on it through the handle you have.');
-  // At most five titles, each cut to 60 characters, and the count.
-  const many = select(['x'.repeat(80), 'b', 'c', 'd', 'e', 'f', 'g']).error;
-  assert.match(many, new RegExp(`Files has 7 windows now: "${'x'.repeat(57)}\\.\\.\\.", "b", "c", "d", "e" and 2 more\\. `));
+  // At most five titles, each cut to 120 characters, and the count.
+  const many = select(['x'.repeat(130), 'b', 'c', 'd', 'e', 'f', 'g']).error;
+  assert.match(many, new RegExp(`Files has 7 windows now: "${'x'.repeat(117)}\\.\\.\\.", "b", "c", "d", "e" and 2 more\\. `));
+  // A Safari profile window's title (69 characters) stays whole, so it can be copied (Codex b12-r3, 2026-10-19).
+  const gate = 'sleight benchmark — Sleight Gate 35290af9-80bf-414f-a32c-33c8ba4a3e07';
+  assert.match(select([gate]).error, new RegExp(`Files has 1 window now: "${gate}"\\. `));
 });
 
 test('a native Cut says sleight cannot see whether it took effect; a Copy alone keeps the short notice', async () => {
