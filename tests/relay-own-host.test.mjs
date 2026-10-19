@@ -98,6 +98,35 @@ test('local tools: menu_bar, hover, drag and select_window refuse the host by na
   assert.deepEqual(h.ran, [], 'no local tool ran');
 });
 
+for (const [name, args] of [
+  ['drag', { app: 'TextEdit', from: [1, 1], to: [2, 2] }],
+  ['hover', { app: 'TextEdit', at: [1, 1] }],
+  ['menu_bar', { op: 'choose', app: 'TextEdit', path: ['File', 'Save'] }],
+]) {
+  test(`local ${name} refuses an ordinary app while the leased window is the host`, async t => {
+    const h = harness(t);
+    h.js(1, 'let card = await cua.getApp({ windowId: 9 })'); await settle();
+    h.fromServer(read(1, 'consent-host', HOST_FILE)); await settle();
+    assert.equal(h.reply(1).result.content[0].text, OWN);
+    h.call(2, name, args); await settle();
+    refused(h, 2);
+    assert.deepEqual(h.ran, [], 'the local action must not run');
+  });
+}
+
+test('a host lease still permits an app inventory and a read of an ordinary app', async t => {
+  const h = harness(t);
+  h.js(1, 'let card = await cua.getApp({ windowId: 9 })'); await settle();
+  h.fromServer(read(1, 'consent-host', HOST_FILE)); await settle();
+  h.call(2, 'menu_bar', { op: 'apps' }); await settle();
+  assert.deepEqual(h.ran, ['menu_bar']);
+  h.js(3, 'let other = await cua.getApp("TextEdit")'); await settle();
+  assert.equal(h.sent(3), true);
+  h.fromServer(read(3, 'TextEdit', 'com.apple.TextEdit')); await settle();
+  h.call(4, 'hover', { app: 'TextEdit', at: [1, 1] }); await settle();
+  assert.deepEqual(h.ran, ['menu_bar', 'hover']);
+});
+
 test('ordinary apps are unaffected: getApp, a read, an action, an approval and the local tools go through', async t => {
   const h = harness(t);
   h.js(1, 'let app = await cua.getApp("TextEdit")'); await settle();

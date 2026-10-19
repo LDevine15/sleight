@@ -1769,7 +1769,7 @@ export function createRelay({
     if (!read) {
       if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return false; }
       if (leaseFault) { leaseStop(msg, leaseFault); return false; }
-      if (name === 'js' && ownWindow(leaseWindow)) { ownStop(msg); return false; }
+      if (ownWindow(leaseWindow)) { ownStop(msg); return false; }
       if (name !== 'js') {
         leaseCalls.set(msg.id, { localAction: true }); return true;
       }
