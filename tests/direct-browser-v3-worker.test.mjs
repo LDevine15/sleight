@@ -283,11 +283,12 @@ test('the relay\'s begin frame lists the bundle ids the engine approved this ses
     for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy();
   }
 });
-// ROADMAP 4c: the menu bar names the host from the client's own introduction. Only the mod's host binds a turbo turn.
+// ROADMAP 4c: the menu bar names the host from the client's own introduction. Only the mod's host takes the mod's handshake;
+// Codex binds through its prompt hook (tests/codex-turbo.test.mjs).
 for (const [label, clientInfo, mod, host] of [
   ['Claude Code', { name: 'claude-code', title: 'Claude Code', version: '2.1.289' }, true, 'Claude Code 2.1.289'],
   ['Codex', { name: 'codex-mcp-client', title: 'Codex', version: '0.160.0' }, false, undefined],
-]) test(`under ${label} the begin frame carries ${host ?? 'no host, since no turbo turn binds'}`, async () => {
+]) test(`under ${label} the begin frame carries ${host ?? 'no host, since the mod\'s handshake is refused (Codex binds through its hook)'}`, async () => {
   const f = await fixture();
   const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
   const replies = []; clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));

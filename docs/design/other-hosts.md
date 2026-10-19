@@ -12,7 +12,7 @@ plugin variables, a skill loader or host session IDs. This covers ROADMAP track 
 | Desktop Code tab detection | `CLAUDE_CODE_ENTRYPOINT` | Desktop detection still forces the panel because that host silently declines forms. Other clients use capabilities. `SLEIGHT_APPROVAL_PROMPT=dialog` forces the panel. `client` disables fallback and cancels if forms are unsupported. |
 | Claude wording in sleight's panel | Claude Code's identity | `clientInfo.name === 'claude-code'` keeps the Claude question, session wording and panel label. When `clientInfo` is absent, `CLAUDE_CODE_ENTRYPOINT` supplies the identity. Other hosts get generic wording at the panel boundary. |
 | Stop hook and `turn_ended` | A model-turn completion event | The existing idle timer ends a used engine turn after 30 seconds without a pending call. EOF drains the turn before collecting the engine. The timer waits for a pending approval's tool call to finish. Codex's plugin hooks are set to call `turn_ended` at Stop and Interrupt (listed and trusted live on 2026-10-19, not yet seen running). For an unused turn the relay replies to that call without forwarding it to the engine. |
-| Mod, pane and status line | Claude Code's hook and UI APIs | The MCP server never imports the mod. Tools run without its pane, status line, `/sleight stop`, turbo and origin-based refusal of model calls to `turn_ended`. That tool keeps the engine's `_meta.ui.visibility: []`. Codex's source hides such a tool from the model (`tool_is_model_visible`, openai/codex at 89461ea6), and OpenAI's own computer-use plugin calls its hidden `turn_ended` from hooks. |
+| Mod, pane and status line | Claude Code's hook and UI APIs | The MCP server never imports the mod. Tools run without its pane, status line, `/sleight stop` and origin-based refusal of model calls to `turn_ended`. Turbo runs only in Claude Code and in Codex 0.160.0 or later (see below). That tool keeps the engine's `_meta.ui.visibility: []`. Codex's source hides such a tool from the model (`tool_is_model_visible`, openai/codex at 89461ea6), and OpenAI's own computer-use plugin calls its hidden `turn_ended` from hooks. |
 | `anthropic/alwaysLoad` and engine `_meta` keys | Claude's tool search conventions | The client may ignore these opaque metadata fields. The relay adds session/turn metadata and approval persistence for the engine. |
 | Registered skill | Claude's slash command and skill loader | The launcher reads the skill relative to itself and appends its body to the first engine documentation reply. With a missing or unreadable file, calls continue using the engine's API docs alone. |
 | `${CLAUDE_PLUGIN_ROOT}` | Plugin manifest interpolation | It is used only in Claude's manifest. Other clients configure the launcher's absolute path. The shell launcher finds `launch.mjs` relative to itself and resolves the installed engine on each startup. |
@@ -25,6 +25,44 @@ form support needs a person at the Mac for an unapproved app. A panel timeout re
 A panel that cannot be shown reports that failure to the model, without attributing a decision to
 the user. Relay-generated forms expire after five minutes. Late answers cannot grant approval or
 keep or undo a document.
+
+## Turbo in Codex
+
+Turbo lets a payment, booking, upload or history step through without asking only when the user's own
+message names it. The worker needs that message from a path the model can't write to. Claude Code's mod
+uses a private envelope. Codex hooks can't hold a secret, and the Codex plugin takes this path instead.
+
+- Codex's UserPromptSubmit hook calls `turn_started` with `${prompt}`, which Codex fills from the user's
+  message (`hooks/src/engine/mcp_runner.rs`). The relay builds the begin frame itself, so the envelope
+  never leaves the server process, and it answers with empty content, because Codex passes a prompt
+  hook's text to the model.
+- `turn_started` has `_meta.ui.visibility: []`. In Codex 0.160.0 such a tool is left out of the model's
+  tools, and `prepare_call` refuses a model call to it by name (`codex-mcp/src/binding.rs`; the model
+  gets "not available to the model" from `core/src/mcp_tool_call.rs`). Hooks call tools without that
+  filter (`core/src/hook_mcp_executor.rs`).
+- A hook's call has `_meta.threadId` and nothing else. Every model call also has `callId`, `sessionId`
+  and Codex's turn metadata (`core/src/mcp_tool_call.rs`). The relay refuses any key beyond `threadId`
+  and a progress token. A model call fails there even if a later Codex showed the tool.
+- `threadId` must equal the hook's `session_id`. They match only on the session's root thread. A
+  subagent's prompt is written by the parent model, and its thread id differs (`core/src/session/session.rs`).
+- Each Codex turn id binds once. A second prompt in the same turn keeps the first binding. A prompt over
+  64 KiB binds with no text. Every payment in that turn asks on sleight's own card. So does a voice
+  session's delegation, whose prompt quotes the voice model. Older Codex versions, other clients and the
+  mod's own handshake from Codex are refused.
+- The relay sends a turbo call to the worker only when its `threadId` and its turn metadata's `turn_id` match the
+  bound turn. A turn that never ran the prompt hook (a goal continuation, a queued turn, or one whose Stop
+  hook didn't run) can't use turbo.
+- The Stop and Interrupt hooks revoke the turn, used or not, and a bind still queued then never runs.
+
+The threat is a page, or a model following one, that wants turbo to treat its text as the user's
+message. Within sleight's MCP channel that needs a call Codex sends only from its hook. Out of scope: a
+model with a shell (it can already run anything as the user) and other installed plugins and hooks. So is a
+Codex build that shows hidden tools and also drops the model-call keys. Codex's app-server
+`mcpServer/tool/call` also reaches hidden tools with only `threadId` added. Its callers are Codex's own
+clients (the desktop app and IDE extensions). MCP Apps widgets should be blocked by the empty visibility
+list, which we haven't checked. Payment cards always use sleight's own window,
+never an MCP form that Codex's auto-review could answer. The source read is openai/codex `rust-v0.160.0`
+(`a956835d`), and none of it has been checked in a live Codex session yet.
 
 ## Proof and limits
 

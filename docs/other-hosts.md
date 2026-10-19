@@ -56,9 +56,11 @@ can't be installed into a test home. To keep it off, turn it off in Codex's plug
 never changes Codex's config itself. Leave `unified-computer-use` on. Its server config also turns on the
 browser automation that Codex's Browser plugin uses.
 
-Codex doesn't get the pane, the status line, the `/sleight` command or turbo. Turbo ties each turn to
-your own message through the Claude Code mod, which Codex doesn't run. The Codex plugin sets
-`SLEIGHT_TURBO=0`, and browsers use the engine path. Codex gives a plugin's server only a short list
+Codex doesn't get the pane, the status line or the `/sleight` command. Turbo works in Codex 0.160.0 and
+later: sleight's prompt hook ties each turbo turn to your message, and the Stop and Interrupt hooks end
+it. It hasn't run in a live session yet. Trust all three hooks when Codex asks. Until you do, turbo's tools report that turbo is unavailable
+and the model uses the engine path. [How the binding works](design/other-hosts.md#turbo-in-codex).
+Codex gives a plugin's server only a short list
 of environment variables, and sleight's plugin adds every documented `SLEIGHT_*` [setting](settings.md)
 to it except the benchmark ones. Export a setting in the shell that starts Codex and sleight sees it.
 
