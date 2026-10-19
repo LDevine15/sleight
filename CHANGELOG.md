@@ -2,6 +2,13 @@
 
 ## 1.3.1 (TODO: release date)
 
+### Engine updates
+
+- A compatibility check runs after every ChatGPT update: a static half that reads each release's engine files on Linux
+  (`bench/compat-static.mjs`, hourly), and the installed engine plus optional live checks on the Mac through
+  `scripts/watch.sh`. Results go to [the compatibility record](docs/results/engine-compat.md). The live checks haven't
+  run yet.
+
 ### Codex
 
 - Turbo works in Codex 0.160.0 and later. A prompt hook ties each turbo turn to your message through a
