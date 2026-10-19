@@ -9,14 +9,14 @@
 // bench/fowl/race-score.mjs for the browser race rounds. Nothing in the output depends on the clock. Every arm's numbers name the
 // ChatGPT engine versions they ran on with their UTC dates, read from the results or inferred from the checked-in timeline
 // (bench/engine-versions.json; run `node bench/engine-version.mjs refresh` on the benchmark Mac before collecting).
-//   node bench/results-hub.mjs [--wt ~/Projects/sleight-wt] [--out docs/results] [--render-only] [--check]
+//   node bench/results-hub.mjs [--wt ~/Projects/sleight-wt] [--out docs/results] [--render-only] [--check] [--exclude-covered]
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { claim, excluded, regradeFor, score, warnings } from './claim-score.mjs';
-import { loadRound, scoreRounds } from './fowl/race-score.mjs';
+import { coveredRows, loadRound, markCover, scoreRounds } from './fowl/race-score.mjs';
 import { engineMix, engineNote, engineText, loadTimeline, passRowEngine, summarizeEngines } from './engine-version.mjs';
 import { buildPage, loadResults, perArm, renderHtml as renderReleaseHtml, renderMarkdown as renderReleaseMarkdown, summarize } from './results-page.mjs';
 
@@ -104,10 +104,11 @@ export function lossRule(table, tasks, arms, me) {
   return lost;
 }
 
-function summarizeVerdict(table, verdict, tasks, arms, me) {
+// minRuns: the race keeps a cell under 3 runs out of the lowest-expected-time count (race-score.mjs MIN_RUNS).
+function summarizeVerdict(table, verdict, tasks, arms, me, { minRuns = 0 } = {}) {
   const fastest = Object.fromEntries(arms.map(arm => [arm, []]));
   for (const task of tasks) {
-    const ranked = arms.filter(a => table[a]?.[task]?.expected != null).sort((a, b) => table[a][task].expected - table[b][task].expected);
+    const ranked = arms.filter(a => table[a]?.[task]?.expected != null && table[a][task].runs.length >= minRuns).sort((a, b) => table[a][task].expected - table[b][task].expected);
     if (ranked.length && (ranked.length === 1 || table[ranked[0]][task].expected < table[ranked[1]][task].expected)) fastest[ranked[0]].push(task);
   }
   return {
@@ -232,7 +233,7 @@ function roundFacts(dir) {
   };
 }
 
-export function collectRace({ raceDir, browsers, family, title, timeline = loadTimeline() }) {
+export function collectRace({ raceDir, browsers, family, title, timeline = loadTimeline(), excludeCovered = false }) {
   // Folder names pick the candidates; a round's own browser.json decides where it is scored, as in race-score.mjs.
   const listed = listRaceRounds(raceDir).filter(round => browsers.includes(round.browser));
   const marked = listed.filter(round => !round.done && existsSync(join(round.dir, 'harness-failure.json')));
@@ -242,6 +243,11 @@ export function collectRace({ raceDir, browsers, family, title, timeline = loadT
     ...marked.map(round => ({ round: round.name, reason: scrub(tryJson(join(round.dir, 'harness-failure.json'))?.reason ?? 'marked as a harness failure') }))]
     .sort((a, b) => (a.round < b.round ? -1 : 1));
   const usable = loaded.filter(round => !round.loaded.excluded);
+  // Cover exclusions are opt-in (--exclude-covered), judged once over every usable round in these browsers.
+  if (excludeCovered) markCover(usable.map(round => round.loaded));
+  const evidence = coveredRows(usable.map(round => round.loaded));
+  const cover = { applied: excludeCovered, rows: evidence.length, left: evidence.filter(c => c.excluded).length,
+    leftPasses: evidence.filter(c => c.excluded && c.passed).length };
   const studies = [], partial = [];
   for (const browser of browsers) {
     const me = sleightArmFor(browser);
@@ -260,13 +266,14 @@ export function collectRace({ raceDir, browsers, family, title, timeline = loadT
         continue;
       }
       const rounds = [...set, ...others];
-      const scored = scoreRounds(rounds.map(round => round.loaded))[browser];
+      const scored = scoreRounds(rounds.map(round => round.loaded), { excludeCovered })[browser];
       const arms = scored.arms;
-      // A failed drag in a window another app covered is left out, as race-score.mjs does, and listed with the app.
-      const { cells, verdict, table } = cellsFor(rounds.flatMap(round => round.loaded.rows.filter(row => !row.harnessCover)), scored.tasks, arms, me);
+      // With --exclude-covered, a run in a window another app covered is left out, as race-score.mjs does, and listed with the app.
+      const left = row => excludeCovered && row.harnessCover;
+      const { cells, verdict, table } = cellsFor(rounds.flatMap(round => round.loaded.rows.filter(row => !left(row))), scored.tasks, arms, me);
       const runs = rounds.flatMap(round => round.loaded.rows.map(row => ({
-        task: row.task, arm: row.arm, round: round.name, run: null, seconds: round1(row.seconds), passed: row.passed,
-        problem: row.passed ? null : scrub((row.harnessCover ? `left out, ${row.harnessCover.reason}: ` : '') + row.problems.join('; ')).slice(0, 200), file: round.name })));
+        task: row.task, arm: row.arm, round: round.name, run: null, seconds: round1(row.seconds), passed: row.passed, ...(left(row) ? { leftOut: scrub(row.harnessCover.reason) } : {}),
+        problem: row.passed ? null : scrub((left(row) ? `left out, ${row.harnessCover.reason}: ` : '') + row.problems.join('; ')).slice(0, 200), file: round.name })));
       const models = {}, effort = {}, versions = {};
       for (const round of rounds) {
         const arm = round.loaded.arm;
@@ -284,13 +291,13 @@ export function collectRace({ raceDir, browsers, family, title, timeline = loadT
         browserVersion: sortedUniq(rounds.map(round => round.facts.browserVersion)),
         rounds: rounds.map(round => ({ round: round.name, arm: round.loaded.arm, rows: round.loaded.rows.length, first: round.facts.first, build: round.facts.build })),
         runs, cells,
-        verdict: { ...summarizeVerdict(table, verdict, scored.tasks, arms, me), raceFastest: scored.fastest, raceTotals: Object.fromEntries(Object.entries(scored.totals).map(([a, t]) => [a, round1(t)])) },
+        verdict: { ...summarizeVerdict(table, verdict, scored.tasks, arms, me, { minRuns: 3 }), raceFastest: scored.fastest, raceTotals: Object.fromEntries(Object.entries(scored.totals).map(([a, t]) => [a, round1(t)])) },
       });
     }
   }
   // The newest complete set per browser leads its page.
   for (const study of studies) study.latest = !studies.some(other => other.browser === study.browser && other !== study && (other.started ?? '') > (study.started ?? ''));
-  return { family, title, source: { race: tilde(raceDir), browsers }, inProgress, excludedRounds, partial, studies };
+  return { family, title, source: { race: tilde(raceDir), browsers }, inProgress, excludedRounds, partial, cover, minRuns: 3, studies };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -632,8 +639,13 @@ function raceStudySection(study, level = '##') {
 const RACE_GRADING = '`bench/fowl/race-score.mjs` grades every saved run again. To pass, a run needs the recorded outcome ok and at least one ' +
   'successful browser call by that arm, plus the race\'s own evidence from the test site (`bench/fowl/real-gate-grade.mjs`). Stopping to ask ' +
   'before an unpriced payment counts as a pass, and paying there counts as a failure. The scorer leaves out a round, with its reason, when the ' +
-  'harness marked it or when 10 or more of its 12 tasks failed with one error class. It also leaves out a failed run that tried a drag ' +
-  'while another app\'s window covered the browser\'s, and the failures table names that app.';
+  'harness marked it or when 10 or more of its 12 tasks failed with one error class.';
+// Said only when the collect applied it (results-hub.mjs --exclude-covered).
+const COVER_RULE = cover => cover?.applied ? ` This collect also left out ${cover.left} runs, ${cover.leftPasses} of them passes, that tried a drag while ` +
+  'another app\'s window covered the browser\'s: every run whose drag tool refused for that window, and runs where a reading showed an app over ' +
+  'half the window or more when no run of that arm and task passed under the same app. The failures table names the app.' : '';
+const raceGrading = race => RACE_GRADING + COVER_RULE(race?.cover) +
+  (race?.minRuns ? ` An arm's cell with fewer than ${race.minRuns} runs isn't counted for lowest expected time on its task.` : '');
 
 const leftOutTables = race => [
   `Rounds come from ${code(race.source.race)}. Folders without ${code('results.json')} are still running and are left out${race.inProgress.length ? `: ${race.inProgress.map(code).join(', ')}` : ', and there were none'}.\n`,
@@ -646,7 +658,7 @@ function renderRacePage(data, name) {
   out.push('Turbo needs Chrome\'s debugging consent, which Safari and Firefox lack, so sleight uses the ChatGPT engine\'s computer use path in them. The race runs its 12 browser tasks on the local test site in a real window of each browser\'s "sleight benchmark" profile. [benchmark.md](../benchmark.md#scoring-the-real-window-race) describes the tasks.\n');
   out.push('## Method\n');
   out.push(list([
-    RACE_GRADING,
+    raceGrading(data),
     SCORING,
     LAWS_RULES,
     'The scorer takes one sleight build set at a time (the folder label, such as `sleight-r` or `sleight-b3-r`) with every usable competitor round in the same browser, so two sleight builds are never pooled. A set is scored once it has 3 runs of every task.',
@@ -678,7 +690,7 @@ function renderTurboPage(data, name) {
   out.push(list([
     'FowlBrowser\'s head-to-head runner, pinned with sleight\'s patch, runs each arm in both browser orders (normal and swap), so a gate round is 26 runs per arm. Its reports give whole seconds. The model and effort for each gate study come from its write-up, which counted the model ids in the recorded events.',
     'A gate run passes under the owner\'s scoring (LAWS). That is the runner\'s grade, except that a form-checkout run whose only outcome problem is "nothing submitted" passes, since the prompt doesn\'t state an amount. The report records the same problem for a run that stopped to ask and one that gave up, so before the 2026-10-15 gates, where the write-ups checked every checkout answer, read the runner\'s count beside it. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.',
-    RACE_GRADING,
+    raceGrading(data.race),
     SCORING,
     LAWS_RULES,
   ]) + '\n');
@@ -881,7 +893,7 @@ export function pretty(value, indent = '') {
 }
 const json = value => pretty(value) + '\n';
 
-export function collect({ wt, out }) {
+export function collect({ wt, out, excludeCovered = false }) {
   const dataDir = join(out, 'data');
   const keep = id => { const file = join(dataDir, `${id}.json`); return existsSync(file) ? readJson(file) : undefined; };
   const claimDir = join(wt, 'app-claim');
@@ -898,8 +910,8 @@ export function collect({ wt, out }) {
   } else { all['app-claim'] = keep('app-claim'); notes.push('app-claim: raw folder missing, kept the data file'); }
   const gates = collectRunnerStudies();
   if (isDir(raceDir)) {
-    all['browser-race'] = collectRace({ raceDir, browsers: ['safari', 'firefox'], family: 'browser-race', title: 'Safari and Firefox race', timeline });
-    const turboRace = collectRace({ raceDir, browsers: ['chrome', 'helium'], family: 'browser-turbo', title: 'Chrome and Helium race', timeline });
+    all['browser-race'] = collectRace({ raceDir, browsers: ['safari', 'firefox'], family: 'browser-race', title: 'Safari and Firefox race', timeline, excludeCovered });
+    const turboRace = collectRace({ raceDir, browsers: ['chrome', 'helium'], family: 'browser-turbo', title: 'Chrome and Helium race', timeline, excludeCovered });
     all['browser-turbo'] = { family: 'browser-turbo', title: 'Browser turbo against FowlBrowser', race: turboRace, gates: gates.filter(s => s.family === 'browser-turbo'),
       headline: ['2026-10-16-gate-3', '2026-10-16-opus'] };
   } else {
@@ -947,7 +959,7 @@ export function main(argv = process.argv.slice(2)) {
   let all, notes = [];
   if (argv.includes('--render-only')) {
     all = Object.fromEntries(FAMILIES.map(f => [f.id, readJson(join(out, 'data', `${f.id}.json`))]));
-  } else ({ all, notes } = collect({ wt, out }));
+  } else ({ all, notes } = collect({ wt, out, excludeCovered: argv.includes('--exclude-covered') }));
   const files = render(all);
   if (argv.includes('--check')) {
     const changed = Object.entries(files).filter(([name, text]) => !existsSync(join(out, name)) || readFileSync(join(out, name), 'utf8') !== text).map(([name]) => name);

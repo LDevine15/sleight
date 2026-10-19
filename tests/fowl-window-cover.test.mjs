@@ -32,9 +32,11 @@ test('a window that stays says how many displays there were and how covered the 
 });
 
 test('summarizeCover keeps each covering app once at its largest share and counts unread readings', () => {
-  assert.deepEqual(summarizeCover([{ covering: [] }, { covering: [{ owner: 'Claude', fraction: 0.4 }] }, { error: 'timeout' }, null,
-    { covering: [{ owner: 'Claude', fraction: 0.83 }, { owner: 'UserNotificationCenter', fraction: 0.019 }] }]),
-  { readings: 5, errors: 2, covering: [{ owner: 'Claude', fraction: 0.83 }, { owner: 'UserNotificationCenter', fraction: 0.019 }] });
+  assert.deepEqual(summarizeCover([{ covering: [] }, { covering: [{ owner: 'Claude', layer: 0, fraction: 0.4 }] }, { error: 'timeout' }, null,
+    { covering: [{ owner: 'Claude', layer: 0, fraction: 0.83 }, { owner: 'UserNotificationCenter', layer: 0, fraction: 0.019 }, { owner: 'Cua Driver', layer: 0, fraction: 1 }] }]),
+  { readings: 5, errors: 2, covering: [{ owner: 'Claude', fraction: 0.83 }, { owner: 'UserNotificationCenter', fraction: 0.019 }],
+    seen: [{ owner: 'Claude', layer: 0, fraction: 0.83, counted: true }, { owner: 'UserNotificationCenter', layer: 0, fraction: 0.019, counted: true },
+      { owner: 'Cua Driver', layer: 0, fraction: 1, counted: false }] });
 });
 
 test('watchCover reads while the agent runs and once more at stop, never two reads at once, and only reads', async () => {
@@ -57,7 +59,7 @@ test('watchCover reads while the agent runs and once more at stop, never two rea
   await new Promise(resolve => setTimeout(resolve, 30));
   assert.equal(reads, after, 'no reads after stop');
   // A read that throws is kept as an unread reading.
-  assert.deepEqual(await watchCover(1, { every: 1000, read: async () => { throw Error('boom'); } }).stop(), { readings: 1, errors: 1, covering: [] });
+  assert.deepEqual(await watchCover(1, { every: 1000, read: async () => { throw Error('boom'); } }).stop(), { readings: 1, errors: 1, covering: [], seen: [] });
 });
 
 test('windowCover records an error instead of failing the round', async () => {

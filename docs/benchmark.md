@@ -202,10 +202,17 @@ tools) is a harness failure. The gate writes `harness-failure.json` into the rou
 scorer drops the round with that reason. Each round also writes `commits.json` with the commits of
 the build the arms load, the bench code and FowlBrowser's runner.
 
-A failed run that tried a drag while another app's window covered the browser's is left out on its
-own, for every arm, and the scorer lists it with the app (`harnessCover` in
-`bench/fowl/real-gate-grade.mjs`). The cover counts when a drag tool refused for it, or when a reading
-at the task's start, every 5 s or at its end shows another app over at least 5% of the window.
+A run that tried a drag has cover evidence when a drag tool refused because another app's window
+covered its points, or when a reading at the task's start, every 5 s or at its end shows another
+app's normal window over at least 5% of the browser's (`coverEvidence` in
+`bench/fowl/real-gate-grade.mjs`). The engine's overlay, Cua's driver overlay, the Dock and windows
+above layer 0 don't count. By default the scorer keeps these runs in the scores and lists them, pass
+or fail, and its first line says "Cover exclusions: OFF (default)". With `--exclude-covered` a drag
+refusal leaves its run out, passes included. A reading alone leaves a run out when one app covered
+half the window or more and no run of the same arm and task passed under that app's window in any
+browser. The
+results hub applies the same rule only with `--exclude-covered`, and only then does its method text
+state it. A cell with fewer than 3 runs is marked and can't be fastest on its task.
 
 ## Earlier benchmarks
 

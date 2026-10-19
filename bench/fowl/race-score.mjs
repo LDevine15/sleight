@@ -5,19 +5,21 @@
 // Each saved row is graded again offline: a pass needs the recorded outcome ok, at least one successful browser call by
 // that arm (counted again from events.jsonl where it was saved) and the race's positive site evidence (real-gate-grade.mjs
 // RACE_EXPECT). A round with harness-failure.json, or one where 10 or more of 12 tasks failed with one error class, is
-// excluded with its reason. --mark writes harness-failure.json into a newly detected round's folder. A failed row whose drag
-// met another app's window over the browser's (real-gate-grade.mjs harnessCover) is excluded on its own, named with the app.
+// excluded with its reason. --mark writes harness-failure.json into a newly detected round's folder.
+// Cover: a row whose drag met another app's window over the browser's has cover evidence (real-gate-grade.mjs coverEvidence),
+// listed with the app. Only --exclude-covered leaves rows out (coverExclusions), passes and failures alike; the output's first
+// line says which. A cell under 3 runs is marked and can't be fastest on its task.
 // Each task carries the ChatGPT engine version it ran on and its UTC dates: the round's engine.json when the gate recorded one,
 // otherwise inferred from the task's recorded start and end against bench/engine-versions.json (bench/engine-version.mjs). A row
 // without times takes the birth time of the round's commits.json, marked as an inferred date. Per browser, the output names each
 // arm's versions with their dates and says when the arms that drive the engine ran on different versions.
-//   node bench/fowl/race-score.mjs [round folders or <dir>/<prefix>*] [--json] [--mark]
+//   node bench/fowl/race-score.mjs [round folders or <dir>/<prefix>*] [--json] [--mark] [--exclude-covered]
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claim, score } from '../claim-score.mjs';
-import { browserEvidence, harnessCover, harnessFailure, raceProblems, runErrorClass } from './real-gate-grade.mjs';
+import { browserEvidence, coverEvidence, coverExclusions, harnessFailure, raceProblems, runErrorClass } from './real-gate-grade.mjs';
 import { currentTimeline, dayRange, engineForRun, engineMix, engineNote, engineText, loadTimeline, summarizeEngines } from '../engine-version.mjs';
 
 const DEFAULT = join(homedir(), 'Projects/sleight-wt/race-1017/*');
@@ -50,10 +52,10 @@ export function regradeRow(row, { eventsText = '', stderr = '' } = {}) {
   problems.push(...raceProblems({ task: row.task, site: row.site, answer: row.run?.result?.result }).filter(p => !problems.includes(p)));
   const passed = problems.length === 0;
   // Rows saved before the cover watch have only the start reading; a saved row without events keeps what the gate recorded.
-  const covered = passed ? null : eventsText ? harnessCover({ ok: false, eventsText, readings: [row.cover, row.coverRun] }) : row.harnessCover ?? null;
+  const cover = eventsText ? coverEvidence({ eventsText, readings: [row.cover, row.coverRun] }) : row.coverEvidence ?? null;
   return { task: row.task.name, arm: row.surface, seconds: row.wallMs / 1000, passed, problems, successfulCalls: calls,
     recordedOk: row.outcome?.ok === true, errorClass: passed ? null : row.errorClass ?? runErrorClass({ eventsText, stderr }),
-    ...(covered ? { harnessCover: covered } : {}) };
+    ...(cover ? { coverEvidence: cover } : {}) };
 }
 
 let staticTimeline;
@@ -78,36 +80,58 @@ export function loadRound(dir, { timeline = staticTimeline ??= loadTimeline() } 
 
 const sleightArm = browser => ['firefox', 'safari'].includes(browser) ? 'sleight' : 'sleight-turbo';
 
-export function scoreRounds(rounds) {
+// Marks row.harnessCover on the rows --exclude-covered leaves out, judged over every scored round together (any browser).
+export function markCover(rounds) {
+  const rows = rounds.filter(r => !r.excluded).flatMap(r => r.rows), out = coverExclusions(rows);
+  for (const row of rows) if (out.has(row)) row.harnessCover = out.get(row); else delete row.harnessCover;
+  for (const round of rounds) round.coverMarked = true;
+  return rounds;
+}
+
+export const MIN_RUNS = 3;
+export function scoreRounds(rounds, { excludeCovered = false } = {}) {
+  // The results hub marks its whole pool once, so a study's subset keeps the pool's verdicts.
+  if (excludeCovered && !rounds.every(round => round.coverMarked)) markCover(rounds);
   const browsers = {};
-  for (const round of rounds) if (!round.excluded) for (const row of round.rows) if (!row.harnessCover) (browsers[round.browser] ??= []).push({ ...row, file: round.name });
+  for (const round of rounds) if (!round.excluded) for (const row of round.rows) if (!(excludeCovered && row.harnessCover)) (browsers[round.browser] ??= []).push({ ...row, file: round.name });
   const out = {};
   for (const [browser, rows] of Object.entries(browsers)) {
     const me = sleightArm(browser), tasks = [...new Set(rows.map(r => r.task))];
     const arms = [me, ...[...new Set(rows.map(r => r.arm))].filter(a => a !== me).sort()];
     const table = score(rows), verdict = claim(table, { tasks, arms }, me);
     const fastest = Object.fromEntries(arms.map(a => [a, []]));
+    // A cell under 3 runs (LAWS: 3 runs per arm) is shown, marked, and can't be fastest on its task.
+    const short = tasks.flatMap(task => arms.filter(a => table[a]?.[task] && table[a][task].runs.length < MIN_RUNS).map(arm => ({ task, arm, runs: table[arm][task].runs.length })));
     for (const task of tasks) {
-      const ranked = arms.filter(a => table[a]?.[task]?.expected != null).sort((a, b) => table[a][task].expected - table[b][task].expected);
+      const ranked = arms.filter(a => table[a]?.[task]?.expected != null && table[a][task].runs.length >= MIN_RUNS).sort((a, b) => table[a][task].expected - table[b][task].expected);
       if (ranked.length && (ranked.length === 1 || table[ranked[0]][task].expected < table[ranked[1]][task].expected)) fastest[ranked[0]].push(task);
     }
     const totals = Object.fromEntries(arms.map(a => [a, tasks.every(t => table[a]?.[t]?.expected != null) ? tasks.reduce((s, t) => s + table[a][t].expected, 0) : null]));
     const counted = summarizeEngines(rows), engines = Object.fromEntries(arms.filter(a => counted[a]).map(a => [a, counted[a]]));
-    out[browser] = { me, tasks, arms, table, stats: verdict.stats, pairs: verdict.pairs, topUps: verdict.pairs.filter(p => p.short?.length), fastest, totals,
+    out[browser] = { me, tasks, arms, table, stats: verdict.stats, pairs: verdict.pairs, topUps: verdict.pairs.filter(p => p.short?.length), fastest, short, totals,
       engines, engineMix: engineMix(engines) };
   }
   return out;
 }
 
-// Failed rows left out of scoring because another app's window covered the browser's at a drag, with the app.
-export const coveredRows = rounds => rounds.filter(r => !r.excluded).flatMap(r => r.rows.filter(row => row.harnessCover)
-  .map(row => ({ round: r.name, browser: r.browser, arm: row.arm, task: row.task, reason: row.harnessCover.reason })));
+// Every scored row with cover evidence, pass or fail, and whether --exclude-covered leaves it out (and why not, when it doesn't).
+export function coveredRows(rounds) {
+  const out = coverExclusions(rounds.filter(r => !r.excluded).flatMap(r => r.rows));
+  return rounds.filter(r => !r.excluded).flatMap(r => r.rows.filter(row => row.coverEvidence).map(row => {
+    const left = out.get(row);
+    return { round: r.name, browser: r.browser, arm: row.arm, task: row.task, passed: row.passed, excluded: !!left, source: left?.source ?? null,
+      reason: left?.reason ?? `kept: ${Object.values(row.coverEvidence.share).some(f => f >= 0.5) ? 'a run of this arm and task passed under the same window' : 'reading under 50% and no drag refusal'}` };
+  }));
+}
 
 // Rows that passed as recorded and fail under the race rules.
 export const flipped = rounds => rounds.flatMap(r => r.rows.filter(row => row.recordedOk && !row.passed).map(row => ({ round: r.name, browser: r.browser, ...row })));
 
-function print(rounds, scored) {
+export const coverLabel = excludeCovered => excludeCovered ? 'Cover exclusions: ON (opt-in --exclude-covered)' : 'Cover exclusions: OFF (default)';
+
+function print(rounds, scored, { excludeCovered = false } = {}) {
   const n = x => x == null ? '-' : x.toFixed(1), col = s => ' ' + String(s).padStart(36);
+  console.log(coverLabel(excludeCovered));
   console.log('Rounds:');
   const roundEngine = e => (e.version ? `engine ${e.version} ${e.provenance}` : `engine ${e.provenance}${e.candidates ? ` (${e.candidates.join(' or ')})` : ''}`) +
     (e.startedAt ? `, ${dayRange(e.startedAt, e.endedAt)}${e.dated === 'inferred' ? ' (date inferred)' : ''}` : ', no date');
@@ -118,18 +142,21 @@ function print(rounds, scored) {
     for (const task of s.tasks) console.log(task.padEnd(22) + s.arms.map(a => {
       const t = s.table[a]?.[task], st = s.stats[a]?.[task];
       if (!t) return col('no runs');
-      if (!t.passes.length) return col(`never (0/${t.runs.length})`);
-      return col(`${n(t.expected)} (${t.passes.length}/${t.runs.length}) ${n(st.median)} [${n(st.range[0])}-${n(st.range[1])}]${st.p90 != null ? ` p90 ${n(st.p90)}` : ''}`);
+      const mark = t.runs.length < MIN_RUNS ? '*' : '';
+      if (!t.passes.length) return col(`never (0/${t.runs.length})${mark}`);
+      return col(`${n(t.expected)} (${t.passes.length}/${t.runs.length}) ${n(st.median)} [${n(st.range[0])}-${n(st.range[1])}]${st.p90 != null ? ` p90 ${n(st.p90)}` : ''}${mark}`);
     }).join(''));
+    if (s.short.length) console.log(`* under ${MIN_RUNS} runs, kept out of "fastest on": ${s.short.map(c => `${c.task}/${c.arm} (${c.runs})`).join(', ')}`);
     console.log('fastest on'.padEnd(22) + s.arms.map(a => col(`${s.fastest[a].length} of ${s.tasks.length}`)).join(''));
     console.log('total expected s'.padEnd(22) + s.arms.map(a => col(s.totals[a] == null ? 'none (a task has no pass)' : n(s.totals[a]))).join(''));
     console.log(`Engine and UTC dates per arm (runs): ${s.arms.map(a => `${a} ${s.engines[a] ? engineText(s.engines[a], a) : 'no runs'}`).join(' | ')}.`);
     console.log(engineNote(s.engines, s.engineMix));
     console.log(s.topUps.length ? `Within 20% of ${s.me}, need 5 runs: ${s.topUps.map(p => `${p.task}/${p.arm} (${p.short.join(', ')})`).join('; ')}` : `No pair within 20% of ${s.me} is short of 5 runs.`);
   }
-  const covered = coveredRows(rounds);
-  console.log(`\nFailed rows excluded as harness-covered, every arm alike (${covered.length}):`);
-  for (const c of covered) console.log(`  ${c.round} ${c.arm} ${c.task}: ${c.reason}`);
+  const covered = coveredRows(rounds), left = covered.filter(c => c.excluded);
+  console.log(`\nRows with cover evidence (${covered.length}), ${left.length} of them ${excludeCovered ? 'left out above' : 'left out under --exclude-covered, scored above'}` +
+    ` (${left.filter(c => c.passed).length} passes, ${left.filter(c => !c.passed).length} failures):`);
+  for (const c of covered) console.log(`  ${c.round} ${c.arm} ${c.task} ${c.passed ? 'pass' : 'fail'}: ${c.excluded ? 'out, ' : ''}${c.reason}`);
   const flips = flipped(rounds);
   console.log(`\nPasses as recorded that fail under the race rules (${flips.length}):`);
   for (const f of flips) console.log(`  ${f.round} ${f.arm} ${f.task}: ${f.problems.join('; ')}`);
@@ -141,7 +168,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const rounds = expandRounds(dirs.length ? dirs : [DEFAULT]).map(dir => loadRound(dir, { timeline }));
   if (args.includes('--mark')) for (const r of rounds) if (r.detected) writeFileSync(join(r.dir, 'harness-failure.json'),
     JSON.stringify({ ...r.detected, decided: 'automatic (race-score --mark)', at: new Date().toISOString() }, null, 2));
-  const scored = scoreRounds(rounds);
-  if (args.includes('--json')) console.log(JSON.stringify({ rounds, browsers: scored, flipped: flipped(rounds), covered: coveredRows(rounds) }, null, 1));
-  else print(rounds, scored);
+  const excludeCovered = args.includes('--exclude-covered');
+  const scored = scoreRounds(rounds, { excludeCovered });
+  if (args.includes('--json')) console.log(JSON.stringify({ coverExclusions: excludeCovered, rounds, browsers: scored, flipped: flipped(rounds), covered: coveredRows(rounds) }, null, 1));
+  else print(rounds, scored, { excludeCovered });
 }

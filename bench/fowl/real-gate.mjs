@@ -18,7 +18,7 @@ import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
 import { startRoundAllow, allowPlan } from './chrome-allow.mjs';
 import { watchCover, windowCover } from './window-cover.mjs';
-import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure, harnessCover } from './real-gate-grade.mjs';
+import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure, coverEvidence, coverText } from './real-gate-grade.mjs';
 import { taskSupport, raceBundles, isCodexSurface, isCodexSleightSurface, runsCodexExec, sleightKind, codexModelFor } from './support.mjs';
 import { CODEX_SLEIGHT_HOME, ensureCodexSleightHome, writeCodexSleightConfig, approvalSummary, PROXY, SLEIGHT_MCP } from '../codex-sleight.mjs';
 import { engineSpan, readEngine } from '../engine-version.mjs';
@@ -332,6 +332,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     // Claude in Chrome reaches Anthropic's browser bridge about 6 s after launch (smoke 2026-10-17: launch 20:17:53,
     // connected 20:17:59). Starting sooner costs the first task a failed select_browser that other arms never pay.
     if (plan.surface === 'claude-in-chrome') await (runtime.settle || (ms => new Promise(resolve => setTimeout(resolve, ms))))(10000);
+    let coverLogged = 0;
     for (let arm of plan.arms) {
       if (controller.signal.aborted) throw Error('Gate interrupted');
       const census = async () => {
@@ -401,10 +402,14 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
         observed: observation.observed, observationReason: observation.reason, ownerCheck: observation.ownerCheck, evidence, visits });
       const text = name => { try { return readFileSync(join(arm.dir, name), 'utf8'); } catch { return ''; } };
       const errorClass = outcome.ok ? null : runErrorClass({ eventsText: text('events.jsonl'), stderr: text('stderr.txt') });
-      const covered = harnessCover({ ok: outcome.ok, eventsText: text('events.jsonl'), readings: [cover, coverRun] });
+      // Cover evidence on every row, pass or fail; race-score --exclude-covered decides over all rounds which rows to leave out.
+      const covered = coverEvidence({ eventsText: text('events.jsonl'), readings: [cover, coverRun] });
+      // The first watched tasks name every window owner the watch saw, overlays included, so a new overlay owner shows up early.
+      if (coverRun?.seen?.length && coverLogged++ < 3) console.error(`cover watch ${arm.task.name}: ${coverRun.seen.map(w =>
+        `${w.owner} ${Math.round(w.fraction * 100)}% layer ${w.layer ?? '?'}${w.counted ? '' : ' (overlay, not counted)'}`).join('; ')}`);
       const row = { task: arm.task, surface: arm.surface, status: 'ran', wallMs: run.finished - run.started, toolCalls: run.toolCalls, toolErrors: run.toolErrors,
         successfulBrowserCalls: evidence?.successfulCalls ?? null, run: { ...run, tabs: [...run.tabs] }, start, observation, navigation: navigation ?? null,
-        agentConfig: arm.metadata, grade, site, outcome, errorClass, cover, coverRun, ...(covered ? { harnessCover: covered } : {}) };
+        agentConfig: arm.metadata, grade, site, outcome, errorClass, cover, coverRun, ...(covered ? { coverEvidence: covered } : {}) };
       rows.push(row);
       writeFileSync(join(arm.dir, 'run.json'), JSON.stringify(row, null, 2));
       writeFileSync(join(plan.out, 'results.json'), JSON.stringify(rows, null, 2));
@@ -451,7 +456,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     '| task | arm | outcome | focus | covered by | ms | calls | errors |', '|---|---|---|---|---|---:|---:|---:|',
     ...rows.map(row => `| ${row.task.name} | ${row.surface} | ${row.outcome.cell} | ${row.focusGrade.cell} | ${coverCell(row.cover)}${row.coverRun?.covering?.length ? `; during: ${coverCell(row.coverRun)}` : ''} | ${row.wallMs} | ${row.toolCalls ?? 'unknown'} | ${row.toolErrors ?? 'unknown'} |`),
     ...(harness ? ['', `Harness failure, excluded from scoring: ${harness.reason}.`] : []),
-    ...(rows.some(row => row.harnessCover) ? ['', ...rows.filter(row => row.harnessCover).map(row => `Excluded from scoring: ${row.task.name}, ${row.harnessCover.reason}.`)] : [])];
+    ...(rows.some(row => row.coverEvidence) ? ['', ...rows.filter(row => row.coverEvidence).map(row => `Cover evidence: ${row.task.name} ${row.outcome.ok ? 'passed' : 'failed'}, ${coverText(row.coverEvidence)}. Scored as run; \`race-score.mjs --exclude-covered\` decides whether it is left out.`)] : [])];
   writeFileSync(join(plan.out, 'report.md'), lines.join('\n') + '\n');
   if (harness) console.error(`Harness failure: ${harness.reason}; rerun this round`);
   if (!cleanupProven || rows.some(row => !row.outcome.ok || row.focusGrade.ok === false)) process.exitCode = 1;

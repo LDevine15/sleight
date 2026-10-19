@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { swiftModuleCache } from '../swift-cache.mjs';
+import { countedCover } from './real-gate-grade.mjs';
 
 const execFileAsync = promisify(execFile);
 let built = null;
@@ -37,15 +38,22 @@ export async function windowCover(pid, { place = false, binary = helper, run = a
   } catch (error) { return { error: error.code === 'ETIMEDOUT' || error.killed ? 'timeout' : String(error.message).slice(0, 200) }; }
 }
 
-// The windows that covered the browser's window at any reading: each app once, with the largest share it covered.
+// The windows that covered the browser's window at any reading: each app once, with the largest share it covered. `covering`
+// counts normal windows of other apps only (real-gate-grade.mjs countedCover); `seen` keeps every owner and layer read, with
+// `counted: false` for the engine's and agents' overlays and system UI, so new overlay owners show up in the first watched runs.
 export function summarizeCover(readings) {
-  const share = new Map();
+  const share = new Map(), seen = new Map();
   let errors = 0;
   for (const reading of readings) {
     if (!reading || reading.error) { errors++; continue; }
-    for (const { owner, fraction } of reading.covering) share.set(owner, Math.max(share.get(owner) ?? 0, fraction));
+    const counted = new Set(countedCover(reading.covering));
+    for (const window of reading.covering ?? []) {
+      const key = JSON.stringify([window.owner, window.layer ?? null]), was = seen.get(key);
+      seen.set(key, { owner: window.owner, layer: window.layer ?? null, fraction: Math.max(was?.fraction ?? 0, window.fraction), counted: counted.has(window) });
+      if (counted.has(window)) share.set(window.owner, Math.max(share.get(window.owner) ?? 0, window.fraction));
+    }
   }
-  return { readings: readings.length, errors, covering: [...share].map(([owner, fraction]) => ({ owner, fraction })) };
+  return { readings: readings.length, errors, covering: [...share].map(([owner, fraction]) => ({ owner, fraction })), seen: [...seen.values()] };
 }
 
 // Reads the cover every `every` ms while the agent runs and once more at stop, one read at a time. A window can come over the

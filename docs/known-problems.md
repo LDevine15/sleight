@@ -732,11 +732,20 @@ native reference, and oversized first results defer the browser reference while 
   reorder, so there was no pointer-free route. The refusal's first step is now a move the app offers without a drag (a button, a
   menu command or keys the app shows), before `app.drag` and before asking the user. It wouldn't have changed these cells, and
   it's unmeasured on a page that does offer one. Each task now also reads the cover every 5 s and at its end, and a place that
-  doesn't find a free spot records the display count and the best spot's overlap. A failed run that tried a drag while another
-  app covered at least 5% of the browser's window, or whose `drag` refused for cover, is left out of race scoring for every arm,
-  named with the app. That also drops 7 sleight failures from the 2026-10-17 Firefox rounds, where a Finder window was over the
-  list. A reading covers the whole window and doesn't know the drag points, so a covered corner can exclude a failure with
-  another cause. We picked the 5% floor because notification banners covered 2 to 4%, and no run measured it.
+  doesn't find a free spot records the display count and the best spot's overlap. `race-score.mjs --exclude-covered` (off by
+  default) leaves out 15 race-1017 runs: 5 codex-sleight-sol failures and 10 sleight runs from the 2026-10-17 Firefox rounds
+  (7 failures, 3 passes), all with a `drag` refusal. A Finder window was over the list in the sleight rounds. codex-sol's 3
+  covered failures stay scored, because codex-sol passed form-settings and form-settings-helium in Firefox under the same
+  Claude window. A reading covers the whole window and doesn't know the drag points, so a covered corner can count as evidence
+  for a run that failed for another reason. We picked the 5% and 50% floors from what these rounds showed (banners 2 to 4%,
+  Finder 41% with passes beside it), and no run measured them. The overlay filter knows the engine's overlay, Cua's driver
+  overlay (100% in safari-cua-r2), the Dock (45 to 50% in the PG3 and SW1 rounds) and system UI by name. The first 3 watched
+  tasks of a round print every owner the watch saw, overlays included.
+- Cover evidence in old race rounds differs by arm. The cover column started on 2026-10-18, so the earlier Firefox rounds have
+  no reading, and for codex, lcu, cua and peekaboo there that means no evidence at all: their failures can't be left out by
+  reading, and only sleight's `drag` names the app in a refusal. The Sol rounds have a start reading and no watch, and only rounds after this change have readings during
+  the run. An arm with no evidence keeps every covered failure, so `--exclude-covered` favors the arms whose rounds recorded
+  cover.
 - Safari demoid lost 2 runs to the sign-in pop-up, Claude Code b9-r2 on Haiku and Codex b12-r3 on gpt-6-luna. Neither the
   engine nor sleight lost the dedicated window. "Sign in with DemoID" opens a separate Safari window, and the engine's next read
   shows that window, as it does in Firefox. When the pop-up closes, the next read shows the dedicated window again under its old
