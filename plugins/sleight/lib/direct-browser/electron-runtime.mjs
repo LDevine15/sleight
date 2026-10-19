@@ -355,10 +355,10 @@ export const registryPath = fileURLToPath(new URL('./electron/recipes.json', imp
 
 /** The worker's debugger consent: sleight's own native card, Always records in the operator's sealed store,
  * and the engine's approval read from the relay's begin frames (`approvedApps()`). */
-export async function createWorkerConsent({ ui, approvedApps, dependencies = {} } = {}) {
+export async function createWorkerConsent({ ui, approvedApps, onAlwaysUsed, dependencies = {} } = {}) {
   const { createElectronConsent, createGrantStore } = await import('./electron-consent.mjs');
   const grantStorePath = dependencies.grantStorePath ?? value((await import('./electron-config.mjs')).grantStorePath);
-  return createElectronConsent({ ui, store: createGrantStore({ path: grantStorePath }),
+  return createElectronConsent({ ui, store: createGrantStore({ path: grantStorePath }), onAlwaysUsed,
     engineApproval: instance => approvedApps().includes(instance.bundleId) ? 'approved' : 'unknown' });
 }
 

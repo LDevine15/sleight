@@ -198,8 +198,9 @@ test('v3 unavailability returns the engine route without constructing v2', async
   await assert.rejects(createInstalledBrowserBridge({ v3: async () => { throw Error('HOST_PACKAGE_MISMATCH'); } }), /HOST_PACKAGE_MISMATCH/);
 });
 
-async function controls(t) {
+async function controls(t, setup = () => {}) {
   const f = fixture(), read = new PassThrough(), write = new PassThrough(), views = [];
+  setup(f);
   let clock = 1000, lost = false, refresh, interval;
   t.mock.method(Date, 'now', () => clock);
   write.on('data', data => views.push(JSON.parse(data.toString())));
@@ -552,4 +553,27 @@ test('two selected apps double the preparing deadline up to the cap, and a paren
   reopen(); await host.closed;
   assert.deepEqual(steps.slice(0, 2), ['quit', 'reopen']);
   assert.ok(steps.indexOf('admin-close') > steps.indexOf('reopen'), steps.join());
+});
+
+test('while connected the menu offers Never Act on the site turbo last worked on, and the click blocks that site and no other', async t => {
+  const blocked = new Set(), writes = [], used = [];
+  const f = await controls(t, f => {
+    f.dependencies.sites = url => blocked.has(new URL(url).origin) ? 'blocked' : undefined;
+    f.dependencies.blockSite = async site => { writes.push(site); blocked.add(site); };
+    f.dependencies.used = key => used.push(key);
+    f.dependencies.createRuntime = async ({ dependencies: d }) => ({ call: async () => { d.onSite('https://example.com'); return { text: 'ok', isError: false }; },
+      delivered: () => false, end: async () => ({ revoked: true, cleanup: [] }) });
+  });
+  assert.equal(f.views.at(-1).data.site, undefined, 'no site before turbo works on one');
+  await begin(f);
+  const offered = f.views.at(-1);
+  assert.equal(offered.data.status, 'connected');
+  assert.equal(offered.data.site, 'https://example.com');
+  assert.deepEqual(offered.choices, ['pause', 'disconnect', 'block-site', 'hand-off', 'turbo-off']);
+  assert.deepEqual(used, ['turbo'], 'the turn that used turbo is its last use');
+  await f.choose(offered, 'block-site');
+  assert.deepEqual(writes, ['https://example.com']);
+  assert.equal(f.views.at(-1).data.site, undefined, 'a blocked site is not offered again');
+  assert.ok(!f.views.at(-1).choices.includes('block-site'));
+  assert.ok(!f.events.includes('disconnect'), 'blocking a site leaves turbo connected');
 });

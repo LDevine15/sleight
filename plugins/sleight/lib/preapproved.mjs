@@ -98,6 +98,29 @@ export function listPreapproved({ io = fs, home = userInfo().homedir, uid = user
   return readList(io, preapprovedFile(home), uid).apps;
 }
 
+// The list as a running session sees it: loaded again whenever the file changes (a revoke from sleight's menu or
+// `sleight-mcp permissions`, `allow remove`, or the user's own edit), so a removal applies at once in every session. A file
+// that turns unreadable or unsafe mid-session allows nothing from the list, and every app asks. onRemoved(listener) hears
+// the apps a reload took off, so the relay can drop this session's approvals for them too.
+export function livePreapproved(initial, { io = fs, file = preapprovedFile(), load = () => loadPreapproved(io) } = {}) {
+  const key = () => { try { const stat = io.lstatSync(file); return `${stat.ino}:${stat.size}:${stat.mtimeMs}`; } catch (err) { return err.code ?? 'error'; } };
+  const listeners = new Set();
+  let apps = initial, seen = key();
+  const fresh = () => {
+    const now = key();
+    if (now !== seen) {
+      seen = now;
+      const before = apps.list();
+      try { apps = load(); } catch { apps = new PreapprovedApps({ version: 1, apps: [] }); }
+      const after = new Set(apps.list()), removed = before.filter(app => !after.has(app));
+      if (removed.length) for (const listener of listeners) { try { listener(removed); } catch {} }
+    }
+    return apps;
+  };
+  return Object.freeze({ get size() { return fresh().size; }, add: (app, riskLevel) => fresh().add(app, riskLevel),
+    list: () => fresh().list(), allows: (app, riskLevel) => fresh().allows(app, riskLevel), onRemoved: listener => { listeners.add(listener); } });
+}
+
 export function loadPreapproved(io = fs) {
   let fd;
   try {

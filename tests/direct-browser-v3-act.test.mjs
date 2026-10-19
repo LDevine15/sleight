@@ -625,3 +625,15 @@ test('v3 accepts a literal space and a literal newline as keys, and still reject
   }
   for (const key of ['', 'a'.repeat(101), 1]) await assert.rejects(f.run(f.tab, [{ do: 'press', ref: 'e1', key }], {}), /needs key/);
 });
+
+test('v3 checks the page\'s site before every step\'s input, so a step that lands on a blocked site stops the rest', async () => {
+  const LINE = 'You blocked sleight on https://blocked.example (sleight-mcp permissions unblock https://blocked.example lifts it).';
+  const f = fixture({ onClick: page => { page.url = () => 'https://blocked.example/next'; } });
+  const checked = [];
+  const siteCheck = () => { const url = f.page.url(); checked.push(url); return url.startsWith('https://blocked.example') ? LINE : undefined; };
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'type', ref: 'e2', text: 'card number' }, { do: 'press', key: 'Enter' }], {}, { siteCheck });
+  assert.deepEqual(f.actions.map(a => a[0]), ['click'], 'nothing is typed on the blocked page');
+  assert.match(result.lines[1], /^2 type e2: not run: You blocked sleight on https:\/\/blocked\.example/);
+  assert.equal(result.lines[2], '3 press: not reached');
+  assert.deepEqual(checked, ['https://example.invalid/', 'https://blocked.example/next']);
+});

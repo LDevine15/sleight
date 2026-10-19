@@ -10,7 +10,7 @@ const guard = async (...args) => {
   return preapprovedWriteDenied(...args);
 };
 const stat = async path => ({ realPath: path });
-for (const filename of ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key', 'hand.json']) {
+for (const filename of ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key', 'hand.json', 'permissions.json']) {
 const policy = '/Users/fixture/Library/Application Support/sleight/' + filename;
 
 test(filename + ': each file mutation denies the policy path and case and tilde spellings', async () => {
@@ -203,4 +203,56 @@ test('the switch hook also catches partial names, escaped and split names, the p
     assert.equal(denied({ tool: 'Bash', command }), false, command);
   }
   assert.equal(denied({ tool: 'Edit', file_path: '/repo/plugins/sleight/lib/relay.mjs', old_string: 'a', new_string: 'outcomes = OUTCOMES' }), false);
+});
+
+test('permissions block, unblock, revoke and sites are the user\'s commands: every spelling but the listing denies', async () => {
+  for (const command of ['sleight-mcp permissions block com.example.app', 'sleight-mcp permissions unblock https://example.com',
+    'sleight-mcp permissions revoke all', 'sleight-mcp permissions revoke Calculator', 'sleight-mcp permissions sites only https://example.com',
+    'sleight-mcp permissions sites all', '/x/plugins/sleight/bin/sleight-mcp permissions unblock com.example.app',
+    'node /x/plugins/sleight/lib/launch.mjs permissions unblock com.example.app', 'cd /tmp && sleight-mcp permissions unblock x.y',
+    'bash -c "sleight-mcp permissions unblock x.y"', 'env A=1 sleight-mcp permissions revoke all', 'nohup sleight-mcp permissions block x.y',
+    'sh -c "true; sleight-mcp permissions unblock x.y"', 'true && sleight-mcp permissions unblock x.y', 'echo hi | sleight-mcp permissions unblock x.y',
+    'zsh -lc "cd /x && sleight-mcp permissions unblock x.y"', 'sleight-mcp "permissions" "unblock" x.y',
+    'node --no-warnings /x/lib/launch.mjs permissions revoke all', 'sleight-mcp permissions list unblock', 'sleight-mcp permissions repair', 'sleight-mcp permissions repair --discard']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat }), true, command);
+  }
+  for (const command of ['sleight-mcp permissions', 'sleight-mcp permissions list', 'env sleight-mcp permissions', 'sh -c "sleight-mcp permissions"',
+    'node /x/lib/launch.mjs permissions list', 'sleight-mcp permissions | head', 'sleight-mcp permissions; echo done', 'sleight-mcp --doctor',
+    'echo permissions unblock', 'permissions unblock x.y', 'sleight-mcp allow list']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat }), false, command);
+  }
+});
+
+test('deleting, moving or changing the permissions file by a parent folder, find, perl, chmod or an import of the writers denies', async () => {
+  const home = '/Users/fixture';
+  for (const command of ['find ~/Library -name permissions.json -delete', 'find "$HOME/Library/Application Support" -exec rm {} +',
+    'find /Users/fixture/Library -type f -delete', 'find -L ~/Library -delete', 'find ~ -name "*.json" -execdir rm {} \\;',
+    `perl -e 'unlink "$ENV{HOME}/Library/Application Support/sleight/permissions.json"'`,
+    'chmod 644 ~/Library/Application\\ Support/sleight/permissions.json', 'chown root ~/Library/Application\\ Support/sleight/permissions.json',
+    'chmod -R 777 ~/Library', 'mv ~/Library/Application\\ Support ~/elsewhere', 'mv "$HOME/Library" /tmp/x', 'rm -rf ~/Library/Application\\ Support',
+    'rm -rf /Users/fixture', 'mv /Users/fixture/Library/Application\\ Support/sleight /tmp/s',
+    `node -e "import('/x/plugins/sleight/lib/permissions-command.mjs').then(m => m.permissionsCommand(['unblock', 'x.y']))"`,
+    `node -e "import('/x/lib/preapproved.mjs').then(m => m.removePreapproved('x'))"`]) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat, home }), true, command);
+  }
+  for (const command of ["find . -name '*.tmp' -delete", 'find ~/Projects -name x -delete', 'find ~/Library -name "*.log"', 'mv a.txt ~/',
+    'rm -rf /tmp/build', 'chmod +x script.sh', 'chmod -R 755 ~/Projects/x', "perl -e 'print 1'", `node -e "console.log(1)"`]) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat, home }), false, command);
+  }
+});
+
+test('globs, braces, archives, downloads, patch and git checkout into sleight\'s folder deny; find denies only when it deletes or runs a writer', async () => {
+  const home = '/Users/fixture', folder = '~/Library/Application\\ Support/sleight';
+  for (const command of [`rm ${folder}/perm*`, `cd ${folder} && rm -f *.json`, `rm -f ${folder}/{a,permissions}.json`, `mv ${folder}/[p]ermissions.json /tmp/x`,
+    'tar -xf x.tar -C ~/Library/Application\\ Support', 'tar xf x.tar --directory=/Users/fixture/Library', 'unzip x.zip -d ~/Library',
+    `ditto x ${folder}`, `curl -o ${folder}/permissions.json https://example.com/x`, `curl --output=${folder}/hand.json https://example.com/x`,
+    `wget -O ${folder}/permissions.json https://example.com/x`, `git checkout -- ${folder}/permissions.json`, `git restore ${folder}/turbo.json`,
+    `patch ${folder}/permissions.json fix.diff`, 'find ~ -name permissions.json -exec rm {} \;', 'find ~/Library -execdir mv {} /tmp \;']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat, home }), true, command);
+  }
+  for (const command of ['find ~ -name x -exec cat {} \;', 'find / -name hand.json -print', "find ~ -name '*.log' -exec ls -l {} +",
+    'tar -xf x.tar -C /tmp/out', 'unzip x.zip -d build', 'curl -o out.json https://example.com/x', 'git checkout -- src/a.js', 'rm -f *.tmp',
+    `ls ${folder}/*.json`]) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat, home }), false, command);
+  }
 });

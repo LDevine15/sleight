@@ -25,6 +25,7 @@ export const browserDefinitions = (home = userInfo().homedir, apps = '/Applicati
 
 export const browserChoices = () => browsers.map(browser => browser.id).join('|');
 export const qualifiedBrowserNames = () => browsers.filter(browser => browser.qualified).map(browser => browser.name).join(' or ');
+export const browserBundleId = name => browsers.find(browser => browser.name === name)?.bundleId;
 export const browserApplicationName = executable => {
   const name = typeof executable === 'string' ? /\/([^/]+)\.app\/Contents\/MacOS\/[^/]+$/.exec(executable)?.[1] : undefined;
   return browsers.find(browser => browser.name === name)?.name;

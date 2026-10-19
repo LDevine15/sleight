@@ -10,6 +10,7 @@
 //   launch.mjs setup     install the helper, open permission panes, run doctor
 //   launch.mjs turbo on [--browser chrome|helium] | off | status   turbo is on by default; these are the user's controls
 //   launch.mjs hand on | off | capture hidden|visible | status   the ghost hand is on by default; the user's controls
+//   launch.mjs permissions [list] | revoke … | block|unblock … | sites …   what sleight may do, and where it never acts
 //   launch.mjs record|replay …  turn a finished run into a script, and run it again (replay.mjs)
 
 import { execFile, execFileSync, spawn } from 'node:child_process';
@@ -32,7 +33,9 @@ import { loadFlowRules } from './flow-rules.mjs';
 import { InputLease } from './input-lease.mjs';
 import { lightReturnEnabled } from './light-return.mjs';
 import { collectOwnedEngine } from './checked-stop.mjs';
-import { addPreapproved, listPreapproved, loadPreapproved, removePreapproved } from './preapproved.mjs';
+import { addPreapproved, listPreapproved, livePreapproved, loadPreapproved, removePreapproved } from './preapproved.mjs';
+import { createPermissionCheck, noteCurrentApp } from './permissions.mjs';
+import { browserDefinitions } from './direct-browser/browsers.mjs';
 import { createGrantAudit } from './preapproved-audit.mjs';
 import { ALLOW_FORBIDDEN_COMMAND, forbiddenTargetsAllowed, matchBlockedApp } from './blocked-apps.mjs';
 import { SELECT_WINDOW_TOOL, selectWindow } from './select-window.mjs';
@@ -160,13 +163,21 @@ async function handDoctorSection() {
     return handDoctorLines(handSetting(), handHostBuilt());
   } catch (err) { return ['ghost hand', `PROBLEM   could not read the hand's state (${err.message})`]; }
 }
+async function permissionsDoctorSection() {
+  try {
+    const lines = (await import('./permissions-command.mjs')).permissionsDoctorLines();
+    return createPermissionCheck().sitesLimited() ? [...lines, ...await browserDoctorLines()] : lines;
+  }
+  catch (err) { return ['permissions', `PROBLEM   could not read the permissions (${err.message})`]; }
+}
 
-export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, hand = handDoctorSection } = {}) {
+export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, hand = handDoctorSection, permissions = permissionsDoctorSection } = {}) {
   if (app !== undefined && (typeof app !== 'string' || !app.trim() || app.startsWith('-'))) {
     log('usage: sleight-mcp --doctor [running app name or bundle ID]'); return 1;
   }
   for (const line of await turbo()) log(line);
   for (const line of await hand()) log(line);
+  for (const line of await permissions()) log(line);
   const s = resolveServer(env);
   if (s.error) { log(`sleight: ${s.error}`); return 1; }
   await probeSurfaces(s, env);
@@ -214,6 +225,45 @@ export async function doctor({ env = process.env, log = console.log, app = proce
   }
   if (probe.stuck) log('SkyComputerUseService helper appears stuck. Stop retrying. The user needs to restart ChatGPT; this ends their Codex sessions. Never quit or restart ChatGPT automatically.');
   return 1;
+}
+
+// Which apps are web browsers, for site limits on the engine path: the apps LaunchServices lists for https (web-browsers.js),
+// joined with the browsers below, so a short or wrong answer never clears a real browser. Asked in the background, at
+// startup when permissions.json already has site limits (ask) or else the first time a check needs it. Answers: true or
+// false; undefined while the ask is pending, when an action without a proven site is refused; null when the ask failed or
+// came back empty, or the window has no bundle id, when the relay judges the window by whether its read shows web content.
+// A failed ask is repeated after 5 minutes.
+const KNOWN_BROWSERS = new Set([...browserDefinitions('/', '/').map(browser => browser.bundleId), 'com.apple.Safari', 'com.apple.SafariTechnologyPreview',
+  'org.mozilla.firefox', 'org.mozilla.firefoxdeveloperedition', 'org.mozilla.nightly', 'company.thebrowser.Browser', 'com.operasoftware.Opera',
+  'com.openai.atlas', 'com.kagi.kagimacOS', 'app.zen-browser.zen', 'com.duckduckgo.macos.browser'].map(id => id.toLowerCase()));
+const BROWSER_RETRY_MS = 300000;
+const browserIds = result => result?.ok === true && Array.isArray(result.ids) ? result.ids.filter(id => typeof id === 'string' && id) : [];
+export function webBrowserCheck(run = runScript, now = Date.now) {
+  let ids, pending = false, failedAt;
+  const ask = () => {
+    if (ids || pending || failedAt !== undefined && now() - failedAt < BROWSER_RETRY_MS) return;
+    pending = true;
+    Promise.resolve().then(() => run('web-browsers.js', {})).then(result => {
+      const found = browserIds(result);
+      if (found.length) { ids = new Set(found.map(id => id.toLowerCase())); failedAt = undefined; } else failedAt = now();
+    }, () => { failedAt = now(); }).finally(() => { pending = false; });
+  };
+  const check = appId => {
+    if (!ids) ask();
+    if (typeof appId !== 'string' || !appId) return null;
+    const id = appId.toLowerCase();
+    if (KNOWN_BROWSERS.has(id) || ids?.has(id)) return true;
+    return ids ? false : failedAt !== undefined ? null : undefined;
+  };
+  return Object.assign(check, { ask, failed: () => !ids && failedAt !== undefined });
+}
+// The doctor's line for that lookup, shown while site limits exist.
+export async function browserDoctorLines(run = runScript) {
+  let found = [];
+  try { found = browserIds(await run('web-browsers.js', {})); } catch {}
+  return found.length ? [`ok        browsers: ${found.length} apps open https links`]
+    : ["PROBLEM   sleight couldn't list your browsers, so site limits on the engine path hold for known browsers and for windows that show web content",
+      '          a session asks again every 5 minutes'];
 }
 
 // SLEIGHT_TRACE=1 logs every relayed message to
@@ -516,8 +566,10 @@ const runOpen = (file, argv) => new Promise((resolve, reject) =>
 // doesn't resolve, the apps the engine refuses (terminals and OpenAI's apps), launchers, script and
 // executable files, relative paths, and anything but an existing regular file. The open goes to the
 // resolved bundle ID, so the app checked is the app that opens the file.
+// blocked(bundleId, app) is the user's line for an app they blocked (permissions.mjs), checked once the name resolves, so a
+// block by bundle id holds whatever name Claude used and whether or not the app runs.
 export async function openDocument(args, { exec = runOpen, resolve = resolveAppId, home = homedir(),
-  fast = false, bundleId: preparedId, current = () => {}, openedFiles, target,
+  fast = false, bundleId: preparedId, current = () => {}, openedFiles, target, blocked = () => undefined,
   hasDocument = async (appId, path) => {
     const result = await runScript('open-file-window.js', { appId, path });
     return result.ok === true && result.matches === true;
@@ -530,10 +582,19 @@ export async function openDocument(args, { exec = runOpen, resolve = resolveAppI
   if (RUNNABLE.test(path)) return text(`open_file doesn't open scripts, apps or installers (${raw}).`, true);
   let info;
   try { info = lstatSync(path); } catch { return text(`No file at ${raw}.`, true); }
+  // sleight's own settings (permissions.json, the always list, turbo's switch) change only by the user's hand, so no app
+  // opens them for Claude to edit. The real path decides, so a link elsewhere doesn't get around it.
+  let actual = path;
+  try { actual = realpathSync(path); } catch {}
+  if ([path, actual].some(value => /\/library\/application support\/sleight(?:\/|$)/i.test(value.normalize('NFC')))) {
+    return text("open_file doesn't open sleight's own settings files; only the user changes them.", true);
+  }
   if (!info.isFile()) return text(`${raw} isn't a regular file.`, true);
   if (info.mode & 0o111) return text(`open_file doesn't open executable files (${raw}).`, true);
   const bundleId = await (preparedId ?? resolve(app));
   if (!BUNDLE_ID.test(bundleId)) return text(`macOS has no app named ${app}.`, true);
+  const refusal = blocked(bundleId, app);
+  if (refusal) return text(refusal, true);
   if (matchBlockedApp(app, bundleId) || LAUNCHER_BUNDLES.has(bundleId.toLowerCase())) {
     return text(`open_file doesn't open files in ${app}, which runs or installs what it opens or isn't driven by sleight.`, true);
   }
@@ -586,13 +647,17 @@ export async function reopenDocument(bundleId, path, { exec = runOpen, openedFil
 const approveOpenFile = (args, approve) => approve(['open_file', args.app],
   `Allow Claude to open files in ${args.app}? They open in the background.`);
 
-export function prepareOpenFile(args, approve, { resolve = resolveAppId, openedFiles } = {}) {
+export function prepareOpenFile(args, approve, { resolve = resolveAppId, openedFiles, blocked } = {}) {
   let approval;
+  const bundleId = Promise.resolve().then(() => resolve(String(args.app ?? '').trim())).catch(() => '');
   return {
     openedFiles,
-    bundleId: Promise.resolve().then(() => resolve(String(args.app ?? '').trim())).catch(() => ''),
-    // Resolution can overlap target lookup; approval starts only when the caller is ready.
-    get approval() { return approval ??= Promise.resolve().then(() => approveOpenFile(args, approve)); },
+    bundleId,
+    // Resolution can overlap target lookup; approval starts only when the caller is ready. A blocked app is never asked about.
+    get approval() {
+      return approval ??= (blocked ? bundleId.then(id => BUNDLE_ID.test(id) && blocked(id, args.app)) : Promise.resolve())
+        .then(refused => refused ? false : approveOpenFile(args, approve));
+    },
   };
 }
 
@@ -688,7 +753,7 @@ async function performDrag(args, runLocal) {
   return text(rest, !ok);
 }
 
-export async function callLocalTool(name, args, approve, runLocal = runScript, resolved, prepared) {
+export async function callLocalTool(name, args, approve, runLocal = runScript, resolved, prepared, { blocked, resolve = resolveAppId } = {}) {
   if (name === 'hover') {
     if (!await approve(['hover', args.app], `Allow Claude to hover in ${args.app}? It moves your pointer briefly.`)) {
       return text(`The user didn't allow hovering in ${args.app}. Stop and tell them; don't work around it.`, true);
@@ -700,10 +765,17 @@ export async function callLocalTool(name, args, approve, runLocal = runScript, r
   }
   if (name === 'select_window') return selectWindow(args, { approve, runScript: runLocal });
   if (name === 'open_file') {
+    // A blocked app is refused before the user is asked to approve opening files in it.
+    let bundleId = prepared?.bundleId;
+    if (blocked) {
+      bundleId ??= Promise.resolve().then(() => resolve(String(args.app ?? '').trim())).catch(() => '');
+      const id = await bundleId, refusal = BUNDLE_ID.test(id) && blocked(id, args.app);
+      if (refusal) return text(refusal, true);
+    }
     if (!await approveOpenFile(args, approve)) {
       return text(`The user didn't allow opening files in ${args.app}. Stop and tell them; don't work around it.`, true);
     }
-    return openDocument(args, prepared ? { ...prepared, fast: true, target: resolved } : undefined);
+    return openDocument(args, { ...prepared ? { ...prepared, fast: true, target: resolved } : {}, ...bundleId ? { bundleId } : {}, ...blocked ? { blocked } : {} });
   }
   if (name === 'drag') {
     if (!await approve(['drag', args.app], `Allow Claude to drag in ${args.app}? Background comes first; foreground fallback can move your pointer for a few seconds.`)) {
@@ -830,6 +902,12 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   process.once('exit', () => { turnHook?.close(); });
   let flowRules, preapproved;
   try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
+  // A revoke from the menu or the command reaches this session at once; the startup list is the first copy.
+  preapproved = livePreapproved(preapproved);
+  // The user's blocks and site limits. With site limits already set, which apps are browsers is asked now, not at the first action.
+  const permissionCheck = createPermissionCheck(), webBrowser = webBrowserCheck();
+  if (permissionCheck.sitesLimited()) webBrowser.ask();
+  const appBlocked = (bundleId, app) => permissionCheck.app({ bundleId, name: app });
   const { trace, grantAudit } = approvalLogging(preapproved);
   handTrace = trace;
   let s = directBrowserServer(resolveServer(), directBrowser);
@@ -966,6 +1044,9 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     idleTurnEndMs: Number(process.env.SLEIGHT_IDLE_TURN_END_MS ?? 30000),
     inputLease: new InputLease({ directory: leaseDirectory, holder: `session ${sessionId} (pid ${process.pid})` }),
     engineForbiddenTargets: forbiddenTargetsAllowed(readForbiddenTargets),
+    // The user's blocks, read again whenever permissions.json changes.
+    permissions: { ...permissionCheck, noteApp: noteCurrentApp },
+    webBrowser,
     onLeaseFault: err => { process.stderr.write(`sleight: ${err.message}; stopping the owned engine.\n`); terminateEngine(); },
     // SLEIGHT_MENU_BAR=0 leaves out the menu bar and notification tools,
     // SLEIGHT_DRAG=0 the drag tool, SLEIGHT_HOVER=0 the hover tool,
@@ -973,10 +1054,11 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     localTools: {
       tools: localToolDefinitions(),
       prepareOpen: (args, approve) => prepareOpenFile(args, (parts, message, options) =>
-        approve(parts, wordForHost(message, wording()), options), { openedFiles }),
+        approve(parts, wordForHost(message, wording()), options), { openedFiles, blocked: appBlocked }),
       reopen: (bundleId, path) => reopenDocument(bundleId, path, { openedFiles }),
       call: (name, args, approve, runLocal, resolved, prepared) => callLocalTool(name, args, (parts, message, options) =>
-        approve(parts, wordForHost(message, wording()), options), runLocal, resolved, prepared),
+        approve(parts, wordForHost(message, wording()), options), runLocal, resolved, prepared,
+        { blocked: appBlocked }),
       target: async args => {
         const result = await appHealth.target(args);
         // sleight's own consent host answers with its one line, which Claude passes on.
@@ -1120,6 +1202,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   } else if (process.argv[2] === 'turbo-state') {
     const { readInstalledConfig } = await import('./direct-browser/installed-config.mjs');
     process.stdout.write(JSON.stringify(turboState(readInstalledConfig)) + '\n');
+  } else if (process.argv[2] === 'permissions') {
+    try { process.exitCode = (await import('./permissions-command.mjs')).permissionsCommand(process.argv.slice(3)); }
+    catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }
   } else if (process.argv[2] === 'allow') {
     try { process.exitCode = allowCommand(process.argv.slice(2)); }
     catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }

@@ -1,7 +1,7 @@
 const directorySuffix = '/library/application support/sleight';
 // grant-seal.key seals the Electron Always records in electron-grants.json; writing it would forge consent. hand.json is the
-// user's ghost hand opt-out.
-const suffixes = ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key', 'hand.json'].map(filename => `${directorySuffix}/${filename}`);
+// user's ghost hand opt-out. permissions.json holds the apps and sites the user told sleight never to act in.
+const suffixes = ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key', 'hand.json', 'permissions.json'].map(filename => `${directorySuffix}/${filename}`);
 const mutations = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const folded = path => path.normalize('NFC').toLowerCase();
 const protectedLiteral = path => {
@@ -17,10 +17,18 @@ const normalize = path => {
   return (path.startsWith('/') ? '/' : '') + parts.join('/');
 };
 
+// True when the path is sleight's folder or a folder above it, so deleting, moving or changing it reaches the protected files.
+// Without the home folder, only ~ spellings can be judged.
+const above = (path, home) => {
+  const root = home ?? '/~', value = folded(normalize(path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/, () => root)));
+  const folder = folded(normalize(`${root}/Library/Application Support/sleight`));
+  return value.startsWith('/') && (value === folder || folder.startsWith(value === '/' ? '/' : value + '/'));
+};
+
 // Resolve before normalizing: a symlink followed by .. walks from its target.
-async function protectedPath(path, { stat, home }) {
+async function protectedPath(path, { stat, home }, ancestor = false) {
   if (typeof path !== 'string' || !path || path.length > 4096) return false;
-  if (protectedLiteral(path)) return true;
+  if (protectedLiteral(path) || ancestor && above(path, home)) return true;
   if (home) path = path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/, () => home);
   let resolved = (await stat(path.startsWith('/') ? '/' : '.').catch(() => undefined))?.realPath;
   if (!resolved) return false;
@@ -29,7 +37,7 @@ async function protectedPath(path, { stat, home }) {
     const info = await stat(next).catch(() => undefined);
     resolved = info?.realPath ?? normalize(next);
   }
-  return protectedLiteral(resolved);
+  return protectedLiteral(resolved) || ancestor && above(resolved, home);
 }
 
 // Only literal shell names and operators, never eval or shell expansion. Keep
@@ -60,22 +68,32 @@ function shellWords(command) {
   return words;
 }
 
+// Commands a find -exec runs that change or remove what it finds.
+const FIND_WRITERS = new Set(['rm', 'mv', 'cp', 'ln', 'chmod', 'chown', 'chgrp', 'chflags', 'truncate', 'tee', 'unlink', 'sed', 'perl', 'sh', 'bash', 'zsh',
+  'python', 'python3', 'node', 'ruby', 'xargs', 'dd', 'install', 'rsync', 'ditto', 'touch', 'shred', 'srm']);
+// A path with glob or brace characters names whatever its folder holds that matches; the folder decides.
+const globFolder = path => /[*?[{]/.test(path) ? path.slice(0, path.search(/[*?[{]/)).replace(/\/[^/]*$/, '') : undefined;
+const PROTECTED_NAME = /(?:preapproved|turbo|turbo-apps|electron-grants|hand|permissions)\.json|grant-seal\.key/i;
 const launcher = name => name === 'sleight-mcp' || name === 'launch.mjs';
 const commandArgument = value => value.replace(/^['"]+|[;&|)'"]+$/g, '');
-// True when the words run the launcher's turbo or hand command with anything but status, as separate words or inside a -c string.
-function launcherToggle(words, command) {
+// True when the words run the launcher's command with arguments `allowed` refuses (by default anything but status), as
+// separate words or inside a -c string, where the arguments run to the next shell operator.
+const statusOnly = rest => rest[0] === 'status';
+function launcherToggle(words, command, allowed = statusOnly) {
   const names = words.map(word => word.split('/').at(-1)), first = names.findIndex(launcher);
   if (first >= 0) {
     const at = names.indexOf(command, first + 1);
-    if (at >= 0 && commandArgument(names[at + 1] ?? '') !== 'status') return true;
+    if (at >= 0 && !allowed(names.slice(at + 1).map(commandArgument))) return true;
   }
   return words.some(word => {
     if (!/\s/.test(word)) return false;
     const hit = /(?<![\w.-])(?:\S*\/)?(?:sleight-mcp|launch\.mjs)(?=[\s'"]|$)/.exec(word);
-    return !!hit && [...word.slice(hit.index).matchAll(new RegExp(`(?<![\\w-])${command}(?![\\w-])\\s*(\\S*)`, 'g'))]
-      .some(match => commandArgument(match[1]) !== 'status');
+    return !!hit && [...word.slice(hit.index).matchAll(new RegExp(`(?<![\\w-])${command}(?![\\w-])([^;&|)\\n]*)`, 'g'))]
+      .some(match => !allowed(match[1].trim().split(/\s+/).filter(Boolean).map(commandArgument)));
   });
 }
+// `permissions` alone or `permissions list` only reads; block, unblock, revoke and sites write permissions.json or a grant.
+const listingOnly = rest => rest.length === 0 || rest.length === 1 && rest[0] === 'list';
 
 function shellWritePaths(command, initialDirectory, depth = 0) {
   if (depth > 8) return [];
@@ -87,9 +105,10 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
       segments.push({ words: [], piped: word.text === '|' ? previous.words : undefined });
     } else previous.words.push(word);
   }
-  const add = (path, literalOnly = false) => {
+  // ancestor: the command also reaches what is under the path (rm -r, mv, find -delete, chmod -R), so a parent folder counts.
+  const add = (path, literalOnly = false, ancestor = false) => {
     if (typeof path !== 'string') return;
-    paths.push({ path: directory && !/^(?:\/|~|\$HOME|\$\{HOME\})/.test(path) ? `${directory}/${path}` : path, literalOnly });
+    paths.push({ path: directory && !/^(?:\/|~|\$HOME|\$\{HOME\})/.test(path) ? `${directory}/${path}` : path, literalOnly, ancestor });
   };
   for (const { words: segment, piped } of segments) {
     const texts = [];
@@ -119,6 +138,8 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
     // `hand on|off|capture` writes hand.json the same way, and only `hand status` passes.
     if (launcherToggle(allWords, 'turbo')) add('~/Library/Application Support/sleight/turbo.json', true);
     if (launcherToggle(allWords, 'hand')) add('~/Library/Application Support/sleight/hand.json', true);
+    // `permissions block|unblock|revoke|sites` change what sleight may do, and only the listing passes.
+    if (launcherToggle(allWords, 'permissions', listingOnly)) add('~/Library/Application Support/sleight/permissions.json', true);
     if (xargs && piped) operands.push(...piped.filter(word => !word.operator).map(word => word.text));
     if (executable === 'cd') {
       const next = operands[0];
@@ -130,20 +151,44 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
       add(target >= 0 ? texts[target + 1] : operands.at(-1));
       const attached = texts.find(text => text.startsWith('--target-directory='));
       if (attached) add(attached.slice('--target-directory='.length));
-    } else if (['tee', 'mv', 'rm', 'truncate'].includes(executable) ||
+    } else if (executable === 'rm') operands.forEach(path => add(path, false, true));
+    else if (executable === 'mv') operands.forEach((path, at) => add(path, false, at < operands.length - 1));
+    else if (['chmod', 'chown', 'chgrp', 'chflags'].includes(executable)) operands.forEach(path => add(path, false, texts.some(arg => /^-[^-]*R/.test(arg))));
+    else if (executable === 'find' && texts.some((arg, at) => arg === '-delete' ||
+      ['-exec', '-execdir', '-ok', '-okdir'].includes(arg) && FIND_WRITERS.has(texts[at + 1]?.split('/').at(-1)))) {
+      // find's search roots come before its first expression; a protected name anywhere in the expression denies too.
+      const start = texts.findIndex(arg => !['-H', '-L', '-P'].includes(arg)), end = texts.findIndex((arg, at) => at >= start && /^[-(!]/.test(arg));
+      const roots = texts.slice(start, end < 0 ? texts.length : end);
+      for (const root of roots.length ? roots : ['.']) add(root, false, true);
+      if (texts.some(arg => PROTECTED_NAME.test(arg))) add('~/Library/Application Support/sleight', true);
+    } else if (executable === 'tar' && /^-?[a-zA-Z]*x|^--extract$|^--get$/.test(texts[0] ?? '') || executable === 'tar' && texts.some(arg => /^-[a-zA-Z]*x/.test(arg))) {
+      // An archive unpacked into a folder can write any file under it.
+      const at = texts.findIndex(arg => arg === '-C' || arg === '--directory');
+      if (at >= 0) add(texts[at + 1], false, true);
+      texts.filter(arg => arg.startsWith('--directory=')).forEach(arg => add(arg.slice('--directory='.length), false, true));
+    } else if (executable === 'unzip' && texts.includes('-d')) add(texts[texts.indexOf('-d') + 1], false, true);
+    else if (executable === 'ditto') add(operands.at(-1), false, true);
+    else if (['curl', 'wget'].includes(executable)) {
+      texts.forEach((arg, at) => { if (['-o', '--output', '-O', '--output-document'].includes(arg)) add(texts[at + 1]); });
+      texts.filter(arg => /^--output(?:-document)?=/.test(arg)).forEach(arg => add(arg.slice(arg.indexOf('=') + 1)));
+    } else if (executable === 'git' && ['checkout', 'restore', 'apply'].includes(texts[0])) operands.slice(1).forEach(path => add(path));
+    else if (executable === 'patch') operands.forEach(path => add(path));
+    else if (['tee', 'truncate'].includes(executable) ||
       (['sed', 'perl'].includes(executable) && texts.some(arg => /^-[^-]*i/.test(arg))) ||
       (executable === 'defaults' && ['write', 'delete', 'import'].includes(texts[0]))) operands.forEach(path => add(path));
     else if (executable === 'plutil' && texts.some(arg => ['-replace', '-insert', '-remove', '-convert'].includes(arg))) {
       add(texts.includes('-o') ? texts[texts.indexOf('-o') + 1] : operands.at(-1));
     } else if (executable === 'dd') texts.filter(arg => arg.startsWith('of=')).forEach(arg => add(arg.slice(3)));
-    else if (/^python(?:\d+(?:\.\d+)?)?$/.test(executable ?? '') || ['node', 'ruby'].includes(executable)) {
-      const flag = texts.findIndex(arg => /^python/.test(executable) ? /^-c/.test(arg) : /^-e|^--eval(?:=|$)/.test(arg));
+    else if (/^python(?:\d+(?:\.\d+)?)?$/.test(executable ?? '') || ['node', 'ruby', 'perl'].includes(executable)) {
+      const flag = texts.findIndex(arg => /^python/.test(executable) ? /^-c/.test(arg) : executable === 'perl' ? /^-\w*[eE]$/.test(arg) : /^-e|^--eval(?:=|$)/.test(arg));
       if (flag < 0) continue;
-      const option = texts[flag], source = ['-c', '-e', '--eval'].includes(option) ? texts[flag + 1] ?? '' : option.replace(/^(?:-[ce]|--eval=)/, '');
-      const writes = /\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?['"][wax][+bt]*['"]|\b(?:writeFile(?:Sync)?|appendFile(?:Sync)?|unlink(?:Sync)?|rename(?:Sync)?|copyFile(?:Sync)?|rm(?:Sync)?|remove|truncate|File\.write)\s*\(/;
+      const option = texts[flag], source = ['-c', '-e', '--eval'].includes(option) || executable === 'perl' ? texts[flag + 1] ?? '' : option.replace(/^(?:-[ce]|--eval=)/, '');
+      // Code that loads sleight's own writers can change permissions.json or the always list without naming either file.
+      if (/\b(?:permissions-command|preapproved)\.mjs\b/i.test(source)) { add('~/Library/Application Support/sleight', true); continue; }
+      const writes = /\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?['"][wax][+bt]*['"]|\b(?:writeFile(?:Sync)?|appendFile(?:Sync)?|unlink(?:Sync)?|rename(?:Sync)?|copyFile(?:Sync)?|rm(?:Sync)?|remove|truncate|File\.write)\s*\(|\b(?:unlink|rename|chmod|chown|rmtree|move|symlink)\b/;
       if (!writes.test(source)) continue;
       // Inline code is scanned as text only, never passed to the filesystem resolver.
-      for (const match of source.matchAll(/(?:~|\$\{?HOME\}?|\/|\.{1,2}\/)[^'"`;\n()<>|]*?(?:(?:preapproved|turbo|turbo-apps|electron-grants|hand)\.json|grant-seal\.key|\/sleight(?=['"`;,)\s]|$))|\b(?:(?:preapproved|turbo|turbo-apps|electron-grants|hand)\.json|grant-seal\.key)\b/gi)) add(match[0], true);
+      for (const match of source.matchAll(/(?:~|\$\{?HOME\}?|\/|\.{1,2}\/)[^'"`;\n()<>|]*?(?:(?:preapproved|turbo|turbo-apps|electron-grants|hand|permissions)\.json|grant-seal\.key|\/sleight(?=['"`;,)\s]|$))|\b(?:(?:preapproved|turbo|turbo-apps|electron-grants|hand|permissions)\.json|grant-seal\.key)\b/gi)) add(match[0], true);
     }
   }
   return paths;
@@ -158,13 +203,15 @@ export async function preapprovedWriteDenied(input, options) {
     paths = shellWritePaths(input.command);
   } else return false;
   for (const candidate of paths) {
-    const { path, literalOnly } = tool === 'Bash' ? candidate : { path: candidate };
+    const { path, literalOnly, ancestor } = tool === 'Bash' ? candidate : { path: candidate };
     if (typeof path !== 'string') continue;
     if (tool === 'Bash') {
-      if (protectedLiteral(path)) return true;
+      if (protectedLiteral(path) || ancestor && above(path, options?.home)) return true;
+      const folder = globFolder(path);
+      if (folder && (protectedLiteral(folder) || ancestor && above(folder, options?.home))) return true;
       if (literalOnly || /\s/.test(path) || path.length >= 512) continue;
     }
-    if (await protectedPath(path, options)) return true;
+    if (await protectedPath(path, options, ancestor)) return true;
   }
   return false;
 }

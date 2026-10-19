@@ -31,6 +31,13 @@ test('Turn Turbo Off asks first, and Settings & Help opens only the fixed docs a
   assert.equal(source.match(/NSWorkspace\.shared\.open/g)?.length, 1);
 });
 
+test('the Permissions rows only remove access: Revoke and Never Act answer at once on the hand channel, and nothing lifts a block', () => {
+  assert.match(source, /@objc func permissionClick\(_ sender: NSMenuItem\) \{\n {8}guard let event = sender\.representedObject as\? \[String: String\] else \{ return \}\n {8}writePermissionEvent\(event\)\n {4}\}/);
+  assert.match(source, /\["revoke", "revoke-all", "block"\]\.contains\(op\)/);
+  assert.doesNotMatch(source, /[Uu]nblock"/, 'no menu row unblocks');
+  assert.match(source, /func menuNeedsUpdate\(_ menu: NSMenu\) \{ fillPermissions\(menu\) \}/);
+});
+
 test('the status menu shows only while turbo is in use and admits only the worker\'s known choices', { skip: macCommandSkip('xcrun') }, t => {
   const block = source.match(/\/\/ BEGIN STATUS MENU\n([\s\S]*?)\/\/ END STATUS MENU/);
   const hookup = source.match(/\/\/ BEGIN HOOKUP\n([\s\S]*?)\/\/ END HOOKUP/);
@@ -100,6 +107,50 @@ check(hookupFrame(menuGlyph, 0).contains("fill-opacity") && hookupFrame(menuGlyp
 check(hookupFrame(menuGlyph, 0).replacingOccurrences(of: #"<rect[^>]*/>"#, with: "", options: .regularExpression)
   == menuGlyph.replacingOccurrences(of: #"<rect[^>]*/>"#, with: "", options: .regularExpression), "only the dabs move")
 check(hookupConnects(from: nil, to: "connected") && hookupConnects(from: "disconnected", to: "connected") && hookupConnects(from: "paused", to: "connected"), "connecting")
+// Never Act on <site>: the site turbo last worked on, after the session actions, only with its choice and a bare http(s) origin.
+check(statusRows(["status": "connected", "site": "https://example.com"], ["pause", "disconnect", "block-site", "turbo-off"])! == [.status(title: "Connected", dot: "green", details: []),
+  .separator, .action("Pause", choice: "pause"), .action("Disconnect", choice: "disconnect"), .action("Never Act on example.com", choice: "block-site"),
+  .separator, .confirm("Turn Turbo Off…", choice: "turbo-off"), .help], "site row")
+check(statusRows(["status": "connected", "site": "http://localhost:8080"], ["block-site"])!.contains(.action("Never Act on http://localhost:8080", choice: "block-site")), "http keeps its scheme")
+check(statusRows(["status": "connected"], ["block-site"]) == nil, "the site choice needs its site")
+for bad in ["https://example.com/path", "javascript:alert(1)", "https://EXAMPLE.com", "https://example.com:99999x"] {
+  check(statusRows(["status": "connected", "site": bad], ["disconnect"]) == nil, "an origin only: " + bad)
+}
+check(statusRows(["status": "connected", "site": "https://example.com"], ["disconnect"])! == [.status(title: "Connected", dot: "green", details: []),
+  .separator, .action("Disconnect", choice: "disconnect"), .separator, .help], "no site row without its choice")
+// The Permissions submenu: each grant with its last use, Revoke All, Never Act in the current app, the blocks, ChatGPT's list.
+let payload: [String: Any] = ["grants": [["title": "Fixture", "detail": "always", "used": 1000.0, "target": "app:Fixture"],
+  ["title": "Chat App", "detail": "debugger, always", "used": NSNull(), "target": "electron:com.example.chat"],
+  ["title": "Google Chrome", "detail": "turbo", "used": 4000.0, "target": "turbo"]],
+  "blocked": ["Blocked App", "https://blocked.example"], "current": ["title": "Editor", "target": "com.example.editor"], "only": ["https://a.example"]]
+check(permissionRows(permissionsData(payload)!, now: 8200) == [.grant("Fixture · always · used 2h ago", target: "app:Fixture"),
+  .grant("Chat App · debugger, always · not used yet", target: "electron:com.example.chat"), .info("Google Chrome · turbo · used 1h ago"),
+  .info("Turn Turbo Off… or sleight-mcp turbo off stops turbo"), .revokeAll, .separator, .block("Never Act in Editor", target: "com.example.editor"), .separator, .info("Blocked: Blocked App"),
+  .info("Blocked: https://blocked.example"), .info("Acts only on: https://a.example"), .info("sleight-mcp permissions changes these"),
+  .separator, .info("ChatGPT's own Always allow list: in ChatGPT's settings")], "permission rows")
+// Turbo's row only points to Turn Turbo Off…: no Revoke, and no Revoke All when it is the only row.
+check(permissionRows(permissionsData(["grants": [["title": "Helium", "detail": "turbo", "used": NSNull(), "target": "turbo"]], "blocked": [Any]()])!, now: 0) ==
+  [.info("Helium · turbo · not used yet"), .info("Turn Turbo Off… or sleight-mcp turbo off stops turbo"),
+  .separator, .info("ChatGPT's own Always allow list: in ChatGPT's settings")], "turbo row points to Turn Turbo Off")
+check(permissionRows(permissionsData(["grants": [Any](), "blocked": [Any]()])!, now: 0) == [.info("Nothing beyond this session's approvals"),
+  .separator, .info("ChatGPT's own Always allow list: in ChatGPT's settings")], "nothing standing")
+let grant: [String: Any] = ["title": "Fixture", "detail": "always", "used": NSNull(), "target": "app:Fixture"]
+for (bad, what) in [(["grants": [Any](), "blocked": [Any](), "extra": 1] as [String: Any], "unknown key"),
+  (["grants": [grant.merging(["more": 1]) { $1 }], "blocked": [Any]()], "grant key"), (["grants": [grant.merging(["target": "app:"]) { $1 }], "blocked": [Any]()], "empty app"),
+  (["grants": [grant.merging(["target": "unblock:x"]) { $1 }], "blocked": [Any]()], "unknown target"), (["grants": [grant.merging(["used": "x"]) { $1 }], "blocked": [Any]()], "used text"),
+  (["grants": [grant.merging(["used": true]) { $1 }], "blocked": [Any]()], "used boolean"), (["grants": [grant.merging(["title": "a\\u{7}b"]) { $1 }], "blocked": [Any]()], "control character"),
+  (["grants": [Any](), "blocked": Array(repeating: "x", count: 25)], "too many blocks"), (["grants": [Any](), "blocked": [Any](), "current": ["title": "x", "target": "not a bundle"]], "current target"),
+  (["grants": [Any](), "blocked": [Any](), "only": [Any]()], "empty only"), (["grants": [Any]()], "no blocked")] {
+  check(permissionsData(bad) == nil, "refused: " + what)
+}
+check(usedWords(nil, now: 9) == "not used yet" && usedWords(100, now: 130) == "used just now" && usedWords(0, now: 300) == "used 5m ago" && usedWords(0, now: 3 * 86400) == "used 3d ago", "used words")
+// The submenu joins the hand-only block after the toggle, and the turbo menu before Turn Turbo Off, once.
+check(handRows(enabled: true, version: "1.3.1", permissions: [.info("x")]) == [.toggle("Ghost Hand", choice: "hand-toggle", on: true), .permissions([.info("x")]),
+  .separator, .help, .separator, .footer("sleight 1.3.1")], "hand-only menu with permissions")
+check(withHand(statusRows(["status": "connected"], ["disconnect", "turbo-off"])!, enabled: true, permissions: [.info("x")]) == [.status(title: "Connected", dot: "green", details: []),
+  .separator, .action("Disconnect", choice: "disconnect"), .separator, .toggle("Ghost Hand", choice: "hand-toggle", on: true), .permissions([.info("x")]),
+  .confirm("Turn Turbo Off…", choice: "turbo-off"), .help], "turbo menu with the hand and permissions")
+check(withHand(workerRow, enabled: true, permissions: [.info("x")]).filter({ if case .toggle = $0 { return true }; return false }).count == 1, "still one Ghost Hand row")
 check(!hookupConnects(from: "connected", to: "connected") && !hookupConnects(from: "connected-idle", to: "connected") && !hookupConnects(from: nil, to: "paused"), "not connecting")
 print("pass")
 `);

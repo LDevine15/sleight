@@ -220,3 +220,11 @@ test('a once grant binds with its turn; revoke-all cancels cards and spends noth
   f.click(1, 'session'); assert.equal(f.consent.grantFor(instance, { session: 's2', turn }), undefined, 'a reply after revoke grants nothing');
   grant.onRevoke(() => connection.park()); assert.equal(connection.parked, 2, 'a hook added after revocation fires at once');
 });
+
+test('a saved Always record that grants the debugger tells the permissions list it was used, and a card answer does not', async () => {
+  const used = [], f = fixture({ consent: { onAlwaysUsed: bundleId => used.push(bundleId) } });
+  const first = ask(f); f.click(0, 'always'); assert.equal((await first).grant.scope, 'always');
+  assert.deepEqual(used, [], 'the click itself is a grant, not a use of the saved record');
+  const again = await ask(f, { ...instance, pid: 99, pidBirth: '1770000000.5' });
+  assert.equal(again.grant.scope, 'always'); assert.deepEqual(used, [instance.bundleId]);
+});
