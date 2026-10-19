@@ -30,7 +30,9 @@ export function rootWindowId(text) {
   return id ? UUID.exec(id)?.[0].toUpperCase() ?? id : undefined;
 }
 
-export function popupWindows() {
+// `trace(event)` records each census and each reason a candidate window doesn't get the line, for live checks: the
+// first live check (FS2, 2026-10-19) showed no line and no way to tell which condition failed.
+export function popupWindows(trace = () => {}) {
   const seen = new Set();
   const census = new Map(); // app -> the ID of its only window, from the last read that counted
   const openers = new Map(); // a pop-up's ID -> the window it came up from, with that window's ID
@@ -40,28 +42,42 @@ export function popupWindows() {
     // A read: `health` is its probe's answer (null when the probe gave none, undefined when the read had no probe), `id`
     // the window it showed.
     count(app, health, id) {
-      if (!app || health === undefined) return;
+      if (!app) return;
+      if (health === undefined) { trace({ event: 'census-unprobed', app, id: id ?? null, held: census.get(app) ?? null }); return; }
       const counted = health?.status === 'responding' && health.windows === 1 &&
         (typeof health.allWindows !== 'number' || health.allWindows <= 1);
       if (counted && id) census.set(app, id); else census.delete(app);
+      trace({ event: 'census', app, id: id ?? null, counted: counted && !!id, status: health?.status ?? null,
+        windows: health?.windows ?? null, allWindows: health?.allWindows ?? null, onScreen: health?.onScreen ?? null });
     },
-    // A stopped or failed call: nothing it showed counts as a census.
-    drop(app) { if (app) census.delete(app); },
+    // A failed or stopped call. One that shows the counted window (a lease stop after Cmd+T retitled it, FS2) keeps the
+    // count: its window is the same, and a window it didn't show stays unseen. Anything else drops it.
+    stopped(app, id) {
+      if (!app || !census.has(app)) return;
+      if (id && census.get(app) === id) { trace({ event: 'census-kept', app, id, reason: 'stop-shows-counted-window' }); return; }
+      census.delete(app);
+      trace({ event: 'census-dropped', app, id: id ?? null, reason: id ? 'stop-shows-other-window' : 'stop-shows-no-window-id' });
+    },
     // The line to add to a window note for an action that acted on `from` and shows `to` now, then remember both IDs.
     note(from, to) {
-      let line;
+      let line, reason;
       const fromId = from?.rootId, toId = to?.rootId;
-      if (fromId && toId && fromId !== toId && from.app === to.app) {
-        const opener = openers.get(fromId);
-        if (opener?.rootId === toId) {
-          line = /* notice */ `It has the ID of ${documentLabel(opener)}, the pop-up's opener.`;
-        } else if (!seen.has(toId) && census.get(to.app) === fromId) {
-          census.delete(to.app);
-          openers.set(toId, from);
-          // Notes count against the prompt budget (bench/prompt-budget.mjs): about 60 characters were left after these two.
-          line = /* notice */ `An earlier read counted ${documentLabel(from)} as the app's only window, so this newer one belongs to its task (a pop-up, say).`;
-        }
+      if (!toId) reason = to && from && to.app === from.app && fromId ? 'shown-window-has-no-id' : undefined;
+      else if (fromId === toId) reason = undefined;
+      else if (!fromId) reason = 'acted-on-window-has-no-id';
+      else if (from.app !== to.app) reason = 'other-app';
+      else if (openers.get(fromId)?.rootId === toId) {
+        line = /* notice */ `It has the ID of ${documentLabel(openers.get(fromId))}, the pop-up's opener.`;
+      } else if (seen.has(toId)) reason = 'shown-before';
+      else if (!census.has(to.app)) reason = 'no-one-window-count';
+      else if (census.get(to.app) !== fromId) reason = 'count-is-another-window';
+      else {
+        census.delete(to.app);
+        openers.set(toId, from);
+        // Notes count against the prompt budget (bench/prompt-budget.mjs): about 60 characters were left after these two.
+        line = /* notice */ `An earlier read counted ${documentLabel(from)} as the app's only window, so this newer one belongs to its task (a pop-up, say).`;
       }
+      if (reason) trace({ event: 'no-line', app: to?.app ?? null, from: fromId ?? null, to: toId ?? null, reason });
       see(fromId); see(toId);
       return line;
     },

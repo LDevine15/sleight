@@ -1589,7 +1589,8 @@ export function createRelay({
     }
   }
   let leaseWindow;
-  const popups = popupWindows(); // the window IDs results showed, and which window each pop-up came up from
+  // The window IDs results showed, and which window each pop-up came up from. Each decision is traced (popup-window).
+  const popups = popupWindows(event => trace('popup-window', event));
   let recoveryTarget, recoveryKnown = false; // recoveryKnown: the target is a bundle ID the engine confirmed
   let stateRead = false; // a getState read went to the engine this session, so its app ids are Claude's to use
   let lastConfirmedWindow; // the lease's last window with a confirmed bundle ID, kept when the lease drops
@@ -4467,9 +4468,13 @@ export function createRelay({
       const known = observedAppId(call, window, msg.result);
       // A pop-up the action brought up, or the window it returns to (SW1, popup-window.mjs). It gets the note below even
       // under its opener's title and URL, and the selected-window path's "outcome unconfirmed" note gets the same line.
-      const popupLine = call.key && window && !msg.result?.isError ? popups.note(leaseWindow, { ...window, rootId: shownId }) : popups.see(shownId);
-      if (call.read && window && !msg.result?.isError) popups.count(window.app, readHealth, shownId);
-      if (msg.error || msg.result?.isError) { popups.drop(leaseWindow?.app); popups.drop(window?.app); }
+      const failed = !!(msg.error || msg.result?.isError);
+      const popupLine = call.key && window && !failed ? popups.note(leaseWindow, { ...window, rootId: shownId }) : popups.see(shownId);
+      if (call.key && failed && shownId && leaseWindow?.rootId && shownId !== leaseWindow.rootId) {
+        trace('popup-window', { event: 'no-line', app: window?.app ?? null, from: leaseWindow.rootId, to: shownId, reason: 'failed-call' });
+      }
+      if (call.read && window && !failed) popups.count(window.app, readHealth, shownId);
+      if (failed) { popups.stopped(leaseWindow?.app, shownId); if (window?.app !== leaseWindow?.app) popups.stopped(window?.app, shownId); }
       // An action whose result shows another window of the same app (a close, a new window). Said
       // plainly, or a "no change" about the window now in front reads as a failed action: Claude
       // probed after closing a Chess game in 4/6 runs (2026-10-08).
@@ -4477,7 +4482,10 @@ export function createRelay({
           !sameWindow(leaseWindow, window) && !newTabOf(leaseWindow, treeBefore, window, text.slice(text.lastIndexOf('Window: '))))) {
         windowNote = `sleight: this call acted on ${documentLabel(leaseWindow)}. The window it shows now is ${documentLabel(window)}.`;
       }
-      if (popupLine && windowNote) { windowNote += ' ' + popupLine; trace('popup-window', { id: msg.id, app: window.app, opener: popupLine.startsWith('It has') }); }
+      if (popupLine && windowNote) {
+        windowNote += ' ' + popupLine;
+        trace('popup-window', { event: popupLine.startsWith('It has') ? 'opener-line' : 'popup-line', id: msg.id, app: window.app });
+      } else if (popupLine) trace('popup-window', { event: 'no-line', id: msg.id, app: window.app, reason: 'no-window-note' });
       const previous = leaseWindow;
       if (guardStop && window && selectedWindow && window.app !== selectedWindow.app) clearSelection();
       leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}), ...(shownId ? { rootId: shownId } : {}) } : undefined;
