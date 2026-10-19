@@ -1141,11 +1141,22 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
                 if (typeof read === 'string' && parse(read)) fresh = read;
               } catch {} finally { globalThis.clearTimeout?.(timer); }
               const header = fresh === undefined ? undefined : parse(fresh);
+              // Not for a control that opens or confirms (a lone "button Remove" in a re-rendered cart is another item's),
+              // nor after an action that opens, nor when a sheet or dialog came up over the page since the tree it used.
               const to = fresh !== undefined && name === 'click' && typeof args[0] === 'number' && state.completedActions > 0 && text !== undefined &&
+                !opens && !before?.opens && !(hasModal(fresh) && !hasModal(text)) &&
                 observed && ['title', 'app', 'url'].every(key => header[key] === observed[key]) ? refusedPlace(text, args[0], fresh) : [];
               if (to.length === 1) {
+                // The read after the refusal can take REFUSAL_READ_MS: the lease is checked again before anything goes.
+                try { await checkLease(); } catch (lost) { state.unknown.push(shown); keep(); throw lost; }
                 if (to[0][0] !== args[0]) renumbered(to[0][0], to[0][1]);
                 args = [to[0][0], ...args.slice(1)];
+                // The call's last click is this element now, for a pickFromList right after it, and for a bound literal.
+                previous.at = to[0][0]; previous.line = to[0][1];
+                if (state.bind && literal !== undefined) {
+                  if (!state.boundNumbers.has(proxy)) state.boundNumbers.set(proxy, new Map());
+                  state.boundNumbers.get(proxy).set(literal, { number: to[0][0], line: to[0][1] });
+                }
                 try { result = await value.apply(raw, args); resent = true; } catch (again) {
                   state.unknown.push(shown);
                   keep();

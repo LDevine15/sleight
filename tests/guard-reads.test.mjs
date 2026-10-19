@@ -8,7 +8,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement, samePlace } from '../plugins/sleight/lib/document-scope.mjs';
+import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement, samePlace, refusedPlace } from '../plugins/sleight/lib/document-scope.mjs';
 import { createReadCompactor } from '../plugins/sleight/lib/compact-reads.mjs';
 
 const expected = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
@@ -579,6 +579,104 @@ test('lp1: a refused click is not resent as the first action, for a bare role, a
   assert.deepEqual(twice.calls.filter(c => c[0] === 'click').map(c => c[1]), [43, 48, 48]);
   const receipt = JSON.parse(twice.output.find(line => line.startsWith('[stop]{"index"')).slice(6));
   assert.equal(receipt.refused, true); assert.equal(receipt.fresh, true);
+});
+
+// lp1 review: refusedPlace's own checks, each one alone, so a version that always answered "same place" fails here.
+test('lp1 review: refusedPlace keeps a line only at the same number, depth, parent and previous row, and only when it is unique', () => {
+  const rows = lines => lines.join('\n');
+  const before = rows(['0 standard window W', '\t1 container Choose dates', '\t\t2 button Friday, December 18', '\t\t3 button Saturday, December 19',
+    '\t4 container Guests', '\t\t5 button Add adult']);
+  assert.deepEqual(refusedPlace(before, 3, before), [[3, 'button Saturday, December 19']]);
+  const variants = {
+    parent: before.replace('1 container Choose dates', '1 container Choose return dates'),
+    depth: before.replace('\t\t3 button Saturday', '\t3 button Saturday'),
+    previous: before.replace('2 button Friday, December 18', '2 button Thursday, December 17'),
+    lookalike: before.replace('\t\t5 button Add adult', '\t\t5 button Saturday, December 19'),
+    missing: before.replace('3 button Saturday, December 19', '3 button Saturday, December 19, Value: 1'),
+  };
+  for (const [name, after] of Object.entries(variants)) assert.deepEqual(refusedPlace(before, 3, after), [], name);
+  // A lookalike already in the first tree, and a bare role, never resolve either.
+  const twice = before.replace('\t\t5 button Add adult', '\t\t5 button Saturday, December 19');
+  assert.deepEqual(refusedPlace(twice, 3, twice), []);
+  const bare = before.replace('3 button Saturday, December 19', '3 button');
+  assert.deepEqual(refusedPlace(bare, 3, bare), []);
+});
+
+// lp1 review finding 1: a line like "button Remove" is unique while a cart holds one item. After the cart re-renders with
+// another item, the same line at the same place is another item's control, so a click on a control that opens or confirms
+// is never resent, nor a click after one, nor one after an earlier action put a sheet over the page.
+const cart = (item, top = '\t1 button Add to cart') => tree(expected, `${top}\n\t2 container Cart\n\t\t3 button Gift wrap\n\t\t4 button Remove\n\t\t5 text ${item}`);
+test('lp1 review: a refused Remove, a click after an opener, and a click under a new sheet are not resent', async () => {
+  const sort = '\t1 menu button Sort, ID: sort';
+  for (const [code, before, after, sent] of [
+    // Without these rules each of the first three would be resent: the line is unique and in the same place.
+    ['await app.click(1); await app.click(4);', cart('Item A'), cart('Item B'), [1, 4]],
+    ['await app.click({ id: "sort" }); await app.click(3);', cart('Item A', sort), cart('Item B', sort), [1, 3]],
+    ['await app.click(1); await app.click(3);', cart('Item A'), cart('Item A') + '\n\t6 sheet Confirm\n\t\t7 button Keep', [1, 3]],
+    // The same refusal with none of them goes once more.
+    ['await app.click(1); await app.click(3);', cart('Item A'), cart('Item B'), [1, 3, 3]],
+  ]) {
+    let acted = false, refused = false;
+    const f = fixture({ strict: true, current: () => refused ? after : before,
+      action: (name, [number]) => { if (acted && !refused) { refused = true; throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`); } acted = true; } });
+    const run = f.run(code, { bind: true, guardStopMark: '[stop]' });
+    if (sent.length === 3) await run;
+    else {
+      await assert.rejects(run, /invalid element ID/, code);
+      assert.ok(f.output.some(line => typeof line === 'string' && line.startsWith(GUARD_MARK)), 'the stop keeps its fresh tree');
+    }
+    assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), sent, code);
+  }
+});
+
+test('lp1 review: a lease lost during the read after a refusal stops the resend', async t => {
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-resend-lease-')));
+  t.after(() => removeTemp(dir)); const path = join(dir, 'lease.json');
+  writeFileSync(path, JSON.stringify({ token: 'owner', expires: Date.now() + 30000 }));
+  let picked = false, refused = false;
+  const clicks = [];
+  const raw = { getAXState: async () => {
+    if (refused) writeFileSync(path, JSON.stringify({ token: 'successor', expires: Date.now() + 30000 }));
+    return picker(picked ? 'Value: Dec 14, 2026 – choose check-out, ' : '');
+  }, click: async number => {
+    clicks.push(number);
+    if (picked) { refused = true; throw new Error('Accessibility error: AXError.invalidUIElement'); }
+    picked = true;
+  } };
+  // The lease check reads its file with a dynamic import, so this runs in the test's own realm.
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const code = guardedCode('await app.click(43); await app.click(48);', travel, 'changed window', { path, token: 'owner' }, { focused: true, bind: true });
+  try {
+    await assert.rejects(new AsyncFunction('app', 'cua', 'nodeRepl', code)(raw, { getApp: async () => raw, listApps: async () => [] }, { write() {} }),
+      /Input lease stopped this action/);
+  } finally { delete globalThis.__sleightDocumentGuard; delete globalThis.__sleightDocumentGuardSetup; }
+  assert.deepEqual(clicks, [43, 48]);
+});
+
+// lp1 review finding 5: after a resend to a new number, the call's last click is that element, so a pickFromList right
+// after it accepts the list from the selected row.
+test('lp1 review: a resend to a new number is the click pickFromList sees', async () => {
+  const names = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot'];
+  let shifted = false, stale = false, selected;
+  const current = () => {
+    stale = false;
+    const first = shifted ? 4 : 3;
+    return tree(expected, '\t1 button Show airports' + (shifted ? '\n\t2 text 6 airports' : '') + `\n\t${first - 1} list Airports\n` +
+      names.map((name, i) => `\t\t${first + i} text ${selected === name ? '(selected)' : '(selectable)'} ${name}`).join('\n') +
+      (selected ? `\n\nSelected:\n\t${first + names.indexOf(selected)} text (selected) ${selected}\n\nNote: Pay special attention to the content selected by the user.` : '\n\nThe focused UI element is 1 button Show airports'));
+  };
+  const f = fixture({ strict: true, current, action: (name, [number]) => {
+    if (name !== 'click') return;
+    if (stale) throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`);
+    if (number === 1) { shifted = true; stale = true; return; }
+    const first = shifted ? 4 : 3;
+    selected = names[number - first];
+  } });
+  const result = await f.run('await app.click(1); await app.click(4); return await app.pickFromList("Delta");', { bind: true });
+  assert.equal(result.clicked, true, JSON.stringify(result));
+  assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [1, 4, 5, 7]);
+  assert.equal(selected, 'Delta');
+  assert.ok(!f.calls.some(c => c[0] === 'pressKey'), 'no key while only a selection names the list');
 });
 
 test('AB3 review: a flagged window binds again after three clean actions that read first', async () => {
