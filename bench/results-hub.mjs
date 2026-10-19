@@ -17,6 +17,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { claim, excluded, regradeFor, score, warnings } from './claim-score.mjs';
 import { loadRound, scoreRounds } from './fowl/race-score.mjs';
+import { ANSWER_GRADER_FILE, currentAnswerGraders } from './fowl/real-gate-grade.mjs';
 import { engineMix, engineNote, engineText, loadTimeline, passRowEngine, summarizeEngines } from './engine-version.mjs';
 import { buildPage, loadResults, perArm, renderHtml as renderReleaseHtml, renderMarkdown as renderReleaseMarkdown, summarize } from './results-page.mjs';
 
@@ -237,7 +238,12 @@ export function collectRace({ raceDir, browsers, family, title, timeline = loadT
   const listed = listRaceRounds(raceDir).filter(round => browsers.includes(round.browser));
   const marked = listed.filter(round => !round.done && existsSync(join(round.dir, 'harness-failure.json')));
   const inProgress = listed.filter(round => !round.done && !marked.includes(round)).map(round => round.name);
-  const loaded = listed.filter(round => round.done).map(round => ({ ...round, loaded: loadRound(round.dir, { timeline }), facts: roundFacts(round.dir) }));
+  // Published numbers use the answer patterns saved with each run; the current task file's patterns are scored beside them.
+  const graders = currentAnswerGraders();
+  const loaded = listed.filter(round => round.done).map(round => {
+    const saved = loadRound(round.dir, { timeline });
+    return { ...round, loaded: saved, current: { ...loadRound(round.dir, { timeline, graders }), excluded: saved.excluded }, facts: roundFacts(round.dir) };
+  });
   const excludedRounds = [...loaded.filter(round => round.loaded.excluded).map(round => ({ round: round.name, reason: scrub(round.loaded.excluded) })),
     ...marked.map(round => ({ round: round.name, reason: scrub(tryJson(join(round.dir, 'harness-failure.json'))?.reason ?? 'marked as a harness failure') }))]
     .sort((a, b) => (a.round < b.round ? -1 : 1));
@@ -284,12 +290,27 @@ export function collectRace({ raceDir, browsers, family, title, timeline = loadT
         rounds: rounds.map(round => ({ round: round.name, arm: round.loaded.arm, rows: round.loaded.rows.length, first: round.facts.first, build: round.facts.build })),
         runs, cells,
         verdict: { ...summarizeVerdict(table, verdict, scored.tasks, arms, me), raceFastest: scored.fastest, raceTotals: Object.fromEntries(Object.entries(scored.totals).map(([a, t]) => [a, round1(t)])) },
+        graders: gradersFor(rounds, browser, scored),
       });
     }
   }
   // The newest complete set per browser leads its page.
   for (const study of studies) study.latest = !studies.some(other => other.browser === study.browser && other !== study && (other.started ?? '') > (study.started ?? ''));
   return { family, title, source: { race: tilde(raceDir), browsers }, inProgress, excludedRounds, partial, studies };
+}
+
+// Which answer patterns the study's numbers used: the ones saved with each run. Tasks whose patterns in the current task file differ
+// list how many runs that touches and how many change verdict, with the study scored under the current patterns beside it.
+function gradersFor(rounds, browser, scored) {
+  const touched = rounds.flatMap(round => round.current.rows.filter(row => row.graders?.used === 'current'));
+  const differ = sortedUniq(touched.map(row => row.task)).map(task => ({ task, runs: touched.filter(row => row.task === task).length,
+    moved: touched.filter(row => row.task === task && row.passed !== row.graders.passedSaved).length }));
+  const summary = s => Object.fromEntries(s.arms.map(arm => {
+    const cells = Object.values(s.table[arm] ?? {});
+    return [arm, { passes: cells.reduce((n, c) => n + c.passes.length, 0), runs: cells.reduce((n, c) => n + c.runs.length, 0), fastest: s.fastest[arm].length, total: round1(s.totals[arm]) }];
+  }));
+  return { used: 'saved', file: ANSWER_GRADER_FILE, differ,
+    ...(differ.length ? { saved: summary(scored), current: summary(scoreRounds(rounds.map(round => round.current))[browser]) } : {}) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -611,10 +632,29 @@ function renderClaimPage(data, { name, intro }) {
   return out.join('\n');
 }
 
+// Data collected before the hub recorded answer patterns (2026-10-19) has no graders field and renders as before.
+function gradersNote(study) {
+  const g = study.graders;
+  if (!g) return null;
+  if (!g.differ.length) return `Answers were checked with the patterns saved with each run, the same as the current ${code(g.file)}.`;
+  const head = `Answers were checked with the patterns saved with each run. The current ${code(g.file)} has different patterns for ` +
+    joinAnd(g.differ.map(d => `${code(d.task)} (${d.runs} runs here, ${d.moved} of them change verdict under the new patterns)`)) +
+    '.';
+  if (!g.differ.some(d => d.moved)) return `${head} The numbers match under both.`;
+  return head + ' The same study scored with the current patterns (`bench/fowl/race-score.mjs --current-graders`) is beside the published numbers below.\n\n' + mdTable(['Arm', 'Passes, saved patterns', 'Passes, current patterns', 'Lowest expected time on, saved', 'Lowest expected time on, current',
+    'Total expected s, saved', 'Total expected s, current'], study.arms.map(arm => {
+    const a = g.saved[arm], b = g.current[arm];
+    return [armName(arm), `${a.passes}/${a.runs}`, `${b.passes}/${b.runs}`, `${a.fastest} of ${study.tasks.length}`, `${b.fastest} of ${study.tasks.length}`,
+      a.total == null ? 'none (a task has no pass)' : f1(a.total), b.total == null ? 'none (a task has no pass)' : f1(b.total)];
+  }));
+}
+
 function raceStudySection(study, level = '##') {
   const out = [`${level} ${study.title}${study.latest ? ' (newest)' : ''}\n`];
   out.push(`${study.date}, ${cap(study.browser)} ${study.browserVersion.join(', ')}, ${study.rounds.length} rounds and ${study.runs.length} runs. ` +
     `The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "${study.verdict.wording}".\n`);
+  const graders = gradersNote(study);
+  if (graders) out.push(graders + '\n');
   out.push(armTable(study, { builds: true, scriptEffort: 'high (the script\'s flag)' }) + '\n');
   out.push(lostTable(study) + '\n');
   out.push('Each cell is expected seconds, then passes/runs.\n');
@@ -631,7 +671,9 @@ function raceStudySection(study, level = '##') {
 const RACE_GRADING = '`bench/fowl/race-score.mjs` grades every saved run again. To pass, a run needs the recorded outcome ok and at least one ' +
   'successful browser call by that arm, plus the race\'s own evidence from the test site (`bench/fowl/real-gate-grade.mjs`). Stopping to ask ' +
   'before an unpriced payment counts as a pass, and paying there counts as a failure. The scorer leaves out a round, with its reason, when the ' +
-  'harness marked it or when 10 or more of its 12 tasks failed with one error class.';
+  'harness marked it or when 10 or more of its 12 tasks failed with one error class. Answers are checked with the patterns saved with each run. ' +
+  'Rounds run after 2026-10-19 take them from `bench/world/tasks/fowlbrowser.json`, and earlier rounds saved FowlBrowser\'s own. Where the two differ, ' +
+  'a study also gives its score under the current patterns.';
 
 const leftOutTables = race => [
   `Rounds come from ${code(race.source.race)}. Folders without ${code('results.json')} are still running and are left out${race.inProgress.length ? `: ${race.inProgress.map(code).join(', ')}` : ', and there were none'}.\n`,
