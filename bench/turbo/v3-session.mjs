@@ -11,7 +11,9 @@ export async function createSession({ origins, taskMessage, forkWorker = fork, r
   if (origins.length) fixturePolicy(origins);
   if (typeof taskMessage !== 'string' || !taskMessage.trim() || Buffer.byteLength(taskMessage) > 65536) throw Error('Runner task message required');
   // Everything below forks the worker, selects the connection and binds the turn. None of it sends a command to the
-  // browser (the first call connects), so any failure here is marked beforeCdp and the protocol may start once more.
+  // browser: the worker connects in its first call's prepare(), never in begin (tests/direct-browser-v3-installed-worker
+  // "turns without browser calls never connect"). So any failure here is marked beforeCdp and the protocol may start
+  // once more. A begin that connected would make this unsafe.
   const startupError = (error, stage) => Object.assign(error instanceof Error ? error : Error('V3_STARTUP_FAILED'),
     { beforeCdp: true, ...(typeof error?.stage === 'string' ? {} : { stage }) });
   let bridge;

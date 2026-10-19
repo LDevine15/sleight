@@ -58,11 +58,13 @@ export function traceStartupFailure(detail, { setting = process.env.SLEIGHT_TRAC
     appendFileSync(join(dir, `trace-${relayPid}.jsonl`), JSON.stringify({ t: new Date().toISOString(), direction: 'turbo-startup-failed', msg }) + '\n', { mode: 0o600 });
   } catch {}
 }
-// Only these failures of a relay's bridge startup can pass on a second try: the worker died or hung, or Chrome changed
-// an entry between two reads. Chrome closed, or open without remote debugging, stays as it is, so it is not retried.
-const transientStages = new Set(['worker-spawn', 'worker-exit', 'worker-disconnect', 'worker-timeout']);
+// Only these failures of a relay's bridge startup can pass on a second try: the worker crashed (a signal or a non-zero
+// exit, or its channel closed first), the process table was full, or Chrome changed an entry between two reads. Chrome
+// closed, or open without remote debugging, stays as it is. A hung worker (worker-timeout, 120 s) is not retried, so the
+// wait never doubles and no second worker runs beside a stuck one.
 const transientReasons = new Set(['STALE_INSTANCE', 'EAGAIN', 'EMFILE', 'ENFILE', 'ENOMEM', 'EINTR', 'ETIMEDOUT']);
-export const transientStartup = error => transientStages.has(error?.stage) || transientReasons.has(error?.reason);
+export const transientStartup = error => error?.stage === 'worker-disconnect' ||
+  error?.stage === 'worker-exit' && error.reason !== 'EXIT_0' || transientReasons.has(error?.reason);
 const phases = new Set(('worker-spawn-start worker-spawned bridge-ready tools-registered turn-begin first-call-admitted call-start call-result '
   + 'turn-end-requested turn-end worker-entry helpers-check-start helpers-check-end connection-select-start connection-select-end '
   + 'worker-ready connection-start connection-end runtime-ready').split(' '));
@@ -187,9 +189,12 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
     if (!hello || !exact(frame, ['version', 'id', 'result']) || frame.version !== 3 || !pending.has(frame.id)) { lose(undefined, 'worker-protocol'); return; }
     const entry = pending.get(frame.id); pending.delete(frame.id); clearTimeout(entry.timer); entry.resolve(frame.result);
   });
+  // Before hello, an exit or a closed channel waits 50 ms, so the worker's own unavailable frame (sent just before it
+  // disconnects) names the failure rather than the exit that followed it.
+  const ended = (stage, reason) => hello ? lose(undefined, stage, reason) : setTimeout(() => lose(undefined, stage, reason), 50);
   child.on('error', error => lose(undefined, 'worker-spawn', startupReason(error)));
-  child.on('exit', (code, signal) => lose(undefined, 'worker-exit', startupCode(signal) ?? (Number.isSafeInteger(code) ? 'EXIT_' + code : undefined)));
-  child.on('disconnect', () => lose(undefined, 'worker-disconnect'));
+  child.on('exit', (code, signal) => ended('worker-exit', startupCode(signal) ?? (Number.isSafeInteger(code) ? 'EXIT_' + code : undefined)));
+  child.on('disconnect', () => ended('worker-disconnect'));
   function rpc(method, params, deadlineMs = timeoutMs) {
     if (lost || !current() || pending.size >= 32) return Promise.reject(Error('V3_WORKER_UNAVAILABLE'));
     const frame = { version: 3, id: 'q' + (++sequence), method, params };

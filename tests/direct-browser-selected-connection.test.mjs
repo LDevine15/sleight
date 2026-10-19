@@ -296,16 +296,19 @@ test('Chrome writing an entry in the profile folder during selection and connect
   const close = p.disconnect(); f.sockets[0].closed(); assert.equal(await close, true);
 });
 test('a replaced or re-permissioned profile folder during selection is still refused or re-read', async t => {
+  // Each look swaps in a complete copy of the folder (its own inode), so every look sees two different folders.
   const f = fixture(t), metadata = f.options.testDependencies.processMetadata;
-  let replaced = false;
+  let swaps = 0;
   f.options.testDependencies.retryDelayMs = 1;
   f.options.testDependencies.processMetadata = async (...args) => {
-    if (!replaced) { replaced = true; renameSync(f.root, f.root + '-moved'); mkdirSync(f.root, { mode: 0o700 }); }
+    const moved = f.root + '-moved-' + (++swaps); renameSync(f.root, moved); t.after(() => rmSync(moved, { recursive: true, force: true }));
+    mkdirSync(f.root, { mode: 0o700 }); copyFileSync(join(moved, 'browser'), f.executable); chmodSync(f.executable, 0o700);
+    symlinkSync(hostname() + '-4312', join(f.root, 'SingletonLock'));
+    writeFileSync(f.active, '9222\n/devtools/browser/fixture\n', { mode: 0o600 });
     return metadata(...args);
   };
-  t.after(() => rmSync(f.root + '-moved', { recursive: true, force: true }));
-  await assert.rejects(createSelectedConnection(f.options), /STALE_INSTANCE|SELECTED_/);
-  assert.equal(f.sockets.length, 0);
+  await assert.rejects(createSelectedConnection(f.options), /^Error: STALE_INSTANCE$/);
+  assert.equal(swaps, 3, 'refused on each of the three looks'); assert.equal(f.sockets.length, 0);
   // A permission change between two reads is still caught: that look is retried, and the next consistent look is used.
   const g = fixture(t), base = g.options.testDependencies.processMetadata;
   let changed = false;

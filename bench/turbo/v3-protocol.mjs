@@ -8,7 +8,7 @@ const codeName = value => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_]{1,
 // 2026-10-19 and every later call of the task failed with them. A second failure is final for the task, as before.
 // onStartupFailure gets { attempt, stage, code, reason, retrying, ms } for each failed attempt, never page content or paths.
 export function createProtocol({ output = process.stdout, start, tools = browserTools('bbench'), validate = input => validateToolCall(input, 'bbench'),
-  retryDelayMs = 300, onStartupFailure = () => {}, now = Date.now } = {}) {
+  retryDelayMs = 300, retryWithinMs = 10000, onStartupFailure = () => {}, now = Date.now } = {}) {
   if (!Array.isArray(tools) || typeof validate !== 'function' || typeof start !== 'function') throw Error('V3 interface required');
   let session, starting, queue = Promise.resolve(), closing = false, cleanup;
   const startSession = async () => {
@@ -16,7 +16,8 @@ export function createProtocol({ output = process.stdout, start, tools = browser
       const began = now();
       try { return await start(); }
       catch (error) {
-        const retrying = attempt === 1 && error?.beforeCdp === true;
+        // A start that hung (the bridge's 120 s startup or 31 s bind deadline) is not retried: the call would outlast the client.
+        const retrying = attempt === 1 && error?.beforeCdp === true && now() - began < retryWithinMs;
         const code = codeName(error?.message) ?? 'UNKNOWN';
         try { onStartupFailure(Object.freeze({ attempt, stage: stageName(error?.stage) ?? 'startup', code,
           reason: codeName(error?.reason) ?? code, retrying, ms: Math.max(0, now() - began) })); } catch {}

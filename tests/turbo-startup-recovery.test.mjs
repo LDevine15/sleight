@@ -58,6 +58,15 @@ test('a second failed start is final for the task and names its stage', async ()
   await f.protocol.close();
 });
 
+test('a start that hung is not retried, so the call cannot outlast the client', async () => {
+  let starts = 0, clock = 0;
+  const f = protocolFixture(async () => { starts++; clock += 31000; throw startupFailure('V3_WORKER_UNAVAILABLE', 'bind', 'V3_WORKER_UNAVAILABLE'); },
+    { now: () => clock });
+  await f.protocol.message({ ...read, id: 1 });
+  assert.equal(starts, 1); assert.deepEqual(f.failures.map(row => [row.attempt, row.retrying, row.ms]), [[1, false, 31000]]);
+  await f.protocol.close();
+});
+
 test('a start failure that does not say it came before any browser command is not retried', async () => {
   let starts = 0;
   const f = protocolFixture(async () => { starts++; throw Object.assign(Error('V3_RUNTIME_UNAVAILABLE'), { stage: 'serve' }); });
@@ -131,7 +140,8 @@ test('the worker names the failed startup stage and a code, never the message of
 });
 
 // A forked worker stand-in: it either fails its startup with the given frame (or exit) or serves turns.
-function fork({ fail, exit, begin } = {}) {
+// exitFirst: the exit event comes before the worker's own frame, as IPC ordering allows.
+function fork({ fail, exit, begin, exitFirst } = {}) {
   const forks = [];
   const forkWorker = (_path, _args, options) => {
     const child = new EventEmitter(), endpoint = new EventEmitter();
@@ -142,6 +152,7 @@ function fork({ fail, exit, begin } = {}) {
     child.disconnect = () => { child.connected = endpoint.connected = false; endpoint.emit('disconnect'); child.emit('disconnect'); };
     child.unref = () => {};
     if (exit) queueMicrotask(() => child.emit('exit', exit, null));
+    else if (fail && exitFirst) queueMicrotask(() => { child.emit('exit', 0, null); setTimeout(() => endpoint.send(fail), 5); });
     else if (fail) queueMicrotask(() => endpoint.send(fail));
     else {
       const worker = serveV3Worker({ channel: endpoint, browser: 'bbench', begin: begin ?? (async () => ({ call: async () => ok, delivered: () => true,
@@ -164,9 +175,15 @@ test('the bridge keeps the worker\'s stage and code, and an older three-field fr
   error = await createV3Bridge({}, bridgeDependencies(fork({ fail: { version: 3, status: 'unavailable', code: 'HOST_SOURCE_MISMATCH' } }).forkWorker))
     .then(() => assert.fail('ready'), value => value);
   assert.equal(error.message, 'HOST_SOURCE_MISMATCH'); assert.equal(error.stage, 'startup');
+  error = await createV3Bridge({}, bridgeDependencies(fork({ fail: { ...frame, reason: 'SELECTED_PROCESS_UNPROVED' }, exitFirst: true }).forkWorker))
+    .then(() => assert.fail('ready'), value => value);
+  assert.equal(error.stage, 'connection-select', 'the worker\'s frame names the failure even after its exit');
+  assert.equal(error.reason, 'SELECTED_PROCESS_UNPROVED'); assert.equal(transientStartup(error), false);
   error = await createV3Bridge({}, bridgeDependencies(fork({ exit: 1 }).forkWorker)).then(() => assert.fail('ready'), value => value);
   assert.equal(error.message, 'V3_WORKER_UNAVAILABLE'); assert.equal(error.stage, 'worker-exit'); assert.equal(error.reason, 'EXIT_1');
   assert.equal(transientStartup(error), true);
+  assert.equal(transientStartup({ stage: 'worker-exit', reason: 'EXIT_0' }), false, 'a worker that exited cleanly said why first');
+  assert.equal(transientStartup({ stage: 'worker-timeout', reason: 'V3_WORKER_UNAVAILABLE' }), false, 'a hung worker is not started twice');
   assert.equal(transientStartup({ stage: 'connection-select', reason: 'SELECTED_PROCESS_UNPROVED' }), false, 'Chrome closed stays closed');
   assert.equal(transientStartup({ stage: 'connection-select', reason: 'STALE_INSTANCE' }), true);
 });
