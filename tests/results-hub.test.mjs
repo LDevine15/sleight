@@ -284,7 +284,7 @@ test('pages name each arm\'s engine version with its UTC dates once the data car
   assert.match(page, /\| ChatGPT engine and UTC dates \| Build \|/);
   assert.match(page, /\| sleight \| [^\n]*\| engine 26\.1013\.40934 \(1 inferred\), 2026-10-19 \|/);
   assert.match(page, /\| LCU \| [^\n]*\| not used, 2026-10-18 \|/);
-  assert.match(page, /The arms that drive the engine ran on different engine versions: sleight on 26\.1013\.40934, codex on 26\.1007\.71326\./);
+  assert.match(page, /The arms that use the engine ran on different engine versions: sleight on 26\.1013\.40934, codex on 26\.1007\.71326\./);
   // Data collected before engine versions were tracked renders exactly as before.
   for (const name of ['native-claim.md', 'app-claim.md', 'browser-turbo.md', 'release-passes.md']) assert.equal(render(all)[name], before[name]);
 });

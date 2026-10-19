@@ -774,7 +774,7 @@ function renderReleasePage(data) {
     mdTable(['File', 'Date', 'Kind', 'Model', 'Effort', 'Per arm: passed/runs, total s', ...(data.files.some(f => f.engines) ? ['ChatGPT engine and UTC dates'] : [])], data.files.map(file => [
       `[${file.name}](../benchmarks/${file.name})`, file.date, file.kind === 'h2h' ? 'head-to-head' : file.kind === 'release' ? `release ${file.version}` : 'sleight only',
       file.model ? code(file.model) : DASH, file.effort ?? DASH, file.arms.map(a => `${armName(a.arm)} ${a.passed}/${a.runs}, ${f0(a.seconds)} s`).join(', '),
-      ...(data.files.some(f => f.engines) ? [file.arms.map(a => `${armName(a.arm)}: ${file.engines?.[a.arm] ?? 'not recorded'}`).join('; ')] : [])])) + '\n',
+      ...(data.files.some(f => f.engines) ? [file.arms.map(a => `${armName(a.arm)}: ${file.engines?.[a.arm] ?? 'not recorded'}`).join(' · ')] : [])])) + '\n',
     '## Data\n',
     '[data/release-passes.json](data/release-passes.json) has every run of the release passes and the two head-to-heads above, and the totals of every file. [explore.html](explore.html) charts them.\n'];
   md = md.replace(/\n## Run it yourself\n/, '\n' + extra.join('\n') + '\n## Run it yourself\n');

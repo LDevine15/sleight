@@ -36,7 +36,10 @@
     "reason": "the account hit its weekly usage limit during this round (claude-code: You have hit your weekly limit); not a result of the arm. Rerun."
    }
   ],
-  "partial": [],
+  "partial": [
+   {"browser":"chrome","label":"sleight-turbo-rel130","rounds":["chrome-sleight-turbo-rel130-r1"],"runs":13,"needed":39},
+   {"browser":"chrome","label":"sleight-turbo-rel130-opus","rounds":["chrome-sleight-turbo-rel130-opus-r1"],"runs":13,"needed":39}
+  ],
   "studies": [
    {
     "id": "browser-turbo-chrome-sleight-turbo",
@@ -47,6 +50,7 @@
     "label": "sleight-turbo",
     "me": "sleight-turbo",
     "arms": ["sleight-turbo","fowlbrowser"],
+    "hosted": [],
     "tasks": [
      "form-travel",
      "form-settings",
@@ -65,6 +69,19 @@
     "models": {"sleight-turbo":["claude-haiku-5-5"],"fowlbrowser":["claude-haiku-5-5"]},
     "effort": {"sleight-turbo":[],"fowlbrowser":[]},
     "versions": {"sleight-turbo":["Claude Code 2.1.289"],"fowlbrowser":["Claude Code 2.1.289"]},
+    "engines": {
+     "sleight-turbo": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T07:08:42.155Z","last":"2026-10-18T08:08:07.486Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     },
+     "fowlbrowser": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T07:12:48.170Z","last":"2026-10-18T08:13:30.386Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     }
+    },
+    "engineMix": null,
     "date": "2026-10-18, 07:08 to 08:13 UTC",
     "builds": {"sleight-turbo":["001f6113"],"fowlbrowser":["001f6113"]},
     "browserVersion": ["155.0.8059.80"],
@@ -770,6 +787,7 @@
      },
      "raceTotals": {"sleight-turbo":null,"fowlbrowser":441.84}
     },
+    "sameModel": [],
     "latest": false
    },
    {
@@ -781,6 +799,7 @@
     "label": "sleight-turbo-b4",
     "me": "sleight-turbo",
     "arms": ["sleight-turbo","fowlbrowser"],
+    "hosted": [],
     "tasks": [
      "form-travel",
      "form-settings",
@@ -799,6 +818,19 @@
     "models": {"sleight-turbo":["claude-haiku-5-5"],"fowlbrowser":["claude-haiku-5-5"]},
     "effort": {"sleight-turbo":[],"fowlbrowser":[]},
     "versions": {"sleight-turbo":["Claude Code 2.1.289"],"fowlbrowser":["Claude Code 2.1.289"]},
+    "engines": {
+     "sleight-turbo": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T12:27:22.853Z","last":"2026-10-18T12:40:10.569Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     },
+     "fowlbrowser": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T07:12:48.170Z","last":"2026-10-18T08:13:30.386Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     }
+    },
+    "engineMix": null,
     "date": "2026-10-18, 07:12 to 12:40 UTC",
     "builds": {"sleight-turbo":["f43d4fbd"],"fowlbrowser":["001f6113"]},
     "browserVersion": ["155.0.8059.80"],
@@ -1517,6 +1549,7 @@
      },
      "raceTotals": {"sleight-turbo":null,"fowlbrowser":441.84}
     },
+    "sameModel": [],
     "latest": false
    },
    {
@@ -1528,6 +1561,7 @@
     "label": "sleight-turbo-b5",
     "me": "sleight-turbo",
     "arms": ["sleight-turbo","fowlbrowser"],
+    "hosted": [],
     "tasks": [
      "form-travel",
      "form-settings",
@@ -1546,6 +1580,19 @@
     "models": {"sleight-turbo":["claude-haiku-5-5"],"fowlbrowser":["claude-haiku-5-5"]},
     "effort": {"sleight-turbo":[],"fowlbrowser":[]},
     "versions": {"sleight-turbo":["Claude Code 2.1.289"],"fowlbrowser":["Claude Code 2.1.289"]},
+    "engines": {
+     "sleight-turbo": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T12:56:29.307Z","last":"2026-10-18T13:09:22.319Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     },
+     "fowlbrowser": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T07:12:48.170Z","last":"2026-10-18T08:13:30.386Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     }
+    },
+    "engineMix": null,
     "date": "2026-10-18, 07:12 to 13:09 UTC",
     "builds": {"sleight-turbo":["0f706f6d"],"fowlbrowser":["001f6113"]},
     "browserVersion": ["155.0.8059.80"],
@@ -2298,6 +2345,7 @@
      },
      "raceTotals": {"sleight-turbo":247.59,"fowlbrowser":441.84}
     },
+    "sameModel": [],
     "latest": true
    },
    {
@@ -2309,6 +2357,7 @@
     "label": "sleight-turbo",
     "me": "sleight-turbo",
     "arms": ["sleight-turbo","fowlbrowser"],
+    "hosted": [],
     "tasks": [
      "form-travel",
      "form-settings",
@@ -2327,6 +2376,19 @@
     "models": {"sleight-turbo":["claude-haiku-5-5"],"fowlbrowser":["claude-haiku-5-5"]},
     "effort": {"sleight-turbo":[],"fowlbrowser":[]},
     "versions": {"sleight-turbo":["Claude Code 2.1.289"],"fowlbrowser":["Claude Code 2.1.289"]},
+    "engines": {
+     "sleight-turbo": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T09:04:13.492Z","last":"2026-10-18T12:15:41.223Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     },
+     "fowlbrowser": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T09:08:50.066Z","last":"2026-10-18T12:22:28.594Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     }
+    },
+    "engineMix": null,
     "date": "2026-10-18, 09:04 to 12:22 UTC",
     "builds": {"sleight-turbo":["326dde47","adcebef9"],"fowlbrowser":["326dde47","adcebef9"]},
     "browserVersion": ["0.19.4.1"],
@@ -3021,6 +3083,7 @@
      },
      "raceTotals": {"sleight-turbo":null,"fowlbrowser":338.28}
     },
+    "sameModel": [],
     "latest": false
    },
    {
@@ -3032,6 +3095,7 @@
     "label": "sleight-turbo-b4",
     "me": "sleight-turbo",
     "arms": ["sleight-turbo","fowlbrowser"],
+    "hosted": [],
     "tasks": [
      "form-travel",
      "form-settings",
@@ -3050,6 +3114,19 @@
     "models": {"sleight-turbo":["claude-haiku-5-5"],"fowlbrowser":["claude-haiku-5-5"]},
     "effort": {"sleight-turbo":[],"fowlbrowser":[]},
     "versions": {"sleight-turbo":["Claude Code 2.1.289"],"fowlbrowser":["Claude Code 2.1.289"]},
+    "engines": {
+     "sleight-turbo": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T12:40:45.086Z","last":"2026-10-18T12:54:17.412Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     },
+     "fowlbrowser": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T09:08:50.066Z","last":"2026-10-18T12:22:28.594Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     }
+    },
+    "engineMix": null,
     "date": "2026-10-18, 09:08 to 12:54 UTC",
     "builds": {"sleight-turbo":["f43d4fbd"],"fowlbrowser":["326dde47","adcebef9"]},
     "browserVersion": ["0.19.4.1"],
@@ -3773,6 +3850,7 @@
      },
      "raceTotals": {"sleight-turbo":null,"fowlbrowser":338.28}
     },
+    "sameModel": [],
     "latest": false
    },
    {
@@ -3784,6 +3862,7 @@
     "label": "sleight-turbo-b5",
     "me": "sleight-turbo",
     "arms": ["sleight-turbo","fowlbrowser"],
+    "hosted": [],
     "tasks": [
      "form-travel",
      "form-settings",
@@ -3802,6 +3881,19 @@
     "models": {"sleight-turbo":["claude-haiku-5-5"],"fowlbrowser":["claude-haiku-5-5"]},
     "effort": {"sleight-turbo":[],"fowlbrowser":[]},
     "versions": {"sleight-turbo":["Claude Code 2.1.289"],"fowlbrowser":["Claude Code 2.1.289"]},
+    "engines": {
+     "sleight-turbo": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T13:11:33.814Z","last":"2026-10-18T13:24:29.116Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     },
+     "fowlbrowser": {
+      "versions": {"26.1007.71326":{"runs":39,"recorded":0,"first":"2026-10-18T09:08:50.066Z","last":"2026-10-18T12:22:28.594Z","datesInferred":0,"undated":0}},
+      "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+      "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+     }
+    },
+    "engineMix": null,
     "date": "2026-10-18, 09:08 to 13:24 UTC",
     "builds": {"sleight-turbo":["46ac78bf"],"fowlbrowser":["326dde47","adcebef9"]},
     "browserVersion": ["0.19.4.1"],
@@ -4522,6 +4614,7 @@
      },
      "raceTotals": {"sleight-turbo":241.793,"fowlbrowser":338.28}
     },
+    "sameModel": [],
     "latest": true
    }
   ]

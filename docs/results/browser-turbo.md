@@ -14,7 +14,12 @@ Turbo is sleight's own browser path for Chrome and Helium. The gate rounds race 
 
 Rounds come from `~/Projects/sleight-wt/race-1017`. Folders without `results.json` are still running and are left out, and there were none.
 
-Every sleight set has 3 runs of every task.
+Sets left out because they don't yet have 3 runs of every task:
+
+| Browser | Set | Runs so far | Rounds |
+| --- | --- | --- | --- |
+| Chrome | `sleight-turbo-rel130` | 13 of 39 | `chrome-sleight-turbo-rel130-r1` |
+| Chrome | `sleight-turbo-rel130-opus` | 13 of 39 | `chrome-sleight-turbo-rel130-opus-r1` |
 
 Rounds left out, with the recorded reason:
 
@@ -33,10 +38,12 @@ Rounds left out, with the recorded reason:
 
 2026-10-18, 07:12 to 13:09 UTC, Chrome 155.0.8059.80, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed every task, fastest on 12 of 13".
 
-| Arm | Model ids in the runs | Effort | Versions recorded | Build |
-| --- | --- | --- | --- | --- |
-| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `0f706f6d` |
-| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `001f6113` |
+| Arm | Model ids in the runs | Effort | Versions recorded | ChatGPT engine and UTC dates | Build |
+| --- | --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | engine 26.1007.71326 (39 inferred), 2026-10-18 | `0f706f6d` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | not used, 2026-10-18 | `001f6113` |
+
+The arms that use the engine ran on one engine version, 26.1007.71326. A version is "recorded" when the runner read it and "inferred" from the timeline in `bench/engine-versions.json` otherwise, and a date is inferred when it comes from a file's stamp or modification time. LCU, Cua, Peekaboo, FowlBrowser, Claude in Chrome and Claude's computer use don't use the engine.
 
 By the loss rule, sleight turbo lost 1 of 13 tasks.
 
@@ -105,10 +112,12 @@ Pairs within 20% of sleight turbo that still need 5 runs:
 
 2026-10-18, 07:08 to 08:13 UTC, Chrome 155.0.8059.80, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed 12 of 13 tasks, fastest on 6 of 13 (LAWS has no wording for a missed task)".
 
-| Arm | Model ids in the runs | Effort | Versions recorded | Build |
-| --- | --- | --- | --- | --- |
-| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `001f6113` |
-| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `001f6113` |
+| Arm | Model ids in the runs | Effort | Versions recorded | ChatGPT engine and UTC dates | Build |
+| --- | --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | engine 26.1007.71326 (39 inferred), 2026-10-18 | `001f6113` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | not used, 2026-10-18 | `001f6113` |
+
+The arms that use the engine ran on one engine version, 26.1007.71326. A version is "recorded" when the runner read it and "inferred" from the timeline in `bench/engine-versions.json` otherwise, and a date is inferred when it comes from a file's stamp or modification time. LCU, Cua, Peekaboo, FowlBrowser, Claude in Chrome and Claude's computer use don't use the engine.
 
 By the loss rule, sleight turbo lost 7 of 13 tasks.
 
@@ -190,10 +199,12 @@ Pairs within 20% of sleight turbo that still need 5 runs:
 
 2026-10-18, 07:12 to 12:40 UTC, Chrome 155.0.8059.80, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed 12 of 13 tasks, fastest on 11 of 13 (LAWS has no wording for a missed task)".
 
-| Arm | Model ids in the runs | Effort | Versions recorded | Build |
-| --- | --- | --- | --- | --- |
-| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `f43d4fbd` |
-| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `001f6113` |
+| Arm | Model ids in the runs | Effort | Versions recorded | ChatGPT engine and UTC dates | Build |
+| --- | --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | engine 26.1007.71326 (39 inferred), 2026-10-18 | `f43d4fbd` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | not used, 2026-10-18 | `001f6113` |
+
+The arms that use the engine ran on one engine version, 26.1007.71326. A version is "recorded" when the runner read it and "inferred" from the timeline in `bench/engine-versions.json` otherwise, and a date is inferred when it comes from a file's stamp or modification time. LCU, Cua, Peekaboo, FowlBrowser, Claude in Chrome and Claude's computer use don't use the engine.
 
 By the loss rule, sleight turbo lost 4 of 13 tasks.
 
@@ -266,10 +277,12 @@ Pairs within 20% of sleight turbo that still need 5 runs:
 
 2026-10-18, 09:08 to 13:24 UTC, Helium 0.19.4.1, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed every task, fastest on 11 of 13".
 
-| Arm | Model ids in the runs | Effort | Versions recorded | Build |
-| --- | --- | --- | --- | --- |
-| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `46ac78bf` |
-| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `326dde47`, `adcebef9` |
+| Arm | Model ids in the runs | Effort | Versions recorded | ChatGPT engine and UTC dates | Build |
+| --- | --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | engine 26.1007.71326 (39 inferred), 2026-10-18 | `46ac78bf` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | not used, 2026-10-18 | `326dde47`, `adcebef9` |
+
+The arms that use the engine ran on one engine version, 26.1007.71326. A version is "recorded" when the runner read it and "inferred" from the timeline in `bench/engine-versions.json` otherwise, and a date is inferred when it comes from a file's stamp or modification time. LCU, Cua, Peekaboo, FowlBrowser, Claude in Chrome and Claude's computer use don't use the engine.
 
 By the loss rule, sleight turbo lost 5 of 13 tasks.
 
@@ -341,10 +354,12 @@ Pairs within 20% of sleight turbo that still need 5 runs:
 
 2026-10-18, 09:04 to 12:22 UTC, Helium 0.19.4.1, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed 12 of 13 tasks, fastest on 6 of 13 (LAWS has no wording for a missed task)".
 
-| Arm | Model ids in the runs | Effort | Versions recorded | Build |
-| --- | --- | --- | --- | --- |
-| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `326dde47`, `adcebef9` |
-| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `326dde47`, `adcebef9` |
+| Arm | Model ids in the runs | Effort | Versions recorded | ChatGPT engine and UTC dates | Build |
+| --- | --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | engine 26.1007.71326 (39 inferred), 2026-10-18 | `326dde47`, `adcebef9` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | not used, 2026-10-18 | `326dde47`, `adcebef9` |
+
+The arms that use the engine ran on one engine version, 26.1007.71326. A version is "recorded" when the runner read it and "inferred" from the timeline in `bench/engine-versions.json` otherwise, and a date is inferred when it comes from a file's stamp or modification time. LCU, Cua, Peekaboo, FowlBrowser, Claude in Chrome and Claude's computer use don't use the engine.
 
 By the loss rule, sleight turbo lost 7 of 13 tasks.
 
@@ -420,10 +435,12 @@ Pairs within 20% of sleight turbo that still need 5 runs:
 
 2026-10-18, 09:08 to 12:54 UTC, Helium 0.19.4.1, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed 12 of 13 tasks, fastest on 11 of 13 (LAWS has no wording for a missed task)".
 
-| Arm | Model ids in the runs | Effort | Versions recorded | Build |
-| --- | --- | --- | --- | --- |
-| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `f43d4fbd` |
-| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `326dde47`, `adcebef9` |
+| Arm | Model ids in the runs | Effort | Versions recorded | ChatGPT engine and UTC dates | Build |
+| --- | --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | engine 26.1007.71326 (39 inferred), 2026-10-18 | `f43d4fbd` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | not used, 2026-10-18 | `326dde47`, `adcebef9` |
+
+The arms that use the engine ran on one engine version, 26.1007.71326. A version is "recorded" when the runner read it and "inferred" from the timeline in `bench/engine-versions.json` otherwise, and a date is inferred when it comes from a file's stamp or modification time. LCU, Cua, Peekaboo, FowlBrowser, Claude in Chrome and Claude's computer use don't use the engine.
 
 By the loss rule, sleight turbo lost 5 of 13 tasks.
 

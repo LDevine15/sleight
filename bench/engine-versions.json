@@ -1,6 +1,6 @@
 {
   "about": "ChatGPT computer-use engine versions on the benchmark Mac, built 2026-10-19 from evidence on disk for results saved before runners recorded the version. Each version was current from firstSeenUTC until the next version's switchedAfterUTC; the switch happened somewhere between that version's switchedAfterUTC (the last evidence of the previous version) and its firstSeenUTC. bench/engine-version.mjs reads it. Times are UTC; ~/Library/Logs/sleight/watch.log writes local time (EDT, UTC-4).",
-  "checkedUTC": "2026-10-19T05:15:56.032Z",
+  "checkedUTC": "2026-10-19T07:22:59.239Z",
   "checkedEvidence": "the engine folder was still 26.1013.40934 (refresh)",
   "versions": [
     {
