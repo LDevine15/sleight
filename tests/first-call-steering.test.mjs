@@ -1,5 +1,6 @@
-// SLEIGHT_FS=1 (loss study 2026-10-19, fixes 3 and 4): the js description steers a first call that looks for a named app's
-// window to getApp, and a browser getApp result whose tab strip shows its selected tab names the keyboard route for a new tab.
+// Loss study 2026-10-19, fixes 3 and 4. FS1, under A/B with SLEIGHT_FS=1: the js description steers a first call that looks
+// for a named app's window to getApp. FS2, default since the race A/B: a browser getApp result whose tab strip shows its
+// selected tab names the keyboard route for a new tab.
 // Shapes come from race-1017 b10: firefox-sleight-b10-r1/mdn (getState first, then getApp, then a click on "+" and a read)
 // and safari-sleight-b10-r2/form-checkout (one tab, no tab strip; Cmd+T stopped).
 import { test } from 'node:test';
@@ -118,35 +119,40 @@ test('FS2: a selected tab in the window\'s own strip is the shape the tab contin
   assert.equal(selectedTabShown(undefined), false);
 });
 
-test('FS2: the keyboard sentence replaces the plain one only with the flag and a strip the continuation can read', () => {
+test('FS2: the keyboard sentence replaces the plain one by default when the strip is one the continuation can read', () => {
   assert.equal(KEYBOARD_TAB_SENTENCE, 'Open the tab and send its URL in the same call: `app.pressKey("super+t")`, then `app.typeText(url)` and `app.pressKey("Return")`; the new tab focuses its address field.');
   const block = sentence => `workflow. ${sentence}\n</app_specific_instructions>\n`;
-  assert.ok(rewriteBrowserInstructions(INSTRUCTIONS + FIREFOX).includes(block(TAB_URL_SENTENCE)));
-  const keyboard = rewriteBrowserInstructions(INSTRUCTIONS + FIREFOX, () => {}, { keyboardTab: true });
+  const keyboard = rewriteBrowserInstructions(INSTRUCTIONS + FIREFOX);
   assert.ok(keyboard.includes(block(KEYBOARD_TAB_SENTENCE)));
   assert.equal(count(keyboard, TAB_URL_SENTENCE), 0);
-  assert.equal(rewriteBrowserInstructions(keyboard, () => {}, { keyboardTab: true }), keyboard);
+  assert.equal(rewriteBrowserInstructions(keyboard), keyboard);
   // Safari's trees keep the plain sentence: its Cmd+T stopped 6 of 6 times in b10 to b12, and its ID route ran in one call.
-  for (const tree of [SAFARI, SAFARI_TABS]) assert.ok(rewriteBrowserInstructions(INSTRUCTIONS + tree, () => {}, { keyboardTab: true }).includes(block(TAB_URL_SENTENCE)));
+  for (const tree of [SAFARI, SAFARI_TABS]) assert.ok(rewriteBrowserInstructions(INSTRUCTIONS + tree).includes(block(TAB_URL_SENTENCE)));
   // Instructions with no tree after them keep the plain sentence.
-  assert.ok(rewriteBrowserInstructions(INSTRUCTIONS, () => {}, { keyboardTab: true }).includes(block(TAB_URL_SENTENCE)));
+  assert.ok(rewriteBrowserInstructions(INSTRUCTIONS).includes(block(TAB_URL_SENTENCE)));
 });
 
-test('FS2: the relay delivers the keyboard sentence in a Firefox-shaped getApp result only with SLEIGHT_FS=1, and traces the route', async t => {
-  const plain = harness(t);
-  const before = await plain.getApp(1, INSTRUCTIONS + FIREFOX);
-  assert.equal(count(before, TAB_URL_SENTENCE), 1);
-  assert.equal(count(before, KEYBOARD_TAB_SENTENCE), 0);
-  assert.deepEqual(plain.traces.filter(row => row.direction === 'browser-instructions').map(({ status, route }) => ({ status, route })),
-    [{ status: 'rewritten', route: undefined }]);
-  const steered = harness(t, { firstCallSteering: true });
-  assert.equal(count(await steered.getApp(1, INSTRUCTIONS + FIREFOX), KEYBOARD_TAB_SENTENCE), 1);
-  assert.equal(count(await steered.getApp(2, INSTRUCTIONS + SAFARI), TAB_URL_SENTENCE), 1);
-  assert.deepEqual(steered.traces.filter(row => row.direction === 'browser-instructions').map(row => row.route), ['keyboard', 'plain']);
-  await withEnv('SLEIGHT_FS', '1', async () => assert.equal(count(await harness(t).getApp(1, INSTRUCTIONS + FIREFOX), KEYBOARD_TAB_SENTENCE), 1));
-  // The b10 engine sent the block and the tree in one text item; a tree in an item of its own counts too.
-  assert.equal(count(await steered.getApp(3, INSTRUCTIONS, FIREFOX), KEYBOARD_TAB_SENTENCE), 1);
-  assert.equal(count(await steered.getApp(4, INSTRUCTIONS, SAFARI), TAB_URL_SENTENCE), 1);
+test('FS2: only a browser instructions block takes the sentence; a native result with a selected tab is left alone', () => {
+  // Native apps with tabs (Finder, Terminal) send no "## Browser Computer Use" block, so what they read doesn't change.
+  assert.equal(rewriteBrowserInstructions(FIREFOX), FIREFOX);
+  const other = INSTRUCTIONS.replace('## Browser Computer Use', '## Spreadsheet Computer Use') + FIREFOX;
+  assert.equal(rewriteBrowserInstructions(other), other);
+});
+
+test('FS2: the relay delivers the keyboard sentence in a Firefox-shaped getApp result with or without SLEIGHT_FS, and traces the route', async t => {
+  for (const [label, options] of [['default', {}], ['FS1 on', { firstCallSteering: true }]]) {
+    const h = harness(t, options);
+    assert.equal(count(await h.getApp(1, INSTRUCTIONS + FIREFOX), KEYBOARD_TAB_SENTENCE), 1, label);
+    assert.equal(count(await h.getApp(2, INSTRUCTIONS + SAFARI), TAB_URL_SENTENCE), 1, label);
+    assert.deepEqual(h.traces.filter(row => row.direction === 'browser-instructions').map(({ status, route }) => ({ status, route })),
+      [{ status: 'rewritten', route: 'keyboard' }, { status: 'rewritten', route: 'plain' }], label);
+    // The b10 engine sent the block and the tree in one text item; a tree in an item of its own counts too.
+    assert.equal(count(await h.getApp(3, INSTRUCTIONS, FIREFOX), KEYBOARD_TAB_SENTENCE), 1, label);
+    assert.equal(count(await h.getApp(4, INSTRUCTIONS, SAFARI), TAB_URL_SENTENCE), 1, label);
+  }
+  for (const value of [undefined, '0', '1']) {
+    await withEnv('SLEIGHT_FS', value, async () => assert.equal(count(await harness(t).getApp(1, INSTRUCTIONS + FIREFOX), KEYBOARD_TAB_SENTENCE), 1, `SLEIGHT_FS=${value}`));
+  }
 });
 
 // The sentence's call shape, from the recorded Firefox tree, passes the tab continuation's structural checks: Cmd+T opened one
