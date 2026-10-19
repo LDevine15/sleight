@@ -135,3 +135,14 @@ test('world save opens an owned empty document and Chess refuses an existing pro
     assert.equal(calls.length, 1);
   } finally { removeTemp(temp); }
 });
+
+test('a failed Calculator read keeps its reason in the check result', async () => {
+  const task = getTasks('world').find(t => t.id === 'calculator-click');
+  const ctx = { expectedCalculator: '391', calculatorBefore: '0', answer: '391',
+    readCalculator: async () => { throw new Error('WORLD_CALCULATOR_READ_FAILED: exit 1: Calculator window absent or ambiguous'); } };
+  const result = await task.check(ctx);
+  assert.match(result, /^WORLD_CALCULATOR_DISPLAY_UNAVAILABLE: /);
+  assert.match(result, /Calculator window absent or ambiguous/);
+  ctx.readCalculator = async () => '2 button ID: Mode: basic; unitConversion: false';
+  assert.match(await task.check(ctx), /^WORLD_CALCULATOR_DISPLAY_(UNAVAILABLE|MISMATCH)/);
+});
