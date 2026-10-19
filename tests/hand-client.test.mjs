@@ -72,15 +72,66 @@ test('the host pid is set while the host runs and cleared when it ends; a dead h
   assert.equal(h.children.length, 1); assert.equal(h.children[0].lines.length, 1);
 });
 
-test('a host that is not compiled yet starts the build in the background and this session has no hand', async () => {
+test('a cold build starts the hand in the same session without blocking sends', async t => {
+  t.after(() => setHandPid(0));
   const h = harness({ built: false });
+  t.after(() => h.client.close());
   h.client.send(frame()); await settle();
-  assert.equal(h.preparing(), 1); assert.equal(h.children.length, 0);
-  assert.equal(h.client.enabled, false);
-  assert.ok(h.traces.some(([d, detail]) => d === 'hand-off' && detail.reason === 'building'));
+  assert.equal(h.preparing(), 1); assert.equal(h.children.length, 1);
+  assert.equal(h.client.enabled, true);
+  assert.ok(h.traces.some(([d, detail]) => d === 'hand-building' && detail.reason === 'cold-cache'));
   assert.ok(h.traces.some(([d, detail]) => d === 'hand-built' && detail.status === 'ready'));
   h.client.send(frame()); await settle();
-  assert.equal(h.preparing(), 1); assert.equal(h.children.length, 0);
+  assert.equal(h.preparing(), 1); assert.equal(h.children.length, 1);
+});
+
+test('turbo falls back immediately during a cold build, which later starts one shared host', async t => {
+  t.after(() => setHandPid(0));
+  let finish, options, spawns = 0;
+  const traces = [], child = fakeChild();
+  const client = createHandClient({ built: () => false, setting: () => ({ enabled: true }), watch: () => undefined,
+    permissions: null, usage: null, prepare: value => { options = value; return new Promise(resolve => { finish = resolve; }); },
+    trace: (direction, detail) => traces.push([direction, detail]) });
+  t.after(() => client.close());
+  assert.equal(await shareConsent(), undefined);
+  await settle();
+  assert.equal(typeof finish, 'function');
+  assert.equal(await shareConsent(), undefined, 'a build does not hold turbo startup');
+  options.onProgress({ stage: 'compile', helper: 'consent-host', compiler: 'swiftc' });
+  assert.deepEqual(traces.at(-1), ['hand-build', { stage: 'compile', helper: 'consent-host', compiler: 'swiftc' }]);
+  finish({ status: 'ready', spawn() { spawns++; return child; } });
+  await settle();
+  assert.equal(spawns, 1);
+  assert.equal((await shareConsent()).pid, child.pid);
+});
+
+test('closing a cold build aborts compilation and traces the session ending without launching a host', async () => {
+  let options, finish;
+  const traces = [];
+  const client = createHandClient({ built: () => false, setting: () => ({ enabled: true }), watch: () => undefined,
+    permissions: null, usage: null, prepare: value => { options = value; return new Promise(resolve => { finish = resolve; }); },
+    trace: (direction, detail) => traces.push([direction, detail]) });
+  client.send(frame()); await settle();
+  client.close();
+  assert.equal(options.signal.aborted, true);
+  assert.ok(traces.some(([d, m]) => d === 'hand-off' && m.reason === 'session-ended' && m.code === 'HAND_BUILD_CANCELLED'));
+  finish({ status: 'ready', spawn: () => assert.fail('closed sessions never launch') });
+  await settle();
+});
+
+test('frames that expired while compiling are dropped instead of replayed on the user desktop', async t => {
+  t.after(() => setHandPid(0));
+  let clock = 0, finish;
+  const child = fakeChild(), traces = [];
+  const client = createHandClient({ built: () => false, setting: () => ({ enabled: true }), now: () => clock,
+    watch: () => undefined, permissions: null, usage: null,
+    prepare: () => new Promise(resolve => { finish = resolve; }), trace: (d, m) => traces.push([d, m]) });
+  t.after(() => client.close());
+  client.send(frame()); await settle(); clock = 10000;
+  finish({ status: 'ready', spawn: () => child }); await settle();
+  assert.equal(child.lines.length, 0);
+  assert.ok(traces.some(([d, m]) => d === 'hand-dropped' && m.reason === 'build-delay'));
+  client.send(frame()); assert.equal(child.lines.length, 1);
 });
 
 test('the hand off: no build, no spawn and no writes', async () => {

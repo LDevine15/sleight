@@ -66,10 +66,15 @@ function executable(name, receipt) {
 const environment = () => ({ PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' });
 
 // A cold module cache rebuilds AppKit's modules: over 120 s at load 31 to 38 (2026-10-14), so first use allows 300 s.
-async function compileNative({ name, source, binary, moduleCache }) {
+async function compileNative({ name, source, binary, moduleCache, signal }) {
   const args = name === 'peer-host' ? ['clang', '-Wall', '-Werror', '-fmodules-cache-path=' + moduleCache, source, '-lbsm', '-o', binary]
     : ['swiftc', '-module-cache-path', moduleCache, source, '-o', binary];
-  await promisify(execFile)('/usr/bin/xcrun', args, { env: environment(), timeout: 300000, maxBuffer: 65536 });
+  // Abort can reject before close. Keep the bank and lock until the compiler has closed its pipes.
+  await new Promise((resolve, reject) => {
+    let failure;
+    const child = execFile('/usr/bin/xcrun', args, { env: environment(), timeout: 300000, maxBuffer: 65536, signal }, error => { failure = error; });
+    child.once('close', () => failure ? reject(failure) : resolve());
+  });
 }
 
 function helperSourceHashes(inventory) {
@@ -150,20 +155,32 @@ function releaseLock(lock) {
 // Internal loader options, never exposed as tool arguments. Compile staged exact
 // source bytes and publish the bank only after both artifacts pass validation.
 export async function prepareNativeHelpers({ inventory, cacheRoot = defaultHelperCache(),
-  sourceRoot = sources, compile = compileNative } = {}) {
+  sourceRoot = sources, compile = compileNative, onProgress = () => {}, signal } = {}) {
   if (inventory?.accepted !== true || inventory.protocol !== 1 || inventory.helperMode !== 'source' ||
       inventory.node !== process.version || !Array.isArray(inventory.files)) throw Error('DISTRIBUTION_ACCEPTANCE_REQUIRED');
   const hashes = helperSourceHashes(inventory);
-  const unavailable = code => Object.freeze({ status: 'unavailable', code, fallback: 'engine',
-    message: code === 'NATIVE_HELPERS_UNAVAILABLE' ? 'Turbo native helpers need Apple command-line tools and a successful local build. Keep using the engine path.'
-      : 'Turbo native helpers are unavailable. Keep using the engine path.' });
+  const started = Date.now(), key = helperBuildKey(hashes);
+  let stage = 'sources', helper;
+  const scrub = value => String(value).split(cacheRoot).join('<helper-cache>').split(sourceRoot).join('<helper-sources>')
+    .split(userInfo().homedir).join('~').replace(/\u001b\[[0-9;]*m/g, '').slice(0, 4096);
+  const detail = () => ({ stage, ...helper ? { helper, compiler: helper === 'peer-host' ? 'clang' : 'swiftc', timeoutMs: 300000 } : {},
+    cacheRoot: cacheRoot.split(userInfo().homedir).join('~'), key, sources: hashes, elapsedMs: Date.now() - started });
+  const progress = extra => { try { onProgress({ ...detail(), ...extra }); } catch {} };
+  const unavailable = (code, extra = {}) => {
+    const diagnostic = Object.freeze({ ...detail(), ...extra });
+    progress({ status: 'unavailable', code, ...extra });
+    return Object.freeze({ status: 'unavailable', code, detail: diagnostic, fallback: 'engine',
+      message: code === 'NATIVE_HELPERS_UNAVAILABLE' ? 'Turbo native helpers need Apple command-line tools and a successful local build. Keep using the engine path.'
+        : 'Turbo native helpers are unavailable. Keep using the engine path.' });
+  };
   if (process.platform !== 'darwin') return unavailable('NATIVE_HELPERS_UNAVAILABLE');
   let bank, locked = false;
   const lock = join(cacheRoot, 'build.lock');
   try {
+    signal?.throwIfAborted();
     const bytes = sourceBytes(sourceRoot, hashes);
+    stage = 'cache'; progress();
     createPrivateCache(cacheRoot);
-    const key = helperBuildKey(hashes);
     const directory = join(cacheRoot, key), record = join(directory, 'build.json');
     const cached = () => {
       const contents = ordinary(record, 0o600), data = JSON.parse(contents);
@@ -173,19 +190,24 @@ export async function prepareNativeHelpers({ inventory, cacheRoot = defaultHelpe
       const receipt = Object.freeze({}); nativeBuilds.set(receipt, build);
       return Object.freeze({ status: 'ready', directory, record, receipt });
     };
-    try { return cached(); } catch {}
+    try { const result = cached(); progress({ status: 'ready', cached: true }); return result; } catch {}
+    stage = 'lock'; progress();
     if (!takeLock(lock)) return unavailable('HOST_BUILD_BUSY');
     locked = true;
     bank = mkdtempSync(join(cacheRoot, 'build-')); chmodSync(bank, 0o700);
     const moduleCache = join(bank, 'module-cache'); mkdirSync(moduleCache, { mode: 0o700 });
     const binaries = {};
     for (const [name, filename] of Object.entries(helperSources)) {
+      signal?.throwIfAborted();
+      stage = 'compile'; helper = name; progress();
       const source = join(bank, filename), binary = join(bank, name);
       writeFileSync(source, bytes[filename], { mode: 0o600, flag: 'wx' });
-      await compile({ name, source, binary, moduleCache, bank });
+      await compile({ name, source, binary, moduleCache, bank, signal });
+      signal?.throwIfAborted();
       chmodSync(binary, 0o700); binaries[name] = digest(ordinary(binary, 0o700));
       if (digest(ordinary(source, 0o600)) !== hashes[filename]) throw Error('HOST_SOURCE_MISMATCH');
     }
+    stage = 'publish'; helper = undefined; progress();
     sourceBytes(sourceRoot, hashes);
     writeFileSync(join(bank, 'build.json'), JSON.stringify({ protocol: 1, arch: process.arch, sources: hashes, binaries }), { mode: 0o600, flag: 'wx' });
     // Replacement is limited to our validated private bank, never a linked or
@@ -193,9 +215,14 @@ export async function prepareNativeHelpers({ inventory, cacheRoot = defaultHelpe
     try { privateDirectory(directory); rmSync(directory, { recursive: true }); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     renameSync(bank, directory); bank = undefined;
-    return cached();
+    const result = cached(); progress({ status: 'ready', cached: false }); return result;
   } catch (error) {
-    return unavailable(['HOST_CACHE_UNSAFE', 'HOST_SOURCE_MISMATCH'].includes(error.message) ? error.message : 'NATIVE_HELPERS_UNAVAILABLE');
+    return unavailable(['HOST_CACHE_UNSAFE', 'HOST_SOURCE_MISMATCH'].includes(error.message) ? error.message : 'NATIVE_HELPERS_UNAVAILABLE', {
+      ...error.name === 'AbortError' ? { errorCode: 'ABORT_ERR' } : typeof error.code === 'string' ? { errorCode: error.code } : {},
+      ...Number.isInteger(error.code) ? { exitCode: error.code } : {},
+      ...error.signal ? { signal: error.signal } : {}, ...error.killed ? { killed: true } : {},
+      ...error.stderr ? { stderr: scrub(error.stderr) } : {},
+    });
   } finally {
     if (bank) rmSync(bank, { recursive: true, force: true });
     if (locked) releaseLock(lock);
@@ -302,12 +329,13 @@ export async function appleToolsPresent({ run = promisify(execFile), exists = ex
     return ['swiftc', 'clang'].every(tool => ['usr/bin', 'Toolchains/XcodeDefault.xctoolchain/usr/bin'].some(folder => exists(join(dir, folder, tool))));
   } catch { return false; }
 }
-export async function prepareHandHost({ cacheRoot = defaultHelperCache(), sourceRoot = sources, compile = compileNative, tools = appleToolsPresent } = {}) {
+export async function prepareHandHost({ cacheRoot = defaultHelperCache(), sourceRoot = sources, compile = compileNative,
+  tools = appleToolsPresent, onProgress, signal } = {}) {
   let inventory;
   try { inventory = handInventory(sourceRoot); } catch { return Object.freeze({ status: 'unavailable', code: 'HOST_SOURCE_MISMATCH' }); }
   if (!nativeHelpersBuilt({ inventory, cacheRoot }) && !await tools()) return Object.freeze({ status: 'unavailable', code: 'APPLE_TOOLS_MISSING' });
-  const built = await prepareNativeHelpers({ inventory, cacheRoot, sourceRoot, compile });
-  if (built.status !== 'ready') return Object.freeze({ status: built.status, code: built.code });
+  const built = await prepareNativeHelpers({ inventory, cacheRoot, sourceRoot, compile, onProgress, signal });
+  if (built.status !== 'ready') return Object.freeze({ status: built.status, code: built.code, detail: built.detail });
   const { receipt } = built;
   // capture is 'hidden' (absent from every capture) or 'visible' (screenshots and recordings show the hand). The host is the
   // session's: hand frames on stdin and control events on stdout. Session clients open fds 3 and 4 at first use, then

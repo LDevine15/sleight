@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import childProcess from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 import { macCommandSkip } from './requirements.mjs';
@@ -94,6 +95,64 @@ test('linked cache ancestor refuses before creating anything through the link', 
   const result = await host.prepareNativeHelpers({ ...f.options, cacheRoot: join(linked, 'new-cache') });
   assert.equal(result.status, 'unavailable'); assert.equal(result.code, 'HOST_CACHE_UNSAFE');
   assert.equal(existsSync(join(f.sourceRoot, 'new-cache')), false);
+});
+test('a compiler failure reports its stage, cache key, source hashes and bounded stderr', { skip }, async t => {
+  const events = [];
+  const f = fixture(t);
+  const result = await host.prepareHandHost({ ...f.options, tools: async () => true, onProgress: event => events.push(event),
+    async compile(data) {
+      if (data.name === 'peer-host') return f.options.compile(data);
+      throw Object.assign(Error('private compiler details'), { code: 1, signal: null,
+        stderr: data.source + ':12: error: invalid Swift\n' + 'x'.repeat(10000) });
+    } });
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.detail.stage, 'compile');
+  assert.equal(result.detail.helper, 'consent-host');
+  assert.equal(result.detail.compiler, 'swiftc');
+  assert.equal(result.detail.exitCode, 1);
+  assert.match(result.detail.key, /^[a-f0-9]{64}$/);
+  assert.deepEqual(result.detail.sources, Object.fromEntries(f.inventory.files.map(x => [x.path.slice(7), x.sha256])));
+  assert.match(result.detail.stderr, /consent-host\.swift:12: error: invalid Swift/);
+  assert.ok(result.detail.stderr.length <= 4096);
+  assert.doesNotMatch(result.detail.stderr, new RegExp(f.root));
+  assert.ok(events.some(e => e.stage === 'compile' && e.helper === 'peer-host'));
+  assert.equal(events.at(-1).status, 'unavailable');
+  assert.equal(existsSync(join(f.cacheRoot, 'build.lock')), false);
+});
+test('a compiler abort is identified and releases its bank and lock', { skip }, async t => {
+  const controller = new AbortController(), f = fixture(t);
+  controller.abort();
+  const result = await host.prepareNativeHelpers({ ...f.options, signal: controller.signal });
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.detail.errorCode, 'ABORT_ERR');
+  assert.equal(f.builds(), 0);
+  assert.equal(existsSync(join(f.cacheRoot, 'build.lock')), false);
+});
+test('an aborted compiler keeps its bank and lock until the child closes', { skip }, async t => {
+  const f = fixture(t), controller = new AbortController(), original = childProcess.execFile;
+  let child, stopped, source;
+  const abortSeen = new Promise(resolve => { stopped = resolve; });
+  t.after(() => { childProcess.execFile = original; syncBuiltinESMExports(); });
+  childProcess.execFile = (_command, args, options, callback) => {
+    source = args[args.indexOf('-o') - 2];
+    child = new EventEmitter();
+    options.signal.addEventListener('abort', () => {
+      callback(Object.assign(Error('aborted'), { name: 'AbortError', code: 'ABORT_ERR' })); stopped();
+    });
+    return child;
+  };
+  syncBuiltinESMExports();
+  const building = host.prepareNativeHelpers({ ...f.options, compile: undefined, signal: controller.signal });
+  controller.abort(); await abortSeen;
+  await new Promise(resolve => setImmediate(resolve));
+  const lock = join(f.cacheRoot, 'build.lock');
+  assert.equal(existsSync(lock), true, 'the compiler still owns its lock');
+  assert.equal(existsSync(source), true, 'the compiler still owns its source bank');
+  child.emit('close', null, 'SIGTERM');
+  const result = await building;
+  assert.equal(result.detail.errorCode, 'ABORT_ERR');
+  assert.equal(existsSync(lock), false);
+  assert.equal(existsSync(source), false);
 });
 test('concurrent first use retains the builders lock and publishes one complete bank', { skip }, async t => {
   const f = fixture(t); let release;

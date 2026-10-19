@@ -1,7 +1,7 @@
 // The relay owns one consent-capable ghost hand host per session. Turbo workers inherit its consent pipes, and browser
 // artwork comes back over worker IPC to this same client. The parent's copies keep the host alive between workers. send and hide
 // are fire-and-forget pipe writes that never throw or wait. A dead host or a failed spawn only traces, and the session goes on
-// without a hand. When the host isn't compiled yet, first use starts the build in the background and that session has no hand.
+// without a hand. A cold build runs off the caller's path and starts the hand in this session when ready.
 //
 // Caller frames: { kind, pid, windowId, at: [x, y], path: [[x, y], ...], delayMs, beats } in global top-left screen points
 // (kCGWindowBounds and AX frames). kind is click, double, right, key, type, drag or scroll. The hand glides along path into at
@@ -91,6 +91,7 @@ export function createHandClient({ env = process.env, setting = () => handSettin
   const nonce = randomBytes(32).toString('hex'), queue = [];
   // host: none, starting, running or dead (failed or closed this session; final). hand: the settings allow the hand.
   let seq = 0, child, host = 'none', starting, hand = false, capture = 'hidden', checked = now(), checking = false, events = '';
+  let buildController, buildStarted;
   // Hosts with an attached worker are left to finish their consent channel before exiting.
   const attached = new WeakSet();
   let consentClaimed = false, resetting;
@@ -210,18 +211,18 @@ export function createHandClient({ env = process.env, setting = () => handSettin
   }
   // Spawns the session's consent-capable host once. Menu and queued frames go to this host for its lifetime.
   async function launch(consent) {
+    if (host === 'dead') return undefined;
     let ready;
     try { ready = built(); } catch { ready = false; }
-    if (!ready) {
-      die('building');
-      Promise.resolve().then(prepare).then(result => note('hand-built', { status: result?.status, code: result?.code }),
-        () => note('hand-built', { status: 'unavailable' }));
-      return undefined;
-    }
+    const cold = !ready;
+    if (cold) note('hand-building', { reason: 'cold-cache', timeoutMs: 600000 });
     try {
-      const result = await prepare();
+      buildStarted = now(); buildController = new AbortController();
+      const result = await prepare({ signal: buildController.signal, onProgress: detail => note('hand-build', detail) });
+      buildController = undefined;
+      if (cold) note('hand-built', { status: result?.status, code: result?.code, ...result?.detail ? { detail: result.detail } : {} });
       if (host === 'dead') return undefined;
-      if (result?.status !== 'ready') { die('unavailable', { code: result?.code }); return undefined; }
+      if (result?.status !== 'ready') { die('unavailable', { code: result?.code, ...result?.detail ? { detail: result.detail } : {} }); return undefined; }
       // The first menu frame already carries the Permissions rows. The usage row follows once the log is read.
       await loadPermissions();
       if (host === 'dead') return undefined;
@@ -237,9 +238,12 @@ export function createHandClient({ env = process.env, setting = () => handSettin
       write(menu());
       statsAt = -Infinity;
       refreshUsage();
-      for (const { wire, at } of queue.splice(0)) write(act(wire, Math.max(0, wire.delayMs - (now() - at))));
+      for (const { wire, at } of queue.splice(0)) {
+        if (cold && now() - at > wire.delayMs + 1500) { note('hand-dropped', { reason: 'build-delay' }); continue; }
+        write(act(wire, Math.max(0, wire.delayMs - (now() - at))));
+      }
       return started;
-    } catch (error) { die('spawn', { code: error?.code ?? error?.message }); return undefined; }
+    } catch (error) { buildController = undefined; die('spawn', { code: error?.code ?? error?.message }); return undefined; }
   }
   // Launches run one at a time, off the caller's path.
   const serial = consent => {
@@ -312,6 +316,10 @@ export function createHandClient({ env = process.env, setting = () => handSettin
       try { watcher?.close(); } catch {}
       watcher = undefined;
       if (current === client) current = undefined;
+      if (buildController) {
+        note('hand-off', { reason: 'session-ended', code: 'HAND_BUILD_CANCELLED', elapsedMs: now() - buildStarted });
+        buildController.abort(); buildController = undefined;
+      }
       if (child) for (const end of [child.stdio?.[3], child.stdio?.[4]]) try { end?.destroy(); } catch {}
       if (host !== 'dead') { host = 'dead'; stop(); }
     },
@@ -323,6 +331,10 @@ export function createHandClient({ env = process.env, setting = () => handSettin
   sharing.set(client, async () => {
     if (consentClaimed) throw Error('HAND_CONSENT_IN_USE');
     if (host === 'dead') return undefined;
+    // Cold compilation must not hold turbo startup. It may use its own consent host meanwhile.
+    let cached;
+    try { cached = built(); } catch { cached = false; }
+    if (host !== 'running' && !cached) { ensure(); return undefined; }
     consentClaimed = true;
     try {
       await resetting;
