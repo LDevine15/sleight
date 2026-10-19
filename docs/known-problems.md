@@ -12,9 +12,8 @@ our own runs. Dates and engine versions are given where they matter.
   header name the host as `consent-host`, its file or its pid. A `getApp` argument computed at run time is checked only at that
   card. We haven't checked whether the engine's `pressKey` to another app can answer a frontmost host card, or whether the
   engine's own clicks at a point under the card press its buttons. Any process named `consent-host` is refused, sleight's or not.
-- The form rule asks before account, security, privacy and sharing settings even when your message names them, so the
-  race's form-settings task (two-factor on) stops before Save by design. `SLEIGHT_CONFIRM_PAYMENTS=always` keeps form and
-  switch confirmations too.
+- The form rule decides "safer" from the switch's name and the value the message gives. A setting whose name doesn't say which
+  way it goes still asks. `SLEIGHT_CONFIRM_PAYMENTS=always` keeps form and switch confirmations too.
 - `claude -p` can't answer approval prompts. List apps in the user's [preapproval file](settings.md#preapproved-apps) before starting.
 - `sleight-mcp setup` hasn't had a full live run: macOS permissions always need the user's click.
 - The engine refuses terminals (Terminal, iTerm2) and OpenAI's own apps (ChatGPT, Codex, Atlas, with

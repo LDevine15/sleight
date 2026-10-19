@@ -69,10 +69,10 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   (owner delegated the call to sleight-arch, 2026-10-18, after travel r3 stopped before "Book trip").
 - A form submit or save that the user's own message asks for is confirmed, like a named payment or booking. That covers the
   values the message names, notification switches included. A page's confirmation dialog that adds anything the
-  message didn't name still asks, and so do account, security, privacy and sharing settings. That holds even when the user's own request
-  includes the security switch (two-factor on the race's settings form): sleight asks, and the race reports that task as a loss rather than
-  bend the rule (sleight-arch, delegated by the owner, 2026-10-18). Payments and bookings keep their
-  own rules (owner, 2026-10-18).
+  message didn't name still asks. A security or privacy switch the message names with its value counts only when it makes the
+  account safer (two-factor on, a profile made private, sharing off). Loosening one, changing a recovery email or phone, a password or
+  connected apps, and a setup step that needs a code still ask (owner, 2026-10-19, replacing the 2026-10-18 ruling that asked before
+  every security setting). Payments and bookings follow the payment and booking rules above (owner, 2026-10-18).
 - Turbo's payment check reads figures, not wording: if any money figure on the checkout is larger than the amount in the
   user's message, it asks. The owner chose this over label rules (2026-10-15), accepting that about half of honest checkouts
   ask once (measured in docs/known-problems.md).
