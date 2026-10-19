@@ -47,12 +47,27 @@ says `ran, unverified`. Actions with no read between them share one line. It's o
 its A/B.
 
 Set `SLEIGHT_ACTION_LOG` to a file name, or to a path under `~/Library/Logs/sleight/`, to append one
-JSON line per action to that file in that folder. Any other path is ignored. A line has the time, the
-call id, the tool, the app or browser origin, the action kind, the target's role, and the outcome. A
-name is kept only when it's one of those generic control words. For an action that sleight or you
-refused, the line has the reason as a category, such as `window changed` or `input lease`. Typed text,
-set values, a secure field's value or length, window titles, page text and screenshots stay out. The
-file is private to your account (0600) and rotates at 5 MB, keeping two old files. The `env` block of
+JSON line per action to that file in that folder. Any other path is ignored. A line has these fields
+and no others:
+
+- `time`, `call` (the call's id), `tool`, and `app` for a native app or `origin` (scheme and host) for a browser.
+- `kind`: the action, such as `click`, `typeText` or `pressKey`, or the tool and its operation.
+- `target`: the control's `role`, its `name` only when it's one of those generic control words,
+  `secure: true` for a password field, or a browser element's `ref`.
+- `chars`: the length of typed, pasted or set text, only for a plain text field whose line names
+  nothing like a password, card, account, government or tax ID, bank code, PIN, expiry or birth date,
+  in English or a common other language. When in doubt it's left out.
+- `key`: a named key such as Return or Tab, or a shortcut with Command or Control. Other keys stay out.
+- `result`: `ok`, `refused`, `failed`, `not run` or `not logged`, with an `outcome` in structure words
+  such as `sheet opened` or `no visible change`, or a `reason` category such as `window changed` or
+  `input lease`.
+- `count`, on a `rest` line: actions that didn't run, or that ran past one call's 30-record cap.
+
+Typed text, set values, a secure field's value or length, window and sheet titles, page text and
+screenshots stay out. The file is private to your account: sleight writes only a regular file with
+one link and mode 0600, in a folder that only your account can write. It rotates at 5 MB, keeping two
+old files. Claude's code can change what the guard records. The log is an audit aid and can't prove
+what happened. The `env` block of
 `~/.claude/settings.json` works for both settings, and only you can set them there: sleight's hook
 refuses Claude's file and shell edits that put them in settings, MCP configs or shell startup files.
 

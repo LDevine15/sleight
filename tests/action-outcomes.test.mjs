@@ -447,6 +447,29 @@ test('typing with no known plain field target keeps its length out, and so does 
   assert.deepEqual(g.records(MARK).at(-1).outcomes[0], { a: 'typeText', t: { r: 'text field', s: true } });
 });
 
+test('a length stays only for a plain field whose line names nothing like a card, account, ID or code, in any common language', async () => {
+  const typed = async field => {
+    const text = form().replace(/The focused UI element is .*$/, 'The focused UI element is 1 ' + field);
+    const f = engine([text, text]);
+    await f.run('await app.typeText("4111111111111111");', { outcomeMark: MARK, actions: ['typeText'] });
+    return f.records(MARK).at(-1).outcomes[0];
+  };
+  assert.equal((await typed('text field (settable) Description: Name, Value: ')).c, 16);
+  for (const field of ['text field (settable) Description: Card number, Value: ', 'text field Description: IBAN', 'text field Kontonummer',
+    'text field Description: Numéro de carte', 'text field Description: Social Security Number', 'text field Description: Routing number',
+    'text field ID: cc-exp', 'text field Description: Tax ID', 'text field Description: Passport no.', 'text field Description: Account',
+    'text field Description: Número de tarjeta', 'combo box Description: Expiry', 'search field ID: ssn', 'text field Description: CVV',
+    'text field Description: PIN', 'text field Description: Steuernummer', 'text field Description: Date of birth']) {
+    const rec = await typed(field);
+    assert.equal(rec.c, undefined, field);
+    assert.doesNotMatch(JSON.stringify(rec), /"p":/, field);
+  }
+  // Password words in other languages, and a protected field, count as secure.
+  for (const body of ['text field Description: Mot de passe', 'text field Description: Contraseña', 'text field Description: Passwort',
+    'text field Description: Пароль', 'text field (protected) Description: Value']) assert.equal(actionOutcome([{ body }]).targets[0].s, true, body);
+  assert.equal(actionOutcome([{ body: 'text field Description: Comment' }]).targets[0].s, undefined);
+});
+
 test('a read the engine took without settling can\'t say "no visible change"', async () => {
   for (const settled of [true, false]) {
     const f = engine([form(), form()]);

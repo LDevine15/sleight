@@ -506,10 +506,11 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
       : /focus/.test(message) ? 'no focus target' : /close button/.test(message) ? 'close button' : /^Native access/.test(message) ? 'native access' : 'stopped';
     // A record as it leaves the engine: no set value, element line or focus number.
     const outcomeOut = ({ want, body, focus, ...rec }) => {
-      const t = body === undefined ? undefined : actionOutcome([{ body }]).targets[0];
-      // A length only for a known plain text field: a password's length is private too.
-      if (!t || t.s || !/^(?:text field|search text field|search field|combo box|text area|text entry area)$/.test(t.r)) delete rec.c;
-      return t ? { ...rec, t } : rec;
+      const { p, ...t } = body === undefined ? {} : actionOutcome([{ body }]).targets[0] ?? {};
+      // A length only for a known plain text field whose line names nothing sensitive: a password's or card number's
+      // length is private too.
+      if (!t.r || t.s || p || !/^(?:text field|search text field|search field|combo box|text area|text entry area)$/.test(t.r)) delete rec.c;
+      return t.r ? { ...rec, t } : rec;
     };
     const outcomeExtra = () => ({ ...(state.actions ? { planned: state.actions.length } : {}), ...(state.expected?.app ? { app: state.expected.app } : {}),
       ...(state.outcomeDropped ? { dropped: state.outcomeDropped } : {}) });

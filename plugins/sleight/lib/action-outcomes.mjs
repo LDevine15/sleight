@@ -48,9 +48,12 @@ export function actionOutcome(recs, before, after) {
     const id = field('ID'), name = (field('Description') || rest.split(TITLE_END)[0].trim() || id || '').trim();
     const value = field('Value');
     // The platform's secure role or subrole first, then bullets for a value, then names.
-    const secure = /secure/i.test(role) || flags.includes('secure') || /\bAXSecureTextField\b/.test(body) || /^[•●*]+$/.test(value ?? '') ||
-      /password|passcode|passphrase|\bpin\b|recovery (?:key|code|phrase)|secret key|security code|verification code|one-time|\botp\b|\bcv[cv]\b|api key|access token/i.test(name + ' ' + (id ?? ''));
-    return { role, flags, name, id, value, secure };
+    const secure = /secure/i.test(role) || flags.includes('secure') || flags.includes('protected') || /\bAXSecureTextField\b/.test(body) || /^[•●*]+$/.test(value ?? '') ||
+      /password|passcode|passphrase|\bpin\b|recovery (?:key|code|phrase)|secret key|security code|verification code|one-time|\botp\b|\bcv[cv]2?\b|api key|access token|protected|passwort|kennwort|mot de passe|contrase[ñn]a|senha|wachtwoord|l[öo]senord|adgangskode|salasana|has[łl]o|пароль|密码|パスワード|비밀번호|jelsz[óo]/i.test(name + ' ' + (id ?? ''));
+    // A field whose line (role, subrole, name, ID or value) looks like a card, account, government or tax ID, bank
+    // code, PIN, expiry or birth date, in English or a common other language. Its typed length stays out; when unsure, out.
+    const sensitive = secure || /\bcard|carte|tarjeta|karte|cart[aã]o|\bcarta\b|kaart|\bkort|karta|カード|卡|account|konto|compte|cuenta|\bconta\b|rekening|\bconto\b|\bssn\b|social security|s[ée]curit[ée] sociale|seguridad social|sozialversicherung|national insurance|\bnino\b|\bsin\b|\bbsn\b|\bnir\b|\bnif\b|\bnie\b|\bdni\b|\bcpf\b|codice fiscale|personnummer|pesel|\biban\b|\bbic\b|\bswift\b|routing|sort code|\bblz\b|bankleitzahl|\baba\b|\brib\b|\bnip\b|geheimzahl|\bcid\b|\bcc-|verification|pr[üu]fnummer|cryptogramme|\btax|\btin\b|\bein\b|\bvat\b|steuer|impuesto|fiscal|imposto|passport|reisepass|passeport|pasaporte|passaporto|paspoort|passaporte|expir|\bexp\b|ablauf|vencimiento|scadenza|birth|geburt|\bdob\b|secret|token|\bkey\b|code|national id|\bid no|number|nummer|num[ée]ro|n[úu]mero/i.test(body);
+    return { role, flags, name, id, value, secure, sensitive };
   };
   const view = text => {
     if (typeof text !== 'string') return;
@@ -72,7 +75,9 @@ export function actionOutcome(recs, before, after) {
   const key = d => d.role + '|' + (d.id || d.name);
   const targets = recs.map(rec => {
     const d = describe(rec.body);
-    return d && { r: d.role, ...(d.secure ? { s: true } : d.name && generic(d.name) ? { m: d.name } : d.name ? { ml: d.name.length } : {}) };
+    // p: the field's line looks sensitive, so its typed length stays in the engine (the guard drops p with it).
+    return d && { r: d.role, ...(d.secure ? { s: true } : d.name && generic(d.name) ? { m: d.name } : d.name ? { ml: d.name.length } : {}),
+      ...(d.sensitive && !d.secure && /field|area|combo box/.test(d.role) ? { p: true } : {}) };
   });
   const b = view(before), a = view(after);
   let rec;
