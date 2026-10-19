@@ -76,7 +76,8 @@ function stageManager() {
   try { return !!$.NSUserDefaults.alloc.initWithSuiteName('com.apple.WindowManager').boolForKey('GloballyEnabled'); } catch { return false; }
 }
 
-// drag.js's matchesIdentity, without the role when the tree's role name has no AX role here.
+// drag.js's matchesIdentity, without the role when the tree's role name has no AX role here, and without its
+// AXValue label binding: the owner allowed that for drag endpoints only (2026-10-19, CC8).
 function matches(el, identity, role) {
   return (!identity.role || role === identity.role) &&
     (!identity.id || scalar(el, 'AXIdentifier') === identity.id) &&

@@ -153,6 +153,13 @@ function matchesIdentity(el, identity, role = attempt(() => el.role(), ''), labe
   return labelValue && labelValueMatches(el, role, title) ? 'value' : false;
 }
 
+// One read of each attribute per element in the walk, however many endpoints it looks for.
+function cachedReads(el) {
+  const memo = new Map();
+  const get = (name, read) => { if (!memo.has(name)) memo.set(name, read()); return memo.get(name); };
+  return { name: () => get('AXTitle', () => el.name()), attributes: { byName: name => ({ value: () => get(name, () => el.attributes.byName(name).value()) }) } };
+}
+
 function elementsForLines(win, lines) {
   const entries = Object.entries(lines).map(([number, line]) => ({ number, identity: elementIdentity(line) }));
   const started = Date.now();
@@ -162,8 +169,9 @@ function elementsForLines(win, lines) {
     if (Date.now() - started > 1500) throw new Error('AX element scan exceeded its time limit');
     const role = attempt(() => el.role(), '');
     if (role === 'AXToolbar' || /^AX(?:Close|Minimize|Zoom|FullScreen|TitleBar)/.test(attempt(() => el.subrole(), ''))) return;
+    const reads = cachedReads(el);
     for (const entry of entries) {
-      const how = matchesIdentity(el, entry.identity, role, !inInput);
+      const how = matchesIdentity(reads, entry.identity, role, !inInput);
       if (!how) continue;
       if (entry.el) throw new Error('element identity must match exactly one named AX element in this window; ambiguous, read again');
       entry.el = el; entry.labelValue = how === 'value';

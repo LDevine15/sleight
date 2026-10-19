@@ -541,3 +541,25 @@ test('a titled static text still binds by name without reading its value', () =>
   assert.deepEqual(Array.from(h.resolve(h.request({ 90: 'text Security' }, 90, [40, 60])).from), [250, 110]);
   assert.equal(h.valueReads.includes(row), false);
 });
+
+test('a row label inside a web area binds, and each static text value is read at most once per walk', () => {
+  const h = labelFixture();
+  const web = { ...h.element('AXWebArea', 300, 160, 200, 120), AXParent: h.win, AXChildren: [h.list] };
+  h.list.AXParent = web; h.win.AXChildren = h.win.AXChildren.filter(el => el !== h.list).concat(web);
+  const points = h.resolve(h.request({ 90: 'text Security', 91: 'text Product updates' }));
+  assert.deepEqual(Array.from(points.from), [250, 110]);
+  assert.equal(h.valueReads.includes(web), false, 'the web area value is never read');
+  const walkReads = h.valueReads.slice(0, -2); // resolve rechecks the two bound rows after the walk
+  assert.equal(new Set(walkReads).size, walkReads.length, 'one AXValue read per element in the walk');
+});
+
+test('a name match and a value match on different elements refuse as ambiguous', () => {
+  const h = labelFixture();
+  h.list.AXChildren.push({ ...h.element('AXStaticText', 310, 260, 80, 20), AXTitle: 'Security', AXParent: h.list });
+  assert.throws(() => h.resolve(h.request({ 90: 'text Security' }, 90, [40, 60])), /ambiguous/);
+});
+
+test('without a character count, a long value is compared and refused, never bound', () => {
+  const h = labelFixture(); h.list.AXChildren[1].AXValue = 'Security' + ' and more'.repeat(10);
+  assert.throws(() => h.resolve(h.request({ 90: 'text Security' }, 90, [40, 60])), /missing/);
+});
