@@ -1,4 +1,5 @@
 import ts from 'typescript';
+import { FrameMapper, windowReceipts } from './frames.mjs';
 
 export const resultText = result => (result?.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
 
@@ -24,11 +25,13 @@ export function elementMapping(before, after) {
 function matchRows(old, fresh) {
   const map = new Map();
   for (const row of old) {
+    if (old.filter(r => r.id === row.id).length !== 1) continue;
+    if ([...old, ...fresh].some(r => r.label === row.label && r.uncertain)) continue;
     const named = /(?:ID|Description|Placeholder|Help):|(?:button|field|textbox|radio|switch|slider|option|link|listbox)\b.+\S/.test(row.label);
     const uniqueLabel = new Set(old.filter(r => r.label === row.label).map(r => r.id)).size === 1;
     const source = old.filter(r => r.key === row.key), targets = fresh.filter(r => r.key === row.key || (named && uniqueLabel && r.label === row.label));
     const targetIds = [...new Set(targets.map(r => r.id))];
-    if (new Set(source.map(r => r.id)).size === 1 && targetIds.length === 1) map.set(row.id, targetIds[0]);
+    if (new Set(source.map(r => r.id)).size === 1 && targetIds.length === 1 && fresh.filter(r => r.id === targetIds[0]).length === 1) map.set(row.id, targetIds[0]);
   }
   return map;
 }
@@ -38,10 +41,10 @@ function mergeElements(previous, text) {
   if (!/lines changed since the last full tree/.test(text)) return rows.length ? rows : previous;
   const merged = [...previous];
   for (const row of rows) {
-    const old = merged.filter(r => r.label === row.label);
-    const index = old.length === 1 ? merged.indexOf(old[0]) : merged.findIndex(r => r.id === row.id);
-    if (index >= 0) merged[index] = { ...row, key: merged[index].label === row.label ? merged[index].key : row.key };
-    else merged.push(row);
+    const index = merged.findIndex(r => r.id === row.id);
+    if (index >= 0) merged[index] = { ...row, uncertain: merged[index].uncertain, key: merged[index].label === row.label ? merged[index].key : row.key };
+    // A new number could be an added sibling or a renumbered control. Only a full read resolves it.
+    else merged.push({ ...row, uncertain: true });
   }
   return merged;
 }
@@ -72,35 +75,59 @@ export function refs(text) {
   return rows.filter((row, i) => rows.findIndex(other => other.id === row.id && other.key === row.key) === i);
 }
 
+const tabHeaders = text => [...text.matchAll(/^(t[a-f0-9]{16,}) (https?:\/\/[^\s]+)\nTitle[^\n]*: ([^\n]+)/gm)];
+const elementMethods = new Set(['click', 'doubleClick', 'rightClick', 'hover', 'setValue', 'selectText', 'scroll', 'pickFromList', 'performSecondaryAction', 'drag', 'pressKey', 'typeText', 'paste']);
+const observationMethods = new Set(['getApp', 'getTab', 'getBrowser', 'getState', 'getAXState', 'getScreenshot', 'getAXStateAndScreenshot', 'listApps', 'listWindows', 'listTabs', 'listBrowsers', 'documentation']);
+
 export class TargetMapper {
-  constructor() { this.before = ''; this.after = ''; this.strings = new Map(); this.identities = new Map(); this.refMap = new Map(); this.beforeRows = []; this.afterRows = []; this.beforeRefs = []; this.afterRefs = []; }
-  refresh(text) {
-    if (elements(text).length) this.afterRows = elements(text);
-    this.afterRefs = mergeRefs([], text);
-    this.refMap = matchRows(this.beforeRefs, this.afterRefs);
+  constructor() { this.before = ''; this.after = ''; this.strings = new Map(); this.identities = new Map(); this.tabs = new Map(); this.frames = new FrameMapper(); this.beforeRows = []; this.afterRows = []; }
+  refMapping(tab) {
+    if (!tab || !this.tabs.has(tab) || !this.strings.has(tab)) throw Error(`Unmapped tab or missing tab snapshot: ${tab ?? '(absent)'}`);
+    return this.tabs.get(tab).refMap;
   }
-  observe(before, after) {
+  refresh(text, args = {}) {
+    this.frames.observe([]);
+    if (elements(text).length) this.afterRows = elements(text);
+    if (refs(text).length || /^# Snapshot \d+/m.test(text)) {
+      this.refMapping(args.tab);
+      const headers = tabHeaders(text);
+      if (headers.length > 1 || headers.length === 1 && headers[0][1] !== this.strings.get(args.tab)) throw Error('Refresh returned a different tab');
+      const state = this.tabs.get(args.tab);
+      state.afterRefs = mergeRefs([], text);
+      state.refMap = matchRows(state.beforeRefs, state.afterRefs);
+    }
+  }
+  observe(before, after, args = {}) {
     if (elements(before).length) {
       this.before = before; this.after = after;
       this.beforeRows = mergeElements(this.beforeRows, this.replaceStrings(before)); this.afterRows = mergeElements(this.afterRows, after);
     }
-    this.beforeRefs = mergeRefs(this.beforeRefs, before); this.afterRefs = mergeRefs(this.afterRefs, after);
-    this.refMap = matchRows(this.beforeRefs, this.afterRefs);
-    const header = text => [...text.matchAll(/^(t[a-f0-9]{16,}) (https?:\/\/[^\s]+)\nTitle[^\n]*: ([^\n]+)/gm)];
-    const a = header(before), b = header(after);
+    const a = tabHeaders(before), b = tabHeaders(after);
+    let tab = args.tab;
     if (a.length || b.length) {
       if (a.length !== 1 || b.length !== 1 || a[0][2] !== b[0][2] || this.replaceStrings(a[0][3]) !== b[0][3]) throw Error('Ambiguous tab handle mapping');
+      if ([...this.tabs.keys()].some(key => key !== a[0][1] && this.strings.get(key) === b[0][1])) throw Error('Ambiguous tab handle mapping');
       this.addString(a[0][1], b[0][1]);
+      tab = a[0][1];
+    }
+    if (refs(before).length || refs(after).length || /^# (?:Snapshot|Changes)/m.test(before + '\n' + after)) {
+      if (!tab || !this.strings.has(tab)) throw Error('Cannot scope refs without a mapped tab');
+      const state = this.tabs.get(tab) ?? { beforeRefs: [], afterRefs: [] };
+      state.beforeRefs = mergeRefs(state.beforeRefs, before); state.afterRefs = mergeRefs(state.afterRefs, after);
+      state.refMap = matchRows(state.beforeRefs, state.afterRefs);
+      this.tabs.set(tab, state);
     }
     // A native select_window receipt binds a changing window number to app + title.
-    const receipts = text => text.split('\n').flatMap(line => {
-      try { const v = JSON.parse(line); return v.target && v.identity ? [v] : []; } catch { return []; }
-    });
-    const x = receipts(before), y = receipts(after);
-    if (x.length === 1 && y.length === 1 && this.replaceStrings(x[0].target.title) === y[0].target.title && x[0].target.appId === y[0].target.appId) {
-      for (const key of ['windowNumber', 'windowId']) if (x[0].identity[key] !== undefined && y[0].identity[key] !== undefined)
-        for (const alias of ['windowNumber', 'windowId', 'toWindowId']) this.identities.set(`${alias}:${x[0].identity[key]}`, y[0].identity[key]);
+    const x = windowReceipts(before), y = windowReceipts(after), pairs = [];
+    for (const old of x) {
+      const same = row => this.replaceStrings(old.target.title) === row.target.title && old.target.appId === row.target.appId;
+      const matches = y.filter(same);
+      if (x.filter(row => row.target.appId === old.target.appId && row.target.title === old.target.title).length !== 1 || matches.length !== 1) continue;
+      const fresh = matches[0]; pairs.push([old, fresh]);
+      for (const key of ['windowNumber', 'windowId']) if (Number.isSafeInteger(old.identity[key]) && Number.isSafeInteger(fresh.identity[key]))
+        for (const alias of ['windowNumber', 'windowId', 'toWindowId']) this.identities.set(`${alias}:${old.identity[key]}`, fresh.identity[key]);
     }
+    this.frames.observe(pairs);
   }
   addString(before, after) {
     if (!before || !after || (this.strings.has(before) && this.strings.get(before) !== after)) throw Error('Ambiguous fixture mapping');
@@ -123,9 +150,16 @@ export class TargetMapper {
     if (ast.parseDiagnostics.length) throw Error('Recorded JavaScript cannot be parsed');
     const edits = [];
     const visit = node => {
+      if (ts.isPropertyAssignment(node)) {
+        const key = node.name.text;
+        if (['elementIndex', 'targetIndex', 'element', 'windowId', 'windowNumber', 'toWindowId'].includes(key) && !ts.isNumericLiteral(node.initializer))
+          throw Error('Computed numeric selectors cannot be remapped safely');
+        if (['from', 'to'].includes(key) && !ts.isNumericLiteral(node.initializer) && !ts.isStringLiteral(node.initializer))
+          throw Error('Computed or coordinate targets cannot be remapped without a window frame');
+      }
       if (ts.isPropertyAssignment(node) && ts.isNumericLiteral(node.initializer)) {
         const key = ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) ? node.name.text : '';
-        if (['elementIndex', 'targetIndex'].includes(key)) edits.push([node.initializer.getStart(ast), node.initializer.end, String(this.mapElement(Number(node.initializer.text)))]);
+        if (['elementIndex', 'targetIndex', 'element', 'from', 'to'].includes(key)) edits.push([node.initializer.getStart(ast), node.initializer.end, String(this.mapElement(Number(node.initializer.text)))]);
         if (['windowId', 'windowNumber', 'toWindowId'].includes(key)) {
           const id = this.identities.get(`${key}:${node.initializer.text}`);
           if (id === undefined) throw Error(`Unmapped ${key}: ${node.initializer.text}`);
@@ -133,12 +167,41 @@ export class TargetMapper {
         }
         if (['id', 'tabId', 'providerTabId'].includes(key)) throw Error(`Unmapped numeric selector ${key}`);
       }
-      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
-          ['click', 'doubleClick', 'rightClick', 'hover', 'setValue', 'selectText', 'scroll', 'pickFromList', 'performSecondaryAction'].includes(node.expression.name.text)) {
-        const arg = node.arguments[0];
-        if (arg && ts.isNumericLiteral(arg)) edits.push([arg.getStart(ast), arg.end, String(this.mapElement(Number(arg.text)))]);
-        else if (arg && !ts.isObjectLiteralExpression(arg) && !ts.isArrayLiteralExpression(arg) && !ts.isStringLiteral(arg))
-          throw Error('Computed element targets cannot be remapped safely');
+      if (ts.isCallExpression(node)) {
+        const method = ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : undefined;
+        if (elementMethods.has(method)) {
+          const targets = method === 'drag' ? [0, 1] : [0];
+          for (const [index, arg] of node.arguments.entries()) {
+            const numeric = ts.isNumericLiteral(arg) || ts.isPrefixUnaryExpression(arg) && ts.isNumericLiteral(arg.operand);
+            if (numeric && !targets.includes(index) && !(method === 'scroll' && index === 2))
+              throw Error('Unmapped numeric argument outside the supported element positions');
+          }
+          for (const index of targets) {
+            const arg = node.arguments[index];
+            if (!arg) continue;
+            if (ts.isNumericLiteral(arg)) edits.push([arg.getStart(ast), arg.end, String(this.mapElement(Number(arg.text)))]);
+            else if (ts.isArrayLiteralExpression(arg)) throw Error('Coordinate handle targets have no verified window frame');
+            else if (ts.isObjectLiteralExpression(arg)) {
+              const names = arg.properties.map(p => p.name?.text);
+              if (!names.some(key => ['elementIndex', 'element', 'targetIndex', 'id'].includes(key))) throw Error('Object handle targets have no verified window frame');
+              if (names.some(key => ['x', 'y', 'from', 'to'].includes(key))) throw Error('Coordinate handle targets have no verified window frame');
+              if (arg.properties.some(p => !ts.isPropertyAssignment(p))) throw Error('Computed element targets cannot be remapped safely');
+            }
+            else if (!ts.isStringLiteral(arg) && arg.kind !== ts.SyntaxKind.NullKeyword)
+              throw Error('Computed element targets cannot be remapped safely');
+          }
+        } else {
+          const numeric = node.arguments.some(arg => {
+            const contains = n => ts.isNumericLiteral(n) || ts.forEachChild(n, contains);
+            return contains(arg);
+          });
+          // Object window selectors are handled above. Every other unknown numeric method refuses.
+          if (numeric && !['getApp', 'getTab'].includes(method)) throw Error('Unmapped numeric argument to an unsupported method');
+          if (['getApp', 'getTab'].includes(method) && node.arguments.some(ts.isNumericLiteral)) throw Error('Unmapped numeric selector');
+          const receiver = ts.isPropertyAccessExpression(node.expression) ? node.expression.expression.getText(ast) : '';
+          if (!observationMethods.has(method) && !['console', 'JSON', 'nodeRepl'].includes(receiver) && node.arguments.some(arg => !ts.isStringLiteral(arg)))
+            throw Error('Computed arguments to an unsupported method cannot be remapped safely');
+        }
       }
       ts.forEachChild(node, visit);
     };
@@ -147,14 +210,25 @@ export class TargetMapper {
     return code;
   }
   arguments(args) {
+    const coordinate = value => Array.isArray(value) || value && typeof value === 'object' && ('x' in value || 'y' in value);
+    if (coordinate(args.from) || coordinate(args.to) || 'x' in args || 'y' in args) {
+      this.frames.assert(args.windowId, args.app);
+      if (args.toWindowId !== undefined) this.frames.assert(args.toWindowId, args.app);
+    }
     const walk = (value, key) => {
+      if (value && typeof value === 'object' && !Array.isArray(value) && value !== args &&
+          ('x' in value || 'y' in value || coordinate(value.from) || coordinate(value.to)))
+        throw Error('Nested coordinates have no verified window frame');
+      if (['point', 'position', 'coordinates', 'target'].includes(key) && coordinate(value))
+        throw Error('Coordinate target has no verified window frame');
       if (key === 'code' && typeof value === 'string') return this.code(value);
       if (['ref', 'to', 'submit'].includes(key) && typeof value === 'string' && /^(?:f\d+)?e\d+$|^s\d+$/.test(value)) {
-        if (!this.refMap.has(value)) throw Error(`Ambiguous or missing ref ${value}; refresh required`);
-        return this.refMap.get(value);
+        const refMap = this.refMapping(args.tab);
+        if (!refMap.has(value)) throw Error(`Ambiguous or missing ref ${value}; refresh required`);
+        return refMap.get(value);
       }
-      if (key === 'tab' && typeof value === 'string' && /^t[a-f0-9]+$/.test(value) && !this.strings.has(value)) throw Error(`Unmapped tab: ${value}`);
-      if (['elementIndex', 'element', 'targetIndex'].includes(key) && typeof value === 'number') return this.mapElement(value);
+      if (key === 'tab' && (!this.strings.has(value) || value !== args.tab)) throw Error(`Unmapped tab or conflicting target tab: ${value}`);
+      if (['elementIndex', 'element', 'targetIndex', 'from', 'to'].includes(key) && typeof value === 'number') return this.mapElement(value);
       if (['windowId', 'toWindowId', 'windowNumber', 'tabId', 'tab_id'].includes(key)) {
         if (!this.identities.has(`${key}:${value}`)) throw Error(`Unmapped ${key}: ${value}`);
         return this.identities.get(`${key}:${value}`);
@@ -167,13 +241,15 @@ export class TargetMapper {
   }
 }
 
-export function normalized(text, mapper = new TargetMapper(), recorded = false) {
+export function normalized(text, mapper = new TargetMapper(), recorded = false, tab) {
+  tab ??= tabHeaders(text)[0]?.[1];
+  text = mapper.frames.normalized(text, recorded);
   text = mapper.replaceStrings(text).replace(/\r\n/g, '\n');
   if (recorded) text = text.replace(/("(?:windowId|toWindowId)"\s*:\s*)(\d+)/g, (all, prefix, id) => {
     const key = /"([^"]+)"/.exec(prefix)[1];
     return mapper.identities.has(`${key}:${id}`) ? prefix + mapper.identities.get(`${key}:${id}`) : all;
   }).replace(/(\b(?:ref|click|type|select|check|uncheck|hover|drag|fill) )((?:f\d+)?e\d+|s\d+)\b/g,
-    (_, prefix, id) => prefix + (mapper.refMap.get(id) ?? id));
+    (_, prefix, id) => prefix + (tab && mapper.tabs.get(tab)?.refMap.get(id) || id));
   const ids = new Map(elements(text).map(r => [r.id, r.key]));
   return text.replace(/^(\+ )?(\s*)\d+ (?=[a-z])/gm, '$1$2# ')
     .replace(/\[ref=(?:f\d+)?[es]\d+\]/g, '[ref=#]')
@@ -187,7 +263,7 @@ export function refreshCode(args) {
   const receivers = new Set();
   const visit = node => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
-        ['click', 'doubleClick', 'rightClick', 'hover', 'setValue', 'selectText', 'scroll', 'pickFromList', 'performSecondaryAction'].includes(node.expression.name.text)) {
+        elementMethods.has(node.expression.name.text)) {
       const receiver = node.expression.expression;
       if (!ts.isIdentifier(receiver)) throw Error('Refresh requires a named app handle');
       receivers.add(receiver.text);
@@ -199,7 +275,7 @@ export function refreshCode(args) {
   return `await ${[...receivers][0]}.getAXState({ disableDiffing: true });`;
 }
 
-export function divergence(expected, actual, mapper) {
+export function divergence(expected, actual, mapper, args = {}) {
   const text = resultText(actual);
   if (/sleight stopped this payment|payment (?:confirmation|approval) (?:blocked|required)|confirmation required through the trusted consent UI|Replay approval declined|^\s*(?:approval declined|permission denied|not approved)\s*$|The user (?:didn't allow|did not allow|did not approve)|Computer Use was not approved|permission request[^\n]*(?:denied|dismissed)|waiting for (?:a |the )?(?:payment |confirmation )?card/im.test(text)) return 'confirmation or approval gate';
   if (Boolean(expected?.isError) !== Boolean(actual?.isError)) return 'success/error changed';
@@ -207,7 +283,7 @@ export function divergence(expected, actual, mapper) {
   const actualMedia = (actual?.content ?? []).filter(b => b.type !== 'text');
   if (JSON.stringify(expectedMedia) !== JSON.stringify(actualMedia)) return 'non-text evidence changed; visual interpretation required';
   const a = expected?.structuredContent ?? expected?.structured_content, b = actual?.structuredContent ?? actual?.structured_content;
-  if (normalized(JSON.stringify(a ?? null), mapper, true) !== normalized(JSON.stringify(b ?? null), mapper)) return 'structured result changed';
-  if (normalized(resultText(expected), mapper, true) !== normalized(text, mapper)) return 'observable text changed';
+  if (normalized(JSON.stringify(a ?? null), mapper, true, args.tab) !== normalized(JSON.stringify(b ?? null), mapper)) return 'structured result changed';
+  if (normalized(resultText(expected), mapper, true, tabHeaders(resultText(expected))[0]?.[1] ?? args.tab) !== normalized(text, mapper)) return 'observable text changed';
   return null;
 }

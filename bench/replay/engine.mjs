@@ -24,15 +24,15 @@ export async function replayCalls(calls, { call, mapper = new TargetMapper(), be
         record({ event: 'mapping-read', index, arguments: refresh, result: fresh, ms: mappingMs });
         if (fresh.isError) throw Error('Target refresh failed');
         mapper.after = resultText(fresh);
-        mapper.refresh(mapper.after);
+        mapper.refresh(mapper.after, original.arguments);
         args = mapper.arguments(original.arguments);
       }
       await beforeCall();
       const start = performance.now();
       try { result = await call(original.server, original.name, args); }
       finally { toolMs = performance.now() - start; }
-      mapper.observe(resultText(original.result), resultText(result));
-      reason = divergence(original.result, result, mapper);
+      mapper.observe(resultText(original.result), resultText(result), original.arguments);
+      reason = divergence(original.result, result, mapper, original.arguments);
     } catch (error) { reason = error.message; }
     const row = { index, id: original.id, server: original.server, name: original.name, arguments: args,
       recordedArguments: original.arguments, expected: original.result, result, toolMs, mappingMs, startedAt, finishedAt: new Date().toISOString(),

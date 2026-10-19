@@ -52,7 +52,7 @@ test('map changed AX numbers by unique ancestor and label, keeping typed values 
   mapper.observe('1 window Checkout\n\t2 text field Name, Value: empty\n\t3 button Save',
     '20 window Checkout\n\t21 text field Name, Value: filled\n\t22 button Save');
   assert.equal(mapper.code('await app.setValue(2, "2"); await app.click(3);'), 'await app.setValue(21, "2"); await app.click(22);');
-  assert.deepEqual(mapper.arguments({ code: 'await app.click([2, 3]);', title: 'keep 2' }), { code: 'await app.click([2, 3]);', title: 'keep 2' });
+  assert.throws(() => mapper.arguments({ code: 'await app.click([2, 3]);', title: 'keep 2' }), /frame/);
   assert.equal(mapper.arguments({ elementIndex: 2 }).elementIndex, 21);
   assert.equal(mapper.code('await app.click({ elementIndex: 2 })'), 'await app.click({ elementIndex: 21 })');
   assert.throws(() => mapper.code('await app.click({ id: 2 })'), /Unmapped numeric selector/);
@@ -81,7 +81,8 @@ test('map real turbo tab handle and refs from a recorded snapshot', () => {
   assert.deepEqual(mapper.arguments({ tab: oldTab, fields: [{ ref: 'e15', value: 'e15' }] }), { tab: nextTab, fields: [{ ref: 'e915', value: 'e15' }] });
   assert.equal(divergence(first.result, text(after), mapper), null);
   assert.throws(() => mapper.arguments({ tab: 't' + 'b'.repeat(31) }), /Unmapped tab/);
-  assert.throws(() => mapper.arguments({ ref: 'e999' }), /missing ref/);
+  assert.throws(() => mapper.arguments({ tab: oldTab, ref: 'e999' }), /missing ref/);
+  assert.throws(() => mapper.arguments({ ref: 'e15' }), /tab/);
 });
 
 test('refuse ambiguous tab identity and map window receipts', () => {
@@ -95,21 +96,26 @@ test('refuse ambiguous tab identity and map window receipts', () => {
   assert.throws(() => mapper.arguments({ windowNumber: 3 }), /Unmapped/);
 });
 
-test('native compact diffs preserve unchanged targets while updating moved IDs', () => {
+test('native compact diffs preserve unchanged targets and require a full read for new IDs', () => {
   const mapper = new TargetMapper();
   mapper.observe('0 window\n  1 text field Name\n  2 button Save', '10 window\n  11 text field Name\n  12 button Save');
   mapper.observe('0 window\nsleight: lines changed since the last full tree\n+   3 text field Name, Value: Sam',
     '10 window\nsleight: lines changed since the last full tree\n+   13 text field Name, Value: Sam');
+  assert.equal(mapper.code('await app.click(2)'), 'await app.click(12)');
+  assert.throws(() => mapper.code('await app.setValue(3, "42")'), /refresh required/);
+  mapper.observe('0 window\n  3 text field Name, Value: Sam\n  2 button Save', '10 window\n  13 text field Name, Value: Sam\n  12 button Save');
   assert.equal(mapper.code('await app.setValue(3, "42"); await app.click(2)'), 'await app.setValue(13, "42"); await app.click(12)');
 });
 
 test('turbo diffs keep unchanged refs and remove deleted refs', () => {
   const mapper = new TargetMapper();
+  const tab = 't' + 'a'.repeat(31), fresh = 't' + 'b'.repeat(31);
+  mapper.addString(tab, fresh);
   mapper.observe('# Snapshot 1\n- button "Save" [ref=e1]\n- button "Delete" [ref=e2]',
-    '# Snapshot 1\n- button "Save" [ref=e10]\n- button "Delete" [ref=e20]');
-  mapper.observe('# Changes\n- - button "Delete" [ref=e2]', '# Changes\n- - button "Delete" [ref=e20]');
-  assert.equal(mapper.arguments({ ref: 'e1' }).ref, 'e10');
-  assert.throws(() => mapper.arguments({ ref: 'e2' }), /missing/);
+    '# Snapshot 1\n- button "Save" [ref=e10]\n- button "Delete" [ref=e20]', { tab });
+  mapper.observe('# Changes\n- - button "Delete" [ref=e2]', '# Changes\n- - button "Delete" [ref=e20]', { tab });
+  assert.equal(mapper.arguments({ tab, ref: 'e1' }).ref, 'e10');
+  assert.throws(() => mapper.arguments({ tab, ref: 'e2' }), /missing/);
 });
 
 test('fixture string substitutions are simultaneous and preserve literal metacharacters', () => {
@@ -133,7 +139,7 @@ test('turbo refresh uses its mapped tab and never retries an uncertain action', 
   const mapper = new TargetMapper();
   const oldTab = 't' + 'a'.repeat(31), tab = 't' + 'b'.repeat(31);
   mapper.addString(oldTab, tab);
-  mapper.beforeRefs = [{ id: 'e1', label: 'button "Save"', key: 'button "Save"' }];
+  mapper.observe('# Snapshot 1\n- button "Save" [ref=e1]', '# Snapshot 1', { tab: oldTab });
   const calls = [], original = { ...call('browser_act', { tab: oldTab, steps: [{ do: 'click', ref: 'e1' }] }, text('done')), server: 'sleight-turbo' };
   const out = await replayCalls([original], { mapper, call: async (server, name, args) => {
     calls.push({ name, args }); return name === 'browser_read' ? text('# Snapshot 2\n- button "Save" [ref=e10]') : text('done');
@@ -191,13 +197,13 @@ test('benchmark store grants nothing and rejects persistence', () => {
 });
 
 test('replay feature switches reach the isolated turbo worker without credentials', async t => {
-  for (const [key, value] of Object.entries({ SLEIGHT_REPLAY_ENV: JSON.stringify({ SLEIGHT_MC1: '0', SLEIGHT_EXAMPLE: '1' }), SLEIGHT_LB12: '0', ANTHROPIC_API_KEY: 'offline-sentinel' })) {
+  for (const [key, value] of Object.entries({ SLEIGHT_REPLAY_ENV: JSON.stringify({ SLEIGHT_MC1: '0', SLEIGHT_DP7: '1' }), SLEIGHT_LB12: '0', ANTHROPIC_API_KEY: 'offline-sentinel' })) {
     const previous = process.env[key]; process.env[key] = value;
     t.after(() => { if (previous === undefined) delete process.env[key]; else process.env[key] = previous; });
   }
   const session = await createSession({ origins: ['http://127.0.0.1:5413'], taskMessage: 'Read the benchmark fixture',
     forkWorker(path, args, options) {
-      assert.equal(options.env.SLEIGHT_MC1, '0'); assert.equal(options.env.SLEIGHT_EXAMPLE, '1'); assert.equal(options.env.SLEIGHT_LB12, '0');
+      assert.equal(options.env.SLEIGHT_MC1, '0'); assert.equal(options.env.SLEIGHT_DP7, '1'); assert.equal(options.env.SLEIGHT_LB12, '0');
       assert.equal(options.env.ANTHROPIC_API_KEY, undefined);
       const child = new EventEmitter(), endpoint = new EventEmitter(); child.connected = endpoint.connected = true;
       child.send = frame => queueMicrotask(() => endpoint.emit('message', structuredClone(frame)));
@@ -294,7 +300,15 @@ test('read-only plan does not call live setup or create output', async () => {
   try {
     writeFileSync(join(dir, 'events.jsonl'), fixture('turbo'));
     const log = console.log; console.log = () => {};
-    try { const plan = await main([dir, '--plan']); assert.equal(plan.calls, 2); assert.equal(plan.model, false); }
+    try {
+      const plan = await main([dir, '--plan']); assert.equal(plan.calls, 2); assert.equal(plan.model, false); assert.deepEqual(plan.windowFrames, []);
+      const receipt = { target: { appId: 'com.apple.TextEdit', title: 'Fixture' }, identity: { windowNumber: 7 }, frame: { x: 100, y: 200, width: 600, height: 400 } };
+      writeFileSync(join(dir, 'events.jsonl'), [
+        { message: { content: [{ type: 'tool_use', id: 'frame', name: 'mcp__plugin_sleight_computer__select_window', input: { app: 'com.apple.TextEdit', title: 'Fixture' } }] } },
+        { message: { content: [{ type: 'tool_result', tool_use_id: 'frame', content: JSON.stringify(receipt) }] } },
+      ].map(JSON.stringify).join('\n'));
+      assert.deepEqual((await main([dir, '--plan'])).windowFrames, [{ index: 0, ...receipt }]);
+    }
     finally { console.log = log; }
     assert.deepEqual((await import('node:fs')).readdirSync(dir), ['events.jsonl']);
     await assert.rejects(main([dir]), /requires --owner-away/);
