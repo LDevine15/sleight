@@ -2,8 +2,35 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { browserTools, createToolDispatcher } from '../plugins/sleight/lib/direct-browser/tools.mjs';
 import { siteRefusal } from '../plugins/sleight/lib/permissions.mjs';
+import { composeAppTurn } from '../plugins/sleight/lib/direct-browser/electron-runtime.mjs';
 
 const names = ['browser_open', 'browser_read', 'browser_act', 'browser_fill', 'browser_tabs'];
+
+test('an app-turn browser_read refuses an opaque Electron URL under either kind of site limit', async () => {
+  for (const perms of [{ state: 'ok', sites: ['https://blocked.example'] }, { state: 'ok', sites: [], only: ['https://fine.example'] },
+    { state: 'ok', sites: [] }]) {
+    let reads = 0;
+    const entry = { page: { url: () => 'vscode-file://fixture/index.html' }, state: {} };
+    const surface = composeAppTurn([{
+      connection: { recipe: { name: 'Fixture' }, pages: {
+        list: async () => [{ tab: 't1', window: { id: 11 } }], enqueue: async (_tab, run) => run(entry),
+      } },
+      contexts: () => ({}),
+      runners: { read: async () => { reads++; return { text: 'private editor snapshot', number: 1 }; } },
+    }]);
+    await surface.pages.list();
+    const d = createToolDispatcher({ browser: 'bapp', pages: surface.pages, snapshot: surface.snapshot,
+      runSteps: surface.runSteps, fillFields: surface.fillFields, ctx: surface.context, sites: url => siteRefusal(perms, url) });
+    const result = await d.call({ name: 'browser_read', arguments: { tab: 't1' } });
+    const limited = !!(perms.sites.length || perms.only?.length);
+    assert.equal(result.isError, limited);
+    assert.equal(reads, limited ? 0 : 1, 'limited app content is never read');
+    if (limited) {
+      assert.equal(result.text, siteRefusal(perms, entry.page.url()));
+      assert.doesNotMatch(result.text, /private editor snapshot/);
+    } else assert.match(result.text, /private editor snapshot/);
+  }
+});
 test('five eager schemas use type arrays without schema compositions at any level', () => {
   const tools = browserTools('bfixture');
   assert.deepEqual(tools.map(t => t.name), names);

@@ -817,6 +817,66 @@ test('a fresh recovery holder is left alone while rows keep appending', () => {
   assert.match(readFileSync(path, 'utf8'), /"call":"next"/);
 });
 
+test('reclaim expiry never removes a fresh successor after observing a dead holder', async t => {
+  const fs = (await import('node:fs')).default, { syncBuiltinESMExports } = await import('node:module');
+  const root = mkdtempSync(join(dir, 'reclaim-race-')), path = join(root, 'shared.jsonl'), lock = path + '.lock', reclaim = lock + '.reclaim';
+  writeFileSync(path, 'x'.repeat(390), { mode: 0o600 });
+  for (const file of [lock, reclaim]) { writeFileSync(file, '', { mode: 0o600 }); utimesSync(file, new Date(0), new Date(0)); }
+  const lstat = fs.lstatSync, rename = fs.renameSync;
+  let raced = false, successor;
+  const replace = () => {
+    raced = true;
+    fs.unlinkSync(reclaim);
+    writeFileSync(reclaim, 'fresh holder', { mode: 0o600, flag: 'wx' });
+    successor = lstat(reclaim).ino;
+  };
+  t.mock.method(fs, 'lstatSync', (...args) => {
+    const stat = lstat(...args);
+    if (args[0] === reclaim && !raced) replace();
+    return stat;
+  });
+  t.mock.method(fs, 'renameSync', (...args) => {
+    if (args[0] === reclaim && !raced) replace();
+    return rename(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    new ActionLog({ path, root, maxBytes: 400 }).write([{ call: 'next' }]);
+    assert.equal(raced, true);
+    assert.ok(existsSync(reclaim), 'the fresh claim must survive expiry');
+    assert.equal(lstat(reclaim).ino, successor);
+    assert.equal(readFileSync(reclaim, 'utf8'), 'fresh holder');
+    assert.ok(!existsSync(path + '.1'));
+    assert.match(readFileSync(path, 'utf8'), /"call":"next"/);
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+});
+
+test('rotation failures are counted and warn once per session while every row still appends', async t => {
+  const fs = (await import('node:fs')).default, { syncBuiltinESMExports } = await import('node:module');
+  const root = mkdtempSync(join(dir, 'rotation-warning-')), path = join(root, 'private-owner.jsonl');
+  writeFileSync(path, 'x'.repeat(390) + '\n', { mode: 0o600 });
+  const said = [], rename = fs.renameSync;
+  t.mock.method(process.stderr, 'write', text => { said.push(text); return true; });
+  t.mock.method(fs, 'renameSync', (...args) => {
+    if (args[0] === path) throw Object.assign(Error('private fixture path'), { code: 'EACCES' });
+    return rename(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const log = new ActionLog({ path, root, maxBytes: 400 });
+    log.write([{ call: 'first' }]); log.write([{ call: 'second' }]);
+    assert.equal(log.rotationFailures, 2);
+    assert.equal(log.failures, 0, 'the writes themselves succeeded');
+    assert.equal(said.length, 1);
+    assert.match(said[0], /^sleight: .*rotate the action log.*\n$/);
+    assert.ok(!said[0].includes(root));
+    const all = readFileSync(path, 'utf8');
+    for (const call of ['first', 'second']) assert.ok(all.includes(JSON.stringify({ call }).slice(1, -1)));
+    new ActionLog({ path, root, maxBytes: 400 }).write([{ call: 'third' }]);
+    assert.equal(said.length, 2, 'a new session warns independently');
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+});
+
 for (const fault of ['lock open', 'lock stat', 'recheck stat', 'reclaim open', 'reclaim unlink']) {
   test(`rotation ${fault} failure skips rotation, never the log row`, async t => {
     const fs = (await import('node:fs')).default, { syncBuiltinESMExports } = await import('node:module');
@@ -857,5 +917,33 @@ test('sensitive names and IDs suppress typed lengths in both plain text area kin
       log.outcomes(1, { outcomes: [rec] }); log.reply({ id: 1, result: {} });
       assert.equal(JSON.parse(readFileSync(path, 'utf8').trim().split('\n').at(-1)).chars, undefined);
     }
+  }
+});
+
+test('a lock or recovery claim another session removes meanwhile is a lost race, not a rotation failure', async t => {
+  for (const vanish of ['lock', 'reclaim rename']) {
+    const fs = (await import('node:fs')).default, { syncBuiltinESMExports } = await import('node:module');
+    const root = mkdtempSync(join(dir, 'vanish-')), path = join(root, 'shared.jsonl'), lock = path + '.lock', reclaim = lock + '.reclaim';
+    writeFileSync(path, 'x'.repeat(390) + '\n', { mode: 0o600 });
+    for (const file of vanish === 'lock' ? [lock] : [lock, reclaim]) {
+      writeFileSync(file, '', { mode: 0o600 });
+      utimesSync(file, new Date(0), new Date(0));
+    }
+    const said = [], method = vanish === 'lock' ? 'lstatSync' : 'renameSync', original = fs[method], target = vanish === 'lock' ? lock : reclaim;
+    let hits = 0;
+    t.mock.method(process.stderr, 'write', text => { said.push(text); return true; });
+    t.mock.method(fs, method, (...args) => {
+      if (args[0] === target && ++hits === 1) throw Object.assign(new Error('fixture'), { code: 'ENOENT' });
+      return original(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      const log = new ActionLog({ path, root, maxBytes: 400 });
+      log.write([{ call: vanish }]);
+      assert.equal(hits, 1, `${vanish}: the race site was reached`);
+      assert.equal(log.rotationFailures, 0, vanish);
+      assert.deepEqual(said, [], vanish);
+      assert.ok(readFileSync(path, 'utf8').includes(JSON.stringify({ call: vanish }).slice(1, -1)), vanish);
+    } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
   }
 });

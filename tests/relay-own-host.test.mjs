@@ -26,7 +26,7 @@ function harness(t, options = {}) {
   const tool = name => ({ name, description: 'x', inputSchema: { type: 'object' } });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, sessionId: 's', ask: async () => 'accept',
     inputLease: new InputLease({ directory, holder: 'A' }), ownHostPid: pid => pid === HOST_PID,
-    localTools: { tools: ['menu_bar', 'hover', 'drag', 'select_window'].map(tool),
+    localTools: { tools: ['menu_bar', 'hover', 'drag', 'select_window', 'open_file'].map(tool),
       target: async args => options.targets?.[args.app] ?? ({ appId: `com.example.${String(args.app).toLowerCase()}`, app: args.app, title: null, url: null }),
       call: async name => { ran.push(name); return { content: [{ type: 'text', text: 'ok' }] }; } }, ...options.relay });
   t.after(() => { relay.close(); removeTemp(directory); });
@@ -102,6 +102,8 @@ for (const [name, args] of [
   ['drag', { app: 'TextEdit', from: [1, 1], to: [2, 2] }],
   ['hover', { app: 'TextEdit', at: [1, 1] }],
   ['menu_bar', { op: 'choose', app: 'TextEdit', path: ['File', 'Save'] }],
+  ['select_window', { app: 'TextEdit', title: 'Doc' }],
+  ['open_file', { app: 'TextEdit', path: '/private/tmp/fixture.txt' }],
 ]) {
   test(`local ${name} refuses an ordinary app while the leased window is the host`, async t => {
     const h = harness(t);

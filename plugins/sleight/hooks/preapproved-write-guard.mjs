@@ -225,7 +225,7 @@ export async function preapprovedWriteDenied(input, options) {
 const SWITCHES = /OUTCOMES|ACTION_LOG/;
 const unescaped = (text, concatenate = true) => {
   const decoded = text.replace(/\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})/g, (_, u, x) => String.fromCharCode(parseInt(u ?? x, 16)));
-  return (concatenate ? decoded.replace(/['"]\s*(?:\+\s*)?['"]/g, '') : decoded).replace(/['"\\]/g, '');
+  return (concatenate ? decoded.replace(concatenate === 'js' ? /['"]\s*\+\s*['"]/g : /['"]\s*(?:\+\s*)?['"]/g, '') : decoded).replace(/['"\\]/g, '');
 };
 const switched = text => typeof text === 'string' && SWITCHES.test(unescaped(text));
 // Paths are matched lowercased (folded).
@@ -242,10 +242,12 @@ export function loggingSwitchWriteDenied(input) {
     return texts.some(switched) && paths.some(path => typeof path === 'string' && CONFIG.test(folded(normalize(path))));
   }
   if (tool !== 'Bash' || !switched(input.command)) return false;
-  const { command } = input, candidates = [command, unescaped(command), unescaped(command, false)];
+  const { command } = input, candidates = [command, unescaped(command), unescaped(command, false), unescaped(command, 'js')];
   // Keep the raw spelling and argument spaces too: folding adjacent literals can join separate shell arguments.
   if (candidates.some(text => /\blaunchctl\s+setenv\b|\bclaude\s+(?:mcp|config)\b/.test(text))) return true;
   // A write to a config file, or an interpreter or editor tool run with one named: reads such as grep pass.
   return shellWritePaths(command).some(({ path }) => CONFIG.test(folded(normalize(path)))) ||
-    candidates.some(text => CONFIG_TEXT.test(text) && SETTERS.test(text));
+    // Each test on its own spelling: a fold that reaches the path can join the interpreter's name onto the argument before it
+    // (Python's and Ruby's adjacent literals), and the raw spelling keeps the name but not the path.
+    candidates.some(text => CONFIG_TEXT.test(text)) && candidates.some(text => SETTERS.test(text));
 }

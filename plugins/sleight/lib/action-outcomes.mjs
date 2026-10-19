@@ -1,10 +1,20 @@
 // What each native action did, from sleight's own read before it and the read after it (SLEIGHT_OUTCOMES=1),
 // and the opt-in JSON Lines action log (SLEIGHT_ACTION_LOG). Only structure, roles, names and the acted-on
 // control's own value line count; typed text, secure values and document text never leave the engine's tree.
-import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { homedir, userInfo } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+
+// A lock file's age. One another session removed meanwhile reads as fresh, so recovery is left to that session (no
+// rotation-failure warning for a race two sessions lose fairly).
+const age = path => {
+  try { return Date.now() - lstatSync(path).mtimeMs; } catch (error) {
+    if (error.code === 'ENOENT') return 0;
+    throw error;
+  }
+};
 
 // The account's short and full names, as receipts scrub them: once per log, on its first write.
 // userInfo() throws for a uid with no passwd entry; the log then scrubs only the home path.
@@ -261,7 +271,7 @@ export function actionLogPath(value, home = homedir()) {
 export class ActionLog {
   constructor({ path, root = logRoot(), maxBytes = 5 * 1024 * 1024, keep = 2, now = () => new Date(), home = homedir(), names } = {}) {
     this.path = path; this.root = root; this.maxBytes = maxBytes; this.keep = keep; this.now = now; this.home = home;
-    this.names = names; this.calls = new Map(); this.origins = new Map(); this.failures = 0;
+    this.names = names; this.calls = new Map(); this.origins = new Map(); this.failures = 0; this.rotationFailures = 0;
   }
   scrub(text) {
     this.names ??= ownerNames().filter(Boolean).sort((a, b) => b.length - a.length);
@@ -374,7 +384,10 @@ export class ActionLog {
       try {
         const stat = lstatSync(this.path);
         if (!stat.isFile()) throw new Error('action log is not a regular file');
-        if (stat.size + text.length > this.maxBytes) try { this.rotate(text.length); } catch { /* Rotation is optional; keep the row. */ }
+        if (stat.size + text.length > this.maxBytes) try { this.rotate(text.length); } catch {
+          // Rotation is optional; report its failure separately and keep appending the row.
+          if (++this.rotationFailures === 1) try { process.stderr.write('sleight: could not rotate the action log; check its folder permissions and rotation lock.\n'); } catch {}
+        }
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
       // O_NOFOLLOW: a symlink at the path can't send the log elsewhere. O_NONBLOCK: a FIFO can't hold the open.
       const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK;
@@ -407,19 +420,32 @@ export class ActionLog {
       if (error.code !== 'EEXIST') throw error;
       // Only one session may recover a stale lock. Recheck its age after the exclusive claim: a different
       // session may already have replaced the stale file with a fresh lock while we waited.
-      if (Date.now() - lstatSync(lock).mtimeMs < 30000) return;
+      if (age(lock) < 30000) return;
       const reclaim = lock + '.reclaim';
       let claim;
       try { claim = openSync(reclaim, flags, 0o600); } catch (error) {
         if (error.code === 'EEXIST') {
           // A recovery holder can die too. Leave live holders alone; retry recovery on the next write.
-          if (Date.now() - lstatSync(reclaim).mtimeMs >= 30000) unlinkSync(reclaim);
+          if (age(reclaim) >= 30000) {
+            // Move first, then check the file we actually took. The old pathname may now name a fresh holder.
+            const expired = reclaim + '.' + randomUUID();
+            try { renameSync(reclaim, expired); } catch (error) {
+              if (error.code === 'ENOENT') return; // another session took it first
+              throw error;
+            }
+            if (Date.now() - lstatSync(expired).mtimeMs >= 30000) unlinkSync(expired);
+            else {
+              // Never overwrite a new claim. If one won the name, retain the moved holder at its unique path.
+              linkSync(expired, reclaim);
+              unlinkSync(expired);
+            }
+          }
           return;
         }
         throw error;
       }
       try {
-        if (Date.now() - lstatSync(lock).mtimeMs < 30000) return;
+        if (age(lock) < 30000) return;
         unlinkSync(lock);
         try { fd = openSync(lock, flags, 0o600); } catch (error) {
           if (error.code === 'EEXIST') return;
