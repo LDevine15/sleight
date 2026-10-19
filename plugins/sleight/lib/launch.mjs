@@ -1,3 +1,4 @@
+import { requestedSubmitRules } from './requested-submit.mjs';
 // Starts the computer-use MCP server that ships with the ChatGPT desktop app.
 //
 // The ChatGPT app writes the server's launch config to a versioned folder,
@@ -332,7 +333,7 @@ export function skillRules(path = join(LIB, '..', 'skills', 'drive-mac-apps', 'S
   if (env.SLEIGHT_PROMPT === 'lean') path = join(dirname(path instanceof URL ? fileURLToPath(path) : path), 'SKILL.lean.md');
   try {
     let text = readFileSync(path, 'utf8').replace(/^---\n[\s\S]*?\n---\n+/, '').trim() || undefined;
-    text = screenshotGuidance(text, env.SLEIGHT_SCREENSHOT_READS !== '0');
+    text = requestedSubmitRules(screenshotGuidance(text, env.SLEIGHT_SCREENSHOT_READS !== '0'), env);
     return env.SLEIGHT_LEAN_CALLS === '1' ? leanCallRules(text) : text;
   }
   catch { return undefined; }
@@ -1071,6 +1072,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     openFast: process.env.SLEIGHT_OPEN_FAST !== '0',
     onClientReply: message => firstCallObserver?.reply(message),
     confirmPayments: paymentConfirmationSetting(),
+    rs: process.env.SLEIGHT_RS,
     // sleight's own card for an engine-path payment the gate stopped (payment-card.mjs); opened on the first such payment.
     paymentCard: createPaymentCard(),
     clientIn: replayClient.clientIn,

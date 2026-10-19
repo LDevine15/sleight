@@ -110,8 +110,8 @@ export function assertOnlyServers(found, planned) {
 // The world and claim runner's version of the same arm: sleight's local tools behind the proxy with the claim's approve.mjs
 // policy, and the env the Claude-hosted sleight arm's server gets from bench/run.mjs (armEnv) for the same pass.
 const LOCAL_TOOLS = ['js', 'js_reset', 'drag', 'hover', 'menu_bar', 'notifications', 'select_window', 'open_file'];
-export function codexSleightRunConfig({ model, effort = 'high', dir, suite, worldTasks = [], ownerPresent = false, surfaces, trace, repo = root, home = CODEX_SLEIGHT_HOME, node = process.execPath }) {
-  const env = { BENCH_ROOT: repo, BENCH_SUITE: suite, ...(ownerPresent ? { BENCH_OWNER_PRESENT: '1' } : {}),
+export function codexSleightRunConfig({ model, effort = 'high', dir, suite, worldTasks = [], ownerPresent = false, surfaces, trace, repo = root, home = CODEX_SLEIGHT_HOME, node = process.execPath, hostEnv = process.env }) {
+  const env = { ...(hostEnv.SLEIGHT_RS !== undefined ? { SLEIGHT_RS: hostEnv.SLEIGHT_RS } : {}), BENCH_ROOT: repo, BENCH_SUITE: suite, ...(ownerPresent ? { BENCH_OWNER_PRESENT: '1' } : {}),
     ...(suite === 'world' ? { BENCH_WORLD_TASKS: JSON.stringify(worldTasks) } : {}),
     ...(surfaces ? { SLEIGHT_SURFACES: surfaces } : {}), ...(trace ? { SLEIGHT_TRACE: trace } : {}) };
   const servers = codexSleightServers({ node, dir, policy: 'bench',

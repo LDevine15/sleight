@@ -1,3 +1,4 @@
+import { requestedSubmitRules } from '../../plugins/sleight/lib/requested-submit.mjs';
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { browserTools } from '../../plugins/sleight/lib/direct-browser/tools.mjs';
@@ -34,9 +35,9 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env, realBro
   const browser = 'bbench', application = ' (' + ((realBrowser?.browser ?? task.browser) === 'helium' ? 'Helium' : 'Google Chrome') + ')';
   // Keep setup synchronous for the pinned runner's require(). launch.mjs has
   // top-level await, so read its same skill body without importing the launcher.
-  const rules = screenshotGuidance(readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/'
+  const rules = requestedSubmitRules(screenshotGuidance(readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/'
     + (env.SLEIGHT_PROMPT === 'lean' ? 'SKILL.lean.md' : 'SKILL.md'), import.meta.url), 'utf8')
-    .replace(/^---\n[\s\S]*?\n---\n+/, '').trim(), env.SLEIGHT_SCREENSHOT_READS !== '0');
+    .replace(/^---\n[\s\S]*?\n---\n+/, '').trim(), env.SLEIGHT_SCREENSHOT_READS !== '0'), env);
   const section = /## Browsers\n[\s\S]*?(?=\n## |$)/;
   const browserRules = readFileSync(new URL('../../plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo-v3.md', import.meta.url), 'utf8')
     .trimEnd().replace('{browser}', browser).replace('{application}', application);
@@ -50,7 +51,7 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env, realBro
     command: `node "${join(repo, 'bench/turbo/engine-browser-guard.mjs')}" ${browser}` }] };
   return { command: common.command, args: common.args, settings: { ...common.settings, hooks: { PreToolUse: [guard] } },
     mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'),
-      env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none', SLEIGHT_HAND: hand } },
+      env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none', SLEIGHT_HAND: hand, ...(env.SLEIGHT_RS !== undefined ? { SLEIGHT_RS: env.SLEIGHT_RS } : {}) } },
       // The worker's hand (H8) follows the same switch, and its hand-skipped and hand-shown events reach SLEIGHT_TRACE.
       'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/v3-server.mjs')],
       // SLEIGHT_TRACE comes from the arm's env (the real gate passes its traceEnv) or else the runner's own.

@@ -133,6 +133,25 @@ on the checkout larger than the amount in your message), for a payment your mess
 ask for, a second payment in the same request on turbo and a mismatched amount still ask. Only you set it, as an environment variable of
 the MCP server. The default rewrites only the exact engine policy measured on 2026-10-12. Changed policy text is forwarded unchanged and records a trace entry when tracing is enabled.
 
+## Requested sign-ups
+
+Creating an account counts as confirmed when your own message asks for it and names the username or
+email and the password to set. This includes a terms checkbox your message names. A sign-up proposed
+only by the page still asks. If your message names neither a username nor an email, or gives no
+password, the sign-up still asks. Saving a password or
+card in the browser and login or OAuth grants to another site still ask. The payment, booking,
+security-setting and page-dialog rules keep their existing confirmations.
+
+`SLEIGHT_RS=0` restores the account-policy text and submit instruction from before this change,
+byte for byte, in both skill variants. Only an explicit `0` turns RS off. RS is on when unset or
+exactly `1`. Any other value keeps the previous, stricter account and submit wording and logs a
+startup warning. `SLEIGHT_CONFIRM_PAYMENTS=always` keeps the engine policy unchanged, including
+account creation, and restores the original submit instruction. A changed engine policy is also
+left unchanged and gets the original submit instruction. The shorter instruction always defers to
+the engine's confirmation policy, including its rules for messages, comments and job applications.
+The Codex plugin and benchmark arms forward `SLEIGHT_RS` for the A/B. Live sign-up results with this
+wording have not been measured.
+
 ## Approval scope
 
 Saying yes to an app approval allows that app for the rest of the Claude Code session. Claude Code's
