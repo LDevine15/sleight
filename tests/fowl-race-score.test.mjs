@@ -10,6 +10,8 @@ import { expandRounds, flipped, loadRound, regradeRow, scoreRounds } from '../be
 import { runRealGate } from '../bench/fowl/real-gate.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
+// A round records the checkout's commits, so a source tree without .git (an exported archive) cannot check that.
+const gitSkip = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).status !== 0 && 'needs a git checkout to record commits';
 // Event lines in the shapes the saved Firefox rounds hold (/tmp/fb-rounds/real-29077030-*, real-4693816f-*, real-a61bdeb2-*).
 const codexRefused = JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', status: 'failed', error: null,
   result: { content: [{ type: 'text', text: 'Computer Use was not approved to use Firefox' }] } } });
@@ -273,7 +275,7 @@ function gateRuntime(dir, events) {
     observeBrowser: async () => ({ observed: false, tabs: {}, reason: 'fixture' }) };
 }
 
-test('a live round records the build and harness commits and marks itself a harness failure', async t => {
+test('a live round records the build and harness commits and marks itself a harness failure', { skip: gitSkip }, async t => {
   const dir = mkdtempSync(join(tmpdir(), 'race-gate-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
   const tasks = Array.from({ length: 12 }, (_, i) => ({ ...gateTask, name: `task${i}` }));
   const out = join(dir, 'out');
