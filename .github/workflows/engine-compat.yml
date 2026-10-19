@@ -1,0 +1,68 @@
+name: Engine compatibility
+
+# Checks each new ChatGPT release against what sleight needs from its computer-use engine, by reading the
+# release's files without running them (bench/compat-static.mjs). An hourly probe reads only the update
+# feed; the check runs when the release version changed. The log and the uploaded report hold versions,
+# dates and sleight's own check names, never the engine's files or docs, so the job is fine on a public
+# repository. --keep-docs, which keeps the engine's docs for a diff, stays off here.
+# GitHub turns off scheduled workflows in a public repository after 60 days without a commit; a commit or
+# a manual run turns this one back on.
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Check the latest release even if it was checked already
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-compat
+  cancel-in-progress: false
+
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Restore the last checked release
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .compat-state
+          key: engine-compat-${{ github.run_id }}
+          restore-keys: engine-compat-
+      - name: Read the update feed
+        id: probe
+        run: node bench/compat-static.mjs --probe --state .compat-state
+      # A .dmg release needs 7-Zip; a .zip needs only unzip.
+      - name: Install 7-Zip
+        if: steps.probe.outputs.changed == 'true' || inputs.force
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq 7zip
+      - name: Check the latest ChatGPT release
+        if: steps.probe.outputs.changed == 'true' || inputs.force
+        run: node bench/compat-static.mjs --feed --state .compat-state --report compat-report.json ${{ inputs.force && '--force' || '' }}
+      # Saved only when a release was checked, so a failed download retries on the next run.
+      - name: Save the checked release
+        if: always() && hashFiles('compat-report.json') != ''
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .compat-state
+          key: engine-compat-${{ github.run_id }}
+      # node bench/compat.mjs --publish --static-log <file> adds either file to docs/results/engine-compat.md.
+      - name: Upload the report
+        if: always() && hashFiles('compat-report.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: engine-compat-report
+          path: |
+            compat-report.json
+            .compat-state/results.jsonl
+          retention-days: 90
