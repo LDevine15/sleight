@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnedWindow, returnRefusal, stopNote, menuIdentity,
-  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows, parentLeaseGate, continuedNote, withoutStopTree, hasWholeTree } from '../plugins/sleight/lib/menu-continuation.mjs';
+  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows, parentLeaseGate, continuedNote, withoutStopTree, hasWholeTree, listsTab } from '../plugins/sleight/lib/menu-continuation.mjs';
 import { GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
 
 test('menu splitting preserves exact action spans across strings, comments and newlines', () => {
@@ -703,4 +703,18 @@ test('a stop without a tree passes through whole, and a diff is not mistaken for
   assert.deepEqual(withoutStopTree(plain), { content: plain, tree: [] });
   assert.equal(hasWholeTree([{ type: 'text', text: 'Window: "A", App: B.\n~ \t3 button Go' }]), false);
   assert.equal(hasWholeTree([{ type: 'text', text: '\nWindow: "A", App: B.\n0 standard window A' }]), true);
+});
+
+// mdn b7 r2 (2026-10-19): after Cmd+T the window reads "Mozilla Firefox" and its strip still lists the Gate tab.
+test('listsTab finds a title in the window\'s own tab strip only', () => {
+  const gate = 'Sleight Gate 493bf03e';
+  const strip = tabs => 'Window: "Mozilla Firefox", App: Firefox.\n0 standard window Mozilla Firefox, Secondary Actions: Raise\n\t1 tab group\n' +
+    tabs.map((tab, i) => `\t\t${i + 2} tab (selectable) Value: ${tab}, ${tab}\nClose tab\n`).join('') + '\t9 HTML Content Description: New Tab\n\t\t10 tab Value: Ads, Ads';
+  assert.equal(listsTab(strip([gate, 'New Tab']), gate), true);
+  assert.equal(listsTab(strip(['New Tab']), gate), false, 'a new window has only its own tab');
+  assert.equal(listsTab(strip(['New Tab']), 'Ads'), false, 'a tab inside the page is not the window\'s');
+  assert.equal(listsTab(strip([`${gate} 2`]), gate), false, 'a longer title is another tab');
+  assert.equal(listsTab(strip([gate]).replace('0 standard window', '0 dialog'), gate), false);
+  assert.equal(listsTab('Window: "A", App: B.\n0 standard window A\n\t1 tab (selected) A', 'A'), true, 'a plain label');
+  assert.equal(listsTab(undefined, gate), false);
 });

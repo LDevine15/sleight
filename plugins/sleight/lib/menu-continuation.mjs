@@ -262,6 +262,17 @@ const tabsOf = entries => entries.flatMap((entry, index) => {
   const tab = /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(entry.line);
   return tab && !underDocument(entries, index) ? [{ label: tab[2] ?? '', selected: /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]), index }] : [];
 });
+// Whether one tree (a standard window's) still lists a tab titled `title` in its own tab strip. A browser window's title
+// follows its active tab, so a new tab retitles the same window: Firefox's New Tab page has no title, and the window reads
+// "Mozilla Firefox" (mdn b7 r2, 2026-10-19). Firefox labels a tab `Value: <title>, <title>`.
+export function listsTab(tree, title) {
+  if (typeof tree !== 'string' || !title || !/^0 standard window(?: |,|$)/m.test(tree)) return false;
+  const entries = [...tree.matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
+  return tabsOf(entries).some(({ label }) => {
+    const name = label.replace(/^Value: /, '');
+    return name === title || name.startsWith(`${title}, `) || name.endsWith(`, ${title}`);
+  });
+}
 // The earlier tree as entries. seenLines keeps the indentation when asked, which says what sat under a page; lines without it
 // all count as the window's own.
 const earlierEntries = before => Object.entries(before).filter(([, line]) => typeof line === 'string').sort(([a], [b]) => a - b)
