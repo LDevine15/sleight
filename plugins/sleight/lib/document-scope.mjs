@@ -1,7 +1,7 @@
 import { promptNotice } from './prompt-notice.mjs';
 import { elementWait } from './element-wait.mjs';
 import { listPicker } from './native-list-pick.mjs';
-import { actionOutcome } from './action-outcomes.mjs';
+import { actionOutcome, outcomeRecord } from './action-outcomes.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -517,8 +517,8 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
       const pending = state.outcomePending.get(raw);
       if (pending) pending.recs.push(rec); else state.outcomePending.set(raw, { before: text, recs: [rec] });
       state.outcomeAdd(rec);
-      // A dropped record sends the last kept one again, with the new count.
-      state.outcomePart(state.outcomes.includes(rec) ? rec : state.outcomes[state.outcomes.length - 1]);
+      // Dropped actions only update the count; flushOutcomes sends the cap summary once.
+      if (state.outcomes.includes(rec)) state.outcomePart(rec);
     };
     // At most 30 records a call; the rest are counted, so the log can say how many it lacks.
     state.outcomeAdd = rec => {
@@ -533,13 +533,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
       : /names no element/.test(message) ? 'bad locator' : /opens a submenu/.test(message) ? 'submenu' : /its menu takes the keys/.test(message) ? 'menu open'
       : /focus/.test(message) ? 'no focus target' : /close button/.test(message) ? 'close button' : /^Native access/.test(message) ? 'native access' : 'stopped';
     // A record as it leaves the engine: no set value, element line or focus number.
-    const outcomeOut = ({ want, body, focus, ...rec }) => {
-      const { p, ...t } = body === undefined ? {} : actionOutcome([{ body }]).targets[0] ?? {};
-      // A length only for a known plain text field whose line names nothing sensitive: a password's or card number's
-      // length is private too.
-      if (!t.r || t.s || p || !/^(?:text field|search text field|search field|combo box|text area|text entry area)$/.test(t.r)) delete rec.c;
-      return t.r ? { ...rec, t } : rec;
-    };
+    const outcomeOut = ${outcomeRecord.toString()};
     const outcomeExtra = () => ({ ...(state.actions ? { planned: state.actions.length } : {}), ...(state.expected?.app ? { app: state.expected.app } : {}),
       ...(state.outcomeDropped ? { dropped: state.outcomeDropped } : {}) });
     // Each record goes out as it changes, so a throw in Claude's own code after an action can't lose it. The call's
