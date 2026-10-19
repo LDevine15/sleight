@@ -72,7 +72,7 @@ import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
 import { createPaymentMessages, PAYMENT_ALLOWED, PAYMENT_WAITING } from './payment-gate.mjs';
-import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE, withFirstCallWindows } from './engine-app-docs.mjs';
+import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE, withFirstCallWindows, withInventoryNote } from './engine-app-docs.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
@@ -771,8 +771,14 @@ export function createRelay({
   // SLEIGHT_FIRST_CALL_BATCH=0: in 24 runs a side it cut turns 208 to 168 (2026-10-09). 'merge' picks
   // the wording under A/B.
   firstCallBatch = false,
+  // Under A/B (SLEIGHT_FS=1, loss study 2026-10-19 fixes 3 and 4): the js description notes at the engine's inventory
+  // sentence that getState lists no windows (INVENTORY_NOTE), FIRST_CALL_WINDOWS goes on, and a browser getApp result whose
+  // tab strip shows its selected tab names Cmd+T, typeText and Return for a new tab (KEYBOARD_TAB_SENTENCE). An engine
+  // description that matches a pin gets the compact text, which has no inventory sentence, so only TS3's goes there. The
+  // flag also turns on the pins of the engine's current descriptions (tool-description.mjs COMPUTER_JS_HASH).
+  firstCallSteering = process.env.SLEIGHT_FS === '1',
   // Under A/B (SLEIGHT_TS3=1): the js description says getState lists no windows (FIRST_CALL_WINDOWS).
-  firstCallWindows = process.env.SLEIGHT_TS3 === '1',
+  firstCallWindows = process.env.SLEIGHT_TS3 === '1' || firstCallSteering,
   // Under A/B (SLEIGHT_RESULT_TRIM=1): leaves out a split acquisition's tree when its call returns a
   // newer full one. Trimming Save-panel file lists with it lost (11/12, 2026-10-11) and is gone.
   resultTrim = false,
@@ -1972,7 +1978,7 @@ export function createRelay({
       if (continuation.checking) return;
       continuation.checking = true;
       const { call, expected, baseline, lease, original, head, current, tab, stopAt } = continuation;
-      const since = Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt);
+      const since = Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt), probeAt = clock();
       menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
         if (!current() || leaseWindow !== lease ||
             !unchangedMenuWindow(expected, baseline, observed, tab ? stopAt : since, clock()) ||
@@ -1987,6 +1993,7 @@ export function createRelay({
           return;
         }
         continuation.checking = false;
+        if (tab) trace('tab-continuation-forwarded', { id: msg.id, probeMs: Math.round(clock() - probeAt) });
         toServer(msg, true);
       });
       return;
@@ -3181,6 +3188,7 @@ export function createRelay({
     // A palette the lease held must be gone, not just behind the document, unless Escape closed it.
     const gone = remainder.closeCheck ? windowGone(windowIdentity, { appId: covered.appId, title: call.target.title, url: call.target.url }, menuContinuationTimeoutMs)
       : Promise.resolve(true);
+    const probeAt = clock();
     gone.then(closed => closed ? menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs, remainder.dialog ? error => refuse(`identity: ${error}`)
       : remainder.tab ? error => refuseTab(`identity: ${error}`) : remainder.palette ? error => refusePalette(`identity: ${error}`) : undefined)
       : (refuse('palette-still-open'), undefined)).then(observed => {
@@ -3202,7 +3210,10 @@ export function createRelay({
         observeServerMessage(msg); return;
       }
       // The sample also says whether idle over the whole call held: the cause of 0 of 9 Firefox continuations (2026-10-18) was not recorded.
-      if (remainder.tab) trace('tab-continuation-checked', { id: msg.id, ...idleSample(observed, stopAt, clock(), since) });
+      // With the stopped call's own engine time and the probe's: the client's result reports only the rest's engine time,
+      // so Firefox's 1.13 to 1.70 s per Cmd+T call outside it (loss study, 2026-10-19) had no split.
+      if (remainder.tab) trace('tab-continuation-checked', { id: msg.id, ...idleSample(observed, stopAt, clock(), since),
+        stopEngineMs: msg.result._meta?.['codex/nodeReplExecutionDurationMs'] ?? null, probeMs: Math.round(clock() - probeAt) });
       // The rest goes to the covered window under its own lease, pinned to the native window just observed. A palette's rest
       // is pinned to the palette the same way and keeps the call's lease, as a menu's does.
       const pinned = remainder.dialog || remainder.palette;
@@ -4298,8 +4309,9 @@ export function createRelay({
       } else if (docs) msg.result.content = msg.result.content.map(c => c.type === 'text' && /^## Computer Use\n/.test(c.text ?? '')
         ? { ...c, text: rewritePaymentPolicy(c.text, confirmPayments, trace) } : c);
       if (msg.result._meta?.['codex/toolSurface']?.kind !== 'browserUse')
-        msg.result.content = msg.result.content.map(c => c.type === 'text' && c.text?.includes('<app_specific_instructions>')
-          ? { ...c, text: rewriteBrowserInstructions(c.text, trace) } : c);
+        msg.result.content = msg.result.content.map((c, i, all) => c.type === 'text' && c.text?.includes('<app_specific_instructions>')
+          ? { ...c, text: rewriteBrowserInstructions(c.text, trace, { keyboardTab: firstCallSteering,
+            tree: firstCallSteering ? all.slice(i + 1).map(item => item.type === 'text' ? item.text ?? '' : '').join('\n') : '' }) } : c);
       if (docs && docsShown && !requestsFullDocumentation(jsCode)) {
         // An un-awaited action that fails can end the engine's session (reproduced 2026-10-07).
         invalidateDiagnostics(); forgetHandles(); helperHandles.clear(); helperControls.clear(); helperActive = undefined;
@@ -4688,9 +4700,10 @@ export function createRelay({
         .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t, !modHost()) : t))
         .map(t => {
           if (t.name !== 'js') return t;
-          const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows);
+          const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows, { current: firstCallSteering });
           if (compact !== undefined) return { ...t, description: compact };
-          const description = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt, firstCallWindows) : t.description;
+          const batched = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt, firstCallWindows) : t.description;
+          const description = firstCallSteering ? withInventoryNote(batched) : batched;
           return { ...t, description: leanCalls ? leanCallDescription(description) : description };
         })
         .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [],

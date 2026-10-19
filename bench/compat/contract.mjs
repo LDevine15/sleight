@@ -1,7 +1,7 @@
 // What sleight needs from the ChatGPT computer-use engine, and the checks that read it back after an engine update.
 // Every name here is one sleight's code calls or parses (plugins/sleight/lib). tests/compat-contract.test.mjs fails when the
 // code starts calling a cua method this file doesn't list, so a new dependency can't skip the check.
-import { compactJsDescription } from '../../plugins/sleight/lib/tool-description.mjs';
+import { engineJsVariant } from '../../plugins/sleight/lib/tool-description.mjs';
 import { rewritePaymentPolicy } from '../../plugins/sleight/lib/payment-policy.mjs';
 import { compactConfirmationsPolicy } from '../../plugins/sleight/lib/compact-confirmations.mjs';
 
@@ -136,10 +136,18 @@ export function checkToolSurface(tools) {
   if (!byName.has('turn_ended')) problems.push('no turn_ended tool');
   const results = [problems.length ? result('tool-surface', 'fail', problems.join('; '))
     : result('tool-surface', 'pass', `js and turn_ended present (${tools.length} tools)`)];
-  if (js && typeof js.description === 'string' && compactJsDescription(js.description, undefined, false) === undefined) {
-    results.push(result('js-description', 'warn', "the engine's js description changed, so sleight sends it whole instead of its shorter version (tool-description.mjs ENGINE_JS_HASH)"));
-  } else if (js) results.push(result('js-description', 'pass'));
+  if (js && typeof js.description === 'string') results.push(jsDescriptionResult(engineJsVariant(js.description)));
+  else if (js) results.push(result('js-description', 'pass'));
   return results;
+}
+
+// Whether sleight's shorter js description replaces the engine's (tool-description.mjs pins). A pin of the engine's current
+// text applies only with SLEIGHT_FS=1 until its A/B, so by default it still warns. `mode` names a surface setting.
+export function jsDescriptionResult(pin, mode) {
+  const where = mode ? ` for CUA_REPL_ENABLED_SURFACES=${mode}` : '';
+  if (!pin) return result('js-description', 'warn', `the engine's js description changed${where}, so sleight sends it whole instead of its shorter version (tool-description.mjs pins)`);
+  if (pin.current) return result('js-description', 'warn', `sleight's shorter js description${where} applies only with SLEIGHT_FS=1 (under A/B); by default the engine's text goes out with its first-call rule rewritten`);
+  return result('js-description', 'pass', "sleight's shorter js description applies");
 }
 
 // sleight rewrites the engine's confirmations policy for payments and forms the user asked for (payment-policy.mjs) and

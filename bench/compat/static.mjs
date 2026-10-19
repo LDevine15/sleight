@@ -5,8 +5,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { HELPER_REL, MODULES_REL, NODE_REL, NODE_REPL_REL, REPL_REL } from '../../plugins/sleight/lib/setup.mjs';
-import { compactJsDescription } from '../../plugins/sleight/lib/tool-description.mjs';
-import { API_MEMBERS, CUA_METHODS, checkApiContract, checkPolicyRewrite } from './contract.mjs';
+import { engineJsVariant } from '../../plugins/sleight/lib/tool-description.mjs';
+import { API_MEMBERS, CUA_METHODS, checkApiContract, checkPolicyRewrite, jsDescriptionResult } from './contract.mjs';
 
 const OAI = join(MODULES_REL, '@oai');
 export const BUNDLE = {
@@ -130,9 +130,10 @@ export function analyzeBundle(app) {
   }));
   // sleight starts the engine with CUA_REPL_ENABLED_SURFACES=computer unless a Codex browser extension is connected
   // (launch.mjs selectSurfaces), so that setting is the one that has to match.
-  const known = Object.entries(descriptions).filter(([, text]) => text !== undefined && compactJsDescription(text, undefined, false) !== undefined).map(([mode]) => mode);
-  results.push(known.includes('computer') ? result('js-description', 'pass', "sleight's shorter js description applies")
-    : result('js-description', 'warn', `the engine's js description changed${known.length ? ' for CUA_REPL_ENABLED_SURFACES=computer' : ''}, so sleight sends it whole instead of its shorter version (tool-description.mjs ENGINE_JS_HASH)`));
+  // The pins of the engine's current descriptions apply only with SLEIGHT_FS=1 until its A/B (tool-description.mjs).
+  const pins = Object.fromEntries(Object.entries(descriptions).map(([mode, text]) => [mode, text === undefined ? undefined : engineJsVariant(text)]));
+  const known = Object.keys(pins).filter(mode => pins[mode]);
+  results.push(jsDescriptionResult(pins.computer, known.length && !pins.computer ? 'computer' : undefined));
 
   results.push(...checkPolicyRewrite([`${coreDoc.trimEnd()}\n\n${policy}`]));
 
