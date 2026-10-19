@@ -40,6 +40,7 @@ import { probeHelper, staleHelperJobs } from './helper-health.mjs';
 import { replayBridge } from './replay.mjs';
 import { serverFromChatGPTApp, setup } from './setup.mjs';
 import { handPid } from './hand/pid.mjs';
+import { ActionLog, actionLogPath } from './action-outcomes.mjs';
 
 const PLUGIN_DIR = ['plugins', 'cache', 'openai-bundled', 'unified-computer-use'];
 const SERVER_KEY = 'cua_repl';
@@ -47,6 +48,15 @@ const SERVER_KEY = 'cua_repl';
 export function receiptOptions(env = process.env) {
   return { receipts: env.SLEIGHT_RECEIPTS === '1', stateReview: env.SLEIGHT_STATE_REVIEW === '1',
     redactReceiptTitles: env.SLEIGHT_RECEIPT_REDACT_TITLES !== '0' };
+}
+
+// SLEIGHT_OUTCOMES=1 puts one verified line per action in results (off until its A/B). SLEIGHT_ACTION_LOG=<absolute or
+// ~/ path> writes one JSON line per action there, rotated at 5 MB with two old files kept.
+export function outcomeOptions(env = process.env, warn = message => process.stderr.write(message + '\n')) {
+  const path = actionLogPath(env.SLEIGHT_ACTION_LOG);
+  // A user who set a path outside the folder would otherwise believe the log is on.
+  if (env.SLEIGHT_ACTION_LOG && !path) warn('sleight: SLEIGHT_ACTION_LOG takes a file name or a path under ~/Library/Logs/sleight/; this one is ignored and the action log is off.');
+  return { outcomes: env.SLEIGHT_OUTCOMES === '1', actionLog: path ? new ActionLog({ path }) : undefined };
 }
 
 function fail(message) {
@@ -950,6 +960,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     flowRules,
     changeReview: process.env.SLEIGHT_CHANGE_REVIEW === '1',
     ...receiptOptions(),
+    ...outcomeOptions(),
     // End the engine's turn after 30 s without a running call, so the app it
     // holds is released even where the mod doesn't run. 0 turns this off.
     idleTurnEndMs: Number(process.env.SLEIGHT_IDLE_TURN_END_MS ?? 30000),

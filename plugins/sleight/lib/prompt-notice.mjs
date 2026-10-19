@@ -181,7 +181,19 @@ export function promptNotice(text, prompt) {
     .replace('sleight: initialization documentation accompanied a syntax error; the code did not run', 'sleight: docs came with a syntax error; code did not run')
     .replace('sleight: initialization documentation accompanied an error; the code may have run up to the error', 'sleight: docs came with an error; code may have run up to it')
     .replace('. Complete the documented initialization with one supported read: ', '. Finish initialization with one read: ')
+    .replace(' Read current state before deciding what remains. Do not replay the pending input automatically. Existing approval requirements still apply.', ' Read state, then decide; never replay pending input. Approvals still apply.')
     .replace('. Read current state before deciding what remains. Do not replay', '. Read state before continuing. Do not replay')
     .replace("sleight: the engine's line counts sleight's setup code. In your code the error is at line ", 'sleight: in your code the error is at line ')
-    .replace(/Use a (?:literal )?number from a \+ line in the latest result, or read the whole window with getAXState\(\{ disableDiffing: true \}\) first\./g, 'Use a + line number from the latest result, or read with getAXState({ disableDiffing: true }) first.');
+    .replace(/Use a (?:literal )?number from a \+ line in the latest result, or read the whole window with getAXState\(\{ disableDiffing: true \}\) first\./g, 'Use a + line number from the latest result, or read with getAXState({ disableDiffing: true }) first.')
+    // SLEIGHT_OUTCOMES lines (action-outcomes.mjs); each phrase is that module's alone, on every line it appears.
+    .replace('sleight outcomes:\n', 'outcomes:\n')
+    .replaceAll('no visible change', 'no change')
+    .replaceAll('failed; partial input possible', 'failed, maybe partly')
+    .replaceAll('ran, unverified', 'unverified')
+    .replaceAll(' other lines changed', ' lines changed')
+    .replaceAll('holds the value', 'holds it')
+    .replaceAll('value reads "', 'reads "')
+    .replaceAll('not run (stopped after ', 'not run (after ')
+    .replace(/menu opened \((\S+) items\)/g, 'menu ($1 items)')
+    .replaceAll('element gone', 'gone');
 }

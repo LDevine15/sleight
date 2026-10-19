@@ -15,6 +15,10 @@ our own runs. Dates and engine versions are given where they matter.
 - The form rule asks before account, security, privacy and sharing settings even when your message names them, so the
   race's form-settings task (two-factor on) stops before Save by design. `SLEIGHT_CONFIRM_PAYMENTS=always` keeps form and
   switch confirmations too.
+- The hook that keeps `SLEIGHT_OUTCOMES` and `SLEIGHT_ACTION_LOG` the user's choice matches text, so it stops
+  mistakes and plain edits only (unit-tested, 2026-10-18). A script Claude writes and then runs, a config file
+  reached through a symlink, a name built at run time, a config file it doesn't list, and another MCP server's
+  shell tool all get past it. It sees only Claude Code's Write, Edit, MultiEdit, NotebookEdit and Bash.
 - `claude -p` can't answer approval prompts. List apps in the user's [preapproval file](settings.md#preapproved-apps) before starting.
 - `sleight-mcp setup` hasn't had a full live run: macOS permissions always need the user's click.
 - The engine refuses terminals (Terminal, iTerm2) and OpenAI's own apps (ChatGPT, Codex, Atlas, with

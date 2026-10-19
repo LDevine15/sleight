@@ -27,6 +27,7 @@ import { bareValue, finalExpression, printValueCode } from './no-output.mjs';
 import { promptNotice } from './prompt-notice.mjs';
 import { unchangedListClicks } from './offscreen-click.mjs';
 import { underDocument } from './menu-continuation.mjs';
+import { renderOutcomes } from './action-outcomes.mjs';
 
 export { GUARD_END, GUARD_MARK, GUARD_OMIT_MARK };
 const MAX_LINES = 3000; // above this, the line diff costs more than it saves
@@ -801,7 +802,8 @@ export function failureReason(content) {
     .filter(line => line && !/^(?:#|Warning:|Window: |URL: |\[\/?sleight:|sleight:guard-ready)/.test(line)).at(-1);
 }
 
-function resultNote(action, after, failed, failure) {
+// outcomes: per-action outcome lines already say what changed, so the call-level UI line is left out.
+function resultNote(action, after, failed, failure, outcomes = false) {
   const before = action.before;
   const invalidRead = after?.invalid;
   if (invalidRead) after = undefined;
@@ -871,7 +873,7 @@ function resultNote(action, after, failed, failure) {
   const selectedTabs = !reason && !incomplete && !degraded && after?.delta?.baseline === before.id
     ? after.delta.selectedTabs : [];
   const fields = [/* lean notice */ failed ? 'call failed (' + (failure?.noInput && !action.overlap ? 'no input was sent' : 'partial input possible') + ')' +
-    (failure?.message ? ': ' + failure.message : ': engine returned no error text') : ui, ...selectedTabs, saved && /* lean notice */ 'saved: ' + saved,
+    (failure?.message ? ': ' + failure.message : ': engine returned no error text') : outcomes ? undefined : ui, ...selectedTabs, saved && /* lean notice */ 'saved: ' + saved,
     saved?.startsWith('observed') && after.window.url?.startsWith('file://') && fileReceipt(after.window.url)].filter(Boolean);
   const finish = saveFinishLine(after, before, failed, action.overlap);
   if (!fields.length) return finish;
@@ -1301,7 +1303,9 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   screenshotReads = process.env.SLEIGHT_SKILL === 'screenshot',
   compactToolbars = process.env.SLEIGHT_COMPACT_TOOLBARS === '1', readHints = {},
   // WB1 and WB2, off by default until their held-out A/B: the missed-field note and the changed-Undo note.
-  routeSteering = process.env.SLEIGHT_WB1 === '1', undoReceipts = process.env.SLEIGHT_WB2 === '1' } = {}) {
+  routeSteering = process.env.SLEIGHT_WB1 === '1', undoReceipts = process.env.SLEIGHT_WB2 === '1',
+  // SLEIGHT_OUTCOMES=1 (A/B, off by default): one line per action from the guard's records (action-outcomes.mjs).
+  outcomes = false } = {}) {
   // window key -> { lines, valid }: the last full tree Claude got, and the
   // element numbers in it Claude knows are current (undefined: all of them).
   const seen = new Map(), pendingSwaps = new Map(), pendingClicks = new Map();
@@ -1317,7 +1321,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const screenshotHints = readHints.screenshotHints ??= new Set();
   const screenshotWindows = readHints.screenshotWindows ??= new Set();
   const openedFiles = readHints.openedFiles ??= new Map();
-  let latest, observedInResult, observationId = 0, textlessNoted = false, resultObservations = [], callCount = 0, listClicks = [];
+  let latest, observedInResult, observationId = 0, textlessNoted = false, resultObservations = [], callCount = 0, listClicks = [], lastOutcomes;
   // document key -> tab list key -> { first, last, clicked, blamed, noted }: each tab strip's order when it
   // first appeared, for the save line, and the tab click a later order change followed.
   const tabOrders = new Map();
@@ -1538,10 +1542,11 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Rewrites a result's text items. Everything one js call writes arrives
     // as one item, so marked trees (Claude's reads and the guard's) sit among
     // Claude's other output. Each is compacted against what Claude saw before it.
-    process(content, { forceFull = false, explicitFull = false, acquisition = false, action, failed = false, failure, code, screenshotWindow, filterMark = FILTERED_MARK } = {}) {
+    process(content, { forceFull = false, explicitFull = false, acquisition = false, action, failed = false, failure, code, screenshotWindow, filterMark = FILTERED_MARK,
+      outcomeStart = 0, outcomeContinuing = false } = {}) {
       listClicks = [];
       if (!Array.isArray(content)) return content;
-      let filtered, typed;
+      let filtered, typed, outcomeRecord;
       // The relay gives each rewritten call its own mark, so window text can't forge or strip one.
       const markPattern = filterMark && new RegExp(filterMark.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^\\r\\n]*)(?:\\r?\\n|$)', 'g');
       if (markPattern) content = content.flatMap(item => {
@@ -1549,7 +1554,16 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         const text = item.text.replace(markPattern, (_, json) => {
           try {
             const record = JSON.parse(json);
-            if (Object.hasOwn(record, 'typed')) typed = record.typed;
+            // The guard sends each action record as it changes, then the whole list at the end. In order, the last
+            // word on each record wins, so a call Claude's own code broke off still has its records.
+            if (Object.hasOwn(record, 'outcomes')) outcomeRecord = { ...record, outcomes: Array.isArray(record.outcomes) ? [...record.outcomes] : [] };
+            else if (Object.hasOwn(record, 'part')) {
+              if (Number.isSafeInteger(record.part) && record.part >= 0 && record.part < 30 && record.rec && typeof record.rec === 'object') {
+                const { part, rec, ...extra } = record;
+                outcomeRecord = { ...outcomeRecord, ...extra, outcomes: [...(outcomeRecord?.outcomes ?? [])] };
+                outcomeRecord.outcomes[part] = rec;
+              }
+            } else if (Object.hasOwn(record, 'typed')) typed = record.typed;
             else filtered = record;
           } catch { filtered = { full: true }; }
           return '';
@@ -1655,8 +1669,14 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         }
         return !out && item.text.includes(GUARD_OMIT_MARK) ? [] : { ...item, text: out };
       });
+      if (outcomeRecord) outcomeRecord.outcomes = outcomeRecord.outcomes.filter(Boolean);
+      lastOutcomes = outcomeRecord;
+      // A stop note that lists what wasn't sent covers the rest.
+      const outcomeLines = outcomes && outcomeRecord && renderOutcomes(outcomeRecord, { start: outcomeStart, continuing: outcomeContinuing,
+        notSent: content.some(item => item?.type === 'text' && /\bnot sent\b/.test(item.text ?? '')) });
+      if (outcomeLines) out.push({ type: 'text', text: promptNotice(outcomeLines, prompt) });
       const note = action && resultNote(action, observedInResult, failed,
-        failure ?? { message: failureReason(content) });
+        failure ?? { message: failureReason(content) }, !!outcomeLines);
       if (note) out.push({ type: 'text', text: promptNotice(note, prompt) });
       const omittedNote = /* lean notice */ `sleight: ${omittedReads} earlier reads of the same window in this call left out; the last is shown. Element numbers refer to the last tree.`;
       if (omittedReads) out.push({ type: 'text', text: promptNotice(omittedNote, prompt) });
@@ -1978,5 +1998,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     lastReadNoted() { return textlessNoted; },
     // The last processed result's unchanged list-row clicks, for the relay's offscreen check.
     listClicks() { return listClicks; },
+    // The guard's action records from the last process() call that had them, once, for the action log.
+    takeOutcomes() { const record = lastOutcomes; lastOutcomes = undefined; return record; },
   };
 }
