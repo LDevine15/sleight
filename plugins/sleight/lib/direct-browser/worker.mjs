@@ -509,7 +509,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     // The Ghost Hand row shows the user's hand setting (an unsafe file keeps the hand off), and its choice flips it. On the
     // shared host the hand channel adds its own row, so the status frame has none.
     let hand;
-    try { hand = ['off', 'unsafe'].includes((dependencies.readHand ?? readHandConfig)().state) ? 'off' : 'on'; } catch { hand = 'off'; }
+    try { hand = (dependencies.readHand ?? readHandConfig)().state === 'on' ? 'on' : 'off'; } catch { hand = 'off'; }
     const handChoices = sharedUi ? [] : [hand === 'on' ? 'hand-off' : 'hand-on'];
     // Never Act on <site>: only while connected, for the site turbo last worked on, unless it is already refused there.
     let site;

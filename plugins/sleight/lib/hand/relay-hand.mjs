@@ -1,13 +1,14 @@
 // The relay's side of the ghost hand: after admission decides a js call, plan its frames beside the engine
 // call and send them to the hand host at their beats. The relay calls admit, approval, answered, result, hide
 // and close, all fire-and-forget: none returns anything, throws or holds the call, and nothing here reads or
-// changes what the relay sends the engine or Claude. Without a client (no client module, SLEIGHT_HAND=0, a
+// changes what the relay sends the engine or Claude. Without a client (settings off, no client module, a
 // dead host) every call is a no-op.
 //
 // Beats: an accepted engine approval request (one per click, key, value or drag, except for apps on the
 // engine's own Always allow list) is the exact moment of its action. Once an app's actions have come with
 // approvals this session, its frames wait for them. Otherwise each frame goes out with the time left on the
 // planner's schedule. The result re-anchors frames still unsent at its own time, a warm write apart.
+import { handSetting } from './settings.mjs';
 import { planHandFrames, handTargets, WRITE_MS } from './planner.mjs';
 
 // The kinds an approval's tool_name stands for. Unknown names beat the next action of any kind.
@@ -16,8 +17,8 @@ const STALE_MS = 60000;
 
 export function createRelayHand({ client, loadClient = () => import('./client.mjs'), clientOptions = {}, locate,
   trace = () => {}, now = () => performance.now(), defer = fn => setImmediate(fn), locateTimeoutMs = 2000, lateMs = 1500,
-  env = process.env } = {}) {
-  if (env.SLEIGHT_HAND === '0' || typeof locate !== 'function') return undefined;
+  env = process.env, setting = () => handSetting({ env }) } = {}) {
+  if (env.SLEIGHT_HAND === '0' || !setting().enabled || typeof locate !== 'function') return undefined;
   let closed = false, locating = false, resolved = client ?? undefined, loading, pendingHide = false;
   const load = () => loading ??= (client ? Promise.resolve(client) : Promise.resolve().then(loadClient).then(m => m.createHandClient(clientOptions)))
     .then(c => (resolved = c && typeof c.send === 'function' ? c : null), () => (resolved = null))

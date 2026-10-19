@@ -1,8 +1,7 @@
-// Whether the ghost hand is on, and whether captures show it. The hand is on by default. `SLEIGHT_HAND=0` in a server's
-// environment turns that server's hand off, and hand.json with `enabled: false` is the user's opt-out, written only by
-// `sleight-mcp hand on|off|capture` (command.mjs). The environment can only turn the hand off, and a file that isn't safe to
-// read leaves it off. Capture is `hidden` by default (the panel is absent from every capture, the user's own screenshots and
-// recordings included) or `visible` (screenshots and recordings show it); `SLEIGHT_HAND_CAPTURE` wins over the file's `capture`.
+// Whether the ghost hand is on, and whether captures show it. The hand is off by default. A saved enabled: true opts in.
+// SLEIGHT_HAND=0 forces it off; SLEIGHT_HAND=1 forces it on for benchmarks. Without an environment override, an unsafe file
+// leaves it off. Capture is hidden by default (the user's own screenshots and recordings included) or visible;
+// SLEIGHT_HAND_CAPTURE wins over the file's capture setting.
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { isAbsolute, join, normalize } from 'node:path';
@@ -34,15 +33,15 @@ export function handSetting({ env = process.env, platform = process.platform, pa
     : file.capture ? [file.capture, 'user'] : ['hidden', 'default'];
   const result = (enabled, reason) => ({ enabled, reason, capture, captureReason });
   if (platform !== 'darwin') return result(false, 'platform');
-  if (env.SLEIGHT_HAND === '0') return result(false, 'env');
+  if (['0', '1'].includes(env.SLEIGHT_HAND)) return result(env.SLEIGHT_HAND === '1', 'env');
   if (file.state === 'unsafe') return result(false, 'unsafe');
-  if (file.state === 'absent') return result(true, 'default');
+  if (file.state === 'absent') return result(false, 'default');
   return result(file.state === 'on', 'user');
 }
 
-const words = setting => setting.reason === 'platform' ? 'off (macOS only)' : setting.reason === 'env' ? 'off (SLEIGHT_HAND=0)'
+const words = setting => setting.reason === 'platform' ? 'off (macOS only)' : setting.reason === 'env' ? `${setting.enabled ? 'on' : 'off'} (SLEIGHT_HAND=${setting.enabled ? '1' : '0'})`
   : setting.reason === 'unsafe' ? 'off (hand.json is a link or has another owner, mode or format)'
-  : setting.reason === 'default' ? 'on (the default)' : setting.enabled ? 'on' : 'off (you turned it off)';
+  : setting.reason === 'default' ? 'off (the default; sleight-mcp hand on turns it on)' : setting.enabled ? 'on' : 'off (you turned it off)';
 const captureWords = setting => `${setting.capture === 'visible' ? 'visible (your screenshots and recordings show the hand)'
   : 'hidden (no screenshot or recording shows the hand)'}${setting.captureReason === 'env' ? ', from SLEIGHT_HAND_CAPTURE'
   : setting.captureReason === 'env-invalid' ? ', because SLEIGHT_HAND_CAPTURE is neither hidden nor visible'

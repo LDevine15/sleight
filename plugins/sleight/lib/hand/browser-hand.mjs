@@ -1,13 +1,14 @@
 // The ghost hand for turbo (H8): the same frames as the relay's planner, from the worker's act runner. act.mjs calls
 // step() when a step's input starts, after its rules allowed it. step() only queues work: the page metrics, the
 // element's CDP box (Playwright's boundingBox) and the browser window's geometry are read on later ticks, and the
-// act path never waits on them or reads anything back. Without a client (no client module, SLEIGHT_HAND=0) there is
+// act path never waits on them or reads anything back. Without a client (settings off, no client module) there is
 // no hand and no reads.
 //
 // Points: a box is CSS pixels relative to the main frame's viewport. The page's content area sits at the bottom of
 // the browser window (window.screenX/screenY/outerWidth/outerHeight, in screen points), and page zoom is the ratio of
 // the window's width to the viewport's CSS width, refined by devicePixelRatio (display scale times zoom). Pinch zoom
 // goes through the visual viewport. Turbo moves no real pointer, so it has nothing to hide the hand before.
+import { handSetting } from './settings.mjs';
 import { appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -82,8 +83,8 @@ const withTimeout = (promise, ms) => {
 
 export function createBrowserHand({ client, loadClient = () => import('./client.mjs'), clientOptions = {}, locate,
   readMetrics = page => trustedLocatorRead(page.locator('html'), pageMetrics), trace = () => {}, now = () => performance.now(),
-  defer = fn => setImmediate(fn), env = process.env } = {}) {
-  if (env.SLEIGHT_HAND === '0' || typeof locate !== 'function') return undefined;
+  defer = fn => setImmediate(fn), env = process.env, setting = () => handSetting({ env }) } = {}) {
+  if (env.SLEIGHT_HAND === '0' || !setting().enabled || typeof locate !== 'function') return undefined;
   let closed = false, resolved = client ?? undefined, loading;
   const load = () => loading ??= (client ? Promise.resolve(client) : Promise.resolve().then(loadClient).then(m => m.createHandClient(clientOptions)))
     .then(c => (resolved = c && typeof c.send === 'function' ? c : null), () => (resolved = null));
