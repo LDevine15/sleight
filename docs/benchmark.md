@@ -99,6 +99,9 @@ node bench/app-speed-map.mjs --dry-run --apps word,vscode --runs 1
 node bench/app-speed-map.mjs --owner-away --apps word,vscode --runs 1
 ```
 
+The 2026-10-19 results for Finder, TextEdit, VS Code, Cursor, Word and Excel are in
+[benchmarks/2026-10-19-speed-map.md](benchmarks/2026-10-19-speed-map.md).
+
 The dry run sends every planned cell through the real scheduler with an in-memory runtime. It prints each cell's engine
 calls, the receipts the run needs and a time estimate. It doesn't start an app or a child process, and it doesn't write
 a file.
