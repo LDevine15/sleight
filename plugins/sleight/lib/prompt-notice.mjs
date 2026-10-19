@@ -180,5 +180,7 @@ export function promptNotice(text, prompt) {
     .replace("the user's message named no amount", 'no amount named')
     .replace("the user's message named more than one amount", 'several amounts named')
     .replace('SLEIGHT_CONFIRM_PAYMENTS=always asks every time', 'SLEIGHT_CONFIRM_PAYMENTS=always')
+    .replace('a payment already went through for this request', 'one payment already made')
+    .replace("sleight: the user allowed this payment once in sleight's card. Nothing was sent: send the same action again.", "sleight: payment allowed once in sleight's card. Nothing sent: resend it.")
     .replace("the user's message named ", 'message named ');
 }

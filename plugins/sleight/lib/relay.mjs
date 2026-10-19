@@ -67,7 +67,7 @@ import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './b
 import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
-import { createPaymentMessages } from './payment-gate.mjs';
+import { createPaymentMessages, PAYMENT_ALLOWED } from './payment-gate.mjs';
 import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE } from './engine-app-docs.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
@@ -747,6 +747,9 @@ export function createRelay({
   // SLEIGHT_TEXTLESS_HINT=0 leaves the note out, for the A/B; SLEIGHT_SKILL=screenshot keeps it on.
   textlessHint = process.env.SLEIGHT_TEXTLESS_HINT !== '0' || process.env.SLEIGHT_SKILL === 'screenshot',
   confirmPayments = 'requested',
+  // sleight's own payment card for the engine-path payment gate (payment-card.mjs); the launcher supplies it. Without it a
+  // payment stop reaches Claude as it is.
+  paymentCard,
   prompt = process.env.SLEIGHT_PROMPT,
   diagnoseRead,
   staleHelperCheck,
@@ -784,6 +787,8 @@ export function createRelay({
   let installedBootstrapped = false;
   // The user's own message for the engine-path payment gate (payment-gate.mjs): only an authenticated turbo begin sets it.
   const paymentMessages = createPaymentMessages();
+  // The client's name, for the card's "sleight request for ..." line.
+  let clientName;
   let turboNoticeShown = false;
   const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ??
     (turboUnavailable ? ['browser_open','browser_read','browser_act','browser_fill','browser_tabs'] : []));
@@ -2810,8 +2815,11 @@ export function createRelay({
     if (!Array.isArray(msg.result?.content)) return false;
     const taken = takeGuardStop(msg.result.content, call.mark);
     msg.result.content = taken.content;
-    // The private mark proves the guard wrote this stop; the next user message answers it (SLEIGHT_CONFIRM_PAYMENTS=always).
-    if (typeof taken.receipt?.error === 'string' && taken.receipt.error.startsWith('sleight stopped this payment:')) paymentMessages.asked();
+    // The private mark proves the guard wrote these: payments it let through count for the request, and a payment stop is
+    // answered by the next user message (SLEIGHT_CONFIRM_PAYMENTS=always) or by sleight's own card below.
+    for (const record of taken.paid ?? []) paymentMessages.paid(record);
+    const paymentStop = typeof taken.receipt?.error === 'string' && taken.receipt.error.startsWith('sleight stopped this payment:') ? taken.receipt.payment : undefined;
+    if (paymentStop) paymentMessages.asked();
     // A tab this call opened in its window: the stop tree passes tabRefusal's checks, which tie it to that window.
     const tabStop = !msg.error && msg.result.isError && taken.receipt?.windowStop === true &&
       tabRefusal(call.plan, taken.receipt, call.target, taken.content, call.before) === undefined;
@@ -2830,6 +2838,27 @@ export function createRelay({
       closed: !!(call.target ?? leaseWindow)?.parent, tab: tabStop });
     // First, not after the tree: in an Office study (2026-10-17) the ran/not-sent line sat at line 134 of a 7 KB result.
     if (note) msg.result.content = [{ type: 'text', text: promptNotice(note, prompt) }, ...msg.result.content];
+    // A payment stop asks the user in sleight's card while Claude's result waits. Allow once lets the next guarded call send
+    // that one action; Cancel, a closed card or no card leaves the stop as it is.
+    if (paymentCard && paymentStop && !msg.error && msg.result.isError) {
+      const generation = stopGeneration, live = () => generation === stopGeneration && !closing && !disposed && !stopCollected;
+      Promise.resolve().then(() => paymentCard.ask({ session: clientName ?? 'the agent', site: paymentStop.site, shown: paymentStop.shown, control: paymentStop.control }))
+        .catch(() => undefined).then(choice => {
+          if (choice === 'once' && live()) {
+            paymentMessages.allowed(paymentStop);
+            const content = msg.result.content.flatMap(item => {
+              if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
+              const text = item.text.split('\n').filter(line => !line.includes('sleight stopped this payment:')).join('\n');
+              return text.trim() ? [{ ...item, text }] : [];
+            });
+            // Nothing failed that Claude should report: the call ends with the note and the tree it stopped on.
+            msg.result = { ...msg.result, isError: false, content: [{ type: 'text', text: promptNotice(PAYMENT_ALLOWED, prompt) }, ...content] };
+            if (action) action.failure = undefined;
+          }
+          observeServerMessage(msg);
+        });
+      return true;
+    }
     const stopped = !msg.error && msg.result.isError;
     const ineligible = !stopped ? 'no-stop' : documentMode ? 'document-scope' : changeReview ? 'change-review' : menuContinued.has(msg.id) ? 'continued'
       : guardMode?.split(',').some(mode => mode.trim() === 'careful') ? 'careful' : !call.target ? 'not-admitted' : undefined;
@@ -2954,6 +2983,7 @@ export function createRelay({
     if (msg.method === 'tools/call' && msg.id !== undefined && !callGenerations.has(msg.id)) callGenerations.set(msg.id, stopGeneration);
     if (msg.method === 'initialize') {
       onInitialize(msg.params?.clientInfo);
+      if (typeof msg.params?.clientInfo?.name === 'string') clientName = msg.params.clientInfo.name.slice(0, 64);
       const capabilities = msg.params?.capabilities ?? {};
       const elicitation = capabilities.elicitation;
       // MCP 2025-06-18 used {}; later versions distinguish form and URL prompts.
@@ -4581,6 +4611,7 @@ export function createRelay({
     for (const resolve of elicitations.values()) resolve({ result: { action: 'cancel' } });
     elicitations.clear();
     lightReturn?.dispose();
+    paymentCard?.close?.();
     promptFailures.clear();
     flowRules?.dispose();
     flowCalls.clear(); flowPending = undefined; flowPermit = undefined;

@@ -9,10 +9,12 @@ import { paymentWords, refundableName } from './direct-browser/rules.mjs';
 // dialogs and alerts. Closure-free: document-scope.mjs runs it in the engine's REPL beside paymentAction, moneyFigures,
 // moneyConflicts, paymentWords and refundableName, which this module imports or defines for Node callers.
 //
-// payment is { setting, message }: setting is SLEIGHT_CONFIRM_PAYMENTS ('requested', 'always' or 'never'), and message is null
-// when sleight holds no copy of the user's own message, else namedAmount's reading of it plus afterAsk (it came after a stop).
-// With probe, it answers only whether the action is submit-shaped on a page that shows a payment, for the guard's choice to read.
-// Returns undefined when the action goes ahead, else { why, shown, named } for the stop.
+// payment is { setting, message, spent, allow }: setting is SLEIGHT_CONFIRM_PAYMENTS ('requested', 'always' or 'never'); message
+// is null when sleight holds no copy of the user's own message, else namedAmount's reading of it plus afterAsk (it came after a
+// stop); spent is the payment already made for this message, as turbo allows one; allow is what the user allowed once in
+// sleight's own card (payment-card.mjs). With probe, it answers only whether the action is submit-shaped on a page that shows a
+// payment, for the guard's choice to read. Returns undefined for an action that isn't a payment, { allowed, site, shown,
+// control, modal } for a payment that goes through, and { why, shown, named, site, control, modal } for one that stops.
 export function enginePayment(name, args, text, payment, probe = false) {
   if (!payment || typeof text !== 'string' || !paymentAction(name, args)) return;
   // Only a web page or a sheet, dialog or alert can show a payment: any other tree goes ahead unparsed.
@@ -68,20 +70,42 @@ export function enginePayment(name, args, text, payment, probe = false) {
     shaped = !row ? paymentPage : !(row.web || row.modal) ? false : role(row, 'button|link') ? pays(row) : enter && inForm(row);
   }
   if (!shaped || probe) return shaped || undefined;
+  // What the card names and an allowance binds to: the page's site, the largest figure, and the control or key.
+  const target = name === 'click' || name === 'performSecondaryAction' ? rows.get(args[0]) : rows.get(focus);
+  const control = Array.isArray(args[0]) ? 'point ' + JSON.stringify(args[0]) : name === 'click' || name === 'performSecondaryAction' ? target.body
+    : (enter ? 'Enter' : 'Space') + ' in ' + (target?.body ?? 'the page');
+  const address = page.find(row => row.web && !row.modal && /^HTML content\b.*, URL: /i.test(row.body))?.body.match(/, URL: ([^,]*)/)?.[1] ?? '';
+  const site = address.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('/')[0];
   const lines = page.map(row => /^(?:radio button|check ?box|switch|toggle button)\b/.test(row.body) && /(?:^|, )Value: (?:1|on)(?:,|$)/.test(row.body)
     ? '\uE000' + row.words + '\uE001' : row.words);
   const { figures, parse } = moneyFigures(lines);
   const largest = list => list.filter(f => f.cur || f.value === Infinity).sort((a, b) => b.value - a.value)[0]?.text;
-  const shown = largest(figures);
+  const shown = largest(figures), modal = !!target?.modal, details = { site, shown, control, modal };
+  const stop = (why, extra = {}) => ({ why, shown, ...extra, site, control, modal });
+  const allow = payment.allow;
+  if (allow && allow.site === site && allow.shown === shown && allow.control === control) return { allowed: 'card', ...details };
+  // One payment per request, as on turbo. The dialog right after it (a confirm() showing the same figure) is that payment.
+  const spent = payment.spent;
+  if (spent) {
+    const dialog = largest(moneyFigures(page.filter(row => row.modal).map(row => row.words)).figures);
+    if (modal && !spent.modal && !spent.dialog && (dialog === undefined || dialog === spent.shown)) return { allowed: 'dialog', ...details };
+    return stop('second');
+  }
   const message = payment.message;
-  if (!message) return { why: 'nocopy', shown };
-  if (message.several) return { why: 'several', shown };
-  if (message.amount === undefined) return { why: 'none', shown };
-  if (payment.setting === 'always' && !message.afterAsk) return { why: 'always', shown };
-  if (payment.setting === 'never' || !moneyConflicts(lines, message.amount, message.currency)) return;
+  if (!message) return stop('nocopy');
+  if (message.several) return stop('several');
+  if (message.amount === undefined) return stop('none');
+  if (payment.setting === 'always' && !message.afterAsk) return stop('always');
   const amount = parse(String(message.amount));
-  return { why: 'over', shown: largest(figures.filter(f => !(f.value <= amount + 0.005))) ?? shown, named: message.display };
+  if (payment.setting !== 'never' && moneyConflicts(lines, message.amount, message.currency))
+    return stop('over', { shown: largest(figures.filter(f => !(f.value <= amount + 0.005))) ?? shown, named: message.display });
+  // The page has to show the amount the message named, as turbo requires of its terms.
+  if (!figures.some(f => f.cur && Math.abs(f.value - amount) < 0.005)) return stop('mismatch', { named: message.display });
+  return { allowed: payment.setting === 'never' ? 'never' : 'message', ...details };
 }
+
+// What Claude reads after the user chose Allow once in sleight's card: the stopped action wasn't sent, and one retry of it may go.
+export const PAYMENT_ALLOWED = /* lean notice */ "sleight: the user allowed this payment once in sleight's card. Nothing was sent: send the same action again.";
 
 // Whether an action can submit: a click or secondary action, Enter or Space, or text with a line break. Closure-free, like enginePayment.
 export function paymentAction(name, args) {
@@ -100,15 +124,28 @@ export function namedAmount(text) {
   return one ? { amount: String(one.value), currency: one.cur, display: one.text } : {};
 }
 
-// The relay's copy of the user's own message, which only the host-authenticated turn begin sets (relay.mjs). It lasts until the
-// user's turn ends. A message that follows a payment stop is marked afterAsk, which SLEIGHT_CONFIRM_PAYMENTS=always requires.
-export function createPaymentMessages() {
-  let message, asked = false;
+// The relay's payment state for the guard. The user's own message, which only the host-authenticated turn begin sets
+// (relay.mjs), lasts until the user's turn ends; a message that follows a payment stop is marked afterAsk, which
+// SLEIGHT_CONFIRM_PAYMENTS=always requires. spent is the payment the guard reported for that message (one per request), and
+// allow is an Allow once from sleight's card, which goes to the next guarded call only and lasts two minutes.
+export function createPaymentMessages({ now = Date.now } = {}) {
+  let message, spent, allow, asked = false;
   return {
-    begin() { message = undefined; },
-    set(text) { message = { ...namedAmount(text), afterAsk: asked }; asked = false; },
-    end() { message = undefined; },
+    begin() { message = undefined; spent = undefined; },
+    set(text) { message = { ...namedAmount(text), afterAsk: asked }; asked = false; spent = undefined; },
+    end() { message = undefined; spent = undefined; },
     asked() { asked = true; },
-    guard(setting) { return { setting, message: message ?? null }; },
+    paid(record) {
+      const { site, shown, control, modal } = record ?? {};
+      if (typeof control !== 'string') return;
+      spent = spent && modal && !spent.modal ? { ...spent, dialog: true } : { site, shown, control, modal: !!modal };
+    },
+    allowed({ site, shown, control }) { allow = { site, shown, control, at: now() }; },
+    guard(setting) {
+      const { at, ...granted } = allow ?? {};
+      const fresh = allow && now() - at <= 120000 ? granted : null;
+      allow = undefined;
+      return { setting, message: message ?? null, spent: spent ?? null, allow: fresh };
+    },
   };
 }

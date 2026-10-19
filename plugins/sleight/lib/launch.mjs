@@ -36,6 +36,7 @@ import { SELECT_WINDOW_TOOL, selectWindow } from './select-window.mjs';
 import { probeHelper, staleHelperJobs } from './helper-health.mjs';
 import { replayBridge } from './replay.mjs';
 import { serverFromChatGPTApp, setup } from './setup.mjs';
+import { createPaymentCard } from './payment-card.mjs';
 
 const PLUGIN_DIR = ['plugins', 'cache', 'openai-bundled', 'unified-computer-use'];
 const SERVER_KEY = 'cua_repl';
@@ -907,6 +908,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     openFast: process.env.SLEIGHT_OPEN_FAST !== '0',
     onClientReply: message => firstCallObserver?.reply(message),
     confirmPayments: paymentConfirmationSetting(),
+    // sleight's own card for an engine-path payment the gate stopped (payment-card.mjs); opened on the first such payment.
+    paymentCard: createPaymentCard(),
     clientIn: replayClient.clientIn,
     clientOut: replayClient.clientOut,
     serverIn: child.stdin,

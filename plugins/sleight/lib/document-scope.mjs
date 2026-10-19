@@ -1048,12 +1048,21 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
               text = await timedRead(raw, 'payment');
             }
             const paid = enginePayment(name, args, text, state.payment);
-            if (paid) {
+            // A payment that goes through spends this request's one payment (an allowance from the card goes with it), and
+            // the relay hears of it under the private mark.
+            if (paid?.allowed) {
+              const spent = state.payment.spent;
+              state.payment = { ...state.payment, allow: paid.allowed === 'card' ? null : state.payment.allow,
+                spent: spent && paid.modal && !spent.modal ? { ...spent, dialog: true } : { site: paid.site, shown: paid.shown, control: paid.control, modal: paid.modal } };
+              if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ paid }) + '\\n');
+            } else if (paid) {
+              attempt.payment = { why: paid.why, site: paid.site, shown: paid.shown, control: paid.control };
               const head = /* notice */ 'sleight stopped this payment: the page shows ' + (paid.shown ?? ${quoted(/* lean notice */ 'no amount')});
               if (paid.why === 'nocopy') throw stop(head + ${quoted(/* lean notice */ " and sleight has no copy of the user's message to check it against. Ask the user to pay themselves.")});
               const why = paid.why === 'none' ? ${quoted(/* lean notice */ "the user's message named no amount")}
                 : paid.why === 'several' ? ${quoted(/* lean notice */ "the user's message named more than one amount")}
                 : paid.why === 'always' ? ${quoted(/* lean notice */ 'SLEIGHT_CONFIRM_PAYMENTS=always asks every time')}
+                : paid.why === 'second' ? ${quoted(/* lean notice */ 'a payment already went through for this request')}
                 : ${quoted(/* lean notice */ "the user's message named ")} + paid.named;
               throw stop(head + ' and ' + why + ${quoted(/* lean notice */ '. Ask the user to confirm, naming the amount.')});
             }
@@ -1154,6 +1163,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
               attempts: state.actionIndex, windowStop: !!attempt.windowStop, name, completed: state.completedActions,
               shown: attempt.shown ?? null, ran: state.ran.slice(0, 10),
               ...(attempt.refused ? { refused: true, bound: !!attempt.bound, fresh: !!attempt.fresh } : {}),
+              ...(attempt.payment ? { payment: attempt.payment } : {}),
               error: String(error?.message ?? error).split('\\n')[0] }) + '\\n');
             state.failures.push(name + ': ' + (error?.message ?? error));
           });
