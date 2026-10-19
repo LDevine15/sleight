@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import vm from 'node:vm';
 import { exploreData, FAMILIES } from '../bench/results-hub.mjs';
 import { renderResultsIndex } from '../bench/results-index.mjs';
@@ -9,6 +9,24 @@ const read = name => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'
 const templatePath = new URL('../bench/results-index.html', import.meta.url);
 const all = () => Object.fromEntries(FAMILIES.map(f => [f.id, JSON.parse(read(`docs/results/data/${f.id}.json`))]));
 const captions = { 'headline-native': 'Native claim caption from the chart module.', overview: 'Overview caption from the chart module.' };
+const homePath = /\/Users\/[^\s,"'<>\\]/;
+
+test('the privacy scan allows the Users root and rejects home paths', () => {
+  for (const text of ['file:///Users/', 'URL: file:///Users/, Value: Users', JSON.stringify({ url: 'file:///Users/' })]) {
+    assert.doesNotMatch(text, homePath);
+  }
+  for (const text of ['/Users/someone', 'file:///Users/someone/', 'file:///Users/someone/Documents/file.txt',
+    JSON.stringify({ url: 'file:///Users/someone/Documents/file.txt' })]) {
+    assert.match(text, homePath);
+  }
+});
+
+test('the docs tree served by Pages contains no home paths', () => {
+  const docs = new URL('../docs/', import.meta.url);
+  const files = readdirSync(docs, { recursive: true }).filter(name => /\.(md|html|json|svg|txt|csv|js|mjs|css)$/i.test(name));
+  assert.ok(files.includes('benchmarks/2026-10-04-hover-discovery-2/results.json'));
+  for (const name of files) assert.doesNotMatch(readFileSync(new URL(name, docs), 'utf8'), homePath, name);
+});
 
 function checkURL(value, { navigation = false } = {}) {
   const url = new URL(value.replaceAll('&amp;', '&'), 'https://land-o-clusters.github.io/sleight/results/');
