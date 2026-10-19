@@ -137,8 +137,8 @@ export async function runBrowserRead(client, { appState, openPage, axTrusted, qu
       const deadline = Date.now() + titleWaitMs;
       for (let attempt = 0; attempt <= Math.ceil(titleWaitMs / 100); attempt++) {
         try {
-          const selected = await client.call('select_window', { app: 'Safari', title: expectedTitle }, Math.max(1, deadline - Date.now()));
-          const read = selected?.isError ? undefined : await client.call('js', { code: `var page = await cua.getApp(${JSON.stringify(SAFARI)})`, timeout_ms: Math.max(1, deadline - Date.now()) });
+          const selected = await client.call('select_window', { app: 'Safari', title: expectedTitle }, attempt === 0 ? 30000 : Math.min(30000, Math.max(1, deadline - Date.now())));
+          const read = selected?.isError ? undefined : await client.call('js', { code: `var page = await cua.getApp(${JSON.stringify(SAFARI)})`, timeout_ms: attempt === 0 ? 60000 : Math.min(60000, Math.max(1, deadline - Date.now())) });
           const text = textOf(read);
           const header = WINDOW_HEADER.exec(text);
           if (selected?.isError) outcome = result('live-browser-read', 'fail', 'select_window returned an error', firstLine(textOf(selected)));
