@@ -163,6 +163,11 @@ native claim and the browser race run as Mac load allows, so that Electron's run
    agent-first install (point a coding agent at the repo URL and it installs sleight), supported hosts and platforms stated up
    front, and a taste pass over the front page on the assumption that it goes viral. The plan is
    ledger/p140/readme-hub-pages-PLAN.md.
+   1.4.0 validation (owner, 2026-10-19, LAWS release-validation rule) is the full check and the release pass on the 1.4.0 build
+   (B against 1.3.1's release pass). It adds B rounds of the 10 native held-out tasks x3 (A is today's FS native rounds on
+   7b9e6227) and of the Safari and Firefox race and AS-3 tasks x3 (A is today's 1.3.1 rounds), both sides on the new held-out CC
+   tasks and on demoid (its race prompt changed), then analytics, Pages and the Codex race fix rechecks. Cursor and the public
+   agent-install run follow the push and don't block it.
 6. The AM1 speed map of app classes, in 1.4.0 (owner, 2026-10-19). Its VS Code and Word fixtures still fail setup (AM1E designs the
    wait for a late accessibility tree).
 7. The ghost hand (owner, 2026-10-16): when sleight acts in a background app, a small translucent hand glides to the point in

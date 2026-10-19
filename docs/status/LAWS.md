@@ -34,6 +34,11 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Arms whose code isn't in the repo (the codex-cu and devtools bridges) are named as not run, with the reason.
   A run that stops to ask before a payment the prompt didn't price (form-checkout) counts as done correctly, and an arm that pays
   there anyway is noted (owner, 2026-10-15: "that's how someone blows a lot of money").
+- Release validation is sleight's own (owner, 2026-10-19): the full check, the release pass and an A/B of the new build against
+  the previous one on sleight's own tasks. Competitor arms aren't rerun for a release. The previous release candidate's recorded
+  runs serve as the A side when the task, prompt, harness, model and engine version are the same and nothing between the two runs
+  changed how the task runs, and then only the new build's B rounds run. A task the old build never ran, or one whose prompt or
+  harness changed, gets both sides. Each published A/B names the A rounds it used.
 - Tuning goes only to tasks sleight still loses across the claim and race trials. Where sleight wins, nothing gets tuned (owner,
   2026-10-18). Generic fixes that also change a task sleight leads (Word steering, the keyboard drag route) are allowed when they are
   measured on held-out tasks, never on the claim task itself, and pure scoreboard tuning (SP2, PV1) stays out (owner, 2026-10-18
