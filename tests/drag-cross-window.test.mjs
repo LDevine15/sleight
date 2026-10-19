@@ -43,7 +43,8 @@ function fixture(options = {}) {
       bundleURL: { path: pid === 7 ? '/Applications/Editor.app' : '/System/Library/CoreServices/Agent.app' } }) },
     AXUIElementCopyElementAtPosition: (_app, x, y, out) => {
       if (_app === systemWide) { const pid = options.eventPid(x, y); out[0] = { pid }; return pid ? 0 : -25212; }
-      const el = [a, b].find(el => x >= el.AXPosition.x && x < el.AXPosition.x + el.AXSize.width && y >= 130);
+      const el = [a, b].find(el => x >= el.AXPosition.x && x < el.AXPosition.x + el.AXSize.width &&
+        y >= el.AXPosition.y && y < el.AXPosition.y + el.AXSize.height);
       out[0] = el ?? wins.find(w => x >= w.AXPosition.x && x < w.AXPosition.x + w.AXSize.width);
       return out[0] ? 0 : -25212;
     },
@@ -375,4 +376,34 @@ test('DP7 and DP2 default on: a cross-window drop uses the empty final line with
   assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
   assert.equal(h.a.AXValue, 'beta\n'); assert.equal(h.b.AXValue, 'gamma delta\nalpha');
   assert.equal(h.events.length, 0);
+});
+
+test('DPd smoke endpoints move onto the second empty target row without a placeholder', () => {
+  for (const to of [[24, 128], [20, 132]]) {
+    const h = fixture(), adapter = h.context.axTextArea;
+    h.a.AXValue = 'alpha move-a7933cf2 omega\n'; h.a.AXSelectedText = 'move-a7933cf2';
+    h.a.range = { location: 6, length: 13 }; h.b.AXValue = 'destination\n\n';
+    Object.assign(h.frames[1], { X: 752, Y: 49, Width: 720, Height: 560 });
+    Object.assign(h.wins[1], { AXPosition: { x: 752, y: 49 }, AXSize: { width: 720, height: 560 } });
+    Object.assign(h.b, { AXPosition: { x: 757, y: 81 }, AXSize: { width: 700, height: 520 } });
+    h.context.axTextArea = (pid, point, reference) => {
+      const area = adapter(pid, point, reference);
+      if ((reference ?? (point.x < 750 ? h.a : h.b)) !== h.b) return area;
+      return { ...area,
+        indexAt: p => p.y >= 81 && p.y < 94 && p.x >= 762 && p.x < 833.5 ? Math.floor((p.x - 762) / 6.5) : 0,
+        rect: (i, n = 1) => i === 12 ? { X: 762, Y: 94, Width: 0, Height: 13 }
+          : i === 13 && n === 0 ? { X: 762, Y: 107, Width: 0, Height: 13 }
+            : { X: 762 + i * 6.5, Y: 81, Width: 6.5, Height: 13 },
+        lineRange: n => [{ location: 0, length: 12 }, { location: 12, length: 1 }, { location: 13, length: 0 }][n] ?? null,
+      };
+    };
+    h.context.raiseWindow = () => assert.fail('AX move raised a window');
+    const r = h.run({ dp7: undefined, dp2: undefined, to, screenshotsByWindow: { 12: [1440, 1120] }, trace: true });
+    assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
+    assert.equal(r.fallbackReason, null); assert.equal(r.deliveryVerified, true);
+    assert.equal(h.a.AXValue, 'alpha omega\n'); assert.equal(h.b.AXValue, 'destination\n\nmove-a7933cf2');
+    assert.deepEqual(h.writes, [[12, 13, 0, 'move-a7933cf2'], [11, 6, 14, '']]);
+    assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), ['ax-move:start', 'settle:start', 'settle:end', 'ax-move:end']);
+    assert.equal(h.events.length + h.activations.length, 0);
+  }
 });

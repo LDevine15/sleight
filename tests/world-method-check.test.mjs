@@ -8,6 +8,23 @@ const claude = (code, error = false, acquire = true) => [
   { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'call', name: 'mcp__computer__js', input: { code: (acquire ? 'let app = await cua.getApp("Fixture"); ' : '') + code } }] } },
   { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'call', is_error: error }] } },
 ].map(JSON.stringify).join('\n');
+
+test('DPd recorded smoke recovery spoils proof through introspection and placeholder typing', { skip }, () => {
+  let serial = 0;
+  const drag = error => {
+    const id = `smoke-${++serial}`;
+    return [
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'mcp__plugin_sleight_computer__drag',
+        input: { app: 'TextEdit', from: 'the current text selection', to: [24, 128], windowId: 321951, toWindowId: 321952 } }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: error }] } },
+    ].map(JSON.stringify).join('\n');
+  };
+  const introspection = claude('Object.keys(app).concat(Object.getOwnPropertyNames(Object.getPrototypeOf(app)||{}))', false, false);
+  const recovered = [introspection, drag(true), drag(true), claude('await app.typeText("x")'), drag(false)].join('\n');
+  assert.deepEqual(dragMethodAudit(recovered), { drag: true, replacement: true, complete: false });
+  assert.deepEqual(dragMethodAudit(introspection + '\n' + drag(false)), { drag: true, replacement: false, complete: false });
+  assert.deepEqual(dragMethodAudit(drag(false)), { drag: true, replacement: false, complete: true });
+});
 test('drag audit requires a successful awaited call, not model prose or an uncalled function', { skip }, () => {
   assert.deepEqual(dragMethodAudit(claude('await app.drag({ from: [1,2], to: [3,4] })')), { drag: true, replacement: false, complete: true });
   for (const code of ['nodeRepl.write("await app.drag()")', 'function move() { app.drag() }', 'const move = () => app.drag()', 'app.drag()', 'if (false) { await app.drag({}) }']) {

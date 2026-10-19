@@ -599,7 +599,7 @@ function dropIndex(area, p, text) {
     }
   }
   if (dp7 && area.lineForIndex && area.lineRange) {
-    // Find a glyph above the empty row, then ask AX for the next visual line.
+    // Find a glyph above the empty row, then follow consecutive blank AX lines.
     // Only geometry and line ranges locate the endpoint. A caret at (0, 0),
     // a gap between rows, and space below the final row do not prove a drop.
     const started = Date.now();
@@ -610,14 +610,21 @@ function dropIndex(area, p, text) {
         const i = area.indexAt({ x, y }), q = area.rect(i);
         if (!q || y < q.Y || y >= q.Y + q.Height || x < q.X || x >= q.X + q.Width) continue;
         const line = area.lineForIndex(i);
-        const range = attempt(() => area.lineRange(line + 1), null);
-        if (range && Number.isSafeInteger(range.location) && Number.isSafeInteger(range.length) &&
-            range.location >= 0 && range.length >= 0 && range.location + range.length <= text.length) {
+        if (!Number.isSafeInteger(line) || line < 0) throw new Error('cannot find where the drop point falls in the text; nothing was changed');
+        let previous = q, nextLocation;
+        for (let offset = 1; offset <= 150 && Date.now() - started <= 1000; offset++) {
+          const range = attempt(() => area.lineRange(line + offset), null);
+          if (!range || !Number.isSafeInteger(range.location) || !Number.isSafeInteger(range.length) ||
+              range.location < 0 || range.length < 0 || range.location + range.length > text.length ||
+              (nextLocation !== undefined && range.location !== nextLocation)) break;
           const end = range.location + range.length;
-          if (text.slice(range.location, end).replace(/\r?\n$/, '') === '') {
-            const caret = area.rect(range.location, range.length);
-            if (onRow(caret) && caret.Height > 0 && (caret.X !== 0 || caret.Y !== 0)) return range.location;
-          }
+          if (text.slice(range.location, end).replace(/\r?\n$/, '') !== '') break;
+          const caret = area.rect(range.location, range.length);
+          if (!caret || !Object.values(caret).every(Number.isFinite) || caret.Width < 0 || caret.Height <= 0 ||
+              (caret.X === 0 && caret.Y === 0) || caret.Y < previous.Y + previous.Height) break;
+          if (onRow(caret)) return range.location;
+          if (caret.Y > p.y || range.length === 0) break;
+          previous = caret; nextLocation = end;
         }
         throw new Error('cannot find where the drop point falls in the text; nothing was changed');
       }
