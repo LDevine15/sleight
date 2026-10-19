@@ -2477,6 +2477,7 @@ export function createRelay({
     if (process.env.SLEIGHT_DP4 === '0' || outcome.textChanged !== true || !inputLease || !leaseCalls.get(msg.id)?.key) return [];
     current();
     const args = msg.params.arguments, number = outcome.toWindowId ?? outcome.windowId;
+    if (!Number.isSafeInteger(number)) return [];
     const known = [...dragWindows.values()].filter(window => window.windowNumber === number &&
       [window.app, window.appId].includes(args.app));
     const target = known.length === 1 ? known[0] : !outcome.toWindowId &&
@@ -2485,7 +2486,7 @@ export function createRelay({
         [...dragWindows.values()].some(other => other.appId === target.appId && other.title === target.title && other.windowNumber !== number)) return [];
     // Implicit app acquisitions have no window number. Prove the helper's returned
     // number against that engine header before reading through its existing handle.
-    if (!known.length) {
+    if (known.length !== 1) {
       if (!windowIdentity) return [];
       verifyWindowIdentity({ ...target, windowNumber: number }, await windowIdentity({ ...target, windowNumber: number }));
       current();
@@ -2496,7 +2497,7 @@ export function createRelay({
       return !unconfirmedHandles.has(name) && window.appId === target.appId && sameWindow(window, target) &&
         (bound === number || bound === undefined && window.nativeCandidates === 1);
     })?.[0];
-    if (!handle) return [];
+    if (!handle || compactor.seenLines(target) === undefined) return [];
     const reply = await new Promise(resolve => {
       const id = `sleight-drag-read-${nextInternalId++}`;
       const timer = setTimeout(() => { internalRequests.delete(id); lateHelperReplies.add(id); resolve(undefined); }, 5000);

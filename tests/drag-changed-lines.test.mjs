@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { callLocalTool, runScript } from '../plugins/sleight/lib/launch.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 
 const appId = 'org.example.editor', app = 'Fixture Editor';
 const tree = (value, title = 'note.txt') => [`Window: "${title}", App: ${app}.`,
@@ -130,4 +132,57 @@ test('DP4 implicit acquisition proves the returned native window number before o
   const h = await fixture(t, { implicit: true });
   assert.equal(h.reads.length, 1, JSON.stringify(h));
   assert.match(h.result.content.map(c => c.text).join('\n'), /lines changed since the last full tree/);
+});
+
+// Exercise the relay callback with states that ordinary acquisition currently deduplicates.
+async function callbackFixture(options = {}) {
+  const { duplicate = false, baseline = true, mismatch = false } = options;
+  const number = Object.hasOwn(options, 'number') ? options.number : 11;
+  const source = readFileSync(new URL('../plugins/sleight/lib/relay.mjs', import.meta.url), 'utf8');
+  const code = source.slice(source.indexOf('  async function dragChangedLines('), source.indexOf('\n  async function callLocal('));
+  const target = { appId, app, title: 'note.txt', url: 'file:///tmp/note.txt', nativeCandidates: 1 };
+  const requests = [], proofs = [], internalRequests = new Map();
+  const context = { process, setTimeout, clearTimeout, inputLease: {}, leaseCalls: new Map([[1, { key: 'lease' }]]),
+    dragWindows: new Map(duplicate ? [[1, { ...target, windowNumber: 11 }], [2, { ...target, title: 'old.txt', windowNumber: 11 }]] : []),
+    leaseWindow: target, webBrowser: () => false,
+    windowIdentity: async window => { proofs.push(window); return { status: mismatch ? 'mismatch' : 'ok' }; },
+    verifyWindowIdentity: (_target, observed) => { if (observed.status !== 'ok') throw Error('identity mismatch'); },
+    handleBundles: new Map([['editor', target]]), handleSelectors: new Map(), unconfirmedHandles: new Set(),
+    sameWindow: (a, b) => a.app === b.app && a.title === b.title,
+    internalRequests, lateHelperReplies: new Set(), nextInternalId: 1, engineMeta: () => ({}),
+    toServer: request => { requests.push(request); internalRequests.get(request.id)({ result: { content: [{ type: 'text', text: tree('beta alpha') }] } }); },
+    windowFromText: () => target, hasFullTree: () => true, GUARD_MARK: '[guard]',
+    compactor: { seenLines: () => baseline ? { 30: 'text entry area Value: alpha beta' } : undefined,
+      process: () => [{ type: 'text', text: baseline ? 'changed lines' : tree('beta alpha') }] },
+  };
+  const run = runInNewContext(code + '\ndragChangedLines', context);
+  let result, error;
+  try { result = await run({ id: 1, params: { arguments: { app: appId } } }, { textChanged: true, windowId: number }, () => {}); }
+  catch (caught) { error = caught; }
+  return { result, error, requests, proofs };
+}
+
+test('DP4 refuses missing and unsafe result window numbers before reading', async () => {
+  for (const number of [undefined, null, '11', 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const h = await callbackFixture({ number });
+    assert.equal(h.requests.length, 0, String(number));
+    assert.equal(h.proofs.length, 0, String(number));
+    assert.equal(h.result.length, 0);
+  }
+});
+
+test('DP4 proves identity for duplicate window numbers and suppresses a mismatch', async () => {
+  for (const mismatch of [false, true]) {
+    const h = await callbackFixture({ duplicate: true, mismatch });
+    assert.equal(h.proofs.length, 1);
+    assert.equal(h.requests.length, mismatch ? 0 : 1);
+    if (mismatch) assert.match(h.error.message, /identity mismatch/);
+    else assert.equal(h.result[0].text, 'changed lines');
+  }
+});
+
+test('DP4 appends no whole tree when the target has no compactor baseline', async () => {
+  const h = await callbackFixture({ baseline: false });
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.result.length, 0);
 });

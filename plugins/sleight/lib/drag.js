@@ -596,15 +596,14 @@ function dropIndex(area, p, text) {
         if (Date.now() - started > 1000) break;
         const i = area.indexAt({ x, y }), q = area.rect(i);
         if (!q || y < q.Y || y >= q.Y + q.Height || x < q.X || x >= q.X + q.Width) continue;
-        const line = area.lineForIndex(i), current = area.lineRange(line);
-        const next = attempt(() => area.lineRange(line + 1), null);
-        for (const range of [next, current]) {
-          if (!range || !Number.isSafeInteger(range.location) || !Number.isSafeInteger(range.length) ||
-              range.location < 0 || range.length < 0 || range.location + range.length > text.length) continue;
+        const line = area.lineForIndex(i);
+        const range = attempt(() => area.lineRange(line + 1), null);
+        if (range && Number.isSafeInteger(range.location) && Number.isSafeInteger(range.length) &&
+            range.location >= 0 && range.length >= 0 && range.location + range.length <= text.length) {
           const end = range.location + range.length;
-          const caret = area.rect(range.location, range.length);
-          if (onRow(caret) && caret.Height > 0 && (caret.X !== 0 || caret.Y !== 0)) {
-            return end > range.location && text[end - 1] === '\n' ? end - 1 : end;
+          if (text.slice(range.location, end).replace(/\r?\n$/, '') === '') {
+            const caret = area.rect(range.location, range.length);
+            if (onRow(caret) && caret.Height > 0 && (caret.X !== 0 || caret.Y !== 0)) return range.location;
           }
         }
         throw new Error('cannot find where the drop point falls in the text; nothing was changed');
@@ -1105,6 +1104,7 @@ function runCrossWindow(request) {
     }
     if (dp7) {
       fallbackReason ||= 'accessibility move unavailable: Accessibility text moves are disabled';
+      fallbackReason = fallbackReason.replace(/; use the guarded posted or foreground drag(?: to preserve it)?$/, '');
       return JSON.stringify({ ok: false, app, windowId: a.id, toWindowId: b.id, from, to, path: 'none',
         fallbackReason, deliveryVerified: false, error: `${fallbackReason}; cross-window posting can copy text, so nothing was pressed` });
     }

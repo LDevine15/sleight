@@ -624,5 +624,6 @@ runs first. Same-app overlap still requires a raise and another exposure check, 
 posted presses keep the raise and settle wait.
 
 `SLEIGHT_DP4=0` leaves the drag result alone. By default, a changed-text result gets one engine
-read of its leased native window and appends the compactor's changed lines. A failed read leaves
-the drag result alone. These switches are on by default and have not had live A/B qualification.
+read of its leased native window and appends the compactor's changed lines when a prior tree exists.
+The read waits up to 5 s. A failed read leaves the drag result alone. These switches are on by default
+and have not had live A/B qualification.

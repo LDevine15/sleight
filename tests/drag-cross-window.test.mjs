@@ -337,6 +337,7 @@ for (const options of [{ formatted: true }, { ignoreWrites: true }, { ax: false 
     const h = fixture({ ...options, dp7: true, dp2: true }), r = h.run();
     assert.equal(r.ok, false); assert.equal(r.path, 'none'); assert.equal(r.deliveryVerified, false);
     assert.match(r.fallbackReason, /accessibility move unavailable/); assert.match(r.error, /cross-window posting can copy/);
+    assert.doesNotMatch(r.error + r.fallbackReason, /use the guarded posted or foreground drag/);
     assert.equal(h.events.length + h.activations.length, 0); assert.equal(h.a.AXValue, 'alpha beta\n');
     assert.equal(h.b.AXValue, 'gamma delta\n');
   });
