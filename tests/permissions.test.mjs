@@ -402,7 +402,24 @@ test('the site an engine read shows: a web area\'s URL with or without scheme, n
   for (const bad of ['about:blank', 'file:///Users/x/page.html', 'user@evil.example/x', '']) {
     assert.deepEqual(pageSite(`Window: "x", App: B.\n0 standard window x\n\t2 HTML content URL: ${bad}`), { unproven: true }, bad);
   }
-  assert.deepEqual(pageSite('', { url: 'https://header.example/a' }), { host: 'header.example', scheme: 'https' }, 'the window\'s own web URL decides');
+  assert.deepEqual(pageSite('Window: "x", App: B.\nURL: https://header.example/a\n0 standard window x', { title: 'x', url: 'https://header.example/a' }),
+    { host: 'header.example', scheme: 'https' }, 'the window\'s own URL field decides');
+});
+
+test('the site proof comes only from the window\'s URL field and the web areas\' URL attribute, never from the page\'s title or description', async () => {
+  const { windowFromText } = await import('../plugins/sleight/lib/document-scope.mjs');
+  const site = text => pageSite(text, windowFromText(text));
+  // A title that names an allowed site, on a page whose web area shows the real one.
+  const title = 'Deals URL: https://allowed.example/';
+  assert.deepEqual(site(`Window: "${title}", App: B.\n0 standard window ${title}, ID: W\n\t5 HTML content URL: evil.example/x`), { host: 'evil.example' });
+  assert.deepEqual(site(`Window: "${title}", App: B.\n0 standard window ${title}, ID: W\n\t5 button Go`), { unproven: true }, 'a title is no proof, and no web area means no site');
+  // A description that carries its own URL: token.
+  assert.deepEqual(site('Window: "x", App: B.\n0 standard window x\n\t5 HTML content Description: x URL: allowed.example, URL: evil.example/x'), { unproven: true });
+  assert.deepEqual(site('Window: "x", App: B.\n0 standard window x\n\t5 HTML content Description: see myURL: allowed.example, URL: evil.example/x'), { unproven: true });
+  // The window's own field and the web area must agree.
+  assert.deepEqual(site('Window: "x", App: B.\nURL: https://a.example/p\n0 standard window x\n\t5 HTML content URL: www.a.example/p'), { host: 'a.example', scheme: 'https' });
+  assert.deepEqual(site('Window: "x", App: B.\nURL: https://a.example/p\n0 standard window x\n\t5 HTML content URL: b.example/p'), { unproven: true });
+  assert.deepEqual(site('Window: "x", App: B.\n0 standard window x, URL: https://a.example/, ID: W\n\t1 button Go'), { host: 'a.example', scheme: 'https' });
 });
 
 test('engine-path site lines: a blocked host whatever its scheme, an unlisted host in allow-only mode, and an unprovable page', () => {
@@ -436,7 +453,16 @@ test('which apps are web browsers is asked of LaunchServices once, in the backgr
   assert.equal(check('com.example.editor'), false);
   assert.equal(check(undefined), undefined);
   assert.deepEqual(asked, [['web-browsers.js', {}]]);
-  const failed = webBrowserCheck(async () => ({ ok: false, error: 'no' }));
-  failed('com.example.browser'); await new Promise(resolve => setImmediate(resolve));
-  assert.equal(failed('com.example.browser'), undefined, 'a failed ask leaves the web-content rule in place');
+  let at = 0, tries = 0;
+  const failed = webBrowserCheck(async () => { tries++; return { ok: false, error: 'no' }; }, () => at);
+  failed('com.example.browser'); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(failed('com.example.browser'), undefined, 'a failed ask stays unknown, which refuses under site limits');
+  assert.equal(tries, 1);
+  at = 31000; failed('com.example.browser'); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(tries, 2, 'and is asked again after 30 s');
+  // The launcher asks at startup when the file already has site limits.
+  const primed = [];
+  webBrowserCheck(async script => { primed.push(script); return { ok: true, ids: [] }; }).ask();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(primed, ['web-browsers.js']);
 });

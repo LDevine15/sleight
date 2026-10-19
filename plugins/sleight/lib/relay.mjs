@@ -1590,10 +1590,18 @@ export function createRelay({
     }
     return undefined;
   }
-  // Site blocks on the engine path: a browser window's action needs a read that proves an allowed site.
-  const browserish = window => webBrowser(window?.appId) ?? !!window?.page;
-  // webBrowser is asked only once the user has site limits.
-  const pageLine = window => permissions?.sitesLimited?.() && browserish(window) ? permissions.page(window.page) : undefined;
+  // Site blocks on the engine path: a browser window's action needs a read that proves an allowed site. webBrowser is asked
+  // only once the user has site limits. Until it answers (or when it can't), every app counts as a browser: a proven site is
+  // judged, and an action without one is refused.
+  const UNKNOWN_BROWSERS = "You limited the sites sleight acts on, and it doesn't know yet whether this app is a web browser, so it doesn't act here. Try again in a moment (sleight-mcp permissions lists your limits).";
+  const pageLine = (window, read = false) => {
+    if (!permissions?.sitesLimited?.()) return undefined;
+    const browser = webBrowser(window?.appId);
+    if (browser === false) return undefined;
+    if (read && (!window?.page || window.page.unproven)) return undefined;
+    if (browser !== true && (!window?.page || window.page.unproven)) return UNKNOWN_BROWSERS;
+    return permissions.page(window?.page);
+  };
   function leaseStop(msg, reason, browserAdvice = false) {
     const note = browserAdvice && msg.params?.name === 'js' && browserLeaseNote(msg.params.arguments?.code, browserHandles);
     const content = [{ type: 'text', text: reason.startsWith('Input lease:') ? reason : `Input lease: ${reason}` }];
@@ -4085,8 +4093,7 @@ export function createRelay({
         // The site this read shows. A read without web-area lines (a diff) keeps what the same window showed before.
         const page = pageSite(text, window);
         if (page) leaseWindow.page = page; else if (previous?.page && sameWindow(previous, window)) leaseWindow.page = previous.page;
-        const line = appLine(leaseWindow.appId, leaseWindow.app) ??
-          (leaseWindow.page && !leaseWindow.page.unproven ? pageLine(leaseWindow) : undefined);
+        const line = appLine(leaseWindow.appId, leaseWindow.app) ?? pageLine(leaseWindow, true);
         if (line) withheld.set(msg.id, line);
         else if (leaseWindow.appId) permissions?.noteApp?.({ bundleId: leaseWindow.appId, name: leaseWindow.app });
       }

@@ -186,6 +186,35 @@ test('engine path: a browser window whose site no read proves is refused while s
   }
 });
 
+test('engine path: until sleight knows which apps are browsers, an app with no proven site is refused under site limits (the launcher\'s default)', async t => {
+  const h = harness(t, { permissions: siteLimits({ state: 'ok', apps: [], sites: ['https://bestbuy.com'] }) });
+  h.js(1, 'let app = await cua.getApp("org.mozilla.firefox")'); await settle();
+  h.fromServer(treeReply(1, firefoxTree, 'org.mozilla.firefox')); await settle();
+  assert.equal(h.reply(1).result.isError, undefined, 'the read still reaches Claude');
+  h.js(2, 'await app.click(17)'); await settle();
+  assert.equal(h.sent(2), false);
+  assert.match(h.reply(2).result.content[0].text, /^You limited the sites sleight acts on, and it doesn't know yet whether this app is a web browser/);
+  // A proven blocked site still names the block while the list is unknown.
+  h.js(3, 'let s = await cua.getApp("com.apple.Safari")'); await settle();
+  h.fromServer(treeReply(3, safariTree('bestbuy.com/x'), 'com.apple.Safari')); await settle();
+  assert.equal(h.reply(3).result.content[0].text, BLOCKED_SITE);
+});
+
+test('engine path: a title or description that names an allowed site proves nothing, so allow-only refuses the action', async t => {
+  const h = harness(t, { permissions: siteLimits({ state: 'ok', apps: [], sites: [], only: ['https://allowed.example'] }), webBrowser: () => true });
+  const title = 'Deals URL: https://allowed.example/';
+  h.js(1, 'let app = await cua.getApp("com.apple.Safari")'); await settle();
+  h.fromServer(treeReply(1, `Window: "${title}", App: Safari.\n0 standard window ${title}, ID: SafariWindow\n\t5 HTML content URL: evil.example/x\n\t\t6 button Buy`, 'com.apple.Safari')); await settle();
+  assert.match(h.reply(1).result.content[0].text, /^You allow sleight only on https:\/\/allowed\.example, not evil\.example/);
+  h.js(2, 'await app.click(6)'); await settle();
+  assert.equal(h.sent(2), false);
+  h.js(3, 'let b = await cua.getApp("com.apple.Safari")'); await settle();
+  h.fromServer(treeReply(3, 'Window: "x", App: Safari.\n0 standard window x\n\t5 HTML content Description: x URL: allowed.example, URL: evil.example/x\n\t\t6 button Buy', 'com.apple.Safari')); await settle();
+  h.js(4, 'await b.click(6)'); await settle();
+  assert.equal(h.sent(4), false);
+  assert.match(h.reply(4).result.content[0].text, /can't tell which site this window shows/);
+});
+
 test('engine path: an app that is no web browser acts with site limits, web content or not', async t => {
   const h = harness(t, { permissions: siteLimits({ state: 'ok', apps: [], sites: ['https://bestbuy.com'] }), webBrowser: () => false });
   h.js(1, 'let app = await cua.getApp("com.example.webview")'); await settle();

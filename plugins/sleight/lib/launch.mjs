@@ -211,21 +211,25 @@ export async function doctor({ env = process.env, log = console.log, app = proce
 }
 
 // Which apps are web browsers, for site limits on the engine path: the apps LaunchServices lists for https (web-browsers.js).
-// Asked once, in the background, the first time a check needs it; until the answer arrives the relay treats a read with web
-// content as a browser's, and a failed ask keeps it that way.
-export function webBrowserCheck(run = runScript) {
-  let ids, asked = false;
-  return appId => {
-    if (typeof appId !== 'string' || !appId) return undefined;
-    if (ids) return ids.has(appId.toLowerCase());
-    if (!asked) {
-      asked = true;
-      Promise.resolve().then(() => run('web-browsers.js', {})).then(result => {
-        if (result?.ok === true && Array.isArray(result.ids)) ids = new Set(result.ids.filter(id => typeof id === 'string').map(id => id.toLowerCase()));
-      }, () => {});
-    }
+// Asked in the background, at startup when permissions.json already has site limits (ask) or else the first time a check
+// needs it. Until the answer arrives every app counts as a browser, so an action without a proven site is refused; a failed
+// ask stays unknown and is asked again after 30 s.
+export function webBrowserCheck(run = runScript, now = Date.now) {
+  let ids, pending = false, failedAt;
+  const ask = () => {
+    if (ids || pending || failedAt !== undefined && now() - failedAt < 30000) return;
+    pending = true;
+    Promise.resolve().then(() => run('web-browsers.js', {})).then(result => {
+      if (result?.ok === true && Array.isArray(result.ids)) ids = new Set(result.ids.filter(id => typeof id === 'string').map(id => id.toLowerCase()));
+      else failedAt = now();
+    }, () => { failedAt = now(); }).finally(() => { pending = false; });
+  };
+  const check = appId => {
+    if (ids) return typeof appId === 'string' && appId ? ids.has(appId.toLowerCase()) : undefined;
+    ask();
     return undefined;
   };
+  return Object.assign(check, { ask });
 }
 
 // SLEIGHT_TRACE=1 logs every relayed message to
@@ -829,6 +833,9 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
   // A revoke from the menu or the command reaches this session at once; the startup list is the first copy.
   preapproved = livePreapproved(preapproved);
+  // The user's blocks and site limits. With site limits already set, which apps are browsers is asked now, not at the first action.
+  const permissionCheck = createPermissionCheck(), webBrowser = webBrowserCheck();
+  if (permissionCheck.sitesLimited()) webBrowser.ask();
   const { trace, grantAudit } = approvalLogging(preapproved);
   let s = directBrowserServer(resolveServer(), directBrowser);
   if (s.error) fail(s.error);
@@ -963,8 +970,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     inputLease: new InputLease({ directory: leaseDirectory, holder: `session ${sessionId} (pid ${process.pid})` }),
     engineForbiddenTargets: forbiddenTargetsAllowed(readForbiddenTargets),
     // The user's blocks, read again whenever permissions.json changes.
-    permissions: { ...createPermissionCheck(), noteApp: noteCurrentApp },
-    webBrowser: webBrowserCheck(),
+    permissions: { ...permissionCheck, noteApp: noteCurrentApp },
+    webBrowser,
     onLeaseFault: err => { process.stderr.write(`sleight: ${err.message}; stopping the owned engine.\n`); terminateEngine(); },
     // SLEIGHT_MENU_BAR=0 leaves out the menu bar and notification tools,
     // SLEIGHT_DRAG=0 the drag tool, SLEIGHT_HOVER=0 the hover tool,

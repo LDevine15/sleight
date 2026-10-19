@@ -101,17 +101,26 @@ function webSite(value) {
 }
 
 /** The site a browser window shows, from an engine read: { host, scheme? } when the read proves one site, { unproven: true }
- *  when it shows web content without one provable site, and undefined when it shows no web content. The window's own URL
- *  decides when it is a web address. Otherwise the outermost web areas ("HTML content") must all name one site; Safari writes
- *  theirs without a scheme (bestbuy.com/product/…). An address bar's text proves nothing: it may be typed and not loaded. */
+ *  when it shows web content without one provable site, and undefined when it shows no web content. Only two things count:
+ *  the window's URL field (the engine's `URL:` line, or the URL attribute on the window's root line) and the URL attribute
+ *  of the outermost web areas ("HTML content"), which must all name one site; Safari writes theirs without a scheme
+ *  (bestbuy.com/product/…). The page writes the title and the descriptions on those same lines, so a line with more than one
+ *  `URL: `, or a title with one, proves nothing. When the window field and the web areas both name a site they must agree.
+ *  An address bar's text proves nothing: it may be typed and not loaded. */
 export function pageSite(text, window) {
-  if (/^https?:\/\//i.test(window?.url ?? '')) return webSite(window.url) ?? { unproven: true };
-  const areas = [...String(text ?? '').matchAll(/^(\t*)\d+ HTML content\b(.*)$/gm)];
-  if (!areas.length) return undefined;
+  const source = String(text ?? ''), tokens = line => line.match(/URL: /g)?.length ?? 0;
+  const fields = [...source.matchAll(/^URL: .*$/gm)].length + [...source.matchAll(/^0 .*$/gm)].reduce((n, line) => n + tokens(line[0]), 0);
+  const web = /^https?:\/\//i.test(window?.url ?? '');
+  // A window field the page may have written is left out, and then only the web areas can prove the site.
+  const fromWindow = web && fields === 1 && !/URL:/i.test(window?.title ?? '') ? webSite(window.url) ?? { unproven: true } : undefined;
+  const areas = [...source.matchAll(/^(\t*)\d+ HTML content\b(.*)$/gm)];
+  if (!areas.length) return fromWindow ?? (web ? { unproven: true } : undefined);
   const depth = Math.min(...areas.map(area => area[1].length));
-  const sites = areas.filter(area => area[1].length === depth).map(area => webSite(/\bURL: ([^\s,]+)/.exec(area[2])?.[1]));
-  if (sites.some(site => !site) || new Set(sites.map(site => `${site.scheme ?? ''}//${site.host}`)).size !== 1) return { unproven: true };
-  return sites[0];
+  const sites = areas.filter(area => area[1].length === depth).map(area => tokens(area[2]) === 1 ? webSite(/URL: ([^\s,]+)/.exec(area[2])?.[1]) : undefined);
+  const key = site => { const { host, port } = hostPort(site.host); return `${host}:${port}`; };
+  if (sites.some(site => !site) || new Set(sites.map(site => `${site.scheme ?? ''}//${key(site)}`)).size !== 1) return { unproven: true };
+  if (fromWindow && (fromWindow.unproven || key(fromWindow) !== key(sites[0]))) return { unproven: true };
+  return fromWindow ?? sites[0];
 }
 
 /** The line for acting in a browser window on the engine path, or undefined. With no site blocks and no allow-only list,
