@@ -111,7 +111,7 @@ import { syntaxErrorHint, syntaxOrigin } from './syntax-errors.mjs';
 import { compactJsDescription } from './tool-description.mjs';
 import { createLightReturn, lightReturnCode } from './light-return.mjs';
 import { hostLabel } from './host-label.mjs';
-import { TURN_START, TURN_START_TOOL, codexTurnClient, codexTurnFrame } from './codex-turn.mjs';
+import { TURN_START, TURN_START_TOOL, codexCallTurn, codexTurnClient, codexTurnFrame } from './codex-turn.mjs';
 
 // App handles have getAXState but no getState; only cua has getState. 13 of 27 sleight runs wrote app.getState
 // in their first call and 8 errored, losing a turn each (Fable study, 2026-10-17 11:53Z pass).
@@ -802,7 +802,9 @@ export function createRelay({
   const HOOK_ARGS = ['hook_event_name', 'session_id', 'turn_id'];
   // Turbo in Codex (codex-turn.mjs): Codex's prompt hook binds a turn through turn_started, its Stop and Interrupt hooks
   // release it. Set from initialize's clientInfo, and never under the mod, whose own handshake stays as it was.
-  let codexClient = false, codexBound = false, codexSequence = 0, codexPending = Promise.resolve();
+  // codexBinding: the Codex thread and turn the last accepted prompt hook named. codexEpoch: bumped by every Stop or
+  // Interrupt, so a bind still queued when one arrives never runs.
+  let codexClient = false, codexBinding, codexEpoch = 0, codexSequence = 0, codexPending = Promise.resolve();
   const codexTurns = new Set();
   const codexTurbo = () => codexClient && !modHost();
   let turboNoticeShown = false;
@@ -2568,10 +2570,14 @@ export function createRelay({
     if (!fresh || !directHost || disposed || msg.id === undefined) { reply(); return; }
     if (codexTurns.size >= 4096) codexTurns.delete(codexTurns.values().next().value);
     codexTurns.add(frame.turn);
-    codexBound = true;
-    const turn = `codex-${++codexSequence}`;
-    codexPending = codexPending.catch(() => {}).then(() => directHost.bind({ ...directHost.bootstrapEnvelope(), event: 'begin', turn, text: frame.text },
-      turboApps(), clientHost)).then(available => { if (available) { resumeRequested = true; resumeAfterStop(); } }, () => {}).finally(reply);
+    codexBinding = { thread: frame.session.toLowerCase(), turn: frame.turn };
+    const turn = `codex-${++codexSequence}`, epoch = codexEpoch;
+    codexPending = codexPending.catch(() => {}).then(() => epoch === codexEpoch &&
+      directHost.bind({ ...directHost.bootstrapEnvelope(), event: 'begin', turn, text: frame.text }, turboApps(), clientHost))
+      .then(available => {
+        if (available && epoch !== codexEpoch) { void directBrowser?.end(); return; }
+        if (available) { resumeRequested = true; resumeAfterStop(); }
+      }, () => {}).finally(reply);
   }
 
   // `let app = await cua.getApp("X"); await app.click(…)` in one call. The lease needs the
@@ -2980,6 +2986,13 @@ export function createRelay({
         return;
       }
       if (closing || disposed) { leaseStop(msg, 'this session is closing.'); return; }
+      // In Codex, only a call from the thread and turn the prompt hook bound reaches the worker.
+      const owner = codexTurbo() ? codexCallTurn(msg.params._meta) : undefined;
+      if (codexTurbo() && (!owner || !codexBinding || owner.thread !== codexBinding.thread || owner.turn !== codexBinding.turn)) {
+        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true,
+          content: [{ type: 'text', text: 'Turbo is unavailable for this turn. Use the engine browser path.' }] } });
+        return;
+      }
       running.add(msg.id);
       callDetails.set(msg.id, msg.params.name);
       directBrowser.call({ name: msg.params.name, arguments: msg.params.arguments }).then(result => {
@@ -3037,9 +3050,9 @@ export function createRelay({
     // Codex's Stop hook ends every turn, including the ones sleight sat out. With nothing to end, answer here, so an
     // unused turn neither reaches the engine nor writes a receipt. The mod calls only after a used turn.
     // Codex's Stop and Interrupt hooks end the turbo turn first, used or not: the revoke takes effect at once.
-    if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.id !== undefined && codexTurbo() && codexBound &&
+    if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.id !== undefined && codexTurbo() && codexBinding &&
         Object.keys(msg.params.arguments ?? {}).every(key => HOOK_ARGS.includes(key))) {
-      codexBound = false;
+      codexBinding = undefined; codexEpoch++;
       void directBrowser?.end();
     }
     if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.id !== undefined && !modHost() &&

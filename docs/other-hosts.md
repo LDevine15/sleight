@@ -57,7 +57,7 @@ browser automation that Codex's Browser plugin uses.
 
 Codex doesn't get the pane, the status line or the `/sleight` command. Turbo works in Codex 0.160.0 and
 later: sleight's prompt hook ties each turbo turn to your message, and the Stop and Interrupt hooks end
-it. Trust all three hooks when Codex asks. Until you do, turbo's tools report that turbo is unavailable
+it. It hasn't run in a live session yet. Trust all three hooks when Codex asks. Until you do, turbo's tools report that turbo is unavailable
 and the model uses the engine path. [How the binding works](design/other-hosts.md#turbo-in-codex).
 Codex gives a plugin's server only a short list
 of environment variables, and sleight's plugin adds every documented `SLEIGHT_*` [setting](settings.md)

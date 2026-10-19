@@ -559,7 +559,11 @@ native reference, and oversized first results defer the browser reference while 
 - The `codex-sleight` benchmark arms configure sleight's server without the plugin's hooks, so they now
   list turbo's tools that never bind. Set `SLEIGHT_TURBO=0` in those arms or install the plugin's hooks.
 - Codex runs sleight's hooks only after you trust them. Untrusted, a used turn ends after
-  30 idle seconds, and turbo never binds.
+  30 idle seconds. Turbo binds only while the prompt hook is trusted, and each binding works only for
+  the turn that made it.
+- Codex's app-server can call sleight's hidden `turn_started` tool, so one of Codex's own clients could
+  bind any text as your message. We haven't checked whether an MCP Apps widget can reach that call.
+- If Codex shares one sleight server across threads, a prompt in one thread ends turbo's turn in another.
 - We don't know whether turning off Codex's `computer-use@openai-bundled` plugin also removes the
   computer surface from `unified-computer-use`, which Codex's Browser plugin shares. The `computer_use`
   feature flag left that plugin's skill in place in a throwaway home.

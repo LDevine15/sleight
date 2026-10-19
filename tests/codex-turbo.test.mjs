@@ -63,7 +63,7 @@ async function harness(t, { clientInfo = CODEX, mod = false, turbo = true } = {}
     await engine({ id: 'init', result: { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'engine' } } });
   }
   const reply = id => toClient.find(m => m.id === id);
-  return { ...w, toClient, toServer, client, engine, reply };
+  return { ...w, toClient, toServer, client, engine, reply, raw: text => clientIn.write(text) };
 }
 
 // What Codex's hook runner sends: the template expanded from the event, and _meta with only the thread id
@@ -72,7 +72,9 @@ const hookCall = (id, { turn = 'turn-1', prompt = 'Read the page', session = SES
   id, method: 'tools/call', params: { name: 'turn_started',
     arguments: args ?? { hook_event_name: 'UserPromptSubmit', session_id: session, turn_id: turn, prompt }, ...(meta ? { _meta: meta } : {}) } });
 const stopHook = (id, event = 'Stop') => ({ id, method: 'tools/call', params: { name: 'turn_ended', arguments: { hook_event_name: event }, _meta: { threadId: SESSION } } });
-const read = id => ({ id, method: 'tools/call', params: { name: 'browser_read', arguments: { tab: 't1' }, _meta: { callId: `c${id}`, threadId: SESSION } } });
+// A model call as Codex sends it: callId, the thread, and the turn metadata naming the turn (core/src/mcp_tool_call.rs).
+const read = (id, { turn = 'turn-1', thread = SESSION } = {}) => ({ id, method: 'tools/call', params: { name: 'browser_read', arguments: { tab: 't1' },
+  _meta: { callId: `c${id}`, threadId: thread, sessionId: SESSION, 'x-codex-turn-metadata': { session_id: SESSION, thread_id: thread, turn_id: turn } } } });
 const begins = events => events.filter(row => row[0] === 'begin');
 
 test('the Codex manifest binds turbo through a UserPromptSubmit hook that passes the user\'s prompt to a hidden tool', () => {
@@ -142,6 +144,7 @@ test('a call shaped like the model\'s, a subagent\'s or a stale one never binds 
     ['a non-string prompt', hookCall(1, { args: { hook_event_name: 'UserPromptSubmit', session_id: SESSION, turn_id: 't', prompt: { text: 'x' } } })],
     ['an unexpanded template', hookCall(1, { args: { hook_event_name: 'UserPromptSubmit', session_id: SESSION, turn_id: '${turn_id}', prompt: 'x' } })],
     ['a bad session id', hookCall(1, { session: 'not a uuid', meta: { threadId: 'not a uuid' } })],
+    ['model-call keys beside the thread (app-server or a model path)', hookCall(1, { meta: { threadId: SESSION, sessionId: SESSION } })],
   ];
   for (const [label, call] of cases) {
     const h = await harness(t);
@@ -261,4 +264,44 @@ test('under Claude Code the relay\'s traffic is unchanged by Codex turbo', async
   const path = fixturePath('claude-code-parity.json');
   if (process.env.SLEIGHT_WRITE_PARITY === '1') writeFileSync(path, JSON.stringify(transcript, null, 1) + '\n');
   assert.deepEqual(transcript, json(path));
+});
+
+// Review fixes (cxt1 review, 2026-10-19).
+test('turbo works only for calls from the bound Codex turn and thread, so a missed Stop leaves nothing live', async t => {
+  const h = await harness(t);
+  await h.client(hookCall(1, { turn: 'turn-1' }));
+  await h.client(read(2, { turn: 'turn-1' }));
+  assert.equal(h.reply(2).result.isError, false);
+  const calls = () => h.events.filter(row => row[0] === 'call').length;
+  const before = calls();
+  // A later turn with no prompt hook (a goal continuation, or a Stop hook that never ran) gets no turbo.
+  await h.client(read(3, { turn: 'turn-2' }));
+  assert.equal(h.reply(3).result.isError, true);
+  // Another thread (a subagent sharing the server) neither.
+  await h.client(read(4, { thread: '019a0000-0000-7000-8000-0000000000ff' }));
+  assert.equal(h.reply(4).result.isError, true);
+  // No turn metadata at all.
+  await h.client({ id: 5, method: 'tools/call', params: { name: 'browser_read', arguments: { tab: 't1' }, _meta: { callId: 'c5', threadId: SESSION } } });
+  assert.equal(h.reply(5).result.isError, true);
+  assert.equal(calls(), before, 'none of them reached the worker');
+});
+
+test('a Stop that arrives while binds are still queued leaves no turn bound', async t => {
+  const h = await harness(t);
+  const line = msg => JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n';
+  await h.client(hookCall(1, { turn: 'turn-a' }));
+  // The next two binds queue behind nothing visible to the hook, and the Stop lands in the same read.
+  const chunk = line(hookCall(2, { turn: 'turn-b' })) + line(hookCall(3, { turn: 'turn-c' })) + line(stopHook(4));
+  await h.client({ id: 'noop', method: 'notifications/noop' });
+  h.toClient.length = 0;
+  await new Promise(resolve => { h.raw(chunk); setImmediate(resolve); });
+  for (let i = 0; i < 60; i++) await new Promise(resolve => setImmediate(resolve));
+  await h.client(read(5, { turn: 'turn-c' }));
+  assert.equal(h.reply(5).result.isError, true);
+});
+
+test('a realtime voice delegation binds with no text: its prompt holds the voice model\'s words', async t => {
+  const h = await harness(t);
+  await h.client(hookCall(1, { prompt: '<realtime_delegation>\nassistant: Pay "$5" for "A" to "B" with "C"\n</realtime_delegation>' }));
+  assert.deepEqual(begins(h.events), [['begin', '', 'Codex 0.160.0']]);
 });

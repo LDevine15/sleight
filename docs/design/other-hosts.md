@@ -37,22 +37,30 @@ uses a private envelope. Codex hooks can't hold a secret, and the Codex plugin t
   never leaves the server process, and it answers with empty content, because Codex passes a prompt
   hook's text to the model.
 - `turn_started` has `_meta.ui.visibility: []`. In Codex 0.160.0 such a tool is left out of the model's
-  tools, and a model call to it by name gets "not available to the model" (`codex-mcp/src/binding.rs`
-  `prepare_call`). Hooks call tools without that filter (`core/src/hook_mcp_executor.rs`).
-- A hook's call has `_meta.threadId` and nothing else. Every model call has `_meta.callId`
-  (`core/src/mcp_tool_call.rs`). The relay refuses a call with `callId`. A model call fails there even if
-  a later Codex showed the tool.
+  tools, and `prepare_call` refuses a model call to it by name (`codex-mcp/src/binding.rs`; the model
+  gets "not available to the model" from `core/src/mcp_tool_call.rs`). Hooks call tools without that
+  filter (`core/src/hook_mcp_executor.rs`).
+- A hook's call has `_meta.threadId` and nothing else. Every model call also has `callId`, `sessionId`
+  and Codex's turn metadata (`core/src/mcp_tool_call.rs`). The relay refuses any key beyond `threadId`
+  and a progress token. A model call fails there even if a later Codex showed the tool.
 - `threadId` must equal the hook's `session_id`. They match only on the session's root thread. A
   subagent's prompt is written by the parent model, and its thread id differs (`core/src/session/session.rs`).
 - Each Codex turn id binds once. A second prompt in the same turn keeps the first binding. A prompt over
-  64 KiB binds with no text. Every payment in that turn asks on sleight's own card. Older Codex versions, other
-  clients and the mod's own handshake from Codex are refused.
-- The Stop and Interrupt hooks revoke the turn before anything else, used or not.
+  64 KiB binds with no text. Every payment in that turn asks on sleight's own card. So does a voice
+  session's delegation, whose prompt quotes the voice model. Older Codex versions, other clients and the
+  mod's own handshake from Codex are refused.
+- The relay sends a turbo call to the worker only when its `threadId` and its turn metadata's `turn_id` match the
+  bound turn. A turn that never ran the prompt hook (a goal continuation, a queued turn, or one whose Stop
+  hook didn't run) can't use turbo.
+- The Stop and Interrupt hooks revoke the turn, used or not, and a bind still queued then never runs.
 
 The threat is a page, or a model following one, that wants turbo to treat its text as the user's
 message. Within sleight's MCP channel that needs a call Codex sends only from its hook. Out of scope: a
-model with a shell, which can already run anything as the user, other installed plugins, and a Codex
-build that both shows hidden tools and drops `callId`. Payment cards always use sleight's own window,
+model with a shell (it can already run anything as the user) and other installed plugins and hooks. So is a
+Codex build that shows hidden tools and also drops the model-call keys. Codex's app-server
+`mcpServer/tool/call` also reaches hidden tools with only `threadId` added. Its callers are Codex's own
+clients (the desktop app and IDE extensions). MCP Apps widgets should be blocked by the empty visibility
+list, which we haven't checked. Payment cards always use sleight's own window,
 never an MCP form that Codex's auto-review could answer. The source read is openai/codex `rust-v0.160.0`
 (`a956835d`), and none of it has been checked in a live Codex session yet.
 
