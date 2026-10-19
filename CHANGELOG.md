@@ -250,13 +250,22 @@ TODO: full release pass result.
 
 - sleight installs as a Codex plugin from the same repo: `codex plugin marketplace add Land-o-Clusters/sleight`,
   then `codex plugin add sleight@sleight`. Codex gets the same server, skill and tool names, and two hooks
-  that end the engine's turn when a Codex turn stops or is interrupted. Turbo, the pane and `/sleight` stay
-  Claude Code only. `--doctor` reports whether sleight is on in Codex and whether Codex's own Computer
-  Use is on beside it. Installed and checked in a throwaway Codex home with CLI 0.160.0, without a live session.
-- Outside Claude Code, the model doesn't see `turn_ended` or turbo's tools. Only the Claude Code mod can
-  bind a turbo turn to your message.
+  meant to end the engine's turn when a Codex turn stops or is interrupted (listed and trusted live, not
+  yet seen running). Turbo, the pane and `/sleight` stay Claude Code only. `--doctor` reports whether
+  sleight is on in Codex and whether Codex's own Computer Use is on beside it. On 2026-10-19, with Codex
+  0.160.0 and gpt-6.1-sol, Calculator's 12 × 12 took 22.5 s and a TextEdit note 44.4 s. Always in Codex's
+  approval prompt wrote sleight's pre-approved list, as a click does in Claude Code.
+- In Codex the first `getApp` of a session failed once and cost a turn (2 of 2 live tasks). Codex sends
+  its sandbox state with each call, and the engine runs that call in a kernel without sleight's setup.
+  sleight now sends its own calls with the same state and sets up again when the state changes.
+- Outside Claude Code, the model doesn't see `turn_ended` or turbo's tools, and the relay refuses a stop,
+  resume or turbo call from it. Only the Claude Code mod binds a turbo turn to your message. Claude Code is
+  recognized by the client name `claude-code` (the CLI and the desktop app's Code tab both send it);
+  any other host gets these protections.
 - The turbo menu shows the host each session runs in and its version, as the client introduced itself
-  ("Claude Code 2.1.289"). It doesn't show a model, because no host reports one to sleight.
+  ("Claude Code 2.1.289"). It doesn't show a model, because no host reports one to sleight. For Claude
+  Code users the idle line now reads "Its session has ended". The menu change was typechecked and
+  unit-tested, not seen in the real menu yet.
 
 ### Pane, replay and receipts
 

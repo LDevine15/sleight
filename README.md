@@ -51,7 +51,8 @@ claude plugin install sleight@sleight
 Or, inside a Claude Code session, `/plugin marketplace add Land-o-Clusters/sleight` and then
 `/plugin install sleight@sleight`. Then start a new session.
 
-In Codex (we've tested CLI 0.160.0), install from the same repo:
+In Codex, install from the same repo. It installs on Codex CLI 0.160.0, and two live tasks worked
+there on 2026-10-19:
 
 ```bash
 codex plugin marketplace add Land-o-Clusters/sleight

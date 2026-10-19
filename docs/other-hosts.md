@@ -15,27 +15,33 @@ codex plugin marketplace add Land-o-Clusters/sleight
 codex plugin add sleight@sleight
 ```
 
-Then start a new Codex session. The first time, Codex asks you to review sleight's two hooks. Trust
-them. At the end of a turn, interrupted or not, they call sleight's `turn_ended` tool. That releases
-the apps sleight used. Codex skips untrusted hooks, and then sleight ends a used turn after 30
-idle seconds.
+Then start a new Codex session from a project folder. Started in your home folder, Codex reads
+`~/.codex/hooks.json` as that folder's project config too, and runs any hooks you keep there.
+
+The first time, Codex asks you to review sleight's two hooks. Trust them. At the end of a turn,
+interrupted or not, they call sleight's `turn_ended` tool, which should release the apps sleight used.
+We have seen Codex list and trust them, but no log yet shows one running. Codex skips untrusted hooks,
+and then sleight ends a used turn after 30 idle seconds.
 
 To set up Computer Use on a Mac that doesn't have it yet, run setup from the installed copy:
 `~/.codex/plugins/cache/sleight/sleight/<version>/bin/sleight-mcp setup`. Its `--doctor` reports
 whether sleight is installed and enabled in Codex, and whether Codex's own Computer Use is on beside it.
 
 To update, run `codex plugin marketplace upgrade sleight && codex plugin add sleight@sleight` and
-start a new session.
+start a new session. We've checked the second step against a local marketplace only.
 
 Codex runs the same server, skill and tools as Claude Code. Its tool names match Claude Code's
 (`mcp__plugin_sleight_computer__js` and the rest), and the skill text is identical on both hosts.
 Codex lists the skill as `sleight:drive-mac-apps`.
 
 Approvals follow the same rules as in Claude Code. Each app gets one card with Allow, Always allow
-and Decline, and Allow lasts for the session. Only your own pick writes Always allow. Codex
-0.160.0 tells MCP servers it can show forms, and sleight sends each card to Codex as a form instead
-of opening its own panel. We haven't yet seen a card in an interactive Codex session. A headless
-`codex exec` run can't answer forms, and it refuses any app you haven't pre-approved.
+and Decline. Allow lasts as long as Codex keeps sleight's server running, which can span more than one
+thread. Codex shows the card as its own prompt. Picking Always there writes sleight's pre-approved
+list, exactly as clicking Always allow does in Claude Code, and the owner saw that happen for TextEdit
+on 2026-10-19. Codex never fills in that choice for you. Its own auto-review and its full-access mode
+answer only cards without fields, and sleight's card has one, so they decline it or ask you. A headless
+`codex exec` run declines it, so it can only use apps you've pre-approved. sleight also ignores an
+Always that Codex marks as its reviewer's.
 
 When Codex's own Computer Use plugin is on too, the model sees two computer-use surfaces. sleight's
 skill listing tells it to use sleight's tools. To start a session without Codex's plugin:
@@ -44,14 +50,21 @@ skill listing tells it to use sleight's tools. To start a session without Codex'
 codex -c 'plugins."computer-use@openai-bundled".enabled=false'
 ```
 
-To keep it off, turn it off in Codex's plugin settings. sleight never changes Codex's config itself.
-Leave `unified-computer-use` on, since Codex's Browser plugin runs on it too.
+We tested that switch on a copy of the plugin under another marketplace name, since the real one
+can't be installed into a test home. To keep it off, turn it off in Codex's plugin settings. sleight
+never changes Codex's config itself. Leave `unified-computer-use` on. Its server config also turns on the
+browser automation that Codex's Browser plugin uses.
 
 Codex doesn't get the pane, the status line, the `/sleight` command or turbo. Turbo ties each turn to
 your own message through the Claude Code mod, which Codex doesn't run. The Codex plugin sets
 `SLEIGHT_TURBO=0`, and browsers use the engine path. Codex gives a plugin's server only a short list
-of environment variables, and sleight's plugin adds the documented `SLEIGHT_*` [settings](settings.md)
-to it. Export a setting in the shell that starts Codex and sleight sees it.
+of environment variables, and sleight's plugin adds every documented `SLEIGHT_*` [setting](settings.md)
+to it except the benchmark ones. Export a setting in the shell that starts Codex and sleight sees it.
+
+Live checks so far on 2026-10-19 used Codex 0.160.0 and gpt-6.1-sol with the owner at the Mac.
+Calculator worked out 12 × 12 = 144 in 22.5 s, and a new plain TextEdit document took 44.4 s, including the
+approval. In both, the first `getApp` failed and the model retried. Codex's sandbox state sends each call
+to its own engine kernel, and sleight now sets that kernel up first.
 
 ## Cursor and generic clients
 
