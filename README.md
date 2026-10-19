@@ -35,25 +35,31 @@ the whole time, while you keep the pointer and the front window.
 
 ## How fast
 
-On our native claim suite, sleight is the fastest computer use plugin for Mac
-`TODO(final): the scorer's wording`. It had the lowest
-expected time on 8 of 9 tasks `TODO(final)` and the lowest total, 251 s against 454 s for the next
-arm, Claude's own computer use `TODO(final)`. It lost preview-read to Peekaboo, 5.1 s against
-4.4 s `TODO(final)`. Haiku 5.5 at high effort drove every Claude arm, and Codex ran gpt-6-luna at the
-same effort. Each arm ran each task 3 times, and 5 times where sleight and that arm were within 20%.
+On our native claim suite, sleight is the fastest computer use plugin for Mac ("fastest" is the
+scorer's own verdict). It had the lowest expected time on 8 of 9 tasks and the lowest total, 251.2 s
+against 453.9 s for the next arm, Claude's own computer use. It lost preview-read to Peekaboo, 5.3 s
+against 4.4 s, and Peekaboo also had one finder-move run faster than any of sleight's. Haiku 5.5 at
+high effort drove every Claude arm, and Codex ran gpt-6-luna at the same effort. Each arm ran each
+task 3 times, and 5 times where sleight and that arm were within 20%. These runs used ChatGPT engine
+26.1007.71326 on 2026-10-17 and 2026-10-18.
 
 - The suite is sleight's own: 9 tasks in Calculator, TextEdit, Finder, Preview, Word and Excel
-  ([bench/claim-tasks.txt](bench/claim-tasks.txt)). The skill was tuned on `TODO(final): list of tuned tasks`.
-  Competitors ran their defaults.
-- App tasks in VS Code, Slack and Spotify: fastest on 3 of 3, 57 s total against 101 s for LCU
-  `TODO(final)`.
+  ([bench/claim-tasks.txt](bench/claim-tasks.txt)). The skill and tool wording were tuned on the
+  runs of textedit-calculator, preview-read, excel-edit, word-edit, finder-move, textedit-save and
+  textedit-drag, and of the browser tasks form-travel, form-settings, form-checkout, mdn and demoid.
+  calculator-click, calculator-menu and the three app tasks weren't tuned. Competitors ran their
+  defaults.
+- App tasks in VS Code, Slack and Spotify: fastest on 3 of 3, 56.8 s total against 101.3 s for LCU.
 - Browsers on turbo, against FowlBrowser in real windows: fastest on 12 of 13 tasks in Chrome
-  (247.6 s against 441.8 s) and 12 of 13 in Helium (241.8 s against 363.3 s) `TODO(final)`.
-- Safari and Firefox, which turbo can't drive yet, on the engine path: fastest on 9 of 12 in Safari
-  (670.1 s), the only arm that passed all 12, and 10 of 12 in Firefox on an older build
-  `TODO(final)`.
-- With Opus 5.5 on FowlBrowser's 13 tasks, turbo took 675 s against 885 s (2026-10-16)
-  `TODO(final): the 1.3.0 Opus head-to-head`.
+  (247.6 s against 441.8 s) and 11 of 13 in Helium (241.8 s against 338.3 s), every task passing.
+- Safari and Firefox, which turbo can't drive yet, on the engine path (engine 26.1013.40934,
+  2026-10-19): "fastest" in both, the lowest expected time on 11 of 12 tasks, 592.1 s in Safari and
+  557.1 s in Firefox, with every task passing. Most competitor runs there are from engine
+  26.1007.71326 a day earlier, and the hub lists each arm's version.
+- sleight inside Codex on gpt-6-luna completed every task in both browsers, faster than Codex's own
+  computer use on 9 of 12 tasks in Safari and 8 of 12 in Firefox.
+- The 1.3.0 release pass on turbo in Chrome, FowlBrowser's 13 tasks: 13 of 13 on Haiku 5.5 in
+  257.8 s and 13 of 13 on Opus 5.5 in 249.9 s (2026-10-19, engine 26.1013.40934).
 
 The hub lists the runs, failures included, with the model each arm ran:
 [benchmark hub](docs/results/README.md), [interactive tables](docs/results/explore.html) and
