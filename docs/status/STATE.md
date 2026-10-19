@@ -14,7 +14,8 @@ has no turbo in Codex, so they run with `SLEIGHT_TURBO=0` once 1.3.1 carries cxt
 nothing paid. Safari's confirm sheet is still untested, since Haiku stopped by itself. The gate also stopped a cart's "Go to
 checkout" link, which failed handoff in two rounds. Fixed on 8c6b08ca (full check 8318 tests 0 fail) and merged into 1.3.1
 f858cf8b, whose full check hasn't run since. Block b10 (`race-1017/block-b10.command`, race-fx at 8c6b08ca) runs sleight's
-Safari and Firefox x3 on the new engine. The b9 rounds are diagnostics only. Items below marked as in flight at the clear are superseded by
+Safari and Firefox x3 on the new engine. The b9 rounds are diagnostics only. 1.4.0 builds now (owner): `claude/p140` from 1.3.1 f858cf8b, with three Opus builders on
+`claude/p140-analytics`, `-cursor` and `-am1` (reports in ledger/p140/), focused tests only and no live runs while races run. Items below marked as in flight at the clear are superseded by
 this paragraph.
 
 **Release line** `pane/auto-mode` = main checkout. It holds the race fixes ft1, fs1 and md1, plus sec130, es1, ff1, rg1r2, fl3,

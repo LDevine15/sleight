@@ -139,6 +139,8 @@ native claim and the browser race run as Mac load allows, so that Electron's run
    only when merged and measured by a Haiku A/B on held-out native tasks plus the claim tasks. Model time is about 85% of a run,
    and sleight's first result is about 25,000 characters against Peekaboo's 4,600.
 5. The parity battery runs about 25 popular apps side by side with Codex. The harness is built, and 3 of 34 runs are done.
+1.4.0 builds now on its own branch, `claude/p140` from the 1.3.1 integration branch (owner, 2026-10-19 04:0xZ): local performance
+   analytics (4c), Cursor plugin support (4d) and the AM1 speed map (item 6), one Opus builder each on `claude/p140-*`.
 6. The AM1 speed map of app classes, in 1.4.0 (owner, 2026-10-19). Its VS Code and Word fixtures still fail setup (AM1E designs the
    wait for a late accessibility tree).
 7. The ghost hand (owner, 2026-10-16): when sleight acts in a background app, a small translucent hand glides to the point in
