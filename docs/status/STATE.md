@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 14:08 UTC)
+## Banner (2026-10-19 14:35 UTC)
 
 Goal (owner): 1.3.0 is out. 1.3.1 validation runs now, then sleight holds at 1.3.1 while the owner uses it. 1.4.0 (analytics,
 Cursor plugin, AM1 speed map) builds on its own branch. The video isn't tied to any release (owner, 2026-10-19). Published results show their engine
@@ -24,8 +24,8 @@ since: the startup cache (HS1) and the promo-code Apply stop (PG2), both in know
 GitHub, with the workflow file at ledger/p130/cf1-engine-compat.yml, okayed by the owner but not pushed yet), FS ddb51401 (behind
 `SLEIGHT_FS=1`), SW1 f98ef207, TU1 0de1cf41, HS1 bafd37b1, and PG3 3eb4d33b (Return that picks an open suggestion list's
 selected option goes ahead on a payment page; the security review's fixes are in, report in ledger/p130/pg3-REPORT.md). Local
-`claude/p131-integration` is fast-forwarded to 3eb4d33b (payment-gate and action-outcomes tests pass, lint 0); its full check and
-push wait until FS native ends. The owner said no more subagents after PG3.
+`claude/p131-integration` is fast-forwarded to 3eb4d33b (payment-gate and action-outcomes tests pass, lint 0); its full check
+reruns when the hold clears (below). The owner said no more subagents after PG3.
 In the FS A/B race half, Firefox with FS was faster in all 3 rounds (474.2, 450.8, 440.1 s against 517.8, 488.5, 512.0 s), Safari mixed (one
 round lost 2 tasks). The candidate default is FS2's Firefox keyboard new-tab route. FS1 (the description text) waits on the native half.
 1.3.1 live checks still owed are the FS native half (queued), SW1 (its first live check failed; the follow-up f98ef207 traces every
@@ -44,10 +44,12 @@ inside Codex 10, 9, 8 of 12 (739.5, 798.9, 791.1 s), codex-sol 8, 7, 8 (801.2, 7
 sleight inside Codex 0 of 6. sleight's repeated misses (form-settings and its Helium twin "nothing submitted", demoid,
 inject-mail) become loss-study items once FS native ends.
 
-**Running (Terminal windows).**
-- `race-1017/block-fsnative.command` (pid 4324): started after block-sol, runs the FS native half (10 held-out tasks x3 per
-  side, logs `race-1017/native-fs3-*.log`), then touches `race-1017/CLEAR`, loc arch's render window for the film. No full checks
-  while it runs (timed A/B).
+**FS native half, paused 14:13Z.** `race-1017/block-fsnative.command` (pid 4324) ran three rounds, and each stopped on fixture AX
+reads (Finder AXFocusedWindow -25204, TextEdit -25202, "owned document lost focus") with the lid closed while the Mac was in use.
+`race-1017/pause` holds it. To resume when the owner is away with the lid open: delete `race-1017/CLEAR`, then `pause`. TextEdit
+pid 55100 was running before the rounds, so leave it. `CLEAR` is open for loc arch now (told by message).
+`/tmp/sleight-hold` appeared at 14:13Z (another project's window), and the full check on 3eb4d33b failed 31 of 8967 (at least
+the memory test refuses under the hold). Rerun it when the hold clears, and push integration only on 0.
 - The race watchdog `race-1017/watchdog.sh` (pid 63290, nohup), harmless while rounds run.
 - Worktrees: race-fx at the release build 1f6efff2, race-131 at 327fa383.
 
