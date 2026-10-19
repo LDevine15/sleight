@@ -210,6 +210,13 @@ our own runs. Dates and engine versions are given where they matter.
 
 ## Browsers
 
+- Turbo can't add a second item to a multi-select list that needs a Command-click. In the 1.3.1 Chrome release pass
+  (2026-10-19, Haiku 5.5) form-settings stopped before submitting in 2 of 5 rounds because Japanese couldn't join
+  Portuguese (Brazil) in its Languages list. Opus passed it. The model stopped and said so, and nothing wrong was submitted.
+- A turbo click whose page re-renders under it comes back "page changed during the click" and the model reads and
+  retries. On the release pass's checkout that loop ran 6 to 7 times in 4 of 5 Haiku rounds (36 to 42 s against 21 to
+  26 s without it), and in 1 of 3 rounds of 1.3.0's pass.
+
 - `app.pickFromList` on Safari and Firefox web lists hasn't run live (2026-10-18). If Page Down doesn't move the list's
   accessibility rows, it stops with "no-progress" and Claude falls back to a scroll loop.
 - The offscreen-row note hasn't run against a live app. It needs the engine's role words to equal the accessibility role

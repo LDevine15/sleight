@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3.1 (TODO: release date)
+## 1.3.1 (2026-10-19)
 
 ### Engine updates
 
@@ -64,6 +64,11 @@ Each switch that was off by default ran an A/B, five alternating rounds a side o
   windows no Space holds, such as the one Safari keeps hidden from launch, which stopped the line in all 3 live rounds.
 - When `select_window` doesn't find a match, it lists window titles whole up to 120 characters. It cut them at 60, and a Safari
   profile window's 69-character title couldn't be copied.
+
+### Electron
+
+- Turbo for Electron apps is built but hasn't passed its live qualification yet (the first live run on 2026-10-19
+  stopped in its own harness before any card showed), so Electron apps stay on the native path.
 
 ### Startup
 
