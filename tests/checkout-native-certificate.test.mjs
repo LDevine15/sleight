@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { tabProbeRefusal } from '../plugins/sleight/lib/tab-probe.mjs';
 
 const source = readFileSync(new URL('../plugins/sleight/lib/window-identity.js', import.meta.url), 'utf8');
 function fixture({ tickMs = 0, collide = false } = {}) {
@@ -127,6 +128,7 @@ test('CK3 stops the native walk at its wall-clock budget', () => {
   const result = f.read();
   assert.equal(result.chrome?.complete, false);
   assert.equal(result.chrome?.reason, 'chrome-deadline');
+  assert.equal(result.chrome?.check, 'walk');
   assert.ok(result.chrome.walkMs >= 250 && result.chrome.walkMs <= 260);
   assert.ok(f.reads.filter(([element]) => element.AXRole === 'AXButton').length < 10);
 });
@@ -141,4 +143,90 @@ test('CK3 buckets native identity comparisons and preserves references on CFHash
   assert.deepEqual(collision.read().chrome, before.chrome);
   collision.toolbar.AXChildren = collision.list([collision.field, collision.field]);
   assert.equal(collision.read().chrome?.reason, 'incomplete-chrome');
+});
+
+// Reconstructed chrome from smoke-ck2c-firefox-mdn/mdn/events.jsonl (2026-10-19).
+// The engine renders the tab's numeric AXValue as selected. Firefox exposes DOM ids
+// through AXDOMIdentifier, not AXIdentifier (mozAccessible::moxDOMIdentifier).
+function firefoxShape() {
+  const f = fixture();
+  delete f.field.AXIdentifier;
+  f.field.AXDOMIdentifier = 'urlbar-input';
+  const container = f.node('AXGroup', { AXChildren: f.list([f.field]), AXParent: f.toolbar });
+  f.field.AXParent = container;
+  f.toolbar.AXChildren = f.list([container]);
+  const tabToolbar = f.node('AXToolbar', { AXChildren: f.list([f.tabs]), AXParent: f.window });
+  f.tabs.AXParent = tabToolbar;
+  f.tabs.AXChildren = f.list([f.tab, f.node('AXButton')]);
+  f.window.AXChildren = f.list([tabToolbar, f.toolbar, f.page]);
+  return f;
+}
+
+// safari-sleight-b10-r2/form-checkout: a content tab group exists with one tab,
+// and Cmd+T exposes a separate TabBar?isSeparate=false group with two radio tabs.
+function safariShape({ hidden = false } = {}) {
+  const f = fixture();
+  f.field.AXRole = 'AXTextField';
+  f.field.AXIdentifier = 'WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD';
+  const scroll = f.node('AXScrollArea', { AXChildren: f.list([f.page]) });
+  const content = f.node('AXTabGroup', { AXChildren: f.list([scroll]), AXParent: f.window });
+  scroll.AXParent = content; f.page.AXParent = scroll;
+  f.tabs.AXIdentifier = 'TabBar?isSeparate=false';
+  f.tab.AXValue = 0;
+  f.tabs.AXChildren = f.list([f.tab, f.node('AXRadioButton', { AXValue: 1, AXParent: f.tabs })]);
+  f.window.AXChildren = f.list([content, f.toolbar, ...(hidden ? [] : [f.tabs])]);
+  return f;
+}
+
+test('CK2d recorded Firefox chrome proves its address field through AXDOMIdentifier', () => {
+  const f = firefoxShape(), before = f.read();
+  assert.equal(before.chrome?.complete, true);
+  assert.equal(before.chrome.addressField, before.chrome.focused);
+  assert.equal(before.chrome.childCount, 2);
+  const added = f.node('AXRadioButton', { AXValue: 1, AXParent: f.tabs });
+  f.tab.AXValue = 0;
+  f.tabs.AXChildren = f.list([f.tab, added, f.tabs.AXChildren.objectAtIndex(1)]);
+  const after = f.read();
+  assert.equal(after.chrome?.complete, true);
+  assert.equal(after.chrome.group, before.chrome.group);
+  assert.equal(after.chrome.addressField, before.chrome.addressField);
+  assert.equal(after.chrome.tabCount, 2);
+  assert.equal(after.chrome.tabs[1].selected, true);
+  assert.equal(tabProbeRefusal({ ...before, nativeIdentity: before }, after, 0, 1, true), undefined);
+});
+
+test('CK2d recorded Safari chrome uses the visible strip beside the content tab group', () => {
+  const f = safariShape(), result = f.read();
+  assert.equal(result.chrome?.complete, true);
+  assert.equal(result.chrome.tabCount, 2);
+  assert.equal(result.chrome.tabs[1].selected, true);
+  assert.equal(result.chrome.addressField, result.chrome.focused);
+});
+
+test('CK2d hidden Safari strip never invents a baseline tab and passes after the strip appears', () => {
+  const f = safariShape({ hidden: true }), before = f.read();
+  assert.equal(before.chrome?.complete, false);
+  assert.equal(before.chrome?.reason, 'missing-tab-strip');
+  assert.equal(before.chrome?.check, 'tab-group');
+  f.window.AXChildren = f.list([...Array.from({ length: f.window.AXChildren.count }, (_, i) => f.window.AXChildren.objectAtIndex(i)), f.tabs]);
+  const after = f.read();
+  assert.equal(after.chrome?.complete, true);
+  assert.equal(tabProbeRefusal({ ...before, nativeIdentity: before }, after, 0, 1, true), 'incomplete-chrome');
+  // The existing full-tree continuation admits the post-Cmd+T strip as its baseline.
+  // That fresh baseline can certify the remainder without inventing a hidden old tab.
+  assert.equal(tabProbeRefusal({ ...after, nativeIdentity: after }, f.read(), 0, 1), undefined);
+});
+
+for (const [name, mutate, reason, check] of [
+  ['unrecognized DOM id', f => { f.field.AXDOMIdentifier = 'search-input'; }, 'unproved-address-field', 'address-field'],
+  ['disabled field', f => { f.field.AXEnabled = false; }, 'unproved-address-field', 'address-field'],
+  ['secure field', f => { f.field.AXSubrole = 'AXSecureTextField'; }, 'unproved-address-field', 'address-field'],
+  ['no selection', f => { f.tab.AXValue = 0; }, 'ambiguous-selected-tab', 'tab-selection'],
+  ['duplicate strip', f => { f.window.AXChildren = f.list([f.tabs, f.toolbar, f.page, f.node('AXTabGroup', { AXChildren: f.list([f.node('AXRadioButton', { AXValue: 1 })]) })]); }, 'ambiguous-tab-group', 'tab-group'],
+]) test(`CK2d recorded Firefox refuses ${name} with the failed check`, () => {
+  const f = firefoxShape(); mutate(f);
+  const { chrome } = f.read();
+  assert.equal(chrome?.complete, false);
+  assert.equal(chrome?.reason, reason);
+  assert.equal(chrome?.check, check);
 });

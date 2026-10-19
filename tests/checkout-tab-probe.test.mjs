@@ -434,3 +434,32 @@ test('CK3 skips the baseline probe when the ordinary first read covers Cmd+T', a
     assert.equal(samples, 4);
   } finally { delete globalThis.__sleightDocumentGuard; delete globalThis.__sleightDocumentGuardSetup; }
 });
+
+for (const side of ['baseline', 'observed']) {
+  test(`CK2d traces the ${side} native chrome check and preserves the full-read fallback`, async t => {
+    const incomplete = { complete: false, reason: 'unproved-address-field', check: 'address-field', walkMs: 38,
+      details: { groups: 1, strips: 1, tabs: 2, selected: 1, fieldCount: 1,
+        fields: [{ role: 'AXComboBox', identifierSource: 'AXDOMIdentifier', toolbar: true, editable: true, enabled: true, secure: false, address: false }] } };
+    const f = await fixture(t, {
+      observe: async () => side === 'observed' ? { ...identity, chrome: incomplete } : identity,
+      setupProbe: info => { if (side === 'baseline') info.target = { ...target, nativeIdentity: { ...identity, chrome: incomplete } }; },
+    });
+    await f.run();
+    assert.deepEqual(f.calls, ['read', 'typeText', 'read', 'pressKey', 'read']);
+    const decision = f.output.filter(line => line.includes('"tabProbe"')).map(line => JSON.parse(line.slice(4)).tabProbe)[0];
+    assert.equal(decision.reason, 'incomplete-chrome');
+    assert.equal(decision.chrome[side].nativeReason, 'unproved-address-field');
+    assert.equal(decision.chrome[side].check, 'address-field');
+    assert.equal(decision.chrome[side].walkMs, 38);
+    assert.deepEqual(decision.chrome[side].details, incomplete.details);
+    assert.equal(decision.chrome[side === 'baseline' ? 'observed' : 'baseline'].refusal, null);
+  });
+}
+
+test('CK2d a malformed complete certificate identifies the failed selection check', async t => {
+  const f = await fixture(t, { observe: async () => ({ ...identity, chrome: { ...chrome(), tabs: [{ ref: 10, selected: false }] } }) });
+  await f.run();
+  const decision = f.output.filter(line => line.includes('"tabProbe"')).map(line => JSON.parse(line.slice(4)).tabProbe)[0];
+  assert.equal(decision.decision, 'read');
+  assert.equal(decision.chrome.observed.refusal, 'tab-selection');
+});

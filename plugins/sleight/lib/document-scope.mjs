@@ -7,7 +7,7 @@ import { actionOutcome, outcomeRecord } from './action-outcomes.mjs';
 import { moneyFigures, moneyConflicts } from './payment-figures.mjs';
 import { enginePayment, paymentAction } from './payment-gate.mjs';
 import { paymentWords, refundableName } from './direct-browser/rules.mjs';
-import { tabProbeRefusal } from './tab-probe.mjs';
+import { tabChromeRefusal, tabProbeRefusal } from './tab-probe.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { tabFocusRefusal } from './menu-continuation.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
@@ -700,6 +700,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
     const lightRole = /^AX(?:TextField|TextArea|ComboBox|SearchField|Cell|Table|Grid|LayoutArea)$/;
     const verifyWindowIdentity = ${verifyWindowIdentity.toString()};
     const tabFocusRefusal = ${tabFocusRefusal.toString()};
+    const tabChromeRefusal = ${tabChromeRefusal.toString()};
     const tabProbeRefusal = ${tabProbeRefusal.toString()};
     const tabCheck = async (before, transition = false) => {
       const probe = state.tabProbe, started = clock(), entered = Date.now(), ready = Math.max(entered, (before?.done ?? entered - 250) + 250);
@@ -750,9 +751,12 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
         if (requestHandle) try { await requestHandle.close(); }
         catch (error) { reason = 'probe-failed'; failed = { failureStep: 'request-close', errno: error?.code ?? null, syscall: error?.syscall ?? null }; }
       }
+      const chromeDiagnostic = c => ({ refusal: tabChromeRefusal(c) ?? null, complete: c?.complete === true,
+        nativeReason: c?.reason ?? null, check: c?.check ?? null, details: c?.details ?? null, walkMs: c?.walkMs ?? null });
       if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ tabProbe: { decision: reason ? 'read' : 'probe', reason: reason ?? 'address-field',
         waitMs: clock() - started, sampleMs: sample?.end - sample?.start, ageMs: Date.now() - sample?.end,
         transition, tabCount: sample?.observed?.chrome?.tabCount, channel: probe.channel,
+        chrome: { baseline: chromeDiagnostic(state.tabTarget?.nativeIdentity?.chrome), observed: chromeDiagnostic(sample?.observed?.chrome) },
         failureStep: failed?.failureStep ?? null, errno: failed?.errno ?? null, syscall: failed?.syscall ?? null,
         exitCode: failed?.exitCode ?? null } }) + '\\n');
       if (reason) { state.tabProbe = undefined; return; }

@@ -16,6 +16,19 @@ export function nativeTabPlan(plan) {
     /^https?:\/\/[^\s\u0000-\u001f]+$/i.test(ts[5].v);
 }
 
+// Keep the failed structural check separate from the native walk's reason in diagnostics.
+export function tabChromeRefusal(c) {
+  if (!c) return 'missing-certificate';
+  if (c.complete !== true) return 'native-incomplete';
+  if (!Number.isSafeInteger(c.group) || c.group <= 0) return 'tab-group';
+  if (!Array.isArray(c.children) || c.children.length !== c.childCount || c.childCount <= 0 || c.childCount > 256 ||
+      !c.children.every(r => Number.isSafeInteger(r) && r > 0) || new Set(c.children).size !== c.children.length) return 'children';
+  if (!Array.isArray(c.tabs) || c.tabs.length !== c.tabCount || c.tabCount <= 0 || !c.tabs.every(t =>
+      Number.isSafeInteger(t?.ref) && c.children.includes(t.ref) && typeof t.selected === 'boolean') ||
+      new Set(c.tabs.map(t => t.ref)).size !== c.tabCount || c.tabs.filter(t => t.selected).length !== 1) return 'tab-selection';
+  if (!Number.isSafeInteger(c.addressField) || c.addressField <= 0) return 'address-field';
+}
+
 // The same identity and focus evidence as the tab continuation, sampled again inside its remainder.
 // `since` and `now` are wall-clock milliseconds, since the guard and relay have different performance clocks.
 export function tabProbeRefusal(expected, observed, since, now, transition = false, baselineOnly = false) {
@@ -28,15 +41,8 @@ export function tabProbeRefusal(expected, observed, since, now, transition = fal
   if (observed.headerMatches !== 1 || observed.windowSubrole !== 'AXStandardWindow') return 'ambiguous-header';
   if (!Number.isFinite(observed.hidIdleSeconds) || observed.hidIdleSeconds <= 0 ||
       !Number.isFinite(since) || !Number.isFinite(now) || now < since || observed.hidIdleSeconds < (now - since) / 1000) return 'hid-input';
-  const valid = c => c?.complete === true && Number.isSafeInteger(c.group) && c.group > 0 &&
-    Array.isArray(c.children) && c.children.length === c.childCount && c.childCount > 0 && c.childCount <= 256 &&
-    c.children.every(r => Number.isSafeInteger(r) && r > 0) && new Set(c.children).size === c.children.length &&
-    Array.isArray(c.tabs) && c.tabs.length === c.tabCount && c.tabCount > 0 && c.tabs.every(t =>
-      Number.isSafeInteger(t?.ref) && c.children.includes(t.ref) && typeof t.selected === 'boolean') &&
-    new Set(c.tabs.map(t => t.ref)).size === c.tabCount && c.tabs.filter(t => t.selected).length === 1 &&
-    Number.isSafeInteger(c.addressField) && c.addressField > 0;
   const was = expected.nativeIdentity.chrome, current = observed.chrome;
-  if (!valid(was) || !valid(current)) return 'incomplete-chrome';
+  if (tabChromeRefusal(was) || tabChromeRefusal(current)) return 'incomplete-chrome';
   if (was.group !== current.group || was.addressField !== current.addressField) return 'chrome-replaced';
   if (transition) {
     const added = current.children.filter(r => !was.children.includes(r));

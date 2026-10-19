@@ -9,6 +9,7 @@ const chromeReferenceBuckets = new Map();
 // References belong to this helper epoch, never to an engine element number. Only browser chrome metadata is read.
 function tabCertificate(app, window, readAttr, scalar) {
   const started = Date.now();
+  let check = 'window', details = {};
   const budget = () => { if (Date.now() - started >= 250 || Date.now() < started) throw new Error('chrome-deadline'); };
   // A single in-flight AX query can use its existing 100 ms messaging timeout after this check.
   const attr = (...args) => { budget(); const value = readAttr(...args); budget(); return value; };
@@ -43,7 +44,7 @@ function tabCertificate(app, window, readAttr, scalar) {
       const selected = attr(element, 'AXSelectedChildren', true);
       if ([true, 1].includes(scalar(attr(element, 'AXVisible', true))) || Number(selected?.count ?? 0) > 0) throw new Error('chrome-transient');
     };
-    const walk = (element, toolbar = false, depth = 0) => {
+    const walk = (element, toolbar = false, depth = 0, ancestors = []) => {
       budget();
       const entries = bucket(seen, element);
       if (depth > 32 || visited >= 1024 || entries.some(other => equal(other, element))) throw new Error('incomplete-chrome');
@@ -51,7 +52,10 @@ function tabCertificate(app, window, readAttr, scalar) {
       const role = scalar(attr(element, 'AXRole'));
       const description = scalar(attr(element, 'AXRoleDescription', true));
       // Stop at content roots before inspecting attributes, values or children within them.
-      if (['AXWebArea', 'AXTextArea'].includes(role) || /html content/i.test(String(description ?? ''))) return;
+      if (['AXWebArea', 'AXTextArea'].includes(role) || /html content/i.test(String(description ?? ''))) {
+        for (const group of ancestors) group.content = true;
+        return;
+      }
       if (['AXSheet', 'AXDialog', 'AXAlert', 'AXPopover'].includes(role) ||
           [true, 1].includes(scalar(attr(element, 'AXModal', true))) ||
           role === 'AXMenuBarItem' && [true, 1].includes(scalar(attr(element, 'AXSelected', true)))) throw new Error('chrome-transient');
@@ -67,38 +71,64 @@ function tabCertificate(app, window, readAttr, scalar) {
         return;
       }
       toolbar ||= role === 'AXToolbar';
-      if (role === 'AXTabGroup') groups.push(element);
+      if (role === 'AXTabGroup') {
+        const group = { element, content: false };
+        groups.push(group); ancestors = [...ancestors, group];
+      }
       if (['AXTextField', 'AXComboBox', 'AXSearchField'].includes(role)) {
-        const identifier = scalar(attr(element, 'AXIdentifier', true));
+        let identifier = scalar(attr(element, 'AXIdentifier', true)), identifierSource = 'AXIdentifier';
+        // Gecko exposes chrome DOM ids through AXDOMIdentifier. This is still an explicit
+        // address id outside document content, with the same ancestry and retained-reference proof.
+        if (identifier === null || identifier === '') {
+          identifier = scalar(attr(element, 'AXDOMIdentifier', true)); identifierSource = 'AXDOMIdentifier';
+        }
         const settable = Ref();
         budget();
         if (Number($.AXUIElementIsAttributeSettable(element, $('AXValue'), settable)) !== 0) throw new Error('editable-unknown');
-        fields.push({ element, toolbar, editable: Number(settable[0]) === 1,
+        fields.push({ element, role, identifierSource, toolbar, editable: Number(settable[0]) === 1,
           enabled: [true, 1].includes(scalar(attr(element, 'AXEnabled'))),
           secure: scalar(attr(element, 'AXSubrole', true)) === 'AXSecureTextField',
           // An explicit chrome identifier is required. Unknown or localized identifiers take the full read.
           address: typeof identifier === 'string' && /(?:^|[-_ ])(?:urlbar|address|location)(?:[-_ ]|$)/i.test(identifier) });
       }
       const leaf = ['AXButton', 'AXRadioButton', 'AXTab', 'AXTextField', 'AXComboBox', 'AXSearchField', 'AXStaticText', 'AXImage', 'AXMenuBarItem'].includes(role);
-      for (const child of children(element, leaf)) walk(child, toolbar, depth + 1);
+      for (const child of children(element, leaf)) walk(child, toolbar, depth + 1, ancestors);
     };
     if (scalar(attr(window, 'AXSubrole')) !== 'AXStandardWindow') throw new Error('nonstandard-window');
+    check = 'walk';
     walk(window);
     // A tracking menu can live outside AXWindows. A missing menu bar is unknown, not an empty menu.
     walk(attr(app, 'AXMenuBar'));
-    if (groups.length !== 1) throw new Error('ambiguous-tab-group');
-    const group = groups[0], direct = children(group), tabs = [];
-    for (const child of direct) {
-      const role = scalar(attr(child, 'AXRole'));
-      if (!['AXRadioButton', 'AXTab'].includes(role)) continue;
+    check = 'tab-group';
+    const strips = [];
+    details.groups = groups.length;
+    for (const group of groups) {
+      const direct = children(group.element);
+      const tabChildren = direct.filter(child => ['AXRadioButton', 'AXTab'].includes(scalar(attr(child, 'AXRole'))));
+      // Safari's content container is also AXTabGroup. Exclude it only with positive
+      // content-root evidence and no direct tabs. An empty or unknown group still refuses.
+      if (!tabChildren.length && group.content) continue;
+      strips.push({ group: group.element, direct, tabChildren });
+    }
+    details.strips = strips.length;
+    if (!strips.length) throw new Error('missing-tab-strip');
+    if (strips.length !== 1) throw new Error('ambiguous-tab-group');
+    const { group, direct, tabChildren } = strips[0], tabs = [];
+    check = 'tab-selection';
+    for (const child of tabChildren) {
       const selected = scalar(attr(child, 'AXValue'));
       if (![true, false, 0, 1].includes(selected)) throw new Error('unknown-tab-selection');
       tabs.push({ ref: ref(child), selected: selected === true || selected === 1 });
     }
+    details.tabs = tabs.length; details.selected = tabs.filter(tab => tab.selected).length;
     if (!tabs.length || tabs.filter(tab => tab.selected).length !== 1) throw new Error('ambiguous-selected-tab');
+    check = 'address-field';
+    details.fieldCount = fields.length;
+    details.fields = fields.slice(0, 8).map(({ element, ...metadata }) => metadata);
     if (fields.length !== 1 || !fields[0].toolbar || !fields[0].editable || !fields[0].enabled ||
         fields[0].secure || !fields[0].address) throw new Error('unproved-address-field');
     const field = fields[0].element;
+    check = 'address-ancestry';
     let owner = field, reached = false;
     const parents = [];
     for (let depth = 0; owner && depth < 40; depth++) {
@@ -108,12 +138,13 @@ function tabCertificate(app, window, readAttr, scalar) {
       parents.push(owner); owner = attr(owner, 'AXParent', true);
     }
     if (!reached) throw new Error('address-ancestry-unknown');
+    check = 'focus';
     const focused = attr(app, 'AXFocusedUIElement');
     const certificate = { complete: true, group: ref(group), childCount: direct.length, children: direct.map(ref), tabCount: tabs.length, tabs,
       addressField: ref(field), focused: equal(field, focused) ? ref(field) : null };
     budget();
     return { ...certificate, walkMs: Date.now() - started };
-  } catch (error) { return { complete: false, reason: String(error.message ?? error), walkMs: Date.now() - started }; }
+  } catch (error) { return { complete: false, reason: String(error.message ?? error), check, details, walkMs: Date.now() - started }; }
 }
 // JXA's Ref('CGPoint') reads back as the number 0, so this fallback never matched (macOS 27.0.1, 2026-10-16).
 // Copy the struct into bytes and read it back through NSValue.
