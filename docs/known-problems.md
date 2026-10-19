@@ -700,7 +700,9 @@ native reference, and oversized first results defer the browser reference while 
   NO_UNIQUE_SCROLL_AREA, because Word also has a Ribbon scroll area. Cleanup left Word running behind a window the host never
   retained, with unreadable document and sheet attributes. Only reason codes were kept, so we don't know which window it was.
   Document fixtures now scroll the area around their own text, and rows keep the tree's scroll-area counts and each cleanup
-  window's AX codes.
+  window's AX codes. The third (08:50 UTC) measured every phase (acquisition 793 ms, reads 86 and 143 ms, scroll 1391 ms,
+  readback 106 ms) and confirmed cleanup, then stopped because Word's window covered Terminal while its document closed. That
+  cover is now `cleanup-cover`. VS Code still hasn't run.
 
 ## Turbo in unattended runs
 

@@ -46,6 +46,7 @@ const bundleId = value => value == null ? null : typeof value === 'string' && /^
 // Focus and cover changes seen in the host's 200 ms samples, with the phase they happened in. sleight never takes focus
 // (LAWS), but before the first engine call the only actor is the fixture app's own launch: an app that activates itself
 // or puts its window over the owner's then is classified (launch-activation, launch-cover) and published, not stopped.
+// A cover by the fixture app during its own cleanup is cleanup-cover, published the same way.
 // Focus returning to the owner's app is recorded as focus-restored. Every other change stops the run as before.
 export function attentionTracker(task, { onEvent } = {}) {
   let phase = 'setup', baseline, lastFront, lastCover = false;
@@ -66,7 +67,9 @@ export function attentionTracker(task, { onEvent } = {}) {
           : phase === 'setup' && front === task.bundle ? 'launch-activation' : 'focus-change');
         lastFront = front;
       }
-      if (cover && !lastCover) record('cover', front, task.bundle, phase === 'setup' ? 'launch-cover' : 'cover');
+      // The cover flag means the fixture app's own window lies over the owner's. During setup that is its launch, and during
+      // cleanup it is the app re-showing a window as its document closes (Word, 2026-10-19). During measurement it stops.
+      if (cover && !lastCover) record('cover', front, task.bundle, phase === 'setup' ? 'launch-cover' : phase === 'cleanup' ? 'cleanup-cover' : 'cover');
       lastCover = cover;
       if (stop) tracker.stopped = true;
       return stop;

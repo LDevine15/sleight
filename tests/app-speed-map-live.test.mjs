@@ -313,3 +313,19 @@ test('a document fixture scrolls the area around its own text, and cleanup windo
   assert.doesNotMatch(JSON.stringify(cleanup.windows), /private/);
   await assert.rejects(h.runtime.close(), /CLEANUP_UNCONFIRMED/);
 });
+
+// AM1 qualification 3 (2026-10-19 08:50Z): every phase measured, then Word's window covered Terminal while its document
+// closed (phase cleanup, 4631 ms) and the cell was marked unsafe, which hid its timings from the summary.
+test('a cover by the fixture app during its own cleanup is recorded as cleanup-cover and does not stop the run', () => {
+  const tracker = attentionTracker({ bundle: 'com.microsoft.Word' });
+  tracker.observe({ front: 'com.apple.Terminal', atMs: 0 });
+  assert.equal(tracker.observe({ front: 'com.apple.Terminal', stage: 'ready', atMs: 1161, targetOverOwner: true }), false);
+  tracker.setPhase('measure');
+  assert.equal(tracker.observe({ front: 'com.apple.Terminal', stage: 'ready', atMs: 2000, targetOverOwner: false }), false);
+  tracker.setPhase('cleanup');
+  assert.equal(tracker.observe({ front: 'com.apple.Terminal', stage: 'cleanup', atMs: 4631, targetOverOwner: true }), false);
+  assert.deepEqual(tracker.events.map(event => [event.phase, event.class]), [['setup', 'launch-cover'], ['cleanup', 'cleanup-cover']]);
+  assert.equal(tracker.stopped, false);
+  // Focus taken during cleanup is still a stop: only the window cover is the app's own close behaviour.
+  assert.equal(tracker.observe({ front: 'com.microsoft.Word', stage: 'cleanup', atMs: 4800 }), true);
+});
