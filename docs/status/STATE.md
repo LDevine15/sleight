@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 15:55 UTC)
+## Banner (2026-10-19 16:35 UTC)
 
 Goal (owner): 1.3.0 is out. 1.3.1 validation runs now, then sleight holds at 1.3.1 while the owner uses it. 1.4.0 (analytics,
 Cursor plugin, AM1 speed map) builds on its own branch. The video isn't tied to any release (owner, 2026-10-19). Published results show their engine
@@ -20,26 +20,29 @@ on Haiku and on Opus. Helium on the release build (2026-10-19, rel130 r1-r5, own
 against FowlBrowser's 343.6 s, every pair within 20% at 5 runs (README updated, hub not regenerated yet). Known 1.3.0 problems found
 since: the startup cache (HS1) and the promo-code Apply stop (PG2), both in known-problems.
 
-**1.3.1, `claude/p131-integration` b0d5af45 (local; 6ba7204b pushed with a full check of 8969 tests, 0 fail).** On top of
-1.3.0's release line (merged 6ba7204b): codex-turbo, FU1, PG2, PG3, the compat check and workflow, FS (behind `SLEIGHT_FS=1`),
-SW1, TU1, HS1, plus CF2 36c0efa3 (the compat probe uses the launcher's surfaces), NT1 24906e50 (fixture cleanup and window-drag
-placement, the cause of today's native STOPs) and the flag A/B runner G3 5e065c7c. Live results so far: SW1 demoid 2 of 3, but its
-pop-up line fired 0 of 3 (SW1b building). Owner, 2026-10-19: every check today including the flag A/Bs and AS-3, then sleight-arch
-pushes 1.3.1 public. The live runbook is ledger/p130/live-runbook-1019.md. Building for 1.3.1: SW1b, DR1 (drag counts Notification
-Center as cover; AX text move type error), G1 ghost hand harness, G2 AS-3 harness, G4 Electron runner. Live queue (Terminal
-blocks, one at a time): block-sw1pg (PG3 form-checkout), block-native4 (FS native A/B on 7b9e6227 with NT1, then compat engine
-and live tiers), block-pg3b, then the flag A/Bs, the Chrome release pass with the TU1 census, Electron, ghost hand, AS-3, Codex
-turbo, and the release steps with the history rewrite (prepared and dry-run in ledger/p131/rewrite-*).
+**1.3.1, `claude/p131-integration` 8aba0c2b (local; 6ba7204b pushed with a full check of 8969 tests, 0 fail).** Merged since:
+CF2 (compat probe uses the launcher's surfaces), NT1 (fixture cleanup and window placement, the cause of today's native STOPs),
+DR1 with its review fixes (drag cover check passes a window only when the hit test returns the target's own process and the
+window is a /System/Library agent; the Accessibility text move had failed every time since 2026-10-11), SW1b (one-window count
+uses windows a Space holds; Safari keeps a hidden launch window), and the live-check harness G1 (ghost hand H5/H6/H8), G2 (AS-3
+A/B), G3 (flag A/Bs), G4 (Electron qualification runner). Every merge had a Sonnet-high review. In today's live checks PG3 stopped
+before the unpriced payment in 3 of 3 (a Safari sleight rerun is queued). SW1 passed demoid 2 of 3, though its pop-up line fired
+0 of 3, which SW1b fixes. The compat engine tier needs a rerun with CF2. By the owner's call every check runs today, the flag A/Bs and AS-3
+included, and then sleight-arch pushes 1.3.1 public with the history rewrite (prepared, dry run PASS, ledger/p131/rewrite-*).
+The owner delegated all Electron qualification cards on benchmark VS Code copies (LAWS). Live queue after the native A/B:
+compat, PG3 rerun, the film's T1 take, then race-131 to the merged candidate with a full check, the flag A/Bs (bench/flag-ab.command,
+~1 h 35 min), AS-3 (~1 h 25 min), Electron (G4), ghost hand H5/H6/H8, SW1b and DR1 rechecks, Codex turbo, the version bump, the
+Chrome release pass with the TU1 census, and the release. Runbook: ledger/p130/live-runbook-1019.md.
 
-**1.4.0, `claude/p140` aef8b351 (local, with 1.3.1 a74fdfe7 merged in).** Analytics, Cursor, AM1 built. Done on branches:
-CR1 9ad4d93a (bench window cover check; its exclusion rule moves Safari fastest-on 9 to 8, under Sonnet review with CR3), CR2
-32d9dc43 (the race prompt allows a pop-up the task opens), CR3 a31ec98f (inject-mail grader, 6 runs fail to pass), AM1E 3a4fc377
-(Excel misses were engine helper crashes, and the crash resend is now jittered). Building: README and hub (plan ledger/p140/readme-hub-pages-PLAN.md;
-Opus rows H1, H2, H4, H5, H6; Sol lane X1 for Pages), CC1-CC3 and CC6 (Opus), CC4-CC5 and held-out fixtures (Sol lanes X5, X4),
-Cursor and analytics validation prep (Sol lanes X2, X3), from the Fable study ledger/p140/codex-vs-cc-1019-REPORT.md. CC7 waits
-for SW1b, and CC8 waits for the owner's AXValue ruling. A Fable loss study on the browser races is running. Owner calls, 2026-10-19, set
-Pages from main /docs on github.io, the README demo from the film's trick take, Cursor listed after its live install (the owner
-walks over to sign in when asked), "tested on macOS 27, minimum not measured".
+**1.4.0, `claude/p140` 130e7ebe (local).** Merged: 1.3.1 8aba0c2b, CR1+CR3 (cover exclusion opt-in, default output identical;
+inject-mail grader), CR2, AM1E, CC6 (premise wrong, ~0 s; fixed a stale-tree race), CC8 (drag binds printed labels by AXValue,
+owner ruling in LAWS), X7, README and hub rows H1 (charts), H2 (hub layout), H4 (README 188 to 106 lines, INSTALL.md for agents),
+H5 (diagram, demo pipeline), H6 (agent-install harness under sandbox-exec). Published numbers unchanged by the merges. Still in review
+or fixing are X5 (CC4/CC5, whose payment-gate bypass on resend is fixed, with small follow-ups left), X6 (turbo LB1-LB3, Sol lane fixing),
+X1/H3 Pages, X3 analytics, X4 held-out fixtures (Sol lanes fixing), TABC a4990639 (CC7+LB4+LB6, reviewed), CC13, LB7 (behind a
+review), X8 LB5. Owner steps: one-time logins for the agent-install test (`node bench/agent-install.mjs --setup` prints them) and the
+Cursor sign-in when its live install runs. The owner's calls cover Pages from main /docs on github.io, README demo from the film's trick take,
+Cursor listed after its live install, "tested on macOS 27, minimum not measured".
 
 **ROADMAP 4b Sol pair, done 14:03Z** (race-131, 1.3.1 327fa383, Safari and Firefox x3, wall sums of 12 tasks). Safari: sleight
 inside Codex 10, 9, 8 of 12 (739.5, 798.9, 791.1 s), codex-sol 8, 7, 8 (801.2, 734.7, 827.2 s). Firefox: sleight inside Codex 10,
