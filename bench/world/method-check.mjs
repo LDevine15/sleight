@@ -14,6 +14,11 @@ const methods = new Set(['getApp', 'getState', 'listApps', 'listWindows', 'getAX
   'match', 'test', 'toString', 'toLowerCase', 'toUpperCase', 'at', 'keys', 'values', 'entries']);
 const logical = new Set([ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken,
   ts.SyntaxKind.AmpersandAmpersandEqualsToken, ts.SyntaxKind.BarBarEqualsToken, ts.SyntaxKind.QuestionQuestionEqualsToken]);
+function refusedBeforeExecution(name, success, content) {
+  if (success || name !== 'mcp__plugin_sleight_computer__js') return false;
+  const text = typeof content === 'string' ? content : Array.isArray(content) && content.length === 1 && content[0]?.type === 'text' ? content[0].text : '';
+  return /^(?:sleight stopped this call before it ran: `js` has no `require` and no file system access\.|sleight skipped this call: `js` has no `require` or file access\.)$/.test(text);
+}
 function literal(node) {
   if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node) ||
     [ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(node.kind)) return true;
@@ -25,9 +30,11 @@ function literal(node) {
 export function dragMethodAudit(transcript) {
   const audit = { drag: false, replacement: false, complete: true }, pending = new Map(), apps = new Set();
   let calls = 0, engine = true;
-  const inspect = (name, input, success) => {
+  const inspect = (name, input, success, content) => {
     calls++;
     if (!input || typeof input !== 'object' || Array.isArray(input)) { audit.complete = false; return; }
+    // Sleight's preflight never sent this request to the engine. Failed engine calls still need inspection.
+    if (refusedBeforeExecution(name, success, content)) return;
     const tool = name.split('__').at(-1);
     if (tool === 'replay') audit.complete = false;
     if (tool === 'blocked_app' && input.op === 'type') audit.replacement = true;
@@ -105,7 +112,7 @@ export function dragMethodAudit(transcript) {
       const item = event.item;
       let input = item.arguments === undefined ? {} : item.arguments;
       if (typeof input === 'string') { try { input = JSON.parse(input); } catch {} }
-      inspect(item.tool ?? '', input, item.status !== 'failed' && !!item.result && item.result.isError !== true && !item.error);
+      inspect(item.tool ?? '', input, item.status !== 'failed' && !!item.result && item.result.isError !== true && !item.error, item.result?.content);
     }
     for (const item of event.message?.content ?? []) {
       if (item.type === 'tool_use') pending.set(item.id, item);
@@ -113,7 +120,7 @@ export function dragMethodAudit(transcript) {
         const request = pending.get(item.tool_use_id);
         if (!request) { audit.complete = false; continue; }
         pending.delete(item.tool_use_id);
-        inspect(request.name, request.input, item.is_error !== true && event.tool_use_result?.isError !== true);
+        inspect(request.name, request.input, item.is_error !== true && event.tool_use_result?.isError !== true, item.content);
       }
     }
   }

@@ -212,7 +212,7 @@ function requireAncestor(el, win, message = 'the focused text selection is outsi
 }
 
 // Numbers name identities from the relay's observed tree, never a fresh traversal index.
-// Text points use a nonempty glyph range; a zero-length line-end range can be at (0, 0).
+// Text points use glyph bounds, or a blank destination row's own proven caret bounds.
 function semanticPoints(request, pid, win, main, knownElements, endpoint, windowText) {
   const references = [], state = [], bounds = main.bounds;
   const numbers = [...new Set((endpoint ? [request[endpoint]] : [request.from, request.to]).filter(elementEndpoint))];
@@ -251,7 +251,7 @@ function semanticPoints(request, pid, win, main, knownElements, endpoint, window
         r.Y + r.Height > field.bounds.Y + field.bounds.Height) throw new Error('text glyph geometry is unavailable or outside the window');
     return { x: end ? r.X + r.Width - Math.min(1, r.Width / 4) : r.X + r.Width / 2, y: r.Y + r.Height / 2 };
   };
-  const resolve = endpoint => {
+  const resolve = (endpoint, destination = false) => {
     if (coordinate(endpoint)) return toPoints(endpoint, screenshotScale(request, bounds, main.title));
     let point;
     if (elementEndpoint(endpoint)) {
@@ -272,17 +272,27 @@ function semanticPoints(request, pid, win, main, knownElements, endpoint, window
       point = glyphPoint(field, field.selection.location + field.selected.search(/\S/u), false);
     } else if (lineEndpoint(endpoint)) {
       const field = text(), range = field.area.lineRange(Number(endpoint.slice(12)) - 1);
-      if (!range || !Number.isSafeInteger(range.location) || !Number.isSafeInteger(range.length) || range.location < 0 || range.length <= 0 ||
+      if (!range || !Number.isSafeInteger(range.location) || !Number.isSafeInteger(range.length) || range.location < 0 || range.length < 0 ||
           range.location + range.length > field.value.length) throw new Error('line range is unavailable');
       const line = field.value.slice(range.location, range.location + range.length).replace(/[\r\n]+$/, '');
-      if (!line.length) throw new Error('line has no final glyph; read the window and choose another target');
-      const last = [...line].at(-1);
-      point = glyphPoint(field, range.location + line.length - last.length, true);
+      if (!line.length) {
+        if (!dp7 || !destination || !/^(?:\r?\n)?$/.test(field.value.slice(range.location, range.location + range.length))) {
+          throw new Error('line has no final glyph; read the window and choose another target');
+        }
+        const r = field.area.rect(range.location, range.length);
+        if (!r || !Object.values(r).every(Number.isFinite) || r.Width < 0 || r.Height <= 0 || (r.X === 0 && r.Y === 0) ||
+            r.X < field.bounds.X || r.Y < field.bounds.Y || r.X + r.Width >= field.bounds.X + field.bounds.Width ||
+            r.Y + r.Height > field.bounds.Y + field.bounds.Height) throw new Error('blank line caret geometry is unavailable or outside the window');
+        point = { x: r.X, y: r.Y + r.Height / 2 };
+      } else {
+        const last = [...line].at(-1);
+        point = glyphPoint(field, range.location + line.length - last.length, true);
+      }
     } else throw new Error('invalid semantic drag endpoint');
     if (!inside(bounds, point)) throw new Error('resolved drag point is outside the chosen window');
     return [point.x - bounds.X, point.y - bounds.Y];
   };
-  const from = endpoint === 'to' ? undefined : resolve(request.from), to = endpoint === 'from' ? undefined : resolve(request.to);
+  const from = endpoint === 'to' ? undefined : resolve(request.from), to = endpoint === 'from' ? undefined : resolve(request.to, true);
   return { from, to, references, elements, signature: JSON.stringify({ from, to, state, bounds: [bounds.X, bounds.Y, bounds.Width, bounds.Height] }) };
 }
 

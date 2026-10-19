@@ -199,13 +199,49 @@ test('selection and one-based line end resolve from glyph geometry in window poi
   assert.equal(h.reads.includes('AXFocusedUIElement'), true);
 });
 
-test('semantic text endpoints refuse empty selections, blank lines, foreign focus and unreadable bounds', () => {
+for (const [value, range] of [['destination\n\n', { location: 12, length: 1 }],
+  ['destination\n', { location: 12, length: 0 }], ['destination\r\n\r\n', { location: 13, length: 2 }]]) {
+  test(`DPg resolves a blank destination line from its own AX caret: ${JSON.stringify(value)}`, () => {
+    const h = semanticFixture(); h.area.AXValue = value; h.area.AXSelectedText = '';
+    h.text.lineRange = () => range;
+    h.text.rect = (i, n) => {
+      assert.equal(i, range.location); assert.equal(n, range.length);
+      return { X: 110, Y: 160, Width: 0, Height: 14 };
+    };
+    const main = { id: 11, title: 'document', bounds: h.bounds };
+    const resolve = () => h.context.semanticPoints(h.request, 7, h.window(), main, undefined, 'to', 'area');
+    assert.deepEqual(Array.from(resolve().to), [10, 67]);
+    vm.runInContext('dp7 = false', h.context);
+    assert.throws(resolve, /line/);
+  });
+}
+
+for (const rect of [null, { X: 0, Y: 0, Width: 0, Height: 14 }, { X: 110, Y: 160, Width: 0, Height: 0 },
+  { X: 110, Y: 160, Width: -1, Height: 14 }, { X: 110, Y: NaN, Width: 0, Height: 14 },
+  { X: 99, Y: 160, Width: 0, Height: 14 }, { X: 110, Y: 490, Width: 0, Height: 14 }]) {
+  test(`DPg refuses an unproven blank caret: ${JSON.stringify(rect)}`, () => {
+    const h = semanticFixture(); h.area.AXValue = 'destination\n\n'; h.area.AXSelectedText = '';
+    h.text.lineRange = () => ({ location: 12, length: 1 }); h.text.rect = () => rect;
+    assert.throws(() => h.context.semanticPoints(h.request, 7, h.window(),
+      { id: 11, title: 'document', bounds: h.bounds }, undefined, 'to', 'area'), /line|geometry|window/);
+  });
+}
+
+test('DPg blank-line geometry propagates AX timeouts', () => {
+  const h = semanticFixture(); h.area.AXValue = 'destination\n\n'; h.area.AXSelectedText = '';
+  h.text.lineRange = () => ({ location: 12, length: 1 });
+  h.text.rect = () => { throw Object.assign(Error('AX timeout'), { axCode: -25204 }); };
+  assert.throws(() => h.context.semanticPoints(h.request, 7, h.window(),
+    { id: 11, title: 'document', bounds: h.bounds }, undefined, 'to', 'area'), error => error.axCode === -25204);
+});
+
+test('semantic text endpoints refuse empty selections, invalid ranges, foreign focus and unreadable bounds', () => {
   for (const change of [
     h => { h.area.AXSelectedText = ''; },
     h => { h.area.AXParent = { ...h.win }; },
     h => { h.text.rect = () => null; },
     h => { h.text.rect = () => ({ X: 99, Y: 140, Width: 8, Height: 14 }); },
-    h => { h.text.lineRange = () => ({ location: 10, length: 1 }); },
+    h => { h.text.lineRange = () => ({ location: 10, length: -1 }); },
     h => { h.text.selection = () => ({ location: 1, length: 5 }); },
   ]) {
     const h = semanticFixture(); change(h);

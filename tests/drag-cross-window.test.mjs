@@ -407,3 +407,27 @@ test('DPd smoke endpoints move onto the second empty target row without a placeh
     assert.equal(h.events.length + h.activations.length, 0);
   }
 });
+
+test('DPg recorded blank-line destination moves to line 2 without a placeholder or screenshot', () => {
+  const h = fixture({ emptyFinal: true }), adapter = h.context.axTextArea;
+  h.a.AXValue = 'alpha move-7a278a09 omega\n'; h.a.AXSelectedText = 'move-7a278a09';
+  h.a.range = { location: 6, length: 13 }; h.b.AXValue = 'destination\n\n';
+  h.context.axTextArea = (pid, point, reference) => {
+    const area = adapter(pid, point, reference);
+    if (reference !== h.b) return area;
+    return { ...area,
+      lineRange: n => [{ location: 0, length: 12 }, { location: 12, length: 1 }, { location: 13, length: 0 }][n] ?? null,
+      rect: (i, n = 1) => i === 12 ? { X: 755, Y: 150, Width: 0, Height: 14 }
+        : i === 13 && n === 0 ? { X: 755, Y: 170, Width: 0, Height: 14 }
+          : { X: 755 + i * 8, Y: 130, Width: 8, Height: 14 },
+    };
+  };
+  h.context.raiseWindow = () => assert.fail('AX move raised a window');
+  const r = h.run({ dp7: true, dp2: true, to: 'end of line 2', trace: true });
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
+  assert.equal(r.fallbackReason, null); assert.equal(r.deliveryVerified, true);
+  assert.equal(h.a.AXValue, 'alpha omega\n'); assert.equal(h.b.AXValue, 'destination\nmove-7a278a09\n');
+  assert.deepEqual(h.writes, [[12, 12, 0, 'move-7a278a09'], [11, 6, 14, '']]);
+  assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), ['ax-move:start', 'settle:start', 'settle:end', 'ax-move:end']);
+  assert.equal(h.events.length + h.activations.length, 0);
+});
