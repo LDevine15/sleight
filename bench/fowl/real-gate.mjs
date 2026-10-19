@@ -17,8 +17,8 @@ import { assertWorldCLI } from '../world/native-world.mjs';
 import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
 import { startRoundAllow, allowPlan } from './chrome-allow.mjs';
-import { windowCover } from './window-cover.mjs';
-import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure } from './real-gate-grade.mjs';
+import { watchCover, windowCover } from './window-cover.mjs';
+import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure, coverEvidence, coverText, withAnswerGraders, currentAnswerGraders } from './real-gate-grade.mjs';
 import { taskSupport, raceBundles, isCodexSurface, isCodexSleightSurface, runsCodexExec, sleightKind, codexModelFor } from './support.mjs';
 import { CODEX_SLEIGHT_HOME, ensureCodexSleightHome, writeCodexSleightConfig, approvalSummary, PROXY, SLEIGHT_MCP } from '../codex-sleight.mjs';
 import { engineSpan, readEngine } from '../engine-version.mjs';
@@ -277,7 +277,11 @@ export async function admitRealGate(plan, { terminal = terminalAncestor } = {}) 
 // Runtime injection is only for offline lifecycle tests, never CLI/environment input.
 export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, tasks,
   runtime = {} }) {
-  tasks ??= JSON.parse(readFileSync(resolve(mcpRoot, args.tasks || 'tools/agents/codex-h2h.json'), 'utf8'));
+  // The answer patterns come from sleight's task file (real-gate-grade.mjs ANSWER_GRADER_FILE); each row saves the task it ran with.
+  if (!tasks) {
+    const graders = currentAnswerGraders();
+    tasks = JSON.parse(readFileSync(resolve(mcpRoot, args.tasks || 'tools/agents/codex-h2h.json'), 'utf8')).map(task => withAnswerGraders(task, graders));
+  }
   let plan = realGatePlan({ args, tasks, repo, mcpRoot });
   if (args['dry-run']) {
     // Read-only previews of what launch records: the app version and the benchmark profile's folder.
@@ -332,6 +336,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     // Claude in Chrome reaches Anthropic's browser bridge about 6 s after launch (smoke 2026-10-17: launch 20:17:53,
     // connected 20:17:59). Starting sooner costs the first task a failed select_browser that other arms never pay.
     if (plan.surface === 'claude-in-chrome') await (runtime.settle || (ms => new Promise(resolve => setTimeout(resolve, ms))))(10000);
+    let coverLogged = 0;
     for (let arm of plan.arms) {
       if (controller.signal.aborted) throw Error('Gate interrupted');
       const census = async () => {
@@ -362,8 +367,10 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       // The browser's own window goes where the fewest other windows overlap it, and what still covers it is recorded beside the
       // task's outcome. An offline test that injects the browser never reads or moves the Mac's windows.
       const cover = await (runtime.windowCover || (runtime.launchBrowser ? async () => null : windowCover))(browser.pid, { place: true });
+      // Windows can come over it while the agent runs, so the cover is read again every 5 s and at the end (read only).
+      const coverWatch = (runtime.watchCover || (runtime.launchBrowser ? null : watchCover))?.(browser.pid) ?? null;
       // Chrome and Helium report every page URL while the agent runs; the lookup graders need that visit.
-      let watch = null, navigation;
+      let watch = null, navigation, coverRun = null;
       if (!['firefox', 'safari'].includes(browser.browser)) {
         try { watch = await (runtime.watchBrowser || watchNavigations)(browser); }
         catch (error) { navigation = { observed: false, reason: error.message }; }
@@ -372,6 +379,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
         if (error.groupClean === false || error.collectionError) cleanupProven = false;
         throw error;
       }).finally(async () => {
+        coverRun = await coverWatch?.stop().catch(error => ({ error: error.message })) ?? null;
         if (!watch) return;
         navigation = { observed: true, urls: watch.urls() };
         await watch.close().catch(() => {});
@@ -398,9 +406,14 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
         observed: observation.observed, observationReason: observation.reason, ownerCheck: observation.ownerCheck, evidence, visits });
       const text = name => { try { return readFileSync(join(arm.dir, name), 'utf8'); } catch { return ''; } };
       const errorClass = outcome.ok ? null : runErrorClass({ eventsText: text('events.jsonl'), stderr: text('stderr.txt') });
+      // Cover evidence on every row, pass or fail; race-score --exclude-covered decides over all rounds which rows to leave out.
+      const covered = coverEvidence({ eventsText: text('events.jsonl'), readings: [cover, coverRun] });
+      // The first watched tasks name every window owner the watch saw, overlays included, so a new overlay owner shows up early.
+      if (coverRun?.seen?.length && coverLogged++ < 3) console.error(`cover watch ${arm.task.name}: ${coverRun.seen.map(w =>
+        `${w.owner} ${Math.round(w.fraction * 100)}% layer ${w.layer ?? '?'}${w.counted ? '' : ' (overlay, not counted)'}`).join('; ')}`);
       const row = { task: arm.task, surface: arm.surface, status: 'ran', wallMs: run.finished - run.started, toolCalls: run.toolCalls, toolErrors: run.toolErrors,
         successfulBrowserCalls: evidence?.successfulCalls ?? null, run: { ...run, tabs: [...run.tabs] }, start, observation, navigation: navigation ?? null,
-        agentConfig: arm.metadata, grade, site, outcome, errorClass, cover };
+        agentConfig: arm.metadata, grade, site, outcome, errorClass, cover, coverRun, ...(covered ? { coverEvidence: covered } : {}) };
       rows.push(row);
       writeFileSync(join(arm.dir, 'run.json'), JSON.stringify(row, null, 2));
       writeFileSync(join(plan.out, 'results.json'), JSON.stringify(rows, null, 2));
@@ -445,8 +458,9 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
   const lines = [`Browser: ${used.browser} ${used.version ?? '(version unknown)'}, profile ${profileText}` +
     `${used.loadedExtensions?.length ? `, loaded ${used.loadedExtensions.join(', ')}` : ''}.`, engineLine(engine), '',
     '| task | arm | outcome | focus | covered by | ms | calls | errors |', '|---|---|---|---|---|---:|---:|---:|',
-    ...rows.map(row => `| ${row.task.name} | ${row.surface} | ${row.outcome.cell} | ${row.focusGrade.cell} | ${coverCell(row.cover)} | ${row.wallMs} | ${row.toolCalls ?? 'unknown'} | ${row.toolErrors ?? 'unknown'} |`),
-    ...(harness ? ['', `Harness failure, excluded from scoring: ${harness.reason}.`] : [])];
+    ...rows.map(row => `| ${row.task.name} | ${row.surface} | ${row.outcome.cell} | ${row.focusGrade.cell} | ${coverCell(row.cover)}${row.coverRun?.covering?.length ? `; during: ${coverCell(row.coverRun)}` : ''} | ${row.wallMs} | ${row.toolCalls ?? 'unknown'} | ${row.toolErrors ?? 'unknown'} |`),
+    ...(harness ? ['', `Harness failure, excluded from scoring: ${harness.reason}.`] : []),
+    ...(rows.some(row => row.coverEvidence) ? ['', ...rows.filter(row => row.coverEvidence).map(row => `Cover evidence: ${row.task.name} ${row.outcome.ok ? 'passed' : 'failed'}, ${coverText(row.coverEvidence)}. Scored as run; \`race-score.mjs --exclude-covered\` decides whether it is left out.`)] : [])];
   writeFileSync(join(plan.out, 'report.md'), lines.join('\n') + '\n');
   if (harness) console.error(`Harness failure: ${harness.reason}; rerun this round`);
   if (!cleanupProven || rows.some(row => !row.outcome.ok || row.focusGrade.ok === false)) process.exitCode = 1;

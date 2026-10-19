@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gradeGateTask, harnessFailure, raceProblems, runErrorClass } from '../bench/fowl/real-gate-grade.mjs';
-import { expandRounds, flipped, loadRound, regradeRow, scoreRounds } from '../bench/fowl/race-score.mjs';
+import { COVER_MIN, coverEvidence, coverExclusions, coverRefusals, countedCover, gradeGateTask, harnessFailure, raceProblems, runErrorClass } from '../bench/fowl/real-gate-grade.mjs';
+import { coveredRows, expandRounds, flipped, loadRound, markCover, regradeRow, scoreRounds } from '../bench/fowl/race-score.mjs';
 import { runRealGate } from '../bench/fowl/real-gate.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
@@ -152,7 +152,9 @@ test('race-score groups rounds by browser, arm and task with the claim rules, an
   assert.deepEqual(flipped(rounds).filter(f => f.task === 'inject-order').map(f => f.round), ['real-c0-codex', 'real-c1-codex', 'real-c2-codex']);
   // FowlBrowser's only call errored, so its recorded pass falls to the browser-call rule.
   const h = scoreRounds(rounds).helium;
-  assert.deepEqual(h.fastest, { 'sleight-turbo': ['wikipedia'], fowlbrowser: [] });
+  // One run each: both cells are marked short, and a short cell can't be fastest on its task.
+  assert.deepEqual(h.fastest, { 'sleight-turbo': [], fowlbrowser: [] });
+  assert.deepEqual(h.short, [{ task: 'wikipedia', arm: 'sleight-turbo', runs: 1 }, { task: 'wikipedia', arm: 'fowlbrowser', runs: 1 }]);
   assert.deepEqual(h.pairs.map(p => [p.arm, p.sleight, p.runs]), [['fowlbrowser', 8, { 'sleight-turbo': 1, fowlbrowser: 1 }]]);
   assert.match(flipped(rounds).find(f => f.arm === 'fowlbrowser').problems.join(), /no successful browser tool call/);
 
@@ -352,4 +354,148 @@ test('a live round records the engine at its start and end, and flags a change',
   const plan = await runRealGate({ args: { surface: 'codex', 'real-browser': 'firefox', out: join(dir, 'dry'), 'dry-run': true }, tasks: [gateTask],
     runtime: { ...gateRuntime(dir, codexOk), readEngine: () => ({ version: '26.1013.40934' }), print: () => {}, readVersion: () => '1', preflight: () => ({}) } });
   assert.equal(plan.engine.version, '26.1013.40934');
+});
+
+// SOL-L1: event lines in the shapes race-1017's Sol rounds saved (firefox-codex-sleight-sol-b16-r3, firefox-codex-sol-r3).
+const dragRefused = owner => JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', server: 'plugin_sleight_computer', tool: 'drag',
+  arguments: { app: 'Firefox', from: [700, 1470], to: [700, 1350] }, status: 'failed', error: null, result: { content: [{ type: 'text',
+    text: JSON.stringify({ path: 'none', error: `${owner} covers the window at the drag points, and this drag has no selected text; nothing was pressed` }, null, 1) }] } } });
+const engineDrag = JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', server: 'cua_repl', tool: 'js', status: 'completed', error: null,
+  arguments: { code: 'await ff.drag([700,1011], [700,887]); await ff.getAXState();' }, result: { content: [{ type: 'text', text: 'no change' }] } } });
+const claudeDrag = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'd', name: 'mcp__plugin_sleight_computer__drag', input: { app: 'Firefox', from: 91, to: 90 } }] } });
+const docsOnly = JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', tool: 'js', status: 'completed', error: null,
+  arguments: { code: 'let app = await cua.getApp("Firefox")' }, result: { content: [{ type: 'text', text: 'drag(from: Vec2, to: Vec2): Promise<void>; use app.drag(from, to)' }] } } });
+const claude83 = { frame: { x: 4, y: 33, width: 1280, height: 854 }, covering: [{ owner: 'Claude', layer: 0, fraction: 0.826 }], moved: false };
+
+const claude40 = { covering: [{ owner: 'Claude', layer: 0, fraction: 0.4 }] };
+const covered = (evidence, rest) => ({ coverEvidence: evidence, ...rest });
+
+test('cover evidence: a drag refusal or a reading of another app\'s normal window, for any outcome; overlays never count', () => {
+  assert.deepEqual(coverRefusals(dragRefused('Claude')), ['Claude']);
+  assert.deepEqual(coverRefusals('{"fallbackReason":"background skipped: Claude covers the window at the drag points"}'), [], 'a text drag that went ahead');
+  assert.deepEqual(coverRefusals('x'.repeat(5_000_000) + dragRefused('Finder')), ['Finder'], 'a large log is scanned by the refusal text');
+  // sleight in Codex: the drag tool named the app, and the start reading had nothing over the window (b16-r2 helium).
+  assert.deepEqual(coverEvidence({ eventsText: [codexOk, dragRefused('Claude')].join('\n'), readings: [{ covering: [] }, null] }), { refused: ['Claude'], share: {} });
+  // Codex's own computer use: no refusal text, the engine's drag in js and a reading of 83%. A pass records the same evidence.
+  assert.deepEqual(coverEvidence({ eventsText: engineDrag, readings: [claude83] }), { refused: [], share: { Claude: 0.826 } });
+  assert.deepEqual(coverEvidence({ eventsText: claudeDrag, readings: [null, { covering: [{ owner: 'Terminal', layer: 0, fraction: 0.12 }] }] }).share, { Terminal: 0.12 });
+  // No drag (tool docs naming drag don't count), a banner under COVER_MIN, and overlays: the engine's, Cua's driver, the Dock, other layers.
+  assert.equal(coverEvidence({ eventsText: docsOnly, readings: [claude83] }), null);
+  assert.equal(coverEvidence({ eventsText: engineDrag, readings: [{ covering: [{ owner: 'UserNotificationCenter', layer: 0, fraction: COVER_MIN - 0.01 }] }, { error: 'timeout' }] }), null);
+  const overlays = [{ owner: 'Codex Computer Use', layer: 0, fraction: 1 }, { owner: 'Cua Driver', layer: 0, fraction: 1 }, { owner: 'Dock', layer: 0, fraction: 0.5 },
+    { owner: 'Stickies', layer: 3, fraction: 0.3 }];
+  assert.deepEqual(countedCover(overlays), []);
+  assert.equal(coverEvidence({ eventsText: engineDrag, readings: [{ covering: overlays }] }), null);
+});
+
+test('--exclude-covered leaves out every run a drag refusal names, pass or fail, and reading-only runs at 50% or more unless the arm passed under that window', () => {
+  const rows = [
+    covered({ refused: ['Claude'], share: {} }, { arm: 'codex-sleight-sol', task: 'form-settings', passed: false }),
+    covered({ refused: ['Finder'], share: {} }, { arm: 'sleight', task: 'form-settings', passed: true }),
+    // codex-sol under the Claude window: Firefox r2 passed form-settings, so the Safari and Firefox r3 failures stay scored.
+    covered({ refused: [], share: { Claude: 0.83 } }, { arm: 'codex-sol', task: 'form-settings', passed: true, browser: 'firefox' }),
+    covered({ refused: [], share: { Claude: 0.83 } }, { arm: 'codex-sol', task: 'form-settings', passed: false, browser: 'firefox' }),
+    covered({ refused: [], share: { Claude: 0.82 } }, { arm: 'codex-sol', task: 'form-settings', passed: false, browser: 'safari' }),
+    // No pass under the window for this arm and task, so the failures are left out.
+    covered({ refused: [], share: { Claude: 0.82 } }, { arm: 'codex-sol', task: 'form-settings-helium', passed: false }),
+    // Another arm's pass doesn't vouch for this arm, and 40% isn't enough without a refusal.
+    covered({ refused: [], share: { Claude: 0.82 } }, { arm: 'cua', task: 'form-settings-helium', passed: false }),
+    covered({ refused: [], share: { Finder: 0.41 } }, { arm: 'lcu', task: 'form-settings', passed: false }),
+  ];
+  const out = coverExclusions(rows);
+  assert.deepEqual(rows.map(row => out.get(row)?.source ?? null), ['refusal', 'refusal', null, null, null, 'reading', 'reading', null]);
+  assert.equal(out.get(rows[0]).reason, 'harness-covered by Claude, drag refused');
+  assert.equal(out.get(rows[5]).reason, 'harness-covered by Claude 82%');
+});
+
+test('race-score scores covered runs by default, says so first, and leaves them out alike with --exclude-covered', t => {
+  const root = mkdtempSync(join(tmpdir(), 'race-score-cover-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const codex = round(root, 'real-f1-codex-sol', 'firefox', 'codex-sol', [['form-settings', 170, false, { events: engineDrag }], ['form-travel', 60, true],
+    ['mdn', 20, false, { events: codexOk }]]);
+  const results = JSON.parse(readFileSync(join(codex, 'results.json'), 'utf8'));
+  for (const row of results) row.cover = claude83;
+  writeFileSync(join(codex, 'results.json'), JSON.stringify(results));
+  round(root, 'real-f1-sleight', 'firefox', 'sleight', [['form-settings', 90, false, { events: [claudeDrag, dragRefused('Claude')].join('\n') }], ['form-travel', 50, true]]);
+  round(root, 'real-f2-sleight', 'firefox', 'sleight', [['form-settings', 80, true, { events: [claudeDrag, dragRefused('Claude'), codexOk].join('\n') }], ['form-travel', 55, true]]);
+  round(root, 'real-f3-sleight', 'firefox', 'sleight', [['form-settings', 70, true, { events: [claudeDrag, codexOk].join('\n') }], ['form-travel', 52, true]]);
+  const load = () => expandRounds([join(root, 'real-*')]).map(dir => loadRound(dir));
+  const plain = scoreRounds(load()).firefox;
+  assert.deepEqual([plain.table.sleight['form-settings'].runs.length, plain.table.sleight['form-settings'].passes.length], [3, 2]);
+  assert.deepEqual([plain.table['codex-sol']['form-settings'].runs.length, plain.table['codex-sol']['form-settings'].passes.length], [1, 0]);
+  const rounds = load(), on = scoreRounds(rounds, { excludeCovered: true }).firefox;
+  // Both refused sleight runs go, the pass with the failure; the codex-sol reading-only failure goes (no codex-sol pass under Claude).
+  assert.deepEqual([on.table.sleight['form-settings'].runs.length, on.table.sleight['form-settings'].passes.length], [1, 1]);
+  assert.equal(on.table['codex-sol']['form-settings'], undefined);
+  // A failure with no drag in a covered window still counts against the arm.
+  assert.deepEqual([on.table['codex-sol'].mdn.runs.length, on.table['codex-sol'].mdn.passes.length], [1, 0]);
+  assert.deepEqual(coveredRows(rounds).map(c => [c.round, c.task, c.passed, c.excluded]), [
+    ['real-f1-codex-sol', 'form-settings', false, true], ['real-f1-sleight', 'form-settings', false, true], ['real-f2-sleight', 'form-settings', true, true]]);
+  // A cell under 3 runs is marked and can't be fastest: sleight's single form-settings run (on) and every codex-sol cell.
+  assert.deepEqual(on.fastest.sleight, ['form-travel']);
+  assert.ok(on.short.some(c => c.arm === 'sleight' && c.task === 'form-settings' && c.runs === 1));
+  assert.deepEqual(plain.fastest['codex-sol'], []);
+  const cli = (...flags) => spawnSync(process.execPath, [join(repo, 'bench/fowl/race-score.mjs'), root, ...flags], { encoding: 'utf8' });
+  const off = cli();
+  assert.equal(off.status, 0, off.stderr);
+  assert.match(off.stdout, /^Cover exclusions: OFF \(default\)\n/);
+  assert.match(off.stdout, /Rows with cover evidence \(3\), 3 of them left out under --exclude-covered, scored above \(1 passes, 2 failures\):\n  real-f1-codex-sol codex-sol form-settings fail: out, harness-covered by Claude 83%/);
+  assert.match(off.stdout, /\* under 3 runs, kept out of "fastest on": .*form-settings\/codex-sol \(1\)/);
+  const onText = cli('--exclude-covered').stdout;
+  assert.match(onText, /^Cover exclusions: ON \(opt-in --exclude-covered\)\n/);
+  assert.match(onText, /3 of them left out above/);
+  const json = JSON.parse(cli('--json').stdout);
+  assert.equal(json.coverExclusions, false);
+  assert.equal(json.covered.length, 3);
+  // A saved row without its events keeps what the gate recorded.
+  const saved = { task: { name: 'form-settings' }, surface: 'codex-sol', wallMs: 1000, successfulBrowserCalls: 3, outcome: { ok: false, cell: 'FAIL: x', problems: ['x'] },
+    coverEvidence: { refused: [], share: { Claude: 0.83 } } };
+  assert.deepEqual(regradeRow(saved).coverEvidence, { refused: [], share: { Claude: 0.83 } });
+  assert.equal(markCover([{ rows: [{ ...regradeRow(saved), passed: false }] }])[0].rows[0].harnessCover.source, 'reading');
+});
+
+test('a live round reads the cover during the run, logs the owners it saw, and records the evidence without leaving the row out', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'race-gate-cover-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const out = join(dir, 'out'), places = [], watched = [], logged = [];
+  // The start reading is clean after placing; the Claude app's window comes over during the run.
+  const runtime = { ...gateRuntime(dir, [codexOk, engineDrag].join('\n')),
+    windowCover: async (pid, options) => { places.push([pid, options]); return { frame: claude83.frame, covering: [], moved: false, screens: 1, bestOverlap: 0 }; },
+    watchCover: pid => { watched.push(pid); return { stop: async () => ({ readings: 4, errors: 0, covering: [{ owner: 'Claude', fraction: 0.826 }],
+      seen: [{ owner: 'Claude', layer: 0, fraction: 0.826, counted: true }, { owner: 'Cua Driver', layer: 0, fraction: 1, counted: false }] }) }; } };
+  const error = console.error; console.error = line => logged.push(line); t.after(() => { console.error = error; });
+  const rows = await runRealGate({ args: { surface: 'codex-sol', 'real-browser': 'firefox', out }, tasks: [{ ...gateTask, name: 'form-settings' }],
+    runner: { gradeOutcome: () => ({ problems: ['nothing submitted'] }), gradeSite: () => ({ problems: [] }) }, runtime });
+  console.error = error;
+  process.exitCode = 0;
+  assert.deepEqual(places.map(([, options]) => options), [{ place: true }]);
+  assert.equal(watched.length, 1);
+  assert.equal(watched[0], places[0][0]);
+  assert.deepEqual(rows[0].coverRun.covering, [{ owner: 'Claude', fraction: 0.826 }]);
+  assert.deepEqual(rows[0].coverEvidence, { refused: [], share: { Claude: 0.826 } });
+  assert.equal(rows[0].harnessCover, undefined);
+  assert.ok(logged.includes('cover watch form-settings: Claude 83% layer 0; Cua Driver 100% layer 0 (overlay, not counted)'), logged.join('\n'));
+  const report = readFileSync(join(out, 'report.md'), 'utf8');
+  assert.match(report, /\| form-settings \| codex-sol \| FAIL: nothing submitted \| not measured \| none; during: Claude 83% \|/);
+  assert.match(report, /\n\nCover evidence: form-settings failed, Claude 83%\. Scored as run; `race-score\.mjs --exclude-covered` decides whether it is left out\.\n$/);
+  assert.equal(coveredRows([loadRound(out)]).length, 1);
+});
+
+test('the hub states the cover rule only when its collect applied it, and the short-cell rule only for data scored with it', async t => {
+  const { FAMILIES, collectRace, render } = await import('../bench/results-hub.mjs');
+  const all = Object.fromEntries(FAMILIES.map(f => [f.id, JSON.parse(readFileSync(join(repo, 'docs/results/data', `${f.id}.json`), 'utf8'))]));
+  const rule = /This collect also left out/;
+  assert.doesNotMatch(render(all)['browser-race.md'], rule);
+  all['browser-race'] = { ...all['browser-race'], cover: { applied: false, rows: 22, left: 15, leftPasses: 3 }, minRuns: 3 };
+  assert.doesNotMatch(render(all)['browser-race.md'], rule);
+  assert.match(render(all)['browser-race.md'], /An arm's cell with fewer than 3 runs isn't counted for lowest expected time on its task\./);
+  all['browser-race'].cover.applied = true;
+  assert.match(render(all)['browser-race.md'], /This collect also left out 15 runs, 3 of them passes, that tried a drag while another app's window covered the browser's/);
+  const raceDir = join(homedir(), 'Projects/sleight-wt/race-1017');
+  if (!existsSync(raceDir)) { t.skip('the race folder is not on this Mac'); return; }
+  const off = collectRace({ raceDir, browsers: ['firefox'], family: 'browser-race', title: 'race' });
+  const on = collectRace({ raceDir, browsers: ['firefox'], family: 'browser-race', title: 'race', excludeCovered: true });
+  assert.equal(off.cover.applied, false);
+  assert.equal(on.cover.applied, true);
+  assert.equal(off.cover.left, on.cover.left);
+  assert.ok(off.studies.flatMap(s => s.runs).every(run => !run.leftOut));
+  assert.ok(on.studies.flatMap(s => s.runs).some(run => run.leftOut && run.passed), 'a covered pass is left out with the failures');
 });

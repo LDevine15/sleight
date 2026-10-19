@@ -7,7 +7,7 @@ import AppKit
 // would overlap it, when that is less than where it is; AXRaise can't lift a background app's window over another app's.
 //
 //   window-cover <pid>          the pid's largest on-screen window and the other apps' windows in front of it that overlap it
-//   window-cover <pid> place    the same before and after the move, plus "moved"
+//   window-cover <pid> place    the same before and after the move, plus "moved", "screens" and "bestOverlap"
 // Output is one JSON line. Failures are {"ok":false,"error":CODE}.
 
 func fail(_ code: String) -> Never {
@@ -85,7 +85,9 @@ for screen in NSScreen.screens {
         }
     }
 }
-if abs(best.minX - before.bounds.minX) < 1 && abs(best.minY - before.bounds.minY) < 1 { emit(result.merging(["moved": false]) { $1 }) }
+// Why a window stayed: how many displays there were and how much of the best spot other windows overlap (share of the window).
+let placing: [String: Any] = ["screens": NSScreen.screens.count, "bestOverlap": (bestArea / (before.bounds.width * before.bounds.height) * 1000).rounded() / 1000]
+if abs(best.minX - before.bounds.minX) < 1 && abs(best.minY - before.bounds.minY) < 1 { emit(result.merging(placing.merging(["moved": false]) { $1 }) { $1 }) }
 var value: CFTypeRef?
 guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXWindowsAttribute as CFString, &value) == .success,
       let axWindows = value as? [AXUIElement] else { fail("ax-windows") }
@@ -103,4 +105,4 @@ guard let position = AXValueCreate(.cgPoint, &origin), AXUIElementSetAttributeVa
 RunLoop.current.run(until: Date().addingTimeInterval(0.3))
 let after = onScreen()
 let moved = target(after)
-emit(["frame": frame(moved.bounds), "covering": cover(after, moved), "moved": true, "from": result])
+emit(placing.merging(["frame": frame(moved.bounds), "covering": cover(after, moved), "moved": true, "from": result]) { $1 })

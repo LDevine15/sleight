@@ -692,7 +692,7 @@ test('a drag that spent its time budget before pressing presses nothing', () => 
 });
 test('a covered drag with no selected text presses nothing and points to the engine drag', () => {
   const h = harness({ background: true, appId: 'com.apple.Chess', areaRole: 'AXImage', selection: '', coveredEnd: true, coveredPid: 9 }); const r = h.run({ windowId: 11 });
-  assert.equal(r.ok, false); assert.match(r.error, /Use the engine's app\.drag.*nothing was pressed/);
+  assert.equal(r.ok, false); assert.match(r.error, /without a drag .*use that\. Otherwise use the engine's app\.drag.*nothing was pressed/);
   assert.equal(h.pidEvents.length, 0); assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0);
 });
 test('a large non-text window posts without scanning unrelated elements', () => {

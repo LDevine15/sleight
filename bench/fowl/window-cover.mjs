@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { swiftModuleCache } from '../swift-cache.mjs';
+import { countedCover } from './real-gate-grade.mjs';
 
 const execFileAsync = promisify(execFile);
 let built = null;
@@ -25,12 +26,50 @@ async function helper() {
   return built;
 }
 
-// { frame, covering: [{ owner, layer, fraction }] }, covering front to back, plus { moved, from } with place; or { error }.
+// { frame, covering: [{ owner, layer, fraction }] }, covering front to back, plus { moved, from, screens, bestOverlap } with place;
+// or { error }. bestOverlap is the other windows' area over the best spot found, as a share of the window (stacked windows add).
 export async function windowCover(pid, { place = false, binary = helper, run = async (binary, args) => (await execFileAsync(binary, args, { timeout: 5000, encoding: 'utf8' })).stdout } = {}) {
   try {
     if (!Number.isSafeInteger(pid) || pid <= 0) return { error: 'no-pid' };
     const reply = JSON.parse(await run(await binary(), [String(pid), ...(place ? ['place'] : [])]));
     if (!reply.ok) return { error: reply.error };
-    return { frame: reply.frame, covering: reply.covering, ...(place ? { moved: reply.moved === true, ...(reply.from ? { from: reply.from } : {}) } : {}) };
+    return { frame: reply.frame, covering: reply.covering, ...(place ? { moved: reply.moved === true, ...(reply.from ? { from: reply.from } : {}),
+      ...(Number.isFinite(reply.screens) ? { screens: reply.screens, bestOverlap: reply.bestOverlap } : {}) } : {}) };
   } catch (error) { return { error: error.code === 'ETIMEDOUT' || error.killed ? 'timeout' : String(error.message).slice(0, 200) }; }
+}
+
+// The windows that covered the browser's window at any reading: each app once, with the largest share it covered. `covering`
+// counts normal windows of other apps only (real-gate-grade.mjs countedCover); `seen` keeps every owner and layer read, with
+// `counted: false` for the engine's and agents' overlays and system UI, so new overlay owners show up in the first watched runs.
+export function summarizeCover(readings) {
+  const share = new Map(), seen = new Map();
+  let errors = 0;
+  for (const reading of readings) {
+    if (!reading || reading.error) { errors++; continue; }
+    const counted = new Set(countedCover(reading.covering));
+    for (const window of reading.covering ?? []) {
+      const key = JSON.stringify([window.owner, window.layer ?? null]), was = seen.get(key);
+      seen.set(key, { owner: window.owner, layer: window.layer ?? null, fraction: Math.max(was?.fraction ?? 0, window.fraction), counted: counted.has(window) });
+      if (counted.has(window)) share.set(window.owner, Math.max(share.get(window.owner) ?? 0, window.fraction));
+    }
+  }
+  return { readings: readings.length, errors, covering: [...share].map(([owner, fraction]) => ({ owner, fraction })), seen: [...seen.values()] };
+}
+
+// Reads the cover every `every` ms while the agent runs and once more at stop, one read at a time. A window can come over the
+// browser's after the task starts: the Claude app's did in Firefox codex-sleight-sol b16-r2 (form-settings-helium, 2026-10-19),
+// where the start reading was clean. It only reads the window list: nothing is moved, raised or activated.
+export function watchCover(pid, { every = 5000, read = windowCover } = {}) {
+  const readings = [];
+  let chain = Promise.resolve(), busy = false;
+  const take = () => {
+    if (busy) return chain;
+    busy = true;
+    chain = chain.then(async () => { readings.push(await read(pid)); }).catch(error => { readings.push({ error: String(error.message) }); })
+      .finally(() => { busy = false; });
+    return chain;
+  };
+  const timer = setInterval(take, every);
+  timer.unref?.();
+  return { async stop() { clearInterval(timer); await chain; await take(); return summarizeCover(readings); } };
 }
