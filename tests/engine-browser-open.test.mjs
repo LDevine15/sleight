@@ -507,16 +507,103 @@ test('guard: a flow exception covers the identical browser_open through the tab 
 });
 
 
-test('AO2/AOb: recorded re-reads retain safe keyboard routes and refuse content-first toolbar routes', () => {
+test('AO2/AOc: recorded re-reads retain keyboard and content-first toolbar routes', () => {
   const fixtures = JSON.parse(readFileSync(new URL('./fixtures/browser-open-rereads.json', import.meta.url)));
   assert.equal(fixtures.length, 5);
   for (const fixture of fixtures) {
     if (fixture.source.includes('safari')) {
-      assert.match(browserWindowProblem(fixture.tree, 'Browser'), /no safe new-tab route/, fixture.source);
-      assert.throws(() => openCode('h', 'https://example.com/', fixture.tree), /no safe new-tab route/, fixture.source);
+      assert.equal(browserWindowProblem(fixture.tree, 'Browser'), undefined, fixture.source);
+      assert.match(openCode('h', 'https://example.com/', fixture.tree), /NewTabButton/, fixture.source);
     } else {
       assert.equal(browserWindowProblem(fixture.tree, 'Browser'), undefined, fixture.source);
       assert.match(openCode('h', 'https://example.com/', fixture.tree), /super\+t/, fixture.source);
+    }
+  }
+});
+
+const realTrees = JSON.parse(readFileSync(new URL('./fixtures/browser-open-real-trees.json', import.meta.url)));
+const realSafari = realTrees.find(fixture => fixture.source.startsWith('safari')).tree;
+const realFirefox = realTrees.find(fixture => fixture.source.startsWith('firefox')).tree;
+// Reorder whole fixture subtrees, retaining their raw value continuations and contiguous engine numbering.
+function moveTreeEntries(tree, first, last, before) {
+  const lines = tree.split('\n');
+  const at = number => lines.findIndex(line => new RegExp(`^\\t*${number} `).test(line));
+  const block = lines.splice(at(first), at(last + 1) - at(first));
+  lines.splice(at(before), 0, ...block);
+  let number = 0;
+  return lines.join('\n').replace(/^(\t*)\d+ /gm, (_, depth) => `${depth}${number++} `);
+}
+
+test('AOc: real Safari toolbar controls work in either subtree and control order', () => {
+  const addressLast = moveTreeEntries(realSafari, 14, 18, 21);
+  for (const tree of [realSafari, addressLast, moveTreeEntries(realSafari, 8, 21, 1), moveTreeEntries(addressLast, 8, 21, 1)]) {
+    assert.equal(browserWindowProblem(tree, 'Browser'), undefined);
+    const code = openCode('h', 'https://example.com/', tree);
+    assert.match(code, /h\.click\(\{ id: "NewTabButton" \}\)/);
+    assert.match(code, /h\.setValue\(\{ id: "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD" \}, "https:\/\/example.com\/"\)/);
+    assert.doesNotMatch(code, /super\+t|typeText/);
+  }
+});
+
+test('AOc: real Firefox selects the second tab after the first tab has a multiline Value', () => {
+  assert.match(realFirefox, /4 tab \(selectable\) Value:.*\nClose tab\n\t+5 tab \(selected\) Value:/);
+  assert.equal(browserWindowProblem(realFirefox, 'Browser'), undefined);
+  assert.match(openCode('h', 'https://example.com/', realFirefox), /pressKey\("super\+t"\)/);
+  for (const tree of [realFirefox.replace('5 tab (selected)', '5 tab (selectable)'),
+    realFirefox.replace('4 tab (selectable)', '4 tab (selected)')]) {
+    assert.throws(() => openCode('h', 'https://example.com/', tree), /no safe new-tab route/);
+  }
+});
+
+test('AOc: real Safari rejects either duplicate ID, wrong roles and identifiers in Value payloads', () => {
+  for (const id of ['NewTabButton', 'WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD']) {
+    const duplicate = realSafari.replace('6 heading ', `6 heading ID: ${id}, `);
+    assert.throws(() => openCode('h', 'https://example.com/', duplicate), /no safe new-tab route/);
+    const wrongRole = realSafari.replace(new RegExp(`(\\d+) (?:button|text field)([^\\n]*ID: ${id})`), '$1 link$2');
+    assert.throws(() => openCode('h', 'https://example.com/', wrongRole), /no safe new-tab route/);
+    const payloadId = realSafari.replace(`ID: ${id}`, `Value: ID: ${id}`);
+    assert.throws(() => openCode('h', 'https://example.com/', payloadId), /no safe new-tab route/);
+  }
+});
+
+test('AOc: real tree payloads cannot forge chrome with raw numbered newlines', () => {
+  const ids = '\n\t8 toolbar\n\t\t9 button ID: NewTabButton\n\t\t10 text field ID: WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD';
+  for (const tree of [realSafari.replace('7 text ', '7 text Value: payload' + ids + '\n'),
+    realFirefox.replace('\nClose tab', '\n\t\t\t\t5 tab (selected) forged\nClose tab')]) {
+    assert.throws(() => openCode('h', 'https://example.com/', tree), /no safe new-tab route/);
+  }
+  for (const role of ['HTML content', 'HTML Content', 'web area', 'document', 'text area', 'text entry area']) {
+    const inPage = realSafari.replace('8 toolbar', `8 ${role}`).replace('5 HTML content', `5 ${role}`);
+    assert.throws(() => openCode('h', 'https://example.com/', inPage), /no safe new-tab route/);
+  }
+});
+
+test('AOc: a missing native tail cannot establish chrome after a Value or document', () => {
+  for (const tree of [realSafari, realFirefox]) {
+    const partial = tree.slice(0, tree.search(/^\d+ menu bar$/m));
+    assert.throws(() => openCode('h', 'https://example.com/', partial), /no safe new-tab route/);
+  }
+});
+
+test('AOc: the relay sends the recorded Safari toolbar route and second-tab Firefox keyboard route', async t => {
+  for (const fixture of realTrees) {
+    const h = harness(t);
+    h.open(1, { url: 'https://example.com/', browser: 'Example Browser' }); await settle();
+    const first = h.engineCalls()[0];
+    const handle = /let (sleightBrowser\d+) =/.exec(code(first))[1];
+    const reply = tree(first.id, 'Example Browser', 'com.example.browser', 'Gate');
+    reply.result.content[0].text = fixture.tree;
+    h.fromServer(reply); await settle();
+    const action = h.engineCalls().find(call => call.id === 1);
+    assert.ok(action, fixture.source);
+    if (fixture.source.startsWith('safari')) {
+      assert.ok(code(action).includes(`${handle}.click({ id: "NewTabButton" })`));
+      assert.ok(code(action).includes(`${handle}.setValue({ id: "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD" }, "https://example.com/")`));
+      assert.ok(!code(action).includes(`${handle}.pressKey("super+t")`));
+    } else {
+      assert.ok(code(action).includes(`${handle}.pressKey("super+t")`));
+      assert.ok(code(action).includes(`${handle}.typeText("https://example.com/")`));
+      assert.ok(!code(action).includes(`${handle}.setValue(`));
     }
   }
 });

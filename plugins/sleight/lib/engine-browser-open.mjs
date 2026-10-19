@@ -82,14 +82,18 @@ export function acquisitionTree(text) {
   // can be removed safely; a remaining second block leaves the acquisition ambiguous.
   return blocks.length === 1 ? blocks[0] : '';
 }
-// The engine's plain-text tree does not escape newlines in values. Once a document or text/value entry starts,
-// a later numbered line might be its payload, even if its number and indentation look right. Keep that suffix
-// for duplicate-ID detection, but never use it as evidence of browser chrome. A structured engine tree would
-// let content-first windows expose their later toolbar safely.
+// Values can contain raw newlines. A complete tree's numbered stream must reach the native menu bar after the
+// window: a page's forged numbered lines collide with the engine's following entries. Only that complete stream
+// lets us use chrome after content or a tab's Value. Without the native tail, retain the conservative prefix.
 function browserEntries(text) {
   const entries = [...acquisitionTree(text).matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
   // A forged prefix in a window title must not hide the real entries with the same numbers.
   if (entries.some((entry, i) => entry.number !== i)) return { entries, trusted: [] };
+  const bar = entries.findIndex(entry => entry.depth === 0 && entry.line === 'menu bar');
+  if (bar > 0 && entries[0].depth === 0 && entries.length > bar + 1 &&
+      entries.slice(1, bar).every(entry => entry.depth > 0) && entries.slice(bar + 1).every(entry => entry.depth > 0)) {
+    return { entries, trusted: entries.slice(0, bar) };
+  }
   let payload = false;
   const trusted = [];
   for (const entry of entries) {
@@ -105,12 +109,17 @@ function openRoute(text) {
   const chromeId = (id, role) => {
     const matches = entries.filter(entry => hasIdentifier(entry.line, id));
     if (matches.length !== 1) return false;
+    // ID-looking text in a value is payload, even on a real chrome field. Never treat it as an AX identifier.
+    if (entries.some(entry => {
+      const value = /(?:^|[ ,])Value: /.exec(entry.line);
+      return value && entry.line.slice(value.index).includes(id);
+    })) return false;
     const at = trusted.indexOf(matches[0]);
     if (at < 0 || !role.test(matches[0].line) || underDocument(trusted, at)) return false;
     for (let i = at - 1, depth = matches[0].depth; i >= 0 && depth > 0; i--) {
       if (trusted[i].depth >= depth) continue;
       depth = trusted[i].depth;
-      if (/^toolbar(?: |,|$)/.test(trusted[i].line)) return true;
+      if (/^toolbar(?: |,|$)/.test(trusted[i].line)) return depth === 1;
     }
     return false;
   };
