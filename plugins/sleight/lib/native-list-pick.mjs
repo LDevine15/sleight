@@ -4,7 +4,8 @@
 // lease and stale-element checks); the helper adds its own checks on the list it pages through.
 // The Firefox travel form's 1,000-row airport list cost 34.6 and 36.3 s of small scroll/read loops
 // (astra-1018-forms, 2026-10-18). Paging four keys a read, the offline model found every label in 1,000/1,000 lists
-// with 18 to 20 reads; jumping to the row the labels around it predict (CC3), a mean of 6.1 to 7.0 reads sees the row.
+// with 18 to 20 reads; jumping to the row the labels around it predict (CC3), 16 keys at most between reads, a mean of
+// 7.9 to 8.8 reads sees the row.
 //
 // What b7 (race-1017, 2026-10-19) measured, and what this follows: after the click the skill asks for, the read
 // names a "Selected:" row instead of the focused list (5 of 7 calls stopped there). Page_Down moves Safari's web list
@@ -15,7 +16,8 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), now = () => Date.now() }) {
   const LIST_ROLE = /^(?:list box|listbox|list)(?: \([^()]*\))*(?: |,|$)/;
   // Totals per search; a key step with fewer rows a key than MIN_KEY_ROWS moves to the wheel. GROW caps an extrapolated jump.
-  const MAX_KEYS = 400, MAX_TICKS = 400, MIN_KEY_ROWS = 5, FIRST_TICKS = 2, MAX_TICK_STEP = 32, MAX_CENTERING = 3, GROW = 4;
+  // BURST caps the keys sent between two reads.
+  const MAX_KEYS = 400, MAX_TICKS = 400, MIN_KEY_ROWS = 5, FIRST_TICKS = 2, MAX_TICK_STEP = 32, MAX_CENTERING = 3, GROW = 4, BURST = 16;
   const compare = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
   const words = value => String(value).replace(/\s+/g, ' ').trim();
   // The list's rows from one tree: a row's label is its first line without role and states.
@@ -69,6 +71,29 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
     }
     return { list: rows[found[0]], kids: childRows(rows, found[0]) };
   };
+  // A list's rows with their labels, and the role they share: the lowercase words every row starts with ("text", then
+  // states such as "(selectable)").
+  const labelRows = kids => {
+    const runs = kids.map(kid => {
+      const parts = kid.body.split(' '), end = parts.findIndex(word => !/^[a-z]+$/.test(word));
+      return parts.slice(0, end < 0 ? parts.length : end);
+    });
+    const role = runs.reduce((common, run) => {
+      let n = 0;
+      while (n < common.length && common[n] === run[n]) n++;
+      return common.slice(0, n);
+    }, runs[0] ?? []).join(' ');
+    const labelOf = body => {
+      const rest = body.slice(role.length).trimStart().replace(/^(?:\([^()]*\) )+/, '');
+      const described = /^Description: (.*?)(?=, (?:Value|ID|Help|Secondary Actions): |$)/.exec(rest);
+      return described ? described[1] : rest.split(/, (?=(?:Value|ID|Help|Secondary Actions|Description|URL): )/)[0];
+    };
+    const labeled = kids.map(kid => ({ number: kid.number, body: kid.body, label: labelOf(kid.body), name: kid.extra[0] }))
+      .filter(row => row.label);
+    return { role, labeled };
+  };
+  // Rows that act when clicked: the focusing click goes only to a list of plain rows.
+  const ACTIONABLE = /\b(?:button|link|menu item|check box|tab|switch|disclosure triangle)$/;
   const view = (text, trusted) => {
     const { rows, selected } = parseRows(text);
     const focus = /^The focused UI element is (\d+) (.+?)\r?$/m.exec(text);
@@ -94,23 +119,7 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
         !(lastClick && [list, ...kids].some(row => row.number === lastClick.number && sameElement(lastClick.line, row.body)))) {
       return { problem: 'The read names a selected row in ' + JSON.stringify(list.body.slice(0, 60)) + ' but no focused element, and the action just before was not a click on that list or one of its rows.' };
     }
-    // The role is the lowercase words every row starts with ("text", then states such as "(selectable)").
-    const runs = kids.map(kid => {
-      const parts = kid.body.split(' '), end = parts.findIndex(word => !/^[a-z]+$/.test(word));
-      return parts.slice(0, end < 0 ? parts.length : end);
-    });
-    const role = runs.reduce((common, run) => {
-      let n = 0;
-      while (n < common.length && common[n] === run[n]) n++;
-      return common.slice(0, n);
-    }, runs[0] ?? []).join(' ');
-    const labelOf = body => {
-      const rest = body.slice(role.length).trimStart().replace(/^(?:\([^()]*\) )+/, '');
-      const described = /^Description: (.*?)(?=, (?:Value|ID|Help|Secondary Actions): |$)/.exec(rest);
-      return described ? described[1] : rest.split(/, (?=(?:Value|ID|Help|Secondary Actions|Description|URL): )/)[0];
-    };
-    const labeled = kids.map(kid => ({ number: kid.number, body: kid.body, label: labelOf(kid.body), name: kid.extra[0] }))
-      .filter(row => row.label);
+    const { labeled } = labelRows(kids);
     return { list: list.body, rows: labeled, labels: labeled.map(row => row.label), focused: !!focus };
   };
   let lastClick;
@@ -293,12 +302,26 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
     };
     const move = async (d, units, how = mover) => {
       if (how === 'key' && !v.focused) throw new Error('pickFromList stopped: no read shows the focus on the list, so no key was sent. Read the window again.');
-      pending = { d, units, how };
-      if (how === 'key') for (let i = 0; i < units; i++) { await press(d > 0 ? 'Page_Down' : 'Page_Up'); keys++; }
-      else { await scroll(v.list, d > 0 ? 'down' : 'up', units); ticks += units; }
-      lastStep = units; lastMover = how;
-      confirmed = null;
-      let next = await look();
+      lastMover = how; confirmed = null;
+      let next;
+      if (how === 'key') {
+        // At most BURST keys go out unread. Between bursts a read must show the same list focused and the row still
+        // ahead; a read that shows the row, or one past it, ends the move there. The time cap ends a burst after a key.
+        for (let pressed = 0; pressed < units;) {
+          const burst = Math.min(BURST, units - pressed);
+          pending = { d, units: burst, how };
+          let sent = 0;
+          while (sent < burst && !(pressed + sent && now() >= deadline)) { await press(d > 0 ? 'Page_Down' : 'Page_Up'); keys++; sent++; }
+          pending.units = sent; pressed += sent; lastStep = pressed;
+          next = await look();
+          if (sent < burst || pressed >= units || reads >= maxReads || next.problem || !next.focused || !sameElement(v.list, next.list) ||
+              !next.labels.length || next.rows.some(isMatch) || compare(target, d > 0 ? next.labels.at(-1) : next.labels[0]) * d <= 0) break;
+        }
+      } else {
+        pending = { d, units, how };
+        await scroll(v.list, d > 0 ? 'down' : 'up', units); ticks += units; lastStep = units;
+        next = await look();
+      }
       // An unchanged window can be a redraw still in flight: look once more before calling it stuck.
       if (sameRows(next, v) && reads < maxReads) { await sleep(80); next = await look(); }
       return next;
@@ -319,6 +342,13 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
       const named = locate(lastText, listRef, typeof listRef === 'number' ? lineSeen?.(listRef) : undefined);
       if (named.problem) return stop('not-a-list', named.problem + ' No key was sent.');
       if (v.problem || !sameElement(v.list, named.list.body)) {
+        // Only a sorted list of plain rows gets the click: at least three labels in strictly ascending order, and no role
+        // that acts when clicked (a row of buttons or a tab strip).
+        const { role, labeled } = labelRows(named.kids), order = labeled.map(row => row.label);
+        if (ACTIONABLE.test(role)) return stop('not-a-list', JSON.stringify(named.list.body.slice(0, 60)) + ' holds ' + role + ' rows, which act when clicked, so it was not clicked. No key was sent.');
+        if (order.length < 3 || order.some((text, i) => i && compare(order[i - 1], text) >= 0)) {
+          return stop('not-a-list', JSON.stringify(named.list.body.slice(0, 60)) + ' does not show three or more labeled rows in ascending order, so it was not clicked. No key was sent.');
+        }
         const n = named.kids.length, lo = Math.floor(3 * n / 8), hi = Math.max(lo, Math.ceil(5 * n / 8) - 1);
         const tries = [...(n ? [named.kids[Math.floor((lo + hi) / 2)]] : []), named.list];
         for (let i = 0; ; i++) {
@@ -332,6 +362,7 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
           break;
         }
         v = await look();
+        if (v.problem || !sameElement(v.list, named.list.body)) return stop('focus-lost', 'The click did not focus the named list. No key was sent.');
       }
     }
     // A read that names only a selected row: the wheel on the list, which needs no focus, until a read shows the focus.
@@ -478,7 +509,7 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
           return { found: true, clicked: false, reason: 'click-unverified', reads, keys, ...(ticks ? { ticks } : {}), label: hits[0].label,
             note: 'The row was clicked, but the read after it does not show it selected, so the click may have reached another control. Read the window before retrying.' };
         }
-        return { found: true, clicked: true, label: hits[0].label, reads, keys, ...(ticks ? { ticks } : {}) };
+        return { found: true, clicked: true, label: hits[0].label, reads, keys, ...(ticks ? { ticks } : {}), ...(focusRow ? { focusClick: focusRow } : {}) };
       }
       const first = v.labels[0], last = v.labels.at(-1);
       if (compare(target, first) >= 0 && compare(target, last) <= 0) {
@@ -552,7 +583,8 @@ export function sortedListShift(before, after) {
       const runs = kids.map(body => { const parts = body.split(' '), end = parts.findIndex(word => !/^[a-z]+$/.test(word)); return parts.slice(0, end < 0 ? parts.length : end); });
       const role = runs.reduce((common, run) => { let n = 0; while (n < common.length && common[n] === run[n]) n++; return common.slice(0, n); }, runs[0] ?? []).join(' ');
       const labels = kids.map(body => body.slice(role.length).trimStart().replace(/^(?:\([^()]*\) )+/, '').split(/, (?=(?:Value|ID|Help|Secondary Actions|Description|URL): )/)[0]).filter(Boolean);
-      found.push({ number: row.number, body: row.body, labels });
+      // Rows that act when clicked (the helper's ACTIONABLE roles) make no list the helper would pick from.
+      if (!/\b(?:button|link|menu item|check box|tab|switch|disclosure triangle)$/.test(role)) found.push({ number: row.number, body: row.body, labels });
     });
     return found;
   };

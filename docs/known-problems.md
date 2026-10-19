@@ -401,16 +401,15 @@ native reference, and oversized first results defer the browser reference while 
 - On an unsorted list, `sleight.pickFromList` can pick a prefix match at its scroll limit before
   reaching a later exact row. Its real-tab scroll and searches past index 360 are fixed.
 - `app.pickFromList` (native, FM1, 2026-10-18) is unit-tested against a fake list and has no live run. Since CC3
-  (2026-10-19) it jumps to the row the labels around it predict. On a generated 1,000-row list it sees the row after
-  6.1 to 6.5 reads on average and at most 13 to 15 (29 to 41 of 1,000 targets take more than 10), against 15.3 to 18.2
-  and 29 to 36 when it paged four keys a read. A contrived list with 900 rows under one prefix takes up to 35 reads.
-  We haven't measured whether Page_Down and Page_Up reach Firefox's list or change its selection. It stops, and clicks
-  nothing, when a page key skips every row seen before (a page as long as the rendered window).
-- A jump presses its Page keys with no read between them, so a page script that moves focus mid-jump gets the rest of
-  them. The next read stops the search. Jumps check the sort order only on the rows they see.
-- `app.pickFromList(<list number>, …)` checks the number against the line Claude saw only when the same call also clicks
-  or scrolls that number; otherwise the number has to name a list, or a row of one, in the helper's own first read.
-  Its focusing click selects a row of that list, which stays selected if the search then stops.
+  (2026-10-19) it jumps to the row the labels around it predict, sending at most 16 Page keys between reads. On
+  generated and airport-name lists of 1,000 rows it sees the row after 7.9 to 8.8 reads on average and at most 14 to 18,
+  against 15.3 to 18.2 and 29 to 36 when it paged four keys a read. A contrived list with 900 rows under one prefix
+  takes up to 36 reads. We haven't measured whether Page_Down and Page_Up reach Firefox's list or change its selection.
+  It stops, and clicks nothing, when a page key skips every row seen before (a page as long as the rendered window).
+- Up to 16 Page keys go out between two reads, so a page script that moves focus mid-burst gets the rest of that burst.
+  The next read stops the search. Jumps check the sort order only on the rows they see.
+- The focusing click of `app.pickFromList(<list number>, …)` selects a row of that list, which stays selected if the
+  search then stops. The list number is checked against the line Claude saw, as a click's is.
 
 ### Turbo (on by default)
 

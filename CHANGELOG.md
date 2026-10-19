@@ -6,8 +6,8 @@
 
 - `app.pickFromList(<list number>, "<row>")` takes the list first and makes the focusing click itself, on a row
   shown wherever the list is scrolled, or on the list after a row with no frame. Without the list it works as before.
-- It jumps to the row the labels around it predict instead of paging four keys a read: 6.1 to 6.5 reads on average
-  on a generated 1,000-row list, down from 15.3 to 18.2, measured on fake trees.
+- It jumps to the row the labels around it predict, at most 16 keys between reads, instead of paging four keys a read:
+  7.9 to 8.8 reads on average on 1,000-row lists, down from 15.3 to 18.2, measured on fake trees.
 - The first scroll or Page_Down call that moves a sorted list gets one line pointing to the helper with that list's
   number. The skill's list line sits next to the form line now.
 

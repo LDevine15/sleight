@@ -75,3 +75,13 @@ test('CC1: the skill puts the list line in Calls, right after the form line, wit
   assert.equal(rules.split('pickFromList(<list number>').length - 1, 1, 'said once');
   assert.match(skillRules(undefined, { SLEIGHT_PROMPT: 'lean' }), /Long list: `await app\.pickFromList\(<list number>, "<whole row text>"\)`\./);
 });
+
+test('CC13 review: no line for a list of buttons or tabs, which the helper would refuse', () => {
+  const buttons = first => ['0 standard window W', '\t1 list Toolbar', ...countries.slice(first, first + 12).map((name, i) => `\t\t${2 + i} button ${name}`)];
+  assert.equal(sortedListShift(buttons(0), buttons(10)), undefined);
+  const tabs = first => ['0 standard window W', '\t1 list Tabs', ...countries.slice(first, first + 12).map((name, i) => `\t\t${2 + i} tab ${name}`)];
+  assert.equal(sortedListShift(tabs(0), tabs(10)), undefined);
+  const c = createReadCompactor({ scrollNote: true });
+  c.process([text(page(0, { list: 'list Toolbar', rows: countries }).replace(/^(\t+\d+) text (?=Land )/gm, '$1 button '))]);
+  assert.doesNotMatch(call(c, 'await safari.scroll(3, "down", 2);', page(10, { list: 'list Toolbar' }).replace(/^(\t+\d+) text (?=Land )/gm, '$1 button ')), /is a sorted list/);
+});

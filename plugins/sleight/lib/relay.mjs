@@ -437,9 +437,10 @@ export function treeFreeFirstAction(code) {
 export function firstCallBatchSetting(value) {
   return ['merge', 'nosavestop'].includes(value) ? value : value !== '0';
 }
-// Element numbers written as literals in a call's code. Others were computed in the call.
+// Element numbers written as literals in a call's code. Others were computed in the call. A list number passed to
+// pickFromList counts, so the helper checks it against the line Claude saw (CC2).
 export function literalNumbers(code) {
-  return [...new Set([...String(code ?? '').matchAll(/\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*(\d+)\s*[,)]/g)].map(m => Number(m[1])))];
+  return [...new Set([...String(code ?? '').matchAll(/\.(?:click|setValue|selectText|performSecondaryAction|scroll|pickFromList)\(\s*(\d+)\s*[,)]/g)].map(m => Number(m[1])))];
 }
 // The action names in a call's code, in order, when the code runs each once: no loops or sleight helpers.
 export function guardActions(code) {
@@ -460,7 +461,7 @@ function reachesGetApp(code) {
   return /\bgetApp\b/.test(bare) || /\[\s*(["'`])getApp\1\s*\]/.test(text) || /\bcua\s*(?:\?\.)?\s*\[/.test(bare);
 }
 function numberedHandles(code) {
-  return [...new Set([...String(code ?? '').matchAll(/([A-Za-z_$][\w$]*)?\.(?:click|setValue|selectText|performSecondaryAction|scroll)\(\s*\d+\s*[,)]/g)].map(m => m[1]))];
+  return [...new Set([...String(code ?? '').matchAll(/([A-Za-z_$][\w$]*)?\.(?:click|setValue|selectText|performSecondaryAction|scroll|pickFromList)\(\s*\d+\s*[,)]/g)].map(m => m[1]))];
 }
 export function batchingDescription(description, variant = true, prompt, windows = false) {
   const text = prompt === 'lean' ? (variant === 'merge' ?

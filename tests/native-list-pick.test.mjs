@@ -602,8 +602,9 @@ test('lp1: the mover is chosen by measured rows: Safari stays on the wheel, Fire
   assert.ok(out.safari.secondsAtB7Wheel < 20, 'inside the 20 s cap even at 1 s a wheel step');
   // One more wheel tick is a centering move where no key count lands the row in the band (CC3).
   assert.ok(out.firefox.wheelSteps <= 5 && out.firefox.keys >= 60, JSON.stringify(out.firefox));
-  // CC3's jumps: 28 Firefox reads and 16 Safari reads before them, on this list (612 rows share "Kel").
-  assert.ok(out.firefox.reads <= 22 && out.safari.reads <= 14, JSON.stringify(out));
+  // CC3's jumps: 28 Firefox reads and 16 Safari reads before them, on this list (612 rows share "Kel"). Firefox's jumps go
+  // out 16 keys between reads.
+  assert.ok(out.firefox.reads <= 24 && out.safari.reads <= 14, JSON.stringify(out));
   // The old picker paged Safari by key only: 612 rows at 2.2 rows a key.
   const old = { keys: Math.ceil(612 / 2.2), reads: Math.ceil(612 / 2.2 / 4) + 2 };
   t.diagnostic('old Safari keys-only estimate: ' + JSON.stringify({ ...old, seconds: +(old.keys * 0.18 + old.reads * 0.2).toFixed(1) }));
@@ -925,25 +926,26 @@ async function census(names, { page, overscan, every = 1 }) {
   return { ...out, seeMean: +(out.seeSum / out.targets).toFixed(2), readMean: +(out.readSum / out.targets).toFixed(2) };
 }
 
-test('CC3: the offline model finds every row of a held-out 1,000-row list with jumps, in about a third of the reads', async t => {
+test('CC3: the offline model finds every row of a held-out 1,000-row list with jumps, in about half the reads', async t => {
   const names = places();
   for (const [page, overscan, every] of [[9, 0, 1], [8, 0, 4], [10, 2, 4]]) {
     const r = await census(names, { page, overscan, every });
     t.diagnostic(`places page ${page} overscan ${overscan}: ${JSON.stringify(r)}`);
     assert.equal(r.found, r.targets, `page ${page} overscan ${overscan}`);
-    // Paging four at a time took 18 to 20 reads for row 612 (simulate.py); the mean here is under 7.
-    assert.ok(r.seeMean <= 7 && r.seeMax <= 15 && r.readMax <= 17, JSON.stringify(r));
+    // Paging four at a time took 18 to 20 reads for row 612 (simulate.py); here the mean is 8 to 9, with 16 keys a read.
+    assert.ok(r.seeMean <= 9 && r.seeMax <= 18 && r.readMax <= 20, JSON.stringify(r));
     assert.ok(r.keyMax <= 400);
   }
 });
 
-test('CC3: evenly spread labels and numbers take at most 8 reads to see any of 1,000 rows', async t => {
+test('CC3: evenly spread labels and numbers take at most 14 reads to see any of 1,000 rows, 16 keys a read', async t => {
   const numbers = Array.from({ length: 1000 }, (_, i) => 'Item ' + (i * 3 + 1)).sort(compareNames);
   for (const [label, names] of [['codes', sortedNames(1000)], ['numbers', numbers]]) {
     const r = await census(names, { page: 9, overscan: 0, every: 2 });
     t.diagnostic(`${label}: ${JSON.stringify(r)}`);
     assert.equal(r.found, r.targets);
-    assert.ok(r.seeMax <= 8 && r.overTen === 0, JSON.stringify(r));
+    // 900 rows at 9 rows a key need six 16-key reads, whatever the estimate says.
+    assert.ok(r.seeMax <= 14 && r.seeMean <= 7.5, JSON.stringify(r));
   }
 });
 
@@ -954,7 +956,7 @@ test('CC3: the travel fixture\'s 1,000 airports, as simulate.py ran them', { ski
   const r = await census(names, { page: 9, overscan: 0 });
   t.diagnostic(`airports page 9 overscan 0: ${JSON.stringify(r)}`);
   assert.equal(r.found, 1000);
-  assert.ok(r.seeMean <= 7 && r.seeMax <= 13, JSON.stringify(r));
+  assert.ok(r.seeMean <= 8.5 && r.seeMax <= 16, JSON.stringify(r));
 });
 
 test('CC3: an end the jump ran into, a top-clamped first measure and a redraw still end on the right row', async () => {
@@ -980,4 +982,92 @@ test('CC3: an end the jump ran into, a top-clamped first measure and a redraw st
       }
     }
   }
+});
+
+// CC13 review fixes.
+// A named list gets the focusing click only when it shows three or more plain rows in ascending order.
+function plainList(rows, { role = 'text (selectable)', focus = 'list' } = {}) {
+  const clicks = [], keys = [];
+  const tree = async () => ['Window: "Book a trip", App: Firefox.', '0 standard window Book a trip', '\t1 list Choices',
+    ...rows.map((row, i) => `\t\t${2 + i} ${role} ${row}`), '\t30 button Next', '',
+    focus === 'list' ? 'The focused UI element is 1 list Choices' : 'The focused UI element is 30 button Next'].join('\n');
+  const run = listPicker({ read: tree, observe() {}, press: async key => keys.push(key), parse: windowFromText, sameElement, expected: window,
+    sleep: async () => {}, click: async line => clicks.push(line) });
+  return { run, clicks, keys };
+}
+
+test('CC13 review: no focusing click on an unsorted, short or actionable list; success reports the focusing click', async () => {
+  for (const [rows, role, message] of [[['Bravo', 'Alpha', 'Charlie', 'Delta'], undefined, /ascending order, so it was not clicked/],
+    [['Alpha', 'Bravo'], undefined, /three or more labeled rows/], [['Alpha', 'Bravo', 'Charlie', 'Delta'], 'button', /holds button rows, which act when clicked/],
+    [['Alpha', 'Bravo', 'Charlie', 'Delta'], 'tab', /holds tab rows/], [['Alpha', 'Bravo', 'Charlie', 'Delta'], 'pop up button', /holds pop up button rows/]]) {
+    const p = plainList(rows, { role, focus: 'button' });
+    const result = await p.run(1, 'Charlie');
+    assert.equal(result.reason, 'not-a-list', JSON.stringify(rows) + role);
+    assert.match(result.note, message);
+    assert.match(result.note, /^No row clicked\..*No key was sent\.$/);
+    assert.deepEqual(p.clicks, []); assert.deepEqual(p.keys, []);
+  }
+  const names = airports(), m = webList(names, { browser: 'firefox', focus: 'city' });
+  const result = await namedPicker(m, 'firefox').run(m.list, names[40]);
+  assert.equal(result.clicked, true);
+  assert.match(result.focusClick, /^text \(selectable\) /);
+  const already = webList(names, { browser: 'firefox' });
+  assert.equal((await namedPicker(already, 'firefox').run(already.list, names[5])).focusClick, undefined, 'no focusing click, none reported');
+});
+
+test('CC13 review: a focusing click that leaves focus on another list stops before any key', async () => {
+  const rows = Array.from({ length: 12 }, (_, i) => 'Dest ' + letters[i]);
+  let selected;
+  const tree = async () => ['Window: "Book a trip", App: Firefox.', '0 standard window Book a trip', '\t1 list box From',
+    ...rows.map((row, i) => `\t\t${2 + i} text (${selected === row ? 'selected' : 'selectable'}) ${row}`), '\t20 list box To',
+    ...rows.map((row, i) => `\t\t${21 + i} text (selectable) ${row}`), '', 'The focused UI element is 20 list box To'].join('\n');
+  const keys = [], clicks = [];
+  const result = await listPicker({ read: tree, observe() {}, press: async key => keys.push(key), parse: windowFromText, sameElement, expected: window,
+    sleep: async () => {}, click: async line => { clicks.push(line); selected = /\(selectable\) (.*)$/.exec(line)?.[1]; } })(1, rows[9]);
+  assert.equal(result.reason, 'focus-lost');
+  assert.match(result.note, /The click did not focus the named list\. No key was sent\./);
+  assert.equal(clicks.length, 1);
+  assert.deepEqual(keys, []);
+});
+
+test('CC13 review: a stale list number stops through the guard when the relay passed the line Claude saw', async () => {
+  const names = airports(), m = webList(names, { browser: 'safari', focus: 'city' });
+  const clicks = [];
+  const handle = { getAXState: async () => m.tree(), pressKey: async key => m.key(key), scroll: async (number, direction, ticks) => m.wheel(number, direction, ticks),
+    click: async number => { clicks.push(number); await m.clickNumber(number); } };
+  const context = { cua: { getApp: async () => handle }, setTimeout, nodeRepl: { write() {} } };
+  const run = code => runInNewContext(`(async () => { ${code} })()`, context);
+  await run(readCode('await cua.getApp("Safari");'));
+  await assert.rejects(run(guardedCode(`return await app.pickFromList(24, ${JSON.stringify(TARGET)});`, travelWindow('safari'), undefined, undefined,
+    { literals: [24], seenLines: { 24: 'list (settable) Arriving at' } })), /not-a-list.*Element 24 changed since you read the window/);
+  assert.deepEqual(clicks, []);
+  assert.deepEqual(m.keys, []);
+});
+
+test('CC13 review: at most 16 keys between reads; focus that leaves between bursts ends the jump', async () => {
+  let since = 0, most = 0;
+  const names = sortedNames(1000);
+  const model = fakeList(names, { page: 9, hook: { key: () => { most = Math.max(most, ++since); }, read: () => { since = 0; } } });
+  const result = await picker(model).run(names[950]);
+  assert.equal(result.clicked, true);
+  assert.equal(most, 16);
+  // Focus moves to the Next button during the first long jump: the read after that burst stops the search.
+  let seenAt;
+  const moved = fakeList(names, { page: 9, hook: { key: m => { if (m.keys.length === 20) m.focus = 'button'; },
+    read: m => { if (m.focus === 'button') seenAt ??= m.keys.length; } } });
+  const stopped = await picker(moved).run(names[950]);
+  assert.equal(stopped.reason, 'focus-lost');
+  assert.ok(seenAt - 20 < 16, `keys after the focus moved: ${seenAt - 20}`);
+  assert.equal(moved.keys.length, seenAt);
+});
+
+test('CC13 review: the time cap ends a key burst after its first key, and the read after it stops the search', async () => {
+  const names = sortedNames(1000);
+  let clock = 0;
+  const model = fakeList(names, { page: 9, hook: { key: () => { clock += 400; } } });
+  const result = await picker(model, { now: () => clock }).run(names[950], { timeoutMs: 3000 });
+  assert.equal(result.reason, 'cap');
+  assert.match(result.note, /time cap/);
+  // 3,000 ms at 400 ms a key: the burst stops at the eighth key, not the sixteenth.
+  assert.ok(model.keys.length <= 9, String(model.keys.length));
 });

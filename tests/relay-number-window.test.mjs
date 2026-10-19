@@ -39,7 +39,8 @@ function fixture(t, slow = false) {
   return { act, call, reply, inputLease };
 }
 
-for (const method of ['click', 'setValue', 'selectText', 'performSecondaryAction', 'scroll']) {
+// CC13 review: a list number passed to pickFromList is a literal too, so the guard checks it against the line Claude saw.
+for (const method of ['click', 'setValue', 'selectText', 'performSecondaryAction', 'scroll', 'pickFromList']) {
   test(`${method} uses the numbered handle's seen window and keeps the lease target`, t => {
     const f = fixture(t);
     const { update } = f.act(`await second.${method}(2, "value")`);
