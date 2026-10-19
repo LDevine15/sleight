@@ -379,3 +379,28 @@ test('each measured row records the fixture setup wait, and the summary reports 
   assert.ok(report.rows.length && report.rows.every(row => row.setupWaitMs === 4200));
   assert.deepEqual(report.summary.find(row => row.mode === 'sequential').setupWaitMs, { n: 1, median: 4200, p90: 4200 });
 });
+
+test('classified attention reaches each row, the summary and the table; a stop keeps the session failure underneath', async () => {
+  const launched = runtime();
+  launched.closeFixture = async () => ({ confirmed: true, focusChanged: false, attention: [{ phase: 'setup', hostStage: 'retain', atMs: 900,
+    kind: 'focus', from: 'org.example.owner', to: 'com.microsoft.Word', class: 'launch-activation' }] });
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), launched);
+  assert.ok(report.rows.every(row => row.attention?.[0]?.class === 'launch-activation'));
+  assert.ok(report.rows.every(row => row.status === 'complete'));
+  assert.deepEqual(report.summary.find(row => row.mode === 'sequential').attention, { 'launch-activation': 1 });
+  assert.match(speedMarkdown(report), /\| Attention \|/);
+  assert.match(speedMarkdown(report), /launch-activation 1/);
+  const stopped = runtime({ held: false });
+  stopped.closeFixture = async () => ({ confirmed: true, focusChanged: true, attention: [{ phase: 'measure', kind: 'focus', class: 'focus-change' }] });
+  // Live 04:41Z: the session opened, then the first timed call's boundary found the latch (acquireMs null, cleanup confirmed).
+  let heldNow = false; const open = stopped.openSession;
+  stopped.held = () => heldNow;
+  stopped.openSession = async (...args) => { const session = await open(...args); heldNow = true; return session; };
+  let published; stopped.publish = async report => { published = structuredClone(report); };
+  await assert.rejects(runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), stopped), /FOCUS_CHANGED/);
+  const row = published.rows[0];
+  assert.equal(row.status, 'unsafe');
+  assert.equal(row.failure, 'FOCUS_CHANGED');
+  assert.equal(row.sessionFailure, 'HOLD');
+  assert.equal(row.attention[0].class, 'focus-change');
+});

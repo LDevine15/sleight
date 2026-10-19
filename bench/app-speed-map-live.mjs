@@ -42,6 +42,38 @@ export function setupDiagnosis(startError) {
   return out;
 }
 
+const bundleId = value => value == null ? null : typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9.-]{0,200}$/.test(value) ? value : 'other';
+// Focus and cover changes seen in the host's 200 ms samples, with the phase they happened in. sleight never takes focus
+// (LAWS), but before the first engine call the only actor is the fixture app's own launch: an app that activates itself
+// or puts its window over the owner's then is classified (launch-activation, launch-cover) and published, not stopped.
+// Focus returning to the owner's app is recorded as focus-restored. Every other change stops the run as before.
+export function attentionTracker(task, { onEvent } = {}) {
+  let phase = 'setup', baseline, lastFront, lastCover = false;
+  const tracker = { events: [], count: 0, stopped: false, setPhase(next) { phase = next; },
+    observe(sample) {
+      const front = bundleId(sample.front), cover = sample.targetOverOwner === true;
+      let stop = false;
+      const record = (kind, from, to, name) => {
+        const event = { phase, hostStage: typeof sample.stage === 'string' ? sample.stage : null,
+          atMs: Number.isFinite(sample.atMs) ? sample.atMs : null, kind, from, to, class: name };
+        tracker.count++; if (tracker.events.length < 20) tracker.events.push(event);
+        if (name === 'focus-change' || name === 'cover') stop = true;
+        onEvent?.(event);
+      };
+      if (baseline === undefined) baseline = lastFront = front;
+      else if (front !== lastFront) {
+        record('focus', lastFront, front, front !== null && front === baseline ? 'focus-restored'
+          : phase === 'setup' && front === task.bundle ? 'launch-activation' : 'focus-change');
+        lastFront = front;
+      }
+      if (cover && !lastCover) record('cover', front, task.bundle, phase === 'setup' ? 'launch-cover' : 'cover');
+      lastCover = cover;
+      if (stop) tracker.stopped = true;
+      return stop;
+    } };
+  return tracker;
+}
+
 // The editor's own throwaway profile, inside the fixture folder. Its main IPC socket lives there, so the path stays short.
 export function editorProfileArgs(dir) {
   const profile = join(dir, 'p'), extensions = join(dir, 'x');
@@ -145,7 +177,9 @@ export async function liveSpeedRuntime(plan, options, {
         }
         fixture.requireStopped = task.fixture === 'workspace';
         fixture.requireRunning = ['existing', 'local-container', 'browser'].includes(task.fixture);
-        fixture.onSample = sample => { if (sample.focusChanged || sample.targetOverOwner) attentionFault = true; };
+        fixture.attention = attentionTracker(task, { onEvent: event =>
+          console.error(`AM1_ATTENTION ${task.id} ${event.class} phase=${event.phase} host=${event.hostStage} from=${event.from} to=${event.to} atMs=${event.atMs}`) });
+        fixture.onSample = sample => { if (fixture.attention.observe(sample)) attentionFault = true; };
         fixture.hostAttempted = true;
         // No AppleScript fallback in cleanup: it would send Apple events to an app that may lack an Automation grant (LAWS).
         fixture.host = await startFixtureHost({ bundle: task.bundle, fixtureKind: fixture.path ? 'doc-file' : 'read', noScripting: true }, fixture, controller.signal);
@@ -159,6 +193,7 @@ export async function liveSpeedRuntime(plan, options, {
         if (confirmed) resources.delete(fixture); else cleanupFault = true;
         const safe = Error(/^(APP_ALREADY_RUNNING|FIXTURE_NOT_OPEN)$/.test(error.message) ? error.message : 'FIXTURE_SETUP_FAILED');
         safe.cleanupConfirmed = confirmed;
+        if (fixture.attention?.events.length) safe.attention = fixture.attention.events;
         const details = error.hostCleanup?.details;
         if (details) {
           safe.setup = setupDiagnosis(details.startError);
@@ -199,7 +234,8 @@ export async function liveSpeedRuntime(plan, options, {
         } }); } catch (error) { if (error.cleanupConfirmed !== true) cleanupFault = true; throw error; }
       activeSessions++;
       let sessionClosed = false;
-      return { js: code => client.call('js', { code, timeout_ms: 60000, title: 'AM1 counts only' }),
+      // The first engine call ends the launch phase: from here on any focus or cover change is sleight's to answer for.
+      return { js: code => { fixture.attention?.setPhase('measure'); return client.call('js', { code, timeout_ms: 60000, title: 'AM1 counts only' }); },
         close: async () => {
           if (sessionClosed) return; sessionClosed = true;
           let tabClosed = true;
@@ -213,6 +249,7 @@ export async function liveSpeedRuntime(plan, options, {
     },
     async closeFixture(fixture) {
       let cleanup;
+      fixture.attention?.setPhase('cleanup');
       try { cleanup = await fixture.host.finish(); }
       catch { cleanup = { confirmed: false, samples: [], details: { reasons: ['CLEANUP_FAILED'] } }; }
       const reasons = [...new Set([...(cleanup.details?.reasons ?? []), ...(cleanup.details?.windows ?? []).flatMap(row => row.reasons ?? [])]
@@ -220,7 +257,7 @@ export async function liveSpeedRuntime(plan, options, {
       try { await fixture.closeServer?.(); } catch { cleanup.confirmed = false; reasons.push('SERVER_CLEANUP_FAILED'); }
       const confirmed = cleanup.confirmed === true;
       if (confirmed) resources.delete(fixture); else cleanupFault = true;
-      return { confirmed, reasons, focusChanged: (cleanup.samples ?? []).some(sample => sample.focusChanged || sample.targetOverOwner) };
+      return { confirmed, reasons, focusChanged: fixture.attention?.stopped === true, attention: fixture.attention?.events ?? [] };
     },
     async publish(report) {
       report.approvalStopped = approvalStopped;

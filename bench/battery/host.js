@@ -242,11 +242,12 @@ function run(argv) {
       var a = order[targetIndex].bounds, b = w.bounds;
       return a.X < b.X + b.Width && b.X < a.X + a.Width && a.Y < b.Y + b.Height && b.Y < a.Y + a.Height;
     });
-    var row = { atMs: Date.now() - started, front: frontBundle, order: order,
+    var row = { atMs: Date.now() - started, stage: hostStage, front: frontBundle, order: order,
       focusChanged: frontBundle !== baselineFront, targetOverOwner: overOwner };
     samples.push(row); emit({ stage: 'sample', sample: row });
   }
   function cleanup(recover) {
+    hostStage = 'cleanup';
     var details = { reasons: [], windows: [] }, clean = true, failedWindows = [], invalidWindows = [];
     function reason(row, code) { if (row.reasons.indexOf(code) < 0) row.reasons.push(code); }
     function present(w, current) { return current.some(function(now) { return same(w, now); }); }
