@@ -83,6 +83,7 @@ import { guardStopMark, splitMenuActions, takeGuardStop, withoutStopTree, hasWho
   failedActionText, paletteRefusal, oneTabAdded, landingRefusal, replaceLastTree, lastHeader } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
+import { stripDP1Trace } from './dp1-trace.mjs';
 import { createStuckEscapes } from './stuck-escape.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
 import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode, filteredReadMark, failureReason, TEXTLESS_NOTE } from './compact-reads.mjs';
@@ -4048,6 +4049,9 @@ export function createRelay({
       msg = { ...msg, id };
     }
     trace('from-server', { id: msg.id, method: msg.method });
+    if (msg.method === undefined && Array.isArray(msg.result?.content)) {
+      msg.result.content = stripDP1Trace(msg.result.content, event => trace('dp1-decision', { id: msg.id, ...event }));
+    }
     if (msg.method === undefined && tabCleanupNotes.has(msg.id)) {
       const text = tabCleanupNotes.get(msg.id); tabCleanupNotes.delete(msg.id);
       if (msg.result) msg.result.content = [...(msg.result.content ?? []), { type: 'text', text }];

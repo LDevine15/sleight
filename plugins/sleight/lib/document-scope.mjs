@@ -7,6 +7,7 @@ import { actionOutcome, outcomeRecord } from './action-outcomes.mjs';
 import { moneyFigures, moneyConflicts } from './payment-figures.mjs';
 import { enginePayment, paymentAction } from './payment-gate.mjs';
 import { paymentWords, refundableName } from './direct-browser/rules.mjs';
+import { withoutTitles } from './dp1-trace.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -382,22 +383,45 @@ export function readCode(code, options = {}) {
 }
 
 // Advisory only: all of this runs in the same mutable JS realm as Claude's code.
-async function closedLastWindow(state, cua) {
+async function closedLastWindow(state, cua, record) {
   const previous = state.previous.get(state.activeApp), action = state.lastAction;
   const pid = state.expected?.nativeIdentity?.pid ?? state.expected?.pid;
-  if (typeof setTimeout !== 'function' || typeof clearTimeout !== 'function' ||
-      !state.guardStopMark || !Number.isSafeInteger(pid) || pid <= 0 ||
-      !state.expected?.appId || !previous?.done || state.failures?.length || action?.kind !== 'key' ||
-      previous.key !== action.value || !/^(?:super|cmd|command|meta)\+(?:shift\+w|w|q)$/i.test(action.value) ||
-      state.callHeaders.get(state.activeApp)?.app !== state.expected.app) return false;
+  const window = state.expected?.nativeIdentity?.windowNumber ?? state.expected?.windowNumber;
+  let inventory = {};
+  const decide = (reason, extra = {}, skip = false) => {
+    try { record({ decision: skip ? 'skipped-read' : 'kept-read', reason, ...inventory, ...extra }); } catch {}
+    return skip;
+  };
+  if (!state.guardStopMark) return decide('no mark');
+  if (typeof setTimeout !== 'function' || typeof clearTimeout !== 'function') return decide('timers unavailable');
+  if (!Number.isSafeInteger(pid) || pid <= 0) return decide('leased pid missing');
+  if (!state.expected?.appId) return decide('leased bundle id missing');
+  if (action?.kind !== 'key' || !/^(?:super|cmd|command|meta)\+(?:shift\+w|w|q)$/i.test(action.value)) return decide('not a close shortcut');
+  if (!previous?.done || state.failures?.length || previous.key !== action.value) return decide('action not completed');
+  if (state.callHeaders.get(state.activeApp)?.app !== state.expected.app) return decide('app header mismatch');
   let timer;
   try {
     // Inventory has a 1 s budget. An unavailable or ambiguous answer keeps the full read.
-    const apps = await Promise.race([cua.listApps({ emit: false }), new Promise(resolve => { timer = setTimeout(resolve, 1000); })]);
-    if (!Array.isArray(apps)) return false;
-    const matches = apps.filter(app => app?.id === state.expected.appId && app.pid === pid);
-    return matches.length === 1 && Array.isArray(matches[0].windows) && matches[0].windows.length === 0;
-  } catch { return false; }
+    const timeout = {};
+    const apps = await Promise.race([cua.listApps({ emit: false }), new Promise(resolve => { timer = setTimeout(() => resolve(timeout), 1000); })]);
+    if (apps === timeout) return decide('timeout');
+    if (!Array.isArray(apps)) return decide('error');
+    inventory = { inventoryHasPid: apps.some(app => app != null && Object.hasOwn(app, 'pid')) };
+    const bundle = apps.filter(app => app?.id === state.expected.appId);
+    const matches = bundle.filter(app => app.pid === pid);
+    const row = matches.length === 1 ? matches[0] : bundle.length === 1 ? bundle[0] : undefined;
+    if (!row) return decide(bundle.length ? 'ambiguous rows' : 'app row missing');
+    inventory = { ...inventory, row, rowHasPid: Object.hasOwn(row, 'pid') };
+    if (matches.length > 1) return decide('ambiguous rows');
+    if (inventory.rowHasPid && row.pid !== pid) return decide('pid mismatch');
+    if (!Array.isArray(row.windows)) return decide('windows missing');
+    if (row.windows.length) return decide('windows non-empty');
+    // AppInfo currently omits pid. Require a unique bundle row and a known leased
+    // window number before using its absence; any remaining window keeps the read.
+    if (!inventory.rowHasPid && (bundle.length !== 1 || !Number.isSafeInteger(window) || window <= 0)) return decide('pid missing in the row');
+    return decide('no windows', { match: inventory.rowHasPid ? 'bundle-id+pid' : 'bundle-id+leased-window-absence',
+      leasedWindowAbsent: true }, true);
+  } catch { return decide('error'); }
   finally { clearTimeout(timer); }
 }
 
@@ -529,8 +553,9 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
           ms: clock() - start, chars: typeof text === 'string' ? text.length : 0, failed: text === undefined }) + '\\n');
       }
     };
-    ${dp1 ? `const closedLast = ${closedLastWindow.toString()};
-    state.readAfter = async (proxy, tail) => tail && await closedLast(state, cua)
+    ${dp1 ? `const closedLast = ${closedLastWindow.toString()}, withoutTitles = ${withoutTitles.toString()};
+    const recordDP1 = event => nodeRepl.write('[sleight:dp1]' + JSON.stringify(withoutTitles(event)) + '\\n');
+    state.readAfter = async (proxy, tail) => tail && await closedLast(state, cua, recordDP1)
       ? state.guardStopMark + ':closed'
       : timedRead(state.raws.get(proxy), 'after-call');` : "state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');"}
     state.raws ||= new WeakMap();

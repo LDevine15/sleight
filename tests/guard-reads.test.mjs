@@ -147,6 +147,53 @@ test('DP1 selects the leased pid when another instance of the bundle still has w
   assert.ok(f.output.some(text => text.includes('private-close-mark:closed')));
 });
 
+test('DP1 traces each decision and uses bundle plus window absence when inventory has no pid', async () => {
+  const row = { id: 'fixture.app', displayName: 'TextEdit', isRunning: true, useCount: 3, windows: [] };
+  const cases = [
+    { row, decision: 'skipped-read', match: 'bundle-id+leased-window-absence', inventoryHasPid: false },
+    { row: { ...row, pid: 123 }, decision: 'skipped-read', match: 'bundle-id+pid', inventoryHasPid: true },
+    { row, target: closeTarget, reason: 'pid missing in the row' },
+    { row: { ...row, windows: [{ id: 44, title: 'private title', app: 'TextEdit' }] }, reason: 'windows non-empty' },
+    { row: { ...row, windows: undefined }, reason: 'windows missing' },
+    { row: { ...row, pid: 456 }, reason: 'pid mismatch' },
+    { apps: [row, row], reason: 'ambiguous rows' },
+    { apps: [], reason: 'app row missing' },
+    { options: { guardStopMark: undefined }, reason: 'no mark' },
+    { error: true, reason: 'error' },
+    { timeout: true, reason: 'timeout' },
+    { key: 'super+s', reason: 'not a close shortcut' },
+  ];
+  for (const cached of [false, true]) for (const c of cases) {
+    const f = fixture();
+    const target = { ...closeTarget, nativeIdentity: { pid: 123, windowNumber: 44 } };
+    if (cached) await f.run('await app.pressKey("super+s");', closeOptions, target);
+    f.output.length = 0; f.calls.length = 0;
+    f.context.cua.listApps = async () => {
+      if (c.error) throw Error('private title');
+      if (c.timeout) return new Promise(() => {});
+      return c.apps ?? [c.row ?? row];
+    };
+    f.context.setTimeout = (fn, ms) => { assert.equal(ms, 1000); return setTimeout(fn, 0); };
+    await f.run(`await app.pressKey(${JSON.stringify(c.key ?? 'super+w')});`,
+      { ...closeOptions, reuseSetup: cached, ...c.options }, c.target ?? target);
+    const events = f.output.filter(text => text.startsWith('[sleight:dp1]'));
+    assert.equal(events.length, 1, JSON.stringify(c));
+    const event = JSON.parse(events[0].slice('[sleight:dp1]'.length));
+    assert.equal(event.decision, c.decision ?? 'kept-read');
+    if (c.reason) assert.equal(event.reason, c.reason);
+    if (c.match) {
+      assert.equal(event.match, c.match);
+      assert.equal(event.inventoryHasPid, c.inventoryHasPid);
+      assert.equal(event.rowHasPid, c.inventoryHasPid);
+      assert.deepEqual(event.row, c.row);
+      assert.equal(event.leasedWindowAbsent, true);
+    }
+    assert.ok(!events[0].includes('private title'));
+    if (c.reason === 'windows non-empty') assert.deepEqual(event.row.windows, [{ id: 44, app: 'TextEdit' }]);
+    assert.equal(f.calls.filter(call => call[0] === 'read').length, c.decision === 'skipped-read' ? 1 : 2);
+  }
+});
+
 test('lean calls keep a strict native handle across calls and report an unchanged action compactly', async () => {
   const f = fixture({ strict: true });
   await f.run('globalThis.saved = await cua.getApp("fixture.app");');
