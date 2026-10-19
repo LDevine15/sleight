@@ -276,3 +276,12 @@ test('the logging switch hook checks raw commands when quote folding joins separ
   ]) assert.equal(denied({ tool: 'Bash', command }), true, command);
   assert.equal(denied({ tool: 'Bash', command: `env 'A=1' 'grep' SLEIGHT_OUTCOMES ~/.zshrc` }), false);
 });
+
+test('the logging switch hook folds JS joins without joining quoted shell arguments', async () => {
+  const { loggingSwitchWriteDenied: denied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
+  for (const join of ["'+'", "' + '", '"+"']) {
+    const command = `env 'A=1' 'python3' -c "open('/Users/u/.zs${join}hrc','a').write('SLEIGHT_OUTCOMES=1')"`;
+    assert.equal(denied({ tool: 'Bash', command }), true, command);
+  }
+  assert.equal(denied({ tool: 'Bash', command: `env 'A=1' 'grep' SLEIGHT_OUTCOMES '/Users/u/.zs'+'hrc'` }), false);
+});
