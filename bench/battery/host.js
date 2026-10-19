@@ -92,7 +92,7 @@ function run(argv) {
     samples.push(row); emit({ stage: 'sample', sample: row });
   }
   function cleanup() {
-    var details = { reasons: [], windows: [] }, clean = true;
+    var details = { reasons: [], windows: [] }, clean = true, failedWindows = [], invalidWindows = [];
     function reason(row, code) { if (row.reasons.indexOf(code) < 0) row.reasons.push(code); }
     function present(w, current) { return current.some(function(now) { return same(w, now); }); }
     function inspect(w, row) {
@@ -105,6 +105,7 @@ function run(argv) {
       var sheetsReadable = [0, -25205, -25212].indexOf(sheets.code) >= 0;
       row.sheetStatus = sheets.code;
       row.sheet = !!sheets.value && ObjC.castRefToObject(sheets.value).count > 0;
+      if (row.documentReads.length === 1 && doc.code === -25201 && sheets.code === -25201) invalidWindows.push(row);
       if (expected && !row.matched) reason(row, 'DOCUMENT_NOT_MATCHED');
       if (row.sheet) reason(row, 'SHEET_PRESENT');
       if (!sheetsReadable) reason(row, 'SHEETS_READ_FAILED');
@@ -122,7 +123,7 @@ function run(argv) {
         if (present(w, before) || entries.some(function(entry) { return same(w, entry.window); })) return;
         var row = { index: entries.length, retained: false, expectedURL: expected || null,
           reasons: ['WINDOW_NOT_RETAINED'], documentReads: [], present: true };
-        inspect(w, row); clean = false;
+        inspect(w, row); failedWindows.push(row);
         details.windows.push(row); entries.push({ window: w, retained: false, row: row });
       });
     }
@@ -143,8 +144,8 @@ function run(argv) {
         if (!row.present) return;
         active();
         var safe = inspect(w, row);
-        if (!entry.retained) { reason(row, 'WINDOW_NOT_RETAINED'); clean = false; return; }
-        if (!safe) { clean = false; return; }
+        if (!entry.retained) { reason(row, 'WINDOW_NOT_RETAINED'); failedWindows.push(row); return; }
+        if (!safe) { failedWindows.push(row); return; }
         var close = attribute(w, 'AXCloseButton');
         if (!close) reason(row, 'CLOSE_BUTTON_MISSING');
         else {
@@ -167,8 +168,8 @@ function run(argv) {
         reason(row, 'WINDOW_STILL_PRESENT_AFTER_10S');
         // Revalidate the retained reference after waiting, immediately before scripting.
         active();
-        if (!inspect(w, row)) { clean = false; return; }
-        if (!entry.retained || !clean) return;
+        if (!inspect(w, row)) { failedWindows.push(row); return; }
+        if (!entry.retained || !clean || failedWindows.length) return;
         if (!ownFixture()) { reason(row, 'SCRIPTING_NOT_OWN_FIXTURE'); return; }
         row.scriptingPath = request.fixturePath;
         var script = 'tell application id ' + quote(request.bundle) + '\nclose (documents whose path is ' + quote(request.fixturePath) + ') saving no\nend tell';
@@ -186,9 +187,14 @@ function run(argv) {
       }
       entries.forEach(function(entry) {
         var row = entry.row; row.present = present(entry.window, current);
-        if (row.present) { clean = false; if (row.scriptingPath) reason(row, 'WINDOW_STILL_PRESENT_AFTER_SCRIPTING'); }
-        if (row.reasons.indexOf('SCRIPTING_FAILED') >= 0) clean = false;
+        // An unretained AX element can expire between the window list and its attribute reads.
+        // Only the invalid-element pair plus final absence excuses it; readable foreign windows latch the stop.
+        if (!entry.retained && !row.present && invalidWindows.indexOf(row) >= 0 && row.sheetStatus === -25201 &&
+          row.documentReads.every(function(read) { return read.status === -25201; })) row.gone = true;
+        if (row.present) { failedWindows.push(row); if (row.scriptingPath) reason(row, 'WINDOW_STILL_PRESENT_AFTER_SCRIPTING'); }
+        if (row.reasons.indexOf('SCRIPTING_FAILED') >= 0) failedWindows.push(row);
       });
+      if (failedWindows.some(function(row) { return !row.gone; })) clean = false;
       if (details.reasons.length) clean = false;
       if (launched && clean) {
         active();
