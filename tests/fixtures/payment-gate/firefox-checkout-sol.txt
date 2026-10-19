@@ -1,0 +1,116 @@
+Window: "Checkout · Northbound Supply", App: Firefox.
+0 standard window Checkout · Northbound Supply, Secondary Actions: Raise
+	1 container Checkout · Northbound Supply
+		2 toolbar Browser tabs
+			3 tab group
+				4 tab (selectable) Value: Sleight Gate 6e3317fa-eb82-4cc4-b7b7-5d522fbc0159, Sleight Gate 6e3317fa-eb82-4cc4-b7b7-5d522fbc0159
+Close tab
+				5 tab (selected) Value: Checkout · Northbound Supply, Checkout · Northbound Supply
+Close tab
+				6 button Open a new tab (⌘T)
+			7 separator
+			8 button List all tabs
+		9 toolbar Navigation
+			10 button Description: Sidebars, Help: Show sidebar (⌃Z)
+			11 button Back
+			12 button (disabled) Forward
+			13 button Reload
+			14 separator
+			15 container
+				16 button View site information
+				17 button View message about autofill
+				18 combo box (settable) Description: Search with Google or enter address, Value: http://127.0.0.1:5413/checkout
+					19 text http://127.0.0.1:5413/checkout
+				20 button Bookmark this page (⌘D)
+			21 separator
+			22 button Account
+			23 button Extensions
+			24 button Description: Firefox, Help: Open application menu
+		25 toolbar
+		26 container
+			27 scroll area
+				28 HTML Content Description: Checkout · Northbound Supply, URL: 127.0.0.1:5413/checkout
+					29 container
+						30 text Northbound Supply
+						31 text Shop
+						32 text Journal
+						33 text Cart (2)
+					34 container
+						35 heading Checkout, Value: 1
+							36 text Checkout
+						37 text Canvas weekender bag and a waxed field jacket.
+						38 container
+							39 heading Contact, Value: 2
+								40 text Contact
+							41 text Reference code
+							42 text field (settable) Reference code, Value: p04
+							43 text Full name
+							44 text field (settable) Full name, Value: Jonah Whitfield
+							45 text Email
+							46 text field (settable) Email, Value: jonah.whitfield@example.io
+							47 text Phone
+							48 text field (settable) Phone, Value: (828) 555-0193, Placeholder: (555) 555-5555
+							49 text US numbers only. We format it for you.
+						50 container
+							51 heading Shipping, Value: 2
+								52 text Shipping
+							53 text Address
+							54 combo box (settable) Address, Value: 47 Juniper Court, Asheville, NC 28801, Placeholder: Start typing your street address
+								55 text 47 Juniper Court, Asheville, NC 28801
+							56 text Address confirmed. Delivery
+							57 Delivery
+								58 container
+									59 radio button Standard 5–7 business days · Free, Value: 0
+									60 text Standard 5–7 business days · Free
+								61 container
+									62 radio button Express 2–3 business days · $12, Value: 0
+									63 text Express 2–3 business days · $12
+								64 container
+									65 radio button Overnight Next business day · $29, Value: 1
+									66 text Overnight Next business day · $29
+						67 container
+							68 heading Payment, Value: 2
+								69 text Payment
+							70 scroll area Secure card payment
+								71 HTML Content Description: Secure card payment, URL: 127.0.0.1:5414/payment.html?parent=http%3A%2F%2F127.0.0.1%3A5413
+									72 container
+										73 text Card number
+										74 text field (settable) Card number, Value: 5555 5555 5555 4444, Placeholder: 1234 1234 1234 1234
+									75 container
+										76 text Expiry (MM/YY)
+										77 text field (settable) Expiry (MM/YY), Value: 11/28, Placeholder: MM/YY
+									78 container
+										79 text CVC
+										80 text field (settable) CVC, Value: 902, Placeholder: 123
+									81 text Card details are handled by Paylock on a separate secure origin.
+							82 text Promo code
+							83 text field (settable) Promo code, Value: WINTER15
+							84 button Apply
+							85 text WINTER15 applied: 15% off.
+						86 container
+							87 text Total $268.00
+							88 button Pay now
+			89 scroll area
+				90 HTML Content Description: The page at http://127.0.0.1:5413 says:, URL: chrome://global/content/commonDialog.xhtml
+					91 container root-group
+						92 container
+							93 text 127.0.0.1:5413
+							94 container
+								95 text Pay $268.00 now?
+						96 button Cancel
+						97 button OK
+	98 close button
+	99 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	100 minimize button
+101 menu bar
+	102 Firefox
+	103 File
+	104 Edit
+	105 View
+	106 History
+	107 Bookmarks
+	108 Tools
+	109 Window
+	110 Help
+
+The focused UI element is 94 container

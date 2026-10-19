@@ -54,8 +54,12 @@ function nativeReader() {
 
 // Readers get the native reader and sealDigest (seal-digest.mjs), so a read can carry the digest of the
 // same node it classified, taken in the same synchronous step.
+// A reader that calls closure-free helpers lists them in reader.helpers. They follow as hoisted declarations,
+// so the reader stays the first function in the source.
 function expression(reader) {
-  return '([el, arg]) => (' + reader.toString() + ')(el, arg, (' + nativeReader.toString() + ')(), (' + sealDigest.toString() + '))';
+  const call = '(' + reader.toString() + ')(el, arg, (' + nativeReader.toString() + ')(), (' + sealDigest.toString() + '))';
+  if (!reader.helpers?.length) return '([el, arg]) => ' + call;
+  return '([el, arg]) => { return ' + call + '; ' + reader.helpers.map(helper => helper.toString()).join(' ') + ' }';
 }
 
 export async function trustedRead(handle, reader, arg) {

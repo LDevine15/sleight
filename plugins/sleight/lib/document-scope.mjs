@@ -1,6 +1,9 @@
 import { promptNotice } from './prompt-notice.mjs';
 import { elementWait } from './element-wait.mjs';
 import { listPicker } from './native-list-pick.mjs';
+import { moneyFigures, moneyConflicts } from './payment-figures.mjs';
+import { enginePayment, paymentAction } from './payment-gate.mjs';
+import { paymentWords, refundableName } from './direct-browser/rules.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -384,6 +387,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
       state.adoptUrl = !!update.adoptUrl;
     }
     state.nativeDenied = update?.nativeDenied;
+    // The payment gate's setting and the relay's copy of the user's message (payment-gate.mjs); without it the gate is off.
+    state.payment = update?.payment;
     state.timing = !!update?.timing;
     state.careful = !!update?.careful;
     state.firstOff = !!update?.firstOff && !!update?.focused && !state.careful && !state.fileOnly && !state.cancelOnly;
@@ -479,6 +484,12 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
     state.noteFocus(state.prior?.text);
     const wait = ${elementWait.toString()};
     const pickList = ${listPicker.toString()};
+    const moneyFigures = ${moneyFigures.toString()};
+    const moneyConflicts = ${moneyConflicts.toString()};
+    const paymentWords = ${paymentWords.toString()};
+    const refundableName = ${refundableName.toString()};
+    const paymentAction = ${paymentAction.toString()};
+    const enginePayment = ${enginePayment.toString()};
     const checkNative = () => { if (state.nativeDenied) throw new Error(state.nativeDenied); };
     // After Return, Enter, Tab, Escape or Space, typeText or paste goes ahead without the settled tree
     // read (about 470 ms in Excel, 2026-10-17) when two native observations that began at least waitMs
@@ -1026,6 +1037,25 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             const number = differentFocusTarget(text, before);
             if (number !== undefined) {
               throw new Error("sleight stopped before " + name + ": another element has focus. Use app.setValue(" + number + ", <text>) instead.");
+            }
+          }
+          // The payment gate: a submit-shaped action on a page that shows a payment stops unless the user's own message named
+          // an amount no figure on the page exceeds. A submit-shaped key, text or point action that skipped its read reads now
+          // when the newest tree it has shows a payment page (focus in it may be stale), or when there is none.
+          if (state.payment) {
+            const newest = text ?? priorText ?? state.callTrees.get(proxy) ?? lastTree;
+            if (text === undefined && paymentAction(name, args) && (newest === undefined || enginePayment(name, args, newest.replace(/^The focused UI element is .*$/m, ''), state.payment, true))) {
+              text = await timedRead(raw, 'payment');
+            }
+            const paid = enginePayment(name, args, text, state.payment);
+            if (paid) {
+              const head = /* notice */ 'sleight stopped this payment: the page shows ' + (paid.shown ?? ${quoted(/* lean notice */ 'no amount')});
+              if (paid.why === 'nocopy') throw stop(head + ${quoted(/* lean notice */ " and sleight has no copy of the user's message to check it against. Ask the user to pay themselves.")});
+              const why = paid.why === 'none' ? ${quoted(/* lean notice */ "the user's message named no amount")}
+                : paid.why === 'several' ? ${quoted(/* lean notice */ "the user's message named more than one amount")}
+                : paid.why === 'always' ? ${quoted(/* lean notice */ 'SLEIGHT_CONFIRM_PAYMENTS=always asks every time')}
+                : ${quoted(/* lean notice */ "the user's message named ")} + paid.named;
+              throw stop(head + ' and ' + why + ${quoted(/* lean notice */ '. Ask the user to confirm, naming the amount.')});
             }
           }
           await checkLease();

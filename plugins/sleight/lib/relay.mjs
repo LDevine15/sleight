@@ -67,6 +67,7 @@ import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './b
 import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
+import { createPaymentMessages } from './payment-gate.mjs';
 import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE } from './engine-app-docs.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
@@ -781,6 +782,8 @@ export function createRelay({
   if (directBrowser !== undefined && !isV3Frontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
   if (directHost !== undefined && !(isV3Bridge(directHost) && isV3Frontend(directBrowser))) throw Error('TRUSTED_ROUTE_REQUIRED');
   let installedBootstrapped = false;
+  // The user's own message for the engine-path payment gate (payment-gate.mjs): only an authenticated turbo begin sets it.
+  const paymentMessages = createPaymentMessages();
   let turboNoticeShown = false;
   const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ??
     (turboUnavailable ? ['browser_open','browser_read','browser_act','browser_fill','browser_tabs'] : []));
@@ -2462,7 +2465,10 @@ export function createRelay({
         reply({ isError: false, content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: directHost.bootstrapEnvelope() }) }] }); return;
       }
       if (!installedBootstrapped || frame?.event !== 'begin') { refuse(); return; }
+      paymentMessages.begin();
+      // bind refuses a frame without this session's envelope before it resolves, so only the user's own message is kept.
       directHost.bind(frame, turboApps()).then(available => {
+        paymentMessages.set(frame.text);
         if (available) { resumeRequested = true; resumeAfterStop(); }
         reply({ isError: !available, content: [] });
       }).catch(refuse);
@@ -2804,6 +2810,8 @@ export function createRelay({
     if (!Array.isArray(msg.result?.content)) return false;
     const taken = takeGuardStop(msg.result.content, call.mark);
     msg.result.content = taken.content;
+    // The private mark proves the guard wrote this stop; the next user message answers it (SLEIGHT_CONFIRM_PAYMENTS=always).
+    if (typeof taken.receipt?.error === 'string' && taken.receipt.error.startsWith('sleight stopped this payment:')) paymentMessages.asked();
     // A tab this call opened in its window: the stop tree passes tabRefusal's checks, which tie it to that window.
     const tabStop = !msg.error && msg.result.isError && taken.receipt?.windowStop === true &&
       tabRefusal(call.plan, taken.receipt, call.target, taken.content, call.before) === undefined;
@@ -3262,6 +3270,8 @@ export function createRelay({
       if (clipboard && name === 'js_reset') clipboardResets.add(msg.id);
       if (name === TURN_END_TOOL) {
         collectDirectEnd(msg.id);
+        // The mod's Stop or Interrupt: the user's turn is over, and so is the payment gate's copy of their message.
+        if (msg.params.arguments?.hook_event_name) paymentMessages.end();
         const generation = stopGeneration;
         const end = note => {
           if (generation !== stopGeneration || disposed) return;
@@ -3335,7 +3345,7 @@ export function createRelay({
               inputLease && leaseCalls.get(msg.id)?.key ? inputLease.grant(leaseCalls.get(msg.id).key) : undefined,
               { ...setup, timing: guardTiming, careful, fileOnly: changeReview, browserCandidate: true,
                 skipAppWrap: browserHandles.has('app') || browser.handles.includes('app'),
-                nativeDenied: nativeDenied ?? promptNotice(NATIVE_DENIED, prompt) });
+                nativeDenied: nativeDenied ?? promptNotice(NATIVE_DENIED, prompt), payment: paymentMessages.guard(confirmPayments) });
           } else if (read) {
             let code = originalCode;
             if (healthPlan && !helperProbes.has(msg.id) && helperFullReads.has(healthPlan.key)) {
@@ -3385,7 +3395,7 @@ export function createRelay({
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
                 seenLines, literals: numbers,
-                uniqueSeen });
+                uniqueSeen, payment: paymentMessages.guard(confirmPayments) });
           } else msg.params.arguments.code = swipeCode;
           if (msg.params.arguments.code !== originalCode) guardCalls.set(msg.id, guardGeneration);
           const restore = restoreEngineBindings(originalCode);
