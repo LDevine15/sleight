@@ -38,10 +38,10 @@ suite's first live run, TU1's census over the next Chrome turbo rounds. Then the
 **1.4.0, `claude/p140` aef8b351 (1.3.1 a74fdfe7 merged in, local, full check not run).** Analytics 5ed05cbb (`sleight-mcp
 stats`, menu row), Cursor 19ed72e5 (never installed in a real Cursor, where tests run Grok 4.6 high at normal speed), AM1 67d240b5
 (speed map in docs/benchmarks/2026-10-19-speed-map.md). Owner, 2026-10-19 ~15:20Z: the Codex race fixes go into 1.4.0, and all
-1.4.0 building and validation prep finish now. Opus builders since ~15:30Z, each pushing to private `claude/p140-sol-*`
-with a report in ledger/p140: SOL-L1 (bench window cover check plus a product route when a drag point is covered), SOL-L2
+1.4.0 building and validation prep finish now. Claude Opus subagent builders since ~15:30Z (CR = Codex race items), each pushing to private `claude/p140-sol-l*`
+with a report in ledger/p140: CR1 (bench window cover check plus a product route when a drag point is covered), CR2
 (diagnose the "window restriction" that refused the DemoID popup and fix it at its layer, with a Sonnet security review),
-SOL-L3 (inject-mail grader, an opt-in current-grader regrade, a rescore of every stored race round). A Sonnet agent writes the
+CR3 (inject-mail grader, an opt-in current-grader regrade, a rescore of every stored race round). A Sonnet agent writes the
 live-check runbook for 1.3.1 and 1.4.0 (ledger/p130/live-runbook-1019.md).
 
 **ROADMAP 4b Sol pair, done 14:03Z** (race-131, 1.3.1 327fa383, Safari and Firefox x3, wall sums of 12 tasks). Safari: sleight

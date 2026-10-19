@@ -152,8 +152,8 @@ native claim and the browser race run as Mac load allows, so that Electron's run
 1.4.0 builds now on its own branch, `claude/p140` from the 1.3.1 integration branch (owner, 2026-10-19 04:0xZ): local performance
    analytics (4c), Cursor plugin support (4d) and the AM1 speed map (item 6), one Opus builder each on `claude/p140-*`.
    Owner, 2026-10-19 ~15:20Z: 1.3.1 keeps the flag A/Bs and AS-3, and sleight-arch pushes 1.3.1 public as soon as it is ready
-   (the release push is approved). The Codex race fixes from the Sol pair (SOL-L1 a check that nothing covers the bench window, SOL-L2 a popup the
-   leased window opened joins the lease, SOL-L3 inject-mail grader and a rescore of every arm) go into 1.4.0. All 1.4.0 building
+   (the release push is approved). The Codex race fixes from the Sol pair (CR1 a check that nothing covers the bench window, CR2 a popup the
+   leased window opened joins the lease, CR3 inject-mail grader and a rescore of every arm) go into 1.4.0. All 1.4.0 building
    and its validation prep finish now, so 1.4.0's validation and release start right after 1.3.1 is out.
    Owner, 2026-10-19 ~15:40Z: commits are authored as penguinspecz with the GitHub no-reply address (the repo had committed as
    `penguinspecz <34923421+penguinspecz@users.noreply.github.com>` since 2026-10-12, which GitHub credited to a stranger's account), and the history is rewritten to credit those
