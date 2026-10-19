@@ -194,7 +194,7 @@ export function engineText(summary, arm) {
     bucketText(`engine ${version}`, b, [b.recorded && `${b.recorded} recorded`, b.runs - b.recorded && `${b.runs - b.recorded} inferred`].filter(Boolean).join(', ')));
   if (summary.ambiguous.runs) parts.push(bucketText(`${summary.ambiguous.runs} ambiguous`, summary.ambiguous));
   if (summary.unknown.runs) parts.push(bucketText(`${summary.unknown.runs} unknown`, summary.unknown));
-  return parts.join('; ');
+  return parts.join(' plus ');
 }
 
 // Arms compared in one table may run on different versions (allowed), and the table must say so. Only arms that drive the
@@ -205,13 +205,13 @@ export function engineMix(byArm) {
   if (all.length < 2) return null;
   return { versions: all, arms: Object.fromEntries(arms.map(([arm, s]) => [arm, Object.keys(s.versions).sort()])) };
 }
-export const mixText = mix => `The arms that drive the engine ran on different engine versions: ${Object.entries(mix.arms).map(([arm, versions]) => `${arm} on ${versions.join(' and ') || 'no known version'}`).join(', ')}.`;
+export const mixText = mix => `The arms that use the engine ran on different engine versions: ${Object.entries(mix.arms).map(([arm, versions]) => `${arm} on ${versions.join(' and ') || 'no known version'}`).join(', ')}.`;
 
 // The sentence under a table: the mix, or one version, and how many engine-arm runs have no settled version.
 export function engineNote(byArm, mix = engineMix(byArm)) {
   const unresolved = Object.entries(byArm).filter(([arm]) => usesEngine(arm)).reduce((n, [, s]) => n + s.ambiguous.runs + s.unknown.runs, 0);
   const versions = [...new Set(Object.entries(byArm).filter(([arm]) => usesEngine(arm)).flatMap(([, s]) => Object.keys(s.versions)))];
-  const head = mix ? mixText(mix) : versions.length ? `The arms that drive the engine ran on one engine version, ${versions[0]}.` : 'No arm here drives the engine with a known version.';
+  const head = mix ? mixText(mix) : versions.length ? `The arms that use the engine ran on one engine version, ${versions[0]}.` : 'No arm here uses the engine with a known version.';
   return unresolved ? `${head} ${unresolved} of their runs have no settled version (ambiguous or unknown).` : head;
 }
 

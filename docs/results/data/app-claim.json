@@ -45,6 +45,39 @@
     "cua": ["Claude Code 2.1.289"],
     "peekaboo": ["@steipete/peekaboo 4.9.2","Claude Code 2.1.289"]
    },
+   "engines": {
+    "sleight": {
+     "versions": {"26.1007.71326":{"runs":11,"recorded":0,"first":"2026-10-18T02:39:41.149Z","last":"2026-10-18T03:16:09.925Z","datesInferred":11,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    },
+    "lcu": {
+     "versions": {"26.1007.71326":{"runs":11,"recorded":0,"first":"2026-10-18T02:43:06.030Z","last":"2026-10-18T03:16:09.923Z","datesInferred":11,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    },
+    "codex": {
+     "versions": {"26.1007.71326":{"runs":9,"recorded":0,"first":"2026-10-18T02:48:50.037Z","last":"2026-10-18T03:14:23.857Z","datesInferred":9,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    },
+    "cua": {
+     "versions": {"26.1007.71326":{"runs":9,"recorded":0,"first":"2026-10-18T02:58:12.564Z","last":"2026-10-18T03:14:23.861Z","datesInferred":9,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    },
+    "peekaboo": {
+     "versions": {"26.1007.71326":{"runs":9,"recorded":0,"first":"2026-10-18T03:08:08.477Z","last":"2026-10-18T03:14:23.863Z","datesInferred":9,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    },
+    "claude-cu": {
+     "versions": {"26.1007.71326":{"runs":11,"recorded":0,"first":"2026-10-18T02:54:45.686Z","last":"2026-10-18T03:16:59.938Z","datesInferred":11,"undated":0}},
+     "ambiguous": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0},
+     "unknown": {"runs":0,"recorded":0,"first":null,"last":null,"datesInferred":0,"undated":0}
+    }
+   },
+   "engineMix": null,
    "runs": [
     {"task":"vscode-edit","arm":"sleight","run":1,"round":null,"seconds":14.1,"passed":true,"problem":null,"file":"2026-10-18T02-39-41-149Z.json"},
     {"task":"slack-post","arm":"sleight","run":1,"round":null,"seconds":11.8,"passed":true,"problem":null,"file":"2026-10-18T02-39-41-149Z.json"},

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
-import { busy, compatApproval, docsDiff, engineTier, lastRecord, launcherChecks, liveTier, mergeEntries, publish, rawEngineChecks,
+import { busy, compatApproval, docsDiff, engineTier, lastRecord, launcherChecks, launcherSurfaces, liveTier, mergeEntries, publish, rawEngineChecks,
   record, renderPage, runDoctor, runWatch, summary, takeStateLock, verdictOf } from '../bench/compat.mjs';
 
 const fake = fileURLToPath(new URL('./fixtures/compat-engine.mjs', import.meta.url));
@@ -16,8 +16,9 @@ function temp(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
-// Hold and lock paths of the test's own, never /tmp/sleight-hold or /tmp/sleight-live.lock (a race may hold it).
-const quiet = dir => ({ holdPath: join(dir, 'no-hold'), lockPath: join(dir, 'no-lock') });
+// Hold and lock paths of the test's own, never /tmp/sleight-hold or /tmp/sleight-live.lock (a race may hold it), and a
+// surface choice that leaves the fake's setting alone instead of reading the Mac's extension cache.
+const quiet = dir => ({ holdPath: join(dir, 'no-hold'), lockPath: join(dir, 'no-lock'), select: () => undefined });
 // A launcher whose --doctor prints a version (or fails) and otherwise serves the fake engine as sleight would.
 function launcher(dir, { version = '26.1013.1001501', fail = false } = {}) {
   const path = join(dir, 'sleight-mcp');
@@ -52,6 +53,43 @@ test('the raw engine checks pass on the recorded engine and name what broke', as
   const hung = await rawEngineChecks(server('hang'), process.env, { open });
   assert.equal(hung.steps.at(-1).status, 'error');
   assert.equal(verdictOf(hung.steps), 'error');
+});
+
+test('the probe runs with the surfaces the launcher picks and says which (CF2)', async t => {
+  const dir = temp(t);
+  const surfaced = (surfaces, mode) => ({ ...server(mode), env: { ...server(mode).env, CUA_REPL_ENABLED_SURFACES: surfaces } });
+  // Computer only: the engine has no browser methods, and that is what sleight's launcher runs with here.
+  const computer = (await rawEngineChecks(surfaced('computer'), process.env)).steps.find(s => s.id === 'repl-probe');
+  assert.equal(computer.status, 'pass');
+  assert.match(computer.reason, /^3 cua methods.*\(surfaces computer\); browser methods not checked/);
+  const both = (await rawEngineChecks(surfaced('browser,computer'), process.env)).steps.find(s => s.id === 'repl-probe');
+  assert.equal(both.status, 'pass');
+  assert.match(both.reason, /^8 cua methods.*\(surfaces browser,computer\)$/);
+  // With the browser surface on, a missing browser method is the engine's break, named with the surfaces.
+  const gone = (await rawEngineChecks(surfaced('browser,computer', 'probe-missing'), process.env)).steps.find(s => s.id === 'repl-probe');
+  assert.equal(gone.status, 'fail');
+  assert.match(gone.reason, /cua\.getTab is undefined \(surfaces browser,computer\)/);
+
+  // The engine tier asks the launcher's surface choice and hands it to both sessions.
+  const opened = [];
+  const open = options => (opened.push(options), import('../bench/compat/client.mjs').then(m => m.openClient(options)));
+  const pick = surfaces => server => { server.env.CUA_REPL_ENABLED_SURFACES = surfaces; return { close: async () => opened.push('cache closed') }; };
+  const base = () => ({ ...server(), env: { ...server().env, CUA_REPL_ENABLED_SURFACES: 'computer' } });
+  for (const surfaces of ['computer', 'browser,computer']) {
+    opened.length = 0;
+    const tier = await engineTier({ launcher: launcher(dir), logs: dir, resolve: base, open, ...quiet(dir), select: pick(surfaces) });
+    assert.equal(verdictOf(tier.steps), 'pass', JSON.stringify(tier.steps));
+    assert.match(tier.steps.find(s => s.id === 'repl-probe').reason, new RegExp(`\\(surfaces ${surfaces}\\)`));
+    assert.equal(opened[0], 'cache closed');
+    assert.equal(opened[1].env.CUA_REPL_ENABLED_SURFACES, surfaces);
+    assert.equal(opened[2].env.SLEIGHT_SURFACES, surfaces);
+  }
+});
+
+test("the launcher's own surface choice: SLEIGHT_SURFACES first, ChatGPT.app engines computer only", async () => {
+  const server = extra => ({ command: '/x', args: [], env: { CUA_REPL_ENABLED_SURFACES: 'computer' }, ...extra });
+  assert.equal(await launcherSurfaces(server(), { SLEIGHT_SURFACES: 'browser,computer' }), 'browser,computer');
+  assert.equal(await launcherSurfaces(server({ fromChatGPTApp: true }), {}), 'computer');
 });
 
 test('the launcher check needs js and select_window', async t => {

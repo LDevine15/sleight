@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { API_MEMBERS, CUA_METHODS, MATCHED_ONLY, PROBE_CODE, apiBlock, checkApiContract, checkPolicyRewrite, checkReplProbe,
+import { API_MEMBERS, BROWSER_METHODS, CUA_METHODS, MATCHED_ONLY, PROBE_CODE, apiBlock, checkApiContract, checkPolicyRewrite, checkReplProbe,
   checkToolSurface, membersOf, parseDeclarations, parseProbe } from '../bench/compat/contract.mjs';
 
 const fixture = name => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -79,6 +79,25 @@ test('the probe code runs as written and its shapes pass the check', async () =>
   assert.match(checkReplProbe(parseProbe(written.join('\n')))[0].reason, /cua\.getTab is undefined/);
   assert.equal(checkReplProbe(undefined)[0].status, 'fail');
   assert.match(checkReplProbe({ ...probe, apps: { '[]': { id: 'string', windows: { '[]': { id: 'string' } } } } })[0].reason, /windows lack/);
+});
+
+test('the probe judges browser methods by the surfaces the engine ran with', () => {
+  const kinds = Object.fromEntries([...CUA_METHODS.map(name => [name, BROWSER_METHODS.includes(name) ? 'undefined' : 'function']),
+    ['nodeRepl.write', 'function'], ['nodeRepl.emitImage', 'function']]);
+  const probe = { kinds, state: { apps: { '[]': { id: 'string' } } }, apps: { '[]': { id: 'string' } } };
+  const [computer] = checkReplProbe(probe, { surfaces: 'computer' });
+  assert.equal(computer.status, 'pass');
+  assert.match(computer.reason, /\(surfaces computer\); browser methods not checked/);
+  const [browser] = checkReplProbe(probe, { surfaces: 'browser,computer' });
+  assert.equal(browser.status, 'fail');
+  assert.match(browser.reason, /^cua\.listBrowsers is undefined; .*cua\.listTabs is undefined \(surfaces browser,computer\)$/);
+  // CF2: no surface setting to judge by is the harness's error, so the verdict is "error", not an engine "fail".
+  const [unknown] = checkReplProbe(probe);
+  assert.equal(unknown.status, 'error');
+  assert.match(unknown.reason, /didn't say which surfaces/);
+  // A computer method gone still fails with the browser surface off.
+  assert.match(checkReplProbe({ ...probe, kinds: { ...kinds, getApp: 'undefined' } }, { surfaces: 'computer' })[0].reason, /^cua\.getApp is undefined \(surfaces computer\)$/);
+  assert.deepEqual(BROWSER_METHODS.filter(name => !CUA_METHODS.includes(name)), []);
 });
 
 test('every cua method sleight calls is in the contract', () => {

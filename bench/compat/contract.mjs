@@ -7,6 +7,9 @@ import { compactConfirmationsPolicy } from '../../plugins/sleight/lib/compact-co
 
 // cua methods the relay, guard and helpers call (relay.mjs, document-scope.mjs, helper-health.mjs, browser-*.mjs).
 export const CUA_METHODS = ['getApp', 'getState', 'listApps', 'listBrowsers', 'getBrowser', 'getTab', 'createBrowserTab', 'listTabs'];
+// The engine defines these only when CUA_REPL_ENABLED_SURFACES includes browser (engine 26.1013.40934, 2026-10-19:
+// with "computer" alone cua has getApp, getState and listApps and no browser methods).
+export const BROWSER_METHODS = ['listBrowsers', 'getBrowser', 'getTab', 'createBrowserTab', 'listTabs'];
 // Names the code matches in Claude's own code but never calls itself, so the engine may drop them without breaking sleight.
 export const MATCHED_ONLY = ['rewriteDocumentation', 'scroll'];
 
@@ -201,12 +204,21 @@ export function parseProbe(text) {
   try { return JSON.parse(line.slice(PROBE_MARK.length)); } catch { return undefined; }
 }
 
-export function checkReplProbe(probe) {
-  if (!probe || typeof probe !== 'object') return [result('repl-probe', 'fail', 'the probe printed no result')];
-  const problems = [];
-  for (const name of [...CUA_METHODS, 'nodeRepl.write', 'nodeRepl.emitImage']) {
-    if (probe.kinds?.[name] !== 'function') problems.push(`${name.includes('.') ? name : `cua.${name}`} is ${probe.kinds?.[name] ?? 'missing'}`);
+// `surfaces` is the CUA_REPL_ENABLED_SURFACES the engine ran with. The browser methods are checked only when it includes
+// browser. Missing browser methods with no surface setting to judge them by are the harness's error, not the engine's.
+export function checkReplProbe(probe, { surfaces } = {}) {
+  const where = surfaces ? ` (surfaces ${surfaces})` : '';
+  if (!probe || typeof probe !== 'object') return [result('repl-probe', 'fail', `the probe printed no result${where}`)];
+  const browser = surfaces ? surfaces.split(',').map(part => part.trim()).includes('browser') : undefined;
+  const missing = name => probe.kinds?.[name] !== 'function';
+  const describe = name => `${name.includes('.') ? name : `cua.${name}`} is ${probe.kinds?.[name] ?? 'missing'}`;
+  const browserGone = BROWSER_METHODS.filter(missing);
+  if (browser === undefined && browserGone.length) {
+    return [result('repl-probe', 'error', `the probe didn't say which surfaces the engine ran with, so ${browserGone.map(describe).join('; ')} can't be judged (the engine defines them only with CUA_REPL_ENABLED_SURFACES including browser)`)];
   }
+  const checked = browser === false ? CUA_METHODS.filter(name => !BROWSER_METHODS.includes(name)) : CUA_METHODS;
+  const problems = [];
+  for (const name of [...checked, 'nodeRepl.write', 'nodeRepl.emitImage']) if (missing(name)) problems.push(describe(name));
   const apps = probe.state?.apps?.['[]'];
   if (!probe.state?.apps || !('[]' in probe.state.apps)) problems.push('getState() has no apps array');
   else if (apps && Object.keys(apps).length && apps.id !== 'string') problems.push('getState() apps have no string id');
@@ -218,5 +230,7 @@ export function checkReplProbe(probe) {
     if (listed.windows && !windows) problems.push('listApps() windows is not an array');
     if (windows && Object.keys(windows).length && (windows.id !== 'number' || windows.app !== 'string')) problems.push('listApps() windows lack a numeric id or an app name');
   }
-  return [problems.length ? result('repl-probe', 'fail', problems.join('; ')) : result('repl-probe', 'pass', `${CUA_METHODS.length} cua methods, getState and listApps shapes as expected`)];
+  const skipped = browser === false ? '; browser methods not checked, as the engine ran without the browser surface' : '';
+  return [problems.length ? result('repl-probe', 'fail', `${problems.join('; ')}${where}`)
+    : result('repl-probe', 'pass', `${checked.length} cua methods, getState and listApps shapes as expected${where}${skipped}`)];
 }

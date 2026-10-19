@@ -11,8 +11,12 @@ import { detectBrowser, doctorLines, ensureTurboConfig, executableProblem, inspe
   from '../plugins/sleight/lib/direct-browser/turbo-setup.mjs';
 import { ensureInstalledTurbo, prepareInstalledStartup, doctor } from '../plugins/sleight/lib/launch.mjs';
 import { applicationName } from '../plugins/sleight/lib/direct-browser/worker.mjs';
+import { writableTreeSkip } from './requirements.mjs';
 
 const realPlugin = fileURLToPath(new URL('../plugins/sleight', import.meta.url));
+// Fixture packages must not be group-writable (the package check refuses that), whatever umask the runner has.
+process.umask(0o022);
+const checkoutSkip = writableTreeSkip(realPlugin);
 // A temp home with Library/Application Support/sleight/turbo.json, a fake /Applications, and optional browsers.
 function world(t, { chrome = false, helium = false, chromeMode = 0o755 } = {}) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'sleight-turbo-setup-')); trackTemp(root);
@@ -58,7 +62,7 @@ for (const [id, name, bundleId, profile, scheme, qualified] of browsers) {
     assert.equal(applicationName(found.executable), name);
   });
   if (qualified) continue;
-  test(`${id} requires the exact qualification override and uses its own inspect address`, t => {
+  test(`${id} requires the exact qualification override and uses its own inspect address`, { skip: checkoutSkip }, t => {
     const w = world(t), url = `${scheme}://inspect/#remote-debugging`;
     w.install(name, name);
     const run = env => {
@@ -152,7 +156,7 @@ test('a config written for a qualification check loads as off without the overri
   assert.ok(readInstalledConfig(w.configPath, { SLEIGHT_TURBO_UNQUALIFIED: '1' }));
 });
 
-test('a written file is accepted by the real reader and package check', t => {
+test('a written file is accepted by the real reader and package check', { skip: checkoutSkip }, t => {
   const w = world(t, { chrome: true });
   const result = ensureTurboConfig(w.base);
   assert.equal(result.action, 'wrote'); assert.equal(result.browser, 'Google Chrome');
@@ -168,7 +172,7 @@ test('a written file is accepted by the real reader and package check', t => {
   assert.equal(ensureTurboConfig(w.base).action, 'none');
 });
 
-test('the file is private and owned by the user, in a private folder it created', t => {
+test('the file is private and owned by the user, in a private folder it created', { skip: checkoutSkip }, t => {
   const w = world(t, { helium: true });
   ensureTurboConfig(w.base);
   const stat = lstatSync(w.configPath);
@@ -192,7 +196,7 @@ test('a write never goes through a linked file or folder', t => {
   assert.deepEqual(readdirSync(real), []);
 });
 
-test('an opt-out is never overwritten at startup, however stale the package looks', t => {
+test('an opt-out is never overwritten at startup, however stale the package looks', { skip: checkoutSkip }, t => {
   const w = world(t, { chrome: true });
   assert.equal(turboCommand(['off'], { ...w.base, out() {} }), 0);
   const before = readFileSync(w.configPath, 'utf8');
@@ -319,7 +323,7 @@ test('the group-write relaxation never covers Chrome Beta, Dev or Canary, even w
   assert.deepEqual(calls, []);
 });
 
-test('writes are atomic: no partial file, no temp leftovers, the old file survives a failed write', t => {
+test('writes are atomic: no partial file, no temp leftovers, the old file survives a failed write', { skip: checkoutSkip }, t => {
   const w = world(t, { chrome: true });
   ensureTurboConfig(w.base);
   const before = readFileSync(w.configPath, 'utf8'), dir = join(w.home, 'Library/Application Support/sleight');
@@ -332,7 +336,7 @@ test('writes are atomic: no partial file, no temp leftovers, the old file surviv
   assert.equal(lstatSync(w.configPath).mode & 0o777, 0o600);
 });
 
-test('status and doctor report each state with the one fix', t => {
+test('status and doctor report each state with the one fix', { skip: checkoutSkip }, t => {
   const none = world(t);
   assert.match(doctorLines(turboDiagnosis(none.base)).join('\n'), /not set up yet[\s\S]*fix: No supported browser found/);
   const w = world(t, { helium: true }), cache = join(w.root, 'cache');
@@ -356,7 +360,7 @@ test('status and doctor report each state with the one fix', t => {
   assert.match(statusLines(turboDiagnosis(w.base)).join('\n'), /turbo +off \(you turned it off\)/);
 });
 
-test('turbo commands: on, off, status, usage', t => {
+test('turbo commands: on, off, status, usage', { skip: checkoutSkip }, t => {
   const w = world(t, { chrome: true, helium: true });
   const run = args => { const out = []; const code = turboCommand(args, { ...w.base, out: x => out.push(x) }); return { code, text: out.join('') }; };
   assert.equal(run([]).code, 2); assert.equal(run(['bogus']).code, 2); assert.equal(run(['off', '--browser', 'chrome']).code, 2); assert.equal(run(['status', 'x']).code, 2);
@@ -369,7 +373,7 @@ test('turbo commands: on, off, status, usage', t => {
   assert.equal(run(['on']).code, 0); assert.match(run(['status']).text, /browser +Google Chrome/);
 });
 
-test('startup hashing time on the real package', t => {
+test('startup hashing time on the real package', { skip: checkoutSkip }, t => {
   const w = world(t, { chrome: true });
   const first = ensureTurboConfig(w.base), second = ensureTurboConfig(w.base);
   t.diagnostic(`files ${packageFiles(realPlugin).length}; absent -> written ${first.ms} ms; current check ${second.ms} ms`);

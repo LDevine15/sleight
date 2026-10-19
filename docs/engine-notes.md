@@ -43,7 +43,10 @@ ChatGPT and engine versions to [the compatibility record](results/engine-compat.
   diff in the state folder, for a private machine. `--app /Applications/ChatGPT.app` checks an installed app.
 - `bench/compat.mjs` runs the installed engine on this Mac: the doctor, the raw engine's tool list, docs and a REPL
   probe of method types and result shapes (never values), sleight's launcher, and a diff of the docs against the last
-  version that passed (`~/Library/Logs/sleight/engine-raw-<version>.diff`). It doesn't open an app and takes about 20 s
+  version that passed (`~/Library/Logs/sleight/engine-raw-<version>.diff`). Both engine sessions use the surfaces
+  sleight's launcher would pick (`selectSurfaces`), and the probe's result names them. The engine defines `cua`'s five
+  browser methods only when `CUA_REPL_ENABLED_SURFACES` lists browser, so with computer alone the probe skips them, and a probe with
+  no surface setting is a harness error. It doesn't open an app and takes about 20 s
   (an estimate). It doesn't start while `/tmp/sleight-hold` or `/tmp/sleight-live.lock` exists. With `--owner-away` it
   adds the live checks, about 2 minutes (an estimate): 17 × 23 in Calculator by clicks with a screenshot, and one
   engine-path read of a page served on 127.0.0.1 in a Safari window the benchmark's fixture helper creates. They take

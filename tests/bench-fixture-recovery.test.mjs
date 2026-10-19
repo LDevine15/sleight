@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { openFixture } from '../bench/real-fixture.mjs';
+import { openFixture, retryFixtureCleanup } from '../bench/real-fixture.mjs';
 import { runInNewContext } from 'node:vm';
 
 function source() {
@@ -420,5 +420,99 @@ for (const mode of ['window', 'folder', 'inherit']) test(`parent refuses recover
   try {
     await assert.rejects(lease.recover(), /document/);
     assert.equal(collected, false);
+  } finally { await lease.dispose(); }
+});
+
+// textedit-two-windows and textedit-window-drag on 2026-10-19 (results 15-28-26 and 15-34-10): the second document's
+// cleanup failed, the first lease closed its window and quit the app this run launched, and recovery then refused the
+// second lease as "not launched by this run", stopping the pass although every app the run launched had exited.
+async function documentPair(t, { secondStart = 5000, firstQuits = true, recoverOk = true, alive = [] } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'nt1-pair-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const ctx = { dir, nonce: 'nonce' }, recovered = [], checked = [];
+  let opened = 0;
+  const options = {
+    helper: async () => ({ command: 'fake', args: [] }), open: async () => {},
+    exited: async (pid, start) => { checked.push([pid, start]); return !alive.includes(pid); },
+    run: async (_command, args, runOptions) => {
+      const request = JSON.parse(args.at(-1));
+      if (request.mode === 'recover') {
+        recovered.push(request);
+        return recoverOk ? { groupClean: true, exit: { code: 0 }, stdout: '{"stage":"recovered","pids":[]}\n' }
+          : { groupClean: true, exit: { code: 1 }, stdout: '', stderr: 'Fixture process ownership unconfirmed' };
+      }
+      const first = opened++ === 0;
+      runOptions.onStdout(JSON.stringify({ stage: 'identified', running: !first, pid: 42, bundle: 'com.apple.TextEdit',
+        processStartedAtMs: first ? 5000 : secondStart, setupCase: first ? 'cold-launch' : 'already-running' }) + '\n' +
+        '{"stage":"armed"}\n{"stage":"ready"}\n');
+      return new Promise(resolve => runOptions.signal.addEventListener('abort', () => resolve({ groupClean: true, exit: { code: 1 } }), { once: true }));
+    },
+  };
+  const request = name => ({ app: 'TextEdit', bundle: 'com.apple.TextEdit', mode: 'document', target: join(dir, name), token: name });
+  await openFixture(ctx, request('Source-nonce.txt'), options);
+  await openFixture(ctx, request('Target-nonce.txt'), options);
+  // What closeFixtures left: the second close refused, the first lease closed and quit the app it launched.
+  Object.assign(ctx.fixtureDiagnostics[1], { cleanup: 'unconfirmed', closeFailure: 'Owned document lost focus; cleanup refused' });
+  if (firstQuits) Object.assign(ctx.fixtureDiagnostics[0], { windowCleanupConfirmed: true, appQuit: true, helperCollectionConfirmed: true });
+  return { ctx, recovered, checked };
+}
+
+test('recovery of a second document in the app this run launched waits for that app to quit, then confirms its exit', async t => {
+  const { ctx, recovered, checked } = await documentPair(t);
+  assert.equal(ctx.windowLeases[1].ownerLease(), ctx.windowLeases[0]);
+  await retryFixtureCleanup(ctx);
+  assert.equal(recovered.length, 1, 'only the launching lease runs native recovery');
+  assert.equal(recovered[0].running, false);
+  assert.deepEqual(checked.at(-1), [42, 5000], 'the adopted lease confirms the exact process start with the kernel');
+  assert.equal(ctx.fixtureDiagnostics[1].cleanup, 'closed with launched app');
+  assert.equal(ctx.fixtureDiagnostics[1].appQuit, true);
+  assert.equal(ctx.fixtureDiagnostics[1].helperCollectionConfirmed, true);
+  assert.equal(ctx.fixtureDiagnostics.some(item => item.cleanup === 'unconfirmed'), false);
+});
+
+test('a second document in an app this run did not launch still refuses recovery', async t => {
+  // A process start that differs from the launching lease's receipt is someone else's app (a leftover TextEdit, 2026-10-19 14:06Z).
+  const { ctx, recovered } = await documentPair(t, { secondStart: 4000 });
+  assert.equal(ctx.windowLeases[1].ownerLease(), undefined);
+  await assert.rejects(retryFixtureCleanup(ctx), /requires an app launched by this run/);
+  assert.equal(recovered.length, 0, 'the refusal comes before any native recovery');
+});
+
+test('when both closes failed, the launching lease recovers first and the second document follows it', async t => {
+  const { ctx, recovered } = await documentPair(t, { firstQuits: false });
+  await retryFixtureCleanup(ctx);
+  assert.equal(recovered.length, 1);
+  assert.deepEqual(ctx.fixtureDiagnostics.map(item => item.appQuit), [true, true]);
+});
+
+test('a second document keeps the stop when the launching lease cannot quit the app', async t => {
+  const { ctx } = await documentPair(t, { firstQuits: false, recoverOk: false });
+  await assert.rejects(retryFixtureCleanup(ctx), /recovery unconfirmed/);
+  assert.equal(ctx.fixtureDiagnostics[1].cleanup, 'unconfirmed');
+});
+
+test('a second document keeps the stop and the live lock when the launched process is still running', async t => {
+  const { ctx } = await documentPair(t, { alive: [42] });
+  await assert.rejects(retryFixtureCleanup(ctx), /exit disagreement/);
+  assert.equal(ctx.exitDisagreements.length, 1);
+});
+
+test('the parent records where the helper placed a fixture window', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'nt1-placement-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const ctx = { dir, nonce: 'nonce' }, placement = { slot: 1, count: 2, frame: { x: 752, y: 49, width: 720, height: 560 } };
+  let sent;
+  const lease = await openFixture(ctx, { app: 'TextEdit', bundle: 'com.apple.TextEdit', mode: 'document', target: join(dir, 'Target-nonce.txt'),
+    token: 'Target-nonce.txt', placement: { slot: 1, count: 2 } }, {
+    helper: async () => ({ command: 'fake', args: [] }), open: async () => {},
+    run: async (_command, args, options) => {
+      sent = JSON.parse(args.at(-1));
+      options.onStdout('{"stage":"armed","running":false,"pid":42}\n' + JSON.stringify({ stage: 'placement', placement }) + '\n{"stage":"ready"}\n');
+      return new Promise(resolve => options.signal.addEventListener('abort', () => resolve({ groupClean: true, exit: { code: 0 } }), { once: true }));
+    },
+  });
+  try {
+    assert.deepEqual(sent.placement, { slot: 1, count: 2 });
+    assert.deepEqual(ctx.fixtureDiagnostics[0].placement, placement);
   } finally { await lease.dispose(); }
 });

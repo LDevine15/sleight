@@ -148,8 +148,10 @@ function textTask(id, open) {
   };
   return { id, app: 'TextEdit', prepare, setup: async ctx => {
     prepare(ctx);
+    // A pair sits side by side in the display's visible frame: cascaded, the source covered the drop point (2026-10-19).
     for (const [index, document] of ctx.documents.entries()) await acquireFixture(ctx, `document${index}`, () => open(ctx, {
-      app: 'TextEdit', bundle: 'com.apple.TextEdit', target: document, token: basename(document), mode: 'document' }));
+      app: 'TextEdit', bundle: 'com.apple.TextEdit', target: document, token: basename(document), mode: 'document',
+      ...(pair && { placement: { slot: index, count: ctx.documents.length } }) }));
   }, prompt: ctx => {
     const [source, target] = ctx.documents;
     const instructions = {

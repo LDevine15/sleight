@@ -65,7 +65,9 @@ export async function rawEngineChecks(server, env, { open = openClient } = {}) {
     catch (error) { steps.push(step('api-contract', 'fail', error.message.split(':')[0])); }
     steps.push(...checkPolicyRewrite(items));
     const probe = await client.call('js', { code: PROBE_CODE, timeout_ms: 30000 });
-    steps.push(...(probe?.isError ? [step('repl-probe', 'fail', 'the probe returned an error', textOf(probe).split('\n')[0])] : checkReplProbe(parseProbe(textOf(probe)))));
+    const surfaces = server.env?.CUA_REPL_ENABLED_SURFACES;
+    steps.push(...(probe?.isError ? [step('repl-probe', 'fail', `the probe returned an error${surfaces ? ` (surfaces ${surfaces})` : ''}`, textOf(probe).split('\n')[0])]
+      : checkReplProbe(parseProbe(textOf(probe)), { surfaces })));
     const ended = await client.endTurn();
     steps.push(ended?.isError ? step('turn-end', 'fail', 'turn_ended with the relay\'s arguments returned an error') : step('turn-end', 'pass'));
   } catch (error) {
@@ -76,11 +78,12 @@ export async function rawEngineChecks(server, env, { open = openClient } = {}) {
   return { steps, docs };
 }
 
-// sleight's own launcher: does it start against this engine and list its tools?
-export async function launcherChecks(launcher, env, { open = openClient } = {}) {
+// sleight's own launcher: does it start against this engine and list its tools? It gets the surfaces the raw engine ran
+// with, so both sessions match.
+export async function launcherChecks(launcher, env, { open = openClient, surfaces = 'computer' } = {}) {
   let client;
   try {
-    client = await open({ command: launcher, env: { ...env, SLEIGHT_APPROVAL_PROMPT: 'client', SLEIGHT_SURFACES: 'computer' }, name: 'sleight-compat' });
+    client = await open({ command: launcher, env: { ...env, SLEIGHT_APPROVAL_PROMPT: 'client', SLEIGHT_SURFACES: surfaces }, name: 'sleight-compat' });
     const names = new Set((await client.listTools() ?? []).map(tool => tool?.name));
     const missing = ['js', 'select_window'].filter(name => !names.has(name));
     return [missing.length ? step('sleight-start', 'fail', `sleight's tool list lacks ${missing.join(', ')}`) : step('sleight-start', 'pass', `${names.size} tools`)];
@@ -108,6 +111,17 @@ export async function docsDiff(logs, version, docs, accepted, run = execute) {
   return [step('api-docs', 'warn', `${changed} lines changed since ${accepted}; see ~/Library/Logs/sleight/engine-raw-${version}.diff`)];
 }
 
+// The surfaces sleight's launcher would start this engine with (launch.mjs selectSurfaces: SLEIGHT_SURFACES, else browser
+// and computer when the extension cache says a Codex browser extension is connected, else computer). resolveServer alone
+// always says computer, and the engine then defines no browser methods, which read as an engine break (CF2, 2026-10-19).
+export async function launcherSurfaces(server, env, select) {
+  select ??= (await import('../plugins/sleight/lib/launch.mjs')).selectSurfaces;
+  const cache = select(server, env);
+  // The launcher refreshes the cache after its first client call. The suite only reads it.
+  await cache?.close?.();
+  return server.env.CUA_REPL_ENABLED_SURFACES;
+}
+
 // Another project's timed window or a live run (a benchmark race) holds the Mac: nothing starts the engine meanwhile.
 export function busy({ holdPath = '/tmp/sleight-hold', lockPath = '/tmp/sleight-live.lock', exists = existsSync } = {}) {
   if (exists(holdPath)) return `${holdPath} exists (another project's timed window)`;
@@ -115,7 +129,7 @@ export function busy({ holdPath = '/tmp/sleight-hold', lockPath = '/tmp/sleight-
   return undefined;
 }
 
-export async function engineTier({ launcher = LAUNCHER, env = process.env, logs = logsDir(), doctor, resolve: resolveServer, open = openClient, run = execute,
+export async function engineTier({ launcher = LAUNCHER, env = process.env, logs = logsDir(), doctor, resolve: resolveServer, select, open = openClient, run = execute,
   holdPath, lockPath } = {}) {
   const waiting = busy({ holdPath, lockPath });
   if (waiting) return { version: doctor?.version, pending: waiting, steps: [step('engine', 'pending', waiting)] };
@@ -125,8 +139,9 @@ export async function engineTier({ launcher = LAUNCHER, env = process.env, logs 
   resolveServer ??= (await import('../plugins/sleight/lib/launch.mjs')).resolveServer;
   const server = resolveServer(env);
   if (server.error) return { version: ran.version, steps: [...steps, step('engine-session', 'fail', 'no engine to start', server.error)] };
+  const surfaces = await launcherSurfaces(server, env, select);
   const raw = await rawEngineChecks(server, env, { open });
-  steps.push(...raw.steps, ...await launcherChecks(launcher, env, { open }));
+  steps.push(...raw.steps, ...await launcherChecks(launcher, env, { open, surfaces }));
   try { steps.push(...await docsDiff(logs, ran.version, raw.docs, readOr(join(logs, 'compat-accepted'), undefined), run)); }
   catch (error) { steps.push(step('api-docs', 'warn', "the docs diff couldn't run", error.message)); }
   return { version: ran.version, steps };

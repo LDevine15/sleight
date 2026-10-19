@@ -112,6 +112,21 @@ test('multi-window setup acquires each exact fixture path and retains a failed a
   } finally { removeTemp(temp); }
 });
 
+test('the two-window tasks ask for side-by-side slots and single documents ask for none', async () => {
+  const { tasks: defaults } = await import('../bench/tasks.mjs');
+  const { realTasks: real } = await import('../bench/tasks-real.mjs');
+  const temp = mkdtempSync(join(tmpdir(), 'sleight-world-placement-'));
+  try {
+    for (const [id, expected] of [['textedit-window-drag', [{ slot: 0, count: 2 }, { slot: 1, count: 2 }]],
+      ['textedit-two-windows', [{ slot: 0, count: 2 }, { slot: 1, count: 2 }]], ['textedit-replace-save', [undefined]]]) {
+      const calls = [];
+      const task = getWorldTasks({ defaults, real, open: async (_ctx, request) => { calls.push(request); return {}; } }).find(t => t.id === id);
+      await task.setup({ dir: temp, nonce: 'fixture' });
+      assert.deepEqual(calls.map(call => call.placement), expected, id);
+    }
+  } finally { removeTemp(temp); }
+});
+
 test('world save opens an owned empty document and Chess refuses an existing process', async () => {
   const { tasks: defaults } = await import('../bench/tasks.mjs');
   const { realTasks: real } = await import('../bench/tasks-real.mjs');

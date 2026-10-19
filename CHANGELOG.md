@@ -65,7 +65,7 @@
   rewritten. [Known problems](docs/known-problems.md) lists what such a session keeps from the cache. Unit-tested on each
   of the 67 `SLEIGHT_*` switches in the plugin's code with every value the code compares it to. Not yet run live.
 
-## 1.3.0 (TODO: release date)
+## 1.3.0 (2026-10-19)
 
 Native actions read the app less, and browsers get a turbo path, on by default, beside the engine's tools.
 In the guard A/B on five native tasks (2026-10-14, Haiku 5.5 at high effort, three runs a side),
@@ -88,7 +88,9 @@ each set, since the prompt doesn't state an amount. FowlBrowser paid $268.00 unp
 Haiku runs, and in all 10 on Opus. These are FowlBrowser's own 13 tasks and nothing wider: the
 native-app comparison hasn't run. [Gate](docs/benchmarks/2026-10-16-gate.md),
 [Opus](docs/benchmarks/2026-10-16-opus.md), [turbo A/B](docs/benchmarks/2026-10-16-turbo-ab.md).
-TODO: full release pass result.
+The release pass (2026-10-19, build `1f6efff2`, engine 26.1013.40934) ran turbo in real Chrome windows on the same
+13 tasks: 13 of 13 on Haiku 5.5 in 257.8 s and 13 of 13 on Opus 5.5 in 249.9 s. Claim results are in the
+[benchmark hub](docs/results/README.md), each arm with its engine version and dates.
 
 ### Native apps
 
@@ -211,8 +213,7 @@ TODO: full release pass result.
   re-acquires a window it already saw whole. Replayed offline it halved acquisition tree text, but in
   the 2026-10-17 A/B (excel-edit and word-edit, 5 rounds) it was slower, 156.3 s against 149.4 s.
 - `SLEIGHT_COMPACT_ACQUISITION=1` sends an app's first tree with only the elements that take actions
-  and short text, and refuses a click on a number it left out.
-  TODO: these entries' A/B result.
+  and short text, and refuses a click on a number it left out. It hasn't had its own A/B yet.
 
 - On a list with more rows than it shows, the skill and the 3-scroll note make
   `app.pickFromList("<whole row text>")` the first move, with search, keys or a scroll loop after it
@@ -394,8 +395,8 @@ TODO: full release pass result.
   [A/B](docs/benchmarks/2026-10-16-turbo-ab.md).
 - The nine-task prototype passed 4/9 in its last round, with all four forms failing. It skipped
   production consent and the broker, so it doesn't support a claim about production speed or accuracy.
-  [Prototype measurements](docs/benchmarks/2026-10-14-turbo-prototype.md).
-  TODO: qualify installed native approval and cleanup.
+  [Prototype measurements](docs/benchmarks/2026-10-14-turbo-prototype.md). Approval and cleanup in a copy
+  installed from the marketplace haven't been checked live on native apps.
 
 ### A/B switches, off by default
 

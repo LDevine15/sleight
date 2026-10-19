@@ -23,7 +23,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":15,"passed":12,"seconds":544.7,"turns":172,"models":[]},{"arm":"lcu","runs":15,"passed":12,"seconds":524.2,"turns":142,"models":[]}]
+   "arms": [{"arm":"sleight","runs":15,"passed":12,"seconds":544.7,"turns":172,"models":[]},{"arm":"lcu","runs":15,"passed":12,"seconds":524.2,"turns":142,"models":[]}],
+   "engines": {"sleight":"engine 26.930.31730 (15 inferred), 2026-10-03 (dates inferred)","lcu":"not used, 2026-10-03"}
   },
   {
    "name": "2026-10-04-drag-tool.json",
@@ -35,7 +36,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":167,"turns":44,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":167,"turns":44,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.930.31730 (3 inferred), 2026-10-04 (dates inferred)"}
   },
   {
    "name": "2026-10-04-input-lease-before-fix.json",
@@ -47,7 +49,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":6,"passed":1,"seconds":358.1,"turns":66,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":6,"passed":1,"seconds":358.1,"turns":66,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.930.31730 (6 inferred), 2026-10-04 (dates inferred)"}
   },
   {
    "name": "2026-10-04-input-lease-general-attempt-1.json",
@@ -59,7 +62,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":0,"seconds":135.7,"turns":53,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":0,"seconds":135.7,"turns":53,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.930.31730 (3 inferred), 2026-10-04 (dates inferred)"}
   },
   {
    "name": "2026-10-04-input-lease-owner-baseline.json",
@@ -71,7 +75,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":6,"passed":0,"seconds":427.2,"turns":59,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":6,"passed":0,"seconds":427.2,"turns":59,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.930.31730 (6 inferred), 2026-10-04 (dates inferred)"}
   },
   {
    "name": "2026-10-05-compact-reads-0.10.0.json",
@@ -83,7 +88,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":601.9,"turns":169,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":601.9,"turns":169,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"12 ambiguous, 2026-10-05 (dates inferred)"}
   },
   {
    "name": "2026-10-05-compact-reads-0.9.1.json",
@@ -95,7 +101,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":571.2,"turns":161,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":571.2,"turns":161,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"12 ambiguous, 2026-10-05 (dates inferred)"}
   },
   {
    "name": "2026-10-05-compact-reads.json",
@@ -107,7 +114,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": "2026-10-05-compact-reads.md",
-   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":525.7,"turns":161,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":525.7,"turns":161,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"12 ambiguous, 2026-10-05 (dates inferred)"}
   },
   {
    "name": "2026-10-05-release-0.11.0.json",
@@ -119,7 +127,8 @@
    "suite": null,
    "passes": 4,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":648,"turns":170,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":648,"turns":170,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"12 ambiguous, 2026-10-05 (dates inferred)"}
   },
   {
    "name": "2026-10-05-release-0.12.0.json",
@@ -131,7 +140,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":524.5,"turns":170,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":524.5,"turns":170,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"12 ambiguous, 2026-10-05 (dates inferred)"}
   },
   {
    "name": "2026-10-05-release-0.7.0.json",
@@ -143,7 +153,8 @@
    "suite": null,
    "passes": 6,
    "writeUp": "2026-10-05-release-0.7.0.md",
-   "arms": [{"arm":"sleight","runs":18,"passed":16,"seconds":914.8,"turns":242,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":18,"passed":16,"seconds":914.8,"turns":242,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.930.31730 (18 inferred), 2026-10-05 (dates inferred)"}
   },
   {
    "name": "2026-10-05-release-0.8.0.json",
@@ -155,7 +166,8 @@
    "suite": null,
    "passes": 3,
    "writeUp": "2026-10-05-release-0.8.0.md",
-   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":353.3,"turns":96,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":353.3,"turns":96,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"6 ambiguous, 2026-10-05 (dates inferred)"}
   },
   {
    "name": "2026-10-07-element-ids.json",
@@ -167,7 +179,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":19,"seconds":1216.5,"turns":281,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":19,"seconds":1216.5,"turns":281,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"21 ambiguous, 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-07-errors.json",
@@ -179,7 +192,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":870.7,"turns":260,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":870.7,"turns":260,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"21 ambiguous, 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-07-simulator-form.json",
@@ -191,7 +205,8 @@
    "suite": null,
    "passes": 2,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":130.1,"turns":27,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":130.1,"turns":27,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"3 ambiguous, 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-07-timing.json",
@@ -203,7 +218,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":18,"seconds":941.7,"turns":300,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":18,"seconds":941.7,"turns":300,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"21 ambiguous, 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-acquire-and-act.json",
@@ -215,7 +231,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":676.5,"turns":156,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":676.5,"turns":156,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-acquisition-echo-haiku.json",
@@ -227,7 +244,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":191,"turns":63,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":191,"turns":63,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (3 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-acquisition-echo.json",
@@ -239,7 +257,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":771.6,"turns":226,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":771.6,"turns":226,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-await-split-view.json",
@@ -251,7 +270,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":13,"seconds":794,"turns":194,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":13,"seconds":794,"turns":194,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-await-stopped.json",
@@ -263,7 +283,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":5,"passed":2,"seconds":262.1,"turns":73,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":5,"passed":2,"seconds":262.1,"turns":73,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (5 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-covered-drags.json",
@@ -275,7 +296,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":18,"seconds":1076.5,"turns":152,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":18,"seconds":1076.5,"turns":152,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-engine-time-pass.json",
@@ -287,7 +309,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":917.2,"turns":212,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":917.2,"turns":212,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-guard-reads.json",
@@ -299,7 +322,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":20,"seconds":798.1,"turns":195,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":20,"seconds":798.1,"turns":195,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-haiku-medium.json",
@@ -311,7 +335,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":20,"seconds":668.5,"turns":235,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":20,"seconds":668.5,"turns":235,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-opus-medium.json",
@@ -323,7 +348,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":841.6,"turns":223,"models":["claude-opus-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":841.6,"turns":223,"models":["claude-opus-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-reliability-pass.json",
@@ -335,7 +361,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":628.4,"turns":157,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":628.4,"turns":157,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-retitle-calculator-unresponsive.json",
@@ -347,7 +374,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":923.2,"turns":157,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":923.2,"turns":157,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-retitle-tools-deferred.json",
@@ -359,7 +387,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":647.9,"turns":139,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":647.9,"turns":139,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-retitle.json",
@@ -371,7 +400,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":621.2,"turns":123,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":621.2,"turns":123,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-save-in-one-call.json",
@@ -383,7 +413,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":20,"seconds":727.2,"turns":213,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":20,"seconds":727.2,"turns":213,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-skill-trim-first.json",
@@ -395,7 +426,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":613.3,"turns":140,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":613.3,"turns":140,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-skill-trim.json",
@@ -407,7 +439,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":566.6,"turns":140,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":566.6,"turns":140,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-sonnet-low.json",
@@ -419,7 +452,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":864.4,"turns":199,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":864.4,"turns":199,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-08-turns.json",
@@ -431,7 +465,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":758.5,"turns":157,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":21,"seconds":758.5,"turns":157,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-08 (dates inferred)"}
   },
   {
    "name": "2026-10-09-chess-glob.json",
@@ -443,7 +478,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":662.9,"turns":16,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":662.9,"turns":16,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (3 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-chess-no-glob.json",
@@ -455,7 +491,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":165.8,"turns":33,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":165.8,"turns":33,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (3 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-codex-real-first.json",
@@ -467,7 +504,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"codex","runs":1,"passed":1,"seconds":36.5,"turns":8,"models":["gpt-6.1-sol"]}]
+   "arms": [{"arm":"codex","runs":1,"passed":1,"seconds":36.5,"turns":8,"models":["gpt-6.1-sol"]}],
+   "engines": {"codex":"engine 26.1002.52244 (1 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-first-call-batch-off-1.json",
@@ -479,7 +517,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":427.6,"turns":104,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":427.6,"turns":104,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (12 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-first-call-batch-off-2.json",
@@ -491,7 +530,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":12,"passed":11,"seconds":407,"turns":104,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":12,"passed":11,"seconds":407,"turns":104,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (12 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-first-call-batch-on-1.json",
@@ -503,7 +543,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":445,"turns":83,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":445,"turns":83,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (12 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-first-call-batch-on-2.json",
@@ -515,7 +556,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":334.5,"turns":85,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":334.5,"turns":85,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (12 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-first-call-hint.json",
@@ -527,7 +569,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":320.5,"turns":80,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":12,"passed":12,"seconds":320.5,"turns":80,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (12 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-footprint.json",
@@ -542,7 +585,8 @@
    "arms": [
     {"arm":"sleight","runs":6,"passed":6,"seconds":205.8,"turns":37,"models":["claude-sonnet-5-5"]},
     {"arm":"codex","runs":6,"passed":6,"seconds":231.9,"turns":55,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1002.52244 (6 inferred), 2026-10-09 (dates inferred)","codex":"engine 26.1002.52244 (6 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-full-screen-every-read.json",
@@ -554,7 +598,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":47,"turns":12,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":47,"turns":12,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (1 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-full-screen-first.json",
@@ -566,7 +611,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":50.3,"turns":16,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":50.3,"turns":16,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (1 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-h2h-background.json",
@@ -581,7 +627,8 @@
    "arms": [
     {"arm":"sleight","runs":15,"passed":15,"seconds":446.2,"turns":101,"models":["claude-sonnet-5-5"]},
     {"arm":"codex","runs":15,"passed":12,"seconds":732.2,"turns":129,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1002.52244 (15 inferred), 2026-10-09 (dates inferred)","codex":"engine 26.1002.52244 (15 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-h2h-chess-simulator.json",
@@ -596,7 +643,8 @@
    "arms": [
     {"arm":"sleight","runs":6,"passed":3,"seconds":683.3,"turns":68,"models":["claude-sonnet-5-5"]},
     {"arm":"codex","runs":6,"passed":5,"seconds":645.6,"turns":90,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1002.52244 (6 inferred), 2026-10-09 (dates inferred)","codex":"engine 26.1002.52244 (6 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-h2h-core-stopped.json",
@@ -611,7 +659,8 @@
    "arms": [
     {"arm":"sleight","runs":10,"passed":10,"seconds":319.2,"turns":82,"models":["claude-sonnet-5-5"]},
     {"arm":"codex","runs":9,"passed":8,"seconds":405.8,"turns":87,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1002.52244 (10 inferred), 2026-10-09 (dates inferred)","codex":"engine 26.1002.52244 (9 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-h2h-loaded.json",
@@ -626,7 +675,8 @@
    "arms": [
     {"arm":"sleight","runs":5,"passed":2,"seconds":975.1,"turns":21,"models":["claude-sonnet-5-5"]},
     {"arm":"codex","runs":4,"passed":3,"seconds":554.9,"turns":56,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1002.52244 (5 inferred), 2026-10-09 (dates inferred)","codex":"engine 26.1002.52244 (4 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-h2h-normal-default.json",
@@ -641,7 +691,8 @@
    "arms": [
     {"arm":"sleight","runs":21,"passed":20,"seconds":904.3,"turns":202,"models":["claude-sonnet-5-5"]},
     {"arm":"codex","runs":21,"passed":16,"seconds":1292.2,"turns":238,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-09 (dates inferred)","codex":"engine 26.1002.52244 (21 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-h2h-normal-real.json",
@@ -656,7 +707,8 @@
    "arms": [
     {"arm":"sleight","runs":12,"passed":12,"seconds":395.9,"turns":119,"models":["claude-sonnet-5-5"]},
     {"arm":"codex","runs":12,"passed":11,"seconds":428.9,"turns":99,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1002.52244 (12 inferred), 2026-10-09 (dates inferred)","codex":"engine 26.1002.52244 (12 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-office-qual-1.json",
@@ -668,7 +720,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":2,"passed":1,"seconds":100.4,"turns":29,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":2,"passed":1,"seconds":100.4,"turns":29,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (2 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-office-qual-2.json",
@@ -680,7 +733,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":1,"seconds":51.7,"turns":16,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":1,"seconds":51.7,"turns":16,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (1 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-real-use-office-10.json",
@@ -692,7 +746,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":2,"passed":0,"seconds":0,"turns":0,"models":[]}]
+   "arms": [{"arm":"sleight","runs":2,"passed":0,"seconds":0,"turns":0,"models":[]}],
+   "engines": {"sleight":"engine 26.1002.52244 (2 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-real-use-office-11.json",
@@ -704,7 +759,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":2,"passed":1,"seconds":99.9,"turns":24,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":2,"passed":1,"seconds":99.9,"turns":24,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (2 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-real-use-tasks-7b-dry.json",
@@ -716,7 +772,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":5,"passed":0,"seconds":0,"turns":0,"models":[]}]
+   "arms": [{"arm":"sleight","runs":5,"passed":0,"seconds":0,"turns":0,"models":[]}],
+   "engines": {"sleight":"engine 26.1002.52244 (5 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-release-0.16.0.json",
@@ -728,7 +785,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":20,"seconds":1354.9,"turns":178,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":20,"seconds":1354.9,"turns":178,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-release-1.0.0.json",
@@ -740,7 +798,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":19,"seconds":911.9,"turns":165,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":19,"seconds":911.9,"turns":165,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-release-1.1.0.json",
@@ -752,7 +811,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":21,"passed":20,"seconds":1469,"turns":150,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":21,"passed":20,"seconds":1469,"turns":150,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (21 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-reuse-smoke.json",
@@ -764,7 +824,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":2,"passed":2,"seconds":37.6,"turns":9,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":2,"passed":2,"seconds":37.6,"turns":9,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (2 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-shots-base.json",
@@ -776,7 +837,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":9,"passed":9,"seconds":475.1,"turns":85,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":9,"passed":9,"seconds":475.1,"turns":85,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (9 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-shots-scaled-tap.json",
@@ -788,7 +850,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":209.4,"turns":36,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":209.4,"turns":36,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (3 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-09-shots-scaled.json",
@@ -800,7 +863,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":9,"passed":9,"seconds":485.1,"turns":92,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":9,"passed":9,"seconds":485.1,"turns":92,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (9 inferred), 2026-10-09 (dates inferred)"}
   },
   {
    "name": "2026-10-10-away-calculator-fix.json",
@@ -812,7 +876,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":130.3,"turns":28,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":130.3,"turns":28,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-away-calculator-traced-2.json",
@@ -824,7 +889,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":125.7,"turns":29,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":125.7,"turns":29,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-away-calculator-traced.json",
@@ -836,7 +902,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":57.1,"turns":12,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":57.1,"turns":12,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (3 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-away-chess.json",
@@ -848,7 +915,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":2,"passed":2,"seconds":150.5,"turns":30,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":2,"passed":2,"seconds":150.5,"turns":30,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (2 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-away-safari-form.json",
@@ -860,7 +928,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":2,"passed":2,"seconds":64.3,"turns":18,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":2,"passed":2,"seconds":64.3,"turns":18,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (2 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-away-simulator-form-2.json",
@@ -872,7 +941,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":0,"seconds":0,"turns":0,"models":[]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":0,"seconds":0,"turns":0,"models":[]}],
+   "engines": {"sleight":"engine 26.1007.21159 (3 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-away-simulator-form-3.json",
@@ -884,7 +954,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":0,"turns":0,"models":[]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":0,"turns":0,"models":[]}],
+   "engines": {"sleight":"engine 26.1007.21159 (1 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-away-simulator-form.json",
@@ -896,7 +967,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":0,"turns":0,"models":[]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":0,"turns":0,"models":[]}],
+   "engines": {"sleight":"engine 26.1007.21159 (1 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-calculator-turns.json",
@@ -908,7 +980,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":91.4,"turns":22,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":91.4,"turns":22,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (3 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-edit-focus-2.json",
@@ -920,7 +993,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":75.9,"turns":20,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":75.9,"turns":20,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (3 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-edit-focus.json",
@@ -932,7 +1006,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":72.9,"turns":29,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":72.9,"turns":29,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (3 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-electron-firefox-live.json",
@@ -944,7 +1019,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":5,"passed":5,"seconds":186.6,"turns":50,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":5,"passed":5,"seconds":186.6,"turns":50,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (5 inferred), 2026-10-10 to 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-10-electron-firefox-refused.json",
@@ -956,7 +1032,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":6.9,"turns":0,"models":[]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":6.9,"turns":0,"models":[]}],
+   "engines": {"sleight":"engine 26.1007.21159 (1 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-exact-text-skill.json",
@@ -968,7 +1045,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":177.2,"turns":40,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":177.2,"turns":40,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (6 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-footprint-2.json",
@@ -983,7 +1061,8 @@
    "arms": [
     {"arm":"sleight","runs":6,"passed":6,"seconds":154.3,"turns":35,"models":["claude-sonnet-5-5"]},
     {"arm":"codex","runs":6,"passed":6,"seconds":239.2,"turns":59,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1002.52244 (6 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1002.52244 (6 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-h2h-3.json",
@@ -998,7 +1077,8 @@
    "arms": [
     {"arm":"sleight","runs":6,"passed":6,"seconds":356.7,"turns":83,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":6,"passed":6,"seconds":209.2,"turns":47,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-h2h-4.json",
@@ -1013,7 +1093,8 @@
    "arms": [
     {"arm":"sleight","runs":9,"passed":8,"seconds":402.4,"turns":96,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":9,"passed":9,"seconds":267.1,"turns":69,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (9 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (9 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-h2h-5.json",
@@ -1028,7 +1109,8 @@
    "arms": [
     {"arm":"sleight","runs":9,"passed":9,"seconds":313.3,"turns":79,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":9,"passed":9,"seconds":340.2,"turns":83,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (9 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (9 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-h2h-clean-arms.json",
@@ -1043,7 +1125,8 @@
    "arms": [
     {"arm":"sleight","runs":9,"passed":7,"seconds":263.7,"turns":70,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":9,"passed":9,"seconds":265.8,"turns":72,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (9 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (9 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-h2h-footprint-haiku-2.json",
@@ -1058,7 +1141,8 @@
    "arms": [
     {"arm":"sleight","runs":6,"passed":5,"seconds":276.1,"turns":62,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":6,"passed":6,"seconds":188.9,"turns":46,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-h2h-footprint-haiku-3.json",
@@ -1073,7 +1157,8 @@
    "arms": [
     {"arm":"sleight","runs":6,"passed":6,"seconds":190.2,"turns":44,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":6,"passed":6,"seconds":175.7,"turns":45,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-h2h-footprint-haiku.json",
@@ -1088,7 +1173,8 @@
    "arms": [
     {"arm":"sleight","runs":6,"passed":6,"seconds":263.1,"turns":61,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":6,"passed":6,"seconds":256.8,"turns":61,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-h2h-guard-1-interrupted.json",
@@ -1103,7 +1189,8 @@
    "arms": [
     {"arm":"sleight","runs":3,"passed":3,"seconds":112.3,"turns":29,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":3,"passed":2,"seconds":142.7,"turns":30,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (3 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (3 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-h2h-guard-2.json",
@@ -1118,7 +1205,8 @@
    "arms": [
     {"arm":"sleight","runs":6,"passed":6,"seconds":245.8,"turns":55,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":6,"passed":6,"seconds":193.9,"turns":46,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-h2h-lcu-0.11.2.json",
@@ -1133,7 +1221,8 @@
    "arms": [
     {"arm":"sleight","runs":8,"passed":8,"seconds":210.6,"turns":56,"models":["claude-haiku-5-5"]},
     {"arm":"lcu","runs":8,"passed":7,"seconds":299.2,"turns":85,"models":["claude-haiku-5-5"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (8 inferred), 2026-10-10 (dates inferred)","lcu":"not used, 2026-10-10"}
   },
   {
    "name": "2026-10-10-h2h-normal-setup.json",
@@ -1148,7 +1237,8 @@
    "arms": [
     {"arm":"sleight","runs":9,"passed":8,"seconds":262.4,"turns":62,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":9,"passed":9,"seconds":229.6,"turns":67,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (9 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (9 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-h2h-save-check.json",
@@ -1163,7 +1253,8 @@
    "arms": [
     {"arm":"sleight","runs":2,"passed":2,"seconds":107.7,"turns":26,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":2,"passed":2,"seconds":84.8,"turns":21,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (2 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (2 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-real-shop-smoke.json",
@@ -1175,7 +1266,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":2,"passed":0,"seconds":73.3,"turns":18,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":2,"passed":0,"seconds":73.3,"turns":18,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (2 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-release-haiku-1.json",
@@ -1187,7 +1279,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":7,"passed":5,"seconds":272.4,"turns":59,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":7,"passed":5,"seconds":272.4,"turns":59,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (7 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-release-haiku-2.json",
@@ -1199,7 +1292,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":7,"passed":6,"seconds":318.2,"turns":63,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":7,"passed":6,"seconds":318.2,"turns":63,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (7 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-release-haiku-3.json",
@@ -1211,7 +1305,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":18,"passed":18,"seconds":964,"turns":189,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":18,"passed":18,"seconds":964,"turns":189,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (18 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-shop-1.json",
@@ -1226,7 +1321,8 @@
    "arms": [
     {"arm":"sleight","runs":2,"passed":1,"seconds":53,"turns":19,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":2,"passed":1,"seconds":82,"turns":23,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (2 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (2 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-shop-2.json",
@@ -1241,7 +1337,8 @@
    "arms": [
     {"arm":"sleight","runs":1,"passed":1,"seconds":95,"turns":22,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":1,"passed":1,"seconds":84.2,"turns":25,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (1 inferred), 2026-10-10 (dates inferred)","codex":"engine 26.1007.21159 (1 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-tonight-affected.json",
@@ -1253,7 +1350,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":15,"passed":15,"seconds":521.8,"turns":100,"models":["claude-sonnet-5-5"]}]
+   "arms": [{"arm":"sleight","runs":15,"passed":15,"seconds":521.8,"turns":100,"models":["claude-sonnet-5-5"]}],
+   "engines": {"sleight":"engine 26.1002.52244 (15 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-verified-results-live.json",
@@ -1265,7 +1363,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": "2026-10-10-verified-results-live.md",
-   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":274.3,"turns":51,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":274.3,"turns":51,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-10-waits-targeting-4-tasks.json",
@@ -1277,7 +1376,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":232.3,"turns":50,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":6,"passed":6,"seconds":232.3,"turns":50,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (6 inferred), 2026-10-10 (dates inferred)"}
   },
   {
    "name": "2026-10-11-battery-partial.json",
@@ -1289,7 +1389,8 @@
    "suite": "battery",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":1,"seconds":20.6,"turns":4,"models":[]},{"arm":"codex","runs":2,"passed":1,"seconds":28,"turns":4,"models":[]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":1,"seconds":20.6,"turns":4,"models":[]},{"arm":"codex","runs":2,"passed":1,"seconds":28,"turns":4,"models":[]}],
+   "engines": {"sleight":"1 ambiguous, 2026-10-11 (dates inferred)","codex":"2 ambiguous, 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-h2h-clean-arms.json",
@@ -1304,7 +1405,8 @@
    "arms": [
     {"arm":"sleight","runs":9,"passed":9,"seconds":198.3,"turns":64,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":9,"passed":9,"seconds":401,"turns":78,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (9 inferred), 2026-10-11 (dates inferred)","codex":"engine 26.1007.21159 (9 inferred), 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-h2h-normal-partial.json",
@@ -1319,7 +1421,8 @@
    "arms": [
     {"arm":"sleight","runs":5,"passed":5,"seconds":123.2,"turns":35,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":4,"passed":4,"seconds":168.8,"turns":37,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (5 inferred), 2026-10-11 (dates inferred)","codex":"engine 26.1007.21159 (4 inferred), 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-h2h-normal.json",
@@ -1334,7 +1437,8 @@
    "arms": [
     {"arm":"sleight","runs":9,"passed":9,"seconds":243.8,"turns":67,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":9,"passed":9,"seconds":325.4,"turns":70,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (9 inferred), 2026-10-11 (dates inferred)","codex":"engine 26.1007.21159 (9 inferred), 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-real-shop-bestbuy-traced.json",
@@ -1346,7 +1450,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":47.2,"turns":15,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":47.2,"turns":15,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (1 inferred), 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-simulator-form-poll-1.json",
@@ -1358,7 +1463,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":0,"turns":0,"models":[]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":0,"turns":0,"models":[]}],
+   "engines": {"sleight":"engine 26.1007.21159 (1 inferred), 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-simulator-form-poll-2.json",
@@ -1370,7 +1476,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":0,"turns":0,"models":[]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":0,"turns":0,"models":[]}],
+   "engines": {"sleight":"engine 26.1007.21159 (1 inferred), 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-sitting-best-buy.json",
@@ -1382,7 +1489,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":38.5,"turns":7,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":38.5,"turns":7,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"1 ambiguous, 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-sitting-shop-smoke.json",
@@ -1394,7 +1502,8 @@
    "suite": "real",
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":2,"passed":0,"seconds":334.5,"turns":78,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":2,"passed":0,"seconds":334.5,"turns":78,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"2 ambiguous, 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-sitting-simulator-form.json",
@@ -1406,7 +1515,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":35.2,"turns":8,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":1,"passed":0,"seconds":35.2,"turns":8,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (1 inferred), 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-sitting-textedit-drag.json",
@@ -1418,7 +1528,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":95,"turns":24,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":95,"turns":24,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (3 inferred), 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-textedit-save-traced.json",
@@ -1430,7 +1541,8 @@
    "suite": null,
    "passes": 1,
    "writeUp": null,
-   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":128,"turns":29,"models":["claude-haiku-5-5"]}]
+   "arms": [{"arm":"sleight","runs":3,"passed":3,"seconds":128,"turns":29,"models":["claude-haiku-5-5"]}],
+   "engines": {"sleight":"engine 26.1007.21159 (3 inferred), 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-web-depth-native-partial.json",
@@ -1445,7 +1557,8 @@
    "arms": [
     {"arm":"sleight","runs":1,"passed":1,"seconds":18.4,"turns":5,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":1,"passed":0,"seconds":29.5,"turns":7,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (1 inferred), 2026-10-11 (dates inferred)","codex":"engine 26.1007.21159 (1 inferred), 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-web-depth-partial.json",
@@ -1460,7 +1573,8 @@
    "arms": [
     {"arm":"sleight","runs":3,"passed":1,"seconds":37.9,"turns":5,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":2,"passed":0,"seconds":28.5,"turns":6,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (3 inferred), 2026-10-11 (dates inferred)","codex":"engine 26.1007.21159 (2 inferred), 2026-10-11 (dates inferred)"}
   },
   {
    "name": "2026-10-11-web-h2h.json",
@@ -1475,7 +1589,8 @@
    "arms": [
     {"arm":"sleight","runs":24,"passed":24,"seconds":684.9,"turns":196,"models":["claude-haiku-5-5"]},
     {"arm":"codex","runs":24,"passed":24,"seconds":1002,"turns":220,"models":["gpt-6.1-sol"]}
-   ]
+   ],
+   "engines": {"sleight":"engine 26.1007.21159 (24 inferred), 2026-10-11 (dates inferred)","codex":"engine 26.1007.21159 (24 inferred), 2026-10-11 (dates inferred)"}
   }
  ],
  "runs": [

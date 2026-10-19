@@ -164,9 +164,11 @@ our own runs. Dates and engine versions are given where they matter.
   menu, and how often a session leaves one open is unmeasured. On 2026-10-17 an A/B run left Word in that loop with its Window
   menu open (main thread sample). AXCancel closed the menu, but Word still ignored Apple events. One Escape key event posted to
   Word's process with `CGEventPostToPid` released it, and Word then closed the fixture and quit by script.
-- `drag` can't drop text into another window. `from` and `to` are offsets from one window and must sit in the same text area,
-  so the benchmark's textedit-window-drag can't pass through it (0/1 on 2026-10-16, its first run). Whether the engine's
-  `app.drag` can move selected text between windows is unmeasured.
+- textedit-window-drag has never passed (0 of 12 recorded runs, 2026-10-16 to 2026-10-19). In all 4 transcripts of 2026-10-19,
+  `drag` with `toWindowId` first refused the drop as covered by the cascaded source window. The fixture now places the two
+  windows side by side in the display's visible frame, which no live run has tested yet. Two more `drag` faults showed up there:
+  its Accessibility move failed with "Ref has incompatible type" (2 of 4 runs), and one run read Notification Center
+  (window 40) as covering the source point. Claude then called `notifications`, the arm's approval was refused, and the pass stopped.
 - In both Firefox settings runs of 2026-10-17, `drag` by element number failed on the web list's rows (3 of 3 tries), so Claude
   used coordinates. Claude then sent 3 drags in the shown image's 2000-pixel frame, while the engine and `drag` read the
   2560-pixel original. Those runs got the frame note late or never. It now comes with the first screenshot of each window
@@ -490,6 +492,10 @@ native reference, and oversized first results defer the browser reference while 
 
 ## The engine and its helper
 
+- After a switch that changes sleight's tool list (an opt-in flag such as `SLEIGHT_COMPACT_CONFIRMATIONS`, or
+  `SLEIGHT_APPROVAL_SCOPE`), the first session can answer every call with an error that says the engine's tools changed,
+  because sleight's startup cache kept the old list. Starting a new session fixes it. Seen in 2 of 2 races on
+  2026-10-19 that flipped such a switch. 1.3.1 caches only the engine's own replies.
 - An action called without `await` that fails used to end the engine's JavaScript session, and every
   handle with it (`app.click(1); "x"` on a disabled Calculator element, 3/3 on 2026-10-07). The guard
   now attaches a handler to each action's promise and tells Claude which action failed. With
@@ -567,6 +573,11 @@ native reference, and oversized first results defer the browser reference while 
   Otherwise the session keeps the old tool descriptions, and its calls run on the live engine. The next session gets the
   new replies. Unit-tested only.
 - When the engine's own initialize fails, every call in that session fails with the engine's error, cached or not.
+- `npm run compat` checks the engine's browser methods only on a Mac where sleight would start the engine with `CUA_REPL_ENABLED_SURFACES=browser,computer`: a
+  Codex browser extension in the extension cache, or `SLEIGHT_SURFACES=browser,computer` set for the run. Without one the
+  REPL probe checks 3 of the 8 `cua` methods. The static check (`bench/compat-static.mjs`) still checks that the engine's
+  JavaScript defines all 8. The Mac suite's first run on 2026-10-19 failed because the suite started the engine with computer alone
+  and required all 8 (fixed in 1.3.1).
 
 ## Specific apps
 
