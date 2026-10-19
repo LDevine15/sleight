@@ -25,14 +25,14 @@
       "notes": []
     },
     {
-      "checkedAt": "2026-10-19T05:28:10.663Z",
+      "checkedAt": "2026-10-19T05:42:31.672Z",
       "source": "static",
       "appVersion": "26.1013.40934",
       "engineVersion": "26.1013.1001501",
-      "sleight": "f858cf8b",
+      "sleight": "88f8c0c1",
       "verdict": "pass",
       "notes": [
-        "js-description: the engine's js description changed for both CUA_REPL_ENABLED_SURFACES settings, so sleight sends it whole instead of its shorter version (tool-description.mjs ENGINE_JS_HASH)"
+        "js-description: the engine's js description changed, so sleight sends it whole instead of its shorter version (tool-description.mjs ENGINE_JS_HASH)"
       ]
     }
   ]

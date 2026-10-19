@@ -14,7 +14,7 @@
 // --record (append to ~/Library/Logs/sleight/compat.jsonl), --min-idle S (live checks only after S seconds without input).
 import { execFile, execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,14 +22,16 @@ import { promisify } from 'node:util';
 import { DOCS_CODE, engineDocsText } from '../scripts/engine-docs.mjs';
 import { openClient, textOf } from './compat/client.mjs';
 import { PROBE_CODE, checkApiContract, checkPolicyRewrite, checkReplProbe, checkToolSurface, parseProbe } from './compat/contract.mjs';
-import { plistString } from './compat/static.mjs';
+import { SAFE_VERSION, plistString } from './compat/static.mjs';
 
 const execute = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const LAUNCHER = join(ROOT, 'plugins', 'sleight', 'bin', 'sleight-mcp');
 export const logsDir = (home = homedir()) => join(home, 'Library', 'Logs', 'sleight');
 
-const step = (id, status, reason) => ({ id, status, ...(reason ? { reason } : {}) });
+// reason is sleight's own wording and may be published; detail can hold engine or system text and stays in the local
+// report (publish copies reasons only).
+const step = (id, status, reason, detail) => ({ id, status, ...(reason ? { reason } : {}), ...(detail ? { detail: scrub(detail).slice(0, 500) } : {}) });
 const scrub = text => String(text ?? '').replaceAll(homedir(), '~').replaceAll(userInfo().username, '[user]');
 const atomic = (path, text) => { const temp = `${path}.${process.pid}.tmp`; writeFileSync(temp, text); renameSync(temp, path); };
 const readOr = (path, fallback) => { try { return readFileSync(path, 'utf8').trim(); } catch { return fallback; } };
@@ -43,10 +45,11 @@ export async function runDoctor(launcher, env, run = execute) {
   let stdout = '', code = 0;
   try { ({ stdout } = await run(launcher, ['--doctor'], { env, timeout: 90000, maxBuffer: 8 << 20 })); }
   catch (error) { stdout = error.stdout ?? ''; code = typeof error.code === 'number' ? error.code : 1; if (!stdout) stdout = error.message; }
-  const version = /^Codex computer-use (\S+)$/m.exec(stdout)?.[1];
+  const printed = /^Codex computer-use (\S+)$/m.exec(stdout)?.[1];
+  const version = printed && SAFE_VERSION.test(printed) ? printed : undefined;
   const problem = stdout.split('\n').find(line => /^(?:MISSING|PROBLEM)\b|FAILED|^sleight: /.test(line.trim()));
-  return { version, code, result: code === 0 && version ? step('doctor', 'pass', `engine ${version}`)
-    : step('doctor', 'fail', scrub(problem?.trim() ?? (version ? `exit ${code}` : 'no "Codex computer-use" version line'))) };
+  if (code === 0 && version) return { version, code, result: step('doctor', 'pass', `engine ${version}`) };
+  return { version, code, result: step('doctor', 'fail', version ? `the doctor reported a problem (exit ${code})` : 'the doctor printed no plain engine version', problem?.trim()) };
 }
 
 // The raw engine, with no sleight relay in between: what the engine itself offers.
@@ -62,11 +65,11 @@ export async function rawEngineChecks(server, env, { open = openClient } = {}) {
     catch (error) { steps.push(step('api-contract', 'fail', error.message.split(':')[0])); }
     steps.push(...checkPolicyRewrite(items));
     const probe = await client.call('js', { code: PROBE_CODE, timeout_ms: 30000 });
-    steps.push(...(probe?.isError ? [step('repl-probe', 'fail', `the probe failed: ${textOf(probe).split('\n')[0].slice(0, 200)}`)] : checkReplProbe(parseProbe(textOf(probe)))));
+    steps.push(...(probe?.isError ? [step('repl-probe', 'fail', 'the probe returned an error', textOf(probe).split('\n')[0])] : checkReplProbe(parseProbe(textOf(probe)))));
     const ended = await client.endTurn();
     steps.push(ended?.isError ? step('turn-end', 'fail', 'turn_ended with the relay\'s arguments returned an error') : step('turn-end', 'pass'));
   } catch (error) {
-    steps.push(step('engine-session', 'error', scrub(error.message).slice(0, 300)));
+    steps.push(step('engine-session', 'error', 'the engine session stopped', error.message));
   } finally {
     await client?.close();
   }
@@ -82,7 +85,7 @@ export async function launcherChecks(launcher, env, { open = openClient } = {}) 
     const missing = ['js', 'select_window'].filter(name => !names.has(name));
     return [missing.length ? step('sleight-start', 'fail', `sleight's tool list lacks ${missing.join(', ')}`) : step('sleight-start', 'pass', `${names.size} tools`)];
   } catch (error) {
-    return [step('sleight-start', 'fail', scrub(error.message).slice(0, 300))];
+    return [step('sleight-start', 'fail', "sleight's launcher didn't start", error.message)];
   } finally {
     await client?.close();
   }
@@ -105,16 +108,27 @@ export async function docsDiff(logs, version, docs, accepted, run = execute) {
   return [step('api-docs', 'warn', `${changed} lines changed since ${accepted}; see ~/Library/Logs/sleight/engine-raw-${version}.diff`)];
 }
 
-export async function engineTier({ launcher = LAUNCHER, env = process.env, logs = logsDir(), doctor, resolve: resolveServer, open = openClient, run = execute } = {}) {
+// Another project's timed window or a live run (a benchmark race) holds the Mac: nothing starts the engine meanwhile.
+export function busy({ holdPath = '/tmp/sleight-hold', lockPath = '/tmp/sleight-live.lock', exists = existsSync } = {}) {
+  if (exists(holdPath)) return `${holdPath} exists (another project's timed window)`;
+  if (exists(lockPath)) return `${lockPath} exists (a live run is going)`;
+  return undefined;
+}
+
+export async function engineTier({ launcher = LAUNCHER, env = process.env, logs = logsDir(), doctor, resolve: resolveServer, open = openClient, run = execute,
+  holdPath, lockPath } = {}) {
+  const waiting = busy({ holdPath, lockPath });
+  if (waiting) return { version: doctor?.version, pending: waiting, steps: [step('engine', 'pending', waiting)] };
   const ran = doctor ?? await runDoctor(launcher, env, run);
   const steps = [ran.result];
   if (ran.result.status !== 'pass') return { version: ran.version, steps };
   resolveServer ??= (await import('../plugins/sleight/lib/launch.mjs')).resolveServer;
   const server = resolveServer(env);
-  if (server.error) return { version: ran.version, steps: [...steps, step('engine-session', 'fail', scrub(server.error))] };
+  if (server.error) return { version: ran.version, steps: [...steps, step('engine-session', 'fail', 'no engine to start', server.error)] };
   const raw = await rawEngineChecks(server, env, { open });
   steps.push(...raw.steps, ...await launcherChecks(launcher, env, { open }));
-  steps.push(...await docsDiff(logs, ran.version, raw.docs, readOr(join(logs, 'compat-accepted'), undefined), run));
+  try { steps.push(...await docsDiff(logs, ran.version, raw.docs, readOr(join(logs, 'compat-accepted'), undefined), run)); }
+  catch (error) { steps.push(step('api-docs', 'warn', "the docs diff couldn't run", error.message)); }
   return { version: ran.version, steps };
 }
 
@@ -129,6 +143,21 @@ export async function compatApproval(params) {
   return decision?.hookSpecificOutput?.action === 'accept' ? { action: 'accept', content: decision.hookSpecificOutput.content ?? {} } : { action: 'decline' };
 }
 
+// Signals during a live check: close the client, quit what the check launched, release the lock, then die of the same
+// signal. One handler set at a time; a second signal while cleaning up kills at once.
+async function withSignals(cleanup, work) {
+  let cleaning;
+  const handler = signal => {
+    if (cleaning) process.kill(process.pid, 'SIGKILL');
+    cleaning = Promise.race([cleanup().catch(() => {}), new Promise(resolve => setTimeout(resolve, 30000).unref())])
+      .finally(() => { process.removeListener('SIGINT', handler); process.removeListener('SIGTERM', handler); process.kill(process.pid, signal); });
+  };
+  process.on('SIGINT', handler);
+  process.on('SIGTERM', handler);
+  try { return await work(); }
+  finally { process.removeListener('SIGINT', handler); process.removeListener('SIGTERM', handler); }
+}
+
 export async function liveTier({ ownerAway, minIdleSeconds = 0, launcher = LAUNCHER, env = process.env, holdPath = '/tmp/sleight-hold',
   lockPath = '/tmp/sleight-live.lock', live, lock, open = openClient } = {}) {
   live ??= await import('./compat/live.mjs');
@@ -137,26 +166,51 @@ export async function liveTier({ ownerAway, minIdleSeconds = 0, launcher = LAUNC
   lock ??= (await import('./live-lock.mjs')).acquireLiveLock;
   let unlock;
   try { unlock = await lock(lockPath, { wait: false }); }
-  catch (error) { return { pending: error.message, steps: [step('live', 'pending', scrub(error.message))] }; }
+  catch (error) { return { pending: 'another live run holds the lock', steps: [step('live', 'pending', 'another live run holds the lock', error.message)] }; }
   const steps = [];
-  let client, dir;
-  try {
-    if (existsSync(holdPath)) return { pending: `${holdPath} exists`, steps: [step('live', 'pending', `${holdPath} exists (another project's timed window)`)] };
-    client = await open({ command: launcher, env: { ...env, SLEIGHT_APPROVAL_PROMPT: 'client', SLEIGHT_SURFACES: 'computer' }, approve: compatApproval, timeoutMs: 120000, name: 'sleight-compat-live' });
-    steps.push(await live.runCalculator(client, live));
-    dir = mkdtempSync(join(tmpdir(), 'sleight-compat-live-'));
-    const nonce = randomBytes(6).toString('hex');
-    const { openFixture, closeFixtures } = live.fixtures ?? await import('./real-fixture.mjs');
-    steps.push(await live.runBrowserRead(client, { ...live, openPage: () => live.openSafariPage({ nonce, dir, open: openFixture, close: closeFixtures }) }));
-  } catch (error) {
-    steps.push(step('live', 'error', scrub(error.message).slice(0, 300)));
-  } finally {
+  let client, dir, launched, page, released = false;
+  const release = async () => {
+    if (released) return;
+    released = true;
+    try { await unlock?.(); }
+    catch (error) { steps.push(step('live-lock', 'fail', "couldn't release the live lock", error.message)); }
+  };
+  // What a signal leaves behind: the session, the Calculator this run launched, the fixture window, the lock.
+  const cleanup = async () => {
     await client?.close();
-    if (dir) rmSync(dir, { recursive: true, force: true });
-    // A check that left an app or window behind keeps the lock, as the benchmark does, so nothing else runs into it.
-    if (steps.some(s => s.cleanup)) steps.push(step('live-lock', 'fail', `kept ${lockPath} because cleanup failed; remove it after checking the Mac`));
-    else await unlock?.();
-  }
+    if (launched && live.quitApp) await live.quitApp(live.CALCULATOR, launched).catch(() => {});
+    await page?.close().catch(() => {});
+    await release();
+  };
+  const hold = () => (existsSync(holdPath) ? step('live', 'pending', `${holdPath} exists (another project's timed window)`) : undefined);
+  await withSignals(cleanup, async () => {
+    try {
+      const held = hold();
+      if (held) { steps.push(held); return; }
+      client = await open({ command: launcher, env: { ...env, SLEIGHT_APPROVAL_PROMPT: 'client', SLEIGHT_SURFACES: 'computer' }, approve: compatApproval, timeoutMs: 120000, name: 'sleight-compat-live' });
+      steps.push(await live.runCalculator(client, { ...live, launchApp: async bundle => (launched = await live.launchApp(bundle)),
+        quitApp: async (bundle, pid) => { await live.quitApp(bundle, pid); launched = undefined; } }));
+      const between = hold();
+      if (between) { steps.push(between); return; }
+      dir = mkdtempSync(join(tmpdir(), 'sleight-compat-live-'));
+      const nonce = randomBytes(6).toString('hex');
+      const { openFixture, closeFixtures } = live.fixtures ?? await import('./real-fixture.mjs');
+      steps.push(await live.runBrowserRead(client, { ...live, openPage: async () => {
+        const opened = await live.openSafariPage({ nonce, dir, open: openFixture, close: closeFixtures });
+        page = { ...opened, close: async () => { const close = opened.close; page = undefined; await close(); } };
+        return page;
+      } }));
+    } catch (error) {
+      steps.push(step('live', 'error', 'the live checks stopped', error.message));
+    } finally {
+      await client?.close();
+      client = undefined;
+      if (dir) rmSync(dir, { recursive: true, force: true });
+      // A check that left an app or window behind keeps the lock, as the benchmark does, so nothing else runs into it.
+      if (steps.some(s => s.cleanup)) steps.push(step('live-lock', 'fail', 'kept the live lock because cleanup failed; remove it after checking the Mac', lockPath));
+      else await release();
+    }
+  });
   return { steps };
 }
 
@@ -192,10 +246,10 @@ export function record(logs, report) {
 }
 
 // The latest record for a version, from compat.jsonl.
-export function lastRecord(logs, version) {
+export function lastRecord(logs, version, match = () => true) {
   const lines = readOr(join(logs, 'compat.jsonl'), '').split('\n').filter(Boolean);
   for (let i = lines.length - 1; i >= 0; i--) {
-    try { const entry = JSON.parse(lines[i]); if (entry.engineVersion === version) return entry; } catch {}
+    try { const entry = JSON.parse(lines[i]); if (entry.engineVersion === version && match(entry)) return entry; } catch {}
   }
   return undefined;
 }
@@ -207,19 +261,23 @@ async function notify(message, run = execute) {
 }
 
 // One state lock for the watch job and manual runs, so two never write the logs at once.
-function takeStateLock(logs) {
+// The pid is written by rename, so a reader sees no pid or a whole one. A lock without a pid younger than a minute is
+// still being taken; an older one, or one whose pid is gone, is stale.
+export function takeStateLock(logs, { now = Date.now } = {}) {
   const path = join(logs, 'compat.lock');
   try { mkdirSync(path); }
   catch (error) {
     if (error.code !== 'EEXIST') throw error;
     const pid = Number(readOr(join(path, 'pid'), '0'));
     let alive = false;
-    try { if (pid > 0) { process.kill(pid, 0); alive = true; } } catch (e) { alive = e.code === 'EPERM'; }
+    if (pid > 0) { try { process.kill(pid, 0); alive = true; } catch (e) { alive = e.code === 'EPERM'; } }
+    else { try { alive = now() - statSync(path).mtimeMs < 60000; } catch {} }
     if (alive) return undefined;
     rmSync(path, { recursive: true, force: true });
-    mkdirSync(path);
+    try { mkdirSync(path); } catch (e) { if (e.code === 'EEXIST') return undefined; throw e; }
   }
-  writeFileSync(join(path, 'pid'), String(process.pid));
+  writeFileSync(join(path, `pid.${process.pid}`), String(process.pid));
+  renameSync(join(path, `pid.${process.pid}`), join(path, 'pid'));
   return () => rmSync(path, { recursive: true, force: true });
 }
 
@@ -232,6 +290,9 @@ export async function runWatch({ env = process.env, logs = logsDir(), force = fa
   const unlock = takeStateLock(logs);
   if (!unlock) { log('another compatibility run is in progress; skipped'); return 0; }
   try {
+    // While the hold or a live run is on, nothing starts the engine and the version stays for the next run.
+    const waiting = busy({ holdPath: deps.holdPath, lockPath: deps.lockPath });
+    if (waiting) { log(`deferred: ${waiting}`); return 0; }
     const statePath = join(logs, 'watch-engine-version');
     const previous = readOr(statePath, undefined);
     const doctor = await runDoctor(deps.launcher ?? LAUNCHER, env, deps.run);
@@ -246,15 +307,19 @@ export async function runWatch({ env = process.env, logs = logsDir(), force = fa
     const liveWanted = env.SLEIGHT_COMPAT_LIVE === '1';
     const last = lastRecord(logs, version);
     const changed = previous !== version;
-    // A live check that couldn't start (pending), never ran, or found its app already open tries again on the next run.
-    const livePending = liveWanted && last && ['pending', 'not run', 'skipped'].includes(last.live);
+    // A live check that couldn't start (pending), never ran, or found its app already open tries again on the next run,
+    // but only after the engine checks for this version passed.
+    const enginePassed = lastRecord(logs, version, entry => entry.tier !== 'live')?.verdict === 'pass';
+    const livePending = liveWanted && enginePassed && last && ['pending', 'not run', 'skipped'].includes(last.live);
     if (!changed && !force && !livePending) { log(`doctor ok, engine ${version} unchanged`); return 0; }
 
     let steps, tier;
     if (!changed && !force) { tier = 'live'; steps = []; }
     else {
       tier = 'engine';
-      ({ steps } = await engineTier({ env, logs, doctor, ...deps }));
+      const tierResult = await engineTier({ env, logs, doctor, ...deps });
+      if (tierResult.pending) { log(`deferred: ${tierResult.pending}`); return 0; }
+      ({ steps } = tierResult);
     }
     if (liveWanted && verdictOf(steps) === 'pass') {
       tier = tier === 'live' ? 'live' : 'engine+live';
@@ -311,7 +376,12 @@ export function renderPage(entries) {
 }
 
 export function publish({ logs = logsDir(), staticLogs = [], data = join(ROOT, 'docs/results/data/engine-compat.json'), page = join(ROOT, 'docs/results/engine-compat.md') } = {}) {
-  const readLines = path => readOr(path, '').split('\n').filter(Boolean).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+  // A static log is results.jsonl (JSON Lines) or a single report (compat-report.json from the workflow's artifact).
+  const readLines = path => {
+    const text = readOr(path, '');
+    try { const whole = JSON.parse(text); return Array.isArray(whole) ? whole : [whole]; } catch {}
+    return text.split('\n').filter(Boolean).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+  };
   const existing = existsSync(data) ? JSON.parse(readFileSync(data, 'utf8')).entries : [];
   const entries = mergeEntries(existing, [...readLines(join(logs, 'compat.jsonl')), ...staticLogs.flatMap(readLines)]);
   mkdirSync(dirname(data), { recursive: true });
@@ -332,17 +402,28 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   if (argv.includes('--watch')) return runWatch({ force: argv.includes('--force') });
+  const minIdle = option(argv, 'min-idle');
+  if (minIdle !== undefined && !/^\d+$/.test(minIdle)) { console.error('--min-idle takes a whole number of seconds'); return 2; }
   const logs = logsDir();
-  const engine = await engineTier({ logs });
-  const steps = [...engine.steps];
-  const ownerAway = argv.includes('--owner-away');
-  if (verdictOf(steps) === 'pass') steps.push(...(await liveTier({ ownerAway, minIdleSeconds: Number(option(argv, 'min-idle') ?? 0) })).steps);
-  const report = makeReport({ version: engine.version, steps, source: 'manual', tier: ownerAway ? 'engine+live' : 'engine' });
-  if (argv.includes('--record')) record(logs, report);
-  const reportPath = option(argv, 'report');
-  if (reportPath) writeFileSync(resolve(reportPath), JSON.stringify(report, null, 2) + '\n');
-  console.log(summary(report));
-  return report.verdict === 'pass' ? 0 : 1;
+  mkdirSync(logs, { recursive: true });
+  const unlock = takeStateLock(logs);
+  if (!unlock) { console.error('another compatibility run is in progress'); return 2; }
+  try {
+    const engine = await engineTier({ logs });
+    if (engine.pending) { console.log(`compat: not started, ${engine.pending}`); return 2; }
+    const steps = [...engine.steps];
+    const ownerAway = argv.includes('--owner-away');
+    if (verdictOf(steps) === 'pass') steps.push(...(await liveTier({ ownerAway, minIdleSeconds: Number(minIdle ?? 0) })).steps);
+    const ranLive = steps.some(s => s.id.startsWith('live') && s.status !== 'pending');
+    const report = makeReport({ version: engine.version, steps, source: 'manual', tier: ranLive ? 'engine+live' : 'engine' });
+    if (argv.includes('--record')) record(logs, report);
+    const reportPath = option(argv, 'report');
+    if (reportPath) writeFileSync(resolve(reportPath), JSON.stringify(report, null, 2) + '\n');
+    console.log(summary(report));
+    return report.verdict === 'pass' ? 0 : 1;
+  } finally {
+    unlock();
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main();

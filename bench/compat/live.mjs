@@ -74,12 +74,12 @@ export async function runCalculator(client, { appState, launchApp, quitApp }) {
     launched = await launchApp(CALCULATOR);
     const acquired = await client.call('js', { code: `var app = await cua.getApp(${JSON.stringify(CALCULATOR)})`, timeout_ms: 60000 });
     const text = textOf(acquired);
-    if (acquired?.isError) outcome = result('live-calculator', 'fail', `getApp failed: ${firstLine(text)}`);
+    if (acquired?.isError) outcome = result('live-calculator', 'fail', 'getApp returned an error', firstLine(text));
     else if (!WINDOW_HEADER.test(text) || !ELEMENT_LINE.test(text)) outcome = result('live-calculator', 'fail', 'getApp returned no "Window: …, App: …" header and numbered element lines');
     else {
       const tree = await client.call('js', { code: readCode('app'), timeout_ms: 60000 });
       const plan = keypadPlan(textOf(tree));
-      if (tree?.isError) outcome = result('live-calculator', 'fail', `getAXState failed: ${firstLine(textOf(tree))}`);
+      if (tree?.isError) outcome = result('live-calculator', 'fail', 'getAXState returned an error', firstLine(textOf(tree)));
       else if (plan.error) outcome = result('live-calculator', 'fail', plan.error);
       else {
         const clicked = await client.call('js', { code: plan.code, timeout_ms: 60000 });
@@ -88,19 +88,19 @@ export async function runCalculator(client, { appState, launchApp, quitApp }) {
         catch (error) { display = error.message; }
         const shot = await client.call('js', { code: 'await app.getScreenshot()', timeout_ms: 30000 });
         const image = (shot?.content ?? []).find(item => item?.type === 'image' && /^image\//.test(item.mimeType ?? '') && item.data);
-        if (clicked?.isError) outcome = result('live-calculator', 'fail', `click failed: ${firstLine(textOf(clicked))}`);
-        else if (display !== plan.expected) outcome = result('live-calculator', 'fail', `the display read ${JSON.stringify(display)}, not ${plan.expected}`);
-        else if (shot?.isError || !image) outcome = result('live-calculator', 'fail', `getScreenshot returned no image${shot?.isError ? `: ${firstLine(textOf(shot))}` : ''}`);
+        if (clicked?.isError) outcome = result('live-calculator', 'fail', 'a click returned an error', firstLine(textOf(clicked)));
+        else if (display !== plan.expected) outcome = result('live-calculator', 'fail', `the display didn't read ${plan.expected}`, String(display).slice(0, 80));
+        else if (shot?.isError || !image) outcome = result('live-calculator', 'fail', 'getScreenshot returned no image', shot?.isError ? firstLine(textOf(shot)) : undefined);
         else outcome = result('live-calculator', 'pass', `17 × 23 = 391 in ${plan.numbers.length} clicks, read back, and a screenshot`);
       }
     }
   } catch (error) {
-    outcome = result('live-calculator', 'fail', error.message);
+    outcome = result('live-calculator', 'error', 'the check stopped', firstLine(error.message));
   } finally {
     // A launch that failed part way may still have started Calculator; quitApp leaves any process it can't prove is ours.
     const cleanup = await quitApp(CALCULATOR, launched).then(() => undefined, error => error.message);
     outcome ??= result('live-calculator', 'fail', 'no result');
-    if (cleanup) outcome = { ...outcome, cleanup, ...(outcome.status === 'pass' ? { status: 'fail', reason: `passed, but quitting the Calculator it launched failed: ${cleanup}` } : {}) };
+    if (cleanup) outcome = { ...outcome, cleanup, ...(outcome.status === 'pass' ? { status: 'fail', reason: 'passed, but quitting the Calculator it launched failed' } : {}) };
   }
   return { ...outcome, ms: Date.now() - started };
 }
@@ -121,25 +121,25 @@ export async function runBrowserRead(client, { appState, openPage, axTrusted }) 
 nodeRepl.write(${JSON.stringify(MARK)} + JSON.stringify(rows.flatMap(row => row.windows ?? []).map(window => window.title).filter(title => typeof title === 'string' && title.includes(${JSON.stringify(page.marker)}))))`, timeout_ms: 30000 });
     const line = textOf(listed).split('\n').find(item => item.startsWith(MARK));
     const titles = line ? JSON.parse(line.slice(MARK.length)) : undefined;
-    if (listed?.isError || !Array.isArray(titles)) outcome = result('live-browser-read', 'fail', `listApps found no Safari windows${listed?.isError ? `: ${firstLine(textOf(listed))}` : ''}`);
+    if (listed?.isError || !Array.isArray(titles)) outcome = result('live-browser-read', 'fail', 'listApps found no Safari windows', listed?.isError ? firstLine(textOf(listed)) : undefined);
     else if (titles.length !== 1) outcome = result('live-browser-read', 'fail', `expected one Safari window titled with the fixture's marker, found ${titles.length}`);
     else {
       const selected = await client.call('select_window', { app: 'Safari', title: titles[0] }, 30000);
       const read = selected?.isError ? undefined : await client.call('js', { code: `var page = await cua.getApp(${JSON.stringify(SAFARI)})`, timeout_ms: 60000 });
       const text = textOf(read);
       const header = WINDOW_HEADER.exec(text);
-      if (selected?.isError) outcome = result('live-browser-read', 'fail', `select_window failed: ${firstLine(textOf(selected))}`);
-      else if (read?.isError) outcome = result('live-browser-read', 'fail', `getApp failed: ${firstLine(text)}`);
+      if (selected?.isError) outcome = result('live-browser-read', 'fail', 'select_window returned an error', firstLine(textOf(selected)));
+      else if (read?.isError) outcome = result('live-browser-read', 'fail', 'getApp returned an error', firstLine(text));
       else if (!header || !header[1].includes(page.marker)) outcome = result('live-browser-read', 'fail', 'the read shows another window than the fixture page');
       else if (!text.includes(page.body)) outcome = result('live-browser-read', 'fail', "the read has the fixture window but not the page's text");
       else outcome = result('live-browser-read', 'pass', 'read the fixture page through the engine path');
     }
   } catch (error) {
-    outcome = result('live-browser-read', 'fail', error.message);
+    outcome = result('live-browser-read', 'error', 'the check stopped', firstLine(error.message));
   } finally {
     const cleanup = page ? await page.close().then(() => undefined, error => error.message) : undefined;
     outcome ??= result('live-browser-read', 'fail', 'no result');
-    if (cleanup) outcome = { ...outcome, cleanup, ...(outcome.status === 'pass' ? { status: 'fail', reason: `passed, but closing the fixture window or Safari failed: ${cleanup}` } : {}) };
+    if (cleanup) outcome = { ...outcome, cleanup, ...(outcome.status === 'pass' ? { status: 'fail', reason: 'passed, but closing the fixture window or Safari failed' } : {}) };
   }
   return { ...outcome, ms: Date.now() - started };
 }

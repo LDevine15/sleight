@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { BUNDLE, analyzeBundle, definesMember, findApp, plistString } from '../bench/compat/static.mjs';
 import { checkDownloadUrl, download, latestItem, parseAppcast, unpack, verifySignature } from '../bench/compat/feed.mjs';
-import { runFeed, summary } from '../bench/compat-static.mjs';
+import { probeFeed, runFeed, summary } from '../bench/compat-static.mjs';
 
 const fixture = name => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 const plist = version => `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>\n<key>CFBundleShortVersionString</key>\n<string>${version}</string>\n</dict></plist>\n`;
@@ -34,8 +34,9 @@ function bundle(root, { app = '26.1013.40934', engine = '26.1013.1001501', drop 
   const description = fixture('engine-js-description.txt').trimEnd();
   const cuts = []; for (let at = -1; cuts.length < 3;) { at = description.indexOf('\n\n', at + 1); cuts.push(at); }
   const parts = [description.slice(0, cuts[0]), description.slice(cuts[0] + 2, cuts[1]), description.slice(cuts[1] + 2, cuts[2]), description.slice(cuts[2] + 2)];
-  ['macos/description', 'macos/browser', 'macos/computer', 'macos/output'].forEach((name, i) => put(join(BUNDLE.instructions, `${name}.md`), parts[i] + '\n'));
-  put(join(BUNDLE.instructions, 'browser-disabled.md'), 'Browser APIs are disabled.\n');
+  // Its second part stands in for browser-disabled.md, the one sleight's default CUA_REPL_ENABLED_SURFACES=computer uses.
+  ['macos/description', 'browser-disabled', 'macos/computer', 'macos/output'].forEach((name, i) => put(join(BUNDLE.instructions, `${name}.md`), parts[i] + '\n'));
+  put(join(BUNDLE.instructions, 'macos/browser.md'), 'Browser guidance.\n');
   put(join(BUNDLE.tinysky, 'create_tinysky_alt.js'), 'const x={getApp(t){},getState(){},listApps(){},listBrowsers(){},getBrowser(){},getTab(){},createBrowserTab(){},listTabs(){}};');
   put(join(BUNDLE.tinysky, 'bind_mac_app.js'), 'class A{getAXState(){}getScreenshot(){}getAXStateAndScreenshot(){}click(){}drag(){}scroll(){}selectText(){}setValue(){}performSecondaryAction(){}paste(){}pressKey(){}typeText(){}}');
   put(join(BUNDLE.plugin, '.mcp.json'), JSON.stringify({ mcpServers: { cua_repl: { command: 'node', enabled_tools: ['js', 'js_reset', 'turn_ended'] } } }));
@@ -66,6 +67,20 @@ test('missing files, members and strings fail by sleight\'s names, never with en
   assert.ok(!JSON.stringify(results).includes('Computer Use Confirmations'));
 });
 
+test('a symbolic link among the files the check reads stops it', t => {
+  const root = temp(t);
+  const dir = bundle(root);
+  rmSync(join(dir, BUNDLE.policy));
+  symlinkSync('/etc/hosts', join(dir, BUNDLE.policy));
+  const report = analyzeBundle(dir);
+  assert.equal(report.results.length, 1);
+  assert.match(report.results[0].reason, /refusing 1 symbolic link/);
+  const linked = bundle(join(root, 'two'));
+  rmSync(join(linked, BUNDLE.tinysky), { recursive: true });
+  symlinkSync(root, join(linked, BUNDLE.tinysky));
+  assert.equal(analyzeBundle(linked).results[0].status, 'fail');
+});
+
 test('a changed js description or policy warns; a bundle without the engine stops early', t => {
   const root = temp(t);
   const dir = bundle(root, { edit: { [join(BUNDLE.instructions, 'macos/output.md')]: 'New output rules.\n',
@@ -82,7 +97,9 @@ test('helpers: plist strings, member definitions, finding the app', t => {
   assert.equal(plistString(plist('1.2'), 'CFBundleShortVersionString'), '1.2');
   assert.ok(definesMember('x={getApp(t){}}', 'getApp'));
   assert.ok(definesMember('{getApp:function(){}}', 'getApp'));
-  assert.ok(!definesMember('cua.getApp(t)', 'getApp'));
+  assert.ok(definesMember('{getApp:(a,b)=>a}', 'getApp'));
+  assert.ok(definesMember('x.y=1;getApp=async t=>t', 'getApp'));
+  for (const mention of ['cua.getApp(t)', 'f(getApp(t))', '{getApp:1}', 'x.getApp=()=>1']) assert.ok(!definesMember(mention, 'getApp'), mention);
   const root = temp(t);
   bundle(join(root, 'volume', 'ChatGPT 26'));
   assert.equal(findApp(root), join(root, 'volume', 'ChatGPT 26', 'ChatGPT.app'));
@@ -101,6 +118,9 @@ test('the appcast parser picks the newest default-channel release', () => {
   assert.equal(items.length, 3);
   assert.deepEqual(latestItem(items), { version: '26.1013.40934', build: '20770', url: 'https://persistent.oaistatic.com/a.zip', length: 10, edSignature: 'c2ln', channel: undefined });
   assert.equal(latestItem(parseAppcast('<rss></rss>')), undefined);
+  // Delta archives patch an older app, so the full enclosure is the one taken, with its entities decoded.
+  const delta = parseAppcast(`<item><sparkle:version>2</sparkle:version><sparkle:deltas><enclosure url="https://persistent.oaistatic.com/d.delta" sparkle:deltaFrom="1"/></sparkle:deltas><enclosure url="https://persistent.oaistatic.com/d2.delta" sparkle:deltaFrom="1"/><enclosure url="https://persistent.oaistatic.com/a.zip?x=1&amp;y=&#38;&quot;" sparkle:edSignature="c2ln"/></item>`);
+  assert.equal(delta[0].url, 'https://persistent.oaistatic.com/a.zip?x=1&y=&"');
   assert.throws(() => checkDownloadUrl('http://persistent.oaistatic.com/a.zip'), /refusing/);
   assert.throws(() => checkDownloadUrl('https://evil.example/a.zip'), /refusing/);
   assert.ok(checkDownloadUrl('https://persistent.oaistatic.com/a.zip'));
@@ -112,6 +132,14 @@ test('downloads stop at the size limit, and the Sparkle signature is checked aga
   const fetchImpl = async () => new Response(body, { status: 200 });
   const path = join(dir, 'release');
   assert.equal(await download('https://persistent.oaistatic.com/a.zip', path, { fetchImpl }), body.length);
+  // Every redirect hop is checked, and there are at most five.
+  const redirect = to => new Response(null, { status: 302, headers: { location: to } });
+  let hops = 0;
+  const viaCdn = async url => (url.endsWith('/a.zip') ? redirect('https://cdn.oaistatic.com/b.zip') : new Response(body, { status: 200 }));
+  assert.equal(await download('https://persistent.oaistatic.com/a.zip', join(dir, 'hop'), { fetchImpl: viaCdn }), body.length);
+  await assert.rejects(download('https://persistent.oaistatic.com/a.zip', join(dir, 'evil'), { fetchImpl: async () => redirect('https://evil.example/x') }), /refusing/);
+  await assert.rejects(download('https://persistent.oaistatic.com/a.zip', join(dir, 'loop'), { fetchImpl: async () => (hops++, redirect('https://persistent.oaistatic.com/a.zip')) }), /more than 5 redirects/);
+  assert.equal(hops, 6);
   await assert.rejects(download('https://persistent.oaistatic.com/a.zip', join(dir, 'big'), { fetchImpl, maxBytes: 4 }), /larger than 4/);
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const key = Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url').toString('base64');
@@ -146,7 +174,9 @@ test('the feed run checks a new release once, records it, and retries only when 
   const logs = [];
   const deps = { state, fetchImpl, log: line => logs.push(line), now: () => new Date('2026-10-19T05:00:00Z'), verifyImpl: () => true,
     downloadImpl: async (url, path) => writeFileSync(path, 'PK'), unpackImpl: async (archive, out) => cpSync(source, join(out, 'ChatGPT.app'), { recursive: true }) };
+  assert.equal(await probeFeed(deps), true);
   const first = await runFeed(deps);
+  assert.equal(await probeFeed(deps), false);
   assert.equal(first.exit, 0);
   assert.equal(first.report.verdict, 'pass');
   assert.equal(first.report.checkedAt, '2026-10-19T05:00:00.000Z');
@@ -158,16 +188,27 @@ test('the feed run checks a new release once, records it, and retries only when 
   version = '26.1014.1';
   assert.equal((await runFeed({ ...deps, downloadImpl: async () => { throw new Error('HTTP 503'); } })).exit, 2);
   assert.equal(JSON.parse(readFileSync(join(state, 'last.json'), 'utf8')).version, '26.1013.40934');
-  const unsigned = await runFeed({ ...deps, verifyImpl: () => false });
-  assert.equal(unsigned.exit, 2);
-  assert.equal(unsigned.report.steps[0].id, 'signature');
-  // A bad signature is recorded, so the same release isn't downloaded every hour.
-  assert.equal((await runFeed(deps)).unchanged, true);
+  // A check that couldn't finish retries on the next runs, then is recorded after the third attempt.
+  for (const attempt of [1, 2]) {
+    const unsigned = await runFeed({ ...deps, verifyImpl: () => false });
+    assert.equal(unsigned.exit, 2);
+    assert.equal(unsigned.report.attempt, attempt);
+    assert.equal(unsigned.report.steps[0].id, 'signature');
+    assert.equal(JSON.parse(readFileSync(join(state, 'last.json'), 'utf8')).version, '26.1013.40934');
+  }
+  assert.equal((await runFeed({ ...deps, unpackImpl: async () => { throw Object.assign(new Error('7z: Data Error in engine text'), { code: 2 }); } })).report.steps[0].reason, 'unpacking failed (exit 2)');
+  assert.equal(JSON.parse(readFileSync(join(state, 'last.json'), 'utf8')).verdict, 'error');
+  // The unchanged path keeps the last verdict's exit code.
+  const repeat = await runFeed(deps);
+  assert.deepEqual([repeat.unchanged, repeat.exit], [true, 2]);
   const forced = await runFeed({ ...deps, force: true });
   assert.equal(forced.report.steps.find(s => s.id === 'feed-version').status, 'warn');
   assert.equal(forced.report.fingerprintChanged, null);
-  assert.equal(readFileSync(join(state, 'results.jsonl'), 'utf8').trim().split('\n').length, 3);
+  assert.equal(readFileSync(join(state, 'results.jsonl'), 'utf8').trim().split('\n').length, 5);
   assert.equal((await runFeed({ ...deps, fetchImpl: async () => new Response('', { status: 500 }) })).exit, 2);
+  version = '26 1015; rm -rf';
+  assert.equal((await runFeed(deps)).exit, 2);
+  assert.match(logs.at(-1), /not a plain version/);
   assert.ok(!logs.join('\n').includes('Computer Use Confirmations'));
 });
 

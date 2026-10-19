@@ -5,6 +5,18 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 
+// Process groups of clients still open. If this process exits without closing one (a crash, process.exit), the exit
+// handler kills the group, so no engine or launcher outlives the check.
+const groups = new Set();
+let exitHook = false;
+function track(pid) {
+  if (!exitHook) {
+    exitHook = true;
+    process.once('exit', () => { for (const group of groups) { try { process.kill(-group, 'SIGKILL'); } catch {} } });
+  }
+  groups.add(pid);
+}
+
 export const textOf = result => (result?.content ?? []).filter(item => item?.type === 'text' && typeof item.text === 'string')
   .map(item => item.text).join('\n');
 
@@ -12,11 +24,12 @@ export async function openClient({ command, args = [], env = process.env, approv
   timeoutMs = 60000, startupTimeoutMs = 20000, turnMeta = false, name = 'sleight-compat', graceMs = 4000, forceMs = 8000 } = {}) {
   // detached: the engine and its helpers share one group, so cleanup can't miss a grandchild.
   const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env, detached: true });
+  if (child.pid) track(child.pid);
   const sessionId = randomUUID();
   let turnId = randomUUID();
   let stderr = '', nextId = 0, ended = false;
   const pending = new Map();
-  const stopped = new Promise(resolve => child.once('close', () => { ended = true; resolve(); }));
+  const stopped = new Promise(resolve => child.once('close', () => { ended = true; groups.delete(child.pid); resolve(); }));
   const failAll = error => { for (const reply of pending.values()) reply.reject(error); pending.clear(); };
   child.stderr.setEncoding('utf8').on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
   child.once('error', failAll);

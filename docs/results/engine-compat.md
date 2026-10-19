@@ -9,7 +9,7 @@ the checks, and this page is rebuilt with `node bench/compat.mjs --publish`.
 
 | Checked (UTC) | ChatGPT | Engine | Where | Result | Live | Warnings and failures |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2026-10-19 05:28 | 26.1013.40934 | 26.1013.1001501 | Static | pass |  | js-description: the engine's js description changed for both CUA_REPL_ENABLED_SURFACES settings, so sleight sends it whole instead of its shorter version (tool-description.mjs ENGINE_JS_HASH) |
+| 2026-10-19 05:42 | 26.1013.40934 | 26.1013.1001501 | Static | pass |  | js-description: the engine's js description changed, so sleight sends it whole instead of its shorter version (tool-description.mjs ENGINE_JS_HASH) |
 | 2026-10-14 13:00 |  | 26.1007.71326 | Mac (watch task) | pass |  |  |
 | 2026-10-12 13:00 |  | 26.1007.30912 | Mac (watch task) | pass |  |  |
 | 2026-10-10 08:19 |  | 26.1007.21159 | Mac (watch task) | pass |  |  |

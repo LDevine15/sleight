@@ -25,6 +25,11 @@ test('the declarations parser reads members, one-line types and inherited method
   assert.equal(apiBlock(docs()), ts.replace(/\n$/, ''));
 });
 
+test('comments and strings can\'t hide or fake a member, and repeated interfaces merge', () => {
+  const owners = parseDeclarations('interface App {\n  /** an unbalanced ( and { in a comment */\n  click(n: number): void;\n  // typeText(text: string): void;\n  label: "a(b";\n}\ninterface App { pressKey(key: string): void }\n');
+  assert.deepEqual([...membersOf(owners, 'App')].sort(), ['click', 'label', 'pressKey']);
+});
+
 test('the recorded API passes, and a removed member sleight uses fails by name', () => {
   assert.deepEqual(checkApiContract(docs()).map(r => r.status), ['pass', 'pass']);
   const gone = checkApiContract(docs(ts.replace(/^\s*typeText\(text: string\): Promise<void>;\n/m, '')));

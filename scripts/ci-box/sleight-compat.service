@@ -1,12 +1,22 @@
-# The static engine compatibility check on a Linux box, as a systemd user service (see docs/engine-notes.md).
+# The static engine compatibility check on a Linux box, as a systemd user service run hourly by
+# sleight-compat.timer. It reads only ChatGPT's update feed until the release changes (docs/engine-notes.md).
+#
+# Install, as the user that runs it (Node 22 or later, unzip, and 7-Zip for a .dmg release):
+#   sudo apt-get install -y unzip 7zip
+#   git clone <sleight-dev URL> ~/sleight-compat && git -C ~/sleight-compat checkout <reviewed commit>
+#   mkdir -p ~/.config/systemd/user
+#   cp ~/sleight-compat/scripts/ci-box/sleight-compat.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now sleight-compat.timer
+#   sudo loginctl enable-linger "$USER"     # keeps user timers running while nobody is logged in
+# The checkout stays at the commit you chose; update it by hand after reviewing a new one:
+#   git -C ~/sleight-compat fetch && git -C ~/sleight-compat checkout <commit>
+# Results: ~/.local/state/sleight-compat (results.jsonl, last.json, and the engine docs with their diffs),
+# and `journalctl --user -u sleight-compat`.
 [Unit]
 Description=sleight static engine compatibility check
-After=network-online.target
 
 [Service]
 Type=oneshot
 WorkingDirectory=%h/sleight-compat
-# A failed pull still runs the check on the checkout already there.
-ExecStartPre=-/usr/bin/git -C %h/sleight-compat pull --ff-only --quiet
 ExecStart=/usr/bin/env node bench/compat-static.mjs --feed --keep-docs --state %h/.local/state/sleight-compat
 Nice=10

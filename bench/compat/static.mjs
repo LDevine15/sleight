@@ -2,7 +2,7 @@
 // and the node_repl binary's strings) and checks the contract in contract.mjs, without running anything from the bundle,
 // so it works on Linux. Results name only sleight's own contract items: nothing from the engine's files is printed.
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { HELPER_REL, MODULES_REL, NODE_REL, NODE_REPL_REL, REPL_REL } from '../../plugins/sleight/lib/setup.mjs';
 import { compactJsDescription } from '../../plugins/sleight/lib/tool-description.mjs';
@@ -26,10 +26,15 @@ export const BUNDLE = {
 const DESCRIPTION_PARTS = { computer: ['macos/description', 'browser-disabled', 'macos/computer', 'macos/output'],
   'browser,computer': ['macos/description', 'macos/browser', 'macos/computer', 'macos/output'] };
 // What the relay sends the engine and relies on it accepting: js arguments, the turn end and its turn metadata.
+// node_repl is a compiled binary, so this finds only a name removed outright, not a changed schema; the Mac's engine
+// checks (bench/compat.mjs) read the real tools/list.
 export const NODE_REPL_STRINGS = ['timeout_ms', 'js_reset', 'turn_ended', 'hook_event_name', 'x-codex-turn-metadata', 'session_id', 'turn_id', 'elicitation'];
 // What cua-repl's launcher must still read and build for sleight's environment (launch.mjs resolveServer, setup.mjs).
 export const LAUNCH_STRINGS = ['CUA_REPL_NODE_REPL_PATH', 'CUA_REPL_ENABLED_SURFACES', 'NODE_REPL_TOOL_OVERRIDES', 'js_reset'];
 
+// Versions go into file names and output, so only plain version strings are used.
+export const SAFE_VERSION = /^[\w.+-]{1,40}$/;
+const safeVersion = value => (typeof value === 'string' && SAFE_VERSION.test(value) ? value : undefined);
 const result = (id, status, reason) => ({ id, status, ...(reason ? { reason } : {}) });
 const read = (app, rel) => readFileSync(join(app, rel), 'utf8');
 
@@ -38,17 +43,45 @@ export function plistString(xml, key) {
   return match?.[1];
 }
 
-// Is `name` defined as a method or property in minified JavaScript (`getApp(t){`, `getApp:`), not only called (`.getApp(`)?
+// Is `name` defined in minified JavaScript, as a method with a body (`getApp(t){`), a property holding a function
+// (`getApp:function(`, `getApp:(t)=>`) or an assigned one (`getApp=async(t)=>`)? A call (`.getApp(`) or a bare mention
+// doesn't count.
 export function definesMember(source, name) {
-  return new RegExp(`(?:^|[^\\w$.])${name.replace(/\$/g, '\\$')}\\s*(?:\\(|:)`).test(source);
+  const id = name.replace(/\$/g, '\\$');
+  const fn = '(?:async\\s*)?(?:function\\b|\\([^()]*\\)\\s*=>|[\\w$]+\\s*=>)';
+  return new RegExp(`(?:^|[^\\w$.])${id}\\s*(?:\\([^()]*\\)\\s*\\{|:\\s*${fn}|=\\s*${fn})`).test(source);
+}
+
+// A downloaded archive could plant a symbolic link where the check reads a file, pointing at anything on the machine
+// that runs it. Every path the check reads, and each folder on the way, must be a real file or folder.
+export function symlinksIn(app) {
+  const found = new Set();
+  const visit = (rel, deep) => {
+    const parts = rel.split('/');
+    for (let i = 1; i <= parts.length; i++) {
+      const sub = parts.slice(0, i).join('/');
+      let info;
+      try { info = lstatSync(join(app, sub)); } catch { return; }
+      if (info.isSymbolicLink()) { found.add(sub); return; }
+    }
+    if (!deep) return;
+    for (const entry of readdirSync(join(app, rel), { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) found.add(join(rel, entry.name));
+      else if (entry.isDirectory()) visit(join(rel, entry.name), true);
+    }
+  };
+  for (const [key, rel] of Object.entries(BUNDLE)) visit(rel, ['instructions', 'tinysky', 'plugin'].includes(key) && existsSync(join(app, rel)));
+  return [...found];
 }
 
 export function analyzeBundle(app) {
   const results = [];
+  const links = symlinksIn(app);
+  if (links.length) return { results: [result('bundle-layout', 'fail', `refusing ${links.length} symbolic links among the files it reads`)], fingerprint: undefined };
   const missing = Object.entries(BUNDLE).filter(([, rel]) => !existsSync(join(app, rel))).map(([key]) => key);
-  const appVersion = existsSync(join(app, BUNDLE.appInfo)) ? plistString(read(app, BUNDLE.appInfo), 'CFBundleShortVersionString') : undefined;
+  const appVersion = existsSync(join(app, BUNDLE.appInfo)) ? safeVersion(plistString(read(app, BUNDLE.appInfo), 'CFBundleShortVersionString')) : undefined;
   // The helper's version is what `sleight-mcp --doctor` prints as "Codex computer-use <version>".
-  const engineVersion = existsSync(join(app, BUNDLE.helperInfo)) ? plistString(read(app, BUNDLE.helperInfo), 'CFBundleShortVersionString') : undefined;
+  const engineVersion = existsSync(join(app, BUNDLE.helperInfo)) ? safeVersion(plistString(read(app, BUNDLE.helperInfo), 'CFBundleShortVersionString')) : undefined;
   results.push(missing.length ? result('bundle-layout', 'fail', `missing ${missing.join(', ')}`) : result('bundle-layout', 'pass'));
   if (missing.includes('plugin') || missing.includes('coreDoc') || missing.includes('tinysky')) {
     return { appVersion, engineVersion, results, fingerprint: undefined };
@@ -62,6 +95,7 @@ export function analyzeBundle(app) {
     if (!server) problems.push('no cua_repl server');
     const enabled = server?.enabled_tools;
     if (Array.isArray(enabled)) for (const tool of ['js', 'turn_ended']) if (!enabled.includes(tool)) problems.push(`${tool} not in enabled_tools`);
+    // A text search, so it finds only a key removed outright.
     for (const key of ['turn_ended', 'hook_event_name', 'session_id', 'turn_id']) if (!plugin.includes(key)) problems.push(`plugin hooks lack ${key}`);
     results.push(problems.length ? result('engine-plugin', 'fail', problems.join('; ')) : result('engine-plugin', 'pass'));
   } catch (error) { results.push(result('engine-plugin', 'fail', `unreadable plugin config (${error.code ?? error.name})`)); }
@@ -94,9 +128,11 @@ export function analyzeBundle(app) {
     const texts = parts.map(part);
     return [mode, texts.every(text => text !== undefined) ? texts.join('\n\n') : undefined];
   }));
+  // sleight starts the engine with CUA_REPL_ENABLED_SURFACES=computer unless a Codex browser extension is connected
+  // (launch.mjs selectSurfaces), so that setting is the one that has to match.
   const known = Object.entries(descriptions).filter(([, text]) => text !== undefined && compactJsDescription(text, undefined, false) !== undefined).map(([mode]) => mode);
-  results.push(known.length ? result('js-description', 'pass', `sleight's shorter js description applies with surfaces ${known.join(' and ')}`)
-    : result('js-description', 'warn', "the engine's js description changed for both CUA_REPL_ENABLED_SURFACES settings, so sleight sends it whole instead of its shorter version (tool-description.mjs ENGINE_JS_HASH)"));
+  results.push(known.includes('computer') ? result('js-description', 'pass', "sleight's shorter js description applies")
+    : result('js-description', 'warn', `the engine's js description changed${known.length ? ' for CUA_REPL_ENABLED_SURFACES=computer' : ''}, so sleight sends it whole instead of its shorter version (tool-description.mjs ENGINE_JS_HASH)`));
 
   results.push(...checkPolicyRewrite([`${coreDoc.trimEnd()}\n\n${policy}`]));
 

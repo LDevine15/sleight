@@ -42,7 +42,15 @@ export function apiBlock(docs) {
 }
 
 // Interfaces, object types and `declare const` objects with their direct members and the types they extend.
-export function parseDeclarations(block) {
+// Comments and string literals become spaces first, so a parenthesis or brace inside one can't throw off the scan and a
+// method named only in a comment doesn't count.
+export function stripCommentsAndStrings(source) {
+  return source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g,
+    text => text.replace(/[^\n]/g, ' '));
+}
+
+export function parseDeclarations(source) {
+  const block = stripCommentsAndStrings(source);
   const owners = new Map();
   const head = /^(?:export\s+)?(?:interface\s+(\w+)(?:<[^>{]*>)?(?:\s+extends\s+([\w\s,<>]+?))?\s*\{|type\s+(\w+)(?:<[^>=]*>)?\s*=\s*(?:[\w\s&]+&\s*)?\{|declare\s+const\s+(\w+)\s*:\s*\{)/gm;
   for (let match; (match = head.exec(block));) {
@@ -70,7 +78,10 @@ export function parseDeclarations(block) {
     // `type X = A & { ... }` inherits A, as `interface X extends A` does.
     const intersected = match[3] ? (/=\s*([\w\s&]+)&\s*\{$/.exec(match[0])?.[1] ?? '') : '';
     const parents = [...(match[2] ?? '').split(','), ...intersected.split('&')].map(part => part.replace(/<.*$/, '').trim()).filter(Boolean);
-    owners.set(name, { members, parents });
+    // A repeated interface merges, as TypeScript's declaration merging does.
+    const known = owners.get(name);
+    if (known) { for (const member of members) known.members.add(member); known.parents.push(...parents); }
+    else owners.set(name, { members, parents });
   }
   return owners;
 }

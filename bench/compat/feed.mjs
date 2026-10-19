@@ -4,7 +4,7 @@
 // per-user query parameters; the static feed needs none, so it's the one polled here.
 import { execFile } from 'node:child_process';
 import { createPublicKey, verify } from 'node:crypto';
-import { createWriteStream, existsSync, readdirSync, readFileSync } from 'node:fs';
+import { closeSync, createWriteStream, existsSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -15,17 +15,22 @@ export const FEED_URL = 'https://persistent.oaistatic.com/codex-app-prod/appcast
 export const ED_PUBLIC_KEY = 'mNfr1v9t63BfgDtlw4C8lRvSY6uMggIXABDOCi3tS6k=';
 // Downloads come only from OpenAI's static hosts; a feed pointing anywhere else stops the check.
 export const DOWNLOAD_HOSTS = /^(?:[a-z0-9-]+\.)*(?:oaistatic\.com|openai\.com|chatgpt\.com)$/;
-export const MAX_DOWNLOAD = 4 * 1024 ** 3;
+// Below 2 GiB, the most readFileSync takes for the signature check. ChatGPT 26.1013.40934 installs about 1 GB.
+export const MAX_DOWNLOAD = 1.9 * 1024 ** 3;
+export const MAX_REDIRECTS = 5;
 
-const attr = (tag, name) => new RegExp(`\\s${name.replace(':', '\\:')}="([^"]*)"`).exec(tag)?.[1];
-const element = (xml, name) => new RegExp(`<${name}>\\s*([^<]*?)\\s*</${name}>`).exec(xml)?.[1];
+const decode = text => text?.replace(/&(?:#(\d+)|#x([0-9a-f]+)|(amp|quot|apos|lt|gt));/gi, (_, dec, hex, name) =>
+  dec ? String.fromCodePoint(Number(dec)) : hex ? String.fromCodePoint(parseInt(hex, 16)) : { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>' }[name.toLowerCase()]);
+const attr = (tag, name) => decode(new RegExp(`\\s${name.replace(':', '\\:')}="([^"]*)"`).exec(tag)?.[1]);
+const element = (xml, name) => decode(new RegExp(`<${name}>\\s*([^<]*?)\\s*</${name}>`).exec(xml)?.[1]);
 
 // Sparkle appcast items: version, build, enclosure and signature. Version and build may sit on the item or the enclosure.
+// Delta updates (<sparkle:deltas>, or an enclosure with sparkle:deltaFrom) patch an older app, so only the full archive counts.
 export function parseAppcast(xml) {
   const items = [];
   for (const match of String(xml ?? '').matchAll(/<item\b[\s\S]*?<\/item>/g)) {
-    const item = match[0];
-    const enclosure = /<enclosure\b[^>]*>/.exec(item)?.[0] ?? '';
+    const item = match[0].replace(/<sparkle:deltas>[\s\S]*?<\/sparkle:deltas>/g, '');
+    const enclosure = [...item.matchAll(/<enclosure\b[^>]*>/g)].map(found => found[0]).find(tag => !/\ssparkle:deltaFrom=/.test(tag)) ?? '';
     const build = element(item, 'sparkle:version') ?? attr(enclosure, 'sparkle:version');
     const version = element(item, 'sparkle:shortVersionString') ?? attr(enclosure, 'sparkle:shortVersionString') ?? build;
     items.push({
@@ -60,11 +65,18 @@ export function checkDownloadUrl(url) {
   return parsed;
 }
 
+// Redirects are followed by hand, so every hop must be an https URL on OpenAI's hosts.
 export async function download(url, path, { fetchImpl = fetch, maxBytes = MAX_DOWNLOAD, timeoutMs = 30 * 60000 } = {}) {
-  checkDownloadUrl(url);
-  const response = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'follow' });
+  const signal = AbortSignal.timeout(timeoutMs);
+  let response, at = url;
+  for (let hop = 0; ; hop++) {
+    checkDownloadUrl(at);
+    response = await fetchImpl(at, { signal, redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(response.status)) break;
+    if (hop >= MAX_REDIRECTS) throw new Error(`more than ${MAX_REDIRECTS} redirects`);
+    at = new URL(response.headers.get('location') ?? '', at).href;
+  }
   if (!response.ok || !response.body) throw new Error(`download failed with HTTP ${response.status}`);
-  if (response.url) checkDownloadUrl(response.url);
   let bytes = 0;
   const limit = async function* (source) {
     for await (const chunk of source) {
@@ -88,7 +100,9 @@ export function verifySignature(path, signature, key = ED_PUBLIC_KEY) {
 // Unpacks a .zip with unzip, or a .dmg with 7-Zip (7zz, else 7z), whose first pass can yield a disk image that needs a
 // second. Only reads files: nothing from the archive runs.
 export async function unpack(archive, dir, { run = execute, which = tool => existsSync(tool) } = {}) {
-  const head = readFileSync(archive).subarray(0, 4);
+  const head = Buffer.alloc(4);
+  const fd = openSync(archive, 'r');
+  try { readSync(fd, head, 0, 4, 0); } finally { closeSync(fd); }
   if (head[0] === 0x50 && head[1] === 0x4b) {
     await run('unzip', ['-q', '-o', archive, '-d', dir], { maxBuffer: 64 << 20 });
     return;

@@ -4,6 +4,7 @@
 //
 //   node bench/compat-static.mjs --app /Applications/ChatGPT.app [--report FILE]
 //   node bench/compat-static.mjs --feed [--state DIR] [--force] [--keep-docs] [--report FILE]
+//   node bench/compat-static.mjs --probe [--state DIR]     prints changed or unchanged (and sets it as a GitHub output)
 //
 // --feed polls ChatGPT's update feed and does nothing more until the version changes. Then it downloads the release,
 // checks its Sparkle signature, unpacks it, and checks the contract. --state (default ~/.local/state/sleight-compat)
@@ -17,7 +18,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { analyzeBundle, engineDocs, findApp } from './compat/static.mjs';
+import { SAFE_VERSION, analyzeBundle, engineDocs, findApp } from './compat/static.mjs';
 import { FEED_URL, download, fetchText, latestItem, parseAppcast, unpack, verifySignature } from './compat/feed.mjs';
 
 const execute = promisify(execFile);
@@ -52,65 +53,96 @@ export function checkApp(app, { now = () => new Date() } = {}) {
     sleight: sleightCommit(), verdict: verdictOf(analysis.results), steps: analysis.results, fingerprint: analysis.fingerprint };
 }
 
-// Line counts only: the diff itself stays in the state folder.
+// Line counts only: the diff itself stays in the state folder, and a failed diff reports no engine text.
 async function keepDocs(state, version, app, run = execute) {
   const dir = join(state, 'docs');
   const previous = existsSync(join(dir, 'latest')) ? readFileSync(join(dir, 'latest'), 'utf8').trim() : undefined;
   mkdirSync(join(dir, version), { recursive: true });
   for (const [name, text] of Object.entries(engineDocs(app))) writeFileSync(join(dir, version, name), text, { mode: 0o600 });
   writeFileSync(join(dir, 'latest'), version + '\n');
-  if (!previous || previous === version || !existsSync(join(dir, previous))) return { docsBaseline: previous ?? null };
-  const diff = await run('diff', ['-ru', join(dir, previous), join(dir, version)], { maxBuffer: 64 << 20 }).then(r => r.stdout, error => {
-    if (error.code === 1) return error.stdout;
-    throw error;
-  });
+  if (!previous || previous === version || !SAFE_VERSION.test(previous) || !existsSync(join(dir, previous))) return { docsBaseline: previous && SAFE_VERSION.test(previous) ? previous : null };
+  let diff;
+  try {
+    diff = await run('diff', ['-ru', join(dir, previous), join(dir, version)], { maxBuffer: 64 << 20 }).then(r => r.stdout, error => {
+      if (error.code === 1) return error.stdout;
+      throw error;
+    });
+  } catch { return { docsBaseline: previous, docsDiff: 'failed' }; }
   writeFileSync(join(dir, `${version}.diff`), diff, { mode: 0o600 });
   return { docsBaseline: previous, docsChangedLines: diff.split('\n').filter(line => /^[+-](?![+-])/.test(line)).length };
+}
+
+export const MAX_ATTEMPTS = 3;
+export const exitFor = verdict => (verdict === 'pass' ? 0 : verdict === 'fail' ? 1 : 2);
+const readJson = path => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return undefined; } };
+
+// A checked release (pass or fail) is written to last.json and not checked again. A check that couldn't finish (bad
+// signature, unpack failure, full disk) retries on the next runs, and after MAX_ATTEMPTS it's recorded as an error so
+// the same download doesn't repeat every hour. A failed download or feed read always retries.
+// Is there a release the state folder hasn't recorded? Reads only the feed.
+export async function probeFeed({ state, feedUrl = FEED_URL, fetchImpl = fetch } = {}) {
+  const last = readJson(join(state, 'last.json'));
+  const item = latestItem(parseAppcast(await fetchText(feedUrl, { fetchImpl })));
+  if (!item) return undefined;
+  return !(last?.version === item.version && last?.build === item.build);
 }
 
 export async function runFeed({ state, force = false, keep = false, feedUrl = FEED_URL, fetchImpl = fetch, now = () => new Date(),
   unpackImpl = unpack, verifyImpl = verifySignature, downloadImpl = download, log = console.log } = {}) {
   mkdirSync(state, { recursive: true });
-  const lastPath = join(state, 'last.json');
-  const last = existsSync(lastPath) ? JSON.parse(readFileSync(lastPath, 'utf8')) : undefined;
+  const lastPath = join(state, 'last.json'), attemptsPath = join(state, 'attempts.json');
+  const last = readJson(lastPath);
   let item;
   try { item = latestItem(parseAppcast(await fetchText(feedUrl, { fetchImpl }))); }
-  catch (error) { log(`static compat: could not read the update feed (${error.message})`); return { exit: 2 }; }
+  catch (error) { log(`static compat: could not read the update feed (${error.name})`); return { exit: 2 }; }
   if (!item) { log('static compat: the update feed lists no release'); return { exit: 2 }; }
+  if (!SAFE_VERSION.test(item.version) || (item.build !== undefined && !SAFE_VERSION.test(item.build))) {
+    log('static compat: the update feed\'s version is not a plain version string'); return { exit: 2 };
+  }
   if (last?.version === item.version && last?.build === item.build && !force) {
     log(`static compat: ChatGPT ${item.version} unchanged since ${last.checkedAt} (${last.verdict})`);
-    return { exit: 0, unchanged: true };
+    return { exit: exitFor(last.verdict), unchanged: true };
   }
+  const attempts = readJson(attemptsPath);
+  const attempt = attempts?.version === item.version && attempts?.build === item.build ? attempts.count + 1 : 1;
   const temp = mkdtempSync(join(tmpdir(), 'sleight-compat-'));
   let report;
   try {
     const archive = join(temp, 'release');
     try { await downloadImpl(item.url, archive, { fetchImpl }); }
-    catch (error) { log(`static compat: download of ChatGPT ${item.version} failed (${error.message}); retrying next run`); return { exit: 2 }; }
-    const base = { checkedAt: now().toISOString(), source: 'static', appVersion: item.version, build: item.build };
-    if (!verifyImpl(archive, item.edSignature)) {
-      report = { ...base, verdict: 'error', steps: [{ id: 'signature', status: 'error', reason: "the download's Sparkle signature doesn't match ChatGPT's pinned key" }] };
-    } else {
+    catch (error) { log(`static compat: download of ChatGPT ${item.version} failed (${/^(?:download|more than|refusing)/.test(error.message) ? error.message : error.name}); retrying next run`); return { exit: 2 }; }
+    const base = { checkedAt: now().toISOString(), source: 'static', appVersion: item.version, build: item.build, sleight: sleightCommit() };
+    const failed = (id, reason) => ({ ...base, verdict: 'error', attempt, steps: [{ id, status: 'error', reason }] });
+    let verified = false;
+    try { verified = verifyImpl(archive, item.edSignature); } catch {}
+    if (!verified) report = failed('signature', "the download's Sparkle signature doesn't match ChatGPT's pinned key");
+    else {
       const out = join(temp, 'unpacked');
       mkdirSync(out);
       let app;
       try { await unpackImpl(archive, out); app = findApp(out); }
-      catch (error) { report = { ...base, verdict: 'error', steps: [{ id: 'unpack', status: 'error', reason: error.message.split('\n')[0] }] }; }
-      if (!report && !app) report = { ...base, verdict: 'error', steps: [{ id: 'unpack', status: 'error', reason: 'no ChatGPT.app with the engine in the download' }] };
+      catch (error) { report = failed('unpack', /needs 7-Zip/.test(error.message) ? error.message : `unpacking failed${typeof error.code === 'number' ? ` (exit ${error.code})` : error.code ? ` (${error.code})` : ''}`); }
+      if (!report && !app) report = failed('unpack', 'no ChatGPT.app with the engine in the download');
       if (!report) {
         report = { ...checkApp(app, { now }), build: item.build };
-        if (report.appVersion !== item.version) report.steps.push({ id: 'feed-version', status: 'warn', reason: `the feed says ${item.version}, the app says ${report.appVersion}` });
+        if (report.appVersion !== item.version) report.steps.push({ id: 'feed-version', status: 'warn', reason: `the feed says ${item.version}, the app says ${report.appVersion ?? 'no plain version'}` });
         report.fingerprintChanged = last?.fingerprint ? last.fingerprint !== report.fingerprint : null;
         if (keep) Object.assign(report, await keepDocs(state, report.appVersion ?? item.version, app));
       }
     }
+  } catch (error) {
+    report = { checkedAt: now().toISOString(), source: 'static', appVersion: item.version, build: item.build, verdict: 'error', attempt,
+      steps: [{ id: 'check', status: 'error', reason: `the check stopped (${error.code ?? error.name})` }] };
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
   appendFileSync(join(state, 'results.jsonl'), JSON.stringify(report) + '\n');
-  writeJson(lastPath, { version: item.version, build: item.build, checkedAt: report.checkedAt, verdict: report.verdict, fingerprint: report.fingerprint });
-  log(summary(report));
-  return { exit: report.verdict === 'pass' ? 0 : report.verdict === 'fail' ? 1 : 2, report };
+  if (report.verdict !== 'error' || attempt >= MAX_ATTEMPTS) {
+    writeJson(lastPath, { version: item.version, build: item.build, checkedAt: report.checkedAt, verdict: report.verdict, fingerprint: report.fingerprint });
+    rmSync(attemptsPath, { force: true });
+  } else writeJson(attemptsPath, { version: item.version, build: item.build, count: attempt });
+  log(summary(report) + (report.verdict === 'error' ? `\n  attempt ${attempt} of ${MAX_ATTEMPTS}` : ''));
+  return { exit: exitFor(report.verdict), report };
 }
 
 function option(argv, name) {
@@ -119,6 +151,12 @@ function option(argv, name) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  // Only an error code, never a message that could quote the engine's files.
+  try { return await run(argv); }
+  catch (error) { console.error(`static compat: internal error (${error.code ?? error.name})`); return 2; }
+}
+
+async function run(argv) {
   const reportPath = option(argv, 'report');
   if (argv.includes('--app')) {
     const app = option(argv, 'app');
@@ -126,7 +164,15 @@ export async function main(argv = process.argv.slice(2)) {
     const report = checkApp(resolve(app));
     if (reportPath) writeJson(resolve(reportPath), report);
     console.log(summary(report));
-    return report.verdict === 'pass' ? 0 : 1;
+    return exitFor(report.verdict);
+  }
+  if (argv.includes('--probe')) {
+    const state = resolve(option(argv, 'state') ?? join(homedir(), '.local', 'state', 'sleight-compat'));
+    const changed = await probeFeed({ state, feedUrl: option(argv, 'feed-url') ?? FEED_URL });
+    if (changed === undefined) { console.log('static compat: the update feed lists no release'); return 2; }
+    console.log(changed ? 'changed' : 'unchanged');
+    if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\n`);
+    return 0;
   }
   if (argv.includes('--feed')) {
     const state = resolve(option(argv, 'state') ?? join(homedir(), '.local', 'state', 'sleight-compat'));

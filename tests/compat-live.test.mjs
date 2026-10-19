@@ -55,9 +55,12 @@ test('the Calculator check passes on 391 and a screenshot, and quits the Calcula
 });
 
 test('the Calculator check fails with the reason, and never touches a Calculator that was running', async () => {
-  assert.match((await runCalculator(calculatorClient({ result: '17' }), apps())).reason, /read "17", not 391/);
+  const wrong = await runCalculator(calculatorClient({ result: '17' }), apps());
+  assert.deepEqual([wrong.reason, wrong.detail], ["the display didn't read 391", '17']);
   assert.match((await runCalculator(calculatorClient({ shot: false }), apps())).reason, /no image/);
-  assert.match((await runCalculator(calculatorClient({ acquire: { isError: true, ...text('Invalid app') } }), apps())).reason, /getApp failed: Invalid app/);
+  // Engine text stays in the private detail field, never the reason that gets published.
+  const refused = await runCalculator(calculatorClient({ acquire: { isError: true, ...text('Invalid app') } }), apps());
+  assert.deepEqual([refused.reason, refused.detail], ['getApp returned an error', 'Invalid app']);
   assert.match((await runCalculator(calculatorClient({ acquire: text('something else') }), apps())).reason, /header/);
   const running = apps(true);
   const skipped = await runCalculator(calculatorClient(), running);
