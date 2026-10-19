@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { skillRules, localToolDefinitions } from '../plugins/sleight/lib/launch.mjs';
 import { batchingDescription, createRelay, promptNotice, promptTool } from '../plugins/sleight/lib/relay.mjs';
 import { FLOW_TOOL } from '../plugins/sleight/lib/flow-rules.mjs';
+import { engineBrowserOpen, engineOpenTool, withBrowserOpenFirst } from '../plugins/sleight/lib/engine-browser-open.mjs';
 
 const firstRule = 'execute exactly one of the API calls shown below, optionally assigning its result to a variable. Do not add other API calls, waits, or snapshots to that invocation.';
 const skillPath = fileURLToPath(new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', import.meta.url));
@@ -167,17 +168,18 @@ export function taggedNoticeInventory(prompt) {
   return entries;
 }
 
-export function budget() {
+export function budget(env = process.env) {
+  const browserCore = engineBrowserOpen(env);
   const variants = ['default', 'lean'];
   const rows = ['skill', 'tool descriptions', 'js rewrite', 'relay notices', 'shared notices', 'marked notices'].map(source => ({ source }));
   const details = {};
   for (const variant of variants) {
     const prompt = variant === 'lean' ? 'lean' : undefined;
-    const toolEntries = tools(prompt).flatMap(tool => descriptions(tool, tool.name));
+    const toolEntries = [...tools(prompt), ...(browserCore ? [engineOpenTool(prompt)] : [])].flatMap(tool => descriptions(tool, tool.name));
     const notices = noticeInventory(prompt), shared = sharedNoticeInventory(prompt), marked = taggedNoticeInventory(prompt);
     const metadata = readFileSync(skillPath, 'utf8').match(/^---\n[\s\S]*?\n---\n+/)[0];
     const texts = [metadata + skillRules(skillPath, { SLEIGHT_PROMPT: prompt }), toolEntries.map(e => e.text).join('\n'),
-      batchingDescription(firstRule, true, prompt), notices.map(e => e.text).join('\n'), shared.map(e => e.text).join('\n'),
+      (browserCore ? withBrowserOpenFirst : text => text)(batchingDescription(firstRule, true, prompt)), notices.map(e => e.text).join('\n'), shared.map(e => e.text).join('\n'),
       marked.map(e => e.text).join('\n')];
     rows.forEach((row, i) => { row[variant] = size(texts[i]); });
     details[variant] = { tools: toolEntries.map(e => ({ source: e.path, ...size(e.text) })), notices: notices.map(e => ({ source: e.path, ...size(e.text) })), shared: shared.map(e => ({ source: e.path, ...size(e.text) })),

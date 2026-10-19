@@ -114,6 +114,7 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
   const env =Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'TERM'].flatMap(key =>
     typeof process.env[key] === 'string' ? [[key, process.env[key]]] : []));
   const engine = kind === 'sleight';
+  const as3WindowPrompt = engine && process.env.SLEIGHT_BROWSER_CORE === '1' && process.env.AS3_WINDOW_PROMPT === '1';
   const extension = ['fowlbrowser', 'claude-in-chrome'].includes(surface);
   const computer = ['firefox', 'safari'].includes(realBrowser.browser);
   if ((engine && !computer) || (kind === 'sleight-turbo' && computer)) throw Error('Firefox/Safari use plain sleight; Chrome/Helium use sleight-turbo');
@@ -127,12 +128,12 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
     mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0', SLEIGHT_HAND: '0', ...traceEnv() } } },
     env: { ...common.env, SLEIGHT_TURBO: '0', FOWL_GATE_WINDOW: JSON.stringify(gateWindowApps(realBrowser)) },
     allowed: engineAllowed(),
-    metadata: { ...common.metadata, surface, connectionMode: 'engine-computer', abFlags: abFlags() } }
+    metadata: { ...common.metadata, surface, connectionMode: 'engine-computer', abFlags: abFlags(), as3WindowPrompt } }
     : kind === 'sleight-turbo' ? turboSetup({ task: { ...task, browser: realBrowser.browser }, repo, dir, prompt, realBrowser,
       env: { ...env, ...traceEnv(), ...(process.env.SLEIGHT_LB12 === '0' || process.env.SLEIGHT_LB12 === '1' ? { SLEIGHT_LB12: process.env.SLEIGHT_LB12 } : {}) } })
     : nativeBrowserSetup({ surface, repo, dir, realBrowser, armHome, dryRun, env });
   // The engine arm identifies the window natively. The turbo arm cannot (its tools show tabs, not windows), so it gets its own tools' truth.
-  const fullPrompt = arm.promptPrefix + (engine ? windowPrompt(realBrowser) : kind === 'sleight-turbo' ? turboWindowPrompt(realBrowser) : '') + prompt;
+  const fullPrompt = arm.promptPrefix + (engine ? windowPrompt(realBrowser, { browserCore: as3WindowPrompt }) : kind === 'sleight-turbo' ? turboWindowPrompt(realBrowser) : '') + prompt;
   if (isCodexSleightSurface(surface)) return codexSleightBrowserSetup({ arm, prompt: fullPrompt, surface, kind, dir, realBrowser });
   // Pinned: the same login reported "default" at 17:03 and "auto" from 20:05 on 2026-10-17, and under auto Claude in
   // Chrome sent every page action to a prompt in Chrome that nobody answers. allowedTools still lists each arm's tools.

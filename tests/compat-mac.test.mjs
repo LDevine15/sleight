@@ -134,6 +134,19 @@ test('approvals go only to Calculator and Safari on the benchmark allowlist', as
   assert.equal((await compatApproval({ message: 'Allow Computer Use to use "Mail"?' })).action, 'decline');
 });
 
+test('CF5: the compat session approves its host-worded Safari selection through the benchmark allowlist', async () => {
+  const { hostWording, wordForHost } = await import('../plugins/sleight/lib/launch.mjs');
+  const wording = hostWording({ name: 'sleight-compat-live', version: '1' });
+  const message = app => wordForHost(`Allow Claude to select a window in ${app}? It changes the app's main window without activating the app.`, wording);
+  for (const app of ['Safari', 'com.apple.Safari', 'Calculator'])
+    assert.deepEqual(await compatApproval({ message: message(app), mode: 'form', requestedSchema: { type: 'object', properties: {} } }), { action: 'accept', content: {} });
+  for (const params of [
+    { message: message('Mail') }, { message: message('Safari'), mode: 'url' },
+    { message: message('Safari').replace('Sleight Compat Live', 'Unknown Host') },
+    { message: message('Safari'), requestedSchema: { properties: { choice: { enum: ['always'] } } } },
+  ]) assert.equal((await compatApproval(params)).action, 'decline');
+});
+
 test('the live tier waits for owner-away and the lock, and keeps the lock when cleanup failed', async t => {
   const dir = temp(t);
   const lockPath = join(dir, 'live.lock'), holdPath = join(dir, 'hold');

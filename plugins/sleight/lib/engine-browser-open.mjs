@@ -3,7 +3,8 @@
 // race-1017) spent a model turn on a lone getApp before its first tab, a median 3.6 to 4.1 s; this opens in one call.
 // The relay runs it as two ordinary js calls (relay.mjs, engineOpen): the acquisition, then the keys, so every guard,
 // lease and the tab continuation apply as they do to Claude's own js.
-import { underDocument } from './menu-continuation.mjs';
+import { selectedTabShown, underDocument } from './menu-continuation.mjs';
+import { hasIdentifier } from './document-scope.mjs';
 
 const json = JSON.stringify;
 
@@ -12,9 +13,16 @@ export const engineBrowserOpen = (env = process.env) => env.SLEIGHT_BROWSER_CORE
 const schema = { type: 'object', properties: { url: { type: 'string', maxLength: 2048 }, browser: { type: 'string', maxLength: 128 } },
   required: ['url', 'browser'], additionalProperties: false };
 export const ENGINE_OPEN_TOOL = Object.freeze({ name: 'browser_open',
-  description: 'Open an http(s) URL in a new tab of a browser app (named as for cua.getApp) in one call, in place of getApp and separate tab steps. Returns the window\'s tree and the js handle to act on it with.',
+  description: 'First call for a web page in Safari, Firefox or any browser turbo doesn\'t drive: opens the URL in a new tab of that browser in one call and returns the window (title, tabs, page tree) plus the js handle for the next actions. Use it instead of getApp when the task gives a URL.',
   inputSchema: schema });
-export const LEAN_ENGINE_OPEN_DESCRIPTION = 'Open an http(s) URL in a new tab of a named browser app in one call. Returns the tree and its js handle.';
+export const LEAN_ENGINE_OPEN_DESCRIPTION = 'Open a URL in a new tab of a named browser in one call; returns the window\'s title, tabs, tree and js handle.';
+export const BROWSER_OPEN_FIRST = 'For a web page in a named browser, call browser_open first; it returns the window.';
+export function withBrowserOpenFirst(text) {
+  if (typeof text !== 'string' || text.includes(BROWSER_OPEN_FIRST)) return text;
+  const after = "Use cua.getState() only to find an app or browser you can't name.";
+  if (text.includes(after)) return text.replace(after, after + ' ' + BROWSER_OPEN_FIRST);
+  return text + ' ' + BROWSER_OPEN_FIRST;
+}
 export const engineOpenTool = prompt => prompt === 'lean' ? { ...ENGINE_OPEN_TOOL, description: LEAN_ENGINE_OPEN_DESCRIPTION } : { ...ENGINE_OPEN_TOOL };
 
 // Turbo's own tool with one more sentence, and a browser field that takes any name: the relay routes by that name.
@@ -60,8 +68,27 @@ export function parseEngineOpen(args) {
 export const siteOf = url => { const parsed = new URL(url); return { host: parsed.host, scheme: parsed.protocol.slice(0, -1) }; };
 
 export const acquisitionCode = (handle, browser) => `let ${handle} = await cua.getApp(${json(browser)});`;
-export const openCode = (handle, url) => [`await ${handle}.pressKey("super+t");`, `await ${handle}.typeText(${json(url)});`,
-  `await ${handle}.pressKey("Return");`, `await ${handle}.getAXState();`].join('\n');
+// A compact same-window re-read can follow the full acquisition. Reuse that full block only when the last block
+// explicitly says nothing changed and repeats its header. A changed window, sheet or partial diff stays fail-closed.
+export function acquisitionTree(text) {
+  const blocks = typeof text === 'string' ? text.match(/^Window: [^\n]*\n[\s\S]*?(?=^Window: |$(?![\s\S]))/gm) ?? [] : [];
+  while (blocks.length > 1) {
+    const last = blocks.at(-1), previous = blocks.at(-2);
+    if (last.split('\n')[0] !== previous.split('\n')[0] || !/^0 standard window(?: |,|$)/m.test(last) || !last.includes('sleight: no change since the last full tree you saw for this window') ||
+        [...last.matchAll(/^\t*\d+ /gm)].length !== 1) break;
+    blocks.pop();
+  }
+  return blocks.at(-1) ?? '';
+}
+export const openCode = (handle, url, text) => {
+  const tree = acquisitionTree(text);
+  const entries = [...tree.matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
+  const chromeId = id => entries.some((entry, i) => hasIdentifier(entry.line, id) && !underDocument(entries, i));
+  const toolbar = !selectedTabShown(tree) && chromeId('NewTabButton') && chromeId('WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD');
+  return [...(toolbar ? [`await ${handle}.click({ id: "NewTabButton" });`, `await ${handle}.setValue({ id: "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD" }, ${json(url)});`]
+    : [`await ${handle}.pressKey("super+t");`, `await ${handle}.typeText(${json(url)});`]),
+    `await ${handle}.pressKey("Return");`, `await ${handle}.getAXState();`].join('\n');
+};
 
 export const openedNote = handle => `browser_open: the new tab is in the window below. In js, \`${handle}\` is its app handle (await ${handle}.click(N)).`;
 export const notBrowserNote = app => `browser_open: ${app || 'that app'} isn't a web browser, so nothing was typed. Name a browser app.`;
@@ -70,8 +97,7 @@ export const unknownBrowserNote = app => `browser_open: sleight doesn't know yet
 // tab: a standard window root, a tab strip outside any page, and no sheet, dialog or alert, which Return could answer.
 // A settings window has no tab strip. Undefined when it may take the keys, else the reason.
 export function browserWindowProblem(text, app) {
-  const at = typeof text === 'string' ? text.lastIndexOf('Window: ') : -1;
-  const entries = at < 0 ? [] : [...text.slice(at).matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
+  const entries = [...acquisitionTree(text).matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
   const name = app || 'the browser';
   if (!entries.length || entries[0].number !== 0) return `browser_open: ${name} shows no window, so nothing was typed.`;
   if (!/^standard window(?: |,|$)/.test(entries[0].line)) return `browser_open: ${name}'s front window isn't a standard window, so nothing was typed.`;

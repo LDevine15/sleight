@@ -151,7 +151,9 @@ export async function engineTier({ launcher = LAUNCHER, env = process.env, logs 
 export async function compatApproval(params) {
   const { benchmarkDecision } = await import('./approve.mjs');
   const { COMPAT_APPS } = await import('./compat/live.mjs');
-  const message = params?.message ?? '';
+  // The launcher rewrites local prompts for this client's initialize name, sleight-compat-live. Normalize only
+  // that fixed host; the benchmark's app allowlist and session-only choices still make the approval decision.
+  const message = (params?.message ?? '').replace(/^Allow Sleight Compat Live to /, 'Allow Claude to ');
   const app = /^Allow Computer Use to use "(.+)"\?$/.exec(message)?.[1] ?? /^Allow Claude to select a window in (.+?)\? /.exec(message)?.[1];
   if (!COMPAT_APPS.includes(app)) return { action: 'decline' };
   const decision = benchmarkDecision({ mcp_server_name: 'plugin:sleight:computer', message, requested_schema: params.requestedSchema, mode: params.mode }, { BENCH_SUITE: 'real' });

@@ -16,7 +16,7 @@ import { codexSleightServers } from '../bench/codex-sleight.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const read = path => readFileSync(join(repo, path), 'utf8');
-const heldOut = JSON.parse(read('bench/world/tasks/browser-heldout.json'));
+const heldOut = JSON.parse(read('bench/world/tasks/browser-open-heldout.json'));
 const raceFile = JSON.parse(read('bench/world/tasks/fowlbrowser.json'));
 const OPEN = 'mcp__plugin_sleight_computer__browser_open';
 const browsers = {
@@ -103,7 +103,7 @@ test('every held-out task runs on the local demo site in Safari and Firefox, wit
   for (const task of heldOut) {
     assert.match(task.name, /^[a-zA-Z0-9_-]+$/);
     assert.equal(typeof task.rationale, 'string'); assert.ok(task.rationale.length > 40, task.name);
-    assert.match(task.source, /^FowlBrowser tools\/agents\/\S+\.json \S+$/);
+    assert.match(task.source, /^(?:FowlBrowser tools\/agents\/\S+\.json \S+|sleight AO held-out lookup)$/);
     assert.ok(task.result && task.budgetSeconds > 0 && (task.grade || task.expect), task.name);
     assert.ok(!/\{repo\}|\{out\}/.test(task.prompt), `${task.name} needs no path`);
     for (const url of [...task.prompt.match(/https?:\/\/\S+/g), task.grade, task.site?.log].filter(Boolean))
@@ -127,7 +127,7 @@ const fakeRunner = dir => {
 out=""; prev=""; for a in "$@"; do [ "$prev" = --out ] && out="$a"; prev="$a"; done
 n=$(cat "${dir}/count" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "${dir}/count"
 if [ -e "${dir}/busy-once" ]; then rm "${dir}/busy-once"; echo "Error: EEXIST: file already exists, mkdir '/tmp/sleight-live.lock'"; exit 1; fi
-echo "$SLEIGHT_BROWSER_CORE $(basename "$out") $*" >> "${dir}/calls"
+echo "$SLEIGHT_BROWSER_CORE $(basename "$out") $* prompt=\${AS3_WINDOW_PROMPT:-0}" >> "${dir}/calls"
 mkdir -p "$out"; echo '[]' > "$out/results.json"
 `);
   chmodSync(file, 0o755);
@@ -138,30 +138,32 @@ const runner = (dir, extra = {}) => ({ ...process.env, AS3_OUT: join(dir, 'out')
 const script = join(repo, 'bench/fowl/as3-ab.command');
 const calls = dir => existsSync(join(dir, 'calls')) ? readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n') : [];
 
-test('the runner runs 3 rounds a side a browser in ABBA order on the held-out list, then scores, and resumes', () => {
+test('the runner runs 5 rounds per cell and browser in balanced order on the held-out list, then scores, and resumes', () => {
   const dir = mkdtempSync(join(tmpdir(), 'as3-ab-'));
   try {
     const result = spawnSync('/bin/sh', [script], { env: runner(dir), encoding: 'utf8', timeout: 60000 });
     assert.equal(result.status, 0, result.stderr);
     const lines = calls(dir);
-    assert.deepEqual(lines.map(line => line.split(' ').slice(0, 2).join(' ')), [
-      '0 as3-safari-off-r1', '1 as3-safari-on-r1', '0 as3-firefox-off-r1', '1 as3-firefox-on-r1',
-      '1 as3-safari-on-r2', '0 as3-safari-off-r2', '1 as3-firefox-on-r2', '0 as3-firefox-off-r2',
-      '0 as3-safari-off-r3', '1 as3-safari-on-r3', '0 as3-firefox-off-r3', '1 as3-firefox-on-r3']);
+    const expected = [];
+    for (let n = 1; n <= 5; n++) for (const browser of ['safari', 'firefox'])
+      for (const side of n % 2 ? ['off', 'on', 'on-prompt'] : ['on-prompt', 'on', 'off'])
+        expected.push(`${side === 'off' ? 0 : 1} as3-ao-${browser}-${side}-r${n}`);
+    assert.deepEqual(lines.map(line => line.split(' ').slice(0, 2).join(' ')), expected);
+    for (const line of lines) assert.equal(line.endsWith('prompt=1'), /-on-prompt-/.test(line), line);
     for (const line of lines) {
       assert.match(line, / --world --real-browser (safari|firefox) --surface sleight --model haiku --effort high /);
-      assert.ok(line.includes(`--tasks ${join(repo, 'bench/world/tasks/browser-heldout.json')} `), line);
-      assert.ok(line.includes(`--out ${join(dir, 'out')}/as3-`), line);
+      assert.ok(line.includes(`--tasks ${join(repo, 'bench/world/tasks/browser-open-heldout.json')} `), line);
+      assert.ok(line.includes(`--out ${join(dir, 'out')}/as3-ao-`), line);
     }
     const log = readFileSync(join(dir, 'out/as3-ab.log'), 'utf8');
-    assert.match(log, /^as3-ab start \S+ build \S+ rounds 3$/m);
-    assert.match(log, /^as3-firefox-on-r3 exit 0 /m);
+    assert.match(log, /^as3-ab start \S+ build \S+ rounds 5$/m);
+    assert.match(log, /^as3-ao-firefox-on-prompt-r5 exit 0 /m);
     assert.match(log, /^as3-ab done .*as3-score\.txt$/m);
     assert.ok(existsSync(join(dir, 'out/as3-score.txt')));
     // A second start keeps every finished round.
     assert.equal(spawnSync('/bin/sh', [script], { env: runner(dir), encoding: 'utf8', timeout: 60000 }).status, 0);
-    assert.equal(calls(dir).length, 12);
-    assert.match(readFileSync(join(dir, 'out/as3-ab.log'), 'utf8'), /^as3-safari-off-r1 kept /m);
+    assert.equal(calls(dir).length, 30);
+    assert.match(readFileSync(join(dir, 'out/as3-ab.log'), 'utf8'), /^as3-ao-safari-off-r1 kept /m);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -182,8 +184,8 @@ test('the runner waits on the hold, the live lock and the pause file, and reruns
     assert.equal(existsSync(join(dir, 'count')), false, 'the pause file still holds it');
     rmSync(join(dir, 'out/pause'));
     assert.equal(await Promise.race([exited, wait(30000).then(() => 'timeout')]), 0);
-    assert.equal(readFileSync(join(dir, 'count'), 'utf8').trim(), '5', 'the round that met the lock ran again');
-    assert.deepEqual(calls(dir).map(line => line.split(' ')[1]), ['as3-safari-off-r1', 'as3-safari-on-r1', 'as3-firefox-off-r1', 'as3-firefox-on-r1']);
+    assert.equal(readFileSync(join(dir, 'count'), 'utf8').trim(), '7', 'the round that met the lock ran again');
+    assert.deepEqual(calls(dir).map(line => line.split(' ')[1]), ['as3-ao-safari-off-r1', 'as3-ao-safari-on-r1', 'as3-ao-safari-on-prompt-r1', 'as3-ao-firefox-off-r1', 'as3-ao-firefox-on-r1', 'as3-ao-firefox-on-prompt-r1']);
     assert.ok(!existsSync(join(dir, 'hold')) && !existsSync(join(dir, 'lock')), 'the runner never makes the hold or the lock');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -215,7 +217,15 @@ function fakeRound(root, name, { browser = 'safari', core, seconds, failed = [],
     // Off: the lone getApp, the tab keys, then the page; on: browser_open, then the page.
     const open = opens ? [call(`o${i}`, 'mcp__plugin_sleight_computer__browser_open', false, 'tree')]
       : [call(`g${i}`, 'mcp__plugin_sleight_computer__js', false, 'app'), call(`t${i}`, 'mcp__plugin_sleight_computer__js', false, 'tab')];
-    writeFileSync(join(dir, task, 'events.jsonl'), [...open, call(`j${i}`, 'mcp__plugin_sleight_computer__js', false, 'ok'), ...(errors[task] ? [call(`e${i}`, 'mcp__plugin_sleight_computer__js', true, errors[task])] : [])].join('\n') + '\n');
+    const events = [JSON.stringify({ type: 'system', t: started }), ...open, call(`j${i}`, 'mcp__plugin_sleight_computer__js', false, 'ok'),
+      ...(errors[task] ? [call(`e${i}`, 'mcp__plugin_sleight_computer__js', true, errors[task])] : [])].join('\n').split('\n').map((line, index) => {
+      const event = JSON.parse(line);
+      event.t ??= started + index * (opens ? 1000 : 2000);
+      if (event.type === 'user' && event.message.content[0].tool_use_id === `j${i}`)
+        event.message.content[0].content = 'Window: "Shop", App: Browser.\n0 standard window Shop\n\t1 HTML content URL: 127.0.0.1:5420/t/x/shop/';
+      return JSON.stringify(event);
+    });
+    writeFileSync(join(dir, task, 'events.jsonl'), events.join('\n') + '\n');
     const ok = !failed.includes(task);
     return { task: { name: task, browser }, surface: 'sleight', wallMs: s * 1000, successfulBrowserCalls: 1,
       outcome: { ok, cell: ok ? 'ok' : 'FAIL: x', problems: ok ? [] : ['x'] }, run: { started, finished: started + s * 1000, result: { result: 'done' } },
@@ -256,12 +266,13 @@ test('the scorer reads each round\'s side from its rows and applies the bar per 
     assert.equal(firefox.pass, false);
     assert.equal(scored.defaultOn, false);
     // The bar's saving threshold, with nothing else wrong.
-    assert.equal(safari.barS, 7.5, '30 s a 12-task round is 2.5 s a task');
+    assert.equal(safari.barS, 2.5, 'AO7 scores the opening median per task');
     assert.equal(safari.taskSaving, 50);
     assert.equal(safari.callSaving, 3, 'one call fewer in each of three tasks');
     const slow = scoreAb([loadAbRound(dirs[0]), loadAbRound(fakeRound(root, 'as3-safari-on-r5', { core: true, opens: false, seconds: { ...base, 'smoke-red': 15 } }))]);
     assert.equal(slow.browsers.safari.saving, 5);
-    assert.deepEqual(slow.browsers.safari.problems, ['median round saving 5.0 s, under 7.5 s']);
+    assert.ok(slow.browsers.safari.problems.some(p => /opening median saving/.test(p)));
+    assert.ok(slow.browsers.safari.problems.some(p => /adoption/.test(p)));
     const cli = spawnSync(process.execPath, [join(repo, 'bench/fowl/as3-score.mjs'), join(root, 'as3-*')], { encoding: 'utf8' });
     assert.equal(cli.status, 0, cli.stderr);
     assert.match(cli.stdout, /as3-firefox-on-r9 \(firefox, side unknown, .*excluded, SLEIGHT_BROWSER_CORE not recorded/);
@@ -281,4 +292,82 @@ test('scorer helpers: side, browser_open use and error kinds', () => {
   assert.equal(errorKind('Flow rules: blocked 3 times. Stop.'), 'Flow rules');
   assert.equal(errorKind('Input lease stopped this action 12 times "x"'), 'Input lease stopped this action');
   assert.equal(errorKind('Waited 1500 ms for the page'), errorKind('Waited 900 ms for the page'));
+});
+
+
+test('AO6: product-on and prompt-on are separate engine cells; other arms keep their prompt', () => {
+  const setup = vars => withEnv(vars, () => realAgentSetup({ task: heldOut[0], surface: 'sleight', dir: '/private/tmp/as3-task', realBrowser: browsers.safari, dryRun: true }));
+  const off = setup({ SLEIGHT_BROWSER_CORE: '0', AS3_WINDOW_PROMPT: '1' });
+  const product = setup({ SLEIGHT_BROWSER_CORE: '1', AS3_WINDOW_PROMPT: '0' });
+  const prompted = setup({ SLEIGHT_BROWSER_CORE: '1', AS3_WINDOW_PROMPT: '1' });
+  assert.equal(off.metadata.as3WindowPrompt, false);
+  assert.equal(product.metadata.as3WindowPrompt, false);
+  assert.equal(prompted.metadata.as3WindowPrompt, true);
+  const sentence = 'browser_open opens the page in a new tab of that window and returns its title and tabs, which is the check.';
+  assert.ok(prompted.prompt.includes(sentence));
+  assert.ok(!product.prompt.includes(sentence) && !off.prompt.includes(sentence));
+  assert.equal(prompted.prompt.replace(sentence + ' ', ''), product.prompt);
+  assert.equal(roundSide([{ agentConfig: { abFlags: { SLEIGHT_BROWSER_CORE: true }, as3WindowPrompt: true } }]), 'on-prompt');
+});
+
+test('AO7: opening phase counts calls to the first local page result, excluding gate trees and errors', async () => {
+  const { openingPhase } = await import('../bench/fowl/as3-score.mjs');
+  const events = [
+    { t: 1000, type: 'system' },
+    { t: 2000, message: { content: [{ type: 'tool_use', id: 'a' }] } },
+    { t: 3000, message: { content: [{ type: 'tool_result', tool_use_id: 'a', content: 'Window: \"Sleight Gate abcd\", App: Safari.\n0 standard window\n1 HTML content URL: 127.0.0.1:5420/t/gate/' }] } },
+    { t: 4000, message: { content: [{ type: 'tool_use', id: 'b' }] } },
+    { t: 4500, message: { content: [{ type: 'tool_result', is_error: true, content: 'Window: Shop\nURL: 127.0.0.1:5420/t/x/' }] } },
+    { t: 5000, message: { content: [{ type: 'tool_result', tool_use_id: 'b', content: [{ type: 'text', text: 'Window: \"Shop\", App: Safari.\n0 standard window\n1 HTML content URL: http://127.0.0.1:5420/t/x/shop/' }] }] } },
+  ];
+  const text = events.map(JSON.stringify).join('\n');
+  assert.deepEqual(openingPhase(text, 500), { seconds: 4.5, calls: 2 });
+  assert.deepEqual(openingPhase(text), { seconds: 4, calls: 2 });
+  assert.equal(openingPhase(events.slice(0, 3).map(JSON.stringify).join('\n')), null);
+  assert.equal(openingPhase(text.replaceAll('5420', '5531')), null);
+  assert.equal(openingPhase(text.replaceAll('"t":', '"noClock":')), null);
+  const dated = events.map(e => ({ ...e, t: undefined, timestamp: new Date(e.t).toISOString() })).map(JSON.stringify).join('\n');
+  assert.deepEqual(openingPhase(dated, 500), { seconds: 4.5, calls: 2 });
+  const joined = structuredClone(events);
+  joined.at(-1).message.content[0].content[0].text = 'Window: "Sleight Gate other", App: Safari.\n0 standard window\n' + joined.at(-1).message.content[0].content[0].text;
+  assert.deepEqual(openingPhase(joined.map(JSON.stringify).join('\n'), 500), { seconds: 4.5, calls: 2 });
+});
+
+test('AO7: default-on needs five product rounds per browser, page proof, adoption and whole-task guards', () => {
+  const rounds = (browser, side, n = 5) => Array.from({ length: n }, (_, i) => ({
+    name: `${browser}-${side}-${i}`, browser, side, commits: { build: { commit: '4fc88abc' } }, engine: { version: 'fixture' },
+    rows: ['a', 'b'].map(task => ({ task, seconds: side === 'off' ? 20 : 16, passed: true, kinds: [], calls: 3,
+      browserOpen: { calls: side === 'off' ? 0 : 1, errors: 0 }, opening: { seconds: side === 'off' ? 10 : 6, calls: side === 'off' ? 3 : 1 } })),
+  }));
+  const complete = ['safari', 'firefox'].flatMap(b => [...rounds(b, 'off'), ...rounds(b, 'on')]);
+  assert.equal(scoreAb(complete).defaultOn, true);
+  assert.equal(scoreAb(complete.slice(1)).defaultOn, false);
+  const promptOnly = ['safari', 'firefox'].flatMap(b => [...rounds(b, 'off'), ...rounds(b, 'on-prompt')]);
+  const prompted = scoreAb(promptOnly);
+  assert.equal(prompted.defaultOn, false);
+  assert.equal(prompted.browsers.safari.prompt.pass, true);
+  for (const mutate of [
+    r => { r.rows[0].opening = null; },
+    r => { r.rows.forEach(row => { row.browserOpen.calls = 0; }); },
+    r => { r.rows[0].passed = false; },
+    r => { r.rows[0].seconds = 80; },
+  ]) {
+    const copy = structuredClone(complete);
+    copy.filter(r => r.side === 'on' && r.browser === 'safari').forEach(mutate);
+    assert.equal(scoreAb(copy).defaultOn, false);
+  }
+  const incomplete = structuredClone(complete);
+  incomplete.filter(r => r.side === 'off' && r.browser === 'safari').forEach(r => { r.rows.pop(); r.rows[0].seconds = 40; });
+  assert.equal(scoreAb(incomplete).browsers.safari.pass, false, 'unmatched task coverage cannot meet the bar');
+});
+
+test('the AO held-out set has five tasks, fresh shop slugs and no signup', () => {
+  assert.deepEqual(heldOut.map(t => t.name), ['smoke-red', 'survey-p09', 'survey-p10', 'ao-moss-color', 'ao-cheapest-mug']);
+  const lookups = heldOut.slice(3);
+  for (const task of lookups) { assert.equal(task.needsClicks, false); assert.equal(task.expect.length, 2); assert.ok(task.site.expect.length); }
+  assert.match(lookups[0].prompt, /t\/ao-moss-color\/shop\/product\/moss/);
+  assert.match(lookups[1].prompt, /t\/ao-cheapest-mug\/shop\//);
+  assert.ok(heldOut.every(t => !/signup|create account/i.test(t.prompt)));
+  assert.match(read('bench/fowl/as3-ab.command'), /out=\$O\/as3-ao-/);
+  assert.match(read('bench/fowl/as3-ab.command'), /\"\$O\/as3-ao-\*\"/);
 });

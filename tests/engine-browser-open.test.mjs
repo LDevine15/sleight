@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { createContext, runInContext, constants } from 'node:vm';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
@@ -15,7 +15,7 @@ import { createV3Bridge, createV3Frontend, serveV3Worker } from '../plugins/slei
 import { localToolDefinitions } from '../plugins/sleight/lib/launch.mjs';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { ENGINE_OPEN_TOOL, LEAN_ENGINE_OPEN_DESCRIPTION, parseEngineOpen, turboRoute, acquisitionCode, openCode, widenTurboOpen,
-  engineBrowserOpen } from '../plugins/sleight/lib/engine-browser-open.mjs';
+  engineBrowserOpen, browserWindowProblem } from '../plugins/sleight/lib/engine-browser-open.mjs';
 
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r)); };
 
@@ -30,8 +30,30 @@ test('the tool mirrors turbo: browser_open with url and browser, and the lean te
   assert.deepEqual(ENGINE_OPEN_TOOL.inputSchema.required.sort(), ['browser', 'url']);
   assert.equal(ENGINE_OPEN_TOOL.inputSchema.additionalProperties, false);
   assert.ok(LEAN_ENGINE_OPEN_DESCRIPTION.length <= ENGINE_OPEN_TOOL.description.length * 0.71);
-  // App-agnostic: the description names no browser.
-  assert.doesNotMatch(ENGINE_OPEN_TOOL.description + LEAN_ENGINE_OPEN_DESCRIPTION, /Safari|Firefox|Chrome|Helium/);
+  assert.match(ENGINE_OPEN_TOOL.description, /First call.*Safari, Firefox/);
+  for (const description of [ENGINE_OPEN_TOOL.description, LEAN_ENGINE_OPEN_DESCRIPTION]) assert.match(description, /title, tabs/);
+});
+
+const safariTree = 'Window: "Gate", App: Safari.\n0 standard window Gate\n\t1 split group\n\t\t2 tab group\n\t\t\t3 HTML content Gate\n\t4 toolbar\n\t\t5 button New Tab, ID: NewTabButton\n\t\t6 text field (settable) ID: WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD';
+const firefoxTree = 'Window: "Gate", App: Firefox.\n0 standard window Gate\n\t1 tab group\n\t\t2 tab (selected) Value: Gate, Gate';
+test('AO1: a one-tab toolbar tree uses IDs; a selected tab keeps the keyboard route', () => {
+  const toolbar = openCode('h', 'https://example.com/"q"', safariTree);
+  assert.match(toolbar, /h\.click\(\{ id: "NewTabButton" \}\)/);
+  assert.match(toolbar, /h\.setValue\(\{ id: "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD" \}, "https:\/\/example.com\/\\"q\\""\)/);
+  assert.doesNotMatch(toolbar, /super\+t|typeText/);
+  assert.match(toolbar, /pressKey\("Return"\);\nawait h.getAXState/);
+  assert.match(openCode('h', 'https://example.com/', firefoxTree), /super\+t/);
+  assert.match(openCode('h', 'https://example.com/', safariTree.replace('ID: NewTabButton', 'ID: Other')), /super\+t/);
+});
+test('AO2: same-window no-change re-reads retain the full acquisition tree', () => {
+  for (const full of [safariTree, firefoxTree]) {
+    const header = full.split('\n')[0];
+    const reread = `${full}\n${header}\n0 standard window Gate\nsleight: no change since the last full tree you saw for this window`;
+    assert.equal(browserWindowProblem(reread, 'Browser'), undefined);
+    if (full === safariTree) assert.match(openCode('h', 'https://example.com/', reread), /NewTabButton/);
+    assert.match(browserWindowProblem(reread.replace(header + '\n0 standard window Gate\nsleight:', 'Window: "Other", App: Browser.\n0 standard window Other\nsleight:'), 'Browser'), /no tab strip/);
+    assert.match(browserWindowProblem(full + '\n' + header + '\n0 standard window Gate\n\t8 sheet Save', 'Browser'), /sheet or dialog/);
+  }
 });
 
 test('parseEngineOpen accepts an http(s) URL and a browser name, and refuses everything that could type more than a URL', () => {
@@ -127,7 +149,7 @@ test('relay: the flag adds browser_open to the tool list; without it the list is
   const on = await listed(t), off = await listed(t, { engineBrowserOpen: false });
   assert.deepEqual(on.find(tool => tool.name === 'browser_open').inputSchema, ENGINE_OPEN_TOOL.inputSchema);
   assert.equal(off.some(tool => tool.name === 'browser_open'), false);
-  assert.deepEqual(on.filter(tool => tool.name !== 'browser_open'), off);
+  assert.deepEqual(on.filter(tool => tool.name !== 'browser_open').map(tool => tool.name === 'js' ? { ...tool, description: tool.description.replace(' For a web page in a named browser, call browser_open first; it returns the window.', '') } : tool), off);
   const lean = await listed(t, { prompt: 'lean' });
   assert.equal(lean.find(tool => tool.name === 'browser_open').description, LEAN_ENGINE_OPEN_DESCRIPTION);
   assert.equal(localToolDefinitions({ SLEIGHT_BROWSER_CORE: '1' }).some(tool => tool.name === 'browser_open'), false,
@@ -445,4 +467,27 @@ test('guard: a flow exception covers the identical browser_open through the tab 
   assert.notEqual(result.isError, true, JSON.stringify(result));
   assert.deepEqual(h.typed, ['http://127.0.0.1:5420/shop?q=SECRET']);
   assert.deepEqual(h.keys, ['super+t', 'Return']);
+});
+
+
+test('AO2: all five recorded AS-3 full-tree plus no-change acquisitions pass the browser check', () => {
+  const fixtures = JSON.parse(readFileSync(new URL('./fixtures/browser-open-rereads.json', import.meta.url)));
+  assert.equal(fixtures.length, 5);
+  for (const fixture of fixtures) {
+    assert.equal(browserWindowProblem(fixture.tree, 'Browser'), undefined, fixture.source);
+    assert.match(openCode('h', 'https://example.com/', fixture.tree), fixture.source.includes('safari') ? /NewTabButton/ : /super\+t/, fixture.source);
+  }
+});
+
+test('AO1/AO2: the relay passes the full acquisition to its toolbar route before typing', async t => {
+  const h = harness(t);
+  h.open(1, { url: 'https://example.com/', browser: 'Example Browser' }); await settle();
+  const first = h.engineCalls()[0];
+  const reply = tree(first.id, 'Example Browser', 'com.example.browser', 'Gate');
+  reply.result.content[0].text = safariTree + '\n' + safariTree.split('\n')[0] + '\n0 standard window Gate\nsleight: no change since the last full tree you saw for this window.';
+  h.fromServer(reply); await settle();
+  const action = h.engineCalls().find(call => call.id === 1);
+  assert.ok(action);
+  assert.match(code(action), /NewTabButton/);
+  assert.doesNotMatch(code(action), /super\+t/);
 });
