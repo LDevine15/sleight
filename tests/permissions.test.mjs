@@ -183,6 +183,34 @@ test('a block by bundle id stores the app\'s names, so a display name, a path or
   assert.deepEqual(readPermissions(w.path).apps, [{ id: 'com.example.editor', name: 'Example Editor', aliases: ['Editor'] }]);
 });
 
+test('open_file never opens sleight\'s own settings folder or a file in it, by its path or through a link', async t => {
+  const { openDocument } = await import('../plugins/sleight/lib/launch.mjs');
+  const w = world(t), opened = [], resolved = [];
+  w.write('permissions.json', { version: 1, apps: [], sites: [] });
+  const link = join(w.home, 'notes.json'); symlinkSync(w.path, link);
+  for (const path of [w.path, link, join(w.support, 'preapproved.json')]) {
+    writeFileSync(join(w.support, 'preapproved.json'), '{}', { mode: 0o600 });
+    const result = await openDocument({ app: 'Example Editor', path }, { home: w.home, resolve: async app => { resolved.push(app); return 'com.example.editor'; }, exec: async (...args) => opened.push(args) });
+    assert.deepEqual(result, { content: [{ type: 'text', text: "open_file doesn't open sleight's own settings files; only the user changes them." }], isError: true }, path);
+  }
+  assert.deepEqual(opened, []);
+  assert.deepEqual(resolved, []);
+});
+
+test('open_file refuses a blocked app before it asks the user to approve opening files there', async () => {
+  const { callLocalTool, prepareOpenFile } = await import('../plugins/sleight/lib/launch.mjs');
+  const line = 'You blocked sleight in Example Editor (sleight-mcp permissions unblock com.example.editor lifts it).';
+  const blocked = bundleId => bundleId === 'com.example.editor' ? line : undefined, asked = [];
+  const approve = async (...args) => { asked.push(args); return true; };
+  const args = { app: 'Some Name', path: '/tmp/x.txt' };
+  assert.deepEqual(await callLocalTool('open_file', args, approve, undefined, undefined, undefined, { blocked, resolve: async () => 'com.example.editor' }),
+    { content: [{ type: 'text', text: line }], isError: true });
+  const prepared = prepareOpenFile(args, approve, { resolve: async () => 'com.example.editor', blocked });
+  assert.equal(await prepared.approval, false);
+  assert.deepEqual(await callLocalTool('open_file', args, approve, undefined, undefined, prepared, { blocked }), { content: [{ type: 'text', text: line }], isError: true });
+  assert.deepEqual(asked, []);
+});
+
 test('open_file refuses an app the user blocked once its name resolves, before anything opens', async t => {
   const { openDocument } = await import('../plugins/sleight/lib/launch.mjs');
   const w = world(t), path = join(w.home, 'note.txt'), opened = [];

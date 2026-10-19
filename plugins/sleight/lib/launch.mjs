@@ -568,6 +568,13 @@ export async function openDocument(args, { exec = runOpen, resolve = resolveAppI
   if (RUNNABLE.test(path)) return text(`open_file doesn't open scripts, apps or installers (${raw}).`, true);
   let info;
   try { info = lstatSync(path); } catch { return text(`No file at ${raw}.`, true); }
+  // sleight's own settings (permissions.json, the always list, turbo's switch) change only by the user's hand, so no app
+  // opens them for Claude to edit. The real path decides, so a link elsewhere doesn't get around it.
+  let actual = path;
+  try { actual = realpathSync(path); } catch {}
+  if ([path, actual].some(value => /\/library\/application support\/sleight(?:\/|$)/i.test(value.normalize('NFC')))) {
+    return text("open_file doesn't open sleight's own settings files; only the user changes them.", true);
+  }
   if (!info.isFile()) return text(`${raw} isn't a regular file.`, true);
   if (info.mode & 0o111) return text(`open_file doesn't open executable files (${raw}).`, true);
   const bundleId = await (preparedId ?? resolve(app));
@@ -626,13 +633,17 @@ export async function reopenDocument(bundleId, path, { exec = runOpen, openedFil
 const approveOpenFile = (args, approve) => approve(['open_file', args.app],
   `Allow Claude to open files in ${args.app}? They open in the background.`);
 
-export function prepareOpenFile(args, approve, { resolve = resolveAppId, openedFiles } = {}) {
+export function prepareOpenFile(args, approve, { resolve = resolveAppId, openedFiles, blocked } = {}) {
   let approval;
+  const bundleId = Promise.resolve().then(() => resolve(String(args.app ?? '').trim())).catch(() => '');
   return {
     openedFiles,
-    bundleId: Promise.resolve().then(() => resolve(String(args.app ?? '').trim())).catch(() => ''),
-    // Resolution can overlap target lookup; approval starts only when the caller is ready.
-    get approval() { return approval ??= Promise.resolve().then(() => approveOpenFile(args, approve)); },
+    bundleId,
+    // Resolution can overlap target lookup; approval starts only when the caller is ready. A blocked app is never asked about.
+    get approval() {
+      return approval ??= (blocked ? bundleId.then(id => BUNDLE_ID.test(id) && blocked(id, args.app)) : Promise.resolve())
+        .then(refused => refused ? false : approveOpenFile(args, approve));
+    },
   };
 }
 
@@ -720,7 +731,7 @@ async function performDrag(args, runLocal) {
   return text(rest, !ok);
 }
 
-export async function callLocalTool(name, args, approve, runLocal = runScript, resolved, prepared, { blocked } = {}) {
+export async function callLocalTool(name, args, approve, runLocal = runScript, resolved, prepared, { blocked, resolve = resolveAppId } = {}) {
   if (name === 'hover') {
     if (!await approve(['hover', args.app], `Allow Claude to hover in ${args.app}? It moves your pointer briefly.`)) {
       return text(`The user didn't allow hovering in ${args.app}. Stop and tell them; don't work around it.`, true);
@@ -732,10 +743,17 @@ export async function callLocalTool(name, args, approve, runLocal = runScript, r
   }
   if (name === 'select_window') return selectWindow(args, { approve, runScript: runLocal });
   if (name === 'open_file') {
+    // A blocked app is refused before the user is asked to approve opening files in it.
+    let bundleId = prepared?.bundleId;
+    if (blocked) {
+      bundleId ??= Promise.resolve().then(() => resolve(String(args.app ?? '').trim())).catch(() => '');
+      const id = await bundleId, refusal = BUNDLE_ID.test(id) && blocked(id, args.app);
+      if (refusal) return text(refusal, true);
+    }
     if (!await approveOpenFile(args, approve)) {
       return text(`The user didn't allow opening files in ${args.app}. Stop and tell them; don't work around it.`, true);
     }
-    return openDocument(args, { ...prepared ? { ...prepared, fast: true, target: resolved } : {}, ...blocked ? { blocked } : {} });
+    return openDocument(args, { ...prepared ? { ...prepared, fast: true, target: resolved } : {}, ...bundleId ? { bundleId } : {}, ...blocked ? { blocked } : {} });
   }
   if (name === 'drag') {
     if (!await approve(['drag', args.app], `Allow Claude to drag in ${args.app}? Background comes first; foreground fallback can move your pointer for a few seconds.`)) {
@@ -861,6 +879,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   // The user's blocks and site limits. With site limits already set, which apps are browsers is asked now, not at the first action.
   const permissionCheck = createPermissionCheck(), webBrowser = webBrowserCheck();
   if (permissionCheck.sitesLimited()) webBrowser.ask();
+  const appBlocked = (bundleId, app) => permissionCheck.app({ bundleId, name: app });
   const { trace, grantAudit } = approvalLogging(preapproved);
   let s = directBrowserServer(resolveServer(), directBrowser);
   if (s.error) fail(s.error);
@@ -1004,11 +1023,11 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     localTools: {
       tools: localToolDefinitions(),
       prepareOpen: (args, approve) => prepareOpenFile(args, (parts, message, options) =>
-        approve(parts, wordForHost(message, wording()), options), { openedFiles }),
+        approve(parts, wordForHost(message, wording()), options), { openedFiles, blocked: appBlocked }),
       reopen: (bundleId, path) => reopenDocument(bundleId, path, { openedFiles }),
       call: (name, args, approve, runLocal, resolved, prepared) => callLocalTool(name, args, (parts, message, options) =>
         approve(parts, wordForHost(message, wording()), options), runLocal, resolved, prepared,
-        { blocked: (bundleId, app) => permissionCheck.app({ bundleId, name: app }) }),
+        { blocked: appBlocked }),
       target: async args => {
         const result = await appHealth.target(args);
         if (!result.ok) throw new Error(`Input lease: ${result.error}`);
