@@ -83,11 +83,12 @@ test('Cursor reads the same skill folder as Claude Code and Codex, and the skill
   assert.deepEqual(copies, ['skills/drive-mac-apps/SKILL.md']);
 });
 
-test('the repo is a Cursor marketplace named like the Claude one, so Cursor\'s plugin replaces its import of the Claude plugin', () => {
+test('the repo is a Cursor marketplace named like the Claude one, so cursor-agent\'s loader keeps its plugin over the Claude import', () => {
   const market = json(join(repo, '.cursor-plugin/marketplace.json'));
   const claudeMarket = json(join(repo, '.claude-plugin/marketplace.json'));
   for (const key of Object.keys(market)) assert.ok(shape.marketplaceKeys.includes(key), key);
-  // Cursor keeps one plugin per <marketplace>/<name>, listing its own marketplaces before the Claude import.
+  // cursor-agent's loader keeps one plugin per <marketplace>/<name>, listing Cursor's marketplaces before the Claude import.
+  // The editor's own rule is unread (live check).
   assert.equal(market.name, claudeMarket.name);
   assert.equal(market.owner.name, claudeMarket.owner.name);
   assert.equal(market.plugins.length, 1);
@@ -99,6 +100,7 @@ test('the repo is a Cursor marketplace named like the Claude one, so Cursor\'s p
   assert.doesNotMatch(JSON.stringify(market), /Claude|Codex/);
   assert.equal(CURSOR_INSTALL, `cursor-agent plugin marketplace add ${CURSOR_REPO}`);
   assert.equal(CURSOR_REPO, claude.repository);
+  assert.equal(entry.source, claudeMarket.plugins[0].source, 'the same ./ form as the Claude marketplace');
 });
 
 test('Cursor\'s own clientInfo reads "Cursor", without the fixed 1.0.0 it sends', () => {
@@ -115,13 +117,20 @@ test('Cursor\'s own clientInfo reads "Cursor", without the fixed 1.0.0 it sends'
   assert.equal(hostLabel({ name: 'cursor-vscode', title: 'Cursor IDE', version: '1.0.0' }), 'Cursor IDE 1.0.0');
   // An odd name is left out, never shown on the approval card.
   assert.deepEqual(hostWording({ name: 'x\nmodel: gpt' }, {}), { claudeCode: false, host: undefined, panel: 'generic' });
+  // hostWording checks a title as the menu bar does: an odd or overlong title falls back to the name. Before 1.4.0 the
+  // card showed the raw title.
+  assert.deepEqual(hostWording({ name: 'acme-agent', title: 'Acme\nmodel: gpt' }, {}), { claudeCode: false, host: 'Acme Agent', panel: 'Acme Agent' });
+  assert.equal(hostWording({ name: 'acme-agent', title: 'A'.repeat(41) }, {}).host, 'Acme Agent');
 });
 
 // A fake filesystem for the doctor, keyed by path under /home.
-function fakeFs(files) {
+// links maps a symlink's path to its target; a path under a link reads through it.
+function fakeFs(files, links = {}) {
   const has = path => Object.keys(files).some(key => key === path || key.startsWith(path + '/'));
   return {
     home: '/home',
+    lstat: path => ({ isSymbolicLink: () => Object.hasOwn(links, path) }),
+    realpath: path => links[path] ?? path,
     exists: has,
     read: path => { if (typeof files[path] !== 'string') throw Object.assign(Error(`ENOENT ${path}`), { code: 'ENOENT' }); return files[path]; },
     list: path => { if (!has(path) || typeof files[path] === 'string') throw Error(`ENOTDIR ${path}`);
@@ -139,7 +148,7 @@ test('doctor: Cursor missing, Cursor without sleight, and each way sleight can b
     `note      sleight isn't set up in Cursor 3.25.6. To add it: ${CURSOR_INSTALL}, then install sleight from Cursor's plugin list`]);
   assert.deepEqual(lines({ [APP]: '{"version":"3.25.6"}', '/home/.cursor/plugins/cache/sleight/sleight/0123abc/.cursor-plugin/plugin.json': manifest('sleight'),
     '/home/.claude/plugins/installed_plugins.json': CLAUDE_INSTALLED }), ['Cursor',
-    'ok        sleight is installed as a Cursor plugin (sleight from marketplace sleight). Cursor uses it in place of the Claude Code copy.']);
+    'ok        sleight is installed as a Cursor plugin (sleight from marketplace sleight). cursor-agent\'s loader keeps it in place of the Claude Code copy (sleight@sleight).']);
   assert.deepEqual(lines({ '/home/.cursor/argv.json': '{}', '/home/.claude/plugins/installed_plugins.json': CLAUDE_INSTALLED }), ['Cursor',
     `note      sleight is installed in Claude Code (sleight@sleight). Cursor runs it from there while "${CURSOR_IMPORT_SETTING}" is on in Cursor's settings.`,
     `          To install it in Cursor itself: ${CURSOR_INSTALL}, then install sleight from Cursor's plugin list`]);
@@ -149,6 +158,31 @@ test('doctor: Cursor missing, Cursor without sleight, and each way sleight can b
     'ok        sleight is a local Cursor plugin (~/.cursor/plugins/local/my-sleight). Copy it again after each sleight update.',
     'ok        sleight is in ~/.cursor/mcp.json as "mac"',
     'note      Cursor starts sleight 2 times (~/.cursor/plugins/local/my-sleight, ~/.cursor/mcp.json "mac"). Keep one.']);
+});
+
+test('doctor: a local plugin linked from outside plugins/local is a problem, since Cursor skips it', () => {
+  const fs = fakeFs({ [APP]: '{"version":"3.25.6"}', '/home/.cursor/plugins/local/sleight/.cursor-plugin/plugin.json': manifest('sleight'),
+    '/home/.cursor/plugins/local/inside/.cursor-plugin/plugin.json': manifest('sleight') },
+  { '/home/.cursor/plugins/local/sleight': '/home/src/sleight/plugins/sleight', '/home/.cursor/plugins/local/inside': '/home/.cursor/plugins/local/copies/sleight' });
+  const status = cursorStatus(fs);
+  assert.deepEqual(status.local, ['inside']);
+  assert.deepEqual(cursorDoctorLines(status), ['Cursor',
+    'PROBLEM   ~/.cursor/plugins/local/sleight links to ~/src/sleight/plugins/sleight, outside ~/.cursor/plugins/local, so Cursor skips it. Put a copy there in its place: rm ~/.cursor/plugins/local/sleight && cp -R ~/src/sleight/plugins/sleight ~/.cursor/plugins/local/sleight',
+    'ok        sleight is a local Cursor plugin (~/.cursor/plugins/local/inside). Copy it again after each sleight update.']);
+  // Only the link: nothing else set up, so the install command still shows.
+  const alone = cursorStatus(fakeFs({ [APP]: '{"version":"3.25.6"}', '/home/.cursor/plugins/local/sleight/.cursor-plugin/plugin.json': manifest('sleight') },
+    { '/home/.cursor/plugins/local/sleight': '/elsewhere/sleight' }));
+  assert.deepEqual(cursorDoctorLines(alone).slice(2), [`note      sleight isn't set up in Cursor 3.25.6. To add it: ${CURSOR_INSTALL}, then install sleight from Cursor's plugin list`]);
+});
+
+test('doctor: a Cursor marketplace by another name doesn\'t replace the Claude Code copy, so both count', () => {
+  const lines = cursorDoctorLines(cursorStatus(fakeFs({ [APP]: '{"version":"3.25.6"}',
+    '/home/.cursor/plugins/cache/mine/sleight/0123abc/.cursor-plugin/plugin.json': manifest('sleight'),
+    '/home/.claude/plugins/installed_plugins.json': CLAUDE_INSTALLED })));
+  assert.deepEqual(lines, ['Cursor',
+    'ok        sleight is installed as a Cursor plugin (sleight from marketplace mine)',
+    `note      sleight is installed in Claude Code (sleight@sleight). Cursor runs it from there while "${CURSOR_IMPORT_SETTING}" is on in Cursor's settings.`,
+    'note      Cursor starts sleight 2 times (marketplace mine, the Claude Code copy, if that setting is on). Keep one.']);
 });
 
 test('doctor: an unreadable mcp.json is a problem line, not a crash', () => {
