@@ -298,6 +298,30 @@ test('the relay asks the guard for outcomes and shows them under SLEIGHT_OUTCOME
   assert.equal(statSync(path).mode & 0o777, 0o600);
 });
 
+test('the relay logs each call\'s time and Claude\'s reads it sent as changed lines, not the guard\'s own (1.4.0 stats)', async t => {
+  const path = join(dir, 'timed.jsonl');
+  const h = relayHarness(t, { actionLog: new ActionLog({ path, root: dir }) });
+  // Enough unchanged lines that the checked box goes to Claude as changed lines.
+  const pad = Array.from({ length: 40 }, (_, i) => `\n\t${30 + i} static text Row ${i}`).join('');
+  await h.call(1, 'let app = await cua.getApp("TextEdit")');
+  await h.reply(1, form('', '0', pad));
+  const code = 'await app.click(2); await app.getAXState();';
+  await h.call(2, code);
+  const mark = /"outcomeMark":"(\[sleight:filtered-read:[0-9a-f]{16}\])"/.exec(h.sentCode(2))[1];
+  const g = engine([form('', '0', pad), form('', '1', pad)]);
+  await g.run(code, { outcomeMark: mark, actions: ['click'] });
+  const text = (await h.reply(2, g.output.join(''))).content.map(item => item.text).join('\n');
+  assert.match(text, /lines changed since the last full tree/);
+  const rows = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(rows.map(row => [row.kind, row.saved, Number.isSafeInteger(row.ms) && row.ms >= 0]), [['click', 1, true]]);
+  // The same click without Claude's read ends on the guard's own read, which saves Claude nothing.
+  await h.call(3, 'await app.click(2);');
+  const again = engine([form('', '1', pad), form('', '0', pad)]);
+  await again.run('await app.click(2);', { outcomeMark: /"outcomeMark":"(\[sleight:filtered-read:[0-9a-f]{16}\])"/.exec(h.sentCode(3))[1], actions: ['click'] });
+  await h.reply(3, again.output.join(''));
+  assert.equal(readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line))[1].saved, undefined);
+});
+
 test('outcomes stay out of results by default while the log still gets them', async t => {
   const path = join(dir, 'quiet.jsonl');
   const h = relayHarness(t, { actionLog: new ActionLog({ path, root: dir }) });
@@ -615,7 +639,8 @@ test('a log a throw can\'t break: Claude\'s reply still arrives when the log fai
 
 test('rotation happens only under the lock file, so two sessions don\'t lose rows', () => {
   const root = mkdtempSync(join(dir, 'lock-')), path = join(root, 'shared.jsonl');
-  const sessions = [new ActionLog({ path, root, maxBytes: 400 }), new ActionLog({ path, root, maxBytes: 400 })];
+  // 500 bytes hold three rows, each with its 1.4.0 ms and pid.
+  const sessions = [new ActionLog({ path, root, maxBytes: 500 }), new ActionLog({ path, root, maxBytes: 500 })];
   const write = (log, id) => {
     log.request({ id, method: 'tools/call', params: { name: 'drag', arguments: { app: 'TextEdit' } } });
     log.reply({ id, result: { content: [{ type: 'text', text: 'ok' }] } });

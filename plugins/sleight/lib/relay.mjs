@@ -1962,6 +1962,7 @@ export function createRelay({
         if (request.epoch !== engineEpoch) return;
         msg = { ...msg, id: request.id };
       } else if (engineEpoch > 0) return;
+      if (actionLog) try { actionLog.waitEnd('s:' + msg.id); } catch {}
     }
     if (stopCollected || (closing && msg.method === 'tools/call' && msg.params?.name !== TURN_END_TOOL &&
         !(internalRequests.has(msg.id) && String(msg.id).startsWith('sleight-tab-cleanup-')))) return;
@@ -2001,6 +2002,8 @@ export function createRelay({
       callDetails.set(msg.id, msg.params.name + (msg.params.arguments?.title ? ': ' + msg.params.arguments.title : ''));
     }
     if (msg.method === 'tools/call' && menuCalls.has(msg.id)) menuCalls.get(msg.id).forwardedAt ??= clock();
+    // The action log times a call from here, after sleight's own checks and waits.
+    if (actionLog && msg.method === 'tools/call' && msg.id !== undefined) try { actionLog.sent(msg.id); } catch {}
     serverIn.write(JSON.stringify(msg) + '\n');
     replWarmup.sent(msg);
   };
@@ -2094,6 +2097,8 @@ export function createRelay({
     msg.result.content = [...dropAcquisitionTree(msg.result.content, reply.result.content, undefined, compactReacquire), ...reply.result.content];
   }
   const toClient = (msg, afterWrite) => {
+    // An approval prompt's time comes off the action log's call times (the engine's prompts and sleight's own).
+    if (actionLog && msg.method === 'elicitation/create' && msg.id !== undefined) try { actionLog.waitStart('c:' + msg.id); } catch {}
     // Every call's reply ends it, by whatever path: its parent lease pin ends too.
     if (msg.method === undefined && msg.id !== undefined) releasePin(msg.id);
     if (msg.method === undefined && stoppedClients.has(msg.id)) return;
@@ -2637,6 +2642,7 @@ export function createRelay({
       return;
     }
     if (msg.method === 'initialize') codexClient = codexTurnClient(msg.params?.clientInfo);
+    if (actionLog && msg.method === undefined && msg.id !== undefined) try { actionLog.waitEnd('c:' + msg.id); } catch {}
     if (msg.method === 'tools/call' && msg.params?.name === TURN_START_TOOL && !modHost()) { codexTurnStart(msg); return; }
     // Stop and resume are the user's controls and work on every host. Only binding a turbo turn needs the mod. (A turbo
     // tool called by name in another host reaches a bridge no turn ever bound, which fails it.)
@@ -3260,6 +3266,7 @@ export function createRelay({
       if (browserBlock) { blockStop(msg, browserBlock); return; }
       running.add(msg.id);
       callDetails.set(msg.id, msg.params.name);
+      if (actionLog) try { actionLog.sent(msg.id); } catch {}
       directBrowser.call({ name: msg.params.name, arguments: msg.params.arguments }).then(result => {
         finishedCall(msg.id);
         const rendered = result.text;
@@ -3956,6 +3963,7 @@ export function createRelay({
     observeServerMessage(msg);
   }
   function observeServerMessage(msg) {
+    if (actionLog && msg.method === 'elicitation/create' && msg.id !== undefined) try { actionLog.waitStart('s:' + msg.id); } catch {}
     let certifiedRead; // { number, title } of this result's read, when its native window number is certified
     if (msg.method === undefined) {
       const stripConst = text => text.split('\n').filter(line =>
@@ -4796,7 +4804,8 @@ export function createRelay({
       const record = automatic ? undefined : compactor.takeOutcomes();
       const kept = !Array.isArray(record?.outcomes) ? undefined : continued?.head ? { ...record, outcomes: record.outcomes.filter(rec => rec?.x !== 'refused') } : record;
       if (continued?.head) continuedOutcomes.set(msg.id, { start: (continued.start ?? 0) + (kept?.outcomes?.length ?? 0) });
-      if (actionLog) try { actionLog.outcomes(msg.id, kept); } catch {}
+      const savedReads = automatic ? 0 : compactor.takeSaved();
+      if (actionLog) try { actionLog.outcomes(msg.id, kept); actionLog.saved(msg.id, savedReads); } catch {}
       if (!automatic && elementVisibility && jsCode !== undefined && !msg.result.isError) listClicks = compactor.listClicks();
       if (typingReceipt) msg.result.content.push({ type: 'text', text: typingReceipt });
       if (!automatic && openReads.has(msg.id) && !msg.result.isError && compactor.lastReadNoted()) textlessOpens.add(msg.id);

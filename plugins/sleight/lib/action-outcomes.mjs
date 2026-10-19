@@ -232,7 +232,7 @@ const ACTIONS = new Set(['click', 'drag', 'scroll', 'selectText', 'setValue', 'p
 const TURBO_STEPS = new Set(['click', 'type', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'drag', 'upload', 'dialog', 'wait',
   'navigate', 'back', 'forward', 'reload', 'viewport']);
 // refusalReason's categories, the guard's refusalOf kinds, and the log's own.
-const REASONS = new Set(['app changed', 'window changed', 'input lease', 'document scope', 'change review', 'flow rule', 'approval declined',
+export const REASONS = new Set(['app changed', 'window changed', 'input lease', 'document scope', 'change review', 'flow rule', 'approval declined',
   'payment confirmation', 'element changed', 'element not found', 'user changed the app', 'stopped by sleight', 'bad locator', 'submenu',
   'menu open', 'no focus target', 'close button', 'native access', 'stopped']);
 const role = value => typeof value === 'string' && /^[a-z]+(?: [a-z]+){0,3}$/.test(value) && value.length <= 40 ? value : undefined;
@@ -249,6 +249,37 @@ export function refusalReason(text = '') {
     [/no element with|elements with/, 'element not found'], [/the user (?:changed|switched)/, 'user changed the app'],
     [/sleight stopped|stopped this call/, 'stopped by sleight']];
   return reasons.find(([pattern]) => pattern.test(text))?.[1];
+}
+
+// The engine browser path's input methods (tab handles and their locators). The guard records no per-action outcomes there
+// (the relay gives browser calls no outcome mark), so the log counts the call sites in the code: an estimate, where a loop
+// counts once and an untaken branch counts. Strings, comments and regular expression literals are left out first.
+const BROWSER_ACTIONS = /\.\s*(?:click|dblclick|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|pressKey|typeText|fill|press|type|check|uncheck|selectOption|hover|goto|reload|goBack|goForward)\s*\(/g;
+function codeOnly(code) {
+  let out = '', last = '';
+  for (let i = 0; i < code.length;) {
+    const c = code[i], next = code[i + 1];
+    let end = i + 1;
+    if (c === '/' && next === '/') { end = code.indexOf('\n', i); if (end < 0) end = code.length; }
+    else if (c === '/' && next === '*') { end = code.indexOf('*/', i + 2); end = end < 0 ? code.length : end + 2; }
+    else if (c === '"' || c === "'" || c === '`' || c === '/' && (!last || /[(,=:[!&|?{};+\-*%<>~^]/.test(last) || /\b(?:return|typeof|case|do|else|in|of|void|yield|await)$/.test(out.trimEnd()))) {
+      let klass = false;
+      for (end = i + 1; end < code.length; end++) {
+        const d = code[end];
+        if (d === '\\') { end++; continue; }
+        if (c === '/' && d === '\n') break;
+        if (c === '/' && d === '[') klass = true;
+        else if (c === '/' && d === ']') klass = false;
+        else if (d === c && !klass) { end++; break; }
+      }
+    } else { out += c; if (!/\s/.test(c)) last = c; i = end; continue; }
+    out += ' '; last = 'x'; i = end;
+  }
+  return out;
+}
+export function browserActionCount(code) {
+  if (typeof code !== 'string' || code.length > 200000) return 0;
+  return Math.min(100, [...codeOnly(code).matchAll(BROWSER_ACTIONS)].length);
 }
 
 // A turbo step's outcome as a category: the outcome text quotes addresses and dialogs from the page.
@@ -269,8 +300,12 @@ export function actionLogPath(value, home = homedir()) {
 }
 
 export class ActionLog {
-  constructor({ path, root = logRoot(), maxBytes = 5 * 1024 * 1024, keep = 2, now = () => new Date(), home = homedir(), names } = {}) {
-    this.path = path; this.root = root; this.maxBytes = maxBytes; this.keep = keep; this.now = now; this.home = home;
+  // clock: milliseconds for each call's time (ms): from when the relay sent it on (its request, for sleight's own tools) to
+  // its reply, less the approval prompts open meanwhile. pid tells sessions sharing one log apart.
+  constructor({ path, root = logRoot(), maxBytes = 5 * 1024 * 1024, keep = 2, now = () => new Date(), clock = () => performance.now(), pid = process.pid,
+    home = homedir(), names } = {}) {
+    this.path = path; this.root = root; this.maxBytes = maxBytes; this.keep = keep; this.now = now; this.clock = clock; this.pid = pid; this.home = home;
+    this.waits = new Map();
     this.names = names; this.calls = new Map(); this.origins = new Map(); this.failures = 0; this.rotationFailures = 0;
   }
   scrub(text) {
@@ -287,7 +322,29 @@ export class ActionLog {
     if (typeof name !== 'string' || name === 'turn_ended' || name === 'js_reset') return;
     // A call the user stopped gets no reply here, so the oldest entries go once 200 wait.
     if (this.calls.size >= 200) this.calls.delete(this.calls.keys().next().value);
-    this.calls.set(msg.id, { name, args, outcomes: [] });
+    this.calls.set(msg.id, { name, args, outcomes: [], start: this.clock() });
+  }
+  // The relay sent the call on to the engine or turbo: its time starts here, after sleight's own checks.
+  sent(id) {
+    const call = this.calls.get(id);
+    if (call && call.sent === undefined) call.sent = this.clock();
+  }
+  // An approval prompt opened or was answered. Its time comes off every call in flight.
+  waitStart(key) {
+    if (this.waits.size >= 50) this.waits.delete(this.waits.keys().next().value);
+    if (!this.waits.has(key)) this.waits.set(key, this.clock());
+  }
+  waitEnd(key) {
+    const start = this.waits.get(key);
+    if (start === undefined) return;
+    this.waits.delete(key);
+    const end = this.clock();
+    for (const call of this.calls.values()) if ((call.pauses ??= []).length < 50) call.pauses.push([start, end]);
+  }
+  // Reads the relay sent this call as changed lines or left out (compact-reads.mjs); a continued call adds the rest's.
+  saved(id, count) {
+    const call = this.calls.get(id);
+    if (call && Number.isSafeInteger(count) && count > 0) call.saved = Math.min(1000, (call.saved ?? 0) + count);
   }
   // A guarded call's records; a continued call adds the rest's.
   outcomes(id, record) {
@@ -301,6 +358,14 @@ export class ActionLog {
     const call = msg?.method === undefined && this.calls.get(msg?.id);
     if (!call) return;
     this.calls.delete(msg.id);
+    const end = this.clock(), start = call.sent ?? call.start;
+    // A prompt still open counts only for calls already running when it opened, so one whose answer never came back
+    // can't zero every later call. One prompt can show as two waits (the engine's and the client's), so overlaps count once.
+    const pauses = [...call.pauses ?? [], ...[...this.waits.values()].filter(opened => opened >= start).map(opened => [opened, end])]
+      .map(([a, b]) => [Math.max(a, start), Math.min(b, end)]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+    let paused = 0, reach = start;
+    for (const [a, b] of pauses) { if (b > reach) { paused += b - Math.max(a, reach); reach = b; } }
+    const ms = Number.isFinite(end - start - paused) ? Math.max(0, Math.round(end - start - paused)) : undefined;
     const text = (msg.result?.content ?? []).filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
     const tool = TOOLS.has(call.name) ? call.name : 'other';
     const error = !!msg.error || !!msg.result?.isError, base = { call: typeof msg.id === 'string' ? this.scrub(msg.id) : msg.id, tool };
@@ -312,6 +377,8 @@ export class ActionLog {
     const rows = [];
     if (call.name === 'js') {
       const app = call.app ? { app: this.scrub(call.app) } : {};
+      // The engine's browser path, from the engine's own reply; an error reply that lost it counts as native.
+      const surface = msg.result?._meta?.['codex/toolSurface']?.kind === 'browserUse' ? { surface: 'browser' } : {};
       call.outcomes.forEach((rec, i) => {
         const targetRole = role(rec.t?.r), key = loggedKey(rec.k);
         const target = targetRole ? { role: targetRole, ...(rec.t.s ? { secure: true } : genericName(rec.t.m) ? { name: rec.t.m } : {}) } : undefined;
@@ -328,9 +395,20 @@ export class ActionLog {
       if (stopped >= 0 && Number.isSafeInteger(call.planned) && call.planned > call.outcomes.length + dropped) {
         rows.push({ ...base, ...app, kind: 'rest', count: call.planned - call.outcomes.length - dropped, result: 'not run', reason: `stopped after ${stopped}` });
       }
-      if (!rows.length && error) rows.push(refused({ ...base, ...app, kind: 'call' }));
+      if (!rows.length && error) rows.push(refused({ ...base, ...app, kind: 'call', ...surface }));
+      const named = surface.surface && !rows.length ? browserActionCount(call.args.code) : 0;
+      if (named) rows.push({ ...base, ...app, kind: 'call', ...surface, actions: named, result: 'ok', outcome: 'unverified' });
+      if (!rows.length && call.saved) rows.push({ ...base, ...app, kind: 'read', result: 'ok', outcome: 'compacted' });
     } else if (/^browser_/.test(call.name)) {
       rows.push(...this.turbo(call, text, error, base, refused));
+      // A diff since the last snapshot in place of the page: one read saved.
+      // Only sleight's own header counts: the first line that starts with "# " comes before any page content.
+      const header = text.split('\n').find(line => line.startsWith('# '));
+      if (!error && ['browser_act', 'browser_fill', 'browser_read'].includes(call.name) &&
+          /^# Changes since snapshot \d+; snapshot \d+ \(untrusted page content\)$/.test(header ?? '')) {
+        call.saved = 1;
+        if (!rows.length) rows.push({ ...base, ...this.where(call), kind: 'read', result: 'ok', outcome: 'compacted' });
+      }
     } else {
       const { args } = call;
       const read = (call.name === 'menu_bar' && args.op === 'apps') || (['notifications', 'review_changes'].includes(call.name) && args.op === 'list');
@@ -339,7 +417,9 @@ export class ActionLog {
       if (!read) rows.push({ ...base, ...(typeof args.app === 'string' ? { app: this.scrub(args.app) } : {}), kind: tool + op,
         ...(error ? refused({}) : { result: 'ok', outcome: 'done' }) });
     }
-    this.write(rows);
+    if (rows.length && call.saved) rows[0] = { ...rows[0], saved: call.saved };
+    const pid = Number.isSafeInteger(this.pid) ? { pid: this.pid } : {};
+    this.write(rows.map(row => ({ ...row, ...(ms === undefined ? {} : { ms }), ...pid })));
   }
   turbo(call, text, error, base, refused) {
     const { args } = call;
@@ -348,6 +428,7 @@ export class ActionLog {
     if (opened && origin(opened[2])) this.origins.set(opened[1], origin(opened[2]));
     const tab = args.tab ?? opened?.[1];
     let at = this.origins.get(tab) ?? (call.name === 'browser_open' ? origin(args.url) : undefined);
+    call.origin = at;
     let where = at ? { origin: at } : {};
     if (call.name === 'browser_read' || (call.name === 'browser_tabs' && args.do === 'list')) return [];
     if (call.name === 'browser_open') return [{ ...base, ...where, kind: 'open', ...(error ? refused({}) : { result: 'ok', outcome: 'opened' }) }];
@@ -369,6 +450,7 @@ export class ActionLog {
     if (!rows.length && call.name === 'browser_tabs') rows.push({ ...base, ...where, kind: OPS.browser_tabs.includes(args.do) ? `tabs ${args.do}` : 'tabs', result: 'ok', outcome: 'done' });
     return rows;
   }
+  where(call) { return call.origin ? { origin: call.origin } : {}; }
   write(rows) {
     if (!rows.length || !this.path) return;
     const time = this.now().toISOString();

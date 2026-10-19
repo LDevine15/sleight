@@ -141,6 +141,15 @@ print("pass")
   assert.equal(spawnSync(binary, [], { encoding: 'utf8' }).stdout.trim(), 'pass');
 });
 
+test('a usage value the host can\'t admit drops only the usage row: the frame stands and the hand-only host keeps running', { skip }, async () => {
+  const binary = build();
+  for (const usage of ['Last 7 days: 1.5 s per action', { native: 1.5, saved: 3, calls: 9 }, { native: 1.5, saved: 3.5 }, { perAction: 1.5, saved: 3 }, null]) {
+    const result = await shared(binary, [[0, menu({ usage })], ['wait', 300], ['alive'], [0, act(1)], ['wait', 100], ['alive'], ['end', 0]], ['--hand', '--menu']);
+    assert.deepEqual(result.alive, [true, true], JSON.stringify(usage));
+    assert.equal(result.code, 0, JSON.stringify(usage) + ': ' + result.stderr);
+  }
+});
+
 test('--consent needs its two descriptors, and the arguments stay strict', { skip }, () => {
   const binary = build();
   const run = args => spawnSync(binary, args, { input: '', encoding: 'utf8', timeout: 30000, env: { PATH: '/usr/bin:/bin' } });
@@ -161,7 +170,8 @@ test('the menu frame\'s Permissions rows and the status frame\'s site are admitt
   const rows = { grants: [{ title: 'Fixture', detail: 'always', used: 1760000000, target: 'app:Fixture' }, { title: 'Chat', detail: 'debugger, always', used: null, target: 'electron:com.example.chat' },
     { title: 'Browser', detail: 'turbo', used: null, target: 'turbo' }], blocked: ['Blocked App'], current: { title: 'Editor', target: 'com.example.editor' }, only: ['https://a.example'] };
   const site = status({ choices: ['connect', 'block-site'], data: { status: 'disconnected', site: 'https://example.com' } });
-  const good = await shared(binary, [[3, site], [0, menu({ permissions: rows })], [0, menu({ permissions: { grants: [], blocked: [] } })], ['wait', 300], ['end', 3], ['end', 0]]);
+  const good = await shared(binary, [[3, site], [0, menu({ permissions: rows })], [0, menu({ permissions: { grants: [], blocked: [] } })],
+    [0, menu({ permissions: rows, usage: { native: 1.5, turbo: 0.4, saved: 312 } })], [0, menu({ usage: { turbo: 0, saved: 0 } })], ['wait', 300], ['end', 3], ['end', 0]]);
   assert.equal(good.code, 0, good.stderr);
   assert.equal(good.stdout + good.consent, '', 'rows draw nothing and answer nothing without a click');
   const cases = {

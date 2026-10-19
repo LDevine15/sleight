@@ -18,6 +18,12 @@ our own runs. Dates and engine versions are given where they matter.
   mistakes and plain edits only (unit-tested, 2026-10-18). A script Claude writes and then runs, a config file
   reached through a symlink, a name built at run time, a config file it doesn't list, and another MCP server's
   shell tool all get past it. It sees only Claude Code's Write, Edit, MultiEdit, NotebookEdit and Bash.
+- `sleight-mcp stats` (1.4.0) splits a call's time evenly over its actions, so one slow action in a batch raises
+  the others' times. Approval prompts come off a call's time, but turbo's own confirmation cards don't. On the
+  engine's browser path sleight counts the input calls written in the code. A loop counts once and an untaken
+  branch counts. That path stays out of the menu row. Reads saved decides which reads Claude asked for from where
+  the code's last read and last action sit. Turbo counts one read saved per diff it returns. Unit-tested only: no
+  live run has checked these numbers.
 - `claude -p` can't answer approval prompts. List apps in the user's [preapproval file](settings.md#preapproved-apps) before starting.
 - `sleight-mcp setup` hasn't had a full live run: macOS permissions always need the user's click.
 - The engine refuses terminals (Terminal, iTerm2) and OpenAI's own apps (ChatGPT, Codex, Atlas, with
