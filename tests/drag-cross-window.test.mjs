@@ -22,6 +22,7 @@ function fixture(options = {}) {
   const previous = { processIdentifier: 99, isNil: () => false, activateWithOptions() {} };
   const app = { AXWindows: wins, AXFocusedUIElement: b };
   let order = [12, 11], delayed = 0, attempts = 0;
+  const systemWide = { systemWide: true };
   const applyDrop = () => {
     if (options.unchanged) return;
     a.AXValue = ' beta\n'; a.AXSelectedText = '';
@@ -35,7 +36,12 @@ function fixture(options = {}) {
       if (!(key in el)) return -25205;
       out[0] = Array.isArray(el[key]) ? list(el[key]) : el[key]; return 0;
     },
+    // The system-wide hit test answers with the process the window server gives the click to (options.eventPid).
+    AXUIElementCreateSystemWide: options.eventPid ? () => systemWide : undefined,
+    AXUIElementGetPid: (el, out) => { out[0] = el.pid; return el.pid ? 0 : -25205; },
+    NSRunningApplication: { runningApplicationWithProcessIdentifier: pid => ({ isNil: () => false, activationPolicy: pid === 7 ? 0 : 1 }) },
     AXUIElementCopyElementAtPosition: (_app, x, y, out) => {
+      if (_app === systemWide) { const pid = options.eventPid(x, y); out[0] = { pid }; return pid ? 0 : -25212; }
       const el = [a, b].find(el => x >= el.AXPosition.x && x < el.AXPosition.x + el.AXSize.width && y >= 130);
       out[0] = el ?? wins.find(w => x >= w.AXPosition.x && x < w.AXPosition.x + w.AXSize.width);
       return out[0] ? 0 : -25212;
@@ -64,6 +70,10 @@ function fixture(options = {}) {
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8'), context);
   context.findApp = () => target;
   context.windows = () => [
+    // As listed on 2026-10-19: Notification Center's full-display window while a banner shows, and the Dock's
+    // tiling backdrop over the left half after Move & Resize.
+    ...(options.overlays ? [{ id: 40, pid: 739, title: 'Notification Center', owner: 'Notification Center', layer: 21, bounds: { X: 0, Y: 0, Width: 1512, Height: 982 } },
+      { id: 310887, pid: 633, title: 'half-backdrop', owner: 'Dock', layer: 0, bounds: { X: -4, Y: 32, Width: 762, Height: 950 } }] : []),
     ...(options.cover ? [{ id: 50, pid: 99, title: 'cover', owner: 'Other', layer: 0, bounds: frames[1] }] : []),
     ...order.filter(id => !(options.foreign && id === 12)).map(id => ({ id, pid: 7, title: options.sameTitle ? 'Same.txt' : `${id}.txt`, owner: 'Editor', layer: 0, bounds: { ...frames[id - 11] } })),
   ];
@@ -296,4 +306,25 @@ test('a repeated selected string does not hide a changed source selection range'
 test('ignored native AX insertion restores its own range change before posted fallback', () => {
   const h = fixture({ ignoreWrites: true, rangeSideEffects: true }), r = h.run();
   assert.equal(r.ok, true, r.error); assert.equal(r.path, 'background'); assert.equal(h.activations.length, 0);
+});
+
+// The 2026-10-19 stop: the Accessibility move failed, the Dock's backdrop sent the drag to the foreground path, and
+// Notification Center's full-display window then refused the source point while its banner was elsewhere.
+test('system windows that let clicks through cover neither endpoint, so the posted path runs', () => {
+  const h = fixture({ ax: false, overlays: true, eventPid: () => 7 }), r = h.run();
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'background');
+  assert.equal(h.activations.length, 0); assert.equal(h.events.filter(e => e.foreground).length, 0);
+});
+
+test('without a hit-test answer the overlays still count as cover, as before', () => {
+  const h = fixture({ ax: false, overlays: true }), r = h.run();
+  assert.equal(r.ok, false); assert.equal(h.events.filter(e => e.type === 1).length, 0);
+  assert.match(r.error, /from is covered by Notification Center \(windowId 40/);
+});
+
+test('a banner over the point is a system overlay: wait and retry once, no tiling advice, nothing pressed', () => {
+  const h = fixture({ ax: false, noPosting: true, overlays: true, eventPid: x => (x < 750 ? 739 : 7) }), r = h.run();
+  assert.equal(r.ok, false); assert.equal(h.events.filter(e => e.type === 1).length, 0);
+  assert.match(r.error, /^from is covered by Notification Center \(windowId 40, "Notification Center"\), a system overlay such as a notification banner; nothing was pressed\. It usually goes away within seconds: wait about 5 s, read the window again and retry the drag once/);
+  assert.doesNotMatch(r.error, /tile the windows|nothing was pressed.*nothing was pressed/);
 });

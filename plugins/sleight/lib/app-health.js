@@ -65,6 +65,38 @@ function frontFullScreen() {
   return ObjC.unwrap(ObjC.castRefToObject(value[0])) === true;
 }
 
+// How many of these windows some Space holds, from the window server's private CGSCopySpacesForWindows.
+// CGWindowList also lists windows an app ordered out and
+// keeps, which no Space holds and nobody can see or act in: Safari keeps a 500x500 one from launch
+// at the screen's corner, so it counted two windows with one open and the pop-up census never
+// counted (SW1b, 2026-10-19). Another Space's window is held by one and still counts. Whether a
+// minimized window is held is unmeasured (AXWindows counts this Space's minimized windows anyway).
+// Undefined when the call is missing or answers oddly.
+let spacesOf, spacesBroken = false;
+function spaceWindows(ids) {
+  if (spacesBroken) return undefined;
+  try {
+    if (!ids.every(id => Number.isInteger(id) && id > 0)) return undefined;
+    if (!spacesOf) {
+      try {
+        ObjC.bindFunction('CGSMainConnectionID', ['int', []]);
+        ObjC.bindFunction('CGSCopySpacesForWindows', ['id', ['int', 'int', 'id']]);
+      } catch (error) { spacesBroken = true; throw error; }
+      const connection = Number($.CGSMainConnectionID());
+      if (!Number.isInteger(connection) || connection <= 0) return undefined;
+      // 7: the current, other and user Spaces. The copied array is never released: one small array a window a read.
+      spacesOf = id => ObjC.deepUnwrap($.CGSCopySpacesForWindows(connection, 7, $([id])));
+    }
+    let count = 0;
+    for (const id of ids) {
+      const held = spacesOf(id);
+      if (!Array.isArray(held)) return undefined;
+      if (held.length) count++;
+    }
+    return count;
+  } catch { return undefined; }
+}
+
 // On another Space, an app's windows leave AXWindows too (Calculator, 2026-10-09), so CGWindowList
 // is the only count of them.
 function spaces(pid) {
@@ -72,6 +104,7 @@ function spaces(pid) {
   return {
     onScreen: cgWindows(true, pid),
     allWindows: all.length,
+    spaceWindows: spaceWindows(all.map(w => w.id)),
     onlySavePanel: all.length > 0 && all.every(w => w.savePanel),
     savePanelWindowIds: all.filter(w => w.savePanel).map(w => w.id).filter(id => Number.isInteger(id) && id > 0),
     fullScreenSpace: frontFullScreen(),

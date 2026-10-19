@@ -166,9 +166,19 @@ our own runs. Dates and engine versions are given where they matter.
   Word's process with `CGEventPostToPid` released it, and Word then closed the fixture and quit by script.
 - textedit-window-drag has never passed (0 of 12 recorded runs, 2026-10-16 to 2026-10-19). In all 4 transcripts of 2026-10-19,
   `drag` with `toWindowId` first refused the drop as covered by the cascaded source window. The fixture now places the two
-  windows side by side in the display's visible frame, which no live run has tested yet. Two more `drag` faults showed up there:
-  its Accessibility move failed with "Ref has incompatible type" (2 of 4 runs), and one run read Notification Center
-  (window 40) as covering the source point. Claude then called `notifications`, the arm's approval was refused, and the pass stopped.
+  windows side by side in the display's visible frame, which no live run has tested yet. Two more `drag` faults showed up there,
+  both fixed on 2026-10-19 and not yet run live. The Accessibility text move failed with "Ref has incompatible type" in all 64
+  benchmark transcripts that tried it (2026-10-16 to 2026-10-19): the formatting check passed a malloc'd buffer where JXA
+  wants a Ref or null. The cover check also counted two system windows that the window server doesn't send clicks to. One is the
+  Dock's tiling backdrop (layer 0, left on screen after Move & Resize). The other is Notification Center's full-display window
+  (layer 21), on screen while a banner shows. A Mimestream banner appeared at 15:38:53Z, half a screen from the source point,
+  and `drag` refused the source point as covered. Claude then called `notifications`, the arm's approval was refused, and the
+  pass stopped. Another app's window now counts as cover at a point when the system-wide Accessibility hit test at that point
+  returns an element of that app, or fails. In a read-only probe on 2026-10-19, that hit test returned the TextEdit window
+  under the Dock backdrop. No banner was on screen during the probe. The banner case is untested and assumes the window server
+  routes clicks outside the banner to the window below. A banner over the point still stops the drag, and the refusal now says
+  to wait about 5 s and retry once.
+- `hover` still counts every on-screen window in front of the point as a blocker, and the same two system windows can refuse it.
 - In both Firefox settings runs of 2026-10-17, `drag` by element number failed on the web list's rows (3 of 3 tries), so Claude
   used coordinates. Claude then sent 3 drags in the shown image's 2000-pixel frame, while the engine and `drag` read the
   2560-pixel original. Those runs got the frame note late or never. It now comes with the first screenshot of each window
@@ -750,7 +760,14 @@ native reference, and oversized first results defer the browser reference while 
   window that comes to the front doesn't get it either, since it may be the owner's. In the first live check (FS2,
   2026-10-19) the line never showed. Haiku's Cmd+T call came back as a lease stop on the retitled window, and any stop
   dropped the count. A stop that shows the counted window now keeps it. The trace records every count, and every reason
-  a new window doesn't get the line, as `popup-window`. We haven't measured whether CGWindowList counts Safari's one window as one.
+  a new window doesn't get the line, as `popup-window`. The second live check (6ba7204b, 3 rounds) showed the line 0 times.
+  CGWindowList counted 2 windows for Safari's one, because Safari keeps a 500x500 window from launch that it never shows and no Space
+  holds. The count now leaves out windows no Space holds (the private `CGSCopySpacesForWindows`) and keeps another Space's.
+  Not yet rerun live. We haven't measured whether a minimized window or a full-screen window on another Space counts. Many
+  apps keep such hidden windows (TextEdit, Messages and Mail did on 2026-10-19). If the owner brings one back between the
+  read and the action (a closed Mail window reopened from the Dock), the line calls it the task's pop-up. Haiku
+  stopped at the pop-up in 1 of those 3 rounds. The proposed race change is one prompt clause for every arm: "a pop-up that a page in it opens is
+  part of the task".
 - sleight inside Codex on gpt-6.1-sol failed demoid 6 of 6 (race-1017 b16, Safari and Firefox), and Codex alone failed it 6 of 6.
   sleight showed the DemoID pop-up and refused nothing. Sol stopped on the race prompt's "never use any other browser window"
   ("your window restriction prevents me from using" it), and all six runs then asked `select_window` for the renamed shop
