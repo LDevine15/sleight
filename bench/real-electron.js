@@ -98,6 +98,12 @@ function nativeElectron() {
   return {
     launch: function (request) {
       var workspace = $.NSWorkspace.sharedWorkspace, url = workspace.URLForApplicationWithBundleIdentifier(request.bundle);
+      // appPath: the live runner's own copy of the bundle (electron-relaunch-live.mjs), checked to carry the same bundle id.
+      if (request.appPath) {
+        url = $.NSURL.fileURLWithPath(request.appPath);
+        var copy = $.NSBundle.bundleWithURL(url);
+        if (!copy || copy.isNil() || unwrap(copy.bundleIdentifier) !== request.bundle) throw new Error('Fixture app copy is not ' + request.bundle);
+      }
       if (!url || url.isNil()) throw new Error('Fixture app not installed');
       var error = Ref();
       // A new instance gives this request its own returned process even if another instance races startup.

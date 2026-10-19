@@ -4,6 +4,19 @@
 // owners: CG window number -> owner pid (metadata, no titles). pids: running pids of a bundle (counts the owner's instance, reads nothing of it).
 // press: AXPress the one button titled `title` inside a sheet of the fixture pid's own windows (its Save As sheet's Cancel).
 // The harness never uses press on a consent card or a macOS permission prompt.
+// windows: the count of a pid's ordinary on-screen windows. card: where sleight's consent card is on screen, for the
+// person who clicks it (the window server's bounds of the consent host's windows, and its card buttons by AX when this
+// helper is trusted). Both read only.
+
+var CARD_BUTTONS = ['Allow once', 'Allow this session', 'Always allow', 'Quit and reopen', 'Cancel', 'Review sleight request'];
+// Window server rows of the given pids, bounds only (no titles).
+function cardRows(list, pids) {
+  return list.filter(function (w) { return pids.indexOf(Number(w.kCGWindowOwnerPID)) !== -1; }).map(function (w) {
+    var b = w.kCGWindowBounds || {};
+    return { pid: Number(w.kCGWindowOwnerPID), id: Number(w.kCGWindowNumber), layer: Number(w.kCGWindowLayer), onScreen: !!w.kCGWindowIsOnscreen,
+      x: Math.round(Number(b.X)), y: Math.round(Number(b.Y)), width: Math.round(Number(b.Width)), height: Math.round(Number(b.Height)) };
+  });
+}
 
 function sampleLoop(request, api, clock) {
   var started = clock.now(), interval = request.intervalMs > 0 ? request.intervalMs : 50;
@@ -58,6 +71,30 @@ function native(request) {
       for (var i = 0; i < running.count; i++) { var app = running.objectAtIndex(i); if (unwrap(app.bundleIdentifier) === bundle) out.push(Number(app.processIdentifier)); }
       return out;
     },
+    windowCount: function (pid) {
+      return windows().filter(function (w) { return Number(w.kCGWindowOwnerPID) === pid && Number(w.kCGWindowLayer) === 0 && !!w.kCGWindowIsOnscreen; }).length;
+    },
+    card: function (pids) {
+      var out = { windows: cardRows(windows(), pids), buttons: [], ax: !!$.AXIsProcessTrusted() };
+      if (!out.ax) return out;
+      function pair(value, type) {
+        var bytes = $.NSMutableData.dataWithLength(16);
+        if (!value || !$.AXValueGetValue(value, type, bytes.mutableBytes)) return null;
+        var boxed = $.NSValue.valueWithBytesObjCType(bytes.bytes, type === 1 ? '{CGPoint=dd}' : '{CGSize=dd}');
+        var s = ObjC.deepUnwrap(type === 1 ? boxed.pointValue : boxed.sizeValue);
+        return type === 1 ? [s.x, s.y] : [s.width, s.height];
+      }
+      function walk(element, pid, depth) {
+        var title = text(element, 'AXTitle');
+        if (text(element, 'AXRole') === 'AXButton' && CARD_BUTTONS.indexOf(title) !== -1) {
+          var at = pair(attribute(element, 'AXPosition'), 1), size = pair(attribute(element, 'AXSize'), 2);
+          if (at && size) out.buttons.push({ pid: pid, title: title, x: Math.round(at[0]), y: Math.round(at[1]), width: Math.round(size[0]), height: Math.round(size[1]) });
+        }
+        if (depth > 0) list(element, 'AXChildren').forEach(function (child) { walk(child, pid, depth - 1); });
+      }
+      pids.forEach(function (pid) { list($.AXUIElementCreateApplication(pid), 'AXWindows').forEach(function (w) { walk(w, pid, 8); }); });
+      return out;
+    },
     pressInSheet: function (pid, title) {
       if (!$.AXIsProcessTrusted()) return { pressed: false, reason: 'accessibility-denied' };
       var found = [];
@@ -86,6 +123,8 @@ function run(argv) {
     emit({ activated: api.activate(request.pid) });
   } else if (request.mode === 'owners') emit({ owners: api.owners(request.ids.map(Number)) });
   else if (request.mode === 'pids') emit({ pids: api.pids(request.bundle) });
+  else if (request.mode === 'windows') emit({ windows: api.windowCount(Number(request.pid)) });
+  else if (request.mode === 'card') emit(api.card(request.pids.map(Number).filter(function (pid) { return pid > 0; })));
   else if (request.mode === 'press') {
     if (request.title !== 'Cancel') throw new Error('Only the fixture sheet\'s Cancel is pressed');
     emit(api.pressInSheet(Number(request.pid), request.title));

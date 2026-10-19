@@ -54,10 +54,10 @@ const SCHEMES = ['vscode-file', 'vscode-webview'];
 
 /** The registry row for one installed bundle. Identity fields come from electron-identity's deriveAppInstance (the same
  * derivation instanceFromRecipe checks): signer is the team id, runtime 'electron/' + Electron Framework's CFBundleVersion. */
-export function recipeFromBundle({ app, derived, executable, sha256, bundlePath, workspace }) {
+export function recipeFromBundle({ app, derived, executable, sha256, bundlePath, workspace, userProfile }) {
   return { build: `${app.bundleId}@${derived.version}`, name: app.name, bundleId: app.bundleId, signer: derived.signer, runtime: derived.runtime,
     executable, sha256, cdhash: derived.cdhash, args: [...RECIPE_ARGS, workspace], schemes: [...SCHEMES], fileRoots: [join(bundlePath, 'Contents', 'Resources', 'app')],
-    joinTolerance: 2, focusEmulation: false, zoomLevel: 0, qualified: false };
+    joinTolerance: 2, focusEmulation: false, zoomLevel: 0, qualified: false, ...(userProfile ? { userProfile } : {}) };
 }
 
 /** The host's own status (electron-host status()) still holds the app's pipe: owned, and ready or parked resumably. */
@@ -74,11 +74,11 @@ async function sha256(path) {
   return hash.digest('hex');
 }
 
-async function listProcesses(exec) {
+export async function listProcesses(exec = execute) {
   const { stdout } = await exec('/bin/ps', ['-axww', '-o', 'pid=', '-o', 'lstart=', '-o', 'args='], { env: { ...process.env, LC_ALL: 'C' }, timeout: 10000, maxBuffer: 32 * 1024 * 1024 });
   return parseProcesses(stdout);
 }
-async function helper(request, exec) {
+export async function helper(request, exec = execute) {
   const { stdout } = await exec('/usr/bin/osascript', ['-l', 'JavaScript', HELPER, JSON.stringify(request)], { timeout: 15000 });
   return JSON.parse(String(stdout).trim().split('\n').at(-1));
 }
@@ -127,11 +127,12 @@ export async function liveRuntime(options, { io } = {}, deps = {}) {
   await io.permission(); // throws when codex-macos-inspect is missing, before anything starts
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'sleight-eq-'));
   const observer = liveObserver({ spawnProcess: deps.spawn, root });
-  return { observer, driverFor: app => liveDriver(app, { root, exec, observer }), async close() { rmSync(root, { recursive: true, force: true }); } };
+  return { observer, driverFor: (app, extra = {}) => liveDriver(app, { root, exec, observer, ...extra }), async close() { rmSync(root, { recursive: true, force: true }); } };
 }
 
 // forkWorker: the seam the unit tests use for a fake worker; the run forks electron-qualification-worker.mjs.
-export function liveDriver(app, { root, exec, observer, forkWorker = worker }) {
+// cardLog: the live runner's card log (electron-qualification-worker.mjs cardLine), passed to every worker.
+export function liveDriver(app, { root, exec, observer, forkWorker = worker, cardLog }) {
   if (!BENCHMARK_ALLOWLIST.includes(app.bundleId)) throw Error('NOT_ON_BENCHMARK_ALLOWLIST');
   const base = mkdtempSync(join(root, app.key + '-'));
   const tempRoot = join(base, 'profiles'), stateDir = join(base, 'state'), registryPath = join(base, 'recipes.json');
@@ -155,7 +156,7 @@ export function liveDriver(app, { root, exec, observer, forkWorker = worker }) {
     appSecret = (await import(new URL('worker.mjs', D))).serverAppSecret();
   }
   const message = (sessionId = session, extra = {}) => ({ bundleId: app.bundleId, session: sessionId, text: `Qualify turbo in ${app.name}.`,
-    registryPath, stateDir, tempRoot, appSecret, allowlist: [...BENCHMARK_ALLOWLIST], ...extra });
+    registryPath, stateDir, tempRoot, appSecret, allowlist: [...BENCHMARK_ALLOWLIST], ...(cardLog ? { cardLog } : {}), ...extra });
   const seen = reply => { if (reply.ok && reply.hostPid) hostPid = reply.hostPid; return reply; };
   // A turn in the given worker, or in a new one (a new consent instance, so a new card).
   async function startWorker(consentWaitMs, sessionId = session, w) {
@@ -176,6 +177,20 @@ export function liveDriver(app, { root, exec, observer, forkWorker = worker }) {
 
   const driver = {
     build: () => build ?? {},
+    prepare,
+    // What the live runner's Claude Code arm needs to reach this run's host through its own worker (electron-arm-server.mjs).
+    armConfig: () => ({ bundleId: app.bundleId, name: app.name, session: 'v3' + randomBytes(16).toString('hex'), registryPath, stateDir, tempRoot, appSecret,
+      allowlist: [...BENCHMARK_ALLOWLIST], workspace: files.root, ...(cardLog ? { cardLog } : {}) }),
+    // The arm's worker launched the app, not this driver: the main process naming this run's temporary root joins the
+    // launched list, so cleanup quits it like its own. Nothing else is adopted.
+    async adoptRunning() {
+      const all = await listProcesses(exec), mains = profileProcesses(all, tempRoot).filter(p => found && p.args.startsWith(found.executable + ' '));
+      for (const p of mains) if (!launched.some(l => l.pid === p.pid)) launched.push({ pid: p.pid, pidBirth: String(p.startedAtMs) });
+      if (mains.length) last = { pid: mains[0].pid };
+      // The arm's host, by its own state folder argument, so cleanup ends it once the app is gone.
+      hostPid ??= all.find(p => ` ${p.args} `.includes(` --state-dir ${stateDir} `))?.pid;
+      return mains.length;
+    },
     identity: () => current ?? last ?? null,
     async connect({ consentWaitMs } = {}) {
       await prepare();
