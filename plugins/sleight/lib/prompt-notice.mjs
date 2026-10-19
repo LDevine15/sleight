@@ -4,6 +4,9 @@
 export function promptNotice(text, prompt) {
   if (prompt !== 'lean') return text;
   return text
+    .replace(': tab read timed out (1.5 s). Read this tab again.', ': timeout (1.5 s); reread tab.')
+    .replace(' changed, is missing or ambiguous. Read this tab again.', ' stale; reread tab.')
+    .replace(': the tab renumbered; the observed row is unique.', ': unique remap.')
     .replace('send numbered actions on one handle per call. Read that window before acting.', 'numbered actions need one handle. Read it first.')
     .replace('REPL preparation was stopped before this call ran.', 'REPL setup stopped. Call skipped.')
     .replace('the window changed before this call\'s actions ran, so nothing after the acquisition was sent. Act again with the numbers above, or with { id } or { label }.', 'window changed first; actions not sent. Use the numbers above, { id } or { label }.')

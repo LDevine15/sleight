@@ -1,6 +1,8 @@
 import { promptNotice } from './prompt-notice.mjs';
 import { elementWait } from './element-wait.mjs';
 import { listPicker } from './native-list-pick.mjs';
+import { settleLoading } from './loading-settle.mjs';
+import { literalElements } from './literal-elements.mjs';
 import { actionOutcome, outcomeRecord } from './action-outcomes.mjs';
 import { moneyFigures, moneyConflicts } from './payment-figures.mjs';
 import { enginePayment, paymentAction } from './payment-gate.mjs';
@@ -371,7 +373,7 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   // last action already wrote one, so the guard reads again only without it.
   const { reuseSetup, acknowledge, prompt, outcomes, kernel, ...checks } = options;
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
-  return guardSetup({ window, reason, lease, ...checks }, { reuseSetup, acknowledge, prompt, outcomes, kernel }) +
+  return guardSetup({ window, reason, lease, literalOrder: literalElements(code), ...checks }, { reuseSetup, acknowledge, prompt, outcomes, kernel }) +
     (options.browserCandidate ? '\nglobalThis.__sleightDocumentGuard.activeApp = undefined;' : '') + /* generated code */ `\n${code}
 {
   const guard = globalThis.__sleightDocumentGuard, last = guard.activeApp && guard.reads.get(guard.activeApp);
@@ -449,6 +451,18 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     // read the code made itself, and refers to that read (codeReads: handle -> its latest element lines).
     // Without the list (a caller other than the relay), every number counts as a literal, as before.
     state.literals = update?.literals ? new Set(update.literals) : undefined;
+    state.pendingLiterals = update?.literalOrder ?? [];
+    // Batch recovery needs the caller's observed lines. A direct caller without
+    // them keeps the positional checks against this call's first capture.
+    state.numberBatch = state.seenLines !== undefined && new Set(state.pendingLiterals).size > 1;
+    state.literalBaselines = new WeakMap();
+    state.loadingBaselines = new WeakMap();
+    const settle = ${settleLoading.toString()};
+    state.settleRead = async (raw, text) => {
+      const before = state.loadingBaselines.get(raw);
+      state.loadingBaselines.delete(raw);
+      return before === undefined ? text : settle(() => raw.getAXState({ disableDiffing: true, emit: false }), before, text, parse, clock);
+    };
     state.codeReads = new WeakMap();
     // Literal numbers whose line was unique in the tree Claude saw (the relay's view of it).
     state.uniqueSeen = new Set(update?.uniqueSeen ?? []);
@@ -457,10 +471,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
       const start = clock();
       let text;
       ${O ? `try {
-        text = await raw.getAXState({ disableDiffing: true, emit: false });
+        text = await state.settleRead(raw, await raw.getAXState({ disableDiffing: true, emit: false }));
         if (phase !== 'wait') state.noteRead(raw, text, !['list', 'after-refusal'].includes(phase));
         return text;
-      } finally {` : `try { return text = await raw.getAXState({ disableDiffing: true, emit: false }); }
+      } finally {` : `try { return text = await state.settleRead(raw, await raw.getAXState({ disableDiffing: true, emit: false })); }
       finally {`}
         if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase,
           ms: clock() - start, chars: typeof text === 'string' ? text.length : 0, failed: text === undefined }) + '\\n');
@@ -756,7 +770,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           state.binding = undefined;
           const reads = state.reads, reading = {}, version = state.actionVersion;
           reads.set(proxy, reading);
-          const text = await raw.getAXState({ ...options, disableDiffing: true, emit: false });${O ? '\n          ' + 'state.noteRead(raw, text);' : ''}
+          const text = await state.settleRead(raw, await raw.getAXState({ ...options, disableDiffing: true, emit: false }));${O ? '\n          ' + 'state.noteRead(raw, text);' : ''}
           const emitted = options?.emit !== false;
           if (emitted) nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
           else nodeRepl.write(${JSON.stringify(GUARD_OMIT_MARK)} + text + ${JSON.stringify(GUARD_END)});
@@ -926,7 +940,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           // Keep the engine's capture until an opener or the caller's own read replaces it. Unknown
           // selectors still read; unique selectors use the numbers of the last capture we took.
           const firstTree = state.callElements.get(proxy);
-          const bindable = state.bind && !treeFree && firstTree && state.binding?.proxy === proxy && !before?.opens && !codeRead &&
+          const bindable = state.bind && !state.literalBaselines.get(proxy)?.moved && !treeFree && firstTree && state.binding?.proxy === proxy && !before?.opens && !codeRead &&
             (byId ? findTarget(firstTree).length === 1 : literal !== undefined && firstTree.has(literal));
           // A flagged window reads instead, and binds again after STALE_PASSES such actions pass.
           const staleKey = captureKey(state.callHeaders.get(proxy));
@@ -1089,7 +1103,33 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           // A number the code computed from its own read in this call (a match over getAXState) means
           // that read's element. Checked against the tree from before the call, correct clicks stopped,
           // and Claude fell back to one action per call in ZCode (2026-10-12).
-          if (codeRead) {
+          if (state.numberBatch && literal !== undefined && state.pendingLiterals.includes(literal)) {
+            if (!state.callElements.has(proxy)) { state.callElements.set(proxy, elements(text ?? '')); state.callTrees.set(proxy, text); }
+            let baseline = state.literalBaselines.get(proxy);
+            if (!baseline) {
+              const lines = new Map([...new Set(state.pendingLiterals)].map(n => [n, state.seenLines[n]]));
+              const unique = state.uniqueSeen;
+              baseline = { lines, unique, moved: false };
+              state.literalBaselines.set(proxy, baseline);
+            }
+            const current = elements(text ?? '');
+            const remaining = [...new Set(state.pendingLiterals)];
+            const shifted = !sameElement(baseline.lines.get(literal), current.get(args[0]));
+            if (baseline.moved || shifted) {
+              const resolved = new Map();
+              for (const n of remaining) {
+                const line = baseline.lines.get(n), matches = baseline.unique.has(n) ? sameLine(line) : [];
+                if (matches.length !== 1) throw stop('sleight stopped before ' + name + '(' + literal + '): element ' + n +
+                  ${quoted(/* lean notice */ ' changed since you read the window (was ')} + JSON.stringify(line ?? 'missing') + ', now ' + JSON.stringify(current.get(n) ?? 'missing') + ')' +
+                  ${quoted(/* lean notice */ '. Use the current numbers in the window below.')});
+                resolved.set(n, matches[0][0]);
+              }
+              baseline.moved = true;
+              const to = resolved.get(literal);
+              if (to !== args[0]) goTo(to, baseline.lines.get(literal), 'the window renumbered since you read it');
+            }
+          }
+          else if (codeRead) {
             if (!state.callElements.has(proxy)) { state.callElements.set(proxy, elements(text ?? '')); state.callTrees.set(proxy, text); }
             const was = codeRead.get(args[0]), now = elements(text ?? '').get(args[0]);
             if (!sameElement(was, now)) {
@@ -1237,6 +1277,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           // A second handle may refer to this same app/window. Every input
           // invalidates the call's observations, including reads on that alias.
           state.reads = new WeakMap();
+          if (text !== undefined) state.loadingBaselines.set(raw, text);
           // No Shift settle after setValue here, as drag.js does after its own text writes: the
           // engine refuses a key press with only modifiers (-10005, 2/2 live, 2026-10-11).
           input();${O ? '\n          ' + 'if (state.outcomeMark) attempt.rec = state.outcomeRec(name, asked, args, text ?? priorText, before); attempt.sent = true;' : ''}
@@ -1272,10 +1313,21 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
               const header = fresh === undefined ? undefined : parse(fresh);
               // Not for a control that opens or confirms (a lone "button Remove" in a re-rendered cart is another item's),
               // nor after an action that opens, nor when a sheet or dialog came up over the page since the tree it used.
+              const batch = state.numberBatch && state.literalBaselines.get(proxy);
+              const batchTargets = new Map();
+              if (batch && fresh !== undefined) for (const n of new Set(state.pendingLiterals)) {
+                const was = batch.lines.get(n);
+                const matches = batch.unique.has(n) && typeof was === 'string' && !/^[a-z][a-z ]*(?: \\([^)]*\\))*$/.test(was)
+                  ? [...elements(fresh)].filter(([, row]) => row === was) : [];
+                if (matches.length !== 1) { batchTargets.clear(); break; }
+                batchTargets.set(n, matches[0]);
+              }
               const to = fresh !== undefined && name === 'click' && typeof args[0] === 'number' && state.completedActions > 0 && text !== undefined &&
                 !opens && !before?.opens && !(hasModal(fresh) && !hasModal(text)) &&
-                observed && ['title', 'app', 'url'].every(key => header[key] === observed[key]) ? refusedPlace(text, args[0], fresh) : [];
+                observed && ['title', 'app', 'url'].every(key => header[key] === observed[key])
+                  ? batch ? batchTargets.has(literal) ? [batchTargets.get(literal)] : [] : refusedPlace(text, args[0], fresh) : [];
               if (to.length === 1) {
+                if (batch) batch.moved = true;
                 // The read after the refusal can take REFUSAL_READ_MS: the lease is checked again before anything goes.
                 try { await checkLease(); } catch (lost) { state.unknown.push(shown); keep(); throw lost; }
                 if (to[0][0] !== args[0]) renumbered(to[0][0], to[0][1]);
@@ -1305,6 +1357,10 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           previous.done = Date.now();
           if (editable) previous.completed = true;${O ? '\n          ' + 'attempt.completed = true;' : ''}
           state.completedActions++;
+          if (literal !== undefined) {
+            const at = state.pendingLiterals.indexOf(literal);
+            if (at !== -1) state.pendingLiterals.splice(at, 1);
+          }
           state.ran.push(shown);${O ? '\n          ' + 'state.keepOutcome(raw, attempt.rec, text ?? priorText);' : ''}
           state.lastAction = name === 'click' && byId && kind !== 'line'
             ? { kind: kind === 'ID' || bare !== undefined && !hasLabel(line ?? '', target) ? 'id' : 'label', value: target, line }

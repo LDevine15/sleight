@@ -553,13 +553,14 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
   // sha256 prefixes of the same calls on the 1.3.0 release line plus PG2 (b8020ea5), which has no outcome code. The pins moved when
   // 1.3.1 took in the release line's payment gate and Codex kernel epochs; the merged off path matched b8020ea5 byte for byte.
   // PG3's suggestion pick and its review fixes changed the gate the guard and the REPL setup embed, so those pins moved again.
+  // CC4 and CC5 add loading settlement and observed batch targets to the shared setup, including its off path.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
     guardedLean: hash(guardedCode('await app.click(1);', window, undefined, undefined, { prompt: 'lean' })),
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: '22d27cec7a26d70c', guardedLean: '32f8d5c667cee2bf', reuse: 'ca953cc424ea8156', read: '2a8b6cef285b4994', repl: '2a8b6cef285b4994' });
+  }, { guarded: '42219c0d95f7c11c', guardedLean: '78ad8df2aa840161', reuse: 'd2b66cc3499a55e3', read: '93a118a18523e93f', repl: '93a118a18523e93f' });
 });
 
 test('with both switches off the guard carries none of the outcome code', () => {

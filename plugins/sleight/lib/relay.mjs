@@ -91,6 +91,7 @@ import { dropRepeatedText } from './repeated-text.mjs';
 import { ruleDelivery } from './rule-delivery.mjs';
 import { typedTextReceipt, typingReceiptCall, typingReceiptCode, withoutTypingReceipt, typingReceiptTarget } from './typed-text-receipt.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
+import { literalElements } from './literal-elements.mjs';
 import { createResultBudget, requestsFullDocumentation } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
 import { OWN_HOST_LINE, isOwnHost, mentionsOwnHost, namesOwnHost as appNamesOwnHost, getAppTargets, ownHostPid as isOwnHostPid } from './own-host.mjs';
@@ -3801,7 +3802,7 @@ export function createRelay({
                 ...(light ? { lightReturn: light } : {}),
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
-                seenLines, literals: numbers,
+                seenLines, literals: numbers, literalOrder: literalElements(originalCode),
                 uniqueSeen, payment: paymentMessages.guard(confirmPayments) });
             if (receiptTyping) msg.params.arguments.code += typingReceiptCode(filterMark);
           } else msg.params.arguments.code = swipeCode;
@@ -3813,7 +3814,7 @@ export function createRelay({
           msg.params.arguments.code = dragToCode(msg.params.arguments.code);
           msg.params.arguments.code = reorderCode(msg.params.arguments.code);
           msg.params.arguments.code = pickFromListCode(msg.params.arguments.code);
-          if (browser) msg.params.arguments.code = browserStale.code(msg.params.arguments.code);
+          if (browser) msg.params.arguments.code = browserStale.code(msg.params.arguments.code, originalCode, prompt);
           const tabCode = tabCleanupCode(browser ? backgroundLinksCode(msg.params.arguments.code) : msg.params.arguments.code);
           if (/\bcua\.createBrowserTab\s*\(|\.tabs\.new\s*\(/.test(originalCode)) tabsMayNeedCleanup = true;
           msg.params.arguments.code = tabReuseCode(tabCode, msg.id);

@@ -1,4 +1,5 @@
-import { tokens } from './flow-rules.mjs';
+import { literalElements } from './literal-elements.mjs';
+import { promptNotice } from './prompt-notice.mjs';
 
 const actions = new Set(['click', 'doubleClick', 'rightClick', 'setValue', 'typeText', 'pressKey', 'paste',
   'scroll', 'selectText', 'performSecondaryAction', 'performAction']);
@@ -49,7 +50,7 @@ function install(cua, config, parse, methods, samePage, sameRow) {
           const current = state.config, seen = current.trees[String(raw.id)];
           if (typeof args[0] === 'number' && current.literals.includes(args[0]) && seen) {
             const requested = args[0];
-            const call = state.call.get(raw) ?? { moved: Object.create(null) };
+            const call = state.call.get(raw) ?? { moved: Object.create(null), remaining: current.order.slice() };
             state.call.set(raw, call);
             const number = call.moved[requested] ?? requested;
             if (number !== requested) args = [number, ...args.slice(1)];
@@ -63,6 +64,7 @@ function install(cua, config, parse, methods, samePage, sameRow) {
               });
             } catch (err) {
               if (err?.staleTimeout) {
+                if (current.order.length > 1) throw new Error(/* notice */ `sleight stopped before ${name}(${requested})${current.batchTimeout}`);
                 nodeRepl.write(`sleight: ${name}(${requested}) ran without a stale-number check: the tab read timed out after 1.5 s.\n`);
                 return value.apply(raw, args);
               }
@@ -72,14 +74,35 @@ function install(cua, config, parse, methods, samePage, sameRow) {
             const was = seen.rows[requested];
             const now = fresh?.rows?.[number];
             const unique = seen.unique.includes(requested);
-            if (was === undefined || !fresh?.header || !samePage(fresh.header, seen.header) || !sameRow(was, now)) {
+            // Once a batch shifts, every remaining literal must still identify
+            // one row from the tree the caller saw, including unchanged numbers.
+            const remaining = [...new Set(call.remaining)];
+            const shifted = remaining.some(n => !sameRow(seen.rows[n], fresh?.rows?.[n]));
+            if (current.order.length > 1 && (call.shifted || shifted)) {
+              const resolved = Object.create(null);
+              for (const n of remaining) {
+                const line = seen.rows[n];
+                const matches = typeof line !== 'string' ? [] : Object.entries(fresh?.rows ?? {}).filter(([, row]) => sameRow(line, row));
+                if (owners.size !== 1 || !samePage(fresh?.header, seen.header) || !seen.unique.includes(n) ||
+                    /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(line ?? '') || matches.length !== 1) {
+                  throw new Error(/* notice */ `sleight stopped before ${name}(${requested}): element ${n}${current.batchMissing}` + (typeof text === 'string' ? '\n' + text : ''));
+                }
+                resolved[n] = Number(matches[0][0]);
+              }
+              call.shifted = true;
+              Object.assign(call.moved, resolved);
+              const to = resolved[requested];
+              if (to !== requested) nodeRepl.write(/* notice */ `sleight: ${name}(${requested}) went to element ${to}${current.batchMoved}\n`);
+              args = [to, ...args.slice(1)];
+            }
+            else if (was === undefined || !fresh?.header || !samePage(fresh.header, seen.header) || !sameRow(was, now)) {
               const matches = was === undefined || !fresh?.rows ? []
                 : Object.entries(fresh.rows).filter(([, line]) => sameRow(was, line));
               const identity = owners.size === 1 && unique && samePage(fresh?.header, seen.header) &&
                 !/^[a-z][a-z ]*(?: \([^)]*\))*$/.test(was ?? '') && matches.length === 1
                 ? ` Current unique row ${matches[0][0]}: ${JSON.stringify(matches[0][1].slice(0, 320))}${matches[0][1].length > 320 ? ' (truncated)' : ''}.` : '';
               if (owners.size === 1 && current.literals.length === 1 && current.literals[0] === requested &&
-                  unique && samePage(fresh.header, seen.header) &&
+                  unique && samePage(fresh?.header, seen.header) &&
                   !/^[a-z][a-z ]*(?: \([^)]*\))*$/.test(was ?? '') && matches.length === 1) {
                 const to = Number(matches[0][0]);
                 nodeRepl.write(`sleight: ${name}(${requested}) went to element ${to}, the same labelled row: the tab renumbered since you read it.${identity}\n`);
@@ -87,6 +110,10 @@ function install(cua, config, parse, methods, samePage, sameRow) {
                 call.moved[requested] = to;
               } else throw new Error(`sleight stopped before ${name}(${requested}): element ${requested} changed or is missing since you read the tab.${identity} Read this tab again before using its numbers.` + (typeof text === 'string' ? '\n' + text : ''));
             } else call.moved[requested] = number;
+            const result = await value.apply(raw, args);
+            const at = call.remaining.indexOf(requested);
+            if (at !== -1) call.remaining.splice(at, 1);
+            return result;
           }
           return value.apply(raw, args);
         };
@@ -139,16 +166,16 @@ export function createBrowserStaleGuard() {
       }
       while (trees.size > 64) trees.delete(trees.keys().next().value);
     },
-    code(code) {
-      const ts = tokens(code), literals = [];
-      for (let i = 0; i < ts.length - 4; i++) if (ts[i].v === '.' && actions.has(ts[i + 1].v) &&
-          ts[i + 2].v === '(' && !ts[i + 3].string && /^\d+$/.test(ts[i + 3].v) &&
-          [',', ')'].includes(ts[i + 4].v)) literals.push(Number(ts[i + 3].v));
+    code(code, original = code, prompt) {
+      const literals = literalElements(original);
       const numbers = [...new Set(literals)], selected = {};
       for (const [id, tree] of trees) selected[id] = { header: tree.header,
         rows: Object.fromEntries(numbers.filter(n => tree.rows[n] !== undefined).map(n => [n, tree.rows[n]])),
         unique: numbers.filter(n => tree.rows[n] !== undefined && Object.values(tree.rows).filter(line => line === tree.rows[n]).length === 1) };
-      const config = { trees: selected, literals: ts.some(t => t.v === '<template>') ? [] : numbers };
+      const config = { trees: selected, literals: numbers, order: literals,
+        batchTimeout: promptNotice(/* lean notice */ ': tab read timed out (1.5 s). Read this tab again.', prompt),
+        batchMissing: promptNotice(/* lean notice */ ' changed, is missing or ambiguous. Read this tab again.', prompt),
+        batchMoved: promptNotice(/* lean notice */ ': the tab renumbered; the observed row is unique.', prompt) };
       return `(${install.toString()})(cua,${JSON.stringify(config)},${parseTree.toString()},${JSON.stringify([...actions])},${samePage.toString()},${sameRow.toString()});\n${code}`;
     },
   };
