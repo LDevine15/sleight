@@ -77,7 +77,7 @@ function handFixture(options = {}) {
   const sent = [], traces = [], locates = [], reads = [], deferred = [];
   const client = { enabled: true, pid: 4242, send: frame => sent.push(frame), hidden: 0, hide() { this.hidden++; }, close() {} };
   let metrics = METRICS;
-  const hand = createBrowserHand({ client, env: { SLEIGHT_HAND: '1' }, defer: fn => deferred.push(fn), now: () => 0,
+  const hand = createBrowserHand({ client, env: { SLEIGHT_HAND: '1' }, setting: () => ({ enabled: true }), defer: fn => deferred.push(fn), now: () => 0,
     readMetrics: async page => { reads.push(page); return metrics; },
     locate: async request => { locates.push(request); return GEOMETRY; },
     trace: (direction, msg) => traces.push([direction, msg]), ...options });
@@ -177,7 +177,7 @@ test('act latency with the hand is within 0.1 ms of act without it', async t => 
     return { median: times[N >> 1], p95: times[Math.floor(N * 0.95)] };
   }
   const sent = [];
-  const make = () => createBrowserHand({ client: { enabled: true, send: frame => sent.push(frame), hide() {}, close() {} }, env: { SLEIGHT_HAND: '1' },
+  const make = () => createBrowserHand({ client: { enabled: true, send: frame => sent.push(frame), hide() {}, close() {} }, env: { SLEIGHT_HAND: '1' }, setting: () => ({ enabled: true }),
     readMetrics: async () => METRICS, locate: async () => GEOMETRY });
   // The fake locators have no boundingBox, so give each step one the way Playwright locators do.
   const boxed = hand => ({ step: input => hand.step({ ...input, locator: { boundingBox: async () => BOX } }) });
