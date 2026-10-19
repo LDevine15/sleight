@@ -707,8 +707,11 @@ native reference, and oversized first results defer the browser reference while 
   in argv, and cleanup quits an instance proven to be the run's own. The full map (08:57 UTC, 10 runs) completed Finder,
   TextEdit, VS Code and Word 10/10 and the TextEdit cohort 40/40. Cursor and Excel were 0/10 on NO_UNIQUE_SCROLL_AREA. Excel's
   marker cell sat outside its only scroll area. Cursor 3.25's tree had neither a scroll area, a list nor a marker row, likely
-  its agent-first layout on an empty profile, which no setting we found turns off. The scroll target rule now covers both, and
-  neither has run since.
+  its agent-first layout on an empty profile, which no setting we found turns off. The scroll target rule now covers both. A
+  Cursor rerun (09:18 UTC) measured its cell through the owned-instance fallback, but Cursor's 102-node tree had one text
+  entry area (likely the agent prompt) and no document region, so its scroll timing isn't a document scroll. The run then
+  stopped when macOS handed focus to Finder as Cursor quit, which now counts as `quit-handoff`. Excel hasn't run since the
+  fix.
 
 ## Turbo in unattended runs
 

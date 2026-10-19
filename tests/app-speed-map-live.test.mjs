@@ -351,3 +351,28 @@ test('only a fixture proven to be the run\'s own instance asks for the any-regio
   assert.equal(word.anyRegion, undefined);
   await w.runtime.closeFixture(word); await w.runtime.close();
 });
+
+// Cursor rerun (2026-10-19 09:18Z): Cursor activated itself at launch; when cleanup quit it, macOS gave focus to Finder,
+// not the baseline Terminal, and that read as a focus change.
+test('focus leaving a self-activated fixture app during cleanup is quit-handoff; other cleanup changes still stop', () => {
+  const app = 'com.todesktop.230313mzl4w4u92';
+  const tracker = attentionTracker({ bundle: app });
+  tracker.observe({ front: 'com.apple.Terminal', atMs: 0 });
+  tracker.observe({ front: app, stage: 'retain', atMs: 2421 });
+  tracker.setPhase('measure');
+  tracker.setPhase('cleanup');
+  assert.equal(tracker.observe({ front: 'com.apple.finder', stage: 'cleanup', atMs: 7671 }), false);
+  assert.equal(tracker.events.at(-1).class, 'quit-handoff');
+  assert.equal(tracker.observe({ front: 'org.example.third', stage: 'cleanup', atMs: 7900 }), true, 'a later change is not the handoff');
+  // Without a launch activation the app never held focus, so a cleanup change is not its handoff.
+  const quiet = attentionTracker({ bundle: app });
+  quiet.observe({ front: 'com.apple.Terminal', atMs: 0 });
+  quiet.setPhase('cleanup');
+  assert.equal(quiet.observe({ front: 'com.apple.finder', stage: 'cleanup', atMs: 5000 }), true);
+  // A handoff during measurement is still sleight's to answer for.
+  const measured = attentionTracker({ bundle: app });
+  measured.observe({ front: 'com.apple.Terminal', atMs: 0 });
+  measured.observe({ front: app, stage: 'retain', atMs: 2000 });
+  measured.setPhase('measure');
+  assert.equal(measured.observe({ front: 'com.apple.finder', stage: 'ready', atMs: 3000 }), true);
+});

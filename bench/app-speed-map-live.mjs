@@ -46,10 +46,11 @@ const bundleId = value => value == null ? null : typeof value === 'string' && /^
 // Focus and cover changes seen in the host's 200 ms samples, with the phase they happened in. sleight never takes focus
 // (LAWS), but before the first engine call the only actor is the fixture app's own launch: an app that activates itself
 // or puts its window over the owner's then is classified (launch-activation, launch-cover) and published, not stopped.
-// A cover by the fixture app during its own cleanup is cleanup-cover, published the same way.
+// A cover by the fixture app during its own cleanup is cleanup-cover, and focus leaving a self-activated fixture app during
+// cleanup is quit-handoff, both published the same way.
 // Focus returning to the owner's app is recorded as focus-restored. Every other change stops the run as before.
 export function attentionTracker(task, { onEvent } = {}) {
-  let phase = 'setup', baseline, lastFront, lastCover = false;
+  let phase = 'setup', baseline, lastFront, lastCover = false, launchActivated = false, handedOff = false;
   const tracker = { events: [], count: 0, stopped: false, setPhase(next) { phase = next; },
     observe(sample) {
       const front = bundleId(sample.front), cover = sample.targetOverOwner === true;
@@ -63,8 +64,14 @@ export function attentionTracker(task, { onEvent } = {}) {
       };
       if (baseline === undefined) baseline = lastFront = front;
       else if (front !== lastFront) {
-        record('focus', lastFront, front, front !== null && front === baseline ? 'focus-restored'
-          : phase === 'setup' && front === task.bundle ? 'launch-activation' : 'focus-change');
+        // When the fixture app took focus at its own launch and cleanup closes or quits it, macOS hands focus to an app
+        // of its choosing, not necessarily the baseline: that one change is quit-handoff.
+        const handoff = phase === 'cleanup' && launchActivated && !handedOff && lastFront === task.bundle;
+        const name = front !== null && front === baseline ? 'focus-restored'
+          : phase === 'setup' && front === task.bundle ? 'launch-activation' : handoff ? 'quit-handoff' : 'focus-change';
+        if (name === 'launch-activation') launchActivated = true;
+        if (name === 'quit-handoff') handedOff = true;
+        record('focus', lastFront, front, name);
         lastFront = front;
       }
       // The cover flag means the fixture app's own window lies over the owner's. During setup that is its launch, and during

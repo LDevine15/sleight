@@ -124,9 +124,10 @@ Every cell records focus and cover changes from the host's 200 ms samples. Each 
 the time and the frontmost bundle ID before and after. Before the first engine call the only actor is the fixture app's
 own launch, so the app activating itself or covering the owner's window then counts as `launch-activation` or
 `launch-cover`. The row and the Attention column report it, and the run goes on. The fixture app's window covering the
-owner's while its document closes counts the same way as `cleanup-cover`. Focus returning to the owner's app is
-`focus-restored`. Any other change, or any change after the first engine call, stops the run as `FOCUS_CHANGED`, with
-the session's own failure kept as `sessionFailure`.
+owner's while its document closes counts the same way as `cleanup-cover`. When the app took focus at launch, the one
+focus change as cleanup closes it goes to whichever app macOS picks, and it counts as `quit-handoff`. Focus returning to
+the owner's app is `focus-restored`. Any other change, or any change after the first engine call, stops the run as
+`FOCUS_CHANGED`, with the session's own failure kept as `sessionFailure`.
 
 ## Browser head-to-head
 
