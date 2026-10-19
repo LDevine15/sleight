@@ -182,7 +182,8 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
               let observed;
               try { observed = await capture(parent, { maxChars: 8000 }); }
               catch (error) {
-                if (error.siteBlocked || error.message === endpointBlock) throw error;
+                if (error.siteBlocked) return textResult([...lines, error.message].join('\n'), true);
+                if (error.message === endpointBlock) throw error;
                 lines.push('Read unavailable; use browser_read before retrying.');
               }
               return await finish(lines, observed?.text, parent, observed);

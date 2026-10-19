@@ -277,5 +277,27 @@ test('self-close recovery still refuses a blocked opener before reading it', asy
     sites: url => url === 'https://blocked.invalid/' ? 'Blocked by the user.' : undefined,
     snapshot: async () => assert.fail('blocked opener must not be read'), runSteps: f.run, fillFields: async () => {} });
   const result = await d.call({ name: 'browser_act', arguments: { tab: 't2', steps: [{ do: 'click', ref: 'e1' }] } });
-  assert.deepEqual(result, { text: 'Blocked by the user.', isError: true });
+  assert.equal(result.isError, true);
+  assert.match(result.text, /tab closed itself.*opener t1 below/);
+  assert.ok(result.text.endsWith('\nBlocked by the user.'));
+});
+
+for (const rejects of [false, true]) test(`a blocked opener retains the closing submit warning (rejects=${rejects})`, async () => {
+  const f = fixture(), opener = { page: { url: () => 'https://blocked.invalid/' }, state: {} };
+  f.page.getByRef = () => utilityLocator({ evaluate: async fn => fn.name === 'inspectTarget' ? { submit: true } : null,
+    click: async () => { f.page.emit('close'); if (rejects) throw Error('Target page has been closed'); } });
+  const d = createToolDispatcher({ browser: 'bfixture',
+    pages: { closedOpener: () => 't1', enqueue: async (id, fn) => fn(id === 't2' ? f.tab : opener) },
+    sites: url => url === 'https://blocked.invalid/' ? 'Blocked by the user.' : undefined,
+    snapshot: async () => assert.fail('blocked opener must not be read'), runSteps: f.run, fillFields: async () => {},
+    deliverSnapshot: () => assert.fail('blocked opener must not deliver refs') });
+  const result = await d.call({ name: 'browser_act', arguments: {
+    tab: 't2', steps: [{ do: 'click', ref: 'e1' }, { do: 'forward' }],
+  } });
+  assert.equal(result.isError, true);
+  assert.match(result.text, /tab closed itself.*opener t1 below/);
+  assert.match(result.text, /its submit is unconfirmed; check the opener or the account before paying again/);
+  assert.match(result.text, /2 forward: not reached/);
+  assert.ok(result.text.endsWith('\nBlocked by the user.'));
+  assert.equal(d.delivered(result), false);
 });
