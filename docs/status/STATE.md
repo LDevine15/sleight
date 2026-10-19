@@ -12,12 +12,15 @@ timestamps from about 03:0xZ to 04:4xZ on 2026-10-19 were guessed too late. The 
 
 **Release line** `pane/auto-mode` = main checkout. It holds the race fixes ft1, fs1 and md1, plus sec130, es1, ff1, rg1r2, fl3,
 form-2fa, the Safari harness fixes, mdn-note, OH1, the FM3 port (engine Chromium tab path only), list-pick, the native
-sleight-in-Codex claim arms with the Calculator reader fix, the benchmark hub, the engine-path payment gate (`claude/pay-gate` d39236bb, two security review rounds; live checks owed:
-one Sol and one Haiku Firefox form-checkout and a Safari confirm sheet), and the Codex plugin with the dropdown's host line
-(`claude/codex-plugin` c8ac627b, merged at the clear; one live Codex rerun with the owner is still owed, as cxp1-REPORT.md describes). The flush full check, with the Codex plugin and the payment gate merged, ran CHECKCOUNT tests
+sleight-in-Codex claim arms with the Calculator reader fix, the benchmark hub, and the Codex plugin with the dropdown's host line
+(`claude/codex-plugin` c8ac627b, merged at the clear; one live Codex rerun with the owner is still owed, as cxp1-REPORT.md describes). The flush full check, with the Codex plugin merged, ran 8279 tests
 with no failures, and lint is clean. LAWS gained the Codex auto-approval rule.
 
 **In flight at the clear** (Opus agents in the old session, which may stop at the clear: check each branch first):
+- `claude/pay-gate` d39236bb: the engine-path payment gate with sleight's card. Both security review rounds are done (38/38,
+  1441 focused and 2528 adversarial headless tests pass). It is NOT merged: the merge conflicts with the Codex plugin in
+  launch.mjs and relay.mjs. Resolve that first next session, keeping both sides, then run the full check. Live checks are still
+  owed: one Sol and one Haiku Firefox form-checkout and a Safari confirm sheet.
 - `claude/codex-turbo` (no pushed commit yet): turbo inside Codex for 1.3.1, in the worktree `~/Projects/sleight-wt/codex-turbo`.
   The report goes to ledger/p130/cxt1-REPORT.md. If nothing was pushed, restart it from the ROADMAP 4e brief.
 - `codex/fu1` 50438a18: the Sol lane is DONE (claims/FU1). It needs a Sonnet-high review, then a merge into `claude/p131-integration`.
@@ -38,7 +41,7 @@ read the Terminal window.
 leaves an unproven AXDialog window in driven apps, which the harness and the Calculator reader now skip.
 
 **Next steps:**
-1. Move race-fx to the release line.
+1. Merge pay-gate (resolve its launch.mjs and relay.mjs conflicts with the Codex plugin), run the full check, push, and move race-fx.
 2. Finish 1.3.1: merge FU1 and codex-turbo, then run the integration branch's full check.
 3. Final runs on the new engine, in an away window, through one queue-runner Terminal window rather than one window per job
    (the owner flagged the pile-up):
