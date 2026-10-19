@@ -60,7 +60,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   `sleight-mcp setup`.
 - Approvals: one card per app (Allow, Always allow, Decline), remembered for the Claude Code session. Only the user's click writes
   Always allow. For the Electron turbo qualification the owner delegated that one Always allow click on the benchmark VS Code to
-  sleight-arch (owner, 2026-10-19), and the owner let sleight-arch push the compatibility check's CI workflow. The engine refuses terminals and OpenAI's own apps, and sleight never works around that; the refusal tells the user
+  sleight-arch (owner, 2026-10-19), and the owner let sleight-arch push the compatibility check's CI workflow. The owner also
+  delegated every sleight card in the Electron qualification run (Allow this session, Always allow, Quit and reopen) on benchmark
+  VS Code copies only, never the owner's own VS Code (owner, 2026-10-19). The engine refuses terminals and OpenAI's own apps, and sleight never works around that; the refusal tells the user
   about the `ComputerUseAllowForbiddenTargets` switch.
 - In a host the user set to answer approvals automatically (Codex's full-access mode or its auto-review), a session-only app
   approval may be answered by the host. Always allow, payment cards and sleight's own consent cards still need the user's click
