@@ -2503,7 +2503,8 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     // A delayed detach/ownership reply remains tracked after the caller's cap.
     return deadline(() => releasing, timeoutMs, 'tab release pending; wait for cleanup before retrying');
   };
-  async function openOwned(url, opener, name = '') {
+  async function openOwned(url, opener, name = '', tracePhase) {
+      const phase = name => { try { tracePhase?.(name); } catch {} };
       if (ended) throw Error('turn ended');
       let parsed;
       try { parsed = new URL(url); } catch { throw Error('invalid browser URL'); }
@@ -2513,7 +2514,9 @@ export function createPageRegistry({ browser, session, context = browser?.contex
         throw Error(endpointBlock);
       }
       const opening = track((async () => {
+        phase('browser-open-create-start');
         const { targetId } = await session.send('Target.createTarget', { url: 'about:blank', background: true });
+        phase('browser-open-create-end');
         if (!targetId) throw Error('background target allocation unavailable');
         allocations.set(targetId, { bySleight: true });
         const until = Date.now() + timeoutMs;
@@ -2525,15 +2528,22 @@ export function createPageRegistry({ browser, session, context = browser?.contex
           throw Error(ended ? 'turn ended' : 'background page attachment timed out');
         }
         const page = seen.get(targetId);
-        const info = await identify(page), entry = await adopt(page, info, opener);
+        phase('browser-open-attach-end');
+        const info = await identify(page);
+        phase('browser-open-identify-end');
+        const entry = await adopt(page, info, opener);
+        phase('browser-open-adopt-end');
         if (!entry) throw Error(endpointBlock);
         entry.openedBySleight = true;
         await entry.ready;
+        phase('browser-open-ready-end');
         if (ended) throw Error('turn ended');
         if (name && await deadline(() => page.evaluate(name => { window.name = name; return window.name; }, name), timeoutMs) !== name)
           throw Error('background target name unavailable');
+        phase('browser-open-goto-start');
         try { await page.goto(parsed.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs }); }
         catch (error) { await assertEndpointRead(page); throw error; }
+        phase('browser-open-goto-end');
         await assertEndpointRead(page);
         return { tab: entry.tab };
       })());
@@ -2541,7 +2551,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
   }
   const api = {
     tab, idle,
-    openTab: ({ url }) => openOwned(url),
+    openTab: ({ url, tracePhase }) => openOwned(url, undefined, '', tracePhase),
     async list() {
       await deadline(idle, timeoutMs);
       for (const entry of records.values()) if (!entry.closed && !entry.released && !entry.blocked) {

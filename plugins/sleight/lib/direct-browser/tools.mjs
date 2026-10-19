@@ -84,14 +84,16 @@ export function validateToolCall(input, browser) {
 }
 const clean = value => String(value ?? '').replace(/[\r\n\t]/g, ' ').slice(0, 240);
 const textResult = (text, isError = false) => ({ text, isError });
+export const closedTabOutcome = 'tab closed itself (sign-in and payment popups do this); opener <tab> below';
 
 // sites(url) is the user's site blocks (permissions.mjs): the line to relay for a page sleight may not act on, or undefined. It is
 // checked before every open, read and input and after every step, so a blocked page is never read or acted on, and onSite hears
 // each allowed origin turbo works on (the menu's Never Act on row).
 export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillFields, ctx, sites, onSite,
-  endpoint, deliverSnapshot = (state, capture) => { state.snapshotNo = Math.max(state.snapshotNo, capture.number); return true; }, now = Date.now } = {}) {
+  endpoint, tracePhase, deliverSnapshot = (state, capture) => { state.snapshotNo = Math.max(state.snapshotNo, capture.number); return true; }, now = Date.now } = {}) {
   if (!pages || [snapshot, runSteps, fillFields, deliverSnapshot].some(fn => typeof fn !== 'function')) throw Error('v3 tool dependencies required');
-  let ended = false, ending;
+  let ended = false, ending, callNo = 0;
+  const lossFixes = process.env.SLEIGHT_LB12 !== '0';
   const deliveries = new WeakMap();
   const pageURL = entry => { try { return typeof entry.page?.url === 'function' ? entry.page.url() : undefined; } catch { return undefined; } };
   // A failed check refuses: the user's blocks can't be read, so nothing is sent.
@@ -121,6 +123,8 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
   return Object.freeze({ tools: () => browserTools(browser),
     async call(input) {
       let request, started = false;
+      const ordinal = ++callNo;
+      const phase = name => { try { tracePhase?.(name, ordinal); } catch {} };
       try {
         request = validateToolCall(input, browser);
         if (ended) throw Error('turn ended');
@@ -132,17 +136,24 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           return textResult(`${a.do}: ${JSON.stringify(await pages[a.do](a.tab))}`);
         }
         if (request.name === 'browser_open') {
-          if (endpointURL(a.url, endpoint)) throw Error(endpointBlock);
-          siteStop(a.url);
-          started = true;
-          const { tab } = await pages.openTab({ url: a.url }), entry = pages.tab(tab);
-          await assertEndpointRead(entry.page, endpoint);
-          // A redirect into a blocked site: the tab closes before its title or page is read.
-          const landed = siteLine(pageURL(entry));
-          if (landed) { try { await pages.close(tab); } catch {} return textResult(landed, true); }
-          const header = `${tab} ${originOf(entry.page.url())}\nTitle (untrusted page content): ${clean(await entry.page.title())}`;
-          try { const observed = await capture(entry, { maxChars: 8000 }); return await finish([header], observed.text, entry, observed); }
-          catch (error) { if (error.message === endpointBlock) throw error; return textResult(header + '\nSnapshot unavailable; use browser_read before input.'); }
+          phase('browser-open-start');
+          try {
+            if (endpointURL(a.url, endpoint)) throw Error(endpointBlock);
+            siteStop(a.url);
+            started = true;
+            const { tab } = await pages.openTab({ url: a.url, tracePhase: phase }), entry = pages.tab(tab);
+            await assertEndpointRead(entry.page, endpoint);
+            // A redirect into a blocked site: the tab closes before its title or page is read.
+            const landed = siteLine(pageURL(entry));
+            if (landed) { try { await pages.close(tab); } catch {} return textResult(landed, true); }
+            const header = `${tab} ${originOf(entry.page.url())}\nTitle (untrusted page content): ${clean(await entry.page.title())}`;
+            try {
+              phase('browser-open-capture-start');
+              const observed = await capture(entry, { maxChars: 8000 });
+              phase('browser-open-capture-end');
+              return await finish([header], observed.text, entry, observed);
+            } catch (error) { if (error.message === endpointBlock) throw error; return textResult(header + '\nSnapshot unavailable; use browser_read before input.'); }
+          } finally { phase('browser-open-end'); }
         }
         // The page closed this tab itself (a sign-in popup): read the opener it came from, not an error.
         const opener = request.name === 'browser_read' ? pages.closedOpener?.(a.tab) : undefined;
@@ -162,7 +173,21 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
           started = true;
           if (request.name === 'browser_act') {
             // The site is checked again before each step's input, so a step that lands on a blocked site stops the rest there.
-            const result = await runSteps(entry, a.steps, privateContext, { siteCheck: () => siteLine(pageURL(entry)) });
+            const result = await runSteps(entry, a.steps, privateContext, { observe: a.observe, siteCheck: () => siteLine(pageURL(entry)) });
+            // The page, not sleight, closed this owned popup during the step. The registry
+            // proves its opener is still owned. Queue and capture there, with the same guards as a read.
+            const opener = lossFixes && result.closed ? pages.closedOpener?.(a.tab) : undefined;
+            if (opener) return await pages.enqueue(opener, async parent => {
+              const lines = result.lines.map(line => line.replace(/: tab closed(?=$|[;.])/, ': ' + closedTabOutcome.replace('<tab>', opener)));
+              let observed;
+              try { observed = await capture(parent, { maxChars: 8000 }); }
+              catch (error) {
+                if (error.siteBlocked) return textResult([...lines, error.message].join('\n'), true);
+                if (error.message === endpointBlock) throw error;
+                lines.push('Read unavailable; use browser_read before retrying.');
+              }
+              return await finish(lines, observed?.text, parent, observed);
+            });
             await assertEndpointRead(entry.page, endpoint);
             const lines = [...result.lines, ...blocked().filter(line => !result.lines.includes(line))];
             // A step that landed on a blocked site: what ran, then the user's line, and nothing of the page.
@@ -174,7 +199,7 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
               catch { observed = undefined; lines.push('Read unavailable; use browser_read before retrying.'); }
             }
             // A row that a scroll step found carries a ref from the page read, which only a delivered read makes usable.
-            if (a.observe === 'none' && !lines.some(line => /\[ref=/.test(line))) observed = undefined;
+            if (a.observe === 'none' && (!lossFixes || result.stoppedAt == null) && !lines.some(line => /\[ref=/.test(line))) observed = undefined;
             return await finish(lines, observed?.text, entry, observed);
           }
           const result = await fillFields(entry, a.fields, { submit: a.submit }, privateContext);

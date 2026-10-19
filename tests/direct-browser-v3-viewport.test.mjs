@@ -9,6 +9,7 @@ function sizedPage(initial = { width: 1280, height: 720 }, { readable = true } =
   const page = new EventEmitter(), calls = []; let size = { ...initial };
   page.url = () => 'https://example.invalid/';
   page.mainFrame = () => page;
+  page.evaluate = async () => {};
   page.context = () => ({ newCDPSession: async () => ({
     send: async (method, params) => {
       calls.push(method);

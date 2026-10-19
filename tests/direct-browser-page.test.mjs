@@ -58,6 +58,17 @@ test('opens blank in the background, installs the hook before navigation, expose
   await f.registry.endTurn();
 });
 
+test('open phase events bracket allocation, attachment, adoption, readiness and navigation without page data', async () => {
+  const f = fixture(), phases = [];
+  await f.registry.openTab({ url: 'https://fixture.invalid/private', tracePhase: phase => phases.push([phase, f.calls.at(-1)?.[0]]) });
+  assert.deepEqual(phases.map(row => row[0]), ['browser-open-create-start', 'browser-open-create-end', 'browser-open-attach-end',
+    'browser-open-identify-end', 'browser-open-adopt-end', 'browser-open-ready-end', 'browser-open-goto-start', 'browser-open-goto-end']);
+  assert.equal(phases[0][1], undefined);
+  assert.equal(phases.at(-1)[1], 'goto');
+  assert.doesNotMatch(JSON.stringify(phases), /private|fixture\.invalid/);
+  await f.registry.endTurn();
+});
+
 test('never exposes an existing user page or a popup with a foreign opener', async () => {
   const f = fixture(); f.page('user'); f.page('foreign', 'user');
   await f.registry.idle();

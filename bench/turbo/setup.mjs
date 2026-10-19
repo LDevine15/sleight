@@ -52,8 +52,12 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env, realBro
       env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none', SLEIGHT_HAND: hand } },
       // The worker's hand (H8) follows the same switch, and its hand-skipped and hand-shown events reach SLEIGHT_TRACE.
       'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/v3-server.mjs')],
-      env: { ...(realBrowser ? { SLEIGHT_TURBO_REAL_BROWSER: JSON.stringify(realBrowser) } : {}), SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl'),
-        SLEIGHT_HAND: hand, ...(typeof process.env.SLEIGHT_TRACE === 'string' && process.env.SLEIGHT_TRACE ? { SLEIGHT_TRACE: process.env.SLEIGHT_TRACE } : {}) } } },
+      // SLEIGHT_TRACE comes from the arm's env (the real gate passes its traceEnv) or else the runner's own.
+      env: { ...(realBrowser ? { SLEIGHT_TURBO_REAL_BROWSER: JSON.stringify(realBrowser) } : {}),
+        ...(env.SLEIGHT_LB12 === '0' || env.SLEIGHT_LB12 === '1' ? { SLEIGHT_LB12: env.SLEIGHT_LB12 } : {}),
+        SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl'),
+        SLEIGHT_HAND: hand, ...(env.SLEIGHT_TRACE ? { SLEIGHT_TRACE: env.SLEIGHT_TRACE }
+          : typeof process.env.SLEIGHT_TRACE === 'string' && process.env.SLEIGHT_TRACE ? { SLEIGHT_TRACE: process.env.SLEIGHT_TRACE } : {}) } } },
     allowed: [...browserTools(browser).map(tool => 'mcp__sleight-turbo__' + tool.name),
       'mcp__plugin_sleight_computer__js', 'mcp__plugin_sleight_computer__js_reset', 'mcp__plugin_sleight_computer__open_file'].join(','),
     promptPrefix: installed + '\n\n',

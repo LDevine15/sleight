@@ -121,6 +121,31 @@ test('runner setup selects all five v3 tools, private task, metrics and v3 guida
   assert.equal(setup.metadata.turboVersion, 3);
 });
 
+test('the turbo A/B switch and trace destination reach the benchmark worker', async t => {
+  const { realAgentSetup } = await import('../bench/fowl/real-gate-setup.mjs');
+  const { createSession } = await load();
+  const { mkdtempSync, realpathSync } = await import('node:fs');
+  const trace = realpathSync(registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-x6-route-'))));
+  const oldFlag = process.env.SLEIGHT_LB12, oldTrace = process.env.SLEIGHT_TRACE;
+  process.env.SLEIGHT_LB12 = '0'; process.env.SLEIGHT_TRACE = trace;
+  t.after(() => {
+    if (oldFlag === undefined) delete process.env.SLEIGHT_LB12; else process.env.SLEIGHT_LB12 = oldFlag;
+    if (oldTrace === undefined) delete process.env.SLEIGHT_TRACE; else process.env.SLEIGHT_TRACE = oldTrace;
+  });
+  const setup = realAgentSetup({ task: { prompt: 'Read ' + origin, result: 'Read' }, surface: 'sleight-turbo', dir: '/private/tmp/fixture-task',
+    realBrowser: { browser: 'chrome', profileRoot: '/private/tmp/profile', marker: 'Sleight Gate fixture' } });
+  const env = setup.mcpConfig.mcpServers['sleight-turbo'].env;
+  assert.equal(env.SLEIGHT_LB12, '0');
+  assert.equal(env.SLEIGHT_TRACE, trace);
+  const fork = fakeFork(async () => ({ call: async () => ({ text: 'ok', isError: false }), end: async () => ({ revoked: true, cleanup: [] }) }));
+  const session = await createSession({ origins: [origin], taskMessage: 'Read fixture', forkWorker: (path, args, options) => {
+    assert.equal(options.env.SLEIGHT_LB12, '0');
+    assert.equal(options.env.SLEIGHT_TRACE, trace);
+    return fork(path, args, options);
+  } });
+  await session.close();
+});
+
 test('cleanup metrics are append-only and never manufacture zero tabs or follow symlinks', async t => {
   const { recordCleanup } = await import('../bench/turbo/v3-server.mjs');
   const { mkdtempSync, readFileSync, symlinkSync, realpathSync } = await import('node:fs');

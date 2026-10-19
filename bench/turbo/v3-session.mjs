@@ -22,9 +22,10 @@ export async function createSession({ origins, taskMessage, forkWorker = fork, r
     forkWorker(_installedEntry, _args, options) {
       // The child receives no credentials, host Claude config, loaders or private
       // engine channels. Only the runner fixture origins enter its environment, SLEIGHT_TRACE (a folder or 1) so the
-      // worker's startup phases and hand events reach the same trace file as this server's, and SLEIGHT_HAND, so the arm's
-      // hand-off setting reaches the worker's ghost hand (without it the worker's hand ran in every turbo round).
-      const env = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'DISPLAY', 'XDG_RUNTIME_DIR', 'SLEIGHT_TRACE', 'SLEIGHT_HAND'].flatMap(key =>
+      // worker's startup phases and hand events reach the same trace file as this server's, SLEIGHT_HAND, so the arm's
+      // hand-off setting reaches the worker's ghost hand (without it the worker's hand ran in every turbo round), and the
+      // metrics destination and LB1/LB2 A/B switch, so the worker records its phases beside this task's cleanup receipt.
+      const env = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'DISPLAY', 'XDG_RUNTIME_DIR', 'SLEIGHT_TRACE', 'SLEIGHT_HAND', 'SLEIGHT_TURBO_METRICS', 'SLEIGHT_LB12'].flatMap(key =>
         typeof process.env[key] === 'string' ? [[key, process.env[key]]] : []));
       env.SLEIGHT_TURBO_ORIGINS = JSON.stringify(origins);
       if (realBrowser) env.SLEIGHT_TURBO_REAL_BROWSER = JSON.stringify(realBrowser);
