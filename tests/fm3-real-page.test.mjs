@@ -36,6 +36,11 @@ test('FM3 real fixture isolated-world switch and checkout cover (owner only)', {
       res.end('<style>body{margin:0}#wrap{overflow-x:hidden;height:200px}.bar{position:fixed;bottom:0;left:0;right:0;height:60px}.notice{position:fixed;bottom:0;left:0;right:0;height:120px;z-index:3;background:#111}</style><div id="wrap"><div class="bar"><button id="wrappedPay" type="button">Pay</button></div></div><div class="notice" role="dialog" aria-label="Offer">Offer</div>');
       return;
     }
+    if (req.url === '/bands.html') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<style>body{margin:0;height:3000px}.band{position:fixed;left:0;right:0;z-index:3;background:#111}#bottom{bottom:0;height:80px}#middle{top:45%;height:10%;display:none}button{position:absolute;left:10px;width:100px;height:40px}#low{top:560px}#high{top:1100px}</style><div class="band" id="bottom" role="contentinfo" aria-label="Bottom bar">Bar</div><div class="band" id="middle" role="banner" aria-label="Middle band">Band</div><button id="low" type="button">Low</button><button id="high" type="button">High</button>');
+      return;
+    }
     if (req.url === '/label.html') {
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end('<style>label{position:relative;display:inline-block;padding:20px}#agree{position:absolute;left:20px;top:20px;width:20px;height:20px;margin:0;opacity:0}.box{position:absolute;left:20px;top:20px;width:20px;height:20px;border:1px solid #333}</style><label><input type="checkbox" id="agree"><span class="box"></span> Agree</label>');
@@ -110,9 +115,9 @@ test('FM3 real fixture isolated-world switch and checkout cover (owner only)', {
 
   await navigate('/checkout.html');
   const click = 'var tab = await cua.getTab("fixture"); await tab.playwright.locator("#pay").click();';
-  await assert.rejects(runInContext('(async()=>{' + clickResultCode(click) + '})()', context), /covered by region Cookie notice/);
+  await assert.rejects(runInContext('(async()=>{' + clickResultCode(click) + '})()', context), /covered by button Accept all in region Cookie notice\./);
   assert.equal(clicks, 0);
-  assert.match(notes.join('\n'), /covered by region Cookie notice/);
+  assert.deepEqual(notes, []);
   await page.locator('#reject').click();
   await runInContext('(async()=>{' + clickResultCode(click) + '})()', context);
   assert.equal(clicks, 1);
@@ -135,17 +140,31 @@ test('FM3 real fixture isolated-world switch and checkout cover (owner only)', {
   assert.deepEqual(notes, []);
   assert.ok(await page.locator('#nestedDetails').evaluate(el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; }) >= 140);
 
+  // Covered where it sits by a fixed bottom bar, clear after the engine's center scroll: no refusal.
+  await page.setViewportSize({ width: 800, height: 600 });
+  await navigate('/bands.html');
+  assert.equal(await page.evaluate(() => document.elementFromPoint(60, 580).id), 'bottom');
+  notes.length = 0;
+  await runInContext('(async()=>{' + clickResultCode('var tab = await cua.getTab("fixture"); await tab.playwright.locator("#low").click();') + '})()', context);
+  assert.equal(clicks, 4);
+  assert.deepEqual(notes, []);
+  // Clear where it sits near the top, under a fixed middle band after the center scroll: refused.
+  await page.evaluate(() => { scrollTo(0, 1000); document.querySelector('#middle').style.display = 'block'; });
+  assert.equal(await page.evaluate(() => document.elementFromPoint(60, 120).id), 'high');
+  await assert.rejects(runInContext('(async()=>{' + clickResultCode('var tab = await cua.getTab("fixture"); await tab.playwright.locator("#high").click();') + '})()', context), /covered by banner Middle band\./);
+  assert.equal(clicks, 4);
+
   // A fixed bar inside an overflow-x wrapper isn't clipped by it, so the cover over it is still named.
   await navigate('/wrapped.html');
   notes.length = 0;
   await assert.rejects(runInContext('(async()=>{' + clickResultCode('var tab = await cua.getTab("fixture"); await tab.playwright.locator("#wrappedPay").click();') + '})()', context), /covered by dialog Offer/);
-  assert.equal(clicks, 3);
+  assert.equal(clicks, 4);
 
   // A styled box over a hidden checkbox in its own label activates the checkbox, so it is no cover.
   await navigate('/label.html');
   notes.length = 0;
   await runInContext('(async()=>{' + clickResultCode('var tab = await cua.getTab("fixture"); await tab.playwright.locator("#agree").click();') + '})()', context);
-  assert.equal(clicks, 4);
+  assert.equal(clicks, 5);
   assert.deepEqual(notes, []);
   assert.equal(await page.locator('#agree').isChecked(), true);
 });

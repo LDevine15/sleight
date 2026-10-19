@@ -3,7 +3,8 @@
 export async function fillForm(tab, fields) {
   if (!tab?.playwright || !Array.isArray(fields)) throw new Error('fillForm needs a browser tab and a field array.');
   const options = { timeoutMs: 1000 }, notes = [];
-  const unverifiable = () => Object.assign(new Error("Read the control's state from a screenshot of it. Click once only if it shows the other state. Never click again to verify."), { unverifiable: true });
+  const unverifiable = (clicked = false) => Object.assign(new Error((clicked ? 'One click was sent. ' : '') +
+    "Read the control's state from a screenshot of it. Click once only if it shows the other state. Never click again to verify."), { unverifiable: true });
   let filled = 0, tree;
   const attribute = value => '"' + value.replace(/["\\\x00-\x1f]/g, char => '\\' + char.charCodeAt(0).toString(16) + ' ') + '"';
   // Resolve numeric references before input. Later actions use the resulting ID or exact label,
@@ -70,7 +71,7 @@ export async function fillForm(tab, fields) {
           }) : [];
           if (rows.length === 1) {
             const value = /\bValue: (0|1|true|false)(?=, |$)/.exec(rows[0])?.[1];
-            if (value !== undefined) meta.checked = value === '1' || value === 'true';
+            if (value !== undefined) { meta.checked = value === '1' || value === 'true'; meta.fromAX = true; }
           }
         }
         return meta;
@@ -83,7 +84,16 @@ export async function fillForm(tab, fields) {
             /^(?:false|off|no|unchecked|0)$/i.test(String(field.value)) ? false : undefined;
         if (on === undefined) throw new Error('checked value must be true or false');
         if (![true, false, 'true', 'false'].includes(meta.checked)) throw unverifiable();
-        try { await loc.setChecked(on, options); }
+        if (meta.fromAX) {
+          // The engine's setChecked would read the isolated default getter, not this AX state: click once, read back.
+          if (meta.checked !== on) {
+            if (meta.role === 'radio' && !on) throw new Error('choose another radio option to uncheck this one');
+            await loc.click(options);
+            const after = (await state()).checked;
+            if (![true, false, 'true', 'false'].includes(after)) throw unverifiable(true);
+            if ((after === true || after === 'true') !== on) throw new Error('checked state did not match after clicking');
+          }
+        } else try { await loc.setChecked(on, options); }
         catch (error) {
           const now = (await state()).checked;
           if (![true, false, 'true', 'false'].includes(now)) throw unverifiable();
@@ -91,7 +101,7 @@ export async function fillForm(tab, fields) {
             if ((meta.type === 'radio' || meta.role === 'radio') && !on) throw new Error('choose another radio option to uncheck this one');
             await loc.click(options);
             const after = (await state()).checked;
-            if (![true, false, 'true', 'false'].includes(after)) throw unverifiable();
+            if (![true, false, 'true', 'false'].includes(after)) throw unverifiable(true);
             if ((after === true || after === 'true') !== on) throw new Error('checked state did not match after clicking');
           }
           fallback = 'checked state verified after fallback';

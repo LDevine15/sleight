@@ -257,40 +257,40 @@ test('a full reply with no buttons clears the previous submit classification', a
   assert.deepEqual(f.reads, []);
 });
 
-// ancestors: boxes (an ancestor that clips its overflow) or { box, style } with computed style overrides.
-function coveredFixture({ cover = true, descendant = false, shadowHost = false, unread = false, hang = false, rect, ancestors = [],
-  style = {}, noStyle = false, labelled = false } = {}) {
+// The engine scrolls the target to the center (resolvePointerActionTarget) and inputs at its box center,
+// with no in-page hit test. `before` is the box before that scroll, `after` the box once it ran.
+const CENTER = { block: 'center', inline: 'nearest', behavior: 'instant' };
+function coveredFixture({ coverAt = () => true, descendant = false, shadowHost = false, shadowRoot = false, unread = false, hang = false,
+  before = { left: 10, top: 20, right: 110, bottom: 60, width: 100, height: 40 }, after = before, labelled = false, control = false,
+  hitLabels = false, nested = false } = {}) {
   const f = fixture();
-  let clicks = 0;
-  const coverElement = { tagName: 'DIV', textContent: 'Fixture notice',
+  let clicks = 0, rect = before;
+  const scrolls = [], evaluates = [], points = [];
+  const region = { tagName: 'DIV', textContent: 'Fixture notice Accept all', parentElement: undefined,
     getAttribute: name => ({ role: 'region', 'aria-label': 'Fixture notice' })[name] ?? null,
-    closest: () => coverElement };
-  const computed = extra => ({ position: 'static', overflowX: 'visible', overflowY: 'visible', transform: 'none', filter: 'none',
-    perspective: 'none', contain: 'none', willChange: 'auto', backdropFilter: 'none', containerType: 'normal', ...extra });
-  let parent;
-  for (const spec of [...ancestors].reverse()) {
-    const box = spec && 'box' in spec ? spec.box : spec;
-    parent = { parentElement: parent, getRootNode: () => ({}),
-      style: computed(spec && 'box' in spec ? spec.style : { overflowX: 'auto', overflowY: 'auto' }),
-      getBoundingClientRect: () => { if (box === null) throw Error('ancestor bounds unavailable'); return box; } };
-  }
+    closest: () => region, contains: node => node === region || node === accept };
+  const accept = { tagName: 'BUTTON', textContent: 'Accept all', parentElement: region,
+    getAttribute: () => null, contains: node => node === accept };
+  accept.closest = () => region;
   const element = { tagName: 'BUTTON', type: 'submit',
-    parentElement: parent, style: computed(style),
-    labels: labelled ? [{ contains: hit => hit === coverElement }] : undefined,
+    labels: labelled ? [{ contains: node => node === region }] : undefined,
+    control: control ? region : undefined,
     getAttribute: () => null, closest: name => name === 'form' ? {} : null,
-    getBoundingClientRect: () => rect ?? ({ left: 10, top: 20, right: 110, bottom: 60, width: 100, height: 40 }),
-    contains: hit => hit === element || descendant,
-    getRootNode: () => ({ host: shadowHost ? coverElement : undefined }),
-    ownerDocument: { documentElement: { clientWidth: 800, clientHeight: 600 },
-      defaultView: noStyle ? {} : { getComputedStyle: node => node.style },
-      elementFromPoint: (x, y) => {
-        assert.equal(x, rect ? (Math.max(0, rect.left) + Math.min(800, rect.right)) / 2 : 60);
-        assert.equal(y, rect ? (Math.max(0, rect.top) + Math.min(600, rect.bottom)) / 2 : 40);
-        return cover ? coverElement : element;
-      } },
+    scrollIntoView: options => { scrolls.push(options); rect = after; },
+    getBoundingClientRect: () => ({ ...rect }),
+    contains: node => node === element || descendant,
+    getRootNode: () => shadowRoot ? root : { host: shadowHost ? region : undefined },
   };
+  if (hitLabels) region.labels = [element];
+  const doc = { documentElement: { clientWidth: 800, clientHeight: 600 },
+    defaultView: { requestAnimationFrame: callback => queueMicrotask(callback) },
+    elementFromPoint: (x, y) => { points.push([x, y]); return coverAt(x, y) ? (nested ? accept : region) : element; } };
+  // An open shadow root answers hit tests inside its own tree.
+  const root = { host: undefined, elementFromPoint: (x, y) => { points.push(['root', x, y]); return element; } };
+  element.ownerDocument = doc;
   const raw = { count: async () => 1, click: async () => { clicks++; },
     evaluate: async (fn, arg, options) => {
+      evaluates.push(arg);
       if (unread) throw Error('hit test unavailable');
       if (hang) return new Promise(() => {});
       if (options) assert.equal(options.timeoutMs, 1000);
@@ -301,89 +301,66 @@ function coveredFixture({ cover = true, descendant = false, shadowHost = false, 
     return target[key];
   } });
   f.tab.playwright.locator = () => loc;
-  return { ...f, clicks: () => clicks };
+  return { ...f, clicks: () => clicks, scrolls, evaluates, points };
 }
+const clickDetails = (options = '') => `var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click(${options});`;
 
-test('a locator click covered by a named region reports the cover before dispatch', async () => {
+test('a locator click covered after the engine center scroll is refused once, with no input', async () => {
   const f = coveredFixture();
-  await assert.rejects(f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();'), /covered by region Fixture notice/);
+  await assert.rejects(f.run(clickDetails()), /sleight: click target is covered by region Fixture notice\. Dismiss or move the cover before clicking\./);
   assert.equal(f.clicks(), 0);
-  assert.match(f.notes.join('\n'), /covered by region Fixture notice/);
-  assert.doesNotMatch(f.notes.join('\n'), /no change yet|submit twice/);
-});
-
-for (const [edge, rect] of Object.entries({
-  top: { left: 10, top: -10, right: 110, bottom: 30, width: 100, height: 40 },
-  bottom: { left: 10, top: 580, right: 110, bottom: 620, width: 100, height: 40 },
-  left: { left: -10, top: 20, right: 90, bottom: 60, width: 100, height: 40 },
-  right: { left: 750, top: 20, right: 850, bottom: 60, width: 100, height: 40 },
-})) test(`a partially visible ${edge} target reaches the engine scroll-before-click path`, async () => {
-  const f = coveredFixture({ rect });
-  let scrolls = 0;
-  const click = f.tab.playwright.locator().click;
-  f.tab.playwright.locator().click = async () => {
-    // resolvePointerActionTarget scrolls before resolving its actual click point.
-    scrolls++;
-    rect.left = 10; rect.top = 20; rect.right = 110; rect.bottom = 60;
-    await click();
-  };
-  await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();');
-  assert.equal(scrolls, 1);
-  assert.equal(f.clicks(), 1);
+  assert.equal(JSON.stringify(f.scrolls), JSON.stringify([CENTER]));
+  assert.deepEqual(f.points, [[60, 40]]);
+  // The refusal is the thrown error alone, not also a written note.
   assert.deepEqual(f.notes, []);
 });
 
-for (const [edge, ancestor] of Object.entries({
-  top: { left: 0, top: 100, right: 800, bottom: 200 },
-  bottom: { left: 0, top: 0, right: 800, bottom: 100 },
-  left: { left: 20, top: 0, right: 800, bottom: 600 },
-  right: { left: 0, top: 0, right: 100, bottom: 600 },
-})) test(`a target clipped at its ancestor's ${edge} edge reaches engine scrolling`, async () => {
-  const rect = { left: 10, top: 90, right: 110, bottom: 130, width: 100, height: 40 };
-  const f = coveredFixture({ rect, ancestors: [ancestor] });
-  let scrolls = 0;
-  const click = f.tab.playwright.locator().click;
-  f.tab.playwright.locator().click = async () => { scrolls++; await click(); };
-  await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();');
-  assert.equal(scrolls, 1); assert.equal(f.clicks(), 1); assert.deepEqual(f.notes, []);
-});
-test('a contained target keeps a confirmed cover check through ordinary ancestors', async () => {
-  const f = coveredFixture({ ancestors: [{ left: 0, top: 0, right: 800, bottom: 600 }] });
-  await assert.rejects(f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();'), /covered by region Fixture notice/);
+test('a cover is named by the element hit and its labelled container', async () => {
+  const f = coveredFixture({ nested: true });
+  await assert.rejects(f.run(clickDetails()), /covered by button Accept all in region Fixture notice\./);
   assert.equal(f.clicks(), 0);
 });
-for (const bounds of [null, {}, { left: 0, top: NaN, right: 800, bottom: 600 }]) {
-  test('uncertain ancestor bounds defer rather than asserting a cover: ' + JSON.stringify(bounds), async () => {
-    const f = coveredFixture({ ancestors: [bounds] });
-    await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();');
-    assert.equal(f.clicks(), 1); assert.deepEqual(f.notes, []);
+
+// A fixed header covers the target before the scroll; the center scroll moves it clear.
+test('a target covered only before the engine center scroll reaches the engine', async () => {
+  const f = coveredFixture({ before: { left: 10, top: -10, right: 110, bottom: 30, width: 100, height: 40 },
+    after: { left: 10, top: 280, right: 110, bottom: 320, width: 100, height: 40 }, coverAt: (x, y) => y < 40 });
+  await f.run(clickDetails());
+  assert.equal(f.clicks(), 1); assert.deepEqual(f.notes, []);
+  assert.deepEqual(f.points, [[60, 300]]);
+});
+
+// An in-viewport target is clear where it sits, but the center scroll puts it under a fixed band.
+test('an in-viewport target that the center scroll moves under a fixed overlay is refused', async () => {
+  const f = coveredFixture({ before: { left: 10, top: 500, right: 110, bottom: 540, width: 100, height: 40 },
+    after: { left: 10, top: 280, right: 110, bottom: 320, width: 100, height: 40 }, coverAt: (x, y) => y > 250 && y < 350 });
+  await assert.rejects(f.run(clickDetails()), /covered by region Fixture notice/);
+  assert.equal(f.clicks(), 0);
+});
+
+test('a box center outside the viewport after the scroll defers to the engine', async () => {
+  const f = coveredFixture({ after: { left: 900, top: 280, right: 1000, bottom: 320, width: 100, height: 40 } });
+  await f.run(clickDetails());
+  assert.equal(f.clicks(), 1); assert.deepEqual(f.points, []);
+});
+
+for (const options of ['{ force: true }', '{ trial: true }']) {
+  test(`a ${options} locator click skips the cover check`, async () => {
+    const f = coveredFixture();
+    await f.run(clickDetails(options));
+    assert.equal(f.clicks(), 1); assert.deepEqual(f.evaluates, []); assert.deepEqual(f.scrolls, []);
   });
 }
 
-// FowlBrowser checkout: Pay sits in a fixed bar whose page boxes don't contain it, under a fixed Cookie notice.
-test('a target outside ancestors that clip nothing keeps the confirmed cover report', async () => {
-  const f = coveredFixture({ ancestors: [{ box: { left: 0, top: 0, right: 800, bottom: 50 }, style: {} },
-    { box: { left: 0, top: 0, right: 800, bottom: 50 }, style: { position: 'fixed' } }] });
-  await assert.rejects(f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();'), /covered by region Fixture notice/);
-  assert.equal(f.clicks(), 0);
+test('a target in a shadow root is hit-tested by its own root', async () => {
+  const f = coveredFixture({ shadowRoot: true });
+  await f.run(clickDetails());
+  assert.equal(f.clicks(), 1); assert.deepEqual(f.points, [['root', 60, 40]]);
 });
-test('a fixed target is not clipped by an overflow wrapper above it, so its cover is reported', async () => {
-  const f = coveredFixture({ style: { position: 'fixed' },
-    ancestors: [{ box: { left: 0, top: 0, right: 800, bottom: 50 }, style: { overflowX: 'hidden', overflowY: 'auto' } }] });
-  await assert.rejects(f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();'), /covered by region Fixture notice/);
-  assert.equal(f.clicks(), 0);
-});
-for (const block of [{ transform: 'matrix(1, 0, 0, 1, 0, 0)' }, { contain: 'paint' }, { filter: 'blur(1px)' }, { willChange: 'transform' }]) {
-  test('a fixed target inside a clipping containing block defers: ' + JSON.stringify(block), async () => {
-    const f = coveredFixture({ style: { position: 'fixed' },
-      ancestors: [{ box: { left: 0, top: 0, right: 800, bottom: 50 }, style: { overflowX: 'hidden', overflowY: 'hidden', ...block } }] });
-    await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();');
-    assert.equal(f.clicks(), 1); assert.deepEqual(f.notes, []);
-  });
-}
 
-for (const spec of [{ cover: false }, { descendant: true }, { shadowHost: true }, { unread: true }, { labelled: true }, { noStyle: true }]) {
-  test(`an unobstructed or unreadable hit test preserves one locator click: ${JSON.stringify(spec)}`, async () => {
+for (const spec of [{ coverAt: () => false }, { descendant: true }, { shadowHost: true }, { unread: true }, { labelled: true },
+  { control: true }, { hitLabels: true }]) {
+  test(`an unobstructed, own-label or unreadable hit test preserves one locator click: ${JSON.stringify(spec)}`, async () => {
     const f = coveredFixture(spec);
     await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").first().click();');
     assert.equal(f.clicks(), 1);
@@ -394,7 +371,7 @@ for (const spec of [{ cover: false }, { descendant: true }, { shadowHost: true }
 test('a hanging hit test expires and never stalls or repeats an ordinary locator click', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const f = coveredFixture({ hang: true });
-  const pending = f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();');
+  const pending = f.run(clickDetails());
   await tick(); assert.equal(f.clicks(), 0);
   t.mock.timers.tick(1001); await pending;
   assert.equal(f.clicks(), 1);

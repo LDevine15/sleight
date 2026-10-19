@@ -133,23 +133,36 @@ test('a custom host with reflected checked state takes the check path rather tha
   assert.deepEqual(h.calls, [['Toggle', 'check', true]]);
 });
 
-test('a custom control uses an exact AX state row instead of its default checked getter', async () => {
-  const h = fixture({ Toggle: { tagName: 'CUSTOM-TOGGLE', id: 'toggle', role: 'switch', isolated: true,
-    checkError: 'not a checkbox' } });
+test('a custom control already in the AX state requested gets no input', async () => {
+  const h = fixture({ Toggle: { tagName: 'CUSTOM-TOGGLE', id: 'toggle', role: 'switch', isolated: true } });
   h.tab.getAXState = async () => 'Browser tab: 1, Title: "Form", URL: "https://example.com".\n0 AXWebArea Form\n\t3 switch Description: Toggle, Value: 1, ID: toggle';
   assert.match(await fillForm(h.tab, [{ label: 'Toggle', value: true }]), /^Filled 1 of 1 fields\./);
-  assert.deepEqual(h.calls, [['Toggle', 'check', true]]);
+  assert.deepEqual(h.calls, []);
 });
 
-test('losing a custom control state during fallback is unverifiable and sends no click', async () => {
+// The engine's setChecked reads the isolated default (false), so it would call an on switch already off.
+test('a verified custom control set to false takes one click and is read back, never engine setChecked', async () => {
+  const h = fixture({ Toggle: { tagName: 'CUSTOM-TOGGLE', id: 'toggle', role: 'switch', isolated: true } });
+  let on = true;
+  const click = h.controls.Toggle.click;
+  h.tab.playwright.getByLabel = () => new Proxy(h.controls.Toggle, { get(target, key) {
+    return key === 'click' ? async options => { on = !on; return click(options); } : target[key];
+  } });
+  h.tab.getAXState = async () => `\t3 switch Description: Toggle, Value: ${on ? 1 : 0}, ID: toggle`;
+  assert.match(await fillForm(h.tab, [{ label: 'Toggle', value: false }]), /^Filled 1 of 1 fields\./);
+  assert.deepEqual(h.calls, [['Toggle', 'click']]);
+  assert.equal(on, false);
+});
+
+test('a custom control unreadable after its one click is unverifiable and says the click was sent', async () => {
   const h = fixture({ Toggle: { tagName: 'CUSTOM-TOGGLE', id: 'toggle', role: 'switch', isolated: true,
     checkError: 'not a checkbox' } });
   let reads = 0;
   h.tab.getAXState = async () => ++reads === 1 ? '\t3 switch Description: Toggle, Value: 0, ID: toggle' : '';
   const out = await fillForm(h.tab, [{ label: 'Toggle', value: true }]);
-  assert.match(out, /Toggle\) unverifiable:/);
+  assert.match(out, /Toggle\) unverifiable: One click was sent\. Read the control's state from a screenshot/);
   assert.doesNotMatch(out, /failed:/);
-  assert.deepEqual(h.calls, [['Toggle', 'check', true]]);
+  assert.deepEqual(h.calls, [['Toggle', 'click']]);
 });
 
 test('a read-only picker reports its UI path without typing and continues other fields', async () => {
