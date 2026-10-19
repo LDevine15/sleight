@@ -52,10 +52,10 @@ export function actionOutcome(recs, before, after) {
     // The platform's secure role or subrole first, then bullets for a value, then names.
     const secure = /secure/i.test(role) || flags.includes('secure') || flags.includes('protected') || /\bAXSecureTextField\b/.test(body) || /^[•●*]+$/.test(value ?? '') ||
       /password|passcode|passphrase|\bpin\b|recovery (?:key|code|phrase)|secret key|security code|verification code|one-time|\botp\b|\bcv[cv]2?\b|api key|access token|protected|passwort|kennwort|mot de passe|contrase[ñn]a|senha|wachtwoord|l[öo]senord|adgangskode|salasana|has[łl]o|пароль|密码|パスワード|비밀번호|jelsz[óo]/i.test(name + ' ' + (id ?? ''));
-    // A field whose line (role, subrole, name, ID or value) looks like a card, account, government or tax ID, bank
-    // code, PIN, expiry or birth date, in English or a common other language. Its typed length stays out; when unsure, out.
-    const sensitive = secure || /\bcard|carte|tarjeta|karte|cart[aã]o|\bcarta\b|kaart|\bkort|karta|カード|卡|account|konto|compte|cuenta|\bconta\b|rekening|\bconto\b|\bssn\b|social security|s[ée]curit[ée] sociale|seguridad social|sozialversicherung|national insurance|\bnino\b|\bsin\b|\bbsn\b|\bnir\b|\bnif\b|\bnie\b|\bdni\b|\bcpf\b|codice fiscale|personnummer|pesel|\biban\b|\bbic\b|\bswift\b|routing|sort code|\bblz\b|bankleitzahl|\baba\b|\brib\b|\bnip\b|geheimzahl|\bcid\b|\bcc-|verification|pr[üu]fnummer|cryptogramme|\btax|\btin\b|\bein\b|\bvat\b|steuer|impuesto|fiscal|imposto|passport|reisepass|passeport|pasaporte|passaporto|paspoort|passaporte|expir|\bexp\b|ablauf|vencimiento|scadenza|birth|geburt|\bdob\b|secret|token|\bkey\b|code|national id|\bid no|number|nummer|num[ée]ro|n[úu]mero/i.test(body);
-    return { role, flags, name, id, value, secure, sensitive };
+    // Only these plain field kinds may expose typed length. A single-line field's label may be absent or
+    // held elsewhere in the tree, so its name cannot prove that a length is safe to keep.
+    const plain = !secure && ['text area', 'text entry area'].includes(role);
+    return { role, flags, name, id, value, secure, plain };
   };
   const view = text => {
     if (typeof text !== 'string') return;
@@ -77,9 +77,9 @@ export function actionOutcome(recs, before, after) {
   const key = d => d.role + '|' + (d.id || d.name);
   const targets = recs.map(rec => {
     const d = describe(rec.body);
-    // p: the field's line looks sensitive, so its typed length stays in the engine (the guard drops p with it).
+    // p: the field is not a known plain kind, so its typed length stays in the engine (the guard drops p with it).
     return d && { r: d.role, ...(d.secure ? { s: true } : d.name && generic(d.name) ? { m: d.name } : d.name ? { ml: d.name.length } : {}),
-      ...(d.sensitive && !d.secure && /field|area|combo box/.test(d.role) ? { p: true } : {}) };
+      ...(!d.plain && !d.secure && /field|area|combo box/.test(d.role) ? { p: true } : {}) };
   });
   const b = view(before), a = view(after);
   let rec;
@@ -256,10 +256,11 @@ export class ActionLog {
   }
   scrub(text) {
     this.names ??= ownerNames().filter(Boolean).sort((a, b) => b.length - a.length);
-    let clean = String(text).replaceAll(this.home, '~');
+    // Strip shell characters first: removing one must not reconstruct an owner's name after scrubbing.
+    let clean = String(text).replace(/[$`\\]/g, '').replaceAll(this.home, '~');
     for (const name of this.names) clean = clean.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'), '[owner]');
     // No $, backtick or backslash: a shell reading a line in double quotes would expand them.
-    return clean.replace(/[$`\\]/g, '').slice(0, 60);
+    return clean.slice(0, 60);
   }
   request(msg) {
     if (msg?.method !== 'tools/call' || msg.id === undefined) return;
@@ -383,7 +384,9 @@ export class ActionLog {
         else if ((stat.mode & 0o777) !== 0o600) throw new Error('action log is not 0600');
         writeSync(fd, text);
       } finally { closeSync(fd); }
-    } catch { this.failures++; }
+    } catch {
+      if (++this.failures === 1) try { process.stderr.write('sleight: could not write the action log; check its folder, file permissions and rotation lock.\n'); } catch {}
+    }
   }
   // Sessions can share one log, so rotation runs only under a lock file and checks the size again there: a session
   // whose look predates another's rotation would otherwise rotate the fresh file and push the old rows off the end.
@@ -393,12 +396,26 @@ export class ActionLog {
     let fd;
     try { fd = openSync(lock, flags, 0o600); } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      // A lock older than 30 s belongs to a session that died while rotating.
+      // Only one session may recover a stale lock. Recheck its age after the exclusive claim: a different
+      // session may already have replaced the stale file with a fresh lock while we waited.
+      if (Date.now() - lstatSync(lock).mtimeMs < 30000) return;
+      const reclaim = lock + '.reclaim';
+      let claim;
+      try { claim = openSync(reclaim, flags, 0o600); } catch (error) {
+        if (error.code === 'EEXIST') return;
+        throw error;
+      }
       try {
         if (Date.now() - lstatSync(lock).mtimeMs < 30000) return;
         unlinkSync(lock);
-        fd = openSync(lock, flags, 0o600);
-      } catch { return; }
+        try { fd = openSync(lock, flags, 0o600); } catch (error) {
+          if (error.code === 'EEXIST') return;
+          throw error;
+        }
+      } finally {
+        closeSync(claim);
+        unlinkSync(reclaim);
+      }
     }
     try {
       let stat;

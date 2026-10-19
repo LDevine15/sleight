@@ -54,7 +54,7 @@ test('a key with no effect reads as no visible change', () => {
 
 test('typing names the focused field and never repeats the typed text', () => {
   const { facts, targets } = actionOutcome([{ a: 'typeText', c: 5, focus: 1, body: 'text field (settable) Description: Name, Value: ' }], form(''), form('Alice'));
-  assert.deepEqual(targets[0], { r: 'text field', m: 'Name' });
+  assert.deepEqual(targets[0], { r: 'text field', m: 'Name', p: true });
   assert.deepEqual(facts, [{ o: 'value' }]);
   assert.doesNotMatch(JSON.stringify(facts), /Alice/);
 });
@@ -181,7 +181,7 @@ test('the guard records each action with the read that followed it, and sends no
   // Return after setValue goes ahead without a read, so the read after Return settles both.
   assert.equal(record.outcomes[1].g, true);
   assert.deepEqual(record.outcomes[2].f, [{ o: 'window', d: '[redacted 10 chars]' }, { o: 'closed', d: 'sheet' }]);
-  assert.equal(record.outcomes[1].c, 6);
+  assert.equal(record.outcomes[1].c, undefined);
   assert.equal(record.outcomes[1].l, 'saveAsNameTextField');
   assert.equal(record.outcomes[1].n, 21);
   assert.equal(record.app, 'TextEdit');
@@ -279,7 +279,7 @@ test('the relay asks the guard for outcomes and shows them under SLEIGHT_OUTCOME
   const result = await h.reply(2, g.output.join(''));
   const text = result.content.map(item => item.text).join('\n');
   // Tab after typing skips its read (the owner's speed rule), so the read before setValue settles both.
-  assert.match(text, /sleight outcomes:\n1 click 1: no visible change\n2 typeText 5 chars into text field "Name", 3 pressKey "Tab": value changed; focus on check box \[redacted 11 chars\]\n4 setValue 4: ran, unverified/);
+  assert.match(text, /sleight outcomes:\n1 click 1: no visible change\n2 typeText into text field "Name", 3 pressKey "Tab": value changed; focus on check box \[redacted 11 chars\]\n4 setValue 4: ran, unverified/);
   assert.doesNotMatch(text, /filtered-read/);
   const log = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.deepEqual(log.map(row => [row.call, row.tool, row.app, row.kind, row.result, row.outcome]), [
@@ -291,7 +291,7 @@ test('the relay asks the guard for outcomes and shows them under SLEIGHT_OUTCOME
   assert.deepEqual(log[1].target, { role: 'text field', name: 'Name' });
   assert.deepEqual(log[3].target, { role: 'secure text field', secure: true });
   assert.equal(log[2].key, 'Tab');
-  assert.equal(log[1].chars, 5);
+  assert.equal(log[1].chars, undefined);
   assert.equal(log[3].chars, undefined); // a secure field's length stays out too
   assert.ok(log.every(row => typeof row.time === 'string' && !Number.isNaN(Date.parse(row.time))));
   assert.doesNotMatch(readFileSync(path, 'utf8'), /Alice|hunter2|••/);
@@ -447,14 +447,14 @@ test('typing with no known plain field target keeps its length out, and so does 
   assert.deepEqual(g.records(MARK).at(-1).outcomes[0], { a: 'typeText', t: { r: 'text field', s: true } });
 });
 
-test('a length stays only for a plain field whose line names nothing like a card, account, ID or code, in any common language', async () => {
+test('single-line lengths stay out regardless of the field name, and password names still count as secure', async () => {
   const typed = async field => {
     const text = form().replace(/The focused UI element is .*$/, 'The focused UI element is 1 ' + field);
     const f = engine([text, text]);
     await f.run('await app.typeText("4111111111111111");', { outcomeMark: MARK, actions: ['typeText'] });
     return f.records(MARK).at(-1).outcomes[0];
   };
-  assert.equal((await typed('text field (settable) Description: Name, Value: ')).c, 16);
+  assert.equal((await typed('text field (settable) Description: Name, Value: ')).c, undefined);
   for (const field of ['text field (settable) Description: Card number, Value: ', 'text field Description: IBAN', 'text field Kontonummer',
     'text field Description: Numéro de carte', 'text field Description: Social Security Number', 'text field Description: Routing number',
     'text field ID: cc-exp', 'text field Description: Tax ID', 'text field Description: Passport no.', 'text field Description: Account',
@@ -702,4 +702,89 @@ test('kind, key, role, reason, tool, app and origin come from fixed words or are
   assert.equal(rows[2].reason, 'stopped by sleight');
   assert.equal(rows[3].key, 'cmd+s');
   assert.equal(rows[4].origin, undefined);
+});
+
+test('past the cap extra actions do not resend the last record', async () => {
+  const f = engine([form()]);
+  await f.run('for (let i = 0; i < 100; i++) await app.click(3);', { outcomeMark: MARK, actions: ['click'] });
+  const records = f.records(MARK);
+  assert.ok(records.filter(record => record.part === 29).length <= 2, 'record 30 goes out at keep and settle only');
+  assert.equal(records.filter(record => record.dropped && record.part === undefined).length, 1, 'one cap summary');
+  const compactor = createReadCompactor({ outcomes: true });
+  compactor.process([{ type: 'text', text: f.output.join('') }], { filterMark: MARK });
+  const record = compactor.takeOutcomes();
+  assert.equal(record.outcomes.length, 30);
+  assert.equal(record.dropped, 70);
+});
+
+test('typed lengths leave the engine only for plain text areas, never ambiguous single-line fields', async () => {
+  for (const [field, want] of [['text field', undefined], ['text field Description: Phone', undefined],
+    ['text field Description: Address', undefined], ['text field Description: Salary', undefined], ['combo box', undefined],
+    ['search field', undefined], ['text area', 16], ['text entry area', 16], ['secure text field', undefined]]) {
+    const text = form().replace(/The focused UI element is .*$/, 'The focused UI element is 1 ' + field);
+    const f = engine([text, text]);
+    await f.run('await app.typeText("4111111111111111");', { outcomeMark: MARK, actions: ['typeText'] });
+    assert.equal(f.records(MARK).at(-1).outcomes[0].c, want, field);
+  }
+});
+
+test('scrubbing owner names happens after shell characters are stripped from call ids and app names', () => {
+  const path = join(dir, 'scrub-order.jsonl');
+  const log = new ActionLog({ path, root: dir, home: '/Users/owner', names: ['owner'] });
+  for (const id of ['ch$ris', 'ch`ris', 'ch\\ris', '/Users/ch$ris']) {
+    log.request({ id, method: 'tools/call', params: { name: 'drag', arguments: { app: id } } });
+    log.reply({ id, result: { content: [] } });
+  }
+  const text = readFileSync(path, 'utf8');
+  assert.doesNotMatch(text, /owner/i);
+  assert.match(text, /\[owner\]/);
+  assert.doesNotMatch(text, /\/Users\//);
+});
+
+test('log failures warn once per session without exposing the path or blocking replies', t => {
+  const said = [];
+  t.mock.method(process.stderr, 'write', text => { said.push(text); return true; });
+  const root = mkdtempSync(join(dir, 'warning-')), path = join(root, 'private-owner.jsonl');
+  writeFileSync(path, '', { mode: 0o644 }); chmodSync(path, 0o644);
+  const log = new ActionLog({ path, root });
+  log.write([{ kind: 'click' }]); log.write([{ kind: 'click' }]);
+  assert.equal(log.failures, 2);
+  assert.equal(said.length, 1);
+  assert.match(said[0], /^sleight: .*action log.*\n$/);
+  assert.ok(!said[0].includes(root));
+  const linked = join(root, 'link'); symlinkSync(root, linked);
+  const next = new ActionLog({ path: join(linked, 'new.jsonl'), root: linked });
+  next.write([{ kind: 'click' }]); next.write([{ kind: 'click' }]);
+  assert.equal(said.length, 2, 'a second session also warns once');
+});
+
+test('a stale-lock contender rechecks age after claiming recovery and leaves a successor lock alone', async t => {
+  const fs = (await import('node:fs')).default, { syncBuiltinESMExports } = await import('node:module');
+  const root = mkdtempSync(join(dir, 'stale-race-')), path = join(root, 'shared.jsonl'), lock = path + '.lock';
+  writeFileSync(path, 'x'.repeat(390), { mode: 0o600 });
+  writeFileSync(lock, '', { mode: 0o600 });
+  utimesSync(lock, new Date(0), new Date(0));
+  const lstat = fs.lstatSync, unlink = fs.unlinkSync;
+  let raced = false;
+  t.mock.method(fs, 'lstatSync', (...args) => {
+    const stat = lstat(...args);
+    if (args[0] === lock && !raced) {
+      raced = true;
+      // Another session recovers and rotates after this session's stale snapshot, then takes a new lock.
+      new ActionLog({ path, root, maxBytes: 400 }).rotate(200);
+      writeFileSync(lock, '', { mode: 0o600, flag: 'wx' });
+    }
+    return stat;
+  });
+  syncBuiltinESMExports();
+  try {
+    new ActionLog({ path, root, maxBytes: 400 }).write([{ kind: 'click' }]);
+    assert.equal(raced, true);
+    assert.ok(existsSync(lock), 'the fresh lock still belongs to the other session');
+    assert.equal(readFileSync(path + '.1', 'utf8'), 'x'.repeat(390));
+    assert.ok(!existsSync(path + '.2'), 'no second rotation');
+  } finally {
+    t.mock.restoreAll(); syncBuiltinESMExports();
+    if (existsSync(lock)) unlink(lock);
+  }
 });

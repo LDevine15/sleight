@@ -517,8 +517,8 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
       const pending = state.outcomePending.get(raw);
       if (pending) pending.recs.push(rec); else state.outcomePending.set(raw, { before: text, recs: [rec] });
       state.outcomeAdd(rec);
-      // A dropped record sends the last kept one again, with the new count.
-      state.outcomePart(state.outcomes.includes(rec) ? rec : state.outcomes[state.outcomes.length - 1]);
+      // Dropped actions only update the count; flushOutcomes sends the cap summary once.
+      if (state.outcomes.includes(rec)) state.outcomePart(rec);
     };
     // At most 30 records a call; the rest are counted, so the log can say how many it lacks.
     state.outcomeAdd = rec => {
@@ -535,9 +535,8 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
     // A record as it leaves the engine: no set value, element line or focus number.
     const outcomeOut = ({ want, body, focus, ...rec }) => {
       const { p, ...t } = body === undefined ? {} : actionOutcome([{ body }]).targets[0] ?? {};
-      // A length only for a known plain text field whose line names nothing sensitive: a password's or card number's
-      // length is private too.
-      if (!t.r || t.s || p || !/^(?:text field|search text field|search field|combo box|text area|text entry area)$/.test(t.r)) delete rec.c;
+      // Only known plain text areas expose length; single-line fields may hold private values with no label.
+      if (t.s || p || !/^(?:text area|text entry area)$/.test(t.r)) delete rec.c;
       return t.r ? { ...rec, t } : rec;
     };
     const outcomeExtra = () => ({ ...(state.actions ? { planned: state.actions.length } : {}), ...(state.expected?.app ? { app: state.expected.app } : {}),

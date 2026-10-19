@@ -223,7 +223,7 @@ export async function preapprovedWriteDenied(input, options) {
 // (docs/known-problems.md).
 // The switches' stems, so an edit of part of a name counts; matched after JSON and shell escapes and quotes are folded out.
 const SWITCHES = /OUTCOMES|ACTION_LOG/;
-const unescaped = text => text.replace(/\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})/g, (_, u, x) => String.fromCharCode(parseInt(u ?? x, 16))).replace(/['"\\]/g, '');
+const unescaped = text => text.replace(/\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})/g, (_, u, x) => String.fromCharCode(parseInt(u ?? x, 16))).replace(/['"]\s*(?:\+\s*)?['"]/g, '').replace(/['"\\]/g, '');
 const switched = text => typeof text === 'string' && SWITCHES.test(unescaped(text));
 // Paths are matched lowercased (folded).
 const CONFIG = /(?:^|\/)(?:\.claude\/[^/]*\.json|\.claude\.json|\.?mcp\.json|managed-settings\.json|settings(?:\.local)?\.json|\.claude-plugin\/plugin\.json|bin\/sleight-mcp|launchagents\/[^/]+\.plist|\.config\/fish\/(?:[^/]+\/)*[^/]+\.fish|\.(?:zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile|envrc)|\.zshrc\.d\/[^/]+)$/;
@@ -239,9 +239,9 @@ export function loggingSwitchWriteDenied(input) {
     return texts.some(switched) && paths.some(path => typeof path === 'string' && CONFIG.test(folded(normalize(path))));
   }
   if (tool !== 'Bash' || !switched(input.command)) return false;
-  const { command } = input;
-  if (/\blaunchctl\s+setenv\b|\bclaude\s+(?:mcp|config)\b/.test(command)) return true;
+  const { command } = input, foldedCommand = unescaped(command);
+  if (/\blaunchctl\s+setenv\b|\bclaude\s+(?:mcp|config)\b/.test(foldedCommand)) return true;
   // A write to a config file, or an interpreter or editor tool run with one named: reads such as grep pass.
   return shellWritePaths(command).some(({ path }) => CONFIG.test(folded(normalize(path)))) ||
-    CONFIG_TEXT.test(command) && SETTERS.test(command);
+    CONFIG_TEXT.test(foldedCommand) && SETTERS.test(foldedCommand);
 }

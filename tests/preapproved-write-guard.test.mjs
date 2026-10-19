@@ -256,3 +256,13 @@ test('globs, braces, archives, downloads, patch and git checkout into sleight\'s
     assert.equal(await guard({ tool: 'Bash', command }, { stat, home }), false, command);
   }
 });
+
+test('the logging switch hook folds config paths and setter names as well as switch names', async () => {
+  const { loggingSwitchWriteDenied: denied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
+  for (const command of [
+    `py'thon3' -c "open('/Users/fixture/.zsh'+'rc','a').write('export SLEIGHT_OUTCOMES=1')"`,
+    `python3 -c "open('/Users/fixture/.zsh' 'rc','a').write('export SLEIGHT_OUTCOMES=1')"`,
+    `python3 -c "open('/Users/fixture/.zsh\\x72c','a').write('export SLEIGHT_ACTION_LOG=a')"`,
+  ]) assert.equal(denied({ tool: 'Bash', command }), true, command);
+  assert.equal(denied({ tool: 'Bash', command: `grep SLEIGHT_OUTCOMES ~/.zsh'rc'` }), false);
+});
