@@ -18,7 +18,8 @@ import { LOGIN_ARMS, loginTarget } from '../bench/world/login-readiness.mjs';
 import { packageSkip } from './requirements.mjs';
 import { cleanupContained as realCleanupContained } from '../bench/real-run.mjs';
 import { mergeArmHooks as realMergeArmHooks } from '../bench/arm-hooks.mjs';
-import { codexSleightRunConfig } from '../bench/codex-sleight.mjs';
+import { codexSleightRunConfig, assertOnlyServers } from '../bench/codex-sleight.mjs';
+import { codexExecPlan } from '../bench/codex-arm.mjs';
 const parserSkip = packageSkip('typescript');
 const { dragMethodAudit } = parserSkip ? {} : await import('../bench/world/method-check.mjs');
 
@@ -47,7 +48,7 @@ test('a refused dry run prints one JSON document with its configuration errors',
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError, daemonError, daemonStopError, declinedPrompts = [] } = {}) {
+async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError, daemonError, daemonStopError, declinedPrompts = [], sleightHomeServers = ['plugin_sleight_computer'], codexResult = {} } = {}) {
   if (!auth) {
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
@@ -113,6 +114,8 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     publishPrivateMailResults: (_path, value, options) => { calls.push('private audit'); assert.ok(options.terms.every(term => term === 'private label')); saved.push(JSON.parse(value)); },
     execFileSync(command, args) {
       if (args?.[0] === '--version') return worldVersion + ' (Claude Code)';
+      if (command === '/usr/bin/git' && args.includes('HEAD')) return 'c0ffee1234\n';
+      if (command === '/usr/bin/git' && args.includes('status')) return ' M bench/run.mjs\n';
       if (command === '/usr/bin/git') throw new Error('outside repo');
       if (command === 'id') return privateMail ? 'Owner Example' : ownerName;
       calls.push('tap check'); return JSON.stringify(taps);
@@ -122,14 +125,14 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     closeBenchTextEdit: options => { calls.push('TextEdit tail'); tailScopes.push(options); },
     quitChess: options => { calls.push('Chess tail'); tailScopes.push(options); },
     quitSimApp: options => { calls.push('Simulator tail'); tailScopes.push(options); },
-    approveOnly: ids => { calls.push(['approve', ...ids]); return () => {}; }, codexReady: () => true,
+    approveOnly: ids => { calls.push(['approve', ...ids]); return () => {}; }, codexReady: () => true, CODEX_HOME: '/owner/.codex-bench', codexExecPlan, assertOnlyServers,
     CODEX_SLEIGHT_HOME: '/owner/.codex-bench-sleight', ensureCodexSleightHome: () => { calls.push('codex sleight home'); return { ok: true, home: '/owner/.codex-bench-sleight', did: [] }; },
     writeCodexSleightConfig: (toml, home, copy) => { calls.push(['codex sleight config', home, copy]); codexConfigs.push(toml); },
-    codexSleightRunConfig, approvalSummary: () => ({ accepted: 1, declined: declinedPrompts, toolsRefused: [] }),
-    codexConfigServers: () => codexServers ?? [],
+    codexSleightRunConfig, approvalSummary: () => ({ accepted: 1, declined: declinedPrompts, toolsRefused: [], log: [{ kind: 'elicitation', message: 'Allow Computer Use to use "TextEdit"?', action: 'accept' }] }),
+    codexConfigServers: home => home === '/owner/.codex-bench-sleight' ? sleightHomeServers : codexServers ?? [],
     cpuSplit,
     startFootprint: () => async () => footprint,
-    runCodex: async (prompt, options) => { codexRuns.push({ prompt, options }); options.onSpawn?.(4321); return { code: 0, out: {}, forbidden: [] }; }, watchAppWindows: () => async () => [],
+    runCodex: async (prompt, options) => { codexRuns.push({ prompt, options }); options.onSpawn?.(4321); return { code: 0, out: {}, forbidden: [], ...codexResult }; }, watchAppWindows: () => async () => [],
     acquireLiveLock: async () => { calls.push('lock'); return async () => calls.push('unlock'); },
     runTiming: () => ({}), traceTiming: () => ({}), withStamps: timing => timing, observePermission: () => { if (dryRun) assert.fail('no host permission observation in initialization-only discovery'); return false; },
     assertCalculatorReady: async () => {
@@ -466,7 +469,7 @@ for (const arm of ['sleight', 'codex', 'lcu', 'cua', 'peekaboo', 'claude-cu', 'm
   assert.equal(result.files.size, 0);
   assert.equal(result.plan.results.length, 3);
   assert.doesNotMatch(result.logs.join('\n'), /results:/);
-  for (const row of result.plan.results) if (row.command) assert.ok(row.command.includes('--no-chrome'));
+  for (const row of result.plan.results) if (row.command && row.runner !== 'runCodex') assert.ok(row.command.includes('--no-chrome'));
 });
 
 for (const arm of ['sleight', 'lcu', 'cua', 'peekaboo']) test(`${arm} world dry plan matches the live driver flags`, async () => {
@@ -1051,6 +1054,88 @@ test('the engine list is set once for a native Codex arm beside a sleight-in-Cod
   assert.equal(result.error, undefined);
   assert.equal(result.calls.filter(call => Array.isArray(call) && call[0] === 'approve').length, 1);
   assert.deepEqual([...new Set(result.codexRuns.map(run => run.options.home))].sort(), ['/owner/.codex-bench-sleight', undefined].sort());
+});
+
+// ROADMAP 4b: the native claim (9 tasks plus VS Code, Slack and Spotify) with GPT inside sleight against Codex out of the box.
+const NATIVE_CLAIM = [...readFileSync(new URL('../bench/claim-tasks.txt', import.meta.url), 'utf8').trim().split(','), 'vscode-edit', 'slack-post', 'spotify-play'];
+const GPT_ARMS = [['codex', 'gpt-6-luna', '/owner/.codex-bench'], ['codex-sol', 'gpt-6.1-sol', '/owner/.codex-bench'],
+  ['codex-sleight', 'gpt-6-luna', '/owner/.codex-bench-sleight'], ['codex-sleight-sol', 'gpt-6.1-sol', '/owner/.codex-bench-sleight']];
+
+test('native claim dry plan: a row per GPT arm, task and run, each with its codex exec command, home and servers, and nothing launched', async () => {
+  const result = await runner({ suite: 'world', arm: GPT_ARMS.map(([arm]) => arm).join(','), dryRun: true, extraArgs: ['--codex-effort', 'high'],
+    tasks: NATIVE_CLAIM.map(id => ({ id, app: 'TextEdit', fixtureLifecycle: true })) });
+  assert.equal(result.error, undefined);
+  assert.equal(NATIVE_CLAIM.length, 12);
+  assert.equal(result.plan.results.length, 4 * 12 * 3);
+  assert.deepEqual(result.plan.sleight, { commit: 'c0ffee1234', dirty: true });
+  for (const [arm, model, home] of GPT_ARMS) {
+    const rows = result.plan.results.filter(row => row.arm === arm);
+    assert.deepEqual([...new Set(rows.map(row => row.task))], NATIVE_CLAIM);
+    for (const row of rows) {
+      assert.deepEqual([row.dryRun, row.runner, row.model, row.effort, row.codexHome], [true, 'runCodex', model, 'high', home], arm);
+      assert.deepEqual(row.command, ['codex', ...codexExecPlan('<fixture task prompt>', { cwd: `/owner/Library/Caches/sleight-bench/${arm.startsWith('codex-sleight') ? 'codex-sleight-arm' : 'codex-arm'}`, model, effort: 'high' })]);
+      if (home.endsWith('-sleight')) assert.deepEqual(row.servers, ['plugin_sleight_computer']);
+      else assert.match(row.servers, /engine server/);
+    }
+  }
+  assert.deepEqual([result.commands, result.directories, result.saved, result.codexConfigs, result.codexRuns], [[], [], [], [], []]);
+  assert.ok(!result.calls.some(call => call === 'codex sleight home' || call === 'lock' || (Array.isArray(call) && call[0] === 'approve')));
+});
+
+test('each GPT row records the model and effort Codex ran, its CLI version, sleight\'s commit and, inside sleight, the approval log', async () => {
+  const codexResult = { modelsRan: ['gpt-6.1-sol'], effortsRan: ['high'], codexCliVersion: '0.160.0', toolServers: { plugin_sleight_computer: 3 } };
+  const result = await runner({ suite: 'world', arm: 'codex-sol,codex-sleight-sol', drive: true, outcome: { passed: true }, codexResult, extraArgs: ['--owner-away'] });
+  assert.equal(result.error, undefined);
+  const file = result.saved.at(-1);
+  assert.deepEqual([file.sleight, file.codexCliVersions, file.codexEffort], [{ commit: 'c0ffee1234', dirty: true }, ['0.160.0'], 'high']);
+  assert.equal(file.engineAllowList, 'benchmark apps for the pass', 'a plain Codex arm in the pass sets the engine list for all of it');
+  const alone = await runner({ suite: 'world', arm: 'codex-sleight-sol', drive: true, outcome: { passed: true }, codexResult, extraArgs: ['--owner-away'] });
+  assert.equal(alone.saved.at(-1).engineAllowList, 'untouched');
+  assert.ok(file.results.every(row => !('modelMismatch' in row)));
+  const other = await runner({ suite: 'world', arm: 'codex-sleight-sol', drive: true, outcome: { passed: true }, codexResult: { ...codexResult, modelsRan: ['gpt-6-luna'] }, extraArgs: ['--owner-away'] });
+  assert.ok(other.saved.at(-1).results.every(row => row.modelMismatch === true && row.modelsRan[0] === 'gpt-6-luna'), 'a run that ran another model is published with it and flagged');
+  assert.ok(other.logs.some(line => /asked for gpt-6\.1-sol, Codex ran gpt-6-luna/.test(line)));
+  for (const row of file.results) {
+    assert.deepEqual([row.sleightCommit, row.sleightDirty, row.codexModel, row.modelsRan, row.effortsRan, row.codexCliVersion], ['c0ffee1234', true, 'gpt-6.1-sol', ['gpt-6.1-sol'], ['high'], '0.160.0'], row.arm);
+    if (row.arm === 'codex-sleight-sol') assert.deepEqual(row.approvals.log.map(entry => entry.action), ['accept']);
+    else assert.equal(row.approvals, undefined);
+  }
+});
+
+test('a sleight-in-Codex home that lists any server beyond the run\'s own stops the pass before the fixture or Codex starts', async () => {
+  for (const suite of ['world', 'default']) {
+    const result = await runner({ suite, arm: 'codex-sleight', drive: true, outcome: { passed: true }, extraArgs: ['--owner-away'],
+      sleightHomeServers: ['plugin_sleight_computer', 'cua_repl'] });
+    assert.equal(result.error, undefined, suite);
+    const rows = result.saved.at(-1).results;
+    assert.equal(rows.length, 1, 'the first run stops the pass');
+    assert.deepEqual([rows[0].phase, rows[0].passed, rows[0].seconds], ['configuration', false, undefined]);
+    assert.match(rows[0].reason, /configures plugin_sleight_computer, cua_repl, not only plugin_sleight_computer/);
+    assert.deepEqual([result.codexRuns.length, result.calls.includes('real run'), result.exitCode], [0, false, 1]);
+  }
+});
+
+test('a sleight-in-Codex run that called another MCP server fails, and a run at another effort is flagged', async () => {
+  const stray = await runner({ suite: 'world', arm: 'codex-sleight', drive: true, outcome: { passed: true }, extraArgs: ['--owner-away'],
+    codexResult: { toolServers: { plugin_sleight_computer: 2, cua_repl: 1 } } });
+  const row = stray.saved.at(-1).results[0];
+  assert.deepEqual([row.passed, row.reason], [false, 'used MCP server cua_repl']);
+  const plain = await runner({ suite: 'world', arm: 'codex', drive: true, outcome: { passed: true }, extraArgs: ['--owner-away'], codexResult: { toolServers: { cua_repl: 3 } } });
+  assert.equal(plain.saved.at(-1).results[0].passed, true, 'the plain arm\'s engine server is its own');
+  const effort = await runner({ suite: 'world', arm: 'codex-sleight', drive: true, outcome: { passed: true }, extraArgs: ['--owner-away'], codexResult: { effortsRan: ['medium'] } });
+  assert.equal(effort.saved.at(-1).results[0].effortMismatch, true);
+});
+
+test('the plain codex arm is unchanged: the bench home, the engine list set for the pass, no sleight config, the same exec flags', async () => {
+  const result = await runner({ suite: 'world', arm: 'codex', drive: true, outcome: { passed: true }, extraArgs: ['--owner-away'] });
+  assert.equal(result.error, undefined);
+  assert.ok(result.codexRuns.length > 0);
+  for (const run of result.codexRuns) { assert.equal(run.options.home, undefined, 'runCodex falls back to ~/.codex-bench'); assert.equal(run.options.model, 'gpt-6-luna'); }
+  assert.equal(result.calls.filter(call => Array.isArray(call) && call[0] === 'approve').length, 1);
+  assert.deepEqual(result.codexConfigs, []);
+  assert.ok(!result.calls.includes('codex sleight home'));
+  assert.deepEqual(codexExecPlan('p', { cwd: '/arm', model: 'gpt-6-luna', effort: 'high' }),
+    ['exec', '--json', '-s', 'read-only', '--disable', 'shell_tool', '-m', 'gpt-6-luna', '-c', 'model_reasoning_effort="high"', '--skip-git-repo-check', '-C', '/arm', 'p']);
 });
 
 test('a real run where Codex used a shell or edited a file fails even when its check passed', async () => {

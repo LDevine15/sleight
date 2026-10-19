@@ -49,18 +49,25 @@ function rolloutLines(threadId, home = CODEX_HOME) {
   const file = existsSync(sessions) && walk(sessions)[0];
   return file ? readFileSync(file, 'utf8').split('\n') : undefined;
 }
-function modelRequests(threadId, home = CODEX_HOME) {
-  return rolloutLines(threadId, home)?.filter(line => line.includes('"token_count"')).length;
-}
-// The model ids Codex ran, from the rollout's turn_context events (empty when the rollout has none), not the id asked for.
-export function modelsRan(lines) {
-  const ran = new Set();
+// What the rollout says ran, not what was asked for: the model ids and efforts from its turn_context events, and the CLI
+// version from its session_meta (cli_version, which `codex exec` 0.160.0 writes). Empty or undefined when the rollout has none.
+export function rolloutFacts(lines) {
+  const models = new Set(), efforts = new Set();
+  let cliVersion, requests = 0;
   for (const line of lines ?? []) {
-    if (!line.includes('"turn_context"')) continue;
-    try { const model = JSON.parse(line).payload?.model; if (typeof model === 'string' && model) ran.add(model); } catch { /* a cut line */ }
+    if (line.includes('"token_count"')) requests++;
+    if (!line.includes('"turn_context"') && !line.includes('"session_meta"')) continue;
+    let event;
+    try { event = JSON.parse(line); } catch { continue; } // a cut line
+    const payload = event.payload ?? {};
+    if (event.type === 'session_meta' && typeof payload.cli_version === 'string') cliVersion ??= payload.cli_version;
+    if (event.type !== 'turn_context') continue;
+    if (typeof payload.model === 'string' && payload.model) models.add(payload.model);
+    if (typeof payload.effort === 'string' && payload.effort) efforts.add(payload.effort);
   }
-  return [...ran];
+  return { models: [...models], efforts: [...efforts], cliVersion, requests };
 }
+export const modelsRan = lines => rolloutFacts(lines).models;
 
 // Finds a numeric key anywhere in a tool result, such as the engine's own execution time.
 function findNumber(value, key) {
@@ -85,7 +92,7 @@ export async function runCodex(prompt, { cwd, model, effort, timeoutMs, signal, 
   // pass them without touching the apps. The Claude arm has no Bash either.
   const args = codexExecPlan(prompt, { cwd, model, effort });
   let buffer = '', threadId, answer = '', usage, toolCalls = 0, engineMs = 0;
-  const forbidden = [];
+  const forbidden = [], toolServers = {};
   const onStdout = chunk => {
     buffer += chunk;
     let i;
@@ -99,22 +106,28 @@ export async function runCodex(prompt, { cwd, model, effort, timeoutMs, signal, 
       if (event.type !== 'item.completed') continue;
       const item = event.item ?? {};
       if (item.type === 'agent_message') answer = item.text ?? answer;
-      if (item.type === 'mcp_tool_call') { toolCalls++; engineMs += findNumber(item, 'codex/nodeReplExecutionDurationMs') ?? 0; }
+      if (item.type === 'mcp_tool_call') {
+        toolCalls++; engineMs += findNumber(item, 'codex/nodeReplExecutionDurationMs') ?? 0;
+        // Which MCP server each call went to: an isolated home shows only its own.
+        if (typeof item.server === 'string') toolServers[item.server] = (toolServers[item.server] ?? 0) + 1;
+      }
       if (['command_execution', 'file_change'].includes(item.type)) forbidden.push(item.type);
     }
   };
   const run = await runOwned(command, args, { cwd, env: { ...process.env, ...env, CODEX_HOME: home }, timeoutMs, signal, onStdout, onSpawn });
-  const ran = threadId ? modelsRan(rolloutLines(threadId, home)) : [];
+  const lines = threadId ? rolloutLines(threadId, home) : undefined;
+  const facts = rolloutFacts(lines), ran = facts.models;
   return {
     code: run.exit.code ?? (run.spawnError ? 127 : 1), stderr: (run.spawnError ?? run.stderr).slice(-2000), forbidden,
     groupClean: run.groupClean, cancelled: run.cancelled, timedOut: run.timedOut,
     // Shaped like Claude Code's JSON result, so the runner records both arms the same way.
-    out: { result: answer, num_turns: threadId ? modelRequests(threadId, home) : undefined,
+    out: { result: answer, num_turns: lines ? facts.requests : undefined,
       usage: usage && { input_tokens: usage.input_tokens, cache_read_input_tokens: usage.cached_input_tokens,
         cache_creation_input_tokens: usage.cache_write_input_tokens, output_tokens: usage.output_tokens },
       // The ids Codex ran when its rollout names them, else the one asked for.
       modelUsage: Object.fromEntries((ran.length ? ran : [model]).map(id => [id, {}])) },
-    modelRequested: model, modelsRan: ran, toolCalls, engineMs,
+    modelRequested: model, modelsRan: ran, effortRequested: effort, effortsRan: facts.efforts, codexCliVersion: facts.cliVersion ?? null,
+    toolCalls, toolServers, engineMs,
     ...(auditDrag && { methodAudit: (await import('./world/method-check.mjs')).dragMethodAudit(run.stdout) }),
   };
 }

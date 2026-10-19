@@ -4,23 +4,29 @@
 // to a correct result (mean per attempt divided by pass rate). A task an arm never passed has no expected time.
 // A second section applies the claim rules in docs/status/LAWS.md: which arm pairs are within 20% of sleight, whether those have
 // 5 runs, median/range/p90 of passes, lowest-expected-time count, totals, and the wording the numbers allow.
+// A third section is ROADMAP 4b: each sleight-in-Codex arm against Codex out of the box on the same model (SAME_MODEL), under the
+// same claim rules with the hosted arm in sleight's place.
 // claim-exclusions.json "regrades" entries ({ file, arm, task, run, reason, why }) replace the reason shown for one failed run whose
 // recorded reason was mislabelled; they never change exclusion, pass or fail, and result files stay untouched.
-//   node bench/claim-score.mjs [--since 2026-10-16T15-34] [--results <dir>] [--json]
+//   node bench/claim-score.mjs [--since 2026-10-16T15-34] [--results <dir>] [--rules <exclusions.json>] [--json]
+// --rules scores another task set with its own exclusions, such as the app claim's VS Code, Slack and Spotify tasks.
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const rules = JSON.parse(readFileSync(join(root, 'bench/claim-exclusions.json'), 'utf8'));
 const arg = name => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
+const rules = JSON.parse(readFileSync(arg('--rules') ?? join(root, 'bench/claim-exclusions.json'), 'utf8'));
 const ME = 'sleight';
+// GPT with sleight as its plugin against GPT with Codex's own computer use (ROADMAP 4b): [hosted arm, baseline arm].
+export const SAME_MODEL = [['codex-sleight', 'codex'], ['codex-sleight-sol', 'codex-sol']];
 // |a-b|/max calls more pairs "within 20%" than |a-b|/min, so it demands more 5-run top-ups: the strict reading of the LAWS rule.
 const STRICT = 'max';
 
 export function excluded(row, file, rules) {
   if (!rules.tasks.includes(row.task)) return 'not a claim task';
   if (row.skipped || row.seconds == null) return 'skipped';
+  if (row.modelMismatch || row.effortMismatch) return 'Codex ran another model or effort than its arm names';
   for (const r of rules.reasons) if (new RegExp(r.match, 'i').test(row.reason ?? '')) return r.why;
   for (const f of rules.files) if ((f.names ? f.names.includes(file) : file.startsWith(f.prefix)) && (!f.arm || f.arm === row.arm)) return f.why;
   for (const r of rules.runs ?? []) if (r.file === file && r.arm === row.arm && r.task === row.task && r.run === row.run) return r.why;
@@ -42,8 +48,8 @@ export function score(rows) {
   return out;
 }
 
-export function claim(table, rules, me = ME) {
-  const tasks = rules.tasks, others = rules.arms.filter(a => a !== me && table[a]), stats = {}, totals = {}, pairs = [], reasons = [];
+export function claim(table, rules, me = ME, arms = rules.arms) {
+  const tasks = rules.tasks, others = arms.filter(a => a !== me && table[a]), stats = {}, totals = {}, pairs = [], reasons = [];
   const off = (a, b, d) => Math.abs(a - b) / Math[d](a, b);
   for (const arm of [me, ...others]) {
     for (const task of tasks) {
@@ -82,9 +88,18 @@ export function claim(table, rules, me = ME) {
   return { strict: STRICT, stats, pairs, lowest, totals, wording, reasons };
 }
 
+// The same-model pairs that have rows, each scored by claim() with the hosted arm as "me" and the baseline as its one rival.
+// A pair missing either arm has no comparison: claim() alone would call a lone arm fastest.
+export const sameModel = (table, rules) => SAME_MODEL.filter(([hosted, base]) => table[hosted] || table[base]).map(([hosted, base]) => {
+  const missing = [hosted, base].filter(arm => !table[arm]);
+  return missing.length ? { hosted, base, pairs: [], lowest: [], totals: {}, wording: 'no comparison', reasons: [`no runs for ${missing.join(' and ')}`] }
+    : { hosted, base, ...claim(table, rules, hosted, [hosted, base]) };
+});
+
 // A sleight exclusion by file prefix can also drop a later claim run in the same hour, and sleight's rows should be one pass.
 export function warnings(rows, rules, since) {
   const out = [], mine = {};
+  for (const arm of new Set(rows.map(r => r.arm))) if (rules.arms && !rules.arms.includes(arm)) out.push(`${arm} has rows but is not in the rules' arms, so it is not scored`);
   for (const f of rules.files) if (f.prefix && (!f.arm || f.arm === ME) && f.prefix >= since) out.push(`file prefix ${f.prefix} can catch a new ${ME} run; list exact names`);
   for (const r of rows) if (r.arm === ME) mine[r.file] = (mine[r.file] ?? 0) + 1;
   if (Object.keys(mine).length > 1) out.push(`${ME}'s included rows come from ${Object.keys(mine).length} passes: ${Object.entries(mine).map(([f, n]) => `${f} (${n})`).join(', ')}`);
@@ -104,8 +119,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         ...(!passed && { reason: (g && g.reason) || (row.reason ?? 'no reason recorded'), ...(g && { recorded: row.reason, regraded: g.why }) }) });
     }
   }
-  const table = score(rows), verdict = claim(table, rules), warned = warnings(rows, rules, since), failures = rows.filter(r => !r.passed);
-  if (process.argv.includes('--json')) { console.log(JSON.stringify({ since, dropped, table, claim: verdict, failures, warnings: warned }, null, 1)); process.exit(0); }
+  const table = score(rows), verdict = claim(table, rules), gpt = sameModel(table, rules), warned = warnings(rows, rules, since), failures = rows.filter(r => !r.passed);
+  if (process.argv.includes('--json')) { console.log(JSON.stringify({ since, dropped, table, claim: verdict, sameModel: gpt, failures, warnings: warned }, null, 1)); process.exit(0); }
   const arms = rules.arms.filter(a => table[a]), n = x => x == null ? '-' : x.toFixed(0), pct = x => x == null ? '-' : `${(x * 100).toFixed(1)}%`;
   console.log(`Claim score since ${since}. Cell: expected s to a correct result (passes/runs), median of passes in brackets.`);
   console.log('task'.padEnd(20) + arms.map(a => a.padStart(22)).join(''));
@@ -132,6 +147,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log(`\n${ME} has the lowest expected time on ${verdict.lowest.length} of ${rules.tasks.length}: ${verdict.lowest.join(', ') || 'none'}`);
   console.log(`Wording: ${verdict.wording}`);
   for (const r of verdict.reasons) console.log(`  not "fastest": ${r}`);
+  for (const p of gpt) {
+    console.log(`\nSame model: ${p.hosted} (sleight inside Codex) against ${p.base} (Codex's own computer use), same rules.`);
+    for (const task of rules.tasks) {
+      const pair = p.pairs.find(x => x.task === task), runs = pair?.runs ?? {};
+      console.log(task.padEnd(20) + `${p.hosted} ${n(pair?.sleight)} (${runs[p.hosted] ?? 0} runs)`.padStart(34) + `${p.base} ${n(pair?.other)} (${runs[p.base] ?? 0} runs)`.padStart(30));
+    }
+    console.log(`totals: ${p.hosted} ${n(p.totals[p.hosted])} s, ${p.base} ${n(p.totals[p.base])} s. ${p.hosted} lower on ${p.lowest.length} of ${rules.tasks.length}. Claim wording for ${p.hosted}: ${p.wording}`);
+    for (const r of p.reasons) console.log(`  not "fastest": ${r}`);
+  }
   console.log(`\nFailed runs counted (${failures.length}):`);
   for (const f of failures) console.log(`  ${f.arm} ${f.task} #${f.run} ${f.file}: ${f.reason}${f.regraded ? ` (regraded from "${f.recorded}": ${f.regraded})` : ''}`);
   for (const w of warned) console.log(`Warning: ${w}`);

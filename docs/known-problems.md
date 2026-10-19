@@ -605,7 +605,9 @@ native reference, and oversized first results defer the browser reference while 
   0.016 ms a call over 2,000 offline echo calls (0.020 ms with both guards), and we haven't measured its start-up or a live run. Codex doesn't run a Stop hook, and sleight ends a used turn after 30 idle seconds.
   The arms' Codex login is a copy of the codex arm's `auth.json`. We don't know whether Codex rotates refresh tokens, which
   would log the other copy out. We don't know whether sleight's replies keep the engine's `codex/nodeReplExecutionDurationMs`
-  field that fills `engineMs` in the codex arm's rows.
+  field that fills `engineMs` in the codex arm's rows. In a pass that also runs `codex` or `codex-sol`, the engine's Always
+  allow list holds the benchmark apps for the whole pass. The sleight arms there meet fewer engine prompts than they would
+  alone. The results record it (`engineAllowList`), and nothing refuses such a pass.
 
 ## Turbo in unattended runs
 
