@@ -59,18 +59,26 @@ func preferredProfileEvidence(_ matches: [[String: Any]]) -> [String: Any]? {
 // its title, description and value are empty (2026-10-18).
 func identifierProfile(_ identifier: String) -> String? {
     guard identifier.hasPrefix("TabGroupPickerButton?"), let query = identifier.split(separator: "?", maxSplits: 1).last else { return nil }
-    for pair in query.split(separator: "&") {
-        let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
-        if parts.count == 2, parts[0] == "Profile" { return parts[1].removingPercentEncoding }
+    let pairs = query.split(separator: "&").map { $0.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init) }
+        .filter { $0.first == "Profile" }
+    guard pairs.count == 1, pairs[0].count == 2 else { return nil }
+    return pairs[0][1].removingPercentEncoding
+}
+func profileButtonAttribute(_ identifier: String, labels: [String: String]) -> String? {
+    if identifier.hasPrefix("TabGroupPickerButton?") {
+        guard identifierProfile(identifier) == profileName, labels.values.filter({ !$0.isEmpty }).allSatisfy({ $0 == profileName }) else { return nil }
+        return "AXIdentifier"
     }
-    return nil
+    return ["AXTitle", "AXDescription", "AXValue"].first { labels[$0] == profileName }
 }
 func profileEvidence(_ window: AXUIElement) throws -> [String: Any]? {
     let toolbar = try chrome(window).filter { string($0, "AXRole") == "AXToolbar" }.flatMap { try chrome($0) }
     var matches: [[String: Any]] = []
     for element in toolbar where ["AXMenuButton", "AXPopUpButton", "AXButton"].contains(string(element, "AXRole")) {
-        let named = ["AXTitle", "AXDescription", "AXValue"].first { string(element, $0) == profileName }
-        let attribute = named ?? (identifierProfile(string(element, "AXIdentifier")) == profileName ? "AXIdentifier" : nil)
+        let id = string(element, "AXIdentifier")
+        let labels = Dictionary(uniqueKeysWithValues: ["AXTitle", "AXDescription", "AXValue"].map { ($0, string(element, $0)) })
+        let attribute = profileButtonAttribute(id, labels: labels)
+        if id.hasPrefix("TabGroupPickerButton?"), attribute == nil { return nil }
         if let name = attribute {
             matches.append(["element": identifier(element), "role": string(element, "AXRole"),
                             "identifier": string(element, "AXIdentifier"), "attribute": name, "value": profileName])
@@ -445,6 +453,9 @@ if CommandLine.arguments.dropFirst() == ["--self-test-owner-safety"] {
     result["unsafeEscapes"] = escapes
     result["identifierProfile"] = identifierProfile("TabGroupPickerButton?Profile=sleight%20benchmark&Icon=hammer.fill") == profileName
     result["identifierOther"] = identifierProfile("TabGroupPickerButton?Profile=owner&Icon=x") == profileName
+    result["conflictingProfile"] = profileButtonAttribute("TabGroupPickerButton?Profile=Personal", labels: ["AXTitle": profileName]) == nil
+        && profileButtonAttribute("TabGroupPickerButton?Profile=sleight%20benchmark", labels: ["AXTitle": "Personal"]) == nil
+    result["identifierDuplicates"] = identifierProfile("TabGroupPickerButton?Profile=sleight%20benchmark&Profile=%ZZ") == nil
     result["identifierPrefix"] = identifierProfile("Other?Profile=sleight%20benchmark") == nil
     result["searchFieldReadable"] = menuChildrenReadable(role: "AXTextField", names: ["AXChildren"], readable: false)
     result["menuChildrenUnreadable"] = menuChildrenReadable(role: "AXMenu", names: ["AXChildren"], readable: false)

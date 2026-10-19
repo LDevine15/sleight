@@ -492,7 +492,7 @@ test('native Safari helper compiles and rejects unowned requests before any app 
     missingProfile: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED', verifiedKey: true,
     menuEscapes: 2, menuEscapePosted: true, stuckEscapes: 2, stuckMenu: 'BENCH_SAFARI_MENU_STUCK',
     unsafeEscapes: 0, unsafeMenu: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED',
-    identifierProfile: true, identifierOther: false, identifierPrefix: true,
+    identifierProfile: true, identifierOther: false, identifierPrefix: true, identifierDuplicates: true, conflictingProfile: true,
     searchFieldReadable: true, menuChildrenUnreadable: false, menuWithoutVisible: true, menuVisibleUnknown: false,
     preferredElement: 'profile', ambiguousProfile: true, visibleMenuClear: false, selectedMenuClear: false,
     clearMenuEscapes: 1,
@@ -557,4 +557,16 @@ test('a broken helper transport collects its own helper through EOF and rejects 
   assert.equal(ended, true);
   await assert.rejects(bridge.request('quit'), /JSON/);
   await bridge.close();
+});
+
+
+test('Safari profile proof refuses conflicting labels and malformed duplicate identifiers', async () => {
+  const { safariProfileEvidence, identifierProfile } = await import('../bench/fowl/safari-browser.mjs');
+  for (const identifier of ['TabGroupPickerButton?Profile=sleight%20benchmark&Profile=%ZZ', 'TabGroupPickerButton?Profile=', 'TabGroupPickerButton?Profile=sleight%20benchmark&Profile']) {
+    assert.notEqual(identifierProfile(identifier), profile);
+    assert.equal(safariProfileEvidence({ toolbar: [{ id: 'profile', role: 'AXButton', identifier, title: profile }] }), null);
+  }
+  for (const [identifier, title] of [['TabGroupPickerButton?Profile=Personal', profile], ['TabGroupPickerButton?Profile=sleight%20benchmark', 'Personal']]) {
+    assert.equal(safariProfileEvidence({ toolbar: [{ id: 'profile', role: 'AXButton', identifier, title }] }), null);
+  }
 });

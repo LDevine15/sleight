@@ -993,6 +993,7 @@ function run(argv) {
       return terminated ? null : fake;
     }, { now: function () { return 0; }, wait: function () {}, emit: function () {} }), path: request.path ? String(ObjC.unwrap($.NSURL.fileURLWithPath(request.path).URLByResolvingSymlinksInPath.path)) : undefined });
   }
+  if (request.bundle === 'com.apple.Safari' && ['quit', 'recover'].indexOf(request.mode) === -1) throw new Error('Safari setup requires the profile-proven created-window helper');
   var allowed = ['com.apple.Safari', 'com.apple.Preview', 'com.apple.finder',
     'com.apple.TextEdit', 'com.apple.calculator', 'com.apple.Chess', 'com.apple.dt.Devices', 'com.apple.iphonesimulator', 'net.imput.helium',
     'com.microsoft.Word', 'com.microsoft.Excel', 'com.microsoft.Powerpoint', 'com.apple.mail'];
