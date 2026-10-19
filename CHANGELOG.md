@@ -236,9 +236,11 @@ TODO: full release pass result.
   drag, window selection and every engine call refuse the process that shows them (sleight's consent
   host), matched by name, by its file and by its pid, so only your click answers them.
 - When your own message asks to submit or save a form or settings page, sleight no longer stops to
-  confirm the values it names, notification, email and SMS switches included. It still asks before a
-  page dialog that adds anything you didn't name, high-stakes submissions, account, security, privacy
-  and sharing settings, and submits only the page proposes. Bookings your message asks for work the
+  confirm the values it names, notification, email and SMS switches included. A security or
+  privacy switch your message names counts too when it makes the account safer, such as two-factor on.
+  It still asks before a page dialog that adds anything you didn't name, high-stakes submissions,
+  loosening a security or privacy setting, recovery email, phone, password or connected-app changes,
+  and submits only the page proposes. Bookings your message asks for work the
   same way, and any money they charge follows the payment rule.
 - In Cursor and other MCP clients, approval prompts use the client's name instead of Claude.
 - The mod refuses Claude's file edits and common shell writes to the preapproved-apps file. Reads
