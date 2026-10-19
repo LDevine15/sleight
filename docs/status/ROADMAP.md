@@ -158,7 +158,9 @@ native claim and the browser race run as Mac load allows, so that Electron's run
    Owner, 2026-10-19 ~15:40Z: commits are authored as penguinspecz with the GitHub no-reply address (the repo had committed as
    `penguinspecz <34923421+penguinspecz@users.noreply.github.com>` since 2026-10-12, which GitHub credited to a stranger's account), and the history is rewritten to credit those
    commits to penguinspecz, with a force push of the public `main` and the tags. sleight-arch rewrites every branch at once
-   when 1.3.1 is ready and no builder is mid-flight, and records the old-to-new commit map. 1.4.0 also gets README and hub
+   when 1.3.1 is ready and no builder is mid-flight, and records the old-to-new commit map. Owner, 2026-10-19 ~22:35Z: 1.3.1 pushes
+   without it, and the rewrite runs at the next quiet point after 1.4.0's lanes merge, force-pushing main and the v1.3.0 and
+   v1.3.1 tags then. 1.4.0 also gets README and hub
    visuals (generated charts, a demo clip, a diagram), a cleaner hub, GitHub Pages for the interactive results page, an
    agent-first install (point a coding agent at the repo URL and it installs sleight), supported hosts and platforms stated up
    front, and a taste pass over the front page on the assumption that it goes viral. The plan is
