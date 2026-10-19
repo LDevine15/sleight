@@ -26,6 +26,7 @@ const STRICT = 'max';
 export function excluded(row, file, rules) {
   if (!rules.tasks.includes(row.task)) return 'not a claim task';
   if (row.skipped || row.seconds == null) return 'skipped';
+  if (row.modelMismatch || row.effortMismatch) return 'Codex ran another model or effort than its arm names';
   for (const r of rules.reasons) if (new RegExp(r.match, 'i').test(row.reason ?? '')) return r.why;
   for (const f of rules.files) if ((f.names ? f.names.includes(file) : file.startsWith(f.prefix)) && (!f.arm || f.arm === row.arm)) return f.why;
   for (const r of rules.runs ?? []) if (r.file === file && r.arm === row.arm && r.task === row.task && r.run === row.run) return r.why;

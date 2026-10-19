@@ -12,7 +12,7 @@ import { getTasks } from '../bench/tasks.mjs';
 import { answerElicitation } from '../bench/codex-sleight-proxy.mjs';
 import { approvalSummary, assertArmHome } from '../bench/codex-sleight.mjs';
 import { runCodex, rolloutFacts } from '../bench/codex-arm.mjs';
-import { SAME_MODEL, claim, sameModel, score, warnings } from '../bench/claim-score.mjs';
+import { SAME_MODEL, claim, excluded, sameModel, score, warnings } from '../bench/claim-score.mjs';
 
 const temporary = t => { const dir = mkdtempSync(join(tmpdir(), 'codex-native-')); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir; };
 const claimTasks = readFileSync(new URL('../bench/claim-tasks.txt', import.meta.url), 'utf8').trim().split(',');
@@ -117,12 +117,16 @@ test('a run asked for one model that ran another is published with the one it ra
   assert.deepEqual(rolloutFacts(['{"type":"session_meta","payload":{"cli_version":"0.160.0"}}', '{"type":"turn_context"', '']).cliVersion, '0.160.0', 'a cut line is skipped');
 });
 
-test('approvals.jsonl reaches the row whole, beside its counts', t => {
+test('approvals.jsonl reaches the row beside its counts, without a hook\'s reason text', t => {
   const file = join(temporary(t), 'approvals.jsonl');
   const entries = [{ t: '2026-10-19T00:00:00.000Z', policy: 'bench', kind: 'elicitation', message: 'Allow Computer Use to use "Slack"?', action: 'accept' },
-    { t: '2026-10-19T00:00:01.000Z', policy: 'bench', kind: 'elicitation', message: 'Allow Computer Use to use "Terminal"?', action: 'decline' }];
+    { t: '2026-10-19T00:00:01.000Z', policy: 'bench', kind: 'elicitation', message: 'Allow Computer Use to use "Terminal"?', action: 'decline' },
+    { t: '2026-10-19T00:00:02.000Z', policy: 'bench', kind: 'tool-refused', tool: 'select_window', reason: 'window title Example' }];
   writeFileSync(file, entries.map(entry => JSON.stringify(entry)).join('\n') + '\n');
-  assert.deepEqual(approvalSummary(file), { accepted: 1, declined: ['Allow Computer Use to use "Terminal"?'], toolsRefused: [], log: entries });
+  const { log, ...counts } = approvalSummary(file, { log: true });
+  assert.deepEqual(counts, { accepted: 1, declined: ['Allow Computer Use to use "Terminal"?'], toolsRefused: ['select_window'] });
+  assert.deepEqual(log, entries.map(({ policy: _policy, reason: _reason, ...kept }) => kept));
+  assert.equal('log' in approvalSummary(file), false, 'the race receipts keep their counts only');
   assert.ok(!existsSync(join(file, '..', 'preapproved.json')));
 });
 
@@ -137,4 +141,8 @@ test('the scorer pairs each sleight-in-Codex arm with Codex on the same model, u
   assert.deepEqual([sol.wording, sol.reasons], ['no comparison', ['no runs for codex-sol']], 'a lone arm is never called faster');
   assert.deepEqual(Object.keys(claim(table, rules).totals), ['sleight', 'codex', 'codex-sleight', 'codex-sleight-sol'], 'the main claim still compares sleight with every arm');
   assert.deepEqual(warnings([{ arm: 'codex-sleight-max', task: 'a', file: 'f' }], rules, '9999'), ['codex-sleight-max has rows but is not in the rules\' arms, so it is not scored']);
+  const exclusions = { ...rules, reasons: [], windows: [] };
+  assert.equal(excluded({ arm: 'codex-sol', task: 'a', seconds: 30, modelMismatch: true }, 'f.json', exclusions), 'Codex ran another model or effort than its arm names');
+  assert.equal(excluded({ arm: 'codex-sol', task: 'a', seconds: 30, effortMismatch: true }, 'f.json', exclusions), 'Codex ran another model or effort than its arm names');
+  assert.equal(excluded({ arm: 'codex-sol', task: 'a', seconds: 30 }, 'f.json', exclusions), undefined);
 });

@@ -9,9 +9,9 @@
 // write the owner's preapproved.json (an "Always allow" needs a `remember` answer the proxy never gives), and
 // SLEIGHT_APPROVAL_PROMPT=client means sleight cancels rather than open its panel if the proxy were missing.
 
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CODEX_HOME } from './codex-arm.mjs';
 import { CODEX_SLEIGHT_ARM_MODELS } from './fowl/support.mjs';
@@ -74,23 +74,30 @@ export function codexSleightServers({ mcpServers, allowed, dir, policy, gateWind
 
 // What the proxy decided for one run (its approvals.jsonl): counts, and every declined or refused prompt by text, so a prompt
 // outside the allowlist shows in the run's record as it does in the Claude arms' declined-prompts log.
-export function approvalSummary(file) {
+const LOG_FIELDS = ['t', 'kind', 'action', 'message', 'tool'];
+export function approvalSummary(file, { log = false } = {}) {
   const entries = [];
   try { for (const line of readFileSync(file, 'utf8').split('\n')) if (line) try { entries.push(JSON.parse(line)); } catch { /* a cut line */ } } catch { /* no log: no prompt was asked */ }
   const asked = entries.filter(entry => entry.kind === 'elicitation');
   return { accepted: asked.filter(entry => entry.action === 'accept').length,
     declined: asked.filter(entry => entry.action !== 'accept').map(entry => entry.message),
     toolsRefused: entries.filter(entry => entry.kind === 'tool-refused').map(entry => entry.tool),
-    // The log itself goes into the run's row: the run folder is temporary. Its lines hold prompt text, never page content.
-    log: entries };
+    // With log, the decisions themselves go into the run's row (the run folder is temporary): prompt text, never a hook's reason.
+    ...(log && { log: entries.map(entry => Object.fromEntries(Object.entries(entry).filter(([key]) => LOG_FIELDS.includes(key)))) }) };
 }
 
 // A sleight-in-Codex home is never the owner's ~/.codex or the codex arm's engine-only ~/.codex-bench.
+// Paths compare after symlinks resolve (through the parent when the folder doesn't exist yet), and without case on macOS.
+const canonical = path => {
+  let out = resolve(path);
+  try { out = realpathSync(out); } catch { try { out = join(realpathSync(dirname(out)), basename(out)); } catch { /* neither exists yet */ } }
+  return process.platform === 'darwin' ? out.toLowerCase() : out;
+};
 export function assertArmHome(home) {
-  const target = resolve(home);
+  const target = canonical(home);
   for (const [other, name] of [[join(homedir(), '.codex'), "the owner's Codex home"], [CODEX_HOME, "the codex arm's home"]])
-    if (target === resolve(other)) throw Error(`the sleight-in-Codex home ${home} is ${name}; set CODEX_SLEIGHT_BENCH_HOME to a folder of its own`);
-  return target;
+    if (target === canonical(other)) throw Error(`the sleight-in-Codex home ${home} is ${name}; set CODEX_SLEIGHT_BENCH_HOME to a folder of its own`);
+  return resolve(home);
 }
 
 // After a run's config is written: the home must list exactly the servers that run planned, so nothing else reaches the model.

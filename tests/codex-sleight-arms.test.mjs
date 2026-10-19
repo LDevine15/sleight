@@ -139,9 +139,7 @@ test('a run writes its servers into the arm\'s home, keeps a copy, and records t
     assert.equal(statSync(join(home, 'config.toml')).mode & 0o777, 0o600);
     assert.deepEqual(receipt.result.modelsRan, undefined);
     assert.deepEqual([receipt.modelRequested, receipt.modelsRan], [model, [model]]);
-    const { log, ...counts } = receipt.approvals;
-    assert.deepEqual(counts, { accepted: 1, declined: ['Allow Computer Use to use "Terminal"?'], toolsRefused: ['select_window'] });
-    assert.deepEqual(log.map(entry => entry.kind), ['elicitation', 'elicitation', 'tool-refused'], 'the receipt keeps the proxy\'s log');
+    assert.deepEqual(receipt.approvals, { accepted: 1, declined: ['Allow Computer Use to use "Terminal"?'], toolsRefused: ['select_window'] });
     assert.equal(receipt.agentConfig.codexServers[0], 'plugin_sleight_computer');
   }
 });
@@ -256,10 +254,9 @@ test('proxy arguments', () => {
 
 test('approvalSummary counts accepted and lists declined prompts and refused tools', t => {
   const file = join(temporary(t), 'approvals.jsonl');
-  assert.deepEqual(approvalSummary(file), { accepted: 0, declined: [], toolsRefused: [], log: [] });
+  assert.deepEqual(approvalSummary(file), { accepted: 0, declined: [], toolsRefused: [] });
   writeFileSync(file, `${JSON.stringify({ kind: 'elicitation', message: 'a', action: 'accept' })}\nnot json\n${JSON.stringify({ kind: 'elicitation', message: 'b', action: 'decline' })}\n`);
-  assert.deepEqual(approvalSummary(file), { accepted: 1, declined: ['b'], toolsRefused: [],
-    log: [{ kind: 'elicitation', message: 'a', action: 'accept' }, { kind: 'elicitation', message: 'b', action: 'decline' }] });
+  assert.deepEqual(approvalSummary(file), { accepted: 1, declined: ['b'], toolsRefused: [] });
 });
 
 // Through the real relay (a fake engine behind it): a client with no capabilities at all, as `codex exec` is. Without the proxy

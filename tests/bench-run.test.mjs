@@ -1096,17 +1096,34 @@ test('each GPT row records the model and effort Codex ran, its CLI version, slei
   assert.ok(other.saved.at(-1).results.every(row => row.modelMismatch === true && row.modelsRan[0] === 'gpt-6-luna'), 'a run that ran another model is published with it and flagged');
   assert.ok(other.logs.some(line => /asked for gpt-6\.1-sol, Codex ran gpt-6-luna/.test(line)));
   for (const row of file.results) {
-    assert.deepEqual([row.sleightCommit, row.codexModel, row.modelsRan, row.effortsRan, row.codexCliVersion], ['c0ffee1234', 'gpt-6.1-sol', ['gpt-6.1-sol'], ['high'], '0.160.0'], row.arm);
+    assert.deepEqual([row.sleightCommit, row.sleightDirty, row.codexModel, row.modelsRan, row.effortsRan, row.codexCliVersion], ['c0ffee1234', true, 'gpt-6.1-sol', ['gpt-6.1-sol'], ['high'], '0.160.0'], row.arm);
     if (row.arm === 'codex-sleight-sol') assert.deepEqual(row.approvals.log.map(entry => entry.action), ['accept']);
     else assert.equal(row.approvals, undefined);
   }
 });
 
-test('a sleight-in-Codex home that lists any server beyond the run\'s own stops the pass before Codex starts', async () => {
-  const result = await runner({ suite: 'world', arm: 'codex-sleight', drive: true, outcome: { passed: true }, extraArgs: ['--owner-away'],
-    sleightHomeServers: ['plugin_sleight_computer', 'cua_repl'] });
-  assert.match(String(result.error?.message), /configures plugin_sleight_computer, cua_repl, not only plugin_sleight_computer/);
-  assert.equal(result.codexRuns.length, 0);
+test('a sleight-in-Codex home that lists any server beyond the run\'s own stops the pass before the fixture or Codex starts', async () => {
+  for (const suite of ['world', 'default']) {
+    const result = await runner({ suite, arm: 'codex-sleight', drive: true, outcome: { passed: true }, extraArgs: ['--owner-away'],
+      sleightHomeServers: ['plugin_sleight_computer', 'cua_repl'] });
+    assert.equal(result.error, undefined, suite);
+    const rows = result.saved.at(-1).results;
+    assert.equal(rows.length, 1, 'the first run stops the pass');
+    assert.deepEqual([rows[0].phase, rows[0].passed, rows[0].seconds], ['configuration', false, undefined]);
+    assert.match(rows[0].reason, /configures plugin_sleight_computer, cua_repl, not only plugin_sleight_computer/);
+    assert.deepEqual([result.codexRuns.length, result.calls.includes('real run'), result.exitCode], [0, false, 1]);
+  }
+});
+
+test('a sleight-in-Codex run that called another MCP server fails, and a run at another effort is flagged', async () => {
+  const stray = await runner({ suite: 'world', arm: 'codex-sleight', drive: true, outcome: { passed: true }, extraArgs: ['--owner-away'],
+    codexResult: { toolServers: { plugin_sleight_computer: 2, cua_repl: 1 } } });
+  const row = stray.saved.at(-1).results[0];
+  assert.deepEqual([row.passed, row.reason], [false, 'used MCP server cua_repl']);
+  const plain = await runner({ suite: 'world', arm: 'codex', drive: true, outcome: { passed: true }, extraArgs: ['--owner-away'], codexResult: { toolServers: { cua_repl: 3 } } });
+  assert.equal(plain.saved.at(-1).results[0].passed, true, 'the plain arm\'s engine server is its own');
+  const effort = await runner({ suite: 'world', arm: 'codex-sleight', drive: true, outcome: { passed: true }, extraArgs: ['--owner-away'], codexResult: { effortsRan: ['medium'] } });
+  assert.equal(effort.saved.at(-1).results[0].effortMismatch, true);
 });
 
 test('the plain codex arm is unchanged: the bench home, the engine list set for the pass, no sleight config, the same exec flags', async () => {

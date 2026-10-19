@@ -155,7 +155,7 @@ ARMS['codex-sol'] = { ...ARMS.codex, codexModel: CODEX_SOL };
 const sleightHostArm = (name, codexModel) => ({ cwd: (() => { const dir = join(ARM_HOME, 'codex-sleight-arm'); if (!isDryRun) mkdirSync(dir, { recursive: true }); return dir; })(),
   codex: true, sleightHost: true, codexModel, codexHome: CODEX_SLEIGHT_HOME,
   check: () => { const home = ensureCodexSleightHome(); return home.ok || home.problem; },
-  identity: { name, host: 'codex exec', model: codexModel, effort: 'high', codexHome: CODEX_SLEIGHT_HOME, approvals: 'benchmark proxy (approve.mjs policy); preapproved.json and the engine list untouched' } });
+  identity: { name, host: 'codex exec', model: codexModel, effort: option('codex-effort', option('effort', 'high')), codexHome: CODEX_SLEIGHT_HOME, approvals: 'benchmark proxy (approve.mjs policy); preapproved.json and the engine list untouched' } });
 ARMS['codex-sleight'] = sleightHostArm('codex-sleight', codexModelOption ?? 'gpt-6-luna');
 ARMS['codex-sleight-sol'] = sleightHostArm('codex-sleight-sol', CODEX_SOL);
 // A pass with a plain Codex arm sets the engine's Always allow list for its whole length, so a sleight-in-Codex arm in the same
@@ -452,7 +452,22 @@ function codexHomeFor(arm, { dir, evidenceDir }) {
   const config = sleightHostConfig(arm, dir, evidenceDir);
   writeCodexSleightConfig(config.toml, arm.codexHome, join(dir, 'codex-config.toml'));
   assertOnlyServers(codexConfigServers(arm.codexHome), config.servers);
-  return { home: arm.codexHome };
+  return { home: arm.codexHome, servers: config.servers };
+}
+// The same, before any fixture starts. A refused home is a configuration row (no seconds, so the claim scorer skips it) and
+// stops the pass; undefined tells the caller to stop.
+function codexRunHome(arm, armName, task, run, dirs) {
+  try { return codexHomeFor(arm, dirs); }
+  catch (error) {
+    results.push({ arm: armName, task: task.id, run, phase: 'configuration', passed: false, reason: scrub(error.message) });
+    console.error(`STOP: ${scrub(error.message)}`);
+    controller.abort(error); process.exitCode = 1; save();
+  }
+}
+// After a sleight-in-Codex run: a call to any MCP server the run didn't configure fails it, as a shell command does.
+function strayServers(response, codexHome) {
+  const stray = codexHome.servers ? Object.keys(response.toolServers ?? {}).filter(name => !codexHome.servers.includes(name)) : [];
+  if (stray.length) response.forbidden = [...response.forbidden ?? [], ...stray.map(name => `MCP server ${name}`)];
 }
 // A Codex arm's dry-run row: the exact `codex exec` arguments, its home, and the servers and approval path a run would get.
 const codexDryPlan = arm => ({ runner: 'runCodex', model: arm.codexModel, effort: codexEffort,
@@ -460,13 +475,16 @@ const codexDryPlan = arm => ({ runner: 'runCodex', model: arm.codexModel, effort
   codexHome: arm.codexHome ?? CODEX_HOME,
   ...(arm.sleightHost ? { servers: sleightHostConfig(arm, '<run folder>').servers, approvals: 'proxy answers from approve.mjs; engine Always allow list untouched' }
     : { servers: 'the engine server configured in the home', approvals: 'engine Always allow list set to the benchmark apps for the pass, then restored' }) });
-// The commit every row ran, recorded because the 2026-10-17 claim results didn't say which build they measured.
-const sleightBuild = (() => {
+// The repo's commit (the harness for every arm, the plugin for sleight's), recorded because the 2026-10-17 claim results didn't
+// say which build they measured. Read again for every row: a sleight arm starts the working tree's plugin on each run.
+const sleightAt = () => {
   try {
     const git = args => execFileSync('/usr/bin/git', ['-C', ROOT, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     return { commit: git(['rev-parse', 'HEAD']), dirty: git(['status', '--porcelain', '--untracked-files=no']) !== '' };
   } catch { return { commit: null }; }
-})();
+};
+const sleightBuild = sleightAt();
+const sleightRow = () => { const { commit, dirty } = sleightAt(); return { sleightCommit: commit, sleightDirty: dirty }; };
 
 function claudeArgs(prompt, arm,{ privateMail = false, fixtureLifecycle = false } = {}) {
   return [
@@ -555,6 +573,10 @@ function finishRun(result) {
   if (asked && result.modelsRan?.some(ran => ran !== asked)) {
     result.modelMismatch = true;
     console.error(`MODEL ${result.arm} ${result.task} #${result.run}: asked for ${asked}, Codex ran ${result.modelsRan.join(', ')}`);
+  }
+  if (asked && result.effortsRan?.some(ran => ran !== codexEffort)) {
+    result.effortMismatch = true;
+    console.error(`EFFORT ${result.arm} ${result.task} #${result.run}: asked for ${codexEffort}, Codex ran ${result.effortsRan.join(', ')}`);
   }
   if (!ARMS[result.arm]?.interactive && auth.mode === 'api' && Number.isFinite(result.costUsd)) {
     const spent = addSpend(result.costUsd);
@@ -646,6 +668,8 @@ pass: for (let run = 1; run <= runs; run++) {
         realContexts.push(ctx);
         const evidenceDir = task.privateMail || task.noScreenshot ? undefined : join(tmpdir(), 'sleight-real-evidence', stamp, `${armName}-${task.id}-${run}`);
         if (evidenceDir) mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
+        const codexHome = ARMS[armName].codex ? codexRunHome(ARMS[armName], armName, task, run, { dir, evidenceDir }) : {};
+        if (!codexHome) break pass;
         let result;
         try { result = await executeRealTask(task, ctx, { dryRun: isDryRun, setupOnly: isSetupOnly, signal: controller.signal,
           lockHeld: !isDryRun,
@@ -657,11 +681,12 @@ pass: for (let run = 1; run <= runs; run++) {
             const stopWatching = guardedPass ? watchAppWindows(ctx.sim?.app ?? task.app) : undefined;
             if (ARMS[armName].codex) {
               const response = await runCodex(prompt, { cwd: ARMS[armName].cwd, model: ARMS[armName].codexModel, effort: codexEffort, timeoutMs: task.timeoutMs ?? TIMEOUT_MS, signal: controller.signal, onSpawn: cpu.onSpawn, auditDrag: suite === 'world' && task.id === 'textedit-window-drag',
-                ...codexHomeFor(ARMS[armName], { dir, evidenceDir }) });
+                ...(codexHome.home && { home: codexHome.home }) });
+              strayServers(response, codexHome);
               response.timing = runTiming(response.out);
               if (ARMS[armName].sleightHost) {
                 // The Claude-hosted arms stop the pass on a prompt outside the allowlist (BENCH_APPROVAL_STOP); so does this one.
-                response.approvals = approvalSummary(join(dir, 'approvals.jsonl'));
+                response.approvals = approvalSummary(join(dir, 'approvals.jsonl'), { log: true });
                 if (response.approvals.declined.length) response.approvalStop = 'unsupported approval: elicitation is outside the benchmark app allowlist or uses an unsupported form';
               }
               response.footprint = await cpu.finish();
@@ -692,7 +717,7 @@ pass: for (let run = 1; run <= runs; run++) {
         const { out, code, forbidden: _forbidden, ...rest } = result;
         if (task.noScreenshot) { delete rest.screenshot; delete rest.cartShot; }
         results.push(task.privateMail ? privateMailResult(task, ctx, result, { arm: armName, run }) : { arm: armName, task: task.id, run, ...rest,
-          sleightCommit: sleightBuild.commit, ...(ARMS[armName].codex && { codexModel: ARMS[armName].codexModel }),
+          ...sleightRow(), ...(ARMS[armName].codex && { codexModel: ARMS[armName].codexModel }),
           ...(suite === 'world' && { half: task.half, timeoutMs: task.timeoutMs }),
           ...((task.surface || ctx.webKind) && { surface: task.surface ?? 'native' }),
           ...(isDryRun && ARMS[armName].generic && { command: [claudeBin, ...ARMS[armName].args, '--disallowedTools', OUTSIDE_TOOLS.join(','), '--settings', ARMS[armName].settings] }),
@@ -722,6 +747,8 @@ pass: for (let run = 1; run <= runs; run++) {
         if (!result.passed && !isDryRun) process.exitCode = 1;
         continue;
       }
+      const codexHome = arm.codex ? codexRunHome(arm, armName, task, run, { dir }) : {};
+      if (!codexHome) break pass;
       // A setup this Mac can't do (no iOS runtime for the simulator task) skips
       // the run rather than ending the pass; skipped runs stay out of the table.
       try {
@@ -748,7 +775,8 @@ pass: for (let run = 1; run <= runs; run++) {
       // sleight traces into the run's scratch folder, so its timing comes from this run alone.
       const cpu = footprint([ctx.sim?.app ?? task.app], arm.codex ? 'codex' : 'claude');
       const codexRun = arm.codex ? await runCodex(prompt, { cwd: arm.cwd, model: arm.codexModel, effort: codexEffort, timeoutMs: TIMEOUT_MS, signal: controller.signal, onSpawn: cpu.onSpawn,
-        ...codexHomeFor(arm, { dir }) }) : undefined;
+        ...(codexHome.home && { home: codexHome.home }) }) : undefined;
+      if (codexRun) strayServers(codexRun, codexHome);
       const { code, out, stderr, groupClean = true, cancelled, stamps } = codexRun ?? await runClaude(prompt, arm, armName === 'sleight' ? { SLEIGHT_TRACE: dir } : {}, { onSpawn: cpu.onSpawn });
       const cpuUsed = await cpu.finish();
       const appWindows = await stopWatching();
@@ -758,7 +786,7 @@ pass: for (let run = 1; run <= runs; run++) {
       // A shell or file edit could pass a check without the app, so it fails the run.
       if (codexRun?.forbidden.length) verdict = `used ${[...new Set(codexRun.forbidden)].join(' and ')}`;
       // As in the fixture path: a prompt the proxy declined stops a sleight-in-Codex pass.
-      const approvals = arm.sleightHost ? approvalSummary(join(dir, 'approvals.jsonl')) : undefined;
+      const approvals = arm.sleightHost ? approvalSummary(join(dir, 'approvals.jsonl'), { log: true }) : undefined;
       if (approvals?.declined.length) {
         verdict = 'unsupported approval: elicitation is outside the benchmark app allowlist or uses an unsupported form';
         controller.abort(new Error(verdict)); process.exitCode = 1;
@@ -787,7 +815,7 @@ pass: for (let run = 1; run <= runs; run++) {
         answer: scrub(answer.slice(0, 300)),
         // What Claude Code reports it used, to catch a model setting that didn't apply.
         models: Object.keys(out?.modelUsage ?? {}),
-        sleightCommit: sleightBuild.commit,
+        ...sleightRow(),
         ...(codexRun && { toolCalls: codexRun.toolCalls, toolServers: codexRun.toolServers, engineMs: codexRun.engineMs, codexModel: arm.codexModel, modelsRan: codexRun.modelsRan,
           effortsRan: codexRun.effortsRan, codexCliVersion: codexRun.codexCliVersion, ...(approvals && { approvals }) }),
         stderr: code === 0 ? undefined : scrub(stderr),

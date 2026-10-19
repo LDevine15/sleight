@@ -984,12 +984,14 @@ the two arms' token counts aren't comparable.
 For ROADMAP 4b (does sleight make GPT faster too?), the native claim has four GPT arms: `codex` (gpt-6-luna) and
 `codex-sol` (gpt-6.1-sol) run Codex's own computer use, and `codex-sleight` and `codex-sleight-sol` run the same two models
 with sleight as Codex's MCP plugin, all at effort high. The sleight arms use `~/.codex-bench-sleight`, whose `config.toml`
-each run rewrites to list only sleight's server and reads back before Codex starts, and sleight runs behind
+each run rewrites to list only sleight's server and reads back before any fixture starts. A call to another MCP server fails
+the run. sleight runs behind
 `bench/codex-sleight-proxy.mjs`, which answers its approval forms from `bench/approve.mjs`, the allowlist the Claude arms'
 hook uses, and never answers Always allow. The runner leaves the engine's own list unchanged unless the pass also runs a plain Codex arm,
 and the results record which (`engineAllowList`), so claim passes run one arm each. Each row records sleight's commit, and a
 Codex row records the model ids, effort and Codex CLI version from Codex's session log (`modelsRan`, `effortsRan`,
-`codexCliVersion`), which MCP server each call went to, and for a sleight arm the proxy's whole approval log.
+`codexCliVersion`), which MCP server each call went to, and for a sleight arm the proxy's approval log. A run whose log
+names another model or effort is flagged (`modelMismatch`, `effortMismatch`), and the claim scorer leaves it out.
 `--dry-run` lists each row's `codex exec` arguments, Codex home and servers without starting anything:
 
 ```bash
