@@ -1,7 +1,8 @@
 // What each native action did, from sleight's own read before it and the read after it (SLEIGHT_OUTCOMES=1),
 // and the opt-in JSON Lines action log (SLEIGHT_ACTION_LOG). Only structure, roles, names and the acted-on
 // control's own value line count; typed text, secure values and document text never leave the engine's tree.
-import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { homedir, userInfo } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -413,7 +414,17 @@ export class ActionLog {
       try { claim = openSync(reclaim, flags, 0o600); } catch (error) {
         if (error.code === 'EEXIST') {
           // A recovery holder can die too. Leave live holders alone; retry recovery on the next write.
-          if (Date.now() - lstatSync(reclaim).mtimeMs >= 30000) unlinkSync(reclaim);
+          if (Date.now() - lstatSync(reclaim).mtimeMs >= 30000) {
+            // Move first, then check the file we actually took. The old pathname may now name a fresh holder.
+            const expired = reclaim + '.' + randomUUID();
+            renameSync(reclaim, expired);
+            if (Date.now() - lstatSync(expired).mtimeMs >= 30000) unlinkSync(expired);
+            else {
+              // Never overwrite a new claim. If one won the name, retain the moved holder at its unique path.
+              linkSync(expired, reclaim);
+              unlinkSync(expired);
+            }
+          }
           return;
         }
         throw error;

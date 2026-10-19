@@ -817,6 +817,40 @@ test('a fresh recovery holder is left alone while rows keep appending', () => {
   assert.match(readFileSync(path, 'utf8'), /"call":"next"/);
 });
 
+test('reclaim expiry never removes a fresh successor after observing a dead holder', async t => {
+  const fs = (await import('node:fs')).default, { syncBuiltinESMExports } = await import('node:module');
+  const root = mkdtempSync(join(dir, 'reclaim-race-')), path = join(root, 'shared.jsonl'), lock = path + '.lock', reclaim = lock + '.reclaim';
+  writeFileSync(path, 'x'.repeat(390), { mode: 0o600 });
+  for (const file of [lock, reclaim]) { writeFileSync(file, '', { mode: 0o600 }); utimesSync(file, new Date(0), new Date(0)); }
+  const lstat = fs.lstatSync, rename = fs.renameSync;
+  let raced = false, successor;
+  const replace = () => {
+    raced = true;
+    fs.unlinkSync(reclaim);
+    writeFileSync(reclaim, 'fresh holder', { mode: 0o600, flag: 'wx' });
+    successor = lstat(reclaim).ino;
+  };
+  t.mock.method(fs, 'lstatSync', (...args) => {
+    const stat = lstat(...args);
+    if (args[0] === reclaim && !raced) replace();
+    return stat;
+  });
+  t.mock.method(fs, 'renameSync', (...args) => {
+    if (args[0] === reclaim && !raced) replace();
+    return rename(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    new ActionLog({ path, root, maxBytes: 400 }).write([{ call: 'next' }]);
+    assert.equal(raced, true);
+    assert.ok(existsSync(reclaim), 'the fresh claim must survive expiry');
+    assert.equal(lstat(reclaim).ino, successor);
+    assert.equal(readFileSync(reclaim, 'utf8'), 'fresh holder');
+    assert.ok(!existsSync(path + '.1'));
+    assert.match(readFileSync(path, 'utf8'), /"call":"next"/);
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+});
+
 for (const fault of ['lock open', 'lock stat', 'recheck stat', 'reclaim open', 'reclaim unlink']) {
   test(`rotation ${fault} failure skips rotation, never the log row`, async t => {
     const fs = (await import('node:fs')).default, { syncBuiltinESMExports } = await import('node:module');
