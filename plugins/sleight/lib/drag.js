@@ -122,38 +122,72 @@ function elementIdentity(line) {
   return { role, id, description, title };
 }
 
-function matchesIdentity(el, identity, role = attempt(() => el.role(), '')) {
+// Owner ruling, 2026-10-19 (CC8; docs/status/LAWS.md, native apps line, FM6): sleight may read AXValue of a short
+// static-text label only to bind a label the engine already printed, and only to locate a drag endpoint. Web pages name
+// list rows only by AXValue, so number drags on the settings list refused in 6 of 6 runs on both hosts (codex-vs-cc-1019).
+// All of these must hold: the engine printed the line as "text <label>", the AX role is AXStaticText, the label and value
+// are at most LABEL_VALUE_CAP characters, the value equals the label exactly (no substring, trimming or case folding),
+// and the element sits in the leased window's content, outside toolbars and outside any text input or layout area
+// (TEXT_INPUT_ROLES). AXValue of text areas, fields, documents and web areas is never read, nor of static text under
+// them. AXNumberOfCharacters, where the app has it, rules out a different-length value before AXValue is read. The value
+// is only compared: it is never returned, stored, logged or put in an error, so it can't reveal anything new.
+// The cap: priority rows are 7 to 15 characters, and 875 of 1,051 distinct engine "text" labels in the 1017 form race
+// were 80 or under (median 27), while sentences and paragraphs ran to 157 at the 90th percentile and 512 (the engine's cut).
+const LABEL_VALUE_CAP = 80;
+const TEXT_INPUT_ROLES = ['AXTextArea', 'AXTextField', 'AXComboBox', 'AXLayoutArea'];
+function labelValueMatches(el, role, title) {
+  if (role !== 'AXStaticText' || typeof title !== 'string' || !title.length || title.length > LABEL_VALUE_CAP) return false;
+  const count = attempt(() => el.attributes.byName('AXNumberOfCharacters').value(), null);
+  if (Number.isSafeInteger(count) && count !== title.length) return false;
+  const value = attempt(() => el.attributes.byName('AXValue').value(), null);
+  return typeof value === 'string' && value.length <= LABEL_VALUE_CAP && value === title;
+}
+
+// Returns 'name', 'value' (bound by the ruling above, only when labelValue allows it) or false.
+function matchesIdentity(el, identity, role = attempt(() => el.role(), ''), labelValue = false) {
   const { id, description, title } = identity;
-  return role === identity.role &&
-    (!id || attempt(() => el.attributes.byName('AXIdentifier').value(), null) === id) &&
-    (!description || attempt(() => el.attributes.byName('AXDescription').value(), null) === description) &&
-    (!title || attempt(() => el.name(), null) === title || attempt(() => el.attributes.byName('AXDescription').value(), null) === title);
+  if (role !== identity.role ||
+    (id && attempt(() => el.attributes.byName('AXIdentifier').value(), null) !== id) ||
+    (description && attempt(() => el.attributes.byName('AXDescription').value(), null) !== description)) return false;
+  if (!title || attempt(() => el.name(), null) === title || attempt(() => el.attributes.byName('AXDescription').value(), null) === title) return 'name';
+  return labelValue && labelValueMatches(el, role, title) ? 'value' : false;
+}
+
+// One read of each attribute per element in the walk, however many endpoints it looks for.
+function cachedReads(el) {
+  const memo = new Map();
+  const get = (name, read) => { if (!memo.has(name)) memo.set(name, read()); return memo.get(name); };
+  return { name: () => get('AXTitle', () => el.name()), attributes: { byName: name => ({ value: () => get(name, () => el.attributes.byName(name).value()) }) } };
 }
 
 function elementsForLines(win, lines) {
   const entries = Object.entries(lines).map(([number, line]) => ({ number, identity: elementIdentity(line) }));
   const started = Date.now();
   let visited = 0;
-  const walk = (el, depth) => {
+  const walk = (el, depth, inInput) => {
     if (depth >= 64 || ++visited > 5000) throw new Error('AX element scan exceeded its depth or 5000-element limit');
     if (Date.now() - started > 1500) throw new Error('AX element scan exceeded its time limit');
     const role = attempt(() => el.role(), '');
     if (role === 'AXToolbar' || /^AX(?:Close|Minimize|Zoom|FullScreen|TitleBar)/.test(attempt(() => el.subrole(), ''))) return;
-    for (const entry of entries) if (matchesIdentity(el, entry.identity, role)) {
+    const reads = cachedReads(el);
+    for (const entry of entries) {
+      const how = matchesIdentity(reads, entry.identity, role, !inInput);
+      if (!how) continue;
       if (entry.el) throw new Error('element identity must match exactly one named AX element in this window; ambiguous, read again');
-      entry.el = el;
+      entry.el = el; entry.labelValue = how === 'value';
     }
-    for (const child of attempt(() => el.uiElements(), [])) walk(child, depth + 1);
+    for (const child of attempt(() => el.uiElements(), [])) walk(child, depth + 1, inInput || TEXT_INPUT_ROLES.includes(role));
   };
-  if (entries.length) walk(win, 0);
+  if (entries.length) walk(win, 0, false);
   if (entries.some(entry => !entry.el)) throw new Error('element identity must match exactly one named AX element in this window; missing, read again');
   return Object.fromEntries(entries.map(entry => [entry.number, entry]));
 }
 
-function requireAncestor(el, win, message = 'the focused text selection is outside the chosen window', contentOnly = false) {
+function requireAncestor(el, win, message = 'the focused text selection is outside the chosen window', contentOnly = false, labelValue = false) {
   for (let depth = 0; depth < 64; depth++) {
     if ($.CFEqual(el.reference, win.reference)) return;
     const role = el.role();
+    if (labelValue && TEXT_INPUT_ROLES.includes(role)) throw new Error('drag label moved into a text input or document; read the window again');
     if (contentOnly && (role === 'AXToolbar' || /^AX(?:Close|Minimize|Zoom|FullScreen|TitleBar)/.test(attempt(() => el.subrole(), '')))) {
       throw new Error('drag element moved into window chrome outside the content; read the window again');
     }
@@ -207,9 +241,9 @@ function semanticPoints(request, pid, win, main, knownElements, endpoint, window
     if (coordinate(endpoint)) return toPoints(endpoint, screenshotScale(request, bounds, main.title));
     let point;
     if (elementEndpoint(endpoint)) {
-      const { el, identity } = elements[endpoint];
-      if (!matchesIdentity(el, identity)) throw new Error('drag element identity changed before input; read the window again');
-      requireAncestor(el, win, 'drag element left the chosen window; read the window again', true);
+      const { el, identity, labelValue } = elements[endpoint];
+      if (!matchesIdentity(el, identity, undefined, labelValue)) throw new Error('drag element identity changed before input; read the window again');
+      requireAncestor(el, win, 'drag element left the chosen window; read the window again', true, labelValue);
       const r = frame(el);
       references.push(el.reference);
       point = { x: r.X + r.Width / 2, y: r.Y + r.Height / 2 };
