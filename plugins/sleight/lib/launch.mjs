@@ -504,6 +504,7 @@ function leanToolDescription(tool) {
     notifications: 'Banners. The user approves notifications once per session.',
   };
   const replacements = [
+    ['If no title matches exactly, a unique ending of at least 12 characters may match within that app.', 'No exact title: one same-app suffix, 12+ chars.'],
     ['Use windowNumber to distinguish equal titles. ', ''],
     ['`at` is relative to the selected window\'s top-left corner.', '`at`: window-relative.'],
     ['Supply an exact `windowTitle` when more than one window is on screen.', 'Pass an exact `windowTitle` when several windows show.'],
@@ -520,7 +521,7 @@ function leanToolDescription(tool) {
     ['op "read" returns the window as numbered elements plus a screenshot file; "click" presses `element` (or a window-relative `point`, which brings the app to the front); "type" sends `text`; "key" presses `key` ("Return", "super+v"); "scroll" moves `amount` lines, positive up.',
       'read: tree/image; click: element or `point`, which brings the app to the front. Other ops use their named argument.'],
     ['Running app name, bundle ID or path', 'App name, bundle ID or path'],
-    ['Exact window title, use when no file URL is known', 'Exact title if no URL'],
+    ['Window title, use when no file URL is known', 'Title if no URL'],
     ['Exact file URL from AXDocument, preferred over title', 'Exact AXDocument URL, preferred'],
     ['Native window number, to distinguish equal titles', 'Native window number for equal titles'],
     ['The app, as "apps" names it', 'Name from apps'],

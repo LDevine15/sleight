@@ -33,7 +33,8 @@ function run(argv) {
     const attribute = (window, key) => {
       try { return window.attributes.byName(key).value(); } catch { return null; }
     };
-    const windows = processes[0].windows(), selected = [];
+    const windows = processes[0].windows(), selected = [], suffixes = [];
+    let exactTitle = false, matchedEnding = false;
     let cg;
     const windowNumber = window => {
       const direct = attribute(window, 'AXWindowNumber');
@@ -58,14 +59,27 @@ function run(argv) {
     };
     const wantedURL = hasURL ? canonical(request.url) : null;
     if (hasURL && !wantedURL) throw new Error('URL must be a file URL');
+    const allowEnding = hasTitle && Array.from(request.title).length >= 12;
     for (const window of windows) {
       const title = attribute(window, 'AXTitle');
+      if (hasTitle && title === request.title) exactTitle = true;
       const document = attribute(window, 'AXDocument');
       const file = document && canonical(document);
+      if (allowEnding && typeof title === 'string' && title.endsWith(request.title)) {
+        suffixes.push({ window, title, url: document || null, validDocument: !document || !!file });
+      }
       if (document && !file) continue;
       if ((hasTitle ? title === request.title : file && file === wantedURL) &&
           (request.windowNumber === undefined || windowNumber(window) === request.windowNumber)) {
         selected.push({ window, title, url: document || null });
+      }
+    }
+    if (hasTitle && !exactTitle) {
+      if (suffixes.length > 1) throw new Error(/* notice */ `Title ending found ${suffixes.length} windows: ${JSON.stringify(suffixes.map(target => target.title))}. Window numbers: ${JSON.stringify(suffixes.map(target => windowNumber(target.window)))}`);
+      if (suffixes.length === 1 && suffixes[0].validDocument &&
+          (request.windowNumber === undefined || windowNumber(suffixes[0].window) === request.windowNumber)) {
+        selected.push(suffixes[0]);
+        matchedEnding = true;
       }
     }
     // A Finder window that navigated took its folder's title, and "found 0" alone sent Claude back
@@ -93,7 +107,8 @@ function run(argv) {
     }
     // AXWindowNumber is optional on macOS; title and AXDocument alone cannot resolve duplicates.
     const number = windowNumber(target.window);
-    return JSON.stringify({ ok: true, target: { appId, app: name, title: target.title, url: target.url },
+    return JSON.stringify({ ok: true, ...(matchedEnding ? { note: /* notice */ `matched by its title ending: ${target.title}` } : {}),
+      target: { appId, app: name, title: target.title, url: target.url },
       identity: { pid: Number(app.processIdentifier), windowNumber: typeof number === 'number' ? number : null } });
   } catch (err) { return JSON.stringify({ ok: false, error: String(err.message || err) }); }
 }

@@ -10,24 +10,27 @@ function select(request, windows, options = {}) {
   const events = [], list = entries => ({ count: entries.length, objectAtIndex: i => entries[i] });
   const app = { bundleIdentifier: 'com.apple.TextEdit', localizedName: 'TextEdit',
     bundleURL: { isNil: () => false, path: '/Applications/TextEdit.app' }, processIdentifier: 1, active: false };
-  const workspace = { runningApplications: list(options.ambiguous ? [app, app] : [app]), frontmostApplication: { processIdentifier: 2 } };
+  const otherApps = (options.otherApps ?? []).map(other => ({ ...app, ...other }));
+  const workspace = { runningApplications: list(options.ambiguous ? [app, app] : [app, ...otherApps]), frontmostApplication: { processIdentifier: 2 } };
   const $ = key => key;
   Object.assign($, { NSWorkspace: { sharedWorkspace: workspace }, NSURL: { URLWithString: value => {
     const url = new URL(value);
     return { isNil: () => false, isFileURL: url.protocol === 'file:', URLByResolvingSymlinksInPath: { path: decodeURIComponent(url.pathname) } };
   } }, CGWindowListCopyWindowInfo: () => list(options.cgWindows ?? []) });
-  const uiWindows = windows.map(window => {
+  const uiWindows = windows => windows.map(window => {
     const main = { get value() { return () => options.mainStatus !== -1; }, set value(_) {} };
     return { position: () => window.position, size: () => window.size, attributes: { byName: key => {
       if (key === 'AXMain') { events.push({ window, key }); if (options.activates) app.active = true; return main; }
       return { value: () => window[key] ?? null };
     } }, actions: { byName: action => ({ perform: () => {
       events.push({ window, action }); if (options.raiseStatus === -1) throw new Error('AXRaise failed');
+      if (options.renames) window.AXTitle = 'Renamed during selection';
     } }) } };
   });
   const result = runInNewContext(source + '\nrun([JSON.stringify(request)])', { $, request,
     Application: () => ({ processes: { whose: query => {
-      assert.equal(query.unixId, 1); return () => [{ windows: () => uiWindows }];
+      const owner = [app, ...otherApps].find(app => app.processIdentifier === query.unixId);
+      return () => owner ? [{ windows: () => uiWindows(owner === app ? windows : owner.windows ?? []) }] : [];
     } } }),
     ObjC: { import() {}, unwrap: x => x, deepUnwrap: x => x, castRefToObject: x => x } });
   return { result: JSON.parse(result), events };
@@ -43,6 +46,99 @@ test('recorded unsaved TextEdit headers with equal titles refuse selection witho
   assert.equal(result.ok, false); assert.match(result.error, /found 2/); assert.deepEqual(events, []);
 });
 const right = { AXTitle: 'right.txt', AXDocument: 'file:///tmp/right.txt' };
+const suffix = 'Project page'; // Exactly 12 characters.
+test('an exact title takes precedence over longer titles ending with it', () => {
+  const exact = { AXTitle: suffix };
+  const { result, events } = select({ app: 'TextEdit', title: suffix }, [
+    { AXTitle: 'Work: ' + suffix }, exact, { AXTitle: 'Personal: ' + suffix },
+  ]);
+  assert.equal(result.ok, true);
+  assert.equal(result.target.title, suffix);
+  assert.equal(result.note, undefined);
+  assert.equal(events[0].window, exact);
+});
+test('a unique title suffix selects the full title and reports the match', async () => {
+  const window = { AXTitle: 'Work: Project page', AXWindowNumber: 42 };
+  const { result, events } = select({ app: 'TextEdit', title: suffix }, [{ AXTitle: 'Other page' }, window]);
+  assert.equal(result.ok, true);
+  assert.equal(result.target.title, 'Work: Project page');
+  assert.equal(result.identity.windowNumber, 42);
+  assert.equal(result.note, 'matched by its title ending: Work: Project page');
+  assert.deepEqual(events, [{ window, action: 'AXRaise' }, { window, key: 'AXMain' }, { window, key: 'AXMain' }]);
+  const response = await selectWindow({ app: 'TextEdit', title: suffix }, {
+    approve: async () => true, runScript: async () => result,
+  });
+  assert.equal(response.isError, undefined);
+  assert.equal(JSON.parse(response.content[0].text).note, result.note);
+});
+test('two suffix candidates refuse and list both full titles, even with a window number', () => {
+  const windows = [
+    { AXTitle: 'Draft: Project page', AXWindowNumber: 11 },
+    { AXTitle: 'Review: Project page', AXWindowNumber: 22 },
+  ];
+  for (const windowNumber of [undefined, 22]) {
+    const { result, events } = select({ app: 'TextEdit', title: suffix, windowNumber }, windows);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /found 2/);
+    for (const window of windows) assert.ok(result.error.includes(window.AXTitle));
+    assert.deepEqual(events, []);
+  }
+});
+test('another profile with the same suffix counts as a second candidate', () => {
+  const windows = [{ AXTitle: 'Work: Project page' }, { AXTitle: 'Personal: Project page' }];
+  const { result, events } = select({ app: 'TextEdit', title: suffix }, windows);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /found 2/);
+  for (const window of windows) assert.ok(result.error.includes(window.AXTitle));
+  assert.deepEqual(events, []);
+});
+test('an 11-character suffix refuses while its exact title still selects', () => {
+  const title = '12345678901';
+  const { result, events } = select({ app: 'TextEdit', title }, [{ AXTitle: 'Work: ' + title }]);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /found 0/);
+  assert.deepEqual(events, []);
+  assert.equal(select({ app: 'TextEdit', title }, [{ AXTitle: title }]).result.ok, true);
+});
+test('11 Unicode characters never qualify as a suffix through surrogate pairs', () => {
+  const title = '\u{1F4C4}1234567890';
+  const { result, events } = select({ app: 'TextEdit', title }, [{ AXTitle: 'Work: ' + title }]);
+  assert.equal(result.ok, false);
+  assert.deepEqual(events, []);
+});
+test('an ineligible document window still makes a same-app suffix ambiguous', () => {
+  const windows = [{ AXTitle: 'Work: Project page' },
+    { AXTitle: 'Personal: Project page', AXDocument: 'https://example.com' }];
+  const { result, events } = select({ app: 'TextEdit', title: suffix }, windows);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /found 2/);
+  for (const window of windows) assert.ok(result.error.includes(window.AXTitle));
+  assert.deepEqual(events, []);
+});
+test('suffix matching never considers windows belonging to another app', () => {
+  const otherApps = [{ bundleIdentifier: 'other.app', localizedName: 'Other', processIdentifier: 9,
+    windows: [{ AXTitle: 'Other: Project page' }] }];
+  const missing = select({ app: 'TextEdit', title: suffix }, [{ AXTitle: 'Unrelated' }], { otherApps });
+  assert.equal(missing.result.ok, false);
+  assert.match(missing.result.error, /found 0/);
+  assert.deepEqual(missing.events, []);
+  const own = select({ app: 'TextEdit', title: suffix }, [{ AXTitle: 'Work: Project page' }], { otherApps });
+  assert.equal(own.result.ok, true);
+  assert.equal(own.result.target.appId, 'com.apple.TextEdit');
+});
+test('suffix matching preserves expected app, document and window-number checks', () => {
+  const window = { AXTitle: 'Work: Project page', AXWindowNumber: 22 };
+  for (const [request, windows] of [
+    [{ expectedAppId: 'other.app' }, [window]],
+    [{ windowNumber: 11 }, [window]],
+    [{}, [{ ...window, AXDocument: 'https://example.com' }]],
+    [{ windowNumber: 22 }, [{ AXTitle: suffix, AXWindowNumber: 11 }, window]],
+  ]) {
+    const { result, events } = select({ app: 'TextEdit', title: suffix, ...request }, windows);
+    assert.equal(result.ok, false);
+    assert.deepEqual(events, []);
+  }
+});
 test('window numbers select one of two equal-title windows without activation', () => {
   const windows = [11, 22].map(AXWindowNumber => ({ AXTitle: 'Untitled', AXWindowNumber }));
   const { result, events } = select({ app: 'TextEdit', title: 'Untitled', windowNumber: 22 }, windows);
@@ -92,8 +188,11 @@ test('non-file AXDocument values do not prevent selecting a different file windo
   }
 });
 test('AX errors or foreground changes return an unconfirmed selection', () => {
-  for (const options of [{ raiseStatus: -1 }, { mainStatus: -1 }, { activates: true }]) {
-    assert.equal(select({ app: 'TextEdit', title: 'left.txt' }, [left], options).result.ok, false);
+  for (const options of [{ raiseStatus: -1 }, { mainStatus: -1 }, { activates: true }, { renames: true }]) {
+    for (const title of ['left.txt', suffix]) {
+      const window = title === suffix ? { AXTitle: 'Work: Project page' } : { ...left };
+      assert.equal(select({ app: 'TextEdit', title }, [window], options).result.ok, false);
+    }
   }
 });
 test('local selection validates and asks before running its helper', async () => {

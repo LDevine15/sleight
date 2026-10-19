@@ -1,11 +1,12 @@
 export const SELECT_WINDOW_TOOL = {
   name: 'select_window',
   description: 'Choose one running app window by exact title or file URL through AXRaise/AXMain, without activating the app. ' +
+    'If no title matches exactly, a unique ending of at least 12 characters may match within that app. ' +
     'Then use one standalone js call to acquire the app and verify its full Window/URL header before acting. ' +
     'Use windowNumber to distinguish equal titles. Missing or duplicate matches stop selection. The user approves window selection once per app per session.',
   inputSchema: { type: 'object', properties: {
     app: { type: 'string', description: 'Running app name, bundle ID or path' },
-    title: { type: 'string', description: 'Exact window title, use when no file URL is known' },
+    title: { type: 'string', description: 'Window title, use when no file URL is known' },
     url: { type: 'string', description: 'Exact file URL from AXDocument, preferred over title' },
     windowNumber: { type: 'integer', minimum: 1, description: 'Native window number, to distinguish equal titles' },
   }, required: ['app'], additionalProperties: false },
