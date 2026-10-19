@@ -136,11 +136,18 @@ export function checkToolSurface(tools) {
   if (!byName.has('turn_ended')) problems.push('no turn_ended tool');
   const results = [problems.length ? result('tool-surface', 'fail', problems.join('; '))
     : result('tool-surface', 'pass', `js and turn_ended present (${tools.length} tools)`)];
-  const pin = js && typeof js.description === 'string' ? engineJsVariant(js.description) : undefined;
-  if (js && typeof js.description === 'string' && !pin) {
-    results.push(result('js-description', 'warn', "the engine's js description changed, so sleight sends it whole instead of its shorter version (tool-description.mjs pins)"));
-  } else if (js) results.push(pin?.current ? result('js-description', 'pass', "sleight's shorter version applies with SLEIGHT_FS=1, under A/B") : result('js-description', 'pass'));
+  if (js && typeof js.description === 'string') results.push(jsDescriptionResult(engineJsVariant(js.description)));
+  else if (js) results.push(result('js-description', 'pass'));
   return results;
+}
+
+// Whether sleight's shorter js description replaces the engine's (tool-description.mjs pins). A pin of the engine's current
+// text applies only with SLEIGHT_FS=1 until its A/B, so by default it still warns. `mode` names a surface setting.
+export function jsDescriptionResult(pin, mode) {
+  const where = mode ? ` for CUA_REPL_ENABLED_SURFACES=${mode}` : '';
+  if (!pin) return result('js-description', 'warn', `the engine's js description changed${where}, so sleight sends it whole instead of its shorter version (tool-description.mjs pins)`);
+  if (pin.current) return result('js-description', 'warn', `sleight's shorter js description${where} applies only with SLEIGHT_FS=1 (under A/B); by default the engine's text goes out with its first-call rule rewritten`);
+  return result('js-description', 'pass', "sleight's shorter js description applies");
 }
 
 // sleight rewrites the engine's confirmations policy for payments and forms the user asked for (payment-policy.mjs) and
