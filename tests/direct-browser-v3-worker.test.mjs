@@ -256,7 +256,14 @@ for (const [label, clientInfo, mod, host] of [
     clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_turbo: { event: 'bootstrap' } } } }) + '\n');
     await settle();
     const boot = replies.find(row => row.id === 1).result;
-    if (!mod) { assert.equal(boot.isError, true); assert.equal(f.events.length, 0); return; }
+    if (!mod) {
+      assert.equal(boot.isError, true);
+      // A turbo tool called by name, though unlisted, never reaches the worker.
+      clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'browser_tabs', arguments: { do: 'list' } } }) + '\n');
+      await settle();
+      assert.equal(replies.find(row => row.id === 3).result.isError, true);
+      assert.equal(f.events.length, 0); return;
+    }
     const envelope = JSON.parse(boot.content[0].text).sleightTurbo;
     clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'turn_ended', arguments: { sleight_turbo: { ...envelope, event: 'begin', turn: 'turn1', text: 'read' } } } }) + '\n');
     await settle();

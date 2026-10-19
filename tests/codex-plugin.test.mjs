@@ -49,8 +49,14 @@ test('one launcher serves both hosts, under the server key that gives the same t
   assert.deepEqual(server.env, { SLEIGHT_TURBO: '0' });
   assert.ok(!server.env_vars.includes('SLEIGHT_TURBO'));
   // Codex hands a stdio server only a short env list; a documented setting the user exports reaches sleight as under Claude.
-  const documented = new Set(readFileSync(join(repo, 'docs/settings.md'), 'utf8').match(/SLEIGHT_[A-Z_]+/g));
-  for (const name of server.env_vars) assert.ok(name === 'CODEX_HOME' || documented.has(name), `${name} isn't a documented setting`);
+  // Every documented setting is forwarded, so a tightening one such as SLEIGHT_GUARD=careful isn't dropped. The only
+  // exceptions: SLEIGHT_TURBO (the plugin sets it to 0) and the benchmark and test switches.
+  const NOT_FORWARDED = { SLEIGHT_TURBO: 'set to 0 by the plugin', SLEIGHT_ARM_DIR: 'benchmark arms only',
+    SLEIGHT_BENCH_API_CAP_USD: 'benchmark arms only', SLEIGHT_STUB_OSASCRIPT: 'tests only' };
+  const documented = [...new Set(readFileSync(join(repo, 'docs/settings.md'), 'utf8').match(/SLEIGHT_[A-Z_]+/g))]
+    .filter(name => !Object.hasOwn(NOT_FORWARDED, name)).toSorted();
+  assert.deepEqual(server.env_vars.filter(name => name.startsWith('SLEIGHT_')).toSorted(), documented);
+  assert.deepEqual(server.env_vars.filter(name => !name.startsWith('SLEIGHT_')), ['CODEX_HOME']);
   // A plugin-root .mcp.json would be read by Claude Code as a second server beside the manifest's.
   assert.equal(existsSync(join(plugin, '.mcp.json')), false);
 });
@@ -210,4 +216,112 @@ test('doctor reports sleight in Codex and Codex\'s own Computer Use beside it', 
     `note      sleight isn't installed in Codex. To add it: ${CODEX_INSTALL}`, "ok        Codex's own Computer Use plugin is off"]);
   const missing = codexStatus({ env: { CODEX_HOME: '/no-codex' }, read: () => { throw Error('ENOENT'); } });
   assert.deepEqual(codexDoctorLines(missing), ['Codex', `note      no Codex config at /no-codex/config.toml. To use sleight in Codex: ${CODEX_INSTALL}`]);
+});
+
+// Review fixes (2026-10-19).
+test('only a positive Claude Code signal counts as the mod\'s host, and every other host gets the relay\'s own guards', () => {
+  // The CLI and the desktop app's Code tab both send name "claude-code". A lookalike name doesn't count.
+  for (const [info, env, want] of [
+    [{ name: 'claude-code', version: '2.1.299' }, {}, true],
+    [{ name: 'claude-desktop' }, { CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' }, false],
+    [{ name: 'Claude' }, {}, false],
+    [{ name: 'codex-mcp-client', title: 'Codex' }, { CLAUDE_CODE_ENTRYPOINT: 'cli' }, false],
+    [undefined, { CLAUDE_CODE_ENTRYPOINT: 'cli' }, true],
+    [{ title: 'No name' }, { CLAUDE_CODE_ENTRYPOINT: 'cli' }, true],
+    [undefined, {}, false],
+  ]) assert.equal(hostWording(info, env).claudeCode, want, JSON.stringify([info, env]));
+});
+
+test('an Always from a Codex reviewer, not the user, never writes the pre-approved list', async t => {
+  const added = [];
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const toServer = [], toClient = [];
+  for (const [stream, records] of [[serverIn, toServer], [clientOut, toClient]])
+    stream.on('data', chunk => chunk.toString().trim().split('\n').forEach(line => records.push(JSON.parse(line))));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, modHost: () => false,
+    alwaysAllow: (app, riskLevel) => added.push([app, riskLevel]) });
+  t.after(() => relay.close());
+  const send = (stream, msg) => stream.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
+  send(clientIn, { id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: { elicitation: { form: {} } },
+    clientInfo: { name: 'codex-mcp-client', title: 'Codex', version: '0.160.0' } } });
+  const ask = (id, app) => send(serverOut, { id, method: 'elicitation/create', params: { mode: 'form', message: `Allow Computer Use to use "${app}"?`,
+    requestedSchema: { type: 'object', properties: {} }, _meta: { connector_id: 'computer-use', persist: ['session', 'always'], riskLevel: 'low', tool_params: { app } } } });
+  ask('a1', 'TextEdit'); await tick();
+  const form = toClient.find(m => m.id === 'a1');
+  assert.ok(form.params.requestedSchema.properties.remember, 'the user\'s form offers Always');
+  send(clientIn, { id: 'a1', result: { action: 'accept', content: { remember: 'Always' }, _meta: { approvals_reviewer: 'auto_review' } } }); await tick();
+  assert.deepEqual(added, [], 'a reviewer\'s answer is not the user\'s click');
+  ask('a2', 'Notes'); await tick();
+  send(clientIn, { id: 'a2', result: { action: 'accept', content: { remember: 'Always' } } }); await tick();
+  assert.deepEqual(added, [['Notes', 'low']], 'the user\'s own Always is written, as a click is in Claude Code');
+});
+
+test('a change in Codex\'s sandbox state means a new engine kernel: full guard setup, and the relay\'s own calls follow it', async () => {
+  const { GUARD_READY } = await import('../plugins/sleight/lib/document-scope.mjs');
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const sent = [];
+  serverIn.on('data', bytes => sent.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, warmRepl: true, changeReview: false, modHost: () => false });
+  try {
+    const send = msg => clientIn.write(JSON.stringify(msg) + '\n'), respond = msg => serverOut.write(JSON.stringify(msg) + '\n');
+    send({ id: 1, method: 'initialize', params: { clientInfo: { name: 'codex-mcp-client' } } }); respond({ id: 1, result: { capabilities: {} } });
+    send({ method: 'notifications/initialized' }); await tick();
+    const warm = sent.find(m => String(m.id).startsWith('sleight-warm-'));
+    respond({ id: warm.id, result: { content: [{ type: 'text', text: GUARD_READY }] } }); await tick();
+    const sandbox = { 'codex/sandbox-state': { permissionProfile: 'workspace-write' }, 'codex/sandbox-state-meta': { permissionProfile: 'workspace-write' } };
+    send({ id: 2, method: 'tools/call', params: { name: 'js', arguments: { code: 'let app = await cua.getApp("Calculator");' },
+      _meta: { callId: 'c1', threadId: 't1', ...sandbox } } }); await tick();
+    const first = sent.find(m => m.id === 2);
+    assert.match(first.params.arguments.code, /globalThis\.__sleightDocumentGuardSetup = /, 'the warm kernel had no sandbox: install the guard again');
+    assert.deepEqual(first.params._meta['codex/sandbox-state'], sandbox['codex/sandbox-state']);
+    respond({ id: 2, result: { content: [{ type: 'text', text: 'Window: "Calculator", App: Calculator.\n' + GUARD_READY }] } }); await tick();
+    send({ id: 3, method: 'tools/call', params: { name: 'js', arguments: { code: 'await app.click({ id: "One" });' }, _meta: { callId: 'c2', ...sandbox } } }); await tick();
+    assert.doesNotMatch(sent.find(m => m.id === 3).params.arguments.code, /globalThis\.__sleightDocumentGuardSetup = /, 'same kernel: setup reused');
+    // The relay's own engine calls carry the same sandbox state, so they reach the same kernel.
+    const own = sent.filter(m => typeof m.id === 'string' && m.method === 'tools/call' && m.params.name === 'js' && !String(m.id).startsWith('sleight-warm-'));
+    for (const call of own) assert.deepEqual(call.params._meta['codex/sandbox-state'], sandbox['codex/sandbox-state'], call.params.arguments.title);
+  } finally { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); }
+});
+
+test('an Interrupt hook during a running call is answered at once and ends the turn when the call finishes', async t => {
+  const h = harness(t, false);
+  h.client({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'await new Promise(r => setTimeout(r, 1e9))' } } }); await tick();
+  h.client({ id: 2, method: 'tools/call', params: { name: 'turn_ended', arguments: { hook_event_name: 'Interrupt' } } }); await tick();
+  assert.deepEqual(h.toClient.find(m => m.id === 2).result, { content: [] }, 'within Codex\'s 3-second hook limit');
+  h.engine({ id: 1, result: { isError: true, content: [{ type: 'text', text: 'cancelled' }] } }); await tick();
+  const end = h.toServer.findLast(m => m.params?.name === 'turn_ended');
+  assert.equal(end?.params.arguments.hook_event_name, 'Interrupt');
+});
+
+test('an unused turn\'s hook still lets go of any input lease, and an unexpanded event name reads as Stop', async t => {
+  let closed = 0;
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const toServer = [], toClient = [];
+  for (const [stream, records] of [[serverIn, toServer], [clientOut, toClient]])
+    stream.on('data', chunk => chunk.toString().trim().split('\n').forEach(line => records.push(JSON.parse(line))));
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, modHost: () => false,
+    inputLease: { close() { closed++; }, acquire() { return 'k'; }, renew() { return true; }, current() { return undefined; } } });
+  t.after(() => relay.close());
+  clientIn.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'turn_ended', arguments: { hook_event_name: 'Stop' } } }) + '\n'); await tick();
+  assert.ok(closed >= 1);
+  const h = harness(t, false);
+  h.client({ id: 3, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } }); await tick();
+  h.engine({ id: 3, result: { content: [{ type: 'text', text: '1' }] } }); await tick();
+  h.client({ id: 4, method: 'tools/call', params: { name: 'turn_ended', arguments: { hook_event_name: '${hook_event_name}' } } }); await tick();
+  assert.equal(h.toServer.findLast(m => m.params?.name === 'turn_ended').params.arguments.hook_event_name, 'Stop');
+});
+
+test('outside the mod\'s host a model can\'t stop, resume or call turbo tools through the relay', async t => {
+  const h = harness(t, false);
+  for (const [id, args] of [[1, { sleight_stop: true }], [2, { sleight_resume: true }]]) {
+    h.client({ id, method: 'tools/call', params: { name: 'turn_ended', arguments: args } }); await tick();
+    assert.equal(h.toClient.find(m => m.id === id).result.isError, true, JSON.stringify(args));
+  }
+  assert.equal(h.toServer.filter(m => m.params?.name === 'turn_ended').length, 0);
+});
+
+test('the doctor reads dotted plugin keys too', () => {
+  const states = pluginStates('plugins."computer-use@openai-bundled".enabled = false\n\n[plugins]\n"sleight@sleight".enabled = true\n');
+  assert.equal(states.get('sleight@sleight'), true);
+  assert.equal(states.get('computer-use@openai-bundled'), false);
 });

@@ -14,16 +14,20 @@ export const BUNDLED_OFF_FOR_SESSION = `codex -c 'plugins."computer-use@openai-b
 
 // `[plugins."<name>@<marketplace>"]` tables and their `enabled` key, from Codex's config.toml. Only what this reader
 // needs: other tables, subtables such as `[plugins."x".mcp_servers.y]`, and other keys are skipped.
+// The dotted forms are read too: `"<id>".enabled = …` under `[plugins]`, and `plugins."<id>".enabled = …` at the top level.
 export function pluginStates(text) {
   const states = new Map();
-  let current;
+  let current, table;
+  const set = (id, value) => states.set(id, value === undefined ? states.get(id) : value === 'true');
   for (const raw of String(text).split('\n')) {
     const line = raw.replace(/^\s+|\s+$/g, '');
     const header = /^\[\s*plugins\s*\.\s*"([^"]+)"\s*\]\s*(?:#.*)?$/.exec(line);
-    if (header) { current = header[1]; if (!states.has(current)) states.set(current, undefined); continue; }
-    if (line.startsWith('[')) { current = undefined; continue; }
+    if (header) { current = header[1]; table = undefined; if (!states.has(current)) states.set(current, undefined); continue; }
+    if (line.startsWith('[')) { current = undefined; table = /^\[\s*plugins\s*\]\s*(?:#.*)?$/.test(line) ? 'plugins' : line; continue; }
     const enabled = /^enabled\s*=\s*(true|false)\s*(?:#.*)?$/.exec(line);
-    if (current && enabled) states.set(current, enabled[1] === 'true');
+    if (current && enabled) { set(current, enabled[1]); continue; }
+    const dotted = /^(plugins\s*\.\s*)?"([^"]+)"\s*\.\s*enabled\s*=\s*(true|false)\s*(?:#.*)?$/.exec(line);
+    if (dotted && (dotted[1] ? table === undefined && current === undefined : table === 'plugins')) set(dotted[2], dotted[3]);
   }
   return states;
 }

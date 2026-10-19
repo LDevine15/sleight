@@ -789,6 +789,16 @@ export function createRelay({
   if (directHost !== undefined && !(isV3Bridge(directHost) && isV3Frontend(directBrowser))) throw Error('TRUSTED_ROUTE_REQUIRED');
   let installedBootstrapped = false;
   let clientHost; // the menu bar's host line, from initialize's clientInfo (host-label.mjs)
+  // Codex sends its sandbox state on each tool call (codex/sandbox-state, because the engine advertises it), and the engine
+  // runs a call in a kernel for that state. The relay's own calls carry the client's latest state so they reach the same
+  // kernel, and a change in it means a fresh kernel: no guard setup and no handles (the first getApp in Codex failed on
+  // the warm kernel's setup, 2 of 2 live tasks, 2026-10-19).
+  const ENGINE_CONTEXT_KEYS = ['codex/sandbox-state', 'codex/sandbox-state-meta', 'codex/sandbox-launcher'];
+  let engineContext = {}, engineContextKey = '{}';
+  const engineMeta = () => ({ ...engineContext, [META_KEY]: turnMeta() });
+  // Codex marks an answer its auto-reviewer gave (approvals_reviewer in _meta). Only the user's own answer writes Always.
+  const reviewerAnswer = result => !!result?._meta && typeof result._meta === 'object' && Object.hasOwn(result._meta, 'approvals_reviewer');
+  const HOOK_ARGS = ['hook_event_name', 'session_id', 'turn_id'];
   let turboNoticeShown = false;
   const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ??
     (turboUnavailable ? ['browser_open','browser_read','browser_act','browser_fill','browser_tabs'] : []));
@@ -1138,7 +1148,7 @@ export function createRelay({
           nativeWarmRequests.add(nativeId);
           toServer({ jsonrpc: '2.0', id: nativeId, method: 'tools/call', params: { name: 'js',
             arguments: { code: 'try { void Promise.resolve(cua.listApps({ emit: false })).catch(() => {}); } catch {}',
-              title: 'Prepare native inventory', timeout_ms: 1000 }, _meta: { [META_KEY]: turnMeta() } } });
+              title: 'Prepare native inventory', timeout_ms: 1000 }, _meta: engineMeta() } });
         } });
       };
       const timer = setTimeout(() => finish({}, true), 6000);
@@ -1147,7 +1157,7 @@ export function createRelay({
       internalRequests.set(id, finish);
       guardCalls.set(id, guardGeneration);
       toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
-        arguments: { code, title: 'Prepare sleight REPL', timeout_ms: 5000 }, _meta: { [META_KEY]: turnMeta() } } });
+        arguments: { code, title: 'Prepare sleight REPL', timeout_ms: 5000 }, _meta: engineMeta() } });
     }),
     resume: msg => closing || disposed ? leaseStop(msg, promptNotice('REPL preparation was stopped before this call ran.', prompt)) : handleClient(msg),
     refuse: msg => leaseStop(msg, promptNotice('REPL preparation was stopped before this call ran.', prompt)),
@@ -1858,7 +1868,7 @@ export function createRelay({
             .flatMap(c => (c.text ?? '').split('\n')).filter(line => /^sleight: kept tab .* because /.test(line)).join('\n'));
         });
         toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
-          arguments: { code: cleanupTabsBefore(Date.now() + 2000) }, _meta: { [META_KEY]: turnMeta() } } });
+          arguments: { code: cleanupTabsBefore(Date.now() + 2000) }, _meta: engineMeta() } });
       });
     })().finally(() => { tabCleanupPending = undefined; });
     return tabCleanupPending;
@@ -1896,7 +1906,7 @@ export function createRelay({
           : (reply.result?.content ?? []).filter(c => c?.type === 'image' && typeof c.data === 'string').at(-1));
       });
       toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
-        arguments: { code: `await ${handle}.getScreenshot()` }, _meta: { [META_KEY]: turnMeta() } } });
+        arguments: { code: `await ${handle}.getScreenshot()` }, _meta: engineMeta() } });
     });
   }
   async function fullerLaunchRead(msg, plan) {
@@ -1914,7 +1924,7 @@ export function createRelay({
       }, 5500);
       internalRequests.set(id, reply => { clearTimeout(timer); resolve(reply); });
       toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
-        arguments: { code: `await ${plan.handle}.getAXState({ disableDiffing: true })` }, _meta: { [META_KEY]: turnMeta() } } });
+        arguments: { code: `await ${plan.handle}.getAXState({ disableDiffing: true })` }, _meta: engineMeta() } });
     });
     if (generation !== stopGeneration || closing || disposed || !reply?.result || reply.result.isError) return;
     const after = text(reply.result.content);
@@ -2093,7 +2103,8 @@ export function createRelay({
 
   function endTurnArgs(args = {}) {
     return {
-      hook_event_name: args.hook_event_name || 'Stop',
+      // The mod and Codex's hooks send Stop or Interrupt. Anything else, an unexpanded template included, is a Stop.
+      hook_event_name: ['Stop', 'Interrupt'].includes(args.hook_event_name) ? args.hook_event_name : 'Stop',
       session_id: sessionId,
       turn_id: turnId,
     };
@@ -2455,7 +2466,10 @@ export function createRelay({
       serverIn.write(line + '\n');
       return;
     }
-    if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && Object.hasOwn(msg.params.arguments ?? {}, 'sleight_turbo')) {
+    // Only the mod stops or resumes sleight and binds turbo's turns. In another host only a model could send these, so
+    // they take the same refusal. (A turbo tool called by name there reaches a bridge no turn ever bound, which fails it.)
+    const modOnly = ['sleight_stop', 'sleight_resume'].some(key => Object.hasOwn(msg.params?.arguments ?? {}, key)) && !modHost();
+    if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && (Object.hasOwn(msg.params.arguments ?? {}, 'sleight_turbo') || modOnly)) {
       // Host-protected own hook calls only. Bypass journals, tracing, result
       // compaction and the engine so the private bootstrap never reaches them.
       const reply = result => {
@@ -2464,7 +2478,7 @@ export function createRelay({
       };
       const refuse = () => reply({ isError: true, content: [{ type: 'text', text: 'Trusted turn binding unavailable.' }] });
       // Without the mod nothing stops the model from calling turn_ended, so no host but the mod's binds a turbo turn.
-      if (!directHost || !modHost() || disposed || msg.id === undefined || Object.keys(msg.params.arguments).length !== 1) { refuse(); return; }
+      if (modOnly || !directHost || !modHost() || disposed || msg.id === undefined || Object.keys(msg.params.arguments).length !== 1) { refuse(); return; }
       const frame = msg.params.arguments.sleight_turbo;
       if (frame && Object.keys(frame).length === 1 && frame.event === 'bootstrap' && !installedBootstrapped) {
         installedBootstrapped = true;
@@ -2492,6 +2506,12 @@ export function createRelay({
     // SLEIGHT_TRACE_CODE=1 also keeps Claude's code, for benchmark diagnosis on this Mac only.
     if (msg.method === 'tools/call') { trace('call-received', { id: msg.id, method: msg.method, params: { name: msg.params?.name,
       ...(traceCode && typeof msg.params?.arguments?.code === 'string' ? { code: msg.params.arguments.code.slice(0, 4000) } : {}) } }); callSeqs.set(msg.id, ++callSeq); callStarts.set(msg.id, Date.now()); }
+    if (msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name)) {
+      const next = {};
+      for (const key of ENGINE_CONTEXT_KEYS) if (msg.params._meta && Object.hasOwn(msg.params._meta, key)) next[key] = msg.params._meta[key];
+      const key = JSON.stringify(next);
+      if (key !== engineContextKey) { engineContext = next; engineContextKey = key; trace('engine-context', { keys: Object.keys(next) }); forgetHandles(); }
+    }
     // Claude sometimes sends js the Bash tool's parameter name (6 of 437 calls, 2026-10-07).
     const jsArgs = msg.method === 'tools/call' && msg.params?.name === 'js' ? msg.params.arguments : undefined;
     if (jsArgs && jsArgs.code === undefined && typeof jsArgs.command === 'string') {
@@ -2987,9 +3007,18 @@ export function createRelay({
     // Codex's Stop hook ends every turn, including the ones sleight sat out. With nothing to end, answer here, so an
     // unused turn neither reaches the engine nor writes a receipt. The mod calls only after a used turn.
     if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.id !== undefined && !modHost() &&
-        !turnUsed && !failedTurnEnds.size && !running.size && !tabsMayNeedCleanup && !tabCleanupPending &&
-        Object.keys(msg.params.arguments ?? {}).every(key => ['hook_event_name', 'session_id', 'turn_id'].includes(key))) {
-      toClient({ jsonrpc: '2.0', id: msg.id, result: { content: [] } }); return;
+        Object.keys(msg.params.arguments ?? {}).every(key => HOOK_ARGS.includes(key))) {
+      if (!turnUsed && !failedTurnEnds.size && !running.size && !tabsMayNeedCleanup && !tabCleanupPending) {
+        // A call refused after taking the input lease leaves the turn unused; let go of the lease all the same.
+        releaseLeases();
+        toClient({ jsonrpc: '2.0', id: msg.id, result: { content: [] } }); return;
+      }
+      // Codex fires Interrupt while the interrupted call may still run, and gives the hook 3 seconds. Answer now and end
+      // the turn once the call finishes, instead of refusing it and leaving the turn to the 30-second idle end.
+      if (running.size && msg.params.arguments?.hook_event_name === 'Interrupt') {
+        toClient({ jsonrpc: '2.0', id: msg.id, result: { content: [] } });
+        void endOpenTurn(true, undefined, 'Interrupt'); return;
+      }
     }
     if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.params.arguments?.sleight_stop === true && stopEngine) {
       if (closing) { leaseStop(msg, 'stop is already pending or the session is closing.'); return; }
@@ -3263,7 +3292,7 @@ export function createRelay({
       alwaysOffered.delete(msg.id);
       // The engine didn't ask for this field: answer it here and pass the engine an empty form.
       if (msg.result?.content && 'remember' in msg.result.content) {
-        if (always && msg.result.action === 'accept' && msg.result.content.remember === 'Always') rememberAlways(always);
+        if (always && msg.result.action === 'accept' && msg.result.content.remember === 'Always' && !reviewerAnswer(msg.result)) rememberAlways(always);
         const { remember: _remember, ...content } = msg.result.content;
         msg.result = { ...msg.result, content };
       }
@@ -3905,7 +3934,7 @@ export function createRelay({
         internalRequests.set(probeId, finish);
         toServer({ jsonrpc: '2.0', id: probeId, method: 'tools/call', params: { name: 'js',
           arguments: { code: readOpened(original.id), timeout_ms: 1500 },
-          _meta: { [META_KEY]: turnMeta() } } });
+          _meta: engineMeta() } });
         return;
       }
       msg.result.content = msg.result.content.map(c =>
@@ -4451,7 +4480,7 @@ export function createRelay({
 
   // Ends the open turn, if any call used it. Resolves once the server answers
   // or after a short grace period.
-  async function endOpenTurn(cleanupTabs = true, carryId) {
+  async function endOpenTurn(cleanupTabs = true, carryId, event) {
     if (inputLease && running.size) {
       const ready = await new Promise(resolve => {
         const done = () => { clearTimeout(timer); resolve(true); };
@@ -4461,7 +4490,7 @@ export function createRelay({
       if (!ready) return false;
     }
     if (cleanupTabs && (tabsMayNeedCleanup || tabCleanupPending)) await cleanupBrowserTabs();
-    const owed = [...failedTurnEnds.values(), ...(turnUsed ? [endTurnArgs()] : [])];
+    const owed = [...failedTurnEnds.values(), ...(turnUsed ? [endTurnArgs(event ? { hook_event_name: event } : {})] : [])];
     failedTurnEnds.clear();
     const done = owed.map(args => {
       const id = `sleight-${nextInternalId++}`;
