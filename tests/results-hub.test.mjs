@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import vm from 'node:vm';
@@ -124,6 +124,48 @@ test('a race set scores the same as race-score.mjs on the same round folders', t
     }
     for (const arm of study.arms) assert.deepEqual(study.verdict.raceFastest[arm], scored.fastest[arm]);
   }
+});
+
+test('a race set leaves sleight inside Codex out of sleight\'s verdict and shows it against Codex on the same model', t => {
+  const raceDir = mkdtempSync(join(tmpdir(), 'hub-race-'));
+  t.after(() => rmSync(raceDir, { recursive: true, force: true }));
+  const ok = JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', status: 'completed', error: null, result: { content: [{ type: 'text', text: 'state' }] } } });
+  const round = (name, surface, tasks) => {
+    const dir = join(raceDir, name); mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'browser.json'), JSON.stringify({ browser: 'safari' }));
+    for (const [task] of tasks) { mkdirSync(join(dir, task)); writeFileSync(join(dir, task, 'events.jsonl'), ok + '\n'); }
+    writeFileSync(join(dir, 'results.json'), JSON.stringify(tasks.map(([task, seconds]) => ({ task: { name: task, browser: 'safari' }, surface, wallMs: seconds * 1000,
+      site: { lines: [] }, run: { started: Date.parse('2026-10-19T06:00:00Z'), finished: Date.parse('2026-10-19T06:01:00Z'), result: { result: 'RESULT: fixture' } }, outcome: { ok: true, cell: 'ok', problems: [] } }))));
+  };
+  for (const i of [1, 2, 3]) {
+    round(`safari-sleight-r${i}`, 'sleight', [['form-travel', 30], ['mdn', 20]]);
+    round(`safari-codex-r${i}`, 'codex', [['form-travel', 50], ['mdn', 40]]);
+    round(`safari-codex-sleight-r${i}`, 'codex-sleight', [['form-travel', 25], ['mdn', 45]]);
+  }
+  const race = collectRace({ raceDir, browsers: ['safari', 'firefox'], family: 'browser-race', title: 'Safari and Firefox race' });
+  const study = race.studies.find(s => s.label === 'sleight');
+  assert.deepEqual(study.arms, ['sleight', 'codex']);
+  assert.deepEqual(study.hosted, ['codex-sleight']);
+  assert.equal(study.verdict.wording, 'fastest');
+  assert.deepEqual(study.verdict.fastest, { sleight: ['form-travel', 'mdn'], codex: [] });
+  assert.deepEqual(study.verdict.lost, []);
+  assert.deepEqual(study.verdict.topUps, []);
+  assert.deepEqual(study.cells.filter(c => c.arm === 'codex-sleight').map(c => [c.task, c.expected]), [['form-travel', 25], ['mdn', 45]]);
+  const [pair] = study.sameModel;
+  assert.deepEqual([pair.hosted, pair.base], ['codex-sleight', 'codex']);
+  assert.deepEqual(pair.fastest, { 'codex-sleight': ['form-travel'], codex: ['mdn'] });
+  assert.deepEqual(pair.totals, { 'codex-sleight': 70, codex: 90 });
+  assert.deepEqual(pair.lost.map(l => [l.task, l.by.map(b => b.arm)]), [['mdn', ['codex']]]);
+  assert.equal(pair.wording, 'completed every task, fastest on 1 of 2');
+  const md = render({ ...committed(), 'browser-race': race })['browser-race.md'];
+  const section = md.slice(md.indexOf('## Safari'));
+  const sameAt = section.indexOf('Same model: codex-sleight');
+  assert.ok(sameAt > 0, 'the page has a same-model section');
+  assert.match(section.slice(0, sameAt), /By the loss rule, sleight didn't lose a task\./);
+  assert.match(section.slice(0, sameAt), /\| Task \| sleight \| Codex \|\n/, 'sleight\'s task table has no codex-sleight column');
+  assert.ok(!section.slice(0, sameAt).includes('Arm ahead'));
+  assert.match(section.slice(sameAt), /\| Task \| codex-sleight \| Codex \|/);
+  assert.match(section.slice(sameAt), /By the loss rule, codex-sleight lost 1 of 2 tasks\./);
 });
 
 test('no generated file holds a home path, the account name or the owner\'s name', () => {

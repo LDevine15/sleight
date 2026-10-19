@@ -261,8 +261,12 @@ export function collectRace({ raceDir, browsers, family, title, timeline = loadT
       }
       const rounds = [...set, ...others];
       const scored = scoreRounds(rounds.map(round => round.loaded))[browser];
-      const arms = scored.arms;
-      const { cells, verdict, table } = cellsFor(rounds.flatMap(round => round.loaded.rows), scored.tasks, arms, me);
+      // sleight inside Codex (SAME_MODEL) is sleight itself, so its cells are kept but it counts only in its same-model section.
+      const { arms, hosted } = scored, everyArm = [...arms, ...hosted];
+      const { cells, table } = cellsFor(rounds.flatMap(round => round.loaded.rows), scored.tasks, everyArm, me);
+      const verdict = claim(table, { tasks: scored.tasks, arms }, me);
+      const sameModel = scored.sameModel.map(pair => ({ hosted: pair.hosted, base: pair.base,
+        ...summarizeVerdict(table, pair, scored.tasks, pair.arms, pair.hosted) }));
       const runs = rounds.flatMap(round => round.loaded.rows.map(row => ({
         task: row.task, arm: row.arm, round: round.name, run: null, seconds: round1(row.seconds), passed: row.passed,
         problem: row.passed ? null : scrub(row.problems.join('; ')).slice(0, 200), file: round.name })));
@@ -277,13 +281,14 @@ export function collectRace({ raceDir, browsers, family, title, timeline = loadT
       const mineStarts = sortedUniq(set.map(round => round.facts.first));
       studies.push({
         id: `${family}-${browser}-${label}`, family, title: `${cap(browser)}, sleight rounds \`${browser}-${label}-r*\``, started: mineStarts[0] ?? null,
-        browser, label, me, arms, tasks: scored.tasks, models, effort, versions, ...enginesFor(rounds.flatMap(round => round.loaded.rows), arms),
+        browser, label, me, arms, hosted, tasks: scored.tasks, models, effort, versions, ...enginesFor(rounds.flatMap(round => round.loaded.rows), everyArm),
         date: starts.length ? dateRange(starts[0], ends.at(-1)) : null,
-        builds: Object.fromEntries(arms.map(arm => [arm, sortedUniq(rounds.filter(r => r.loaded.arm === arm).map(r => r.facts.build))])),
+        builds: Object.fromEntries(everyArm.map(arm => [arm, sortedUniq(rounds.filter(r => r.loaded.arm === arm).map(r => r.facts.build))])),
         browserVersion: sortedUniq(rounds.map(round => round.facts.browserVersion)),
         rounds: rounds.map(round => ({ round: round.name, arm: round.loaded.arm, rows: round.loaded.rows.length, first: round.facts.first, build: round.facts.build })),
         runs, cells,
         verdict: { ...summarizeVerdict(table, verdict, scored.tasks, arms, me), raceFastest: scored.fastest, raceTotals: Object.fromEntries(Object.entries(scored.totals).map(([a, t]) => [a, round1(t)])) },
+        sameModel,
       });
     }
   }
@@ -543,7 +548,7 @@ function armTable(study, { builds = false, scriptEffort = null } = {}) {
   const head = ['Arm', 'Model ids in the runs', 'Effort', 'Versions recorded', ...(engines ? ['ChatGPT engine and UTC dates'] : []), ...(builds ? ['Build'] : [])];
   const recorded = arm => (Array.isArray(study.effort) ? study.effort : study.effort?.[arm] ?? []);
   const effortOf = arm => (recorded(arm).length ? recorded(arm) : scriptEffort ? [scriptEffort] : []);
-  const table = mdTable(head, study.arms.map(arm => [armName(arm), study.models?.[arm]?.length ? study.models[arm].map(code).join(', ') : 'not recorded',
+  const table = mdTable(head, [...study.arms, ...(study.hosted ?? [])].map(arm => [armName(arm), study.models?.[arm]?.length ? study.models[arm].map(code).join(', ') : 'not recorded',
     effortOf(arm).join(', ') || 'not recorded', study.versions?.[arm]?.join(', ') || 'not recorded',
     ...(engines ? [engineText(study.engines[arm], arm)] : []),
     ...(builds ? [study.builds?.[arm]?.map(code).join(', ') || 'not recorded'] : [])]));
@@ -620,11 +625,26 @@ function raceStudySection(study, level = '##') {
   out.push('Each cell is expected seconds, then passes/runs.\n');
   out.push(taskMatrix(study) + '\n');
   out.push(topUpTable(study) + '\n');
+  for (const pair of study.sameModel ?? []) out.push(sameModelSection(study, pair, level + '#'));
   const failures = failureRows(study);
   out.push(`<details><summary>Spread of passing runs and the ${failures.length} failed runs</summary>\n`);
   out.push(spreadTable(study) + '\n');
   if (failures.length) out.push(mdTable(['Task', 'Arm', 'Round', 's', 'Problems'], failures) + '\n');
   out.push('</details>\n');
+  return out.join('\n');
+}
+
+// ROADMAP 4b: sleight inside Codex against Codex's own computer use on the same model, scored like sleight against its rivals.
+function sameModelSection(study, pair, level) {
+  const view = { ...study, me: pair.hosted, arms: [pair.hosted, pair.base], verdict: pair };
+  const out = [`${level} Same model: ${pair.hosted} against ${armName(pair.base)}\n`];
+  out.push(`${code(pair.hosted)} is sleight running inside Codex, and ${armName(pair.base)} is Codex with its own computer use, on the same model. ` +
+    `It is sleight itself and stays out of sleight's verdict above. Here it takes sleight's place against ${armName(pair.base)} under the same rules. ` +
+    `The scorer's wording for it is "${pair.wording}".\n`);
+  if (pair.wording === 'no comparison') return out.concat(list(pair.reasons.map(code)) + '\n').join('\n');
+  out.push(lostTable(view) + '\n');
+  out.push(taskMatrix(view) + '\n');
+  out.push(topUpTable(view) + '\n');
   return out.join('\n');
 }
 
@@ -856,7 +876,7 @@ export function exploreData(all) {
   const strings = [], index = new Map();
   const id = value => { const key = String(value ?? ''); if (!index.has(key)) { index.set(key, strings.length); strings.push(key); } return index.get(key); };
   const out = studies.map(s => ({
-    id: s.id, family: s.family, title: s.title, date: s.date ?? '', browser: s.browser ?? '', me: s.me, arms: s.arms, tasks: s.tasks,
+    id: s.id, family: s.family, title: s.title, date: s.date ?? '', browser: s.browser ?? '', me: s.me, arms: [...s.arms, ...(s.hosted ?? [])], tasks: s.tasks,
     models: s.models ?? {}, effort: Array.isArray(s.effort) ? s.effort : sortedUniq(Object.values(s.effort ?? {}).flat()),
     wording: s.verdict?.wording ?? null, page: families.find(f => f.id === s.family).page,
     cells: s.cells.map(c => [id(c.task), id(c.arm), c.runs, c.passes, c.expected, c.median, c.min, c.max, c.p90]),
