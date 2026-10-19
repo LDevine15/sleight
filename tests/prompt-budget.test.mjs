@@ -9,6 +9,7 @@ import { batchingDescription, createRelay } from '../plugins/sleight/lib/relay.m
 import { compactJsDescription } from '../plugins/sleight/lib/tool-description.mjs';
 import { guardedCode } from '../plugins/sleight/lib/document-scope.mjs';
 import { SCROLL_LOOP_NOTE, TEXTLESS_NOTE } from '../plugins/sleight/lib/compact-reads.mjs';
+import { closedTabOutcome } from '../plugins/sleight/lib/direct-browser/tools.mjs';
 // The budget script parses relay.mjs with the typescript dev dependency, which CI doesn't install.
 const budget = await import('../bench/prompt-budget.mjs').catch(error => {
   if (error.code === 'ERR_MODULE_NOT_FOUND') return null;
@@ -23,6 +24,11 @@ const hash = text => createHash('sha256').update(text).digest('hex');
 const baseline = JSON.parse(readFileSync(new URL('fixtures/prompt-default.json', import.meta.url)));
 const skillPath = new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', import.meta.url);
 const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
+
+test('the self-closed popup outcome has a reviewed prompt budget', () => {
+  assert.equal(hash(closedTabOutcome), baseline.browserClosedOutcome);
+  assert.ok(closedTabOutcome.length <= 80);
+});
 
 function placement(t, env = {}) {
   const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();

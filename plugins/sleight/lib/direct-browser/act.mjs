@@ -168,26 +168,30 @@ function coverDetails(el) {
       .map(n => (n.getAttribute('aria-label') || n.innerText || n.value || '').slice(0, 80)) };
 }
 
-function watch(page, state) {
-  const pending = new Set(), completed = new Set(), listeners = []; let boundary, dialogResolve, stopped = false;
+function watch(page, state, now) {
+  const pending = new Set(), active = new Set(), completed = new Set(), listeners = []; let boundary, dialogResolve, stopped = false;
+  let lastActivity = now();
   const dialogReady = new Promise(resolve => { dialogResolve = resolve; });
   // Settles when any boundary registers (navigation, new document, dialog, popup, close), so a caller can wait for one event, not a fixed time.
   let boundaryResolve; const boundaryReady = new Promise(resolve => { boundaryResolve = resolve; });
-  const mark = value => { boundary = value; boundaryResolve(); };
+  const mark = value => { lastActivity = now(); boundary = value; boundaryResolve(); };
   const stop = () => { stopped = true; for (const [event, fn] of listeners) page.off(event, fn); };
   const on = (event, fn) => {
     const listener = (...args) => { if (!stopped) fn(...args); };
     page.on(event, listener); listeners.push([event, listener]);
   };
-  on('request', r => { if (['document', 'xhr', 'fetch', 'script', 'stylesheet'].includes(r.resourceType())) pending.add(r); });
-  on('requestfinished', r => { if (pending.delete(r)) completed.add(r); });
-  on('requestfailed', r => { pending.delete(r); });
+  on('request', r => {
+    lastActivity = now(); active.add(r);
+    if (['document', 'xhr', 'fetch', 'script', 'stylesheet'].includes(r.resourceType())) pending.add(r);
+  });
+  on('requestfinished', r => { if (active.delete(r)) lastActivity = now(); if (pending.delete(r)) completed.add(r); });
+  on('requestfailed', r => { if (active.delete(r)) lastActivity = now(); pending.delete(r); });
   on('framenavigated', frame => { if (frame === page.mainFrame()) mark({ kind: 'navigation' }); });
   on('load', () => { if (!boundary) mark({ kind: 'document' }); });
   on('dialog', dialog => { state.dialog = dialog; mark({ kind: 'dialog', dialog }); dialogResolve(boundary); });
   on('popup', popup => { mark({ kind: 'popup', popup }); });
   on('close', () => { mark({ kind: 'close' }); state.dialog = null; stop(); });
-  return { pending, completed, dialogReady, boundaryReady, get boundary() { return boundary; },
+  return { pending, active, completed, dialogReady, boundaryReady, get boundary() { return boundary; }, get lastActivity() { return lastActivity; },
     stop };
 }
 
@@ -220,14 +224,18 @@ function ruleMessage(result) {
 // queues work and returns nothing, and a hand that throws changes nothing here.
 export function createActionRunner({ check, snapshot, backgroundClick = (tab, locator, click) => click({}), actionTimeoutMs = 7000, now = Date.now, sleep = pause, hand } = {}) {
   if (typeof check !== 'function' || typeof snapshot !== 'function') throw Error('action runner needs check and snapshot');
+  const lossFixes = process.env.SLEIGHT_LB12 !== '0';
   // siteCheck() gives the user's line when the page now shows a site sleight may not act on (permissions.mjs). It runs in the
   // gate, right before each step's input, so a step that moved the page to such a site stops every step after it.
-  return async function runSteps(tab, steps, ctx = {}, { nextStep, siteCheck } = {}) {
+  return async function runSteps(tab, steps, ctx = {}, { nextStep, siteCheck, observe } = {}) {
     // A bad step list is refused before any input, so the caller must not report it as an unconfirmed outcome.
     try { validate(steps); } catch (error) { error.notRun = true; throw error; }
     const { page, state } = tab, since = state.snapshotNo > 0 ? state.snapshotNo : undefined, lines = []; let stoppedAt = null;
-    let observed, observeError, confirmation, blocker, carry, observeWaitMs = 600;
+    let observed, observeError, confirmation, blocker, carry, closed = false, observeWaitMs = 600;
     const read = async options => { const capturedAt = now(), result = await snapshot(page, options); observed = { ...result, capturedAt }; return observed; };
+    // Keep requests across step watchers: a wait after a click must see work that click left in flight.
+    const batchWatch = watch(page, state, now);
+    try {
     for (let index = 0; index < steps.length; index++) {
       // navigate on a link is that link's click, so every click rule, guard and popup rule applies unchanged.
       const named = steps[index], step = named.do === 'navigate' ? { ...named, do: 'click' } : named, label = `${index + 1} ${named.do}${step.ref ? ' ' + step.ref : ''}`;
@@ -276,7 +284,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // Visible dialogs and panels before the input, to tell a submit that answered with one from a silent one.
         const overlayRead = async () => { try { return await trustedLocatorRead(locator, overlaySignature); } catch { return null; } };
         const overlayBase = locator && (step.do === 'click' || enter) ? await overlayRead() : null;
-        armed = watch(page, state); const start = now();
+        armed = watch(page, state, now); const start = now();
         // A script-driven control on the closed name list may be refunded later, if the whole network stays quiet (activity.mjs).
         if (step.do === 'click' && info.scriptButton === true && refundableName(info.accName)) activity = observeActivity(page);
         const options = { timeout: TIMEOUT };
@@ -325,9 +333,11 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           }
           if (step.do === 'wait') {
             if (locator) return typeof locator.waitFor === 'function' ? locator.waitFor({ ...options, state: 'visible' }) : locator.waitForElementState('visible', options);
-            if (step.ms === undefined) { await sleep(100); return; }
-            await sleep(Math.min(step.ms, WAIT_CAP));
-            return step.ms > WAIT_CAP ? `waited ${WAIT_CAP} ms (cap, not ${step.ms}); page below` : undefined;
+            if (!lossFixes) {
+              await sleep(Math.min(step.ms ?? 100, WAIT_CAP));
+              return step.ms > WAIT_CAP ? `waited ${WAIT_CAP} ms (cap, not ${step.ms}); page below` : undefined;
+            }
+            return;
           }
           if (step.do === 'scroll') {
             const end = now() + 4000, clamp = n => Math.max(-SCROLL_CAP, Math.min(SCROLL_CAP, n)), dx = clamp(step.dx ?? 0), dy = clamp(step.dy ?? 500);
@@ -366,14 +376,38 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // or type settles briefly and the last of the run settles fully. Enter, Return and Space can activate
         // a control, so they always settle in full, and so does any step that starts a submit.
         const quiet = (step.do === 'type' || step.do === 'press' && !enter) && !submits;
+        const short = lossFixes && (['viewport', 'back', 'forward', 'wait'].includes(step.do) || step.do === 'scroll' && !step.until);
+        if (short) {
+          const until = start + actionTimeoutMs, waiting = step.do === 'wait' && !locator;
+          const requestedEnd = start + Math.min(step.ms ?? 150, WAIT_CAP);
+          // Give resize/scroll handlers a frame to start their work. A navigation can destroy that
+          // evaluation; only an observed boundary makes that failure safe to ignore.
+          if (!waiting && !armed.boundary) try {
+            await bounded(Promise.race([page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve()))), armed.boundaryReady]), actionTimeoutMs);
+          } catch (error) { if (!armed.boundary) throw error; }
+          let landed;
+          for (;;) {
+            const boundary = armed.boundary;
+            if (boundary && !['navigation', 'document'].includes(boundary.kind)) break;
+            if (boundary?.kind === 'navigation' && landed !== boundary) {
+              await page.waitForLoadState('domcontentloaded', { timeout: Math.max(1, until - now()) });
+              landed = boundary;
+            }
+            const quietEnd = Math.min(requestedEnd, Math.max(start, batchWatch.lastActivity) + 150);
+            if (!batchWatch.active.size && (!waiting || now() >= quietEnd)) break;
+            if (now() >= until) throw Error('page activity still pending after its deadline');
+            await sleep(Math.min(25, until - now(), !batchWatch.active.size && waiting ? Math.max(1, quietEnd - now()) : 25));
+          }
+          observeWaitMs = now() - start;
+        }
         // Electron fences one input per invocation; lookahead changes only settling, never sends that next input.
         const batched = quiet && !inputPending && !armed.boundary && ['type', 'press'].includes((steps[index + 1] ?? nextStep)?.do);
-        observeWaitMs = batched ? 40 : 600;
+        if (!short) observeWaitMs = batched ? 40 : 600;
         // A submit's clock starts when the gate arms the fence (submit.startedAt), which in a trusted turn is after `start`: the
         // delivered read clears the fence only if taken a full second after that moment (rules.mjs deliverSnapshot), so both wait on it.
         const origin = submits && submit ? Math.max(start, submit.startedAt) : start;
         const settleUntil = batched ? now() + 40 : origin + (submits ? 5000 : 600);
-        while (!armed.boundary && now() < settleUntil) {
+        while (!short && !armed.boundary && now() < settleUntil) {
           if (submits && locator) {
             // A key can return before the navigation it started has committed, and the node is gone mid-read. Give the
             // navigation boundary a moment to register; destroyed evidence without one still stops the batch.
@@ -393,6 +427,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // Carry watchers only across steps this invocation will run. The Electron caller guards its next invocation.
         if (batched && steps[index + 1] && !armed.boundary) carry = armed;
         const boundary = armed.boundary;
+        closed = lossFixes && boundary?.kind === 'close';
         if (boundary?.kind === 'dialog') state.dialog = boundary.dialog;
         if (submit && state.submitUnconfirmed === submit) {
           if (boundary?.kind === 'navigation' || boundary?.kind === 'document' || formChanged || armed.completed.size) state.submitUnconfirmed = false;
@@ -431,6 +466,9 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           + (raisable.length ? `. ${raisable.length > 1 ? 'Tabs' : 'Tab'} ${raisable.join(', ')} (opened by this page, another origin) can be raised to the foreground by the page at any time, and sleight cannot block or detect that` : '') + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
         if (boundary) { stoppedAt = index + 1; break; }
       } catch (error) {
+        if (lossFixes && started && armed?.boundary?.kind === 'close') {
+          closed = true; lines.push(label + ': tab closed'); stoppedAt = index + 1; break;
+        }
         if (started && submit && state.submitUnconfirmed === submit) submit.settledAt = now();
         let detail = step.do === 'upload' && started ? 'upload did not finish; inspect the control before retrying' : String(error.message);
         for (const value of [step.text, ...step.values ?? [], ...step.paths ?? []]) if (typeof value === 'string' && value) detail = detail.replaceAll(value, '[redacted]');
@@ -467,8 +505,9 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
     if (stoppedAt !== null) for (let i = stoppedAt; i < steps.length; i++) lines.push(`${i + 1} ${steps[i].do}: not reached`);
     // Never turn a delivered input into a tool error because its observation
     // failed. The caller delivers this snapshot and records its number.
-    if (!state.dialog && state.actionPending) lines.push('Read deferred: input still pending; wait for it before browser_read.');
-    else if (!state.dialog) try { await read({ since, maxChars: 8000 }); } catch (error) { observeError = clean(error.message); }
+    const needsRead = !lossFixes || observe !== 'none' || stoppedAt !== null || lines.some(line => /\[ref=/.test(line));
+    if (!closed && !state.dialog && state.actionPending) lines.push('Read deferred: input still pending; wait for it before browser_read.');
+    else if (!closed && !state.dialog && needsRead) try { await read({ since, maxChars: 8000 }); } catch (error) { observeError = clean(error.message); }
     if (blocker && observed && observed !== blocker && !observed.text.includes(blocker.text)) observed.text += '\nBlocker controls (untrusted page content):\n' + blocker.text;
     if (observed) {
       const changed = observed.text.split('\n').filter(line => /^[+~-]\s/.test(line)).length;
@@ -477,7 +516,9 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
       for (let i = 0; i < lines.length; i++) lines[i] = lines[i].replace('input sent; observation below', detail);
     }
     if (observeError) lines.push('Read unavailable: ' + observeError + '; use browser_read before retrying.');
-    return { lines, stoppedAt, observe: observed, ...(confirmation ? { confirmation } : {}) };
+    if (!needsRead) for (let i = 0; i < lines.length; i++) lines[i] = lines[i].replace('input sent; observation below', 'input sent');
+    return { lines, stoppedAt, observe: observed, ...(closed ? { closed: true } : {}), ...(confirmation ? { confirmation } : {}) };
+    } finally { batchWatch.stop(); }
   };
 }
 

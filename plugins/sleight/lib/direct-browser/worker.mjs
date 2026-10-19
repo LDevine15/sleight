@@ -1,7 +1,7 @@
 import { fork } from 'node:child_process';
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
+import { appendFileSync, closeSync, constants, mkdirSync, openSync, readFileSync, realpathSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readInstalledConfig, readInstalledConfigFile, acceptedInstalledPackage, installedConfigPath } from './installed-config.mjs';
@@ -67,24 +67,34 @@ export const transientStartup = error => error?.stage === 'worker-disconnect' ||
   error?.stage === 'worker-exit' && error.reason !== 'EXIT_0' || transientReasons.has(error?.reason);
 const phases = new Set(('worker-spawn-start worker-spawned bridge-ready tools-registered turn-begin first-call-admitted call-start call-result '
   + 'turn-end-requested turn-end worker-entry helpers-check-start helpers-check-end connection-select-start connection-select-end '
-  + 'worker-ready connection-start connection-end runtime-ready').split(' '));
+  + 'worker-ready connection-start connection-end runtime-ready '
+  + 'browser-open-start browser-open-create-start browser-open-create-end browser-open-attach-end browser-open-identify-end '
+  + 'browser-open-adopt-end browser-open-ready-end browser-open-goto-start browser-open-goto-end browser-open-capture-start '
+  + 'browser-open-capture-end browser-open-end').split(' '));
 // Numeric ordinals correlate calls without recording user text, tool arguments or page results.
 // Both processes append to the relay's existing trace file. Disabled tracing reads no clock and does no I/O.
-export function createWorkerTrace({ setting = process.env.SLEIGHT_TRACE, relayPid = process.ppid, now = Date.now } = {}) {
-  if (!setting || !Number.isSafeInteger(relayPid) || relayPid < 1) return () => {};
+export function createWorkerTrace({ setting = process.env.SLEIGHT_TRACE, metrics = process.env.SLEIGHT_TURBO_METRICS, relayPid = process.ppid, now = Date.now } = {}) {
   const dir = setting === '1' ? join(homedir(), 'Library', 'Logs', 'sleight') : setting;
   // The bridge starts before launch.mjs initializes relay tracing.
-  let fd;
-  try { mkdirSync(dir, { recursive: true }); fd = openSync(join(dir, `trace-${relayPid}.jsonl`), 'a', 0o600); } catch { return () => {}; }
+  let fd, metricFd;
+  if (dir && Number.isSafeInteger(relayPid) && relayPid > 0) try {
+    mkdirSync(dir, { recursive: true }); fd = openSync(join(dir, `trace-${relayPid}.jsonl`), 'a', 0o600);
+  } catch {}
+  if (metrics) try {
+    if (metrics.startsWith('/') && resolve(metrics) === metrics && basename(metrics) === 'turbo-metrics.jsonl' && realpathSync(dirname(metrics)) === dirname(metrics))
+      metricFd = openSync(metrics, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
+  } catch {}
   const trace = (phase, turn, call) => {
-    if (fd === undefined) return;
+    const openPhase = typeof phase === 'string' && phase.startsWith('browser-open-');
+    if (fd === undefined && (metricFd === undefined || !openPhase)) return;
     if (!phases.has(phase) || [turn, call].some(n => n !== undefined && (!Number.isSafeInteger(n) || n < 0))) return;
     try {
-      writeSync(fd, JSON.stringify({ t: new Date(now()).toISOString(), direction: 'turbo-phase',
-        msg: { phase, ...(turn !== undefined ? { turn } : {}), ...(call !== undefined ? { call } : {}) } }) + '\n');
+      const t = new Date(now()).toISOString(), msg = { phase, ...(turn !== undefined ? { turn } : {}), ...(call !== undefined ? { call } : {}) };
+      if (fd !== undefined) try { writeSync(fd, JSON.stringify({ t, direction: 'turbo-phase', msg }) + '\n'); } catch {}
+      if (metricFd !== undefined && openPhase) try { writeSync(metricFd, JSON.stringify({ version: 3, t, ...msg }) + '\n'); } catch {}
     } catch {}
   };
-  trace.close = () => { const old = fd; fd = undefined; if (old !== undefined) try { closeSync(old); } catch {} };
+  trace.close = () => { const old = [fd, metricFd]; fd = metricFd = undefined; for (const value of old) if (value !== undefined) try { closeSync(value); } catch {} };
   return trace;
 }
 function phaseTrace(dependencies, relayPid) {
@@ -285,6 +295,7 @@ export async function createV3TurnRuntime({ binding, browser, pages, snapshot, u
   ]);
   const ctx = (dependencies.createContext ?? createV3Context)({ binding, browser, ui });
   const runtime = createToolDispatcher({ browser, pages, snapshot, ctx, endpoint, sites: dependencies.sites, onSite: dependencies.onSite,
+    tracePhase: dependencies.tracePhase,
     runSteps: dependencies.runSteps ?? runSteps, fillFields: dependencies.fillFields ?? fillFields,
     deliverSnapshot(state, capture) {
       if (capture.state !== state || !Number.isSafeInteger(capture.number) || capture.number < 1 ||
@@ -394,6 +405,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   // Opted-in Electron apps (EPV3-7): this session's id at the resident hosts, the debugger consent, one admin
   // client per app host, qualification receipts and the latest begin frame's engine approvals.
   let appSession, appConsent, appConnected = false, turnApps = Object.freeze([]), hostSecret;
+  let traceTurn = 0;
   let browserName; // the menu bar's browser line, from the operator-owned config's executable only
   let hostName; // the menu bar's host line, from the MCP client's own clientInfo (the relay's label), never guessed
   let optOutFailed = false;
@@ -569,6 +581,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     subscribe();
     protocol = serveV3Worker({ channel, browser: selected.selectedBrowser, current,
       async begin(message, binding, { apps = [], appSecret: secret, host } = {}) {
+        const turnNo = ++traceTurn;
         if (!current() || resources.size) throw Error('CLEANUP_UNPROVED');
         if (validHostLabel(host) && host !== hostName) { hostName = host; try { status(); } catch {} }
         turnApps = Object.freeze([...apps]);
@@ -646,6 +659,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
                 // Acknowledgment is coupled to the exact output identity in the
                 // fork protocol. Merely taking a snapshot never admits its refs.
                 acknowledgeSnapshot: snapshots.acknowledgeSnapshot, sites, onSite: noteSite,
+                tracePhase: (phase, call) => trace(phase, turnNo, call),
               } });
             resource.runtime = runtime;
             trace('runtime-ready');

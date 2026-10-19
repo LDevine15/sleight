@@ -36,6 +36,7 @@ function fixture({ effect = '', submit = false, fail, onClick, snapshotFail = fa
   page.getByRef = loc; page.url = () => 'https://example.invalid/';
   page.locator = selector => { assert.equal(selector, ':focus'); return loc('e1'); };
   page.mainFrame = () => page;
+  page.evaluate = async () => { time += 16; };
   page.keyboard = { async press(key) { actions.push(['key', key]); } };
   page.mouse = { async move(x, y) { actions.push(['move', x, y]); }, async wheel(dx, dy) { actions.push(['wheel', dx, dy]); } };
   for (const method of ['goBack', 'goForward', 'reload', 'setViewportSize']) page[method] = async options => { actions.push([method, options]); };
@@ -532,12 +533,12 @@ test('v3 refuses a non-finite scroll step as not run, and clamps a finite one pa
   assert.doesNotMatch(plain.lines[0], /clamped/);
 });
 
-test('v3 wait takes ms as a timed wait capped at 5000, and says so when it clamps', async () => {
+test('v3 wait ends at quiet, including when its requested duration exceeds the cap', async () => {
   const f = fixture();
   const result = await f.run(f.tab, [{ do: 'wait', ms: 1500 }], {});
-  assert.equal(f.time(), 1500); assert.equal(f.actions.length, 0); assert.doesNotMatch(result.lines[0], /cap/);
+  assert.equal(f.time(), 150); assert.equal(f.actions.length, 0); assert.doesNotMatch(result.lines[0], /cap/);
   const long = fixture(), capped = await long.run(long.tab, [{ do: 'wait', ms: 60000 }], {});
-  assert.equal(long.time(), 5000); assert.match(capped.lines[0], /waited 5000 ms \(cap, not 60000\)/);
+  assert.equal(long.time(), 150); assert.doesNotMatch(capped.lines[0], /waited 5000/);
   await assert.rejects(fixture().run(fixture().tab, [{ do: 'wait', ms: -1 }], {}), /wait needs ms of 0 or more/);
   const ref = fixture(); await ref.run(ref.tab, [{ do: 'wait', ref: 'e1', ms: 9000 }], {});
   assert.deepEqual(ref.actions.map(a => a[0]), ['wait']); // a ref still waits for the element, not the clock
