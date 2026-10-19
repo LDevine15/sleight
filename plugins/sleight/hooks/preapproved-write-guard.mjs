@@ -68,6 +68,11 @@ function shellWords(command) {
   return words;
 }
 
+// Commands a find -exec runs that change or remove what it finds.
+const FIND_WRITERS = new Set(['rm', 'mv', 'cp', 'ln', 'chmod', 'chown', 'chgrp', 'chflags', 'truncate', 'tee', 'unlink', 'sed', 'perl', 'sh', 'bash', 'zsh',
+  'python', 'python3', 'node', 'ruby', 'xargs', 'dd', 'install', 'rsync', 'ditto', 'touch', 'shred', 'srm']);
+// A path with glob or brace characters names whatever its folder holds that matches; the folder decides.
+const globFolder = path => /[*?[{]/.test(path) ? path.slice(0, path.search(/[*?[{]/)).replace(/\/[^/]*$/, '') : undefined;
 const PROTECTED_NAME = /(?:preapproved|turbo|turbo-apps|electron-grants|hand|permissions)\.json|grant-seal\.key/i;
 const launcher = name => name === 'sleight-mcp' || name === 'launch.mjs';
 const commandArgument = value => value.replace(/^['"]+|[;&|)'"]+$/g, '');
@@ -149,13 +154,26 @@ function shellWritePaths(command, initialDirectory, depth = 0) {
     } else if (executable === 'rm') operands.forEach(path => add(path, false, true));
     else if (executable === 'mv') operands.forEach((path, at) => add(path, false, at < operands.length - 1));
     else if (['chmod', 'chown', 'chgrp', 'chflags'].includes(executable)) operands.forEach(path => add(path, false, texts.some(arg => /^-[^-]*R/.test(arg))));
-    else if (executable === 'find' && texts.some(arg => ['-delete', '-exec', '-execdir', '-ok', '-okdir'].includes(arg))) {
+    else if (executable === 'find' && texts.some((arg, at) => arg === '-delete' ||
+      ['-exec', '-execdir', '-ok', '-okdir'].includes(arg) && FIND_WRITERS.has(texts[at + 1]?.split('/').at(-1)))) {
       // find's search roots come before its first expression; a protected name anywhere in the expression denies too.
       const start = texts.findIndex(arg => !['-H', '-L', '-P'].includes(arg)), end = texts.findIndex((arg, at) => at >= start && /^[-(!]/.test(arg));
       const roots = texts.slice(start, end < 0 ? texts.length : end);
       for (const root of roots.length ? roots : ['.']) add(root, false, true);
       if (texts.some(arg => PROTECTED_NAME.test(arg))) add('~/Library/Application Support/sleight', true);
-    } else if (['tee', 'truncate'].includes(executable) ||
+    } else if (executable === 'tar' && /^-?[a-zA-Z]*x|^--extract$|^--get$/.test(texts[0] ?? '') || executable === 'tar' && texts.some(arg => /^-[a-zA-Z]*x/.test(arg))) {
+      // An archive unpacked into a folder can write any file under it.
+      const at = texts.findIndex(arg => arg === '-C' || arg === '--directory');
+      if (at >= 0) add(texts[at + 1], false, true);
+      texts.filter(arg => arg.startsWith('--directory=')).forEach(arg => add(arg.slice('--directory='.length), false, true));
+    } else if (executable === 'unzip' && texts.includes('-d')) add(texts[texts.indexOf('-d') + 1], false, true);
+    else if (executable === 'ditto') add(operands.at(-1), false, true);
+    else if (['curl', 'wget'].includes(executable)) {
+      texts.forEach((arg, at) => { if (['-o', '--output', '-O', '--output-document'].includes(arg)) add(texts[at + 1]); });
+      texts.filter(arg => /^--output(?:-document)?=/.test(arg)).forEach(arg => add(arg.slice(arg.indexOf('=') + 1)));
+    } else if (executable === 'git' && ['checkout', 'restore', 'apply'].includes(texts[0])) operands.slice(1).forEach(path => add(path));
+    else if (executable === 'patch') operands.forEach(path => add(path));
+    else if (['tee', 'truncate'].includes(executable) ||
       (['sed', 'perl'].includes(executable) && texts.some(arg => /^-[^-]*i/.test(arg))) ||
       (executable === 'defaults' && ['write', 'delete', 'import'].includes(texts[0]))) operands.forEach(path => add(path));
     else if (executable === 'plutil' && texts.some(arg => ['-replace', '-insert', '-remove', '-convert'].includes(arg))) {
@@ -189,6 +207,8 @@ export async function preapprovedWriteDenied(input, options) {
     if (typeof path !== 'string') continue;
     if (tool === 'Bash') {
       if (protectedLiteral(path) || ancestor && above(path, options?.home)) return true;
+      const folder = globFolder(path);
+      if (folder && (protectedLiteral(folder) || ancestor && above(folder, options?.home))) return true;
       if (literalOnly || /\s/.test(path) || path.length >= 512) continue;
     }
     if (await protectedPath(path, options, ancestor)) return true;

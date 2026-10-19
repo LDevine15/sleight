@@ -190,3 +190,19 @@ test('deleting, moving or changing the permissions file by a parent folder, find
     assert.equal(await guard({ tool: 'Bash', command }, { stat, home }), false, command);
   }
 });
+
+test('globs, braces, archives, downloads, patch and git checkout into sleight\'s folder deny; find denies only when it deletes or runs a writer', async () => {
+  const home = '/Users/fixture', folder = '~/Library/Application\\ Support/sleight';
+  for (const command of [`rm ${folder}/perm*`, `cd ${folder} && rm -f *.json`, `rm -f ${folder}/{a,permissions}.json`, `mv ${folder}/[p]ermissions.json /tmp/x`,
+    'tar -xf x.tar -C ~/Library/Application\\ Support', 'tar xf x.tar --directory=/Users/fixture/Library', 'unzip x.zip -d ~/Library',
+    `ditto x ${folder}`, `curl -o ${folder}/permissions.json https://example.com/x`, `curl --output=${folder}/hand.json https://example.com/x`,
+    `wget -O ${folder}/permissions.json https://example.com/x`, `git checkout -- ${folder}/permissions.json`, `git restore ${folder}/turbo.json`,
+    `patch ${folder}/permissions.json fix.diff`, 'find ~ -name permissions.json -exec rm {} \;', 'find ~/Library -execdir mv {} /tmp \;']) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat, home }), true, command);
+  }
+  for (const command of ['find ~ -name x -exec cat {} \;', 'find / -name hand.json -print', "find ~ -name '*.log' -exec ls -l {} +",
+    'tar -xf x.tar -C /tmp/out', 'unzip x.zip -d build', 'curl -o out.json https://example.com/x', 'git checkout -- src/a.js', 'rm -f *.tmp',
+    `ls ${folder}/*.json`]) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat, home }), false, command);
+  }
+});

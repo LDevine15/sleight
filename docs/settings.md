@@ -153,8 +153,9 @@ bundle id also stores the names macOS gives the app, so `getApp("Example")` and 
 engine path. It is off by default. `sites all` lifts the limit, and `revoke <origin>` takes one site off. Revoking the
 last site is refused, because an empty list would mean no limit.
 
-Sites compare by host, in any case, with a trailing dot and a leading `www.` ignored. A block covers its subdomains on
-any scheme and port. An allow-only site matches its own scheme and port only.
+Sites compare by host, in any case, with a trailing dot and a leading `www.` ignored (`www.com` keeps its `www.`). A
+block covers its subdomains on any scheme and port. An allow-only site matches its own scheme and port only, and
+`https://www.example.com` there also allows `https://example.com`.
 
 Turbo checks the site of every page before it reads, and again before each step's input. Under a site limit it refuses
 a tab whose address isn't http(s), except a blank tab. On the engine path (Safari, Firefox, or Chrome without turbo) the
@@ -170,8 +171,11 @@ has Never Act on the site turbo last worked on. The menu never grants or lifts a
 approval card, and only `unblock` lifts a block.
 
 The blocks live in `~/Library/Application Support/sleight/permissions.json`, written only by your clicks in that menu
-and by the command. Claude's own file edits and shell commands can't write it or run `block`, `unblock`, `revoke` or
-`sites`. Plain `sleight-mcp permissions`, which only lists, stays allowed. A `permissions.json` that is a link or has
+and by the command. sleight's hook refuses Claude's file edits there and the common shell routes to that folder: redirects,
+`rm`, `mv`, `cp`, `chmod`, `find -delete`, unpacked archives, downloads, globs, and inline code that mentions the files or
+loads sleight's writers. It also refuses `block`, `unblock`, `revoke`, `sites` and `repair`. The hook reads command text,
+so a script Claude writes and then runs, or a path built from variables, gets past it. `open_file` never opens files in
+that folder. Plain `sleight-mcp permissions`, which only lists, stays allowed. A `permissions.json` that is a link or has
 another owner, mode or format stops every action, and so does one that is gone after a session read it. `sleight-mcp
 permissions repair` replaces it with a private file that keeps every valid block, and `sleight-mcp --doctor` names that
 fix. When repair can't read the old file, or none of its allowed sites, it changes nothing until you run `repair
