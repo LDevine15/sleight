@@ -222,5 +222,6 @@ test('the race carries SLEIGHT_WORKFLOW_DOCS=0 to the sleight arm for the A/B ba
   assert.deepEqual(traceEnv({ SLEIGHT_WORKFLOW_DOCS: '0', HOME: '/h' }), { SLEIGHT_WORKFLOW_DOCS: '0' });
   assert.deepEqual(traceEnv({ SLEIGHT_WORKFLOW_DOCS: '1' }), {});
   const script = readFileSync(new URL('../bench/fowl/rounds.sh', import.meta.url), 'utf8');
-  assert.match(script, /env -i[^\n]*\n[^\n]*\$\{SLEIGHT_WORKFLOW_DOCS:\+SLEIGHT_WORKFLOW_DOCS="\$SLEIGHT_WORKFLOW_DOCS"\}[^\n]*node tools\/rounds\.mjs/);
+  const branch = script.slice(script.indexOf('if [ -n "$REAL" ]; then'), script.indexOf('fi\n', script.indexOf('if [ -n "$REAL" ]; then')));
+  assert.match(branch, /env -i[\s\S]*\$\{SLEIGHT_WORKFLOW_DOCS:\+SLEIGHT_WORKFLOW_DOCS="\$SLEIGHT_WORKFLOW_DOCS"\}[\s\S]*node tools\/rounds\.mjs/);
 });
