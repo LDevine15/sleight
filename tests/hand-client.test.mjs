@@ -28,11 +28,11 @@ function fakeChild(pid = 4242, consent = true) {
   child.lines = lines; child.menus = menus;
   return child;
 }
-function harness({ enabled = true, built = true, capture = 'hidden', result, now, setHand, killAfterMs, permissions = null, currentApp = () => undefined, watch = () => undefined } = {}) {
+function harness({ enabled = true, built = true, capture = 'hidden', result, now, setHand, killAfterMs, permissions = null, usage = null, currentApp = () => undefined, watch = () => undefined } = {}) {
   const children = [], traces = [], spawns = [];
   let preparing = 0, setting = { enabled, capture };
   const client = createHandClient({
-    setting: () => setting, built: () => built, now, watch, setHand, permissions, currentApp, ...killAfterMs ? { killAfterMs } : {},
+    setting: () => setting, built: () => built, now, watch, setHand, permissions, usage, currentApp, ...killAfterMs ? { killAfterMs } : {},
     prepare: async () => { preparing++; return result ?? { status: 'ready', spawn: options => { spawns.push(options); const c = fakeChild(4242 + children.length, options?.consent); children.push(c); return c; } }; },
     trace: (direction, detail) => traces.push([direction, detail]),
   });
@@ -427,4 +427,38 @@ test('without a provider the menu frame has no Permissions rows, and a permissio
   assert.equal(Object.hasOwn(first, 'permissions'), false);
   h.children[0].stdout.emit('data', Buffer.from(JSON.stringify({ permissions: 'revoke-all', nonce: first.nonce }) + '\n')); await settle();
   assert.equal(h.traces.filter(([d]) => d === 'hand-toggle-refused').length, 1);
+});
+
+test('the menu frame carries the action log\'s last 7 days when it has timed actions, read again at most every five minutes', async t => {
+  t.after(() => setHandPid(0));
+  let clock = 0, reads = 0, next = { perAction: 1.5, turbo: 0.6, saved: 6 };
+  const h = harness({ now: () => clock, usage: async () => { reads++; return next; } });
+  h.client.send(frame()); await settle();
+  const [first] = h.children[0].menus;
+  assert.deepEqual(Object.keys(first), ['hand', 'nonce', 'enabled', 'capture', 'version', 'usage']);
+  assert.deepEqual(first.usage, { perAction: 1.5, turbo: 0.6, saved: 6 });
+  next = { perAction: 1.2, saved: 7 };
+  clock = 61000; h.client.send(frame()); await settle();
+  assert.equal(reads, 1, 'the minute\'s recheck leaves the log alone inside five minutes');
+  clock = 301000; h.client.send(frame()); await settle();
+  assert.equal(reads, 2);
+  assert.deepEqual(h.children[0].menus.at(-1).usage, { perAction: 1.2, saved: 7 });
+  const sent = h.children[0].menus.length;
+  clock = 602000; h.client.send(frame()); await settle();
+  assert.equal(h.children[0].menus.length, sent, 'no new frame when nothing changed');
+  for (const bad of [{ perAction: '1.2', saved: 7 }, { perAction: 1.2, saved: 7.5 }, { perAction: -1, saved: 7 }, { perAction: 1.2, saved: 7, turbo: Infinity }, null]) {
+    next = bad; clock += 301000; h.client.send(frame()); await settle();
+    assert.equal(Object.hasOwn(h.children[0].menus.at(-1), 'usage'), false, JSON.stringify(bad));
+    next = { perAction: 1, saved: 1 }; clock += 301000; h.client.send(frame()); await settle();
+  }
+});
+
+test('with the action log off the menu frame has no usage, and a failing read only leaves it out', async t => {
+  t.after(() => setHandPid(0));
+  for (const usage of [async () => undefined, async () => { throw Error('EACCES'); }]) {
+    const h = harness({ usage });
+    h.client.send(frame()); await settle();
+    assert.equal(Object.hasOwn(h.children[0].menus[0], 'usage'), false);
+    h.client.close();
+  }
 });

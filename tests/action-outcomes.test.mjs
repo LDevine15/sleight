@@ -298,6 +298,23 @@ test('the relay asks the guard for outcomes and shows them under SLEIGHT_OUTCOME
   assert.equal(statSync(path).mode & 0o777, 0o600);
 });
 
+test('the relay logs each call\'s time and the guard reads it sent as changed lines (1.4.0 stats)', async t => {
+  const path = join(dir, 'timed.jsonl');
+  const h = relayHarness(t, { actionLog: new ActionLog({ path, root: dir }) });
+  // Enough unchanged lines that the checked box goes to Claude as changed lines.
+  const pad = Array.from({ length: 40 }, (_, i) => `\n\t${30 + i} static text Row ${i}`).join('');
+  await h.call(1, 'let app = await cua.getApp("TextEdit")');
+  await h.reply(1, form('', '0', pad));
+  await h.call(2, 'await app.click(2);');
+  const mark = /"outcomeMark":"(\[sleight:filtered-read:[0-9a-f]{16}\])"/.exec(h.sentCode(2))[1];
+  const g = engine([form('', '0', pad), form('', '1', pad)]);
+  await g.run('await app.click(2);', { outcomeMark: mark, actions: ['click'] });
+  const text = (await h.reply(2, g.output.join(''))).content.map(item => item.text).join('\n');
+  assert.match(text, /lines changed since the last full tree/);
+  const rows = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(rows.map(row => [row.kind, row.saved, Number.isSafeInteger(row.ms) && row.ms >= 0]), [['click', 1, true]]);
+});
+
 test('outcomes stay out of results by default while the log still gets them', async t => {
   const path = join(dir, 'quiet.jsonl');
   const h = relayHarness(t, { actionLog: new ActionLog({ path, root: dir }) });

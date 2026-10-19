@@ -14,6 +14,7 @@ import { handHostBuilt, prepareHandHost } from '../direct-browser/host.mjs';
 import { handConfigPath, handSetting } from './settings.mjs';
 import { setHandPid } from './pid.mjs';
 import { currentApp as noted } from '../permissions.mjs';
+import { actionLogPath } from '../action-outcomes.mjs';
 
 const kinds = new Set(['click', 'double', 'right', 'key', 'type', 'drag', 'scroll']);
 const round = value => Math.round(value * 100) / 100;
@@ -64,14 +65,27 @@ export function sessionHandClient(options = {}) {
 // The files behind the menu's Permissions rows. A change to any of them sends the host a fresh menu frame.
 const permissionFiles = new Set(['preapproved.json', 'permissions.json', 'electron-grants.json', 'turbo.json']);
 const command = async () => import('../permissions-command.mjs');
+// The menu's usage row: the opt-in action log's last 7 days (action-stats.mjs), only while this session writes the log.
+const logUsage = env => async () => {
+  const path = actionLogPath(env.SLEIGHT_ACTION_LOG);
+  return path ? (await import('../action-stats.mjs')).menuUsage({ path }) : undefined;
+};
+const seconds = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 3600;
+/** { perAction, turbo?, saved } exactly, or undefined. */
+export function usageFrame(value) {
+  if (!value || typeof value !== 'object' || !seconds(value.perAction) || value.turbo !== undefined && !seconds(value.turbo) ||
+      !(Number.isSafeInteger(value.saved) && value.saved >= 0 && value.saved <= 1e9)) return undefined;
+  return { perAction: value.perAction, ...value.turbo !== undefined ? { turbo: value.turbo } : {}, saved: value.saved };
+}
 
 /** `enabled` is true while this session may still show the hand: the settings allow it and the host hasn't failed.
- *  permissions: the menu's Permissions rows (menu() gives { payload, offered }) and their clicks (apply), or null for none. */
+ *  permissions: the menu's Permissions rows (menu() gives { payload, offered }) and their clicks (apply), or null for none.
+ *  usage: the menu's usage row ({ perAction, turbo?, saved } or undefined), read at most every usageMs, or null for none. */
 export function createHandClient({ env = process.env, setting = () => handSetting({ env }), built = handHostBuilt, prepare = prepareHandHost,
   trace = () => {}, now = Date.now, defer = setImmediate, recheckMs = 60000, killAfterMs = 2000,
   setHand = async enabled => (await import('./command.mjs')).writeHandSetting({ enabled }),
   permissions = { menu: async () => (await command()).permissionsMenu(), apply: async (event, offered) => (await command()).applyMenuEvent(event, offered) },
-  currentApp = noted,
+  currentApp = noted, usage = logUsage(env), usageMs = 300000,
   watch = (folder, listener) => process.platform === 'darwin' ? fsWatch(folder, { persistent: false }, listener) : undefined } = {}) {
   const nonce = randomBytes(32).toString('hex'), queue = [];
   // host: none, starting, running or dead (failed or closed this session; final). hand: the settings allow the hand.
@@ -98,7 +112,25 @@ export function createHandClient({ env = process.env, setting = () => handSettin
     windowId: wire.windowId, at: wire.at, path: wire.path, delayMs, beats: wire.beats }) + '\n';
   // perms: the last Permissions rows sent, with the targets a click may act on; permsText detects a change.
   let perms, permsText, permsApp, refreshing = false, again = false;
-  const menu = () => JSON.stringify({ hand: 'menu', nonce, enabled: hand, capture, version, ...perms?.payload ? { permissions: perms.payload } : {} }) + '\n';
+  // stats: the usage row last sent, and when the log was last read.
+  let stats, statsText = 'null', statsAt = -Infinity;
+  const menu = () => JSON.stringify({ hand: 'menu', nonce, enabled: hand, capture, version, ...perms?.payload ? { permissions: perms.payload } : {},
+    ...stats ? { usage: stats } : {} }) + '\n';
+  async function loadUsage() {
+    if (!usage) return false;
+    statsAt = now();
+    let next;
+    try { next = usageFrame(await usage()); } catch (error) { note('usage-unavailable', { code: error?.code ?? 'read' }); next = undefined; }
+    const text = JSON.stringify(next ?? null);
+    if (text === statsText) return false;
+    stats = next; statsText = text;
+    return true;
+  }
+  // Off the caller's path; statsAt is set before the read, so a slow read isn't started twice.
+  function refreshUsage() {
+    if (!usage || host !== 'running' || now() - statsAt < usageMs) return;
+    loadUsage().then(changed => { if (changed && host === 'running') write(menu()); });
+  }
   async function loadPermissions() {
     if (!permissions) return false;
     let next;
@@ -176,8 +208,9 @@ export function createHandClient({ env = process.env, setting = () => handSettin
       const result = await prepare();
       if (host === 'dead') return undefined;
       if (result?.status !== 'ready') { die('unavailable', { code: result?.code }); return undefined; }
-      // The first menu frame already carries the Permissions rows.
+      // The first menu frame already carries the Permissions rows and the usage row.
       await loadPermissions();
+      await loadUsage();
       if (host === 'dead') return undefined;
       const started = result.spawn({ capture, consent });
       if (consent) attached.add(started);
@@ -234,6 +267,7 @@ export function createHandClient({ env = process.env, setting = () => handSettin
       }
       // Last-use times come from other sessions' records too, so the rows are read again with the minute's recheck.
       refreshPermissions();
+      refreshUsage();
     });
   }
   let watcher;

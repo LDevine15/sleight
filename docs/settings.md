@@ -62,6 +62,12 @@ and no others:
   such as `sheet opened` or `no visible change`, or a `reason` category such as `window changed` or
   `input lease`.
 - `count`, on a `rest` line: actions that didn't run, or that ran past one call's 30-record cap.
+- `ms`: milliseconds from the call's request to its reply. Every line of the call has it.
+- `saved`, on a call's first line: reads it got as changed lines or not at all, in place of the whole
+  window or page. A read-only call that saved reads gets one `read` line for this.
+- `surface: "browser"` and `actions`, on the one `call` line for the engine's browser path: the guard
+  doesn't record actions there, so `actions` counts the input calls the code names, such as `click(` or `fill(`.
+  A call in a loop counts once.
 
 Typed text, set values, a secure field's value or length, window and sheet titles, page text and
 screenshots stay out. The file is private to your account: sleight writes only a regular file with
@@ -72,6 +78,21 @@ what happened. The `env` block of
 that put them in settings, MCP configs, the plugin's manifest or launcher, a LaunchAgent or a shell
 startup file. It stops mistakes and the plain edits. [Known problems](known-problems.md#approvals-and-guards)
 lists how a determined agent gets past it.
+
+### Stats
+
+`sleight-mcp stats` reads the action log back and summarizes the last 7 days. It gives the median and
+p90 seconds per action for each path, with native apps, turbo and the engine's browser path counted apart.
+It also counts reads saved, and refusals and failures by reason. A call's time is split evenly over its actions. `--days N` (1 to 365)
+changes the window, and `--json` prints the same numbers as JSON. It finds the log from `--log <file name>`,
+then the environment, then the `env` block of `~/.claude/settings.json`. With the log off it says how to
+turn it on. Lines written before 1.4.0 count, without timing. Reads saved counts the engine path's
+compacted reads and turbo's diffs, and a full read Claude asks for counts as none.
+
+While a session writes the log, the glove's menu adds one row for the last 7 days, such as
+`Last 7 days: 1.2 s per action · turbo 0.4 s · 312 reads saved`. It shows only once the log has a timed
+action, and refreshes at most every five minutes. The command and the row read only the log on this Mac,
+and neither sends it anywhere.
 
 ## Text drags
 
@@ -324,7 +345,8 @@ by default. The first time sleight acts it compiles in the background, and that 
   `sleight-mcp hand on` turns it back on. Off hides the hand in running sessions at once.
 - The glove's menu has a Ghost Hand row with a checkmark, which writes the same setting. The glove is in the menu bar
   while turbo is in use, and for five minutes after sleight last acted while the hand is on. Without turbo its menu holds
-  only the Ghost Hand row, [Permissions](#permissions), Settings & Help and the version.
+  only the Ghost Hand row, [Permissions](#permissions), the [usage row](#stats) when the action log is on, Settings & Help
+  and the version.
 - `sleight-mcp hand capture hidden|visible` sets whether captures show the hand. `hidden`, the default, keeps it out of
   every capture, your own screenshots and recordings included. `visible` lets your screenshots and recordings show it.
   `SLEIGHT_HAND_CAPTURE=hidden|visible` in the server's environment takes precedence over the file.

@@ -4796,7 +4796,8 @@ export function createRelay({
       const record = automatic ? undefined : compactor.takeOutcomes();
       const kept = !Array.isArray(record?.outcomes) ? undefined : continued?.head ? { ...record, outcomes: record.outcomes.filter(rec => rec?.x !== 'refused') } : record;
       if (continued?.head) continuedOutcomes.set(msg.id, { start: (continued.start ?? 0) + (kept?.outcomes?.length ?? 0) });
-      if (actionLog) try { actionLog.outcomes(msg.id, kept); } catch {}
+      const savedReads = automatic ? 0 : compactor.takeSaved();
+      if (actionLog) try { actionLog.outcomes(msg.id, kept); actionLog.saved(msg.id, savedReads); } catch {}
       if (!automatic && elementVisibility && jsCode !== undefined && !msg.result.isError) listClicks = compactor.listClicks();
       if (typingReceipt) msg.result.content.push({ type: 'text', text: typingReceipt });
       if (!automatic && openReads.has(msg.id) && !msg.result.isError && compactor.lastReadNoted()) textlessOpens.add(msg.id);

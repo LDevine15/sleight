@@ -1322,6 +1322,8 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const screenshotWindows = readHints.screenshotWindows ??= new Set();
   const openedFiles = readHints.openedFiles ??= new Map();
   let latest, observedInResult, observationId = 0, textlessNoted = false, resultObservations = [], callCount = 0, listClicks = [], lastOutcomes;
+  // Reads the last call got as changed lines or not at all, for the action log's reads-saved count (action-stats.mjs).
+  let savedReads = 0, lastSaved = 0;
   // document key -> tab list key -> { first, last, clicked, blamed, noted }: each tab strip's order when it
   // first appeared, for the save line, and the tab click a later order change followed.
   const tabOrders = new Map();
@@ -1544,7 +1546,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Claude's other output. Each is compacted against what Claude saw before it.
     process(content, { forceFull = false, explicitFull = false, acquisition = false, action, failed = false, failure, code, screenshotWindow, filterMark = FILTERED_MARK,
       outcomeStart = 0, outcomeContinuing = false } = {}) {
-      listClicks = [];
+      listClicks = []; savedReads = 0; lastSaved = 0;
       if (!Array.isArray(content)) return content;
       let filtered, typed, outcomeRecord;
       // The relay gives each rewritten call its own mark, so window text can't forge or strip one.
@@ -1608,7 +1610,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         if (item?.type === 'text' && /sleight: an action in this call failed|engine's JavaScript session restarted/.test(item.text ?? '')) failed = true;
         if (item?.type !== 'text' || typeof item.text !== 'string' || (!item.text.includes(GUARD_MARK) && !item.text.includes(GUARD_OMIT_MARK))) {
           const reacquired = reacquire && item?.type === 'text' && typeof item.text === 'string' ? compactReacquired(item.text) : undefined;
-          if (reacquired !== undefined && reacquired !== item.text) return { ...item, text: reacquired };
+          if (reacquired !== undefined && reacquired !== item.text) { savedReads++; return { ...item, text: reacquired }; }
           if (reacquired === undefined && item?.type === 'text' && typeof item.text === 'string') remember(item.text, forceFull ? undefined : action);
           if ((action || compactToolbars) && hasFullTree(item.text)) {
             const at = item.text.lastIndexOf('Window: ');
@@ -1638,6 +1640,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
             if (compactToolbars) {
               if (observedInResult?.lines?.join('\n') !== tree.replace(/\n+$/, '')) compact(tree, seenText, action, refreshNumbers);
             } else remember(tree, action);
+            savedReads++;
             pos = end + GUARD_END.length;
             continue;
           }
@@ -1662,6 +1665,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
             if (entry?.valid) for (const [num, key] of numbered(tree.replace(/\n+$/, '').split('\n'))) { entry.valid.add(num); entry.believed?.set(num, key); }
           }
           if (compactToolbars || sent === tree) shownTrees.add(tree.replace(/\n+$/, ''));
+          if (sent !== tree) savedReads++;
           if (end < 0 && observedInResult && !observedInResult.invalid) observedInResult.incomplete = true;
           add(sent); seenText += '\n' + sent;
           if (end < 0) break;
@@ -1671,6 +1675,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       });
       if (outcomeRecord) outcomeRecord.outcomes = outcomeRecord.outcomes.filter(Boolean);
       lastOutcomes = outcomeRecord;
+      lastSaved = savedReads + omittedReads;
       // A stop note that lists what wasn't sent covers the rest.
       const outcomeLines = outcomes && outcomeRecord && renderOutcomes(outcomeRecord, { start: outcomeStart, continuing: outcomeContinuing,
         notSent: content.some(item => item?.type === 'text' && /\bnot sent\b/.test(item.text ?? '')) });
@@ -2000,5 +2005,6 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     listClicks() { return listClicks; },
     // The guard's action records from the last process() call that had them, once, for the action log.
     takeOutcomes() { const record = lastOutcomes; lastOutcomes = undefined; return record; },
+    takeSaved() { const count = lastSaved; lastSaved = 0; return count; },
   };
 }

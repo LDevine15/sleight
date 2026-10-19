@@ -1231,6 +1231,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   } else if (process.argv[2] === 'permissions') {
     try { process.exitCode = (await import('./permissions-command.mjs')).permissionsCommand(process.argv.slice(3)); }
     catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }
+  } else if (process.argv[2] === 'stats') {
+    try { process.exitCode = await (await import('./action-stats.mjs')).statsCommand(process.argv.slice(3)); }
+    catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }
   } else if (process.argv[2] === 'allow') {
     try { process.exitCode = allowCommand(process.argv.slice(2)); }
     catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }

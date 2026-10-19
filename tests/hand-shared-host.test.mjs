@@ -68,6 +68,9 @@ const handFaults = {
   'a menu frame with a string flag': [[0, menu({ enabled: 'false' })]],
   'a menu frame with an unknown capture': [[0, menu({ capture: 'readOnly' })]],
   'a menu frame with an odd version': [[0, menu({ version: '1.3.1; x' })]],
+  'a menu frame with usage text': [[0, menu({ usage: 'Last 7 days: 1.5 s per action' })]],
+  'a menu frame with an extra usage key': [[0, menu({ usage: { perAction: 1.5, saved: 3, calls: 9 } })]],
+  'a menu frame with fractional reads saved': [[0, menu({ usage: { perAction: 1.5, saved: 3.5 } })]],
   'a toggle frame from a sender': [[0, { hand: 'toggle', nonce: handNonce, enabled: true }]],
   'a line that is not JSON': [[0, 'click 1 2']],
 };
@@ -161,7 +164,8 @@ test('the menu frame\'s Permissions rows and the status frame\'s site are admitt
   const rows = { grants: [{ title: 'Fixture', detail: 'always', used: 1760000000, target: 'app:Fixture' }, { title: 'Chat', detail: 'debugger, always', used: null, target: 'electron:com.example.chat' },
     { title: 'Browser', detail: 'turbo', used: null, target: 'turbo' }], blocked: ['Blocked App'], current: { title: 'Editor', target: 'com.example.editor' }, only: ['https://a.example'] };
   const site = status({ choices: ['connect', 'block-site'], data: { status: 'disconnected', site: 'https://example.com' } });
-  const good = await shared(binary, [[3, site], [0, menu({ permissions: rows })], [0, menu({ permissions: { grants: [], blocked: [] } })], ['wait', 300], ['end', 3], ['end', 0]]);
+  const good = await shared(binary, [[3, site], [0, menu({ permissions: rows })], [0, menu({ permissions: { grants: [], blocked: [] } })],
+    [0, menu({ permissions: rows, usage: { perAction: 1.5, turbo: 0.4, saved: 312 } })], [0, menu({ usage: { perAction: 0, saved: 0 } })], ['wait', 300], ['end', 3], ['end', 0]]);
   assert.equal(good.code, 0, good.stderr);
   assert.equal(good.stdout + good.consent, '', 'rows draw nothing and answer nothing without a click');
   const cases = {

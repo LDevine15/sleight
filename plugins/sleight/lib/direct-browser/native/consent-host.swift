@@ -88,6 +88,7 @@ enum StatusRow: Equatable {
     case confirm(String, choice: String)
     case toggle(String, choice: String, on: Bool)
     case permissions([PermissionRow])
+    case usage(String)
     case help
     case separator
     case footer(String)
@@ -147,23 +148,47 @@ let handIdleWindow = 300.0
 func menuVisible(_ status: String?, requests: Int, handEnabled: Bool, sinceAct: Double?) -> Bool {
     statusVisible(status, requests: requests) || handEnabled && (sinceAct.map { $0 >= 0 && $0 < handIdleWindow } ?? false)
 }
-// Without turbo, the hand's own block: its toggle, the Permissions submenu, Settings & Help and the version.
-func handRows(enabled: Bool, version: String?, permissions: [PermissionRow]? = nil) -> [StatusRow] {
+// The usage row (1.4.0): the opt-in action log's last 7 days from the hand channel's menu frame, as numbers this host words.
+// Exact keys: perAction and saved, and turbo when turbo acted. Seconds run 0 to 3600, and reads saved is a whole number.
+struct UsageStats: Equatable { let perAction: Double, turbo: Double?, saved: Int }
+func usageData(_ value: Any?) -> UsageStats? {
+    func seconds(_ value: Any?) -> Double? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite,
+            number.doubleValue >= 0, number.doubleValue <= 3600 else { return nil }
+        return number.doubleValue
+    }
+    guard let data = value as? [String: Any], Set(data.keys) == ["perAction", "saved"] || Set(data.keys) == ["perAction", "turbo", "saved"],
+        let perAction = seconds(data["perAction"]), let saved = data["saved"] as? NSNumber, CFGetTypeID(saved) != CFBooleanGetTypeID(),
+        saved.doubleValue.rounded() == saved.doubleValue, saved.doubleValue >= 0, saved.doubleValue <= 1e9 else { return nil }
+    var turbo: Double?
+    if data["turbo"] != nil { guard let value = seconds(data["turbo"]) else { return nil }; turbo = value }
+    return UsageStats(perAction: perAction, turbo: turbo, saved: Int(saved.doubleValue))
+}
+func usageWords(_ usage: UsageStats) -> String {
+    var parts = [String(format: "%.1f s per action", usage.perAction)]
+    if let turbo = usage.turbo { parts.append(String(format: "turbo %.1f s", turbo)) }
+    parts.append(usage.saved == 1 ? "1 read saved" : "\(usage.saved) reads saved")
+    return "Last 7 days: " + parts.joined(separator: " · ")
+}
+// Without turbo, the hand's own block: its toggle, the Permissions submenu, the usage row, Settings & Help and the version.
+func handRows(enabled: Bool, version: String?, permissions: [PermissionRow]? = nil, usage: UsageStats? = nil) -> [StatusRow] {
     var rows: [StatusRow] = [.toggle("Ghost Hand", choice: "hand-toggle", on: enabled)]
     if let permissions = permissions { rows.append(.permissions(permissions)) }
+    if let usage = usage { rows.append(.usage(usageWords(usage))) }
     rows += [.separator, .help]
     if let version = version, version.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}$"#, options: .regularExpression) != nil {
         rows += [.separator, .footer("sleight " + version)]
     }
     return rows
 }
-// With turbo, the hand channel's toggle (unless a status frame already has one) and its Permissions submenu join the turbo menu
-// before Turn Turbo Off.
-func withHand(_ rows: [StatusRow], enabled: Bool, permissions: [PermissionRow]? = nil) -> [StatusRow] {
+// With turbo, the hand channel's toggle (unless a status frame already has one), its Permissions submenu and its usage row join
+// the turbo menu before Turn Turbo Off.
+func withHand(_ rows: [StatusRow], enabled: Bool, permissions: [PermissionRow]? = nil, usage: UsageStats? = nil) -> [StatusRow] {
     guard let at = rows.firstIndex(where: { if case .confirm = $0 { return true }; return $0 == .help }) else { return rows }
     var added: [StatusRow] = []
     if !rows.contains(where: { if case .toggle = $0 { return true }; return false }) { added.append(.toggle("Ghost Hand", choice: "hand-toggle", on: enabled)) }
     if let permissions = permissions { added.append(.permissions(permissions)) }
+    if let usage = usage { added.append(.usage(usageWords(usage))) }
     var merged = rows
     merged.insert(contentsOf: added, at: at)
     return merged
@@ -335,6 +360,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var hand: (enabled: Bool, version: String)?
     // The Permissions submenu's rows from the hand channel; its times are worded again each time the submenu opens.
     var permissions: PermissionsData?
+    var usage: UsageStats?
     var lastAct: Date?
     var visibility: DispatchWorkItem?
     var hookupTimer: Timer?
@@ -421,6 +447,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 entry.target = self; menu.addItem(entry)
             case .separator: menu.addItem(NSMenuItem.separator())
             case let .footer(text): menu.addItem(NSMenuItem(title: text, action: nil, keyEquivalent: ""))
+            case let .usage(text): menu.addItem(NSMenuItem(title: text, action: nil, keyEquivalent: ""))
             }
         }
     }
@@ -432,7 +459,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let data = frame["data"] as? [String: Any] else { continue }
             if data["status"] != nil {
                 let rows = statusRows(data, choices) ?? []
-                add(hand.map { withHand(rows, enabled: $0.enabled, permissions: permissionMenu) } ?? rows, to: menu, id: id)
+                add(hand.map { withHand(rows, enabled: $0.enabled, permissions: permissionMenu, usage: usage) } ?? rows, to: menu, id: id)
                 statusShown = true
             } else {
                 let row = NSMenuItem(title: "Review sleight request", action: #selector(review(_:)), keyEquivalent: "")
@@ -441,7 +468,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if !statusShown, let hand = hand {
             if !menu.items.isEmpty { menu.addItem(NSMenuItem.separator()) }
-            add(handRows(enabled: hand.enabled, version: hand.version, permissions: permissionMenu), to: menu, id: "")
+            add(handRows(enabled: hand.enabled, version: hand.version, permissions: permissionMenu, usage: usage), to: menu, id: "")
         }
         item.menu = menu
         let requests = pending.values.filter { ($0["data"] as? [String: Any])?["status"] == nil }.count
@@ -459,9 +486,11 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // hand stays.
     func channelClosed() { modal.close(); pending.removeAll(); status = nil; consentOpen = false; rebuildMenu(); if !handOpen { NSApp.terminate(nil) } }
     // The hand channel ended or faulted: its state goes, and turbo's channel, if open, keeps the host.
-    func handGone() { handOpen = false; hand = nil; permissions = nil; lastAct = nil; rebuildMenu(); if !consentOpen { NSApp.terminate(nil) } }
+    func handGone() { handOpen = false; hand = nil; permissions = nil; usage = nil; lastAct = nil; rebuildMenu(); if !consentOpen { NSApp.terminate(nil) } }
     func noteAct() { lastAct = Date(); rebuildMenu() }
-    func handState(enabled: Bool, version: String, permissions: PermissionsData?) { hand = (enabled, version); self.permissions = permissions; rebuildMenu() }
+    func handState(enabled: Bool, version: String, permissions: PermissionsData?, usage: UsageStats?) {
+        hand = (enabled, version); self.permissions = permissions; self.usage = usage; rebuildMenu()
+    }
     var permissionMenu: [PermissionRow]? { permissions.map { permissionRows($0, now: Date().timeIntervalSince1970) } }
     func fillPermissions(_ submenu: NSMenu) {
         submenu.removeAllItems()
@@ -605,8 +634,9 @@ struct HandAct {
     let seq: Int, kind: String, pid: Int32, windowId: UInt32, at: CGPoint, path: [CGPoint], delay: Double, beats: Int
 }
 // menu: the hand's setting, capture mode and the plugin version, for the shared host's Ghost Hand row.
-// permissions: the Permissions submenu's rows (permissionsData), when the relay has them.
-enum HandFrame { case act(String, HandAct), hide(String), menu(String, enabled: Bool, capture: String, version: String, permissions: PermissionsData?) }
+// permissions: the Permissions submenu's rows (permissionsData), when the relay has them. usage: the usage row (usageData),
+// when this session writes the action log and it has timed actions.
+enum HandFrame { case act(String, HandAct), hide(String), menu(String, enabled: Bool, capture: String, version: String, permissions: PermissionsData?, usage: UsageStats?) }
 let handKinds: Set<String> = ["click", "double", "right", "key", "type", "drag", "scroll"]
 func handFrame(_ data: [String: Any]) -> HandFrame? {
     func number(_ value: Any?) -> Double? {
@@ -626,14 +656,16 @@ func handFrame(_ data: [String: Any]) -> HandFrame? {
     if data["hand"] as? String == "hide" { return Set(data.keys) == ["hand", "nonce"] ? .hide(nonce) : nil }
     if data["hand"] as? String == "menu" {
         let keys: Set<String> = ["hand", "nonce", "enabled", "capture", "version"]
-        guard Set(data.keys) == keys || Set(data.keys) == keys.union(["permissions"]),
+        guard keys.isSubset(of: Set(data.keys)), Set(data.keys).subtracting(keys).isSubset(of: ["permissions", "usage"]),
             let enabled = data["enabled"] as? NSNumber, CFGetTypeID(enabled) == CFBooleanGetTypeID(),
             let capture = data["capture"] as? String, ["hidden", "visible"].contains(capture),
             let version = data["version"] as? String, version.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}$"#, options: .regularExpression) != nil
             else { return nil }
         let permissions = data["permissions"].map { permissionsData($0) }
         if let parsed = permissions, parsed == nil { return nil }
-        return .menu(nonce, enabled: enabled.boolValue, capture: capture, version: version, permissions: permissions ?? nil)
+        let usage = data["usage"].map { usageData($0) }
+        if let parsed = usage, parsed == nil { return nil }
+        return .menu(nonce, enabled: enabled.boolValue, capture: capture, version: version, permissions: permissions ?? nil, usage: usage ?? nil)
     }
     guard data["hand"] as? String == "act",
         Set(data.keys) == ["hand", "nonce", "seq", "kind", "pid", "windowId", "at", "path", "delayMs", "beats"],
@@ -1045,13 +1077,13 @@ final class HandHost: NSObject, NSApplicationDelegate {
                     guard nonceBook.admit("hand", nonce), act.seq > last else { fault(); continue lines }
                     last = act.seq
                     DispatchQueue.main.async { self.consent?.noteAct(); self.schedule(act) }
-                case let .menu(nonce, enabled, capture, version, permissions):
+                case let .menu(nonce, enabled, capture, version, permissions, usage):
                     guard nonceBook.admit("hand", nonce) else { fault(); continue lines }
                     DispatchQueue.main.async {
                         self.capture = capture
                         if let panel = self.panel { panel.sharingType = handCaptureModes[capture] ?? NSWindow.SharingType.none }
                         if !enabled { self.hide() }
-                        self.consent?.handState(enabled: enabled, version: version, permissions: permissions)
+                        self.consent?.handState(enabled: enabled, version: version, permissions: permissions, usage: usage)
                     }
                 }
             }
