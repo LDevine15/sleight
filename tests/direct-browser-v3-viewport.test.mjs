@@ -36,7 +36,7 @@ test('a viewport step reports the new and the old size and says how to restore',
   assert.deepEqual(size(), { width: 390, height: 844 });
   assert.equal(result.lines[0], process.env.SLEIGHT_MT === '0'
     ? '1 viewport: viewport 390x844 (was 1280x720); a viewport step with no size restores 1280x720'
-    : '1 viewport: viewport 390x844 (was 1280x720; a viewport step with no size restores it). Below, refs without [offscreen] are inside this viewport.');
+    : '1 viewport: viewport 390x844 (was 1280x720; a viewport step with no size restores it). [offscreen] means outside this viewport; [partly offscreen] means cut off by it.');
 });
 
 test('a viewport step with no size gives the original size back, once', async () => {
@@ -56,7 +56,7 @@ test('several resizes still restore the size the tab had before the first one', 
   const run = runner(page);
   await run([{ do: 'viewport', width: 390, height: 844 }]);
   const second = await run([{ do: 'viewport', width: 768, height: 1024 }]);
-  assert.match(second.lines[0], process.env.SLEIGHT_MT === '0' ? /viewport 768x1024 \(was 390x844\); a viewport step with no size restores 1000x800$/ : /viewport 768x1024 \(was 390x844; a viewport step with no size restores it\)\. Below, refs without \[offscreen\] are inside this viewport\.$/);
+  assert.match(second.lines[0], process.env.SLEIGHT_MT === '0' ? /viewport 768x1024 \(was 390x844\); a viewport step with no size restores 1000x800$/ : /viewport 768x1024 \(was 390x844; a viewport step with no size restores it\)\. \[offscreen\] means outside this viewport; \[partly offscreen\] means cut off by it\.$/);
   await run([{ do: 'viewport' }]);
   assert.deepEqual(size(), { width: 1000, height: 800 });
 });
@@ -105,6 +105,6 @@ for (const mode of [undefined, '0']) test(`MT6 viewport guidance preserves resto
   const result = await run([{ do: 'viewport', width: 390, height: 844 }]);
   assert.equal(result.lines[0], mode === '0'
     ? '1 viewport: viewport 390x844 (was 1280x720); a viewport step with no size restores 1280x720'
-    : '1 viewport: viewport 390x844 (was 1280x720; a viewport step with no size restores it). Below, refs without [offscreen] are inside this viewport.');
+    : '1 viewport: viewport 390x844 (was 1280x720; a viewport step with no size restores it). [offscreen] means outside this viewport; [partly offscreen] means cut off by it.');
   await run([{ do: 'viewport' }]); assert.deepEqual(size(), { width: 1280, height: 720 });
 }));

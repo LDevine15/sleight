@@ -3,6 +3,10 @@ import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { trackPage } from './activity.mjs';
 import { endpointURL, endpointTarget, endpointBlock, bindEndpointPage, assertEndpointRead } from './endpoint-guard.mjs';
 import { trustedRead } from './trusted-dom.mjs';
+import { tabHandle } from './tab-handle.mjs';
+
+// Preserve recovery advice when the dispatcher hides an uncertain operation's details.
+const capabilityError = message => Object.assign(Error(message), { capability: true });
 
 function deadline(task, ms, message = 'background preparation timed out') {
   let timer;
@@ -1644,12 +1648,12 @@ export const newHook = () => Object.freeze({ key: 'k' + randomBytes(16).toString
 // literals (an array of 16 to 64 byte values). The page never holds a string it must convert, and an array or object
 // literal runs no page code.
 export function hookSource(hook) {
-  if (typeof hook?.key !== 'string' || typeof hook?.secret !== 'string') throw Error('background popup hook unavailable');
+  if (typeof hook?.key !== 'string' || typeof hook?.secret !== 'string') throw capabilityError('background popup hook unavailable; use the engine browser path');
   return `(${popupHook})(${JSON.stringify({ key: hook.key, secret: Array.from(Buffer.from(hook.secret, 'latin1')) })})`;
 }
 const issued = new WeakMap();
 export function hookProof(hook, method) {
-  if (typeof hook?.key !== 'string' || typeof hook?.secret !== 'string' || typeof method !== 'string') throw Error('background popup hook unavailable');
+  if (typeof hook?.key !== 'string' || typeof hook?.secret !== 'string' || typeof method !== 'string') throw capabilityError('background popup hook unavailable; use the engine browser path');
   const nonce = randomBytes(12).toString('hex');
   if (!issued.has(hook)) issued.set(hook, new Map());
   const calls = issued.get(hook);
@@ -1712,7 +1716,7 @@ export function hookOpen(hook, answer) {
 }
 const hookOf = tab => {
   const hook = tab?.hook;
-  if (typeof hook?.key !== 'string' || typeof hook?.secret !== 'string') throw Error('background popup hook unavailable');
+  if (typeof hook?.key !== 'string' || typeof hook?.secret !== 'string') throw capabilityError('background popup hook unavailable; use the engine browser path');
   return hook;
 };
 
@@ -1805,7 +1809,7 @@ export function frameShield(page, owner, { hook, token, capMs, timeoutMs = 1000,
     timeoutMs, 'frame unreachable');
     if (answer === 'absent') {
       if (mayLackHook(frame) || await scriptsOff(frame)) return null;
-      throw Error('background popup hook unavailable');
+      throw capabilityError('background popup hook unavailable; use the engine browser path');
     }
     const opened = hookOpen(hook, answer);
     // The registry's script also runs in a frame whose scripts are off, but no listener there ever fires (the install probe
@@ -1918,15 +1922,17 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     try {
       prepared = hookOpen(hook, await deadline(() => locator.evaluate((element, { key, prepare, reveal, token, capMs, press }) => {
         const hook = window[key];
-        if (!hook) throw Error('background popup hook unavailable');
+        if (!hook) throw Error('background popup hook unavailable; use the engine browser path');
         const result = hook.prepare(prepare, element, token, capMs, press);
         hook.reveal(reveal, element);
         return result;
       }, { key, prepare: hookProof(hook, 'prepare'), reveal: hookProof(hook, 'reveal'), token, capMs: timeoutMs + 1000, press }, { timeout: timeoutMs }), timeoutMs));
     } catch (error) {
       // The one refusal the hook states itself: name it, so the model is not sent to the engine path for a focus it can move.
-      throw failure = Error(/document focus is inside a frame/.test(error?.message) ? 'focus is held inside a frame (a card field, say) that would receive the background modifier; click a page element outside it first'
-        : 'background popup preparation failed; use the engine browser path');
+      failure = /document focus is inside a frame/.test(error?.message)
+        ? Error('focus is held inside a frame (a card field, say) that would receive the background modifier; click a page element outside it first')
+        : capabilityError('background popup preparation failed; use the engine browser path');
+      throw failure;
     }
     if (prepared?.kind === 'refuse') throw Error(prepared.reason === 'link'
       ? 'Enter would open this link in a new tab, and sleight cannot check where it goes; click the link instead'
@@ -1952,11 +1958,12 @@ export async function backgroundClick(tab, locator, click = options => locator.c
         await hook.settle(settle);
         return hook.guard(guard, element, token, capMs, { press, keys });
       }, { key, settle: hookProof(hook, 'settle'), guard: hookProof(hook, 'guard'), token, capMs: timeoutMs + 4000, press: !!press, keys: keys === true }, { timeout: timeoutMs }), timeoutMs), others.arm()]);
-      if (hookOpen(hook, armed) !== true) throw Error('click guard unavailable');
-      if (!othersArmed) throw others.unarmable ? Error('background popup hook unavailable') : Error('frame unavailable');
+      if (hookOpen(hook, armed) !== true) throw capabilityError('click guard unavailable; use the engine browser path');
+      if (!othersArmed) throw others.unarmable ? capabilityError('background popup hook unavailable; use the engine browser path') : capabilityError('frame unavailable; use the engine browser path');
     } catch (error) {
       if (error?.code === 'KEY_FRAMES') throw error;
-      throw hookFailed(error) ? failure = Error(hookUnavailable) : Error(keys ? keyGuardUnavailable : changedMidClick);
+      if (/^(?:click guard|frame) unavailable;/.test(error?.message)) throw failure = error;
+      throw hookFailed(error) ? failure = capabilityError(hookUnavailable) : (keys ? capabilityError(keyGuardUnavailable) : Error(changedMidClick));
     }
     const checkpoint = tab.popupCheckpoint?.();
     tab.background = modified; // Read by the result: a popup after an unmodified click probably took the foreground.
@@ -1986,7 +1993,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
         ? 'the page changed this form to submit into a new tab while it was being submitted; nothing was sent, read the page before retrying'
         : 'the page changed this link to open somewhere sleight cannot check; nothing was opened, read the page before retrying');
       if (request?.url) {
-        if (typeof tab.openChild !== 'function') throw Error('background link opening needs the owned page registry');
+        if (typeof tab.openChild !== 'function') throw capabilityError('background link opening needs the owned page registry; use the engine browser path');
         await tab.openChild(request.url, { target: request.target, rel: request.rel });
       }
     }
@@ -1995,7 +2002,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
     return result;
   } catch (error) {
     if (failure || !hookFailed(error)) throw error;
-    throw failure = Error(hookUnavailable);
+    throw failure = capabilityError(hookUnavailable);
   } finally {
     // A hook that cannot vouch for its own answer, or refused the call, may have vetoed the input: say so rather than
     // report a click delivered. A page that navigated away or closed just ends the evaluate, which is not a veto.
@@ -2166,7 +2173,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
   if (!context || typeof session?.send !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000)
     throw Error('approved browser connection required');
   if (ownTarget !== undefined && (typeof ownTarget !== 'function' || typeof upstream?.send !== 'function'))
-    throw Error('trusted popup admission needs the upstream CDP connection');
+    throw capabilityError('trusted popup admission needs the upstream CDP connection; use the engine browser path');
   if (frames !== undefined && !['sessions', 'addScript', 'evaluate'].every(name => typeof frames?.[name] === 'function'))
     throw Error('approved frame sessions required');
   const hook = newHook();
@@ -2183,7 +2190,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
       const cdp = await context.newCDPSession(page);
       try {
         const { targetInfo } = await cdp.send('Target.getTargetInfo');
-        if (targetInfo?.type !== 'page' || !targetInfo.targetId) throw Error('owned page identity unavailable');
+        if (targetInfo?.type !== 'page' || !targetInfo.targetId) throw capabilityError('owned page identity unavailable; use the engine browser path');
         return { cdp, targetInfo };
       } catch (error) { await cdp.detach().catch(() => {}); throw error; }
     })());
@@ -2201,10 +2208,10 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     await entry.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
     const source = hookSource(entry.hook);
     const { identifier } = await entry.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source });
-    if (!identifier) throw Error('background popup hook installation failed');
+    if (!identifier) throw capabilityError('background popup hook installation failed; use the engine browser path');
     entry.script = identifier;
     const result = await entry.cdp.send('Runtime.evaluate', { expression: source, returnByValue: true });
-    if (result.exceptionDetails) throw Error('background popup hook installation failed');
+    if (result.exceptionDetails) throw capabilityError('background popup hook installation failed; use the engine browser path');
     // The page session's script does not reach a frame in another process (a cross-site iframe). The filter puts the hook at the
     // start of every document in such a frame, before that frame is resumed. Playwright's addInitScript is not used: it runs its
     // scripts at once in a frame whose document has already started, which puts the hook behind the page's own listeners.
@@ -2219,7 +2226,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     const probe = await entry.cdp.send('Runtime.evaluate', { returnByValue: true, expression: `(() => { try { return window[${JSON.stringify(entry.hook.key)}].verdict(${JSON.stringify(hookProof(entry.hook, 'verdict'))}, '') } catch { return 'absent' } })()` });
     let genuine = false;
     try { genuine = !probe.exceptionDetails && typeof probe.result?.value === 'string' && probe.result.value !== 'absent' && hookOpen(entry.hook, probe.result.value) === undefined; } catch { /* Not the hook's answer. */ }
-    if (!genuine) throw Error('background popup hook installation failed');
+    if (!genuine) throw capabilityError('background popup hook installation failed; use the engine browser path');
     await framesHooked();
   };
   // A page adopted after it loaded (a popup) has child frames that began before the registry's script was registered. Give
@@ -2259,11 +2266,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     catch (error) { if (error.message !== endpointBlock) throw error; blocked = true; }
     if (blocked) { await blockPage(page, info, opener); return; }
     if (targets.has(info.targetInfo.targetId)) return targets.get(info.targetInfo.targetId);
-    // Nine independent base32 digits carry 45 random bits. Check every retained record too, so a stale handle is never reused.
-    let handle;
-    if (process.env.SLEIGHT_MT === '0') handle = 't' + randomUUID().replaceAll('-', '');
-    else do { handle = 't' + Array.from(randomBytes(9), byte => 'abcdefghijklmnopqrstuvwxyz234567'[byte & 31]).join(''); }
-    while (records.has(handle));
+    const handle = tabHandle(records);
     const entry = { tab: handle, targetId: info.targetInfo.targetId, page, cdp: info.cdp,
       state: { snapshotNo: 0, submitUnconfirmed: false }, opener: opener?.tab, popups: [], popupWaitMs, endpoint,
       closed: page.isClosed(), released: false, queue: Promise.resolve(), openedBySleight: allocations.get(info.targetInfo.targetId)?.bySleight === true,
@@ -2522,7 +2525,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
         phase('browser-open-create-start');
         const { targetId } = await session.send('Target.createTarget', { url: 'about:blank', background: true });
         phase('browser-open-create-end');
-        if (!targetId) throw Error('background target allocation unavailable');
+        if (!targetId) throw capabilityError('background target allocation unavailable; use the engine browser path');
         allocations.set(targetId, { bySleight: true });
         const until = Date.now() + timeoutMs;
         while (!seen.has(targetId) && !ended && Date.now() < until) {
@@ -2544,7 +2547,7 @@ export function createPageRegistry({ browser, session, context = browser?.contex
         phase('browser-open-ready-end');
         if (ended) throw Error('turn ended');
         if (name && await deadline(() => page.evaluate(name => { window.name = name; return window.name; }, name), timeoutMs) !== name)
-          throw Error('background target name unavailable');
+          throw capabilityError('background target name unavailable; use the engine browser path');
         phase('browser-open-goto-start');
         try { await page.goto(parsed.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs }); }
         catch (error) { await assertEndpointRead(page); throw error; }

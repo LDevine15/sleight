@@ -168,6 +168,23 @@ function clickFixture(probe) {
   return { calls, entry, locator };
 }
 
+test('MTb missing popup hooks keep capability routing advice', () => {
+  for (const call of [() => hookSource({}), () => hookProof({}, 'prepare')])
+    assert.throws(call, /background popup hook unavailable; use the engine browser path/);
+});
+test('MTb unavailable click guard keeps capability routing and sends nothing', async () => {
+  const f = clickFixture(true), evaluate = f.locator.evaluate;
+  f.locator.evaluate = (fn, arg) => arg?.guard ? hookAnswer(f.entry.hook, fn, arg, { guard: false }) : evaluate(fn, arg);
+  await assert.rejects(backgroundClick(f.entry, f.locator, async () => f.calls.push(['click'])), /click guard unavailable; use the engine browser path/);
+  assert.equal(f.calls.filter(row => row[0] === 'click').length, 0);
+});
+test('MTb missing owned registry keeps capability routing without replaying a link', async () => {
+  const f = clickFixture({ kind: 'link' });
+  f.entry.page.evaluate = async (fn, arg) => hookAnswer(f.entry.hook, fn, arg, { request: { url: 'https://fixture.invalid/' } });
+  await assert.rejects(backgroundClick(f.entry, f.locator, async () => f.calls.push(['click'])), /owned page registry; use the engine browser path/);
+  assert.equal(f.calls.filter(row => row[0] === 'click').length, 1);
+});
+
 test('same-tab links receive an ordinary Playwright click', async () => {
   const f = clickFixture(false);
   const value = await backgroundClick(f.entry, f.locator, async options => { f.calls.push(['click', options]); return 'landed'; });

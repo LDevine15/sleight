@@ -2,6 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCDPFilter } from '../plugins/sleight/lib/direct-browser/cdp-filter.mjs';
 import { app, identity, recipe, page, rect, fakeUpstream, fakeWindows, nativeWindow, fakeBrowser, tick } from './fixtures/electron-graph.mjs';
+import { withMT } from './fixtures/mt-env.mjs';
+import crypto from 'node:crypto';
+import { syncBuiltinESMExports } from 'node:module';
+
+for (const mode of [undefined, '0']) test(`MTb Electron handles use the shared format and reject forged handles, switch=${mode}`, async t => withMT(mode, async () => {
+  const f = fakeUpstream([page('a'), page('b', 'app://main/b.html')]);
+  f.geometry.set('a', geometryOf(rect(0, 0))); f.geometry.set('b', geometryOf(rect(900, 0)));
+  const s = await world({ extra: { upstream: f, windows: fakeWindows([nativeWindow(11, rect(0, 0)), nativeWindow(12, rect(900, 0))]) } });
+  t.after(() => s.filter.dispose());
+  let draws = 0;
+  const original = crypto.randomBytes, mocked = t.mock.method(crypto, 'randomBytes', size => size === 9 ? Buffer.alloc(9, draws++ < 2 ? 0 : 1) : original(size));
+  syncBuiltinESMExports();
+  try {
+    await s.pages.seed();
+    const rows = await s.pages.list();
+    assert.equal(rows.length, 2); assert.equal(new Set(rows.map(row => row.tab)).size, 2);
+    for (const row of rows) {
+      assert.match(row.tab, mode === '0' ? /^t[0-9a-f]{32}$/ : /^t[a-z2-7]{9}$/);
+      assert.equal(s.pages.tab(row.tab).targetId, row.targetId);
+    }
+    if (mode !== '0') assert.equal(draws, 3, 'the second admission retries the colliding draw');
+    assert.throws(() => s.pages.tab('tforged123'), /unknown|owned/i);
+    await s.pages.endTurn();
+  } finally { mocked.mock.restore(); syncBuiltinESMExports(); }
+}));
 
 const base = new URL('../plugins/sleight/lib/direct-browser/', import.meta.url);
 async function load() {
@@ -86,7 +111,7 @@ test('seed admits only joined app pages: DevTools, workers, hidden, ambiguous an
   await s.pages.seed();
   const rows = await s.pages.list();
   assert.deepEqual(rows.map(row => [row.targetId, row.status, row.window]), [['a', 'joined', { id: 11, epoch: 1 }]]);
-  assert.match(rows[0].tab, /^t[0-9a-f]{32}$/);
+  assert.match(rows[0].tab, (process.env.SLEIGHT_MT === '0' ? /^t[0-9a-f]{32}$/ : /^t[a-z2-7]{9}$/));
   for (const id of ['d', 'w']) assert.ok(!f.attaches().includes(id), id + ' never gets an attach');
   assert.equal(s.filter.owns('b'), false, 'b and c share a window: ambiguous, so not admitted');
   assert.equal(s.filter.owns('h'), false);

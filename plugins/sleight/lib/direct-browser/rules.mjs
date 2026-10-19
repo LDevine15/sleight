@@ -5,7 +5,7 @@
 // dispatch. target carries final element metadata, prior metadata, page-observed
 // {terms:{page:{item,amount,payee,currency?},method}}, and the owning tab state.
 const allow = Object.freeze({ verdict: 'allow' });
-const refuse = message => ({ verdict: 'refuse', message: message + (process.env.SLEIGHT_MT === '0' ? ' Use the engine browser path if needed.' : '') });
+const refuse = (message, capability = false) => ({ verdict: 'refuse', message: message + (capability || process.env.SLEIGHT_MT === '0' ? ' Use the engine browser path if needed.' : '') });
 const payments = new WeakMap();
 const captures = new WeakMap();
 const paymentPages = new WeakSet(), historyRequests = new WeakMap();
@@ -249,7 +249,7 @@ export function check(ctx, kind, target = {}) {
     if (target.state) paymentPages.add(target.state);
     bank.dialog = kind === 'dialog' ? undefined : { session: target.session, turn: target.turn, document: target.document, origin: target.origin, terms: { ...terms } };
     return allow;
-  } catch { return refuse('Trusted rule evidence is unavailable.'); }
+  } catch { return refuse('Trusted rule evidence is unavailable.', true); }
 }
 
 // One state per document, retained across turns. Capture when the snapshot read

@@ -6,7 +6,7 @@
 // Before each mutation it rechecks the target epoch, the join and the instance fence; a change during an
 // awaited preparation (guard) stops the dispatch and parks the page. Nothing imports this file in the
 // installed path yet (EPV3-7 wires it beside createPageRegistry).
-import { randomUUID } from 'node:crypto';
+import { tabHandle } from './tab-handle.mjs';
 
 const fail = code => { throw Error(code); };
 const handoff = 'ELECTRON_NATIVE_HANDOFF: app windows open and close through the app itself, so use the app tools (its own Quit or close keeps unsaved-work review)';
@@ -75,7 +75,7 @@ export function createAppPageRegistry({ browser, filter, targets, join, fence, o
       await filter.own(record.targetId);
       const { page, cdp } = await pageFor(record.targetId);
       if (ended || !targets.current(record.targetId, record.epoch)) { await cdp.detach().catch(() => {}); fail('ELECTRON_TARGET_CHANGED'); }
-      const entry = { tab: 't' + randomUUID().replaceAll('-', ''), targetId: record.targetId, epoch: record.epoch, window, page, cdp,
+      const entry = { tab: tabHandle(records), targetId: record.targetId, epoch: record.epoch, window, page, cdp,
         state: { snapshotNo: 0, submitUnconfirmed: false }, queue: Promise.resolve(), parked: null, joinNo: 1,
         released: false, revoked: false, app: true, renderer };
       records.set(entry.tab, entry); byTarget.set(entry.targetId, entry);

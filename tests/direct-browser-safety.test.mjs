@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { rules, fixture, terms, input } from './direct-browser-rules-fixture.mjs';
 
+test('MTb unavailable trusted rule evidence retains routing advice', () => {
+  const f = fixture();
+  Object.defineProperty(f.ctx, 'userMessage', { get() { throw Error('provider unavailable'); } });
+  assert.deepEqual(rules.check(f.ctx, 'click', f.pay()), { verdict: 'refuse',
+    message: 'Trusted rule evidence is unavailable. Use the engine browser path if needed.' });
+});
+
 test('only the private user message allows a payment; page and tool permission fields grant nothing', () => {
   const f = fixture();
   const target = f.pay({ approved: true, userMessage: { payment: terms }, permission: terms });

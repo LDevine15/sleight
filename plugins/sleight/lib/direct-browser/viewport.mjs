@@ -28,7 +28,7 @@ export async function setViewport(page, { width, height }) {
   const now = await innerSize(page);
   return `viewport ${now ? now.width + 'x' + now.height : width + 'x' + height}`
     + (before ? process.env.SLEIGHT_MT !== '0'
-      ? ` (was ${before.width}x${before.height}; a viewport step with no size restores it). Below, refs without [offscreen] are inside this viewport.`
+      ? ` (was ${before.width}x${before.height}; a viewport step with no size restores it). [offscreen] means outside this viewport; [partly offscreen] means cut off by it.`
       : ` (was ${before.width}x${before.height}); a viewport step with no size restores ${original.get(page).width}x${original.get(page).height}`
       : '; previous size unknown');
 }

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { setViewport } from '../plugins/sleight/lib/direct-browser/viewport.mjs';
+import { withMT } from './fixtures/mt-env.mjs';
 
 const module = await import('../plugins/sleight/lib/direct-browser/snapshot.mjs').catch(error => {
   if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error;
@@ -677,6 +679,30 @@ function withViewport(page, width, height) {
   return page;
 }
 const boxed = (box, props) => ({ role: 'button', ...props, box: { x: 0, y: 0, width: 100, height: 40, ...box } });
+
+for (const [name, node, metrics, marker] of [
+  ['outside', boxed({ y: 900 }, { ref: 'e1' }), true, ' [offscreen]'],
+  ['partly outside', boxed({ y: 820 }, { ref: 'e1' }), true, ' [partly offscreen]'],
+  ['frame', boxed({ y: 900 }, { ref: 'f2e1' }), true, ''],
+  ['zero area', boxed({ y: 900, width: 0 }, { ref: 'e1' }), true, ''],
+  ['missing box', { role: 'button', ref: 'e1' }, true, ''],
+  ['failed metrics', boxed({ y: 900 }, { ref: 'e1' }), false, ''],
+]) test(`MTb viewport guidance makes no visibility inference for ${name}`, async () => withMT(undefined, async () => {
+  const { page } = fixture([{ ...node, name: 'Target' }]);
+  let size = { width: 1280, height: 720 };
+  page.setViewportSize = async next => { size = next; };
+  const context = page.context();
+  page.context = () => ({ newCDPSession: async frame => {
+    const session = await context.newCDPSession(frame), send = session.send;
+    session.send = (method, params) => method === 'Runtime.evaluate' ? Promise.resolve({ result: { value: [size.width, size.height] } })
+      : method === 'Page.getLayoutMetrics' && metrics ? Promise.resolve({ cssLayoutViewport: { pageX: 0, pageY: 0, clientWidth: size.width, clientHeight: size.height } }) : send(method, params);
+    return session;
+  } });
+  const guidance = await setViewport(page, { width: 390, height: 844 });
+  assert.equal(guidance, 'viewport 390x844 (was 1280x720; a viewport step with no size restores it). [offscreen] means outside this viewport; [partly offscreen] means cut off by it.');
+  const result = await module.snapshot(page);
+  assert.ok(result.text.split('\n').some(line => line.endsWith(`[ref=${node.ref}]${marker}`)), result.text);
+}));
 
 test('refs outside the viewport carry offscreen markers and in-view refs carry none', async () => {
   const { page } = fixture([{ role: 'main', ref: 'e1', box: { x: 0, y: 0, width: 390, height: 3000 }, children: [

@@ -1,11 +1,44 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fork } from 'node:child_process';
+import { fork, execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { serveV3Worker } from '../plugins/sleight/lib/direct-browser/worker.mjs';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
+import { withMT } from './fixtures/mt-env.mjs';
+
+for (const mode of [undefined, '0', '1']) test(`MTb benchmark forwards the model-time switch, switch=${mode}`, async () => withMT(mode, async () => {
+  const { turboSetup } = await import('../bench/turbo/setup.mjs');
+  const { realAgentSetup } = await import('../bench/fowl/real-gate-setup.mjs');
+  const { createSession } = await load();
+  const task = { prompt: 'Read ' + origin, result: 'Read' }, dir = '/private/tmp/fixture-task';
+  const direct = turboSetup({ task, repo: '/fixture/repo', dir, prompt: task.prompt, env: process.env });
+  assert.equal(direct.mcpServers['sleight-turbo'].env.SLEIGHT_MT, mode);
+  const gate = realAgentSetup({ task, surface: 'sleight-turbo', dir,
+    realBrowser: { browser: 'chrome', profileRoot: '/private/tmp/profile', marker: 'Sleight Gate fixture' } });
+  assert.equal(gate.mcpConfig.mcpServers['sleight-turbo'].env.SLEIGHT_MT, mode);
+  const fork = fakeFork(async () => ({ call: async () => ({ text: 'ok', isError: false }), end: async () => ({ revoked: true, cleanup: [] }) }));
+  const session = await createSession({ origins: [origin], taskMessage: 'Read fixture', forkWorker: (path, args, options) => {
+    assert.equal(options.env.SLEIGHT_MT, mode);
+    return fork(path, args, options);
+  } });
+  await session.close();
+}));
+test('MTb isolated rounds command forwards the model-time switch and strips unrelated values', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../bench/fowl/rounds.sh', import.meta.url), 'utf8');
+  // Execute only the real gate's env-isolation command, replacing its benchmark payload with an environment reader.
+  // The rest of rounds.sh owns profiles, Git state and a live lock and must never run in this offline test.
+  const command = source.match(/  exec env -i[\s\S]*?node tools\/rounds\.mjs "\$@" --model "\$MODEL"/)[0]
+    .replace('node tools/rounds.mjs "$@" --model "$MODEL"', '"$1" -e \'process.stdout.write(JSON.stringify({mt:process.env.SLEIGHT_MT,lb12:process.env.SLEIGHT_LB12,unrelated:process.env.MTB_UNRELATED}))\'');
+  for (const mode of [undefined, '0', '1']) {
+    const env = { ...process.env, SLEIGHT_LB12: '0', MTB_UNRELATED: 'must not cross' };
+    if (mode === undefined) delete env.SLEIGHT_MT; else env.SLEIGHT_MT = mode;
+    const result = JSON.parse(execFileSync('/bin/sh', ['-c', 'REPO=/fixture; MODEL=fixture;\n' + command, 'mtb-env', process.execPath], { env, encoding: 'utf8' }));
+    assert.deepEqual(result, { ...(mode === undefined ? {} : { mt: mode }), lb12: '0' });
+  }
+});
 
 const load = () => import('../bench/turbo/v3-session.mjs');
 const origin = 'http://127.0.0.1:5431';

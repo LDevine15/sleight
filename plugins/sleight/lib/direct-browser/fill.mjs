@@ -72,9 +72,9 @@ function validate(fields, submit) {
 }
 function refusal(result) {
   if (result === 'allow' || result?.status === 'allow' || result?.kind === 'allow' || result?.verdict === 'allow') return;
-  if (result?.status === 'confirm' || result?.kind === 'confirm' || result?.verdict === 'confirm') throw new FieldError('confirmation required; use the engine browser path');
+  if (result?.status === 'confirm' || result?.kind === 'confirm' || result?.verdict === 'confirm') throw new FieldError('confirmation required' + (process.env.SLEIGHT_MT === '0' ? '; use the engine browser path' : ''));
   const message = typeof result === 'string' ? result : result?.message ?? result?.msg;
-  throw new FieldError(message || 'rules refused input; use the engine browser path');
+  throw new FieldError(message || 'rules refused input' + (process.env.SLEIGHT_MT === '0' ? '; use the engine browser path' : ''));
 }
 
 export function createFillFields({ check, runSteps, inspectElement = inspect, now = Date.now, sleep = pause } = {}) {
@@ -139,7 +139,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
               // retains pending input through its settle. Never pre-consume here.
               sent = true;
               const result = await runSteps(tab, [{ do: 'click', ref }], ctx);
-              if (!Array.isArray(result?.lines)) throw new FieldError('guarded submit result unavailable');
+              if (!Array.isArray(result?.lines)) throw said('guarded submit result unavailable; field may have changed; read before retrying; use the engine browser path if needed');
               sent = !result.lines.some(line => /: not run:/.test(line));
               if (actionFailed(result)) throw new FieldError('submit stopped; read the page before retrying');
               return result;

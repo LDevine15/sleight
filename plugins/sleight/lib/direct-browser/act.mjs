@@ -219,7 +219,7 @@ function ownInput(state, dialog) {
 function ruleMessage(result) {
   if (result === 'allow' || result?.verdict === 'allow' || result?.kind === 'allow') return null;
   if (result?.verdict === 'confirm' || result?.kind === 'confirm') return 'confirmation required through the trusted consent UI' + (process.env.SLEIGHT_MT === '0' ? '; use the engine browser path if needed' : '');
-  return clean(result?.message ?? result?.msg ?? 'rule check refused; read the page or use the engine browser path');
+  return clean(result?.message ?? result?.msg ?? 'rule check refused; read the page' + (process.env.SLEIGHT_MT === '0' ? ' or use the engine browser path' : ''));
 }
 
 // Dependencies are the other v3 lanes' fixed interfaces. Injecting them keeps unit
@@ -459,7 +459,6 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           : boundary?.kind === 'dialog' ? dialogOutcome(boundary.dialog)
           : boundary?.kind === 'popup' ? endpointURL(boundary.popup.url(), tab.endpoint) ? endpointBlock : boundary.popup.isClosed() ? 'opened background tab that closed itself; opener below'
             : foregroundTabs > 0 ? `opened a tab that probably took the foreground (${why}, and sleight cannot tell which tab was active before); opener below: ` + originOf(boundary.popup.url())
-            : process.env.SLEIGHT_MT !== '0' ? `opened tab${popupTab ? ' ' + popupTab : ''} at ${originOf(boundary.popup.url())} (you control it; opener ${tab.tab ?? 'this tab'})`
             : `opened background tab${popupTab ? ' ' + popupTab : ''} at ${originOf(boundary.popup.url())} (opener ${tab.tab ?? 'this tab'})`
           : boundary?.kind === 'close' ? 'tab closed' + (submit && state.submitUnconfirmed === submit ? '; ' + closedSubmitWarning : '')
           : popupTab && foregroundTabs > 0 ? `opened a tab ${popupTab} that probably took the foreground (${why}, and sleight cannot tell which tab was active before); the opener's page is below`

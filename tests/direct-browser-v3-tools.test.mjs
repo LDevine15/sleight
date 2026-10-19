@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { browserTools, createToolDispatcher } from '../plugins/sleight/lib/direct-browser/tools.mjs';
 import { siteRefusal } from '../plugins/sleight/lib/permissions.mjs';
 import { composeAppTurn } from '../plugins/sleight/lib/direct-browser/electron-runtime.mjs';
+import { hookSource } from '../plugins/sleight/lib/direct-browser/page.mjs';
 
 const names = ['browser_open', 'browser_read', 'browser_act', 'browser_fill', 'browser_tabs'];
 
@@ -312,6 +313,20 @@ test('browser_act hands runSteps a site check that refuses once the page moves t
 
 // MT3, MT5, MT6 and MT7 share one switch; schemas and safety clauses stay fixed.
 import { withMT } from './fixtures/mt-env.mjs';
+for (const mode of [undefined, '0']) test(`MTb capability advice survives dispatcher uncertainty sanitization, switch=${mode}`, async () => withMT(mode, async () => {
+  const unavailable = () => hookSource({});
+  const entry = { page: {}, state: {} };
+  const dispatcher = createToolDispatcher({ pages: { openTab: unavailable, enqueue: async (_, run) => run(entry) },
+    snapshot: unavailable, runSteps: unavailable, fillFields: unavailable });
+  for (const request of [{ name: 'browser_open', arguments: { url: 'https://example.invalid/' } },
+    { name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'click', ref: 'e1' }] } }]) {
+    const result = await dispatcher.call(request);
+    assert.equal(result.isError, false);
+    assert.equal(result.text, 'Operation outcome is unconfirmed. Read current state before deciding what remains; do not replay input blindly. Use the engine browser path if needed.');
+  }
+  const read = await dispatcher.call({ name: 'browser_read', arguments: { tab: 't1' } });
+  assert.deepEqual(read, { isError: true, text: 'background popup hook unavailable; use the engine browser path.' });
+}));
 for (const mode of [undefined, '0']) test(`MT descriptions and scroll guidance, switch=${mode}`, async () => withMT(mode, async () => {
   const tools = browserTools('bfixture'), descriptions = Object.fromEntries(tools.map(t => [t.name, t.description]));
   for (const tool of tools) assert.ok(tool.description.length <= 2048);
@@ -320,7 +335,11 @@ for (const mode of [undefined, '0']) test(`MT descriptions and scroll guidance, 
     assert.match(descriptions.browser_fill, /Values are text, boolean, number or string array/);
     assert.match(descriptions.browser_tabs, /Never acquire engine-path tabs/);
   } else {
-    assert.match(descriptions.browser_act, /A step that navigates, opens a tab or raises a dialog ends the batch \(later steps read "not reached"\), so put one such step last/);
+    assert.match(descriptions.browser_act, /navigates, opens a tab, raises a dialog, loads or closes the page, or reaches the settle cap/);
+    assert.match(descriptions.browser_act, /later steps read "not reached"/);
+    assert.match(descriptions.browser_fill, /text or a number for a textbox/);
+    assert.match(descriptions.browser_fill, /virtual list/);
+    assert.match(descriptions.browser_tabs, /payment the user did not ask for/);
     assert.match(descriptions.browser_fill, /true or false for a checkbox, switch or the radio option to choose/);
     assert.match(descriptions.browser_fill, /submit is an observed ref, only when the user asked for that submit/);
     assert.match(descriptions.browser_tabs, /keep one open for the user to look at after the turn/);
