@@ -239,7 +239,7 @@ const fixturePath = '/private/tmp/sleight-battery-unit/pair/fixture.txt';
 function cleanupHost(options = {}) {
   const events = [], presses = [], scripts = [];
   let command = '', now = 0, opened = false, present = true, terminations = 0, windowReads = 0, foreignGone = false, earlyWindowReads = 0;
-  let nextTerminations = 0;
+  let nextTerminations = 0; const psCalls = [];
   const path = options.path ?? fixturePath, expected = pathToFileURL(path).href;
   const window = {}, secondWindow = {}, foreignWindow = {}, close = {}, appElement = {}, nextElement = {}, extraWindow = {};
   const list = values => ({ count: values.length, objectAtIndex: n => values[n] });
@@ -272,7 +272,11 @@ function cleanupHost(options = {}) {
     CGWindowListCopyWindowInfo: () => list([]),
     NSRunLoop: { currentRunLoop: { runUntilDate() { now += 200; if (options.ownCloseAt && now >= options.ownCloseAt) present = false; } } },
     NSDate: { dateWithTimeIntervalSinceNow: seconds => seconds },
-    NSString: { stringWithContentsOfFileEncodingError: () => JSON.stringify({ command }) },
+    NSString: { stringWithContentsOfFileEncodingError: () => JSON.stringify({ command }),
+      alloc: { initWithDataEncoding: data => data } },
+    // /bin/ps for the launched pid's arguments: the fake returns options.processArgs.
+    NSTask: { alloc: { get init() { const task = { get launch() { psCalls.push(task.arguments); return task; }, get waitUntilExit() { return task; } }; return task; } } },
+    NSPipe: { get pipe() { return { fileHandleForReading: { get readDataToEndOfFile() { return options.processArgs ?? ''; } } }; } },
     NSFileHandle: { fileHandleWithStandardOutput: { writeData(data) {
       const event = JSON.parse(data); events.push(event);
       if (event.stage === 'armed') { opened = true; command = options.finishFirst ? 'finish' : 'launched'; }
@@ -296,11 +300,12 @@ function cleanupHost(options = {}) {
         const foreign = !foreignGone && ((options.restoredWindow && opened) || (options.restoredOnRead && windowReads >= options.restoredOnRead) ||
           (options.extraWindowAfterPress && presses.length) || (options.transientWindow && now >= 400 && now < 5000));
         out[0] = list([...((opened || options.baselineWindow) && present ? options.multipleWindows ? [window, secondWindow] : [window] : []), ...(foreign ? [foreignWindow] : []),
-          ...(opened && options.pendingExtra ? [extraWindow] : [])]); return 0;
+          ...(opened && options.pendingExtra ? [extraWindow] : []),
+          ...(opened && present && options.lateSecondAt !== undefined && now >= options.lateSecondAt ? [secondWindow] : [])]); return 0;
       }
       if (element === foreignWindow && options.invalidForeign && now >= (options.invalidForeignAfter ?? 0) && ['AXDocument', 'AXSheets'].includes(name)) {
         if (!options.foreignStaysPresent) foreignGone = true;
-        return -25201;
+        return options.invalidStatus ?? -25201;
       }
       if (element === foreignWindow && name === 'AXDocument') { out[0] = 'file:///private/tmp/another.txt'; return 0; }
       if (element === secondWindow && !present) return -25202;
@@ -309,6 +314,8 @@ function cleanupHost(options = {}) {
         if (options.documentReadError) throw new Error(options.documentReadError);
         if (options.documentMissing) return -25205;
         if (options.documentStatus && now < (options.documentStatusUntil ?? Infinity)) return options.documentStatus;
+        if (element === secondWindow && now < (options.secondBusyUntil ?? -1)) return -25204;
+        if (options.busyFrom !== undefined && now >= options.busyFrom && now < options.busyFrom + 600) return -25204;
         if (options.changedDocumentCloses && now >= 10000) present = false;
         out[0] = options.changedDocument && now >= 10000 ? options.changedDocument : options.document ?? expected; return 0;
       }
@@ -337,11 +344,12 @@ function cleanupHost(options = {}) {
   const ObjC = { import() {}, unwrap: value => value?.value ?? value, deepUnwrap: value => value,
     castRefToObject: value => value?.rawApplication ?? (options.strictRefs && value === close ? { cast: close } : value) };
   const request = { bundle: 'org.example.fixture', targetURL: options.noTarget ? undefined : expected, control: 'ignored', fixturePath: path,
-    fixtureRoot: '/private/tmp/sleight-battery-unit/pair', ...(options.windowMarker && { windowMarker: options.windowMarker }) };
+    fixtureRoot: '/private/tmp/sleight-battery-unit/pair', ...(options.windowMarker && { windowMarker: options.windowMarker }),
+    ...(options.ownedArg && { ownedArg: options.ownedArg }) };
   const source = readFileSync(new URL('../bench/battery/host.js', import.meta.url), 'utf8');
   runInNewContext(`${source}\nrun([request]);`, { $: dollar, ObjC, Ref: () => [], Date: { now: () => now }, request: JSON.stringify(request) });
   return { ...events.findLast(e => e.stage === 'cleanup'), events, presses, scripts, terminations, present, now, windowReads,
-    earlyWindowReads, nextTerminations };
+    earlyWindowReads, nextTerminations, psCalls };
 }
 
 test('the application Ref is cast before reading its AXWindows', () => {
@@ -1160,4 +1168,82 @@ test('every host sample names the host stage it was taken in', () => {
   const stages = [...new Set(result.events.filter(e => e.stage === 'sample').map(e => e.sample.stage))];
   assert.deepEqual(stages, ['baseline', 'retain', 'ready', 'cleanup']);
   assert.ok(result.events.filter(e => e.stage === 'sample').every(e => 'front' in e.sample && Number.isFinite(e.sample.atMs)));
+});
+
+// AM1 qualification 2 (2026-10-19 08:45Z): cleanup left an unretained Word window with DOCUMENT_NOT_MATCHED and SHEETS_READ_FAILED.
+test('an unretained window whose element reads -25202 (invalid) and is gone at finish does not fail cleanup', () => {
+  const result = cleanupHost({ axCloses: true, extraWindowAfterPress: true, invalidForeign: true, invalidStatus: -25202 });
+  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.details.windows[1].gone, true);
+  assert.equal(result.terminations, 1);
+});
+
+test('a busy fixture window is read again in cleanup instead of failing as not matched', () => {
+  const result = cleanupHost({ axCloses: true, busyFrom: 200 });
+  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.terminations, 1);
+});
+
+test('cleanup adopts a fixture window that appeared after readiness while its reads were busy', () => {
+  const result = cleanupHost({ lateSecondAt: 200, secondBusyUntil: 700 });
+  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.details.windows.filter(row => row.retained).length, 2);
+  assert.equal(result.terminations, 1);
+});
+
+// AM1 qualification 4 (2026-10-19 09:0xZ): VS Code opened an empty window, the host couldn't prove it was the fixture, and
+// cleanup left the run's own editor instance running.
+const ownedArg = '--user-data-dir=/private/tmp/sleight-battery-unit/pair/p';
+test('an instance the run launched on its own profile is quit whole, even with an unidentified window', () => {
+  const result = cleanupHost({ documentStatus: -25205, ownedArg, processArgs: `/Applications/Fixture.app/Contents/MacOS/Fixture ${ownedArg} --new-window /private/tmp/x` });
+  assert.equal(result.events.find(e => e.stage === 'error').error.message, 'FIXTURE_WINDOW_UNIDENTIFIED');
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.terminations, 1);
+  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.details.app.owned, true);
+  assert.equal(JSON.stringify(result.psCalls.at(-1)), JSON.stringify(['-ww', '-o', 'args=', '-p', '42']));
+});
+
+test('the owned quit also ends a normal cell, through the app instead of window by window', () => {
+  const result = cleanupHost({ ownedArg, processArgs: `Fixture ${ownedArg}` });
+  assert.equal(result.events.some(e => e.stage === 'ready'), true);
+  assert.equal(result.terminations, 1);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.details.app.owned, true);
+});
+
+for (const [name, options] of [
+  ['its arguments lack the profile', { processArgs: 'Fixture --user-data-dir=/private/tmp/sleight-battery-unit/pair/p2' }],
+  ['the profile is only a prefix of an argument', { processArgs: `Fixture ${ownedArg}x` }],
+  ['the app was already running', { wasRunning: true, processArgs: `Fixture ${ownedArg}` }],
+]) test(`an instance is not owned when ${name}`, () => {
+  const result = cleanupHost({ documentStatus: -25205, ownedArg, ...options });
+  assert.notEqual(result.details?.app?.owned, true);
+  assert.equal(result.terminations, 0);
+  assert.equal(result.confirmed, false);
+});
+
+test('a target passed in the launch arguments is not also opened as a document', async t => {
+  const { startHost } = await load('runtime');
+  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const recorder = launchRecorder({ ownArgv: true });
+  const target = join(dir, 'AM1-folder'), profile = join(dir, 'p');
+  const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target, targetInArgs: true,
+    launchArgs: [`--user-data-dir=${profile}`, '--new-window', target], ownedArg: `--user-data-dir=${profile}` }, new AbortController().signal, recorder.runProcess);
+  assert.deepEqual(recorder.launches, [['-g', '-b', 'org.example.fixture', '--args', `--user-data-dir=${profile}`, '--new-window', target]]);
+  assert.equal(recorder.request.ownedArg, `--user-data-dir=${profile}`);
+  recorder.done(); await host.finish();
+});
+
+test('an owned-instance argument outside the fixture folder or absent from the launch is not passed', async t => {
+  const { startHost } = await load('runtime'), dir = bank(t);
+  for (const ctx of [{ launchArgs: ['--user-data-dir=/private/tmp/elsewhere'], ownedArg: '--user-data-dir=/private/tmp/elsewhere' },
+    { launchArgs: ['--new-window'], ownedArg: `--user-data-dir=${join(dir, 'p')}` }]) {
+    const recorder = launchRecorder({ ownArgv: true });
+    const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: join(dir, 'f'), ...ctx }, new AbortController().signal, recorder.runProcess);
+    assert.equal(recorder.request.ownedArg, undefined, JSON.stringify(ctx));
+    recorder.done(); await host.finish();
+  }
 });

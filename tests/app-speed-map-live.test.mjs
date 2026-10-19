@@ -300,3 +300,43 @@ test('a fixture app activating itself before the first engine call is classified
   await h.runtime.close();
   assert.equal(h.unlocks, 1);
 });
+
+test('a document fixture scrolls the area around its own text, and cleanup window rows keep codes only', async t => {
+  const h = await setup(t, { id: 'word', confirmed: false, details: { reasons: [], windows: [
+    { retained: false, present: true, matched: false, document: 'file:///private/x.docx', expectedURL: 'file:///private/y.docx', documentStatus: -25204,
+      sheetStatus: -25204, documentReads: [{ document: 'file:///private/x.docx', status: 0 }], reasons: ['WINDOW_NOT_RETAINED', 'PRIVATE'], scriptingPath: '/private/y' }] } });
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['word'], runs: 1 }).apps[0]);
+  assert.equal(fixture.scrollMarker, fixture.marker);
+  assert.equal(fixture.requiredText, undefined);
+  const cleanup = await h.runtime.closeFixture(fixture);
+  assert.deepEqual(cleanup.windows, [{ retained: false, present: true, matched: false, documentStatus: -25204, sheetStatus: -25204, reasons: ['WINDOW_NOT_RETAINED'] }]);
+  assert.doesNotMatch(JSON.stringify(cleanup.windows), /private/);
+  await assert.rejects(h.runtime.close(), /CLEANUP_UNCONFIRMED/);
+});
+
+// AM1 qualification 3 (2026-10-19 08:50Z): every phase measured, then Word's window covered Terminal while its document
+// closed (phase cleanup, 4631 ms) and the cell was marked unsafe, which hid its timings from the summary.
+test('a cover by the fixture app during its own cleanup is recorded as cleanup-cover and does not stop the run', () => {
+  const tracker = attentionTracker({ bundle: 'com.microsoft.Word' });
+  tracker.observe({ front: 'com.apple.Terminal', atMs: 0 });
+  assert.equal(tracker.observe({ front: 'com.apple.Terminal', stage: 'ready', atMs: 1161, targetOverOwner: true }), false);
+  tracker.setPhase('measure');
+  assert.equal(tracker.observe({ front: 'com.apple.Terminal', stage: 'ready', atMs: 2000, targetOverOwner: false }), false);
+  tracker.setPhase('cleanup');
+  assert.equal(tracker.observe({ front: 'com.apple.Terminal', stage: 'cleanup', atMs: 4631, targetOverOwner: true }), false);
+  assert.deepEqual(tracker.events.map(event => [event.phase, event.class]), [['setup', 'launch-cover'], ['cleanup', 'cleanup-cover']]);
+  assert.equal(tracker.stopped, false);
+  // Focus taken during cleanup is still a stop: only the window cover is the app's own close behaviour.
+  assert.equal(tracker.observe({ front: 'com.microsoft.Word', stage: 'cleanup', atMs: 4800 }), true);
+});
+
+test('a workspace fixture passes its folder as a launch argument and names the profile that proves ownership', async t => {
+  // VS Code 1.141 with --new-window and no path in argv opens an empty window and ignores the folder sent as a document.
+  const h = await setup(t, { id: 'vscode', base: '/private/tmp' });
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['vscode'], runs: 1 }).apps[0]);
+  assert.equal(fixture.launchArgs.at(-1), fixture.target);
+  assert.equal(fixture.targetInArgs, true);
+  assert.equal(fixture.ownedArg, fixture.launchArgs.find(arg => arg.startsWith('--user-data-dir=')));
+  assert.ok(fixture.ownedArg.slice(16).startsWith(fixture.dir + '/'));
+  await h.runtime.closeFixture(fixture); await h.runtime.close();
+});

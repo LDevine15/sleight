@@ -60,8 +60,12 @@ function treeMetrics(tree, { marker, requiredText, scrollMarker } = {}) {
   if (marker && !tree.split('\n')[0].includes(marker) || requiredText && !tree.includes(requiredText)) throw Error('FIXTURE_IDENTITY');
   const numbered = [...tree.matchAll(/^\t*\d+ /gm)].length;
   const dom = [...tree.matchAll(/\bnode_id=/g)].length;
-  const scrolls = [...tree.matchAll(/^\t*(\d+) (?:scroll area|scroll view|AXScrollArea)\b/gmi)];
-  const targets = scrolls.length ? scrolls : [...tree.matchAll(/^\t*(\d+) (?:text area|text view|outline|list)\b/gmi)];
+  const scrolls = [...tree.matchAll(/^(\t*)(\d+) (?:scroll area|scroll view|AXScrollArea)\b/gmi)].map(row => [row[0], row[2], row[1].length]);
+  const fallback = [...tree.matchAll(/^\t*(\d+) (?:text area|text view|outline|list)\b/gmi)];
+  const targets = scrolls.length ? scrolls : fallback;
+  // Counts and depths only, never text: enough to tell why a scroll target was or wasn't unique.
+  const shape = { scrollAreas: scrolls.length, fallbackTargets: fallback.length, markerRows: 0, markerScrollAreas: 0,
+    scrollDepths: scrolls.slice(0, 10).map(row => row[2]) };
   if (scrollMarker) {
     const targetIds = new Set(targets.map(row => Number(row[1]))), matches = new Set(), ancestors = [];
     for (const line of tree.split('\n')) {
@@ -70,14 +74,16 @@ function treeMetrics(tree, { marker, requiredText, scrollMarker } = {}) {
       const depth = row[1].length, id = Number(row[2]);
       while (ancestors.length && ancestors.at(-1).depth >= depth) ancestors.pop();
       if (row[3].includes(scrollMarker)) {
+        shape.markerRows++;
         const parent = ancestors.findLast(item => targetIds.has(item.id));
         if (parent) matches.add(parent.id);
       }
       ancestors.push({ depth, id });
     }
-    return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: matches.size === 1 ? [...matches][0] : null };
+    shape.markerScrollAreas = matches.size;
+    return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: matches.size === 1 ? [...matches][0] : null, shape };
   }
-  return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: targets.length === 1 ? Number(targets[0][1]) : null };
+  return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: targets.length === 1 ? Number(targets[0][1]) : null, shape };
 }
 
 function metrics(reply) {
@@ -88,7 +94,11 @@ function metrics(reply) {
   if (!Number.isInteger(value?.chars) || value.chars < 0 ||
       value.nodes !== null && (!Number.isInteger(value.nodes) || value.nodes < 0) ||
       value.scrollTarget !== null && (!Number.isInteger(value.scrollTarget) || value.scrollTarget < 0)) throw Error('METRICS_INVALID');
-  return value;
+  const shape = value.shape, count = item => Number.isInteger(item) && item >= 0;
+  if (shape !== undefined && !(shape && ['scrollAreas', 'fallbackTargets', 'markerRows', 'markerScrollAreas'].every(key => count(shape[key])) &&
+      Array.isArray(shape.scrollDepths) && shape.scrollDepths.length <= 10 && shape.scrollDepths.every(count))) throw Error('METRICS_INVALID');
+  return shape === undefined ? value : { ...value, shape: { scrollAreas: shape.scrollAreas, fallbackTargets: shape.fallbackTargets,
+    markerRows: shape.markerRows, markerScrollAreas: shape.markerScrollAreas, scrollDepths: shape.scrollDepths } };
 }
 const failures = new Set(['HOLD', 'TREE_UNAVAILABLE', 'FIXTURE_IDENTITY', 'ENGINE_CALL_FAILED', 'METRICS_UNAVAILABLE', 'METRICS_INVALID',
   'NO_UNIQUE_SCROLL_AREA', 'CLEANUP_UNCONFIRMED', 'SESSION_CLEANUP_UNCONFIRMED', 'FOCUS_CHANGED', 'APP_ALREADY_RUNNING',
@@ -152,6 +162,7 @@ export async function runSpeedMap(plan, runtime) {
         const first = await measuredRead('firstReadMs');
         row.chars = first.chars; row.nodes = first.nodes;
         const warm = await measuredRead('warmReadMs');
+        if (warm.shape) row.treeShape = warm.shape;
         if (mode === 'sequential' && !plan.ownerPresent && !task.readOnly) {
           if (!browser && warm.scrollTarget === null) throw Error('NO_UNIQUE_SCROLL_AREA');
           await timed('actionMs', browser ? 'await am1Tab.cua.scroll({x:120,y:200,scrollX:0,scrollY:400});' :
@@ -175,6 +186,7 @@ export async function runSpeedMap(plan, runtime) {
       row.cleanupConfirmed &&= cleanup?.confirmed === true;
       row.cleanupReasons = cleanup?.reasons ?? [];
       row.attention = cleanup?.attention ?? [];
+      if (Array.isArray(cleanup?.windows)) row.cleanupWindows = cleanup.windows;
       if (cleanup?.focusChanged) {
         if (row.failure && row.failure !== 'FOCUS_CHANGED') row.sessionFailure = row.failure;
         row.status = 'unsafe'; row.failure = 'FOCUS_CHANGED';

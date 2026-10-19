@@ -708,7 +708,16 @@ native reference, and oversized first results defer the browser reference while 
   Cursor, Word or Excel take to show an identifiable window here. Cursor, Excel and the concurrent cohort have never run. The
   first qualification (2026-10-19, 04:41 UTC) stopped Word's first cell on FOCUS_CHANGED between the end of setup (1517 ms)
   and the first engine call, with cleanup confirmed. Its samples kept only booleans, so we don't know whether Word activated
-  itself or its window covered the owner's. VS Code didn't run.
+  itself or its window covered the owner's. VS Code didn't run. The second (08:45 UTC) passed setup in 1476 ms. Word covered
+  the owner's Terminal at 1774 ms (launch-cover) and read in 199 ms first and 110 ms warm, but its scroll step failed with
+  NO_UNIQUE_SCROLL_AREA, because Word also has a Ribbon scroll area. Cleanup left Word running behind a window the host never
+  retained, with unreadable document and sheet attributes. Only reason codes were kept, so we don't know which window it was.
+  Document fixtures now scroll the area around their own text, and rows keep the tree's scroll-area counts and each cleanup
+  window's AX codes. The third (08:50 UTC) measured every phase (acquisition 793 ms, reads 86 and 143 ms, scroll 1391 ms,
+  readback 106 ms) and confirmed cleanup, then stopped because Word's window covered Terminal while its document closed. That
+  cover is now `cleanup-cover`. The fourth (09:0x UTC) completed Word's cell. VS Code reached setup for the first time and
+  opened an empty window instead of the fixture folder, and cleanup left the run's own instance running. The folder now goes
+  in argv, and cleanup quits an instance proven to be the run's own. No run has measured VS Code yet.
 
 ## Turbo in unattended runs
 
