@@ -18,7 +18,7 @@ export async function selectWindow(args, { approve, runScript }) {
   if (typeof args.app !== 'string' || !args.app || (hasTitle === hasURL) ||
       (hasTitle && typeof args.title !== 'string') || (hasURL && (typeof args.url !== 'string' || !args.url.startsWith('file://'))) ||
       (args.windowNumber !== undefined && (!Number.isSafeInteger(args.windowNumber) || args.windowNumber <= 0))) {
-    return text(/* notice */ 'select_window needs app and one title or file URL. With no exact title, a unique ending may match after whitespace: 12+ code points after trim(), excluding Cf and M.', true);
+    return text(/* notice */ 'select_window needs app and one title or file URL. No exact title: unique ending after whitespace; 12+ code points after trim(), excluding Cf/M.', true);
   }
   if (!await approve(['select_window', args.app], `Allow Claude to select a window in ${args.app}? It changes the app's main window without activating the app.`)) {
     return text(`The user didn't allow window selection in ${args.app}. Stop and tell them.`, true);
