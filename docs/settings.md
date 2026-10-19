@@ -62,12 +62,15 @@ and no others:
   such as `sheet opened` or `no visible change`, or a `reason` category such as `window changed` or
   `input lease`.
 - `count`, on a `rest` line: actions that didn't run, or that ran past one call's 30-record cap.
-- `ms`: milliseconds from the call's request to its reply. Every line of the call has it.
-- `saved`, on a call's first line: reads it got as changed lines or not at all, in place of the whole
-  window or page. A read-only call that saved reads gets one `read` line for this.
+- `ms`: milliseconds from when sleight sent the call on to the engine or turbo (from its request, for
+  sleight's own tools) to its reply, less the approval prompts open meanwhile. Every line of the call has it.
+- `pid`: the relay's process id, which tells sessions sharing one log apart.
+- `saved`, on a call's first line: reads Claude's code asked for that went out as changed lines or not at
+  all, and turbo's diffs. The guard's own read after an action never counts. A read-only call that saved
+  reads gets one `read` line for this.
 - `surface: "browser"` and `actions`, on the one `call` line for the engine's browser path: the guard
   doesn't record actions there, so `actions` counts the input calls the code names, such as `click(` or `fill(`.
-  A call in a loop counts once.
+  That's an estimate: a call in a loop counts once, and one in a branch that didn't run still counts.
 
 Typed text, set values, a secure field's value or length, window and sheet titles, page text and
 screenshots stay out. The file is private to your account: sleight writes only a regular file with
@@ -82,16 +85,19 @@ lists how a determined agent gets past it.
 ### Stats
 
 `sleight-mcp stats` reads the action log back and summarizes the last 7 days. It gives the median and
-p90 seconds per action for each path, with native apps, turbo and the engine's browser path counted apart.
-It also counts reads saved, and refusals and failures by reason. A call's time is split evenly over its actions. `--days N` (1 to 365)
+p90 seconds per action for each path, with native apps, turbo and the engine's browser path counted apart
+and never mixed. It also counts reads saved, and refusals and failures by reason. A call's time is split
+evenly over its actions. A p90 can still include waits sleight can't separate, such as turbo's own
+confirmation cards. The engine path's line says its action count is an estimate. `--days N` (1 to 365)
 changes the window, and `--json` prints the same numbers as JSON. It finds the log from `--log <file name>`,
 then the environment, then the `env` block of `~/.claude/settings.json`. With the log off it says how to
-turn it on. Lines written before 1.4.0 count, without timing. Reads saved counts the engine path's
-compacted reads and turbo's diffs, and a full read Claude asks for counts as none.
+turn it on. A line from before 1.4.0 has no `ms`, so it counts as an action without timing, and the
+output says how many. A log file over 16 MB is skipped, and the output says so.
 
 While a session writes the log, the glove's menu adds one row for the last 7 days, such as
-`Last 7 days: 1.2 s per action · turbo 0.4 s · 312 reads saved`. It shows only once the log has a timed
-action, and refreshes at most every five minutes. The command and the row read only the log on this Mac,
+`Last 7 days: 1.2 s per native action · 0.4 s per turbo action · 312 reads saved`. It shows the native
+and turbo medians only, once the log has a timed action on either, and refreshes at most every five
+minutes. The command and the row read only the log on this Mac,
 and neither sends it anywhere.
 
 ## Text drags

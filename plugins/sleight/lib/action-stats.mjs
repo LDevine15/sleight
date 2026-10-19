@@ -13,13 +13,14 @@ const USAGE = 'usage: sleight-mcp stats [--days N] [--json] [--log <file name>]\
 // The reasons a summary names; any other is counted as other.
 const NAMED = new Set([...REASONS, 'error', 'engine error', 'covered']);
 
-// One file's rows, or none: only a regular file of at most 16 MB, opened without following a link.
-async function fileRows(path) {
+// One file's rows, 'big' for a file over the limit, or none: only a regular file, opened without following a link.
+async function fileRows(path, maxBytes) {
   let handle;
   try {
     handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = await handle.stat();
-    if (!stat.isFile() || stat.size > MAX_FILE) return;
+    if (!stat.isFile()) return;
+    if (stat.size > maxBytes) return 'big';
     const rows = [];
     for (const line of (await handle.readFile('utf8')).split('\n')) {
       if (!line) continue;
@@ -29,34 +30,40 @@ async function fileRows(path) {
   } catch { return; } finally { await handle?.close().catch(() => {}); }
 }
 
-/** The log and its two rotated files, oldest first. files counts the ones read. */
-export async function readLogRows(path) {
+/** The log and its two rotated files, oldest first. files counts the ones read, skipped the ones over maxBytes (16 MB). */
+export async function readLogRows(path, { maxBytes = MAX_FILE } = {}) {
   const rows = [];
-  let files = 0;
+  let files = 0, skipped = 0;
   for (const file of [`${path}.2`, `${path}.1`, path]) {
-    const found = await fileRows(file);
-    if (found) { files++; rows.push(...found); }
+    const found = await fileRows(file, maxBytes);
+    if (found === 'big') skipped++;
+    else if (found) { files++; rows.push(...found); }
   }
-  return { rows, files };
+  return { rows, files, skipped };
 }
 
 const round = value => Math.round(value * 1000) / 1000;
-// Linear interpolation between the closest ranks.
-function quantile(sorted, q) {
-  const h = (sorted.length - 1) * q, low = Math.floor(h);
-  return round(sorted[low] + (h - low) * ((sorted[low + 1] ?? sorted[low]) - sorted[low]));
+// Samples are [seconds, weight]: a call's actions share one sample, never expanded. The quantile interpolates between the
+// closest ranks as if each sample were repeated weight times.
+function quantile(sorted, total, q) {
+  const h = (total - 1) * q, low = Math.floor(h);
+  const at = rank => { let seen = 0; for (const [value, weight] of sorted) { seen += weight; if (rank < seen) return value; } return sorted.at(-1)[0]; };
+  const a = at(low), b = at(low + 1);
+  return round(a + (h - low) * (b - a));
 }
 const spread = samples => {
-  const sorted = [...samples].sort((a, b) => a - b);
-  return sorted.length ? { median: quantile(sorted, 0.5), p90: quantile(sorted, 0.9) } : { median: null, p90: null };
+  const sorted = [...samples].sort((a, b) => a[0] - b[0]), total = sorted.reduce((sum, [, weight]) => sum + weight, 0);
+  return total ? { median: quantile(sorted, total, 0.5), p90: quantile(sorted, total, 0.9) } : { median: null, p90: null };
 };
-const count = value => Number.isSafeInteger(value) && value >= 0 && value <= 1e6 ? value : 0;
+// A row's counts are capped: the guard keeps 30 records a call and an engine browser call names at most 100 actions, so
+// anything larger came from a corrupt or planted line.
+const count = (value, cap = 1000) => Number.isSafeInteger(value) && value >= 0 ? Math.min(value, cap) : 0;
 
 // How many actions a row stands for: a row that ran is one, an engine browser call the actions its code named, and a record-cap
 // line the actions that ran past the cap.
 function weight(row) {
   if (row.kind === 'read') return 0;
-  if (row.result === 'ok' || row.result === 'failed') return row.kind === 'call' && count(row.actions) > 0 ? Math.min(row.actions, 100) : 1;
+  if (row.result === 'ok' || row.result === 'failed') return row.kind === 'call' && count(row.actions) > 0 ? count(row.actions, 100) : 1;
   if (row.result === 'not logged') return count(row.count);
   return 0;
 }
@@ -71,7 +78,7 @@ export function summarize(rows, { now = Date.now(), days = 7 } = {}) {
     if (!(time >= since && time <= now) || typeof row.tool !== 'string' || typeof row.kind !== 'string' || typeof row.result !== 'string') continue;
     from = from === undefined || time < from ? time : from; to = to === undefined || time > to ? time : to;
     // A call's rows are written together, so they share their time.
-    const key = JSON.stringify([row.time, row.call, row.tool]);
+    const key = JSON.stringify([row.time, row.call, row.tool, row.pid]);
     if (!calls.has(key)) calls.set(key, []);
     calls.get(key).push(row);
   }
@@ -97,15 +104,15 @@ export function summarize(rows, { now = Date.now(), days = 7 } = {}) {
     actions[path] += ran;
     const ms = rows.find(row => typeof row.ms === 'number')?.ms;
     if (!(Number.isFinite(ms) && ms >= 0 && ms <= DAY)) { untimed += ran; continue; }
-    for (let i = 0; i < ran; i++) samples[path].push(ms / 1000 / ran);
+    samples[path].push([ms / 1000 / ran, ran]);
   }
-  const all = [...samples.native, ...samples.turbo, ...samples.engine];
+  const timed = list => list.reduce((sum, [, weight]) => sum + weight, 0);
   const sorted = order => Object.fromEntries(Object.entries(order).sort(([a, x], [b, y]) => y - x || a.localeCompare(b)));
   return {
     days, from: from === undefined ? null : new Date(from).toISOString(), to: to === undefined ? null : new Date(to).toISOString(),
-    calls: callCount, actions: actions.native + actions.turbo + actions.engine, timed: all.length, untimed,
-    perAction: all.length ? spread(all) : null,
-    paths: Object.fromEntries(Object.keys(samples).map(path => [path, { actions: actions[path], timed: samples[path].length, ...spread(samples[path]) }])),
+    calls: callCount, actions: actions.native + actions.turbo + actions.engine,
+    timed: timed(samples.native) + timed(samples.turbo) + timed(samples.engine), untimed,
+    paths: Object.fromEntries(Object.keys(samples).map(path => [path, { actions: actions[path], timed: timed(samples[path]), ...spread(samples[path]) }])),
     readsSaved,
     refused: { count: refused.count, reasons: sorted(refused.reasons) },
     failed: { count: failed.count, reasons: sorted(failed.reasons) },
@@ -123,27 +130,29 @@ function stamp(ms, timeZone) {
 const tilde = (path, home) => path.startsWith(home + '/') ? '~' + path.slice(home.length) : path;
 const reasons = into => Object.entries(into.reasons).map(([word, n]) => `${word} ${n}`).join(', ');
 
-/** The summary as the command prints it. */
-export function statsText(summary, { log, files, timeZone }) {
+/** The summary as the command prints it. Paths stay apart: their times measure different things. */
+export function statsText(summary, { log, files, skipped = 0, timeZone }) {
   const zone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const span = summary.days === 1 ? 'day' : `${summary.days} days`;
   if (!summary.from) return `No actions logged in the last ${span}.\nLog: ${log}\n`;
   const rotated = files - 1 > 0 ? `, with ${plural(files - 1, 'rotated file')}` : '';
   const lines = [`sleight stats for the last ${span}, ${stamp(Date.parse(summary.from), zone)} to ${stamp(Date.parse(summary.to), zone)} (${zone})`,
-    `Log: ${log}${rotated}`, `${plural(summary.actions, 'action')} in ${plural(summary.calls, 'call')}`,
-    summary.perAction ? `Seconds per action: median ${seconds(summary.perAction.median)}, p90 ${seconds(summary.perAction.p90)}, over ${plural(summary.timed, 'timed action')}`
-      : 'Seconds per action: no timed actions yet'];
+    `Log: ${log}${rotated}`, ...skipped ? [`Skipped ${plural(skipped, 'log file')} over 16 MB.`] : [],
+    `${plural(summary.actions, 'action')} in ${plural(summary.calls, 'call')}`,
+    summary.timed ? 'Seconds per action, from sending each call to its reply, less approval prompts:' : 'Seconds per action: no timed actions yet'];
   for (const [path, name] of [['native', 'Native apps'], ['turbo', 'Turbo'], ['engine', 'Engine path']]) {
     const part = summary.paths[path];
     if (!part.actions) continue;
-    lines.push(`  ${name}: ${plural(part.actions, 'action')}, ` + (part.timed ? `median ${seconds(part.median)} s, p90 ${seconds(part.p90)} s` : 'no timing'));
+    lines.push(`  ${name}: ${plural(part.actions, 'action')}, ` + (part.timed ? `median ${seconds(part.median)} s, p90 ${seconds(part.p90)} s` : 'no timing') +
+      (path === 'engine' ? ', with actions counted from the code (an estimate)' : ''));
   }
-  lines.push(`Reads saved: ${summary.readsSaved}, sent as changed lines or left out instead of whole`);
+  if (summary.timed) lines.push('A p90 can include waits sleight can\'t separate, such as turbo\'s own confirmation cards.');
+  lines.push(`Reads saved: ${summary.readsSaved}, reads Claude asked for that went out as changed lines or were left out`);
   if (summary.refused.count) lines.push(`Refused: ${summary.refused.count} (${reasons(summary.refused)})`);
   if (summary.failed.count) lines.push(`Failed: ${summary.failed.count} (${reasons(summary.failed)})`);
   if (summary.notRun) lines.push(`Not run: ${summary.notRun}`);
   if (!summary.refused.count && !summary.failed.count && !summary.notRun) lines.push('No failures');
-  if (summary.untimed) lines.push(`${plural(summary.untimed, 'action')} ${summary.untimed === 1 ? 'has' : 'have'} no timing: sleight logged ${summary.untimed === 1 ? 'it' : 'them'} before 1.4.0.`);
+  if (summary.untimed) lines.push(`${plural(summary.untimed, 'action')} ${summary.untimed === 1 ? 'has' : 'have'} no timing: sleight before 1.4.0 logged ${summary.untimed === 1 ? 'it' : 'them'}.`);
   lines.push('This comes from the log on this Mac. Nothing is sent anywhere.');
   return lines.join('\n') + '\n';
 }
@@ -163,7 +172,7 @@ const HOW_TO = 'To turn it on, add "SLEIGHT_ACTION_LOG": "actions.jsonl" to the 
 
 /** `sleight-mcp stats [--days N] [--json] [--log <file name>]`. Exit code 0, or 2 on usage. */
 export async function statsCommand(args, { out = text => process.stdout.write(text), env = process.env, home = homedir(), now = Date.now,
-  timeZone } = {}) {
+  timeZone, maxBytes } = {}) {
   let days = 7, json = false, flag;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json') json = true;
@@ -179,18 +188,21 @@ export async function statsCommand(args, { out = text => process.stdout.write(te
       : 'The action log is off, so sleight has nothing to count.\n') + HOW_TO);
     return 0;
   }
-  const log = tilde(path, home), { rows, files } = await readLogRows(path);
+  const log = tilde(path, home), { rows, files, skipped } = await readLogRows(path, maxBytes ? { maxBytes } : {});
   const summary = summarize(rows, { now: now(), days });
-  if (json) { out(JSON.stringify({ log, files, ...summary }, null, 2) + '\n'); return 0; }
-  out(files ? statsText(summary, { log, files, timeZone }) : `The action log is on (${log}), and nothing is in it yet.\n`);
+  if (json) { out(JSON.stringify({ log, files, skipped, ...summary }, null, 2) + '\n'); return 0; }
+  out(files ? statsText(summary, { log, files, skipped, timeZone })
+    : skipped ? `The action log is on (${log}). Skipped ${plural(skipped, 'log file')} over 16 MB.\n`
+    : `The action log is on (${log}), and nothing is in it yet.\n`);
   return 0;
 }
 
-/** The dropdown's row: { perAction, turbo?, saved } over the last 7 days, or undefined without a timed action. */
+/** The dropdown's row: { native?, turbo?, saved } over the last 7 days, the median seconds per action on each path, or undefined
+ *  without a timed native or turbo action. The engine browser path's count is an estimate, so it stays out. */
 export async function menuUsage({ path, now = Date.now } = {}) {
   if (!path) return undefined;
-  const summary = summarize((await readLogRows(path)).rows, { now: now(), days: 7 });
-  if (!summary.perAction) return undefined;
+  const { paths, readsSaved } = summarize((await readLogRows(path)).rows, { now: now(), days: 7 });
+  if (!paths.native.timed && !paths.turbo.timed) return undefined;
   const tenth = value => Math.round(value * 10) / 10;
-  return { perAction: tenth(summary.perAction.median), ...summary.paths.turbo.timed ? { turbo: tenth(summary.paths.turbo.median) } : {}, saved: summary.readsSaved };
+  return { ...paths.native.timed ? { native: tenth(paths.native.median) } : {}, ...paths.turbo.timed ? { turbo: tenth(paths.turbo.median) } : {}, saved: readsSaved };
 }

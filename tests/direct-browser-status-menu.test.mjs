@@ -166,22 +166,23 @@ check(statusRows(["status": "connected-idle", "host": "Codex 0.160.0"], ["discon
 check(statusRows(["status": "connected-idle"], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: ["Its session has ended"]), "no host, no host line")
 check(statusRows(["status": "connected", "host": "Codex\\nmodel gpt"], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: []), "odd host dropped")
 check(statusRows(["status": "connected", "host": String(repeating: "a", count: 73)], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: []), "long host dropped")
-// The usage row (1.4.0): the action log's last 7 days, exact keys and bounded numbers, after Permissions.
-check(usageData(["perAction": 1.5, "turbo": 0.6, "saved": 312]) == UsageStats(perAction: 1.5, turbo: 0.6, saved: 312), "usage with turbo")
-check(usageWords(UsageStats(perAction: 1.5, turbo: 0.6, saved: 312)) == "Last 7 days: 1.5 s per action · turbo 0.6 s · 312 reads saved", "usage words")
-check(usageWords(usageData(["perAction": 12, "saved": 1])!) == "Last 7 days: 12.0 s per action · 1 read saved", "usage without turbo")
-for (bad, what) in [(["perAction": 1.5, "saved": 3, "days": 7] as [String: Any], "extra key"), (["saved": 3], "no perAction"), (["perAction": 1.5], "no saved"),
-  (["perAction": "1.5", "saved": 3], "text seconds"), (["perAction": true, "saved": 3], "boolean seconds"), (["perAction": -0.1, "saved": 3], "negative"),
-  (["perAction": 3600.1, "saved": 3], "over an hour"), (["perAction": 1.5, "saved": 3.5], "fractional saved"), (["perAction": 1.5, "saved": 1e10], "huge saved"),
-  (["perAction": 1.5, "saved": 3, "turbo": NSNull()], "null turbo"), (["perAction": 1.5, "saved": false], "boolean saved")] {
+// The usage row (1.4.0): each path's median from the action log's last 7 days, exact keys and bounded numbers, after Permissions.
+check(usageData(["native": 1.5, "turbo": 0.6, "saved": 312]) == UsageStats(native: 1.5, turbo: 0.6, saved: 312), "usage with both paths")
+check(usageWords(UsageStats(native: 1.5, turbo: 0.6, saved: 312)) == "Last 7 days: 1.5 s per native action · 0.6 s per turbo action · 312 reads saved", "usage words")
+check(usageWords(usageData(["native": 12, "saved": 1])!) == "Last 7 days: 12.0 s per native action · 1 read saved", "native only")
+check(usageWords(usageData(["turbo": 0.4, "saved": 0])!) == "Last 7 days: 0.4 s per turbo action · 0 reads saved", "turbo only")
+for (bad, what) in [(["native": 1.5, "saved": 3, "days": 7] as [String: Any], "extra key"), (["saved": 3], "no path"), (["native": 1.5], "no saved"),
+  (["perAction": 1.5, "saved": 3], "the old key"), (["native": "1.5", "saved": 3], "text seconds"), (["native": true, "saved": 3], "boolean seconds"),
+  (["native": -0.1, "saved": 3], "negative"), (["turbo": 3600.1, "saved": 3], "over an hour"), (["native": 1.5, "saved": 3.5], "fractional saved"),
+  (["native": 1.5, "saved": 1e10], "huge saved"), (["native": 1.5, "saved": 3, "turbo": NSNull()], "null turbo"), (["native": 1.5, "saved": false], "boolean saved")] {
   check(usageData(bad) == nil, "usage refused: " + what)
 }
 check(usageData("Last 7 days") == nil, "usage is an object")
-check(handRows(enabled: true, version: "1.4.0", permissions: [.info("x")], usage: UsageStats(perAction: 1.5, turbo: nil, saved: 2)) == [.toggle("Ghost Hand", choice: "hand-toggle", on: true),
-  .permissions([.info("x")]), .usage("Last 7 days: 1.5 s per action · 2 reads saved"), .separator, .help, .separator, .footer("sleight 1.4.0")], "hand-only menu with usage")
-check(withHand(statusRows(["status": "connected"], ["disconnect", "turbo-off"])!, enabled: true, usage: UsageStats(perAction: 1.5, turbo: 0.4, saved: 0)) == [.status(title: "Connected", dot: "green", details: []),
+check(handRows(enabled: true, version: "1.4.0", permissions: [.info("x")], usage: UsageStats(native: 1.5, turbo: nil, saved: 2)) == [.toggle("Ghost Hand", choice: "hand-toggle", on: true),
+  .permissions([.info("x")]), .usage("Last 7 days: 1.5 s per native action · 2 reads saved"), .separator, .help, .separator, .footer("sleight 1.4.0")], "hand-only menu with usage")
+check(withHand(statusRows(["status": "connected"], ["disconnect", "turbo-off"])!, enabled: true, usage: UsageStats(native: nil, turbo: 0.4, saved: 0)) == [.status(title: "Connected", dot: "green", details: []),
   .separator, .action("Disconnect", choice: "disconnect"), .separator, .toggle("Ghost Hand", choice: "hand-toggle", on: true),
-  .usage("Last 7 days: 1.5 s per action · turbo 0.4 s · 0 reads saved"), .confirm("Turn Turbo Off…", choice: "turbo-off"), .help], "turbo menu with usage")
+  .usage("Last 7 days: 0.4 s per turbo action · 0 reads saved"), .confirm("Turn Turbo Off…", choice: "turbo-off"), .help], "turbo menu with usage")
 check(handRows(enabled: true, version: "1.4.0") == [.toggle("Ghost Hand", choice: "hand-toggle", on: true), .separator, .help, .separator, .footer("sleight 1.4.0")], "no usage, no row")
 print("pass")
 `);

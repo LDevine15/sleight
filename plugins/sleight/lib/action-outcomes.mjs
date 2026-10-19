@@ -251,13 +251,35 @@ export function refusalReason(text = '') {
   return reasons.find(([pattern]) => pattern.test(text))?.[1];
 }
 
-// The engine browser path's input methods (tab handles and their locators). The guard records no per-action outcomes there,
-// so the log counts the calls in the code, with strings and comments left out: a loop counts once.
+// The engine browser path's input methods (tab handles and their locators). The guard records no per-action outcomes there
+// (the relay gives browser calls no outcome mark), so the log counts the call sites in the code: an estimate, where a loop
+// counts once and an untaken branch counts. Strings, comments and regular expression literals are left out first.
 const BROWSER_ACTIONS = /\.\s*(?:click|dblclick|drag|dragTo|scroll|selectText|setValue|performSecondaryAction|paste|pressKey|typeText|fill|press|type|check|uncheck|selectOption|hover|goto|reload|goBack|goForward)\s*\(/g;
+function codeOnly(code) {
+  let out = '', last = '';
+  for (let i = 0; i < code.length;) {
+    const c = code[i], next = code[i + 1];
+    let end = i + 1;
+    if (c === '/' && next === '/') { end = code.indexOf('\n', i); if (end < 0) end = code.length; }
+    else if (c === '/' && next === '*') { end = code.indexOf('*/', i + 2); end = end < 0 ? code.length : end + 2; }
+    else if (c === '"' || c === "'" || c === '`' || c === '/' && (!last || /[(,=:[!&|?{};+\-*%<>~^]/.test(last) || /\b(?:return|typeof|case|do|else|in|of|void|yield|await)$/.test(out.trimEnd()))) {
+      let klass = false;
+      for (end = i + 1; end < code.length; end++) {
+        const d = code[end];
+        if (d === '\\') { end++; continue; }
+        if (c === '/' && d === '\n') break;
+        if (c === '/' && d === '[') klass = true;
+        else if (c === '/' && d === ']') klass = false;
+        else if (d === c && !klass) { end++; break; }
+      }
+    } else { out += c; if (!/\s/.test(c)) last = c; i = end; continue; }
+    out += ' '; last = 'x'; i = end;
+  }
+  return out;
+}
 export function browserActionCount(code) {
-  if (typeof code !== 'string') return 0;
-  const bare = code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, ' ');
-  return Math.min(100, [...bare.matchAll(BROWSER_ACTIONS)].length);
+  if (typeof code !== 'string' || code.length > 200000) return 0;
+  return Math.min(100, [...codeOnly(code).matchAll(BROWSER_ACTIONS)].length);
 }
 
 // A turbo step's outcome as a category: the outcome text quotes addresses and dialogs from the page.
@@ -278,9 +300,12 @@ export function actionLogPath(value, home = homedir()) {
 }
 
 export class ActionLog {
-  // clock: milliseconds for each call's time (ms), from its request to its reply.
-  constructor({ path, root = logRoot(), maxBytes = 5 * 1024 * 1024, keep = 2, now = () => new Date(), clock = () => performance.now(), home = homedir(), names } = {}) {
-    this.path = path; this.root = root; this.maxBytes = maxBytes; this.keep = keep; this.now = now; this.clock = clock; this.home = home;
+  // clock: milliseconds for each call's time (ms): from when the relay sent it on (its request, for sleight's own tools) to
+  // its reply, less the approval prompts open meanwhile. pid tells sessions sharing one log apart.
+  constructor({ path, root = logRoot(), maxBytes = 5 * 1024 * 1024, keep = 2, now = () => new Date(), clock = () => performance.now(), pid = process.pid,
+    home = homedir(), names } = {}) {
+    this.path = path; this.root = root; this.maxBytes = maxBytes; this.keep = keep; this.now = now; this.clock = clock; this.pid = pid; this.home = home;
+    this.waits = new Map();
     this.names = names; this.calls = new Map(); this.origins = new Map(); this.failures = 0; this.rotationFailures = 0;
   }
   scrub(text) {
@@ -299,6 +324,23 @@ export class ActionLog {
     if (this.calls.size >= 200) this.calls.delete(this.calls.keys().next().value);
     this.calls.set(msg.id, { name, args, outcomes: [], start: this.clock() });
   }
+  // The relay sent the call on to the engine or turbo: its time starts here, after sleight's own checks.
+  sent(id) {
+    const call = this.calls.get(id);
+    if (call && call.sent === undefined) call.sent = this.clock();
+  }
+  // An approval prompt opened or was answered. Its time comes off every call in flight.
+  waitStart(key) {
+    if (this.waits.size >= 50) this.waits.delete(this.waits.keys().next().value);
+    if (!this.waits.has(key)) this.waits.set(key, this.clock());
+  }
+  waitEnd(key) {
+    const start = this.waits.get(key);
+    if (start === undefined) return;
+    this.waits.delete(key);
+    const end = this.clock();
+    for (const call of this.calls.values()) if ((call.pauses ??= []).length < 50) call.pauses.push([start, end]);
+  }
   // Reads the relay sent this call as changed lines or left out (compact-reads.mjs); a continued call adds the rest's.
   saved(id, count) {
     const call = this.calls.get(id);
@@ -316,7 +358,14 @@ export class ActionLog {
     const call = msg?.method === undefined && this.calls.get(msg?.id);
     if (!call) return;
     this.calls.delete(msg.id);
-    const end = this.clock(), ms = Number.isFinite(end - call.start) ? Math.max(0, Math.round(end - call.start)) : undefined;
+    const end = this.clock(), start = call.sent ?? call.start;
+    // A prompt still open counts only for calls already running when it opened, so one whose answer never came back
+    // can't zero every later call. One prompt can show as two waits (the engine's and the client's), so overlaps count once.
+    const pauses = [...call.pauses ?? [], ...[...this.waits.values()].filter(opened => opened >= start).map(opened => [opened, end])]
+      .map(([a, b]) => [Math.max(a, start), Math.min(b, end)]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+    let paused = 0, reach = start;
+    for (const [a, b] of pauses) { if (b > reach) { paused += b - Math.max(a, reach); reach = b; } }
+    const ms = Number.isFinite(end - start - paused) ? Math.max(0, Math.round(end - start - paused)) : undefined;
     const text = (msg.result?.content ?? []).filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
     const tool = TOOLS.has(call.name) ? call.name : 'other';
     const error = !!msg.error || !!msg.result?.isError, base = { call: typeof msg.id === 'string' ? this.scrub(msg.id) : msg.id, tool };
@@ -353,7 +402,10 @@ export class ActionLog {
     } else if (/^browser_/.test(call.name)) {
       rows.push(...this.turbo(call, text, error, base, refused));
       // A diff since the last snapshot in place of the page: one read saved.
-      if (!error && ['browser_act', 'browser_fill', 'browser_read'].includes(call.name) && /^# Changes since snapshot \d+/m.test(text)) {
+      // Only sleight's own header counts: the first line that starts with "# " comes before any page content.
+      const header = text.split('\n').find(line => line.startsWith('# '));
+      if (!error && ['browser_act', 'browser_fill', 'browser_read'].includes(call.name) &&
+          /^# Changes since snapshot \d+; snapshot \d+ \(untrusted page content\)$/.test(header ?? '')) {
         call.saved = 1;
         if (!rows.length) rows.push({ ...base, ...this.where(call), kind: 'read', result: 'ok', outcome: 'compacted' });
       }
@@ -366,7 +418,8 @@ export class ActionLog {
         ...(error ? refused({}) : { result: 'ok', outcome: 'done' }) });
     }
     if (rows.length && call.saved) rows[0] = { ...rows[0], saved: call.saved };
-    this.write(ms === undefined ? rows : rows.map(row => ({ ...row, ms })));
+    const pid = Number.isSafeInteger(this.pid) ? { pid: this.pid } : {};
+    this.write(rows.map(row => ({ ...row, ...(ms === undefined ? {} : { ms }), ...pid })));
   }
   turbo(call, text, error, base, refused) {
     const { args } = call;

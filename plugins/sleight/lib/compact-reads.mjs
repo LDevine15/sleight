@@ -1296,6 +1296,17 @@ export const SCROLL_LOOP_NOTE = /* lean notice */ 'sleight: 3 calls in a row scr
   '`await app.pickFromList("<whole row text>")`, which pages by key and clicks that row. If it stops, loop up to a fixed count: ' +
   'scroll, read with getAXState(), and stop when the target shows or the rows stop changing.';
 
+// The guard trees in a call's output that answer Claude's own reads and went out compacted or were left out (omitted). Without
+// a read in the code every guard tree is the guard's; a call whose last action comes after its last read ends on the guard's
+// own read.
+function claudeReads(code, compacted, omitted) {
+  const masked = typeof code === 'string' ? maskCode(code) : '';
+  const lastRead = Math.max(-1, ...[...masked.matchAll(/\.\s*getAXState(?:AndScreenshot)?\s*\(/g)].map(match => match.index));
+  if (lastRead < 0) return 0;
+  const lastAction = Math.max(-1, ...[...masked.matchAll(/\.\s*(?:click|drag|scroll|selectText|setValue|performSecondaryAction|paste|pressKey|typeText)\s*\(/g)].map(match => match.index));
+  return omitted + (lastAction > lastRead ? compacted.slice(0, -1) : compacted).filter(Boolean).length;
+}
+
 export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TRIM === '1', leanCalls = false, prompt,
   callTrees = process.env.SLEIGHT_CALL_TREES !== 'all', scrollNote = process.env.SLEIGHT_SCROLL_NOTE !== '0',
   compactAcquisition = process.env.SLEIGHT_COMPACT_ACQUISITION === '1',
@@ -1322,8 +1333,10 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
   const screenshotWindows = readHints.screenshotWindows ??= new Set();
   const openedFiles = readHints.openedFiles ??= new Map();
   let latest, observedInResult, observationId = 0, textlessNoted = false, resultObservations = [], callCount = 0, listClicks = [], lastOutcomes;
-  // Reads the last call got as changed lines or not at all, for the action log's reads-saved count (action-stats.mjs).
-  let savedReads = 0, lastSaved = 0;
+  // Reads the last call got as changed lines or not at all, for the action log's reads-saved count (action-stats.mjs). Only
+  // reads Claude's code asked for count: guardTrees is whether each guard tree went out compacted, and the read the guard
+  // adds after a call's last action is sleight's own, so it never counts.
+  let savedReads = 0, lastSaved = 0, guardTrees = [];
   // document key -> tab list key -> { first, last, clicked, blamed, noted }: each tab strip's order when it
   // first appeared, for the save line, and the tab click a later order change followed.
   const tabOrders = new Map();
@@ -1546,7 +1559,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
     // Claude's other output. Each is compacted against what Claude saw before it.
     process(content, { forceFull = false, explicitFull = false, acquisition = false, action, failed = false, failure, code, screenshotWindow, filterMark = FILTERED_MARK,
       outcomeStart = 0, outcomeContinuing = false } = {}) {
-      listClicks = []; savedReads = 0; lastSaved = 0;
+      listClicks = []; savedReads = 0; lastSaved = 0; guardTrees = [];
       if (!Array.isArray(content)) return content;
       let filtered, typed, outcomeRecord;
       // The relay gives each rewritten call its own mark, so window text can't forge or strip one.
@@ -1640,7 +1653,6 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
             if (compactToolbars) {
               if (observedInResult?.lines?.join('\n') !== tree.replace(/\n+$/, '')) compact(tree, seenText, action, refreshNumbers);
             } else remember(tree, action);
-            savedReads++;
             pos = end + GUARD_END.length;
             continue;
           }
@@ -1665,7 +1677,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
             if (entry?.valid) for (const [num, key] of numbered(tree.replace(/\n+$/, '').split('\n'))) { entry.valid.add(num); entry.believed?.set(num, key); }
           }
           if (compactToolbars || sent === tree) shownTrees.add(tree.replace(/\n+$/, ''));
-          if (sent !== tree) savedReads++;
+          guardTrees.push(sent !== tree);
           if (end < 0 && observedInResult && !observedInResult.invalid) observedInResult.incomplete = true;
           add(sent); seenText += '\n' + sent;
           if (end < 0) break;
@@ -1675,7 +1687,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       });
       if (outcomeRecord) outcomeRecord.outcomes = outcomeRecord.outcomes.filter(Boolean);
       lastOutcomes = outcomeRecord;
-      lastSaved = savedReads + omittedReads;
+      lastSaved = savedReads + claudeReads(code, guardTrees, omittedReads);
       // A stop note that lists what wasn't sent covers the rest.
       const outcomeLines = outcomes && outcomeRecord && renderOutcomes(outcomeRecord, { start: outcomeStart, continuing: outcomeContinuing,
         notSent: content.some(item => item?.type === 'text' && /\bnot sent\b/.test(item.text ?? '')) });

@@ -8,9 +8,10 @@
   per action for each path, with native apps, turbo and the engine's browser path counted apart, and counts
   reads saved and failures. `--days N` and `--json` are options. With the log off, it says how to turn it on.
 - The glove's menu shows one row for the last 7 days while a session writes the log, such as
-  `Last 7 days: 1.2 s per action · turbo 0.4 s · 312 reads saved`.
-- Log lines gain `ms` (the call's time), `saved` (reads sent as changed lines or left out) and, for the
-  engine's browser path, one `call` line with the number of input calls its code names. The log stays
+  `Last 7 days: 1.2 s per native action · 0.4 s per turbo action · 312 reads saved`.
+- Log lines gain `ms` (the call's time from sending it on, less approval prompts), `pid`, `saved` (reads
+  Claude asked for that went out as changed lines or were left out) and, for the engine's browser path,
+  one `call` line with the number of input calls its code names. The log stays
   on this Mac. [Settings](docs/settings.md#stats).
 
 ## 1.3.1 (TODO: release date)

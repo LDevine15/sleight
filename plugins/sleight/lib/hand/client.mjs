@@ -71,16 +71,17 @@ const logUsage = env => async () => {
   return path ? (await import('../action-stats.mjs')).menuUsage({ path }) : undefined;
 };
 const seconds = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 3600;
-/** { perAction, turbo?, saved } exactly, or undefined. */
+/** { native?, turbo?, saved } exactly, with native or turbo, or undefined: each path's median seconds per action. */
 export function usageFrame(value) {
-  if (!value || typeof value !== 'object' || !seconds(value.perAction) || value.turbo !== undefined && !seconds(value.turbo) ||
+  if (!value || typeof value !== 'object' || value.native === undefined && value.turbo === undefined ||
+      value.native !== undefined && !seconds(value.native) || value.turbo !== undefined && !seconds(value.turbo) ||
       !(Number.isSafeInteger(value.saved) && value.saved >= 0 && value.saved <= 1e9)) return undefined;
-  return { perAction: value.perAction, ...value.turbo !== undefined ? { turbo: value.turbo } : {}, saved: value.saved };
+  return { ...value.native !== undefined ? { native: value.native } : {}, ...value.turbo !== undefined ? { turbo: value.turbo } : {}, saved: value.saved };
 }
 
 /** `enabled` is true while this session may still show the hand: the settings allow it and the host hasn't failed.
  *  permissions: the menu's Permissions rows (menu() gives { payload, offered }) and their clicks (apply), or null for none.
- *  usage: the menu's usage row ({ perAction, turbo?, saved } or undefined), read at most every usageMs, or null for none. */
+ *  usage: the menu's usage row ({ native?, turbo?, saved } or undefined), read at most every usageMs, or null for none. */
 export function createHandClient({ env = process.env, setting = () => handSetting({ env }), built = handHostBuilt, prepare = prepareHandHost,
   trace = () => {}, now = Date.now, defer = setImmediate, recheckMs = 60000, killAfterMs = 2000,
   setHand = async enabled => (await import('./command.mjs')).writeHandSetting({ enabled }),
@@ -208,9 +209,8 @@ export function createHandClient({ env = process.env, setting = () => handSettin
       const result = await prepare();
       if (host === 'dead') return undefined;
       if (result?.status !== 'ready') { die('unavailable', { code: result?.code }); return undefined; }
-      // The first menu frame already carries the Permissions rows and the usage row.
+      // The first menu frame already carries the Permissions rows. The usage row follows once the log is read.
       await loadPermissions();
-      await loadUsage();
       if (host === 'dead') return undefined;
       const started = result.spawn({ capture, consent });
       if (consent) attached.add(started);
@@ -223,6 +223,8 @@ export function createHandClient({ env = process.env, setting = () => handSettin
       setHandPid(started.pid);
       note('hand-started', { pid: started.pid, consent });
       write(menu());
+      statsAt = -Infinity;
+      refreshUsage();
       for (const { wire, at } of queue.splice(0)) write(act(wire, Math.max(0, wire.delayMs - (now() - at))));
       if (previous) stopChild(previous);
       return started;

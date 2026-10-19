@@ -149,24 +149,27 @@ func menuVisible(_ status: String?, requests: Int, handEnabled: Bool, sinceAct: 
     statusVisible(status, requests: requests) || handEnabled && (sinceAct.map { $0 >= 0 && $0 < handIdleWindow } ?? false)
 }
 // The usage row (1.4.0): the opt-in action log's last 7 days from the hand channel's menu frame, as numbers this host words.
-// Exact keys: perAction and saved, and turbo when turbo acted. Seconds run 0 to 3600, and reads saved is a whole number.
-struct UsageStats: Equatable { let perAction: Double, turbo: Double?, saved: Int }
+// Exact keys: saved, with native, turbo or both, each that path's median seconds per action (paths are never mixed). Seconds
+// run 0 to 3600, and reads saved is a whole number.
+struct UsageStats: Equatable { let native: Double?, turbo: Double?, saved: Int }
 func usageData(_ value: Any?) -> UsageStats? {
     func seconds(_ value: Any?) -> Double? {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite,
             number.doubleValue >= 0, number.doubleValue <= 3600 else { return nil }
         return number.doubleValue
     }
-    guard let data = value as? [String: Any], Set(data.keys) == ["perAction", "saved"] || Set(data.keys) == ["perAction", "turbo", "saved"],
-        let perAction = seconds(data["perAction"]), let saved = data["saved"] as? NSNumber, CFGetTypeID(saved) != CFBooleanGetTypeID(),
+    guard let data = value as? [String: Any], data["saved"] != nil, data["native"] != nil || data["turbo"] != nil,
+        Set(data.keys).isSubset(of: ["native", "turbo", "saved"]), let saved = data["saved"] as? NSNumber, CFGetTypeID(saved) != CFBooleanGetTypeID(),
         saved.doubleValue.rounded() == saved.doubleValue, saved.doubleValue >= 0, saved.doubleValue <= 1e9 else { return nil }
-    var turbo: Double?
+    var native: Double?, turbo: Double?
+    if data["native"] != nil { guard let value = seconds(data["native"]) else { return nil }; native = value }
     if data["turbo"] != nil { guard let value = seconds(data["turbo"]) else { return nil }; turbo = value }
-    return UsageStats(perAction: perAction, turbo: turbo, saved: Int(saved.doubleValue))
+    return UsageStats(native: native, turbo: turbo, saved: Int(saved.doubleValue))
 }
 func usageWords(_ usage: UsageStats) -> String {
-    var parts = [String(format: "%.1f s per action", usage.perAction)]
-    if let turbo = usage.turbo { parts.append(String(format: "turbo %.1f s", turbo)) }
+    var parts: [String] = []
+    if let native = usage.native { parts.append(String(format: "%.1f s per native action", native)) }
+    if let turbo = usage.turbo { parts.append(String(format: "%.1f s per turbo action", turbo)) }
     parts.append(usage.saved == 1 ? "1 read saved" : "\(usage.saved) reads saved")
     return "Last 7 days: " + parts.joined(separator: " · ")
 }
@@ -635,7 +638,8 @@ struct HandAct {
 }
 // menu: the hand's setting, capture mode and the plugin version, for the shared host's Ghost Hand row.
 // permissions: the Permissions submenu's rows (permissionsData), when the relay has them. usage: the usage row (usageData),
-// when this session writes the action log and it has timed actions.
+// when this session writes the action log and it has timed actions. A usage value this host can't admit drops only that row:
+// a bad number must never take the glove down.
 enum HandFrame { case act(String, HandAct), hide(String), menu(String, enabled: Bool, capture: String, version: String, permissions: PermissionsData?, usage: UsageStats?) }
 let handKinds: Set<String> = ["click", "double", "right", "key", "type", "drag", "scroll"]
 func handFrame(_ data: [String: Any]) -> HandFrame? {
@@ -663,9 +667,7 @@ func handFrame(_ data: [String: Any]) -> HandFrame? {
             else { return nil }
         let permissions = data["permissions"].map { permissionsData($0) }
         if let parsed = permissions, parsed == nil { return nil }
-        let usage = data["usage"].map { usageData($0) }
-        if let parsed = usage, parsed == nil { return nil }
-        return .menu(nonce, enabled: enabled.boolValue, capture: capture, version: version, permissions: permissions ?? nil, usage: usage ?? nil)
+        return .menu(nonce, enabled: enabled.boolValue, capture: capture, version: version, permissions: permissions ?? nil, usage: usageData(data["usage"]))
     }
     guard data["hand"] as? String == "act",
         Set(data.keys) == ["hand", "nonce", "seq", "kind", "pid", "windowId", "at", "path", "delayMs", "beats"],

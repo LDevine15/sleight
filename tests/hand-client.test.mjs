@@ -429,27 +429,32 @@ test('without a provider the menu frame has no Permissions rows, and a permissio
   assert.equal(h.traces.filter(([d]) => d === 'hand-toggle-refused').length, 1);
 });
 
-test('the menu frame carries the action log\'s last 7 days when it has timed actions, read again at most every five minutes', async t => {
+test('the menu frame carries the action log\'s last 7 days once read, after the host starts, and again at most every five minutes', async t => {
   t.after(() => setHandPid(0));
-  let clock = 0, reads = 0, next = { perAction: 1.5, turbo: 0.6, saved: 6 };
-  const h = harness({ now: () => clock, usage: async () => { reads++; return next; } });
+  let clock = 0, reads = 0, release, next = { native: 1.5, turbo: 0.6, saved: 6 };
+  const gate = new Promise(resolve => { release = resolve; });
+  const h = harness({ now: () => clock, usage: async () => { reads++; if (reads === 1) await gate; return next; } });
   h.client.send(frame()); await settle();
-  const [first] = h.children[0].menus;
-  assert.deepEqual(Object.keys(first), ['hand', 'nonce', 'enabled', 'capture', 'version', 'usage']);
-  assert.deepEqual(first.usage, { perAction: 1.5, turbo: 0.6, saved: 6 });
-  next = { perAction: 1.2, saved: 7 };
+  assert.equal(h.children.length, 1, 'the host starts without waiting for the log');
+  assert.equal(Object.hasOwn(h.children[0].menus[0], 'usage'), false);
+  release(); await settle();
+  const usage = h.children[0].menus.at(-1);
+  assert.deepEqual(Object.keys(usage), ['hand', 'nonce', 'enabled', 'capture', 'version', 'usage']);
+  assert.deepEqual(usage.usage, { native: 1.5, turbo: 0.6, saved: 6 });
+  next = { turbo: 1.2, saved: 7 };
   clock = 61000; h.client.send(frame()); await settle();
   assert.equal(reads, 1, 'the minute\'s recheck leaves the log alone inside five minutes');
   clock = 301000; h.client.send(frame()); await settle();
   assert.equal(reads, 2);
-  assert.deepEqual(h.children[0].menus.at(-1).usage, { perAction: 1.2, saved: 7 });
+  assert.deepEqual(h.children[0].menus.at(-1).usage, { turbo: 1.2, saved: 7 });
   const sent = h.children[0].menus.length;
   clock = 602000; h.client.send(frame()); await settle();
   assert.equal(h.children[0].menus.length, sent, 'no new frame when nothing changed');
-  for (const bad of [{ perAction: '1.2', saved: 7 }, { perAction: 1.2, saved: 7.5 }, { perAction: -1, saved: 7 }, { perAction: 1.2, saved: 7, turbo: Infinity }, null]) {
+  for (const bad of [{ native: '1.2', saved: 7 }, { native: 1.2, saved: 7.5 }, { native: -1, saved: 7 }, { native: 1.2, saved: 7, turbo: Infinity },
+    { saved: 7 }, { perAction: 1.2, saved: 7 }, null]) {
     next = bad; clock += 301000; h.client.send(frame()); await settle();
     assert.equal(Object.hasOwn(h.children[0].menus.at(-1), 'usage'), false, JSON.stringify(bad));
-    next = { perAction: 1, saved: 1 }; clock += 301000; h.client.send(frame()); await settle();
+    next = { native: 1, saved: 1 }; clock += 301000; h.client.send(frame()); await settle();
   }
 });
 
@@ -458,7 +463,7 @@ test('with the action log off the menu frame has no usage, and a failing read on
   for (const usage of [async () => undefined, async () => { throw Error('EACCES'); }]) {
     const h = harness({ usage });
     h.client.send(frame()); await settle();
-    assert.equal(Object.hasOwn(h.children[0].menus[0], 'usage'), false);
+    assert.ok(h.children[0].menus.every(menu => !Object.hasOwn(menu, 'usage')));
     h.client.close();
   }
 });
