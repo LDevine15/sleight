@@ -544,6 +544,13 @@ native reference, and oversized first results defer the browser reference while 
   lists the cut-off lines as added: 2,800 characters in the third call of the 2026-10-17 Excel replay.
   A re-acquisition with changes keeps its diff beside the call's own diff, two views of one window.
   Whether Haiku reads again after "no change" in an acquisition is unmeasured.
+- sleight answers a session's first handshake from a cache of the engine's earlier replies. If the engine changes without
+  a change to its version, launch path or settings, the first session to notice keeps the cached initialize answer
+  until it reconnects, since MCP can't initialize a client twice. That covers the engine's instructions, version and
+  capabilities. If the protocol version changed, the calls sent during startup fail once and ask Claude to call again. A
+  changed tool list reaches the client only if the engine advertised `listChanged`. Otherwise the session keeps the old
+  tool descriptions, and its calls run on the live engine. The next session gets the new replies. Unit-tested only.
+- When the engine's own initialize fails, every call in that session fails with the engine's error, cached or not.
 
 ## Specific apps
 

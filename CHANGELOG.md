@@ -31,6 +31,15 @@
 - When `select_window` doesn't find a match, it lists window titles whole up to 120 characters. It cut them at 60, and a Safari
   profile window's 69-character title couldn't be copied.
 
+### Startup
+
+- A session started with an A/B switch such as `SLEIGHT_FS=1`, right after sessions without it, failed every call with
+  "Engine tools changed" (the first task of a Firefox race round, 2026-10-19). The startup cache now
+  keeps only the engine's own replies, keyed on what starts the engine, and each session applies its own settings to
+  them. A cached reply that turns out stale no longer ends the session, which goes on with the engine's live reply, and
+  the cache is rewritten. Unit-tested on each of the 67 `SLEIGHT_*` switches in the plugin's code with every value it
+  checks for. Not yet run live.
+
 ## 1.3.0 (TODO: release date)
 
 Native actions read the app less, and browsers get a turbo path, on by default, beside the engine's tools.

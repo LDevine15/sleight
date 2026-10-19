@@ -918,9 +918,32 @@ export function createRelay({
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
+  // The tool list as this session shows it: the engine's tools rewritten by this session's settings, then sleight's own.
+  // The handshake cache stores the engine's list and answers through this too (startup-cache.mjs).
+  const clientTools = ({ tools, ...result }) => ({ ...result, tools: tools
+    .filter(t => !HIDDEN_TOOLS.has(t.name))
+    .filter(t => !documentMode || t.name === 'js' || t.name === TURN_END_TOOL)
+    .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t, !modHost()) : t))
+    .map(t => {
+      if (t.name !== 'js') return t;
+      const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows, { current: firstCallSteering });
+      if (compact !== undefined) return { ...t, description: compact };
+      const batched = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt, firstCallWindows) : t.description;
+      const description = firstCallSteering ? withInventoryNote(batched) : batched;
+      return { ...t, description: leanCalls ? leanCallDescription(description) : description };
+    })
+    .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [],
+      (modHost() || codexTurbo()) && directBrowser ? directBrowser.tools().map(t => engineBrowserOpen ? widenTurboOpen(t, directBrowser.browser) : t)
+        : engineBrowserOpen && !documentMode ? [engineOpenTool(prompt)] : [],
+      codexTurbo() ? [structuredClone(TURN_START)] : [])
+    // Claude Code defers MCP tools behind a search, which cost a turn before the first call, and
+    // again before the first drag (3/3 textedit-drag runs, 2026-10-08). sleight's descriptions
+    // are short, so all but the internal turn_ended load up front, local tools included.
+    .map(t => promptTool(t, prompt))
+    .map(t => (t.name !== TURN_END_TOOL && t.name !== TURN_START_TOOL ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } } : t)) });
   let startup = startupCache?.bind({
-    context: { approvalScope, firstCallBatch, prompt, changeReview, leanCalls, flowRules: !!flowRules, tools: localTools?.tools },
     send: msg => toClient(msg), forward: msg => clientLine(JSON.stringify(msg), true),
+    present: { tools: clientTools }, log: line => stderr.write(line + '\n'),
   });
   const clickResults = new TabClickResults();
   const journal = receipts || stateReview ? new TurnJournal({ redactTitles: redactReceiptTitles }) : undefined;
@@ -4705,29 +4728,9 @@ export function createRelay({
             description: 'Always adds the app to your pre-approved list (sleight-mcp allow remove takes it off).' } } };
       }
     }
-    if (msg.method === undefined && listRequests.delete(msg.id) && Array.isArray(msg.result?.tools)) {
-      msg.result.tools = msg.result.tools
-        .filter(t => !HIDDEN_TOOLS.has(t.name))
-        .filter(t => !documentMode || t.name === 'js' || t.name === TURN_END_TOOL)
-        .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t, !modHost()) : t))
-        .map(t => {
-          if (t.name !== 'js') return t;
-          const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows, { current: firstCallSteering });
-          if (compact !== undefined) return { ...t, description: compact };
-          const batched = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt, firstCallWindows) : t.description;
-          const description = firstCallSteering ? withInventoryNote(batched) : batched;
-          return { ...t, description: leanCalls ? leanCallDescription(description) : description };
-        })
-        .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [],
-          (modHost() || codexTurbo()) && directBrowser ? directBrowser.tools().map(t => engineBrowserOpen ? widenTurboOpen(t, directBrowser.browser) : t)
-            : engineBrowserOpen && !documentMode ? [engineOpenTool(prompt)] : [],
-          codexTurbo() ? [structuredClone(TURN_START)] : [])
-        // Claude Code defers MCP tools behind a search, which cost a turn before the first call, and
-        // again before the first drag (3/3 textedit-drag runs, 2026-10-08). sleight's descriptions
-        // are short, so all but the internal turn_ended load up front, local tools included.
-        .map(t => promptTool(t, prompt))
-        .map(t => (t.name !== TURN_END_TOOL && t.name !== TURN_START_TOOL ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } } : t));
-    }
+    // The handshake cache checks and records the engine's own replies, before this session's rewrites.
+    const engineReply = msg.method === undefined && startup?.expects(msg.id) ? structuredClone(msg) : undefined;
+    if (msg.method === undefined && listRequests.delete(msg.id) && Array.isArray(msg.result?.tools)) msg.result = clientTools(msg.result);
     if (panelNote) {
       if (Array.isArray(msg.result?.content)) msg.result.content.push({ type: 'text', text: panelNote });
       else if (msg.error && typeof msg.error.message === 'string') msg.error.message += '\n' + panelNote;
@@ -4868,7 +4871,7 @@ export function createRelay({
           return;
         }
       }
-      if (!startup?.reply(msg)) toClient(msg);
+      if (!startup?.reply(msg, engineReply)) toClient(msg);
     };
     // A list row the call's click left unchanged: the helper says whether it lies outside the list's visible
     // frame, and its note replaces "UI changed". The result waits for at most the helper's deadline.
