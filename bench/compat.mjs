@@ -183,7 +183,7 @@ export async function liveTier({ ownerAway, minIdleSeconds = 0, launcher = LAUNC
   try { unlock = await lock(lockPath, { wait: false }); }
   catch (error) { return { pending: 'another live run holds the lock', steps: [step('live', 'pending', 'another live run holds the lock', error.message)] }; }
   const steps = [];
-  let client, dir, launched, page, released = false;
+  let client, dir, launched, page, safariSince, released = false;
   const release = async () => {
     if (released) return;
     released = true;
@@ -195,6 +195,7 @@ export async function liveTier({ ownerAway, minIdleSeconds = 0, launcher = LAUNC
     await client?.close();
     if (launched && live.quitApp) await live.quitApp(live.CALCULATOR, launched).catch(() => {});
     await page?.close().catch(() => {});
+    if (safariSince && live.quitLaunchedSince) await live.quitLaunchedSince(live.SAFARI, safariSince).catch(() => {});
     await release();
   };
   const hold = () => (existsSync(holdPath) ? step('live', 'pending', `${holdPath} exists (another project's timed window)`) : undefined);
@@ -211,10 +212,13 @@ export async function liveTier({ ownerAway, minIdleSeconds = 0, launcher = LAUNC
       const nonce = randomBytes(6).toString('hex');
       const { openFixture, closeFixtures } = live.fixtures ?? await import('./real-fixture.mjs');
       steps.push(await live.runBrowserRead(client, { ...live, openPage: async () => {
+        safariSince = Date.now();
         const opened = await live.openSafariPage({ nonce, dir, open: openFixture, close: closeFixtures });
         page = { ...opened, close: async () => { const close = opened.close; page = undefined; await close(); } };
         return page;
       } }));
+      // runBrowserRead quit any Safari it launched; a Safari started later isn't this run's.
+      safariSince = undefined;
     } catch (error) {
       steps.push(step('live', 'error', 'the live checks stopped', error.message));
     } finally {

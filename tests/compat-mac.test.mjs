@@ -286,6 +286,18 @@ test('a signal during a live check closes the session, quits what it launched, r
   assert.equal(existsSync(join(dir, 'live.lock')), false);
 });
 
+test('a signal during the browser check quits the Safari that check launched before releasing the lock', async t => {
+  const dir = temp(t);
+  const { spawn } = await import('node:child_process');
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/compat-signal.mjs', import.meta.url)), dir, 'browser'], { stdio: ['ignore', 'pipe', 'inherit'] });
+  await new Promise(resolve => child.stdout.on('data', chunk => { if (String(chunk).includes('ready')) resolve(); }));
+  child.kill('SIGTERM');
+  const [code, signal] = await new Promise(resolve => child.once('exit', (...args) => resolve(args)));
+  assert.deepEqual([code, signal], [null, 'SIGTERM']);
+  assert.deepEqual(readFileSync(join(dir, 'marks'), 'utf8').trim().split('\n'), ['client closed', 'quit com.apple.Safari launched since number']);
+  assert.equal(existsSync(join(dir, 'live.lock')), false);
+});
+
 test('main rejects a --min-idle that is not a whole number before starting anything', async () => {
   const { main } = await import('../bench/compat.mjs');
   assert.equal(await main(['--min-idle', 'soon']), 2);

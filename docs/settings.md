@@ -452,6 +452,11 @@ asks Claude to chain later calls such as save and close into one, which happened
 `SLEIGHT_FIRST_CALL_BATCH=nosavestop` (for an A/B, not yet run) drops the instruction to end a call
 after Cmd+S and says sleight waits for the sheet a shortcut opens.
 
+`SLEIGHT_FS=1` (under A/B, off by default) replaces the engine's current js description with sleight's shorter text and
+says `cua.getState()` doesn't list windows. Every engine session reads it. On 10 native held-out tasks, three runs a side
+(2026-10-19), it passed 24 of 27 against 25 of 27 (word-memo 2/3, textedit-notes-table 1/3 against 2/3; textedit-window-drag, 0 of 6, left out) and word-brief went from 67.2 to
+100.2 s, so it stays off. The browser's keyboard new-tab sentence, once behind the same switch, is on for everyone.
+
 ## Result size
 
 `SLEIGHT_RESULT_TRIM=1` (under A/B) leaves a split acquisition's tree out of a result when the same

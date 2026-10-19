@@ -44,7 +44,8 @@ our own runs. Dates and engine versions are given where they matter.
   (above). It needs idle since the stop result arrived, so a user typing after the stop still refuses it. The relay trace
   records the refusal reason and the idle sample, but no traced round has run since.
 - Safari's tab continuation never fired in race-1017, where Cmd+T followed by typing stopped 36 of 36 runs inside Codex and 19 of 19
-  Claude Code chains. Safari's Start Page has no page content, so the navigation continuation took the stop first and then
+  Claude Code chains. It also stopped 6 of 6 times in the b10 to b12 rounds (2026-10-19), a turn each.
+  Safari's Start Page has no page content, so the navigation continuation took the stop first and then
   failed its idle check. In 1.4.0 the tab checks run first, a `Value: on` tab counts as selected, and a window that showed
   no tab bar may show two tabs, the old one named as the window was. That case needs Claude's last tree of the window
   whole, so a Cmd+T after a read with folded or trimmed lines still stops. None of this has run live yet. Safari's toolbar New Tab
@@ -56,7 +57,8 @@ our own runs. Dates and engine versions are given where they matter.
 - sleight's shorter js description hasn't matched the engine's text since its 2026-10-16 update, and never matched the
   computer-only text most sessions get, so Claude reads the engine's description with only its first-call rule rewritten.
   That text lists `cua.getState()` before `cua.getApp()`, and 39 of 72 b10 race runs opened with getState. `SLEIGHT_FS=1`
-  pins both current variants until its A/B, which has to cover native tasks too, since every engine session reads it.
+  pins both current variants. Every engine session reads it, and its native A/B (2026-10-19) passed 24 of 27 against 25 of
+  27 with word-brief 67.2 to 100.2 s, so it stays off until a reworded text passes one.
 - A continued call's result reports the second engine call's `codex/nodeReplExecutionDurationMs`, not the sum. In Firefox
   1.13 to 1.70 s per Cmd+T call fell outside it (b10, 2026-10-19): most likely the first call (a plain Cmd+T and read took
   1.20 to 1.29 s) plus two helper probes, whose time isn't measured yet. The relay trace now records the stop's engine
@@ -601,6 +603,15 @@ native reference, and oversized first results defer the browser reference while 
   REPL probe checks 3 of the 8 `cua` methods. The static check (`bench/compat-static.mjs`) still checks that the engine's
   JavaScript defines all 8. The Mac suite's first run on 2026-10-19 failed because the suite started the engine with computer alone
   and required all 8 (fixed in 1.3.1).
+- The first live-tier run (2026-10-19, engine 26.1013.40934) failed both checks on the checks' own bugs, never reaching
+  an engine fault. The Calculator check wrote a `getAXState` tree the call had already printed, so the display read found
+  two edit fields. The Safari fixture pressed File > New Window and saw zero window-created events in 3 s. With Safari profiles that
+  item can be a submenu. Safari kept one Start Page window afterwards, which a submenu press explains. The helper's
+  events weren't kept, so that cause is likely, not measured. The cleanup then left Safari running, since the fixture won't quit an app holding a window it
+  didn't create. The check now quits the one Safari process macOS dates after the check began. The fixes have unit tests
+  and haven't run live. The fixture still refuses a Safari whose own launch window appears after its helper starts
+  watching, and we haven't measured how often a cold launch does that, since the benchmark's Safari tasks so far started
+  with Safari running.
 
 ## Specific apps
 

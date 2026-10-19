@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CALCULATOR, SAFARI, fixturePage, keypadPlan, liveGate, openSafariPage, parseIdle, quitApp, runBrowserRead, runCalculator } from '../bench/compat/live.mjs';
+import { CALCULATOR, SAFARI, fixturePage, keypadPlan, liveGate, openSafariPage, parseIdle, quitApp, quitLaunchedSince, runBrowserRead, runCalculator } from '../bench/compat/live.mjs';
 
 const tree = readFileSync(new URL('./fixtures/calculator-tree.txt', import.meta.url), 'utf8');
 const text = value => ({ content: [{ type: 'text', text: value }] });
@@ -33,7 +33,11 @@ function calculatorClient({ result = '391', acquire = text('Window: "Calculator"
   return { calls, call: async (name, args) => {
     calls.push(args.code);
     if (args.code.includes('cua.getApp')) return acquire;
-    if (args.code.includes('getAXState')) return text(clicked ? display(result) : display('0'));
+    // As the engine does: getAXState prints its own tree unless emit is false, and nodeRepl.write adds a second copy.
+    if (args.code.includes('getAXState')) {
+      const state = clicked ? display(result) : display('0');
+      return text((args.code.includes('emit: false') ? '' : state + '\n') + (args.code.includes('nodeRepl.write') ? state : ''));
+    }
     if (args.code.includes('app.click')) { clicked = true; return text('done'); }
     if (args.code.includes('getScreenshot')) return shot ? { content: [{ type: 'image', mimeType: 'image/png', data: 'iVBOR' }] } : text('no image');
     throw new Error('unexpected ' + args.code);
@@ -142,4 +146,54 @@ test('openSafariPage serves the page on 127.0.0.1 and hands the fixture an owner
   const failed = [];
   await assert.rejects(openSafariPage({ nonce: 'n2', dir: '/tmp/x', open: async () => { throw new Error('setup failed'); }, close: async () => failed.push('closed') }), /setup failed/);
   assert.deepEqual(failed, ['closed']);
+});
+
+test('the Calculator check reads one tree after the clicks, as getAXState prints its own unless emit is false', async () => {
+  const client = calculatorClient();
+  const outcome = await runCalculator(client, apps());
+  assert.equal(outcome.status, 'pass', `${outcome.reason}: ${outcome.detail}`);
+  for (const code of client.calls.filter(code => code.includes('getAXState'))) assert.match(code, /emit: false/);
+});
+
+test('quitLaunchedSince quits only the one Safari process macOS dates after the check began', async () => {
+  const since = 1_792_000_000_000;
+  const scripts = [];
+  const run = async (cmd, args) => { scripts.push(JSON.parse(args.at(-1))); running = false; };
+  let running = true;
+  const state = (pids, launchDates) => async () => (running ? { running: true, pids, launchDates } : { running: false, pids: [], launchDates: [] });
+  const sleep = async () => {};
+  assert.equal(await quitLaunchedSince(SAFARI, since, { state: state([53150], [since + 1800]), run, sleep }), true);
+  assert.deepEqual(scripts, [{ op: 'quit', appId: SAFARI, pid: 53150, launchedAtMs: since }]);
+  running = true;
+  for (const [pids, dates] of [[[53150], [since - 1]], [[53150], [null]], [[53150, 53151], [since + 1, since + 2]]]) {
+    await assert.rejects(quitLaunchedSince(SAFARI, since, { state: state(pids, dates), run, sleep }), /left running/);
+  }
+  assert.equal(scripts.length, 1);
+  running = false;
+  assert.equal(await quitLaunchedSince(SAFARI, since, { state: state([], []), run, sleep }), false);
+  assert.equal(scripts.length, 1);
+});
+
+test('a browser check whose fixture setup failed still quits the Safari it launched', async () => {
+  // The first live run (2026-10-19): the fixture's setup failed, its close refused to quit Safari, and Safari stayed open.
+  const quits = [];
+  const host = (quit = async (bundle, since) => { quits.push([bundle, since]); return true; }) => ({
+    appState: async () => ({ running: false }), axTrusted: async () => true, quitLaunchedSince: quit,
+    openPage: async () => { throw new Error('Fixture setup failed: Browser creation ownership unconfirmed'); } });
+  const began = Date.now();
+  const stopped = await runBrowserRead(browserClient(fixturePage('abc')), host());
+  assert.deepEqual([stopped.status, stopped.detail, stopped.quitSafari, stopped.cleanup], ['error', 'Fixture setup failed: Browser creation ownership unconfirmed', true, undefined]);
+  assert.equal(quits.length, 1);
+  assert.equal(quits[0][0], SAFARI);
+  assert.ok(quits[0][1] >= began);
+  // A Safari it can't prove is its own stays running and keeps the live lock through the cleanup field.
+  const kept = await runBrowserRead(browserClient(fixturePage('abc')), host(async () => { throw new Error('com.apple.Safari is not one process launched by this check (pids 7); left running'); }));
+  assert.match(kept.cleanup, /left running/);
+  // A window close the fixture refused, followed by a quit of the whole Safari it launched, leaves nothing behind.
+  const p = { ...fixturePage('abc'), close: async () => { throw new Error('Owned Safari fixture window cleanup unconfirmed'); } };
+  const closed = await runBrowserRead(browserClient(p), { ...host(), openPage: async () => p });
+  assert.deepEqual([closed.status, closed.cleanup, closed.fixtureCleanup, closed.quitSafari], ['pass', undefined, 'Owned Safari fixture window cleanup unconfirmed', true]);
+  // A normal run whose fixture already quit Safari has nothing to quit.
+  const normal = await runBrowserRead(browserClient(fixturePage('abc')), { ...host(async () => false), openPage: async () => ({ ...fixturePage('abc'), close: async () => {} }) });
+  assert.deepEqual([normal.status, normal.quitSafari, normal.cleanup], ['pass', undefined, undefined]);
 });

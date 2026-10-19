@@ -56,6 +56,15 @@
   The failed stage and code go to the trace and, in benchmark rounds, to the task's `turbo-metrics.jsonl`. Not yet run
   live.
 
+### Browsers
+
+- A browser getApp result whose window shows its tab strip with a selected tab, as Firefox's does, now says to open a new tab
+  in one call with Cmd+T, the URL and Return. In three race rounds a side (2026-10-19, Haiku 5.5 at high effort, 12 tasks),
+  Firefox took 474.2, 450.8 and 440.1 s with it against 517.8, 488.5 and 512.0 s without, all 12/12. Safari's one-tab window
+  doesn't show a tab strip, so all 36 Safari results kept the earlier sentence, and native apps never see either one.
+- `SLEIGHT_FS=1` (under A/B) gives the js tool sleight's shorter description, which every session reads. On 10 native tasks
+  three times a side it passed 24 of 27 against 25 of 27 (one task that failed every run left out) and slowed word-brief from 67.2 to 100.2 s, so it stays off.
+
 ### Windows
 
 - When an action brings up a pop-up window, such as a sign-in window in Safari, the result says it belongs to the task in
