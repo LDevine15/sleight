@@ -67,7 +67,7 @@ export function promptNotice(text, prompt) {
       'sleight: setValue $1 reverted to $2; input went to $3. Click it, type, Return.')
     .replace(/^sleight: the alert says "(.*)" Its buttons: /s, 'sleight: alert "$1" buttons: ')
     .replace(/^sleight: the Undo item changed from "(.*?)" to "(.*?)", so the app recorded an edit since your last read of this window\. Treat that edit as done; don't open a gallery or pane to confirm it\.$/s,
-      'sleight: Undo now "$2" (was "$1"): edit recorded; no gallery or pane check needed.')
+      'sleight: Undo now "$2" (was "$1"): edit recorded; skip a gallery/pane check.')
     .replace(/^sleight: the text typed after clicking (.*?) isn't in (?:that field|those fields)\. `(.*?)` sets a field without typing\.$/s,
       'sleight: typing after clicking $1 missed it; $2 sets it.')
     .replace(' earlier reads of the same window in this call left out; the last is shown. Element numbers refer to the last tree.', ' earlier reads of this window omitted; numbers refer to the last tree.')
