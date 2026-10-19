@@ -115,7 +115,8 @@ export async function runSpeedMap(plan, runtime) {
         acquireMs: null, firstReadMs: null, warmReadMs: null, actionMs: null, afterReadMs: null,
         chars: null, nodes: null, cleanupConfirmed,
         // Setup diagnosis is codes and counts from the live runtime (setupDiagnosis), never text.
-        ...(error.setup && { setup: error.setup }), ...(Array.isArray(error.cleanupReasons) && { cleanupReasons: error.cleanupReasons }) });
+        ...(error.setup && { setup: error.setup }), ...(Array.isArray(error.cleanupReasons) && { cleanupReasons: error.cleanupReasons }),
+        ...(Array.isArray(error.attention) && { attention: error.attention }) });
       await runtime.publish(report);
       if (!cleanupConfirmed) throw Error('CLEANUP_UNCONFIRMED');
       return;
@@ -173,7 +174,11 @@ export async function runSpeedMap(plan, runtime) {
     for (const row of rows) {
       row.cleanupConfirmed &&= cleanup?.confirmed === true;
       row.cleanupReasons = cleanup?.reasons ?? [];
-      if (cleanup?.focusChanged) { row.status = 'unsafe'; row.failure = 'FOCUS_CHANGED'; }
+      row.attention = cleanup?.attention ?? [];
+      if (cleanup?.focusChanged) {
+        if (row.failure && row.failure !== 'FOCUS_CHANGED') row.sessionFailure = row.failure;
+        row.status = 'unsafe'; row.failure = 'FOCUS_CHANGED';
+      }
     }
     report.rows.push(...rows);
     if (mode === 'concurrent') report.cohorts.push({ app: task.id, trial, sessions: count, wallMs: runtime.now() - start });
@@ -210,6 +215,9 @@ export function summarizeSpeedMap({ rows, cohorts = [] }) {
     return { app: group.app, class: group.class, ownerAccount: group.ownerAccount, mode: group.mode,
       scope: [...new Set(group.rows.map(row => row.scope ?? 'unknown'))].join(', '),
       failures: [...new Set(group.rows.filter(row => row.failure).map(row => row.setup?.message ? `${row.failure}:${row.setup.message}` : row.failure))],
+      // One fixture per cell: count its attention events once, not once per concurrent session.
+      attention: group.rows.filter(row => !row.sessionIndex).flatMap(row => row.attention ?? [])
+        .reduce((counts, event) => ({ ...counts, [event.class]: (counts[event.class] ?? 0) + 1 }), {}),
       cohortWallMs: stats(qualifiedCohorts.map(cohort => cohort.wallMs)), attempted: group.rows.length, completed: completed.length,
       ...Object.fromEntries(['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes']
         .map(key => [key, stats(completed.map(row => row[key]))])) };
@@ -220,9 +228,10 @@ export function speedMarkdown(report) {
   const rounded = value => Number(value.toFixed(2));
   const cell = value => value.n ? `${rounded(value.median)} / ${rounded(value.p90)} (n=${value.n})` : 'not measured';
   const rows = [...(report.summary ?? summarizeSpeedMap(report))].sort((a, b) => a.class.localeCompare(b.class) || a.app.localeCompare(b.app));
-  const table = selected => '| Class | App | Mode | Scope | Failure | Complete | Setup wait | Acquire | First read | Warm read | Action | Readback | Characters | Nodes | Cohort lifecycle |\n' +
-    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' + selected.map(row =>
-      `| ${row.class} | ${row.app} | ${row.mode} | ${row.scope ?? 'unknown'} | ${(row.failures ?? []).join(', ') || 'none'} | ${row.completed}/${row.attempted} | ` +
+  const table = selected => '| Class | App | Mode | Scope | Failure | Attention | Complete | Setup wait | Acquire | First read | Warm read | Action | Readback | Characters | Nodes | Cohort lifecycle |\n' +
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' + selected.map(row =>
+      `| ${row.class} | ${row.app} | ${row.mode} | ${row.scope ?? 'unknown'} | ${(row.failures ?? []).join(', ') || 'none'} | ` +
+      `${Object.entries(row.attention ?? {}).map(([name, count]) => `${name} ${count}`).join(', ') || 'none'} | ${row.completed}/${row.attempted} | ` +
       ['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes', 'cohortWallMs'].map(key => cell(row[key] ?? { n: 0 })).join(' | ') + ' |').join('\n') + '\n';
   const account = rows.filter(row => row.ownerAccount), background = rows.filter(row => !row.ownerAccount);
   return '# App-class speed map\n\nTimes in ms, median / p90 (nearest rank). Counts describe the first explicit full read. ' +

@@ -4,10 +4,10 @@ import { mkdtempSync, mkdirSync, existsSync, readFileSync, symlinkSync, writeFil
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
-import { liveSpeedRuntime, speedOutput, setupDiagnosis, editorProfileArgs } from '../bench/app-speed-map-live.mjs';
+import { liveSpeedRuntime, speedOutput, setupDiagnosis, editorProfileArgs, attentionTracker } from '../bench/app-speed-map-live.mjs';
 import { speedPlan } from '../bench/app-speed-map.mjs';
 
-async function setup(t, { confirmed = true, focusChanged = false, startupFailure = false, details, id = 'textedit', hostError, hosts, base = tmpdir() } = {}) {
+async function setup(t, { confirmed = true, focusChanged = false, startupFailure = false, details, id = 'textedit', hostError, hosts, base = tmpdir(), samples } = {}) {
   const root = mkdtempSync(join(base, 'sleight-am1-test-'));
   t.after(() => removeTemp(root));
   const bank = join(root, 'bank'), calls = []; let unlocks = 0, approver;
@@ -22,7 +22,8 @@ async function setup(t, { confirmed = true, focusChanged = false, startupFailure
       if (id === 'textedit') { assert.equal(fixture.path,fixture.target); assert.match(readFileSync(fixture.target,'utf8'),/^AM1-/); }
       calls.push('host'); hosts?.push({ task, fixture });
       if (hostError) throw hostError;
-      fixture.onSample({focusChanged,targetOverOwner:false});
+      for (const sample of samples ?? [{ front: 'org.example.owner', stage: 'baseline', atMs: 0 },
+        ...(focusChanged ? [{ front: 'org.example.third', stage: 'retain', atMs: 400, focusChanged: true }] : [])]) fixture.onSample(sample);
       return {startup:{waitMs:2500,relaunches:0},finish:async()=>({confirmed,details,samples:[{focusChanged}]})};
     },
     makeClient:async(server, options)=>{
@@ -222,4 +223,80 @@ test('a prepared fixture keeps the host startup wait for the report', async t =>
   assert.equal(fixture.setupWaitMs, 2500);
   assert.equal(fixture.setupRelaunches, 0);
   await h.runtime.closeFixture(fixture); await h.runtime.close();
+});
+
+// AM1 qualification, 2026-10-19 04:41Z: Word's first cell stopped on FOCUS_CHANGED during setup, before any engine call.
+test('attention events name the phase, host stage, time and the frontmost bundle before and after', () => {
+  const tracker = attentionTracker({ bundle: 'com.microsoft.Word' });
+  assert.equal(tracker.observe({ front: 'org.example.owner', stage: 'baseline', atMs: 0 }), false);
+  assert.equal(tracker.observe({ front: 'com.microsoft.Word', stage: 'retain', atMs: 900, focusChanged: true }), false);
+  tracker.setPhase('measure');
+  assert.equal(tracker.observe({ front: 'com.microsoft.Word', stage: 'ready', atMs: 1700, focusChanged: true }), false);
+  assert.equal(tracker.observe({ front: 'org.example.third', stage: 'ready', atMs: 2500, focusChanged: true }), true);
+  assert.deepEqual(tracker.events, [
+    { phase: 'setup', hostStage: 'retain', atMs: 900, kind: 'focus', from: 'org.example.owner', to: 'com.microsoft.Word', class: 'launch-activation' },
+    { phase: 'measure', hostStage: 'ready', atMs: 2500, kind: 'focus', from: 'com.microsoft.Word', to: 'org.example.third', class: 'focus-change' },
+  ]);
+  assert.equal(tracker.stopped, true);
+});
+
+test('only the fixture app activating itself or covering during setup is classified rather than stopped', () => {
+  const third = attentionTracker({ bundle: 'com.microsoft.Word' });
+  third.observe({ front: 'org.example.owner', atMs: 0 });
+  assert.equal(third.observe({ front: 'org.example.third', stage: 'retain', atMs: 300 }), true);
+  assert.equal(third.events[0].class, 'focus-change');
+  const cover = attentionTracker({ bundle: 'com.microsoft.Word' });
+  cover.observe({ front: 'org.example.owner', atMs: 0 });
+  assert.equal(cover.observe({ front: 'org.example.owner', stage: 'retain', atMs: 300, targetOverOwner: true }), false);
+  assert.equal(cover.events[0].class, 'launch-cover');
+  cover.setPhase('measure');
+  assert.equal(cover.observe({ front: 'org.example.owner', atMs: 600, targetOverOwner: true }), false, 'a cover that started in setup is one event');
+  assert.equal(cover.observe({ front: 'org.example.owner', atMs: 900, targetOverOwner: false }), false);
+  assert.equal(cover.observe({ front: 'org.example.owner', atMs: 1200, targetOverOwner: true }), true);
+  assert.equal(cover.events.at(-1).class, 'cover');
+  assert.equal(cover.events.length, 2);
+});
+
+test('focus returning to the owner app is recorded and does not stop; cleanup changes still stop', () => {
+  const tracker = attentionTracker({ bundle: 'com.microsoft.Word' });
+  tracker.observe({ front: 'org.example.owner', atMs: 0 });
+  tracker.observe({ front: 'com.microsoft.Word', stage: 'retain', atMs: 500 });
+  tracker.setPhase('cleanup');
+  assert.equal(tracker.observe({ front: 'org.example.owner', stage: 'cleanup', atMs: 9000 }), false);
+  assert.equal(tracker.events.at(-1).class, 'focus-restored');
+  assert.equal(tracker.observe({ front: 'com.microsoft.Word', stage: 'cleanup', atMs: 9200 }), true);
+  assert.equal(tracker.events.at(-1).class, 'focus-change');
+});
+
+test('attention events keep bundle ids only and stay bounded', () => {
+  const tracker = attentionTracker({ bundle: 'com.microsoft.Word' });
+  tracker.observe({ front: 'org.example.owner', atMs: 0 });
+  tracker.observe({ front: 'Private window title!', stage: 'retain', atMs: 1 });
+  assert.equal(tracker.events[0].to, 'other');
+  for (let n = 0; n < 50; n++) tracker.observe({ front: n % 2 ? 'org.example.owner' : 'org.example.third', atMs: n + 2 });
+  assert.ok(tracker.events.length <= 20);
+  assert.ok(tracker.count > 20);
+  assert.doesNotMatch(JSON.stringify(tracker.events), /Private/);
+});
+
+test('a fixture app activating itself before the first engine call is classified; a later change still holds the run', async t => {
+  const h = await setup(t, { id: 'word', samples: [{ front: 'org.example.owner', stage: 'baseline', atMs: 0 },
+    { front: 'com.microsoft.Word', stage: 'retain', atMs: 1200, focusChanged: true }] });
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['word'], runs: 1 }).apps[0]);
+  assert.equal(h.runtime.held(), false);
+  const session = await h.runtime.openSession(fixture.task, fixture);
+  // Client startup is still before the first engine call; the fixture app finishing its own activation then is the launch.
+  fixture.onSample({ front: 'org.example.owner', stage: 'ready', atMs: 1600 });
+  fixture.onSample({ front: 'com.microsoft.Word', stage: 'ready', atMs: 2400 });
+  assert.equal(h.runtime.held(), false);
+  await session.js('1');
+  fixture.onSample({ front: 'org.example.third', stage: 'ready', atMs: 3000 });
+  assert.equal(h.runtime.held(), true, 'after the first engine call a change to another app stops the run');
+  await session.close();
+  const cleanup = await h.runtime.closeFixture(fixture);
+  assert.equal(cleanup.focusChanged, true);
+  assert.deepEqual(cleanup.attention.map(event => [event.phase, event.class]),
+    [['setup', 'launch-activation'], ['setup', 'focus-restored'], ['setup', 'launch-activation'], ['measure', 'focus-change']]);
+  await h.runtime.close();
+  assert.equal(h.unlocks, 1);
 });

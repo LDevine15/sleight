@@ -112,6 +112,13 @@ the claim suite's editor tasks. Apps that embed Electron, CEF or a Chromium fram
 `-ApplePersistenceIgnoreState` switch, because VS Code 1.141 reads its letters as short flags and `-s` (`--status`)
 quits a first instance.
 
+Every cell records focus and cover changes from the host's 200 ms samples. Each record gives the phase, the host stage,
+the time and the frontmost bundle ID before and after. Before the first engine call the only actor is the fixture app's
+own launch, so the app activating itself or covering the owner's window then counts as `launch-activation` or
+`launch-cover`. The row and the Attention column report it, and the run goes on. Focus returning to the owner's app is
+`focus-restored`. Any other change, or any change after the first engine call, stops the run as `FOCUS_CHANGED`, with
+the session's own failure kept as `sessionFailure`.
+
 ## Browser head-to-head
 
 sleight against Codex on the 12 web tasks (grid, editor, dense, spa, nested and infinite pages in

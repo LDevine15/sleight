@@ -1153,3 +1153,11 @@ test('a second instance appearing after the launched pid is known stops as ambig
   assert.equal(result.presses.length, 1);
   assert.equal(result.terminations, 1);
 });
+
+test('every host sample names the host stage it was taken in', () => {
+  // The window closes 3 s after the press, so cleanup samples while it waits.
+  const result = cleanupHost({ finishLaunchingAt: 1000, ownCloseAt: 3000 });
+  const stages = [...new Set(result.events.filter(e => e.stage === 'sample').map(e => e.sample.stage))];
+  assert.deepEqual(stages, ['baseline', 'retain', 'ready', 'cleanup']);
+  assert.ok(result.events.filter(e => e.stage === 'sample').every(e => 'front' in e.sample && Number.isFinite(e.sample.atMs)));
+});

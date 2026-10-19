@@ -705,7 +705,10 @@ native reference, and oversized first results defer the browser reference while 
   the VS Code cause offline. VS Code read AppKit's persistence switch as `--status` and quit, and its pid then answered
   -25204. The Word cause comes from the code path, not from a live receipt. Word's new window wasn't identified as the fixture
   in time, and that stop left Word open. The 60 s startup budget is a guess, since no run has measured how long VS Code,
-  Cursor, Word or Excel take to show an identifiable window here. Cursor, Excel and the concurrent cohort have never run.
+  Cursor, Word or Excel take to show an identifiable window here. Cursor, Excel and the concurrent cohort have never run. The
+  first qualification (2026-10-19, 04:41 UTC) stopped Word's first cell on FOCUS_CHANGED between the end of setup (1517 ms)
+  and the first engine call, with cleanup confirmed. Its samples kept only booleans, so we don't know whether Word activated
+  itself or its window covered the owner's. VS Code didn't run.
 
 ## Turbo in unattended runs
 
