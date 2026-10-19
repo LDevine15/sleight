@@ -46,7 +46,8 @@ our own runs. Dates and engine versions are given where they matter.
 - Safari's tab continuation never fired in race-1017, where Cmd+T followed by typing stopped 36 of 36 runs inside Codex and 19 of 19
   Claude Code chains. Safari's Start Page has no page content, so the navigation continuation took the stop first and then
   failed its idle check. In 1.4.0 the tab checks run first, a `Value: on` tab counts as selected, and a window that showed
-  no tab bar may show two tabs, the old one named as the window was. None of this has run live yet. Safari's toolbar New Tab
+  no tab bar may show two tabs, the old one named as the window was. That case needs Claude's last tree of the window
+  whole, so a Cmd+T after a read with folded or trimmed lines still stops. None of this has run live yet. Safari's toolbar New Tab
   button still stops, since it sits apart from the tabs. `SLEIGHT_FS=1` still names the keyboard route only for a window
   whose strip shows a selected tab, so Safari's one-tab window keeps the plain sentence. `SLEIGHT_TABC=0` turns all of it off.
 - After a tab continuation's Return, a result whose tree still names the new tab under the page's header reads again,

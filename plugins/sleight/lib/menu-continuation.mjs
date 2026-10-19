@@ -279,8 +279,8 @@ const TAB_KEY = /^(?:super|cmd|command|meta|ctrl|control)\+t$/i;
 // content is not the window's own tab strip. `valueOn`: a tab line with no state in parentheses is selected by its
 // `Value: on` attribute, as Safari marks its tabs (Value: on or off, no "(selected)").
 const tabsOf = (entries, { valueOn = false } = {}) => entries.flatMap((entry, index) => {
-  // "tab group" is the strip itself (and Safari's page area), never a tab.
-  const tab = !/^tab group(?: |,|$)/.test(entry.line) && /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(entry.line);
+  // "tab group" is the strip itself (and Safari's page area), never a tab; a tab titled "group chat" stays one (review).
+  const tab = !/^tab group(?:$|,| (?:Description|ID|Help|Secondary Actions): )/.test(entry.line) && /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(entry.line);
   if (!tab || underDocument(entries, index)) return [];
   const label = tab[2] ?? '';
   const selected = tab[1] ? /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]) : valueOn && /, Value: on(?:,|$)/.test(label);
@@ -405,9 +405,13 @@ export function tabRefusal(plan, receipt, expected, content, before, { hiddenStr
   if (!before || typeof before !== 'object') return 'no-earlier-tree';
   const entries = [...stopped.tree.matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
   const was = tabsOf(earlierEntries(before), { valueOn: hiddenStrip }), now = tabsOf(entries, { valueOn: hiddenStrip });
-  // The hidden strip needs the earlier tree to be this window's whole tree: its root line, under the title Claude saw.
-  const hidden = hiddenStrip && button === undefined && typeof before[0] === 'string' &&
-    before[0].replace(/^\t*/, '').startsWith(`standard window ${expected.title}`) && hiddenStripOpened(was, now, expected.title);
+  // The hidden strip needs the earlier tree to be this window's whole tree: its root line, under the title Claude saw, and
+  // every number from 0 up with none left out. A result that folded or trimmed lines (a toolbar holding a strip) leaves a gap,
+  // and a strip Claude never saw can't count as none (review: a tab switch would then look like a tab opening).
+  const numbers = Object.keys(before).map(Number).sort((a, b) => a - b);
+  const whole = numbers.every((number, i) => number === i) && typeof before[0] === 'string' &&
+    before[0].replace(/^\t*/, '').startsWith(`standard window ${expected.title}`);
+  const hidden = hiddenStrip && button === undefined && whole && hiddenStripOpened(was, now, expected.title);
   if (!oneMoreTab(was, now) && !hidden) return 'no-new-tab';
   const selected = now.filter(tab => tab.selected);
   if (button !== undefined) {

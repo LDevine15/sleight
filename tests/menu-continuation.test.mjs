@@ -810,6 +810,10 @@ for (const [name, tree, before, reason, expected = sfExpected] of [
   ['the old tab still selected', sfStart([sfTab('Gate 3f34', { active: true }), sfTab('Start Page')]), sfGate, 'no-new-tab'],
   ['both tabs on', sfStart([sfTab('Gate 3f34', { active: true }), sfTab('Start Page', { active: true })]), sfGate, 'no-new-tab'],
   ['an earlier tree without the window\'s root', sfStart(), sfGate.replace(/^0 standard window bench — Gate 3f34/m, '0 standard window Other'), 'no-new-tab'],
+  // Review: Claude's earlier tree with lines folded away (a gap in its numbers) may have hidden a strip of two tabs, and a tab
+  // switch in it would look like a tab opening.
+  ['an earlier tree with a gap in its numbers', sfStart(), sfGate.replace(/\n\t\t7 text field[^\n]*/, ''), 'no-new-tab'],
+  ['an earlier tree with a folded line', sfStart(), sfGate.replace('\t\t\t3 scroll area\n', ''), 'no-new-tab'],
   ['focus in the page', sfStart(undefined, '5 button Close'), sfGate, 'focus-not-app-field'],
   ['a sheet', sfStart().replace('\t6 toolbar', '\t11 sheet Confirm\n\t6 toolbar'), sfGate, 'sheet'],
   ['another app', sfStart().replace('App: Safari.', 'App: Other.'), sfGate, 'other-app'],
@@ -817,6 +821,13 @@ for (const [name, tree, before, reason, expected = sfExpected] of [
   const receipt = { ...sfReceipt, root: /^0 .*$/m.exec(tree)[0] };
   const content = [{ type: 'text', text: 'Input lease stopped this action: window or URL changed.\n' + tree }];
   assert.equal(tabRefusal(sfPlan, receipt, expected, content, linesOf(before), hidden), reason);
+});
+
+test('LB4 review: a tab titled "group chat" is a tab, and the strip\'s own tab group is not', () => {
+  const now = [sfTab('group chat'), sfTab('Start Page', { active: true })];
+  const gate = sfGate.replaceAll('Gate 3f34', 'group chat');
+  const expected = { ...sfExpected, title: 'bench — group chat' };
+  assert.equal(tabRefusal(sfPlan, sfReceipt, expected, sfStop(sfStart(now)), linesOf(gate), hidden), undefined);
 });
 
 test('LB4: the hidden strip never stands in for a click (the toolbar\'s New Tab button sits beside no tab)', () => {
