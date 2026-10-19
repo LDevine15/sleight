@@ -716,7 +716,9 @@ native reference, and oversized first results defer the browser reference while 
   kept, so its code is unknown. The Excel-only run (09:44 UTC) failed all 10 canvas scrolls and 5 of 10 four-session cohorts
   at acquisition, each cohort losing all four sessions together. That pattern points to the fixture's state in those cohorts,
   not contention among sessions. The cause isn't known, because the receipt kept only the error kinds (timeout, unsupported,
-  lease, approval). Excel's action is now a Page Down key, and the log keeps the error template.
+  lease, approval). Excel's action is now a Page Down key, and the log keeps the error template. At 09:55 UTC Excel completed
+  10/10 with the key, and its cohorts lost 11 of 40 acquisitions to one engine error with no AX code and no busy answer, cause
+  unknown. Results: docs/benchmarks/2026-10-19-speed-map.md.
 
 ## Turbo in unattended runs
 
