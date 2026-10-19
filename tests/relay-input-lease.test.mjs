@@ -844,11 +844,11 @@ const settled = () => new Promise(resolve => setTimeout(resolve, 20));
 const ONE = { status: 'responding', windows: 1, allWindows: 1, onScreen: 1 };
 const TWO = { status: 'responding', windows: 2, windowTitles: [SHOP_TITLE, 'Personal — Mail'], allWindows: 2, onScreen: 2 };
 // `probes`: the health probe's answers for successive getApp reads; the last one repeats.
-async function safariHarness(t, { select, tree = shopTree, probes = [ONE] } = {}) {
+async function safariHarness(t, { select, tree = shopTree, probes = [ONE], events } = {}) {
   const { harness } = setup(t);
   const target = { appId: 'com.apple.Safari', app: 'Safari', title: SHOP_TITLE, url: null };
   let probe = 0;
-  const h = harness('safari', { fresh: true, changeReview: false,
+  const h = harness('safari', { fresh: true, changeReview: false, ...(events ? { trace: (direction, msg) => { if (direction === 'popup-window') events.push(msg); } } : {}),
     spaceProbe: async () => probes[Math.min(probe++, probes.length - 1)], ...(select ? { localTools: {
     tools: [SELECT_WINDOW_TOOL], target: async () => target,
     call: async () => ({ content: [{ type: 'text', text: JSON.stringify({ ok: true, target }) }] }),
@@ -888,6 +888,35 @@ test('a pop-up an action brought up is tied to the window it came from, and so i
     h.send(rpc('next', 'js', { code: 'await app.click(4)' })); await settled();
     assert.equal(h.forwarded.at(-1)?.id, 'next', `select ${select}`);
   }
+});
+// FS2 (2026-10-19, safari-sleight-fs2on-r2): Haiku's Cmd+T call came back as a lease stop showing the same window
+// retitled, which dropped the count, so the DemoID click got no line, and Haiku stopped again.
+test('a lease stop that shows the counted window keeps the count (the FS2 flow)', async t => {
+  const events = [];
+  const h = await safariHarness(t, { events });
+  assert.deepEqual(events.at(-1), { event: 'census', app: 'Safari', id: SHOP, counted: true, status: 'responding', windows: 1, allWindows: 1, onScreen: 1 });
+  h.send(rpc('tab', 'js', { code: 'await app.pressKey("super+t"); await app.setValue({ id: "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD" }, "x"); await app.pressKey("Return"); await app.getAXState()' }));
+  await settled();
+  h.reply({ jsonrpc: '2.0', id: h.forwarded.at(-1).id, result: { isError: true, content: [{ type: 'text', text:
+    'Input lease stopped this action: window or URL changed. Read the intended window again before acting. Observed {"title":"sleight benchmark — Start Page","app":"Safari","url":null}\n' +
+    safariTree('Start Page', SHOP) }], _meta: { 'codex/toolSurface': { app: { appId: 'com.apple.Safari' } } } } });
+  await settled();
+  assert.ok(events.some(e => e.event === 'census-kept' && e.reason === 'stop-shows-counted-window'), JSON.stringify(events));
+  await clickResult(h, 'url', safariResult('url', shopTree));
+  assert.match(await clickResult(h, 'signin', safariResult('signin', popupTree)), POPUP_LINE);
+  assert.equal(events.at(-1).event, 'popup-line');
+});
+test('the trace names why a new window got no line', async t => {
+  let events = [];
+  let h = await safariHarness(t, { probes: [TWO], events });
+  await clickResult(h, 'two', safariResult('two', popupTree));
+  assert.deepEqual(events.map(e => e.event + ':' + (e.reason ?? e.counted)), ['census:false', 'no-line:no-one-window-count']);
+  events = [];
+  h = await safariHarness(t, { events });
+  h.send(rpc('fail', 'js', { code: 'await app.click(4); await app.getAXState()' })); await settled();
+  h.reply({ jsonrpc: '2.0', id: 'fail', result: { isError: true, content: [{ type: 'text', text: popupTree }], _meta: { 'codex/toolSurface': { app: { appId: 'com.apple.Safari' } } } } });
+  await settled();
+  assert.deepEqual(events.slice(1).map(e => e.event + ':' + e.reason), ['no-line:failed-call', 'census-dropped:stop-shows-other-window']);
 });
 test('the window count also comes from a first call that reads a property after getApp (Haiku b9-r2)', async t => {
   const { harness } = setup(t);

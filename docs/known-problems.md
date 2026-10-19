@@ -714,8 +714,10 @@ native reference, and oversized first results defer the browser reference while 
   window it came from, and later says when a window has the opener's ID. That needs a window ID on the root line (Firefox
   prints none), a read whose probe counted the acted-on window as the app's only one on any Space, and an action's own
   result showing the new window. A pop-up first shown by a separate read doesn't get the line. With more windows open, a
-  window that comes to the front doesn't get it either, since it may be the owner's. We haven't measured whether
-  CGWindowList counts Safari's one window as one, and no live run has checked the new note yet. The proposed race change is one
+  window that comes to the front doesn't get it either, since it may be the owner's. In the first live check (FS2,
+  2026-10-19) the line never showed. Haiku's Cmd+T call came back as a lease stop on the retitled window, and any stop
+  dropped the count. A stop that shows the counted window now keeps it. The trace records every count, and every reason
+  a new window doesn't get the line, as `popup-window`. We haven't measured whether CGWindowList counts Safari's one window as one. The proposed race change is one
   prompt clause for every arm: "a pop-up that a page in it opens is part of the task".
 - The race scorer's harness-failure check knows three error classes (`approval refused`, `no daemon`, `no tools`). A round that
   fails on some other shared cause, such as every call answering "Turbo is unavailable", is scored as the arm's failures until

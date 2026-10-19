@@ -36,11 +36,17 @@ test('popupWindows names a new ID as a pop-up after a one-window count of the wi
   let p = popupWindows();
   p.count('Safari', one, undefined);
   assert.equal(p.note(shop, popup), undefined);
-  // A read with no probe keeps the count; a stopped call drops it.
+  // A read with no probe keeps the count. A stopped call that shows another window, or no ID, drops it.
+  for (const id of ['M', undefined]) {
+    p = popupWindows();
+    p.count('Safari', one, 'A'); p.count('Safari', undefined, 'A');
+    p.stopped('Safari', id);
+    assert.equal(p.note(shop, popup), undefined, String(id));
+  }
+  // A stopped call that shows the counted window keeps it (FS2: the lease stop after Cmd+T retitled the window).
   p = popupWindows();
-  p.count('Safari', one, 'A'); p.count('Safari', undefined, 'A');
-  p.drop('Safari');
-  assert.equal(p.note(shop, popup), undefined);
+  p.count('Safari', one, 'A'); p.stopped('Safari', 'A');
+  assert.match(p.note(shop, popup), /^An earlier read counted/);
   // Counted, but the action ran in another window.
   p = popupWindows();
   p.count('Safari', one, 'A');
@@ -60,4 +66,31 @@ test('popupWindows names a new ID as a pop-up after a one-window count of the wi
   assert.equal(p.note(undefined, { ...popup, rootId: 'D' }), undefined);
   // `see` stays usable on its own.
   const { see } = p; see('Z');
+});
+
+test('popupWindows traces every census and every reason a new ID gets no line', () => {
+  const events = [], p = popupWindows(event => events.push(event));
+  const shop = { title: 'Shop', app: 'Safari', url: null, rootId: 'A' };
+  const reasons = () => events.filter(e => e.event === 'no-line').map(e => e.reason);
+  p.count('Safari', null, 'A');
+  assert.deepEqual(events.at(-1), { event: 'census', app: 'Safari', id: 'A', counted: false, status: null, windows: null, allWindows: null, onScreen: null });
+  p.note(shop, { ...shop, rootId: 'B' });
+  p.count('Safari', { status: 'responding', windows: 1, allWindows: 3, onScreen: 1 }, 'A');
+  assert.equal(events.at(-1).allWindows, 3);
+  p.count('Safari', undefined, 'A');
+  assert.equal(events.at(-1).event, 'census-unprobed');
+  p.note(shop, { ...shop, rootId: 'B' });
+  p.count('Safari', { status: 'responding', windows: 1, allWindows: 1 }, 'M');
+  p.note(shop, { ...shop, rootId: 'C' });
+  p.note({ ...shop, rootId: undefined }, { ...shop, rootId: 'D' });
+  p.note(shop, { ...shop, rootId: undefined });
+  p.note(shop, { ...shop, app: 'Firefox', rootId: 'E' });
+  p.stopped('Safari', 'Z');
+  assert.deepEqual(reasons(), ['no-one-window-count', 'shown-before', 'count-is-another-window', 'acted-on-window-has-no-id',
+    'shown-window-has-no-id', 'other-app']);
+  assert.equal(events.at(-1).reason, 'stop-shows-other-window');
+  // The same window adds no trace.
+  const before = events.length;
+  p.note(shop, { ...shop });
+  assert.equal(events.length, before);
 });
