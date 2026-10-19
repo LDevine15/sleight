@@ -270,6 +270,14 @@ extension, otherwise `computer` only. Set it to `computer` or `browser,computer`
 An engine started from ChatGPT.app, when there's no Codex plugin, is computer-only unless you set
 it. [How it works](how-it-works.md#browser-surface).
 
+`SLEIGHT_BROWSER_CORE=1` (off by default, waiting on an A/B) adds a `browser_open` tool for a
+browser turbo doesn't drive, such as Safari or Firefox. It takes `{ url, browser }`, the fields of
+turbo's tool. sleight acquires the browser and checks that it is a web browser whose front window
+has a tab strip and no sheet or dialog. It then sends Cmd+T, the URL and Return as an ordinary js
+call, so leases, app and site blocks and flow rules apply as they do to your own js. The result
+gives the window's js handle for the next steps. With turbo on, a call naming turbo's browser still
+goes to turbo.
+
 ## Turbo
 
 Turbo, the direct Chrome DevTools path for browsers, is on by default. At startup sleight writes
