@@ -4,7 +4,7 @@ set -eu
 cd "$(dirname "$0")"
 PIN=$(sed -n 's/.*"browser-use==\([^"]*\)".*/\1/p' pyproject.toml)
 if [ "${1:-}" = --dry-run ]; then
-  echo "uv sync --python 3.12 --frozen  # browser-use==${PIN}"
+  echo "uv sync --python 3.12 --frozen  # browser-use==${PIN}, security overrides in pyproject.toml"
   exit 0
 fi
 uv sync --python 3.12 --frozen
