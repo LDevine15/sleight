@@ -155,6 +155,14 @@ native claim and the browser race run as Mac load allows, so that Electron's run
    (the release push is approved). The Codex race fixes from the Sol pair (SOL-L1 a check that nothing covers the bench window, SOL-L2 a popup the
    leased window opened joins the lease, SOL-L3 inject-mail grader and a rescore of every arm) go into 1.4.0. All 1.4.0 building
    and its validation prep finish now, so 1.4.0's validation and release start right after 1.3.1 is out.
+   Owner, 2026-10-19 ~15:40Z: commits are authored as penguinspecz with the GitHub no-reply address (the repo had committed as
+   `penguinspecz <34923421+penguinspecz@users.noreply.github.com>` since 2026-10-12, which GitHub credited to a stranger's account), and the history is rewritten to credit those
+   commits to penguinspecz, with a force push of the public `main` and the tags. sleight-arch rewrites every branch at once
+   when 1.3.1 is ready and no builder is mid-flight, and records the old-to-new commit map. 1.4.0 also gets README and hub
+   visuals (generated charts, a demo clip, a diagram), a cleaner hub, GitHub Pages for the interactive results page, an
+   agent-first install (point a coding agent at the repo URL and it installs sleight), supported hosts and platforms stated up
+   front, and a taste pass over the front page on the assumption that it goes viral. The plan is
+   ledger/p140/readme-hub-pages-PLAN.md.
 6. The AM1 speed map of app classes, in 1.4.0 (owner, 2026-10-19). Its VS Code and Word fixtures still fail setup (AM1E designs the
    wait for a late accessibility tree).
 7. The ghost hand (owner, 2026-10-16): when sleight acts in a background app, a small translucent hand glides to the point in
