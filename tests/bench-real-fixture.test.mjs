@@ -1702,3 +1702,85 @@ test('native quit force-terminates a launched app that ignores an accepted quit,
     }
   }
 });
+
+test('document cleanup recognizes a sibling by the run nonce when each token is the document file name', () => {
+  // The world tasks pass token: basename(document), so Target-<nonce>.txt never appears in its sibling's title
+  // Source-<nonce>.txt. Matching on the token refused every sibling: 4 native passes stopped on 2026-10-19.
+  for (const [label, siblingTitle, setupCase, followsRaise, expect] of [
+    ['cold sibling stays focused', 'Source-nonce.txt', 'cold-launch', false, 'closed'],
+    ['running sibling follows', 'Source-nonce.txt', 'already-running', true, 'closed'],
+    ['cold stranger', 'Notes.txt', 'cold-launch', false, 'refused'],
+    ['running stranger', 'Notes.txt', 'already-running', true, 'refused'],
+  ]) {
+    const owned = {}, sibling = {}, button = {}, actions = [];
+    let focused = sibling, exists = true;
+    const fixture = cleanupNative((element, attribute) => {
+      if (attribute === 'AXFocusedWindow') return { value: focused };
+      if (element === sibling) return { value: attribute === 'AXTitle' ? siblingTitle : attribute === 'AXRole' ? 'AXWindow' : null };
+      if (attribute === 'AXCloseButton') { assert.equal(element, owned); return { value: button }; }
+      return { value: attribute === 'AXRole' ? exists ? 'AXWindow' : '' : attribute === 'AXTitle' ? 'Target-nonce.txt' : null };
+    }, { setupCase });
+    fixture.native.AXUIElementPerformAction = (element, action) => {
+      actions.push(action);
+      if (action === 'AXRaise') { assert.equal(element, owned); if (followsRaise) focused = owned; }
+      else { assert.equal(action, 'AXPress'); assert.equal(element, button); exists = false; }
+      return 0;
+    };
+    fixture.native.AXUIElementSetAttributeValue = () => 0;
+    const api = { ...fixture.api, wait() {} };
+    if (setupCase !== 'cold-launch') api.closeDocument = (_app, validate) => { validate(); actions.push('close'); exists = false; };
+    const close = () => fixture.sandbox.closeOwnedWindow(owned, { mode: 'document', token: 'Target-nonce.txt', runToken: 'nonce' }, {}, api);
+    if (expect === 'closed') { close(); assert.deepEqual(actions, ['AXRaise', setupCase === 'cold-launch' ? 'AXPress' : 'close'], label); }
+    else { assert.throws(close, /lost focus/, label); assert.deepEqual(actions, [], label); }
+  }
+});
+
+for (const stillThere of [false, true]) test(`a window that closes between two reads of the wait loop ${stillThere ? 'but still exists keeps the stop' : 'counts as closed'}`, () => {
+  // 3 TextEdit stops on 2026-10-19 read -25202 for AXDocument, AXSheets or AXRole at wait-0 or wait-2, every probe -25202.
+  const { closeOwnedWindow } = nativeSource(), window = {}, actions = [];
+  let gone = false;
+  const api = {
+    exists: () => !gone, text: () => 'File-nonce.txt', matches: () => true, focused: () => window, equal: (a, b) => a === b,
+    wait() {}, dialog: () => [], closeButton: (_window, validate) => { validate(); actions.push('button'); },
+    discard: () => {
+      actions.push('discard');
+      if (!stillThere) gone = true;
+      throw Object.assign(new Error('AX fixture read failed: -25202 (AXSheets)'), { code: -25202 });
+    },
+  };
+  const close = () => closeOwnedWindow(window, { mode: 'window', token: 'File-nonce.txt' }, {}, api);
+  if (stillThere) assert.throws(close, error => error.code === -25202);
+  else close();
+  assert.deepEqual(actions, ['button', 'discard']);
+});
+
+test('fixture slots fit side by side inside the visible frame of any display', () => {
+  const { fixtureFrame } = nativeSource();
+  // The built-in display on 2026-10-19 (3024 x 1964 pixels at 2x), with the menu bar and Dock taken out; a 5K display; a small one.
+  for (const visible of [{ x: 0, y: 33, width: 1512, height: 875 }, { x: 0, y: 25, width: 2560, height: 1415 }, { x: -1280, y: 25, width: 1280, height: 775 }]) {
+    const [left, right] = [0, 1].map(slot => fixtureFrame(visible, slot, 2));
+    assert.ok(left.x + left.width < right.x, `no overlap on ${visible.width}`);
+    for (const frame of [left, right]) {
+      assert.ok(frame.x >= visible.x && frame.x + frame.width <= visible.x + visible.width, 'inside horizontally');
+      assert.ok(frame.y >= visible.y && frame.y + frame.height <= visible.y + visible.height, 'inside vertically');
+      assert.ok(frame.width >= 320 && frame.height >= 240);
+    }
+  }
+  assert.throws(() => fixtureFrame({ x: 0, y: 25, width: 600, height: 400 }, 0, 2), /too small/);
+  assert.throws(() => fixtureFrame({ x: 0, y: 25, width: 1512, height: 875 }, 2, 2), /slot invalid/);
+});
+
+test('placement fails setup when the window does not end inside its own slot', () => {
+  const { placeFixtureWindow } = nativeSource(), visible = { x: 0, y: 33, width: 1512, height: 875 };
+  for (const [label, read, expect] of [
+    ['as asked', frame => frame, 'placed'],
+    ['narrower', frame => ({ ...frame, width: frame.width - 100 }), 'placed'],
+    ['cascaded over the first slot', frame => ({ ...frame, x: 40 }), 'refused'],
+    ['unreadable', () => null, 'refused'],
+  ]) {
+    let asked;
+    const api = { visibleFrame: () => visible, place: (_window, frame) => { asked = frame; }, frame: () => read(asked) };
+    if (expect === 'placed') assert.equal(placeFixtureWindow({}, { slot: 1, count: 2 }, api).slot, 1, label);
+    else assert.throws(() => placeFixtureWindow({}, { slot: 1, count: 2 }, api), /placement unconfirmed/, label);
+  }
+});

@@ -288,7 +288,7 @@ function validateOwnedFixture(window, request, app, api, focus, sibling) {
     if (focus) {
       var focused = api.focused(app);
       if (!api.equal(focused, window) && !(sibling && api.equal(focused, sibling) &&
-          api.text(sibling, 'AXTitle').indexOf(request.token) !== -1)) throw new Error('Owned document lost focus; cleanup refused');
+          api.text(sibling, 'AXTitle').indexOf(siblingToken(request)) !== -1)) throw new Error('Owned document lost focus; cleanup refused');
     }
     // Any waited read may have made an earlier check stale. Repeat all checks
     // before allowing the existing action to use the retained reference.
@@ -416,26 +416,60 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
   for (var attempt = 0; attempt < 30; attempt++) {
     step('wait-' + attempt);
     api.wait();
-    if (!api.exists(window) || closedUnderUs(window, app, api) || (request.mode === 'document' && !api.matches(window, request, true))) {
-      if (closedWithoutSheet(app, window, api)) return;
-      sheetLeft = true;
-      continue;
-    }
-    noDialog();
-    if (!request.refuseDialogs || (api.discardable && api.discardable(window, request, app))) {
-      api.discard(window, request.refuseDialogs ? discardIdentity : identity, request, app);
+    try {
+      if (!api.exists(window) || closedUnderUs(window, app, api) || (request.mode === 'document' && !api.matches(window, request, true))) {
+        if (closedWithoutSheet(app, window, api)) return;
+        sheetLeft = true;
+        continue;
+      }
+      noDialog();
+      if (!request.refuseDialogs || (api.discardable && api.discardable(window, request, app))) {
+        api.discard(window, request.refuseDialogs ? discardIdentity : identity, request, app);
+      }
+    } catch (error) {
+      // The close can finish between two reads of one check: the window answers AXRole, then is an invalid element (-25202)
+      // for AXDocument, AXSheets or AXRole (3 TextEdit stops on 2026-10-19, every probe -25202, listed=false). Only the
+      // retained window reading as gone continues the wait, and the next turn still requires no save sheet left behind.
+      if (!error || error.code !== -25202 || api.exists(window)) throw error;
     }
   }
   throw new Error(sheetLeft ? HIDDEN_SHEET : 'Owned fixture window is still open');
 }
 
+// A task that drags between two fixture windows needs both uncovered: TextEdit cascades a second document over the first,
+// and sleight's drag refused the drop as covered by the sibling in all 4 textedit-window-drag runs of 2026-10-19. Each
+// window gets its own slot in the primary display's visible frame (menu bar and Dock excluded), side by side with a gap,
+// so the slots never overlap on any display size. AX coordinates, origin at the primary display's top left.
+var PLACEMENT_GAP = 16;
+function fixtureFrame(visible, slot, count) {
+  if (!(count >= 1) || !(slot >= 0) || slot >= count || slot !== Math.floor(slot)) throw new Error('Fixture placement slot invalid');
+  var width = Math.floor(Math.min(720, (visible.width - PLACEMENT_GAP * (count + 1)) / count));
+  var height = Math.floor(Math.min(560, visible.height - PLACEMENT_GAP * 2));
+  if (!(width >= 320) || !(height >= 240)) throw new Error('Display too small for side-by-side fixture windows');
+  return { x: Math.round(visible.x + PLACEMENT_GAP + slot * (width + PLACEMENT_GAP)), y: Math.round(visible.y + PLACEMENT_GAP), width: width, height: height };
+}
+
+// The window must end inside its slot (half a gap of slack) and inside the visible frame, or setup fails before the task starts.
+function placeFixtureWindow(window, placement, api) {
+  var visible = api.visibleFrame(), frame = fixtureFrame(visible, placement.slot, placement.count);
+  api.place(window, frame);
+  var actual = api.frame(window), slack = PLACEMENT_GAP / 2;
+  var inSlot = actual && actual.x >= frame.x - slack && actual.x + actual.width <= frame.x + frame.width + slack &&
+    actual.y >= visible.y - 1 && actual.y + actual.height <= visible.y + visible.height + 1;
+  if (!inSlot) throw new Error('Fixture window placement unconfirmed (wanted ' + JSON.stringify(frame) + ', read ' + JSON.stringify(actual) + ')');
+  return { slot: placement.slot, count: placement.count, visible: visible, frame: frame, actual: actual };
+}
+
 // File > Close acts on the focused document, and a task with two fixture windows can leave the other one focused
 // (textedit-window-drag, 2026-10-16). Only when the focused window is a fixture of this run (its title carries the run's
 // nonce) is this one raised in the background. Any other focused window keeps the lost-focus refusal.
+// The nonce is the run token. A document's own token is its file name (Target-<nonce>.txt), which its sibling
+// (Source-<nonce>.txt) never carries: that check refused every sibling and stopped 4 native passes on 2026-10-19.
+function siblingToken(request) { return request.runToken || request.token; }
 function raiseOverSibling(window, request, app, api) {
-  if (!api.raise || !request.token) return;
+  if (!api.raise || !siblingToken(request)) return;
   var focused = api.focused(app);
-  if (!focused || api.equal(focused, window) || api.text(focused, 'AXTitle').indexOf(request.token) === -1) return;
+  if (!focused || api.equal(focused, window) || api.text(focused, 'AXTitle').indexOf(siblingToken(request)) === -1) return;
   api.raise(window);
   for (var attempt = 0; attempt < 20 && !api.equal(api.focused(app), window); attempt++) api.wait();
   return focused;
@@ -622,6 +656,7 @@ function recoverFixtureApplications(request, api, clock) {
 }
 
 function nativeAX(state, clock) {
+  var placementBound = false;
   function read(element, attribute) {
     var operation = function () {
       if (clock && clock.check) clock.check();
@@ -824,6 +859,46 @@ function nativeAX(state, clock) {
           pathAvailable: !!current, pathMatchesNormalizedTarget: !!current && current === normalizedTarget };
       }
       return { focused: describe(read(app, 'AXFocusedWindow')), main: describe(read(app, 'AXMainWindow')) };
+    },
+    visibleFrame: function () {
+      var screens = $.NSScreen.screens;
+      if (!screens || Number(screens.count) < 1) throw new Error('Fixture display unavailable');
+      var primary = screens.objectAtIndex(0), full = primary.frame, area = primary.visibleFrame;
+      return { x: Number(area.origin.x), y: Number(full.size.height) - (Number(area.origin.y) + Number(area.size.height)),
+        width: Number(area.size.width), height: Number(area.size.height) };
+    },
+    place: function (window, frame) {
+      if (clock && clock.check) clock.check();
+      if (!placementBound) {
+        ObjC.bindFunction('malloc', ['void*', ['unsigned long']]);
+        ObjC.bindFunction('free', ['void', ['void*']]);
+        ObjC.bindFunction('AXValueCreate', ['id', ['int', 'void*']]);
+        placementBound = true;
+      }
+      var set = function (attribute, type, boxed) {
+        var bytes = $.malloc(32);
+        try {
+          boxed.getValue(bytes);
+          var code = Number($.AXUIElementSetAttributeValue(window, $(attribute), $.AXValueCreate(type, bytes)));
+          if (code !== 0) throw Object.assign(new Error('Fixture window placement failed: ' + code + ' (' + attribute + ')'), { code: code });
+        } finally { $.free(bytes); }
+      };
+      set('AXSize', 2, $.NSValue.valueWithSize($.NSMakeSize(frame.width, frame.height)));
+      set('AXPosition', 1, $.NSValue.valueWithPoint($.NSMakePoint(frame.x, frame.y)));
+    },
+    // JXA's Ref('CGPoint') reads back as 0: copy the struct into bytes (plugins/sleight/lib/element-visibility.js).
+    frame: function (window) {
+      var pair = function (attribute, type) {
+        var value = read(window, attribute);
+        if (!value) return null;
+        var bytes = $.NSMutableData.dataWithLength(16);
+        if (!$.AXValueGetValue(value, type, bytes.mutableBytes)) return null;
+        var boxed = $.NSValue.valueWithBytesObjCType(bytes.bytes, type === 1 ? '{CGPoint=dd}' : '{CGSize=dd}');
+        var unwrapped = ObjC.deepUnwrap(type === 1 ? boxed.pointValue : boxed.sizeValue);
+        return type === 1 ? [Number(unwrapped.x), Number(unwrapped.y)] : [Number(unwrapped.width), Number(unwrapped.height)];
+      };
+      var position = pair('AXPosition', 1), size = pair('AXSize', 2);
+      return position && size ? { x: position[0], y: position[1], width: size[0], height: size[1] } : null;
     },
     raise: function (window) {
       if (clock && clock.check) clock.check();
@@ -1117,6 +1192,11 @@ function run(argv) {
   if (!applicationReady) throw new Error('Fixture application readiness unconfirmed');
   if (!inherited && !owned) throw new Error('Fixture identity could not be established without a window inventory');
   if (!inherited && !api.matches(owned, request)) throw new Error('Fixture document identity unconfirmed');
+  if (request.placement && !inherited) {
+    var placement = placeFixtureWindow(owned, request.placement, api);
+    if (!api.matches(owned, request)) throw new Error('Fixture document identity unconfirmed');
+    emit({ stage: 'placement', placement: placement });
+  }
   emit({ stage: 'ready', pid: pid, pids: pids.slice(), processHandoff: processHandoff,
     processStartedAtMs: processStartedAtMs,
     inheritReady: state.inheritReady, bundle: runningBundle(target) || request.bundle,

@@ -158,9 +158,11 @@ our own runs. Dates and engine versions are given where they matter.
   menu, and how often a session leaves one open is unmeasured. On 2026-10-17 an A/B run left Word in that loop with its Window
   menu open (main thread sample). AXCancel closed the menu, but Word still ignored Apple events. One Escape key event posted to
   Word's process with `CGEventPostToPid` released it, and Word then closed the fixture and quit by script.
-- `drag` can't drop text into another window. `from` and `to` are offsets from one window and must sit in the same text area,
-  so the benchmark's textedit-window-drag can't pass through it (0/1 on 2026-10-16, its first run). Whether the engine's
-  `app.drag` can move selected text between windows is unmeasured.
+- textedit-window-drag has never passed (0 of 12 recorded runs, 2026-10-16 to 2026-10-19). In all 4 transcripts of 2026-10-19,
+  `drag` with `toWindowId` first refused the drop as covered by the cascaded source window. The fixture now places the two
+  windows side by side in the display's visible frame, which no live run has tested yet. Two more `drag` faults showed up there:
+  its Accessibility move failed with "Ref has incompatible type" (2 of 4 runs), and one run read Notification Center
+  (window 40) as covering the source point. Claude then called `notifications`, the arm's approval was refused, and the pass stopped.
 - In both Firefox settings runs of 2026-10-17, `drag` by element number failed on the web list's rows (3 of 3 tries), so Claude
   used coordinates. Claude then sent 3 drags in the shown image's 2000-pixel frame, while the engine and `drag` read the
   2560-pixel original. Those runs got the frame note late or never. It now comes with the first screenshot of each window

@@ -107,6 +107,15 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
     app: request.app,
     pids: [],
     launched: false,
+    diagnostics,
+    // The cold-launch lease of this run whose exact process (pid, bundle, start time) this lease attached to, if any.
+    ownerLease() {
+      if (lease.running !== true || !(lease.pid > 0) || !(lease.processStartedAtMs > 0) || lease.bundle !== request.bundle) return undefined;
+      if (!launchedProcesses.some(item => item.pid === lease.pid && item.bundle === request.bundle &&
+        item.processStartedAtMs === lease.processStartedAtMs)) return undefined;
+      return ctx.windowLeases.find(other => other !== lease && other.running === false && other.launched && other.setupCase === 'cold-launch' &&
+        other.pid === lease.pid && other.bundle === request.bundle && other.processStartedAtMs === lease.processStartedAtMs);
+    },
     async quit({ final = false } = {}) {
       if (lease.running !== false || !lease.launched || request.app === 'Finder' || diagnostics.appQuit) return;
       if (createdWindow && diagnostics.windowCleanupConfirmed !== true) {
@@ -153,6 +162,21 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
     },
     async recover() {
       if (request.mode !== 'document') throw new Error('Fixture recovery requires a document fixture');
+      // A second document opened in the app an earlier lease of this run launched (textedit-two-windows and
+      // textedit-window-drag). That lease recovers first and quits the app, which takes this window with it, so this one
+      // only confirms the exact process is gone. Before this, such a cleanup failure stopped its pass (2 on 2026-10-19).
+      const owner = createdWindow || !lease.launched ? undefined : lease.ownerLease();
+      if (owner) {
+        if (owner.diagnostics.appQuit !== true) throw new Error('Fixture recovery requires the launching lease to quit its app first');
+        diagnostics.appQuit = false;
+        diagnostics.helperCollectionConfirmed = await lease.dispose();
+        if (!diagnostics.helperCollectionConfirmed) throw new Error('Fixture helper collection unconfirmed; recovery refused');
+        await confirmExit([{ pid: Number(lease.pid), processStartedAtMs: lease.processStartedAtMs }], 'recovery');
+        diagnostics.cleanup = 'closed with launched app';
+        diagnostics.windowCleanupConfirmed = true;
+        diagnostics.appQuit = true;
+        return;
+      }
       if (createdWindow || lease.running !== false || !lease.launched) throw new Error('Fixture recovery requires an app launched by this run');
       diagnostics.appQuit = false;
       diagnostics.helperCollectionConfirmed = await lease.dispose();
@@ -224,7 +248,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
             diagnostics[event.phase + 'TotalWaitMs'] = event.totalWaitMs;
           } else diagnostics.retries.push(retry);
         }
-        for (const key of ['windows', 'fresh', 'totalWaitMs', 'actionTaken', 'cleanup', 'cleanupError', 'menuCancelled', 'menuCancelMethod', 'menuItems', 'menuCommands', 'readiness', 'navigation', 'creation', 'foregroundFallback', 'launchWait', 'readWait', 'cleanupReadWait', 'observationReadWait', 'setupCase', 'inheritReady']) {
+        for (const key of ['windows', 'fresh', 'totalWaitMs', 'actionTaken', 'cleanup', 'cleanupError', 'menuCancelled', 'menuCancelMethod', 'menuItems', 'menuCommands', 'readiness', 'navigation', 'creation', 'foregroundFallback', 'launchWait', 'readWait', 'cleanupReadWait', 'observationReadWait', 'setupCase', 'inheritReady', 'placement']) {
           if (event[key] !== undefined) diagnostics[key] = event[key];
         }
         if (event.stage) stage(event.stage).resolve(event);
@@ -286,5 +310,9 @@ export async function closeFixtures(ctx) {
 export async function retryFixtureCleanup(ctx) {
   const leases = ctx.windowLeases ?? [];
   if (!leases.length || ctx.pendingAcquisitions?.size) throw new Error('Fixture recovery ownership unconfirmed');
-  for (const lease of [...leases].reverse()) await lease.recover();
+  // A lease that attached to an app another lease launched recovers after it, once that lease has quit the app.
+  const adopted = lease => typeof lease.ownerLease === 'function' && !!lease.ownerLease();
+  const ordered = [...leases].reverse();
+  for (const lease of ordered.filter(lease => !adopted(lease))) await lease.recover();
+  for (const lease of ordered.filter(adopted)) await lease.recover();
 }
