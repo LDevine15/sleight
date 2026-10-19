@@ -167,8 +167,9 @@ our own runs. Dates and engine versions are given where they matter.
   Dock's tiling backdrop (layer 0, left on screen after Move & Resize). The other is Notification Center's full-display window
   (layer 21), on screen while a banner shows. A Mimestream banner appeared at 15:38:53Z, half a screen from the source point,
   and `drag` refused the source point as covered. Claude then called `notifications`, the arm's approval was refused, and the
-  pass stopped. Another app's window now counts as cover at a point when the system-wide Accessibility hit test at that point
-  returns an element of that app, or fails. In a read-only probe on 2026-10-19, that hit test returned the TextEdit window
+  pass stopped. Now a macOS background agent's window (activation policy not regular, bundle under /System/Library) stops
+  counting as cover at a point if the system-wide Accessibility hit test there returns an element of the drag's own app.
+  Every other window still counts. In a read-only probe on 2026-10-19, that hit test returned the TextEdit window
   under the Dock backdrop. No banner was on screen during the probe. The banner case is untested and assumes the window server
   routes clicks outside the banner to the window below. A banner over the point still stops the drag, and the refusal now says
   to wait about 5 s and retry once.
