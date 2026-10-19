@@ -11,7 +11,7 @@ import { REAL_APPS } from '../bench/tasks.mjs';
 // Run the actual helper selector and launch choreography, replacing only the
 // compiler and process boundaries. No helper, app or engine starts.
 for (const [app, bundle, opens, initialStage] of [
-  ['Safari', 'com.apple.Safari', [['-g', '-a', 'Safari']], 'launch'],
+  ['Safari', 'com.apple.Safari', [['-g', '-a', 'Safari', '--args', '-ApplePersistenceIgnoreState', 'YES']], 'launch'],
   ['Helium', 'net.imput.helium', [['-n', '-g', '-a', 'Helium', '--args', '--new-window', 'http://127.0.0.1:1234/abc123/']], 'armed'],
 ]) test(`${app} web-page fixtures use the same helper and launch path as its older web tasks`, async t => {
   const dir = mkdtempSync(join(tmpdir(), 'web-fixture-routing-'));
@@ -52,12 +52,13 @@ test('all browser-table identities are approved in the real suite', () => {
   }
 });
 
-test('generic web fixtures reach the same accessibility gate for all five browsers', () => {
+// Safari's web pages need the profile-proven helper (CF4), so the JXA path refuses Safari before anything else.
+test('generic web fixtures reach the same accessibility gate for all five browsers, and JXA refuses Safari', () => {
   const sandbox = { ObjC: { import() {}, unwrap: value => value }, $: { AXIsProcessTrusted: () => false } };
   runInNewContext(readFileSync(new URL('../bench/real-fixture.js', import.meta.url), 'utf8'), sandbox);
   for (const { app, bundle } of webBrowsers) assert.throws(() => sandbox.run([JSON.stringify({
     app, bundle, fixtureKind: 'web-page', mode: 'window', control: '/fixture/control', target: 'http://127.0.0.1:1234/abc123/',
-  })]), /Accessibility is unavailable/);
+  })]), bundle === 'com.apple.Safari' ? /Safari setup requires the profile-proven created-window helper/ : /Accessibility is unavailable/);
 });
 
 test('every web task requests the generic web fixture kind without browser-specific setup', async () => {
