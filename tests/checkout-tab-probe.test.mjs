@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, writeFileSync, readFileSync, utimesSync } from 'node:fs';
+import { constants, openSync, closeSync, mkdtempSync, existsSync, writeFileSync, readFileSync, utimesSync, lstatSync } from 'node:fs';
+import * as engineFS from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
@@ -29,10 +30,15 @@ test('CK3 admits only a literal awaited new-tab URL and Return chain', () => {
   }
 });
 
-async function fixture(t, { observe = async () => identity, current = () => tree, onType = () => {}, onOutput = () => {}, guardDate = Date } = {}) {
+const requestPaths = info => Array.from({ length: 8 }, (_, i) => info.request + '-' + i);
+const requestSample = (info, index = 0) => openSync(requestPaths(info)[index], constants.O_RDONLY | constants.O_NONBLOCK);
+
+async function fixture(t, { observe = async () => identity, current = () => tree, onType = () => {}, onOutput = () => {}, guardDate = Date,
+  sandboxFS = engineFS, setupProbe = () => {} } = {}) {
   const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-'))));
   const probe = createTabProbe({ directory, observe, intervalMs: 2, timeoutMs: 20, deadlineMs: 650, freshMs: 30 });
   const info = probe.begin(1, target);
+  setupProbe(info);
   t.after(() => probe.dispose());
   const calls = [], output = [];
   const raw = { getAXState: async () => { calls.push('read'); return current(); },
@@ -40,9 +46,10 @@ async function fixture(t, { observe = async () => identity, current = () => tree
   return { info, calls, output, run: async (options = {}) => {
     const { lease, ...checks } = options;
     try {
-      await new AsyncFunction('app', 'cua', 'nodeRepl', 'Date', guardedCode('await app.typeText("https://example.test"); await app.pressKey("Return");',
-        expected, 'window changed', lease, { careful: true, tabProbe: info, guardStopMark: '[ck]', ...checks }))(raw,
-        { getApp: async () => raw }, { write: value => { output.push(value); onOutput(value); } }, guardDate);
+      const code = guardedCode('await app.typeText("https://example.test"); await app.pressKey("Return");',
+        expected, 'window changed', lease, { careful: true, tabProbe: info, guardStopMark: '[ck]', ...checks });
+      await new AsyncFunction('app', 'cua', 'nodeRepl', 'Date', 'sandboxFS', code.replace("await import('node:fs')", 'sandboxFS'))(raw,
+        { getApp: async () => raw }, { write: value => { output.push(value); onOutput(value); } }, guardDate, sandboxFS);
     } finally { delete globalThis.__sleightDocumentGuard; delete globalThis.__sleightDocumentGuardSetup; probe.end(1); }
   } };
 }
@@ -53,6 +60,99 @@ test('CK3 remainder probes address focus before typing and Return and keeps its 
   assert.deepEqual(f.calls, ['typeText', 'pressKey', 'read']);
   assert.equal(existsSync(f.info.path), false);
   assert.equal(f.output.filter(line => /"tabProbe"/.test(line)).length, 2);
+});
+
+test('CK3 requests reach the relay when the engine sandbox refuses every file write', async t => {
+  let writes = 0, opens = 0;
+  const promises = { ...engineFS.promises,
+    writeFile: async () => { writes++; throw Object.assign(Error('sandbox denied write'), { code: 'EPERM', syscall: 'open' }); },
+    open: async (path, flags) => {
+      opens++;
+      assert.equal(flags, constants.O_RDONLY | constants.O_NONBLOCK);
+      assert.equal(lstatSync(path).isFIFO(), true);
+      assert.equal(lstatSync(path).mode & 0o777, 0o600);
+      return engineFS.promises.open(path, flags);
+    } };
+  await assert.rejects(promises.writeFile('/sandbox/request', '{}'), { code: 'EPERM', syscall: 'open' });
+  const f = await fixture(t, { sandboxFS: { constants, promises } });
+  await f.run();
+  assert.equal(writes, 1, 'only the simulated old request write was refused');
+  assert.equal(opens, 4, 'two samples for each guarded input');
+  assert.deepEqual(f.calls, ['typeText', 'pressKey', 'read']);
+  const decisions = f.output.filter(line => line.includes('"tabProbe"')).map(line => JSON.parse(line.slice(4)).tabProbe);
+  assert.equal(decisions.length, 2);
+  for (const decision of decisions) {
+    assert.equal(decision.decision, 'probe');
+    assert.equal(decision.channel, 'read-fifo');
+    assert.equal(decision.failureStep, null);
+    assert.equal(decision.errno, null);
+    assert.equal(decision.syscall, null);
+    assert.ok(Number.isFinite(decision.sampleMs));
+  }
+});
+
+test('CK3 a sandboxed FIFO open refusal traces the step and errno and keeps every read', async t => {
+  const f = await fixture(t, { sandboxFS: { constants, promises: { ...engineFS.promises,
+    open: async () => { throw Object.assign(Error('sandbox denied open'), { code: 'EPERM', syscall: 'open' }); } } } });
+  await f.run();
+  assert.deepEqual(f.calls, ['read', 'typeText', 'read', 'pressKey', 'read']);
+  const { tabProbe: decision } = JSON.parse(f.output[0].slice(4));
+  assert.equal(decision.decision, 'read');
+  assert.equal(decision.reason, 'probe-failed');
+  assert.equal(decision.failureStep, 'request-open');
+  assert.equal(decision.errno, 'EPERM');
+  assert.equal(decision.syscall, 'open');
+});
+
+test('CK3 a native probe refusal traces its errno and retains full reads', async t => {
+  const f = await fixture(t, { observe: async () => { throw Object.assign(Error('helper pipe failed'), { code: 'EPIPE', syscall: 'write' }); } });
+  await f.run();
+  assert.deepEqual(f.calls, ['read', 'typeText', 'read', 'pressKey', 'read']);
+  const { tabProbe: decision } = JSON.parse(f.output[0].slice(4));
+  assert.equal(decision.reason, 'probe-failed');
+  assert.equal(decision.failureStep, 'native-observe');
+  assert.equal(decision.errno, 'EPIPE');
+  assert.equal(decision.syscall, 'write');
+});
+
+test('CK3 an unreadable observation traces its errno and closes its request reader', async t => {
+  let closes = 0;
+  const f = await fixture(t, { sandboxFS: { constants, promises: { ...engineFS.promises,
+    open: async (...args) => {
+      const handle = await engineFS.promises.open(...args);
+      return { close: async () => { closes++; await handle.close(); } };
+    },
+    readFile: async () => { throw Object.assign(Error('sandbox denied read'), { code: 'EACCES', syscall: 'open' }); } } } });
+  await f.run();
+  assert.deepEqual(f.calls, ['read', 'typeText', 'read', 'pressKey', 'read']);
+  assert.equal(closes, 1);
+  const { tabProbe: decision } = JSON.parse(f.output[0].slice(4));
+  assert.equal(decision.reason, 'probe-timeout');
+  assert.equal(decision.failureStep, 'observation-read');
+  assert.equal(decision.errno, 'EACCES');
+});
+
+test('CK3 request creation failure is traced by the guard before its ordinary reads', async t => {
+  const f = await fixture(t, { setupProbe: info => {
+    info.failure = { failureStep: 'request-create', errno: 'EACCES', syscall: 'mkfifo' };
+  } });
+  await f.run();
+  assert.deepEqual(f.calls, ['read', 'typeText', 'read', 'pressKey', 'read']);
+  const { tabProbe: decision } = JSON.parse(f.output[0].slice(4));
+  assert.equal(decision.failureStep, 'request-create');
+  assert.equal(decision.errno, 'EACCES');
+  assert.equal(decision.syscall, 'mkfifo');
+});
+
+test('CK3 a failed relay FIFO utility returns a fallback with its process status', t => {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-create-'))));
+  const probe = createTabProbe({ directory: join(directory, 'absent'), observe: async () => assert.fail('no native work') });
+  t.after(() => probe.dispose());
+  const info = probe.begin(1, target);
+  assert.equal(info.channel, 'read-fifo');
+  assert.equal(info.failure.failureStep, 'request-create');
+  assert.equal(info.failure.exitCode, 1);
+  assert.equal(info.failure.errno, null, 'mkfifo exits without exposing an errno code');
 });
 
 for (const [reason, observed] of [
@@ -138,7 +238,7 @@ test('CK3 ending a call prevents a late helper reply from recreating its observa
   const probe = createTabProbe({ directory, observe: () => new Promise(resolve => { finish = resolve; }) });
   t.after(() => probe.dispose());
   const info = probe.begin(1, target);
-  if (info.request) writeFileSync(info.request, JSON.stringify({ id: 'late' }));
+  const fd = requestSample(info); t.after(() => closeSync(fd));
   for (let i = 0; i < 100 && !finish; i++) await new Promise(r => setTimeout(r, 5));
   probe.end(1);
   finish(identity);
@@ -232,27 +332,65 @@ test('CK3 performs no native work until the guard requests samples', async t => 
   const info = probe.begin(1, target);
   await new Promise(resolve => setTimeout(resolve, 40));
   assert.equal(count, 0);
-  writeFileSync(info.request, JSON.stringify({ id: 'one' }));
+  const first = requestSample(info); t.after(() => closeSync(first));
   for (let i = 0; i < 100 && !existsSync(info.path); i++) await new Promise(r => setTimeout(r, 5));
-  assert.equal(JSON.parse(readFileSync(info.path)).request, 'one');
+  assert.equal(JSON.parse(readFileSync(info.path)).request, 1);
   await new Promise(resolve => setTimeout(resolve, 40));
   assert.equal(count, 1);
-  writeFileSync(info.request, JSON.stringify({ id: 'two' }));
+  const second = requestSample(info, 1); t.after(() => closeSync(second));
   for (let i = 0; i < 100 && count < 2; i++) await new Promise(r => setTimeout(r, 5));
   assert.equal(count, 2);
   probe.end(1);
-  assert.equal(existsSync(info.request), false);
+  for (const path of requestPaths(info)) assert.equal(existsSync(path), false);
 });
+
+test('CK3 each read-only request is used once and no more than eight walks run', async t => {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-bound-'))));
+  let count = 0;
+  const probe = createTabProbe({ directory, observe: async () => { count++; return identity; }, intervalMs: 2 });
+  t.after(() => probe.dispose());
+  const info = probe.begin(1, target);
+  const fds = requestPaths(info).map(path => openSync(path, constants.O_RDONLY | constants.O_NONBLOCK));
+  t.after(() => fds.forEach(fd => closeSync(fd)));
+  for (let i = 0; i < 100 && count < 8; i++) await new Promise(r => setTimeout(r, 5));
+  assert.equal(count, 8);
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(count, 8);
+});
+
+test('CK3 relay publication failures include the step and errno in the channel trace', async t => {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-publish-'))));
+  const traces = [];
+  let info;
+  const probe = createTabProbe({ directory, intervalMs: 2,
+    observe: async () => { engineFS.mkdirSync(info.path + '.tmp'); return identity; },
+    trace: (direction, record) => traces.push({ direction, ...record }) });
+  t.after(() => probe.dispose());
+  info = probe.begin(1, target);
+  const fd = requestSample(info); t.after(() => closeSync(fd));
+  for (let i = 0; i < 100 && !traces.length; i++) await new Promise(r => setTimeout(r, 5));
+  assert.equal(traces[0]?.direction, 'tab-probe-channel');
+  assert.equal(traces[0].failureStep, 'observation-publish');
+  assert.equal(traces[0].errno, 'EISDIR');
+  assert.equal(traces[0].syscall, 'open');
+  assert.equal(existsSync(info.path), false);
+});
+
 test('CK3 startup removes only stale observation and request files', t => {
   const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-stale-'))));
   for (const name of ['tab-old.obs', 'tab-old.obs.tmp', 'tab-old.req', 'tab-old.req.tmp', 'lease.json', 'other.obs']) {
     const path = join(directory, name); writeFileSync(path, '{}'); utimesSync(path, new Date(Date.now() - 120000), new Date(Date.now() - 120000));
   }
   writeFileSync(join(directory, 'tab-active.obs'), '{}');
+  const source = createTabProbe({ directory, observe: async () => identity });
+  t.after(() => source.dispose());
+  const info = source.begin(1, target);
+  for (const path of requestPaths(info)) utimesSync(path, new Date(Date.now() - 120000), new Date(Date.now() - 120000));
   const probe = createTabProbe({ directory, observe: async () => identity });
   t.after(() => probe.dispose());
   for (const name of ['tab-old.obs', 'tab-old.obs.tmp', 'tab-old.req', 'tab-old.req.tmp']) assert.equal(existsSync(join(directory, name)), false);
   for (const name of ['lease.json', 'other.obs', 'tab-active.obs']) assert.equal(existsSync(join(directory, name)), true);
+  for (const path of requestPaths(info)) assert.equal(existsSync(path), false);
 });
 
 test('CK3 timing variation does not change the chrome stability signature', async t => {
@@ -267,10 +405,10 @@ test('CK3 a timed-out request never queues another native walk or publishes a la
   const probe = createTabProbe({ directory, timeoutMs: 10, intervalMs: 2, observe: () => { count++; return new Promise(r => { finish = r; }); } });
   t.after(() => probe.dispose());
   const info = probe.begin(1, target);
-  writeFileSync(info.request, JSON.stringify({ id: 'first' }));
+  const first = requestSample(info); t.after(() => closeSync(first));
   for (let i = 0; i < 100 && !existsSync(info.path); i++) await new Promise(r => setTimeout(r, 5));
   assert.equal(JSON.parse(readFileSync(info.path)).observed, undefined);
-  writeFileSync(info.request, JSON.stringify({ id: 'second' }));
+  const second = requestSample(info, 1); t.after(() => closeSync(second));
   finish(identity);
   await new Promise(r => setTimeout(r, 40));
   assert.equal(count, 1);

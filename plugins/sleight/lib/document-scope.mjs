@@ -491,7 +491,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     state.ck1 = !!((update?.c ?? 3) & 1);
     state.ck2 = !!((update?.c ?? 3) & 2);
     state.tabProbe = !state.fileOnly && !state.cancelOnly ? update?.tabProbe : undefined;
-    state.tabTarget = state.tabProbe?.target; state.tabStep = state.tabProbe?.mode === 'new-tab' ? 0 : 1;
+    state.tabTarget = state.tabProbe?.target; state.tabStep = state.tabProbe?.mode === 'new-tab' ? 0 : 1; state.tabSerial = 0;
     // The relay's native observations after a key press (light-return.mjs), for the light check below.
     state.light = update?.lightReturn?.path && !state.careful && !state.fileOnly && !state.cancelOnly ? { ...update.lightReturn } : undefined;
     state.binding = undefined;
@@ -703,19 +703,31 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
     const tabProbeRefusal = ${tabProbeRefusal.toString()};
     const tabCheck = async (before, transition = false) => {
       const probe = state.tabProbe, started = clock(), entered = Date.now(), ready = Math.max(entered, (before?.done ?? entered - 250) + 250);
-      let reason = 'probe-timeout', sample, first, pending, serial = 0;
+      let reason = 'probe-timeout', sample, first, pending, requestHandle, failed = probe.failure, step = 'filesystem-import';
       try {
-        const fs = await import('node:fs/promises');
+        if (failed) throw Object.assign(Error('tab probe setup failed'), { code: failed.errno });
+        const fs = await import('node:fs');
         do {
           const now = Date.now();
           if (!pending && now >= ready && (!first || now >= first.start + 50)) {
-            pending = entered + ':' + state.tabStep + ':' + (++serial);
-            await fs.writeFile(probe.request, JSON.stringify({ id: pending }), { mode: 0o600 });
+            step = 'request-open';
+            pending = ++state.tabSerial;
+            if (pending > 8) throw Object.assign(Error('tab sample limit'), { code: 'EOVERFLOW' });
+            requestHandle = await fs.promises.open(probe.request + '-' + (pending - 1), fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
           }
-          try { sample = JSON.parse(await fs.readFile(probe.path, 'utf8')); } catch {}
+          let readStep = 'observation-read';
+          try {
+            const text = await fs.promises.readFile(probe.path, 'utf8');
+            readStep = 'observation-parse'; sample = JSON.parse(text); failed = undefined;
+          } catch (error) { failed = { failureStep: readStep, errno: error?.code ?? null, syscall: error?.syscall ?? null }; }
           if (now < entered || now < probe.since) { reason = 'clock-reversed'; break; }
           if (pending && sample?.request === pending && Number.isFinite(sample?.start) && sample.start >= entered && sample.start >= ready && Number.isFinite(sample.end) &&
               sample.end >= sample.start && sample.end <= now && now - sample.end <= probe.freshMs) {
+            step = 'request-close';
+            await requestHandle.close(); requestHandle = undefined;
+            failed = sample.failure;
+            if (failed) { reason = 'probe-failed'; break; }
+            step = 'certificate-check';
             // The engine's own input can reset HID idle. Require no input since that action finished,
             // earlier than the original continuation's post-read stop boundary.
             reason = tabProbeRefusal(state.tabTarget, sample.observed, Math.max(probe.since, before?.done ?? probe.since), sample.end, transition);
@@ -731,10 +743,18 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           if (clock() - started >= probe.deadlineMs) break;
           await new Promise(resolve => setTimeout(resolve, 5));
         } while (true);
-      } catch { reason = 'probe-failed'; }
+      } catch (error) {
+        reason = 'probe-failed';
+        if (!probe.failure) failed = { failureStep: step, errno: error?.code ?? null, syscall: error?.syscall ?? null };
+      } finally {
+        if (requestHandle) try { await requestHandle.close(); }
+        catch (error) { reason = 'probe-failed'; failed = { failureStep: 'request-close', errno: error?.code ?? null, syscall: error?.syscall ?? null }; }
+      }
       if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ tabProbe: { decision: reason ? 'read' : 'probe', reason: reason ?? 'address-field',
         waitMs: clock() - started, sampleMs: sample?.end - sample?.start, ageMs: Date.now() - sample?.end,
-        transition, tabCount: sample?.observed?.chrome?.tabCount } }) + '\\n');
+        transition, tabCount: sample?.observed?.chrome?.tabCount, channel: probe.channel,
+        failureStep: failed?.failureStep ?? null, errno: failed?.errno ?? null, syscall: failed?.syscall ?? null,
+        exitCode: failed?.exitCode ?? null } }) + '\\n');
       if (reason) { state.tabProbe = undefined; return; }
       return { ...sample.observed, sampledEnd: sample.end };
     };

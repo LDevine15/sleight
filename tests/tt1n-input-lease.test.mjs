@@ -829,7 +829,7 @@ async function tabFixture(t, { opened, focus = fieldFocus, ...options } = {}) {
   const refusals = [], continued = [], traces = [];
   const h = await fixture(t, { base: marker, onAction: tabScript(opened), trace: (direction, msg) => {
     if (direction === 'tab-continuation-refused') refusals.push(msg.reason);
-    if (direction.startsWith('tab-continuation-')) traces.push({ direction, ...msg });
+    if (direction.startsWith('tab-continuation-') || direction === 'tab-probe') traces.push({ direction, ...msg });
     if (direction === 'menu-continuation') continued.push(msg.kind);
   }, ...options });
   h.native.focus = focus;
@@ -1653,6 +1653,16 @@ test('CK3: the admitted tab remainder probes while the original tab-tree and fin
   assert.deepEqual(h.continued, ['tab']);
   assert.ok(h.identityChecks() >= 5, 'admission, tab check, final boundary and two fresh action probes');
   assert.equal(reads, 2, 'the original stop tree and final read remain, neither remainder action reads');
+  const decisions = h.traces.filter(trace => trace.direction === 'tab-probe');
+  assert.equal(decisions.length, 2);
+  for (const decision of decisions) {
+    assert.equal(decision.decision, 'probe');
+    assert.equal(decision.channel, 'read-fifo');
+    assert.equal(decision.failureStep, null);
+    assert.equal(decision.errno, null);
+    assert.equal(decision.syscall, null);
+    assert.ok(Number.isFinite(decision.sampleMs));
+  }
 });
 
 const ckChrome = added => ({ complete: true, group: 8, children: added ? [10, 11] : [10], childCount: added ? 2 : 1,

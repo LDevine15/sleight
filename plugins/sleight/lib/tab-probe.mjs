@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync, readdirSync, statSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { constants, openSync, closeSync, readdirSync, statSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { tabFocusRefusal } from './menu-continuation.mjs';
@@ -50,37 +51,51 @@ export function tabProbeRefusal(expected, observed, since, now, transition = fal
   return tabFocusRefusal(observed);
 }
 
-// The engine guard requests each sample through a private sidecar. Idle calls do no native work.
+// Opening a FIFO for reading signals demand without a sandboxed write or socket. The relay owns
+// creation and publication. Each FIFO is consumed once, so holding a reader cannot queue more walks.
 export function createTabProbe({ directory, observe, intervalMs = 10, timeoutMs = 600, deadlineMs = 650, freshMs = 100,
-  now = Date.now } = {}) {
+  now = Date.now, trace = () => {} } = {}) {
   const calls = new Map();
+  const failure = (step, error) => ({ failureStep: step, errno: error?.code ?? null, syscall: error?.syscall ?? null,
+    exitCode: Number.isInteger(error?.status) ? error.status : null });
   // The lease directory is shared by relays. Active calls live for at most 10 s; retain recent files.
   if (directory) try {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (!entry.isFile() || !/^tab-.+\.(?:obs|req)(?:\.tmp)?$/.test(entry.name)) continue;
+      if (!(entry.isFile() || entry.isFIFO()) || !/^tab-.+\.(?:obs|req(?:-[0-7])?)(?:\.tmp)?$/.test(entry.name)) continue;
       const path = join(directory, entry.name);
       if (now() - statSync(path).mtimeMs > 60000) rmSync(path, { force: true });
     }
   } catch { /* Cleanup failure cannot authorize a certificate. */ }
   const poll = async call => {
     if (call.ended || call.failed || now() >= call.until) return;
-    let request;
-    try { request = JSON.parse(readFileSync(call.request, 'utf8')); } catch {}
-    if (typeof request?.id === 'string' && request.id.length <= 100 && request.id !== call.last && call.samples < 8) {
-      call.last = request.id; call.samples++;
+    let requested = false;
+    if (call.samples < call.requests.length) try {
+      // ENXIO means no reader yet. NONBLOCK keeps both processes cancellable.
+      const fd = openSync(call.requests[call.samples], constants.O_WRONLY | constants.O_NONBLOCK);
+      closeSync(fd); requested = true;
+    } catch (error) {
+      if (error.code !== 'ENXIO') {
+        call.failed = true;
+        trace('tab-probe-channel', { id: call.id, channel: 'read-fifo', ...failure('request-accept', error) });
+        return;
+      }
+    }
+    if (requested) {
+      const request = ++call.samples;
       const start = now();
-      let timer, observed;
+      let timer, observed, failed, timedOut = false;
       try {
         observed = await Promise.race([Promise.resolve().then(() => observe({ ...call.target, focus: true, tabCertificate: true,
           ...(call.mode === 'new-tab' ? { followTab: true } : {}) })),
-          new Promise(resolve => { timer = setTimeout(resolve, timeoutMs); })]);
-      } catch { /* A failed probe records no identity. */ }
+          new Promise(resolve => { timer = setTimeout(() => { timedOut = true; resolve(); }, timeoutMs); })]);
+        if (!observed) failed = failure('native-observe', { code: timedOut ? 'ETIMEDOUT' : 'ENODATA' });
+      } catch (error) { failed = failure('native-observe', error); }
       finally { clearTimeout(timer); }
       if (call.ended) return;
       try {
-        writeFileSync(call.path + '.tmp', JSON.stringify({ request: request.id, start, end: now(), observed }), { mode: 0o600 });
+        writeFileSync(call.path + '.tmp', JSON.stringify({ request, start, end: now(), observed, failure: failed }), { mode: 0o600 });
         renameSync(call.path + '.tmp', call.path);
-      } catch { /* The guard reads the tree if publication fails. */ }
+      } catch (error) { trace('tab-probe-channel', { id: call.id, channel: 'read-fifo', ...failure('observation-publish', error) }); }
       if (!observed) { call.failed = true; return; } // Never queue behind a timed-out native call.
     }
     call.timer = setTimeout(() => poll(call), intervalMs);
@@ -90,16 +105,22 @@ export function createTabProbe({ directory, observe, intervalMs = 10, timeoutMs 
     begin(id, target, since = now(), mode = 'remainder') {
       if (!directory || !target?.appId || !target.nativeIdentity || calls.has(id)) return;
       const stem = join(directory, `tab-${randomUUID()}`);
-      const call = { path: stem + '.obs', request: stem + '.req', target, mode, samples: 0, until: now() + 10000 };
+      const requests = Array.from({ length: 8 }, (_, i) => stem + '.req-' + i);
+      const call = { id, path: stem + '.obs', requests, target, mode, samples: 0, until: now() + 10000 };
       calls.set(id, call);
+      try { execFileSync('/usr/bin/mkfifo', ['-m', '600', ...requests], { stdio: 'pipe', timeout: 1000 }); }
+      catch (error) {
+        call.failed = true;
+        return { target, mode, channel: 'read-fifo', failure: failure('request-create', error) };
+      }
       void poll(call);
-      return { path: call.path, request: call.request, target, since, deadlineMs, freshMs, mode };
+      return { path: call.path, request: stem + '.req', target, since, deadlineMs, freshMs, mode, channel: 'read-fifo' };
     },
     end(id) {
       const call = calls.get(id);
       if (!call) return;
       call.ended = true; calls.delete(id); clearTimeout(call.timer);
-      for (const path of [call.path, call.path + '.tmp', call.request, call.request + '.tmp']) try { rmSync(path, { force: true }); } catch {}
+      for (const path of [call.path, call.path + '.tmp', ...call.requests]) try { rmSync(path, { force: true }); } catch {}
     },
     dispose() { for (const id of calls.keys()) this.end(id); },
   };

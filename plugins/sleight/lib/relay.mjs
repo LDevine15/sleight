@@ -1078,7 +1078,7 @@ export function createRelay({
   const lightReturn = guardLightReturn && windowIdentity && inputLease?.directory
     ? createLightReturn({ directory: inputLease.directory, observe: windowIdentity }) : undefined;
   const tabProbe = ck3 && windowIdentity && inputLease?.directory
-    ? createTabProbe({ directory: inputLease.directory, observe: windowIdentity }) : undefined;
+    ? createTabProbe({ directory: inputLease.directory, observe: windowIdentity, trace }) : undefined;
   const promptFailures = new Map(); // call id -> native panel failure, distinct from a user decline
   const running = new Set(); // ids of engine calls waiting for a result
   const nativeChecked = new Set();

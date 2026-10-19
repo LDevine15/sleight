@@ -564,6 +564,7 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
   // CK adds binding diagnostics, exact plain-line remaps and tab probe checks to the shared installation.
   // CK2 adds the field inventory proof and native tab certificates with dispatch-age fallback to that installation.
   // CK2b shares payment exclusions and adds request-driven certificates to the shared installation.
+  // CK2c replaces sandboxed request writes with read-only FIFOs and adds failure diagnostics.
   // The warm-call pin is unchanged: default-on CK switches occupy no per-call bytes.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
@@ -571,7 +572,7 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: 'c93994c57e61edfe', guardedLean: '3fd389ba154cefd2', reuse: 'b824edb3aa6dc2c4', read: 'ef2acbc8b4b048af', repl: 'ef2acbc8b4b048af' });
+  }, { guarded: 'bf381babe9f7c756', guardedLean: '0f9c9ae4a67fa154', reuse: 'b824edb3aa6dc2c4', read: 'ab92dd177f6469e0', repl: 'ab92dd177f6469e0' });
 });
 
 test('with both switches off the guard carries none of the outcome code', () => {
