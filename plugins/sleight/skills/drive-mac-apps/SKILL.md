@@ -30,7 +30,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   For missing information, use `await app.getAXState()`.
 - If acquisition returns an empty tree, or a result says the user changed the app or a header
   changed, read again before retrying.
-- A window other than getApp's: `select_window`.
+- A window other than the one getApp shows: `select_window`.
 - Multiply tap coordinates by the screenshot multiplier.
 
 ## Text, menus and files
@@ -42,7 +42,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   between columns, newlines between rows: `await app.paste("<a>\t<b>\n<c>\t<d>", { format: "text" })`.
   It overwrites the whole block: paste only when every value is known.
 - `setValue` writes a field without focus or Return; to move through a field, click it, type, Return.
-- Use a menu item's shortcut if it has one. Otherwise open the menu and pick the item by label in one
+- Use a menu item's shortcut if any. Otherwise open the menu and pick the item by label in one
   call: `await app.click({ label: "<menu>" }); await app.click({ label: "<item>" })`.
 - Acquire a document that's already open. Don't reopen it.
 - Open a file with `open_file`, not the app's Open panel, which can bring the app to the front.
@@ -52,7 +52,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   such as `await app.pressKey("super+shift+g"); await app.typeText("<folder>"); await app.pressKey("Return"); await app.setValue({ id: "saveAsNameTextField" }, "<name>"); await app.pressKey("Return")`.
   A full path in the name field becomes a name with slashes. The result's title and URL confirm the
   save.
-- Don't switch back to a sheet or tab just to look at it before saving. Clicks can drag tabs: switch
+- Don't switch back to a sheet or tab to look at it before saving. Clicks can drag tabs: switch
   with the next/previous-tab key.
 - A confirmed save covers that document's sheets and pages. Don't recheck them. Save again after
   edits.

@@ -40,7 +40,7 @@ test('named native tasks acquire directly and action results avoid a confirming 
 // excel-edit open-shot runs (2026-10-17): 4/9 clicked a sheet tab only to look before saving, and each dragged it.
 test('the skill skips switching back to look before saving and switches tabs by key, naming no app', () => {
   const rules = skillRules();
-  assert.match(rules, /Don't switch back to a sheet or tab just to look at it before saving\. Clicks can drag tabs: switch\s+with the next\/previous-tab key\./);
+  assert.match(rules, /Don't switch back to a sheet or tab to look at it before saving\. Clicks can drag tabs: switch\s+with the next\/previous-tab key\./);
   assert.doesNotMatch(rules, /After finishing any edit, switch sheets/);
   assert.doesNotMatch(rules, /Excel|Numbers|Option\+(?:Left|Right)|Name Box/);
   for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) assert.ok(skillRules(undefined, env).trim().split(/\s+/).length <= 1040);
@@ -79,7 +79,7 @@ test('the drag and menu_bar descriptions carry what the skill no longer repeats'
   assert.match(menuBar.description, /status items in the macOS menu bar/);
   // The skill routes to select_window and hover; their descriptions carry the steps and the user warning.
   const rules = skillRules();
-  assert.match(rules, /A window other than getApp's: `select_window`\./);
+  assert.match(rules, /A window other than the one getApp shows: `select_window`\./);
   assert.match(rules, /Before the `hover` tool, try `Help:`, `Secondary Actions:`,\s+right-click or keys\./);
   const select = localToolDefinitions({}).find(tool => tool.name === 'select_window');
   for (const passage of ['by exact title or file URL', 'Then use one standalone js call to acquire the app and verify its full Window/URL header before acting.'])
@@ -161,7 +161,8 @@ test('the tab input line is scoped to tab handles', () => {
 // getState and a listWindows call before getApp. getApp's window needs no selection; only another window does.
 test('the skill sends only a window other than getApp\'s through select_window', () => {
   const rules = skillRules();
-  assert.match(rules, /^- A window other than getApp's: `select_window`\.$/m);
+  assert.match(rules, /^- A window other than the one getApp shows: `select_window`\.$/m);
+  assert.doesNotMatch(rules, /getApp's: `select_window`/);
   assert.doesNotMatch(rules, /Among windows/);
   // getApp comes first for a named app, and the select_window tool still verifies the header after selecting.
   assert.match(rules, /When the task specifies an app, start with `let app = await cua\.getApp/);
