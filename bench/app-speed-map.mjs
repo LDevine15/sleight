@@ -49,41 +49,84 @@ export function speedScope(plan, task) {
   return plan.ownerPresent === true ? 'owner-present-read-only' : 'owned-fixture';
 }
 
-export async function readMetrics(handle, { marker, requiredText, scrollMarker } = {}) {
+export async function readMetrics(handle, { marker, requiredText, scrollMarker, anyRegion } = {}) {
   const tree = await handle.getAXState({ disableDiffing: true, emit: false });
-  return treeMetrics(tree, { marker, requiredText, scrollMarker });
+  return treeMetrics(tree, { marker, requiredText, scrollMarker, anyRegion });
 }
 
 // Serialized into the engine. Receives text, never a native handle.
-function treeMetrics(tree, { marker, requiredText, scrollMarker } = {}) {
+function treeMetrics(tree, { marker, requiredText, scrollMarker, anyRegion } = {}) {
   if (typeof tree !== 'string') throw Error('TREE_UNAVAILABLE');
   if (marker && !tree.split('\n')[0].includes(marker) || requiredText && !tree.includes(requiredText)) throw Error('FIXTURE_IDENTITY');
   const numbered = [...tree.matchAll(/^\t*\d+ /gm)].length;
   const dom = [...tree.matchAll(/\bnode_id=/g)].length;
-  const scrolls = [...tree.matchAll(/^(\t*)(\d+) (?:scroll area|scroll view|AXScrollArea)\b/gmi)].map(row => [row[0], row[2], row[1].length]);
-  const fallback = [...tree.matchAll(/^\t*(\d+) (?:text area|text view|outline|list)\b/gmi)];
-  const targets = scrolls.length ? scrolls : fallback;
-  // Counts and depths only, never text: enough to tell why a scroll target was or wasn't unique.
-  const shape = { scrollAreas: scrolls.length, fallbackTargets: fallback.length, markerRows: 0, markerScrollAreas: 0,
-    scrollDepths: scrolls.slice(0, 10).map(row => row[2]) };
-  if (scrollMarker) {
-    const targetIds = new Set(targets.map(row => Number(row[1]))), matches = new Set(), ancestors = [];
-    for (const line of tree.split('\n')) {
-      const row = /^(\t*)(\d+) (.+)$/.exec(line);
-      if (!row) continue;
-      const depth = row[1].length, id = Number(row[2]);
-      while (ancestors.length && ancestors.at(-1).depth >= depth) ancestors.pop();
-      if (row[3].includes(scrollMarker)) {
-        shape.markerRows++;
-        const parent = ancestors.findLast(item => targetIds.has(item.id));
-        if (parent) matches.add(parent.id);
-      }
-      ancestors.push({ depth, id });
-    }
-    shape.markerScrollAreas = matches.size;
-    return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: matches.size === 1 ? [...matches][0] : null, shape };
+  // Role words counted for the receipt, longest first. Labels and values are never kept.
+  const vocabulary = ['standard window', 'scroll area', 'scroll view', 'layout area', 'text entry area', 'text area', 'text view', 'web area',
+    'tab group', 'static text', 'pop up button', 'menu button', 'radio button', 'check box', 'menu bar', 'menu item', 'table', 'grid',
+    'outline', 'list', 'row', 'cell', 'group', 'button', 'toolbar', 'splitter', 'image', 'link', 'heading', 'window', 'dialog', 'sheet'];
+  const tier1 = /^(?:scroll area|scroll view|AXScrollArea)\b/i, tier2 = /^(?:list|outline|table|grid|layout area|text area|text entry area|text view)\b/i;
+  const tier3 = /^web area\b/i, legacy = /^(?:text area|text view|outline|list)\b/i, field = /^text entry area\b/i, canvas = /^layout area\b/i;
+  const rows = [], stack = [], roles = {};
+  for (const line of tree.split('\n')) {
+    const match = /^(\t*)(\d+) (.+)$/.exec(line);
+    if (!match) continue;
+    const row = { depth: match[1].length, id: Number(match[2]), text: match[3], size: 0 };
+    while (stack.length && stack.at(-1).depth >= row.depth) stack.pop();
+    row.parents = stack.slice(); for (const parent of stack) parent.size++;
+    stack.push(row); rows.push(row);
+    const role = vocabulary.find(word => row.text.toLowerCase() === word || row.text.toLowerCase().startsWith(word + ' ') || row.text.toLowerCase().startsWith(word + ','));
+    if (role) roles[role] = (roles[role] ?? 0) + 1;
   }
-  return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: targets.length === 1 ? Number(targets[0][1]) : null, shape };
+  const scrolls = rows.filter(row => tier1.test(row.text)), fallback = rows.filter(row => legacy.test(row.text));
+  // Counts, depths and role words only, never text: enough to tell why a scroll target was or wasn't unique.
+  const shape = { scrollAreas: scrolls.length, fallbackTargets: fallback.length, markerRows: 0, markerScrollAreas: 0,
+    scrollDepths: scrolls.slice(0, 10).map(row => row.depth), markerRegions: 0, tier: 0, targetRole: null, roles };
+  const largest = list => {
+    const top = Math.max(...list.map(row => row.size));
+    const best = list.filter(row => row.size === top);
+    return best.length === 1 ? best[0].id : null;
+  };
+  let scrollTarget = null;
+  if (scrollMarker) {
+    const marked = rows.filter(row => row.text.includes(scrollMarker));
+    shape.markerRows = marked.length;
+    // Tier 1: the one scroll area around the fixture's own text (Word, TextEdit, Finder).
+    const areas = new Map();
+    for (const row of marked) { const area = row.parents.findLast(parent => tier1.test(parent.text)); if (area) areas.set(area.id, area); }
+    shape.markerScrollAreas = areas.size;
+    if (areas.size === 1) { scrollTarget = [...areas.keys()][0]; shape.tier = 1; }
+    else if (!areas.size) {
+      // Tier 2: no scroll area holds it, so the nearest list, outline, table, grid, layout or text region that does (a
+      // sheet's cell table, an editor's explorer list); several such regions resolve to the largest.
+      // An editable field holding the text is excluded: it shows a value (Excel's formula bar), not the document.
+      const regions = new Map();
+      for (const row of marked) {
+        const region = [...row.parents, row].findLast(item => tier2.test(item.text) && !(item === row && field.test(row.text)));
+        if (region) regions.set(region.id, region);
+      }
+      shape.markerRegions = regions.size;
+      if (regions.size) { scrollTarget = largest([...regions.values()]); if (scrollTarget !== null) shape.tier = 2; }
+      // Tier 4: the document's text isn't in the tree (Excel exposes no cells), so the document canvas, AXLayoutArea.
+      if (scrollTarget === null) {
+        const canvases = rows.filter(row => canvas.test(row.text));
+        if (canvases.length) { scrollTarget = largest(canvases); if (scrollTarget !== null) shape.tier = 4; }
+      }
+    }
+    // Tier 3: in an instance that is wholly the run's own, the largest scrollable region when nothing holds the marker.
+    if (scrollTarget === null && anyRegion) {
+      for (const tier of [tier1, tier2, tier3]) {
+        const regions = rows.filter(row => tier.test(row.text));
+        if (regions.length) { scrollTarget = largest(regions); break; }
+      }
+      if (scrollTarget !== null) shape.tier = 3;
+    }
+  } else {
+    const targets = scrolls.length ? scrolls : fallback;
+    scrollTarget = targets.length === 1 ? targets[0].id : null;
+  }
+  const chosen = rows.find(row => row.id === scrollTarget);
+  shape.targetRole = chosen ? vocabulary.find(word => chosen.text.toLowerCase().startsWith(word)) ?? 'other' : null;
+  return { chars: tree.length, nodes: numbered || dom || null, scrollTarget, shape };
 }
 
 function metrics(reply) {
@@ -95,21 +138,47 @@ function metrics(reply) {
       value.nodes !== null && (!Number.isInteger(value.nodes) || value.nodes < 0) ||
       value.scrollTarget !== null && (!Number.isInteger(value.scrollTarget) || value.scrollTarget < 0)) throw Error('METRICS_INVALID');
   const shape = value.shape, count = item => Number.isInteger(item) && item >= 0;
-  if (shape !== undefined && !(shape && ['scrollAreas', 'fallbackTargets', 'markerRows', 'markerScrollAreas'].every(key => count(shape[key])) &&
-      Array.isArray(shape.scrollDepths) && shape.scrollDepths.length <= 10 && shape.scrollDepths.every(count))) throw Error('METRICS_INVALID');
+  const roles = shape?.roles;
+  if (shape !== undefined && !(shape && ['scrollAreas', 'fallbackTargets', 'markerRows', 'markerScrollAreas', 'markerRegions'].every(key => count(shape[key])) &&
+      Array.isArray(shape.scrollDepths) && shape.scrollDepths.length <= 10 && shape.scrollDepths.every(count) && [0, 1, 2, 3, 4].includes(shape.tier) &&
+      (shape.targetRole === null || /^[a-z ]{1,24}$/.test(shape.targetRole)) &&
+      roles && typeof roles === 'object' && Object.keys(roles).length <= 40 &&
+      Object.entries(roles).every(([role, n]) => /^[a-z ]{1,24}$/.test(role) && count(n)))) throw Error('METRICS_INVALID');
   return shape === undefined ? value : { ...value, shape: { scrollAreas: shape.scrollAreas, fallbackTargets: shape.fallbackTargets,
-    markerRows: shape.markerRows, markerScrollAreas: shape.markerScrollAreas, scrollDepths: shape.scrollDepths } };
+    markerRows: shape.markerRows, markerScrollAreas: shape.markerScrollAreas, scrollDepths: shape.scrollDepths,
+    markerRegions: shape.markerRegions, tier: shape.tier, targetRole: shape.targetRole, roles: { ...roles } } };
 }
 const failures = new Set(['HOLD', 'TREE_UNAVAILABLE', 'FIXTURE_IDENTITY', 'ENGINE_CALL_FAILED', 'METRICS_UNAVAILABLE', 'METRICS_INVALID',
   'NO_UNIQUE_SCROLL_AREA', 'CLEANUP_UNCONFIRMED', 'SESSION_CLEANUP_UNCONFIRMED', 'FOCUS_CHANGED', 'APP_ALREADY_RUNNING',
   'FIXTURE_NOT_OPEN', 'FIXTURE_SETUP_FAILED', 'LOCAL_CONTAINER_RECEIPT_REQUIRED', 'LOCAL_CONTAINER_UNQUALIFIED', 'MACOS_REQUIRED', 'INVALID_OPTIONS',
   'CONFLICTING_OWNER_BOUNDARY', 'OWNER_BOUNDARY_REQUIRED', 'BROWSER_PROFILE_RECEIPT_REQUIRED', 'OUTPUT_OUTSIDE_BENCH_RESULTS', 'OUTPUT_SYMLINK', 'OUTPUT_ALREADY_EXISTS', 'TEMP_CLEANUP_UNCONFIRMED']);
 const failureCode = error => failures.has(error?.message) ? error.message : 'READ_FAILED';
+// A failed engine call keeps only AX codes and fixed error kinds, never its text.
+const errorKinds = ['not scrollable', 'not found', 'timed out', 'timeout', 'invalid', 'unsupported', 'denied', 'lease', 'stale', 'covered',
+  'offscreen', 'not visible', 'approval', 'busy', 'cannot complete'];
+export function engineError(reply) {
+  const text = (reply?.content ?? []).filter(item => item.type === 'text').map(item => item.text).join('\n').toLowerCase();
+  // A template of the message: quoted values, paths and numbers replaced, other characters dropped. Unquoted words
+  // can still be labels, so the template only goes to the local log, and the report gets its hash (same template, same hash).
+  // The first three non-empty lines: an engine message can open with a bare heading ("Computer Use", 2026-10-19).
+  // A quote opens only after a space or line start, so apostrophes inside words (can't, app's) stay text.
+  const template = text.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 3).join(' / ')
+    .replace(/(^|[\s(:])(?:"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|`[^`]*`)/g, '$1_q_')
+    .replace(/(?:~|\/)[^\s)]*/g, match => match === '/' ? match : '_p_').replace(/-?\d+(?:\.\d+)?/g, '_n_')
+    .replace(/[^_a-z ,.:;()'/-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  let hash = 0x811c9dc5;
+  for (const char of template) hash = Math.imul(hash ^ char.charCodeAt(0), 0x01000193) >>> 0;
+  return { template, published: { codes: [...new Set((text.match(/-25\d{3}\b/g) ?? []).map(Number))].slice(0, 5),
+    kinds: errorKinds.filter(kind => text.includes(kind)), signature: hash.toString(16).padStart(8, '0') } };
+}
+const engineFailure = reply => { const { template, published } = engineError(reply); return { engine: published, template }; };
+const steps = { acquireMs: 'acquire', firstReadMs: 'firstRead', warmReadMs: 'warmRead', actionMs: 'action', afterReadMs: 'afterRead' };
 
 export async function runSpeedMap(plan, runtime) {
   const report = { startedUTC: new Date().toISOString(), runs: plan.runs, concurrency: plan.concurrency,
     ownerPresent: plan.ownerPresent, rows: [], cohorts: [], note: plan.note };
   const boundary = () => { if (runtime.held()) throw Error('HOLD'); };
+  const sleep = runtime.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
   async function cohort(task, trial, mode) {
     boundary();
     let fixture, scope, preparationStarted = false;
@@ -141,7 +210,7 @@ export async function runSpeedMap(plan, runtime) {
       async function timed(key, code) {
         boundary(); const start = runtime.now();
         const reply = await session.js(code);
-        if (reply?.isError) throw Error('ENGINE_CALL_FAILED');
+        if (reply?.isError) throw Object.assign(Error('ENGINE_CALL_FAILED'), { step: steps[key], ...engineFailure(reply) });
         row[key] = runtime.now() - start;
       }
       try {
@@ -150,28 +219,49 @@ export async function runSpeedMap(plan, runtime) {
         const handle = browser ? 'am1Tab' : 'am1App';
         const acquire = browser ? `var am1Choices = (await cua.listBrowsers({emit:false})).filter(b => b.name === ${JSON.stringify(task.app)} && b.id === ${JSON.stringify(fixture.browserId)} && b.profileName === ${JSON.stringify(fixture.profileName)}); if(am1Choices.length !== 1) throw Error('BROWSER_IDENTITY'); var am1Tab = await cua.createBrowserTab(am1Choices[0].id, ${JSON.stringify(fixture.url)}, {visible:false});` :
           `var am1App = await cua.getApp(${JSON.stringify(task.bundle)});`;
-        await timed('acquireMs', acquire);
+        // An engine that says it is busy (-25204, cannot complete) gets at most two more tries, counted in the row.
+        row.acquireRetries = 0;
+        for (;;) {
+          try { await timed('acquireMs', acquire); break; }
+          catch (error) {
+            const busy = error.engine && (error.engine.codes.includes(-25204) || error.engine.kinds.some(kind => kind === 'busy' || kind === 'cannot complete'));
+            if (!busy || row.acquireRetries >= 2) throw error;
+            row.acquireRetries++; await sleep(500);
+          }
+        }
         const read = `var am1Tree = await ${handle}.getAXState({ disableDiffing: true, emit: false }); am1Tree;`;
         async function measuredRead(key) {
           // A bound standalone read follows the native lease rule and lets
           // concurrent read-only sessions avoid taking an action lease.
           await timed(key, read);
           boundary();
-          return metrics(await session.js(`nodeRepl.write('AM1METRICS:' + JSON.stringify((${treeMetrics.toString()})(am1Tree, ${JSON.stringify({ marker: fixture.marker, requiredText: fixture.requiredText, scrollMarker: fixture.scrollMarker })})));`));
+          const reply = await session.js(`nodeRepl.write('AM1METRICS:' + JSON.stringify((${treeMetrics.toString()})(am1Tree, ${JSON.stringify({ marker: fixture.marker, requiredText: fixture.requiredText, scrollMarker: fixture.scrollMarker, anyRegion: fixture.anyRegion === true })})));`);
+          if (reply?.isError) throw Object.assign(Error('ENGINE_CALL_FAILED'), { step: steps[key] + 'Metrics', ...engineFailure(reply) });
+          return metrics(reply);
         }
         const first = await measuredRead('firstReadMs');
         row.chars = first.chars; row.nodes = first.nodes;
         const warm = await measuredRead('warmReadMs');
         if (warm.shape) row.treeShape = warm.shape;
         if (mode === 'sequential' && !plan.ownerPresent && !task.readOnly) {
-          if (!browser && warm.scrollTarget === null) throw Error('NO_UNIQUE_SCROLL_AREA');
+          // A document the tree doesn't show (tier 4, Excel's canvas) doesn't scroll through the engine (10/10 failed,
+          // 2026-10-19), so its action is a Page Down the app handles itself, published as a key action.
+          const key = !browser && warm.shape?.tier === 4;
+          if (!browser && !key && warm.scrollTarget === null) throw Error('NO_UNIQUE_SCROLL_AREA');
+          row.actionKind = key ? 'key' : 'scroll';
           await timed('actionMs', browser ? 'await am1Tab.cua.scroll({x:120,y:200,scrollX:0,scrollY:400});' :
-            `await am1App.scroll(${warm.scrollTarget}, 'down', 1);`);
+            key ? `await am1App.pressKey('Page_Down');` : `await am1App.scroll(${warm.scrollTarget}, 'down', 1);`);
           const after = await measuredRead('afterReadMs');
           row.afterChars = after.chars; row.afterNodes = after.nodes;
         }
         row.status = 'complete';
-      } catch (error) { row.failure = failureCode(error); if (!session) row.cleanupConfirmed = error.cleanupConfirmed === true; }
+      } catch (error) {
+        row.failure = failureCode(error); if (!session) row.cleanupConfirmed = error.cleanupConfirmed === true;
+        if (error.step) {
+          row.failedStep = error.step; row.engineError = error.engine;
+          runtime.log?.(`AM1_ENGINE_ERROR ${task.id} ${error.step} ${error.template}`);
+        }
+      }
       finally {
         if (session) {
           try { await session.close(); }
@@ -226,11 +316,13 @@ export function summarizeSpeedMap({ rows, cohorts = [] }) {
       group.rows.filter(row => row.trial === cohort.trial).every(row => row.status === 'complete' && row.cleanupConfirmed !== false)) : [];
     return { app: group.app, class: group.class, ownerAccount: group.ownerAccount, mode: group.mode,
       scope: [...new Set(group.rows.map(row => row.scope ?? 'unknown'))].join(', '),
-      failures: [...new Set(group.rows.filter(row => row.failure).map(row => row.setup?.message ? `${row.failure}:${row.setup.message}` : row.failure))],
+      failures: [...new Set(group.rows.filter(row => row.failure).map(row => row.setup?.message ? `${row.failure}:${row.setup.message}`
+        : row.failedStep ? `${row.failure}:${row.failedStep}` : row.failure))],
       // One fixture per cell: count its attention events once, not once per concurrent session.
       attention: group.rows.filter(row => !row.sessionIndex).flatMap(row => row.attention ?? [])
         .reduce((counts, event) => ({ ...counts, [event.class]: (counts[event.class] ?? 0) + 1 }), {}),
       cohortWallMs: stats(qualifiedCohorts.map(cohort => cohort.wallMs)), attempted: group.rows.length, completed: completed.length,
+      actionKinds: [...new Set(completed.map(row => row.actionKind).filter(Boolean))],
       ...Object.fromEntries(['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes']
         .map(key => [key, stats(completed.map(row => row[key]))])) };
   });
@@ -244,7 +336,8 @@ export function speedMarkdown(report) {
     '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' + selected.map(row =>
       `| ${row.class} | ${row.app} | ${row.mode} | ${row.scope ?? 'unknown'} | ${(row.failures ?? []).join(', ') || 'none'} | ` +
       `${Object.entries(row.attention ?? {}).map(([name, count]) => `${name} ${count}`).join(', ') || 'none'} | ${row.completed}/${row.attempted} | ` +
-      ['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes', 'cohortWallMs'].map(key => cell(row[key] ?? { n: 0 })).join(' | ') + ' |').join('\n') + '\n';
+      ['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes', 'cohortWallMs'].map(key =>
+        cell(row[key] ?? { n: 0 }) + (key === 'actionMs' && (row.actionKinds ?? []).includes('key') ? ' (key)' : '')).join(' | ') + ' |').join('\n') + '\n';
   const account = rows.filter(row => row.ownerAccount), background = rows.filter(row => !row.ownerAccount);
   return '# App-class speed map\n\nTimes in ms, median / p90 (nearest rank). Counts describe the first explicit full read. ' +
     'Only complete trials contribute to these summaries. Setup wait runs from the return of the open command to an identified fixture window. ' +
@@ -275,7 +368,8 @@ export async function simulateSpeedMap(plan) {
       return { async close() {}, async js(code) {
         totals.engineCalls++;
         if (code.includes('AM1METRICS')) return { content: [{ type: 'text', text: 'AM1METRICS:' + JSON.stringify({ chars: 0, nodes: 0, scrollTarget: 1 }) }] };
-        const step = /getApp|createBrowserTab/.test(code) ? 'acquire' : /scroll\(/.test(code) ? 'scroll' : /getAXState/.test(code) ? 'read' : 'other';
+        const step = /getApp|createBrowserTab/.test(code) ? 'acquire' : /scroll\(/.test(code) ? 'scroll' : /pressKey\(/.test(code) ? 'key'
+          : /getAXState/.test(code) ? 'read' : 'other';
         if (step === 'scroll') totals.scrolls++;
         if (!index) steps.get(fixture.cell).push(step);
         return { content: [] };

@@ -99,6 +99,9 @@ node bench/app-speed-map.mjs --dry-run --apps word,vscode --runs 1
 node bench/app-speed-map.mjs --owner-away --apps word,vscode --runs 1
 ```
 
+The 2026-10-19 results for Finder, TextEdit, VS Code, Cursor, Word and Excel are in
+[benchmarks/2026-10-19-speed-map.md](benchmarks/2026-10-19-speed-map.md).
+
 The dry run sends every planned cell through the real scheduler with an in-memory runtime. It prints each cell's engine
 calls, the receipts the run needs and a time estimate. It doesn't start an app or a child process, and it doesn't write
 a file.
@@ -114,13 +117,24 @@ fixture's profile in its arguments is the run's own, so cleanup quits it whole. 
 Chromium framework don't get AppKit's `-ApplePersistenceIgnoreState` switch, because VS Code 1.141 reads its letters as
 short flags and `-s` (`--status`) quits a first instance.
 
+The scroll target comes from the fixture's own text. It is the one scroll area around a row with the fixture marker.
+When no scroll area holds the marker, it is the nearest list, outline, table, grid, layout area or text region that
+does, and a tie goes to the largest (a sheet's cell table, an editor's explorer list). An editable field that shows the
+text, such as a formula bar, doesn't count. When the document's text isn't in the tree at all, the action is a Page Down
+key sent to the app instead of a scroll, and the Action column marks it `(key)`. An instance proven to be the run's own
+may fall back to its largest scrollable region. Each row's `treeShape` records which rule applied (`tier`) and counts of
+fixed role words, never labels or values. A failed engine call records its step, AX codes, fixed error kinds and a hash
+of the message template. The template itself goes only to the local log as an `AM1_ENGINE_ERROR` line. Acquisition
+retries an engine that answers busy (-25204) at most twice and counts the retries.
+
 Every cell records focus and cover changes from the host's 200 ms samples. Each record gives the phase, the host stage,
 the time and the frontmost bundle ID before and after. Before the first engine call the only actor is the fixture app's
 own launch, so the app activating itself or covering the owner's window then counts as `launch-activation` or
 `launch-cover`. The row and the Attention column report it, and the run goes on. The fixture app's window covering the
-owner's while its document closes counts the same way as `cleanup-cover`. Focus returning to the owner's app is
-`focus-restored`. Any other change, or any change after the first engine call, stops the run as `FOCUS_CHANGED`, with
-the session's own failure kept as `sessionFailure`.
+owner's while its document closes counts the same way as `cleanup-cover`. When the app took focus at launch, the one
+focus change as cleanup closes it goes to whichever app macOS picks, and it counts as `quit-handoff`. Focus returning to
+the owner's app is `focus-restored`. Any other change, or any change after the first engine call, stops the run as
+`FOCUS_CHANGED`, with the session's own failure kept as `sessionFailure`.
 
 ## Browser head-to-head
 

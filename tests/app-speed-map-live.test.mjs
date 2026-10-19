@@ -340,3 +340,39 @@ test('a workspace fixture passes its folder as a launch argument and names the p
   assert.ok(fixture.ownedArg.slice(16).startsWith(fixture.dir + '/'));
   await h.runtime.closeFixture(fixture); await h.runtime.close();
 });
+
+test('only a fixture proven to be the run\'s own instance asks for the any-region scroll fallback', async t => {
+  const h = await setup(t, { id: 'vscode', base: '/private/tmp' });
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['vscode'], runs: 1 }).apps[0]);
+  assert.equal(fixture.anyRegion, true);
+  await h.runtime.closeFixture(fixture); await h.runtime.close();
+  const w = await setup(t, { id: 'word' });
+  const word = await w.runtime.prepare(speedPlan({ ids: ['word'], runs: 1 }).apps[0]);
+  assert.equal(word.anyRegion, undefined);
+  await w.runtime.closeFixture(word); await w.runtime.close();
+});
+
+// Cursor rerun (2026-10-19 09:18Z): Cursor activated itself at launch; when cleanup quit it, macOS gave focus to Finder,
+// not the baseline Terminal, and that read as a focus change.
+test('focus leaving a self-activated fixture app during cleanup is quit-handoff; other cleanup changes still stop', () => {
+  const app = 'com.todesktop.230313mzl4w4u92';
+  const tracker = attentionTracker({ bundle: app });
+  tracker.observe({ front: 'com.apple.Terminal', atMs: 0 });
+  tracker.observe({ front: app, stage: 'retain', atMs: 2421 });
+  tracker.setPhase('measure');
+  tracker.setPhase('cleanup');
+  assert.equal(tracker.observe({ front: 'com.apple.finder', stage: 'cleanup', atMs: 7671 }), false);
+  assert.equal(tracker.events.at(-1).class, 'quit-handoff');
+  assert.equal(tracker.observe({ front: 'org.example.third', stage: 'cleanup', atMs: 7900 }), true, 'a later change is not the handoff');
+  // Without a launch activation the app never held focus, so a cleanup change is not its handoff.
+  const quiet = attentionTracker({ bundle: app });
+  quiet.observe({ front: 'com.apple.Terminal', atMs: 0 });
+  quiet.setPhase('cleanup');
+  assert.equal(quiet.observe({ front: 'com.apple.finder', stage: 'cleanup', atMs: 5000 }), true);
+  // A handoff during measurement is still sleight's to answer for.
+  const measured = attentionTracker({ bundle: app });
+  measured.observe({ front: 'com.apple.Terminal', atMs: 0 });
+  measured.observe({ front: app, stage: 'retain', atMs: 2000 });
+  measured.setPhase('measure');
+  assert.equal(measured.observe({ front: 'com.apple.finder', stage: 'ready', atMs: 3000 }), true);
+});

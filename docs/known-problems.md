@@ -717,7 +717,21 @@ native reference, and oversized first results defer the browser reference while 
   readback 106 ms) and confirmed cleanup, then stopped because Word's window covered Terminal while its document closed. That
   cover is now `cleanup-cover`. The fourth (09:0x UTC) completed Word's cell. VS Code reached setup for the first time and
   opened an empty window instead of the fixture folder, and cleanup left the run's own instance running. The folder now goes
-  in argv, and cleanup quits an instance proven to be the run's own. No run has measured VS Code yet.
+  in argv, and cleanup quits an instance proven to be the run's own. The full map (08:57 UTC, 10 runs) completed Finder,
+  TextEdit, VS Code and Word 10/10 and the TextEdit cohort 40/40. Cursor and Excel were 0/10 on NO_UNIQUE_SCROLL_AREA. Excel's
+  marker cell sat outside its only scroll area. Cursor 3.25's tree had neither a scroll area, a list nor a marker row, likely
+  its agent-first layout on an empty profile, which no setting we found turns off. The scroll target rule now covers both. A
+  Cursor rerun (09:18 UTC) measured its cell through the owned-instance fallback, but Cursor's 102-node tree had one text
+  entry area (likely the agent prompt) and no document region, so its scroll timing isn't a document scroll. The run then
+  stopped when macOS handed focus to Finder as Cursor quit, which now counts as `quit-handoff`. The 09:31 UTC rerun measured
+  Cursor 10/10 that way and the Excel cohort 40/40, but Excel's sequential cells passed 2/10. All eight failures were at the
+  scroll, which went to the formula bar field because Excel's tree doesn't list its cells. The engine's error text wasn't
+  kept, so its code is unknown. The Excel-only run (09:44 UTC) failed all 10 canvas scrolls and 5 of 10 four-session cohorts
+  at acquisition, each cohort losing all four sessions together. That pattern points to the fixture's state in those cohorts,
+  not contention among sessions. The cause isn't known, because the receipt kept only the error kinds (timeout, unsupported,
+  lease, approval). Excel's action is now a Page Down key, and the log keeps the error template. At 09:55 UTC Excel completed
+  10/10 with the key, and its cohorts lost 11 of 40 acquisitions to one engine error, whose cause is unknown. The engine
+  didn't answer busy or give an AX code, so the harness didn't retry. Results: docs/benchmarks/2026-10-19-speed-map.md.
 
 ## Turbo in unattended runs
 
