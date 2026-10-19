@@ -62,8 +62,8 @@ codex plugin marketplace add Land-o-Clusters/sleight
 codex plugin add sleight@sleight
 ```
 
-Start a new Codex session and trust sleight's two hooks when Codex asks. [Codex](docs/other-hosts.md#codex)
-lists what differs there: no pane and no turbo.
+Start a new Codex session and trust sleight's three hooks when Codex asks. [Codex](docs/other-hosts.md#codex)
+lists what differs there: no pane, and turbo needs Codex 0.160.0 or later.
 
 If you already use Computer Use in ChatGPT or Codex, that's all: the engine's helper and its macOS
 permissions are in place.

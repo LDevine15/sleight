@@ -193,7 +193,7 @@ overwrites it. Claude's own file edits and shell commands can't write the file o
   opt-out as `turbo off`, and every session's turbo stops within a minute. With turbo disconnected and nothing waiting,
   the icon is hidden.
 - `SLEIGHT_TURBO=0` in the MCP server's environment keeps that one server on the engine path without touching the file.
-  It can only turn turbo off. The Firefox and Safari benchmark arms and sleight's Codex plugin set it.
+  It can only turn turbo off. The Firefox and Safari benchmark arms set it.
 - `sleight-mcp turbo on` turns turbo on. `--browser chrome` or `--browser helium` picks the browser.
   Without it, Google Chrome is first and Helium second. A browser whose executable others can write is
   skipped, because the connection refuses it. The exception is Chrome or Helium with a group-writable

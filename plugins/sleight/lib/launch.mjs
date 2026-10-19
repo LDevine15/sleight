@@ -38,6 +38,7 @@ import { replayBridge } from './replay.mjs';
 import { serverFromChatGPTApp, setup } from './setup.mjs';
 import { codexDoctorLines, codexStatus } from './codex-host.mjs';
 import { hostLabel } from './host-label.mjs';
+import { codexTurnClient } from './codex-turn.mjs';
 
 const PLUGIN_DIR = ['plugins', 'cache', 'openai-bundled', 'unified-computer-use'];
 const SERVER_KEY = 'cua_repl';
@@ -734,7 +735,9 @@ export function approvalOptions(env = process.env, dialog = askWithDialog) {
     wording = hostWording(info, env);
     // Once per session, so a host detected the wrong way shows in the host's MCP log.
     const label = hostLabel(info) ?? 'an unnamed client';
-    process.stderr.write(`sleight: host ${label}, ${wording.claudeCode ? 'with the sleight mod (Claude Code)' : 'without the sleight mod: turn_ended hidden, no turbo, sleight ends turns itself'}\n`);
+    process.stderr.write(`sleight: host ${label}, ${wording.claudeCode ? 'with the sleight mod (Claude Code)' : codexTurnClient(info)
+      ? 'without the sleight mod: turn_ended hidden, Codex\'s prompt hook binds turbo turns, its Stop hook ends them'
+      : 'without the sleight mod: turn_ended hidden, no turbo, sleight ends turns itself'}\n`);
   };
   const prompt = (message, scoped, options) => dialog(message, scoped, { ...options, ...wording });
   const extras = { onInitialize, wording: () => wording };

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1 (TODO: release date)
+
+### Codex
+
+- Turbo works in Codex 0.160.0 and later. A prompt hook ties each turbo turn to your message through a
+  tool Codex hides from the model, and the Stop and Interrupt hooks end it. The plugin no longer sets
+  `SLEIGHT_TURBO=0`. Trust the new hook when Codex asks. Not yet run live.
+
 ## 1.3.0 (TODO: release date)
 
 Native actions read the app less, and browsers get a turbo path, on by default, beside the engine's tools.

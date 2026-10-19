@@ -45,13 +45,12 @@ test('one launcher serves both hosts, under the server key that gives the same t
   assert.equal(server.command, './bin/sleight-mcp');
   assert.equal(server.cwd, '.');
   accessSync(inside(server.command), constants.X_OK);
-  // Turbo binds turns through the mod, which Codex doesn't run: the Codex server stays on the engine path.
-  assert.deepEqual(server.env, { SLEIGHT_TURBO: '0' });
-  assert.ok(!server.env_vars.includes('SLEIGHT_TURBO'));
+  // Turbo is on in Codex too: its prompt hook binds each turn (tests/codex-turbo.test.mjs). A user's SLEIGHT_TURBO=0 still applies.
+  assert.equal(server.env, undefined);
   // Codex hands a stdio server only a short env list; a documented setting the user exports reaches sleight as under Claude.
   // Every documented setting is forwarded, so a tightening one such as SLEIGHT_GUARD=careful isn't dropped. The only
-  // exceptions: SLEIGHT_TURBO (the plugin sets it to 0) and the benchmark and test switches.
-  const NOT_FORWARDED = { SLEIGHT_TURBO: 'set to 0 by the plugin', SLEIGHT_ARM_DIR: 'benchmark arms only',
+  // exceptions: the benchmark and test switches.
+  const NOT_FORWARDED = { SLEIGHT_ARM_DIR: 'benchmark arms only',
     SLEIGHT_BENCH_API_CAP_USD: 'benchmark arms only', SLEIGHT_STUB_OSASCRIPT: 'tests only' };
   const documented = [...new Set(readFileSync(join(repo, 'docs/settings.md'), 'utf8').match(/SLEIGHT_[A-Z_]+/g))]
     .filter(name => !Object.hasOwn(NOT_FORWARDED, name)).toSorted();
@@ -72,11 +71,12 @@ const PARITY = {
   'turn.complete (aborted)': { codex: 'Interrupt', tool: 'turn_ended' },
   'turn.complete (subagent: skipped)': { codex: null, why: 'the mod ends only the main turn; SubagentStop is left unmapped to match' },
   'tool.call turn_ended deny': { codex: null, why: 'the engine marks turn_ended hidden and the relay keeps the mark outside Claude' },
-  'prompt.submit (stop lift, turbo begin)': { codex: null, why: 'no /sleight stop and no turbo in Codex' },
+  'prompt.submit (turbo begin)': { codex: 'UserPromptSubmit', tool: 'turn_started' },
+  'prompt.submit (stop lift)': { codex: null, why: 'no /sleight stop in Codex' },
   'classic.PreToolUse preapproved guard': { codex: null, why: 'needs a command hook; the skill tells the model never to edit the file' },
   'session.start /sleight command, pane, status line': { codex: null, why: 'Codex has no plugin UI surface for them' },
 };
-test('the Codex hooks map the mod\'s turn end, and nothing else, onto turn_ended', () => {
+test('the Codex hooks map the mod\'s turn end onto turn_ended and its turbo begin onto turn_started', () => {
   const events = Object.keys(codex.hooks.hooks);
   assert.deepEqual(events.toSorted(), Object.values(PARITY).map(row => row.codex).filter(Boolean).toSorted());
   for (const event of events) {
@@ -87,9 +87,10 @@ test('the Codex hooks map the mod\'s turn end, and nothing else, onto turn_ended
     for (const key of Object.keys(handler)) assert.ok(shape.mcpToolHandlerKeys.includes(key), key);
     assert.equal(handler.type, 'mcp_tool');
     assert.equal(handler.server, codexServerKey(SERVER));
-    assert.equal(handler.tool, 'turn_ended');
-    // The relay fills in its own session and turn ids, so the hook passes only which event ended the turn.
-    assert.deepEqual(handler.input, { hook_event_name: '${hook_event_name}' });
+    assert.equal(handler.tool, Object.values(PARITY).find(row => row.codex === event).tool);
+    // The relay fills in its own session and turn ids, so a turn-end hook passes only which event ended the turn.
+    // The prompt hook's input is checked in tests/codex-turbo.test.mjs.
+    if (handler.tool === 'turn_ended') assert.deepEqual(handler.input, { hook_event_name: '${hook_event_name}' });
   }
   // Codex clamps an Interrupt hook to 3 seconds (it turned 10 into 3 in the throwaway home).
   assert.ok(codex.hooks.hooks.Interrupt[0].hooks[0].timeout <= 3);
@@ -97,7 +98,8 @@ test('the Codex hooks map the mod\'s turn end, and nothing else, onto turn_ended
   const listed = json(fixture('hooks-list.json'));
   assert.deepEqual(listed.errors, []);
   assert.deepEqual(listed.hooks.map(h => [h.eventName, h.server, h.tool, h.timeoutSec]),
-    events.map(event => [event.toLowerCase(), codexServerKey(SERVER), 'turn_ended', codex.hooks.hooks[event][0].hooks[0].timeout]));
+    events.map(event => [event[0].toLowerCase() + event.slice(1), codexServerKey(SERVER), codex.hooks.hooks[event][0].hooks[0].tool,
+      codex.hooks.hooks[event][0].hooks[0].timeout]));
 });
 
 test('the repo is a Codex marketplace whose sleight entry is the plugin folder', () => {

@@ -5,9 +5,6 @@
       "cwd": ".",
       "startup_timeout_sec": 120,
       "tool_timeout_sec": 600,
-      "env": {
-        "SLEIGHT_TURBO": "0"
-      },
       "env_vars": [
         "CODEX_HOME",
         "SLEIGHT_APPROVAL_PROMPT",
@@ -47,7 +44,8 @@
         "SLEIGHT_TEXTLESS_HINT",
         "SLEIGHT_TRACE",
         "SLEIGHT_TRACE_CODE",
-        "SLEIGHT_TRACE_CUT"
+        "SLEIGHT_TRACE_CUT",
+        "SLEIGHT_TURBO"
       ]
     }
   }

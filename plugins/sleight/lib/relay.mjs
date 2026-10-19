@@ -111,6 +111,7 @@ import { syntaxErrorHint, syntaxOrigin } from './syntax-errors.mjs';
 import { compactJsDescription } from './tool-description.mjs';
 import { createLightReturn, lightReturnCode } from './light-return.mjs';
 import { hostLabel } from './host-label.mjs';
+import { TURN_START, TURN_START_TOOL, codexTurnClient, codexTurnFrame } from './codex-turn.mjs';
 
 // App handles have getAXState but no getState; only cua has getState. 13 of 27 sleight runs wrote app.getState
 // in their first call and 8 errored, losing a turn each (Fable study, 2026-10-17 11:53Z pass).
@@ -799,6 +800,11 @@ export function createRelay({
   // Codex marks an answer its auto-reviewer gave (approvals_reviewer in _meta). Only the user's own answer writes Always.
   const reviewerAnswer = result => !!result?._meta && typeof result._meta === 'object' && Object.hasOwn(result._meta, 'approvals_reviewer');
   const HOOK_ARGS = ['hook_event_name', 'session_id', 'turn_id'];
+  // Turbo in Codex (codex-turn.mjs): Codex's prompt hook binds a turn through turn_started, its Stop and Interrupt hooks
+  // release it. Set from initialize's clientInfo, and never under the mod, whose own handshake stays as it was.
+  let codexClient = false, codexBound = false, codexSequence = 0, codexPending = Promise.resolve();
+  const codexTurns = new Set();
+  const codexTurbo = () => codexClient && !modHost();
   let turboNoticeShown = false;
   const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ??
     (turboUnavailable ? ['browser_open','browser_read','browser_act','browser_fill','browser_tabs'] : []));
@@ -2466,6 +2472,8 @@ export function createRelay({
       serverIn.write(line + '\n');
       return;
     }
+    if (msg.method === 'initialize') codexClient = codexTurnClient(msg.params?.clientInfo);
+    if (msg.method === 'tools/call' && msg.params?.name === TURN_START_TOOL && !modHost()) { codexTurnStart(msg); return; }
     // Only the mod stops or resumes sleight and binds turbo's turns. In another host only a model could send these, so
     // they take the same refusal. (A turbo tool called by name there reaches a bridge no turn ever bound, which fails it.)
     const modOnly = ['sleight_stop', 'sleight_resume'].some(key => Object.hasOwn(msg.params?.arguments ?? {}, key)) && !modHost();
@@ -2542,6 +2550,28 @@ export function createRelay({
     if (msg.method === 'tools/call' && (msg.params?.name === 'js' || localNames.has(msg.params?.name)) &&
         namesOwnHost(msg.params.name, msg.params.arguments ?? {})) { finishedCall(msg.id); ownStop(msg); return; }
     if (!splitAcquisition(msg) && !splitSave(msg)) handleClient(msg);
+  }
+
+  // Codex's prompt hook, and only it (codex-turn.mjs). Like the mod's frames it bypasses journals, tracing and the engine.
+  // The reply is always empty: Codex hands a UserPromptSubmit hook's text to the model as context, and an error would
+  // show as a failed hook on every prompt. The relay builds the begin frame itself; the envelope never leaves this process.
+  function codexTurnStart(msg) {
+    const reply = () => {
+      if (msg.id !== undefined && !disposed && !clientOut.destroyed && !clientOut.writableEnded)
+        clientOut.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { content: [] } }) + '\n');
+    };
+    const frame = codexTurbo() ? codexTurnFrame(msg.params) : undefined;
+    // One binding per Codex turn. A prompt the user adds mid-turn keeps the first binding (and turbo's tabs); a payment it
+    // names asks on sleight's card. An ended turn's id never binds again.
+    const fresh = frame && !codexTurns.has(frame.turn);
+    trace('codex-turn', { accepted: !!fresh && !!directHost });
+    if (!fresh || !directHost || disposed || msg.id === undefined) { reply(); return; }
+    if (codexTurns.size >= 4096) codexTurns.delete(codexTurns.values().next().value);
+    codexTurns.add(frame.turn);
+    codexBound = true;
+    const turn = `codex-${++codexSequence}`;
+    codexPending = codexPending.catch(() => {}).then(() => directHost.bind({ ...directHost.bootstrapEnvelope(), event: 'begin', turn, text: frame.text },
+      turboApps(), clientHost)).then(available => { if (available) { resumeRequested = true; resumeAfterStop(); } }, () => {}).finally(reply);
   }
 
   // `let app = await cua.getApp("X"); await app.click(…)` in one call. The lease needs the
@@ -3006,6 +3036,12 @@ export function createRelay({
     }
     // Codex's Stop hook ends every turn, including the ones sleight sat out. With nothing to end, answer here, so an
     // unused turn neither reaches the engine nor writes a receipt. The mod calls only after a used turn.
+    // Codex's Stop and Interrupt hooks end the turbo turn first, used or not: the revoke takes effect at once.
+    if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.id !== undefined && codexTurbo() && codexBound &&
+        Object.keys(msg.params.arguments ?? {}).every(key => HOOK_ARGS.includes(key))) {
+      codexBound = false;
+      void directBrowser?.end();
+    }
     if (msg.method === 'tools/call' && msg.params?.name === TURN_END_TOOL && msg.id !== undefined && !modHost() &&
         Object.keys(msg.params.arguments ?? {}).every(key => HOOK_ARGS.includes(key))) {
       if (!turnUsed && !failedTurnEnds.size && !running.size && !tabsMayNeedCleanup && !tabCleanupPending) {
@@ -4344,12 +4380,13 @@ export function createRelay({
           const description = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt) : t.description;
           return { ...t, description: leanCalls ? leanCallDescription(description) : description };
         })
-        .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [], (modHost() && directBrowser?.tools()) || [])
+        .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [], ((modHost() || codexTurbo()) && directBrowser?.tools()) || [],
+          codexTurbo() ? [structuredClone(TURN_START)] : [])
         // Claude Code defers MCP tools behind a search, which cost a turn before the first call, and
         // again before the first drag (3/3 textedit-drag runs, 2026-10-08). sleight's descriptions
         // are short, so all but the internal turn_ended load up front, local tools included.
         .map(t => promptTool(t, prompt))
-        .map(t => (t.name !== TURN_END_TOOL ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } } : t));
+        .map(t => (t.name !== TURN_END_TOOL && t.name !== TURN_START_TOOL ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } } : t));
     }
     if (panelNote) {
       if (Array.isArray(msg.result?.content)) msg.result.content.push({ type: 'text', text: panelNote });

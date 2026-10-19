@@ -550,10 +550,16 @@ native reference, and oversized first results defer the browser reference while 
 - In Codex, the Stop and Interrupt hooks were listed and trusted on 2026-10-19, but no log shows one
   running yet. An Interrupt during a running call is answered at once, and the turn ends if the call
   finishes within 3 seconds. A call that runs longer leaves the turn to the 30-second idle end.
-- In Codex, turbo is off and browsers use the engine path. Turbo needs the Claude Code mod to tie a
-  turn to your message, and a Codex hook has no way to hold the private envelope that does it.
-- Codex runs sleight's turn-end hooks only after you trust them. Untrusted, a used turn ends after
-  30 idle seconds.
+- Turbo in Codex hasn't run in a live session. The binding rests on Codex 0.160.0's source: a tool hidden
+  from the model can't be called by it, and every model call has `callId`. A Codex version that
+  changes both loses that protection. sleight doesn't bind turns for Codex older than 0.160.0.
+- In Codex, a message you add while a turn is running doesn't rebind turbo. A payment that only the
+  added message names asks on sleight's card. A message over 64 KiB binds with no text, so every
+  payment, upload and history step in that turn asks.
+- The `codex-sleight` benchmark arms configure sleight's server without the plugin's hooks, so they now
+  list turbo's tools that never bind. Set `SLEIGHT_TURBO=0` in those arms or install the plugin's hooks.
+- Codex runs sleight's hooks only after you trust them. Untrusted, a used turn ends after
+  30 idle seconds, and turbo never binds.
 - We don't know whether turning off Codex's `computer-use@openai-bundled` plugin also removes the
   computer surface from `unified-computer-use`, which Codex's Browser plugin shares. The `computer_use`
   feature flag left that plugin's skill in place in a throwaway home.
