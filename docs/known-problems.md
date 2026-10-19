@@ -34,9 +34,12 @@ our own runs. Dates and engine versions are given where they matter.
   3 clicks), and the cause wasn't recorded. It no longer needs HID idle over the call, which the engine's key presses reset
   (above). It needs idle since the stop result arrived, so a user typing after the stop still refuses it. The relay trace
   records the refusal reason and the idle sample, but no traced round has run since.
-- A key call whose window comes back retitled doesn't get a window note when that window's tab strip still lists the old
-  title (a new tab in Firefox, 12 of 60 b3 and b7 task-runs). A second window that also lists a tab with that title doesn't
-  get one either. Only Firefox's tab labels are tested.
+- A key call whose window comes back retitled doesn't get a window note when its tab strip is the one Claude last saw for
+  that window plus exactly one selected tab (a new tab in Firefox, 12 of 60 b3 and b7 task-runs). A tab switch or a new
+  window keeps the note. Another window of the same app also loses it when its strip lists every tab of the last-seen one
+  plus one selected tab. The old title must be a whole tab label, plain or Firefox's `Value: <title>, <title>`. Tabs count
+  only from the window's own tab group, before any page. Only Firefox's strip is tested, and Safari and Chrome may still
+  get the note.
 - A read between the menu click and the next action (`const menu = await app.getAXState()`) doesn't split either, so the
   call stops at the menu, as textedit-save-2 did (2026-10-17). The guard doesn't pass a menu's header (title and app, no
   URL) on its own: only the continuation checks the native window behind it.

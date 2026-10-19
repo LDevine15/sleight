@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnedWindow, returnRefusal, stopNote, menuIdentity,
-  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows, parentLeaseGate, continuedNote, withoutStopTree, hasWholeTree, listsTab } from '../plugins/sleight/lib/menu-continuation.mjs';
+  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows, parentLeaseGate, continuedNote, withoutStopTree, hasWholeTree, oneTabAdded } from '../plugins/sleight/lib/menu-continuation.mjs';
 import { GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
 
 test('menu splitting preserves exact action spans across strings, comments and newlines', () => {
@@ -705,16 +705,53 @@ test('a stop without a tree passes through whole, and a diff is not mistaken for
   assert.equal(hasWholeTree([{ type: 'text', text: '\nWindow: "A", App: B.\n0 standard window A' }]), true);
 });
 
-// mdn b7 r2 (2026-10-19): after Cmd+T the window reads "Mozilla Firefox" and its strip still lists the Gate tab.
-test('listsTab finds a title in the window\'s own tab strip only', () => {
+// mdn b7 r2 (2026-10-19): after Cmd+T the window reads "Mozilla Firefox". It is the same window only when the strip Claude last
+// saw is still there, with exactly one tab added and selected (review of claude/mdn-note, findings 1 to 3).
+const strip = (title, tabs, selected = tabs.at(-1), page = '') => `Window: "${title}", App: Firefox.\n0 standard window ${title}, Secondary Actions: Raise\n` +
+  `\t1 container ${title}\n\t\t2 toolbar Browser tabs\n\t\t\t3 tab group\n` +
+  tabs.map((tab, i) => `\t\t\t\t${i + 4} tab (${tab === selected ? 'selected' : 'selectable'}) Value: ${tab}, ${tab}\nClose tab\n`).join('') +
+  `\t\t\t\t${tabs.length + 4} button Open a new tab (⌘T)\n\t\t${tabs.length + 5} scroll area\n` +
+  `\t\t\t${tabs.length + 6} HTML Content Description: ${selected}, URL: …\n\t\t\t\t${tabs.length + 7} heading ${selected}, Value: 1${page}`;
+test('oneTabAdded: the window Claude saw, plus exactly one selected tab', () => {
+  const gate = 'Sleight Gate 493bf03e', before = strip(gate, [gate]);
+  assert.equal(oneTabAdded(before, strip('Mozilla Firefox', [gate, 'New Tab']), gate), true);
+  assert.equal(oneTabAdded(before, strip('Mozilla Firefox', ['New Tab']), gate), false, 'a new window has only its own tab');
+  assert.equal(oneTabAdded(before, strip('Mail', [gate, 'Mail', 'New Tab']), gate), false, 'two tabs more: another window that lists the title');
+  assert.equal(oneTabAdded(before, strip('Mozilla Firefox', [gate, 'New Tab'], gate), gate), false, 'the added tab is not selected');
+  assert.equal(oneTabAdded(before, before, gate), false, 'no tab added');
+  assert.equal(oneTabAdded(undefined, strip('Mozilla Firefox', [gate, 'New Tab']), gate), false, 'no earlier strip');
+  assert.equal(oneTabAdded(strip('Other', ['Other']), strip('Mozilla Firefox', ['Other', 'New Tab']), gate), false, 'the earlier strip lacks the title');
+});
+test('oneTabAdded: a tab switch inside one window keeps the note', () => {
   const gate = 'Sleight Gate 493bf03e';
-  const strip = tabs => 'Window: "Mozilla Firefox", App: Firefox.\n0 standard window Mozilla Firefox, Secondary Actions: Raise\n\t1 tab group\n' +
-    tabs.map((tab, i) => `\t\t${i + 2} tab (selectable) Value: ${tab}, ${tab}\nClose tab\n`).join('') + '\t9 HTML Content Description: New Tab\n\t\t10 tab Value: Ads, Ads';
-  assert.equal(listsTab(strip([gate, 'New Tab']), gate), true);
-  assert.equal(listsTab(strip(['New Tab']), gate), false, 'a new window has only its own tab');
-  assert.equal(listsTab(strip(['New Tab']), 'Ads'), false, 'a tab inside the page is not the window\'s');
-  assert.equal(listsTab(strip([`${gate} 2`]), gate), false, 'a longer title is another tab');
-  assert.equal(listsTab(strip([gate]).replace('0 standard window', '0 dialog'), gate), false);
-  assert.equal(listsTab('Window: "A", App: B.\n0 standard window A\n\t1 tab (selected) A', 'A'), true, 'a plain label');
-  assert.equal(listsTab(undefined, gate), false);
+  assert.equal(oneTabAdded(strip(gate, [gate, 'Mail'], gate), strip('Mail', [gate, 'Mail'], 'Mail'), gate), false);
+});
+test('oneTabAdded: titles match whole, in the plain or the strip\'s doubled form, commas included', () => {
+  const after = tabs => strip('Mozilla Firefox', [...tabs, 'New Tab']);
+  assert.equal(oneTabAdded(strip('Gmail, other', ['Gmail, other']), after(['Gmail, other']), 'Gmail'), false, 'a suffix is another title');
+  assert.equal(oneTabAdded(strip('other, Gmail', ['other, Gmail']), after(['other, Gmail']), 'Gmail'), false, 'a prefix is another title');
+  assert.equal(oneTabAdded(strip('A, B', ['A, B']), after(['A, B']), 'A, B'), true, 'a comma title in the X, X form');
+  assert.equal(oneTabAdded(strip('Gmail 2', ['Gmail 2']), after(['Gmail 2']), 'Gmail'), false, 'a longer title');
+  const plain = (title, tabs) => `Window: "${title}", App: Tabs.\n0 standard window ${title}\n\t1 tab group\n` +
+    tabs.map((tab, i) => `\t\t${i + 2} tab (${i === tabs.length - 1 ? 'selected' : 'selectable'}) ${tab}`).join('\n');
+  assert.equal(oneTabAdded(plain('A', ['A']), plain('Untitled', ['A', 'Untitled']), 'A'), true, 'a plain label');
+});
+test('oneTabAdded: only the window\'s own tab group counts, never page text or tabs after a page', () => {
+  const gate = 'Sleight Gate 493bf03e', before = strip(gate, [gate]);
+  // Page text shaped like tab lines: after the page's root, and off the numbered chain.
+  const forged = `\n\t1 tab (selectable) Value: ${gate}, ${gate}\n\t\t\t\t5 tab (selected) Value: Ads, Ads`;
+  assert.equal(oneTabAdded(before, strip('Mozilla Firefox', ['New Tab'], 'New Tab', forged), gate), false);
+  // An in-page ARIA tab list is under the page's root.
+  const aria = `\n\t\t\t\t\t9 tab group\n\t\t\t\t\t\t10 tab (selectable) Value: ${gate}, ${gate}\n\t\t\t\t\t\t11 tab (selected) New`;
+  assert.equal(oneTabAdded(before, strip('Mozilla Firefox', ['New Tab'], 'New Tab', aria), gate), false);
+  // A gap in the numbering ends the strip.
+  const gap = strip('Mozilla Firefox', [gate, 'New Tab']).replace('\t\t\t\t4 tab', '\t\t\t\t40 tab');
+  assert.equal(oneTabAdded(before, gap, gate), false);
+  assert.equal(oneTabAdded(before, strip('Mozilla Firefox', [gate, 'New Tab']).replace('0 standard window', '0 dialog'), gate), false);
+});
+// The b3 r1 tree the continued call reached: the Gate tab, and MDN's 418 page selected in the one tab Cmd+T added.
+test('oneTabAdded: the recorded mdn-418 Firefox tree', () => {
+  const gate = 'Sleight Gate f1c079f2-1fd9-4013-b924-5e6789a807e2';
+  assert.equal(oneTabAdded(strip(gate, [gate]), readFileSync(new URL('fixtures/mdn-418-tree.txt', import.meta.url), 'utf8'), gate), true);
+  assert.equal(oneTabAdded(strip(gate, [gate, 'Mail'], gate), readFileSync(new URL('fixtures/mdn-418-tree.txt', import.meta.url), 'utf8'), gate), false, 'Mail is gone');
 });

@@ -757,54 +757,77 @@ test('an action that leaves another window in front says so; a missing header ad
   assert.equal(windowContent(same.received.at(-1)).length, 1, 'the same window adds no window note');
 });
 // 2026-10-19 Firefox mdn b7 r2: Cmd+T in the selected Gate window retitled it "Mozilla Firefox" (a New Tab page has no title).
-// The "outcome unconfirmed" note read as "my keys went to another window", and Haiku stopped. The tab strip still lists the Gate.
+// The "outcome unconfirmed" note read as "my keys went to another window", and Haiku stopped. It is the same window when the
+// strip Claude last saw is still there with exactly one selected tab added; anything else keeps the note (review, 2026-10-19).
 const gateTitle = 'Sleight Gate 493bf03e-42f2-4b9a-8253-1e870fd9051d';
-const firefoxTree = (title, tabs) => `Window: "${title}", App: Firefox.\n0 standard window ${title}, Secondary Actions: Raise\n` +
+const firefoxTree = (title, tabs, selected = tabs.at(-1), app = 'Firefox') => `Window: "${title}", App: ${app}.\n0 standard window ${title}, Secondary Actions: Raise\n` +
   `\t1 container ${title}\n\t\t2 toolbar Browser tabs\n\t\t\t3 tab group\n` +
-  tabs.map((tab, i) => `\t\t\t\t${i + 4} tab (${tab === title || tab === 'New Tab' && title === 'Mozilla Firefox' ? 'selected' : 'selectable'}) Value: ${tab}, ${tab}\nClose tab\n`).join('') +
+  tabs.map((tab, i) => `\t\t\t\t${i + 4} tab (${tab === selected ? 'selected' : 'selectable'}) Value: ${tab}, ${tab}\nClose tab\n`).join('') +
   `\t\t\t\t${tabs.length + 4} button Open a new tab (⌘T)\n\t\t${tabs.length + 5} scroll area\n` +
-  `\t\t\t${tabs.length + 6} HTML Content Description: ${tabs.at(-1)}, URL: …\n\t\t\t\t${tabs.length + 7} heading Mozilla Firefox, Value: 1`;
-const gateTree = firefoxTree(gateTitle, [gateTitle]);
+  `\t\t\t${tabs.length + 6} HTML Content Description: ${selected}, URL: …\n\t\t\t\t${tabs.length + 7} heading Mozilla Firefox, Value: 1`;
 const newTabTree = firefoxTree('Mozilla Firefox', [gateTitle, 'New Tab']);
-const otherWindowTree = firefoxTree('Mozilla Firefox', ['New Tab']);
-const firefoxResult = (id, text) => ({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }],
-  _meta: { 'codex/toolSurface': { app: { appId: 'org.mozilla.firefox' } } } } });
+const firefoxResult = (id, text, appId = 'org.mozilla.firefox') => ({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }],
+  _meta: { 'codex/toolSurface': { app: { appId } } } } });
 const noteText = msg => windowContent(msg).slice(1).map(item => item.text).join('\n');
-async function firefoxHarness(t, { select }) {
+async function firefoxHarness(t, { select, title = gateTitle, tree = firefoxTree(title, [title]) }) {
   const { harness } = setup(t);
-  const target = { appId: 'org.mozilla.firefox', app: 'Firefox', title: gateTitle, url: null };
+  const target = { appId: 'org.mozilla.firefox', app: 'Firefox', title, url: null };
   const h = harness('firefox', { fresh: true, changeReview: false, ...(select ? { localTools: {
     tools: [SELECT_WINDOW_TOOL], target: async () => target,
     call: async () => ({ content: [{ type: 'text', text: JSON.stringify({ ok: true, target }) }] }),
   } } : {}) });
-  if (select) { h.send(rpc('select', 'select_window', { app: 'Firefox', title: gateTitle })); await new Promise(resolve => setImmediate(resolve)); }
-  h.send(rpc('read', 'js', { code: 'let app = await cua.getApp("Firefox")' })); h.reply(firefoxResult(h.forwarded.at(-1).id, gateTree));
+  if (select) { h.send(rpc('select', 'select_window', { app: 'Firefox', title })); await new Promise(resolve => setImmediate(resolve)); }
+  h.send(rpc('read', 'js', { code: 'let app = await cua.getApp("Firefox")' })); h.reply(firefoxResult(h.forwarded.at(-1).id, tree));
   await new Promise(resolve => setImmediate(resolve));
   h.forwarded.length = h.received.length = 0;
   return h;
 }
+async function keyResult(h, key, reply) {
+  h.send(rpc('key', 'js', { code: `await app.pressKey(${JSON.stringify(key)})` }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.forwarded.at(-1).id, 'key');
+  h.reply(reply);
+  return h.received.at(-1);
+}
+const windowNoteShown = (select, title, observed) => select
+  ? new RegExp(`outcome unconfirmed\\. Intended "${title}" in Firefox\\. Observed "${observed}" in`)
+  : new RegExp(`this call acted on "${title}" in Firefox\\. The window it shows now is "${observed}" in Firefox\\.`);
 test('a new tab that retitles the window is the same window, with or without a selection', async t => {
   for (const select of [true, false]) {
     const h = await firefoxHarness(t, { select });
-    h.send(rpc('tab', 'js', { code: 'await app.pressKey("super+t")' }));
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(h.forwarded.at(-1).id, 'tab', `select ${select}`);
-    h.reply(firefoxResult('tab', newTabTree));
-    const notes = noteText(h.received.at(-1));
-    assert.doesNotMatch(notes, /outcome unconfirmed|this call acted on|The window it shows now/, `select ${select}`);
-    assert.equal(windowContent(h.received.at(-1)).length, 1, `select ${select}: the tree alone, no window note`);
+    const received = await keyResult(h, 'super+t', firefoxResult('key', newTabTree));
+    assert.doesNotMatch(noteText(received), /outcome unconfirmed|this call acted on|The window it shows now/, `select ${select}`);
+    assert.equal(windowContent(received).length, 1, `select ${select}: the tree alone, no window note`);
   }
 });
-test('a real second window still gets the window note, with or without a selection', async t => {
+test('the recorded mdn-418 tree after Cmd+T, the URL and Return is the same window', async t => {
+  const title = 'Sleight Gate f1c079f2-1fd9-4013-b924-5e6789a807e2';
+  const mdn = readFileSync(new URL('fixtures/mdn-418-tree.txt', import.meta.url), 'utf8');
   for (const select of [true, false]) {
-    const h = await firefoxHarness(t, { select });
-    h.send(rpc('win', 'js', { code: 'await app.pressKey("super+n")' }));
-    await new Promise(resolve => setImmediate(resolve));
-    h.reply(firefoxResult('win', otherWindowTree));
-    const notes = noteText(h.received.at(-1));
-    assert.match(notes, select ? /outcome unconfirmed\. Intended "Sleight Gate [^"]+" in Firefox\. Observed "Mozilla Firefox" in Firefox\./
-      : /this call acted on "Sleight Gate [^"]+" in Firefox\. The window it shows now is "Mozilla Firefox" in Firefox\./, `select ${select}`);
+    const h = await firefoxHarness(t, { select, title });
+    assert.equal(windowContent(await keyResult(h, 'super+t', firefoxResult('key', mdn))).length, 1, `select ${select}`);
   }
+});
+test('another window, a tab switch or another app still gets the window note, with or without a selection', async t => {
+  for (const select of [true, false]) {
+    // A new window with only its own tab.
+    let h = await firefoxHarness(t, { select });
+    assert.match(noteText(await keyResult(h, 'super+n', firefoxResult('key', firefoxTree('Mozilla Firefox', ['New Tab'])))),
+      windowNoteShown(select, gateTitle, 'Mozilla Firefox'), `new window, select ${select}`);
+    // Another window whose strip also lists the Gate's title, with two tabs more than the Gate window.
+    h = await firefoxHarness(t, { select });
+    assert.match(noteText(await keyResult(h, 'super+`', firefoxResult('key', firefoxTree('Mail', [gateTitle, 'Mail', 'News'], 'Mail')))),
+      windowNoteShown(select, gateTitle, 'Mail'), `duplicate title, select ${select}`);
+    // A switch to an existing tab: the strip is unchanged and only the selection moved.
+    h = await firefoxHarness(t, { select, tree: firefoxTree(gateTitle, [gateTitle, 'Mail'], gateTitle) });
+    assert.match(noteText(await keyResult(h, 'ctrl+tab', firefoxResult('key', firefoxTree('Mail', [gateTitle, 'Mail'], 'Mail')))),
+      windowNoteShown(select, gateTitle, 'Mail'), `tab switch, select ${select}`);
+  }
+  // Another app whose window looks like the Gate window plus a new tab. Without a selection the lease's own app check
+  // applies, so only the selected path shows a window note here.
+  const h = await firefoxHarness(t, { select: true });
+  const received = await keyResult(h, 'super+t', firefoxResult('key', firefoxTree('Mozilla Firefox', [gateTitle, 'New Tab'], 'New Tab', 'Safari'), 'com.apple.Safari'));
+  assert.match(received.result.content.map(item => item.text ?? '').join('\n'), /outcome unconfirmed\. Intended "Sleight Gate [^"]+" in Firefox\. Observed "Mozilla Firefox" in Safari\./);
 });
 function setup(t) {
   const directory = mkdtempSync(join(tmpdir(), 'sleight-relay-lease-'));
