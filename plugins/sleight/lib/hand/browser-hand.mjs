@@ -8,6 +8,9 @@
 // the browser window (window.screenX/screenY/outerWidth/outerHeight, in screen points), and page zoom is the ratio of
 // the window's width to the viewport's CSS width, refined by devicePixelRatio (display scale times zoom). Pinch zoom
 // goes through the visual viewport. Turbo moves no real pointer, so it has nothing to hide the hand before.
+import { appendFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { exposure } from './planner.mjs';
 import { trustedLocatorRead } from '../direct-browser/trusted-dom.mjs';
 
@@ -107,7 +110,7 @@ export function createBrowserHand({ client, loadClient = () => import('./client.
     if (!live()) return;
     const planned = planBrowserFrame({ op, text, box, toBox, metrics, geometry, ignorePids: [resolved.pid].filter(Number.isSafeInteger) });
     if (planned?.skip) return skip(planned.skip);
-    if (planned?.frame) try { resolved.send(planned.frame); } catch {}
+    if (planned?.frame) try { resolved.send(planned.frame); trace('hand-shown', { op, kind: planned.frame.kind }); } catch {}
   }
   return {
     // input: { op, page, locator, to, ref, text }, as act.mjs has them when the step's input starts.
@@ -121,11 +124,27 @@ export function createBrowserHand({ client, loadClient = () => import('./client.
   };
 }
 
+// Where the worker's hand events go: the relay's trace file (SLEIGHT_TRACE, see launch.mjs), named by the parent's pid as
+// worker.mjs's traceLoss does. An event holds the operation and a fixed reason or kind, never page content.
+const HAND_EVENTS = new Set(['hand-skipped', 'hand-shown']);
+export function workerHandTrace({ setting = process.env.SLEIGHT_TRACE, parentPid = process.ppid, now = Date.now,
+  append = (file, line) => appendFileSync(file, line, { mode: 0o600 }), home = homedir } = {}) {
+  if (!setting || !Number.isSafeInteger(parentPid) || parentPid < 1) return () => {};
+  const file = join(setting === '1' ? join(home(), 'Library', 'Logs', 'sleight') : setting, `trace-${parentPid}.jsonl`);
+  return (direction, msg) => {
+    if (!HAND_EVENTS.has(direction)) return;
+    const fields = { op: typeof msg?.op === 'string' && KINDS[msg.op] ? msg.op : 'other',
+      ...(typeof msg?.reason === 'string' && /^[a-z][a-z-]{1,31}$/.test(msg.reason) ? { reason: msg.reason } : {}),
+      ...(typeof msg?.kind === 'string' && Object.values(KINDS).includes(msg.kind) ? { kind: msg.kind } : {}) };
+    try { append(file, JSON.stringify({ t: new Date(now()).toISOString(), direction, msg: fields }) + '\n'); } catch {}
+  };
+}
+
 // One hand per worker process, for every runner it builds. The helper is the native hand's locate.js, run by bounds.
 let shared;
 export function sharedBrowserHand(env = process.env) {
   if (shared !== undefined) return shared ?? undefined;
-  shared = createBrowserHand({ env, locate: request => runLocate(request) }) ?? null;
+  shared = createBrowserHand({ env, locate: request => runLocate(request), trace: workerHandTrace({ setting: env.SLEIGHT_TRACE }) }) ?? null;
   return shared ?? undefined;
 }
 async function runLocate(request) {

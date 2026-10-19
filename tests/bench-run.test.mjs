@@ -21,6 +21,7 @@ import { mergeArmHooks as realMergeArmHooks } from '../bench/arm-hooks.mjs';
 import { codexSleightRunConfig, assertOnlyServers } from '../bench/codex-sleight.mjs';
 import { codexExecPlan } from '../bench/codex-arm.mjs';
 import { engineSpan } from '../bench/engine-version.mjs';
+import { benchHand } from '../bench/hand/bench-hand.mjs';
 const parserSkip = packageSkip('typescript');
 const { dragMethodAudit } = parserSkip ? {} : await import('../bench/world/method-check.mjs');
 
@@ -132,7 +133,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     writeCodexSleightConfig: (toml, home, copy) => { calls.push(['codex sleight config', home, copy]); codexConfigs.push(toml); },
     codexSleightRunConfig, approvalSummary: () => ({ accepted: 1, declined: declinedPrompts, toolsRefused: [], log: [{ kind: 'elicitation', message: 'Allow Computer Use to use "TextEdit"?', action: 'accept' }] }),
     codexConfigServers: home => home === '/owner/.codex-bench-sleight' ? sleightHomeServers : codexServers ?? [],
-    cpuSplit,
+    cpuSplit, benchHand,
     startFootprint: () => async () => footprint,
     runCodex: async (prompt, options) => { codexRuns.push({ prompt, options }); options.onSpawn?.(4321); return { code: 0, out: {}, forbidden: [], ...codexResult }; }, watchAppWindows: () => async () => [],
     acquireLiveLock: async () => { calls.push('lock'); return async () => calls.push('unlock'); },
@@ -982,6 +983,22 @@ test('every arm runs with the ghost hand off, even when the host env turns it on
     assert.ok(result.envs.length > 0);
     for (const env of result.envs) assert.equal(env.SLEIGHT_HAND, '0', suite);
   }
+});
+
+test('SLEIGHT_BENCH_HAND=1 turns the hand on in every arm and marks the pass; any other value stops it', async () => {
+  for (const suite of ['real', 'default']) {
+    const result = await runner({ suite, base: { SLEIGHT_BENCH_HAND: '1' }, drive: true });
+    assert.equal(result.error, undefined);
+    assert.ok(result.envs.length > 0);
+    for (const env of result.envs) assert.equal(env.SLEIGHT_HAND, '1', suite);
+    assert.equal(result.saved.at(-1).ghostHand, 'on', suite);
+    assert.ok(result.logs.some(line => /Ghost hand on/.test(line)), suite);
+  }
+  const off = await runner({ suite: 'real', base: { SLEIGHT_BENCH_HAND: '0' }, drive: true });
+  assert.equal(off.saved.at(-1).ghostHand, 'off');
+  for (const env of off.envs) assert.equal(env.SLEIGHT_HAND, '0');
+  const bad = await runner({ suite: 'real', base: { SLEIGHT_BENCH_HAND: 'yes' } });
+  assert.match(String(bad.error?.message), /SLEIGHT_BENCH_HAND must be 0 or 1/);
 });
 
 test('--surfaces browser,computer reaches every real-suite run and the results; anything else is refused', async () => {

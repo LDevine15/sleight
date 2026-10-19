@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { chromeArmPlan, chromeHooks } from './chrome.mjs';
+import { benchHand } from '../../hand/bench-hand.mjs';
 
 export const BROWSER_SURFACES = ['playwright-mcp', 'chrome-devtools-mcp', 'claude-in-chrome', 'claude-cu'];
 export const CLAUDE_VERSION = '2.1.289';
@@ -22,7 +23,8 @@ export function worldAgentSetup({ surface, dir, armRoot = defaultArmRoot(), host
   env.DISABLE_AUTOUPDATER = '1';
   env.DISABLE_TELEMETRY = '1';
   env.ENABLE_TOOL_SEARCH = 'false';
-  env.SLEIGHT_HAND = '0'; // the ghost hand stays out of timing; the cost pass sets it on the returned env
+  // The ghost hand stays out of timing unless the runner's SLEIGHT_BENCH_HAND=1 (H6 cost pass, H8 hidden-tab check).
+  env.SLEIGHT_HAND = benchHand(process.env);
   return { command: path.join(arm, 'node_modules/.bin/claude'), env,
     args: ['--setting-sources', '', '--disable-slash-commands'],
     settings: { claudeMdExcludes: ['**'], autoMemoryEnabled: false },
