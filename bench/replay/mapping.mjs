@@ -1,5 +1,5 @@
 import ts from 'typescript';
-import { FrameMapper, windowReceipts } from './frames.mjs';
+import { FrameMapper, windowReceipts, isNativeSelection } from './frames.mjs';
 
 export const resultText = result => (result?.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
 
@@ -97,7 +97,7 @@ export class TargetMapper {
       state.refMap = matchRows(state.beforeRefs, state.afterRefs);
     }
   }
-  observe(before, after, args = {}) {
+  observe(before, after, args = {}, source) {
     if (elements(before).length) {
       this.before = before; this.after = after;
       this.beforeRows = mergeElements(this.beforeRows, this.replaceStrings(before)); this.afterRows = mergeElements(this.afterRows, after);
@@ -118,7 +118,7 @@ export class TargetMapper {
       this.tabs.set(tab, state);
     }
     // A native select_window receipt binds a changing window number to app + title.
-    const x = windowReceipts(before), y = windowReceipts(after), pairs = [];
+    const x = isNativeSelection(source) ? windowReceipts(before) : [], y = isNativeSelection(source) ? windowReceipts(after) : [], pairs = [];
     for (const old of x) {
       const same = row => this.replaceStrings(old.target.title) === row.target.title && old.target.appId === row.target.appId;
       const matches = y.filter(same);

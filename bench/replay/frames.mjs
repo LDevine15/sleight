@@ -1,5 +1,7 @@
 // Only explicit native window-selection receipts can establish a coordinate frame.
 // Screenshots describe pixels, not a window's origin and dimensions in points.
+export const isNativeSelection = call => call?.server === 'plugin:sleight:computer' && call.name === 'select_window';
+
 export function windowReceipts(text) {
   return text.split('\n').flatMap(line => {
     try {

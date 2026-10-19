@@ -31,7 +31,7 @@ export async function replayCalls(calls, { call, mapper = new TargetMapper(), be
       const start = performance.now();
       try { result = await call(original.server, original.name, args); }
       finally { toolMs = performance.now() - start; }
-      mapper.observe(resultText(original.result), resultText(result), original.arguments);
+      mapper.observe(resultText(original.result), resultText(result), original.arguments, original);
       reason = divergence(original.result, result, mapper, original.arguments);
     } catch (error) { reason = error.message; }
     const row = { index, id: original.id, server: original.server, name: original.name, arguments: args,

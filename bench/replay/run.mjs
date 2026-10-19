@@ -9,7 +9,7 @@ import { loadRecording } from './recording.mjs';
 import { replayCalls, parseEnv, schedule, summarize } from './engine.mjs';
 import { TargetMapper, resultText } from './mapping.mjs';
 import { requireReplayLauncher } from './launcher-contract.mjs';
-import { windowReceipts } from './frames.mjs';
+import { windowReceipts, isNativeSelection } from './frames.mjs';
 
 const repo = fileURLToPath(new URL('../..', import.meta.url));
 export function options(argv) {
@@ -157,7 +157,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (comparingBuilds && variants[0].build.worktree === variants[1].build.worktree) throw Error('Comparison requires distinct worktrees');
   const order = schedule(opts.repeat, variants);
   const plan = { source: recording.transcript, transcriptSHA256: recording.transcriptSHA256, kind: recording.kind, task: recording.task, calls: recording.calls.length,
-    windowFrames: recording.calls.flatMap((call, index) => windowReceipts(resultText(call.result)).filter(row => row.frame).map(row => ({ index, ...row }))),
+    windowFrames: recording.calls.flatMap((call, index) => isNativeSelection(call) ? windowReceipts(resultText(call.result)).filter(row => row.frame).map(row => ({ index, ...row })) : []),
     schedule: order, check, model: false, mode: comparingBuilds ? 'worktrees' : 'switches', worktree: repo,
     commit: execFileSync('/usr/bin/git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     trackedDirty: Boolean(execFileSync('/usr/bin/git', ['-C', repo, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim()),

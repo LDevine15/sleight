@@ -89,7 +89,7 @@ test('refuse ambiguous tab identity and map window receipts', () => {
   const mapper = new TargetMapper(), head = 't' + 'a'.repeat(31) + ' http://127.0.0.1:5413\nTitle: Checkout';
   assert.throws(() => mapper.observe(head, head + '\n' + head), /Ambiguous tab/);
   const receipt = n => text(JSON.stringify({ target: { appId: 'com.apple.TextEdit', title: 'Source.txt' }, identity: { pid: n, windowNumber: n } }));
-  mapper.observe(resultText(receipt(1)), resultText(receipt(2)));
+  mapper.observe(resultText(receipt(1)), resultText(receipt(2)), {}, { server: 'plugin:sleight:computer', name: 'select_window' });
   assert.equal(mapper.arguments({ windowNumber: 1 }).windowNumber, 2);
   assert.deepEqual(mapper.arguments({ windowId: 1, toWindowId: 1 }), { windowId: 2, toWindowId: 2 });
   assert.equal(divergence(text('{"windowId":1}'), text('{"windowId":2}'), mapper), null);
