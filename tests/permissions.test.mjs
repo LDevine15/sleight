@@ -18,7 +18,7 @@ function world(t) {
   const records = [];
   const grants = { list: () => [...records], remove: key => { const at = records.findIndex(r => r.key === key); if (at < 0) return false; records.splice(at, 1); return true; } };
   const engineFile = join(home, 'engine-approvals.json');
-  const options = { home, out: text => lines.push(text), grants: () => grants, logs, engineFile, now: () => 10 * 24 * HOUR, appNames: () => [] };
+  const options = { home, out: text => lines.push(text), grants: () => grants, logs, engineFile, now: () => 10 * 24 * HOUR, appNames: () => [], tty: true };
   const command = (args, extra = {}) => permissionsCommand(args, { ...options, ...extra });
   const write = (name, data, mode = 0o600) => { const file = join(support, name); writeFileSync(file, typeof data === 'string' ? data : JSON.stringify(data), { mode }); chmodSync(file, mode); return file; };
   const output = () => { const text = lines.join(''); lines.length = 0; return text; };
@@ -249,6 +249,21 @@ test('the listing: always-allowed apps with when sleight last used them, debugge
   assert.equal(w.output(), text);
 });
 
+test('site limits are worded for every path they hold on, and ChatGPT\'s list is read only for a person at a terminal', t => {
+  const w = world(t);
+  assert.equal(w.command(['sites', 'only', 'https://a.example']), 0);
+  assert.equal(w.output(), 'sleight acts only on https://a.example from its next action, in turbo and in browser windows on the engine path. sleight-mcp permissions sites all lifts the limit.\n');
+  assert.equal(w.command([]), 0);
+  assert.match(w.output(), /\nSites: only https:\/\/a\.example \(turbo and browser windows on the engine path\)\n/);
+  assert.equal(w.command(['sites', 'all']), 0);
+  assert.equal(w.output(), 'sleight may act on any site you haven\'t blocked.\n');
+  writeFileSync(w.engineFile, JSON.stringify({ approvedBundleIdentifiers: ['com.example.secret'] }));
+  assert.equal(w.command([], { tty: false }), 0);
+  const text = w.output();
+  assert.doesNotMatch(text, /com\.example\.secret/);
+  assert.match(text, /\nChatGPT's own Always allow list: run sleight-mcp permissions in Terminal to see it\.\n$/);
+});
+
 test('revoke takes an app off the list and its debugger grants, turbo writes the opt-out, and all clears every grant but no block', t => {
   const w = world(t);
   w.write('preapproved.json', { version: 1, apps: [{ app: 'Calculator', riskLevel: 'low' }, { app: 'com.example.chat', riskLevel: 'high' }] });
@@ -356,9 +371,9 @@ test('the menu payload offers revokes and a block for the app sleight last acted
 
 test('the doctor: an unsafe file is the one problem, with its fix; otherwise counts', t => {
   const w = world(t);
-  assert.deepEqual(permissionsDoctorLines({ home: w.home }), ['permissions', 'ok        blocks: none (sleight-mcp permissions lists what sleight may do)', 'ok        turbo sites: any site']);
+  assert.deepEqual(permissionsDoctorLines({ home: w.home }), ['permissions', 'ok        blocks: none (sleight-mcp permissions lists what sleight may do)', 'ok        sites: any site']);
   w.write('permissions.json', { version: 1, apps: [{ id: 'com.example.app' }], sites: ['https://a.example'], only: ['https://b.example'] });
-  assert.deepEqual(permissionsDoctorLines({ home: w.home }), ['permissions', 'ok        blocks: 1 app, 1 site (sleight-mcp permissions lists what sleight may do)', 'ok        turbo sites: only https://b.example']);
+  assert.deepEqual(permissionsDoctorLines({ home: w.home }), ['permissions', 'ok        blocks: 1 app, 1 site (sleight-mcp permissions lists what sleight may do)', 'ok        sites: only https://b.example']);
   w.write('permissions.json', { version: 1, apps: [], sites: [] }, 0o666);
   assert.deepEqual(permissionsDoctorLines({ home: w.home }), ['permissions',
     'PROBLEM   permissions.json is a link or has another owner, mode or format, so sleight acts nowhere',

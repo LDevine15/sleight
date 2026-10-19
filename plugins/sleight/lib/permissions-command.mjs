@@ -27,8 +27,9 @@ function installedAppNames(bundleId) {
   } catch { return []; }
 }
 
-function context({ home = userInfo().homedir, uid = process.getuid(), out = text => process.stdout.write(text), now = Date.now, appNames = installedAppNames, ...rest } = {}) {
-  return { home, uid, out, now, appNames, path: permissionsPath(home), folder: usedFolder(home), logs: join(home, 'Library/Logs/sleight'),
+function context({ home = userInfo().homedir, uid = process.getuid(), out = text => process.stdout.write(text), now = Date.now, appNames = installedAppNames,
+  tty = process.stdout.isTTY === true, ...rest } = {}) {
+  return { home, uid, out, now, appNames, tty, path: permissionsPath(home), folder: usedFolder(home), logs: join(home, 'Library/Logs/sleight'),
     grants: () => createGrantStore({ path: grantStorePath(home) }), engineFile: engineFile(home), ...rest };
 }
 
@@ -208,7 +209,11 @@ function listing(o) {
   if (perms.state === 'unsafe') lines.push('Blocked: permissions.json is unsafe, so sleight acts nowhere (sleight-mcp permissions repair fixes it, keeping the valid blocks)');
   else if (perms.apps.length || perms.sites.length) lines.push('Blocked', ...perms.apps.map(app => `  ${app.name ? `${app.name} (${app.id})` : app.id}`),
     ...perms.sites.map(site => `  ${site}`), 'sleight-mcp permissions unblock <app bundle id|origin> lifts a block.');
-  lines.push(perms.only ? `Turbo sites: only ${perms.only.join(', ')}` : 'Turbo sites: any site (sleight-mcp permissions sites only <origin...> limits turbo to those)');
+  lines.push(perms.only ? `Sites: only ${perms.only.join(', ')} (turbo and browser windows on the engine path)`
+    : 'Sites: any site you haven\'t blocked (sleight-mcp permissions sites only <origin...> limits sleight to those)');
+  // ChatGPT's list lives in its group container, and reading that can raise macOS's "data from other apps" prompt. Only a
+  // person at a terminal gets it; Claude's shell, which has no terminal, gets the pointer.
+  if (!o.tty) { lines.push("ChatGPT's own Always allow list: run sleight-mcp permissions in Terminal to see it."); return lines.join('\n') + '\n'; }
   const engine = engineApprovals(o.engineFile);
   lines.push("ChatGPT's own Always allow list, managed in ChatGPT's settings (sleight can't change it)",
     ...engine.state === 'ok' && engine.apps.length ? engine.apps.map(app => `  ${app}`) : [engine.state === 'unreadable' ? '  (unreadable)' : '  (empty)']);
@@ -238,7 +243,7 @@ export function permissionsCommand(args, options) {
           return 1;
         }
         const changed = update(o, p => p.only?.some(s => sameListed(s, site)) ? { ...p, only: p.only.filter(s => !sameListed(s, site)) } : false);
-        o.out(changed ? `${site} is off the sites turbo may act on.\n` : `${site} isn't on an allow-only list.\n`); return 0;
+        o.out(changed ? `${site} is off the sites sleight may act on.\n` : `${site} isn't on an allow-only list.\n`); return 0;
       }
       const removed = revokeApp(o, what);
       o.out(removed ? `Revoked ${what} (${removed}). It asks again from its next action.\n` : `Nothing to revoke for ${what}.\n`); return 0;
@@ -259,14 +264,14 @@ export function permissionsCommand(args, options) {
     }
     if (op === 'sites' && rest[0] === 'all' && rest.length === 1) {
       update(o, p => p.only ? { ...p, only: undefined } : false);
-      o.out('Turbo may act on any site you haven\'t blocked.\n'); return 0;
+      o.out('sleight may act on any site you haven\'t blocked.\n'); return 0;
     }
     if (op === 'sites' && rest[0] === 'only' && rest.length > 1) {
       const sites = rest.slice(1).map(siteOrigin);
       if (sites.some(site => !site) || sites.length > 256) { o.out(usage); return 2; }
       const only = sites.filter((site, at) => sites.findIndex(other => sameListed(other, site)) === at);
       update(o, p => ({ ...p, only }));
-      o.out(`Turbo acts only on ${only.join(', ')} from its next action. sleight-mcp permissions sites all lifts the limit.\n`); return 0;
+      o.out(`sleight acts only on ${only.join(', ')} from its next action, in turbo and in browser windows on the engine path. sleight-mcp permissions sites all lifts the limit.\n`); return 0;
     }
   } catch (error) {
     if (typeof error?.line === 'string') { o.out(error.line); return 1; }
@@ -332,6 +337,6 @@ export function permissionsDoctorLines(options) {
   }
   const blocks = [perms.apps.length && count(perms.apps.length, 'app'), perms.sites.length && count(perms.sites.length, 'site')].filter(Boolean);
   lines.push(`ok        blocks: ${blocks.length ? blocks.join(', ') : 'none'} (sleight-mcp permissions lists what sleight may do)`,
-    `ok        turbo sites: ${perms.only ? 'only ' + perms.only.join(', ') : 'any site'}`);
+    `ok        sites: ${perms.only ? 'only ' + perms.only.join(', ') : 'any site'}`);
   return lines;
 }

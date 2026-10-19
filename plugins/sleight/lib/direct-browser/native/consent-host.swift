@@ -232,7 +232,7 @@ func permissionRows(_ data: PermissionsData, now: Double) -> [PermissionRow] {
     if !data.blocked.isEmpty || data.only != nil {
         rows.append(.separator)
         rows += data.blocked.map { .info("Blocked: " + $0) }
-        if let only = data.only { rows.append(.info("Turbo only on: " + only.joined(separator: ", "))) }
+        if let only = data.only { rows.append(.info("Acts only on: " + only.joined(separator: ", "))) }
         rows.append(.info("sleight-mcp permissions changes these"))
     }
     rows += [.separator, .info("ChatGPT's own Always allow list: in ChatGPT's settings")]

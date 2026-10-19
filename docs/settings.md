@@ -135,8 +135,9 @@ after five minutes without granting approval. A late answer cannot change that d
 - Your pre-approved apps, the Electron debugger grants and turbo's browser, with when sleight last used each one.
   An app's time comes from the grant audit (its newest 24 files). For a debugger grant and turbo, sleight sets the time
   of an empty file in `~/Library/Application Support/sleight/used/` when it uses them, so that folder holds times only.
-- Your blocks and, when set, the only sites turbo may act on.
-- ChatGPT's own Always allow list, read-only. Only ChatGPT's computer-use settings change it.
+- Your blocks and, when set, the only sites sleight may act on.
+- ChatGPT's own Always allow list, read-only. Only ChatGPT's computer-use settings change it. The command reads it only
+  when it runs in a terminal, so Claude's shell gets a pointer instead.
 
 `sleight-mcp permissions revoke <app>` takes the app off the pre-approved list and removes its debugger grants.
 `revoke turbo` turns turbo off, and `revoke all` does both for everything listed and leaves the blocks. A revoke asks
@@ -145,15 +146,21 @@ nothing, since it only removes access, and running sessions see it at their next
 `sleight-mcp permissions block <bundle id>` or `block <origin>` (such as `https://example.com`) stops sleight in that
 app or on that site, in every session, from its next action. Claude gets one line it can pass on, such as "You blocked
 sleight in Example (sleight-mcp permissions unblock com.example.app lifts it)". An engine approval for a blocked app is
-declined without asking you, and blocking the browser turbo drives stops turbo too. `unblock` lifts a block.
+declined without asking you, and blocking the browser turbo drives stops turbo too. `unblock` lifts a block. A block by
+bundle id also stores the names macOS gives the app, so `getApp("Example")` and `open_file` with that name stop too.
 
-`sleight-mcp permissions sites only <origin...>` limits sleight to those sites. It is off by default. `sites all` lifts
-the limit, and `revoke <origin>` takes one site off.
+`sleight-mcp permissions sites only <origin...>` limits sleight to those sites, in turbo and in browser windows on the
+engine path. It is off by default. `sites all` lifts the limit, and `revoke <origin>` takes one site off. Revoking the
+last site is refused, because an empty list would mean no limit.
 
-Turbo checks the site of every page before it reads or acts. On the engine path (Safari, Firefox, or Chrome without
-turbo) the relay takes the site from the window's read, from its web address or from the web area's URL. A blocked host
-is refused whatever its scheme. While you have a site block or an allow-only list, sleight doesn't act in a browser
-window whose read doesn't prove one site. It also refuses calls through the engine's browser surface, because those
+Sites compare by host, in any case, with a trailing dot and a leading `www.` ignored. A block covers its subdomains on
+any scheme and port. An allow-only site matches its own scheme and port only.
+
+Turbo checks the site of every page before it reads, and again before each step's input. Under a site limit it refuses
+a tab whose address isn't http(s), except a blank tab. On the engine path (Safari, Firefox, or Chrome without turbo) the
+relay takes the site from the window's URL field and the web areas' URL attribute, never from the title or other page
+text. Under a site limit, an action in a browser window needs a read that proves one site. Until sleight knows which
+apps are browsers, that holds for every app. It also refuses calls through the engine's browser surface, because those
 don't say which page they act on. An app is a browser when macOS lists it as a handler for https.
 
 The glove's menu has a Permissions submenu with the same list. Each app row has Revoke, and below them are Revoke All,
@@ -165,8 +172,10 @@ approval card, and only `unblock` lifts a block.
 The blocks live in `~/Library/Application Support/sleight/permissions.json`, written only by your clicks in that menu
 and by the command. Claude's own file edits and shell commands can't write it or run `block`, `unblock`, `revoke` or
 `sites`. Plain `sleight-mcp permissions`, which only lists, stays allowed. A `permissions.json` that is a link or has
-another owner, mode or format stops every action. `sleight-mcp permissions repair` replaces it with a private file that
-keeps every valid block, and `sleight-mcp --doctor` names that fix.
+another owner, mode or format stops every action, and so does one that is gone after a session read it. `sleight-mcp
+permissions repair` replaces it with a private file that keeps every valid block, and `sleight-mcp --doctor` names that
+fix. When repair can't read the old file, or none of its allowed sites, it changes nothing until you run `repair
+--discard`, which writes an empty file.
 
 No tool acts on sleight's own glove or its approval and payment cards, which belong to its consent host. The `menu_bar`
 tool refuses that status item and leaves it out of `apps`, and `js`, `drag`, `hover`, `open_file`, `select_window` and
