@@ -1,0 +1,9 @@
+{
+  "id": "MS1",
+  "source": "~/Projects/sleight-wt/race-1017/chrome-sleight-turbo-rel131-r2/form-settings",
+  "switch": null, "tool": "browser_fill", "argumentPattern": "Japanese|pt-BR|Portuguese",
+  "resultIncludes": "Japanese[^\\n]*selected|selected[^\\n]*Japanese",
+  "alsoResultIncludes": "Portuguese[^\\n]*selected|selected[^\\n]*Portuguese",
+  "resultExcludes": "not run|not reached|unconfirmed",
+  "assertion": "The recorded language fill leaves both Japanese and Portuguese selected. MS1 has no A/B switch; compare baseline and candidate worktrees separately."
+}

@@ -1,0 +1,9 @@
+{
+  "id": "DP2",
+  "source": "~/Projects/sleight-wt/p131-int/bench/results/2026-10-19T20-41-28-692Z.json",
+  "task": "textedit-drag", "arm": "sleight", "run": 1,
+  "switch": "SLEIGHT_DP2",
+  "tool": "drag", "resultIncludes": "\"path\"\\s*:\\s*\"accessibility\"",
+  "toolMsBelow": 1500, "needsInternalOrder": true,
+  "assertion": "Accessibility drag under 1500 ms; AX-before-raise ordering needs helper trace events that are not currently emitted."
+}
