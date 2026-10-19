@@ -11,7 +11,7 @@
 //   node bench/fowl/as3-score.mjs [round folders or <dir>/<prefix>*] [--json]
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expandRounds, loadRound } from './race-score.mjs';
 
@@ -21,7 +21,7 @@ const readJson = file => { try { return JSON.parse(readFileSync(file, 'utf8')); 
 const readText = file => { try { return readFileSync(file, 'utf8'); } catch { return ''; } };
 const median = list => { const s = [...list].sort((a, b) => a - b); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null; };
 
-// 'on', 'off', or { problem } when the rows don't say or disagree.
+// 'on', 'on-prompt', 'off', or { problem } when the rows don't say or disagree.
 export function roundSide(saved) {
   if (!Array.isArray(saved) || !saved.length) return { problem: 'no saved rows' };
   const values = new Set(saved.map(row => row.agentConfig?.abFlags?.SLEIGHT_BROWSER_CORE));
@@ -41,7 +41,7 @@ export function openingPhase(eventsText = '', started) {
     let event; try { event = JSON.parse(line); } catch { continue; }
     const parsed = typeof event.timestamp === 'string' ? Date.parse(event.timestamp) : NaN;
     const time = Number.isFinite(event.t) ? event.t : Number.isFinite(parsed) ? parsed : null;
-    start ??= time;
+    start ??= time; // Without run.started, the first timestamp is after the model's first turn, so this understates it.
     for (const item of event.message?.content ?? []) {
       if (item.type === 'tool_use') calls++;
       if (item.type !== 'tool_result' || item.is_error === true || time == null || start == null || time < start) continue;
@@ -95,13 +95,15 @@ export function loadAbRound(dir, options) {
   const round = loadRound(dir, options);
   const saved = readJson(join(dir, 'results.json'));
   const side = roundSide(saved);
+  const promptProblem = /-on-prompt-/.test(basename(dir)) && side === 'on'
+    ? 'on-prompt folder but AS3_WINDOW_PROMPT was not recorded; prompt plumbing may be missing' : null;
   const rows = round.rows.map(row => {
     const events = readText(join(dir, row.task, 'events.jsonl'));
     const started = saved?.find(r => r.task?.name === row.task)?.run?.started;
     return { ...row, opening: openingPhase(events, started), browserOpen: browserOpenUse(events), calls: toolCalls(events), kinds: [...toolErrorKinds(events), ...(row.errorClass?.class ? [`run: ${row.errorClass.class}`] : [])] };
   });
   return { ...round, rows, side: typeof side === 'string' ? side : null,
-    excluded: round.excluded ?? (typeof side === 'string' ? null : side.problem) };
+    excluded: round.excluded ?? promptProblem ?? (typeof side === 'string' ? null : side.problem) };
 }
 
 export function scoreAb(rounds) {

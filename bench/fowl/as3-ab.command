@@ -1,7 +1,7 @@
 #!/bin/sh
 # AS-3 A/B: SLEIGHT_BROWSER_CORE off and on (browser_open on the engine path), the sleight arm in Safari and Firefox, on the
 # held-out browser tasks (bench/world/tasks/browser-open-heldout.json), never the 12 race tasks. Haiku, effort high,
-# 5 rounds per cell and browser. Odd rounds: off, on, on-prompt; even rounds reverse that order.
+# 5 rounds per cell and browser. Rotate through all six cell orders across rounds.
 # Run it from the race worktree at a build with AS-3 and its harness plumbing:
 #   open -a Terminal <race worktree>/bench/fowl/as3-ab.command
 # Before every round it waits while /tmp/sleight-hold, /tmp/sleight-live.lock or $O/pause exists. It never creates or
@@ -22,6 +22,7 @@ LOG=$O/as3-ab.log
 mkdir -p "$O" || exit 1
 # A build without the plumbing would run arm B without browser_open and score it as a loss.
 grep -q 'SLEIGHT_BROWSER_CORE="$SLEIGHT_BROWSER_CORE"' "$R/bench/fowl/rounds.sh" && grep -q 'browser_open' "$R/bench/fowl/real-gate-setup.mjs" &&
+  grep -q 'AS3_WINDOW_PROMPT="$AS3_WINDOW_PROMPT"' "$R/bench/fowl/rounds.sh" && grep -q 'AS3_WINDOW_PROMPT' "$R/bench/fowl/real-gate-setup.mjs" &&
   [ -f "$R/plugins/sleight/lib/engine-browser-open.mjs" ] && [ -f "$TASKS" ] ||
   { echo "as3-ab: $R lacks AS-3 or its harness plumbing; move the race worktree first" | tee -a "$LOG" >&2; exit 1; }
 now() { date -u +%H:%M:%SZ; }
@@ -51,7 +52,15 @@ echo "as3-ab start $(now) build $(git -C "$R" rev-parse --short HEAD 2>/dev/null
 n=1
 while [ $n -le "$N" ]; do
   for br in safari firefox; do
-    if [ $((n % 2)) -eq 1 ]; then race $br off $n; race $br on $n; race $br on-prompt $n; else race $br on-prompt $n; race $br on $n; race $br off $n; fi
+    case $(((n - 1) % 6)) in
+      0) cells="off on on-prompt" ;;
+      1) cells="on on-prompt off" ;;
+      2) cells="on-prompt off on" ;;
+      3) cells="off on-prompt on" ;;
+      4) cells="on-prompt on off" ;;
+      5) cells="on off on-prompt" ;;
+    esac
+    for cell in $cells; do race "$br" "$cell" "$n"; done
   done
   n=$((n + 1))
 done

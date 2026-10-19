@@ -145,8 +145,10 @@ test('the runner runs 5 rounds per cell and browser in balanced order on the hel
     assert.equal(result.status, 0, result.stderr);
     const lines = calls(dir);
     const expected = [];
+    const orders = [['off', 'on', 'on-prompt'], ['on', 'on-prompt', 'off'], ['on-prompt', 'off', 'on'],
+      ['off', 'on-prompt', 'on'], ['on-prompt', 'on', 'off'], ['on', 'off', 'on-prompt']];
     for (let n = 1; n <= 5; n++) for (const browser of ['safari', 'firefox'])
-      for (const side of n % 2 ? ['off', 'on', 'on-prompt'] : ['on-prompt', 'on', 'off'])
+      for (const side of orders[(n - 1) % orders.length])
         expected.push(`${side === 'off' ? 0 : 1} as3-ao-${browser}-${side}-r${n}`);
     assert.deepEqual(lines.map(line => line.split(' ').slice(0, 2).join(' ')), expected);
     for (const line of lines) assert.equal(line.endsWith('prompt=1'), /-on-prompt-/.test(line), line);
@@ -164,6 +166,10 @@ test('the runner runs 5 rounds per cell and browser in balanced order on the hel
     assert.equal(spawnSync('/bin/sh', [script], { env: runner(dir), encoding: 'utf8', timeout: 60000 }).status, 0);
     assert.equal(calls(dir).length, 30);
     assert.match(readFileSync(join(dir, 'out/as3-ab.log'), 'utf8'), /^as3-ao-safari-off-r1 kept /m);
+    // A configured sixth round completes the permutation cycle; the default remains five rounds.
+    assert.equal(spawnSync('/bin/sh', [script], { env: runner(dir, { AS3_ROUNDS: '6' }), encoding: 'utf8', timeout: 60000 }).status, 0);
+    const sixth = calls(dir).slice(30).map(line => line.split(' ')[1]);
+    assert.deepEqual(sixth, ['safari', 'firefox'].flatMap(br => orders[5].map(side => `as3-ao-${br}-${side}-r6`)));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -190,18 +196,45 @@ test('the runner waits on the hold, the live lock and the pause file, and reruns
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('the runner refuses a build without the AS-3 plumbing', () => {
+for (const missing of ['core', 'forwarded prompt', 'recorded prompt']) test(`the runner refuses a build without ${missing} plumbing`, () => {
   const dir = mkdtempSync(join(tmpdir(), 'as3-ab-'));
   try {
     const copy = join(dir, 'repo/bench/fowl');
     mkdirSync(copy, { recursive: true });
     writeFileSync(join(copy, 'as3-ab.command'), read('bench/fowl/as3-ab.command'));
-    writeFileSync(join(copy, 'rounds.sh'), '#!/bin/sh\n');
+    mkdirSync(join(dir, 'repo/plugins/sleight/lib'), { recursive: true });
+    mkdirSync(join(dir, 'repo/bench/world/tasks'), { recursive: true });
+    writeFileSync(join(dir, 'repo/plugins/sleight/lib/engine-browser-open.mjs'), '');
+    writeFileSync(join(dir, 'repo/bench/world/tasks/browser-open-heldout.json'), '[]');
+    const rounds = read('bench/fowl/rounds.sh');
+    const setup = read('bench/fowl/real-gate-setup.mjs');
+    writeFileSync(join(copy, 'rounds.sh'), missing === 'core' ? rounds.replaceAll('SLEIGHT_BROWSER_CORE', 'MISSING_CORE')
+      : missing === 'forwarded prompt' ? rounds.replaceAll('AS3_WINDOW_PROMPT', 'MISSING_PROMPT') : rounds);
+    writeFileSync(join(copy, 'real-gate-setup.mjs'), missing === 'recorded prompt' ? setup.replaceAll('AS3_WINDOW_PROMPT', 'MISSING_PROMPT') : setup);
     const result = spawnSync('/bin/sh', [join(copy, 'as3-ab.command')], { env: runner(dir), encoding: 'utf8', timeout: 10000 });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /lacks AS-3 or its harness plumbing/);
     assert.equal(existsSync(join(dir, 'count')), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an on-prompt folder with product-on metadata is excluded instead of polluting the product cell', () => {
+  const root = mkdtempSync(join(tmpdir(), 'as3-score-'));
+  try {
+    const dir = fakeRound(root, 'as3-ao-safari-on-prompt-r1', { core: true, seconds: { 'smoke-red': 20 } });
+    const round = loadAbRound(dir);
+    assert.equal(round.side, 'on');
+    assert.match(round.excluded, /on-prompt.*AS3_WINDOW_PROMPT.*not recorded/);
+    assert.deepEqual(scoreAb([round]).browsers, {});
+    const cli = spawnSync(process.execPath, [join(repo, 'bench/fowl/as3-score.mjs'), dir], { encoding: 'utf8' });
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.match(cli.stdout, /excluded, on-prompt folder but AS3_WINDOW_PROMPT was not recorded/);
+    const rows = JSON.parse(readFileSync(join(dir, 'results.json'), 'utf8'));
+    rows.forEach(row => { row.agentConfig.as3WindowPrompt = true; });
+    writeFileSync(join(dir, 'results.json'), JSON.stringify(rows));
+    assert.equal(loadAbRound(dir).side, 'on-prompt');
+    assert.equal(loadAbRound(dir).excluded, null);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 // Fake rounds in the shape real-gate.mjs saves: results.json rows, browser.json and each task's events.jsonl.
@@ -368,6 +401,9 @@ test('the AO held-out set has five tasks, fresh shop slugs and no signup', () =>
   assert.match(lookups[0].prompt, /t\/ao-moss-color\/shop\/product\/moss/);
   assert.match(lookups[1].prompt, /t\/ao-cheapest-mug\/shop\//);
   assert.ok(heldOut.every(t => !/signup|create account/i.test(t.prompt)));
+  const price = new RegExp(lookups[1].expect[1]);
+  for (const answer of ['Chalk $11', 'Chalk 11.00', 'Chalk costs $11.', 'Chalk costs $11.00.']) assert.match(answer, price);
+  for (const answer of ['Chalk $211', 'Chalk 111.00', 'Chalk $11.99']) assert.doesNotMatch(answer, price);
   assert.match(read('bench/fowl/as3-ab.command'), /out=\$O\/as3-ao-/);
   assert.match(read('bench/fowl/as3-ab.command'), /\"\$O\/as3-ao-\*\"/);
 });

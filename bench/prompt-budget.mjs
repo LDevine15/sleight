@@ -168,6 +168,7 @@ export function taggedNoticeInventory(prompt) {
   return entries;
 }
 
+// The CLI inherits feature flags from the shell; use budget({}) for the pinned default inventory.
 export function budget(env = process.env) {
   const browserCore = engineBrowserOpen(env);
   const variants = ['default', 'lean'];

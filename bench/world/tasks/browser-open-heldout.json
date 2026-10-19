@@ -74,7 +74,7 @@
   "result": "the cheapest mug's name and price",
   "expect": [
    "Chalk",
-   "\\$?11(\\.00)?\\b"
+   "(?<![\\d.$])\\$?11(?:\\.00)?(?!\\d|\\.\\d)\\b"
   ],
   "site": {
    "log": "http://127.0.0.1:5420/t/ao-cheapest-mug/api/log",

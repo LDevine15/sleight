@@ -13,7 +13,7 @@ export const engineBrowserOpen = (env = process.env) => env.SLEIGHT_BROWSER_CORE
 const schema = { type: 'object', properties: { url: { type: 'string', maxLength: 2048 }, browser: { type: 'string', maxLength: 128 } },
   required: ['url', 'browser'], additionalProperties: false };
 export const ENGINE_OPEN_TOOL = Object.freeze({ name: 'browser_open',
-  description: 'First call for a web page in Safari, Firefox or any browser turbo doesn\'t drive: opens the URL in a new tab of that browser in one call and returns the window (title, tabs, page tree) plus the js handle for the next actions. Use it instead of getApp when the task gives a URL.',
+  description: 'First call for a web page in a named browser: opens the URL in a new tab in one call and returns the window (title, tabs, page tree) plus the js handle for the next actions. Use it instead of getApp when the task gives a URL.',
   inputSchema: schema });
 export const LEAN_ENGINE_OPEN_DESCRIPTION = 'Open a URL in a new tab of a named browser in one call; returns the window\'s title, tabs, tree and js handle.';
 export const BROWSER_OPEN_FIRST = 'For a web page in a named browser, call browser_open first; it returns the window.';
@@ -78,14 +78,51 @@ export function acquisitionTree(text) {
         [...last.matchAll(/^\t*\d+ /gm)].length !== 1) break;
     blocks.pop();
   }
-  return blocks.at(-1) ?? '';
+  // A raw newline in page text can spell another Window header. Only the compact, identical-header suffix above
+  // can be removed safely; a remaining second block leaves the acquisition ambiguous.
+  return blocks.length === 1 ? blocks[0] : '';
+}
+// The engine's plain-text tree does not escape newlines in values. Once a document or text/value entry starts,
+// a later numbered line might be its payload, even if its number and indentation look right. Keep that suffix
+// for duplicate-ID detection, but never use it as evidence of browser chrome. A structured engine tree would
+// let content-first windows expose their later toolbar safely.
+function browserEntries(text) {
+  const entries = [...acquisitionTree(text).matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
+  // A forged prefix in a window title must not hide the real entries with the same numbers.
+  if (entries.some((entry, i) => entry.number !== i)) return { entries, trusted: [] };
+  let payload = false;
+  const trusted = [];
+  for (const entry of entries) {
+    if (payload || (entry.number > 0 && entry.depth === 0)) break;
+    trusted.push(entry);
+    payload = /^(?:HTML content|web area|document|text area|text entry area)(?: |,|$)/i.test(entry.line) ||
+      /^text(?: |,|$)(?!field(?: |,|$))/i.test(entry.line) || /(?:^|[ ,])Value: /.test(entry.line);
+  }
+  return { entries, trusted };
+}
+function openRoute(text) {
+  const { entries, trusted } = browserEntries(text);
+  const chromeId = (id, role) => {
+    const matches = entries.filter(entry => hasIdentifier(entry.line, id));
+    if (matches.length !== 1) return false;
+    const at = trusted.indexOf(matches[0]);
+    if (at < 0 || !role.test(matches[0].line) || underDocument(trusted, at)) return false;
+    for (let i = at - 1, depth = matches[0].depth; i >= 0 && depth > 0; i--) {
+      if (trusted[i].depth >= depth) continue;
+      depth = trusted[i].depth;
+      if (/^toolbar(?: |,|$)/.test(trusted[i].line)) return true;
+    }
+    return false;
+  };
+  const tree = trusted.map(e => '\t'.repeat(e.depth) + e.number + ' ' + e.line).join('\n');
+  if (selectedTabShown(tree)) return 'keyboard';
+  if (chromeId('NewTabButton', /^button(?: |,|$)/) && chromeId('WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD', /^text field(?: |,|$)/)) return 'toolbar';
+  return undefined;
 }
 export const openCode = (handle, url, text) => {
-  const tree = acquisitionTree(text);
-  const entries = [...tree.matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
-  const chromeId = id => entries.some((entry, i) => hasIdentifier(entry.line, id) && !underDocument(entries, i));
-  const toolbar = !selectedTabShown(tree) && chromeId('NewTabButton') && chromeId('WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD');
-  return [...(toolbar ? [`await ${handle}.click({ id: "NewTabButton" });`, `await ${handle}.setValue({ id: "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD" }, ${json(url)});`]
+  const route = openRoute(text);
+  if (!route) fail('no safe new-tab route, so nothing was typed. Read the window with js.');
+  return [...(route === 'toolbar' ? [`await ${handle}.click({ id: "NewTabButton" });`, `await ${handle}.setValue({ id: "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD" }, ${json(url)});`]
     : [`await ${handle}.pressKey("super+t");`, `await ${handle}.typeText(${json(url)});`]),
     `await ${handle}.pressKey("Return");`, `await ${handle}.getAXState();`].join('\n');
 };
@@ -97,12 +134,13 @@ export const unknownBrowserNote = app => `browser_open: sleight doesn't know yet
 // tab: a standard window root, a tab strip outside any page, and no sheet, dialog or alert, which Return could answer.
 // A settings window has no tab strip. Undefined when it may take the keys, else the reason.
 export function browserWindowProblem(text, app) {
-  const entries = [...acquisitionTree(text).matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
+  const { entries, trusted } = browserEntries(text);
   const name = app || 'the browser';
   if (!entries.length || entries[0].number !== 0) return `browser_open: ${name} shows no window, so nothing was typed.`;
   if (!/^standard window(?: |,|$)/.test(entries[0].line)) return `browser_open: ${name}'s front window isn't a standard window, so nothing was typed.`;
   if (entries.some(entry => /^(?:sheet|dialog|system dialog|alert)(?: |,|$)/.test(entry.line))) return `browser_open: ${name} has a sheet or dialog open, so nothing was typed. Read it with js.`;
-  if (!entries.some((entry, i) => /^tab group(?: |,|$)/.test(entry.line) && !underDocument(entries, i))) return `browser_open: ${name}'s front window shows no tab strip, so nothing was typed.`;
+  if (!trusted.some((entry, i) => /^tab group(?: |,|$)/.test(entry.line) && !underDocument(trusted, i))) return `browser_open: ${name}'s front window shows no tab strip, so nothing was typed.`;
+  if (!openRoute(text)) return `browser_open: ${name} shows no safe new-tab route, so nothing was typed. Read the window with js.`;
   return undefined;
 }
 // js's own wording while a turn's tab cleanup runs.
