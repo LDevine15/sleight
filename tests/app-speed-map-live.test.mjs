@@ -329,3 +329,14 @@ test('a cover by the fixture app during its own cleanup is recorded as cleanup-c
   // Focus taken during cleanup is still a stop: only the window cover is the app's own close behaviour.
   assert.equal(tracker.observe({ front: 'com.microsoft.Word', stage: 'cleanup', atMs: 4800 }), true);
 });
+
+test('a workspace fixture passes its folder as a launch argument and names the profile that proves ownership', async t => {
+  // VS Code 1.141 with --new-window and no path in argv opens an empty window and ignores the folder sent as a document.
+  const h = await setup(t, { id: 'vscode', base: '/private/tmp' });
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['vscode'], runs: 1 }).apps[0]);
+  assert.equal(fixture.launchArgs.at(-1), fixture.target);
+  assert.equal(fixture.targetInArgs, true);
+  assert.equal(fixture.ownedArg, fixture.launchArgs.find(arg => arg.startsWith('--user-data-dir=')));
+  assert.ok(fixture.ownedArg.slice(16).startsWith(fixture.dir + '/'));
+  await h.runtime.closeFixture(fixture); await h.runtime.close();
+});

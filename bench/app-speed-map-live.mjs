@@ -167,7 +167,11 @@ export async function liveSpeedRuntime(plan, options, {
           fixture.scrollMarker = name + '-row';
           if (task.fixture === 'folder') fixture.requiredText = fixture.scrollMarker;
           writeFileSync(join(fixture.target, fixture.scrollMarker), name + '\n'.repeat(100), { mode: 0o600 });
-          if (task.fixture === 'workspace') fixture.launchArgs = editorProfileArgs(dir);
+          if (task.fixture === 'workspace') {
+            // The folder goes in argv: with --new-window and no path there, VS Code opens an empty window instead.
+            fixture.launchArgs = [...editorProfileArgs(dir), fixture.target]; fixture.targetInArgs = true;
+            fixture.ownedArg = fixture.launchArgs[0];
+          }
         } else if (task.fixture === 'browser') {
           fixture.marker = name;
           const server = createServer((req, res) => {

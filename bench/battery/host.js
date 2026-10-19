@@ -62,6 +62,23 @@ function run(argv) {
     if (!date || typeof date.isNil === 'function' && date.isNil()) return false;
     return Number(date.timeIntervalSince1970) * 1000 >= armedAt;
   }
+  function processArgs(id) {
+    try {
+      var task = $.NSTask.alloc.init, out = $.NSPipe.pipe;
+      task.launchPath = '/bin/ps'; task.arguments = ['-ww', '-o', 'args=', '-p', String(id)];
+      task.standardOutput = out; task.standardError = $.NSPipe.pipe;
+      task.launch;
+      var data = out.fileHandleForReading.readDataToEndOfFile;
+      task.waitUntilExit;
+      return String(ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding)) || '').trim();
+    } catch (_) { return ''; }
+  }
+  // The run's own instance: launched by this run after the arm, with the fixture's private profile in its arguments, so
+  // nothing in it can be the owner's. Such an instance is quit whole, whatever its windows show.
+  function ownedInstance() {
+    if (!request.ownedArg || !launched || wasRunning || !pid || !target || !launchedAfterArm(target)) return false;
+    return (' ' + processArgs(pid) + ' ').indexOf(' ' + request.ownedArg + ' ') >= 0;
+  }
   // Apps that embed Electron, CEF or a Chromium framework parse argv themselves and can misread AppKit's switches.
   function ownArgv() {
     try {
@@ -305,6 +322,20 @@ function run(argv) {
         // The app this run launched has exited: none of its windows or processes is left to close.
         details.app = { pid: pid, exited: true, terminated: true };
         emit({ stage: 'cleanup', confirmed: true, details: details }); return;
+      }
+      if (ownedInstance()) {
+        active();
+        var own = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+        details.app = { pid: pid, owned: true, terminated: false };
+        if (!own || ObjC.unwrap(own.bundleIdentifier) !== request.bundle) reason(details, 'APP_IDENTITY_UNCONFIRMED');
+        else {
+          details.app.terminateRequested = !!own.terminate;
+          var quitBy = Date.now() + 30000;
+          while (!own.terminated && Date.now() < quitBy) { active(); sample(); wait(); }
+          details.app.terminated = !!own.terminated;
+          if (!own.terminated) reason(details, 'APP_NOT_TERMINATED');
+        }
+        emit({ stage: 'cleanup', confirmed: details.app.terminated === true && !details.reasons.length, details: details }); return;
       }
       // A setup timeout has a separate bounded chance to establish fixture ownership for cleanup.
       if (recover) windowsWaitUntil = Date.now() + 10000;

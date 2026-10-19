@@ -702,7 +702,9 @@ native reference, and oversized first results defer the browser reference while 
   Document fixtures now scroll the area around their own text, and rows keep the tree's scroll-area counts and each cleanup
   window's AX codes. The third (08:50 UTC) measured every phase (acquisition 793 ms, reads 86 and 143 ms, scroll 1391 ms,
   readback 106 ms) and confirmed cleanup, then stopped because Word's window covered Terminal while its document closed. That
-  cover is now `cleanup-cover`. VS Code still hasn't run.
+  cover is now `cleanup-cover`. The fourth (09:0x UTC) completed Word's cell. VS Code reached setup for the first time and
+  opened an empty window instead of the fixture folder, and cleanup left the run's own instance running. The folder now goes
+  in argv, and cleanup quits an instance proven to be the run's own. No run has measured VS Code yet.
 
 ## Turbo in unattended runs
 

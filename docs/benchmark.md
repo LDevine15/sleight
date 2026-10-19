@@ -108,9 +108,11 @@ finishes launching. It waits while the accessibility tree answers -25204 (cannot
 title can't be read yet, and it follows a process that hands over to a new instance of itself started after the run's
 own open. A readable different document still stops setup at once. The report row records a setup failure as a code with
 counts, such as `FIXTURE_SETUP_FAILED:APP_EXITED`. Editors run on a throwaway profile inside the fixture folder, like
-the claim suite's editor tasks. Apps that embed Electron, CEF or a Chromium framework don't get AppKit's
-`-ApplePersistenceIgnoreState` switch, because VS Code 1.141 reads its letters as short flags and `-s` (`--status`)
-quits a first instance.
+the claim suite's editor tasks, with the folder in argv. VS Code 1.141 given `--new-window` and no path in argv opens
+one empty window and ignores a folder sent as a document. An instance that started after the host armed and has the
+fixture's profile in its arguments is the run's own, so cleanup quits it whole. Apps that embed Electron, CEF or a
+Chromium framework don't get AppKit's `-ApplePersistenceIgnoreState` switch, because VS Code 1.141 reads its letters as
+short flags and `-s` (`--status`) quits a first instance.
 
 Every cell records focus and cover changes from the host's 200 ms samples. Each record gives the phase, the host stage,
 the time and the frontmost bundle ID before and after. Before the first engine call the only actor is the fixture app's

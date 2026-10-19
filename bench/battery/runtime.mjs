@@ -50,8 +50,12 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
     realpathSync(ctx.path) === ctx.path && realpathSync(ctx.dir) === ctx.dir ? ctx.path : undefined;
   // A window title names the fixture by its private temp name, with or without the file extension.
   const name = ctx.target ? basename(ctx.target) : '', stem = name.replace(/\.[^.]+$/, '');
+  // An argument that marks the whole launched instance as the run's: it must be in the launch and point into the fixture folder.
+  const ownedArg = typeof ctx.ownedArg === 'string' && Array.isArray(ctx.launchArgs) && ctx.launchArgs.includes(ctx.ownedArg) &&
+    ctx.dir.startsWith('/private/tmp/sleight-battery-') && /^--[a-z-]+=\/./.test(ctx.ownedArg) &&
+    ctx.ownedArg.slice(ctx.ownedArg.indexOf('=') + 1).startsWith(ctx.dir + '/') ? ctx.ownedArg : undefined;
   const response = runProcess('/usr/bin/osascript', ['-l', 'JavaScript', hostScript, JSON.stringify({
-    bundle: task.bundle, targetURL: targetURL(ctx.target), control, fixturePath, fixtureRoot: fixturePath ? ctx.dir : undefined, startupMs: STARTUP_MS,
+    bundle: task.bundle, targetURL: targetURL(ctx.target), control, fixturePath, fixtureRoot: fixturePath ? ctx.dir : undefined, startupMs: STARTUP_MS, ownedArg,
     ...(ctx.windowMarker && ctx.target && ctx.dir.startsWith('/private/tmp/sleight-battery-') &&
       dirname(ctx.target) === ctx.dir && realpathSync(ctx.target) === ctx.target && realpathSync(ctx.dir) === ctx.dir &&
       ctx.windowMarker.length >= 10 && (ctx.windowMarker === name || ctx.windowMarker === stem) ? { windowMarker: ctx.windowMarker } : {}) })], { timeoutMs: 650000, signal: hostController.signal,
@@ -98,7 +102,9 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
       // AppKit's persistence switch keeps a fresh launch from restoring windows, but an app that parses argv itself can
       // misread it: VS Code 1.141 reads its letters as short flags, and -s (--status) quits a first instance (2026-10-19).
       const launchArgs = armed.wasRunning ? [] : ctx.launchArgs ?? (armed.ownArgv === true ? [] : ['-ApplePersistenceIgnoreState', 'YES']);
-      const opened = await runProcess('/usr/bin/open', ['-g', '-b', task.bundle, ...(ctx.target ? [ctx.target] : []),
+      // A target the launch arguments already carry isn't also sent as a document: VS Code 1.141 with --new-window and no
+      // path in argv opens one empty window and ignores the document event (mainImpl.js, forceEmpty).
+      const opened = await runProcess('/usr/bin/open', ['-g', '-b', task.bundle, ...(ctx.target && !ctx.targetInArgs ? [ctx.target] : []),
         ...(launchArgs.length ? ['--args', ...launchArgs] : [])], { signal, timeoutMs: 30000 });
       if (opened.exit.code !== 0 || !opened.groupClean) throw new Error(opened.spawnError || opened.stderr?.trim() || 'FIXTURE_OPEN_FAILED');
     }
