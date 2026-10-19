@@ -1,14 +1,16 @@
 // What each native action did, from sleight's own read before it and the read after it (SLEIGHT_OUTCOMES=1),
 // and the opt-in JSON Lines action log (SLEIGHT_ACTION_LOG). Only structure, roles, names and the acted-on
 // control's own value line count; typed text, secure values and document text never leave the engine's tree.
-import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir, userInfo } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 // The account's short and full names, as receipts scrub them: once per log, on its first write.
+// userInfo() throws for a uid with no passwd entry; the log then scrubs only the home path.
 function ownerNames() {
-  const names = [userInfo().username];
+  const names = [];
+  try { names.push(userInfo().username); } catch {}
   try { names.push(execFileSync('/usr/bin/id', ['-F'], { encoding: 'utf8', timeout: 1000, stdio: ['ignore', 'pipe', 'ignore'] }).trim()); } catch {}
   return names;
 }
@@ -353,16 +355,16 @@ export class ActionLog {
     const text = rows.map(row => JSON.stringify({ time, ...row })).join('\n') + '\n';
     try {
       mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-      // A symlinked folder can't lead the log out of the root, and only a regular file is written.
+      // Checked on every write: the root is a real folder of this account that no one else can write, and a symlinked
+      // folder under it can't lead the log out.
+      const top = lstatSync(this.root);
+      if (!top.isDirectory() || top.uid !== process.getuid() || top.mode & 0o022) throw new Error('action log folder is not private');
       const root = realpathSync(this.root);
       if (!(realpathSync(dirname(this.path)) + '/').startsWith(root + '/')) throw new Error('action log outside its folder');
       try {
         const stat = lstatSync(this.path);
         if (!stat.isFile()) throw new Error('action log is not a regular file');
-        if (stat.size + text.length > this.maxBytes) {
-          for (let n = this.keep - 1; n >= 1; n--) try { renameSync(`${this.path}.${n}`, `${this.path}.${n + 1}`); } catch {}
-          renameSync(this.path, `${this.path}.1`);
-        }
+        if (stat.size + text.length > this.maxBytes) this.rotate(text.length);
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
       // O_NOFOLLOW: a symlink at the path can't send the log elsewhere. O_NONBLOCK: a FIFO can't hold the open.
       const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK;
@@ -382,5 +384,31 @@ export class ActionLog {
         writeSync(fd, text);
       } finally { closeSync(fd); }
     } catch { this.failures++; }
+  }
+  // Sessions can share one log, so rotation runs only under a lock file and checks the size again there: a session
+  // whose look predates another's rotation would otherwise rotate the fresh file and push the old rows off the end.
+  // Without the lock the row goes into the current file, a little over the size, and the next write rotates.
+  rotate(adding) {
+    const lock = `${this.path}.lock`, flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW;
+    let fd;
+    try { fd = openSync(lock, flags, 0o600); } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      // A lock older than 30 s belongs to a session that died while rotating.
+      try {
+        if (Date.now() - lstatSync(lock).mtimeMs < 30000) return;
+        unlinkSync(lock);
+        fd = openSync(lock, flags, 0o600);
+      } catch { return; }
+    }
+    try {
+      let stat;
+      try { stat = lstatSync(this.path); } catch { return; }
+      if (!stat.isFile() || stat.size + adding <= this.maxBytes) return;
+      for (let n = this.keep - 1; n >= 1; n--) try { renameSync(`${this.path}.${n}`, `${this.path}.${n + 1}`); } catch {}
+      renameSync(this.path, `${this.path}.1`);
+    } finally {
+      closeSync(fd);
+      try { unlinkSync(lock); } catch {}
+    }
   }
 }

@@ -2,7 +2,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { runInNewContext, createContext, runInContext, constants } from 'node:vm';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, statSync, symlinkSync, linkSync, existsSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, statSync, symlinkSync, linkSync, existsSync, chmodSync, utimesSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -592,6 +592,75 @@ test('the log makes its file 0600, writes only a regular file, and never through
   symlinkSync(outside, join(root, 'away'));
   assert.equal(write(join(root, 'away', 'a.jsonl')), 1);
   assert.ok(!existsSync(join(outside, 'a.jsonl')));
+});
+
+test('a sheet or dialog that opened or closed is logged by its role only, never its title\'s length', () => {
+  const root = mkdtempSync(join(dir, 'modal-')), path = join(root, 'modal.jsonl');
+  const log = new ActionLog({ path, root });
+  log.request({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: '' } } });
+  log.outcomes(1, { outcomes: [{ a: 'click', f: [{ o: 'opened', d: 'sheet [redacted 41 chars]' }, { o: 'closed', d: 'dialog [redacted 9 chars]' }] },
+    { a: 'click', f: [{ o: 'closed', d: 'sheet "Save"' }] }] });
+  log.reply({ id: 1, result: { content: [{ type: 'text', text: 'ok' }] } });
+  const rows = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(rows.map(row => row.outcome), ['sheet opened; dialog closed', 'sheet closed']);
+});
+
+test('a log a throw can\'t break: Claude\'s reply still arrives when the log fails', async t => {
+  const h = relayHarness(t, { actionLog: { request() { throw new Error('request'); }, outcomes() { throw new Error('outcomes'); }, reply() { throw new Error('reply'); } } });
+  await h.call(1, 'let app = await cua.getApp("TextEdit")');
+  const result = await h.reply(1, form());
+  assert.ok(result?.content?.length, 'reply delivered');
+});
+
+test('rotation happens only under the lock file, so two sessions don\'t lose rows', () => {
+  const root = mkdtempSync(join(dir, 'lock-')), path = join(root, 'shared.jsonl');
+  const sessions = [new ActionLog({ path, root, maxBytes: 400 }), new ActionLog({ path, root, maxBytes: 400 })];
+  const write = (log, id) => {
+    log.request({ id, method: 'tools/call', params: { name: 'drag', arguments: { app: 'TextEdit' } } });
+    log.reply({ id, result: { content: [{ type: 'text', text: 'ok' }] } });
+  };
+  // Another session holds the lock: the write goes on in the current file, over the size, and nothing rotates.
+  writeFileSync(path, 'x'.repeat(390) + '\n', { mode: 0o600 });
+  writeFileSync(path + '.lock', '', { mode: 0o600 });
+  write(sessions[0], 1);
+  assert.ok(!existsSync(path + '.1'));
+  assert.match(readFileSync(path, 'utf8'), /"call":1/);
+  // A lock older than 30 s is a dead session's: it is broken and the file rotates.
+  utimesSync(path + '.lock', new Date(Date.now() - 60000), new Date(Date.now() - 60000));
+  write(sessions[1], 2);
+  assert.ok(existsSync(path + '.1') && !existsSync(path + '.lock'));
+  assert.match(readFileSync(path + '.1', 'utf8'), /"call":1/);
+  // Turns between two sessions keep every row while three files hold them (three rows a file here).
+  for (let id = 3; id < 9; id++) write(sessions[id % 2], id);
+  const all = ['', '.1', '.2'].map(suffix => existsSync(path + suffix) ? readFileSync(path + suffix, 'utf8') : '').join('');
+  for (let id = 3; id < 9; id++) assert.match(all, new RegExp(`"call":${id},`), String(id));
+});
+
+test('the log root is checked on every write: a symlinked or group-writable root is refused', () => {
+  const real = mkdtempSync(join(dir, 'real-')), link = join(dir, 'linked-root-' + process.pid);
+  symlinkSync(real, link);
+  const write = (root, path) => {
+    const log = new ActionLog({ path, root });
+    log.request({ id: 1, method: 'tools/call', params: { name: 'drag', arguments: { app: 'TextEdit' } } });
+    log.reply({ id: 1, result: { content: [{ type: 'text', text: 'ok' }] } });
+    return log.failures;
+  };
+  assert.equal(write(link, join(link, 'a.jsonl')), 1);
+  assert.ok(!existsSync(join(real, 'a.jsonl')));
+  const open = mkdtempSync(join(dir, 'open-'));
+  chmodSync(open, 0o777);
+  assert.equal(write(open, join(open, 'a.jsonl')), 1);
+  chmodSync(open, 0o755);
+  assert.equal(write(open, join(open, 'a.jsonl')), 0);
+});
+
+test('a log path outside the folder says so once on stderr', () => {
+  const said = [];
+  assert.equal(outcomeOptions({ SLEIGHT_ACTION_LOG: '/tmp/a.jsonl' }, message => said.push(message)).actionLog, undefined);
+  assert.equal(said.length, 1);
+  assert.match(said[0], /^sleight: SLEIGHT_ACTION_LOG .*ignored/);
+  outcomeOptions({}, message => said.push(message));
+  assert.equal(said.length, 1);
 });
 
 test('a hard link at the log path is refused, so a row can never land in another file', () => {

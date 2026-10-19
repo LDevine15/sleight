@@ -2018,7 +2018,8 @@ export function createRelay({
     }
     if (msg.method === undefined) resultBudget.finish(msg.id);
     journal?.reply(msg);
-    actionLog?.reply(msg);
+    // The log is a side record: its failure never costs Claude a reply.
+    try { actionLog?.reply(msg); } catch {}
     trace('to-client', msg);
     if (msg.method === undefined && msg.id !== undefined) onClientReply(msg);
     clientOut.write(JSON.stringify(msg) + '\n', afterWrite ? error => {
@@ -2479,7 +2480,7 @@ export function createRelay({
       msg.params.arguments.code.trim().match(/^((?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+cua\.getApp\([^;]*\))\s*;\s*([A-Za-z_$][\w$]*)\s*;?$/);
     if (echo && echo[2] === echo[3]) msg.params.arguments.code = echo[1];
     journal?.request(msg);
-    actionLog?.request(msg);
+    try { actionLog?.request(msg); } catch {}
     const write = jsArgs && evaluateWrite(msg.params.arguments?.code);
     if (write) {
       finishedCall(msg.id);
@@ -4340,7 +4341,7 @@ export function createRelay({
       const record = automatic ? undefined : compactor.takeOutcomes();
       const kept = !Array.isArray(record?.outcomes) ? undefined : continued?.head ? { ...record, outcomes: record.outcomes.filter(rec => rec?.x !== 'refused') } : record;
       if (continued?.head) continuedOutcomes.set(msg.id, { start: (continued.start ?? 0) + (kept?.outcomes?.length ?? 0) });
-      if (actionLog) actionLog.outcomes(msg.id, kept);
+      if (actionLog) try { actionLog.outcomes(msg.id, kept); } catch {}
       if (!automatic && openReads.has(msg.id) && !msg.result.isError && compactor.lastReadNoted()) textlessOpens.add(msg.id);
       filterMarks.delete(msg.id);
     }
