@@ -170,8 +170,9 @@ test('the menu frame\'s Permissions rows and the status frame\'s site are admitt
     'a current app that is no bundle id': menu({ permissions: { grants: [], blocked: [], current: { title: 'x', target: 'x' } } }),
     'an unknown permissions key': menu({ permissions: { grants: [], blocked: [], unblock: ['x'] } }),
   };
+  // A hand-channel fault drops only the hand while turbo's consent channel runs, so these end the host under --menu.
   for (const [name, frame] of Object.entries(cases)) {
-    const result = await shared(binary, [[0, frame], ['wait', 200], ['end', 3], ['end', 0]]);
+    const result = await shared(binary, [[0, frame], ['wait', 200], ['end', 0]], ['--hand', '--menu']);
     assert.equal(result.code, 65, name + ': ' + result.stderr);
   }
   for (const [name, frame] of Object.entries({ 'a site that is a path': status({ data: { status: 'disconnected', site: 'https://example.com/x' } }),

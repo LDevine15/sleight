@@ -186,9 +186,9 @@ export async function doctor({ env = process.env, log = console.log, app = proce
     log('usage: sleight-mcp --doctor [running app name or bundle ID]'); return 1;
   }
   for (const line of await turbo()) log(line);
-  for (const line of codex(env)) log(line);
   for (const line of await hand()) log(line);
   for (const line of await permissions()) log(line);
+  for (const line of codex(env)) log(line);
   const s = resolveServer(env);
   if (s.error) { log(`sleight: ${s.error}`); return 1; }
   await probeSurfaces(s, env);
