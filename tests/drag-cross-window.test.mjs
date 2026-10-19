@@ -39,7 +39,8 @@ function fixture(options = {}) {
     // The system-wide hit test answers with the process the window server gives the click to (options.eventPid).
     AXUIElementCreateSystemWide: options.eventPid ? () => systemWide : undefined,
     AXUIElementGetPid: (el, out) => { out[0] = el.pid; return el.pid ? 0 : -25205; },
-    NSRunningApplication: { runningApplicationWithProcessIdentifier: pid => ({ isNil: () => false, activationPolicy: pid === 7 ? 0 : 1 }) },
+    NSRunningApplication: { runningApplicationWithProcessIdentifier: pid => ({ isNil: () => false, activationPolicy: pid === 7 ? 0 : 1,
+      bundleURL: { path: pid === 7 ? '/Applications/Editor.app' : '/System/Library/CoreServices/Agent.app' } }) },
     AXUIElementCopyElementAtPosition: (_app, x, y, out) => {
       if (_app === systemWide) { const pid = options.eventPid(x, y); out[0] = { pid }; return pid ? 0 : -25212; }
       const el = [a, b].find(el => x >= el.AXPosition.x && x < el.AXPosition.x + el.AXSize.width && y >= 130);
@@ -325,6 +326,6 @@ test('without a hit-test answer the overlays still count as cover, as before', (
 test('a banner over the point is a system overlay: wait and retry once, no tiling advice, nothing pressed', () => {
   const h = fixture({ ax: false, noPosting: true, overlays: true, eventPid: x => (x < 750 ? 739 : 7) }), r = h.run();
   assert.equal(r.ok, false); assert.equal(h.events.filter(e => e.type === 1).length, 0);
-  assert.match(r.error, /^from is covered by Notification Center \(windowId 40, "Notification Center"\), a system overlay such as a notification banner; nothing was pressed\. It usually goes away within seconds: wait about 5 s, read the window again and retry the drag once/);
+  assert.match(r.error, /^from is covered by Notification Center \(windowId 40\), a system window such as a notification banner or a system prompt; nothing was pressed\. If it is a security, permission, password or sign-in prompt, don't interact with it: tell the user now\. Otherwise it usually goes away within seconds: wait about 5 s, read the window again and retry the drag once/);
   assert.doesNotMatch(r.error, /tile the windows|nothing was pressed.*nothing was pressed/);
 });

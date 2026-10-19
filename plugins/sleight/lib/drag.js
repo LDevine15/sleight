@@ -688,29 +688,36 @@ function eventPidAt(list, p) {
   const key = `${p.x},${p.y}`;
   if (!list.eventPids) list.eventPids = new Map();
   if (!list.eventPids.has(key)) {
-    let pid = null;
+    let pid = null, systemWide = null;
     try {
       const hit = Ref(), owner = Ref();
-      if (Number($.AXUIElementCopyElementAtPosition($.AXUIElementCreateSystemWide(), p.x, p.y, hit)) === 0 &&
+      systemWide = $.AXUIElementCreateSystemWide();
+      // On the system-wide element this deadline is process-wide, so it goes back to the default (0) after the test.
+      if (Number($.AXUIElementSetMessagingTimeout(systemWide, 0.5)) === 0 &&
+          Number($.AXUIElementCopyElementAtPosition(systemWide, p.x, p.y, hit)) === 0 &&
           Number($.AXUIElementGetPid(ObjC.castRefToObject(hit[0]), owner)) === 0) pid = Number(owner[0]);
-    } catch (_) {}
+    } catch (_) {
+    } finally { if (systemWide) try { $.AXUIElementSetMessagingTimeout(systemWide, 0); } catch (_) {} }
     list.eventPids.set(key, Number.isSafeInteger(pid) && pid > 0 ? pid : null);
   }
   return list.eventPids.get(key);
 }
-// Another app's window that lets clicks at p through. Some system windows are on screen and in front without
+// A macOS background agent's window (activation policy not regular, bundle under /System/Library), such as
+// Notification Center's or the Dock's, rather than a window of an app someone works in.
+const systemOverlay = w => attempt(() => {
+  const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(w.pid);
+  if (!app || app.isNil() || Number(app.activationPolicy) === 0) return false;
+  const path = ObjC.unwrap(app.bundleURL.path);
+  return typeof path === 'string' && path.startsWith('/System/Library/');
+}, false);
+// A system agent's window that lets the click at p through to the target. Some are on screen and in front without
 // taking events: Notification Center's full-display window (layer 21) whenever a banner shows, which stopped a
 // drag whose point was half a screen from the banner (2026-10-19), and the Dock's tiling backdrop (layer 0,
 // "half-backdrop") after Move & Resize, where the hit test reached the app below it (read-only probe, 2026-10-19).
-// An unknown answer counts as cover, and so does a banner over the point, since the hit test then lands on it.
-const passesThrough = (list, w, p) => { const pid = eventPidAt(list, p); return pid !== null && pid !== w.pid; };
-const blocks = (list, w, p, pid) => !overlay(w) && (w.pid === pid || !passesThrough(list, w, p));
-// A background agent's window (activation policy not regular), such as a notification banner, rather than a
-// window of an app someone works in.
-const systemOverlay = w => attempt(() => {
-  const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(w.pid);
-  return !!app && !app.isNil() && Number(app.activationPolicy) !== 0;
-}, false);
+// Only a hit on the target itself waives cover. A hit on a third app, no answer, a banner over the point (the hit
+// is then the banner's) or any other app's window keep the cover.
+const passesThrough = (list, w, p, pid) => eventPidAt(list, p) === pid && systemOverlay(w);
+const blocks = (list, w, p, pid) => !overlay(w) && (w.pid === pid || !passesThrough(list, w, p, pid));
 
 function exposedEndpoints(list, main, points, sameAppOnly, destination = main) {
   for (const [name, point, target] of [['from', points.start, main], ['to', points.end, destination]]) {
@@ -720,7 +727,8 @@ function exposedEndpoints(list, main, points, sameAppOnly, destination = main) {
       // A system overlay seldom stays, and acting on it is not the drag's business: in a 2026-10-19 run Claude
       // turned to the notifications tool, whose approval the run refused, and the pass stopped.
       if (top && top.pid !== target.pid && systemOverlay(top)) {
-        throw Object.assign(new Error(`${name} is covered by ${top.owner}${shown}, a system overlay such as a notification banner; nothing was pressed. It usually goes away within seconds: wait about 5 s, read the window again and retry the drag once. If it's still covered, tell the user rather than acting on the overlay`), { systemOverlay: true });
+        // The window title is another process's text, so it stays out of a message that goes on to give instructions.
+        throw Object.assign(new Error(`${name} is covered by ${top.owner} (windowId ${top.id}), a system window such as a notification banner or a system prompt; nothing was pressed. If it is a security, permission, password or sign-in prompt, don't interact with it: tell the user now. Otherwise it usually goes away within seconds: wait about 5 s, read the window again and retry the drag once, and if it's still covered, tell the user rather than acting on it`), { systemOverlay: true });
       }
       // A window of the same app with no title over the target is usually a dialog: Chess's New Game
       // dialog covered the board and stopped 9 drags in one run (2026-10-09).
@@ -754,7 +762,7 @@ function exposedAt(list, main, p) {
   return list.slice(0, index).every(w => w.pid === main.pid || overlay(w) ||
     !inside({ X: w.bounds.X - EDGE_CLEARANCE, Y: w.bounds.Y - EDGE_CLEARANCE,
       Width: w.bounds.Width + 2 * EDGE_CLEARANCE, Height: w.bounds.Height + 2 * EDGE_CLEARANCE }, p) ||
-    (inside(w.bounds, p) && passesThrough(list, w, p)));
+    (inside(w.bounds, p) && passesThrough(list, w, p, main.pid)));
 }
 
 // Only a leaf item can take a point of its own: a group, list or web area holds other rows and controls, and
