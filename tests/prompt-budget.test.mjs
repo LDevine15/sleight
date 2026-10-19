@@ -22,6 +22,8 @@ const firstRule = 'execute exactly one of the API calls shown below, optionally 
 const hash = text => createHash('sha256').update(text).digest('hex');
 const baseline = JSON.parse(readFileSync(new URL('fixtures/prompt-default.json', import.meta.url)));
 const skillPath = new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', import.meta.url);
+// Measured 15-word sentence: docs/benchmarks/2026-10-19-flag-ab.md, -34.2 s, SE 22.7 s.
+// Only the default skill limit grows, from 1040 to 1055; lean stays at 505 and the ratio at 0.71.
 const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
 
 function placement(t, env = {}) {
@@ -52,7 +54,7 @@ for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }, { SLEIGHT_LEAN_CALLS: '1' }, 
     assert.match(first, /Write text with `nodeRepl\.write\(\.\.\.\)`/);
     assert.doesNotMatch(first, /sleight\.fillForm|sleight\.dragTo|downloadMedia|tab\.getJsDialog/);
     // Engine-path browser sessions (Firefox, Safari) never see the Browsers section, so the form batching rule is outside it.
-    assert.match(first, /(?:In a form, fill|Forms: fill) every independent (?:visible )?field(?: you already see)? in one call\./);
+    assert.match(first, /In a form, fill every independent (?:visible )?field(?: you already see)? in one call\./);
     assert.match(first, /Observe again after\s+autocomplete, a (?:field-adding|selection that adds fields)/);
     assert.match(first, /async validation/);
     assert.match(first, /Stop at a required confirmation\./);
@@ -65,7 +67,7 @@ for (const env of [{}, { SLEIGHT_PROMPT: 'lean' }, { SLEIGHT_LEAN_CALLS: '1' }, 
     h.call(3, 'let tab = await cua.getTab("1")');
     const browser = h.reply(3, 'Browser result', true);
     assert.match(browser, /sleight\.fillForm/);
-    assert.match(browser, /stop if the user declines a browser approval/i);
+    assert.match(browser, /stop if the user declines a browser approval/);
     assert.match(browser, /downloadMedia/);
     assert.match(browser, /tab\.getJsDialog/);
     assert.doesNotMatch(browser, /Never create or edit/);
@@ -106,7 +108,7 @@ test('lean calls teach persistent handles and action endings only under the expe
       assert.match(selected, /Keep the app handle across calls/);
       assert.match(selected, /End on the action/);
     } else assert.equal(selected, normal, 'the lean skill has no native call guidance to replace');
-    assert.ok(selected.split(/\s+/).length <= (prompt === 'lean' ? 505 : 1040));
+    assert.ok(selected.split(/\s+/).length <= (prompt === 'lean' ? 505 : 1055));
     assert.equal(skillRules(skillPath, { SLEIGHT_PROMPT: prompt, SLEIGHT_LEAN_CALLS: '0' }), normal);
   }
 });
@@ -139,7 +141,7 @@ test('the default skill explains masked field reads without claiming a fill succ
 });
 
 test('both skill variants explain browser routing and script input within their word budgets', () => {
-  for (const [env, limit] of [[{}, 1040], [{ SLEIGHT_PROMPT: 'lean' }, 505]]) {
+  for (const [env, limit] of [[{}, 1055], [{ SLEIGHT_PROMPT: 'lean' }, 505]]) {
     const skill = skillRules(skillPath, env);
     assert.match(skill, /[Ww]eb pages.*tab handle, never `getApp`/);
     assert.match(skill, /[Tt]op-level `await`, no `return`/);
@@ -152,10 +154,10 @@ test('both skill variants explain browser routing and script input within their 
     if (!env.SLEIGHT_PROMPT) assert.match(skill, /nodeRepl\.write\(await sleight\.pickFromList\(tab, list, "Portland"\)\)/);
     else assert.doesNotMatch(skill, /sleight\.pickFromList/);
     assert.match(skill, /[Rr]ead once at the end/);
-    assert.match(skill, /Submit in (?:that|the same) call only when the user asked[^.]*(?:confirmation policy\sdoesn't require confirming it|the engine's confirmation policy allows it)\./);
+    assert.match(skill, /Submit in (?:that|the same) call only when the user asked[^.]*confirmation policy\sdoesn't require confirming it\./);
     assert.match(skill, /Otherwise stop before the final click\./);
     assert.doesNotMatch(skill, /submit in (?:that|the same) call when nothing is uncertain/i);
-    assert.match(skill, /(?:Use locators when validation(?: or |\/)autocomplete (?:can add or move|moves) fields, indices on static forms|Validation\/autocomplete moves fields: use locators\. Static forms: indices)\./);
+    assert.match(skill, /Use locators when validation(?: or |\/)autocomplete (?:can add or move|moves) fields, indices on static forms\./);
     assert.match(skill, /nodeRepl\.write\(await sleight\.dragTo\(tab, from, to\)\)/);
     assert.match(skill, /selectors, locators or page coordinates.*reads back/s);
     if (env.SLEIGHT_PROMPT === 'lean') assert.doesNotMatch(skill, /sleight\.reorder/);
@@ -174,15 +176,15 @@ test('the default skill retains extension selection and lean retains precise saf
   assert.match(normal, /nodeRepl\.write\(await sleight\.pickFromList\(tab, list, "Portland"\)\)/);
   assert.doesNotMatch(lean, /sleight\.pickFromList/);
   assert.match(normal, /cua\.getBrowser\(\{ extensionInstanceId \}\).*in a call of its own/s);
-  assert.match(lean, /tell the user first(?::| that) it moves their pointer/i);
+  assert.match(lean, /tell the user first that it moves their pointer/i);
   assert.match(lean, /ask the user to run `bin\/sleight-mcp --doctor` from the plugin folder/);
-  assert.match(lean, /(?:the latest screenshot of that window|that window's latest screenshot)/);
-  assert.match(lean, /(?:press Cmd\+Z in that window|Lost text: press Cmd\+Z there)/);
+  assert.match(lean, /the latest screenshot of that window/);
+  assert.match(lean, /press Cmd\+Z in that window/);
   assert.match(lean, /Use only documented methods/);
   assert.match(lean, /leave tabs in the background/i);
   assert.match(lean, /stop if the user declines a browser approval/i);
   assert.match(lean, /brings the app forward for about two seconds/);
-  assert.match(lean, /(?:the engine's confirmation policy|the engine's confirmation policy allows it)/);
+  assert.match(lean, /the engine's confirmation policy/);
   assert.match(lean, /Before `hover`, try `Help:`/);
 });
 

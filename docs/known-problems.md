@@ -3,6 +3,16 @@
 What doesn't work, or works only partly, with the measurements behind it. We found all of these in
 our own runs. Dates and engine versions are given where they matter.
 
+## Flag A/B limits
+
+- Across five alternating rounds with Haiku 5.5 at high effort, open-shot won by about 1.1 SE
+  (5.8 s, SE 5.2 s) and the screenshot sentence by 1.5 SE (34.2 s, SE 22.7 s). Those margins
+  come from `flags-score.txt`. The error estimate excludes pass-rate uncertainty. The screenshot
+  rows measured Word only, word-memo and word-brief. Neither flag's held-out A/B measured Excel
+  or Opus. See the [four flag A/Bs](benchmarks/2026-10-19-flag-ab.md) for every task and attempt.
+- The default skill restores `60fe1319` plus the exact measured screenshot sentence.
+  The lean skill restores `60fe1319` without that sentence. The screenshot A/B never measured lean.
+
 ## Approvals and guards
 
 - The preapproval loader proves file ownership, not who wrote it. The mod refuses Claude's file edits

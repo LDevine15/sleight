@@ -157,18 +157,18 @@ test('screenshot reads default on and only the A/B zero turns them off', () => {
   }
 });
 
-for (const flag of [undefined, '0']) for (const mismatch of [false, true]) test(`the relay associates screenshot-only results and honors the A/B switch: flag=${flag}, mismatch=${mismatch}`, async t => {
+for (const setting of ['SLEIGHT_SCREENSHOT_READS', 'SLEIGHT_TEXTLESS_HINT']) for (const flag of [undefined, '0']) for (const mismatch of [false, true]) test(`the relay associates screenshot-only results and preserves the independent hint switch: ${setting}=${flag}, mismatch=${mismatch}`, async t => {
   const directory = trackTemp(mkdtempSync('/tmp/sleight-fl1-'));
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams, replies = [];
   clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
-  const previous = process.env.SLEIGHT_SCREENSHOT_READS;
-  if (flag === undefined) delete process.env.SLEIGHT_SCREENSHOT_READS;
-  else process.env.SLEIGHT_SCREENSHOT_READS = flag;
+  const previous = process.env[setting];
+  if (flag === undefined) delete process.env[setting];
+  else process.env[setting] = flag;
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
     inputLease: new InputLease({ directory, holder: 'fl1-fixture' }) });
-  if (previous === undefined) delete process.env.SLEIGHT_SCREENSHOT_READS;
-  else process.env.SLEIGHT_SCREENSHOT_READS = previous;
+  if (previous === undefined) delete process.env[setting];
+  else process.env[setting] = previous;
   t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); removeTemp(directory); });
   const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
   const call = async (id, code, content, appId = 'example.fixture') => {
@@ -184,7 +184,7 @@ for (const flag of [undefined, '0']) for (const mismatch of [false, true]) test(
   await call(2, 'nodeRepl.emitImage(await app.getScreenshot())', [{ type: 'image', mimeType: 'image/png', data: 'fixture' }], mismatch ? 'example.other' : 'example.fixture');
   const result = await call(3, 'await app.getAXState()', [text(GUARD_MARK + tree(pane) + GUARD_END)]);
   assert.equal(result?.isError, undefined);
-  assert.equal(/Read the window with/.test(output(result.content)), flag !== '0' && mismatch);
+  assert.equal(/Read the window with/.test(output(result.content)), (setting !== 'SLEIGHT_TEXTLESS_HINT' || flag !== '0') && mismatch);
 });
 
 test('windows with one title and no URL keep separate hint and screenshot state when the tree carries an ID', () => {

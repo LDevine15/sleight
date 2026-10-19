@@ -499,7 +499,7 @@ test('the open_file screenshot replaces the textless note and is sent with the t
   assert.match(body(out), /screenshot added.*Window handle: `(__sleightOpenedApp\d+)`, already acquired, but `app` isn't set: start the next call with `let app = \1;`\./);
 });
 
-for (const [name, options, before] of [['SLEIGHT_SCREENSHOT_READS=0', { textlessHint: false }, false],
+for (const [name, options, before] of [['SLEIGHT_TEXTLESS_HINT=0', { textlessHint: false }, false],
   ['a hint already spent on the window', {}, true]]) test(`no open_file screenshot with ${name}`, async t => {
   const h = harness(t, { localTools: bookTools(), ...options });
   if (before) {

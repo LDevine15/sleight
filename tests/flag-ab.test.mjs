@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ARMS, FLAGS, loadRows, plan, readManifest, scoreFlag } from '../bench/flag-ab.mjs';
+import { ARMS, FLAGS, LEGACY_ARMS, LEGACY_FLAGS, format, loadRows, plan, readManifest, scoreFlag } from '../bench/flag-ab.mjs';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
 
 const reasons = JSON.parse(readFileSync(new URL('../bench/claim-exclusions.json', import.meta.url), 'utf8')).reasons;
@@ -152,4 +152,26 @@ test('the score command reads a manifest and prints each flag with its verdict',
   assert.match(out.stdout, /compact-toolbars[\s\S]*verdict: no verdict\. short of 3 runs a side: textedit-replace-all \(off 0, on 0\)/);
   const json = JSON.parse(spawnSync(process.execPath, [script, 'score', '--manifest', join(dir, 'manifest.tsv'), '--json'], { encoding: 'utf8' }).stdout);
   assert.equal(json.scores.find(s => s.flag === 'skill-screenshot').total.on, 106);
+});
+
+
+test('the legacy fixture manifest reproduces all four historical score blocks and verdicts', () => {
+  const entries = readManifest(readFileSync(new URL('fixtures/flag-ab-legacy.tsv', import.meta.url), 'utf8'));
+  const read = path => {
+    const [flag, round, side, arm] = path.split('/');
+    const study = JSON.parse(readFileSync(new URL(`../docs/benchmarks/2026-10-19-flag-ab-${flag}.json`, import.meta.url), 'utf8'));
+    const attempt = study.rounds.find(row => row.round === Number(round) && row.arm === side);
+    return { results: attempt.results.filter(row => LEGACY_ARMS.find(a => a.id === arm).tasks.includes(row.task))
+      .map(row => ({ ...row, arm: 'sleight' })) };
+  };
+  const { rows, dropped, missing } = loadRows(entries, { read, reasons, legacy: true });
+  assert.deepEqual(dropped, {});
+  assert.deepEqual(missing, []);
+  const scores = Object.keys(LEGACY_FLAGS).map(flag => scoreFlag(flag, rows, { legacy: true }));
+  assert.deepEqual(scores.map(s => s.verdict), ['default on', 'remove', 'stay opt-in', 'default on']);
+  const page = readFileSync(new URL('../docs/benchmarks/2026-10-19-flag-ab.md', import.meta.url), 'utf8');
+  const blocks = [...page.matchAll(/```text\n([\s\S]*?)\n```/g)].map(match => match[1]);
+  assert.equal(blocks.length, 4);
+  const printed = format(scores, { manifest: 'fixture.tsv', entries: entries.length, dropped, missing });
+  assert.equal(printed.slice(printed.indexOf('\n\n') + 2), blocks.join('\n\n'));
 });

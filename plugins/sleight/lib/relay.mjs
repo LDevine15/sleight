@@ -808,8 +808,9 @@ export function createRelay({
   // read returned no cell values and a screenshot followed in 5/5 excel-edit runs, about 3 s a run (2026-10-17).
   // The note costs about 30 tokens and no engine call; attaching a screenshot would cost an image and a
   // serial capture on every such read.
-  // SLEIGHT_SCREENSHOT_READS=0 disables the screenshot guidance and notes for the A/B.
-  textlessHint = process.env.SLEIGHT_SCREENSHOT_READS !== '0',
+  // Preserve the 60fe1319 relay baseline: the hint is independent of the screenshot sentence A/B.
+  // SLEIGHT_TEXTLESS_HINT=0 leaves it out, including the open_file textless fallback.
+  textlessHint = process.env.SLEIGHT_TEXTLESS_HINT !== '0',
   confirmPayments = 'requested',
   // sleight's own payment card for the engine-path payment gate (payment-card.mjs); the launcher supplies it. Without it a
   // payment stop reaches Claude as it is.

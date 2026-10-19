@@ -54,7 +54,8 @@ try {
           const loadStart = condition();
           const { createReadCompactor, GUARD_MARK, GUARD_END } = modules[arm];
           const inputs = [first, second].map(tree => [text(GUARD_MARK + tree + GUARD_END)]);
-          const c = createReadCompactor(); c.process([text(first)]);
+          // Historical CPU comparison, not the shipped screenshot default.
+          const c = createReadCompactor({ screenshotReads: false }); c.process([text(first)]);
           for (let i = 0; i < 20; i++) c.process(inputs[i % 2], { action: c.beginAction?.('await app.typeText("b")') });
           let user = 0, system = 0;
           const wallStart = performance.now();

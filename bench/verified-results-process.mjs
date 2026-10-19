@@ -37,7 +37,8 @@ try {
     const samples = [];
     for (let sample = 0; sample < 5; sample++) {
       hold();
-      const c = createReadCompactor(); c.process([text(first)]);
+      // Historical CPU comparison, not the shipped screenshot default.
+      const c = createReadCompactor({ screenshotReads: false }); c.process([text(first)]);
       for (let i = 0; i < 20; i++) c.process(inputs[i % 2], { action: c.beginAction?.('await app.typeText("b")') });
       let user = 0, system = 0;
       for (let i = 0; i < iterations; i++) {
