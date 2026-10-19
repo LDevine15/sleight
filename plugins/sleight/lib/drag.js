@@ -69,7 +69,8 @@ let dp7 = true, dp2 = true;
 let tracePhases = false;
 function dragPhase(phase, edge) {
   if (!tracePhases) return;
-  try { console.error('sleight-drag-phase ' + JSON.stringify({ phase, edge, monoMs: $.NSProcessInfo.processInfo.systemUptime * 1000 })); } catch (_) {}
+  // JXA provides console.log on stderr, but has no console.error.
+  try { console.log('sleight-drag-phase ' + JSON.stringify({ phase, edge, monoMs: $.NSProcessInfo.processInfo.systemUptime * 1000 })); } catch (_) {}
 }
 function inDragPhase(phase, fn) {
   dragPhase(phase, 'start');

@@ -150,7 +150,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
   });
   const traces = [];
   Object.defineProperty(native.NSProcessInfo.processInfo, 'systemUptime', { get: () => 1 + ++clock / 1000 });
-  const context = vm.createContext({ console: { error: line => traces.push(JSON.parse(line.replace(/^sleight-drag-phase /, ''))) }, SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $: native, Ref: () => [], ObjC: { import() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); onDelay?.({ values, selected }); if (slowDelays) clock += 30000; },
+  const context = vm.createContext({ console: { log: line => traces.push(JSON.parse(line.replace(/^sleight-drag-phase /, ''))) }, SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $: native, Ref: () => [], ObjC: { import() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); onDelay?.({ values, selected }); if (slowDelays) clock += 30000; },
     Date: { now: () => clock },
     Application: () => ({ processes: { whose: () => [proc] } }) });
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8'), context);

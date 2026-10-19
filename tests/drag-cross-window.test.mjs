@@ -64,7 +64,7 @@ function fixture(options = {}) {
       if (e.type === 2 && !options.postedUnchanged) applyDrop();
     },
   });
-  const context = vm.createContext({ console: { error: line => traces.push(JSON.parse(line.replace(/^sleight-drag-phase /, ''))) }, $, Ref: () => [], ObjC: { import() {}, bindFunction() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v },
+  const context = vm.createContext({ console: { log: line => traces.push(JSON.parse(line.replace(/^sleight-drag-phase /, ''))) }, $, Ref: () => [], ObjC: { import() {}, bindFunction() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v },
     delay: () => { if (++delayed === 1) options.onSettle?.({ a, b, frames }); },
     Application: () => assert.fail('cross-window selection must not use app focus or Apple events'),
     SLEIGHT_ACCESSIBILITY_MOVE: options.ax !== false });

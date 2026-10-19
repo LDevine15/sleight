@@ -4,10 +4,39 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { approvalLogging, runScript } from '../plugins/sleight/lib/launch.mjs';
 
 const prefix = 'sleight-drag-phase ';
 const phase = { phase: 'ax-move', edge: 'start', monoMs: 1234.5 };
+
+test('native JXA emits phase JSON on stderr with monotonic milliseconds and no app access', { skip: process.platform !== 'darwin' }, () => {
+  const source = readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8');
+  const probe = source + `
+    function run() {
+      tracePhases = true;
+      try { inDragPhase('ax-move', () => inDragPhase('settle', () => { throw new Error('PRIVATE TEXT'); })); } catch (_) {}
+      tracePhases = false;
+      inDragPhase('raise', () => {});
+      return 'ok';
+    }
+  `;
+  const result = spawnSync('osascript', ['-l', 'JavaScript', '-e', probe], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), 'ok');
+  const events = result.stderr.trim().split('\n').map(line => {
+    assert.ok(line.startsWith(prefix), line);
+    return JSON.parse(line.slice(prefix.length));
+  });
+  assert.deepEqual(events.map(e => `${e.phase}:${e.edge}`), ['ax-move:start', 'settle:start', 'settle:end', 'ax-move:end']);
+  events.forEach((e, i) => {
+    assert.deepEqual(Object.keys(e).sort(), ['edge', 'monoMs', 'phase']);
+    assert.ok(Number.isFinite(e.monoMs) && e.monoMs > 0);
+    if (i) assert.ok(e.monoMs >= events[i - 1].monoMs);
+  });
+  assert.equal(result.stderr.includes('PRIVATE TEXT'), false);
+});
+
 function runner(stderr, stdout = '{"ok":true}', error = null, inspect = () => {}) {
   return (_command, args, _options, callback) => {
     inspect(JSON.parse(args.at(-1)));
