@@ -260,10 +260,23 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   26-run round on 2026-10-13, down from 74, against 0 for FowlBrowser.
 - A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop). `SLEIGHT_CONFIRM_PAYMENTS=never` also skips the figure check below for such a payment, so a page that hides a larger total behind a matching amount field is not caught. It asks as before for an unrequested payment, a second payment in the same request and an amount that differs from the message.
 - Turbo follows a plain `<a href>` to an http(s) URL without asking only when its one payment word is "checkout" and its words contain no money figure. The link also needs to be outside a payment form and free of handler attributes (`on*`, `ping`, `data-method`, Turbo, Stimulus, htmx, Vue, Alpine, Angular). The DevTools protocol must report that nothing on it or inside it listens for click, mousedown, pointerdown, pointerup, auxclick or keydown. A listener on an ancestor or the document doesn't count, because frameworks and analytics listen there on nearly every page (the race's own shop logs pointerdown on the window), so a delegated handler that charges from a checkout-only link isn't caught at the link. The figure check still applies wherever a money figure shows. If the listener list can't be read, the link asks. A page that charges on a plain GET to such a link isn't stopped at the link, and the later "Place order" button still asks. Not measured on a live site.
-- On the engine path (Safari, Firefox, native apps) the payment rule is policy text the model follows, with no figure check behind it.
-  Before 2026-10-17 that text didn't require the amount, and in the first real-window Firefox round Haiku confirmed an unpriced
-  checkout's "Pay $268.00 now?" dialog (1 of 1 form-checkout runs). The text now requires the amount in the user's message. It
-  hasn't been rerun.
+- On the engine path (Safari, Firefox, native apps) a guard check stops a click, Enter or Space that could pay unless the user's
+  message named one amount and no figure on the page is larger. It reads only the accessibility tree the guard already read, and
+  only page content: a web area and the window's sheets, dialogs and alerts. Before it, Haiku confirmed an unpriced "Pay $268.00
+  now?" dialog in Firefox (1 of 1 runs, 2026-10-17), and gpt-6.1-sol inside Codex paid the same checkout without asking (1 of
+  1, 2026-10-19). Tested on recorded trees only, with no live run yet.
+- The check needs sleight's copy of the user's message, which only the Claude Code mod sends, with turbo's turn start. In Codex,
+  and in Claude Code with turbo off, every payment on the engine path stops and the user has to pay themselves.
+- The amount is the one money figure with a currency in the message. A message with two figures ("$29 overnight", "$268.00") doesn't
+  state one, so it stops. Wording isn't read, so "never more than $300" names $300.
+- It doesn't see a figure drawn in an image or canvas, a page that charges from a control with no pay word outside the card
+  fields' form, or a payment in a native app window (only a sheet, dialog or alert whose words mention a payment is checked). The tree
+  has no forms: the card fields' form is their nearest common ancestor that holds a button, and every button in it asks except
+  turbo's closed list (Apply, Remove, a stepper). Tabs opened through the ChatGPT browser extension aren't checked.
+- It doesn't count payments, so a second payment in the same turn at or under the message's amount goes through, and a "checkout"
+  link asks because the engine path can't see the page's click listeners. A point click on a payment page asks, since the element
+  under it is unknown. It runs in the engine's JavaScript session like the guard's other checks, so code that edits the guard
+  gets past it.
 - The turbo v3 payment read asks whenever any visible money figure in the payment form or dialog is larger than the amount in the
   user's message, in any currency and with any label or sign (a discount, a was price, a gift card, a late fee, a coverage limit,
   a later total, an estimate, "-$500.00"). It doesn't read wording. Rounds 4 to 12 added label lists that cleared such a figure, and
