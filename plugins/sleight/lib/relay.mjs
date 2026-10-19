@@ -82,6 +82,7 @@ import { guardStopMark, splitMenuActions, takeGuardStop, withoutStopTree, hasWho
   unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate,
   failedActionText, paletteRefusal, oneTabAdded, landingRefusal, replaceLastTree, lastHeader } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
+import { stripHandBindings } from './hand/bindings.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { createStuckEscapes } from './stuck-escape.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
@@ -1825,6 +1826,7 @@ export function createRelay({
   function finishedCall(id) {
     // A call that ends without an engine result (a refusal, a retry, a stop) shows no more hand.
     hand?.result(id, true);
+    handBindingMarks.delete(id);
     callDetails.delete(id);
     lightReturn?.end(id);
     const call = leaseCalls.get(id);
@@ -2821,6 +2823,7 @@ export function createRelay({
   // window before it lets an action through, so the relay sends the acquisition alone, takes
   // the lease from its reply, then sends the rest, and Claude gets both results as one. Before,
   // Claude spent a turn on the acquisition (the engine's first call, or a switch of app).
+  const handBindingMarks = new Map();
   const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), splitCodes = new Map(), rawHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
   const openShots = new Map(), openReads = new Set(), textlessOpens = new Set();
   const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Map(), menuForwards = new Map();
@@ -3853,6 +3856,8 @@ export function createRelay({
             const stopMark = guardStopMark();
             menuCalls.set(msg.id, { ...menuAdmissions.get(msg.id), mark: stopMark, seen: seenLines, uniqueSeen,
               request: { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: originalCode } } } });
+            const handBindingMark = hand ? filteredReadMark() : undefined;
+            if (handBindingMark) handBindingMarks.set(msg.id, handBindingMark);
             const filterMark = filteredReadMark(), filteredCode = filteredReadCode(swipeCode, filterMark);
             const typingAction = compactor.beginAction(originalCode);
             const typedTarget = typingAction?.typedTarget;
@@ -3864,7 +3869,7 @@ export function createRelay({
               target === leaseWindow && lightReturnCode(originalCode) ? lightReturn.begin(msg.id, leaseWindow) : undefined;
             msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
-              { ...setup, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, ...(outcomeMark ? { outcomeMark } : {}), timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
+              { ...setup, handBindingMark, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, ...(outcomeMark ? { outcomeMark } : {}), timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
                 firstOff: !careful && !documentMode && !changeReview,
                 focused: focusedChecked.has(msg.id),
                 quietEdits: !careful && !documentMode && !changeReview,
@@ -4283,6 +4288,7 @@ export function createRelay({
     const panelNote = Array.isArray(msg.result?.content) || typeof msg.error?.message === 'string'
       ? panelAdvice(panelHealth) : undefined;
     if (msg.method === undefined && Array.isArray(msg.result?.content)) {
+      msg.result.content = stripHandBindings(msg.result.content, handBindingMarks.get(msg.id), bindings => hand?.bindings?.(msg.id, bindings));
       msg.result.content = stripGuardTiming(msg.result.content, metric => trace('guard-read', { id: msg.id, ...metric }));
     }
     const automatic = msg.method === undefined && helperProbes.has(msg.id);

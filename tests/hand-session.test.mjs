@@ -34,7 +34,7 @@ test('admission only queues work; the frames go out after the engine call, with 
   f.advance(100);
   await f.run();
   assert.deepEqual(f.requests, [{ app: 'Editor', appId: 'com.example.editor', title: 'notes.txt', identities: {
-    1: { role: 'AXButton', id: 'saveButton', description: 'Save', title: undefined } }, focus: false }]);
+    1: { role: 'AXButton', id: 'saveButton', description: 'Save', title: undefined } }, versions: { 1: '9e41af0cf584a429d820306e6ac8d456aa18381d53495fc7d022b6b68cbcc080' }, focus: false }]);
   assert.deepEqual(f.sent.map(s => [s.kind, s.at, s.delayMs]), [
     ['click', [300, 298], 0], ['click', [160, 250], GUARD_READ_MS + WRITE_MS - 100], ['type', [160, 250], GUARD_READ_MS + 2 * WRITE_MS - 100]]);
   assert.deepEqual(Object.keys(f.sent[0]).sort(), ['at', 'beats', 'delayMs', 'kind', 'path', 'pid', 'sentAt', 'windowId']);
@@ -57,11 +57,11 @@ test('once an app sends approval requests, each accepted approval is the exact b
   f.advance(50);
   approval(f, 'a3', 'press_key'); f.hand.answered('a3', 'accept');
   assert.deepEqual(f.sent.map(s => s.kind), ['click', 'key']);
-  const beats = f.traces.filter(([d]) => d === 'hand-beat').map(([, m]) => m);
-  assert.deepEqual(beats.slice(-2), [{ id: 2, action: 0, driftMs: 300 }, { id: 2, action: 1, driftMs: 350 - WRITE_MS }]);
   // The result re-anchors the rest of the schedule at its own time.
   f.advance(1000);
   f.hand.result(2, false);
+  const beats = f.traces.filter(([d]) => d === 'hand-beat').map(([, m]) => m);
+  assert.deepEqual(beats.slice(-2), [{ id: 2, action: 0, driftMs: 300 }, { id: 2, action: 1, driftMs: 350 - WRITE_MS }]);
   assert.deepEqual(f.sent.map(s => [s.kind, s.delayMs, s.sentAt]).at(-1), ['click', 0, 2350]);
 });
 
@@ -229,4 +229,27 @@ test('default off installs no hand hooks; saved on enables hooks and env 0 still
   assert.ok(hand);
   hand.close();
   assert.equal(createRelayHand({ ...on, env: { SLEIGHT_HAND: '0' } }), undefined);
+});
+
+
+test('guard binding decisions correct approval drift for this call', async () => {
+  const f = fixture();
+  admit(f, 1, 'await app.click(1); await app.click(1)');
+  approval(f, 'a', 'click'); f.hand.answered('a', 'accept');
+  await f.run();
+  f.advance(72); approval(f, 'b', 'click'); f.hand.answered('b', 'accept');
+  f.hand.bindings(1, [{ index: 0, bound: false }, { index: 1, bound: true }]);
+  f.hand.result(1, false);
+  const beats = f.traces.filter(([d]) => d === 'hand-beat').map(([, m]) => m);
+  assert.equal(beats[0].driftMs, beats[1].driftMs);
+});
+
+
+test('approval drift uses the original approval time when geometry arrives later', async () => {
+  const f = fixture();
+  admit(f, 1, 'await app.click(1)');
+  approval(f, 'a', 'click'); f.hand.answered('a', 'accept');
+  f.advance(500); await f.run(); f.hand.result(1, false);
+  const beat = f.traces.find(([d]) => d === 'hand-beat')[1];
+  assert.equal(beat.driftMs, -GUARD_READ_MS);
 });

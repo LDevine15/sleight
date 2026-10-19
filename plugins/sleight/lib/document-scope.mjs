@@ -439,6 +439,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     // The payment gate's setting and the relay's copy of the user's message (payment-gate.mjs); without it the gate is off.
     state.payment = update?.payment;
     state.timing = !!update?.timing;
+    state.handBindingMark = update?.handBindingMark;
     state.careful = !!update?.careful;
     state.firstOff = !!update?.firstOff && !!update?.focused && !state.careful && !state.fileOnly && !state.cancelOnly;
     state.quietEdits = !!update?.quietEdits && !state.careful;
@@ -1440,6 +1441,11 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
         return (...args) => {
           const attempt = { index: state.actionIndex++ };
           const pending = track(act(attempt, ...args));
+          if (state.handBindingMark) {
+            const mark = state.handBindingMark;
+            const report = () => { try { nodeRepl.write(mark + JSON.stringify({ index: attempt.index, bound: !!attempt.bound }) + '\\n'); } catch {} };
+            pending.then(report, report);
+          }
           pending.catch(error => {${O ? '\n            ' + `// Ahead of the stop mark: a continued call keeps only the output before it. An action that completed
             // keeps its outcome when a later check throws.
             if (state.outcomeMark) {

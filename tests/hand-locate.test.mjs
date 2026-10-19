@@ -74,3 +74,50 @@ test('runScript stops hand/locate.js after 2.5 s, not the 30 s default', async (
   assert.deepEqual(await runScript('hand/locate.js', { app: 'Example' }, run), { ok: true });
   assert.equal(timeout, 2500);
 });
+
+
+test('geometry cache reuses only unchanged identities in the same pid, window and bounds', () => {
+  const c = locateContext(), win = { AXRole: 'AXWindow', AXChildren: [button('Save', 100), button('Other', 200)] };
+  const bounds = { X: 0, Y: 0, Width: 500, Height: 500 };
+  let walks = 0;
+  const walk = c.elements;
+  c.elements = (...args) => { walks++; return walk(...args); };
+  const request = { 1: { role: 'AXButton', title: 'Save' } };
+  const get = (pid = 10, window = 20, b = bounds, ids = request) => JSON.parse(JSON.stringify(c.cachedElements(pid, window, b, win, ids)));
+  assert.equal(get()[1].X, 100); assert.equal(walks, 1);
+  assert.equal(get()[1].X, 100); assert.equal(walks, 1);
+  assert.equal(get(10, 20, bounds, { 1: { role: 'AXButton', title: 'Other' } })[1].X, 200);
+  assert.equal(walks, 2, 'a changed tree identity walks again');
+  get(10, 20, { ...bounds, X: 1 }); get(11); get(10, 21);
+  assert.equal(walks, 5, 'moves, process and window changes invalidate');
+  c.cachedElements(10, 21, bounds, win, request, { 1: 'line-version-1' });
+  c.cachedElements(10, 21, bounds, win, request, { 1: 'line-version-2' });
+  assert.equal(walks, 7, 'a changed tree line walks even when parsed identity is the same');
+});
+
+test('the launcher locates on the persistent utility lane', async () => {
+  const { createAppHealthHelper } = await import('../plugins/sleight/lib/read-failure.mjs');
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  const lanes = [], requests = [];
+  const helper = createAppHealthHelper({ spawnHelper(kind) {
+    lanes.push(kind);
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), kill() { queueMicrotask(() => child.emit('close')); } });
+    child.stdin.on('data', chunk => { const r = JSON.parse(chunk); requests.push(r); child.stdout.write(JSON.stringify({ id: r.id, ok: true }) + '\n'); });
+    return child;
+  } });
+  await helper.handLocate({ pid: 10 }); await helper.handLocate({ pid: 10 });
+  assert.deepEqual(lanes, ['hand']); assert.equal(requests[0].op, 'hand-locate');
+  await helper.close();
+  const launch = readFileSync(new URL('../plugins/sleight/lib/launch.mjs', import.meta.url), 'utf8');
+  assert.match(launch, /locate: request => appHealth.handLocate\(request\)/);
+});
+
+
+test('utility priority applies to the hand helper without changing admission helper priority', async () => {
+  const { probePlan } = await import('../plugins/sleight/lib/probe-supervisor.mjs');
+  const hand = probePlan('--hand-session', []), admission = probePlan('--session', []);
+  assert.equal(hand.command, '/usr/bin/nice');
+  assert.deepEqual(hand.args.slice(0, 3), ['-n', '10', '/usr/bin/osascript']);
+  assert.equal(admission.command, '/usr/bin/osascript');
+});

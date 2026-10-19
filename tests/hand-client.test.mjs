@@ -18,12 +18,12 @@ function fakeChild(pid = 4242, consent = true) {
   child.pid = pid; child.ended = false;
   child.stdin = Object.assign(new EventEmitter(), {
     writableLength: 0,
-    write(text) { for (const line of text.trimEnd().split('\n').map(line => JSON.parse(line))) (line.hand === 'menu' ? menus : lines).push(line); return true; },
+    write(text) { for (const line of text.trimEnd().split('\n').map(line => JSON.parse(line))) { (line.hand === 'menu' ? menus : lines).push(line); } return true; },
     end() { child.ended = true; },
   });
   child.stdout = new EventEmitter();
   child.kill = () => { child.killed = true; };
-  child.stdio = [child.stdin, child.stdout, null, ...consent ? [Object.assign(new EventEmitter(), { name: 'consent-in', destroy() { this.destroyed = true; } }),
+  child.stdio = [child.stdin, child.stdout, null, ...consent ? [Object.assign(new EventEmitter(), { name: 'consent-in', write(text) { const line = JSON.parse(text); lines.push(line); queueMicrotask(() => child.stdout.emit('data', JSON.stringify({ hand: 'consent-ready', nonce: line.nonce, token: line.token }) + '\n')); }, destroy() { this.destroyed = true; } }),
     Object.assign(new EventEmitter(), { name: 'consent-out', destroy() { this.destroyed = true; } })] : []];
   child.lines = lines; child.menus = menus;
   return child;
@@ -56,7 +56,7 @@ test('send and hide return at once without a promise, and the host gets exact no
   assert.deepEqual(Object.keys(first), ['hand', 'nonce', 'seq', 'kind', 'pid', 'windowId', 'at', 'path', 'delayMs', 'beats']);
   assert.deepEqual([second.seq, second.kind, second.delayMs, second.beats, second.nonce], [2, 'drag', 470, 2, first.nonce]);
   assert.deepEqual(hide, { hand: 'hide', nonce: first.nonce });
-  assert.deepEqual(h.spawns, [{ capture: 'hidden', consent: false }]);
+  assert.deepEqual(h.spawns, [{ capture: 'hidden', consent: true }]);
 });
 
 test('the host pid is set while the host runs and cleared when it ends; a dead host only traces and is not respawned', async t => {
@@ -219,29 +219,24 @@ test('the Ghost Hand toggle reaches the relay on the host\'s stdout, nonce-bound
   assert.equal(h.traces.filter(([d]) => d === 'hand-toggle-refused').length, 5);
 });
 
-test('the consent channel opens only when turbo forks: a hand-only host has none, and each fork gets a fresh host that replaces the last', async t => {
+test('the first host is consent-capable and successive worker forks reuse its pid after exit and reset', async t => {
   t.after(() => setHandPid(0));
   const h = harness();
   h.client.send(frame()); await settle();
-  assert.deepEqual(h.spawns, [{ capture: 'hidden', consent: false }]);
-  assert.equal(h.children[0].stdio[3], undefined, 'a session that never uses turbo holds no consent ends');
-  const pipes = await shareConsent();
-  assert.deepEqual(h.spawns.at(-1), { capture: 'hidden', consent: true });
-  assert.equal(h.children.length, 2, 'one host at a time: the hand-only one is replaced');
-  assert.equal(h.children[0].ended, true); assert.equal(handPid(), 4243);
-  assert.equal(h.children[1].menus[0].nonce, h.children[0].menus[0].nonce, 'the same hand sender');
-  assert.deepEqual([pipes.write.name, pipes.read.name], ['consent-in', 'consent-out']);
-  pipes.release();
-  assert.equal(pipes.write.destroyed && pipes.read.destroyed, true, 'the relay keeps no copy of the consent channel');
+  assert.deepEqual(h.spawns, [{ capture: 'hidden', consent: true }]);
+  const pipes = await shareConsent(); pipes.release();
+  assert.equal(h.children.length, 1); assert.equal(handPid(), 4242);
+  assert.notEqual(pipes.write.destroyed, true, 'the session retains its descriptors');
+  await assert.rejects(shareConsent(), /HAND_CONSENT_IN_USE/, 'no simultaneous readers or fallback host');
+  pipes.detached();
+  const again = await shareConsent(); again.release();
+  assert.equal(h.children.length, 1); assert.equal(h.children[0].ended, false);
+  assert.equal(again.write, pipes.write); assert.equal(again.read, pipes.read);
+  assert.equal(h.children[0].lines.at(-1).hand, 'consent-reset');
+  assert.equal(h.traces.filter(([d]) => d === 'hand-started').length, 1);
   h.client.send(frame()); await settle();
-  assert.equal(h.children[1].lines.at(-1).hand, 'act', 'the hand carries on in the new host');
-  // A crashed worker's successor reattaches: another fresh host and channel, still one glove.
-  const again = await shareConsent();
-  assert.equal(h.children.length, 3); assert.equal(h.children[1].ended, true); assert.ok(again.write !== pipes.write);
-  again.release();
-  // The replaced hosts with consent attached are left to end with their worker, never killed.
-  await new Promise(resolve => setTimeout(resolve, 40));
-  assert.equal(h.children[1].killed, undefined);
+  assert.equal(h.children[0].lines.at(-1).hand, 'act');
+  h.client.close();
 });
 
 test('turbo gets a host even with the hand off; a closed client shares nothing', async t => {
@@ -295,9 +290,12 @@ test('the session\'s hand client is the integration point: one per process, none
   const bridge = await createV3Bridge({}, { readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
     forkWorker(_path, args, forkOptions) { fork = { args, stdio: forkOptions.stdio }; queueMicrotask(() => session.ready()); return child; } });
   try {
-    assert.deepEqual(fork.args, ['--shared-ui']);
+    assert.deepEqual(fork.args, ['--shared-ui', '--shared-hand-pid=' + children.at(-1).pid]);
+    const before = children.at(-1).lines.length;
+    child.emit('message', { version: 3, hand: frame() });
+    assert.equal(children.at(-1).lines.length, before + 1, 'browser hand IPC uses the same host');
     assert.equal(fork.stdio[4], children.at(-1).stdio[3]); assert.equal(fork.stdio[5], children.at(-1).stdio[4]);
-    assert.equal(children.at(-1).stdio[3].destroyed, true, 'released after the fork');
+    assert.notEqual(children.at(-1).stdio[3].destroyed, true, 'retained for the session');
   } finally { await bridge.detach(); first.close(); }
   assert.notEqual(sessionHandClient(options), first, 'a closed session client is replaced');
   sessionHandClient(options).close();

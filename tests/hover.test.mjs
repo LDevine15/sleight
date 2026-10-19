@@ -297,3 +297,43 @@ test('native capture passes an empty NSDictionary and cleans up its temporary im
   assert.equal(native.capture({ bounds: { X: 10, Y: 20, Width: 300, Height: 400 } }), 'PNG');
   assert.deepEqual(removed, ['/private/tmp/sleight-hover-test']);
 });
+
+
+test('hover hides the hand with acknowledgement around its own capture and releases on failure', () => {
+  for (const failure of [undefined, 'capture']) {
+    const { p, events } = platform(failure);
+    p.hideHand = () => { events.push('hide acknowledged'); return () => events.push('release hand'); };
+    const result = controller().performHover({ app: 'TextEdit', at: [10, 20] }, p);
+    assert.equal(result.ok, !failure);
+    const at = events.indexOf('hide acknowledged');
+    assert.deepEqual(events.slice(at, at + 3), ['hide acknowledged', 'capture', 'release hand']);
+  }
+  const { p, events } = platform();
+  p.hideHand = () => { throw Error('hand did not acknowledge capture hide'); };
+  assert.equal(controller().performHover({ app: 'TextEdit', at: [10, 20] }, p).ok, false);
+  assert.equal(events.includes('capture'), false);
+  assert.deepEqual(events.slice(-2), ['restore pointer', 'restore front']);
+});
+
+
+test('native capture pause waits for this host acknowledgement and always releases its observer', () => {
+  for (const acknowledged of [true, false]) {
+    const c = controller(), events = [];
+    let callback, clock = 0;
+    const token = 'e'.repeat(32);
+    c.Date = { now: () => clock };
+    c.ObjC.unwrap = x => x;
+    c.ObjC.registerSubclass = spec => { callback = spec.methods['captureAck:'].implementation; c.$.SleightHoverCaptureObserver = { alloc: { init: {} } }; };
+    c.$ = { NSUUID: { UUID: { UUIDString: token } }, NSDistributedNotificationCenter: { defaultCenter: {
+      addObserverSelectorNameObject(_observer, selector, name, object) { events.push(['listen', selector, name, object]); },
+      postNotificationNameObjectUserInfoDeliverImmediately(name, object) { events.push(['post', name, object]); if (acknowledged && object.startsWith('begin:')) callback({ object: token }); },
+      removeObserver() { events.push(['remove']); }
+    } }, NSRunLoop: { currentRunLoop: { runUntilDate() { clock += 1000; } } }, NSDate: { dateWithTimeIntervalSinceNow: x => x } };
+    c.windowList = () => [];
+    vm.runInContext('handPid = 123', c);
+    if (acknowledged) c.hideHandForCapture()();
+    else assert.throws(() => c.hideHandForCapture(), /did not acknowledge/);
+    assert.deepEqual(events.filter(e => e[0] === 'post').map(e => e[2]), ['begin:' + token, 'end:' + token]);
+    assert.ok(events.some(e => e[0] === 'remove'));
+  }
+});

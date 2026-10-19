@@ -48,7 +48,11 @@ function performHover(request, native) {
     native.wait(waitMs);
     check();
     if (native.typedSince(started)) throw new Error(`the user typed while ${app} was in front, so their keys may have gone into it. Read the app again before continuing, and tell the user`);
-    result.image = native.capture(target);
+    // Wait for the hand host to hide and hold future frames before our regional screenshot.
+    // A fire-and-forget hide alone can race a queued animation.
+    const restoreHand = native.hideHand?.();
+    try { result.image = native.capture(target); }
+    finally { restoreHand?.(); }
     result.app = app;
     result.at = at;
     result.waitMs = waitMs;
@@ -94,6 +98,37 @@ function requireOneDisplay(bounds) {
         bounds.Y + bounds.Height <= display.origin.y + display.size.height) return;
   }
   throw new Error('hover needs the whole window on one display; move it onto one display before retrying');
+}
+
+let captureAck, captureObserverClass;
+function hideHandForCapture() {
+  if (!handPid) return () => {};
+  const center = $.NSDistributedNotificationCenter.defaultCenter;
+  const name = 'com.sleight.hand.capture.' + handPid;
+  const token = ObjC.unwrap($.NSUUID.UUID.UUIDString).replace(/-/g, '').toLowerCase();
+  if (!captureObserverClass) {
+    ObjC.registerSubclass({ name: 'SleightHoverCaptureObserver', superclass: 'NSObject', methods: {
+      'captureAck:': { types: ['void', ['id']], implementation: function(note) { captureAck = ObjC.unwrap(note.object); } }
+    } });
+    captureObserverClass = $.SleightHoverCaptureObserver;
+  }
+  const observer = captureObserverClass.alloc.init;
+  const post = verb => center.postNotificationNameObjectUserInfoDeliverImmediately(name, verb + ':' + token, null, true);
+  const restore = () => post('end');
+  captureAck = undefined;
+  center.addObserverSelectorNameObject(observer, 'captureAck:', name + '.ack', token);
+  try {
+    post('begin');
+    const deadline = Date.now() + 2000;
+    while (captureAck !== token && Date.now() < deadline) $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.01));
+    if (captureAck !== token) throw new Error('hand did not acknowledge capture hide; hover screenshot stopped');
+    while (windowList().some(w => w.pid === handPid && w.layer === 3)) {
+      if (Date.now() >= deadline) throw new Error('hand panel is still visible; hover screenshot stopped');
+      $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.01));
+    }
+    return restore;
+  } catch (error) { restore(); throw error; }
+  finally { center.removeObserver(observer); }
 }
 
 function nativeHover() {
@@ -144,6 +179,7 @@ function nativeHover() {
     activate(target) { if (!target.app.activateWithOptions(0)) throw new Error('app activation failed'); },
     wait: ms => delay(ms / 1000),
     move(point) { $.CGEventPost($.kCGHIDEventTap, $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, $.CGPointMake(point.x, point.y), $.kCGMouseButtonLeft)); },
+    hideHand: hideHandForCapture,
     capture(target) {
       requireOneDisplay(target.bounds);
       // Capture only the app's rectangle, including its visible hover surfaces.

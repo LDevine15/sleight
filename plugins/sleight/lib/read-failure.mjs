@@ -67,19 +67,21 @@ function helperLane(kind, timeoutMs, spawnHelper) {
 }
 
 export function spawnAppHealthHelper(kind) {
-  return spawn(process.execPath, [HEALTH_SUPERVISOR, '--session'], { stdio: ['pipe', 'pipe', 'ignore'] });
+  return spawn(process.execPath, [HEALTH_SUPERVISOR, kind === 'hand' ? '--hand-session' : '--session'], { stdio: ['pipe', 'pipe', 'ignore'] });
 }
 
-// Three lazy lanes: 2 s probes, 30 s targets, 30 s taps. A stuck scan cannot delay a target.
+// Lazy independent lanes: 2 s probes and hand geometry, 30 s targets and taps. Hand work cannot delay admission.
 export function createAppHealthHelper({ timeoutMs = 2000, operationTimeoutMs = 30000,
   spawnHelper = spawnAppHealthHelper } = {}) {
   const probe = helperLane('probe', timeoutMs, spawnHelper);
   const target = helperLane('target', operationTimeoutMs, spawnHelper);
   const taps = helperLane('taps', operationTimeoutMs, spawnHelper);
+  const hand = helperLane('hand', 2000, spawnHelper);
   return {
     probe: (app, { deadlineSeconds = 0.5 } = {}) => probe.request({ app, deadlineSeconds }, { status: 'unknown' },
       deadlineSeconds > 0.5 ? Math.max(timeoutMs, deadlineSeconds * 1000 + 1500) : timeoutMs),
     frontRestore: request => probe.request({ ...request, op: 'front-restore' }, { status: 'unknown' }),
+    handLocate: request => hand.request({ op: 'hand-locate', request }, { ok: false }),
     windowIdentity: window => target.request({ op: 'window-identity', window }, { status: 'unknown' }),
     // On the probe lane with a short deadline: a result waits for it (offscreen-click.mjs).
     elementVisibility: request => probe.request({ ...request, op: 'element-visibility' }, { status: 'unknown' }, 1500),
@@ -87,7 +89,7 @@ export function createAppHealthHelper({ timeoutMs = 2000, operationTimeoutMs = 3
       error: `Lease-target resolution failed: its helper was unavailable or did not answer within ${operationTimeoutMs / 1000} s. Stop this local action; reading the app again won't help.` }),
     keyboardTaps: async () => { const r = await taps.request({ op: 'keyboard-taps' }, { ok: false }); return r.ok ? r.taps : []; },
     keyboardTapState: () => taps.request({ op: 'keyboard-taps' }, { ok: false, error: 'Keyboard tap scan unavailable' }),
-    close: () => Promise.all([probe.close(), target.close(), taps.close()]),
+    close: () => Promise.all([probe.close(), target.close(), taps.close(), hand.close()]),
   };
 }
 

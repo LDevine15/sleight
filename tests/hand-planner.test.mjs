@@ -127,3 +127,15 @@ test('unresolved targets, a missing scale or geometry, and repeated code skip wi
   // Each frame names the action it shows, for approval beats.
   assert.deepEqual(planHandFrames(base('await app.click([1, 1]); await app.click(n); await app.click([2, 2]);')).actions, [0, 2]);
 });
+
+
+test('bound actions use the guard decision instead of paying another read in the schedule', () => {
+  const source = { code: 'await app.click(1); await app.click(1); await app.click(1)',
+    lines: { 1: 'button Save' }, target: { app: 'Editor' },
+    window: { pid: 1, windowId: 2, bounds: { X: 0, Y: 0, Width: 500, Height: 500 } },
+    elements: { 1: { X: 10, Y: 10, Width: 20, Height: 20 } },
+    windows: [{ pid: 1, id: 2, bounds: { X: 0, Y: 0, Width: 500, Height: 500 } }],
+    bindings: [{ index: 0, bound: false }, { index: 1, bound: true }, { index: 2, bound: true }] };
+  const plan = planHandFrames(source);
+  assert.deepEqual(plan.frames.map(f => f.delayMs), [470, 542, 614]);
+});

@@ -239,7 +239,7 @@ export function createNativeProcessProvider(receipt) {
 // Pure private channel parser. read/write are inherited pipes of the selected
 // child, never a local socket, page bridge or model endpoint. Tests inject streams
 // solely to test framing/replay logic, not to claim native-user authentication.
-export function createUiChannel({ read, write, onLoss = () => {} }) {
+export function createUiChannel({ read, write, onLoss = () => {}, discardOldNonce = false }) {
   const nonce = randomBytes(32).toString('hex'), pending = new Map(), events = new WeakSet();
   let buffer = '', closed = false;
   const lose = () => { if (closed) return; closed = true; pending.clear(); onLoss(); };
@@ -250,6 +250,8 @@ export function createUiChannel({ read, write, onLoss = () => {} }) {
       let end;
       while ((end = buffer.indexOf('\n')) >= 0) {
         const raw = immutableJSON(JSON.parse(buffer.slice(0, end))); buffer = buffer.slice(end + 1);
+        // A successor worker inherits the same session pipe. Only a reply to its fresh nonce can authenticate.
+        if (discardOldNonce && raw?.nonce !== nonce && /^[0-9a-f]{64}$/.test(raw?.nonce ?? '')) continue;
         const record = pending.get(raw.id);
         if (!record || raw.nonce !== nonce || Object.keys(raw).length !== 3 ||
             !record.choices.includes(raw.choice) || Date.now() >= record.deadline) throw Error();
@@ -308,11 +310,11 @@ export async function prepareHandHost({ cacheRoot = defaultHelperCache(), source
   if (built.status !== 'ready') return Object.freeze({ status: built.status, code: built.code });
   const { receipt } = built;
   // capture is 'hidden' (absent from every capture) or 'visible' (screenshots and recordings show the hand). The host is the
-  // session's: hand frames on stdin and the Ghost Hand toggle on stdout. Only a host opened for turbo's fork (consent) has
-  // fds 3 and 4, its consent channel; the hand-only host has none.
+  // session's: hand frames on stdin and control events on stdout. Session clients open fds 3 and 4 at first use, then
+  // pass those consent pipes to each turbo worker. --menu remains available to standalone hand clients.
   return Object.freeze({ status: 'ready', spawn: ({ capture = 'hidden', consent = false } = {}) => {
     if (!['hidden', 'visible'].includes(capture) || typeof consent !== 'boolean') throw Error('HAND_CAPTURE_INVALID');
-    return spawn(executable('consent-host', receipt), ['--hand', '--capture=' + capture, consent ? '--consent' : '--menu'],
+    return spawn('/usr/bin/nice', ['-n', '10', executable('consent-host', receipt), '--hand', '--capture=' + capture, consent ? '--consent' : '--menu'],
       { env: environment(), stdio: ['pipe', 'pipe', 'ignore', ...consent ? ['pipe', 'pipe'] : []] });
   } });
 }
@@ -322,7 +324,7 @@ export async function prepareHandHost({ cacheRoot = defaultHelperCache(), source
 export function createSharedUi(receipt, onLoss, { fds = [4, 5] } = {}) {
   executable('consent-host', receipt);
   const write = new Socket({ fd: fds[0], readable: false, writable: true }), read = new Socket({ fd: fds[1], readable: true, writable: false });
-  return createUiChannel({ read, write, onLoss });
+  return createUiChannel({ read, write, onLoss, discardOldNonce: true });
 }
 
 export function createNativeUi(receipt, onLoss) {

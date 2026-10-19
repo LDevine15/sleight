@@ -942,8 +942,10 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   // The ghost hand's session client, before turbo's bridge forks its worker so the worker can share the session's one host.
   // It spawns nothing until sleight acts or turbo forks, and the default off setting leaves it out. The relay's hand hooks take this
   // same client.
+  // Startup can fork turbo before approval logging exists. Retain its numeric host events.
   let handTrace;
-  const hand = (await import('./hand/client.mjs')).sessionHandClient({ trace: (direction, msg) => handTrace?.(direction, msg) });
+  const earlyHandTrace = [];
+  const hand = (await import('./hand/client.mjs')).sessionHandClient({ trace: (direction, msg) => { if (handTrace) handTrace(direction, msg); else if (earlyHandTrace.length < 64) earlyHandTrace.push([direction, msg]); } });
   process.once('exit', () => hand?.close());
   const prepared = directBrowser === undefined ? await prepareInstalledStartup(undefined, undefined, { ensure: ensureTurbo ? ensureInstalledTurbo : undefined }) : { directBrowser };
   directBrowser = prepared.directBrowser;
@@ -959,6 +961,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const appBlocked = (bundleId, app) => permissionCheck.app({ bundleId, name: app });
   const { trace, grantAudit } = approvalLogging(preapproved);
   handTrace = trace;
+  for (const event of earlyHandTrace.splice(0)) trace?.(...event);
   let s = directBrowserServer(resolveServer(), directBrowser);
   if (s.error) fail(s.error);
   if (!existsSync(s.command)) fail(`server runtime missing: ${s.command}`);
@@ -1121,7 +1124,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     },
     trace,
     // The ghost hand, only when the settings enable it, on the session's one client (made above, before turbo forks).
-    hand: hand && createRelayHand({ client: hand, locate: request => runScript('hand/locate.js', request), trace: (direction, msg) => trace?.(direction, msg),
+    hand: hand && createRelayHand({ client: hand, locate: request => appHealth.handLocate(request), trace: (direction, msg) => trace?.(direction, msg),
       clientOptions: { trace: (direction, msg) => trace?.(direction, msg) } }),
     guardTiming: !!process.env.SLEIGHT_TRACE,
     traceCode: process.env.SLEIGHT_TRACE_CODE === '1',

@@ -232,3 +232,13 @@ test('default off installs no hand hooks; saved on enables hooks and env 0 still
   hand.close();
   assert.equal(createBrowserHand({ ...on, env: { SLEIGHT_HAND: '0' } }), undefined);
 });
+
+
+test('a shared worker sends artwork to its parent client without creating a second hand host', async () => {
+  const { workerHandClient } = await import('../plugins/sleight/lib/hand/browser-hand.mjs');
+  const frames = [], channel = { connected: true, send: value => frames.push(value) };
+  const client = workerHandClient(channel, 4242), frame = { kind: 'click', pid: 1, windowId: 2, at: [10, 10] };
+  client.send(frame); client.close();
+  assert.deepEqual(frames, [{ version: 3, hand: frame }]); assert.equal(client.pid, 4242);
+  channel.connected = false; client.send(frame); assert.equal(frames.length, 1);
+});

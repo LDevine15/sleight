@@ -74,7 +74,7 @@ function hover(hand, request = { app: 'Editor', at: middle(hand), waitMs: 100, h
   const native = Object.assign(context.nativeHover(), {
     now: () => time, idleSeconds: () => 60, typedSince: () => false, screenCaptureAllowed: () => true,
     resolve: () => ({ pid: win.pid }), save: () => ({}), activate() {}, wait: ms => { time += ms; }, move() {},
-    capture: () => 'PNG', restorePointer() {}, restoreFront() {},
+    hideHand: () => () => {}, capture: () => 'PNG', restorePointer() {}, restoreFront() {},
     point(target, at) { Object.assign(target, { bounds: win.bounds, windowId: win.id, windowTitle: win.title }); return { x: win.bounds.X + at[0], y: win.bounds.Y + at[1] }; },
   });
   return plain(context.performHover(request, native));

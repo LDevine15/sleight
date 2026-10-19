@@ -8,6 +8,7 @@
 // the browser window (window.screenX/screenY/outerWidth/outerHeight, in screen points), and page zoom is the ratio of
 // the window's width to the viewport's CSS width, refined by devicePixelRatio (display scale times zoom). Pinch zoom
 // goes through the visual viewport. Turbo moves no real pointer, so it has nothing to hide the hand before.
+import { createAppHealthHelper } from '../read-failure.mjs';
 import { handSetting } from './settings.mjs';
 import { appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -143,20 +144,22 @@ export function workerHandTrace({ setting = process.env.SLEIGHT_TRACE, parentPid
   };
 }
 
-// One hand per worker process, for every runner it builds. The helper is the native hand's locate.js, run by bounds.
+// Inherited IPC sends frames to the relay's one client. The worker never starts another host.
+export function workerHandClient(channel, pid) {
+  return { enabled: true, pid,
+    send(frame) { if (channel.connected !== false) try { channel.send({ version: 3, hand: frame }); } catch {} },
+    close() {} };
+}
+
+// One hand planner per worker, with a lazy persistent utility helper for Window Server geometry.
 let shared;
 export function sharedBrowserHand(env = process.env) {
   if (shared !== undefined) return shared ?? undefined;
-  shared = createBrowserHand({ env, locate: request => runLocate(request), trace: workerHandTrace({ setting: env.SLEIGHT_TRACE }) }) ?? null;
+  const helper = createAppHealthHelper();
+  const sharedUi = process.argv.includes('--shared-ui') && typeof process.send === 'function';
+  const pid = Number(process.argv.find(arg => arg.startsWith('--shared-hand-pid='))?.split('=')[1]);
+  const client = sharedUi ? workerHandClient(process, Number.isSafeInteger(pid) && pid > 0 ? pid : undefined) : undefined;
+  shared = createBrowserHand({ env, client, locate: request => helper.handLocate(request), trace: workerHandTrace({ setting: env.SLEIGHT_TRACE }) }) ?? null;
+  if (shared) process.once('exit', () => helper.close());
   return shared ?? undefined;
-}
-async function runLocate(request) {
-  const [{ execFile }, { fileURLToPath }] = await Promise.all([import('node:child_process'), import('node:url')]);
-  const script = fileURLToPath(new URL('./locate.js', import.meta.url));
-  return new Promise(resolve => {
-    // Stopped after 2.5 s, past the 2 s the hand waits, so a stalled AX app leaves no osascript behind.
-    execFile('osascript', ['-l', 'JavaScript', script, JSON.stringify(request)], { timeout: 2500 }, (error, stdout) => {
-      try { resolve(JSON.parse(stdout)); } catch { resolve({ ok: false }); }
-    });
-  });
 }

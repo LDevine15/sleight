@@ -157,14 +157,16 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
   const trace = phaseTrace(dependencies, process.pid);
   trace('worker-spawn-start');
   // The session's shared host (the ghost hand's) serves turbo's consent channel too, so one glove serves both. The worker gets
-  // the channel's ends as fds 4 and 5 and talks to the host directly; the relay closes its copies at once and never reads them.
+  // the channel's ends as fds 4 and 5 and talks to the host directly; the relay retains idle copies for reattachment.
   // Without a shared host the worker opens its own, as before.
   let shared, child;
-  try { shared = await (dependencies.shareConsent ?? (await import('../hand/client.mjs')).shareConsent)(); } catch {}
-  try { child = (dependencies.forkWorker ?? fork)(fileURLToPath(new URL('./worker.mjs', import.meta.url)), shared ? ['--shared-ui'] : [],
+  try { shared = await (dependencies.shareConsent ?? (await import('../hand/client.mjs')).shareConsent)(); }
+  catch (error) { trace.close(); throw Object.assign(error, { stage: 'worker-spawn', reason: startupReason(error) }); }
+  try { child = (dependencies.forkWorker ?? fork)(fileURLToPath(new URL('./worker.mjs', import.meta.url)), shared ? ['--shared-ui', ...(Number.isSafeInteger(shared.pid) && shared.pid > 0 ? ['--shared-hand-pid=' + shared.pid] : [])] : [],
     { env, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc', ...shared ? [shared.write, shared.read] : []], serialization: 'json' }); }
-  catch (error) { trace.close(); throw Object.assign(Error('V3_WORKER_UNAVAILABLE'), { stage: 'worker-spawn', reason: startupReason(error) }); }
+  catch (error) { shared?.detached?.(); trace.close(); throw Object.assign(Error('V3_WORKER_UNAVAILABLE'), { stage: 'worker-spawn', reason: startupReason(error) }); }
   finally { shared?.release(); }
+  child.once('exit', () => shared?.detached?.());
   trace('worker-spawned');
   let hello, active = false, lost = false, generation = 0, sequence = 0, ending, callTimeoutMs = timeoutMs;
   let traceTurn = 0, traceCall = 0, toolsRegistered = false;
@@ -187,6 +189,7 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
   }
   child.on('message', frame => {
     if (lost) return;
+    if (shared && exact(frame, ['version', 'hand']) && frame.version === 3) { shared.send?.(frame.hand); return; }
     if (!hello && (exact(frame, ['version', 'status', 'code']) || exact(frame, ['version', 'status', 'code', 'stage', 'reason'])) &&
         frame.version === 3 && frame.status === 'unavailable') {
       const code = unsafeStartup.has(frame.code) ? frame.code : 'V3_RUNTIME_UNAVAILABLE';
