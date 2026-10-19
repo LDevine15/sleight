@@ -256,12 +256,14 @@ TODO: full release pass result.
   0.160.0 and gpt-6.1-sol, Calculator's 12 × 12 took 22.5 s and a TextEdit note 44.4 s. Always in Codex's
   approval prompt wrote sleight's pre-approved list, as a click does in Claude Code.
 - In Codex the first `getApp` of a session failed once and cost a turn (2 of 2 live tasks). Codex sends
-  its sandbox state with each call, and the engine runs that call in a kernel without sleight's setup.
-  sleight now sends its own calls with the same state and sets up again when the state changes.
-- Outside Claude Code, the model doesn't see `turn_ended` or turbo's tools, and the relay refuses a stop,
-  resume or turbo call from it. Only the Claude Code mod binds a turbo turn to your message. Claude Code is
-  recognized by the client name `claude-code` (the CLI and the desktop app's Code tab both send it);
-  any other host gets these protections.
+  its sandbox state with each call, and we think the engine runs that call in a kernel without sleight's
+  setup. sleight now sends its own calls with the same state and sets up again when the state changes.
+  Unit-tested, not yet rerun live.
+- Outside Claude Code, the model doesn't see `turn_ended` or turbo's tools, and the relay refuses a turbo
+  call from it. Stop and resume work on every host. Only the Claude Code mod binds a turbo turn to your
+  message. Claude Code is recognized by the client name `claude-code`. The CLI's traces show it, and the
+  desktop app's Code tab runs a bundled binary that builds the same name. No trace from the desktop tab
+  has been captured. Any other host gets these protections.
 - The turbo menu shows the host each session runs in and its version, as the client introduced itself
   ("Claude Code 2.1.289"). It doesn't show a model, because no host reports one to sleight. For Claude
   Code users the idle line now reads "Its session has ended". The menu change was typechecked and
