@@ -164,3 +164,30 @@ test('the action log and outcome switches are the user\'s: Claude\'s file and sh
     assert.equal(denied({ tool: 'Bash', command }), false, command);
   }
 });
+
+test('the switch hook also catches partial names, escaped and split names, the plugin\'s own config and launcher, and osascript or awk writes', async () => {
+  const { loggingSwitchWriteDenied: denied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
+  // Partial names: the switch's stem is enough in a config file.
+  assert.equal(denied({ tool: 'Edit', file_path: '/project/.claude/settings.json', old_string: 'OUTCOMES": "0"', new_string: 'OUTCOMES": "1"' }), true);
+  // JSON \u escapes are decoded before matching.
+  assert.equal(denied({ tool: 'Write', file_path: '~/.claude/settings.json', content: '{"env":{"SLEIGHT_\\u004fUTC\\u004fMES":"1"}}' }), true);
+  // The plugin's own manifest (its MCP server env) and launcher, LaunchAgents and fish.
+  for (const file of ['/Users/fixture/.claude/plugins/cache/sleight/sleight/1.3.0/.claude-plugin/plugin.json', '/repo/plugins/sleight/.claude-plugin/plugin.json',
+    '/repo/plugins/sleight/bin/sleight-mcp', '~/Library/LaunchAgents/com.example.env.plist', '~/.config/fish/config.fish']) {
+    assert.equal(denied({ tool: 'Write', file_path: file, content: 'SLEIGHT_ACTION_LOG=a.jsonl' }), true, file);
+    assert.equal(denied({ tool: 'Write', file_path: file, content: 'no switch here' }), false, file);
+  }
+  for (const command of [
+    "sed -i '' 's/OUTCOMES\": \"0\"/OUTCOMES\": \"1\"/' .claude/settings.json",
+    "echo 'export SLEIGHT_OUT''COMES=1' >> ~/.zshrc",
+    'echo export SLEIGHT_OUT\\COMES=1 >> ~/.zshrc',
+    'osascript -e \'do shell script "echo export SLEIGHT_OUTCOMES=1 >> ~/.zshrc"\'',
+    'awk \'BEGIN { print "export SLEIGHT_ACTION_LOG=a" >> "/Users/fixture/.zshrc" }\'',
+    'perl -pi -e \'s/x/SLEIGHT_ACTION_LOG/\' plugins/sleight/bin/sleight-mcp',
+  ]) assert.equal(denied({ tool: 'Bash', command }), true, command);
+  for (const command of ['grep OUTCOMES .claude/settings.json', "awk '/ACTION_LOG/' ~/.claude/settings.json", 'git log --grep OUTCOMES',
+    'SLEIGHT_OUTCOMES=1 node --test tests/action-outcomes.test.mjs']) {
+    assert.equal(denied({ tool: 'Bash', command }), false, command);
+  }
+  assert.equal(denied({ tool: 'Edit', file_path: '/repo/plugins/sleight/lib/relay.mjs', old_string: 'a', new_string: 'outcomes = OUTCOMES' }), false);
+});

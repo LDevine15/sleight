@@ -68,8 +68,10 @@ screenshots stay out. The file is private to your account: sleight writes only a
 one link and mode 0600, in a folder that only your account can write. It rotates at 5 MB, keeping two
 old files. Claude's code can change what the guard records. The log is an audit aid and can't prove
 what happened. The `env` block of
-`~/.claude/settings.json` works for both settings, and only you can set them there: sleight's hook
-refuses Claude's file and shell edits that put them in settings, MCP configs or shell startup files.
+`~/.claude/settings.json` works for both settings. sleight's hook refuses Claude's file and shell edits
+that put them in settings, MCP configs, the plugin's manifest or launcher, a LaunchAgent or a shell
+startup file. It stops mistakes and the plain edits. [Known problems](known-problems.md#approvals-and-guards)
+lists how a determined agent gets past it.
 
 ## Text drags
 

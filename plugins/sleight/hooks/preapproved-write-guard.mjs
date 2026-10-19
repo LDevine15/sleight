@@ -166,21 +166,28 @@ export async function preapprovedWriteDenied(input, options) {
 }
 
 // SLEIGHT_ACTION_LOG and SLEIGHT_OUTCOMES are the user's switches. Claude's file and shell tools may not set them where
-// sleight's MCP server reads its environment: Claude Code settings, MCP configs, shell startup files, launchd.
-const SWITCHES = /\bSLEIGHT_(?:ACTION_LOG|OUTCOMES)\b/;
-const CONFIG = /(?:^|\/)(?:\.claude\/[^/]*\.json|\.claude\.json|\.?mcp\.json|managed-settings\.json|settings(?:\.local)?\.json|\.(?:zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile|envrc))$/;
-const CONFIG_TEXT = /(?:settings(?:\.local)?|\.claude|mcp|managed-settings)\.json|\.(?:zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile|envrc)\b/;
-const SETTERS = /\b(?:claude\s+(?:mcp|config)|launchctl\s+setenv|python\d*(?:\.\d+)?|node|ruby|perl|jq|plutil|defaults)\b/;
+// sleight's MCP server reads its environment: Claude Code settings, MCP configs, the plugin's own manifest and launcher,
+// shell startup files, launchd. This catches mistakes and the plain ways around it, not a determined agent: a script
+// Claude writes and then runs, a symlinked config path, or another MCP server's shell tool all get past it
+// (docs/known-problems.md).
+// The switches' stems, so an edit of part of a name counts; matched after JSON and shell escapes and quotes are folded out.
+const SWITCHES = /OUTCOMES|ACTION_LOG/;
+const unescaped = text => text.replace(/\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})/g, (_, u, x) => String.fromCharCode(parseInt(u ?? x, 16))).replace(/['"\\]/g, '');
+const switched = text => typeof text === 'string' && SWITCHES.test(unescaped(text));
+// Paths are matched lowercased (folded).
+const CONFIG = /(?:^|\/)(?:\.claude\/[^/]*\.json|\.claude\.json|\.?mcp\.json|managed-settings\.json|settings(?:\.local)?\.json|\.claude-plugin\/plugin\.json|bin\/sleight-mcp|launchagents\/[^/]+\.plist|\.config\/fish\/(?:[^/]+\/)*[^/]+\.fish|\.(?:zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile|envrc)|\.zshrc\.d\/[^/]+)$/;
+const CONFIG_TEXT = /(?:settings(?:\.local)?|\.claude|mcp|managed-settings|plugin)\.json|\.plist\b|\.fish\b|\.(?:zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile|envrc)\b/;
+// Commands that can write a file they name in their own text. awk only with an output redirect, a pipe or system().
+const SETTERS = /\b(?:claude\s+(?:mcp|config)|launchctl\s+setenv|python\d*(?:\.\d+)?|node|ruby|perl|jq|plutil|defaults|osascript)\b|\bg?awk\b[^\n]*(?:>|\||\bsystem\s*\()/;
 export function loggingSwitchWriteDenied(input) {
   const { tool } = input ?? {};
   if (mutations.has(tool)) {
     const edits = Array.isArray(input.edits) ? input.edits : [];
     const texts = [input.content, input.new_string, input.new_source, ...edits.map(edit => edit?.new_string)];
     const paths = [input.file_path, input.notebook_path, ...edits.map(edit => edit?.file_path)];
-    return texts.some(text => typeof text === 'string' && SWITCHES.test(text)) &&
-      paths.some(path => typeof path === 'string' && CONFIG.test(folded(normalize(path))));
+    return texts.some(switched) && paths.some(path => typeof path === 'string' && CONFIG.test(folded(normalize(path))));
   }
-  if (tool !== 'Bash' || typeof input.command !== 'string' || !SWITCHES.test(input.command)) return false;
+  if (tool !== 'Bash' || !switched(input.command)) return false;
   const { command } = input;
   if (/\blaunchctl\s+setenv\b|\bclaude\s+(?:mcp|config)\b/.test(command)) return true;
   // A write to a config file, or an interpreter or editor tool run with one named: reads such as grep pass.
