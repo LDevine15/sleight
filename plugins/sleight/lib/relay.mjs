@@ -62,7 +62,7 @@ import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge, failure as turboFailure } from './direct-browser/worker.mjs';
 import { browserBundleId } from './direct-browser/browsers.mjs';
 import { engineBrowserOpen as engineBrowserOpenSetting, engineOpenTool, widenTurboOpen, turboRoute, parseEngineOpen, siteOf, acquisitionCode, openCode,
-  openedNote, notBrowserNote, unknownBrowserNote, browserWindowProblem, CLEANUP_NOTE, DOCUMENT_SCOPE_NOTE, STOPPED_NOTE } from './engine-browser-open.mjs';
+  openedNote, invalidAppReply, invalidAppNote, notBrowserNote, unknownBrowserNote, browserWindowProblem, withBrowserOpenFirst, CLEANUP_NOTE, DOCUMENT_SCOPE_NOTE, STOPPED_NOTE } from './engine-browser-open.mjs';
 import { pageSite } from './permissions.mjs';
 import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, lastWindowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot, selectedMenuEntry } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
@@ -953,10 +953,11 @@ export function createRelay({
       computerSurface = typeof t.description === 'string' &&
         (engineJsVariant(t.description)?.variant === 'computer' || /(?:^|\n)Browser APIs are disabled\.(?:\n|$)/.test(t.description));
       const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows, { current: firstCallSteering });
-      if (compact !== undefined) return { ...t, description: compact };
+      if (compact !== undefined) return { ...t, description: engineBrowserOpen && !documentMode ? withBrowserOpenFirst(compact) : compact };
       const batched = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt, firstCallWindows) : t.description;
       const description = firstCallSteering ? withInventoryNote(batched) : batched;
-      return { ...t, description: leanCalls ? leanCallDescription(description) : description };
+      const final = leanCalls ? leanCallDescription(description) : description;
+      return { ...t, description: engineBrowserOpen && !documentMode ? withBrowserOpenFirst(final) : final };
     })
     .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [],
       (modHost() || codexTurbo()) && directBrowser ? directBrowser.tools().map(t => engineBrowserOpen ? widenTurboOpen(t, directBrowser.browser) : t)
@@ -2966,17 +2967,26 @@ export function createRelay({
       const spent = () => { engineOpenPrints.delete(msg.id); if (flowPermit?.fingerprint === print) flowPermit = undefined; };
       const end = message => { spent(); toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: message }] } }); };
       if (generation !== stopGeneration || closing || disposed) { end(STOPPED_NOTE); stoppedClients.add(msg.id); return; }
-      if (reply.error || reply.result?.isError) { spent(); toClient({ ...reply, id: msg.id }); return; }
-      const shown = windowFromText((reply.result?.content ?? []).filter(item => item?.type === 'text').map(item => item.text).join('\n'));
+      if (reply.error || reply.result?.isError) {
+        spent();
+        // The engine puts first-call documentation before Invalid app. Claude Code can truncate that error away
+        // (AOd Firefox smoke), so explain the failed target first and retain all engine instructions after it.
+        const invalid = invalidAppReply(reply, open.browser);
+        toClient({ ...reply, id: msg.id, ...(invalid ? { result: { ...reply.result,
+          content: [{ type: 'text', text: promptNotice(invalidAppNote(open.browser), prompt) }, ...reply.result.content] } } : {}) });
+        return;
+      }
+      const acquiredText = (reply.result?.content ?? []).filter(item => item?.type === 'text').map(item => item.text).join('\n');
+      const shown = windowFromText(acquiredText);
       const appId = reply.result?._meta?.['codex/toolSurface']?.app?.appId, app = shown?.app ?? open.browser;
       const browser = typeof appId === 'string' && appId ? webBrowser(appId) : false;
       if (browser !== true) { end(promptNotice(browser === undefined ? unknownBrowserNote(app) : notBrowserNote(app), prompt)); return; }
-      const problem = browserWindowProblem((reply.result?.content ?? []).filter(item => item?.type === 'text').map(item => item.text).join('\n'), app);
+      const problem = browserWindowProblem(acquiredText, app);
       if (problem) { end(promptNotice(problem, prompt)); return; }
       // The acquisition's own read moved the flow revision; a permit for this exact call still covers its keys.
       if (flowRules && flowPermit?.fingerprint === print) flowPermit = { ...flowPermit, revision: flowRules.revision };
       splitHeads.set(msg.id, [{ type: 'text', text: promptNotice(openedNote(handle), prompt) }, ...(reply.result?.content ?? [])]);
-      handleClient({ ...msg, params: { name: 'js', arguments: { code: openCode(handle, open.url) } } });
+      handleClient({ ...msg, params: { name: 'js', arguments: { code: openCode(handle, open.url, acquiredText) } } });
     });
     trace('browser-open-split', { id: msg.id, acquisition: id });
     callSeqs.set(id, callSeqs.get(msg.id)); callSeqs.set(msg.id, ++callSeq);
@@ -4358,7 +4368,10 @@ export function createRelay({
         else msg.result.content.push({ type: 'text', text: advice });
       }
     }
-    const initializationNote = firstPass && jsCode !== undefined && initializationAdvice(msg.result?.content, !!msg.error || !!msg.result?.isError, jsCode);
+    // browser_open's acquisition sends no input. Its explicit Invalid app gets a direct correction below,
+    // so a generic initialization read would send Claude through inventory before retrying a known browser.
+    const invalidOpen = engineOpenAcquisitions.has(msg.id) && jsCode !== undefined && getAppTargets(jsCode).some(browser => invalidAppReply(msg, browser));
+    const initializationNote = firstPass && jsCode !== undefined && !invalidOpen && initializationAdvice(msg.result?.content, !!msg.error || !!msg.result?.isError, jsCode);
     if (initializationNote) msg.result.content.push({ type: 'text', text: promptNotice(initializationNote, prompt) });
     if (msg.method === undefined && syntaxOrigins.has(msg.id)) {
       const origin = syntaxOrigins.get(msg.id); syntaxOrigins.delete(msg.id);

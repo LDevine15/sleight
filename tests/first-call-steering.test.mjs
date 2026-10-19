@@ -20,6 +20,16 @@ const engine = readFileSync(new URL('fixtures/engine-js-description.txt', import
 // stands in for such wording.
 const live = engine.replace('Prefer purpose-built skills, connectors,', 'Prefer purpose-built connectors,');
 const count = (text, part) => text.split(part).length - 1;
+test('AO4: browser_open first-call guidance appears only with browser core, for live and compact descriptions', async t => {
+  for (const description of [live, engine]) {
+    const plain = await harness(t, { engineBrowserOpen: false }).jsDescription(description);
+    const on = await harness(t, { engineBrowserOpen: true }).jsDescription(description);
+    const sentence = 'For a web page in a named browser, call browser_open first; it returns the window.';
+    assert.equal(count(on, sentence), 1);
+    assert.equal(on.replace(' ' + sentence, ''), plain);
+    if (description === engine) assert.ok(on.length <= 2048, String(on.length));
+  }
+});
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 function harness(t, options = {}) {

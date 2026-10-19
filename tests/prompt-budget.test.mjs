@@ -363,3 +363,16 @@ test('the guard carries lean stop wording only under SLEIGHT_PROMPT=lean, and bo
   assert.ok(lean.length < normal.length);
   for (const code of [normal, lean]) assert.doesNotThrow(() => new AsyncFunction(code));
 });
+
+
+test('AO prompt inventory counts browser_open and first-call guidance only under the flag, within the same ratio', { skip }, () => {
+  const off = budget.budget({}), on = budget.budget({ SLEIGHT_BROWSER_CORE: '1' });
+  for (const variant of ['default', 'lean']) {
+    assert.ok(!off.details[variant].tools.some(e => e.source === 'browser_open'));
+    assert.ok(on.details[variant].tools.some(e => e.source === 'browser_open'));
+    assert.ok(on.total[variant].characters > off.total[variant].characters);
+    const js = r => r.rows.find(row => row.source === 'js rewrite')[variant].characters;
+    assert.equal(js(on) - js(off), 83);
+  }
+  assert.ok(on.total.lean.characters <= on.total.default.characters * 0.71, JSON.stringify(on.total));
+});

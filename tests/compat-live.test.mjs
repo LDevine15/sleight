@@ -314,3 +314,25 @@ test('the Safari quit fallback refuses an unproved pid or an unproven window', a
     await assert.rejects(quitLaunchedSince(SAFARI, 1000, { ...options, ...extra }), /left running/);
   }
 });
+
+
+test('CF5: the browser check selects Safari with the real host wording and benchmark approval callback', async () => {
+  const { compatApproval } = await import('../bench/compat.mjs');
+  const { selectWindow } = await import('../plugins/sleight/lib/select-window.mjs');
+  const { hostWording, wordForHost } = await import('../plugins/sleight/lib/launch.mjs');
+  const wording = hostWording({ name: 'sleight-compat-live', version: '1' });
+  const p = { ...fixturePage('cf5'), window: { title: 'sleight benchmark — sleight compat cf5', profile: 'sleight benchmark' }, close: async () => {} };
+  const approved = [];
+  const client = { call: async (name, args) => name === 'select_window' ? selectWindow(args, {
+    approve: async (_key, message) => {
+      const params = { message: wordForHost(message, wording), mode: 'form', requestedSchema: { type: 'object', properties: {} } };
+      const answer = await compatApproval(params); approved.push([params.message, answer]); return answer.action === 'accept';
+    },
+    runScript: async () => ({ ok: true }),
+  }) : text(`Window: "${p.window.title}", App: Safari.\n0 standard window\n1 text ${p.body}`) };
+  const outcome = await runBrowserRead(client, { appState: async () => ({ running: false }), openPage: async () => p });
+  assert.equal(outcome.status, 'pass', JSON.stringify(outcome));
+  assert.equal(approved.length, 1);
+  assert.match(approved[0][0], /^Allow Sleight Compat Live to select a window in Safari/);
+  assert.deepEqual(approved[0][1], { action: 'accept', content: {} });
+});

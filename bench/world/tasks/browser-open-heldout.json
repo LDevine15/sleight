@@ -1,0 +1,89 @@
+[
+ {
+  "name": "smoke-red",
+  "browser": "safari",
+  "budgetSeconds": 150,
+  "needsClicks": false,
+  "prompt": "open the demo shop at http://127.0.0.1:5420/t/smoke-red/shop/ in {browser} and tell me the price of the red mug",
+  "result": "the red mug's name and price",
+  "expect": [
+   "Ember",
+   "\\$?16(\\.00)?\\b"
+  ],
+  "site": {
+   "log": "http://127.0.0.1:5420/t/smoke-red/api/log",
+   "expect": [
+    "^view /shop/"
+   ]
+  },
+  "source": "FowlBrowser tools/agents/codex-smoke.json smoke-red",
+  "rationale": "A one-page lookup on the demo shop: the open is most of the task, so it shows the per-task saving browser_open aims at. The race lookups (shipping-link, size-guide) also need a link or a pop-up; this one does not.",
+  "heldOutFor": "AS-3 (SLEIGHT_BROWSER_CORE, browser_open) A/B in Safari and Firefox"
+ },
+ {
+  "name": "survey-p09",
+  "browser": "safari",
+  "budgetSeconds": 90,
+  "needsClicks": true,
+  "grade": "http://127.0.0.1:5413/grade/p09",
+  "prompt": "fill out the form at http://127.0.0.1:5413/survey in {browser} with these details: reference code p09, email noor.halvorsen@example.com. app feels fast: agree, design is easy to understand: strongly agree, support answers quickly: disagree, good value for money: neutral. 4 stars overall, 3 out of 10 for recommending, and when it asks why say \"Search is slow on large projects.\" yes i contacted support, 3 times. comments: \"Please add keyboard shortcuts for the export panel and a dark theme for reports.\" then submit it",
+  "result": "the submission id",
+  "source": "FowlBrowser tools/agents/forms.json survey-chrome",
+  "rationale": "The survey page is in no race task: Likert radios, a star rating drawn in SVG, a 0 to 10 scale, a reason field and a count menu that appear only after earlier answers, and a text area. Graded by the forms server (persona p09).",
+  "heldOutFor": "AS-3 (SLEIGHT_BROWSER_CORE, browser_open) A/B in Safari and Firefox"
+ },
+ {
+  "name": "survey-p10",
+  "browser": "safari",
+  "budgetSeconds": 90,
+  "needsClicks": true,
+  "grade": "http://127.0.0.1:5413/grade/p10",
+  "prompt": "fill out the form at http://127.0.0.1:5413/survey in {browser} with these details: reference code p10, email eli.vasquez-park@example.org. app feels fast: disagree, design is easy to understand: neutral, support answers quickly: strongly agree, good value for money: agree. 2 stars overall, 9 out of 10 for recommending, and when it asks why say \"The calendar sync is fast and reliable.\" no i haven't contacted support. comments: \"Love the new onboarding. The pricing page could be clearer about seats.\" then submit it",
+  "result": "the submission id",
+  "source": "FowlBrowser tools/agents/forms.json survey-helium",
+  "rationale": "The same survey with other answers, including the \"no\" branch for contacting support (the count menu stays hidden). Persona p10.",
+  "heldOutFor": "AS-3 (SLEIGHT_BROWSER_CORE, browser_open) A/B in Safari and Firefox"
+ },
+ {
+  "name": "ao-moss-color",
+  "browser": "safari",
+  "budgetSeconds": 90,
+  "needsClicks": false,
+  "prompt": "open http://127.0.0.1:5420/t/ao-moss-color/shop/product/moss in {browser} and tell me the Moss mug's color",
+  "result": "the mug's name and color",
+  "expect": [
+   "Moss",
+   "\\bgreen\\b"
+  ],
+  "site": {
+   "log": "http://127.0.0.1:5420/t/ao-moss-color/api/log",
+   "expect": [
+    "^view /shop/product/moss$"
+   ]
+  },
+  "source": "sleight AO held-out lookup",
+  "rationale": "A one-page shop lookup on a fresh task slug. Answer patterns check the fixture product data and the site log must show a view of the requested page.",
+  "heldOutFor": "AS-3 browser_open A/B in Safari and Firefox"
+ },
+ {
+  "name": "ao-cheapest-mug",
+  "browser": "safari",
+  "budgetSeconds": 90,
+  "needsClicks": false,
+  "prompt": "open http://127.0.0.1:5420/t/ao-cheapest-mug/shop/ in {browser} and tell me the name and price of the cheapest mug on the listing",
+  "result": "the cheapest mug's name and price",
+  "expect": [
+   "Chalk",
+   "(?<![\\d.$])\\$?11(?:\\.00)?(?!\\d|\\.\\d)\\b"
+  ],
+  "site": {
+   "log": "http://127.0.0.1:5420/t/ao-cheapest-mug/api/log",
+   "expect": [
+    "^view /shop/$"
+   ]
+  },
+  "source": "sleight AO held-out lookup",
+  "rationale": "A one-page shop lookup on a fresh task slug. Answer patterns check the fixture product data and the site log must show a view of the requested page.",
+  "heldOutFor": "AS-3 browser_open A/B in Safari and Firefox"
+ }
+]
