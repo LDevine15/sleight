@@ -84,6 +84,7 @@ import { promptNotice } from './prompt-notice.mjs';
 export { promptNotice };
 import { dropRepeatedText } from './repeated-text.mjs';
 import { ruleDelivery } from './rule-delivery.mjs';
+import { typedTextReceipt, typingReceiptCall, typingReceiptCode, withoutTypingReceipt, typingReceiptTarget } from './typed-text-receipt.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
 import { createResultBudget, requestsFullDocumentation } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
@@ -3420,8 +3421,10 @@ export function createRelay({
             menuCalls.set(msg.id, { ...menuAdmissions.get(msg.id), mark: stopMark, seen: seenLines, uniqueSeen,
               request: { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: originalCode } } } });
             const filterMark = filteredReadMark(), filteredCode = filteredReadCode(swipeCode, filterMark);
-            const typedTarget = compactor.beginAction(originalCode)?.typedTarget;
-            if (filteredCode !== swipeCode || typedTarget) filterMarks.set(msg.id, filterMark);
+            const typingAction = compactor.beginAction(originalCode);
+            const typedTarget = typingAction?.typedTarget;
+            const receiptTyping = typingReceiptCall(originalCode) && !!typingReceiptTarget(typingAction);
+            if (filteredCode !== swipeCode || typedTarget || receiptTyping) filterMarks.set(msg.id, filterMark);
             const light = lightReturn && inputLease && !careful && !documentMode && !changeReview && !menuBaseline &&
               target === leaseWindow && lightReturnCode(originalCode) ? lightReturn.begin(msg.id, leaseWindow) : undefined;
             msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? target, reason,
@@ -3439,6 +3442,7 @@ export function createRelay({
                 // the window renumbered between Claude's read and this call.
                 seenLines, literals: numbers,
                 uniqueSeen });
+            if (receiptTyping) msg.params.arguments.code += typingReceiptCode(filterMark);
           } else msg.params.arguments.code = swipeCode;
           if (msg.params.arguments.code !== originalCode) guardCalls.set(msg.id, guardGeneration);
           const restore = restoreEngineBindings(originalCode);
@@ -4446,12 +4450,16 @@ export function createRelay({
       const screenshotWindow = screenshotTarget && (!screenshotAppId || screenshotAppId === screenshotTarget.appId) ? screenshotTarget : undefined;
       const input = automatic ? undefined : dropRepeatedImages(dropRepeatedText(msg.result.content), prompt);
       if (input && compactReacquire && healthPlan?.acquisition && splitCalls.has(msg.id) && String(msg.id).startsWith('sleight-acquire-')) rawHeads.set(msg.id, input);
-      if (!automatic) msg.result.content = compactor.process(input,
+      const typingReceipt = !automatic && typingReceiptCall(jsCode) && typedTextReceipt({
+        action: resultCalls.get(msg.id), content: input, mark: filterMarks.get(msg.id),
+        failed: resultFailed || !!msg.result?.isError });
+      if (!automatic) msg.result.content = compactor.process(withoutTypingReceipt(input, filterMarks.get(msg.id)),
         { code: jsCode, screenshotWindow, acquisition: healthPlan?.acquisition === true, filterMark: filterMarks.get(msg.id) ?? null,
           forceFull: healthPlan?.fullVisible === true,
           explicitFull: /\bdisableDiffing\s*:\s*true\b/.test(jsCode ?? ''),
           action: closedLast ? undefined : resultCalls.get(msg.id), failure, failed: !closedLast && (resultFailed || !!msg.result?.isError) });
       if (!automatic && elementVisibility && jsCode !== undefined && !msg.result.isError) listClicks = compactor.listClicks();
+      if (typingReceipt) msg.result.content.push({ type: 'text', text: typingReceipt });
       if (!automatic && openReads.has(msg.id) && !msg.result.isError && compactor.lastReadNoted()) textlessOpens.add(msg.id);
       filterMarks.delete(msg.id);
     }

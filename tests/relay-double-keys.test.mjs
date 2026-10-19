@@ -46,20 +46,35 @@ test('repeated app reads and guards invoke native typing once per submitted call
   serverIn.on('data', chunk => forwarded.push(JSON.parse(chunk.toString())));
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: true });
   t.after(() => { relay.close(); rmSync(bank, { recursive: true, force: true }); });
-  const writes = [];
-  const state = `Window: "fixture.txt", App: TextEdit\nURL: ${pathToFileURL(path).href}\n1 text entry area`;
-  const raw = { getAXState: async () => state, typeText: async text => { writes.push(text); } };
-  const realm = { cua: { getApp: async () => raw }, nodeRepl: { write() {} } };
+  const writes = [], received = [];
+  clientOut.on('data', data => received.push(...data.toString().trim().split('\n').map(JSON.parse)));
+  const state = `Window: "fixture.txt", App: TextEdit\n0 standard window fixture.txt, URL: ${pathToFileURL(path).href}\n\t1 text entry area Body, Value: existing\nThe focused UI element is 1 text entry area Body`;
+  const raw = { getAXState: async () => state, typeText: async text => { writes.push(text); }, paste: async text => { writes.push(text); } };
+  let emitted = [];
+  const realm = { cua: { getApp: async () => raw }, nodeRepl: { write: text => emitted.push({ type: 'text', text }) } };
   const submit = async (id, code) => {
     clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call',
       params: { name: 'js', arguments: { code } } }) + '\n');
+    await new Promise(resolve => setImmediate(resolve));
+    emitted = [];
     await runInNewContext(`(async () => { ${forwarded.at(-1).params.arguments.code} })()`, realm);
     serverOut.write(JSON.stringify({ jsonrpc: '2.0', id,
-      result: { content: [{ type: 'text', text: state }] } }) + '\n');
+      result: { content: emitted.length ? emitted : [{ type: 'text', text: state }] } }) + '\n');
+    await new Promise(resolve => setImmediate(resolve));
   };
   await submit(1, 'app = await cua.getApp("TextEdit")');
+  await submit(10, 'await app.getAXState()');
   await submit(2, 'await app.typeText("A1|")');
   await submit(3, 'app = await cua.getApp("TextEdit")');
   await submit(4, 'await app.typeText("A2|")');
-  assert.deepEqual(writes, ['A1|', 'A2|']);
+  realm.clipText = 'A\tB\n1\t2';
+  await submit(5, 'await app.paste(clipText)');
+  assert.deepEqual(writes, ['A1|', 'A2|', 'A\tB\n1\t2']);
+  for (const [id, count] of [[2, 3], [4, 3], [5, 7]]) {
+    const reply = received.find(msg => msg.id === id);
+    assert.equal(reply.result.isError, undefined);
+    const text = reply.result.content.map(item => item.text ?? '').join('\n');
+    assert.ok(text.includes(`sent ${count} characters to text entry area Body; tree unchanged; insertion unconfirmed`));
+    assert.doesNotMatch(text, /sleight:filtered-read|A1\||A2\|/);
+  }
 });
