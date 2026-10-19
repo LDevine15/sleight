@@ -151,6 +151,10 @@ native claim and the browser race run as Mac load allows, so that Electron's run
 5. The parity battery runs about 25 popular apps side by side with Codex. The harness is built, and 3 of 34 runs are done.
 1.4.0 builds now on its own branch, `claude/p140` from the 1.3.1 integration branch (owner, 2026-10-19 04:0xZ): local performance
    analytics (4c), Cursor plugin support (4d) and the AM1 speed map (item 6), one Opus builder each on `claude/p140-*`.
+   Owner, 2026-10-19 ~15:20Z: 1.3.1 keeps the flag A/Bs and AS-3, and sleight-arch pushes 1.3.1 public as soon as it is ready
+   (the release push is approved). The Codex race fixes from the Sol pair (SOL-L1 a check that nothing covers the bench window, SOL-L2 a popup the
+   leased window opened joins the lease, SOL-L3 inject-mail grader and a rescore of every arm) go into 1.4.0. All 1.4.0 building
+   and its validation prep finish now, so 1.4.0's validation and release start right after 1.3.1 is out.
 6. The AM1 speed map of app classes, in 1.4.0 (owner, 2026-10-19). Its VS Code and Word fixtures still fail setup (AM1E designs the
    wait for a late accessibility tree).
 7. The ghost hand (owner, 2026-10-16): when sleight acts in a background app, a small translucent hand glides to the point in

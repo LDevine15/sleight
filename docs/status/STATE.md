@@ -3,7 +3,7 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 14:32 UTC)
+## Banner (2026-10-19 15:25 UTC)
 
 Goal (owner): 1.3.0 is out. 1.3.1 validation runs now, then sleight holds at 1.3.1 while the owner uses it. 1.4.0 (analytics,
 Cursor plugin, AM1 speed map) builds on its own branch. The video isn't tied to any release (owner, 2026-10-19). Published results show their engine
@@ -16,7 +16,8 @@ okayed one toggle (disable, push, re-enable, verified active). Release line `pan
 checkout). The owner's installed copy is 1.3.0 (`claude plugin update`, reads from the main checkout). Claim: native "fastest" 8 of
 9 (251.2 s against 453.9 s), app 3 of 3, Chrome turbo "fastest" 10 of 13 on the release build (258.9 s against 447.8 s), Safari and
 Firefox "fastest" 11 of 12 (592.1 s, 557.1 s), sleight inside Codex (luna) ahead of Codex on 9 and 8 of 12, release pass 13 of 13
-on Haiku and on Opus. Helium's top-ups are owed (Helium is the owner's browser, so ask before running it). Known 1.3.0 problems found
+on Haiku and on Opus. Helium on the release build (2026-10-19, rel130 r1-r5, owner's go): "fastest" on 10 of 13, 264.1 s
+against FowlBrowser's 343.6 s, every pair within 20% at 5 runs (README updated, hub not regenerated yet). Known 1.3.0 problems found
 since: the startup cache (HS1) and the promo-code Apply stop (PG2), both in known-problems.
 
 **1.3.1, `claude/p131-integration` a74fdfe7 (pushed; 3eb4d33b had a full check of 8967 tests, 0 fail).** Merged: codex-turbo
@@ -25,18 +26,23 @@ since: the startup cache (HS1) and the promo-code Apply stop (PG2), both in know
 option goes ahead on a payment page; security review fixes in, report in ledger/p130/pg3-REPORT.md), and the engine-compat
 workflow a74fdfe7 (pushed with the org ruleset off for the push and back on, verified active, owner's approval). It reaches the
 public repo with 1.3.1. The ci-box timer runs hourly from a bundle of 948554e1 (ci-box has no repo access), first run PASS on
-26.1013.40934 with the known js-description warning. The owner said no more subagents after PG3.
+26.1013.40934 with the known js-description warning.
 In the FS A/B race half, Firefox with FS was faster in all 3 rounds (474.2, 450.8, 440.1 s against 517.8, 488.5, 512.0 s), Safari mixed (one
 round lost 2 tasks). The candidate default is FS2's Firefox keyboard new-tab route. FS1 (the description text) waits on the native half.
-1.3.1 live checks still owed are the FS native half (queued), SW1 (its first live check failed; the follow-up f98ef207 traces every
+1.3.1 live checks still owed (owner, 2026-10-19: all of them today, flag A/Bs and AS-3 included, then sleight-arch pushes
+1.3.1 public when ready) are the FS native half (running, `block-native3`, `native-fs5-*`), SW1 (its first live check failed; the follow-up f98ef207 traces every
 reason), Codex turbo's seven steps (ledger/p130/cxt1-REPORT.md), AS-3 A/B, Electron qualification (the owner delegated the one
 Always allow click on the benchmark VS Code), ghost hand capture test and cost pass, WK4 and DC1, the flag A/Bs, the compatibility
 suite's first live run, TU1's census over the next Chrome turbo rounds. Then the 1.3.1 version bump, release pass and tag.
 
-**1.4.0, `claude/p140` 26d4389f (pushed, synced with 1.3.1 bc9ac747's parent).** Analytics 5ed05cbb (`sleight-mcp stats`, menu
-row), Cursor 19ed72e5 (plugin manifest, marketplace, doctor; never installed in a real Cursor; Cursor is on the benchmark
-allowlist with Grok 4.6 high, normal speed), AM1 67d240b5 (speed map published in docs/benchmarks/2026-10-19-speed-map.md: six
-apps 10 of 10, Excel cohorts 29 of 40). Its full check hasn't run.
+**1.4.0, `claude/p140` aef8b351 (1.3.1 a74fdfe7 merged in, local, full check not run).** Analytics 5ed05cbb (`sleight-mcp
+stats`, menu row), Cursor 19ed72e5 (never installed in a real Cursor, where tests run Grok 4.6 high at normal speed), AM1 67d240b5
+(speed map in docs/benchmarks/2026-10-19-speed-map.md). Owner, 2026-10-19 ~15:20Z: the Codex race fixes go into 1.4.0, and all
+1.4.0 building and validation prep finish now. Opus builders since ~15:30Z, each pushing to private `claude/p140-sol-*`
+with a report in ledger/p140: SOL-L1 (bench window cover check plus a product route when a drag point is covered), SOL-L2
+(diagnose the "window restriction" that refused the DemoID popup and fix it at its layer, with a Sonnet security review),
+SOL-L3 (inject-mail grader, an opt-in current-grader regrade, a rescore of every stored race round). A Sonnet agent writes the
+live-check runbook for 1.3.1 and 1.4.0 (ledger/p130/live-runbook-1019.md).
 
 **ROADMAP 4b Sol pair, done 14:03Z** (race-131, 1.3.1 327fa383, Safari and Firefox x3, wall sums of 12 tasks). Safari: sleight
 inside Codex 10, 9, 8 of 12 (739.5, 798.9, 791.1 s), codex-sol 8, 7, 8 (801.2, 734.7, 827.2 s). Firefox: sleight inside Codex 10,

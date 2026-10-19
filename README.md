@@ -53,8 +53,8 @@ native task 3 times, and 5 times where sleight and that arm were within 20%. The
 - Browsers on turbo, against FowlBrowser in real windows: "fastest" in Chrome on the 1.3.0 build
   (2026-10-19), the lowest expected time on 10 of 13 tasks and 258.9 s against 447.8 s, with 5 runs
   where the two were within 20%. One demoid run failed when turbo didn't start. In Helium, on the
-  2026-10-18 build with 3 runs each, "completed every task, fastest on 11 of 13" (241.8 s against
-  338.3 s), with the top-ups to 5 runs still owed.
+  same build (2026-10-19), "fastest", the lowest expected time on 10 of 13 tasks and 264.1 s against
+  343.6 s, with 5 runs where the two were within 20%. One demoid run failed the same way.
 - Safari and Firefox, which turbo can't drive yet, on the engine path (engine 26.1013.40934,
   2026-10-19): "fastest" in both, the lowest expected time on 11 of 12 tasks, 592.1 s in Safari and
   557.1 s in Firefox, with every task passing. Most of Codex's runs there are from engine
