@@ -1,0 +1,12 @@
+# The static engine compatibility check on a Linux box, as a systemd user service (see docs/engine-notes.md).
+[Unit]
+Description=sleight static engine compatibility check
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/sleight-compat
+# A failed pull still runs the check on the checkout already there.
+ExecStartPre=-/usr/bin/git -C %h/sleight-compat pull --ff-only --quiet
+ExecStart=/usr/bin/env node bench/compat-static.mjs --feed --keep-docs --state %h/.local/state/sleight-compat
+Nice=10

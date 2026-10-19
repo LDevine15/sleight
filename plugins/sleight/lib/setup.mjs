@@ -6,11 +6,11 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFileCb);
 const INSTALLER_REL = 'Contents/Resources/cua_node/lib/node_modules/@oai/sky/Codex Computer Use.app/Contents/SharedSupport/Codex Computer Use Installer.app/Contents/MacOS/Codex Computer Use Installer';
-const HELPER_REL = 'Contents/Resources/cua_node/lib/node_modules/@oai/sky/Codex Computer Use.app';
-const NODE_REL = 'Contents/Resources/cua_node/bin/node';
-const REPL_REL = 'Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/bin/cua-repl.mjs';
-const MODULES_REL = 'Contents/Resources/cua_node/lib/node_modules';
-const NODE_REPL_REL = 'Contents/Resources/cua_node/bin/node_repl';
+export const HELPER_REL = 'Contents/Resources/cua_node/lib/node_modules/@oai/sky/Codex Computer Use.app';
+export const NODE_REL = 'Contents/Resources/cua_node/bin/node';
+export const REPL_REL = 'Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/bin/cua-repl.mjs';
+export const MODULES_REL = 'Contents/Resources/cua_node/lib/node_modules';
+export const NODE_REPL_REL = 'Contents/Resources/cua_node/bin/node_repl';
 const CODEX_CLI_REL = 'Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex';
 const PANES = [
   'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',

@@ -1,0 +1,203 @@
+// What sleight needs from the ChatGPT computer-use engine, and the checks that read it back after an engine update.
+// Every name here is one sleight's code calls or parses (plugins/sleight/lib). tests/compat-contract.test.mjs fails when the
+// code starts calling a cua method this file doesn't list, so a new dependency can't skip the check.
+import { compactJsDescription } from '../../plugins/sleight/lib/tool-description.mjs';
+import { rewritePaymentPolicy } from '../../plugins/sleight/lib/payment-policy.mjs';
+import { compactConfirmationsPolicy } from '../../plugins/sleight/lib/compact-confirmations.mjs';
+
+// cua methods the relay, guard and helpers call (relay.mjs, document-scope.mjs, helper-health.mjs, browser-*.mjs).
+export const CUA_METHODS = ['getApp', 'getState', 'listApps', 'listBrowsers', 'getBrowser', 'getTab', 'createBrowserTab', 'listTabs'];
+// Names the code matches in Claude's own code but never calls itself, so the engine may drop them without breaking sleight.
+export const MATCHED_ONLY = ['rewriteDocumentation', 'scroll'];
+
+// Members of the API's TypeScript declarations, inherited ones included. App and Tab methods are the guard's
+// (document-scope.mjs) and relay's calls; the type fields are the ones the code reads from results.
+export const API_MEMBERS = {
+  cua: CUA_METHODS,
+  App: ['getAXState', 'getScreenshot', 'getAXStateAndScreenshot', 'click', 'drag', 'scroll', 'selectText', 'setValue',
+    'performSecondaryAction', 'paste', 'pressKey', 'typeText'],
+  Tab: ['getAXState', 'getScreenshot', 'click', 'drag', 'paste', 'pressKey', 'typeText', 'id', 'goto', 'close'],
+  StateOptions: ['disableDiffing', 'emit'],
+  StateAndScreenshot: ['state', 'screenshot'],
+  AppInfo: ['id', 'windows'],
+  WindowInfo: ['id', 'app', 'title'],
+  State: ['apps', 'errors'],
+  BrowserInfo: ['id', 'type', 'profileName', 'metadata'],
+  Browser: ['browserId'],
+};
+
+// Headings sleight's result budget and first-call guidance cut the docs at (result-budget.mjs, initialization-guidance.mjs).
+export const DOC_HEADINGS = ['## Computer Use', '## API', '# Computer Use Confirmations Policy'];
+
+const result = (id, status, reason, detail) => ({ id, status, ...(reason ? { reason } : {}), ...(detail ? { detail } : {}) });
+
+// The first ```typescript block after the "## API" heading.
+export function apiBlock(docs) {
+  const api = docs.search(/^## API\s*$/m);
+  if (api < 0) return undefined;
+  const open = docs.indexOf('```typescript\n', api);
+  if (open < 0) return undefined;
+  const close = docs.indexOf('\n```', open + 14);
+  return close < 0 ? undefined : docs.slice(open + 14, close);
+}
+
+// Interfaces, object types and `declare const` objects with their direct members and the types they extend.
+export function parseDeclarations(block) {
+  const owners = new Map();
+  const head = /^(?:export\s+)?(?:interface\s+(\w+)(?:<[^>{]*>)?(?:\s+extends\s+([\w\s,<>]+?))?\s*\{|type\s+(\w+)(?:<[^>=]*>)?\s*=\s*(?:[\w\s&]+&\s*)?\{|declare\s+const\s+(\w+)\s*:\s*\{)/gm;
+  for (let match; (match = head.exec(block));) {
+    const name = match[1] ?? match[3] ?? match[4];
+    const start = match.index + match[0].length;
+    // Members are the segments between ";" or line ends outside nested braces and parentheses, so a one-line
+    // `{ state: string; screenshot?: Uint8Array }` and a multi-line method signature both count once.
+    const members = new Set();
+    let braces = 0, parens = 0, segment = '', at = start;
+    const flush = () => {
+      const member = /^\s*(?:readonly\s+)?([A-Za-z_$][\w$]*)\??\s*[(:<]/.exec(segment);
+      if (member) members.add(member[1]);
+      segment = '';
+    };
+    for (; at < block.length; at++) {
+      const char = block[at];
+      if (char === '{') braces++;
+      else if (char === '}') { if (braces === 0) break; braces--; }
+      else if (char === '(') parens++;
+      else if (char === ')') parens--;
+      if (braces === 0 && parens === 0 && (char === ';' || char === '\n')) flush();
+      else if (braces === 0 && char !== '}') segment += char;
+    }
+    flush();
+    // `type X = A & { ... }` inherits A, as `interface X extends A` does.
+    const intersected = match[3] ? (/=\s*([\w\s&]+)&\s*\{$/.exec(match[0])?.[1] ?? '') : '';
+    const parents = [...(match[2] ?? '').split(','), ...intersected.split('&')].map(part => part.replace(/<.*$/, '').trim()).filter(Boolean);
+    owners.set(name, { members, parents });
+  }
+  return owners;
+}
+
+export function membersOf(owners, name, seen = new Set()) {
+  const owner = owners.get(name);
+  if (!owner || seen.has(name)) return new Set();
+  seen.add(name);
+  const all = new Set(owner.members);
+  for (const parent of owner.parents) for (const member of membersOf(owners, parent, seen)) all.add(member);
+  return all;
+}
+
+// The API docs against API_MEMBERS. A member sleight uses that's gone fails; anything else that changed shows in the diff.
+export function checkApiContract(docs) {
+  const block = typeof docs === 'string' ? apiBlock(docs) : undefined;
+  if (!block) return [result('api-contract', 'fail', 'the engine docs have no "## API" TypeScript block')];
+  const owners = parseDeclarations(block);
+  const missing = [];
+  for (const [owner, wanted] of Object.entries(API_MEMBERS)) {
+    if (!owners.has(owner)) { missing.push(`${owner} (whole declaration)`); continue; }
+    const have = membersOf(owners, owner);
+    for (const name of wanted) if (!have.has(name)) missing.push(`${owner}.${name}`);
+  }
+  const headings = DOC_HEADINGS.filter(heading => !new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm').test(docs));
+  return [
+    missing.length ? result('api-contract', 'fail', `the API no longer declares ${missing.join(', ')}`)
+      : result('api-contract', 'pass', `${Object.values(API_MEMBERS).flat().length} members sleight uses are declared`),
+    headings.length ? result('doc-headings', 'warn', `missing heading ${headings.map(h => JSON.stringify(h)).join(', ')}; sleight's docs trimming leaves that part whole`)
+      : result('doc-headings', 'pass'),
+  ];
+}
+
+// The engine's own tools/list, read without sleight's relay.
+export function checkToolSurface(tools) {
+  if (!Array.isArray(tools)) return [result('tool-surface', 'fail', 'tools/list returned no tools array')];
+  const byName = new Map(tools.map(tool => [tool?.name, tool]));
+  const problems = [];
+  const js = byName.get('js');
+  if (!js) problems.push('no js tool');
+  else {
+    const schema = js.inputSchema ?? {};
+    const props = schema.properties ?? {};
+    if (schema.type !== 'object') problems.push('js inputSchema is not an object');
+    if (props.code?.type !== 'string') problems.push('js has no string "code" argument');
+    // The relay's own calls send title and timeout_ms (relay.mjs 1248, 1257, 1380).
+    if (!props.timeout_ms || !['number', 'integer'].includes(props.timeout_ms.type)) problems.push('js has no numeric "timeout_ms" argument');
+    if (!props.title) problems.push('js has no "title" argument');
+    if (Array.isArray(schema.required) && schema.required.some(key => key !== 'code')) problems.push(`js requires ${schema.required.filter(key => key !== 'code').join(', ')}`);
+  }
+  // The relay ends every turn through turn_ended (relay.mjs endTurnArgs).
+  if (!byName.has('turn_ended')) problems.push('no turn_ended tool');
+  const results = [problems.length ? result('tool-surface', 'fail', problems.join('; '))
+    : result('tool-surface', 'pass', `js and turn_ended present (${tools.length} tools)`)];
+  if (js && typeof js.description === 'string' && compactJsDescription(js.description, undefined, false) === undefined) {
+    results.push(result('js-description', 'warn', "the engine's js description changed, so sleight sends it whole instead of its shorter version (tool-description.mjs ENGINE_JS_HASH)"));
+  } else if (js) results.push(result('js-description', 'pass'));
+  return results;
+}
+
+// sleight rewrites the engine's confirmations policy for payments and forms the user asked for (payment-policy.mjs) and
+// shortens it (compact-confirmations.mjs). Both match the engine's exact text, so a new wording turns them off.
+// The relay rewrites only a text item that starts with "## Computer Use" (relay.mjs, near rewritePaymentPolicy).
+export function checkPolicyRewrite(texts) {
+  const strings = texts.filter(text => typeof text === 'string');
+  if (!strings.some(text => /(^|\n)## Computer Use\n/.test(text))) {
+    return [result('policy-rewrite', 'warn', 'the first result has no "## Computer Use" docs, so the payment and form rules sleight adds are not delivered')];
+  }
+  const item = strings.find(text => text.startsWith('## Computer Use\n'));
+  if (!item) return [result('policy-rewrite', 'warn', 'no result item starts with "## Computer Use", so sleight skips its policy rewrite')];
+  let status = 'unmatched';
+  const rewritten = rewritePaymentPolicy(item, 'requested', (_, info) => { status = info?.status ?? status; });
+  if (status !== 'rewritten') {
+    return [result('policy-rewrite', 'warn', "the engine's confirmations policy changed, so sleight leaves it whole: payments and form submits the user named ask again")];
+  }
+  return compactConfirmationsPolicy(rewritten) === undefined
+    ? [result('policy-rewrite', 'warn', 'the payment rewrite applies, but the compact policy no longer matches it, so the full policy is sent')]
+    : [result('policy-rewrite', 'pass')];
+}
+
+// One js call on the raw engine with no app: which cua methods exist, and the shape (key names and value types, never
+// values) of getState and listApps, which the doctor and the guard read.
+export const PROBE_MARK = 'sleight-compat-probe:';
+export const PROBE_CODE = `await (async () => {
+const names = ${JSON.stringify(CUA_METHODS)};
+const kinds = Object.fromEntries(names.map(name => [name, typeof cua[name]]));
+kinds['nodeRepl.write'] = typeof nodeRepl.write;
+kinds['nodeRepl.emitImage'] = typeof nodeRepl.emitImage;
+const shape = (value, depth = 0) => {
+  if (Array.isArray(value)) {
+    const merged = {};
+    for (const item of value.slice(0, 200)) {
+      const inner = shape(item, depth + 1);
+      if (inner && typeof inner === 'object') Object.assign(merged, inner); else merged['[]'] = inner;
+    }
+    return { '[]': merged };
+  }
+  if (value && typeof value === 'object' && depth < 4) return Object.fromEntries(Object.keys(value).sort().map(key => [key, shape(value[key], depth + 1)]));
+  return value === null ? 'null' : typeof value;
+};
+const state = await cua.getState({ emit: false });
+const apps = await cua.listApps({ emit: false });
+nodeRepl.write(${JSON.stringify(PROBE_MARK)} + JSON.stringify({ kinds, state: shape(state), apps: shape(apps) }));
+})();`;
+
+export function parseProbe(text) {
+  const line = String(text ?? '').split('\n').find(item => item.startsWith(PROBE_MARK));
+  if (!line) return undefined;
+  try { return JSON.parse(line.slice(PROBE_MARK.length)); } catch { return undefined; }
+}
+
+export function checkReplProbe(probe) {
+  if (!probe || typeof probe !== 'object') return [result('repl-probe', 'fail', 'the probe printed no result')];
+  const problems = [];
+  for (const name of [...CUA_METHODS, 'nodeRepl.write', 'nodeRepl.emitImage']) {
+    if (probe.kinds?.[name] !== 'function') problems.push(`${name.includes('.') ? name : `cua.${name}`} is ${probe.kinds?.[name] ?? 'missing'}`);
+  }
+  const apps = probe.state?.apps?.['[]'];
+  if (!probe.state?.apps || !('[]' in probe.state.apps)) problems.push('getState() has no apps array');
+  else if (apps && Object.keys(apps).length && apps.id !== 'string') problems.push('getState() apps have no string id');
+  const listed = probe.apps?.['[]'];
+  if (!probe.apps || !('[]' in probe.apps)) problems.push('listApps() returned no array');
+  else if (listed && Object.keys(listed).length) {
+    if (listed.id !== 'string') problems.push('listApps() rows have no string id');
+    const windows = listed.windows?.['[]'];
+    if (listed.windows && !windows) problems.push('listApps() windows is not an array');
+    if (windows && Object.keys(windows).length && (windows.id !== 'number' || windows.app !== 'string')) problems.push('listApps() windows lack a numeric id or an app name');
+  }
+  return [problems.length ? result('repl-probe', 'fail', problems.join('; ')) : result('repl-probe', 'pass', `${CUA_METHODS.length} cua methods, getState and listApps shapes as expected`)];
+}
