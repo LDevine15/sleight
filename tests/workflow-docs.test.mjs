@@ -216,3 +216,11 @@ test('an unawaited chain of actions settles before the call reads', async () => 
   assert.equal(f.ops.filter(op => op === 'click').length, 2);
   assert.equal(f.output.at(-1), GUARD_MARK + f.tree() + GUARD_END);
 });
+
+test('the race carries SLEIGHT_WORKFLOW_DOCS=0 to the sleight arm for the A/B baseline', async () => {
+  const { traceEnv } = await import('../bench/fowl/real-gate-setup.mjs');
+  assert.deepEqual(traceEnv({ SLEIGHT_WORKFLOW_DOCS: '0', HOME: '/h' }), { SLEIGHT_WORKFLOW_DOCS: '0' });
+  assert.deepEqual(traceEnv({ SLEIGHT_WORKFLOW_DOCS: '1' }), {});
+  const script = readFileSync(new URL('../bench/fowl/rounds.sh', import.meta.url), 'utf8');
+  assert.match(script, /env -i[^\n]*\n[^\n]*\$\{SLEIGHT_WORKFLOW_DOCS:\+SLEIGHT_WORKFLOW_DOCS="\$SLEIGHT_WORKFLOW_DOCS"\}[^\n]*node tools\/rounds\.mjs/);
+});
