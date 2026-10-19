@@ -3,20 +3,19 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 03:50 UTC)
+## Banner (2026-10-19 05:00 UTC)
 
-**Since the clear (03:50Z).** Pay-gate is merged into the release line (`pane/auto-mode` 7a129a4a; full check 8317 tests 0
-fail, lint 0). Codex turbo finished (`claude/codex-turbo` 9612ea86, 570/570 focused, Sonnet review fixed, never run live;
-ledger/p130/cxt1-REPORT.md has the seven live-check steps). FU1's review found a Python/Ruby adjacent-literal bypass of the
-logging-switch guard and a false rotation warning. Both are fixed on `codex/fu1` ca7ab807. `claude/p131-integration` 4abeff67
-holds the release line, codex-turbo and FU1 (full check 8833 tests 0 fail). Ruling: the codex-sleight arms measure 1.3.0, which
-has no turbo in Codex, so they run with `SLEIGHT_TURBO=0` once 1.3.1 carries cxt1. The owner gave us the Mac (keep Dia open). In the pay-gate live checks (b9), Firefox Haiku and Codex Sol both stopped at Pay now with
-nothing paid. Safari's confirm sheet is still untested, since Haiku stopped by itself. The gate also stopped a cart's "Go to
-checkout" link, which failed handoff in two rounds. Fixed on 8c6b08ca (full check 8318 tests 0 fail) and merged into 1.3.1
-f858cf8b, whose full check hasn't run since. Block b10 (`race-1017/block-b10.command`, race-fx at 8c6b08ca) runs sleight's
-Safari and Firefox x3 on the new engine. The b9 rounds are diagnostics only. 1.4.0 builds now (owner): `claude/p140` from 1.3.1 f858cf8b, with three Opus builders on
-`claude/p140-analytics`, `-cursor` and `-am1` (reports in ledger/p140/), focused tests only and no live runs while races run. Items below marked as in flight at the clear are superseded by
-this paragraph.
+**Since the clear (05:00Z).** Release line `pane/auto-mode` dbc7925d. Pay-gate merged, with a checkout-link fix 8c6b08ca after
+the live rounds (full check 8318 tests 0 fail). On engine 26.1013.40934 (b10, Haiku), sleight's Safari total is 567.1 s expected total,
+fastest on 10 of 12, and Firefox 555.5 s, 10 of 12, every run passing. The competitor numbers it beats are from 26.1007.71326.
+Owner decisions (LAWS, ROADMAP): engine updates no longer force reruns, since every result records its engine version, and
+a compatibility check after every update comes in 1.3.1 (4f). Also, 4b runs the luna pair for 1.3.0 and the Sol pair for 1.3.1.
+The tag path is now the Safari r2 rerun (running), block b12 (codex-sleight luna Safari and Firefox x3, `race-1017/block-b12.command`,
+started by `swap-b12.sh` once r2 ends), top-ups to 5 for pairs within 20%, EV1 (engine versions on results, `claude/ev1`,
+building), release pass, hub and README, then the owner's go. 1.3.1 `claude/p131-integration` f858cf8b (codex-turbo, FU1, gate
+fix) needs its full check, and 4f builds on `claude/p131-compat`. 1.4.0 `claude/p140` a96092aa holds analytics, Cursor and AM1
+(focused tests pass, full check owed, AM1 live rerun owed after its FOCUS_CHANGED stop). Items below marked as in flight at the
+clear are superseded by this paragraph.
 
 **Release line** `pane/auto-mode` = main checkout. It holds the race fixes ft1, fs1 and md1, plus sec130, es1, ff1, rg1r2, fl3,
 form-2fa, the Safari harness fixes, mdn-note, OH1, the FM3 port (engine Chromium tab path only), list-pick, the native
