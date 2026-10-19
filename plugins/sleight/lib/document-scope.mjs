@@ -590,11 +590,16 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             state.reads.set(proxy, { text, emitted: true, modalOpened: pending.modalOpened });
           }
         }); })();
-        // app.pickFromList("<row label>"): pages a focused sorted list by key, then clicks the row. Every key and
-        // the click run through this handle's own checks, so a window change, a lost lease or a renumbered row stops it.
+        // app.pickFromList("<row label>"): pages a sorted list by key or wheel, then clicks the row. Every key, wheel
+        // step and the click run through this handle's own checks, so a window change, a lost lease or a renumbered row stops it.
         if (name === 'pickFromList') return async (label, options) => {
           checkNative();
           const superseded = () => { throw new Error('pickFromList stopped: another action or read ran during the search. Read the window again.'); };
+          // A click on this handle that was the call's last action: after it, the read can name the selected row in
+          // place of the focused list (race-1017 b7, Safari and Firefox), and the helper accepts that list only then.
+          const before = state.previous.get(proxy);
+          const clicked = before?.name === 'click' && before.version === state.actionVersion && before.done !== undefined &&
+            Number.isInteger(before.at) && typeof before.line === 'string' ? { number: before.at, line: before.line } : undefined;
           const result = await pickList({
             read: async () => {
               checkNative();
@@ -616,8 +621,15 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
               if (state.actionVersion !== version + 1) superseded();
               return result;
             },
+            // The wheel over the list, named by its whole line in the newest tree.
+            scroll: async (line, direction, ticks) => {
+              const version = state.actionVersion;
+              const result = await proxy.scroll({ line }, direction, ticks);
+              if (state.actionVersion !== version + 1) superseded();
+              return result;
+            },
             click: line => proxy.click({ line }),
-            parse, sameElement, expected: state.guarded ? state.expected : undefined
+            parse, sameElement, clicked, expected: state.guarded ? state.expected : undefined
           })(label, options);
           // A search that did not click ends the call, so later actions in it don't run past the failure.
           if (!result.clicked) throw new Error('pickFromList stopped (' + result.reason + '): ' + result.note + ' [' + result.reads + ' reads, ' + result.keys + ' keys]');
@@ -1054,6 +1066,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             ['performSecondaryAction', 'setValue', 'scroll'].includes(name) || name === 'pressKey' &&
             (keys.length > 0 || /^(?:return|enter|escape|esc|tab|space)$/i.test(key ?? ''));
           const previous = { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey, number: editable ? args[0] : undefined, line, focus: /^The focused UI element is (.+?)\\r?$/m.exec(text ?? '')?.[1],
+            at: name === 'click' && typeof args[0] === 'number' ? args[0] : undefined, version: state.actionVersion,
             textEditing: textEditing && (editable || ['typeText', 'paste'].includes(name) || editKey), opens, modal: text === undefined ? undefined : hasModal(text),
             touches: state.touches };
           state.previous.set(proxy, previous);
