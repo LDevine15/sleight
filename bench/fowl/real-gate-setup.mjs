@@ -13,15 +13,16 @@ import { claudeHostManifest } from './real-browser.mjs';
 
 // The sleight arm's MCP server gets an explicit env, so a trace the launching shell asked for stopped at the harness
 // (no relay trace in the 36 Firefox b3 runs, 2026-10-18). SLEIGHT_TRACE goes through, and SLEIGHT_TS3=1, SLEIGHT_FS=1 and
-// SLEIGHT_BROWSER_CORE=1 for their A/Bs, and SLEIGHT_WORKFLOW_DOCS=0 (CC6's baseline); no other host variable does.
+// SLEIGHT_BROWSER_CORE=1 for their A/Bs, SLEIGHT_MC1=0|1, and SLEIGHT_WORKFLOW_DOCS=0 (CC6's baseline).
 const AB_FLAGS = ['SLEIGHT_TS3', 'SLEIGHT_FS', 'SLEIGHT_BROWSER_CORE'];
 export function traceEnv(host = process.env) {
   return { ...(typeof host.SLEIGHT_TRACE === 'string' && host.SLEIGHT_TRACE ? { SLEIGHT_TRACE: host.SLEIGHT_TRACE } : {}),
     ...Object.fromEntries(AB_FLAGS.filter(key => host[key] === '1').map(key => [key, '1'])),
+    ...(['0', '1'].includes(host.SLEIGHT_MC1) ? { SLEIGHT_MC1: host.SLEIGHT_MC1 } : {}),
     ...(host.SLEIGHT_WORKFLOW_DOCS === '0' ? { SLEIGHT_WORKFLOW_DOCS: '0' } : {}) };
 }
-// The A/B flags the engine arm ran with, for its metadata: every row then names its variant (off when absent).
-export const abFlags = (host = process.env) => Object.fromEntries(AB_FLAGS.map(key => [key, host[key] === '1']));
+// The effective A/B modes for engine-arm metadata. MC1 defaults on; the opt-in flags default off.
+export const abFlags = (host = process.env) => ({ ...Object.fromEntries(AB_FLAGS.map(key => [key, host[key] === '1'])), SLEIGHT_MC1: host.SLEIGHT_MC1 !== '0' });
 // AS-3: with SLEIGHT_BROWSER_CORE=1 the server lists browser_open, and a user's install can call it, so the arm allows it.
 const ENGINE_TOOLS = ['js', 'js_reset', 'open_file', 'drag', 'select_window'];
 export const engineAllowed = (host = process.env) => [...ENGINE_TOOLS, ...(host.SLEIGHT_BROWSER_CORE === '1' ? ['browser_open'] : [])]

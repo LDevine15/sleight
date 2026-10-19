@@ -62,9 +62,10 @@ test('v3 action reports an unproved click as an observation and returns a diff',
 test('MC1 action reports the settled retry in the same step and disables recovery for submits', async () => {
   for (const submit of [false, true]) {
     const f = fixture({ submit, backgroundClick: async (tab, locator, click, options) => {
-      assert.equal(options.recover, !submit);
-      if (options.recover) options.onRetry();
-      return click({});
+      const result = await click({});
+      assert.equal(options.recover(), !submit);
+      if (options.recover()) options.onRetry();
+      return result;
     } });
     const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
     if (submit) assert.doesNotMatch(result.lines[0], /retried/);

@@ -2084,10 +2084,11 @@ async function backgroundClickOnce(tab, locator, click = options => locator.clic
     throw failure = Error(hookUnavailable);
   } finally {
     let retry = false;
-    if (mc1 && recover && !retried && !failure && !reported && !press && !keys) {
+    if (mc1 && !retried && !failure && !reported && !press && !keys) {
       try {
-        retry = hookOpen(hook, await deadline(() => locator.evaluate((element, { key, proof, token }) => window[key].retry(proof, element, token),
-          { key, proof: hookProof(hook, 'retry'), token }, { timeout: timeoutMs }), timeoutMs)) === true;
+        if (typeof recover === 'function' ? recover() === true : recover === true)
+          retry = hookOpen(hook, await deadline(() => locator.evaluate((element, { key, proof, token }) => window[key].retry(proof, element, token),
+            { key, proof: hookProof(hook, 'retry'), token }, { timeout: timeoutMs }), timeoutMs)) === true;
       } catch { /* An absent, late or unverified answer grants no retry. */ }
     }
     // A hook that cannot vouch for its own answer, or refused the call, may have vetoed the input: say so rather than

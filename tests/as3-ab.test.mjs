@@ -36,8 +36,8 @@ test('traceEnv forwards SLEIGHT_BROWSER_CORE=1 only, and abFlags records each A/
   assert.deepEqual(traceEnv({ SLEIGHT_BROWSER_CORE: '0' }), {});
   assert.deepEqual(traceEnv({ SLEIGHT_BROWSER_CORE: 'true' }), {});
   assert.deepEqual(traceEnv({ SLEIGHT_TRACE: '/t', SLEIGHT_FS: '1', SLEIGHT_BROWSER_CORE: '1' }), { SLEIGHT_TRACE: '/t', SLEIGHT_FS: '1', SLEIGHT_BROWSER_CORE: '1' });
-  assert.deepEqual(abFlags({ SLEIGHT_BROWSER_CORE: '1' }), { SLEIGHT_TS3: false, SLEIGHT_FS: false, SLEIGHT_BROWSER_CORE: true });
-  assert.deepEqual(abFlags({}), { SLEIGHT_TS3: false, SLEIGHT_FS: false, SLEIGHT_BROWSER_CORE: false });
+  assert.deepEqual(abFlags({ SLEIGHT_BROWSER_CORE: '1' }), { SLEIGHT_TS3: false, SLEIGHT_FS: false, SLEIGHT_BROWSER_CORE: true, SLEIGHT_MC1: true });
+  assert.deepEqual(abFlags({}), { SLEIGHT_TS3: false, SLEIGHT_FS: false, SLEIGHT_BROWSER_CORE: false, SLEIGHT_MC1: true });
   assert.ok(!engineAllowed({}).includes('browser_open'));
   assert.ok(!engineAllowed({ SLEIGHT_BROWSER_CORE: '0' }).includes('browser_open'));
   assert.equal(engineAllowed({ SLEIGHT_BROWSER_CORE: '1' }), engineAllowed({}) + ',' + OPEN);

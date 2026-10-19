@@ -30,6 +30,7 @@
         "SLEIGHT_HOVER",
         "SLEIGHT_IDLE_TURN_END_MS",
         "SLEIGHT_LAUNCH_REREAD",
+        "SLEIGHT_MC1",
         "SLEIGHT_MENU_BAR",
         "SLEIGHT_OPEN_AUTO_SHOT",
         "SLEIGHT_OPEN_FILE",

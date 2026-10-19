@@ -243,7 +243,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
     for (let index = 0; index < steps.length; index++) {
       // navigate on a link is that link's click, so every click rule, guard and popup rule applies unchanged.
       const named = steps[index], step = named.do === 'navigate' ? { ...named, do: 'click' } : named, label = `${index + 1} ${named.do}${step.ref ? ' ' + step.ref : ''}`;
-      let locator, target, started = false, armed, activity, deferred = false, staging, submit, inputPending = false, stepFinished = false, settleCapped = false, settleNote, clickRetry = '';
+      let locator, target, started = false, armed, activity, deferred = false, staging, submit, inputPending = false, stepFinished = false, settleCapped = false, settleNote, clickRetry = '', recoverClick = false;
       try {
         if (state.dialog && step.do !== 'dialog') throw Error('a page dialog is waiting; answer it with the dialog operation');
         if (step.do === 'dialog' && !state.dialog) throw Error('no waiting dialog; read the page');
@@ -265,6 +265,10 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           const refused = siteCheck?.();
           if (refused) throw Error(refused);
           const verdict = trusted ? await ctx.check(step.do, target) : await check(ctx, step.do, target);
+          // The trusted check refreshes the target, including when seal verification vetoes the click.
+          // Recovery reads this decision after the callback, never the earlier inspectTarget result.
+          const risk = intent(step.do, target);
+          recoverClick = !risk.submit && !risk.payment && !target.element?.payment && !target.prior?.payment;
           if (verdict?.verdict === 'confirm' || verdict?.kind === 'confirm') confirmation = { step: index + 1, terms: verdict.terms };
           const message = ruleMessage(verdict);
           if (message) throw Error(message);
@@ -305,7 +309,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             // The rules read the element inside gate(); the page confirms those words are the ones it sealed.
             if (trusted) { target.verifySeal = verifySeal; await gate(); ctx.beginInput(target); }
             begin(); return locator.click({ ...options, ...extra, ...aim });
-          }, { recover: !submits && !info.payment, onRetry: () => { clickRetry = '; waited for the page to settle and retried the click once'; } });
+          }, { recover: () => recoverClick, onRetry: () => { clickRetry = '; waited for the page to settle and retried the click once'; } });
           const pressKey = keys => trusted ? ctx.pressTarget(target, step.key, options, keys) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
           // Enter and Space can follow a link or submit a form into a new tab: arm the popup hook, as a click does. In a trusted turn
           // the key also goes through the key shield (armed before the key, every other frame locked), so the gate's verdict and the
