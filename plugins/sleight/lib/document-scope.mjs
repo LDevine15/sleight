@@ -747,9 +747,9 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             state.reads.set(proxy, { text, emitted: true, modalOpened: pending.modalOpened });
           }
         }); })();
-        // app.pickFromList("<row label>"): pages a sorted list by key or wheel, then clicks the row. Every key, wheel
+        // app.pickFromList([list,] "<row label>"): pages a sorted list by key or wheel, then clicks the row. Every key, wheel
         // step and the click run through this handle's own checks, so a window change, a lost lease or a renumbered row stops it.
-        if (name === 'pickFromList') return (label, options) => track((async () => {
+        if (name === 'pickFromList') return (...args) => track((async () => {
           checkNative();
           const superseded = () => { throw new Error('pickFromList stopped: another action or read ran during the search. Read the window again.'); };
           // A click on this handle that was the call's last action: after it, the read can name the selected row in
@@ -786,8 +786,10 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
               return result;
             },
             click: line => proxy.click({ line }),
+            // A list number Claude wrote names the line it saw for that number, when the relay passed it.
+            lineSeen: number => state.seenLines?.[number],
             parse, sameElement, clicked, expected: state.guarded ? state.expected : undefined
-          })(label, options);
+          })(...args);
           // A search that did not click ends the call, so later actions in it don't run past the failure.
           if (!result.clicked) throw new Error('pickFromList stopped (' + result.reason + '): ' + result.note + ' [' + result.reads + ' reads, ' + result.keys + ' keys]');
           return result;

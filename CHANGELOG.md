@@ -2,36 +2,88 @@
 
 ## 1.4.0 (TODO: release date)
 
-### New tabs on the engine path
+### Install and results
 
-- A call's own Cmd+T in Safari carries on into the new tab, with the address and Return in the same call. It stopped after
-  Cmd+T in 36 of 36 Safari runs of sleight inside Codex (race-1017), a turn each. The window, focus, sheet, HID-idle and
-  payment checks are the same as Firefox's.
-- After that Return, a result whose tree still shows the new tab under the page's title reads the window again, for up to
-  1.5 s, so Claude gets the page. `SLEIGHT_TABC=0` turns both off. Not yet run live.
+- The README puts installation and the measured native results first, with an agent install prompt and a shorter
+  explanation of supported hosts and safety checks.
+- INSTALL.md covers Claude Code, Codex, Cursor and other MCP clients, including setup, updates, removal and the steps
+  only the user can complete. The new install flow has not yet run live.
+- Benchmark pages put task results first, with shared navigation, folded methods and failures, and separate comparisons
+  of sleight inside Codex against Codex on the same model.
+- The GitHub Pages results landing links to each benchmark family, its data and the interactive explorer. It loads no
+  external scripts or fonts.
+- Results include light and dark charts for the native headline, the overview and each benchmark family, with engine
+  versions, model details and explicit labels for missing or failed runs.
+- A light and dark architecture diagram shows the engine and turbo paths. The demo export checks synchronized captures
+  before making a GIF. A new demo has not yet been recorded.
+- An install benchmark checks the agent's plugin install, doctor result and remaining user steps in an isolated config.
+  It has not yet run with a live agent.
 
 ### Cursor
 
-- sleight is a Cursor plugin. The repo is a Cursor marketplace named like the Claude Code one, so in
-  cursor-agent's plugin loader the Cursor plugin replaces Cursor's import of sleight's Claude Code plugin
-  (not yet checked in the Cursor app). The plugin starts the same launcher
-  and reads the same skill file as Claude Code and Codex. `sleight-mcp --doctor` reports whether
-  sleight reaches Cursor (plugin, local copy, `~/.cursor/mcp.json` or Cursor's import of the Claude Code
-  plugin) and prints the command to add it. Cursor's approval cards and the menu bar's host line now say
-  Cursor, where they said "Cursor Vscode" from the client name Cursor sends. Not yet installed in a live
-  Cursor session.
+- A Cursor plugin and marketplace use sleight's existing launcher and skill. The doctor reports the install route and
+  duplicate routes. The new plugin has not yet been installed in a live Cursor session.
+- Cursor's approval cards and menu bar label say "Cursor" for both editor and CLI clients. Not yet run live.
 
-### Stats
+### Local stats
 
-- `sleight-mcp stats` summarizes the opt-in action log on this Mac. It gives the median and p90 seconds
-  per action for each path, with native apps, turbo and the engine's browser path counted apart, and counts
-  reads saved and failures. `--days N` and `--json` are options. With the log off, it says how to turn it on.
-- The glove's menu shows one row for the last 7 days while a session writes the log, such as
-  `Last 7 days: 1.2 s per native action · 0.4 s per turbo action · 312 reads saved`.
-- Log lines gain `ms` (the call's time from sending it on, less approval prompts), `pid`, `saved` (reads
-  Claude asked for that went out as changed lines or were left out) and, for the engine's browser path,
-  one `call` line with the number of input calls its code names. The log stays
-  on this Mac. [Settings](docs/settings.md#stats).
+- `sleight-mcp stats` reports median and p90 action times, reads saved and failures from the opt-in local log, with
+  native, turbo and engine-browser results kept separate. `--days N` and `--json` are available. Not yet run live.
+- The glove's menu shows recent action times and reads saved while a session writes the log. Not yet run live.
+- Action logs record call time excluding approval waits, process identity and reads saved, without typed values or
+  page text. The log stays on this Mac. [Settings](docs/settings.md#stats). Not yet run live.
+- An isolated analytics check compares log counts and timings with the relay trace and stats output, without changing
+  user settings. The native validation pass has not yet run live.
+
+### Native actions and engine browsers
+
+- The first scroll that moves a sorted list points Claude to `pickFromList` with that list's number. The skill gives
+  the list instruction beside form batching. Not yet run live.
+- `app.pickFromList(<list>, "<row>")` accepts a list number or label and focuses the list itself. It checks the observed
+  number and refuses lists whose rows trigger actions before clicking. Not yet run live.
+- List picks estimate jumps from the labels around the target, with reads between bounded key bursts and stops for
+  lost focus, stalled movement or an ambiguous row. Not yet run live.
+- Action results wait for newly loading controls before returning the latest tree, within a bounded polling budget.
+  Not yet run live.
+- Numbered batches can follow renumbered controls only when each remaining observed target and its parent still match
+  uniquely. A resent click still passes the payment check. Not yet run live.
+- Computer-only instructions explain that action results already show changed lines. Those results include current
+  element numbers, and the final read waits for actions and list picks still running. Not yet run live.
+- A call's own Cmd+T in Safari can continue with the address and Return in that call, including from a window with no
+  visible tab strip. Window, focus, idle and payment checks still apply. Not yet run live.
+- After that Return, a result that still shows the new tab under the page title reads again for the landed page.
+  `SLEIGHT_TABC=0` disables the tab changes. Not yet run live.
+- Drag endpoints can match a short, exact static-text label exposed only as its accessibility value. Document text,
+  other windows and ambiguous labels still refuse. Not yet run live.
+- `select_window` accepts a unique title ending that starts after whitespace when no exact title matches. It returns
+  the full title and refuses ambiguous endings with a bounded list of candidates. Not yet run live.
+
+### Turbo
+
+- Viewport, plain scroll, history and wait steps use bounded frame and request settling. Calls with `observe: none`
+  skip an unrequested final snapshot. Waits report elapsed time and keep their duration after an uncertain submit.
+  Not yet run live.
+- When a popup closes during input, sleight can return its owned opener's snapshot and keeps the warning for an
+  unconfirmed submit, including when the opener is blocked. Alerts during the final read return a waiting-dialog
+  result. Not yet run live.
+- Browser opens record the time spent in each phase without URLs, page text or tab handles. Not yet run live.
+- The benchmark census counts a worker lost on the first turbo call separately from startup errors, including older
+  transcripts whose metrics omit the cause.
+
+### Measurements and benchmark rules
+
+- The app speed map publishes sequential and concurrent-session timings, failures and cleanup evidence across native
+  and Electron apps. [Measured results](docs/benchmarks/2026-10-19-speed-map.md).
+- Sessions that meet the same helper crash spread their read retries instead of resending together. The speed map
+  names helper crashes and counts crash reports. The retry change has not yet run live.
+- Race reports keep covered runs by default. `--exclude-covered` applies the same evidence rule to passes and failures,
+  and cells with too few runs stay out of fastest-task counts. Cover readings omit system overlays.
+- Race instructions allow a task-requested popup in the same browser and profile, and explain how to return after it
+  closes. They still refuse unrelated windows. The revised instructions have not yet run live.
+- The inject-mail grader accepts answers that withheld a message and rejects claims that sent it. Reports can compare
+  saved and current graders without changing the original verdicts or ignoring site-log evidence of a send.
+- Held-out list, calendar, dependent-dropdown and new-tab fixtures cover Firefox, Safari and native Finder. World
+  benchmark approvals cover only selected task apps. These fixtures have not yet run live.
 
 ## 1.3.1 (TODO: release date)
 

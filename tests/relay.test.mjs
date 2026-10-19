@@ -120,7 +120,7 @@ test('each read through a known native handle keeps its app Space probe', async 
   assert.equal(probes.length, 3, 'an unknown handle has no app to probe');
 });
 
-test('the relay uses compact guard setup only after an executed installation, then keeps per-call reads', async () => {
+test('the relay uses compact guard setup only after an executed installation, then keeps per-call reads', async t => {
   const h = harness();
   const writes = [], actions = [];
   const header = 'Window: "Calculator", App: Calculator.\n0 standard window\n1 button One';
@@ -136,6 +136,7 @@ test('the relay uses compact guard setup only after an executed installation, th
   await execute(1);
   assert.doesNotMatch(JSON.stringify(h.toClient.at(-1)), /guard-ready/);
   helperRead(h, 2, 'await app.typeText("x")');
+  t.diagnostic(`compact guard after executed installation: ${Buffer.byteLength(h.toServer.at(-1).params.arguments.code)} bytes (limit 2500)`);
   assert.ok(Buffer.byteLength(h.toServer.at(-1).params.arguments.code) < 2500);
   await execute(2);
   helperRead(h, 3, 'await app.typeText("y")');
@@ -156,11 +157,12 @@ test('docs alone and an installation reply from before reset cannot enable compa
   assert.ok(Buffer.byteLength(h.toServer.at(-1).params.arguments.code) > 5000);
 });
 
-test('a missing warm setup is reported without replaying input and the next read reinstalls it', () => {
+test('a missing warm setup is reported without replaying input and the next read reinstalls it', t => {
   const h = harness();
   helperRead(h, 1);
   helperReply(h, 1, '[sleight:guard-ready]\nWindow: "Calculator", App: Calculator.', false);
   helperRead(h, 2, 'await app.typeText("x")');
+  t.diagnostic(`compact guard before missing-setup refusal: ${Buffer.byteLength(h.toServer.at(-1).params.arguments.code)} bytes (limit 2500)`);
   assert.ok(Buffer.byteLength(h.toServer.at(-1).params.arguments.code) < 2500);
   const sent = h.toServer.length;
   helperReply(h, 2, 'Sleight guard setup is missing. Send a standalone app acquisition before acting.');

@@ -558,13 +558,16 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
   // The X5 review fixes (payment gate on a resend, seen parents, settle budget) changed that setup again, and so did the
   // re-review's (a resend's payment stop is not a refusal, the resend gate starts from the pre-attempt payment, bare parents).
   // The 1.4.0 integration (CC6 with CC4/CC5) recomputed them from the merged setup.
+  // CC2 and CC3 (the list helper's own focusing click and its jumps, then the CC13 review fixes) changed the list helper
+  // the guard and setup embed.
+  // X11 recomputed these pins with CC6 tracking and CC13 list arguments together.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
     guardedLean: hash(guardedCode('await app.click(1);', window, undefined, undefined, { prompt: 'lean' })),
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: 'dcab3f0d42e13f6c', guardedLean: '37a827630bc345bb', reuse: 'b824edb3aa6dc2c4', read: '36c4fa230c249709', repl: '36c4fa230c249709' });
+  }, { guarded: '24b38349b21f2975', guardedLean: 'db6cfa77928bf90d', reuse: 'b824edb3aa6dc2c4', read: 'ac55e55ba6957fcd', repl: 'ac55e55ba6957fcd' });
 });
 
 test('with both switches off the guard carries none of the outcome code', () => {
