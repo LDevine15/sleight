@@ -400,7 +400,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Parent-only reset on the consent pipe, after every byte from the exited worker.
         // It carries the hand channel's secret, which no worker receives.
         if shared, frame["hand"] as? String == "consent-reset" {
-            // The first worker can exit before this utility host has read its initial hand menu.
+            // The first worker can exit before this host has read its initial hand menu.
             // Wait for that channel to bind itself; a reset never binds its secret on the worker's behalf.
             let deadline = resetDeadline ?? Date().addingTimeInterval(2)
             if nonceBook.nonce("hand") == nil && Date() < deadline {
@@ -1358,7 +1358,6 @@ if arguments.isEmpty {
         FileHandle.standardOutput.write(bytes + Data([10]))
         exit(0)
     }
-    pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0)
     let hand = HandHost()
     hand.demo = demo; hand.capture = capture
     if consent || menuOnly {

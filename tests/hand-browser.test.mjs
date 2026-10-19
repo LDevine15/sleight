@@ -237,8 +237,44 @@ test('default off installs no hand hooks; saved on enables hooks and env 0 still
 test('a shared worker sends artwork to its parent client without creating a second hand host', async () => {
   const { workerHandClient } = await import('../plugins/sleight/lib/hand/browser-hand.mjs');
   const frames = [], channel = { connected: true, send: value => frames.push(value) };
-  const client = workerHandClient(channel, 4242), frame = { kind: 'click', pid: 1, windowId: 2, at: [10, 10] };
+  const client = workerHandClient(channel, 4242, { setting: () => ({ enabled: true }) }), frame = { kind: 'click', pid: 1, windowId: 2, at: [10, 10] };
   client.send(frame); client.close();
   assert.deepEqual(frames, [{ version: 3, hand: frame }]); assert.equal(client.pid, 4242);
   channel.connected = false; client.send(frame); assert.equal(frames.length, 1);
+});
+
+test('turning the shared worker hand off stops metrics, box and geometry reads, then on resumes them', async () => {
+  const { workerHandClient } = await import('../plugins/sleight/lib/hand/browser-hand.mjs');
+  let enabled = true, clock = 0, metrics = 0, boxes = 0, locates = 0;
+  const frames = [], client = workerHandClient({ connected: true, send: f => frames.push(f) }, 4242,
+    { setting: () => ({ enabled }), now: () => clock });
+  const hand = createBrowserHand({ client, setting: () => ({ enabled: true }), now: () => clock,
+    readMetrics: async () => { metrics++; return METRICS; }, locate: async () => { locates++; return GEOMETRY; } });
+  const step = async () => { hand.step({ op: 'click', page: {}, locator: { boundingBox: async () => { boxes++; return BOX; } } });
+    for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
+  await step();
+  assert.deepEqual([metrics, boxes, locates, frames.length], [1, 1, 1, 1]);
+  enabled = false; clock = 500;
+  await step(); await step();
+  assert.equal(client.enabled, false);
+  assert.deepEqual([metrics, boxes, locates, frames.length], [1, 1, 1, 1]);
+  enabled = true; clock = 2000;
+  await step();
+  assert.deepEqual([metrics, boxes, locates, frames.length], [2, 2, 2, 2]);
+  hand.close();
+});
+
+test('off during a metrics read stops the remaining box and geometry reads', async () => {
+  const { workerHandClient } = await import('../plugins/sleight/lib/hand/browser-hand.mjs');
+  let enabled = true, clock = 0, boxes = 0, locates = 0, finish;
+  const client = workerHandClient({ connected: true, send() { assert.fail('off cannot send artwork'); } }, 4242,
+    { setting: () => ({ enabled }), now: () => clock });
+  const hand = createBrowserHand({ client, setting: () => ({ enabled: true }),
+    readMetrics: () => new Promise(resolve => { finish = resolve; }), locate: () => { locates++; return GEOMETRY; } });
+  hand.step({ op: 'click', page: {}, locator: { boundingBox() { boxes++; return BOX; } } });
+  await new Promise(resolve => setImmediate(resolve));
+  enabled = false; clock = 500; finish(METRICS);
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([boxes, locates], [0, 0]);
+  hand.close();
 });

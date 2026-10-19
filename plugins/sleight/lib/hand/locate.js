@@ -108,6 +108,7 @@ function elements(win, identities, limit = ELEMENT_LIMIT, ms = WALK_MS) {
 
 // Each helper owns a bounded bank. Recheck window state, bounds, cover and focus on every request.
 // A changed line's identity replaces its old frame, even when the element number is unchanged.
+// Frames expire within 500 ms: scrolling and layout changes need not change the window bounds or tree lines.
 const geometryCache = new Map();
 function cachedElements(pid, windowNumber, bounds, win, identities, versions = {}) {
   const key = JSON.stringify([pid, windowNumber, bounds.X, bounds.Y, bounds.Width, bounds.Height]);
@@ -118,16 +119,16 @@ function cachedElements(pid, windowNumber, bounds, win, identities, versions = {
     if (geometryCache.size >= 32) geometryCache.delete(geometryCache.keys().next().value);
     bank = { pid, windowNumber, frames: new Map() }; geometryCache.set(key, bank);
   }
-  const missing = {}, out = {};
+  const missing = {}, out = {}, at = Date.now();
   for (const [number, identity] of Object.entries(identities ?? {})) {
     const stamp = JSON.stringify([identity, versions[number]]), cached = bank.frames.get(number);
-    if (cached?.stamp === stamp) out[number] = cached.frame;
+    if (cached?.stamp === stamp && at >= cached.at && at - cached.at < 500) out[number] = cached.frame;
     else { bank.frames.delete(number); missing[number] = identity; }
   }
   const found = Object.keys(missing).length ? elements(win, missing) : {};
   for (const [number, frame] of Object.entries(found)) {
     if (bank.frames.size >= 3000) bank.frames.delete(bank.frames.keys().next().value);
-    bank.frames.set(number, { stamp: JSON.stringify([missing[number], versions[number]]), frame }); out[number] = frame;
+    bank.frames.set(number, { stamp: JSON.stringify([missing[number], versions[number]]), frame, at }); out[number] = frame;
   }
   return out;
 }

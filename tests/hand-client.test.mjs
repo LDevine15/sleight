@@ -229,6 +229,10 @@ test('the first host is consent-capable and successive worker forks reuse its pi
   assert.notEqual(pipes.write.destroyed, true, 'the session retains its descriptors');
   await assert.rejects(shareConsent(), /HAND_CONSENT_IN_USE/, 'no simultaneous readers or fallback host');
   pipes.detached();
+  assert.equal(h.children[0].lines.at(-1).hand, 'consent-reset', 'worker exit clears consent without another attach');
+  const resets = h.children[0].lines.length;
+  pipes.detached();
+  assert.equal(h.children[0].lines.length, resets, 'detaching twice sends one reset');
   const again = await shareConsent(); again.release();
   assert.equal(h.children.length, 1); assert.equal(h.children[0].ended, false);
   assert.equal(again.write, pipes.write); assert.equal(again.read, pipes.read);
@@ -237,6 +241,45 @@ test('the first host is consent-capable and successive worker forks reuse its pi
   h.client.send(frame()); await settle();
   assert.equal(h.children[0].lines.at(-1).hand, 'act');
   h.client.close();
+});
+
+test('turbo can fall back when the shared host cannot start or has exited', async t => {
+  t.after(() => setHandPid(0));
+  for (const options of [{ built: false }, { result: { status: 'unavailable', code: 'APPLE_TOOLS_MISSING' } },
+    { result: { status: 'unavailable', code: 'HOST_COMPILE_FAILED' } },
+    { result: { status: 'ready', spawn() { throw Error('SPAWN_FAILED'); } } }]) {
+    const h = harness(options);
+    try {
+      assert.equal(await shareConsent(), undefined);
+      assert.equal(await shareConsent(), undefined, 'a dead host still permits fallback');
+    } finally { h.client.close(); }
+  }
+  const h = harness();
+  h.client.send(frame()); await settle();
+  h.children[0].emit('exit', 65, null);
+  try { assert.equal(await shareConsent(), undefined); } finally { h.client.close(); }
+});
+
+test('a successor waits for the exit reset acknowledgement, and a failed reset permits fallback', async t => {
+  t.after(() => setHandPid(0));
+  const h = harness();
+  t.after(() => h.client.close());
+  const first = await shareConsent(), child = h.children[0];
+  let reset;
+  first.write.write = text => { reset = JSON.parse(text); };
+  first.detached();
+  let attached = false;
+  const pending = shareConsent().then(pipes => { attached = true; return pipes; });
+  await settle();
+  assert.equal(attached, false, 'no worker may inherit an uncleared consent channel');
+  child.stdout.emit('data', JSON.stringify({ hand: 'consent-ready', nonce: reset.nonce, token: reset.token }) + '\n');
+  const second = await pending;
+  assert.equal(second.pid, first.pid);
+  second.write.write = () => { throw Error('EPIPE'); };
+  second.detached();
+  assert.equal(await shareConsent(), undefined);
+  assert.equal(first.write.destroyed, true);
+  assert.equal(first.read.destroyed, true);
 });
 
 test('turbo gets a host even with the hand off; a closed client shares nothing', async t => {
@@ -354,6 +397,7 @@ test('prepareHandHost builds through the helper pipeline and its handle starts o
   for (const [options, args, descriptors] of [[undefined, '--hand --capture=hidden --menu', 3], [{ capture: 'visible' }, '--hand --capture=visible --menu', 3],
     [{ consent: true }, '--hand --capture=hidden --consent', 5]]) {
     const child = ready.spawn(options);
+    assert.match(child.spawnfile, /\/consent-host$/, 'consent runs directly at normal priority');
     assert.equal(child.stdio.filter(Boolean).length, descriptors - 1, args);
     child.stdin.end();
     assert.equal(await new Promise(resolve => child.on('exit', resolve)), 0);

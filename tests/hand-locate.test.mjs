@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 // locate.js in a vm, over a fake AX tree: an element is { AXRole, AXTitle, AXPosition, AXSize, AXChildren }.
-function locateContext() {
+function locateContext(now = Date.now) {
   const pair = v => ({ pointValue: { x: v[0], y: v[1] }, sizeValue: { width: v[0], height: v[1] } });
   const $ = name => name;
   Object.assign($, {
@@ -19,7 +19,7 @@ function locateContext() {
     AXValueGetValue: (value, _type, bytes) => { bytes.value = value; return true; },
     NSValue: { valueWithBytesObjCType: bytes => pair(bytes.value) },
   });
-  const context = vm.createContext({ ObjC: { import() {}, castRefToObject: x => x, deepUnwrap: x => x, unwrap: x => x }, $, Ref: () => [] });
+  const context = vm.createContext({ Date: { now }, ObjC: { import() {}, castRefToObject: x => x, deepUnwrap: x => x, unwrap: x => x }, $, Ref: () => [] });
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/hand/locate.js', import.meta.url), 'utf8'), context);
   return context;
 }
@@ -111,6 +111,20 @@ test('the launcher locates on the persistent utility lane', async () => {
   await helper.close();
   const launch = readFileSync(new URL('../plugins/sleight/lib/launch.mjs', import.meta.url), 'utf8');
   assert.match(launch, /locate: request => appHealth.handLocate\(request\)/);
+});
+
+test('scrolls and layout shifts expire cached frames within 500 ms without changing window bounds or tree lines', () => {
+  let clock = 0;
+  const c = locateContext(() => clock), el = button('Save', 100);
+  const win = { AXRole: 'AXWindow', AXChildren: [el] }, bounds = { X: 0, Y: 0, Width: 500, Height: 500 };
+  const get = () => JSON.parse(JSON.stringify(c.cachedElements(10, 20, bounds, win, { 1: { role: 'AXButton', title: 'Save' } })));
+  assert.equal(get()[1].X, 100);
+  el.AXPosition = [250, 80];
+  clock = 500;
+  assert.deepEqual(get()[1], { X: 250, Y: 80, Width: 20, Height: 20 });
+  win.AXChildren = [];
+  clock = 1000;
+  assert.deepEqual(get(), {}, 'a removed element cannot retain a cached frame');
 });
 
 

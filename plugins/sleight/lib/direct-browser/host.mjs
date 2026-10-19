@@ -314,7 +314,7 @@ export async function prepareHandHost({ cacheRoot = defaultHelperCache(), source
   // pass those consent pipes to each turbo worker. --menu remains available to standalone hand clients.
   return Object.freeze({ status: 'ready', spawn: ({ capture = 'hidden', consent = false } = {}) => {
     if (!['hidden', 'visible'].includes(capture) || typeof consent !== 'boolean') throw Error('HAND_CAPTURE_INVALID');
-    return spawn('/usr/bin/nice', ['-n', '10', executable('consent-host', receipt), '--hand', '--capture=' + capture, consent ? '--consent' : '--menu'],
+    return spawn(executable('consent-host', receipt), ['--hand', '--capture=' + capture, consent ? '--consent' : '--menu'],
       { env: environment(), stdio: ['pipe', 'pipe', 'ignore', ...consent ? ['pipe', 'pipe'] : []] });
   } });
 }

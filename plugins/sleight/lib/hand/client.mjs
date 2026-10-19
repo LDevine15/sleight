@@ -48,7 +48,7 @@ export function handWireFrame(frame) {
 let current;
 const sharing = new WeakMap();
 /** Turbo's bridge, right before it forks its worker: a consent channel to the session's host as { write, read, release }. It
- *  starts the host even with the hand off. No open client returns undefined; a failed shared host refuses attachment. */
+ *  starts the host even with the hand off. No open client or an unavailable host returns undefined for turbo's fallback. */
 export async function shareConsent() {
   const share = current && sharing.get(current);
   return share ? share() : undefined;
@@ -93,8 +93,17 @@ export function createHandClient({ env = process.env, setting = () => handSettin
   let seq = 0, child, host = 'none', starting, hand = false, capture = 'hidden', checked = now(), checking = false, events = '';
   // Hosts with an attached worker are left to finish their consent channel before exiting.
   const attached = new WeakSet();
-  let consentClaimed = false, consentUsed = false;
+  let consentClaimed = false, resetting;
   const resetWaiters = new Map();
+  const resetConsent = started => {
+    const token = randomBytes(16).toString('hex');
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { resetWaiters.delete(token); reject(Error('HAND_CONSENT_RESET_TIMEOUT')); }, 2000);
+      resetWaiters.set(token, () => { clearTimeout(timer); resetWaiters.delete(token); resolve(); });
+      try { started.stdio[3].write(JSON.stringify({ hand: 'consent-reset', nonce, token }) + '\n'); }
+      catch (error) { clearTimeout(timer); resetWaiters.delete(token); reject(error); }
+    });
+  };
   let chain = Promise.resolve();
   const read = () => {
     try {
@@ -312,28 +321,28 @@ export function createHandClient({ env = process.env, setting = () => handSettin
   // Keep the parent's descriptors until session close. A worker ending then cannot end the host.
   // Reattachment requires the old worker's exit and a nonce-bound reset acknowledged by the host.
   sharing.set(client, async () => {
-    if (host === 'dead') throw Error('HAND_HOST_UNAVAILABLE');
     if (consentClaimed) throw Error('HAND_CONSENT_IN_USE');
+    if (host === 'dead') return undefined;
     consentClaimed = true;
     try {
+      await resetting;
       if (!await ensure() || !child?.stdio?.[3] || !child.stdio[4]) throw Error('HAND_HOST_UNAVAILABLE');
-      if (consentUsed) {
-        const token = randomBytes(16).toString('hex');
-        await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => { resetWaiters.delete(token); reject(Error('HAND_CONSENT_RESET_TIMEOUT')); }, 2000);
-          resetWaiters.set(token, () => { clearTimeout(timer); resetWaiters.delete(token); resolve(); });
-          try { child.stdio[3].write(JSON.stringify({ hand: 'consent-reset', nonce, token }) + '\n'); }
-          catch (error) { clearTimeout(timer); resetWaiters.delete(token); reject(error); }
-        });
-      }
-      consentUsed = true;
       const started = child, [writeEnd, readEnd] = [started.stdio[3], started.stdio[4]];
       attached.add(started);
       let detached = false;
       return Object.freeze({ write: writeEnd, read: readEnd, pid: started.pid, send: frame => client.send(frame),
         release() {}, // fork inherited its copies; the parent retains these for the next worker
-        detached() { if (!detached) { detached = true; consentClaimed = false; } } });
-    } catch (error) { consentClaimed = false; throw error; }
+        detached() {
+          if (detached) return;
+          detached = true;
+          // Clear the old worker's card and indicator even if no replacement ever attaches.
+          if (host === 'running' && child === started) resetting = resetConsent(started).catch(error => {
+            for (const end of [writeEnd, readEnd]) try { end.destroy(); } catch {}
+            if (child === started) die('consent-reset', { code: error?.message });
+          });
+          consentClaimed = false;
+        } });
+    } catch { consentClaimed = false; return undefined; }
   });
   current = client;
   return client;

@@ -300,19 +300,22 @@ test('native capture passes an empty NSDictionary and cleans up its temporary im
 
 
 test('hover hides the hand with acknowledgement around its own capture and releases on failure', () => {
-  for (const failure of [undefined, 'capture']) {
+  for (const failure of [undefined, 'activate', 'move', 'capture']) {
     const { p, events } = platform(failure);
     p.hideHand = () => { events.push('hide acknowledged'); return () => events.push('release hand'); };
     const result = controller().performHover({ app: 'TextEdit', at: [10, 20] }, p);
     assert.equal(result.ok, !failure);
-    const at = events.indexOf('hide acknowledged');
-    assert.deepEqual(events.slice(at, at + 3), ['hide acknowledged', 'capture', 'release hand']);
+    assert.ok(events.indexOf('hide acknowledged') < events.indexOf('save'));
+    assert.equal(events.filter(e => e === 'release hand').length, 1);
   }
   const { p, events } = platform();
   p.hideHand = () => { throw Error('hand did not acknowledge capture hide'); };
-  assert.equal(controller().performHover({ app: 'TextEdit', at: [10, 20] }, p).ok, false);
+  const result = controller().performHover({ app: 'TextEdit', at: [10, 20] }, p);
+  assert.equal(result.ok, false); assert.equal(result.takeoverMs, 0);
   assert.equal(events.includes('capture'), false);
-  assert.deepEqual(events.slice(-2), ['restore pointer', 'restore front']);
+  assert.equal(events.includes('save'), false);
+  assert.equal(events.includes('activate'), false);
+  assert.equal(events.includes('move'), false);
 });
 
 
@@ -336,4 +339,13 @@ test('native capture pause waits for this host acknowledgement and always releas
     assert.deepEqual(events.filter(e => e[0] === 'post').map(e => e[2]), ['begin:' + token, 'end:' + token]);
     assert.ok(events.some(e => e[0] === 'remove'));
   }
+});
+
+test('a capture hold release failure is reported after restoring pointer and focus', () => {
+  const { p, events } = platform();
+  p.hideHand = () => () => { throw Error('release failed'); };
+  const result = controller().performHover({ app: 'TextEdit', at: [10, 20] }, p);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /release failed/);
+  assert.deepEqual(events.slice(-2), ['restore pointer', 'restore front']);
 });

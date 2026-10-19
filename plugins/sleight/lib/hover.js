@@ -12,7 +12,7 @@ function ownHost(app) {
 
 function performHover(request, native) {
   const result = { ok: false, takeoverMs: 0 };
-  let saved, started;
+  let saved, started, restoreHand;
   try {
     handPid = Number.isSafeInteger(request.handPid) && request.handPid > 0 ? request.handPid : 0;
     const { app, at, windowTitle, waitMs = 1500 } = request;
@@ -32,6 +32,9 @@ function performHover(request, native) {
       }
     };
     check();
+    // A slow or missing hand acknowledgement must stop before pointer or focus takeover.
+    // Keep future frames held through the dwell and screenshot, and release on every exit.
+    restoreHand = native.hideHand?.();
     // Hover takes the pointer and focus, so it waits, as drag does, for the person at the
     // Mac to pause for 2 s (up to 10 s): keys typed then would go into the target app.
     for (let waited = 0; native.idleSeconds() < 2; waited += 500) {
@@ -48,11 +51,7 @@ function performHover(request, native) {
     native.wait(waitMs);
     check();
     if (native.typedSince(started)) throw new Error(`the user typed while ${app} was in front, so their keys may have gone into it. Read the app again before continuing, and tell the user`);
-    // Wait for the hand host to hide and hold future frames before our regional screenshot.
-    // A fire-and-forget hide alone can race a queued animation.
-    const restoreHand = native.hideHand?.();
-    try { result.image = native.capture(target); }
-    finally { restoreHand?.(); }
+    result.image = native.capture(target);
     result.app = app;
     result.at = at;
     result.waitMs = waitMs;
@@ -67,6 +66,8 @@ function performHover(request, native) {
       }
       result.takeoverMs = native.now() - started;
     }
+    try { restoreHand?.(); }
+    catch (err) { result.ok = false; result.error = [result.error, String(err.message || err)].filter(Boolean).join('; '); }
   }
   return result;
 }

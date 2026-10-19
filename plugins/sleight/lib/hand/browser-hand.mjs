@@ -105,6 +105,7 @@ export function createBrowserHand({ client, loadClient = () => import('./client.
     const skip = reason => trace('hand-skipped', { op, reason });
     let metrics;
     try { metrics = await readMetrics(page); } catch { return skip('no-geometry'); }
+    if (!live()) return;
     const blocked = pageSkip(KINDS[op], metrics);
     if (blocked) return skip(blocked);
     const bounds = { X: metrics.screenX, Y: metrics.screenY, Width: metrics.outerWidth, Height: metrics.outerHeight };
@@ -145,9 +146,19 @@ export function workerHandTrace({ setting = process.env.SLEIGHT_TRACE, parentPid
 }
 
 // Inherited IPC sends frames to the relay's one client. The worker never starts another host.
-export function workerHandClient(channel, pid) {
-  return { enabled: true, pid,
-    send(frame) { if (channel.connected !== false) try { channel.send({ version: 3, hand: frame }); } catch {} },
+export function workerHandClient(channel, pid, { env = process.env, setting = () => handSetting({ env }), now = Date.now } = {}) {
+  let checked = -Infinity, enabled = false;
+  // Recheck at the next use after 250 ms, including before page reads. No idle timer or extra host is needed.
+  const live = () => {
+    const at = now();
+    if (at < checked || at - checked >= 250) {
+      checked = at;
+      try { enabled = env.SLEIGHT_HAND !== '0' && setting()?.enabled === true; } catch { enabled = false; }
+    }
+    return enabled && channel.connected !== false;
+  };
+  return { get enabled() { return live(); }, pid,
+    send(frame) { if (live()) try { channel.send({ version: 3, hand: frame }); } catch {} },
     close() {} };
 }
 
@@ -158,7 +169,7 @@ export function sharedBrowserHand(env = process.env) {
   const helper = createAppHealthHelper();
   const sharedUi = process.argv.includes('--shared-ui') && typeof process.send === 'function';
   const pid = Number(process.argv.find(arg => arg.startsWith('--shared-hand-pid='))?.split('=')[1]);
-  const client = sharedUi ? workerHandClient(process, Number.isSafeInteger(pid) && pid > 0 ? pid : undefined) : undefined;
+  const client = sharedUi ? workerHandClient(process, Number.isSafeInteger(pid) && pid > 0 ? pid : undefined, { env }) : undefined;
   shared = createBrowserHand({ env, client, locate: request => helper.handLocate(request), trace: workerHandTrace({ setting: env.SLEIGHT_TRACE }) }) ?? null;
   if (shared) process.once('exit', () => helper.close());
   return shared ?? undefined;

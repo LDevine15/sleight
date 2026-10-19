@@ -87,8 +87,11 @@ export function createRelayHand({ client, loadClient = () => import('./client.mj
     locating = true;
     let geometry, timer;
     try {
-      const lineMap = typeof lines === 'string' ? Object.fromEntries([...lines.matchAll(/^\t*(\d+) (.+)$/gm)].map(m => [m[1], m[2]])) : lines ?? {};
-      const versions = Object.fromEntries(Object.keys(targets.identities).map(n => [n, createHash('sha256').update(lineMap[n] ?? '').digest('hex')]));
+      // Only hash the requested lines, without allocating another map of the whole engine tree.
+      const versions = Object.fromEntries(Object.keys(targets.identities).map(n => {
+        const line = typeof lines === 'string' ? new RegExp('^\\t*' + n + ' (.+)$', 'm').exec(lines)?.[1] : lines?.[n];
+        return [n, createHash('sha256').update(line ?? '').digest('hex')];
+      }));
       const request = Object.fromEntries(Object.entries({ app: target?.app, appId: target?.appId, title: target?.title,
         windowNumber: target?.windowNumber ?? target?.nativeIdentity?.windowNumber, pid: target?.nativeIdentity?.pid,
         identities: targets.identities, versions, focus: targets.focus }).filter(([, v]) => v !== undefined));
