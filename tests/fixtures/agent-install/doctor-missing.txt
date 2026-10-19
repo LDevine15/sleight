@@ -1,0 +1,10 @@
+turbo (direct browser path)
+known     Google Chrome: installed, qualified
+ok        config: on
+ok        remote debugging: on (DevToolsActivePort present)
+Codex computer-use 1.0.0
+ok        node: /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node
+ok        server script: /Applications/ChatGPT.app/Contents/Resources/cua/server.js
+ok        node_repl: /Applications/ChatGPT.app/Contents/Resources/cua/node_repl
+MISSING   computer-use helper: (not set)
+Run sleight-mcp setup to install the helper and grant its permissions.
