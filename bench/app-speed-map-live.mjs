@@ -149,6 +149,8 @@ export async function liveSpeedRuntime(plan, options, {
         fixture.hostAttempted = true;
         // No AppleScript fallback in cleanup: it would send Apple events to an app that may lack an Automation grant (LAWS).
         fixture.host = await startFixtureHost({ bundle: task.bundle, fixtureKind: fixture.path ? 'doc-file' : 'read', noScripting: true }, fixture, controller.signal);
+        // How long the app took to show an identified fixture window, from the host's readiness receipt.
+        fixture.setupWaitMs = fixture.host.startup?.waitMs ?? null; fixture.setupRelaunches = fixture.host.startup?.relaunches ?? null;
         return fixture;
       } catch (error) {
         let serverClean = true;

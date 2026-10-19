@@ -371,3 +371,11 @@ test('the CLI dry run includes the simulation and never spawns a child or writes
     assert.equal(out.simulation.liveCommand, 'node bench/app-speed-map.mjs --owner-away --apps vscode,word --runs 1');
   } finally { removeTemp(dir); }
 });
+
+test('each measured row records the fixture setup wait, and the summary reports it', async () => {
+  const r = runtime(), prepare = r.prepare;
+  r.prepare = async (...args) => ({ ...(await prepare(...args)), setupWaitMs: 4200 });
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r);
+  assert.ok(report.rows.length && report.rows.every(row => row.setupWaitMs === 4200));
+  assert.deepEqual(report.summary.find(row => row.mode === 'sequential').setupWaitMs, { n: 1, median: 4200, p90: 4200 });
+});

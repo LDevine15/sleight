@@ -23,7 +23,7 @@ async function setup(t, { confirmed = true, focusChanged = false, startupFailure
       calls.push('host'); hosts?.push({ task, fixture });
       if (hostError) throw hostError;
       fixture.onSample({focusChanged,targetOverOwner:false});
-      return {finish:async()=>({confirmed,details,samples:[{focusChanged}]})};
+      return {startup:{waitMs:2500,relaunches:0},finish:async()=>({confirmed,details,samples:[{focusChanged}]})};
     },
     makeClient:async(server, options)=>{
       if (startupFailure) throw Error('private startup detail');
@@ -214,4 +214,12 @@ test('an editor profile that would exceed the socket path limit refuses before w
   const dir = join(root, 'd'.repeat(80));
   assert.throws(() => editorProfileArgs(dir), /FIXTURE_SETUP_FAILED/);
   assert.equal(existsSync(join(dir, 'p')), false);
+});
+
+test('a prepared fixture keeps the host startup wait for the report', async t => {
+  const h = await setup(t);
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['textedit'], runs: 1 }).apps[0]);
+  assert.equal(fixture.setupWaitMs, 2500);
+  assert.equal(fixture.setupRelaunches, 0);
+  await h.runtime.closeFixture(fixture); await h.runtime.close();
 });

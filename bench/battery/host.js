@@ -7,6 +7,7 @@ function run(argv) {
   var hostStage = 'baseline', windowCount = null, windowsWaitUntil = null, cleanupReported = false, startWait = null;
   // One startup budget, set by the runtime, covers launch, a busy accessibility tree and a window whose identity reads late.
   var startupMs = Number(request.startupMs) > 0 ? Number(request.startupMs) : 60000;
+  var armedAt = null, sawLaunch = false;
   function emit(data) { if (data.stage === 'cleanup') cleanupReported = true; $.NSFileHandle.fileHandleWithStandardOutput.writeData($(JSON.stringify(data) + '\n').dataUsingEncoding($.NSUTF8StringEncoding)); }
   function wait() { $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.2)); }
   function active() {
@@ -46,6 +47,12 @@ function run(argv) {
     var list = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(request.bundle), out = [];
     for (var n = 0; n < list.count; n++) if (!list.objectAtIndex(n).terminated) out.push(list.objectAtIndex(n));
     return out;
+  }
+  // Only a process that started after the host armed, that is after the run's own open, can be the run's launch.
+  function launchedAfterArm(app) {
+    var date = app.launchDate;
+    if (!date || typeof date.isNil === 'function' && date.isNil()) return false;
+    return Number(date.timeIntervalSince1970) * 1000 >= armedAt;
   }
   // Apps that embed Electron, CEF or a Chromium framework parse argv themselves and can misread AppKit's switches.
   function ownArgv() {
@@ -107,6 +114,8 @@ function run(argv) {
     var foreign = [], pending = [];
     current.forEach(function(w, index) {
       if (known(w)) return;
+      // Each read can block for the 6 s messaging timeout; past the budget, leave the rest undecided.
+      if (Date.now() - startWait.startedAt >= startupMs) { if (launched) pending.push({ documentStatus: null, titleStatus: null }); return; }
       if (launched && !expected) { retained.push(w); return; }
       var seen = identify(w);
       if (seen.kind === 'match') retained.push(w);
@@ -122,22 +131,29 @@ function run(argv) {
     }
     startWait.pending = pending.length;
     if (pending.length) {
-      startWait.pendingDocumentStatus = pending[0].documentStatus; startWait.pendingTitleStatus = pending[0].titleStatus;
+      // Keep the codes of the last window actually read; a window skipped at the deadline has none.
+      var read = pending.filter(function(row) { return row.documentStatus !== null; })[0];
+      if (read) { startWait.pendingDocumentStatus = read.documentStatus; startWait.pendingTitleStatus = read.titleStatus; }
       return false;
     }
-    if (!expected) return current.length > 0;
+    // An app that was already running may reuse a window (a browser tab); it is ready on its windows, as before.
+    if (!expected || !launched) return current.length > 0;
     return retained.some(function(w) { return current.some(function(now) { return same(w, now); }); });
   }
   function startupStep() {
     startWait.polls++;
     if (!wasRunning) {
-      var live = liveInstances();
-      startWait.instances = live.length;
+      var listed = liveInstances(), live = listed.filter(launchedAfterArm);
+      startWait.instances = live.length; startWait.olderInstances = listed.length - live.length;
       if (live.length > 1) { startWait.ambiguousPolls++; return false; }
       if (!live.length) { if (pid) startWait.exited = true; return false; }
       var current = Number(live[0].processIdentifier);
-      // A launched process can hand over to a new instance of itself; the old pid answers -25204 for good.
-      if (pid && current !== pid) { startWait.relaunches++; retained = []; }
+      // A launched process can hand over to a new instance of itself; the old pid answers -25204 for good. Only a
+      // fixture target lets the new instance prove its windows, so without one a handover counts as an exit.
+      if (pid && current !== pid && !expected) { startWait.exited = true; startWait.instances = 0; return false; }
+      if (pid && current !== pid) {
+        startWait.relaunches++; retained = []; startWait.finishedLaunching = false; startWait.lastWindowsStatus = null;
+      }
       target = live[0]; pid = current; launched = true; startWait.exited = false;
     } else if (target.terminated) { startWait.exited = true; startWait.instances = 0; return false; }
     if (!target.isFinishedLaunching) { startWait.launchingPolls++; return false; }
@@ -239,7 +255,7 @@ function run(argv) {
       row.document = doc.value ? String(ObjC.unwrap(ObjC.castRefToObject(doc.value))) : null;
       row.documentStatus = doc.code;
       row.documentReads.push({ document: row.document, status: doc.code });
-      row.matched = !!expected && doc.code === 0 && row.document === expected || !!markerMatches(w, doc);
+      row.matched = doc.code === 0 && ownDocument(row.document) || !!markerMatches(w, doc);
       var sheets = readAttribute(w, 'AXSheets');
       var sheetsReadable = [0, -25205, -25212].indexOf(sheets.code) >= 0;
       row.sheetStatus = sheets.code;
@@ -270,14 +286,16 @@ function run(argv) {
       var current = windows(); recordNew(current, entries); return current;
     }
     try {
-      if (recover && launched && !wasRunning) {
-        var live = liveInstances();
-        // The app this run launched has exited: none of its windows or processes is left to close.
-        if (!live.length) {
-          details.app = { pid: pid, exited: true, terminated: true };
-          emit({ stage: 'cleanup', confirmed: true, details: details }); return;
+      if (recover && launched && !wasRunning && !liveInstances().some(function(app) { return Number(app.processIdentifier) === pid; })) {
+        // Recovery never switches instance. Allow a second for a handover to show before calling the launch exited.
+        for (var tick = 0; tick < 5 && !liveInstances().length; tick++) { active(); sample(); wait(); }
+        if (liveInstances().length) {
+          reason(details, 'APP_REPLACED'); details.app = { pid: pid, exited: true, terminated: false };
+          emit({ stage: 'cleanup', confirmed: false, details: details }); return;
         }
-        if (live.length === 1) { target = live[0]; pid = Number(target.processIdentifier); }
+        // The app this run launched has exited: none of its windows or processes is left to close.
+        details.app = { pid: pid, exited: true, terminated: true };
+        emit({ stage: 'cleanup', confirmed: true, details: details }); return;
       }
       // A setup timeout has a separate bounded chance to establish fixture ownership for cleanup.
       if (recover) windowsWaitUntil = Date.now() + 10000;
@@ -375,12 +393,17 @@ function run(argv) {
     wasRunning = initial.length > 0; target = wasRunning ? initial[0] : null;
     pid = target ? Number(target.processIdentifier) : null;
     before = windows();
-    sample(); emit({ stage: 'armed', wasRunning: wasRunning, windowCount: windowCount, ownArgv: ownArgv() });
+    sample(); armedAt = Date.now(); emit({ stage: 'armed', wasRunning: wasRunning, windowCount: windowCount, ownArgv: ownArgv() });
     var end = Date.now() + 600000;
     while (Date.now() < end) {
       var raw = $.NSString.stringWithContentsOfFileEncodingError(request.control, $.NSUTF8StringEncoding, null);
       var command = raw ? JSON.parse(ObjC.unwrap(raw)).command : '';
       if (command === 'abort') { emit({ stage: 'cleanup', confirmed: false, details: { reasons: ['HOST_ABORTED'], windows: [] } }); return ''; }
+      if (command === 'launched') sawLaunch = true;
+      // finish without a launch command means the runtime's open never completed: nothing here is proven to be ours.
+      if (command === 'finish' && !sawLaunch) {
+        emit({ stage: 'cleanup', confirmed: false, details: { reasons: ['LAUNCH_UNCONFIRMED'], windows: [] } }); return '';
+      }
       if ((command === 'launched' || command === 'finish') && !ready) {
         hostStage = 'retain';
         if (!startWait) startWait = { budgetMs: startupMs, startedAt: Date.now(), polls: 0, instances: null, relaunches: 0, exited: false,

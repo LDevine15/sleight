@@ -126,7 +126,7 @@ export async function runSpeedMap(plan, runtime) {
       const row = { app: task.id, class: task.class, ownerAccount: plan.ownerPresent || task.ownerPresent,
         scope, mode, trial, sessionIndex, status: 'failed',
         acquireMs: null, firstReadMs: null, warmReadMs: null, actionMs: null, afterReadMs: null,
-        chars: null, nodes: null, cleanupConfirmed: true };
+        chars: null, nodes: null, cleanupConfirmed: true, setupWaitMs: fixture.setupWaitMs ?? null };
       async function timed(key, code) {
         boundary(); const start = runtime.now();
         const reply = await session.js(code);
@@ -211,7 +211,7 @@ export function summarizeSpeedMap({ rows, cohorts = [] }) {
       scope: [...new Set(group.rows.map(row => row.scope ?? 'unknown'))].join(', '),
       failures: [...new Set(group.rows.filter(row => row.failure).map(row => row.setup?.message ? `${row.failure}:${row.setup.message}` : row.failure))],
       cohortWallMs: stats(qualifiedCohorts.map(cohort => cohort.wallMs)), attempted: group.rows.length, completed: completed.length,
-      ...Object.fromEntries(['acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes']
+      ...Object.fromEntries(['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes']
         .map(key => [key, stats(completed.map(row => row[key]))])) };
   });
 }
@@ -220,13 +220,14 @@ export function speedMarkdown(report) {
   const rounded = value => Number(value.toFixed(2));
   const cell = value => value.n ? `${rounded(value.median)} / ${rounded(value.p90)} (n=${value.n})` : 'not measured';
   const rows = [...(report.summary ?? summarizeSpeedMap(report))].sort((a, b) => a.class.localeCompare(b.class) || a.app.localeCompare(b.app));
-  const table = selected => '| Class | App | Mode | Scope | Failure | Complete | Acquire | First read | Warm read | Action | Readback | Characters | Nodes | Cohort lifecycle |\n' +
-    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' + selected.map(row =>
+  const table = selected => '| Class | App | Mode | Scope | Failure | Complete | Setup wait | Acquire | First read | Warm read | Action | Readback | Characters | Nodes | Cohort lifecycle |\n' +
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' + selected.map(row =>
       `| ${row.class} | ${row.app} | ${row.mode} | ${row.scope ?? 'unknown'} | ${(row.failures ?? []).join(', ') || 'none'} | ${row.completed}/${row.attempted} | ` +
-      ['acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes', 'cohortWallMs'].map(key => cell(row[key])).join(' | ') + ' |').join('\n') + '\n';
+      ['setupWaitMs', 'acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes', 'cohortWallMs'].map(key => cell(row[key] ?? { n: 0 })).join(' | ') + ' |').join('\n') + '\n';
   const account = rows.filter(row => row.ownerAccount), background = rows.filter(row => !row.ownerAccount);
   return '# App-class speed map\n\nTimes in ms, median / p90 (nearest rank). Counts describe the first explicit full read. ' +
-    'Only complete trials contribute to these summaries. Cohort lifecycle includes session startup, reads and cleanup.\n\n' +
+    'Only complete trials contribute to these summaries. Setup wait runs from the return of the open command to an identified fixture window. ' +
+    'Cohort lifecycle includes session startup, reads and cleanup.\n\n' +
     (background.length ? table(background) : '') +
     (account.length ? '\n## Owner-present reads\n\nTiming and tree counts only. Local-container membership is unproved.\n\n' + table(account) : '');
 }

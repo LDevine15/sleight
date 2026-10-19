@@ -105,11 +105,12 @@ a file.
 
 Setup has a 60 s budget for each fixture, and within it the host doesn't read the window list until the launched process
 finishes launching. It waits while the accessibility tree answers -25204 (cannot complete) or a new window's document or
-title can't be read yet, and it follows a process that hands over to a new instance. A readable different document still
-stops setup at once. The report row records a setup failure as a code with counts, such as
-`FIXTURE_SETUP_FAILED:APP_EXITED`. Editors run on a throwaway profile inside the fixture folder, like the claim suite's
-editor tasks. Apps that embed Electron, CEF or a Chromium framework don't get AppKit's `-ApplePersistenceIgnoreState`
-switch, because VS Code 1.141 reads its letters as short flags and `-s` (`--status`) quits a first instance.
+title can't be read yet, and it follows a process that hands over to a new instance of itself started after the run's
+own open. A readable different document still stops setup at once. The report row records a setup failure as a code with
+counts, such as `FIXTURE_SETUP_FAILED:APP_EXITED`. Editors run on a throwaway profile inside the fixture folder, like
+the claim suite's editor tasks. Apps that embed Electron, CEF or a Chromium framework don't get AppKit's
+`-ApplePersistenceIgnoreState` switch, because VS Code 1.141 reads its letters as short flags and `-s` (`--status`)
+quits a first instance.
 
 ## Browser head-to-head
 

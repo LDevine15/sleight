@@ -244,17 +244,20 @@ function cleanupHost(options = {}) {
   const window = {}, secondWindow = {}, foreignWindow = {}, close = {}, appElement = {}, nextElement = {};
   const list = values => ({ count: values.length, objectAtIndex: n => values[n] });
   const app = { processIdentifier: 42, bundleIdentifier: 'org.example.fixture', terminated: false,
+    launchDate: { timeIntervalSince1970: (options.wasRunning ? -60 : 0) },
     get isFinishedLaunching() { return options.finishLaunchingAt === undefined || now >= options.finishLaunchingAt; },
     get terminate() { terminations++; if (!options.stuckApp) this.terminated = true; return !options.stuckApp; } };
   // A second instance of the same bundle: the launched process relaunched itself (relaunchAt).
-  const next = { processIdentifier: 43, bundleIdentifier: 'org.example.fixture', terminated: false, isFinishedLaunching: true,
+  const next = { processIdentifier: 43, bundleIdentifier: 'org.example.fixture', terminated: false,
+    get launchDate() { return { timeIntervalSince1970: (options.nextLaunchedAt ?? options.relaunchAt ?? options.nextAt ?? 0) / 1000 }; },
+    get isFinishedLaunching() { return !options.nextNeverFinishes; },
     get terminate() { nextTerminations++; this.terminated = true; return true; } };
   const ended = () => options.exitAt !== undefined && now >= options.exitAt || options.relaunchAt !== undefined && now >= options.relaunchAt;
   function instances() {
     if (!(opened || options.wasRunning)) return [];
     if (ended()) app.terminated = true;
     const live = [...(!app.terminated || options.listsTerminated ? [app] : []),
-      ...(options.relaunchAt !== undefined && now >= options.relaunchAt && !next.terminated ? [next] : [])];
+      ...((options.relaunchAt !== undefined && now >= options.relaunchAt || options.nextAt !== undefined && now >= options.nextAt) && !next.terminated ? [next] : [])];
     return options.secondInstance ? [...live, next] : live;
   }
   const dollar = value => typeof value === 'string' ? { value, toString: () => value, dataUsingEncoding: () => value } : value;
@@ -272,7 +275,7 @@ function cleanupHost(options = {}) {
     NSString: { stringWithContentsOfFileEncodingError: () => JSON.stringify({ command }) },
     NSFileHandle: { fileHandleWithStandardOutput: { writeData(data) {
       const event = JSON.parse(data); events.push(event);
-      if (event.stage === 'armed') { opened = true; command = 'launched'; }
+      if (event.stage === 'armed') { opened = true; command = options.finishFirst ? 'finish' : 'launched'; }
       if (event.stage === 'ready' || event.stage === 'error') command = 'finish';
     } } },
     NSURL: { fileURLWithPath: value => ({ absoluteString: pathToFileURL(String(value)).href }) },
@@ -332,7 +335,7 @@ function cleanupHost(options = {}) {
   });
   const ObjC = { import() {}, unwrap: value => value?.value ?? value, deepUnwrap: value => value,
     castRefToObject: value => value?.rawApplication ?? (options.strictRefs && value === close ? { cast: close } : value) };
-  const request = { bundle: 'org.example.fixture', targetURL: expected, control: 'ignored', fixturePath: path,
+  const request = { bundle: 'org.example.fixture', targetURL: options.noTarget ? undefined : expected, control: 'ignored', fixturePath: path,
     fixtureRoot: '/private/tmp/sleight-battery-unit/pair', ...(options.windowMarker && { windowMarker: options.windowMarker }) };
   const source = readFileSync(new URL('../bench/battery/host.js', import.meta.url), 'utf8');
   runInNewContext(`${source}\nrun([request]);`, { $: dollar, ObjC, Ref: () => [], Date: { now: () => now }, request: JSON.stringify(request) });
@@ -1018,4 +1021,115 @@ test('a document fixture may name its window by the file stem, and scripting can
     assert.equal(recorder.request.fixturePath, scripted ? path : undefined);
     recorder.done(); await host.finish();
   }
+});
+
+test('the started host reports how long readiness took and whether the process relaunched', async t => {
+  const { startHost } = await load('runtime'), dir = bank(t);
+  const response = Promise.withResolvers();
+  const runProcess = (executable, args, options) => {
+    if (executable === '/usr/bin/open') return Promise.resolve({ exit: { code: 0 }, groupClean: true });
+    options.onStdout('{"stage":"armed","wasRunning":false,"ownArgv":false}\n{"stage":"ready","pid":43,"waitMs":12400,"relaunches":1,"windowCount":1}\n');
+    return response.promise;
+  };
+  const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture' }, new AbortController().signal, runProcess);
+  assert.deepEqual(host.startup, { waitMs: 12400, relaunches: 1 });
+  response.resolve({ exit: { code: 0 }, groupClean: true }); await host.finish();
+});
+
+test('a relaunched instance that never finishes launching is reported as such, not by the old pid\'s read status', () => {
+  const result = cleanupHost({ startupStatus: -25204, relaunchAt: 3000, nextNeverFinishes: true, axCloses: true });
+  const error = result.events.find(e => e.stage === 'error').error;
+  assert.equal(error.message, 'APP_NOT_FINISHED_LAUNCHING');
+  assert.equal(error.startWait.relaunches, 1);
+  // Recovery still closes the proven fixture window and quits the instance this run launched, never the exited one.
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.nextTerminations, 1);
+  assert.equal(result.terminations, 0);
+  assert.equal(result.confirmed, true);
+});
+
+// Review findings on the late-tree host (2026-10-19).
+test('an instance launched before the host armed is never followed or quit', () => {
+  const result = cleanupHost({ relaunchAt: 2000, nextLaunchedAt: -5000, finishLaunchingAt: 4000, axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'ready'), false);
+  assert.equal(result.events.find(e => e.stage === 'error').error.message, 'APP_EXITED');
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.nextTerminations, 0);
+  assert.equal(result.confirmed, false);
+});
+
+test('without a fixture target a launched process that hands over is not followed', () => {
+  const result = cleanupHost({ noTarget: true, relaunchAt: 2000, finishLaunchingAt: 4000, axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'ready'), false);
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.nextTerminations, 0);
+  assert.equal(result.confirmed, false);
+});
+
+test('recovery never switches to another instance, and an instance appearing after an exit stays untouched', () => {
+  const result = cleanupHost({ exitAt: 600, finishLaunchingAt: 2000, nextAt: 60300, axCloses: true });
+  assert.equal(result.events.find(e => e.stage === 'error').error.message, 'APP_EXITED');
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.nextTerminations, 0);
+  assert.equal(result.confirmed, false);
+});
+
+test('finish before any launch command confirms nothing and touches nothing', () => {
+  const result = cleanupHost({ finishFirst: true, axCloses: true });
+  assert.equal(result.confirmed, false);
+  assert.ok(result.details.reasons.includes('LAUNCH_UNCONFIRMED'));
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.terminations, 0);
+});
+
+for (const [name, document] of [['a localhost URL', 'file://localhost/private/tmp/sleight-battery-unit/pair/fixture.txt'],
+  ['a trailing slash', 'file:///private/tmp/sleight-battery-unit/pair/fixture.txt/']]) {
+  test(`a window admitted through ${name} also closes in cleanup`, () => {
+    const result = cleanupHost({ document, axCloses: true });
+    assert.equal(result.events.some(e => e.stage === 'ready'), true);
+    assert.equal(result.confirmed, true, JSON.stringify(result.details));
+    assert.equal(result.presses.length, 1);
+  });
+}
+
+test('a sibling path sharing the fixture prefix is a different document', () => {
+  const result = cleanupHost({ document: 'file:///private/tmp/sleight-battery-unit/pair/fixture.txt2', axCloses: true });
+  assert.equal(result.events.find(e => e.stage === 'error').error.message, 'FOREIGN_WINDOW_ON_START');
+  assert.equal(result.presses.length, 0);
+});
+
+test('an app that was already running is ready on its existing windows, as before', () => {
+  const result = cleanupHost({ wasRunning: true, baselineWindow: true, document: 'file:///private/tmp/owner.txt', axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'ready'), true);
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.terminations, 0);
+});
+
+test('a host that gets finish before readiness after an open failure is aborted, not asked to clean', async t => {
+  const { startHost } = await load('runtime'), dir = bank(t);
+  const response = Promise.withResolvers(); let commands = [];
+  const runProcess = (executable, args, options) => {
+    if (executable === '/usr/bin/open') return Promise.resolve({ exit: { code: 1 }, groupClean: true, stderr: 'open failed' });
+    options.onStdout('{"stage":"armed","wasRunning":false,"ownArgv":false}\n');
+    options.signal.addEventListener('abort', () => response.resolve({ exit: { code: 0 }, groupClean: true }));
+    return response.promise;
+  };
+  await assert.rejects(startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture' }, new AbortController().signal, runProcess), error => {
+    commands.push(JSON.parse(readFileSync(join(dir, 'host-control.json'), 'utf8')).command);
+    assert.equal(error.hostCleanup.confirmed, false);
+    return true;
+  });
+  assert.deepEqual(commands, ['abort']);
+});
+
+test('a generic file stem is not accepted as a window marker', async t => {
+  const { startHost } = await load('runtime');
+  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'fixture.txt'); writeFileSync(path, 'x');
+  const recorder = launchRecorder({ ownArgv: false });
+  const host = await startHost({ bundle: 'org.example.fixture', fixtureKind: 'doc-file' }, { dir, path, target: path, windowMarker: 'fixture' },
+    new AbortController().signal, recorder.runProcess);
+  assert.equal(recorder.request.windowMarker, undefined);
+  recorder.done(); await host.finish();
 });
