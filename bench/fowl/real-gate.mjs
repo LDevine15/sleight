@@ -21,6 +21,7 @@ import { windowCover } from './window-cover.mjs';
 import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure } from './real-gate-grade.mjs';
 import { taskSupport, raceBundles, isCodexSurface, isCodexSleightSurface, runsCodexExec, sleightKind, codexModelFor } from './support.mjs';
 import { CODEX_SLEIGHT_HOME, ensureCodexSleightHome, writeCodexSleightConfig, approvalSummary, PROXY, SLEIGHT_MCP } from '../codex-sleight.mjs';
+import { engineSpan, readEngine } from '../engine-version.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const codexHome = () => join(homedir(), '.codex-bench');
@@ -222,6 +223,15 @@ export function coverCell(cover) {
   return [...share].map(([owner, fraction]) => `${owner} ${Math.round(fraction * 100)}%`).join(', ');
 }
 
+// The report's engine line: one version, or both reads when the engine changed during the round, and the round's UTC times.
+export function engineLine(span) {
+  if (!span) return 'Engine: not recorded.';
+  const app = read => (read?.chatgptApp ? ` (ChatGPT ${read.chatgptApp}${read.chatgptBuild ? `, build ${read.chatgptBuild}` : ''})` : '');
+  const when = ` Round from ${span.startedAt ?? 'unknown'} to ${span.endedAt ?? 'unknown'} UTC.`;
+  if (span.changed) return `Engine: ${span.start.version ?? 'unknown'}${app(span.start)} at the start and ${span.end.version ?? 'unknown'}${app(span.end)} at the end (changed during the round).${when}`;
+  return `Engine: ${span.start.version ?? `unknown (${span.start.error ?? 'no read'})`}${app(span.start)}.${when}`;
+}
+
 export function markHarnessFailure(out, rows, total) {
   const verdict = harnessFailure(rows.map(row => ({ task: row.task.name, ok: row.outcome?.ok === true, errorClass: row.errorClass })), total);
   if (verdict) writeFileSync(join(out, 'harness-failure.json'), JSON.stringify({ ...verdict, decided: 'automatic', at: new Date().toISOString() }, null, 2));
@@ -275,7 +285,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     if (plan.browser.profileMode === 'benchmark-copy') {
       try { profileFolder = benchmarkProfile(join(plan.browser.profileSource.userDataDir, 'Local State')); } catch (error) { profileFolder = { error: error.message }; }
     }
-    const printable = { ...plan, armPrep: roundArmPrep(plan, { armHome: runtime.armHome }), allowWatcher: allowPlan(plan), browser: { ...plan.browser, version: (runtime.readVersion || browserVersion)(plan.browser.executable) ?? plan.browser.version ?? null,
+    const printable = { ...plan, engine: (runtime.readEngine || readEngine)(), armPrep: roundArmPrep(plan, { armHome: runtime.armHome }), allowWatcher: allowPlan(plan), browser: { ...plan.browser, version: (runtime.readVersion || browserVersion)(plan.browser.executable) ?? plan.browser.version ?? null,
       ...(profileFolder ? { profileFolder } : {}), preflight: (runtime.preflight || gatePreflight)(plan) },
       arms: plan.arms.map(({ env, ...arm }) => ({ ...arm,
       environment: { ...(env.CLAUDE_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR } : {}),
@@ -292,11 +302,14 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
   mkdirSync(lockPath);
   const controller = new AbortController(), abort = () => controller.abort();
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, abort);
-  let browser, sites, monitor, armPrep, allow, cleanupProven = true;
+  let browser, sites, monitor, armPrep, allow, cleanupProven = true, engineStart, engine;
   const rows = [];
   try {
     mkdirSync(plan.out, { recursive: true, mode: 0o700 });
     writeFileSync(join(plan.out, 'commits.json'), JSON.stringify((runtime.commits || roundCommits)({ repo, mcpRoot }), null, 2));
+    // The ChatGPT engine version, read again at the end: every published result names it (LAWS, owner 2026-10-19).
+    engineStart = (runtime.readEngine || readEngine)();
+    writeFileSync(join(plan.out, 'engine.json'), JSON.stringify(engineSpan(engineStart), null, 2));
     // Resolve pinned native receipts before the first browser launch.
     realGatePlan({ args, tasks, repo, mcpRoot, realBrowser: plan.browser, dryRun: false });
     // An offline test that injects admission never touches the Mac's approvals or daemons unless it injects prep too.
@@ -414,6 +427,10 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       }
     }
     catch { cleanupProven = false; }
+    if (engineStart) try {
+      engine = engineSpan(engineStart, (runtime.readEngine || readEngine)());
+      writeFileSync(join(plan.out, 'engine.json'), JSON.stringify(engine, null, 2));
+    } catch (error) { console.error(`Engine version at the end not recorded (${error.message})`); }
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.removeListener(signal, abort);
     if (cleanupProven) rmdirSync(lockPath);
     else console.error(`Cleanup unproved; retained ${lockPath} and ${plan.browser.profileRoot}`);
@@ -426,7 +443,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
   const profileText = used.profileMode === 'benchmark-copy' ? `a copy of Chrome's "sleight benchmark" (${used.profileFolder ?? 'folder unknown'})`
     : `fresh at ${used.profileRoot}`;
   const lines = [`Browser: ${used.browser} ${used.version ?? '(version unknown)'}, profile ${profileText}` +
-    `${used.loadedExtensions?.length ? `, loaded ${used.loadedExtensions.join(', ')}` : ''}.`, '',
+    `${used.loadedExtensions?.length ? `, loaded ${used.loadedExtensions.join(', ')}` : ''}.`, engineLine(engine), '',
     '| task | arm | outcome | focus | covered by | ms | calls | errors |', '|---|---|---|---|---|---:|---:|---:|',
     ...rows.map(row => `| ${row.task.name} | ${row.surface} | ${row.outcome.cell} | ${row.focusGrade.cell} | ${coverCell(row.cover)} | ${row.wallMs} | ${row.toolCalls ?? 'unknown'} | ${row.toolErrors ?? 'unknown'} |`),
     ...(harness ? ['', `Harness failure, excluded from scoring: ${harness.reason}.`] : [])];
