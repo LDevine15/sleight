@@ -1,0 +1,60 @@
+{
+  "mcpServers": {
+    "plugin_sleight_computer": {
+      "command": "./bin/sleight-mcp",
+      "cwd": ".",
+      "startup_timeout_sec": 120,
+      "tool_timeout_sec": 600,
+      "env": {
+        "SLEIGHT_TURBO": "0"
+      },
+      "env_vars": [
+        "CODEX_HOME",
+        "SLEIGHT_ACTION_LOG",
+        "SLEIGHT_APPROVAL_PROMPT",
+        "SLEIGHT_APPROVAL_SCOPE",
+        "SLEIGHT_BROWSER_CORE",
+        "SLEIGHT_CALL_TREES",
+        "SLEIGHT_CHANGE_REVIEW",
+        "SLEIGHT_CHATGPT_APP",
+        "SLEIGHT_CLIPBOARD",
+        "SLEIGHT_COMPACT_REACQUIRE",
+        "SLEIGHT_CONFIRM_PAYMENTS",
+        "SLEIGHT_DRAG",
+        "SLEIGHT_FIRST_CALL_BATCH",
+        "SLEIGHT_FLOW_RULES",
+        "SLEIGHT_FRONT_RESTORE",
+        "SLEIGHT_GUARD",
+        "SLEIGHT_GUARD_LIGHT_RETURN",
+        "SLEIGHT_HAND",
+        "SLEIGHT_HAND_CAPTURE",
+        "SLEIGHT_HOVER",
+        "SLEIGHT_IDLE_TURN_END_MS",
+        "SLEIGHT_LAUNCH_REREAD",
+        "SLEIGHT_MENU_BAR",
+        "SLEIGHT_OPEN_AUTO_SHOT",
+        "SLEIGHT_OPEN_FILE",
+        "SLEIGHT_OPEN_RULES",
+        "SLEIGHT_OPEN_SHOT",
+        "SLEIGHT_OUTCOMES",
+        "SLEIGHT_PARENT_LEASE",
+        "SLEIGHT_POPOVER_CONTINUATION",
+        "SLEIGHT_RECEIPTS",
+        "SLEIGHT_RECEIPT_REDACT_TITLES",
+        "SLEIGHT_RESULT_TRIM",
+        "SLEIGHT_RULES_FIRST",
+        "SLEIGHT_SCROLL_NOTE",
+        "SLEIGHT_SELECT_WINDOW",
+        "SLEIGHT_SIM_FOCUS_NOTE",
+        "SLEIGHT_STATE_REVIEW",
+        "SLEIGHT_STUCK_ESCAPE",
+        "SLEIGHT_SURFACES",
+        "SLEIGHT_TAB_CONTINUATION",
+        "SLEIGHT_TEXTLESS_HINT",
+        "SLEIGHT_TRACE",
+        "SLEIGHT_TRACE_CODE",
+        "SLEIGHT_TRACE_CUT"
+      ]
+    }
+  }
+}

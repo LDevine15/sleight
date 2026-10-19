@@ -1,0 +1,11 @@
+{
+  "_source": "Key sets read from the Codex plugins installed on this Mac (Codex CLI 0.160.0, 2026-10-19): ~/.codex/plugins/cache/openai-bundled/{computer-use,unified-computer-use,browser,code-review,visualize}/*/.codex-plugin/plugin.json, ~/.codex/plugins/cache/openai-curated/superpowers/*/.codex-plugin/plugin.json, the curated plugins repo in ~/.codex/.tmp/plugins, and the hook events and handler types named in the codex binary. Only the names, no content.",
+  "manifestKeys": ["name", "version", "description", "author", "homepage", "repository", "license", "keywords", "skills", "mcpServers", "hooks", "apps", "interface", "bundledContentVariant"],
+  "interfaceKeys": ["displayName", "shortDescription", "longDescription", "developerName", "category", "capabilities", "websiteURL", "privacyPolicyURL", "termsOfServiceURL", "defaultPrompt", "brandColor", "composerIcon", "logo", "logoDark", "screenshots"],
+  "capabilities": ["Interactive", "Read", "Write"],
+  "hookEvents": ["PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact", "PostCompact", "SessionStart", "SessionEnd", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop", "Interrupt"],
+  "mcpToolHandlerKeys": ["type", "server", "tool", "input", "timeout", "statusMessage"],
+  "mcpServerKeys": ["command", "args", "cwd", "env", "env_vars", "enabled", "enabled_tools", "disabled_tools", "startup_timeout_sec", "tool_timeout_sec", "tools", "omit_tools_from"],
+  "marketplaceEntryKeys": ["name", "source", "policy", "category"],
+  "marketplacePolicy": { "installation": ["AVAILABLE"], "authentication": ["ON_INSTALL", "ON_USE"] }
+}

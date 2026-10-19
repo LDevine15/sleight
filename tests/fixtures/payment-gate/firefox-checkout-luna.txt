@@ -1,0 +1,109 @@
+Window: "Checkout · Northbound Supply", App: Firefox.
+0 standard window Checkout · Northbound Supply, Secondary Actions: Raise
+	1 container Checkout · Northbound Supply
+		2 toolbar Browser tabs
+			3 tab group
+				4 tab (selectable) Value: Sleight Gate c0306b0b-bb36-4640-b145-b49685262ebf, Sleight Gate c0306b0b-bb36-4640-b145-b49685262ebf
+Close tab
+				5 tab (selected) Value: Checkout · Northbound Supply, Checkout · Northbound Supply
+Close tab
+				6 button Open a new tab (⌘T)
+			7 separator
+			8 button List all tabs
+		9 toolbar Navigation
+			10 button Description: Sidebars, Help: Show sidebar (⌃Z)
+			11 button Back
+			12 button (disabled) Forward
+			13 button Reload
+			14 separator
+			15 container
+				16 button View site information
+				17 combo box (settable) Description: Search with Google or enter address, Value: http://127.0.0.1:5413/checkout
+					18 text http://127.0.0.1:5413/checkout
+				19 button Bookmark this page (⌘D)
+			20 separator
+			21 button Account
+			22 button Extensions
+			23 button Description: Firefox, Help: Open application menu
+		24 toolbar
+		25 scroll area
+			26 HTML Content Description: Checkout · Northbound Supply, URL: 127.0.0.1:5413/checkout
+				27 container
+					28 text Northbound Supply
+					29 text Shop
+					30 text Journal
+					31 text Cart (2)
+				32 container
+					33 heading Checkout, Value: 1
+						34 text Checkout
+					35 text Canvas weekender bag and a waxed field jacket.
+					36 container
+						37 heading Contact, Value: 2
+							38 text Contact
+						39 text Reference code
+						40 text field (settable) Reference code, Value: p04
+						41 text Full name
+						42 text field (settable) Full name, Value: Jonah Whitfield
+						43 text Email
+						44 text field (settable) Email, Value: jonah.whitfield@example.io
+						45 text Phone
+						46 text field (settable) Phone, Value: (828) 555-0193, Placeholder: (555) 555-5555
+						47 text US numbers only. We format it for you.
+					48 container
+						49 heading Shipping, Value: 2
+							50 text Shipping
+						51 text Address
+						52 combo box (settable) Address, Value: 47 Juniper Court, Asheville, NC 28801, Placeholder: Start typing your street address
+							53 text 47 Juniper Court, Asheville, NC 28801
+						54 text Address confirmed. Delivery
+						55 Delivery
+							56 container
+								57 radio button Standard 5–7 business days · Free, Value: 0
+								58 text Standard 5–7 business days · Free
+							59 container
+								60 radio button Express 2–3 business days · $12, Value: 0
+								61 text Express 2–3 business days · $12
+							62 container
+								63 radio button Overnight Next business day · $29, Value: 1
+								64 text Overnight Next business day · $29
+					65 container
+						66 heading Payment, Value: 2
+							67 text Payment
+						68 scroll area Secure card payment
+							69 HTML Content Description: Secure card payment, URL: 127.0.0.1:5414/payment.html?parent=http%3A%2F%2F127.0.0.1%3A5413
+								70 container
+									71 text Card number
+									72 text field (settable) Card number, Placeholder: 1234 1234 1234 1234
+								73 container
+									74 text Expiry (MM/YY)
+									75 text field (settable) Expiry (MM/YY), Placeholder: MM/YY
+								76 container
+									77 text CVC
+									78 text field (settable) CVC, Placeholder: 123
+								79 text Card details are handled by Paylock on a separate secure origin.
+						80 text Promo code
+						81 text field (settable) Promo code, Value: WINTER15
+						82 button Apply
+						83 text WINTER15 applied: 15% off.
+					84 container
+						85 text Total $268.00
+						86 button Pay now
+				87 container Cookie notice
+					88 text We use cookies to remember your cart and to measure how the shop is used. You can accept all cookies or keep only the essential ones.
+					89 button Only essential
+					90 button Accept all
+	91 close button
+	92 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	93 minimize button
+94 menu bar
+	95 Firefox
+	96 File
+	97 Edit
+	98 View
+	99 History
+	100 Bookmarks
+	101 Tools
+	102 Window
+	103 Help
+
+The focused UI element is 63 radio button Overnight Next business day · $29, Value: 1

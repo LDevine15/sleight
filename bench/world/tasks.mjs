@@ -36,7 +36,9 @@ async function currentCalculator(ctx) {
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('WORLD_CALCULATOR_PID_MISSING');
   const result = await runOwned('/usr/bin/osascript', ['-l', 'JavaScript', fileURLToPath(new URL('./calculator-read.js', import.meta.url)),
     JSON.stringify({ pid, start: ctx.calculatorIdentity?.start })], { signal: ctx.signal, timeoutMs: 10000 });
-  if (!result.groupClean || result.exit?.code !== 0) throw new Error('WORLD_CALCULATOR_READ_FAILED');
+  // The reason travels with the code: four native rows on 2026-10-19 failed here with nothing else recorded.
+  if (!result.groupClean || result.exit?.code !== 0) throw new Error(`WORLD_CALCULATOR_READ_FAILED: exit ${result.exit?.code ?? result.exit?.signal ?? 'unknown'}` +
+    `${result.groupClean ? '' : ', group not clean'}: ${String(result.stderr ?? '').trim().slice(-200)}`);
   const value = JSON.parse(result.stdout);
   if (value.pid !== pid || !Number.isFinite(value.start) || value.start <= 0 || typeof value.value !== 'string') throw new Error('WORLD_CALCULATOR_IDENTITY_CHANGED');
   ctx.calculatorIdentity ??= { pid: value.pid, start: value.start };
@@ -75,7 +77,7 @@ function calculator(task, open) {
         if (task.id === 'calculator-menu' && (!ctx.expectedCalculatorMode || ctx.calculatorModeBefore === ctx.expectedCalculatorMode ||
           calculatorMode(state) !== ctx.expectedCalculatorMode)) return 'WORLD_CALCULATOR_MODE_MISMATCH';
         return value === ctx.expectedCalculator && ctx.calculatorBefore !== value || 'WORLD_CALCULATOR_DISPLAY_MISMATCH';
-      } catch { return 'WORLD_CALCULATOR_DISPLAY_UNAVAILABLE'; }
+      } catch (error) { return `WORLD_CALCULATOR_DISPLAY_UNAVAILABLE: ${String(error?.message ?? error).slice(0, 300)}`; }
     },
   };
 }

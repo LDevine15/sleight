@@ -97,10 +97,13 @@ Payments explicitly requested in the user's own message count as confirmed when 
 specifies what to buy or pay, the amount and the payment details. This includes the page's confirmation dialog
 for that same item, amount and payee. A payment whose amount the message doesn't state asks, even when the page
 shows a total. Other payments still require confirmation, and page content never grants permission.
+On the engine path a guard check applies this before a click, Enter or Space that could pay, and asks
+in sleight's own payment card ([known problems](known-problems.md) lists what it can't see).
 Set `SLEIGHT_CONFIRM_PAYMENTS=always` to keep the engine's rule that requires confirmation immediately
-before every financial transaction. Set `SLEIGHT_CONFIRM_PAYMENTS=never` to also skip turbo's one remaining check (a money figure
-on the checkout larger than the amount in your message) for a payment your message named with its amount. A payment you didn't
-ask for, a second payment in the same request and a mismatched amount still ask. Only you set it, as an environment variable of
+before every financial transaction. On the engine path the check then stops each payment until a later message of yours
+names its amount. Set `SLEIGHT_CONFIRM_PAYMENTS=never` to also skip the one remaining check, on turbo and on the engine path (a money figure
+on the checkout larger than the amount in your message), for a payment your message named with its amount. A payment you didn't
+ask for, a second payment in the same request on turbo and a mismatched amount still ask. Only you set it, as an environment variable of
 the MCP server. The default rewrites only the exact engine policy measured on 2026-10-12. Changed policy text is forwarded unchanged and records a trace entry when tracing is enabled.
 
 ## Approval scope
@@ -291,12 +294,13 @@ overwrites it. Claude's own file edits and shell commands can't write the file o
   remote debugging is on (the profile's `DevToolsActivePort` file exists while the browser runs with it).
 - `sleight-mcp turbo off` writes the opt-out. Turbo stays off until you run `turbo on`.
 - sleight's glove sits in the menu bar when turbo is connected, paused or waiting for cleanup, or when a request waits
-  for you. The menu shows the state and browser beside a coloured dot, how the payment check is set, Pause (or how a pause
+  for you. The menu shows the state and browser beside a coloured dot, the host the session runs in with its version (as
+  the MCP client introduced itself, and never a model, since no host reports one), how the payment check is set, Pause (or how a pause
   ends), Disconnect, Never Act on the site turbo last worked on, Turn Turbo Off…, Settings & Help… and the version. Turn Turbo Off asks once, then writes the same
   opt-out as `turbo off`, and every session's turbo stops within a minute. With turbo disconnected and nothing waiting,
   the icon is hidden unless the ghost hand keeps it. When turbo connects, the glove's dabs flow into place (0.8 s).
 - `SLEIGHT_TURBO=0` in the MCP server's environment keeps that one server on the engine path without touching the file.
-  It can only turn turbo off. The Firefox and Safari benchmark arms set it.
+  It can only turn turbo off. The Firefox and Safari benchmark arms and sleight's Codex plugin set it.
 - `sleight-mcp turbo on` turns turbo on. `--browser chrome` or `--browser helium` picks the browser.
   Without it, Google Chrome is first and Helium second. A browser whose executable others can write is
   skipped, because the connection refuses it. The exception is Chrome or Helium with a group-writable

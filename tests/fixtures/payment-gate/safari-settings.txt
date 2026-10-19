@@ -1,0 +1,107 @@
+Window: "sleight benchmark — Settings · Relaybox", App: Safari.
+0 standard window sleight benchmark — Settings · Relaybox, ID: SafariWindow?IsSecure=false&UUID=9F4D547F-1D3E-44B5-8895-9BBD8DC8FBE8, Secondary Actions: Raise
+	1 split group
+		2 splitter (disabled, settable, float) -1
+		3 tab group
+			4 scroll area
+				5 HTML content Description: Settings · Relaybox, URL: 127.0.0.1:5413/settings
+					6 container
+						7 text Relaybox Inbox Teams Settings
+					8 container
+						9 heading Notification settings, Value: 1
+							10 text Notification settings
+						11 text Choose how and when Relaybox gets in touch. Reference code
+						12 text field (settable) Reference code, Value: p07
+						13 heading Channels, Value: 2
+							14 text Channels
+						15 text Email alerts
+						16 switch (settable, boolean) Email alerts, Value: off
+						17 text SMS alerts
+						18 switch (settable, boolean) SMS alerts, Value: on
+						19 text Weekly digest
+						20 switch (settable, boolean) Weekly digest, Value: on
+						21 text Two-factor authentication for alerts
+						22 switch (settable, boolean) Two-factor authentication, Value: on
+						23 text Theme
+						24 (settable, unknown) Theme
+							25 radio button Light, Value: 0
+							26 radio button Dark, Value: 1
+							27 radio button Auto, Value: 0
+						28 heading Delivery, Value: 2
+							29 text Delivery
+						30 text Alert volume
+						31 slider (settable, float) Alert volume, Value: 50
+							32 value indicator 50
+						33 container 50
+							34 text 50
+						35 text Languages
+						36 list Languages
+							37 text English (UK) German French Portuguese (Portugal) Spanish (Spain), Value: Europe
+							38 text (selectable) English (UK)
+							39 text (selectable) German
+							40 text (selectable) French
+							41 text (selectable) Portuguese (Portugal)
+							42 text (selectable) Spanish (Spain)
+							43 text English (US) Portuguese (Brazil) Spanish (Mexico) French (Canada), Value: Americas
+							44 text (selectable) English (US)
+							45 text (selected) Portuguese (Brazil)
+							46 text (selectable) Spanish (Mexico)
+							47 text (selectable) French (Canada)
+							48 text Japanese Korean Chinese Hindi, Value: Asia
+							49 text (selected) Japanese
+							50 text (selectable) Korean
+							51 text (selectable) Chinese
+							52 text (selectable) Hindi
+						53 text Hold ⌘ to choose more than one.
+						54 text Time zone
+						55 combo box (collapsed, settable) Time zone, Value: UTC, Secondary Actions: Expand
+							56 text (settable) UTC
+						57 text Type to filter, then pick a zone.
+						58 heading Priority order, Value: 2
+							59 text Priority order
+						60 text Drag to reorder. The top one interrupts you first.
+						61 container Priority order
+							62 text Security
+							63 text Mentions
+							64 text Billing
+							65 text Reminders
+							66 text Product updates
+						67 button Save
+				68 scroll bar (settable, float) 0.5765921
+	69 toolbar
+		70 button Description: Toggle sidebar, ID: SidebarButton, Secondary Actions: Move previous, Move next, Remove from toolbar
+		71 menu button ID: TabGroupPickerButton?Profile=sleight%20benchmark&Icon=hammer.fill, Secondary Actions: Move next, Remove from toolbar
+		72 container BackForwardSegmentedControl
+			73 button Description: Go back, Help: Show the previous page, ID: BackButton
+			74 button (disabled) Description: Go forward, Help: Show the next page, ID: ForwardButton
+		75 container Secondary Actions: Move previous, Move next, Remove from toolbar
+			76 button Page Menu, ID: AssistantButton
+			77 button Add page to Reading List, ID: OneStepBookmarkingButton
+			78 text field (settable) Description: smart search field, Value: 127.0.0.1:5413/settings, ID: WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD
+			79 button Reload this page, ID: ReloadButton
+		80 button Description: Share, ID: ShareButton, Secondary Actions: Move previous, Move next, Remove from toolbar
+		81 button Description: New Tab, ID: NewTabButton, Secondary Actions: Move previous, Move next, Remove from toolbar
+		82 button Description: Tab Overview, ID: TabOverviewButton, Secondary Actions: Move previous, Remove from toolbar
+	83 tab group Description: Tab bar, 2 tabs, ID: TabBar?isSeparate=false
+		84 tab Sleight Gate 979f9afd-3ae1-4c30-b412-f0e36ffeeeb4, Value: off, Secondary Actions: close tab, ID: TabBarTab?isNarrow=false&isExpanded=false&tabCount=&isPinned=false&isCluster=false&clusterID=&isActive=false
+			85 image Description: favorite, ID: FaviconImageView
+			86 text Value: Sleight Gate 979f9afd-3ae1-4c30-b412-f0e36ffeeeb4, ID: UnifiedTabBarButton._titleTextField
+		87 tab Settings · Relaybox, Help: To interact with the items in this button, press Control-Option-Shift-Down Arrow., Value: on, Secondary Actions: close tab, ID: TabBarTab?isNarrow=false&isExpanded=false&tabCount=&isPinned=false&isCluster=false&clusterID=&isActive=true
+			88 image FaviconImageView
+			89 text Value: Settings · Relaybox, ID: UnifiedTabBarButton._titleTextField
+	90 close button
+	91 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	92 minimize button
+93 menu bar
+	94 Safari
+	95 File
+	96 Edit
+	97 View, ID: SafariViewMenu
+	98 History
+	99 Bookmarks, ID: SafariBookmarksMenu
+	100 Window, ID: SafariWindowMenu
+	101 Help, ID: SafariHelpMenu
+
+Selected:
+	45 text (selected) Portuguese (Brazil)
+	49 text (selected) Japanese

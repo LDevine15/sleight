@@ -1,9 +1,9 @@
-// One page for everything the benchmark publishes. Reads the results files named on
-// the command line and writes docs/results/index.html, a static page with no external
-// requests that works opened from disk and on GitHub Pages from /docs, plus
-// docs/results/README.md with the same tables for GitHub's viewer. Every number in
-// the pages comes from those files; nothing is typed by hand. Rebuild it after each
-// release pass:
+// The release-pass page of the benchmark hub. Reads the results files named on the
+// command line and writes docs/results/release-passes.html, a static page with no
+// external requests that works opened from disk, plus release-passes.md with the same
+// tables for GitHub's viewer. Every number in the pages comes from those files; nothing
+// is typed by hand. bench/results-hub.mjs renders this page with the rest of the hub;
+// this command renders it alone:
 //   node bench/results-page.mjs docs/benchmarks/<results>.json ... [--out docs/results]
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -308,11 +308,15 @@ const htmlLinks = text => text
 const METHOD_TAIL = 'The standard results files don\'t record an engine version or load figures. Passes that ' +
   'measured them state them in a write-up or note. Turns differ between harnesses.';
 
-export function renderMarkdown(page) {
+const rebuildCommand = (page, opts) => opts.rebuild ??
+  'node bench/results-page.mjs ' + [...page.releases, ...page.rivals].map(file => `docs/benchmarks/${file.name}`).join(' ');
+
+export function renderMarkdown(page, opts = {}) {
+  const chart = opts.chart ?? 'release-passes.html';
   const out = [];
-  out.push('# Benchmark results\n');
-  out.push('One page per release, generated from the results files in [benchmarks](../benchmarks/). ' +
-    `Every number comes from those files. ${LAWS_MD} The same page as a chart is [index.html](index.html).\n`);
+  out.push(`# ${opts.title ?? 'Release passes'}\n`);
+  out.push('One section per release pass, generated from the results files in [benchmarks](../benchmarks/). ' +
+    `Every number comes from those files. ${LAWS_MD} The same page with a chart is [${chart}](${chart}).\n`);
   const latest = page.latestRelease;
   if (latest) {
     const stats = summarize(latest.results);
@@ -344,7 +348,7 @@ export function renderMarkdown(page) {
   out.push('## Release history\n');
   out.push(historyTable(page, markdownTable) + '\n');
   out.push('Run counts differ between versions: the task set grew from 18 runs to 21, and 0.8.0 and 0.11.0 ' +
-    'ran partial sets. The chart is in [index.html](index.html).\n');
+    `ran partial sets. The chart is in [${chart}](${chart}).\n`);
   out.push('## Method and caveats\n');
   out.push(methodList([...page.releases, ...page.rivals], false).join('\n') + '\n');
   out.push(METHOD_TAIL + '\n');
@@ -352,15 +356,14 @@ export function renderMarkdown(page) {
   out.push('```sh\n' + RUN_IT_YOURSELF + '\n```\n');
   out.push(LIVE_MD + '\n');
   out.push('Rebuild this page after a release pass with:\n');
-  out.push('```sh\nnode bench/results-page.mjs ' +
-    [...page.releases, ...page.rivals].map(file => `docs/benchmarks/${file.name}`).join(' ') + '\n```');
+  out.push('```sh\n' + rebuildCommand(page, opts) + '\n```');
   return out.join('\n') + '\n';
 }
 
-export function renderHtml(page) {
+export function renderHtml(page, opts = {}) {
   const out = [];
   out.push('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n' +
-    '<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>sleight benchmark results</title>\n' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>sleight release passes</title>\n' +
     '<style>\n' +
     'html{color-scheme:light;}\n' +
     'body{font:15px/1.55 system-ui,sans-serif;max-width:62rem;margin:2rem auto;padding:0 1rem;color:#1c2430;background:#fff;}\n' +
@@ -374,8 +377,8 @@ export function renderHtml(page) {
     'pre{background:#eef1f5;padding:0.7rem;overflow-x:auto;}\n' +
     '.note{color:#5a6472;font-size:0.85rem;}\n' +
     '</style>\n</head>\n<body>\n');
-  out.push('<h1>sleight benchmark results</h1>\n');
-  out.push(`<p>One page per release, generated from the results files in <a href="../benchmarks/">benchmarks</a>. ` +
+  out.push(`<h1>${escapeHtml(opts.title ?? 'Release passes')}</h1>\n`);
+  out.push(`<p>One section per release pass, generated from the results files in <a href="../benchmarks/">benchmarks</a>. ` +
     `Every number comes from those files. ${htmlLinks(LAWS_MD)}</p>\n`);
   const latest = page.latestRelease;
   if (latest) {
@@ -416,8 +419,7 @@ export function renderHtml(page) {
   out.push('<pre><code>' + escapeHtml(RUN_IT_YOURSELF) + '</code></pre>\n');
   out.push('<p>' + htmlLinks(LIVE_MD) + '</p>\n');
   out.push('<p>Rebuild this page after a release pass with:</p>\n');
-  out.push('<pre><code>node bench/results-page.mjs ' +
-    escapeHtml([...page.releases, ...page.rivals].map(file => `docs/benchmarks/${file.name}`).join(' ')) + '</code></pre>\n');
+  out.push('<pre><code>' + escapeHtml(rebuildCommand(page, opts)) + '</code></pre>\n');
   out.push('</body>\n</html>\n');
   return out.join('');
 }
@@ -442,9 +444,9 @@ export function main(argv = process.argv.slice(2)) {
   for (const file of page.skipped) console.log(`skipped ${file.name}: one arm and no -release-<version> in the name`);
   const outDir = join(ROOT, out);
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(join(outDir, 'index.html'), renderHtml(page));
-  writeFileSync(join(outDir, 'README.md'), renderMarkdown(page));
-  console.log(`wrote ${out}/index.html and ${out}/README.md from ${paths.length} results files`);
+  writeFileSync(join(outDir, 'release-passes.html'), renderHtml(page));
+  writeFileSync(join(outDir, 'release-passes.md'), renderMarkdown(page));
+  console.log(`wrote ${out}/release-passes.html and ${out}/release-passes.md from ${paths.length} results files`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();

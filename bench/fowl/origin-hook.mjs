@@ -29,9 +29,12 @@ export function gateWindowCheck(e, env = process.env) {
   if (!/(^|__)select_window$/.test(e.tool_name ?? '')) return null;
   const gate = gateWindow(env), input = e.tool_input ?? {};
   const keys = Object.keys(input).filter(k => input[k] !== undefined);
-  if (gate && gate.apps.includes(input.app) && input.title === gate.title && keys.every(k => ['app', 'title'].includes(k))) return null;
+  // A Safari profile puts its name before the title: "<profile> — Sleight Gate <uuid>".
+  const title = typeof input.title === 'string' ? input.title : '';
+  const owned = title === gate?.title || (!!gate && title.endsWith(' — ' + gate.title) && /^[^—]*\S — /.test(title) && title.indexOf(' — ') === title.length - gate.title.length - 3);
+  if (gate && gate.apps.includes(input.app) && owned && keys.every(k => ['app', 'title'].includes(k))) return null;
   return `Benchmark: select_window is allowed only for the gate's own window, app ${gate ? gate.apps[0] : '(none)'} with the exact title ` +
-    `"${gate ? gate.title : '(none)'}". Its title changes once a page loads; cua.getApp on the browser then addresses the same window.`;
+    `"${gate ? gate.title : '(none)'}" (or "<profile> — ${gate ? gate.title : '(none)'}"). Its title changes once a page loads; cua.getApp on the browser then addresses the same window.`;
 }
 
 export function answer(e, env = process.env) {

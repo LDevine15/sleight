@@ -50,6 +50,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   writes the idea from a behavior spec (owner, 2026-10-14). Bundled libraries such as playwright-core are included unmodified, with their
   notices. Going public, money, scope changes, and redistributing anything that depends on another vendor's app or engine
   are the owner's calls. The ChatGPT engine dependency is cleared for release.
+- Everything people read (docs, the README, benchmark pages, the post, commit messages) goes through the humanizer skill and
+  Vale before it's published or committed (owner, 2026-10-19).
 - The name is sleight, and its icon is the two-hands image. Branding uses only sleight's own marks.
 - sleight is app-agnostic, like Codex. Its mechanisms are generic and work in any app.
 - Install has two paths: with Computer Use already on in ChatGPT or Codex, installing sleight is enough. Without it,
@@ -57,6 +59,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 - Approvals: one card per app (Allow, Always allow, Decline), remembered for the Claude Code session. Only the user's click writes
   Always allow. The engine refuses terminals and OpenAI's own apps, and sleight never works around that; the refusal tells the user
   about the `ComputerUseAllowForbiddenTargets` switch.
+- In a host the user set to answer approvals automatically (Codex's full-access mode or its auto-review), a session-only app
+  approval may be answered by the host. Always allow, payment cards and sleight's own consent cards still need the user's click
+  (owner, 2026-10-19).
 - When the user's own message names what to pay, the amount, and what to pay with, that payment counts as confirmed, including the
   page's own confirm dialog. Any other payment asks, on the engine path and on turbo alike. A checkout whose amount the message didn't state
   asks once (owner, 2026-10-17, after the engine path paid $268 on an unpriced test checkout). `SLEIGHT_CONFIRM_PAYMENTS=always` keeps asking. `SLEIGHT_CONFIRM_PAYMENTS=never` lets a user opt
@@ -67,10 +72,10 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   (owner delegated the call to sleight-arch, 2026-10-18, after travel r3 stopped before "Book trip").
 - A form submit or save that the user's own message asks for is confirmed, like a named payment or booking. That covers the
   values the message names, notification switches included. A page's confirmation dialog that adds anything the
-  message didn't name still asks, and so do account, security, privacy and sharing settings. That holds even when the user's own request
-  includes the security switch (two-factor on the race's settings form): sleight asks, and the race reports that task as a loss rather than
-  bend the rule (sleight-arch, delegated by the owner, 2026-10-18). Payments and bookings keep their
-  own rules (owner, 2026-10-18).
+  message didn't name still asks. A security or privacy switch the message names with its value counts only when it makes the
+  account safer (two-factor on, a profile made private, sharing off). Loosening one, changing a recovery email or phone, a password or
+  connected apps, and a setup step that needs a code still ask (owner, 2026-10-19, replacing the 2026-10-18 ruling that asked before
+  every security setting). Payments and bookings follow the payment and booking rules above (owner, 2026-10-18).
 - Turbo's payment check reads figures, not wording: if any money figure on the checkout is larger than the amount in the
   user's message, it asks. The owner chose this over label rules (2026-10-15), accepting that about half of honest checkouts
   ask once (measured in docs/known-problems.md).

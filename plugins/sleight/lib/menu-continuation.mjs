@@ -148,6 +148,7 @@ export function splitMenuActions(code, { alias = name => /^__sleightOpenedApp\d+
 
 export function takeGuardStop(content, mark) {
   let receipt, count = 0, input = false, adopted;
+  const paid = [];
   const head = [];
   const cleaned = content.flatMap(item => {
     if (item?.type !== 'text' || typeof item.text !== 'string') { if (!count) head.push(item); return [item]; }
@@ -158,12 +159,14 @@ export function takeGuardStop(content, mark) {
       if (record?.input === true) { input = true; return false; }
       // The guard moved to a window in another app this call acquired; the last one counts.
       if (record?.adopted) { adopted = record.adopted; return false; }
+      // A payment the guard let through (payment-gate.mjs), for the request's count.
+      if (record?.paid) { paid.push(record.paid); return false; }
       count++; receipt = record;
       return false;
     }).join('\n');
     return text ? [{ ...item, text }] : [];
   });
-  return { content: cleaned, head, receipt: count === 1 ? receipt : undefined, input, adopted };
+  return { content: cleaned, head, receipt: count === 1 ? receipt : undefined, input, adopted, paid };
 }
 
 // A tab or navigation continuation passes through a stop on a page Claude never asked about (Firefox's New Tab, 381
@@ -278,6 +281,50 @@ const tabsOf = entries => entries.flatMap((entry, index) => {
   const tab = /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(entry.line);
   return tab && !underDocument(entries, index) ? [{ label: tab[2] ?? '', selected: /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]), index }] : [];
 });
+// The window's own tab strip: the tabs directly under the first tab group of a standard window's tree, read from the numbered
+// chain that runs 0, 1, 2... without a gap and stops at the first page or document. Page text shaped like a tab line sits
+// after the page's root or breaks the chain, so it never counts. undefined when the tree has no such strip.
+function windowTabs(tree) {
+  if (typeof tree !== 'string') return;
+  const lines = tree.split('\n'), root = lines.findIndex(line => /^0 standard window(?: |,|$)/.test(line));
+  if (root < 0) return;
+  const entries = [];
+  for (const line of lines.slice(root)) {
+    const entry = /^(\t*)(\d+) (.*)$/.exec(line);
+    if (!entry) continue; // A value's own later lines (Firefox's "Close tab").
+    if (Number(entry[2]) !== entries.length || DOCUMENT_ROLE.test(entry[3])) break;
+    entries.push({ depth: entry[1].length, line: entry[3] });
+  }
+  const group = entries.findIndex(entry => /^tab group(?: |,|$)/.test(entry.line));
+  if (group < 0) return;
+  const tabs = [];
+  for (let i = group + 1; i < entries.length && entries[i].depth > entries[group].depth; i++) {
+    const tab = entries[i].depth === entries[group].depth + 1 && /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(entries[i].line);
+    if (tab) tabs.push({ label: tab[2] ?? '', selected: /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]) });
+  }
+  return tabs.length ? tabs : undefined;
+}
+// The same tab strip with exactly one tab more, that tab selected: tabs only as labels, by count.
+function oneMoreTab(was, now) {
+  const selected = now.filter(tab => tab.selected);
+  if (now.length !== was.length + 1 || selected.length !== 1) return false;
+  const left = new Map();
+  for (const tab of now) left.set(tab.label, (left.get(tab.label) ?? 0) + 1);
+  for (const tab of was) {
+    if (!left.get(tab.label)) return false;
+    left.set(tab.label, left.get(tab.label) - 1);
+  }
+  return [...left].every(([label, count]) => count === (label === selected[0].label ? 1 : 0));
+}
+// Whether `after` is the window Claude last saw as `before` with one new tab opened in it. A browser window's title follows its
+// active tab, so a new tab retitles the same window: Firefox's New Tab page has no title, and the window reads "Mozilla
+// Firefox" (mdn b7 r2, 2026-10-19). The earlier strip must list `title` whole, as Firefox's `Value: <title>, <title>` or a
+// plain label. A tab switch adds no tab, and another window that merely lists the title has other tabs, so both stay false.
+export function oneTabAdded(before, after, title) {
+  const was = windowTabs(before), now = windowTabs(after);
+  if (!was || !now || !title || !was.some(({ label }) => [title, `Value: ${title}, ${title}`].includes(label))) return false;
+  return oneMoreTab(was, now);
+}
 // The earlier tree as entries. seenLines keeps the indentation when asked, which says what sat under a page; lines without it
 // all count as the window's own.
 const earlierEntries = before => Object.entries(before).filter(([, line]) => typeof line === 'string').sort(([a], [b]) => a - b)
@@ -326,15 +373,8 @@ export function tabRefusal(plan, receipt, expected, content, before) {
   if (!before || typeof before !== 'object') return 'no-earlier-tree';
   const entries = [...stopped.tree.matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
   const was = tabsOf(earlierEntries(before)), now = tabsOf(entries);
+  if (!oneMoreTab(was, now)) return 'no-new-tab';
   const selected = now.filter(tab => tab.selected);
-  if (now.length !== was.length + 1 || selected.length !== 1) return 'no-new-tab';
-  const left = new Map();
-  for (const tab of now) left.set(tab.label, (left.get(tab.label) ?? 0) + 1);
-  for (const tab of was) {
-    if (!left.get(tab.label)) return 'no-new-tab';
-    left.set(tab.label, left.get(tab.label) - 1);
-  }
-  if ([...left].some(([label, count]) => count !== (label === selected[0].label ? 1 : 0))) return 'no-new-tab';
   if (button !== undefined) {
     const at = tabStripButton(entries, button);
     if (at < 0) return 'not-a-tab-button';

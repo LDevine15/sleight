@@ -44,6 +44,9 @@ import { replayBridge } from './replay.mjs';
 import { serverFromChatGPTApp, setup } from './setup.mjs';
 import { handPid } from './hand/pid.mjs';
 import { ActionLog, actionLogPath } from './action-outcomes.mjs';
+import { codexDoctorLines, codexStatus } from './codex-host.mjs';
+import { hostLabel } from './host-label.mjs';
+import { createPaymentCard } from './payment-card.mjs';
 
 const PLUGIN_DIR = ['plugins', 'cache', 'openai-bundled', 'unified-computer-use'];
 const SERVER_KEY = 'cua_repl';
@@ -152,6 +155,12 @@ const readForbiddenTargets = () => execFileSync(process.execPath, [join(LIB, 'pr
 const listLaunchdJobs = () => new Promise((resolve, reject) =>
   execFile(process.execPath, [join(LIB, 'probe-supervisor.mjs'), '--launchd-jobs'], { timeout: 6000 }, (err, stdout) => (err ? reject(err) : resolve(stdout))));
 
+// Read-only, like the turbo lines: is sleight a Codex plugin here, and is Codex's own Computer Use on beside it.
+function codexDoctor(env) {
+  try { return codexDoctorLines(codexStatus({ env })); }
+  catch (err) { return ['Codex', `PROBLEM   could not read Codex's config (${err.message})`]; }
+}
+
 // Read-only. The doctor prints it first so it shows even when the engine checks below stop early.
 async function turboDoctorLines() {
   try { const turbo = await import('./direct-browser/turbo-setup.mjs'); return turbo.doctorLines(turbo.turboDiagnosis()); }
@@ -171,11 +180,12 @@ async function permissionsDoctorSection() {
   catch (err) { return ['permissions', `PROBLEM   could not read the permissions (${err.message})`]; }
 }
 
-export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, hand = handDoctorSection, permissions = permissionsDoctorSection } = {}) {
+export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, hand = handDoctorSection, permissions = permissionsDoctorSection, codex = codexDoctor } = {}) {
   if (app !== undefined && (typeof app !== 'string' || !app.trim() || app.startsWith('-'))) {
     log('usage: sleight-mcp --doctor [running app name or bundle ID]'); return 1;
   }
   for (const line of await turbo()) log(line);
+  for (const line of codex(env)) log(line);
   for (const line of await hand()) log(line);
   for (const line of await permissions()) log(line);
   const s = resolveServer(env);
@@ -345,8 +355,12 @@ export function resumeHelpers() {
 
 // Claude Code keeps "Claude" in the panel. Other hosts use clientInfo.title, or a titled
 // form of clientInfo.name ("cursor" becomes "Cursor"). Missing identity stays "this agent".
+// Claude Code is a positive signal only: the client name "claude-code", which both the CLI (2.1.289) and the desktop
+// app's Code tab (its bundled 2.1.299) send, or, with no client name at all, Claude Code's own CLAUDE_CODE_ENTRYPOINT.
+// Any other name, a lookalike such as "claude-desktop" included, is a host without the mod (see relay modHost).
 export function hostWording(info, env = process.env) {
-  const claudeCode = info ? /^claude/i.test(info.name ?? '') : !!env.CLAUDE_CODE_ENTRYPOINT;
+  const name = typeof info?.name === 'string' && info.name.trim() ? info.name.trim() : undefined;
+  const claudeCode = name ? name === 'claude-code' : !!env.CLAUDE_CODE_ENTRYPOINT;
   if (claudeCode) return { claudeCode: true, host: 'Claude', panel: 'claude-code' };
   const raw = [info?.title, info?.name].map(value => typeof value === 'string' ? value.trim() : '').find(Boolean);
   if (!raw) return { claudeCode: false, host: undefined, panel: 'generic' };
@@ -818,7 +832,12 @@ export function approvalOptions(env = process.env, dialog = askWithDialog) {
   const setting = env.SLEIGHT_APPROVAL_PROMPT;
   let wording = hostWording(undefined, env);
   // Claude Code's CLI names itself claude-code; the desktop app's Code tab may name itself otherwise.
-  const onInitialize = info => { wording = hostWording(info, env); };
+  const onInitialize = info => {
+    wording = hostWording(info, env);
+    // Once per session, so a host detected the wrong way shows in the host's MCP log.
+    const label = hostLabel(info) ?? 'an unnamed client';
+    process.stderr.write(`sleight: host ${label}, ${wording.claudeCode ? 'with the sleight mod (Claude Code)' : 'without the sleight mod: turn_ended hidden, no turbo, sleight ends turns itself'}\n`);
+  };
   const prompt = (message, scoped, options) => dialog(message, scoped, { ...options, ...wording });
   const extras = { onInitialize, wording: () => wording };
   if (setting === 'dialog' || (!setting && env.CLAUDE_CODE_ENTRYPOINT === 'claude-desktop')) return { ask: prompt, ...extras };
@@ -1022,6 +1041,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     openFast: process.env.SLEIGHT_OPEN_FAST !== '0',
     onClientReply: message => firstCallObserver?.reply(message),
     confirmPayments: paymentConfirmationSetting(),
+    // sleight's own card for an engine-path payment the gate stopped (payment-card.mjs); opened on the first such payment.
+    paymentCard: createPaymentCard(),
     clientIn: replayClient.clientIn,
     clientOut: replayClient.clientOut,
     serverIn: child.stdin,
@@ -1042,6 +1063,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     // End the engine's turn after 30 s without a running call, so the app it
     // holds is released even where the mod doesn't run. 0 turns this off.
     idleTurnEndMs: Number(process.env.SLEIGHT_IDLE_TURN_END_MS ?? 30000),
+    // The mod runs only in Claude Code, which initialize's clientInfo names (hostWording).
+    modHost: () => wording().claudeCode,
     inputLease: new InputLease({ directory: leaseDirectory, holder: `session ${sessionId} (pid ${process.pid})` }),
     engineForbiddenTargets: forbiddenTargetsAllowed(readForbiddenTargets),
     // The user's blocks, read again whenever permissions.json changes.

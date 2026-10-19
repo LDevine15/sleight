@@ -2,6 +2,9 @@ import { promptNotice } from './prompt-notice.mjs';
 import { elementWait } from './element-wait.mjs';
 import { listPicker } from './native-list-pick.mjs';
 import { actionOutcome, outcomeRecord } from './action-outcomes.mjs';
+import { moneyFigures, moneyConflicts } from './payment-figures.mjs';
+import { enginePayment, paymentAction } from './payment-gate.mjs';
+import { paymentWords, refundableName } from './direct-browser/rules.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -190,6 +193,28 @@ export function samePlace(before, number, after) {
   return hit && hit.line === line && hit.number === number + (at < start ? 0 : size) ? [[hit.number, line]] : [];
 }
 
+// Where element `number` of the tree `before` is in the tree `after`, for a click the engine refused because an earlier action
+// in the call replaced the element: the travel form's date picker rebuilt its day buttons after the check-in click, and the
+// check-out click was refused in 10 of 11 sleight form-travel runs, Safari and Firefox (race-1017). The line stays where it was
+// when its whole line is on exactly one element in each tree, at the same number and depth, under the same parent and after
+// the same row (the nearest row above at its depth or less). A line that moved goes by samePlace's rules. Anything else
+// returns no element, and the refusal stops the call as before.
+export function refusedPlace(before, number, after) {
+  const rows = text => String(text ?? '').split('\n').map(line => /^(\t*)(\d+) (.*?)\r?$/.exec(line)).filter(Boolean)
+    .map(m => ({ depth: m[1].length, number: Number(m[2]), line: m[3] }));
+  const old = rows(before), now = rows(after), at = old.findIndex(row => row.number === number);
+  const line = old[at]?.line;
+  if (line === undefined || /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(line) || old.filter(row => row.line === line).length !== 1 ||
+      now.filter(row => row.line === line).length !== 1) return [];
+  const to = now.findIndex(row => row.line === line);
+  if (now[to].number !== number) return samePlace(before, number, after);
+  if (now[to].depth !== old[at].depth) return [];
+  // The parent (nearest row above with less depth) and the row before (nearest above at its depth or less).
+  const near = (list, i, deeper) => { for (let j = i - 1; j >= 0; j--) if (deeper ? list[j].depth < list[i].depth : list[j].depth <= list[i].depth) return list[j]; };
+  const same = (a, b) => (a === undefined && b === undefined) || (!!a && !!b && a.number === b.number && a.depth === b.depth && sameElement(a.line, b.line));
+  return same(near(old, at, true), near(now, to, true)) && same(near(old, at, false), near(now, to, false)) ? [[number, line]] : [];
+}
+
 // Only a resolved focus outside the clicked field's subtree proves a mismatch. Focus on the settable
 // field that holds the clicked element counts as inside: a click on a field's inner text node focuses
 // the field itself (Firefox address bar, 3 of 9 runs, 2026-10-18). Missing rows or focus leave the
@@ -344,9 +369,9 @@ export function readCode(code, options = {}) {
 export function guardedCode(code, window, reason = /* notice */ 'Document scope stopped this action: window or URL changed. Read the window and ask the user with document_scope.', lease, options = {}) {
   // The lease needs a full header after the call. A read Claude made after its
   // last action already wrote one, so the guard reads again only without it.
-  const { reuseSetup, acknowledge, prompt, outcomes, ...checks } = options;
+  const { reuseSetup, acknowledge, prompt, outcomes, kernel, ...checks } = options;
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
-  return guardSetup({ window, reason, lease, ...checks }, { reuseSetup, acknowledge, prompt, outcomes }) +
+  return guardSetup({ window, reason, lease, ...checks }, { reuseSetup, acknowledge, prompt, outcomes, kernel }) +
     (options.browserCandidate ? '\nglobalThis.__sleightDocumentGuard.activeApp = undefined;' : '') + /* generated code */ `\n${code}
 {
   const guard = globalThis.__sleightDocumentGuard, last = guard.activeApp && guard.reads.get(guard.activeApp);
@@ -368,7 +393,7 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
 }
 
 // outcomes: the session records action outcomes (SLEIGHT_OUTCOMES or SLEIGHT_ACTION_LOG); without it the guard is unchanged.
-function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, outcomes = false } = {}) {
+function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, outcomes = false, kernel } = {}) {
   const O = outcomes;
   // Notice text the guard throws or writes, in its SLEIGHT_PROMPT wording.
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
@@ -377,9 +402,13 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
   const install = reuseSetup ? '' : /* generated code */ `globalThis.__sleightDocumentGuardSetup = update => {
     const parse = ${windowFromText.toString()};
     const isCancel = ${isCancelAction.toString()};
-    const state = globalThis.__sleightDocumentGuard ||= {
+    ${kernel === undefined ? `const state = globalThis.__sleightDocumentGuard ||= {
       getApp: typeof cua.getApp === 'function' ? cua.getApp.bind(cua) : undefined, proxies: new WeakSet(), wrapped: new WeakMap()
-    };
+    };` : /* A host whose calls reach more than one kernel (Codex's sandbox states): state from another epoch is stale, so
+      start clean, keeping the raw getApp rather than binding a wrapper an earlier setup installed. */ `const __sleightGuardKernel = ${Number(kernel)};
+    const prior = globalThis.__sleightDocumentGuard;
+    const state = prior && prior.kernel === __sleightGuardKernel ? prior : (globalThis.__sleightDocumentGuard = { kernel: __sleightGuardKernel,
+      getApp: prior?.getApp ?? (typeof cua.getApp === 'function' ? cua.getApp.bind(cua) : undefined), proxies: new WeakSet(), wrapped: new WeakMap() });`}
     if (update) {
       state.guarded = true; state.expected = update.window; state.reason = update.reason;
       state.lease = update.lease;
@@ -387,6 +416,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
       state.adoptUrl = !!update.adoptUrl;
     }
     state.nativeDenied = update?.nativeDenied;
+    // The payment gate's setting and the relay's copy of the user's message (payment-gate.mjs); without it the gate is off.
+    state.payment = update?.payment;
     state.timing = !!update?.timing;
     state.careful = !!update?.careful;
     state.firstOff = !!update?.firstOff && !!update?.focused && !state.careful && !state.fileOnly && !state.cancelOnly;
@@ -474,6 +505,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     const disabledLabelNote = ${disabledLabelNote.toString()};
     const sameElement = ${sameElement.toString()};
     const samePlace = ${samePlace.toString()};
+    const refusedPlace = ${refusedPlace.toString()};
     const differentFocusTarget = ${differentFocusTarget.toString()};
     const selectedMenuEntry = ${selectedMenuEntry.toString()};
     const trappingMenu = ${trappingMenu.toString()};
@@ -553,6 +585,12 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
     state.noteFocus(state.prior?.text);
     const wait = ${elementWait.toString()};
     const pickList = ${listPicker.toString()};
+    const moneyFigures = ${moneyFigures.toString()};
+    const moneyConflicts = ${moneyConflicts.toString()};
+    const paymentWords = ${paymentWords.toString()};
+    const refundableName = ${refundableName.toString()};
+    const paymentAction = ${paymentAction.toString()};
+    const enginePayment = ${enginePayment.toString()};
     const checkNative = () => { if (state.nativeDenied) throw new Error(state.nativeDenied); };
     // After Return, Enter, Tab, Escape or Space, typeText or paste goes ahead without the settled tree
     // read (about 470 ms in Excel, 2026-10-17) when two native observations that began at least waitMs
@@ -664,11 +702,16 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             state.reads.set(proxy, { text, emitted: true, modalOpened: pending.modalOpened });
           }
         }); })();
-        // app.pickFromList("<row label>"): pages a focused sorted list by key, then clicks the row. Every key and
-        // the click run through this handle's own checks, so a window change, a lost lease or a renumbered row stops it.
+        // app.pickFromList("<row label>"): pages a sorted list by key or wheel, then clicks the row. Every key, wheel
+        // step and the click run through this handle's own checks, so a window change, a lost lease or a renumbered row stops it.
         if (name === 'pickFromList') return async (label, options) => {
           checkNative();
           const superseded = () => { throw new Error('pickFromList stopped: another action or read ran during the search. Read the window again.'); };
+          // A click on this handle that was the call's last action: after it, the read can name the selected row in
+          // place of the focused list (race-1017 b7, Safari and Firefox), and the helper accepts that list only then.
+          const before = state.previous.get(proxy);
+          const clicked = before?.name === 'click' && before.version === state.actionVersion && before.done !== undefined &&
+            Number.isInteger(before.at) && typeof before.line === 'string' ? { number: before.at, line: before.line } : undefined;
           const result = await pickList({
             read: async () => {
               checkNative();
@@ -690,8 +733,15 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
               if (state.actionVersion !== version + 1) superseded();
               return result;
             },
+            // The wheel over the list, named by its whole line in the newest tree.
+            scroll: async (line, direction, ticks) => {
+              const version = state.actionVersion;
+              const result = await proxy.scroll({ line }, direction, ticks);
+              if (state.actionVersion !== version + 1) superseded();
+              return result;
+            },
             click: line => proxy.click({ line }),
-            parse, sameElement, expected: state.guarded ? state.expected : undefined
+            parse, sameElement, clicked, expected: state.guarded ? state.expected : undefined
           })(label, options);
           // A search that did not click ends the call, so later actions in it don't run past the failure.
           if (!result.clicked) throw new Error('pickFromList stopped (' + result.reason + '): ' + result.note + ' [' + result.reads + ' reads, ' + result.keys + ' keys]');
@@ -765,8 +815,10 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           state.activeApp = proxy;
           return result;
         };
-        if (!['click', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction',
-          'paste', 'pressKey', 'typeText'].includes(name)) return (...args) => { checkNative(); return value.apply(raw, args); };
+        // Every input method an engine handle may take goes through the checks below (doubleClick, rightClick, press and
+        // performAction included, review F3), so none of them reaches the app unchecked.
+        if (!['click', 'doubleClick', 'rightClick', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction', 'performAction',
+          'paste', 'press', 'pressKey', 'typeText'].includes(name)) return (...args) => { checkNative(); return value.apply(raw, args); };
         const act = async (attempt, ...args) => {
           checkNative();${O ? '\n          ' + 'const asked = args[0]; if (state.outcomeMark) attempt.rec = state.outcomeRec(name, asked, args);' : ''}
           // The action as Claude wrote it, for a stop that lists what ran.
@@ -978,6 +1030,16 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             // An { id } that matched by label is looked up as { label } is from here on.
             const asLabel = kind === 'ID' && found.length > 0 && !found.some(([, line]) => hasIdentifier(line, target));
             const ancestry = found.length > 1 ? contexts(text) : undefined;
+            // A control and its static text share the label ("text Country" above "pop up button (collapsed) Country"), and a
+            // click on the text does nothing: of several matches with static text among them, the one control, or the one
+            // enabled control, is the target (race-1017 b7: Country, City and Dates stopped 2 of 3 Safari form-travel runs, 2.2
+            // to 3.8 s each). This runs before the enabled preference, which would keep the text beside a disabled control.
+            // Two enabled controls still stop.
+            if (name === 'click' && found.length > 1 && (kind === 'label' || asLabel || bare !== undefined)) {
+              const controls = found.filter(([, line]) => !/^text(?: \\([^()]*\\))*(?: |$)/.test(line) || /^text (?:field|area|entry area)(?: |$)/.test(line));
+              const enabled = controls.filter(([, line]) => !/^[a-z][a-z ]* \\([^()]*\\bdisabled\\b[^()]*\\)/.test(line));
+              if (controls.length < found.length) found = controls.length === 1 ? controls : enabled.length === 1 ? enabled : found;
+            }
             let barItems = [], outside = [];
             if (found.length > 1 && (kind === 'label' || asLabel || bare !== undefined && found.every(([, line]) => hasLabel(line, target)))) {
               // A menu-bar title sharing its label with one element outside the menu bar means that element: { label: "Table" }
@@ -1023,6 +1085,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             }
             args = [to, ...args.slice(1)];
           };
+          const renumbered = (to, was) => nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + to + ', the same ' + JSON.stringify(was) + ${quoted(/* lean notice */ ': an earlier action in this call renumbered the window.')} + '\\n');
           // A number the code computed from its own read in this call (a match over getAXState) means
           // that read's element. Checked against the tree from before the call, correct clicks stopped,
           // and Claude fell back to one action per call in ZCode (2026-10-12).
@@ -1063,7 +1126,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
               : /\\b(?:ID|Description|Help): /.test(was) ? [...elements(text)].filter(([, line]) => sameElement(was, line))
               : bound === undefined ? samePlace(state.callTrees.get(proxy), args[0], text) : [];
             if (moved.length === 1) {
-              nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + moved[0][0] + ', the same ' + JSON.stringify(was) + ${quoted(/* lean notice */ ': an earlier action in this call renumbered the window.')} + '\\n');
+              renumbered(moved[0][0], was);
               args = [moved[0][0], ...args.slice(1)];
               if (state.bind && literal !== undefined) {
                 if (!state.boundNumbers.has(proxy)) state.boundNumbers.set(proxy, new Map());
@@ -1102,6 +1165,41 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
               throw new Error("sleight stopped before " + name + ": another element has focus. Use app.setValue(" + number + ", <text>) instead.");
             }
           }
+          // The payment gate: a submit-shaped action on a page that shows a payment stops unless the user's own message named
+          // an amount no figure on the page exceeds. A submit-shaped key, text or point action that skipped its read reads now
+          // when the newest tree it has shows a payment page (focus in it may be stale), or when there is none.
+          if (state.payment) {
+            const newest = text ?? priorText ?? state.callTrees.get(proxy) ?? lastTree;
+            // After this call has acted, the page may have changed step under the same window (review N4): a submit-shaped action
+            // on a web page or dialog reads again rather than trusting the call's first tree.
+            if (text === undefined && paymentAction(name, args) && (newest === undefined ||
+                !firstAction && /^\\t*\\d+ (?:HTML content|sheet|dialog|alert)\\b/im.test(newest) ||
+                enginePayment(name, args, newest.replace(/^The focused UI element is .*$/m, ''), state.payment, true))) {
+              text = await timedRead(raw, 'payment');
+            }
+            const paid = enginePayment(name, args, text, state.payment);
+            // A payment that goes through spends this request's one payment (an allowance from the card goes with it), and
+            // the relay hears of it under the private mark.
+            if (paid?.allowed) {
+              const spent = state.payment.spent;
+              state.payment = { ...state.payment, allow: paid.allowed === 'card' ? null : state.payment.allow,
+                spent: !paid.payment ? spent : paid.allowed === 'dialog' && spent ? { ...spent, dialog: true }
+                  : { site: paid.site, shown: paid.shown, control: paid.control, modal: paid.modal, at: state.payment.now ?? Date.now() } };
+              if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ paid }) + '\\n');
+            } else if (paid?.why === 'point') {
+              throw stop(${quoted(/* lean notice */ "sleight stopped this click: the page shows a payment, and a click at a point can't be checked. Use the element number.")});
+            } else if (paid) {
+              attempt.payment = { why: paid.why, site: paid.site, shown: paid.shown, control: paid.control };
+              const head = /* notice */ 'sleight stopped this payment: the page shows ' + (paid.shown ?? ${quoted(/* lean notice */ 'no amount')});
+              if (paid.why === 'nocopy') throw stop(head + ${quoted(/* lean notice */ " and sleight has no copy of the user's message to check it against. Ask the user to pay themselves.")});
+              const why = paid.why === 'none' ? ${quoted(/* lean notice */ "the user's message named no amount")}
+                : paid.why === 'several' ? ${quoted(/* lean notice */ "the user's message named more than one amount")}
+                : paid.why === 'always' ? ${quoted(/* lean notice */ 'SLEIGHT_CONFIRM_PAYMENTS=always asks every time')}
+                : paid.why === 'second' ? ${quoted(/* lean notice */ 'a payment already went through for this request')}
+                : ${quoted(/* lean notice */ "the user's message named ")} + paid.named;
+              throw stop(head + ' and ' + why + ${quoted(/* lean notice */ '. Ask the user to confirm, naming the amount.')});
+            }
+          }
           await checkLease();
           state.activeApp = proxy;
           // Only the resolved target's role makes a field click quiet; coordinates and words in a
@@ -1128,6 +1226,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             ['performSecondaryAction', 'setValue', 'scroll'].includes(name) || name === 'pressKey' &&
             (keys.length > 0 || /^(?:return|enter|escape|esc|tab|space)$/i.test(key ?? ''));
           const previous = { name, key: name === 'pressKey' ? args[0] : undefined, editable, editKey, number: editable ? args[0] : undefined, line, focus: /^The focused UI element is (.+?)\\r?$/m.exec(text ?? '')?.[1],
+            at: name === 'click' && typeof args[0] === 'number' ? args[0] : undefined, version: state.actionVersion,
             textEditing: textEditing && (editable || ['typeText', 'paste'].includes(name) || editKey), opens, modal: text === undefined ? undefined : hasModal(text),
             touches: state.touches };
           state.previous.set(proxy, previous);
@@ -1144,13 +1243,19 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           // Input went out before the engine answered, so a rejected action may have acted.
           let result;
           try { result = await value.apply(raw, args); } catch (error) {
-            state.unknown.push(shown);
+            let fresh, resent = false;
+            const keep = () => {
+              nodeRepl.write(${JSON.stringify(GUARD_MARK)} + fresh + ${JSON.stringify(GUARD_END)});
+              state.reads.set(proxy, { text: fresh, emitted: true, version: state.actionVersion });
+              attempt.fresh = true;
+            };
             // "75 is an invalid element ID" (-10005): the engine's capture no longer holds that element. A date
             // picker re-rendered its days after the first date's click, so the bound capture's next date was gone
-            // (Firefox travel, 2026-10-17: a diff read, a full read and a lone click followed, 9.4 s). The stop stays
-            // and nothing is resent. It carries a fresh tree for the relay's note, when one comes within
-            // REFUSAL_READ_MS, and the window reads before each numbered or named action for a while, so the rest
-            // can go in one call. The macOS accessibility error "AXError.invalidUIElement" is the same loss seen
+            // (Firefox travel, 2026-10-17: a diff read, a full read and a lone click followed, 9.4 s). A click after an
+            // earlier action in the call goes once more when the fresh read has its whole line in the same place
+            // (refusedPlace; the refusal itself sent nothing). Otherwise the stop stays and nothing is resent. It carries
+            // a fresh tree for the relay's note, when one comes within REFUSAL_READ_MS, and the window reads before
+            // each numbered or named action for a while, so the rest can go in one call. The macOS accessibility error "AXError.invalidUIElement" is the same loss seen
             // from the native side (Firefox travel, 2026-10-18: 6.3 s of reads before the retry). It recovers the same
             // way. "elementHasNoFrame" does not: an element scrolled out of view has no frame either (a virtual list's
             // overscan row, same race), so nothing in that text says the element is gone.
@@ -1160,16 +1265,38 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
               state.binding = undefined;
               let timer;
               try {
-                const fresh = await Promise.race([timedRead(raw, 'after-refusal'),
+                const read = await Promise.race([timedRead(raw, 'after-refusal'),
                   new Promise(resolve => { timer = globalThis.setTimeout?.(resolve, REFUSAL_READ_MS); })]);
-                if (typeof fresh === 'string' && parse(fresh)) {
-                  nodeRepl.write(${JSON.stringify(GUARD_MARK)} + fresh + ${JSON.stringify(GUARD_END)});
-                  state.reads.set(proxy, { text: fresh, emitted: true, version: state.actionVersion });
-                  attempt.fresh = true;
-                }
+                if (typeof read === 'string' && parse(read)) fresh = read;
               } catch {} finally { globalThis.clearTimeout?.(timer); }
+              const header = fresh === undefined ? undefined : parse(fresh);
+              // Not for a control that opens or confirms (a lone "button Remove" in a re-rendered cart is another item's),
+              // nor after an action that opens, nor when a sheet or dialog came up over the page since the tree it used.
+              const to = fresh !== undefined && name === 'click' && typeof args[0] === 'number' && state.completedActions > 0 && text !== undefined &&
+                !opens && !before?.opens && !(hasModal(fresh) && !hasModal(text)) &&
+                observed && ['title', 'app', 'url'].every(key => header[key] === observed[key]) ? refusedPlace(text, args[0], fresh) : [];
+              if (to.length === 1) {
+                // The read after the refusal can take REFUSAL_READ_MS: the lease is checked again before anything goes.
+                try { await checkLease(); } catch (lost) { state.unknown.push(shown); keep(); throw lost; }
+                if (to[0][0] !== args[0]) renumbered(to[0][0], to[0][1]);
+                args = [to[0][0], ...args.slice(1)];
+                // The call's last click is this element now, for a pickFromList right after it, and for a bound literal.
+                previous.at = to[0][0]; previous.line = to[0][1];
+                if (state.bind && literal !== undefined) {
+                  if (!state.boundNumbers.has(proxy)) state.boundNumbers.set(proxy, new Map());
+                  state.boundNumbers.get(proxy).set(literal, { number: to[0][0], line: to[0][1] });
+                }
+                try { result = await value.apply(raw, args); resent = true; } catch (again) {
+                  state.unknown.push(shown);
+                  keep();
+                  throw again;
+                }
+              } else if (fresh !== undefined) keep();
             }
-            throw error;
+            if (!resent) {
+              state.unknown.push(shown);
+              throw error;
+            }
           }
           if (unbound) {
             const left = state.staleCaptures.get(staleKey) - 1;
@@ -1208,6 +1335,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
               attempts: state.actionIndex, windowStop: !!attempt.windowStop, name, completed: state.completedActions,
               shown: attempt.shown ?? null, ran: state.ran.slice(0, 10),
               ...(attempt.refused ? { refused: true, bound: !!attempt.bound, fresh: !!attempt.fresh } : {}),
+              ...(attempt.payment ? { payment: attempt.payment } : {}),
               error: String(error?.message ?? error).split('\\n')[0] }) + '\\n');
             state.failures.push(name + ': ' + (error?.message ?? error));
           });

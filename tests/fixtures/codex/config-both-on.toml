@@ -1,0 +1,19 @@
+# A Codex home with sleight and Codex's own Computer Use both on (the shape of a real config, values made up).
+model = "gpt-6.1-sol"
+
+[plugins."sleight@sleight"]
+enabled = true
+
+[plugins."computer-use@openai-bundled"]
+enabled = true # the app's own toggle
+
+[plugins."unified-computer-use@openai-bundled"]
+enabled = true
+
+[plugins."codex-app-tools@openai-bundled".mcp_servers.codex_app.tools.send_message_to_thread]
+approval_mode = "approve"
+enabled = false
+
+[marketplaces.sleight]
+source_type = "git"
+source = "https://github.com/Land-o-Clusters/sleight.git"

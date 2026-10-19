@@ -10,6 +10,7 @@ import { createV3TurnBinding, createV3Context } from './v3-context.mjs';
 import { browserApplicationName } from './browsers.mjs';
 import { readHandConfig } from '../hand/settings.mjs';
 import { createPermissionCheck, stampUse } from '../permissions.mjs';
+import { validHostLabel } from '../host-label.mjs';
 
 const bridges = new WeakSet(), frontends = new WeakSet();
 export const isV3Bridge = value => !!value && bridges.has(value);
@@ -177,14 +178,16 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
       return tools;
     },
     // apps: the relay's own list of engine-approved bundle ids, never a field of the hook's frame.
-    async bind(frame, apps = []) {
+    // host: the relay's label for the MCP client (host-label.mjs), for the menu bar. Never a field of the hook's frame.
+    async bind(frame, apps = [], host) {
       if (!exact(frame, ['version', 'session', 'nonce', 'event', 'turn', 'text']) || frame.version !== 1 ||
           frame.session !== hello.session || frame.nonce !== hello.nonce || frame.event !== 'begin' || !id(frame.turn) ||
           typeof frame.text !== 'string' || Buffer.byteLength(frame.text) > 65536 || !approvedApps(apps) || turns.has(frame.turn) || lost || !current()) throw Error('TRUSTED_TURN_REQUIRED');
       turns.add(frame.turn); fence(); const epoch = generation;
       callTimeoutMs = timeoutMs;
       trace('turn-begin', ++traceTurn); traceCall = 0;
-      const result = await rpc('begin', { turn: frame.turn, text: frame.text, apps: [...apps], appSecret: serverAppSecret() });
+      const result = await rpc('begin', { turn: frame.turn, text: frame.text, apps: [...apps], appSecret: serverAppSecret(),
+        ...(validHostLabel(host) ? { host } : {}) });
       if (epoch !== generation || lost || !current()) return false;
       active = result?.available === true;
       // An app turn's first calls prepare it and may wait on the user's clicks; the worker names that deadline, within 10 minutes.
@@ -293,17 +296,18 @@ export function serveV3Worker({ channel, browser, begin, current = () => true, c
       return;
     }
     if (frame.method === 'begin') {
-      const keys = Object.hasOwn(frame.params ?? {}, 'appSecret') ? ['turn', 'text', 'apps', 'appSecret'] : ['turn', 'text', 'apps'];
+      const keys = ['turn', 'text', 'apps', ...['appSecret', 'host'].filter(key => Object.hasOwn(frame.params ?? {}, key))];
       if (!exact(frame.params, keys) || !id(frame.params.turn) || turns.has(frame.params.turn) ||
-          typeof frame.params.text !== 'string' || Buffer.byteLength(frame.params.text) > 65536 || !approvedApps(frame.params.apps)) return respond({ available: false });
+          typeof frame.params.text !== 'string' || Buffer.byteLength(frame.params.text) > 65536 || !approvedApps(frame.params.apps) ||
+          (Object.hasOwn(frame.params, 'host') && !validHostLabel(frame.params.host))) return respond({ available: false });
       turns.add(frame.params.turn); const stopped = fence(), epoch = generation, apps = Object.freeze([...frame.params.apps]);
-      const secret = validAppSecret(frame.params.appSecret) ? frame.params.appSecret : undefined;
+      const secret = validAppSecret(frame.params.appSecret) ? frame.params.appSecret : undefined, host = frame.params.host;
       work = work.catch(() => {}).then(async () => {
         await stopped;
         if (ended || epoch !== generation || !current()) return { available: false };
         const message = Object.freeze({ source: 'user', session, turn: frame.params.turn, id: frame.params.turn, text: frame.params.text });
         const binding = createV3TurnBinding(message, () => !ended && epoch === generation && current());
-        const prepared = await begin(message, binding, { apps, ...(secret ? { appSecret: secret } : {}) });
+        const prepared = await begin(message, binding, { apps, ...(secret ? { appSecret: secret } : {}), ...(host ? { host } : {}) });
         if (ended || epoch !== generation || !current()) { await prepared?.end(); return { available: false }; }
         runtime = prepared; return { available: !!runtime, ...(runtime && validWait(runtime.waitMs) ? { waitMs: runtime.waitMs } : {}) };
       });
@@ -346,6 +350,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
   // client per app host, qualification receipts and the latest begin frame's engine approvals.
   let appSession, appConsent, appConnected = false, turnApps = Object.freeze([]), hostSecret;
   let browserName; // the menu bar's browser line, from the operator-owned config's executable only
+  let hostName; // the menu bar's host line, from the MCP client's own clientInfo (the relay's label), never guessed
   let optOutFailed = false;
   // The user's site blocks, read again when permissions.json changes, and the site turbo last worked on, for the menu's Never
   // Act on row. used(key) records a permission's last use (permissions.mjs stampUse); only the installed entry passes it.
@@ -453,7 +458,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     let site;
     try { site = state === 'connected' && currentSite && !sites(currentSite) ? currentSite : undefined; } catch { site = undefined; }
     const siteChoices = site ? ['block-site'] : [];
-    ui.present('v3-control-' + (++sequence), { status: state, ...(browserName ? { browser: browserName } : {}), payments, ...sharedUi ? {} : { hand },
+    ui.present('v3-control-' + (++sequence), { status: state, ...(browserName ? { browser: browserName } : {}), ...(hostName ? { host: hostName } : {}), payments, ...sharedUi ? {} : { hand },
       ...(site ? { site } : {}), ...(optOutFailed ? { optOut: 'failed' } : {}), ...(pluginVersion ? { version: pluginVersion } : {}) },
       // Paused has no Pause: turbo resumes when Claude next asks, through the session card.
       state === 'cleanup-required' ? ['cleanup', ...handChoices] : state === 'paused' ? ['disconnect', ...handChoices, 'turbo-off'] : ['pause', 'disconnect', ...siteChoices, ...handChoices, 'turbo-off'], async event => {
@@ -511,8 +516,9 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     }
     subscribe();
     protocol = serveV3Worker({ channel, browser: selected.selectedBrowser, current,
-      async begin(message, binding, { apps = [], appSecret: secret } = {}) {
+      async begin(message, binding, { apps = [], appSecret: secret, host } = {}) {
         if (!current() || resources.size) throw Error('CLEANUP_UNPROVED');
+        if (validHostLabel(host) && host !== hostName) { hostName = host; try { status(); } catch {} }
         turnApps = Object.freeze([...apps]);
         hostSecret ??= secret;
         const selections = await appSelections(apps);

@@ -12,9 +12,8 @@ our own runs. Dates and engine versions are given where they matter.
   header name the host as `consent-host`, its file or its pid. A `getApp` argument computed at run time is checked only at that
   card. We haven't checked whether the engine's `pressKey` to another app can answer a frontmost host card, or whether the
   engine's own clicks at a point under the card press its buttons. Any process named `consent-host` is refused, sleight's or not.
-- The form rule asks before account, security, privacy and sharing settings even when your message names them, so the
-  race's form-settings task (two-factor on) stops before Save by design. `SLEIGHT_CONFIRM_PAYMENTS=always` keeps form and
-  switch confirmations too.
+- The form rule decides "safer" from the switch's name and the value the message gives. A setting whose name doesn't say which
+  way it goes still asks. `SLEIGHT_CONFIRM_PAYMENTS=always` keeps form and switch confirmations too.
 - The hook that keeps `SLEIGHT_OUTCOMES` and `SLEIGHT_ACTION_LOG` the user's choice matches text, so it stops
   mistakes and plain edits only (unit-tested, 2026-10-18). A script Claude writes and then runs, a config file
   reached through a symlink, a name built at run time, a config file it doesn't list, and another MCP server's
@@ -33,11 +32,17 @@ our own runs. Dates and engine versions are given where they matter.
   continuation also needs HID idle since the document was last seen as a standard window, so any mouse or key input
   after that stops the rest. It also stops when the app has a second window with the same title and URL, when the
   dialog's own native identity couldn't be read before the call, and when a palette closed by a button can't be shown gone.
-- The tab continuation (a call's own Cmd+T, or a click on the button among the tabs, going on into the new tab) hasn't run
-  live. Fixtures and a replay of the Firefox rounds' saved trees cover it. In the 2026-10-18 round it ran 0 of 9 times (6 Cmd+T,
+- The tab continuation (a call's own Cmd+T, or a click on the button among the tabs, going on into the new tab) ran live in
+  3 Firefox mdn runs, all Cmd+T: b7-r1, b3-r1 and b3-r3 (2026-10-19). In the 2026-10-18 round it ran 0 of 9 times (6 Cmd+T,
   3 clicks), and the cause wasn't recorded. It no longer needs HID idle over the call, which the engine's key presses reset
   (above). It needs idle since the stop result arrived, so a user typing after the stop still refuses it. The relay trace
-  records the refusal reason and the idle sample, and one traced live round will show whether idle was the cause.
+  records the refusal reason and the idle sample, but no traced round has run since.
+- A key call whose window comes back retitled doesn't get a window note when its tab strip is the one Claude last saw for
+  that window plus exactly one selected tab (a new tab in Firefox, 12 of 60 b3 and b7 task-runs). A tab switch or a new
+  window keeps the note. Another window of the same app also loses it when its strip lists every tab of the last-seen one
+  plus one selected tab. The old title must be a whole tab label, plain or Firefox's `Value: <title>, <title>`. Tabs count
+  only from the window's own tab group, before any page. Only Firefox's strip is tested, and Safari and Chrome may still
+  get the note.
 - A read between the menu click and the next action (`const menu = await app.getAXState()`) doesn't split either, so the
   call stops at the menu, as textedit-save-2 did (2026-10-17). The guard doesn't pass a menu's header (title and app, no
   URL) on its own: only the continuation checks the native window behind it.
@@ -265,10 +270,55 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   26-run round on 2026-10-13, down from 74, against 0 for FowlBrowser.
 - A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop). `SLEIGHT_CONFIRM_PAYMENTS=never` also skips the figure check below for such a payment, so a page that hides a larger total behind a matching amount field is not caught. It asks as before for an unrequested payment, a second payment in the same request and an amount that differs from the message.
 - Turbo follows a plain `<a href>` to an http(s) URL without asking only when its one payment word is "checkout" and its words contain no money figure. The link also needs to be outside a payment form and free of handler attributes (`on*`, `ping`, `data-method`, Turbo, Stimulus, htmx, Vue, Alpine, Angular). The DevTools protocol must report that nothing on it or inside it listens for click, mousedown, pointerdown, pointerup, auxclick or keydown. A listener on an ancestor or the document doesn't count, because frameworks and analytics listen there on nearly every page (the race's own shop logs pointerdown on the window), so a delegated handler that charges from a checkout-only link isn't caught at the link. The figure check still applies wherever a money figure shows. If the listener list can't be read, the link asks. A page that charges on a plain GET to such a link isn't stopped at the link, and the later "Place order" button still asks. Not measured on a live site.
-- On the engine path (Safari, Firefox, native apps) the payment rule is policy text the model follows, with no figure check behind it.
-  Before 2026-10-17 that text didn't require the amount, and in the first real-window Firefox round Haiku confirmed an unpriced
-  checkout's "Pay $268.00 now?" dialog (1 of 1 form-checkout runs). The text now requires the amount in the user's message. It
-  hasn't been rerun.
+- On the engine path in Safari and Firefox (the accessibility tree), a guard check holds back the submits on a page that shows a payment:
+  card fields, a frame named for card payment, or a money figure above zero beside a control that reads as a submit. Held back are a click
+  on a button, link or other row whose words read as a submit, any other button in the card fields' block except turbo's closed list
+  (Apply, Remove, a stepper), Enter or a typed line break in any field, and Enter, Space or a click on the confirm dialog. A payment
+  goes through when the user's message stated one amount and the page shows it, with no larger figure, once per request. Before it,
+  Haiku confirmed an unpriced "Pay $268.00 now?" dialog in Firefox (1 of 1 runs, 2026-10-17), and gpt-6.1-sol inside Codex paid
+  the same checkout without asking (1 of 1, 2026-10-19). Tested on recorded and edited trees only, with no live run yet.
+- Tabs driven through the ChatGPT browser extension (`cua.getBrowser`, `createBrowserTab`), Codex's main browser path, aren't
+  checked: the guard doesn't wrap their DOM actions. This is open work, not covered.
+- A stopped payment opens sleight's payment card (the consent host turbo uses). Allow once doesn't send the action. Claude sends it
+  again, and the allowance covers the one action that matches it (same site, largest figure and control) until a new user message,
+  the turn's end or two minutes. A page with no URL row has no site, and no allowance matches it. The relay builds the card's helper
+  from the plugin's Swift source, or reuses turbo's build. If the build isn't ready within 20 s, or the host can't start (no window
+  server), the payment stops without a card and Claude asks the user.
+- Claude's result waits at most 45 s for the card, under Codex's `tool_timeout_sec` default of 60 s (from Codex's config reference,
+  not measured here). After that Claude gets the stop with a note to resend after the user answers, and the card remains open up to
+  120 s.
+- The card's helper accepts any click on its own window, so another automation tool in the session (not sleight's, which refuses that
+  process) could press Allow once. turbo's card has the same limit.
+- sleight's copy of the user's message comes only from the Claude Code mod, with turbo's turn start. In Codex, and in Claude Code
+  with turbo off, every engine-path payment goes to the card.
+- The amount is the one money figure with a currency in the message. A message with two figures ("$29 overnight", "$268.00") doesn't
+  state one, so it asks. Wording isn't read, so "never more than $300" names $300.
+- The words are English only: turbo's pay words plus place (your) order, confirm, submit, complete, reserve, book and buy. A
+  control that says only Continue, Next, Finish, Order, Authorize, Approve, Top up or Pledge isn't a submit to the check unless it
+  sits in the card fields' block. Card fields labelled only in another language ("Kartennummer") aren't card fields.
+- A page counts as a payment page only with card fields, a card-payment frame, or a money figure with a currency sign or code. A
+  bare "268.00", a currency in a separate cell from its number, and currencies outside the list (kr, zł, Kč, Ft, lei, RM, CLP) give
+  no figure, and a figure split across rows isn't joined. A saved-card or wallet checkout that shows neither isn't a payment page.
+  Its Pay button goes through unchecked.
+- It doesn't see a figure drawn in an image or canvas, or a payment in a native app window (only a sheet, dialog or alert whose words
+  mention a payment and that shows a figure or card words is checked). setValue, typing without a line break and drags aren't gated,
+  so a page that submits on an input event isn't caught. A page with no money figure above zero and no card field (a free booking or
+  subscription) isn't a payment page.
+- False stops that remain. On a priced page, Enter in a search or promo field and a multi-line text in a text area stop. Enter in
+  a field beside card fields counts as the payment, and a later Pay then asks again. A field named "Gift card" or "Business card"
+  makes a page a card page. Apply is checked when it is the only button beside the card fields, as on the race checkout. A point
+  click anywhere in a window with a payment page stops too.
+- The browser's own confirm is told apart by structure alone: a sheet, dialog or alert outside the page, or a second top-level web
+  area (Firefox draws its confirm that way). Its 60 s exception after a payment also takes a page's own `confirm()` that shows the same
+  figure, so a page could get one extra charge of the message's amount in that window. Cancel, Close, Back, Apply and the rest of the
+  closed list exempt only a button with no pay word, so a pay button that labels itself "Back" isn't checked unless it's the only one
+  beside the card fields.
+- `dragTo` and `pickFromList` aren't checked by the gate. Engine calls in the browser-extension branch can't act on an app at all
+  (native input is refused there), so the gate doesn't run on that branch.
+- The relay keeps the payment count and resets it with each user message. A link never counts. Codex doesn't send the message, so there
+  every later payment in the session asks, and the confirm dialog's exception lasts 60 s. A point click on a payment page stops and
+  asks for the element number. The check runs in the engine's JavaScript session like the guard's other checks, so code that edits
+  the guard gets past it. With turbo on, a pending card can show a second sleight icon in the menu bar.
 - The turbo v3 payment read asks whenever any visible money figure in the payment form or dialog is larger than the amount in the
   user's message, in any currency and with any label or sign (a discount, a was price, a gift card, a late fee, a coverage limit,
   a later total, an estimate, "-$500.00"). It doesn't read wording. Rounds 4 to 12 added label lists that cleared such a figure, and
@@ -546,6 +596,24 @@ native reference, and oversized first results defer the browser reference while 
   hosts and Claude under Claude Code. It is unit-tested only: no live approval in another host has been
   checked. Unanswered relay forms expire after five minutes.
 - A name lookup can still launch an app that exited between the native check and `getApp`.
+- In Codex, a card without fields can be accepted without you. Codex's full-access mode and its
+  auto-review answer such cards themselves (openai/codex source at 89461ea6). sleight's app card always
+  has the Always field under the default session scope, so this applies only with
+  `SLEIGHT_APPROVAL_SCOPE=once` or `document`, and to the engine's browser cards. Not seen live.
+- In Codex, an Allow lasts as long as Codex keeps sleight's server running, which can span more than one
+  thread. We haven't checked how Codex shares one server process across threads.
+- In Codex, the Stop and Interrupt hooks were listed and trusted on 2026-10-19, but no log shows one
+  running yet. An Interrupt during a running call is answered at once, and the turn ends if the call
+  finishes within 3 seconds. A call that runs longer leaves the turn to the 30-second idle end.
+- In Codex, turbo is off and browsers use the engine path. Turbo needs the Claude Code mod to tie a
+  turn to your message, and a Codex hook has no way to hold the private envelope that does it.
+- Codex runs sleight's turn-end hooks only after you trust them. Untrusted, a used turn ends after
+  30 idle seconds.
+- We don't know whether turning off Codex's `computer-use@openai-bundled` plugin also removes the
+  computer surface from `unified-computer-use`, which Codex's Browser plugin shares. The `computer_use`
+  feature flag left that plugin's skill in place in a throwaway home.
+- Whether Codex asks before each sleight tool call depends on Codex's own approval settings. We
+  haven't checked it in a live session.
 
 ## Desktop replay
 
@@ -604,7 +672,9 @@ native reference, and oversized first results defer the browser reference while 
   0.016 ms a call over 2,000 offline echo calls (0.020 ms with both guards), and we haven't measured its start-up or a live run. Codex doesn't run a Stop hook, and sleight ends a used turn after 30 idle seconds.
   The arms' Codex login is a copy of the codex arm's `auth.json`. We don't know whether Codex rotates refresh tokens, which
   would log the other copy out. We don't know whether sleight's replies keep the engine's `codex/nodeReplExecutionDurationMs`
-  field that fills `engineMs` in the codex arm's rows.
+  field that fills `engineMs` in the codex arm's rows. In a pass that also runs `codex` or `codex-sol`, the engine's Always
+  allow list holds the benchmark apps for the whole pass. The sleight arms there meet fewer engine prompts than they would
+  alone. The results record it (`engineAllowList`), and nothing refuses such a pass.
 
 ## Turbo in unattended runs
 

@@ -152,6 +152,16 @@ check(withHand(statusRows(["status": "connected"], ["disconnect", "turbo-off"])!
   .confirm("Turn Turbo Off…", choice: "turbo-off"), .help], "turbo menu with the hand and permissions")
 check(withHand(workerRow, enabled: true, permissions: [.info("x")]).filter({ if case .toggle = $0 { return true }; return false }).count == 1, "still one Ghost Hand row")
 check(!hookupConnects(from: "connected", to: "connected") && !hookupConnects(from: "connected-idle", to: "connected") && !hookupConnects(from: nil, to: "paused"), "not connecting")
+// The host line, from the relay's label of each host's own clientInfo (fixtures in tests/fixtures/host-client-info.json).
+for (host, label) in [("claude-code", "Claude Code 2.1.289"), ("codex", "Codex 0.160.0"), ("cursor", "Cursor")] {
+  check(statusRows(["status": "connected", "host": label, "payments": "ask"], ["disconnect"])!.first ==
+    .status(title: "Connected", dot: "green", details: ["Host: " + label, "Payments: asks unless you named the amount"]), "host line for " + host)
+}
+check(statusRows(["status": "connected-idle", "host": "Codex 0.160.0"], ["disconnect"])!.first ==
+  .status(title: "Connected", dot: "green", details: ["Host: Codex 0.160.0", "Its session has ended"]), "idle session names no host by guess")
+check(statusRows(["status": "connected-idle"], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: ["Its session has ended"]), "no host, no host line")
+check(statusRows(["status": "connected", "host": "Codex\\nmodel gpt"], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: []), "odd host dropped")
+check(statusRows(["status": "connected", "host": String(repeating: "a", count: 73)], ["disconnect"])!.first == .status(title: "Connected", dot: "green", details: []), "long host dropped")
 print("pass")
 `);
   const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(), swift, '-o', binary], { encoding: 'utf8' });

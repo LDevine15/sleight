@@ -526,15 +526,15 @@ test('past the 30-record cap the guard counts what it dropped, and the log says 
 
 test('with both switches off the guard code is the base build\'s, byte for byte', () => {
   const hash = code => createHash('sha256').update(code).digest('hex').slice(0, 16);
-  // sha256 prefixes of the same calls at the 1.3.1 integration parent e858d554, before outcomes merged (base d82a462a's
-  // pins moved when seven integration commits changed the guard; so1's off path matched the parent byte for byte).
+  // sha256 prefixes of the same calls on the 1.3.0 release line 7a129a4a, which has no outcome code. The pins moved when
+  // 1.3.1 took in the release line's payment gate and Codex kernel epochs; the merged off path matched 7a129a4a byte for byte.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
     guardedLean: hash(guardedCode('await app.click(1);', window, undefined, undefined, { prompt: 'lean' })),
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: 'f91c7cf5d8f3d2e9', guardedLean: '8ceddc8f17321b26', reuse: 'ca953cc424ea8156', read: '34a38b4f3313bcbc', repl: '34a38b4f3313bcbc' });
+  }, { guarded: 'f1fadabaf165950f', guardedLean: '640299abf71b90e2', reuse: 'ca953cc424ea8156', read: 'a4483d2db9f497c5', repl: 'a4483d2db9f497c5' });
 });
 
 test('with both switches off the guard carries none of the outcome code', () => {

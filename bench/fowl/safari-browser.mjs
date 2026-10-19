@@ -91,6 +91,12 @@ function windows(snapshot) {
       new Set(snapshot.windows.map(w => w.id)).size !== snapshot.windows.length) throw Error('BENCH_SAFARI_AX_INVALID');
   return snapshot.windows;
 }
+// What the census may say about a window that is not the round's: its AX shape, never a title, URL or content.
+function windowShape(window) {
+  const shape = { profileEvidence: Boolean(safariProfileEvidence(window)) };
+  for (const key of ['role', 'subrole', 'frame', 'minimized', 'focused', 'childRoles']) if (Object.hasOwn(window, key)) shape[key] = window[key];
+  return shape;
+}
 // known: titles of pages this harness loaded itself. Safari exposes only the selected tab's URL (through the address field), so an
 // unselected tab still showing the harness's marker page gets the marker URL; any other unselected tab leaves the inventory unobserved.
 function tabs(window, known = {}) {
@@ -217,14 +223,23 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     return inventory;
   };
   browser.observe = async () => {
+    let auxiliaryWindows = [];
     try {
       await census();
       const list = await snapshot();
-      if (list.length !== 1) throw Error('BENCH_SAFARI_EXTRA_WINDOWS');
-      return { observed: true, source: 'AX-tab-bar', profileEvidence: browser.profileEvidence, tabs: tabs(ownedWindow(list), { [plan.marker]: plan.markerUrl }),
-        unavailableGraders: ['completed downloads', 'device viewport'] };
+      // A window with no profile evidence and a non-standard subrole (a floating panel or system dialog, never a document window)
+      // holds no tabs of the round; it is recorded and skipped. A profile window or an unproven standard window still counts.
+      const auxiliary = list.filter(w => !safariProfileEvidence(w) && typeof w.subrole === 'string' && w.subrole && w.subrole !== 'AXStandardWindow');
+      auxiliaryWindows = auxiliary.map(windowShape);
+      const counted = list.filter(w => !auxiliary.includes(w));
+      if (counted.length !== 1) {
+        throw Object.assign(Error('BENCH_SAFARI_EXTRA_WINDOWS'), { extraWindows: counted.filter(w => w.id !== windowId).map(windowShape) });
+      }
+      return { observed: true, source: 'AX-tab-bar', profileEvidence: browser.profileEvidence, tabs: tabs(ownedWindow(counted), { [plan.marker]: plan.markerUrl }),
+        ...(auxiliaryWindows.length ? { auxiliaryWindows } : {}), unavailableGraders: ['completed downloads', 'device viewport'] };
     } catch (error) {
       return { observed: false, tabs: {}, reason: error.message, ...(error.ownerCheck ? { ownerCheck: error.ownerCheck } : {}),
+        ...(error.extraWindows ? { extraWindows: error.extraWindows } : {}), ...(auxiliaryWindows.length ? { auxiliaryWindows } : {}),
         unavailableGraders: ['retention', 'handoff', 'completed downloads', 'device viewport'] };
     }
   };

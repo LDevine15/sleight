@@ -746,20 +746,34 @@ test('OF2: a stop that closed no dialog keeps the tab and page advice', async t 
 
 // AB3: a date picker re-rendered its days after the first date's click, so the engine refused the next date's number
 // from the call's bound capture (Firefox travel, 2026-10-17). A diff read, a full read and a lone click followed (9.4 s).
-const picker = rendered => 'Window: "report.txt", App: Fixture Editor.\n0 standard window report.txt, URL: file:///tmp/report.txt\n' +
+// lp1 (fix 4): with one inserted row the refused click goes once more to its new number. `split` also inserts a second
+// row between the days and the guests, which no single block explains, so the stop paths below keep their shape.
+const picker = (rendered, split = false) => 'Window: "report.txt", App: Fixture Editor.\n0 standard window report.txt, URL: file:///tmp/report.txt\n' +
   '\t1 text field Dates' + (rendered ? ', Value: Dec 14\n\t2 text Check-in set' : '') + '\n' +
-  ['button Monday, December 14, ID: d14', 'button Saturday, December 19, ID: d19', 'button Add adult, ID: add-adult', 'button Add child, ID: add-child']
+  ['button Monday, December 14, ID: d14', 'button Saturday, December 19, ID: d19', ...rendered && split ? ['text Pick check-out'] : [],
+    'button Add adult, ID: add-adult', 'button Add child, ID: add-child']
     .map((line, i) => `\t${i + (rendered ? 3 : 2)} ${line}`).join('\n');
-async function pickerFixture(t, { failRead = false } = {}) {
+async function pickerFixture(t, { failRead = false, split = true } = {}) {
   // The engine's capture: a read takes a new one, and any click replaces the elements it holds.
   let stale = false;
   return fixture(t, { base: picker(false), onRead: () => { if (failRead && stale) throw new Error('read failed'); stale = false; },
     onAction: (name, number) => {
       if (stale) throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`);
       stale = true;
-      return picker(true);
+      return picker(true, split);
     } });
 }
+
+test('lp1: the date picker\'s refused click goes once more to its new number, and the call goes on', async t => {
+  const h = await pickerFixture(t, { split: false });
+  const result = await h.call('await app.click({ label: "Monday, December 14" }); await app.click({ label: "Saturday, December 19" }); ' +
+    'await app.click({ label: "Add adult" }); await app.click(5);');
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  // 3 refused, resent to 4; click(5) was Add child in the tree Claude saw, now 6.
+  assert.deepEqual(h.clicks, [2, 3, 4, 5, 6]);
+  assert.match(allText(result), /sleight: click\(3\) went to element 4, the same "button Saturday, December 19, ID: d19": an earlier action in this call renumbered the window\./);
+  assert.doesNotMatch(allText(result), /refused/);
+});
 
 test('AB3: a refused element says what ran, what was not sent, and where the rest are now', async t => {
   const h = await pickerFixture(t);
@@ -769,8 +783,8 @@ test('AB3: a refused element says what ran, what was not sent, and where the res
   assert.deepEqual(h.clicks, [2, 3], 'the refused click is not resent and nothing after it runs');
   const text = result.content.map(c => c.text ?? '').join('\n');
   assert.match(text, /sleight: this call ran 1 action \(click\); the engine refused the next click \(element 3\): its number came from this call's first read, and the element changed \(perhaps replaced by an earlier action\)\. Not sent after it: click, click 5\./);
-  // click(5) was Add child in the tree Claude saw; it is 6 now.
-  assert.match(text, /In this result's window, the refused action and the rest are now click 4, click 5, click 6\. /);
+  // click(5) was Add child in the tree Claude saw; it is 7 now, below the second inserted row.
+  assert.match(text, /In this result's window, the refused action and the rest are now click 4, click 6, click 7\. /);
   assert.match(text, /sleight now reads this window before each numbered or named action, so the rest can go in one call\./);
   assert.match(text, /Dates, Value: Dec 14/, 'the fresh tree is in the result');
   assert.ok(result.content[0].text.startsWith('sleight: this call ran'), 'the note comes before the tree');
@@ -793,7 +807,7 @@ test('AB3: after a refusal, the rest goes in one call', async t => {
   const result = await h.call('await app.click({ label: "Saturday, December 19" }); await app.click({ label: "Add adult" }); ' +
     'await app.click({ label: "Add adult" }); await app.click({ label: "Add child" });');
   assert.notEqual(result.isError, true, JSON.stringify(result));
-  assert.deepEqual(h.clicks, [2, 3, 4, 5, 5, 6]);
+  assert.deepEqual(h.clicks, [2, 3, 4, 6, 6, 7]);
 });
 
 // AB1: the Firefox race round's new-tab stops (2026-10-17). A leased browser-like window without a URL; Cmd+T adds a

@@ -1,0 +1,11 @@
+{
+  "_source": "Codex 0.160.0 app-server `hooks/list` in a throwaway CODEX_HOME after `codex plugin marketplace add <this repo>` and `codex plugin add sleight@sleight` (2026-10-19). Paths and hashes left out. Codex clamped an Interrupt timeout of 10 to 3 seconds.",
+  "hooks": [
+    { "eventName": "stop", "handlerType": "mcpTool", "server": "plugin_sleight_computer", "tool": "turn_ended", "timeoutSec": 30,
+      "statusMessage": "sleight is releasing the apps it used", "source": "plugin", "pluginId": "sleight@sleight", "enabled": true, "isManaged": false, "trustStatus": "untrusted" },
+    { "eventName": "interrupt", "handlerType": "mcpTool", "server": "plugin_sleight_computer", "tool": "turn_ended", "timeoutSec": 3,
+      "statusMessage": "sleight is releasing the apps it used", "source": "plugin", "pluginId": "sleight@sleight", "enabled": true, "isManaged": false, "trustStatus": "untrusted" }
+  ],
+  "warnings": [],
+  "errors": []
+}

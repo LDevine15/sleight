@@ -17,7 +17,10 @@ function fixture(specs) {
       getAttribute: key => spec[key] ?? null, ...spec };
     const loc = {
       count: async () => spec.count ?? 1,
-      evaluate: async (fn, arg) => fn(new Proxy(el, { set() { throw Error('page evaluation must only read'); } }), arg),
+      evaluate: async (fn, arg) => fn(new Proxy(el, {
+        get(target, key) { return spec.isolated && key === 'checked' ? false : target[key]; },
+        set() { throw Error('page evaluation must only read'); },
+      }), arg),
       fill: async value => { calls.push([name, 'fill', value]); if (spec.fillError) throw Error(spec.fillError); el.value = value; },
       type: async value => { calls.push([name, 'type', value]); el.value = value; },
       press: async key => {
@@ -42,7 +45,7 @@ function fixture(specs) {
 test('fills text, checkbox, radio, select, slider and switch in field order', async () => {
   const h = fixture({ Name: {}, Terms: { type: 'checkbox' }, Choice: { type: 'radio' },
     Country: { tagName: 'SELECT' }, Amount: { type: 'range', min: '0', max: '10', step: '2' },
-    Alerts: { role: 'switch' } });
+    Alerts: { role: 'switch', 'aria-checked': 'false' } });
   const out = await fillForm(h.tab, [
     { label: 'Name', value: 'Ada' }, { label: 'Terms', value: true }, { label: 'Choice', value: true },
     { label: 'Country', value: 'UK' }, { label: 'Amount', value: 4 }, { label: 'Alerts', value: false },
@@ -98,15 +101,68 @@ test('a custom combobox uses an exact option locator after the fill fallback', a
   assert.deepEqual(h.calls, [['Country', 'fill', 'UK'], ['Country', 'click'], ['UK', 'click']]);
 });
 
-test('a custom host with a boolean checked property toggles via click-and-verify', async () => {
+test('a custom host with only the engine default checked property is unverifiable without input', async () => {
   const h = fixture({
-    TwoFactor: { tagName: 'FB-SECURE-SWITCH', type: undefined, checkError: 'not a checkbox' },
+    TwoFactor: { tagName: 'FB-SECURE-SWITCH', type: undefined, isolated: true, checkError: 'not a checkbox' },
+    Name: {},
   });
-  const out = await fillForm(h.tab, [{ label: 'TwoFactor', value: true }]);
-  assert.match(out, /^Filled 1 of 1 fields\./);
-  assert.ok(h.calls.some(call => call[1] === 'check' && call[2] === true));
-  assert.equal(h.calls.filter(call => call[1] === 'click').length, 1);
-  assert.match(out, /fallback/);
+  for (const value of [true, false]) {
+    h.calls.length = 0;
+    const out = await fillForm(h.tab, [{ label: 'TwoFactor', value }, { label: 'Name', value: 'Ada' }]);
+    assert.match(out, /^Filled 1 of 2 fields\./);
+    assert.match(out, /TwoFactor\) unverifiable:/);
+    assert.match(out, /screenshot of it\. Click once only if it shows the other state\. Never click again to verify/);
+    assert.doesNotMatch(out, /TwoFactor\) failed|Input may have been sent/);
+    assert.deepEqual(h.calls, [['Name', 'fill', 'Ada']]);
+  }
+});
+
+test('a custom host with reflected pressed state can be verified in a fresh injection realm', async () => {
+  const h = fixture({ Toggle: { tagName: 'CUSTOM-TOGGLE', type: undefined, 'aria-pressed': 'true',
+    checked: false, checkError: 'not a checkbox' } });
+  const context = createContext({ tab: h.tab });
+  const out = await runInContext('(async () => {' + fillFormCode('return await sleight.fillForm(tab, [{label:"Toggle",value:true}])') + '})()', context);
+  assert.equal(out, 'Filled 1 of 1 fields.\nField 1 (Toggle): checked state verified after fallback.');
+  assert.deepEqual(h.calls, [['Toggle', 'check', true]]);
+});
+
+test('a custom host with reflected checked state takes the check path rather than text fill', async () => {
+  const h = fixture({ Toggle: { tagName: 'CUSTOM-TOGGLE', type: undefined, 'aria-checked': 'true',
+    checked: false, checkError: 'not a checkbox' } });
+  assert.match(await fillForm(h.tab, [{ label: 'Toggle', value: true }]), /^Filled 1 of 1 fields\./);
+  assert.deepEqual(h.calls, [['Toggle', 'check', true]]);
+});
+
+test('a custom control already in the AX state requested gets no input', async () => {
+  const h = fixture({ Toggle: { tagName: 'CUSTOM-TOGGLE', id: 'toggle', role: 'switch', isolated: true } });
+  h.tab.getAXState = async () => 'Browser tab: 1, Title: "Form", URL: "https://example.com".\n0 AXWebArea Form\n\t3 switch Description: Toggle, Value: 1, ID: toggle';
+  assert.match(await fillForm(h.tab, [{ label: 'Toggle', value: true }]), /^Filled 1 of 1 fields\./);
+  assert.deepEqual(h.calls, []);
+});
+
+// The engine's setChecked reads the isolated default (false), so it would call an on switch already off.
+test('a verified custom control set to false takes one click and is read back, never engine setChecked', async () => {
+  const h = fixture({ Toggle: { tagName: 'CUSTOM-TOGGLE', id: 'toggle', role: 'switch', isolated: true } });
+  let on = true;
+  const click = h.controls.Toggle.click;
+  h.tab.playwright.getByLabel = () => new Proxy(h.controls.Toggle, { get(target, key) {
+    return key === 'click' ? async options => { on = !on; return click(options); } : target[key];
+  } });
+  h.tab.getAXState = async () => `\t3 switch Description: Toggle, Value: ${on ? 1 : 0}, ID: toggle`;
+  assert.match(await fillForm(h.tab, [{ label: 'Toggle', value: false }]), /^Filled 1 of 1 fields\./);
+  assert.deepEqual(h.calls, [['Toggle', 'click']]);
+  assert.equal(on, false);
+});
+
+test('a custom control unreadable after its one click is unverifiable and says the click was sent', async () => {
+  const h = fixture({ Toggle: { tagName: 'CUSTOM-TOGGLE', id: 'toggle', role: 'switch', isolated: true,
+    checkError: 'not a checkbox' } });
+  let reads = 0;
+  h.tab.getAXState = async () => ++reads === 1 ? '\t3 switch Description: Toggle, Value: 0, ID: toggle' : '';
+  const out = await fillForm(h.tab, [{ label: 'Toggle', value: true }]);
+  assert.match(out, /Toggle\) unverifiable: One click was sent\. Read the control's state from a screenshot/);
+  assert.doesNotMatch(out, /failed:/);
+  assert.deepEqual(h.calls, [['Toggle', 'click']]);
 });
 
 test('a read-only picker reports its UI path without typing and continues other fields', async () => {

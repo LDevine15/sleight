@@ -232,17 +232,53 @@ TODO: full release pass result.
   `SLEIGHT_CONFIRM_PAYMENTS=always` keeps asking. `SLEIGHT_CONFIRM_PAYMENTS=never` also skips turbo's
   check of a money figure larger than your amount, for a payment your message named with its amount.
   An unrequested payment, a second payment in the same request and a different amount still ask.
+- In Safari and Firefox driven through the accessibility tree, a guard check now applies turbo's payment
+  rule before the input goes out. On a page that shows a payment (card fields, or a money figure above zero
+  beside a pay, order, confirm, submit, reserve or book control), it checks every click that reads as a
+  submit, Enter or a typed line break in any field, and the browser's confirm dialog. A payment goes through
+  when your message stated its amount, the page shows that amount and no larger figure, and it's the
+  request's first payment (the confirm dialog within 60 s after it, showing the same figure, counts as the
+  same one). Any other payment opens sleight's own payment card, the one turbo uses, naming the site, the
+  largest figure and the control. Allow once lets Claude send that one action again, and Cancel keeps the
+  stop. This works in Codex and with turbo off. Tabs driven through the ChatGPT browser extension aren't
+  checked yet. On the recorded race trees it stops the unasked $268.00 payment and passes the same click when
+  the message states $268.00. Not run live yet.
 - No tool can answer sleight's own menu or its approval and payment cards. The menu bar tool, hover,
   drag, window selection and every engine call refuse the process that shows them (sleight's consent
   host), matched by name, by its file and by its pid, so only your click answers them.
 - When your own message asks to submit or save a form or settings page, sleight no longer stops to
-  confirm the values it names, notification, email and SMS switches included. It still asks before a
-  page dialog that adds anything you didn't name, high-stakes submissions, account, security, privacy
-  and sharing settings, and submits only the page proposes. Bookings your message asks for work the
+  confirm the values it names, notification, email and SMS switches included. A security or
+  privacy switch your message names counts too when it makes the account safer, such as two-factor on.
+  It still asks before a page dialog that adds anything you didn't name, high-stakes submissions,
+  loosening a security or privacy setting, recovery email, phone, password or connected-app changes,
+  and submits only the page proposes. Bookings your message asks for work the
   same way, and any money they charge follows the payment rule.
 - In Cursor and other MCP clients, approval prompts use the client's name instead of Claude.
 - The mod refuses Claude's file edits and common shell writes to the preapproved-apps file. Reads
   stay allowed. A path built at run time still gets past it.
+
+### Codex
+
+- sleight installs as a Codex plugin from the same repo: `codex plugin marketplace add Land-o-Clusters/sleight`,
+  then `codex plugin add sleight@sleight`. Codex gets the same server, skill and tool names, and two hooks
+  meant to end the engine's turn when a Codex turn stops or is interrupted (listed and trusted live, not
+  yet seen running). Turbo, the pane and `/sleight` stay Claude Code only. `--doctor` reports whether
+  sleight is on in Codex and whether Codex's own Computer Use is on beside it. On 2026-10-19, with Codex
+  0.160.0 and gpt-6.1-sol, Calculator's 12 × 12 took 22.5 s and a TextEdit note 44.4 s. Always in Codex's
+  approval prompt wrote sleight's pre-approved list, as a click does in Claude Code.
+- In Codex the first `getApp` of a session failed once and cost a turn (2 of 2 live tasks). Codex sends
+  its sandbox state with each call, and we think the engine runs that call in a kernel without sleight's
+  setup. sleight now sends its own calls with the same state and sets up again when the state changes.
+  Unit-tested, not yet rerun live.
+- Outside Claude Code, the model doesn't see `turn_ended` or turbo's tools, and the relay refuses a turbo
+  call from it. Stop and resume work on every host. Only the Claude Code mod binds a turbo turn to your
+  message. Claude Code is recognized by the client name `claude-code`. The CLI's traces show it, and the
+  desktop app's Code tab runs a bundled binary that builds the same name. No trace from the desktop tab
+  has been captured. Any other host gets these protections.
+- The turbo menu shows the host each session runs in and its version, as the client introduced itself
+  ("Claude Code 2.1.289"). It doesn't show a model, because no host reports one to sleight. For Claude
+  Code users the idle line now reads "Its session has ended". The menu change was typechecked and
+  unit-tested, not seen in the real menu yet.
 
 ### Pane, replay and receipts
 

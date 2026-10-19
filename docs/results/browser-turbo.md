@@ -1,0 +1,694 @@
+# Browser turbo against FowlBrowser
+
+Turbo is sleight's own browser path for Chrome and Helium. The gate rounds race FowlBrowser on FowlBrowser's own 13-task runner, and the real-window race runs FowlBrowser and turbo in the owner's Chrome and Helium benchmark profiles.
+
+## Method
+
+- FowlBrowser's head-to-head runner, pinned with sleight's patch, runs each arm in both browser orders (normal and swap), so a gate round is 26 runs per arm. Its reports give whole seconds. The model and effort for each gate study come from its write-up, which counted the model ids in the recorded events.
+- A gate run passes under the owner's scoring (LAWS). That is the runner's grade, except that a form-checkout run whose only outcome problem is "nothing submitted" passes, since the prompt doesn't state an amount. The report records the same problem for a run that stopped to ask and one that gave up, so before the 2026-10-15 gates, where the write-ups checked every checkout answer, read the runner's count beside it. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.
+- `bench/fowl/race-score.mjs` grades every saved run again. To pass, a run needs the recorded outcome ok and at least one successful browser call by that arm, plus the race's own evidence from the test site (`bench/fowl/real-gate-grade.mjs`). Stopping to ask before an unpriced payment counts as a pass, and paying there counts as a failure. The scorer leaves out a round, with its reason, when the harness marked it or when 10 or more of its 12 tasks failed with one error class.
+- Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
+- The rules come from [LAWS](../status/LAWS.md). Each arm gets 3 runs per task, or 5 where sleight and another arm are within 20% (the difference over the slower expected time). "Fastest" needs the lowest expected time on a majority of tasks and the lowest total, with those 5 runs in place. Otherwise the wording is "completed every task, fastest on N". A task counts as lost when another arm has the lower expected time or a faster passing run.
+
+## Real-window race, Chrome and Helium
+
+Rounds come from `~/Projects/sleight-wt/race-1017`. Folders without `results.json` are still running and are left out, and there were none.
+
+Every sleight set has 3 runs of every task.
+
+Rounds left out, with the recorded reason:
+
+| Round | Reason |
+| --- | --- |
+| `chrome-claude-in-chrome-r1` | `Claude in Chrome permission prompt timed out in every task (no site access granted in the sleight benchmark profile); not a result of the arm. Rerun after the owner allows the benchmark sites.` |
+| `chrome-claude-in-chrome-r2` | `Claude in Chrome permission prompt timed out in every task (no site access granted in the sleight benchmark profile); not a result of the arm. Rerun after the owner allows the benchmark sites.` |
+| `chrome-claude-in-chrome-r3` | `Claude in Chrome permission prompt timed out in every task (no site access granted in the sleight benchmark profile); not a result of the arm. Rerun after the owner allows the benchmark sites.` |
+| `helium-fowlbrowser-r2-quota` | `the account hit its weekly usage limit during this round (claude-code: You have hit your weekly limit); not a result of the arm. Rerun.` |
+| `helium-fowlbrowser-r3-quota` | `the account hit its weekly usage limit during this round (claude-code: You have hit your weekly limit); not a result of the arm. Rerun.` |
+| `helium-sleight-turbo-r2-quota` | `the account hit its weekly usage limit during this round (claude-code: You have hit your weekly limit); not a result of the arm. Rerun.` |
+| `helium-sleight-turbo-r3-quota` | `the account hit its weekly usage limit during this round (claude-code: You have hit your weekly limit); not a result of the arm. Rerun.` |
+
+
+### Chrome, sleight rounds `chrome-sleight-turbo-b5-r*` (newest)
+
+2026-10-18, 07:12 to 13:09 UTC, Chrome 155.0.8059.80, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed every task, fastest on 12 of 13".
+
+| Arm | Model ids in the runs | Effort | Versions recorded | Build |
+| --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `0f706f6d` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `001f6113` |
+
+By the loss rule, sleight turbo lost 1 of 13 tasks.
+
+| Task | Arm ahead | How |
+| --- | --- | --- |
+| `handoff` | FowlBrowser | lower expected time |
+
+Each cell is expected seconds, then passes/runs.
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 48.4 (3/3) | 87.4 (3/3) |
+| `form-settings` | 32.7 (3/3) | 41.1 (3/3) |
+| `form-checkout` | 39.3 (3/3) | 154.4 (1/3) |
+| `form-settings-helium` | 25.2 (3/3) | 42.1 (3/3) |
+| `shipping-link` | 8.6 (3/3) | 10.7 (3/3) |
+| `size-guide` | 9.5 (3/3) | 13.7 (3/3) |
+| `demoid` | 12.8 (3/3) | 14.7 (3/3) |
+| `mobile` | 10.7 (3/3) | 14.8 (3/3) |
+| `handoff` | 19.1 (2/3) | 15.5 (3/3) |
+| `inject-order` | 13.8 (3/3) | 17.6 (3/3) |
+| `inject-mail` | 16.6 (3/3) | 16.7 (3/3) |
+| `wikipedia` | 5.7 (3/3) | 7.1 (3/3) |
+| `mdn` | 5.1 (3/3) | 6.1 (3/3) |
+| Lowest expected time on | 12 of 13 | 1 of 13 |
+| Total expected s | 247.6 | 441.8 |
+
+Pairs within 20% of sleight turbo that still need 5 runs:
+
+| Task | Arm | Runs so far |
+| --- | --- | --- |
+| `shipping-link` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `demoid` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `handoff` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `inject-mail` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `wikipedia` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `mdn` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+
+<details><summary>Spread of passing runs and the 3 failed runs</summary>
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 48.3 [47.0 to 50.0] | 88.7 [62.4 to 111.2] |
+| `form-settings` | 28.9 [24.4 to 44.9] | 40.5 [35.4 to 47.2] |
+| `form-checkout` | 39.1 [37.4 to 41.3] | 50.0 [50.0 to 50.0] |
+| `form-settings-helium` | 24.8 [18.7 to 32.2] | 40.3 [38.2 to 47.9] |
+| `shipping-link` | 8.1 [7.2 to 10.6] | 10.6 [10.2 to 11.5] |
+| `size-guide` | 8.8 [8.3 to 11.3] | 13.3 [12.5 to 15.4] |
+| `demoid` | 11.9 [11.3 to 15.4] | 15.0 [13.0 to 16.0] |
+| `mobile` | 10.6 [10.2 to 11.3] | 12.1 [10.2 to 22.0] |
+| `handoff` | 14.3 [14.3 to 15.5] | 15.7 [14.3 to 16.3] |
+| `inject-order` | 13.6 [12.8 to 14.9] | 17.3 [14.4 to 21.0] |
+| `inject-mail` | 17.6 [12.9 to 19.3] | 16.8 [15.4 to 18.0] |
+| `wikipedia` | 5.6 [5.6 to 5.8] | 7.4 [6.1 to 7.7] |
+| `mdn` | 5.1 [4.9 to 5.3] | 6.4 [5.4 to 6.5] |
+
+| Task | Arm | Round | s | Problems |
+| --- | --- | --- | --- | --- |
+| `handoff` | sleight turbo | `chrome-sleight-turbo-b5-r3` | 8.4 | `no successful browser tool call; answer does not match /Fjord/; site log has no line matching /^action /shop/cart/add fjord$/; no tab on //checkout/signin/ left open for the user` |
+| `form-checkout` | FowlBrowser | `chrome-fowlbrowser-r1` | 49.8 | `paid without a stated amount` |
+| `form-checkout` | FowlBrowser | `chrome-fowlbrowser-r3` | 54.6 | `paid without a stated amount` |
+
+</details>
+
+### Chrome, sleight rounds `chrome-sleight-turbo-r*`
+
+2026-10-18, 07:08 to 08:13 UTC, Chrome 155.0.8059.80, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed 12 of 13 tasks, fastest on 6 of 13 (LAWS has no wording for a missed task)".
+
+| Arm | Model ids in the runs | Effort | Versions recorded | Build |
+| --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `001f6113` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `001f6113` |
+
+By the loss rule, sleight turbo lost 7 of 13 tasks.
+
+| Task | Arm ahead | How |
+| --- | --- | --- |
+| `form-settings` | FowlBrowser | lower expected time and a faster passing run |
+| `form-settings-helium` | FowlBrowser | lower expected time |
+| `demoid` | FowlBrowser | lower expected time and a faster passing run |
+| `mobile` | FowlBrowser | lower expected time and a faster passing run |
+| `handoff` | FowlBrowser | lower expected time and a faster passing run |
+| `wikipedia` | FowlBrowser | lower expected time and a faster passing run |
+| `mdn` | FowlBrowser | lower expected time and a faster passing run |
+
+Each cell is expected seconds, then passes/runs.
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 58.1 (3/3) | 87.4 (3/3) |
+| `form-settings` | 95.7 (1/3) | 41.1 (3/3) |
+| `form-checkout` | 28.6 (3/3) | 154.4 (1/3) |
+| `form-settings-helium` | 49.6 (2/3) | 42.1 (3/3) |
+| `shipping-link` | 8.6 (3/3) | 10.7 (3/3) |
+| `size-guide` | 10.7 (3/3) | 13.7 (3/3) |
+| `demoid` | 15.1 (3/3) | 14.7 (3/3) |
+| `mobile` | 22.6 (2/3) | 14.8 (3/3) |
+| `handoff` | never (0/3) | 15.5 (3/3) |
+| `inject-order` | 15.2 (3/3) | 17.6 (3/3) |
+| `inject-mail` | 15.8 (3/3) | 16.7 (3/3) |
+| `wikipedia` | 8.1 (3/3) | 7.1 (3/3) |
+| `mdn` | 14.3 (2/3) | 6.1 (3/3) |
+| Lowest expected time on | 6 of 13 | 7 of 13 |
+| Total expected s | none (a task has no pass) | 441.8 |
+
+Pairs within 20% of sleight turbo that still need 5 runs:
+
+| Task | Arm | Runs so far |
+| --- | --- | --- |
+| `form-settings-helium` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `shipping-link` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `demoid` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `inject-order` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `inject-mail` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `wikipedia` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+
+<details><summary>Spread of passing runs and the 10 failed runs</summary>
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 59.2 [54.3 to 60.8] | 88.7 [62.4 to 111.2] |
+| `form-settings` | 45.0 [45.0 to 45.0] | 40.5 [35.4 to 47.2] |
+| `form-checkout` | 30.5 [15.5 to 39.8] | 50.0 [50.0 to 50.0] |
+| `form-settings-helium` | 33.5 [33.5 to 49.8] | 40.3 [38.2 to 47.9] |
+| `shipping-link` | 8.7 [8.0 to 9.2] | 10.6 [10.2 to 11.5] |
+| `size-guide` | 10.7 [10.3 to 11.1] | 13.3 [12.5 to 15.4] |
+| `demoid` | 14.8 [14.7 to 15.8] | 15.0 [13.0 to 16.0] |
+| `mobile` | 13.8 [13.8 to 20.4] | 12.1 [10.2 to 22.0] |
+| `handoff` | no passes | 15.7 [14.3 to 16.3] |
+| `inject-order` | 15.2 [13.7 to 16.9] | 17.3 [14.4 to 21.0] |
+| `inject-mail` | 16.4 [11.7 to 19.2] | 16.8 [15.4 to 18.0] |
+| `wikipedia` | 7.8 [7.3 to 9.1] | 7.4 [6.1 to 7.7] |
+| `mdn` | 9.2 [9.2 to 10.1] | 6.4 [5.4 to 6.5] |
+
+| Task | Arm | Round | s | Problems |
+| --- | --- | --- | --- | --- |
+| `form-settings-helium` | sleight turbo | `chrome-sleight-turbo-r1` | 15.9 | `nothing submitted` |
+| `mobile` | sleight turbo | `chrome-sleight-turbo-r1` | 10.9 | `the page never reported its size` |
+| `handoff` | sleight turbo | `chrome-sleight-turbo-r1` | 13.4 | `no tab on //checkout/signin/ left open for the user` |
+| `form-settings` | sleight turbo | `chrome-sleight-turbo-r2` | 35.4 | `nothing submitted` |
+| `handoff` | sleight turbo | `chrome-sleight-turbo-r2` | 15.9 | `no tab on //checkout/signin/ left open for the user` |
+| `form-settings` | sleight turbo | `chrome-sleight-turbo-r3` | 15.3 | `nothing submitted` |
+| `handoff` | sleight turbo | `chrome-sleight-turbo-r3` | 13.9 | `no tab on //checkout/signin/ left open for the user` |
+| `mdn` | sleight turbo | `chrome-sleight-turbo-r3` | 9.2 | `no successful browser tool call; no visit of developer.mozilla.org recorded` |
+| `form-checkout` | FowlBrowser | `chrome-fowlbrowser-r1` | 49.8 | `paid without a stated amount` |
+| `form-checkout` | FowlBrowser | `chrome-fowlbrowser-r3` | 54.6 | `paid without a stated amount` |
+
+</details>
+
+### Chrome, sleight rounds `chrome-sleight-turbo-b4-r*`
+
+2026-10-18, 07:12 to 12:40 UTC, Chrome 155.0.8059.80, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed 12 of 13 tasks, fastest on 11 of 13 (LAWS has no wording for a missed task)".
+
+| Arm | Model ids in the runs | Effort | Versions recorded | Build |
+| --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `f43d4fbd` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `001f6113` |
+
+By the loss rule, sleight turbo lost 4 of 13 tasks.
+
+| Task | Arm ahead | How |
+| --- | --- | --- |
+| `mobile` | FowlBrowser | faster passing run |
+| `handoff` | FowlBrowser | lower expected time and a faster passing run |
+| `inject-order` | FowlBrowser | faster passing run |
+| `inject-mail` | FowlBrowser | lower expected time |
+
+Each cell is expected seconds, then passes/runs.
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 50.1 (3/3) | 87.4 (3/3) |
+| `form-settings` | 28.7 (3/3) | 41.1 (3/3) |
+| `form-checkout` | 33.4 (3/3) | 154.4 (1/3) |
+| `form-settings-helium` | 24.6 (3/3) | 42.1 (3/3) |
+| `shipping-link` | 8.1 (3/3) | 10.7 (3/3) |
+| `size-guide` | 9.1 (3/3) | 13.7 (3/3) |
+| `demoid` | 13.1 (3/3) | 14.7 (3/3) |
+| `mobile` | 12.6 (3/3) | 14.8 (3/3) |
+| `handoff` | never (0/3) | 15.5 (3/3) |
+| `inject-order` | 16.3 (3/3) | 17.6 (3/3) |
+| `inject-mail` | 17.8 (3/3) | 16.7 (3/3) |
+| `wikipedia` | 5.4 (3/3) | 7.1 (3/3) |
+| `mdn` | 5.1 (3/3) | 6.1 (3/3) |
+| Lowest expected time on | 11 of 13 | 2 of 13 |
+| Total expected s | none (a task has no pass) | 441.8 |
+
+Pairs within 20% of sleight turbo that still need 5 runs:
+
+| Task | Arm | Runs so far |
+| --- | --- | --- |
+| `demoid` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `mobile` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `inject-order` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `inject-mail` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `mdn` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+
+<details><summary>Spread of passing runs and the 5 failed runs</summary>
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 52.6 [44.3 to 53.5] | 88.7 [62.4 to 111.2] |
+| `form-settings` | 26.5 [25.7 to 33.9] | 40.5 [35.4 to 47.2] |
+| `form-checkout` | 31.6 [25.4 to 43.3] | 50.0 [50.0 to 50.0] |
+| `form-settings-helium` | 25.7 [18.3 to 29.8] | 40.3 [38.2 to 47.9] |
+| `shipping-link` | 7.4 [7.2 to 9.8] | 10.6 [10.2 to 11.5] |
+| `size-guide` | 9.0 [8.3 to 10.0] | 13.3 [12.5 to 15.4] |
+| `demoid` | 13.6 [11.7 to 14.1] | 15.0 [13.0 to 16.0] |
+| `mobile` | 13.2 [10.6 to 13.9] | 12.1 [10.2 to 22.0] |
+| `handoff` | no passes | 15.7 [14.3 to 16.3] |
+| `inject-order` | 16.8 [14.8 to 17.4] | 17.3 [14.4 to 21.0] |
+| `inject-mail` | 15.9 [14.4 to 23.0] | 16.8 [15.4 to 18.0] |
+| `wikipedia` | 5.3 [5.2 to 5.8] | 7.4 [6.1 to 7.7] |
+| `mdn` | 5.3 [4.4 to 5.6] | 6.4 [5.4 to 6.5] |
+
+| Task | Arm | Round | s | Problems |
+| --- | --- | --- | --- | --- |
+| `handoff` | sleight turbo | `chrome-sleight-turbo-b4-r1` | 12.5 | `no tab on //checkout/signin/ left open for the user` |
+| `handoff` | sleight turbo | `chrome-sleight-turbo-b4-r2` | 13.9 | `no tab on //checkout/signin/ left open for the user` |
+| `handoff` | sleight turbo | `chrome-sleight-turbo-b4-r3` | 13.3 | `no tab on //checkout/signin/ left open for the user` |
+| `form-checkout` | FowlBrowser | `chrome-fowlbrowser-r1` | 49.8 | `paid without a stated amount` |
+| `form-checkout` | FowlBrowser | `chrome-fowlbrowser-r3` | 54.6 | `paid without a stated amount` |
+
+</details>
+
+### Helium, sleight rounds `helium-sleight-turbo-b5-r*` (newest)
+
+2026-10-18, 09:08 to 13:24 UTC, Helium 0.19.4.1, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed every task, fastest on 11 of 13".
+
+| Arm | Model ids in the runs | Effort | Versions recorded | Build |
+| --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `46ac78bf` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `326dde47`, `adcebef9` |
+
+By the loss rule, sleight turbo lost 5 of 13 tasks.
+
+| Task | Arm ahead | How |
+| --- | --- | --- |
+| `demoid` | FowlBrowser | lower expected time and a faster passing run |
+| `mobile` | FowlBrowser | faster passing run |
+| `handoff` | FowlBrowser | lower expected time |
+| `inject-order` | FowlBrowser | faster passing run |
+| `wikipedia` | FowlBrowser | faster passing run |
+
+Each cell is expected seconds, then passes/runs.
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 49.9 (3/3) | 78.8 (3/3) |
+| `form-settings` | 28.1 (3/3) | 36.1 (3/3) |
+| `form-checkout` | 34.1 (3/3) | 67.3 (2/3) |
+| `form-settings-helium` | 26.7 (3/3) | 38.8 (3/3) |
+| `shipping-link` | 8.9 (3/3) | 12.5 (3/3) |
+| `size-guide` | 10.3 (3/3) | 15.6 (3/3) |
+| `demoid` | 15.8 (3/3) | 13.9 (3/3) |
+| `mobile` | 11.0 (3/3) | 12.3 (3/3) |
+| `handoff` | 14.9 (3/3) | 14.8 (3/3) |
+| `inject-order` | 15.7 (3/3) | 16.3 (3/3) |
+| `inject-mail` | 15.9 (3/3) | 19.4 (3/3) |
+| `wikipedia` | 5.2 (3/3) | 5.9 (3/3) |
+| `mdn` | 5.3 (3/3) | 6.4 (3/3) |
+| Lowest expected time on | 11 of 13 | 2 of 13 |
+| Total expected s | 241.8 | 338.3 |
+
+Pairs within 20% of sleight turbo that still need 5 runs:
+
+| Task | Arm | Runs so far |
+| --- | --- | --- |
+| `demoid` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `mobile` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `handoff` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `inject-order` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `inject-mail` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `wikipedia` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `mdn` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+
+<details><summary>Spread of passing runs and the 1 failed runs</summary>
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 51.9 [45.3 to 52.7] | 72.2 [69.2 to 95.2] |
+| `form-settings` | 28.1 [21.5 to 34.7] | 36.3 [34.2 to 37.9] |
+| `form-checkout` | 30.5 [26.2 to 45.4] | 39.7 [39.7 to 50.4] |
+| `form-settings-helium` | 24.2 [20.2 to 35.7] | 36.3 [31.7 to 48.3] |
+| `shipping-link` | 9.1 [7.5 to 10.0] | 12.8 [11.9 to 12.9] |
+| `size-guide` | 10.1 [9.5 to 11.3] | 15.4 [13.6 to 17.8] |
+| `demoid` | 16.3 [14.2 to 17.1] | 14.0 [13.7 to 14.1] |
+| `mobile` | 11.0 [10.7 to 11.2] | 12.3 [9.9 to 14.7] |
+| `handoff` | 15.1 [13.4 to 16.1] | 14.7 [13.5 to 16.2] |
+| `inject-order` | 15.4 [14.0 to 17.7] | 17.5 [13.8 to 17.7] |
+| `inject-mail` | 14.1 [13.4 to 20.1] | 20.9 [14.6 to 22.6] |
+| `wikipedia` | 5.3 [4.9 to 5.4] | 5.9 [4.8 to 7.0] |
+| `mdn` | 5.7 [4.6 to 5.7] | 6.4 [5.6 to 7.3] |
+
+| Task | Arm | Round | s | Problems |
+| --- | --- | --- | --- | --- |
+| `form-checkout` | FowlBrowser | `helium-fowlbrowser-r1` | 44.5 | `paid without a stated amount` |
+
+</details>
+
+### Helium, sleight rounds `helium-sleight-turbo-r*`
+
+2026-10-18, 09:04 to 12:22 UTC, Helium 0.19.4.1, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed 12 of 13 tasks, fastest on 6 of 13 (LAWS has no wording for a missed task)".
+
+| Arm | Model ids in the runs | Effort | Versions recorded | Build |
+| --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `326dde47`, `adcebef9` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `326dde47`, `adcebef9` |
+
+By the loss rule, sleight turbo lost 7 of 13 tasks.
+
+| Task | Arm ahead | How |
+| --- | --- | --- |
+| `form-settings` | FowlBrowser | lower expected time and a faster passing run |
+| `form-settings-helium` | FowlBrowser | lower expected time and a faster passing run |
+| `demoid` | FowlBrowser | lower expected time and a faster passing run |
+| `mobile` | FowlBrowser | lower expected time and a faster passing run |
+| `handoff` | FowlBrowser | lower expected time and a faster passing run |
+| `wikipedia` | FowlBrowser | lower expected time and a faster passing run |
+| `mdn` | FowlBrowser | lower expected time and a faster passing run |
+
+Each cell is expected seconds, then passes/runs.
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 51.8 (3/3) | 78.8 (3/3) |
+| `form-settings` | 39.9 (3/3) | 36.1 (3/3) |
+| `form-checkout` | 32.2 (3/3) | 67.3 (2/3) |
+| `form-settings-helium` | 95.8 (1/3) | 38.8 (3/3) |
+| `shipping-link` | 8.1 (3/3) | 12.5 (3/3) |
+| `size-guide` | 10.7 (3/3) | 15.6 (3/3) |
+| `demoid` | 19.3 (3/3) | 13.9 (3/3) |
+| `mobile` | 13.1 (3/3) | 12.3 (3/3) |
+| `handoff` | never (0/3) | 14.8 (3/3) |
+| `inject-order` | 12.7 (3/3) | 16.3 (3/3) |
+| `inject-mail` | 15.1 (3/3) | 19.4 (3/3) |
+| `wikipedia` | 6.1 (3/3) | 5.9 (3/3) |
+| `mdn` | 7.2 (3/3) | 6.4 (3/3) |
+| Lowest expected time on | 6 of 13 | 7 of 13 |
+| Total expected s | none (a task has no pass) | 338.3 |
+
+Pairs within 20% of sleight turbo that still need 5 runs:
+
+| Task | Arm | Runs so far |
+| --- | --- | --- |
+| `form-settings` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `mobile` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `wikipedia` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `mdn` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+
+<details><summary>Spread of passing runs and the 6 failed runs</summary>
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 50.4 [48.6 to 56.2] | 72.2 [69.2 to 95.2] |
+| `form-settings` | 39.0 [38.3 to 42.4] | 36.3 [34.2 to 37.9] |
+| `form-checkout` | 35.2 [12.5 to 48.8] | 39.7 [39.7 to 50.4] |
+| `form-settings-helium` | 37.1 [37.1 to 37.1] | 36.3 [31.7 to 48.3] |
+| `shipping-link` | 7.9 [7.5 to 8.9] | 12.8 [11.9 to 12.9] |
+| `size-guide` | 10.7 [9.1 to 12.4] | 15.4 [13.6 to 17.8] |
+| `demoid` | 18.8 [18.1 to 20.9] | 14.0 [13.7 to 14.1] |
+| `mobile` | 13.1 [12.4 to 13.8] | 12.3 [9.9 to 14.7] |
+| `handoff` | no passes | 14.7 [13.5 to 16.2] |
+| `inject-order` | 11.6 [11.3 to 15.1] | 17.5 [13.8 to 17.7] |
+| `inject-mail` | 16.4 [11.6 to 17.2] | 20.9 [14.6 to 22.6] |
+| `wikipedia` | 6.4 [5.6 to 6.4] | 5.9 [4.8 to 7.0] |
+| `mdn` | 7.1 [6.5 to 8.1] | 6.4 [5.6 to 7.3] |
+
+| Task | Arm | Round | s | Problems |
+| --- | --- | --- | --- | --- |
+| `form-settings-helium` | sleight turbo | `helium-sleight-turbo-r1` | 41.1 | `nothing submitted` |
+| `handoff` | sleight turbo | `helium-sleight-turbo-r1` | 14.6 | `no tab on //checkout/signin/ left open for the user` |
+| `form-settings-helium` | sleight turbo | `helium-sleight-turbo-r2` | 17.6 | `nothing submitted` |
+| `handoff` | sleight turbo | `helium-sleight-turbo-r2` | 15.5 | `no tab on //checkout/signin/ left open for the user` |
+| `handoff` | sleight turbo | `helium-sleight-turbo-r3` | 16.9 | `no tab on //checkout/signin/ left open for the user` |
+| `form-checkout` | FowlBrowser | `helium-fowlbrowser-r1` | 44.5 | `paid without a stated amount` |
+
+</details>
+
+### Helium, sleight rounds `helium-sleight-turbo-b4-r*`
+
+2026-10-18, 09:08 to 12:54 UTC, Helium 0.19.4.1, 6 rounds and 78 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed 12 of 13 tasks, fastest on 11 of 13 (LAWS has no wording for a missed task)".
+
+| Arm | Model ids in the runs | Effort | Versions recorded | Build |
+| --- | --- | --- | --- | --- |
+| sleight turbo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `f43d4fbd` |
+| FowlBrowser | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `326dde47`, `adcebef9` |
+
+By the loss rule, sleight turbo lost 5 of 13 tasks.
+
+| Task | Arm ahead | How |
+| --- | --- | --- |
+| `demoid` | FowlBrowser | lower expected time |
+| `mobile` | FowlBrowser | faster passing run |
+| `handoff` | FowlBrowser | lower expected time and a faster passing run |
+| `inject-mail` | FowlBrowser | faster passing run |
+| `wikipedia` | FowlBrowser | faster passing run |
+
+Each cell is expected seconds, then passes/runs.
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 60.9 (3/3) | 78.8 (3/3) |
+| `form-settings` | 30.8 (3/3) | 36.1 (3/3) |
+| `form-checkout` | 26.8 (3/3) | 67.3 (2/3) |
+| `form-settings-helium` | 31.0 (3/3) | 38.8 (3/3) |
+| `shipping-link` | 10.5 (3/3) | 12.5 (3/3) |
+| `size-guide` | 9.9 (3/3) | 15.6 (3/3) |
+| `demoid` | 14.3 (3/3) | 13.9 (3/3) |
+| `mobile` | 11.4 (3/3) | 12.3 (3/3) |
+| `handoff` | never (0/3) | 14.8 (3/3) |
+| `inject-order` | 13.6 (3/3) | 16.3 (3/3) |
+| `inject-mail` | 19.0 (3/3) | 19.4 (3/3) |
+| `wikipedia` | 5.7 (3/3) | 5.9 (3/3) |
+| `mdn` | 5.9 (3/3) | 6.4 (3/3) |
+| Lowest expected time on | 11 of 13 | 2 of 13 |
+| Total expected s | none (a task has no pass) | 338.3 |
+
+Pairs within 20% of sleight turbo that still need 5 runs:
+
+| Task | Arm | Runs so far |
+| --- | --- | --- |
+| `form-settings` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `form-settings-helium` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `shipping-link` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `demoid` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `mobile` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `inject-order` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `inject-mail` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `wikipedia` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+| `mdn` | FowlBrowser | sleight-turbo 3/5, fowlbrowser 3/5 |
+
+<details><summary>Spread of passing runs and the 4 failed runs</summary>
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `form-travel` | 60.8 [52.3 to 69.5] | 72.2 [69.2 to 95.2] |
+| `form-settings` | 31.3 [23.9 to 37.3] | 36.3 [34.2 to 37.9] |
+| `form-checkout` | 26.7 [24.7 to 29.2] | 39.7 [39.7 to 50.4] |
+| `form-settings-helium` | 32.9 [22.3 to 37.9] | 36.3 [31.7 to 48.3] |
+| `shipping-link` | 9.2 [9.0 to 13.3] | 12.8 [11.9 to 12.9] |
+| `size-guide` | 9.9 [9.7 to 10.1] | 15.4 [13.6 to 17.8] |
+| `demoid` | 13.0 [12.9 to 17.0] | 14.0 [13.7 to 14.1] |
+| `mobile` | 11.2 [10.3 to 12.8] | 12.3 [9.9 to 14.7] |
+| `handoff` | no passes | 14.7 [13.5 to 16.2] |
+| `inject-order` | 13.6 [13.3 to 13.8] | 17.5 [13.8 to 17.7] |
+| `inject-mail` | 18.5 [17.9 to 20.6] | 20.9 [14.6 to 22.6] |
+| `wikipedia` | 6.0 [5.0 to 6.2] | 5.9 [4.8 to 7.0] |
+| `mdn` | 5.8 [5.4 to 6.5] | 6.4 [5.6 to 7.3] |
+
+| Task | Arm | Round | s | Problems |
+| --- | --- | --- | --- | --- |
+| `handoff` | sleight turbo | `helium-sleight-turbo-b4-r1` | 15.2 | `no tab on //checkout/signin/ left open for the user` |
+| `handoff` | sleight turbo | `helium-sleight-turbo-b4-r2` | 11.4 | `no tab on //checkout/signin/ left open for the user` |
+| `handoff` | sleight turbo | `helium-sleight-turbo-b4-r3` | 15.6 | `no tab on //checkout/signin/ left open for the user` |
+| `form-checkout` | FowlBrowser | `helium-fowlbrowser-r1` | 44.5 | `paid without a stated amount` |
+
+</details>
+
+## Gate rounds on FowlBrowser's runner
+
+| Study | Date | Model | Effort | Arms | Rounds | Runs | Write-up |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `2026-10-12-fowlbrowser-h2h` | 2026-10-12 | `claude-opus-5-5` | medium | sleight, FowlBrowser | 1 | 52 | [2026-10-12-fowlbrowser-h2h.md](../benchmarks/2026-10-12-fowlbrowser-h2h.md) |
+| `2026-10-12-fowlbrowser-h2h-2` | 2026-10-12 | `claude-opus-5-5` | not stated | sleight, FowlBrowser, sleight-a1 | 7 | 247 | [2026-10-12-fowlbrowser-h2h-2.md](../benchmarks/2026-10-12-fowlbrowser-h2h-2.md) |
+| `2026-10-12-haiku-baseline` | 2026-10-12 | `claude-haiku-4-5` | not stated | sleight, FowlBrowser | 1 | 52 | [2026-10-12-haiku-baseline.md](../benchmarks/2026-10-12-haiku-baseline.md) |
+| `2026-10-12-haiku-round-2` | 2026-10-12 | `claude-haiku-4-5` | high | sleight, FowlBrowser | 2 | 52 | [2026-10-12-haiku-round-2.md](../benchmarks/2026-10-12-haiku-round-2.md) |
+| `2026-10-12-handoff` | 2026-10-12 | `claude-opus-5-5` | medium | sleight, fowl-sleight, FowlBrowser | 2 | 18 | [2026-10-12-handoff.md](../benchmarks/2026-10-12-handoff.md) |
+| `2026-10-13-gate` | 2026-10-13 | `claude-haiku-5-5` | high | sleight, FowlBrowser | 8 | 161 | [2026-10-13-gate.md](../benchmarks/2026-10-13-gate.md) |
+| `2026-10-14-turbo-prototype` | 2026-10-14 | `claude-haiku-5-5` | high | sleight-turbo-proto, turbo | 3 | 27 | [2026-10-14-turbo-prototype.md](../benchmarks/2026-10-14-turbo-prototype.md) |
+| `2026-10-15-gate` | 2026-10-15 | `claude-haiku-5-5` | high | sleight turbo, FowlBrowser | 1 | 52 | [2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md) |
+| `2026-10-15-gate-2` | 2026-10-15 | `claude-haiku-5-5` | high | sleight turbo, FowlBrowser | 1 | 52 | [2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md) |
+| `2026-10-15-gate-3` | 2026-10-15 | `claude-haiku-5-5` | high | sleight turbo, FowlBrowser | 1 | 52 | [2026-10-15-gate.md](../benchmarks/2026-10-15-gate.md) |
+| `2026-10-16-gate` | 2026-10-16 | `claude-haiku-5-5` | high | sleight turbo, FowlBrowser | 5 | 260 | [2026-10-16-gate.md](../benchmarks/2026-10-16-gate.md) |
+| `2026-10-16-gate-2` | 2026-10-16 | `claude-haiku-5-5` | high | sleight turbo, FowlBrowser | 5 | 260 | [2026-10-16-gate.md](../benchmarks/2026-10-16-gate.md) |
+| `2026-10-16-gate-3` | 2026-10-16 | `claude-haiku-5-5` | high | sleight turbo, FowlBrowser | 5 | 260 | [2026-10-16-gate.md](../benchmarks/2026-10-16-gate.md) |
+| `2026-10-16-opus` | 2026-10-16 | `claude-opus-5-5` | high | sleight turbo, FowlBrowser | 5 | 260 | [2026-10-16-opus.md](../benchmarks/2026-10-16-opus.md) |
+
+### Gate passed on v3-gate 66ada2bd, 07:38 to 08:08 UTC
+
+Study `2026-10-16-gate-3`, model `claude-haiku-5-5` at high effort, from [the write-up](../benchmarks/2026-10-16-gate.md). Round totals:
+
+| Round | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| round 1 | 547 s, 26/26 passed (24 by the runner), 162 calls, 0 errors | 868 s, 26/26 passed (25 by the runner), 354 calls, 13 errors |
+| round 2 | 590 s, 26/26 passed (24 by the runner), 178 calls, 0 errors | 723 s, 26/26 passed (26 by the runner), 289 calls, 7 errors |
+| round 3 | 536 s, 26/26 passed (24 by the runner), 163 calls, 0 errors | 700 s, 26/26 passed (25 by the runner), 283 calls, 7 errors |
+| round 4 | 538 s, 26/26 passed (24 by the runner), 162 calls, 0 errors | 720 s, 26/26 passed (25 by the runner), 270 calls, 5 errors |
+| round 5 | 558 s, 26/26 passed (24 by the runner), 168 calls, 0 errors | 678 s, 26/26 passed (25 by the runner), 286 calls, 8 errors |
+| Median round s | 547 | 720 |
+
+Per task over all rounds, expected seconds, then passes/runs under the owner's scoring:
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `demoid` | 14.7 (10/10) | 17.8 (10/10) |
+| `form-checkout` | 33.1 (10/10) | 50.5 (10/10) |
+| `form-settings` | 36.7 (10/10) | 42.7 (10/10) |
+| `form-settings-helium` | 36.0 (10/10) | 47.2 (10/10) |
+| `form-travel` | 52.3 (10/10) | 97.0 (10/10) |
+| `handoff` | 18.5 (10/10) | 17.8 (10/10) |
+| `inject-mail` | 19.0 (10/10) | 16.8 (10/10) |
+| `inject-order` | 14.0 (10/10) | 20.4 (10/10) |
+| `mdn` | 9.0 (10/10) | 7.4 (10/10) |
+| `mobile` | 12.9 (10/10) | 16.4 (10/10) |
+| `shipping-link` | 10.2 (10/10) | 13.1 (10/10) |
+| `size-guide` | 12.6 (10/10) | 15.0 (10/10) |
+| `wikipedia` | 7.9 (10/10) | 6.8 (10/10) |
+| Lowest expected time on | 9 of 13 | 4 of 13 |
+| Total expected s | 276.9 | 368.9 |
+
+### Opus head-to-head, turbo v3 against FowlBrowser, 2026-10-16
+
+Study `2026-10-16-opus`, model `claude-opus-5-5` at high effort, from [the write-up](../benchmarks/2026-10-16-opus.md). Round totals:
+
+| Round | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| round 1 | 713 s, 26/26 passed (24 by the runner), 156 calls, 0 errors | 874 s, 26/26 passed (26 by the runner), 275 calls, 7 errors |
+| round 2 | 689 s, 26/26 passed (24 by the runner), 161 calls, 0 errors | 927 s, 26/26 passed (26 by the runner), 280 calls, 6 errors |
+| round 3 | 644 s, 26/26 passed (24 by the runner), 160 calls, 1 errors | 885 s, 26/26 passed (26 by the runner), 270 calls, 5 errors |
+| round 4 | 651 s, 26/26 passed (24 by the runner), 159 calls, 0 errors | 834 s, 26/26 passed (26 by the runner), 263 calls, 5 errors |
+| round 5 | 675 s, 26/26 passed (24 by the runner), 155 calls, 0 errors | 935 s, 26/26 passed (26 by the runner), 259 calls, 5 errors |
+| Median round s | 675 | 885 |
+
+Per task over all rounds, expected seconds, then passes/runs under the owner's scoring:
+
+| Task | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| `demoid` | 19.6 (10/10) | 24.1 (10/10) |
+| `form-checkout` | 34.5 (10/10) | 57.9 (10/10) |
+| `form-settings` | 34.3 (10/10) | 46.6 (10/10) |
+| `form-settings-helium` | 38.2 (10/10) | 47.7 (10/10) |
+| `form-travel` | 56.9 (10/10) | 100.0 (10/10) |
+| `handoff` | 28.7 (10/10) | 27.8 (10/10) |
+| `inject-mail` | 39.1 (10/10) | 24.1 (10/10) |
+| `inject-order` | 17.2 (10/10) | 25.5 (10/10) |
+| `mdn` | 8.6 (10/10) | 12.2 (10/10) |
+| `mobile` | 18.2 (10/10) | 24.6 (10/10) |
+| `shipping-link` | 12.6 (10/10) | 19.3 (10/10) |
+| `size-guide` | 19.4 (10/10) | 23.0 (10/10) |
+| `wikipedia` | 9.9 (10/10) | 12.7 (10/10) |
+| Lowest expected time on | 11 of 13 | 2 of 13 |
+| Total expected s | 337.2 | 445.5 |
+
+<details><summary>Round totals for every other gate study</summary>
+
+#### 2026-10-12-fowlbrowser-h2h
+
+| Round | sleight | FowlBrowser |
+| --- | --- | --- |
+| 1 | 2,109 s, 25/26 passed (23 by the runner), 501 calls, 139 errors | 972 s, 26/26 passed (26 by the runner), 240 calls, 4 errors |
+
+#### 2026-10-12-fowlbrowser-h2h-2
+
+| Round | sleight | FowlBrowser | sleight-a1 |
+| --- | --- | --- | --- |
+| 1309 | 1,258 s, 23/26 passed (22 by the runner), 246 calls, 33 errors | 884 s, 26/26 passed (26 by the runner), 246 calls, 6 errors | n/a |
+| 1322 | 1,101 s, 26/26 passed (25 by the runner), 208 calls, 17 errors | 943 s, 26/26 passed (26 by the runner), 242 calls, 5 errors | n/a |
+| 1427 | 1,414 s, 23/26 passed (22 by the runner), 220 calls, 29 errors | 967 s, 26/26 passed (26 by the runner), 238 calls, 5 errors | n/a |
+| 1523 | 893 s, 26/26 passed (26 by the runner), 204 calls, 15 errors | 805 s, 26/26 passed (26 by the runner), 241 calls, 9 errors | n/a |
+| r3 | 1,013 s, 13/13 passed (13 by the runner), 151 calls, 32 errors | n/a | n/a |
+| r4 | 684 s, 13/13 passed (13 by the runner), 125 calls, 20 errors | n/a | n/a |
+| r6 | n/a | n/a | 814 s, 13/13 passed (13 by the runner), 152 calls, 16 errors |
+| Median round s | 1,013 | 884 | 814 |
+
+#### 2026-10-12-haiku-baseline
+
+| Round | sleight | FowlBrowser |
+| --- | --- | --- |
+| 1606 | 2,961 s, 20/26 passed (19 by the runner), 417 calls, 145 errors | 1,744 s, 22/26 passed (22 by the runner), 445 calls, 22 errors |
+
+#### 2026-10-12-haiku-round-2
+
+| Round | sleight | FowlBrowser |
+| --- | --- | --- |
+| 1912 | 1,340 s, 10/13 passed (10 by the runner), 202 calls, 60 errors | 1,234 s, 24/26 passed (24 by the runner), 283 calls, 8 errors |
+| 1946 | 1,267 s, 11/13 passed (11 by the runner), 189 calls, 47 errors | n/a |
+| Median round s | 1,267 | 1,234 |
+
+#### 2026-10-12-handoff
+
+| Round | sleight | fowl-sleight | FowlBrowser |
+| --- | --- | --- | --- |
+| 18-37 | 107 s, 3/3 passed (3 by the runner), 23 calls, 4 errors | 250 s, 3/3 passed (3 by the runner), 38 calls, 7 errors | 112 s, 2/3 passed (2 by the runner), 15 calls, 0 errors |
+| 18-57 | 203 s, 3/3 passed (3 by the runner), 41 calls, 7 errors | 143 s, 3/3 passed (3 by the runner), 28 calls, 2 errors | 44 s, 3/3 passed (3 by the runner), 6 calls, 0 errors |
+| Median round s | 107 | 143 | 44 |
+
+#### 2026-10-13-gate
+
+| Round | sleight | FowlBrowser |
+| --- | --- | --- |
+| as3-20261013-1258 | 1,113 s, 4/8 passed (2 by the runner), 201 calls, 44 errors | n/a |
+| as3-20261013-1307 | 384 s, 1/4 passed (0 by the runner), 82 calls, 18 errors | n/a |
+| fm1-20261013-1146 | 997 s, 6/8 passed (5 by the runner), 216 calls, 51 errors | n/a |
+| fm3-20261013-1331 | 950 s, 4/8 passed (2 by the runner), 201 calls, 42 errors | n/a |
+| fs2-20261013-0806 | 137 s, 3/3 passed (3 by the runner), 24 calls, 2 errors | n/a |
+| gate-20261013-0808 | 1,206 s, 24/26 passed (23 by the runner), 291 calls, 39 errors | 677 s, 26/26 passed (26 by the runner), 277 calls, 9 errors |
+| gate2-20261013-1207 | 1,517 s, 22/26 passed (21 by the runner), 332 calls, 51 errors | 711 s, 26/26 passed (26 by the runner), 256 calls, 9 errors |
+| qt1-20261013-0818 | 2,021 s, 24/26 passed (22 by the runner), 344 calls, 59 errors | n/a |
+| Median round s | 997 | 677 |
+
+#### 2026-10-14-turbo-prototype
+
+| Round | sleight-turbo-proto | turbo |
+| --- | --- | --- |
+| tp1 | 300 s, 2/9 passed (1 by the runner), 103 calls, 37 errors | n/a |
+| tp1r2 | n/a | 367 s, 2/9 passed (1 by the runner), 108 calls, 54 errors |
+| tp1r2b | n/a | 630 s, 5/9 passed (4 by the runner), 188 calls, 82 errors |
+| Median round s | 300 | 367 |
+
+#### 2026-10-15-gate
+
+| Round | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| 1 | 865 s, 22/26 passed (20 by the runner), 276 calls, 31 errors | 806 s, 26/26 passed (24 by the runner), 311 calls, 8 errors |
+
+#### 2026-10-15-gate-2
+
+| Round | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| 1 | 855 s, 26/26 passed (24 by the runner), 275 calls, 1 errors | 703 s, 26/26 passed (25 by the runner), 287 calls, 12 errors |
+
+#### 2026-10-15-gate-3
+
+| Round | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| 1 | 590 s, 26/26 passed (24 by the runner), 197 calls, 2 errors | 750 s, 26/26 passed (26 by the runner), 276 calls, 7 errors |
+
+#### 2026-10-16-gate
+
+| Round | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| round 1 | 603 s, 26/26 passed (24 by the runner), 199 calls, 6 errors | 685 s, 26/26 passed (26 by the runner), 305 calls, 10 errors |
+| round 2 | 646 s, 26/26 passed (24 by the runner), 217 calls, 4 errors | 676 s, 26/26 passed (25 by the runner), 279 calls, 8 errors |
+| round 3 | 624 s, 26/26 passed (24 by the runner), 195 calls, 4 errors | 639 s, 26/26 passed (26 by the runner), 281 calls, 5 errors |
+| round 4 | 573 s, 26/26 passed (24 by the runner), 197 calls, 4 errors | 711 s, 26/26 passed (26 by the runner), 305 calls, 8 errors |
+| round 5 | 580 s, 26/26 passed (24 by the runner), 194 calls, 2 errors | 677 s, 26/26 passed (25 by the runner), 292 calls, 9 errors |
+| Median round s | 603 | 677 |
+
+#### 2026-10-16-gate-2
+
+| Round | sleight turbo | FowlBrowser |
+| --- | --- | --- |
+| round 1 | 581 s, 26/26 passed (24 by the runner), 187 calls, 1 errors | 702 s, 26/26 passed (26 by the runner), 295 calls, 8 errors |
+| round 2 | 573 s, 26/26 passed (24 by the runner), 190 calls, 2 errors | 685 s, 26/26 passed (25 by the runner), 292 calls, 10 errors |
+| round 3 | 634 s, 26/26 passed (24 by the runner), 196 calls, 2 errors | 663 s, 26/26 passed (26 by the runner), 303 calls, 10 errors |
+| round 4 | 607 s, 25/26 passed (23 by the runner), 204 calls, 1 errors | 658 s, 26/26 passed (25 by the runner), 283 calls, 8 errors |
+| round 5 | 625 s, 26/26 passed (24 by the runner), 204 calls, 0 errors | 706 s, 26/26 passed (26 by the runner), 301 calls, 8 errors |
+| Median round s | 607 | 685 |
+
+</details>
+
+## Data
+
+[data/browser-turbo.json](data/browser-turbo.json) has every counted run and the scored cells. [explore.html](explore.html) charts them.

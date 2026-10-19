@@ -119,11 +119,12 @@ test('numbered submit buttons without an ID use their exact visible role and nam
   assert.match(f.notes.join('\n'), /retry may submit twice/);
 });
 
-test('unreadable target metadata stays silent without delaying input dispatch', async t => {
+test('unreadable target metadata stays silent after the bounded pre-click hit test', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const f = fixture({ hang: 'metadata' });
   const pending = f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("button[type=submit]").click();');
-  await tick(); assert.deepEqual(f.calls, ['click']);
+  await tick(); assert.deepEqual(f.calls, []);
+  t.mock.timers.tick(1001); await tick(); assert.deepEqual(f.calls, ['click']);
   t.mock.timers.tick(1501); await pending;
   assert.deepEqual(f.notes, []);
 });
@@ -167,12 +168,12 @@ test('click reporting composes with the alias prelude without duplicate input', 
 for (const code of ['await tab.playwright.getByRole("button", { name: "Expand details" }).click();',
   'await tab.playwright.getByRole("link", { name: "Pay" }).click();',
   'await tab.playwright.locator("#details").click();', 'await tab.click(12);']) {
-  test(`an ordinary click adds zero engine reads with 100 ms observations: ${code}`, async t => {
+  test(`an ordinary click reads only the locator hit test, with no submit observations: ${code}`, async t => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
     const f = fixture({ row: 'Expand details', readMs: 100 });
     const pending = f.run('var tab = await cua.getTab("1");' + code);
     await tick();
-    assert.deepEqual(f.reads, []);
+    assert.deepEqual(f.reads, code.includes('playwright') ? ['metadata'] : []);
     await pending;
     assert.deepEqual(f.calls, ['click']);
     assert.deepEqual(f.notes, []);
@@ -254,4 +255,125 @@ test('a full reply with no buttons clears the previous submit classification', a
   const f = fixture();
   await runInContext('(async()=>{' + observer.code('var tab = await cua.getTab("1"); await tab.click(12);') + '})()', f.context);
   assert.deepEqual(f.reads, []);
+});
+
+// The engine scrolls the target to the center (resolvePointerActionTarget) and inputs at its box center,
+// with no in-page hit test. `before` is the box before that scroll, `after` the box once it ran.
+const CENTER = { block: 'center', inline: 'nearest', behavior: 'instant' };
+function coveredFixture({ coverAt = () => true, descendant = false, shadowHost = false, shadowRoot = false, unread = false, hang = false,
+  before = { left: 10, top: 20, right: 110, bottom: 60, width: 100, height: 40 }, after = before, labelled = false, control = false,
+  hitLabels = false, nested = false } = {}) {
+  const f = fixture();
+  let clicks = 0, rect = before;
+  const scrolls = [], evaluates = [], points = [];
+  const region = { tagName: 'DIV', textContent: 'Fixture notice Accept all', parentElement: undefined,
+    getAttribute: name => ({ role: 'region', 'aria-label': 'Fixture notice' })[name] ?? null,
+    closest: () => region, contains: node => node === region || node === accept };
+  const accept = { tagName: 'BUTTON', textContent: 'Accept all', parentElement: region,
+    getAttribute: () => null, contains: node => node === accept };
+  accept.closest = () => region;
+  const element = { tagName: 'BUTTON', type: 'submit',
+    labels: labelled ? [{ contains: node => node === region }] : undefined,
+    control: control ? region : undefined,
+    getAttribute: () => null, closest: name => name === 'form' ? {} : null,
+    scrollIntoView: options => { scrolls.push(options); rect = after; },
+    getBoundingClientRect: () => ({ ...rect }),
+    contains: node => node === element || descendant,
+    getRootNode: () => shadowRoot ? root : { host: shadowHost ? region : undefined },
+  };
+  if (hitLabels) region.labels = [element];
+  const doc = { documentElement: { clientWidth: 800, clientHeight: 600 },
+    defaultView: { requestAnimationFrame: callback => queueMicrotask(callback) },
+    elementFromPoint: (x, y) => { points.push([x, y]); return coverAt(x, y) ? (nested ? accept : region) : element; } };
+  // An open shadow root answers hit tests inside its own tree.
+  const root = { host: undefined, elementFromPoint: (x, y) => { points.push(['root', x, y]); return element; } };
+  element.ownerDocument = doc;
+  const raw = { count: async () => 1, click: async () => { clicks++; },
+    evaluate: async (fn, arg, options) => {
+      evaluates.push(arg);
+      if (unread) throw Error('hit test unavailable');
+      if (hang) return new Promise(() => {});
+      if (options) assert.equal(options.timeoutMs, 1000);
+      return fn(element, arg);
+    }, first: () => loc };
+  const loc = new Proxy(raw, { get(target, key) {
+    if (!(key in target)) throw Error('unsupported engine locator method: ' + String(key));
+    return target[key];
+  } });
+  f.tab.playwright.locator = () => loc;
+  return { ...f, clicks: () => clicks, scrolls, evaluates, points };
+}
+const clickDetails = (options = '') => `var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click(${options});`;
+
+test('a locator click covered after the engine center scroll is refused once, with no input', async () => {
+  const f = coveredFixture();
+  await assert.rejects(f.run(clickDetails()), /sleight: click target is covered by region Fixture notice\. Dismiss or move the cover before clicking\./);
+  assert.equal(f.clicks(), 0);
+  assert.equal(JSON.stringify(f.scrolls), JSON.stringify([CENTER]));
+  assert.deepEqual(f.points, [[60, 40]]);
+  // The refusal is the thrown error alone, not also a written note.
+  assert.deepEqual(f.notes, []);
+});
+
+test('a cover is named by the element hit and its labelled container', async () => {
+  const f = coveredFixture({ nested: true });
+  await assert.rejects(f.run(clickDetails()), /covered by button Accept all in region Fixture notice\./);
+  assert.equal(f.clicks(), 0);
+});
+
+// A fixed header covers the target before the scroll; the center scroll moves it clear.
+test('a target covered only before the engine center scroll reaches the engine', async () => {
+  const f = coveredFixture({ before: { left: 10, top: -10, right: 110, bottom: 30, width: 100, height: 40 },
+    after: { left: 10, top: 280, right: 110, bottom: 320, width: 100, height: 40 }, coverAt: (x, y) => y < 40 });
+  await f.run(clickDetails());
+  assert.equal(f.clicks(), 1); assert.deepEqual(f.notes, []);
+  assert.deepEqual(f.points, [[60, 300]]);
+});
+
+// An in-viewport target is clear where it sits, but the center scroll puts it under a fixed band.
+test('an in-viewport target that the center scroll moves under a fixed overlay is refused', async () => {
+  const f = coveredFixture({ before: { left: 10, top: 500, right: 110, bottom: 540, width: 100, height: 40 },
+    after: { left: 10, top: 280, right: 110, bottom: 320, width: 100, height: 40 }, coverAt: (x, y) => y > 250 && y < 350 });
+  await assert.rejects(f.run(clickDetails()), /covered by region Fixture notice/);
+  assert.equal(f.clicks(), 0);
+});
+
+test('a box center outside the viewport after the scroll defers to the engine', async () => {
+  const f = coveredFixture({ after: { left: 900, top: 280, right: 1000, bottom: 320, width: 100, height: 40 } });
+  await f.run(clickDetails());
+  assert.equal(f.clicks(), 1); assert.deepEqual(f.points, []);
+});
+
+for (const options of ['{ force: true }', '{ trial: true }']) {
+  test(`a ${options} locator click skips the cover check`, async () => {
+    const f = coveredFixture();
+    await f.run(clickDetails(options));
+    assert.equal(f.clicks(), 1); assert.deepEqual(f.evaluates, []); assert.deepEqual(f.scrolls, []);
+  });
+}
+
+test('a target in a shadow root is hit-tested by its own root', async () => {
+  const f = coveredFixture({ shadowRoot: true });
+  await f.run(clickDetails());
+  assert.equal(f.clicks(), 1); assert.deepEqual(f.points, [['root', 60, 40]]);
+});
+
+for (const spec of [{ coverAt: () => false }, { descendant: true }, { shadowHost: true }, { unread: true }, { labelled: true },
+  { control: true }, { hitLabels: true }]) {
+  test(`an unobstructed, own-label or unreadable hit test preserves one locator click: ${JSON.stringify(spec)}`, async () => {
+    const f = coveredFixture(spec);
+    await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").first().click();');
+    assert.equal(f.clicks(), 1);
+    assert.deepEqual(f.notes, []);
+  });
+}
+
+test('a hanging hit test expires and never stalls or repeats an ordinary locator click', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = coveredFixture({ hang: true });
+  const pending = f.run(clickDetails());
+  await tick(); assert.equal(f.clicks(), 0);
+  t.mock.timers.tick(1001); await pending;
+  assert.equal(f.clicks(), 1);
+  assert.deepEqual(f.notes, []);
 });

@@ -1,0 +1,160 @@
+Window: "sleight benchmark — Book a trip · Skyway", App: Safari.
+0 standard window sleight benchmark — Book a trip · Skyway, ID: SafariWindow?IsSecure=false&UUID=DB930F74-BBAE-41A1-8A71-758D547B5F55, Secondary Actions: Raise
+	1 split group
+		2 splitter (disabled, settable, float) -1
+		3 tab group
+			4 scroll area
+				5 HTML content Description: Book a trip · Skyway, URL: 127.0.0.1:5413/travel
+					6 container
+						7 text Skyway Flights Stays Trips Help
+					8 container
+						9 heading Book a trip, Value: 1
+							10 text Book a trip
+						11 text Three quick steps. You can go back at any time.
+						12 container Trip
+						13 container Destination
+						14 container Seat
+						15 menu Secondary Actions: Cancel
+						16 menu Secondary Actions: Cancel
+						17 heading Choose your seat, Value: 2
+							18 text Choose your seat
+						19 container Seat map (showing 44-144 of 210 items)
+							20 toggle button (disabled) Seat 7C, taken, Value: off
+							21 text 7
+							22 toggle button Seat 7D, Value: off
+							23 toggle button Seat 7E, Value: off
+							24 toggle button Seat 7F, Value: off
+							25 toggle button Seat 8A, Value: off
+							26 toggle button (disabled) Seat 8B, taken, Value: off
+							27 toggle button Seat 8C, Value: off
+							28 text 8
+							29 toggle button (disabled) Seat 8D, taken, Value: off
+							30 toggle button Seat 8E, Value: off
+							31 toggle button Seat 8F, Value: off
+							32 toggle button Seat 9A, Value: off
+							33 toggle button Seat 9B, Value: off
+							34 toggle button Seat 9C, Value: off
+							35 text 9
+							36 toggle button Seat 9D, Value: off
+							37 toggle button (disabled) Seat 9E, taken, Value: off
+							38 toggle button Seat 9F, Value: off
+							39 toggle button (disabled) Seat 10A, taken, Value: off
+							40 toggle button Seat 10B, Value: off
+							41 toggle button Seat 10C, Value: off
+							42 text 10
+							43 toggle button Seat 10D, Value: off
+							44 toggle button Seat 10E, Value: off
+							45 toggle button (disabled) Seat 10F, taken, Value: off
+							46 toggle button Seat 11A, Value: off
+							47 toggle button (disabled) Seat 11B, taken, Value: off
+							48 toggle button Seat 11C, Value: off
+							49 text 11
+							50 toggle button Seat 11D, Value: off
+							51 toggle button Seat 11E, Value: off
+							52 toggle button Seat 11F, Value: off
+							53 toggle button Seat 12A, Value: off
+							54 toggle button (disabled) Seat 12B, taken, Value: off
+							55 toggle button (disabled) Seat 12C, taken, Value: off
+							56 text 12
+							57 toggle button Seat 12D, Value: off
+							58 toggle button Seat 12E, Value: off
+							59 toggle button Seat 12F, Value: off
+							60 toggle button Seat 13A, Value: off
+							61 toggle button Seat 13B, Value: off
+							62 toggle button Seat 13C, Value: off
+							63 text 13
+							64 toggle button (disabled) Seat 13D, taken, Value: off
+							65 toggle button Seat 13E, Value: off
+							66 toggle button Seat 13F, Value: off
+							67 toggle button Seat 14A, Value: off
+							68 toggle button Seat 14B, Value: off
+							69 toggle button Seat 14C, Value: on
+							70 text 14
+							71 toggle button Seat 14D, Value: off
+							72 toggle button (disabled) Seat 14E, taken, Value: off
+							73 toggle button Seat 14F, Value: off
+							74 toggle button (disabled) Seat 15A, taken, Value: off
+							75 toggle button Seat 15B, Value: off
+							76 toggle button Seat 15C, Value: off
+							77 text 15
+							78 toggle button Seat 15D, Value: off
+							79 toggle button Seat 15E, Value: off
+							80 toggle button (disabled) Seat 15F, taken, Value: off
+							81 toggle button Seat 16A, Value: off
+							82 toggle button (disabled) Seat 16B, taken, Value: off
+							83 toggle button Seat 16C, Value: off
+							84 text 16
+							85 toggle button Seat 16D, Value: off
+							86 toggle button Seat 16E, Value: off
+							87 toggle button Seat 16F, Value: off
+							88 toggle button Seat 17A, Value: off
+							89 toggle button Seat 17B, Value: off
+							90 toggle button (disabled) Seat 17C, taken, Value: off
+							91 text 17
+							92 toggle button Seat 17D, Value: off
+							93 toggle button Seat 17E, Value: off
+							94 toggle button Seat 17F, Value: off
+							95 toggle button Seat 18A, Value: off
+							96 toggle button Seat 18B, Value: off
+							97 toggle button Seat 18C, Value: off
+							98 text 18
+							99 toggle button (disabled) Seat 18D, taken, Value: off
+							100 toggle button Seat 18E, Value: off
+							101 toggle button Seat 18F, Value: off
+							102 toggle button Seat 19A, Value: off
+							103 toggle button Seat 19B, Value: off
+							104 toggle button Seat 19C, Value: off
+							105 text 19
+							106 toggle button Seat 19D, Value: off
+							107 toggle button (disabled) Seat 19E, taken, Value: off
+							108 toggle button Seat 19F, Value: off
+							109 toggle button (disabled) Seat 20A, taken, Value: off
+							110 toggle button (disabled) Seat 20B, taken, Value: off
+							111 toggle button Seat 20C, Value: off
+							112 text 20
+							113 toggle button Seat 20D, Value: off
+							114 toggle button Seat 20E, Value: off
+							115 toggle button (disabled) Seat 20F, taken, Value: off
+							116 toggle button Seat 21A, Value: off
+							117 toggle button (disabled) Seat 21B, taken, Value: off
+							118 toggle button Seat 21C, Value: off
+							119 text 21
+						120 text Seat 14C selected.
+						121 button Back
+						122 button Book trip
+				123 scroll bar (settable, float) 0
+	124 toolbar
+		125 button Description: Toggle sidebar, ID: SidebarButton, Secondary Actions: Move previous, Move next, Remove from toolbar
+		126 menu button ID: TabGroupPickerButton?Profile=sleight%20benchmark&Icon=hammer.fill, Secondary Actions: Move next, Remove from toolbar
+		127 container BackForwardSegmentedControl
+			128 button Description: Go back, Help: Show the previous page, ID: BackButton
+			129 button (disabled) Description: Go forward, Help: Show the next page, ID: ForwardButton
+		130 container Secondary Actions: Move previous, Move next, Remove from toolbar
+			131 button Page Menu, ID: AssistantButton
+			132 button Add page to Reading List, ID: OneStepBookmarkingButton
+			133 text field (settable) Description: smart search field, Value: 127.0.0.1:5413/travel, ID: WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD
+			134 button Reload this page, ID: ReloadButton
+		135 button Description: Share, ID: ShareButton, Secondary Actions: Move previous, Move next, Remove from toolbar
+		136 button Description: New Tab, ID: NewTabButton, Secondary Actions: Move previous, Move next, Remove from toolbar
+		137 button Description: Tab Overview, ID: TabOverviewButton, Secondary Actions: Move previous, Remove from toolbar
+	138 tab group Description: Tab bar, 2 tabs, ID: TabBar?isSeparate=false
+		139 tab Sleight Gate 979f9afd-3ae1-4c30-b412-f0e36ffeeeb4, Value: off, Secondary Actions: close tab, ID: TabBarTab?isNarrow=false&isExpanded=false&tabCount=&isPinned=false&isCluster=false&clusterID=&isActive=false
+			140 image Description: favorite, ID: FaviconImageView
+			141 text Value: Sleight Gate 979f9afd-3ae1-4c30-b412-f0e36ffeeeb4, ID: UnifiedTabBarButton._titleTextField
+		142 tab Book a trip · Skyway, Help: To interact with the items in this button, press Control-Option-Shift-Down Arrow., Value: on, Secondary Actions: close tab, ID: TabBarTab?isNarrow=false&isExpanded=false&tabCount=&isPinned=false&isCluster=false&clusterID=&isActive=true
+			143 image FaviconImageView
+			144 text Value: Book a trip · Skyway, ID: UnifiedTabBarButton._titleTextField
+	145 close button
+	146 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	147 minimize button
+148 menu bar
+	149 Safari
+	150 File
+	151 Edit
+	152 View, ID: SafariViewMenu
+	153 History
+	154 Bookmarks, ID: SafariBookmarksMenu
+	155 Window, ID: SafariWindowMenu
+	156 Help, ID: SafariHelpMenu
+
+The focused UI element is 5 HTML content Description: Book a trip · Skyway, URL: 127.0.0.1:5413/travel
