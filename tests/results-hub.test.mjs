@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import vm from 'node:vm';
 import { claim, score } from '../bench/claim-score.mjs';
+import { engineMix, summarizeEngines } from '../bench/engine-version.mjs';
 import {
   FAMILIES, cellText, cellsFor, collectJsonAbs, collectRace, collectReleases, collectRunnerStudies, dateRange, lossRule, parseRunnerReport,
   ownerPass, render, scoreClaimDir, scrub, scrubPaths, variantOf,
@@ -227,4 +228,36 @@ test('explore.html runs, fills its filters, draws charts per task and switches f
   nodes['f-result'].listeners.change[0]({ target: { value: '' } });
   nodes.theme.listeners.click[0]();
   assert.equal(document.documentElement.attrs['data-theme'], 'light');
+});
+
+test('pages name each arm\'s engine version with its UTC dates once the data carries them, and flag engine arms on different versions', () => {
+  const all = committed(), before = render(all);
+  const study = all['browser-race'].studies.find(s => s.latest);
+  const run = (version, day) => ({ version, provenance: 'inferred', startedAt: `${day}T10:00:00.000Z`, endedAt: `${day}T11:00:00.000Z`, dated: 'recorded' });
+  const rows = [{ arm: 'sleight', engine: run('26.1013.40934', '2026-10-19') }, { arm: 'codex', engine: run('26.1007.71326', '2026-10-18') },
+    { arm: 'lcu', engine: run('26.1007.71326', '2026-10-18') }];
+  const engines = summarizeEngines(rows);
+  Object.assign(study, { engines, engineMix: engineMix(engines) });
+  const page = render(all)['browser-race.md'];
+  assert.match(page, /\| ChatGPT engine and UTC dates \| Build \|/);
+  assert.match(page, /\| sleight \| [^\n]*\| engine 26\.1013\.40934 \(1 inferred\), 2026-10-19 \|/);
+  assert.match(page, /\| LCU \| [^\n]*\| not used, 2026-10-18 \|/);
+  assert.match(page, /The arms that drive the engine ran on different engine versions: sleight on 26\.1013\.40934, codex on 26\.1007\.71326\./);
+  // Data collected before engine versions were tracked renders exactly as before.
+  for (const name of ['native-claim.md', 'app-claim.md', 'browser-turbo.md', 'release-passes.md']) assert.equal(render(all)[name], before[name]);
+});
+
+test('claim rows and claim-score carry the engine and date inferred from the pass stamp and the file\'s last save', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'hub-claim-engine-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, '2026-10-18T02-39-00-000Z.json');
+  writeFileSync(file, JSON.stringify({ arms: ['sleight'], results: [{ arm: 'sleight', task: 'calculator-click', run: 1, seconds: 7, passed: true }] }));
+  utimesSync(file, new Date('2026-10-18T03:00:00Z'), new Date('2026-10-18T03:00:00Z'));
+  const rules = readJson(join(ROOT, 'bench/claim-exclusions.json'));
+  const [row] = scoreClaimDir(dir, { ...rules, since: '2026-10-18' }, '2026-10-18').rows;
+  assert.deepEqual(row.engine, { version: '26.1007.71326', provenance: 'inferred', startedAt: '2026-10-18T02:39:00.000Z', endedAt: '2026-10-18T03:00:00.000Z', dated: 'inferred' });
+  const cli = JSON.parse(execFileSync(process.execPath, [join(ROOT, 'bench/claim-score.mjs'), '--results', dir, '--json'], { encoding: 'utf8' }));
+  assert.deepEqual([cli.engines.sleight.versions['26.1007.71326'].runs, cli.engines.sleight.versions['26.1007.71326'].first], [1, '2026-10-18T02:39:00.000Z']);
+  assert.match(execFileSync(process.execPath, [join(ROOT, 'bench/claim-score.mjs'), '--results', dir], { encoding: 'utf8' }),
+    /sleight +engine 26\.1007\.71326 \(1 inferred\), 2026-10-18 \(dates inferred\)/);
 });
