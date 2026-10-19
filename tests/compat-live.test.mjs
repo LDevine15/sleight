@@ -139,6 +139,36 @@ test('compat waits for the expected profile title when the receipt and first sel
   assert.equal(reads, 2);
 });
 
+test('compat keeps the first engine budgets when acquiring the page takes longer than the title window', async t => {
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  const p = { ...fixturePage('slow'), window: { profile: 'sleight benchmark' }, close: async () => {} };
+  const budgets = [];
+  const outcome = await runBrowserRead({ call: async (name, args, timeout) => {
+    budgets.push([name, name === 'select_window' ? timeout : args.timeout_ms]);
+    now += 4000;
+    if (name === 'select_window') return text('ok');
+    return text(`Window: "sleight benchmark — ${p.marker}", App: Safari.\n1 text ${p.body}`);
+  } }, { appState: async () => ({ running: false }), openPage: async () => p });
+  assert.equal(outcome.status, 'pass', outcome.reason);
+  assert.deepEqual(budgets, [['select_window', 30000], ['js', 60000]]);
+});
+
+test('compat bounds only retries by the time remaining in the title window', async t => {
+  let now = 1000, reads = 0;
+  t.mock.method(Date, 'now', () => now);
+  const p = { ...fixturePage('retry'), window: { profile: 'sleight benchmark' }, close: async () => {} };
+  const budgets = [];
+  const outcome = await runBrowserRead({ call: async (name, args, timeout) => {
+    budgets.push([name, name === 'select_window' ? timeout : args.timeout_ms]);
+    now += 250;
+    if (name === 'select_window') return text('ok');
+    return text(`Window: "${++reads === 1 ? 'Start Page' : `sleight benchmark — ${p.marker}`}", App: Safari.\n1 text ${p.body}`);
+  } }, { appState: async () => ({ running: false }), openPage: async () => p, sleep: async ms => { now += ms; } });
+  assert.equal(outcome.status, 'pass', outcome.reason);
+  assert.deepEqual(budgets, [['select_window', 30000], ['js', 60000], ['select_window', 2400], ['js', 2150]]);
+});
+
 test('compat reports Escape and passes the fixture pid to its quit fallback', async () => {
   const p = { ...fixturePage('abc'), window: { profile: 'sleight benchmark', title: 'loading', pid: 41 },
     diagnostics: { pid: 41, menuCancelMethod: 'Escape', menuEscapePid: 41 }, close: async () => {} };

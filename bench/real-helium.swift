@@ -338,6 +338,25 @@ func regression(_ scenario: String) throws {
         guard unproven == "unproven window left open", closed.isEmpty else { throw FixtureError("Unproven recovery closed a window") }
         _ = try recoverSafariSetup("benchmark", profileProven: true, recover: { closed.append($0); return "closed" })
         guard closed == ["benchmark"] else { throw FixtureError("Proven setup abort left its window open") }
+        let created = CreatedWindow<String>(equal: ==)
+        try created.beginCommand(); created.created("benchmark")
+        let owned = try retainCreated(created)
+        var profileProven = true
+        created.created("another")
+        var open = true
+        let ambiguous = try recoverSafariSetup(profileProven ? retainedForRecovery(owned, state: created) : owned, profileProven: profileProven, recover: {
+            closed.append($0); open = false; return "closed retained fixture"
+        })
+        guard ambiguous == "unconfirmed", open, closed == ["benchmark"] else {
+            throw FixtureError("Second creation after profile proof allowed recovery")
+        }
+        profileProven = false
+        let unprovenAmbiguous = try recoverSafariSetup(profileProven ? retainedForRecovery(owned, state: created) : owned, profileProven: profileProven, recover: {
+            closed.append($0); open = false; return "closed retained fixture"
+        })
+        guard unprovenAmbiguous == "unproven window left open", open, closed == ["benchmark"] else {
+            throw FixtureError("Ambiguous unproven window lost its close refusal")
+        }
         var ticks = 0, attempts = 0
         try awaitSafariProfile(proof: {
             attempts += 1
@@ -1103,7 +1122,7 @@ func fixture(_ argument: String) throws {
                 if let current = NSRunningApplication(processIdentifier: pid), !current.isTerminated {
                     guard current.bundleIdentifier == bundle else { throw FixtureError("Browser process changed before recovery") }
                     if safari {
-                        event["cleanup"] = try recoverSafariSetup(owned, profileProven: safariProfileProven, recover: { window in
+                        event["cleanup"] = try recoverSafariSetup(safariProfileProven ? retainedForRecovery(owned, state: created) : owned, profileProven: safariProfileProven, recover: { window in
                             do { try clearSafariMenu(app, window: window, pid: pid) }
                             catch { event["menuCleanupError"] = String(describing: error) }
                             return try recoverSetup(window, target: target, token: token, safari: true, appName: appName)

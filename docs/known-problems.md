@@ -172,6 +172,7 @@ our own runs. Dates and engine versions are given where they matter.
   Safari fixture setup cancels its File menu and polls for clearance after a failure before creating a window. Without a
   profile-proven window it cannot post Escape. If AXCancel leaves the tracking loop stuck, cleanup reports it and may leave
   Safari running. No live check has qualified this failure path yet.
+  Safari fixture cleanup also stays unconfirmed if a menu item's AXSelected is unreadable. That attribute still needs live qualification.
 - textedit-window-drag has never passed (0 of 12 recorded runs, 2026-10-16 to 2026-10-19). In all 4 transcripts of 2026-10-19,
   `drag` with `toWindowId` first refused the drop as covered by the cascaded source window. The fixture now places the two
   windows side by side in the display's visible frame, which no live run has tested yet. Two more `drag` faults showed up there,

@@ -46,3 +46,9 @@ test('Safari fixture proves the retained window before menu input or navigation'
   assert.match(escape, /combinedSessionState/);
   assert.match(escape, /UInt32.max/);
 });
+
+test('Safari setup recovery rechecks creation ownership after profile proof', () => {
+  const source = readFileSync(new URL('../bench/real-helium.swift', import.meta.url), 'utf8');
+  const recovery = source.slice(source.indexOf('if setup {', source.indexOf('func fixture(')));
+  assert.match(recovery, /recoverSafariSetup\(safariProfileProven \? retainedForRecovery\(owned, state: created\) : owned, profileProven: safariProfileProven/);
+});
