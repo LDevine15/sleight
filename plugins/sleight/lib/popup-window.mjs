@@ -4,9 +4,10 @@
 // b9-r2, 2026-10-19). The b10 runs went on in the pop-up and passed 3 of 3, and Firefox, whose root line has no ID,
 // passed 3 of 3. The window note says where the new window came from, from the IDs the engine printed and one count:
 // - The pop-up claim needs a census: an app read whose health probe counted one window, on every Space, which is the
-//   window that read showed. An action in that same window that shows an ID no result has shown since is a window the
-//   action brought up. Any window that appeared in between and was shown is seen, so it never gets the claim. Without
-//   the census, a window the session never read (the owner's, brought forward by Cmd+` or a close) would look new.
+//   window that read showed (a window no Space holds, ordered out and never shown, isn't counted). An action in that same
+//   window that shows an ID no result has shown since is a window the action brought up. Any window that appeared in
+//   between and was shown is seen, so it never gets the claim. Without the census, a window the session never read (the
+//   owner's, brought forward by Cmd+` or a close) would look new.
 //   The census is used once, and a probe that couldn't count or a stopped call drops it.
 // - An app may give every window of a kind the same ID, so an equal ID never claims the same window, and the line for
 //   the window a pop-up returns to states only that the IDs match.
@@ -44,11 +45,15 @@ export function popupWindows(trace = () => {}) {
     count(app, health, id) {
       if (!app) return;
       if (health === undefined) { trace({ event: 'census-unprobed', app, id: id ?? null, held: census.get(app) ?? null }); return; }
+      // CGWindowList's count includes windows no Space holds (Safari keeps one from launch, SW1b); `spaceWindows` leaves
+      // them out and keeps another Space's. One window on screen ties the one held window to the one AX window (with none on
+      // screen, the held one could be another Space's). Without a Space count, a second window still stops the count.
       const counted = health?.status === 'responding' && health.windows === 1 &&
-        (typeof health.allWindows !== 'number' || health.allWindows <= 1);
+        (typeof health.allWindows !== 'number' || health.allWindows <= 1 || (health.spaceWindows === 1 && health.onScreen === 1));
       if (counted && id) census.set(app, id); else census.delete(app);
       trace({ event: 'census', app, id: id ?? null, counted: counted && !!id, status: health?.status ?? null,
-        windows: health?.windows ?? null, allWindows: health?.allWindows ?? null, onScreen: health?.onScreen ?? null });
+        windows: health?.windows ?? null, allWindows: health?.allWindows ?? null, spaceWindows: health?.spaceWindows ?? null,
+        onScreen: health?.onScreen ?? null });
     },
     // A failed or stopped call. One that shows the counted window (a lease stop after Cmd+T retitled it, FS2) keeps the
     // count: its window is the same, and a window it didn't show stays unseen. Anything else drops it.
