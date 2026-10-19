@@ -65,6 +65,14 @@ codex plugin add sleight@sleight
 Start a new Codex session and trust sleight's three hooks when Codex asks. [Codex](docs/other-hosts.md#codex)
 lists what differs there: no pane, and turbo needs Codex 0.160.0 or later.
 
+In Cursor, add the repo as a plugin marketplace, then install sleight from Cursor's plugin list. This
+install hasn't been run yet. Cursor 3.25.6 already runs sleight's Claude Code plugin while its
+third-party plugin setting is on ([Cursor](docs/other-hosts.md#cursor)):
+
+```bash
+cursor-agent plugin marketplace add https://github.com/Land-o-Clusters/sleight
+```
+
 If you already use Computer Use in ChatGPT or Codex, that's all: the engine's helper and its macOS
 permissions are in place.
 

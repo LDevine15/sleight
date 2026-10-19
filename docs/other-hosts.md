@@ -1,7 +1,7 @@
 # Other MCP hosts
 
-sleight is a Claude Code plugin first. It also installs as a Codex plugin, and its MCP server works
-with Cursor and generic stdio clients. Each needs the same [Mac and ChatGPT app setup](../README.md#install).
+sleight is a Claude Code plugin first. It also installs as a Codex plugin and a Cursor plugin, and its
+MCP server works with generic stdio clients. Each needs the same [Mac and ChatGPT app setup](../README.md#install).
 
 ## Codex
 
@@ -70,7 +70,33 @@ approval. In both, the first `getApp` failed and the model retried. We think Cod
 sends each call to an engine kernel of its own. sleight now sets up again whenever that state changes,
 which unit tests cover but no live run has checked yet.
 
-## Cursor and generic clients
+## Cursor
+
+The repo is also a Cursor plugin marketplace. Signed in to cursor-agent (2026.09.10 or later), run:
+
+```bash
+cursor-agent plugin marketplace add https://github.com/Land-o-Clusters/sleight
+```
+
+Then install sleight from `/plugins` in cursor-agent, or from Customize in the Cursor app, and start
+a new chat. Nobody has run this install yet. It needs the 1.4.0 release on the public repo.
+
+If sleight is installed in Claude Code, Cursor may run it already. Cursor 3.25.6 loads Claude Code's
+plugins while "Include Third-Party Plugins, Skills, and Other Configs" is on in its settings, which is
+the default. On our Mac, Cursor's logs show sleight's server connected in 10 sessions from 2026-10-08
+to 2026-10-14. cursor-agent's plugin loader keeps one plugin per marketplace and name, so there a
+sleight plugin from the marketplace above replaces that copy. We haven't checked the Cursor app's own
+loader. `sleight-mcp --doctor` has a Cursor section that lists each route it
+finds, and gives the command when there's none.
+
+Cursor's model calls sleight's tools through Cursor's own MCP tool, as server `plugin-sleight-computer`,
+tool `js`. The plugin's skill is the same file Claude Code and Codex read, and as in Claude Code only
+the skill's slash command loads it in full. The relay adds it to the engine's first documentation
+reply. Approvals use Cursor's form prompts and name Cursor. Cursor's hooks run shell commands and can't
+call an MCP tool. The relay ends a used turn after 30 idle seconds and on disconnect. Cursor doesn't
+get the pane, the status line, `/sleight` or turbo.
+
+## Generic clients
 
 Clone the repo and use its launcher. It runs on the Node bundled with ChatGPT, without npm install.
 
@@ -79,9 +105,10 @@ git clone https://github.com/Land-o-Clusters/sleight.git ~/sleight
 ~/sleight/plugins/sleight/bin/sleight-mcp --doctor
 ```
 
-For [Cursor](https://cursor.com/help/customization/mcp), put this in `~/.cursor/mcp.json`. The same
-`mcpServers` entry works in a generic client that accepts this JSON format. Replace the command with
-your clone's absolute path. JSON doesn't expand `~` or `${CLAUDE_PLUGIN_ROOT}`.
+To use [Cursor](https://cursor.com/docs/context/mcp) without the plugin, put this in `~/.cursor/mcp.json`.
+The same `mcpServers` entry works in a generic client that accepts this JSON format. Replace the command
+with your clone's absolute path. JSON doesn't expand `~` or `${CLAUDE_PLUGIN_ROOT}`. Keep one route:
+with the plugin installed too, Cursor starts two sleight servers.
 
 ```json
 {

@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "computer": {
+      "command": "${CURSOR_PLUGIN_ROOT}/bin/sleight-mcp"
+    }
+  }
+}

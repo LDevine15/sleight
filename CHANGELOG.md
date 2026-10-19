@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.0 (TODO: release date)
+
+### Cursor
+
+- sleight is a Cursor plugin. The repo is a Cursor marketplace named like the Claude Code one, so in
+  cursor-agent's plugin loader the Cursor plugin replaces Cursor's import of sleight's Claude Code plugin
+  (not yet checked in the Cursor app). The plugin starts the same launcher
+  and reads the same skill file as Claude Code and Codex. `sleight-mcp --doctor` reports whether
+  sleight reaches Cursor (plugin, local copy, `~/.cursor/mcp.json` or Cursor's import of the Claude Code
+  plugin) and prints the command to add it. Cursor's approval cards and the menu bar's host line now say
+  Cursor, where they said "Cursor Vscode" from the client name Cursor sends. Not yet installed in a live
+  Cursor session.
+
 ## 1.3.1 (TODO: release date)
 
 ### Codex

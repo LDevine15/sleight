@@ -1,0 +1,16 @@
+{
+  "_source": "Key sets from Cursor's own plugin parser in cursor-agent 2026.09.10-fd3934a (index.js, the plugin.json and marketplace.json schemas) and https://cursor.com/docs/reference/plugins (fetched 2026-10-19), plus the stdio server keys in https://cursor.com/docs/context/mcp. clientInfo from Cursor 3.25.6's bundled MCP client (mcpProcessMain.js and extensions/cursor-mcp) and cursor-agent 2026.09.10's. Only names and constants, no code.",
+  "manifestKeys": ["name", "displayName", "description", "version", "author", "publisher", "homepage", "repository", "license", "logo", "keywords", "capabilities", "category", "tags", "minClientVersions", "commands", "agents", "skills", "rules", "hooks", "variables", "mcpServers"],
+  "authorKeys": ["name", "email"],
+  "name": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$",
+  "defaultComponentPaths": ["skills", "rules", "agents", "commands", "hooks/hooks.json", "mcp.json"],
+  "pluginRootVariable": "${CURSOR_PLUGIN_ROOT}",
+  "stdioServerKeys": ["type", "command", "args", "env", "envFile"],
+  "marketplaceKeys": ["name", "owner", "metadata", "plugins"],
+  "marketplaceEntryKeys": ["name", "source", "description", "version", "author", "category", "tags", "logo"],
+  "skillFrontmatterKeys": ["name", "description", "paths", "disable-model-invocation", "icon", "color", "metadata"],
+  "clientInfo": {
+    "editor": { "name": "cursor-vscode", "version": "1.0.0" },
+    "cli": { "name": "Cursor", "version": "1.0.0" }
+  }
+}

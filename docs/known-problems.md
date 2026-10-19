@@ -598,6 +598,13 @@ native reference, and oversized first results defer the browser reference while 
   in 1.3.0. The panel shows the client's name (Cursor) in other
   hosts and Claude under Claude Code. It is unit-tested only: no live approval in another host has been
   checked. Unanswered relay forms expire after five minutes.
+- The Cursor plugin (1.4.0) hasn't been installed in Cursor yet. We don't know whether
+  `cursor-agent plugin marketplace add` works on a personal account, whether Cursor accepts the
+  manifest's empty `hooks` object without a warning, or whether it hides `turn_ended` from the model.
+  A local plugin copy and the Claude Code import would both start a server named `plugin-sleight-computer`,
+  and we haven't seen what Cursor does then.
+- That a Cursor plugin replaces Cursor's import of the Claude Code plugin with the same marketplace and
+  name comes from cursor-agent's plugin loader. We haven't read or tested the Cursor app's own loader.
 - A name lookup can still launch an app that exited between the native check and `getApp`.
 - In Codex, a card without fields can be accepted without you. Codex's full-access mode and its
   auto-review answer such cards themselves (openai/codex source at 89461ea6). sleight's app card always
