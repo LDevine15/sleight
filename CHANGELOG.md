@@ -122,6 +122,22 @@
   doesn't show a tab strip, so all 36 Safari results kept the earlier sentence, and native apps never see either one.
 - `SLEIGHT_FS=1` (under A/B) gives the js tool sleight's shorter description, which every session reads. On 10 native tasks
   three times a side it passed 24 of 27 against 25 of 27 (one task that failed every run left out) and slowed word-brief from 67.2 to 100.2 s, so it stays off.
+- `SLEIGHT_BROWSER_CORE=1` (under A/B) adds `browser_open`, which opens a URL in Safari or Firefox in one call on the engine
+  path. In three rounds a side on five held-out tasks (2026-10-19, Haiku 5.5 at high effort), Haiku called it 0 times in 30
+  tasks, so the A/B measured nothing about it, and it stays off.
+
+### Native apps
+
+Each switch that was off by default ran an A/B, five alternating rounds a side on held-out native tasks
+(2026-10-19, Haiku 5.5 at high effort, 55 runs, [flag A/Bs](docs/benchmarks/2026-10-19-flag-ab.md)).
+
+- `open_file`'s first read includes the window's screenshot by default. Summed expected time on four tasks was 60.0 s
+  against 65.8 s without it (standard error 5.2 s), all 25 runs a side passing.
+- The skill tells Claude to take a screenshot when a document pane or table doesn't expose its text. On Word's word-memo and
+  word-brief, summed expected time fell from 196.2 to 162.0 s (standard error 22.7 s), 10 of 10 passing against 9 of 10.
+  Only Word ran it. The lean skill is unchanged.
+- `SLEIGHT_COMPACT_CONFIRMATIONS` is gone. It didn't save time (92.3 s against 90.9 s), and confirmations read as before.
+- `SLEIGHT_COMPACT_TOOLBARS=1` stays off by default. It made textedit-replace-all 16% slower (26.9 s against 23.2 s).
 
 ### Windows
 

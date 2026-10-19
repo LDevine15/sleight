@@ -2,8 +2,8 @@
 // Flag A/Bs (g3, 2026-10-19): each opt-in flag alone against the same build without it, on held-out native tasks that
 // reach the flag's code. bench/flag-ab.command runs the plan and writes a manifest, and `score` reads it back.
 //   node bench/flag-ab.mjs plan [--rounds 5] [--start 1] [--arms preview-read,office]
-//   node bench/flag-ab.mjs score [--manifest ~/Projects/sleight-wt/race-1017/flags-manifest.tsv] [--min-runs 3] [--json]
-// A plan line is one bench/run.mjs invocation: round, arm, side, runs, tasks, env (tab-separated, env empty for "off").
+//   node bench/flag-ab.mjs score [--legacy] [--manifest ~/Projects/sleight-wt/race-1017/flags-manifest.tsv] [--min-runs 3] [--json]
+// A plan line is one bench/run.mjs invocation: round, arm, side, runs, tasks, env (tab-separated, explicit zero for "off").
 // Verdict, per flag over its tasks' summed expected time (mean seconds per attempt over the pass rate, as claim-score):
 //   default on   faster than off by more than one standard error, no task with a lower pass rate, and no task more than
 //                10% slower beyond that task's own standard error
@@ -21,9 +21,8 @@ export const WORSE = 0.1;
 
 export const FLAGS = {
   'open-shot': 'SLEIGHT_OPEN_SHOT=1',
-  'compact-confirmations': 'SLEIGHT_COMPACT_CONFIRMATIONS=1',
   'compact-toolbars': 'SLEIGHT_COMPACT_TOOLBARS=1',
-  'skill-screenshot': 'SLEIGHT_SKILL=screenshot',
+  'skill-screenshot': 'SLEIGHT_SCREENSHOT_READS=1',
 };
 
 // Tasks in world-suite order (bench/run.mjs runs them in that order whatever --tasks says). Arms with the same task list
@@ -33,16 +32,25 @@ export const ARMS = [
   { id: 'open-shot', block: 'native', tasks: ['textedit-edit', 'preview-pdf', 'textedit-replace-save'], runs: 1, flags: ['open-shot'] },
   // preview-read is a claim task, and sleight's only native loss (to Peekaboo), so LAWS allows it. PV4 asks for 10 runs.
   { id: 'preview-read', block: 'native', tasks: ['preview-read'], runs: 2, flags: ['open-shot'] },
-  // The shorter policy reaches every native-first session once, with the engine docs. Finder, TextEdit and Preview, each saving or creating.
-  { id: 'confirmations', block: 'native', tasks: ['textedit-edit', 'preview-pdf', 'finder-create-folder', 'textedit-insert-line'], runs: 1,
-    flags: ['compact-confirmations'] },
   // No native window outside Office has a toolbar over 20 controls (TextEdit 15, Preview 13, Finder 11), so off Office
   // the flag only removes repeated trees: multi-read TextEdit tasks.
   { id: 'toolbars-text', block: 'native', tasks: ['textedit-replace-all', 'textedit-insert-line'], runs: 1, flags: ['compact-toolbars'] },
   // Word's ribbon (50 controls) is where the fold cost word-edit ~40% before FL1; Word's document area is the textless
-  // window SLEIGHT_SKILL=screenshot is about. No held-out Excel task exists, and excel-edit is a claim task sleight leads.
+  // window the screenshot guidance covers. No held-out Excel task exists, and excel-edit is a claim task sleight leads.
   { id: 'office', block: 'office', tasks: ['word-memo', 'word-brief'], runs: 1, flags: ['compact-toolbars', 'skill-screenshot'] },
 ];
+
+// The 2026-10-19 manifest predates default-on screenshots and includes the removed confirmation arm.
+// Keep its labels and task membership for score --legacy; new plans use only the active flags above.
+export const LEGACY_FLAGS = {
+  'open-shot': 'SLEIGHT_OPEN_SHOT=1',
+  'compact-confirmations': 'SLEIGHT_COMPACT_CONFIRMATIONS=1',
+  'compact-toolbars': 'SLEIGHT_COMPACT_TOOLBARS=1',
+  'skill-screenshot': 'SLEIGHT_SKILL=screenshot',
+};
+export const LEGACY_ARMS = [...ARMS.slice(0, 2),
+  { id: 'confirmations', block: 'native', tasks: ['textedit-edit', 'preview-pdf', 'finder-create-folder', 'textedit-insert-line'],
+    runs: 1, flags: ['compact-confirmations'] }, ...ARMS.slice(2)];
 
 export function plan({ rounds = 5, start = 1, arms = ARMS.map(arm => arm.id) } = {}) {
   const unknown = arms.filter(id => !ARMS.some(arm => arm.id === id));
@@ -53,7 +61,8 @@ export function plan({ rounds = 5, start = 1, arms = ARMS.map(arm => arm.id) } =
       const sides = ['off', ...arm.flags];
       // Odd rounds run "off" first, even rounds last, so neither side always runs first.
       for (const side of round % 2 ? sides : sides.toReversed()) {
-        lines.push({ round, arm: arm.id, side, runs: arm.runs, tasks: arm.tasks.join(','), env: side === 'off' ? '' : FLAGS[side] });
+        const env = arm.flags.map(flag => FLAGS[flag].replace(/=1$/, flag === side ? '=1' : '=0')).join(' ');
+        lines.push({ round, arm: arm.id, side, runs: arm.runs, tasks: arm.tasks.join(','), env });
       }
     }
   }
@@ -68,11 +77,11 @@ export function readManifest(text) {
   });
 }
 
-export function loadRows(entries, { read = path => JSON.parse(readFileSync(path, 'utf8')), reasons = [], model = MODEL } = {}) {
+export function loadRows(entries, { read = path => JSON.parse(readFileSync(path, 'utf8')), reasons = [], model = MODEL, legacy = false } = {}) {
   const rows = [], dropped = {}, missing = [];
   const drop = why => { dropped[why] = (dropped[why] ?? 0) + 1; };
   for (const entry of entries) {
-    const arm = ARMS.find(arm => arm.id === entry.arm);
+    const arm = (legacy ? LEGACY_ARMS : ARMS).find(arm => arm.id === entry.arm);
     if (!arm || !(entry.side === 'off' || arm.flags.includes(entry.side))) { missing.push({ ...entry, why: 'unknown arm or side' }); continue; }
     let results;
     try { results = entry.results && read(entry.results).results; } catch (error) { missing.push({ ...entry, why: error.message }); continue; }
@@ -100,8 +109,8 @@ function stats(list) {
   return { runs: list.length, passes, mean, sd, expected: passes ? mean / (passes / list.length) : null };
 }
 
-export function scoreFlag(flag, rows, { minRuns = 3 } = {}) {
-  const arms = ARMS.filter(arm => arm.flags.includes(flag));
+export function scoreFlag(flag, rows, { minRuns = 3, legacy = false } = {}) {
+  const arms = (legacy ? LEGACY_ARMS : ARMS).filter(arm => arm.flags.includes(flag));
   const tasks = [...new Set(arms.flatMap(arm => arm.tasks))];
   const mine = rows.filter(row => arms.some(arm => arm.id === row.arm) && (row.side === 'off' || row.side === flag));
   const perTask = tasks.map(task => {
@@ -114,7 +123,7 @@ export function scoreFlag(flag, rows, { minRuns = 3 } = {}) {
   const total = { off: sum('off'), on: sum('on'), se: Math.sqrt(perTask.reduce((a, t) => a + t.se ** 2, 0)) };
   total.diff = total.off != null && total.on != null ? total.on - total.off : null;
   const commits = [...new Set(mine.map(row => row.commit))], engines = [...new Set(mine.map(row => row.engine).filter(Boolean))];
-  const result = { flag, env: FLAGS[flag], tasks: perTask, total, commits, engines };
+  const result = { flag, env: (legacy ? LEGACY_FLAGS : FLAGS)[flag], tasks: perTask, total, commits, engines };
 
   const short = perTask.filter(t => t.off.runs < minRuns || t.on.runs < minRuns);
   const incomplete = short.length ? [`short of ${minRuns} runs a side: ${short.map(t => `${t.task} (off ${t.off.runs}, on ${t.on.runs})`).join(', ')}`] : [];
@@ -168,12 +177,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const manifest = arg('--manifest') ?? join(homedir(), 'Projects/sleight-wt/race-1017/flags-manifest.tsv');
     const entries = readManifest(readFileSync(manifest, 'utf8'));
     const reasons = JSON.parse(readFileSync(join(root, 'bench/claim-exclusions.json'), 'utf8')).reasons;
-    const { rows, dropped, missing } = loadRows(entries, { reasons });
-    const scores = Object.keys(FLAGS).map(flag => scoreFlag(flag, rows, { minRuns: Number(arg('--min-runs') ?? 3) }));
+    const legacy = process.argv.includes('--legacy') || entries.some(entry => entry.arm === 'confirmations');
+    const { rows, dropped, missing } = loadRows(entries, { reasons, legacy });
+    const scores = Object.keys(legacy ? LEGACY_FLAGS : FLAGS).map(flag => scoreFlag(flag, rows, { minRuns: Number(arg('--min-runs') ?? 3), legacy }));
     console.log(process.argv.includes('--json') ? JSON.stringify({ manifest, dropped, missing, scores }, null, 1)
       : format(scores, { manifest, entries: entries.length, dropped, missing }));
   } else {
-    console.error('usage: flag-ab.mjs plan [--rounds N] [--start N] [--arms a,b] | score [--manifest file] [--min-runs N] [--json]');
+    console.error('usage: flag-ab.mjs plan [--rounds N] [--start N] [--arms a,b] | score [--legacy] [--manifest file] [--min-runs N] [--json]');
     process.exit(2);
   }
 }

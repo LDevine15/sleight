@@ -1,8 +1,9 @@
 # Prompt budget
 
 `SLEIGHT_PROMPT=lean` selects shorter skill text, local tool descriptions, the `js` first-call
-rewrite and result notices. Unset or any other value keeps the text from `245a186`.
-The original skill is unchanged. The launcher reads `SKILL.lean.md` only for this switch.
+rewrite and result notices. Unset or any other value keeps the default text.
+The default skill adds the measured screenshot sentence to `60fe1319`. The lean skill keeps that
+build's text. The launcher reads `SKILL.lean.md` only for this switch.
 
 ## Measurement
 
@@ -46,6 +47,12 @@ its lean wording when the relay builds its code. A test fails on any `sleight:` 
 relay, compactor, guard or stop notes that no inventory counts. Measured on 2026-10-17, with the
 marked notices as a sixth row: 35,164 default characters and 24,915 lean (70.85%, the test's bar
 is 71%), up from 27,087 and 19,137 before the marked rows.
+
+Measured again for FL2b on 2026-10-19, the full inventory is 42,217 default characters and
+29,872 lean (70.7582%, below the unchanged 71% limit). Skill bodies are 7,013 and 3,373
+characters, 1,053 and 505 words. The measured screenshot sentence adds 15 whitespace-separated
+words, so only the default word limit rises from 1,040 to 1,055. Lean stays at 505. The default
+with lean-call guidance uses 1,055 words. These figures supersede the older inventory above.
 
 ## Safety and offline evidence
 

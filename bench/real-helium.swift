@@ -4,6 +4,8 @@ import AppKit
 import ApplicationServices
 
 var fixtureAppName = "browser"
+let fixtureSafariProfile = "sleight benchmark"
+var fixtureMenuEscapePosted = false
 
 struct FixtureError: Error, CustomStringConvertible {
     let description: String
@@ -56,12 +58,9 @@ func navigateRetained<Element>(_ state: CreatedWindow<Element>, ownerAway: Bool 
 }
 
 func safariWindowCommand(_ titles: [String]) throws -> Int {
-    let plain = titles.indices.filter { titles[$0] == "New Window" }
-    if plain.count == 1 { return plain[0] }
-    guard plain.isEmpty, let profile = titles.indices.first(where: {
-        titles[$0].hasPrefix("New ") && titles[$0].hasSuffix(" Window") && titles[$0] != "New Private Window"
-    }) else { throw FixtureError("\(fixtureAppName) new-window command unavailable or ambiguous") }
-    return profile
+    let matches = titles.indices.filter { titles[$0] == "New \(fixtureSafariProfile) Window" }
+    guard matches.count == 1 else { throw FixtureError("Safari benchmark profile '\(fixtureSafariProfile)' unavailable or ambiguous; URL not loaded") }
+    return matches[0]
 }
 
 // With Safari profiles, File > New Window can be a submenu of "New <Profile> Window" items (Safari 26 and later,
@@ -69,9 +68,97 @@ func safariWindowCommand(_ titles: [String]) throws -> Int {
 // failed the compat check's fixture with "Browser creation ownership unconfirmed" (2026-10-19). `submenu` opens a
 // submenu item and returns its items, or returns nil for a plain command.
 func safariNewWindowTarget<Item>(_ items: [Item], title: (Item) throws -> String, submenu: (Item) throws -> [Item]?) throws -> Item {
-    let item = items[try safariWindowCommand(try items.map(title))]
-    guard let nested = try submenu(item) else { return item }
+    let titles = try items.map(title)
+    if titles.contains("New \(fixtureSafariProfile) Window") { return items[try safariWindowCommand(titles)] }
+    let parents = titles.indices.filter { titles[$0] == "New Window" }
+    guard parents.count == 1, let nested = try submenu(items[parents[0]]) else {
+        throw FixtureError("Safari benchmark profile '\(fixtureSafariProfile)' unavailable; URL not loaded")
+    }
     return nested[try safariWindowCommand(try nested.map(title))]
+}
+
+enum SafariProfileState { case verified, unavailable, mismatch }
+// Only toolbar metadata proves the profile. Titles and the last-used profile do not.
+func safariProfileState<Element>(_ window: Element, children: (Element) throws -> [Element],
+    text: (Element, String) throws -> String) throws -> SafariProfileState {
+    var visited = 0, matches = 0, conflict = false
+    func walk(_ element: Element, _ toolbar: Bool, _ depth: Int) throws {
+        visited += 1
+        guard depth < 30, visited <= 4000 else { throw FixtureError("Safari profile search exceeded its bound") }
+        let role = try text(element, "AXRole")
+        if role == "AXWebArea" { return }
+        let inToolbar = toolbar || role == "AXToolbar"
+        if inToolbar && ["AXMenuButton", "AXPopUpButton", "AXButton"].contains(role) {
+            let identifier = try text(element, "AXIdentifier")
+            let query = identifier.hasPrefix("TabGroupPickerButton?") ? String(identifier.dropFirst("TabGroupPickerButton?".count)) : ""
+            let pairs = query.split(separator: "&").map { $0.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init) }
+                .filter { $0.first == "Profile" }
+            let labels = try ["AXTitle", "AXDescription", "AXValue"].map { try text(element, $0) }.filter { !$0.isEmpty }
+            if !pairs.isEmpty {
+                if pairs.count == 1, pairs[0].count == 2, pairs[0][1].removingPercentEncoding == fixtureSafariProfile,
+                   labels.allSatisfy({ $0 == fixtureSafariProfile }) { matches += 1 }
+                else { conflict = true }
+            } else if labels.contains(fixtureSafariProfile) { matches += 1 }
+        }
+        for child in try children(element) { try walk(child, inToolbar, depth + 1) }
+    }
+    try walk(window, false, 0)
+    return conflict || matches > 1 ? .mismatch : matches == 1 ? .verified : .unavailable
+}
+
+func safariProfile<Element>(_ window: Element, children: (Element) throws -> [Element],
+    text: (Element, String) throws -> String) throws -> Bool {
+    try safariProfileState(window, children: children, text: text) == .verified
+}
+func awaitSafariProfile(proof: () throws -> SafariProfileState, wait: () -> Void) throws {
+    var state = SafariProfileState.unavailable
+    for attempt in 0...20 {
+        state = (try? proof()) ?? .unavailable
+        if state == .verified { return }
+        if attempt < 20 { wait() }
+    }
+    throw FixtureError(state == .mismatch ? "Safari profile mismatch; URL not loaded" : "Safari profile toolbar not readable; URL not loaded")
+}
+func recoverSafariSetup<Element>(_ window: Element?, profileProven: Bool, recover: (Element) throws -> String) throws -> String {
+    guard let window else { return "unconfirmed" }
+    guard profileProven else { return "unproven window left open" }
+    return try recover(window)
+}
+// nil means unreadable within the bound. Unknown observations never authorize Escape.
+func releaseFixtureMenu(open: () throws -> Bool, wait: () -> Void, escape: () throws -> Void) throws -> Bool? {
+    var consecutive = 0
+    for attempt in 0...20 {
+        if let selected = try? open() {
+            if !selected { return false }
+            consecutive += 1
+            if consecutive >= 11 { break } // Ten 100 ms waits with the menu still selected.
+        } else { consecutive = 0 }
+        if attempt == 20 { return nil }
+        wait()
+    }
+    try escape()
+    for _ in 0..<20 { wait(); if (try? open()) == false { return true } }
+    throw FixtureError("Safari menu loop remains after one Escape; quit refused")
+}
+
+func requireFixtureEscape(unused: Bool, enabled: Bool, sameProcess: Bool, focused: Bool,
+    profile: Bool, noDialogs: Bool, idleSeconds: Double) throws {
+    guard unused, enabled, sameProcess, focused, profile, noDialogs else { throw FixtureError("Safari menu Escape identity or dialog check refused") }
+    guard idleSeconds >= 1 else { throw FixtureError("Safari menu Escape refused while the owner is active") }
+}
+
+func cancelUnprovenSafariMenu(cancel: () -> Void, open: () throws -> Bool, wait: () -> Void) -> Bool {
+    cancel()
+    return (try? releaseFixtureMenu(open: open, wait: wait, escape: {
+        throw FixtureError("No proven Safari window; menu Escape refused")
+    })) == false
+}
+
+func closeSafariReference<Element>(_ window: Element, validate: () throws -> Void,
+    button: (Element) throws -> Element?, press: (Element) throws -> Void) throws {
+    try validate()
+    guard let close = try button(window) else { throw FixtureError("Retained Safari window close button unavailable") }
+    try validate(); try press(close)
 }
 
 func emit(_ object: [String: Any]) throws {
@@ -245,6 +332,136 @@ func navigatedFixture(document: String, title: String, target: String, token: St
 }
 
 func regression(_ scenario: String) throws {
+    if scenario == "safari-setup-policy" {
+        var closed: [String] = []
+        let unproven = try recoverSafariSetup("Personal", profileProven: false, recover: { closed.append($0); return "closed" })
+        guard unproven == "unproven window left open", closed.isEmpty else { throw FixtureError("Unproven recovery closed a window") }
+        _ = try recoverSafariSetup("benchmark", profileProven: true, recover: { closed.append($0); return "closed" })
+        guard closed == ["benchmark"] else { throw FixtureError("Proven setup abort left its window open") }
+        let created = CreatedWindow<String>(equal: ==)
+        try created.beginCommand(); created.created("benchmark")
+        let owned = try retainCreated(created)
+        var profileProven = true
+        created.created("another")
+        var open = true
+        let ambiguous = try recoverSafariSetup(profileProven ? retainedForRecovery(owned, state: created) : owned, profileProven: profileProven, recover: {
+            closed.append($0); open = false; return "closed retained fixture"
+        })
+        guard ambiguous == "unconfirmed", open, closed == ["benchmark"] else {
+            throw FixtureError("Second creation after profile proof allowed recovery")
+        }
+        profileProven = false
+        let unprovenAmbiguous = try recoverSafariSetup(profileProven ? retainedForRecovery(owned, state: created) : owned, profileProven: profileProven, recover: {
+            closed.append($0); open = false; return "closed retained fixture"
+        })
+        guard unprovenAmbiguous == "unproven window left open", open, closed == ["benchmark"] else {
+            throw FixtureError("Ambiguous unproven window lost its close refusal")
+        }
+        var ticks = 0, attempts = 0
+        try awaitSafariProfile(proof: {
+            attempts += 1
+            if attempts == 1 { throw FixtureError("transient AX error") }
+            return attempts < 5 ? .unavailable : .verified
+        }, wait: { ticks += 1 })
+        guard ticks == 4 else { throw FixtureError("Delayed toolbar refused") }
+        for state in [SafariProfileState.unavailable, .mismatch] {
+            ticks = 0; var message = ""
+            do { try awaitSafariProfile(proof: { state }, wait: { ticks += 1 }) } catch { message = String(describing: error) }
+            guard ticks == 20, message.contains(state == .mismatch ? "mismatch" : "not readable") else { throw FixtureError("Profile bound or refusal lost") }
+        }
+        var cancelled = 0
+        ticks = 0
+        let cleared = cancelUnprovenSafariMenu(cancel: { cancelled += 1 }, open: { ticks < 3 }, wait: { ticks += 1 })
+        guard cleared, cancelled == 1, ticks == 3 else { throw FixtureError("Failed File command left a closing menu") }
+        guard !cancelUnprovenSafariMenu(cancel: { cancelled += 1 }, open: { true }, wait: {}), cancelled == 2 else {
+            throw FixtureError("Unproven stuck menu incorrectly confirmed clear")
+        }
+        try emit(["scenario": scenario, "passed": true]); return
+    }
+    if scenario == "safari-escape-guards" {
+        var posts = 0
+        for guardIndex in 0..<7 {
+            var refused = false
+            do {
+                try requireFixtureEscape(unused: guardIndex != 0, enabled: guardIndex != 1,
+                    sameProcess: guardIndex != 2, focused: guardIndex != 3, profile: guardIndex != 4,
+                    noDialogs: guardIndex != 5, idleSeconds: guardIndex == 6 ? 0.1 : 2)
+                posts += 1
+            } catch { refused = true }
+            guard refused else { throw FixtureError("Unsafe Escape guard admitted") }
+        }
+        guard posts == 0 else { throw FixtureError("Unsafe Escape posted") }
+        try requireFixtureEscape(unused: true, enabled: true, sameProcess: true, focused: true, profile: true, noDialogs: true, idleSeconds: 2)
+        try emit(["scenario": scenario, "passed": true]); return
+    }
+    if scenario == "safari-profile-proof" {
+        let tree = ["window": ["toolbar", "web"], "toolbar": ["profile"], "web": ["fake-profile"]]
+        let roles = ["window": "AXWindow", "toolbar": "AXToolbar", "web": "AXWebArea", "profile": "AXButton", "fake-profile": "AXButton"]
+        var identifier = "TabGroupPickerButton?Profile=sleight%20benchmark&Icon=hammer.fill", label = ""
+        var visited: [String] = [], navigated = false
+        func proof() throws -> Bool {
+            try safariProfile("window", children: { tree[$0] ?? [] }, text: { element, name in
+                visited.append(element)
+                return name == "AXRole" ? roles[element] ?? "" : element != "profile" ? "" : name == "AXIdentifier" ? identifier : name == "AXTitle" ? label : ""
+            })
+        }
+        guard try proof(), !visited.contains("fake-profile") else { throw FixtureError("Toolbar profile proof failed") }
+        for value in ["TabGroupPickerButton?Profile=Personal&Icon=x", "", "TabGroupPickerButton?Profile=sleight%20benchmark&Profile=Personal",
+                      "TabGroupPickerButton?Profile=sleight%20benchmark&Profile=%ZZ", "TabGroupPickerButton?Profile="] {
+            identifier = value
+            if try proof() { navigated = true }
+        }
+        guard !navigated else { throw FixtureError("Owner profile admitted before navigation") }
+        identifier = "TabGroupPickerButton?Profile=Personal"; label = fixtureSafariProfile
+        guard try !proof() else { throw FixtureError("Conflicting profile label admitted") }
+        identifier = "TabGroupPickerButton?Profile=sleight%20benchmark"; label = "Personal"
+        guard try !proof() else { throw FixtureError("Conflicting identifier admitted") }
+        guard try !safariProfile("window", children: { $0 == "window" ? ["profile"] : [] },
+            text: { element, name in name == "AXRole" ? (element == "window" ? "AXWindow" : "AXButton") : name == "AXTitle" ? fixtureSafariProfile : "" }) else {
+            throw FixtureError("Profile outside toolbar admitted")
+        }
+        try emit(["scenario": scenario, "passed": true]); return
+    }
+    if scenario == "safari-menu-release" {
+        var observations = 0, ticks = 0, escapes = 0, stuck = true
+        let released = try releaseFixtureMenu(open: { observations += 1; return stuck }, wait: { ticks += 1 }, escape: {
+            guard ticks >= 10 else { throw FixtureError("Escape preceded sustained menu evidence") }
+            escapes += 1; stuck = false
+        })
+        guard released == true, escapes == 1 else { throw FixtureError("Stuck menu not released exactly once") }
+        ticks = 0; escapes = 0
+        _ = try releaseFixtureMenu(open: { ticks < 5 }, wait: { ticks += 1 }, escape: { escapes += 1 })
+        guard escapes == 0 else { throw FixtureError("Closing menu received Escape") }
+        ticks = 0
+        guard try releaseFixtureMenu(open: {
+            if ticks < 3 { throw FixtureError("transient AX error") }; return false
+        }, wait: { ticks += 1 }, escape: { escapes += 1 }) == false, ticks == 3, escapes == 0 else { throw FixtureError("Transient menu read aborted") }
+        ticks = 0
+        guard try releaseFixtureMenu(open: { throw FixtureError("unreadable") }, wait: { ticks += 1 }, escape: { escapes += 1 }) == nil,
+              ticks == 20, escapes == 0 else { throw FixtureError("Unknown menu received Escape") }
+        escapes = 0
+        guard try releaseFixtureMenu(open: { false }, wait: {}, escape: { escapes += 1 }) == false, escapes == 0 else {
+            throw FixtureError("Clear menu received Escape")
+        }
+        var refused = false
+        do { _ = try releaseFixtureMenu(open: { true }, wait: {}, escape: { escapes += 1 }) } catch { refused = true }
+        guard refused, escapes == 1 else { throw FixtureError("Repeated Escape admitted") }
+        refused = false; escapes = 0
+        do { _ = try releaseFixtureMenu(open: { true }, wait: {}, escape: { throw FixtureError("dialog present") }) } catch { refused = true }
+        guard refused, escapes == 0 else { throw FixtureError("Dialog received Escape") }
+        try emit(["scenario": scenario, "passed": true]); return
+    }
+    if scenario == "safari-retained-close" {
+        var closed: [String] = [], validations = 0
+        try closeSafariReference("owned", validate: { validations += 1 }, button: { window in
+            guard window == "owned" else { throw FixtureError("Owner window inspected") }; return "owned-close"
+        }, press: { closed.append($0) })
+        guard closed == ["owned-close"], validations == 2 else { throw FixtureError("Retained button close failed without File menu") }
+        var refused = false
+        do { try closeSafariReference("owned", validate: { throw FixtureError("identity changed") }, button: { _ in "owner-close" }, press: { closed.append($0) }) } catch { refused = true }
+        guard refused, closed == ["owned-close"] else { throw FixtureError("Owner close admitted") }
+        try emit(["scenario": scenario, "passed": true]); return
+    }
     if scenario == "safari-profile-submenu" {
         let submenus = ["New Window": ["New Private Window", "New Personal Window", "New sleight benchmark Window"]]
         var opened: [String] = []
@@ -252,15 +469,21 @@ func regression(_ scenario: String) throws {
             guard let nested = submenus[item] else { return nil }
             opened.append(item); return nested
         }
-        guard try safariNewWindowTarget(["New Window", "New Private Window", "New Tab"], title: { $0 }, submenu: open) == "New Personal Window",
+        guard try safariNewWindowTarget(["New Window", "New Private Window", "New Tab"], title: { $0 }, submenu: open) == "New sleight benchmark Window",
               opened == ["New Window"] else { throw FixtureError("Profile submenu not followed") }
         opened = []
-        guard try safariNewWindowTarget(["New Tab", "New Window", "New Private Window"], title: { $0 }, submenu: { _ in nil }) == "New Window",
-              try safariNewWindowTarget(["New Private Window", "New Work Window"], title: { $0 }, submenu: open) == "New Work Window",
+        guard try safariNewWindowTarget(["New Tab", "New sleight benchmark Window", "New Private Window"], title: { $0 }, submenu: { _ in nil }) == "New sleight benchmark Window",
+              try safariNewWindowTarget(["New Private Window", "New sleight benchmark Window"], title: { $0 }, submenu: open) == "New sleight benchmark Window",
               opened.isEmpty else { throw FixtureError("Plain command changed") }
         var privateOnlyRefused = false
         do { _ = try safariNewWindowTarget(["New Window"], title: { $0 }, submenu: { _ in ["New Private Window"] }) } catch { privateOnlyRefused = true }
         guard privateOnlyRefused else { throw FixtureError("Private window admitted") }
+        for titles in [["New Window"], ["New Personal Window", "New Work Window"],
+                       ["New sleight benchmark Window", "New sleight benchmark Window"]] {
+            var refused = false
+            do { _ = try safariNewWindowTarget(titles, title: { $0 }, submenu: { _ in nil }) } catch { refused = true }
+            guard refused else { throw FixtureError("Unproved benchmark profile admitted") }
+        }
         try emit(["scenario": scenario, "passed": true])
         return
     }
@@ -476,7 +699,7 @@ func selfTest() throws {
             navigate: { _ in navigation.append("unexpected") }) } catch {}
     }
     guard navigation == ["fixture"] else { throw FixtureError("Unproven window navigated") }
-    guard try safariWindowCommand(["New Private Window", "New Personal Window", "New Work Window"]) == 1 else { throw FixtureError("Private profile command selected") }
+    guard try safariWindowCommand(["New Private Window", "New Personal Window", "New sleight benchmark Window"]) == 2 else { throw FixtureError("Owner profile command selected") }
     var ambiguousCommandRefused = false
     do { _ = try safariWindowCommand(["New Window", "New Window"]) } catch { ambiguousCommandRefused = true }
     guard ambiguousCommandRefused else { throw FixtureError("Ambiguous menu command admitted") }
@@ -559,9 +782,18 @@ func newSafariWindow(_ app: AXUIElement, beforeCreate: () throws -> Void) throws
         try beforeCreate()
         try press(target)
     } catch {
-        guard AXUIElementPerformAction(menus.first ?? files[0], "AXCancel" as CFString) == .success else { throw FixtureError("\(fixtureAppName) failed-menu cancellation unconfirmed: \(error)") }
-        try emit(["stage": "menu-cancel", "menuCancelled": true, "menuCancelMethod": "AXCancel"])
-        throw error
+        let original = error
+        // Cancel our File menu without input to any unproven window. AXCancel's
+        // return code alone does not prove the menu's tracking loop ended.
+        let wasFresh = freshSetup; freshSetup = false
+        defer { freshSetup = wasFresh }
+        let cleared = cancelUnprovenSafariMenu(cancel: {
+            for menu in menus.reversed() { _ = AXUIElementPerformAction(menu, kAXCancelAction as CFString) }
+            _ = AXUIElementPerformAction(files[0], kAXCancelAction as CFString)
+        }, open: { try safariMenuOpen(app) }, wait: wait)
+        try emit(["stage": "menu-cancel", "menuCancelled": true, "menuCleared": cleared,
+                  "menuCancelMethod": "AXCancel", "menuCleanup": cleared ? "clear" : "unconfirmed; no proven window for Escape"])
+        throw original
     }
 }
 func blankSafariWindow(_ window: AXUIElement) throws -> Bool {
@@ -570,7 +802,49 @@ func blankSafariWindow(_ window: AXUIElement) throws -> Bool {
     return (document.isEmpty || document == "about:blank") &&
         (title.isEmpty || title == "Start Page" || title.hasSuffix(" — Start Page") || title == "Untitled")
 }
+func requireSafariProfile(_ window: AXUIElement) throws {
+    guard try safariProfile(window, children: children, text: text) else {
+        throw FixtureError("Safari window is not the verified '\(fixtureSafariProfile)' profile; URL not loaded")
+    }
+}
+func safariMenuOpen(_ app: AXUIElement) throws -> Bool {
+    guard let bar = try read(app, kAXMenuBarAttribute), CFGetTypeID(bar) == AXUIElementGetTypeID() else {
+        throw FixtureError("Safari menu state unavailable; quit refused")
+    }
+    for item in try children(bar as! AXUIElement) {
+        guard let selected = try read(item, kAXSelectedAttribute) as? Bool else { throw FixtureError("Safari menu selection unreadable") }
+        if selected { return true }
+        for menu in try children(item) where try text(menu, kAXRoleAttribute) == kAXMenuRole {
+            if try read(menu, "AXVisible") as? Bool == true { return true }
+        }
+    }
+    return false
+}
+@discardableResult
+func clearSafariMenu(_ app: AXUIElement, window: AXUIElement, pid: pid_t) throws -> Bool {
+    let escaped = try releaseFixtureMenu(open: { try safariMenuOpen(app) }, wait: wait, escape: {
+        try requireFixtureEscape(unused: !fixtureMenuEscapePosted,
+            enabled: ProcessInfo.processInfo.environment["SLEIGHT_STUCK_ESCAPE"] != "0",
+            sameProcess: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.apple.Safari",
+            focused: try read(app, kAXFocusedWindowAttribute).map { CFEqual($0, window) } ?? false,
+            profile: try safariProfile(window, children: children, text: text), noDialogs: try ownedDialogs(window).isEmpty,
+            idleSeconds: CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: UInt32.max)!))
+        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: true),
+              let up = CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: false) else { throw FixtureError("Safari menu Escape unavailable") }
+        fixtureMenuEscapePosted = true
+        down.postToPid(pid); up.postToPid(pid)
+        try emit(["stage": "menu-cancel", "menuCancelled": true, "menuCancelMethod": "Escape", "menuEscapePid": pid])
+    })
+    guard let escaped else {
+        try emit(["stage": "menu-unknown", "menuCleared": false, "menuCleanup": "unreadable; Escape not posted"])
+        return false
+    }
+    fixtureMenuEscapePosted = false // A confirmed clear menu ends this episode.
+    if escaped { try emit(["stage": "menu-cleared", "menuCleared": true]) }
+    return true
+}
 func navigateSafariWindow(_ window: AXUIElement, target: String) throws {
+    try requireSafariProfile(window)
     let addresses = try safariAddressFields(window, children: children, role: { try text($0, kAXRoleAttribute) },
         labels: { element in try [kAXDescriptionAttribute, kAXTitleAttribute, kAXHelpAttribute,
             kAXPlaceholderValueAttribute, kAXIdentifierAttribute].map { try text(element, $0) } }, canNavigate: { element in
@@ -581,6 +855,7 @@ func navigateSafariWindow(_ window: AXUIElement, target: String) throws {
         })
     try emit(["stage": "navigation", "navigation": ["addressFieldCount": addresses.count]])
     let field = try uniqueSafariAddress(addresses)
+    try requireSafariProfile(window)
     guard try blankSafariWindow(window) else { throw FixtureError("New \(fixtureAppName) window changed before navigation") }
     actionTaken = true
     guard AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, target as CFString) == .success,
@@ -628,7 +903,7 @@ func ownedDialogs(_ window: AXUIElement) throws -> [(AXUIElement, String)] {
 
 // Only AXCancel on an attached app dialog is allowed. No button choice, key
 // event, URL lookup, title-based ownership, or action on a system prompt.
-func closeWholeWindow(_ window: AXUIElement, app: AXUIElement, validate: () throws -> Void) throws {
+func closeWholeWindow(_ window: AXUIElement, app: AXUIElement, direct: Bool = false, validate: () throws -> Void) throws {
     try validate()
     try cancelOwnedDialogs(window, equal: { CFEqual($0, $1) }, validate: validate, dialogs: { window in
         try ownedDialogs(window).map { dialog, kind in
@@ -638,6 +913,15 @@ func closeWholeWindow(_ window: AXUIElement, app: AXUIElement, validate: () thro
     }, cancel: { dialog in
         guard AXUIElementPerformAction(dialog, kAXCancelAction as CFString) == .success else { throw FixtureError("Owned window dialog cancellation refused") }
     }, wait: wait)
+    if direct {
+        // AXCloseButton belongs to this retained reference and closes the whole window.
+        // File > Close Window can be absent in a background Safari and can leave its menu tracking.
+        try closeSafariReference(window, validate: validate, button: { window in
+            guard let button = try read(window, kAXCloseButtonAttribute), CFGetTypeID(button) == AXUIElementGetTypeID() else { return nil }
+            return button as! AXUIElement
+        }, press: press)
+        return
+    }
     // Direct the app's menu at the retained window, even when the arm selected
     // another window. Revalidate focus immediately before each menu press.
     try validate()
@@ -730,6 +1014,7 @@ func fixture(_ argument: String) throws {
     AXUIElementSetMessagingTimeout(app, 0.5)
     var setup = true
     var owned: AXUIElement?
+    var safariProfileProven = false
     let created = CreatedWindow<AXUIElement>(equal: { CFEqual($0, $1) })
     do {
     var observer: AXObserver?
@@ -773,6 +1058,9 @@ func fixture(_ argument: String) throws {
         // Retain before metadata reads or blank-page validation can fail. Only
         // the unique event after our creation command supplies this reference.
         owned = try retainCreated(created)
+        try awaitSafariProfile(proof: { try safariProfileState(owned!, children: children, text: text) }, wait: wait)
+        safariProfileProven = true
+        try clearSafariMenu(app, window: owned!, pid: pid)
         var creation: [String: Any] = ["count": created.count]
         if let candidate = try created.unique() {
             let document = try text(candidate, kAXDocumentAttribute), title = try text(candidate, kAXTitleAttribute)
@@ -796,7 +1084,12 @@ func fixture(_ argument: String) throws {
         }
     }
     guard ready, let owned else { throw FixtureError("New \(appName) fixture identity unconfirmed") }
-    try emit(["stage": "ready", "pid": pid, "fresh": !running, "totalWaitMs": retryWaitMs])
+    var receipt: [String: Any] = ["stage": "ready", "pid": pid, "fresh": !running, "totalWaitMs": retryWaitMs]
+    if safari {
+        try requireSafariProfile(owned)
+        receipt["fixtureWindow"] = ["title": try text(owned, kAXTitleAttribute), "profile": fixtureSafariProfile, "pid": pid]
+    }
+    try emit(receipt)
     setup = false
     freshSetup = false
     while command() != "close" { wait() }
@@ -815,7 +1108,10 @@ func fixture(_ argument: String) throws {
         listed: listed, details: { window in
             let dialogs = try ownedDialogs(window)
             return (dialogs.filter { $0.1 == kAXSheetRole }.count, dialogs.filter { $0.1 != kAXSheetRole }.count)
-        }, close: { window in try closeWholeWindow(window, app: app, validate: validate) }, wait: wait,
+        }, close: { window in
+            if safari, try !clearSafariMenu(app, window: window, pid: pid) { throw FixtureError("Safari menu cleanup unreadable") }
+            try closeWholeWindow(window, app: app, direct: safari, validate: validate)
+        }, wait: wait,
         report: { try emit(["stage": "window-cleanup", "windows": $0]) })
     try emit(["stage": "closed"])
     } catch {
@@ -825,10 +1121,16 @@ func fixture(_ argument: String) throws {
             do {
                 if let current = NSRunningApplication(processIdentifier: pid), !current.isTerminated {
                     guard current.bundleIdentifier == bundle else { throw FixtureError("Browser process changed before recovery") }
-                    event["cleanup"] = try recoverSetup(createdFixtureForRecovery(owned, state: created, matches: {
+                    if safari {
+                        event["cleanup"] = try recoverSafariSetup(safariProfileProven ? retainedForRecovery(owned, state: created) : owned, profileProven: safariProfileProven, recover: { window in
+                            do { try clearSafariMenu(app, window: window, pid: pid) }
+                            catch { event["menuCleanupError"] = String(describing: error) }
+                            return try recoverSetup(window, target: target, token: token, safari: true, appName: appName)
+                        })
+                    } else { event["cleanup"] = try recoverSetup(createdFixtureForRecovery(owned, state: created, matches: {
                         (try? matches($0, target: target, token: token)) == true
                             || (try? matches($0, target: target, token: token, navigating: true)) == true
-                    }), target: target, token: token, safari: safari, appName: appName)
+                    }), target: target, token: token, safari: false, appName: appName) }
                 } else { event["cleanup"] = owned == nil ? "unconfirmed" : "closed retained fixture" }
             } catch { event["cleanupError"] = String(describing: error) }
             try emit(event)

@@ -789,15 +789,16 @@ test('Safari records launch ownership before acquiring a new fixture window', as
     run: async (_command, _args, options) => {
       assert.deepEqual(actions, [], 'running state must be observed before launching');
       options.onStdout('{"stage":"launch","running":false}\n');
-      setTimeout(() => options.onStdout('{"stage":"armed","running":false}\n{"stage":"ready","pid":123}\n'), 5);
+      setTimeout(() => options.onStdout('{"stage":"armed","running":false}\n{"stage":"ready","pid":123,"fixtureWindow":{"title":"sleight benchmark \\u2014 fixture test","profile":"sleight benchmark","pid":123}}\n'), 5);
       return new Promise(resolve => { finish = resolve; });
     },
   });
   assert.deepEqual(actions, [
-    ['-g', '-a', 'Safari'],
+    ['-g', '-a', 'Safari', '--args', '-ApplePersistenceIgnoreState', 'YES'],
   ]);
   assert.equal(lease.running, false);
   assert.equal(lease.pid, 123);
+  assert.deepEqual(lease.diagnostics.fixtureWindow, { title: 'sleight benchmark \u2014 fixture test', profile: 'sleight benchmark', pid: 123 });
   const closed = lease.close();
   finish({ exit: { code: 0 }, stdout: '{"stage":"closed"}\n', groupClean: true });
   await closed;
@@ -1783,4 +1784,11 @@ test('placement fails setup when the window does not end inside its own slot', (
     if (expect === 'placed') assert.equal(placeFixtureWindow({}, { slot: 1, count: 2 }, api).slot, 1, label);
     else assert.throws(() => placeFixtureWindow({}, { slot: 1, count: 2 }, api), /placement unconfirmed/, label);
   }
+});
+
+test('the JXA setup path refuses Safari before any application lookup or menu action', () => {
+  const source = readFileSync(new URL('../bench/real-fixture.js', import.meta.url), 'utf8');
+  const sandbox = { ObjC: { import() {} } };
+  runInNewContext(source, sandbox);
+  assert.throws(() => sandbox.run([JSON.stringify({ bundle: 'com.apple.Safari', mode: 'window' })]), /profile-proven created-window helper/);
 });

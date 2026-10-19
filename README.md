@@ -84,7 +84,7 @@ Safari and Firefox through the engine's accessibility path. The engine refuses t
 - [App claim](docs/results/app-claim.md): "fastest", sleight's total expected time 56.8 s over 3 tasks (60 runs, 2026-10-18, 02:39 to 03:16 UTC). Engine 26.1007.71326, 2026-10-18.
 - [Chrome and Helium: turbo against FowlBrowser](docs/results/browser-turbo.md): in Chrome, the lowest expected time on 10 of 13 and a total of 258.9 s against FowlBrowser's 447.8 s (`sleight-turbo-rel130`). In Helium, the lowest expected time on 11 of 13 and a total of 241.8 s against FowlBrowser's 338.3 s (`sleight-turbo-b5`). 14 gate studies. Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19.
 - [Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo](docs/results/browser-race.md): in Safari sleight is fastest on 11 of 12 tasks, the only arm with a total (592.1 s) (`sleight-b10`, 2026-10-18). In Firefox sleight is fastest on 11 of 12 tasks, with a total of 557.1 s (`sleight-b10`, 2026-10-18). Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19.
-- [Experiments](docs/results/ab-tests.md): 13 studies with run data. The catalog has 94 benchmark write-ups and includes studies without structured run data.
+- [Experiments](docs/results/ab-tests.md): 17 studies with run data. The catalog has 95 benchmark write-ups and includes studies without structured run data.
 - [Release passes and the earlier head-to-heads](docs/results/release-passes.md): 7 release passes (2026-10-05 to 2026-10-09), 115 results files in all.
 
 <picture>

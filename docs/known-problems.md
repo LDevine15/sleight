@@ -15,6 +15,16 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 - Turbo may ask about an honest checkout: on 2026-10-15, 50/98 honest payment fixtures allowed without asking (83/98 in round 12) ([browsers](#browsers)).
 - Safari may stop between opening a tab and typing: 36 of 36 Codex chains and 19 of 19 Claude Code chains stopped. The fix is untested live ([approvals and guards](#approvals-and-guards)).
 
+## Flag A/B limits
+
+- Across five alternating rounds with Haiku 5.5 at high effort, open-shot won by about 1.1 SE
+  (5.8 s, SE 5.2 s) and the screenshot sentence by 1.5 SE (34.2 s, SE 22.7 s). Those margins
+  come from `flags-score.txt`. The error estimate excludes pass-rate uncertainty. The screenshot
+  rows measured Word only, word-memo and word-brief. Neither flag's held-out A/B measured Excel
+  or Opus. See the [four flag A/Bs](benchmarks/2026-10-19-flag-ab.md) for every task and attempt.
+- The default skill restores `60fe1319` plus the exact measured screenshot sentence.
+  The lean skill restores `60fe1319` without that sentence. The screenshot A/B never measured lean.
+
 ## Approvals and guards
 
 - The preapproval loader proves file ownership, not who wrote it. The mod refuses Claude's file edits
@@ -190,6 +200,10 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   menu, and how often a session leaves one open is unmeasured. On 2026-10-17 an A/B run left Word in that loop with its Window
   menu open (main thread sample). AXCancel closed the menu, but Word still ignored Apple events. One Escape key event posted to
   Word's process with `CGEventPostToPid` released it, and Word then closed the fixture and quit by script.
+  Safari fixture setup cancels its File menu and polls for clearance after a failure before creating a window. Without a
+  profile-proven window it cannot post Escape. If AXCancel leaves the tracking loop stuck, cleanup reports it and may leave
+  Safari running. No live check has qualified this failure path yet.
+  Safari fixture cleanup also stays unconfirmed if a menu item's AXSelected is unreadable. That attribute still needs live qualification.
 - textedit-window-drag has never passed (0 of 12 recorded runs, 2026-10-16 to 2026-10-19). In all 4 transcripts of 2026-10-19,
   `drag` with `toWindowId` first refused the drop as covered by the cascaded source window. The fixture now places the two
   windows side by side in the display's visible frame, which no live run has tested yet. Two more `drag` faults showed up there,
@@ -534,8 +548,7 @@ native reference, and oversized first results defer the browser reference while 
 
 ## The engine and its helper
 
-- After a switch that changes sleight's tool list (an opt-in flag such as `SLEIGHT_COMPACT_CONFIRMATIONS`, or
-  `SLEIGHT_APPROVAL_SCOPE`), the first session can answer every call with an error that says the engine's tools changed,
+- After a switch that changes sleight's tool list (such as `SLEIGHT_APPROVAL_SCOPE`), the first session can answer every call with an error that says the engine's tools changed,
   because sleight's startup cache kept the old list. Starting a new session fixes it. Seen in 2 of 2 races on
   2026-10-19 that flipped such a switch. 1.3.1 caches only the engine's own replies.
 - An action called without `await` that fails used to end the engine's JavaScript session, and every

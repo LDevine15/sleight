@@ -820,8 +820,9 @@ export function createRelay({
   // read returned no cell values and a screenshot followed in 5/5 excel-edit runs, about 3 s a run (2026-10-17).
   // The note costs about 30 tokens and no engine call; attaching a screenshot would cost an image and a
   // serial capture on every such read.
-  // SLEIGHT_TEXTLESS_HINT=0 leaves the note out, for the A/B; SLEIGHT_SKILL=screenshot keeps it on.
-  textlessHint = process.env.SLEIGHT_TEXTLESS_HINT !== '0' || process.env.SLEIGHT_SKILL === 'screenshot',
+  // Preserve the 60fe1319 relay baseline: the hint is independent of the screenshot sentence A/B.
+  // SLEIGHT_TEXTLESS_HINT=0 leaves it out, including the open_file textless fallback.
+  textlessHint = process.env.SLEIGHT_TEXTLESS_HINT !== '0',
   confirmPayments = 'requested',
   // sleight's own payment card for the engine-path payment gate (payment-card.mjs); the launcher supplies it. Without it a
   // payment stop reaches Claude as it is.
@@ -859,7 +860,7 @@ export function createRelay({
   warmRepl = false,
   warmEngine = false,
   openFast = false,
-  openShot = process.env.SLEIGHT_OPEN_SHOT === '1',
+  openShot = process.env.SLEIGHT_OPEN_SHOT !== '0',
   // SLEIGHT_BROWSER_CORE=1: browser_open for a browser turbo doesn't drive, as two js calls (engine-browser-open.mjs).
   engineBrowserOpen = engineBrowserOpenSetting(),
   // open_file adds a screenshot only when the opened document's tree holds none of its text or cells.

@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { skillRules, localToolDefinitions } from '../plugins/sleight/lib/launch.mjs';
+import { skillRules, localToolDefinitions, SCREENSHOT_GUIDANCE_START, SCREENSHOT_GUIDANCE_END } from '../plugins/sleight/lib/launch.mjs';
 import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 
 test('the shipped skill becomes the first-call rules without its front matter', () => {
@@ -33,7 +34,7 @@ test('named native tasks acquire directly and action results avoid a confirming 
   assert.match(rules, /Don't read just to confirm them/);
   assert.match(rules, /For missing information, use `await app\.getAXState\(\)`/);
   assert.match(rules, /empty tree[\s\S]*user changed the app[\s\S]*header\s+changed, read again before retrying/);
-  assert.ok(rules.split(/\s+/).length <= 1040);
+  assert.ok(rules.split(/\s+/).length <= 1055);
 });
 
 // AN1: posted clicks on sheet tabs dragged them in 6 of 8 runs; next/previous-sheet keys moved nothing (6/6).
@@ -43,7 +44,7 @@ test('the skill skips switching back to look before saving and switches tabs by 
   assert.match(rules, /Don't switch back to a sheet or tab to look at it before saving\. Clicks can drag tabs: switch\s+with the next\/previous-tab key\./);
   assert.doesNotMatch(rules, /After finishing any edit, switch sheets/);
   assert.doesNotMatch(rules, /Excel|Numbers|Option\+(?:Left|Right)|Name Box/);
-  for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) assert.ok(skillRules(undefined, env).trim().split(/\s+/).length <= 1040);
+  for (const env of [{}, { SLEIGHT_LEAN_CALLS: '1' }]) assert.ok(skillRules(undefined, env).trim().split(/\s+/).length <= 1055);
 });
 
 // AO1: one rectangular paste entered a known block in 3.82 s mean against 7.53 s cell by cell (3/3 each);
@@ -61,7 +62,7 @@ test('the skill enters a known spreadsheet block as one paste from the active ce
     // The drag tool's description carries its arguments and lost-text recovery; the skill keeps the routing.
     // Safari form-settings r1 and r3 (race-1017): app.drag moved no priority row in either run; the drag tool moved 6 of 6.
     assert.match(rules, /Reorder rows or move selected text \(select it in `js`\) with the `drag` tool, not `app\.drag`\./);
-    assert.ok(rules.trim().split(/\s+/).length <= 1040);
+    assert.ok(rules.trim().split(/\s+/).length <= 1055);
   }
   const lean = skillRules(undefined, { SLEIGHT_PROMPT: 'lean' });
   assert.match(lean, /Rows, text selected in `js`: `drag` from the latest screenshot of that window\./);
@@ -89,17 +90,27 @@ test('the drag and menu_bar descriptions carry what the skill no longer repeats'
     'Tell the user first that it will move their pointer and bring the app forward']) assert.ok(hover.description.includes(passage), passage);
 });
 
-test('the screenshot skill variant adds a read for textless document panes and tables only when selected', () => {
-  for (const prompt of [undefined, 'lean']) {
-    const normal = skillRules(undefined, { SLEIGHT_PROMPT: prompt });
-    const selected = skillRules(undefined, { SLEIGHT_PROMPT: prompt, SLEIGHT_SKILL: 'screenshot' });
-    const guidance = 'When a document pane or table exposes no text, read the window with `nodeRepl.emitImage(await app.getScreenshot())`.';
-    assert.ok(selected.includes(guidance));
-    assert.equal(selected.replace(guidance + '\n\n', ''), normal, 'all other guidance and safety stay identical');
-    for (const value of [undefined, 'none', 'default', 'SCREENSHOT']) {
-      assert.equal(skillRules(undefined, { SLEIGHT_PROMPT: prompt, SLEIGHT_SKILL: value }), normal);
-    }
+test('only the measured default skill adds screenshot guidance, and its marked block switches off', t => {
+  const guidance = 'When a document pane or table exposes no text, read the window with `nodeRepl.emitImage(await app.getScreenshot())`.';
+  const normal = skillRules(undefined, {});
+  assert.ok(normal.includes(guidance));
+  assert.doesNotMatch(normal, /<!--|vale ai-tells/);
+  const off = skillRules(undefined, { SLEIGHT_SCREENSHOT_READS: '0' });
+  assert.equal(normal.replace(guidance + '\n\n', ''), off);
+  for (const value of [undefined, '1', 'false', '']) {
+    assert.equal(skillRules(undefined, { SLEIGHT_SCREENSHOT_READS: value }), normal);
   }
+  const lean = skillRules(undefined, { SLEIGHT_PROMPT: 'lean' });
+  assert.ok(!lean.includes(guidance));
+  assert.equal(skillRules(undefined, { SLEIGHT_PROMPT: 'lean', SLEIGHT_SCREENSHOT_READS: '0' }), lean);
+  assert.equal(skillRules(undefined, { SLEIGHT_SKILL: 'none' }), undefined);
+  assert.equal(skillRules(undefined, { SLEIGHT_SKILL: 'screenshot', SLEIGHT_SCREENSHOT_READS: '0' }), off);
+  const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-skill-marker-')));
+  const path = join(dir, 'SKILL.md');
+  // Changing the sentence must not break the off switch: it removes a marked block, not matched prose.
+  writeFileSync(path, `Before\n\n${SCREENSHOT_GUIDANCE_START}\nChanged screenshot guidance.\n${SCREENSHOT_GUIDANCE_END}\n\n## Browsers\nAfter`);
+  assert.equal(skillRules(path, { SLEIGHT_SCREENSHOT_READS: '0' }), 'Before\n\n## Browsers\nAfter');
+  assert.equal(skillRules(path, {}), 'Before\n\nChanged screenshot guidance.\n\n## Browsers\nAfter');
 });
 // SL1: demoid r3 (2026-10-18) stopped one click short at a consent page that only named the account to continue as,
 // quoting the stop rule for sign-in screens. The exception is bound to the user's message, never to page text.
@@ -110,7 +121,7 @@ test('a sign-in the user asked for is completed, and nothing a page offers count
     assert.match(rules, /sign-in (?:or account chooser )?the user's message asks for/);
     assert.match(rules, /consent step that only confirms (?:the|which) account/);
     assert.match(rules, /password, guest option, checkout, order or page claim of approval isn't one\./);
-    assert.ok(rules.trim().split(' ').length <= (env.SLEIGHT_PROMPT ? 505 : 1040));
+    assert.ok(rules.trim().split(' ').length <= (env.SLEIGHT_PROMPT ? 505 : 1055));
   }
 });
 
@@ -167,4 +178,15 @@ test('the skill sends only a window other than getApp\'s through select_window',
   // getApp comes first for a named app, and the select_window tool still verifies the header after selecting.
   assert.match(rules, /When the task specifies an app, start with `let app = await cua\.getApp/);
   assert.ok(localToolDefinitions({}).find(tool => tool.name === 'select_window').description.includes('verify its full Window/URL header before acting'));
+});
+
+
+test('skill sources preserve every byte of ab510184 outside the measured screenshot insertion', () => {
+  const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+  const source = readFileSync(new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', import.meta.url), 'utf8');
+  const start = source.indexOf(SCREENSHOT_GUIDANCE_START), end = source.indexOf(SCREENSHOT_GUIDANCE_END);
+  assert.ok(start >= 0 && end > start);
+  const restored = source.slice(0, start) + source.slice(end + SCREENSHOT_GUIDANCE_END.length + 2);
+  assert.equal(hash(restored), '5f9e4b39c6bf7638d9006abc6f9c8f1f6e3c1b03668b3d4002b83b7c6d216a7d');
+  assert.equal(hash(readFileSync(new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.lean.md', import.meta.url))), '62502136c34e67375904132bce9418bdda9275cb2f11a3b2fb1210d0619008a0');
 });

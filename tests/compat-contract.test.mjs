@@ -53,6 +53,7 @@ test('the tool surface needs js with code, timeout_ms and title, and turn_ended'
 
 test('the policy rewrite applies to the recorded policy and warns when the engine changes it', () => {
   assert.deepEqual(checkPolicyRewrite([docs(), 'Invalid app: x']).map(r => r.status), ['pass']);
+  assert.deepEqual(checkPolicyRewrite([docs() + '\nAdditional engine guidance.']).map(r => r.status), ['warn']);
   const changed = checkPolicyRewrite([docs(ts, policy.replace('Delete data', 'Remove data'))]);
   assert.equal(changed[0].status, 'warn');
   assert.match(changed[0].reason, /ask again/);

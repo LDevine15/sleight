@@ -294,7 +294,7 @@ test('a signal during the browser check quits the Safari that check launched bef
   child.kill('SIGTERM');
   const [code, signal] = await new Promise(resolve => child.once('exit', (...args) => resolve(args)));
   assert.deepEqual([code, signal], [null, 'SIGTERM']);
-  assert.deepEqual(readFileSync(join(dir, 'marks'), 'utf8').trim().split('\n'), ['client closed', 'quit com.apple.Safari launched since number']);
+  assert.deepEqual(readFileSync(join(dir, 'marks'), 'utf8').trim().split('\n'), ['client closed', 'quit com.apple.Safari pid 41 launched since number']);
   assert.equal(existsSync(join(dir, 'live.lock')), false);
 });
 

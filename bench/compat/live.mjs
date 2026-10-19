@@ -18,7 +18,11 @@ export const COMPAT_APPS = ['Calculator', CALCULATOR, 'Safari', SAFARI];
 // The engine's window header and element lines, as document-scope.mjs and helper-health.mjs parse them.
 export const WINDOW_HEADER = /^Window: (.*), App: (.+)\r?$/m;
 const ELEMENT_LINE = /^\t*\d+ \S/m;
-const MARK = 'sleight-compat:';
+const BENCHMARK_PROFILE = 'sleight benchmark';
+export function fixtureWindowTitle(title, marker) {
+  const value = String(title ?? '').replace(/^"(.*)"$/, '$1');
+  return value === marker || value === `${BENCHMARK_PROFILE} \u2014 ${marker}`;
+}
 
 const result = (id, status, reason, detail) => ({ id, status, ...(reason ? { reason } : {}), ...(detail ? { detail } : {}) });
 const firstLine = text => String(text ?? '').trim().split('\n')[0].slice(0, 300);
@@ -109,35 +113,54 @@ export async function runCalculator(client, { appState, launchApp, quitApp }) {
 
 // One engine-path page read: a page served on 127.0.0.1 in a Safari window this run created, chosen by its title through
 // sleight's select_window, then acquired and read with getApp as Claude would.
-export async function runBrowserRead(client, { appState, openPage, axTrusted, quitLaunchedSince }) {
+export async function runBrowserRead(client, { appState, openPage, axTrusted, quitLaunchedSince,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), titleWaitMs = 10000 }) {
   const started = Date.now();
   const before = await appState(SAFARI);
   if (before.running) return result('live-browser-read', 'skip', 'Safari was already running, so it may be the owner\'s; the check uses only a Safari it launches');
   // The fixture helper reads Safari's windows through Accessibility. Without a grant (a launchd job has none) macOS would
   // ask the owner, so the check skips instead.
   if (axTrusted && !(await axTrusted())) return result('live-browser-read', 'skip', 'this process has no Accessibility grant, so the fixture window can\'t be opened without a macOS prompt; run npm run compat -- --owner-away from a terminal');
-  let page, outcome, opening;
+  let page, outcome, opening, diagnostics;
   try {
     opening = Date.now();
     page = await openPage();
-    const listed = await client.call('js', { code: `const rows = (await cua.listApps({ emit: false })).filter(row => row.id === ${JSON.stringify(SAFARI)});
-nodeRepl.write(${JSON.stringify(MARK)} + JSON.stringify(rows.flatMap(row => row.windows ?? []).map(window => window.title).filter(title => typeof title === 'string' && title.includes(${JSON.stringify(page.marker)}))))`, timeout_ms: 30000 });
-    const line = textOf(listed).split('\n').find(item => item.startsWith(MARK));
-    const titles = line ? JSON.parse(line.slice(MARK.length)) : undefined;
-    if (listed?.isError || !Array.isArray(titles)) outcome = result('live-browser-read', 'fail', 'listApps found no Safari windows', listed?.isError ? firstLine(textOf(listed)) : undefined);
-    else if (titles.length !== 1) outcome = result('live-browser-read', 'fail', `expected one Safari window titled with the fixture's marker, found ${titles.length}`);
+    diagnostics = page.diagnostics;
+    // Native listApps may omit windows. The helper's retained reference supplies
+    // profile proof. Its title may still be the loading URL.
+    const conflictingTitle = String(page.window?.title ?? '').endsWith(` \u2014 ${page.marker}`) && !fixtureWindowTitle(page.window.title, page.marker);
+    if (page.window?.profile !== BENCHMARK_PROFILE || conflictingTitle) {
+      outcome = result('live-browser-read', 'fail', 'the fixture has no verified benchmark-profile window receipt');
+    }
     else {
-      const selected = await client.call('select_window', { app: 'Safari', title: titles[0] }, 30000);
-      const read = selected?.isError ? undefined : await client.call('js', { code: `var page = await cua.getApp(${JSON.stringify(SAFARI)})`, timeout_ms: 60000 });
-      const text = textOf(read);
-      const header = WINDOW_HEADER.exec(text);
-      if (selected?.isError) outcome = result('live-browser-read', 'fail', 'select_window returned an error', firstLine(textOf(selected)));
-      else if (read?.isError) outcome = result('live-browser-read', 'fail', 'getApp returned an error', firstLine(text));
-      else if (!header || !header[1].includes(page.marker)) outcome = result('live-browser-read', 'fail', 'the read shows another window than the fixture page');
-      else if (!text.includes(page.body)) outcome = result('live-browser-read', 'fail', "the read has the fixture window but not the page's text");
-      else outcome = result('live-browser-read', 'pass', 'read the fixture page through the engine path');
+      const expectedTitle = `${page.window.profile} \u2014 ${page.marker}`;
+      // The title window starts when the first attempt ends, since a cold first getApp can take seconds (2026-10-19:
+      // a 3 s window that included it left the retries 1 ms). Every attempt keeps the full engine budgets.
+      let deadline;
+      const reasons = [];
+      for (let attempt = 0; attempt <= Math.ceil(titleWaitMs / 100); attempt++) {
+        try {
+          const selected = await client.call('select_window', { app: 'Safari', title: expectedTitle }, 30000);
+          const read = selected?.isError ? undefined : await client.call('js', { code: `var page = await cua.getApp(${JSON.stringify(SAFARI)})`, timeout_ms: 60000 });
+          const text = textOf(read);
+          const header = WINDOW_HEADER.exec(text);
+          if (selected?.isError) outcome = result('live-browser-read', 'fail', 'select_window returned an error', firstLine(textOf(selected)));
+          else if (read?.isError) outcome = result('live-browser-read', 'fail', 'getApp returned an error', firstLine(text));
+          else if (!header || !fixtureWindowTitle(header[1], page.marker)) outcome = result('live-browser-read', 'fail', 'the read shows another window or profile than the fixture page');
+          else if (!text.includes(page.body)) outcome = result('live-browser-read', 'fail', "the read has the fixture window but not the page's text");
+          else outcome = result('live-browser-read', 'pass', 'read the fixture page through the engine path');
+        } catch (error) { outcome = result('live-browser-read', 'fail', 'the fixture title was not ready', firstLine(error.message)); }
+        deadline ??= Date.now() + titleWaitMs;
+        if (outcome.status !== 'pass' && !reasons.includes(outcome.reason)) reasons.push(outcome.reason);
+        if (outcome.status === 'pass' || Date.now() >= deadline || attempt === Math.ceil(titleWaitMs / 100)) {
+          if (outcome.status !== 'pass' && reasons.length > 1) outcome = { ...outcome, attempts: reasons };
+          break;
+        }
+        await sleep(100);
+      }
     }
   } catch (error) {
+    diagnostics = error.fixtureDiagnostics;
     outcome = result('live-browser-read', 'error', 'the check stopped', firstLine(error.message));
   } finally {
     const closed = page ? await page.close().then(() => undefined, error => error.message) : undefined;
@@ -145,7 +168,7 @@ nodeRepl.write(${JSON.stringify(MARK)} + JSON.stringify(rows.flatMap(row => row.
     // Safari and its Start Page window running (2026-10-19), so the check then quits the Safari it launched itself.
     let cleanup = closed, quitSafari;
     if (opening !== undefined && quitLaunchedSince) {
-      const quit = await quitLaunchedSince(SAFARI, opening).then(done => { quitSafari = done; }, error => error.message);
+      const quit = await quitLaunchedSince(SAFARI, opening, { pid: diagnostics?.pid ?? page?.window?.pid, unprovenWindow: diagnostics?.cleanup === 'unproven window left open' }).then(done => { quitSafari = done; }, error => error.message);
       cleanup = quit ? [closed, quit].filter(Boolean).join('; ') : undefined;
     }
     outcome ??= result('live-browser-read', 'fail', 'no result');
@@ -153,7 +176,7 @@ nodeRepl.write(${JSON.stringify(MARK)} + JSON.stringify(rows.flatMap(row => row.
     if (closed && !cleanup) outcome = { ...outcome, fixtureCleanup: closed };
     if (cleanup) outcome = { ...outcome, cleanup, ...(outcome.status === 'pass' ? { status: 'fail', reason: 'passed, but closing the fixture window or Safari failed' } : {}) };
   }
-  return { ...outcome, ms: Date.now() - started };
+  return { ...outcome, ...(diagnostics?.menuCancelMethod === 'Escape' ? { escapePosted: true, menuEscapePid: diagnostics.menuEscapePid } : {}), ms: Date.now() - started };
 }
 
 // The real app helpers. The running check and quit go through NSRunningApplication (no Apple events), and the quit
@@ -189,11 +212,11 @@ export async function quitApp(bundle, launched, { state = appState, run = execut
 // Quits an app that one process of this run launched: the only process for the bundle, launched (by macOS's date) no
 // earlier than sinceMs, after a check that found the app not running. Anything else stays running and throws.
 // Returns true when it quit something.
-export async function quitLaunchedSince(bundle, sinceMs, { state = appState, run, sleep, waitMs = 25000 } = {}) {
+export async function quitLaunchedSince(bundle, sinceMs, { pid, unprovenWindow = false, state = appState, run, sleep, waitMs = 25000 } = {}) {
   const now = await state(bundle);
   if (!now.running) return false;
   const launchedAtMs = now.launchDates?.[0];
-  if (now.pids?.length !== 1 || !(launchedAtMs >= sinceMs)) {
+  if (unprovenWindow || !Number.isInteger(pid) || now.pids?.length !== 1 || now.pids[0] !== pid || !(launchedAtMs >= sinceMs)) {
     throw new Error(`${bundle} is not one process launched by this check (pids ${(now.pids ?? []).join(', ')}); left running`);
   }
   await quitApp(bundle, { pid: now.pids[0], launchedAtMs: sinceMs }, { state, run, sleep, waitMs });
@@ -215,7 +238,7 @@ export function fixturePage(nonce) {
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${marker}</title></head><body><h1>${body}</h1><p>A local page for sleight's engine compatibility check.</p><button>Compat button</button></body></html>`;
   return { marker, body, html };
 }
-export async function openSafariPage({ nonce, dir, open, close }) {
+export async function openSafariPage({ nonce, dir, open, close, onDiagnostics }) {
   const page = fixturePage(nonce);
   const server = createServer((req, res) => {
     if (req.method !== 'GET' || req.url !== `/${nonce}/`) { res.writeHead(404).end(); return; }
@@ -223,14 +246,17 @@ export async function openSafariPage({ nonce, dir, open, close }) {
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const url = `http://127.0.0.1:${server.address().port}/${nonce}/`;
-  const ctx = { dir, nonce, ownerAway: true };
+  const ctx = { dir, nonce, ownerAway: true, onFixtureDiagnostics: onDiagnostics };
   const stop = () => new Promise(resolve => server.close(() => resolve()));
-  try { await open(ctx, { app: 'Safari', bundle: SAFARI, target: url, token: nonce, mode: 'window', fixtureKind: 'web-page' }); }
+  let lease;
+  try { lease = await open(ctx, { app: 'Safari', bundle: SAFARI, target: url, token: nonce, mode: 'window', fixtureKind: 'web-page' }); }
   catch (error) {
     // A setup failure the helper cleaned up still quits the Safari it launched.
     await close(ctx).catch(() => {});
+    error.fixtureDiagnostics ??= ctx.windowLeases?.at(-1)?.diagnostics;
     await stop();
     throw error;
   }
-  return { ...page, url, close: async () => { try { await close(ctx); } finally { await stop(); } } };
+  return { ...page, url, window: lease?.diagnostics?.fixtureWindow, diagnostics: lease?.diagnostics,
+    close: async () => { try { await close(ctx); } finally { await stop(); } } };
 }

@@ -745,6 +745,12 @@ called `cua.getAXState()`, which `cua` doesn't have. One textedit-save took 19 t
 textedit-save runs sent Go to Folder through the final Return in one call, against 0 of 3 before the
 save-sheet note (`49356a7`). The new wording is the default since this A/B.
 
+The [2026-10-19 flag A/Bs](benchmarks/2026-10-19-flag-ab.md) ran five alternating rounds per side
+on build `60fe1319`, Haiku 5.5 at high, engine `26.1013.40934`. Open screenshots (65.8 to 60.0 s)
+and screenshot guidance (196.2 to 162.0 s) become defaults in 1.3.1. Compact confirmations are
+removed (90.9 to 92.3 s). Compact toolbars stay opt-in because textedit-replace-all slowed
+from 23.2 to 26.9 s (+16.2%, SE 2.4 s).
+
 Trimming results lost (`e212204`, 04:26 to 04:39 UTC, same tasks and setup,
 [raw](benchmarks/2026-10-11-result-trim-ab.json)). `SLEIGHT_RESULT_TRIM=1` cut file lists in Save and
 Open panels to 10 rows plus a count, and left out a split acquisition's tree when its call returned a

@@ -20,6 +20,8 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { leanCallRules } from './lean-calls.mjs';
+import { screenshotGuidance } from './screenshot-guidance.mjs';
+export { SCREENSHOT_GUIDANCE_START, SCREENSHOT_GUIDANCE_END } from './screenshot-guidance.mjs';
 import { discoverExtensions, createBrowserSelection } from './browser-discovery.mjs';
 import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs';
 import { createStartupCache, startupIdentity } from './startup-cache.mjs';
@@ -326,11 +328,11 @@ export function paymentConfirmationSetting(env = process.env) {
 // Under the sheet A/B, the menu rule gets the call to send. 9 textedit-save runs opened Format in one call
 // and chose Make Plain Text in the next, 33.8 s over 11 calls (turn study, 2026-10-11).
 export function skillRules(path = join(LIB, '..', 'skills', 'drive-mac-apps', 'SKILL.md'), env = process.env) {
+  if (env.SLEIGHT_SKILL === 'none') return undefined;
   if (env.SLEIGHT_PROMPT === 'lean') path = join(dirname(path instanceof URL ? fileURLToPath(path) : path), 'SKILL.lean.md');
   try {
     let text = readFileSync(path, 'utf8').replace(/^---\n[\s\S]*?\n---\n+/, '').trim() || undefined;
-    if (env.SLEIGHT_SKILL === 'screenshot') text = text?.replace('## Browsers',
-      'When a document pane or table exposes no text, read the window with `nodeRepl.emitImage(await app.getScreenshot())`.\n\n## Browsers');
+    text = screenshotGuidance(text, env.SLEIGHT_SCREENSHOT_READS !== '0');
     return env.SLEIGHT_LEAN_CALLS === '1' ? leanCallRules(text) : text;
   }
   catch { return undefined; }

@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ARMS, FLAGS, loadRows, plan, readManifest, scoreFlag } from '../bench/flag-ab.mjs';
+import { ARMS, FLAGS, LEGACY_ARMS, LEGACY_FLAGS, format, loadRows, plan, readManifest, scoreFlag } from '../bench/flag-ab.mjs';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
 
 const reasons = JSON.parse(readFileSync(new URL('../bench/claim-exclusions.json', import.meta.url), 'utf8')).reasons;
@@ -21,7 +21,7 @@ const jitter = (base, i) => base + [0, 2, -2, 1, -1][i % 5];
 
 test('the plan alternates which side runs first, runs every native arm before Office, and sets one flag a side', () => {
   const lines = plan({ rounds: 2 });
-  assert.equal(lines.length, 2 * (2 * 4 + 3));
+  assert.equal(lines.length, 2 * (2 * 3 + 3));
   const firstOffice = lines.findIndex(l => l.arm === 'office');
   assert.ok(lines.slice(firstOffice).every(l => l.arm === 'office'), 'Office comes last');
   const sides = (round, arm) => lines.filter(l => l.round === round && l.arm === arm).map(l => l.side);
@@ -29,7 +29,14 @@ test('the plan alternates which side runs first, runs every native arm before Of
   assert.deepEqual(sides(2, 'open-shot'), ['open-shot', 'off']);
   assert.deepEqual(sides(1, 'office'), ['off', 'compact-toolbars', 'skill-screenshot']);
   assert.deepEqual(sides(2, 'office'), ['skill-screenshot', 'compact-toolbars', 'off']);
-  for (const l of lines) assert.equal(l.env, l.side === 'off' ? '' : FLAGS[l.side]);
+  const env = (arm, side) => lines.find(l => l.round === 1 && l.arm === arm && l.side === side).env;
+  assert.equal(env('open-shot', 'off'), 'SLEIGHT_OPEN_SHOT=0');
+  assert.equal(env('open-shot', 'open-shot'), 'SLEIGHT_OPEN_SHOT=1');
+  assert.equal(env('office', 'off'), 'SLEIGHT_COMPACT_TOOLBARS=0 SLEIGHT_SCREENSHOT_READS=0');
+  assert.equal(env('office', 'compact-toolbars'), 'SLEIGHT_COMPACT_TOOLBARS=1 SLEIGHT_SCREENSHOT_READS=0');
+  assert.equal(env('office', 'skill-screenshot'), 'SLEIGHT_COMPACT_TOOLBARS=0 SLEIGHT_SCREENSHOT_READS=1');
+  assert.equal(env('toolbars-text', 'off'), 'SLEIGHT_COMPACT_TOOLBARS=0');
+  assert.equal(env('toolbars-text', 'compact-toolbars'), 'SLEIGHT_COMPACT_TOOLBARS=1');
   assert.equal(lines.find(l => l.arm === 'preview-read').runs, 2);
 });
 
@@ -99,13 +106,13 @@ test('no win at all removes the flag, even inside the noise', () => {
 });
 
 test('a win inside the noise, a lost pass or one much slower task keeps the flag opt-in', () => {
-  const noisy = scoreFlag('compact-confirmations', flagRows('compact-confirmations', { off: (t, i) => [10, 40, 15, 35, 25][i], on: (t, i) => [12, 36, 14, 33, 24][i] }));
+  const noisy = scoreFlag('open-shot', flagRows('open-shot', { off: (t, i) => [10, 40, 15, 35, 25][i], on: (t, i) => [12, 36, 14, 33, 24][i] }));
   assert.equal(noisy.verdict, 'stay opt-in');
   assert.match(noisy.reasons[0], /inside the noise/);
-  const lost = scoreFlag('compact-confirmations', flagRows('compact-confirmations', { on: () => 10, onPass: (t, i) => !(t === 'preview-pdf' && i === 2) }));
+  const lost = scoreFlag('open-shot', flagRows('open-shot', { on: () => 10, onPass: (t, i) => !(t === 'preview-pdf' && i === 2) }));
   assert.equal(lost.verdict, 'stay opt-in');
   assert.match(lost.reasons.join(), /preview-pdf passed 4\/5 with the flag against 5\/5/);
-  const slower = scoreFlag('compact-confirmations', flagRows('compact-confirmations', {
+  const slower = scoreFlag('open-shot', flagRows('open-shot', {
     off: (t, i) => jitter(t === 'textedit-edit' ? 20 : 60, i), on: (t, i) => jitter(t === 'textedit-edit' ? 30 : 40, i) }));
   assert.equal(slower.verdict, 'stay opt-in');
   assert.match(slower.reasons.join(), /textedit-edit 30\.0 s against 20\.0 s \(\+50%/);
@@ -141,8 +148,30 @@ test('the score command reads a manifest and prints each flag with its verdict',
   const out = spawnSync(process.execPath, [script, 'score', '--manifest', join(dir, 'manifest.tsv')], { encoding: 'utf8' });
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /9 invocations/);
-  assert.match(out.stdout, /skill-screenshot \(SLEIGHT_SKILL=screenshot\), commit abc12345[\s\S]*verdict: default on\./);
+  assert.match(out.stdout, /skill-screenshot \(SLEIGHT_SCREENSHOT_READS=1\), commit abc12345[\s\S]*verdict: default on\./);
   assert.match(out.stdout, /compact-toolbars[\s\S]*verdict: no verdict\. short of 3 runs a side: textedit-replace-all \(off 0, on 0\)/);
   const json = JSON.parse(spawnSync(process.execPath, [script, 'score', '--manifest', join(dir, 'manifest.tsv'), '--json'], { encoding: 'utf8' }).stdout);
   assert.equal(json.scores.find(s => s.flag === 'skill-screenshot').total.on, 106);
+});
+
+
+test('the legacy fixture manifest reproduces all four historical score blocks and verdicts', () => {
+  const entries = readManifest(readFileSync(new URL('fixtures/flag-ab-legacy.tsv', import.meta.url), 'utf8'));
+  const read = path => {
+    const [flag, round, side, arm] = path.split('/');
+    const study = JSON.parse(readFileSync(new URL(`../docs/benchmarks/2026-10-19-flag-ab-${flag}.json`, import.meta.url), 'utf8'));
+    const attempt = study.rounds.find(row => row.round === Number(round) && row.arm === side);
+    return { results: attempt.results.filter(row => LEGACY_ARMS.find(a => a.id === arm).tasks.includes(row.task))
+      .map(row => ({ ...row, arm: 'sleight' })) };
+  };
+  const { rows, dropped, missing } = loadRows(entries, { read, reasons, legacy: true });
+  assert.deepEqual(dropped, {});
+  assert.deepEqual(missing, []);
+  const scores = Object.keys(LEGACY_FLAGS).map(flag => scoreFlag(flag, rows, { legacy: true }));
+  assert.deepEqual(scores.map(s => s.verdict), ['default on', 'remove', 'stay opt-in', 'default on']);
+  const page = readFileSync(new URL('../docs/benchmarks/2026-10-19-flag-ab.md', import.meta.url), 'utf8');
+  const blocks = [...page.matchAll(/```text\n([\s\S]*?)\n```/g)].map(match => match[1]);
+  assert.equal(blocks.length, 4);
+  const printed = format(scores, { manifest: 'fixture.tsv', entries: entries.length, dropped, missing });
+  assert.equal(printed.slice(printed.indexOf('\n\n') + 2), blocks.join('\n\n'));
 });

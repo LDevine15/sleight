@@ -24,6 +24,8 @@ const firstRule = 'execute exactly one of the API calls shown below, optionally 
 const hash = text => createHash('sha256').update(text).digest('hex');
 const baseline = JSON.parse(readFileSync(new URL('fixtures/prompt-default.json', import.meta.url)));
 const skillPath = new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', import.meta.url);
+// Measured 15-word sentence: docs/benchmarks/2026-10-19-flag-ab.md, -34.2 s, SE 22.7 s.
+// Only the default skill limit grows, from 1040 to 1055; lean stays at 505 and the ratio at 0.71.
 const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
 
 test('the self-closed popup outcome has a reviewed prompt budget', () => {
@@ -119,7 +121,7 @@ test('lean calls teach persistent handles and action endings only under the expe
       assert.match(selected, /Keep the app handle across calls/);
       assert.match(selected, /End on the action/);
     } else assert.equal(selected, normal, 'the lean skill has no native call guidance to replace');
-    assert.ok(selected.split(/\s+/).length <= (prompt === 'lean' ? 505 : 1040));
+    assert.ok(selected.split(/\s+/).length <= (prompt === 'lean' ? 505 : 1055));
     assert.equal(skillRules(skillPath, { SLEIGHT_PROMPT: prompt, SLEIGHT_LEAN_CALLS: '0' }), normal);
   }
 });
@@ -152,7 +154,7 @@ test('the default skill explains masked field reads without claiming a fill succ
 });
 
 test('both skill variants explain browser routing and script input within their word budgets', () => {
-  for (const [env, limit] of [[{}, 1040], [{ SLEIGHT_PROMPT: 'lean' }, 505]]) {
+  for (const [env, limit] of [[{}, 1055], [{ SLEIGHT_PROMPT: 'lean' }, 505]]) {
     const skill = skillRules(skillPath, env);
     assert.match(skill, /[Ww]eb pages.*tab handle, never `getApp`/);
     assert.match(skill, /[Tt]op-level `await`, no `return`/);

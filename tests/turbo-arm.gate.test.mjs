@@ -56,6 +56,18 @@ test('fixture and open-web tasks receive the same installed prompt and tools wit
   assert.deepEqual(JSON.parse(setups[1].mcpServers['sleight-turbo'].env.SLEIGHT_TURBO_ORIGINS), []);
 });
 
+test('the combined turbo prompt shares the screenshot A/B switch and keeps lint markers out', t => {
+  const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-turbo-screenshot-')));
+  for (const prompt of [undefined, 'lean']) for (const flag of [undefined, '0']) {
+    const env = { SLEIGHT_PROMPT: prompt, SLEIGHT_SCREENSHOT_READS: flag };
+    const setup = turboSetup({ task: fixtureTask, repo: root, dir, prompt: fixtureTask.prompt, env });
+    assert.doesNotMatch(setup.promptPrefix, /<!--|vale ai-tells/);
+    assert.equal(setup.promptPrefix.includes('When a document pane or table exposes no text'), prompt !== 'lean' && flag !== '0');
+    const native = skillRules(undefined, env).split('## Browsers')[0];
+    assert.ok(setup.promptPrefix.startsWith(native));
+  }
+});
+
 test('the prompt names the task browser as the one the tools drive and sends no engine browser steps', t => {
   const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-turbo-config-')));
   for (const [browser, application] of [['helium', 'Helium'], ['chrome', 'Google Chrome']]) {

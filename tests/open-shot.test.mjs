@@ -8,12 +8,12 @@ const tree = 'Window: "note.txt", App: Example Editor.\n0 standard window note.t
 const image = { type: 'image', data: 'AA==', mimeType: 'image/png' };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-async function open(t, { flag, autoFlag, window = tree, openedFile, failShot = false, failOpen = false, failRead = false, changeReview = false, warmRepl = false } = {}) {
+async function open(t, { flag = '0', autoFlag, window = tree, openedFile, failShot = false, failOpen = false, failRead = false, changeReview = false, warmRepl = false } = {}) {
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
   const sent = [], received = [], events = [], approvals = [], leases = [];
   const previous = process.env.SLEIGHT_OPEN_SHOT, previousAuto = process.env.SLEIGHT_OPEN_AUTO_SHOT;
-  if (flag === undefined) delete process.env.SLEIGHT_OPEN_SHOT;
+  if (flag == null) delete process.env.SLEIGHT_OPEN_SHOT;
   else process.env.SLEIGHT_OPEN_SHOT = flag;
   if (autoFlag === undefined) delete process.env.SLEIGHT_OPEN_AUTO_SHOT;
   else process.env.SLEIGHT_OPEN_AUTO_SHOT = autoFlag;
@@ -78,7 +78,7 @@ async function open(t, { flag, autoFlag, window = tree, openedFile, failShot = f
   return { result, sent, events, approvals, leases, received };
 }
 
-for (const flag of [undefined, '0', 'true']) test(`open screenshot stays off for flag=${flag}`, async t => {
+for (const flag of ['0']) test(`open screenshot stays off for flag=${flag}`, async t => {
   const h = await open(t, { flag });
   assert.deepEqual(h.events, ['acquire']);
   assert.equal(h.result.isError, false);
@@ -87,8 +87,8 @@ for (const flag of [undefined, '0', 'true']) test(`open screenshot stays off for
   assert.equal(h.sent.filter(msg => msg.method === 'tools/call').length, 1);
 });
 
-for (const changeReview of [false, true]) test(`flag on returns one screenshot after the tree in one engine call; changeReview=${changeReview}`, async t => {
-  const h = await open(t, { flag: '1', changeReview });
+for (const flag of [null, '1', 'true']) for (const changeReview of [false, true]) test(`flag=${flag} returns one screenshot after the tree in one engine call; changeReview=${changeReview}`, async t => {
+  const h = await open(t, { flag, changeReview });
   assert.deepEqual(h.events, ['acquire', 'screenshot']);
   assert.equal(h.result.isError, false);
   assert.deepEqual(h.result.content.filter(c => c.type === 'image'), [image]);

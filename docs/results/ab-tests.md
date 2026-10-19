@@ -29,6 +29,10 @@ Each study compares sleight variants on the same tasks. The pages score them the
 | 2026-10-12 | `2026-10-12-lean-skill-ab` | `claude-opus-5-5` | 2 | default 26/26 passed, 1,006 s. lean 26/26 passed, 981 s | [2026-10-12-lean-skill-ab.md](../benchmarks/2026-10-12-lean-skill-ab.md) |
 | 2026-10-16 | `2026-10-16-turbo-ab` | `claude-haiku-5-5` | 10 | baseline 130/130 passed, 2,921 s. candidate 129/130 passed, 2,698 s | [2026-10-16-turbo-ab.md](../benchmarks/2026-10-16-turbo-ab.md) |
 | 2026-10-16 | `2026-10-16-turbo-ab-find` | `claude-haiku-5-5` | 6 | baseline 78/78 passed, 1,824 s. candidate 78/78 passed, 1,656 s | [2026-10-16-turbo-ab.md](../benchmarks/2026-10-16-turbo-ab.md) |
+| 2026-10-19 | `2026-10-19-flag-ab-compact-confirmations` | `claude-haiku-5-5` | 5 | off 20/20 passed, 454 s. on 20/20 passed, 461 s | [2026-10-19-flag-ab.md](../benchmarks/2026-10-19-flag-ab.md) |
+| 2026-10-19 | `2026-10-19-flag-ab-compact-toolbars` | `claude-haiku-5-5` | 5 | off 19/20 passed, 1,150 s. on 20/20 passed, 1,103 s | [2026-10-19-flag-ab.md](../benchmarks/2026-10-19-flag-ab.md) |
+| 2026-10-19 | `2026-10-19-flag-ab-open-shot` | `claude-haiku-5-5` | 5 to 10 | off 25/25 passed, 355 s. on 25/25 passed, 325 s | [2026-10-19-flag-ab.md](../benchmarks/2026-10-19-flag-ab.md) |
+| 2026-10-19 | `2026-10-19-flag-ab-skill-screenshot` | `claude-haiku-5-5` | 5 | off 9/10 passed, 860 s. on 10/10 passed, 810 s | [2026-10-19-flag-ab.md](../benchmarks/2026-10-19-flag-ab.md) |
 
 Totals add every run, failures included, so a variant with more runs has a larger total. The per-task tables below compare like with like.
 
@@ -316,6 +320,84 @@ Totals add every run, failures included, so a variant with more runs has a large
 | `wikipedia` | 8.3 (6/6) | 7.2 (6/6) |
 | Lowest expected time on | 4 of 13 | 9 of 13 |
 | Total expected s | 304.0 | 276.0 |
+
+</details>
+
+<details><summary>2026-10-19-flag-ab-compact-confirmations</summary>
+
+`Flag A/B, compact-confirmations, 2026-10-19`. The baseline is `off`. Commit `60fe1319820053db382b26bdaecbc1db83e0c895`. Write-up: [2026-10-19-flag-ab.md](../benchmarks/2026-10-19-flag-ab.md).
+
+| Arm | Model ids in the runs | Effort | Versions recorded |
+| --- | --- | --- | --- |
+| off | `claude-haiku-5-5` | high | not recorded |
+| on | `claude-haiku-5-5` | high | not recorded |
+
+| Task | off | on |
+| --- | --- | --- |
+| `finder-create-folder` | 20.6 (5/5) | 18.3 (5/5) |
+| `preview-pdf` | 24.1 (5/5) | 22.1 (5/5) |
+| `textedit-edit` | 16.2 (5/5) | 18.5 (5/5) |
+| `textedit-insert-line` | 30.0 (5/5) | 33.4 (5/5) |
+| Lowest expected time on | 2 of 4 | 2 of 4 |
+| Total expected s | 90.9 | 92.3 |
+
+</details>
+
+<details><summary>2026-10-19-flag-ab-compact-toolbars</summary>
+
+`Flag A/B, compact-toolbars, 2026-10-19`. The baseline is `off`. Commit `60fe1319820053db382b26bdaecbc1db83e0c895`. Write-up: [2026-10-19-flag-ab.md](../benchmarks/2026-10-19-flag-ab.md).
+
+| Arm | Model ids in the runs | Effort | Versions recorded |
+| --- | --- | --- | --- |
+| off | `claude-haiku-5-5` | high | not recorded |
+| on | `claude-haiku-5-5` | high | not recorded |
+
+| Task | off | on |
+| --- | --- | --- |
+| `textedit-insert-line` | 34.9 (5/5) | 36.4 (5/5) |
+| `textedit-replace-all` | 23.2 (5/5) | 26.9 (5/5) |
+| `word-brief` | 74.7 (5/5) | 70.1 (5/5) |
+| `word-memo` | 121.5 (4/5) | 87.1 (5/5) |
+| Lowest expected time on | 2 of 4 | 2 of 4 |
+| Total expected s | 254.3 | 220.5 |
+
+</details>
+
+<details><summary>2026-10-19-flag-ab-open-shot</summary>
+
+`Flag A/B, open-shot, 2026-10-19`. The baseline is `off`. Commit `60fe1319820053db382b26bdaecbc1db83e0c895`. Write-up: [2026-10-19-flag-ab.md](../benchmarks/2026-10-19-flag-ab.md).
+
+| Arm | Model ids in the runs | Effort | Versions recorded |
+| --- | --- | --- | --- |
+| off | `claude-haiku-5-5` | high | not recorded |
+| on | `claude-haiku-5-5` | high | not recorded |
+
+| Task | off | on |
+| --- | --- | --- |
+| `preview-pdf` | 27.2 (5/5) | 25.0 (5/5) |
+| `preview-read` | 5.3 (10/10) | 5.0 (10/10) |
+| `textedit-edit` | 23.9 (5/5) | 20.4 (5/5) |
+| `textedit-replace-save` | 9.4 (5/5) | 9.6 (5/5) |
+| Lowest expected time on | 1 of 4 | 3 of 4 |
+| Total expected s | 65.8 | 60.0 |
+
+</details>
+
+<details><summary>2026-10-19-flag-ab-skill-screenshot</summary>
+
+`Flag A/B, skill-screenshot, 2026-10-19`. The baseline is `off`. Commit `60fe1319820053db382b26bdaecbc1db83e0c895`. Write-up: [2026-10-19-flag-ab.md](../benchmarks/2026-10-19-flag-ab.md).
+
+| Arm | Model ids in the runs | Effort | Versions recorded |
+| --- | --- | --- | --- |
+| off | `claude-haiku-5-5` | high | not recorded |
+| on | `claude-haiku-5-5` | high | not recorded |
+
+| Task | off | on |
+| --- | --- | --- |
+| `word-brief` | 74.7 (5/5) | 66.6 (5/5) |
+| `word-memo` | 121.5 (4/5) | 95.5 (5/5) |
+| Lowest expected time on | 0 of 2 | 2 of 2 |
+| Total expected s | 196.2 | 162.0 |
 
 </details>
 

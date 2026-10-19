@@ -75,6 +75,10 @@ The engine masks protected field reads as `<redacted>`. This does not mean input
 Submit in that call only when the user asked for that submit and the engine's confirmation policy
 doesn't require confirming it. Otherwise stop before the final click.
 
+<!-- vale ai-tells.NegatedObject = NO -->
+When a document pane or table exposes no text, read the window with `nodeRepl.emitImage(await app.getScreenshot())`.
+<!-- vale ai-tells.NegatedObject = YES -->
+
 ## Browsers
 
 Several Chromium browsers report as Chrome: pick `metadata.extensionInstanceId` from

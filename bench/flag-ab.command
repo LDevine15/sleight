@@ -11,7 +11,7 @@ REPO=${0:A:h:h}
 O=${O:-$HOME/Projects/sleight-wt/race-1017}; WT=${WT:-$HOME/Projects/sleight-wt/race-131}
 ROUNDS=${ROUNDS:-5}; START=${START:-1}; ARMS=${ARMS:-}; AFTER=${AFTER:-}
 PAUSE=$O/flags-pause; LOG=$O/flags.log; MANIFEST=$O/flags-manifest.tsv
-unset -m 'SLEIGHT_*'  # the off side is the shipped default; each on side sets one flag
+unset -m 'SLEIGHT_*'  # the plan explicitly sets each tested switch, including the off side
 plan=$(node $REPO/bench/flag-ab.mjs plan --rounds $ROUNDS --start $START ${ARMS:+--arms} ${ARMS:+$ARMS}) && [[ -n $plan ]] || exit 1
 [[ -n $AFTER ]] && until grep -q '^done' $AFTER 2>/dev/null; do sleep 30; done
 commit=$(git -C $WT rev-parse HEAD) || exit 1
@@ -34,7 +34,7 @@ while IFS=$'\t' read -r -u 3 round arm side runs tasks flag; do
     touch $PAUSE; echo "paused before $name: ${left}still running; quit it, then rm $PAUSE" >> $LOG
   done
   echo "$name $(date -u +%H:%M:%S)" >> $LOG
-  env DISABLE_AUTOUPDATER=1 $flag node bench/run.mjs --suite world --arm sleight --tasks $tasks --runs $runs \
+  env DISABLE_AUTOUPDATER=1 ${=flag} node bench/run.mjs --suite world --arm sleight --tasks $tasks --runs $runs \
     --model claude-haiku-5-5 --effort high --owner-away < /dev/null > $O/$name.log 2>&1
   code=$?
   results=$(sed -n 's/^results: //p' $O/$name.log | tail -1); stops=$(grep -c '^STOP:' $O/$name.log)
