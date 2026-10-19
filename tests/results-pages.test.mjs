@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import vm from 'node:vm';
 import { exploreData, FAMILIES } from '../bench/results-hub.mjs';
+import { renderResultsIndex } from '../bench/results-index.mjs';
 
 const read = name => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8');
 const templatePath = new URL('../bench/results-index.html', import.meta.url);
@@ -46,9 +47,7 @@ class Node {
 
 function landing(data) {
   assert.ok(existsSync(templatePath), 'H3 landing template is present');
-  const template = read('bench/results-index.html');
-  assert.equal(template.split('/*__DATA__*/null').length, 2, 'one data slot, matching explore.html');
-  const html = template.replace('/*__DATA__*/null', () => JSON.stringify(data).replaceAll('<', '\\u003c'));
+  const html = renderResultsIndex(data);
   checkRequests(html);
   const nodes = Object.fromEntries([...html.matchAll(/\bid="([^"]+)"/g)].map(([, id]) => [id, new Node('div')]));
   const document = { getElementById: id => nodes[id], createElement: tag => new Node(tag) };
@@ -69,6 +68,7 @@ test('Pages serves unprocessed files and has a root link to results', () => {
 
 test('the committed results pages and source templates load no third-party resources', () => {
   for (const name of ['docs/results/index.html', 'docs/results/explore.html', 'bench/results-explore.html']) checkRequests(read(name));
+  if (existsSync(new URL('../docs/results/release-passes.html', import.meta.url))) checkRequests(read('docs/results/release-passes.html'));
 });
 
 test('the request guard rejects remote resources and allows only GitHub navigation', () => {
@@ -121,9 +121,12 @@ test('the landing handles H1 stubs and an empty study list', () => {
 });
 
 test('the landing treats benchmark wording and captions as text', () => {
-  const unsafe = '<img src="https://example.com/track">';
-  const { nodes } = landing({ families: [{ id: 'native-claim', title: 'Native claim', page: 'native-claim.md' }], strings: [],
+  const unsafe = '</script><img src=//x> <!-- $&';
+  const { html, nodes } = landing({ families: [{ id: 'native-claim', title: 'Native claim', page: 'native-claim.md' }], strings: [],
     studies: [{ family: 'native-claim', wording: unsafe }], chartCaptions: { 'headline-native': unsafe } });
+  assert.equal([...html.matchAll(/<script\b/gi)].length, 1);
+  assert.equal([...html.matchAll(/<\/script\s*>/gi)].length, 1);
+  assert.doesNotMatch(html, /<img src=\/\/x>|<!--/);
   assert.ok(nodes.families.textContent.includes(unsafe));
   assert.equal(nodes.families.find('img').length, 0);
   assert.equal(nodes['headline-native-caption'].textContent, unsafe);

@@ -40,6 +40,7 @@ sleight runs inside Claude Code, and what Claude Code sends is handled under
 either.
 
 The results site doesn't load resources from third parties or use analytics.
+GitHub hosts the site and keeps its normal server logs.
 
 ## The update watch
 
