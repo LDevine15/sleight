@@ -6,7 +6,8 @@
 //   render:  reads only those data files and writes the index (README.md, index.html), one Markdown page per family,
 //            release-passes.html, and explore.html with the data inlined (fetch from file:// fails in browsers).
 // Scores come from the scorers themselves: bench/claim-score.mjs for the claims and every per-task table, and
-// bench/fowl/race-score.mjs for the browser race rounds. Nothing in the output depends on the clock.
+// bench/fowl/race-score.mjs for the browser race rounds. Nothing in the output depends on the clock. Every arm's numbers name the
+// ChatGPT engine versions they ran on with their UTC dates, read from the results or inferred (bench/engine-version.mjs).
 //   node bench/results-hub.mjs [--wt ~/Projects/sleight-wt] [--out docs/results] [--render-only] [--check]
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -15,6 +16,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { claim, excluded, regradeFor, score, warnings } from './claim-score.mjs';
 import { loadRound, scoreRounds } from './fowl/race-score.mjs';
+import { currentTimeline, engineMix, engineText, loadTimeline, mixText, passRowEngine, summarizeEngines } from './engine-version.mjs';
 import { buildPage, loadResults, perArm, renderHtml as renderReleaseHtml, renderMarkdown as renderReleaseMarkdown, summarize } from './results-page.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -120,10 +122,10 @@ const scrubVerdict = verdict => ({ ...verdict, wording: scrub(verdict.wording), 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Collect: native claim and app claim (bench/claim-score.mjs, its CLI loop over a results folder).
 
-export function scoreClaimDir(dir, rules, since) {
+export function scoreClaimDir(dir, rules, since, timeline = loadTimeline()) {
   const rows = [], dropped = {}, files = [];
   for (const file of readdirSync(dir).filter(name => name.endsWith('.json') && name >= since).sort()) {
-    const raw = readJson(join(dir, file));
+    const raw = readJson(join(dir, file)), mtimeMs = statSync(join(dir, file)).mtimeMs;
     let kept = 0;
     for (const row of raw.results ?? []) {
       const why = excluded(row, file, rules);
@@ -131,7 +133,7 @@ export function scoreClaimDir(dir, rules, since) {
       const passed = !!(row.passed || (row.cleanupContained && row.taskPassed)), g = !passed && regradeFor(row, file, rules);
       rows.push({ arm: row.arm, task: row.task, seconds: row.seconds, passed, file, run: row.run,
         ...(!passed && { reason: (g && g.reason) || (row.reason ?? 'no reason recorded'), ...(g && { recorded: row.reason, regraded: g.why }) }),
-        models: row.models ?? [] });
+        models: row.models ?? [], engine: passRowEngine(raw, row, { file, mtimeMs, timeline }) });
       kept += 1;
     }
     files.push({ file, raw, kept });
@@ -153,9 +155,9 @@ function armVersions(raw) {
   return out;
 }
 
-function collectClaim({ id, title, dir, rulesFile, since, sinceNote }) {
+function collectClaim({ id, title, dir, rulesFile, since, sinceNote, timeline }) {
   const rules = readJson(rulesFile);
-  const result = scoreClaimDir(dir, rules, since ?? rules.since);
+  const result = scoreClaimDir(dir, rules, since ?? rules.since, timeline);
   const arms = rules.arms.filter(arm => result.table[arm]);
   const tasks = rules.tasks;
   const { cells, verdict, table } = cellsFor(result.rows, tasks, arms, 'sleight');
@@ -178,12 +180,19 @@ function collectClaim({ id, title, dir, rulesFile, since, sinceNote }) {
     studies: [{
       id, family: id, title, browser: null, me: 'sleight', arms, tasks,
       date: stamps.length ? dateRange(sortedUniq(stamps)[0], sortedUniq(stamps).at(-1)) : null,
-      models, effort: sortedUniq(effort), auth: sortedUniq(auth), versions,
+      models, effort: sortedUniq(effort), auth: sortedUniq(auth), versions, ...enginesFor(result.rows, arms),
       runs, cells, verdict: scrubVerdict(summarizeVerdict(table, verdict, tasks, arms, 'sleight')),
       excluded: Object.entries(result.dropped).sort(([a], [b]) => (a < b ? -1 : 1)).map(([why, count]) => ({ why: scrub(why), count })),
       warnings: result.warnings.map(scrub),
     }],
   };
+}
+
+// Per arm, the engine versions and UTC dates of its counted runs, in the table's arm order, and the mix among engine arms.
+function enginesFor(rows, arms) {
+  const counted = summarizeEngines(rows.filter(row => row.engine));
+  const engines = Object.fromEntries(arms.filter(arm => counted[arm]).map(arm => [arm, counted[arm]]));
+  return { engines, engineMix: engineMix(engines) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -222,12 +231,12 @@ function roundFacts(dir) {
   };
 }
 
-export function collectRace({ raceDir, browsers, family, title }) {
+export function collectRace({ raceDir, browsers, family, title, timeline = loadTimeline() }) {
   // Folder names pick the candidates; a round's own browser.json decides where it is scored, as in race-score.mjs.
   const listed = listRaceRounds(raceDir).filter(round => browsers.includes(round.browser));
   const marked = listed.filter(round => !round.done && existsSync(join(round.dir, 'harness-failure.json')));
   const inProgress = listed.filter(round => !round.done && !marked.includes(round)).map(round => round.name);
-  const loaded = listed.filter(round => round.done).map(round => ({ ...round, loaded: loadRound(round.dir), facts: roundFacts(round.dir) }));
+  const loaded = listed.filter(round => round.done).map(round => ({ ...round, loaded: loadRound(round.dir, { timeline }), facts: roundFacts(round.dir) }));
   const excludedRounds = [...loaded.filter(round => round.loaded.excluded).map(round => ({ round: round.name, reason: scrub(round.loaded.excluded) })),
     ...marked.map(round => ({ round: round.name, reason: scrub(tryJson(join(round.dir, 'harness-failure.json'))?.reason ?? 'marked as a harness failure') }))]
     .sort((a, b) => (a.round < b.round ? -1 : 1));
@@ -267,7 +276,7 @@ export function collectRace({ raceDir, browsers, family, title }) {
       const mineStarts = sortedUniq(set.map(round => round.facts.first));
       studies.push({
         id: `${family}-${browser}-${label}`, family, title: `${cap(browser)}, sleight rounds \`${browser}-${label}-r*\``, started: mineStarts[0] ?? null,
-        browser, label, me, arms, tasks: scored.tasks, models, effort, versions,
+        browser, label, me, arms, tasks: scored.tasks, models, effort, versions, ...enginesFor(rounds.flatMap(round => round.loaded.rows), arms),
         date: starts.length ? dateRange(starts[0], ends.at(-1)) : null,
         builds: Object.fromEntries(arms.map(arm => [arm, sortedUniq(rounds.filter(r => r.loaded.arm === arm).map(r => r.facts.build))])),
         browserVersion: sortedUniq(rounds.map(round => round.facts.browserVersion)),
@@ -463,7 +472,7 @@ export function writeUpCatalog() {
 
 export const RELEASE_RIVALS = ['2026-10-10-h2h-5.json', '2026-10-03-sleight-vs-lcu.json'];
 
-export function collectReleases() {
+export function collectReleases({ timeline = loadTimeline() } = {}) {
   const standard = [];
   for (const name of readdirSync(BENCH).sort().filter(file => file.endsWith('.json'))) {
     const raw = tryJson(join(BENCH, name));
@@ -472,12 +481,14 @@ export function collectReleases() {
     const last = passes ? passes.at(-1) : raw;
     if (!Array.isArray(last?.results) || !last.results.length || !last.results.every(row => row.arm && row.task)) continue;
     const writeUp = existsSync(join(BENCH, name.replace(/\.json$/, '.md'))) ? name.replace(/\.json$/, '.md') : undefined;
-    standard.push(loadResults(name, raw, writeUp));
+    // A file's mtime here is the checkout's, so an older pass is placed from its stamp and its runs' seconds.
+    standard.push({ ...loadResults(name, raw, writeUp), engines: summarizeEngines(last.results.map(row => ({ arm: row.arm, engine: passRowEngine(raw.stamp ? raw : last, row, { file: name, timeline }) }))) });
   }
   const toRow = file => {
     const arms = Object.values(perArm(file.results)).map(stats => ({ arm: stats.arm, runs: stats.runs, passed: stats.passed, seconds: stats.seconds, turns: stats.turns, models: stats.models }));
     return { name: file.name, date: file.date, kind: file.kind, version: file.version ?? null, model: file.model ?? null, effort: file.effort ?? null, suite: file.suite ?? null,
-      passes: file.passes, writeUp: file.writeUp ? basename(file.writeUp) : null, arms };
+      passes: file.passes, writeUp: file.writeUp ? basename(file.writeUp) : null, arms,
+      engines: Object.fromEntries(arms.map(a => [a.arm, engineText(file.engines[a.arm], a.arm)])) };
   };
   const releaseNames = standard.filter(file => file.kind === 'release' || RELEASE_RIVALS.includes(file.name)).map(file => file.name);
   const runs = standard.filter(file => releaseNames.includes(file.name)).flatMap(file => file.results.map(row => ({
@@ -524,15 +535,21 @@ function spreadTable(study) {
   return mdTable(head, rows);
 }
 
-// Per arm: the model ids its runs recorded, effort and the versions the files name.
+// Per arm: the model ids its runs recorded, effort, the versions the files name and, for data collected since engine versions were
+// tracked (2026-10-19), the ChatGPT engine versions with their UTC dates. Older data files render as before.
 function armTable(study, { builds = false, scriptEffort = null } = {}) {
-  const head = ['Arm', 'Model ids in the runs', 'Effort', 'Versions recorded', ...(builds ? ['Build'] : [])];
+  const engines = !!study.engines;
+  const head = ['Arm', 'Model ids in the runs', 'Effort', 'Versions recorded', ...(engines ? ['ChatGPT engine and UTC dates'] : []), ...(builds ? ['Build'] : [])];
   const recorded = arm => (Array.isArray(study.effort) ? study.effort : study.effort?.[arm] ?? []);
   const effortOf = arm => (recorded(arm).length ? recorded(arm) : scriptEffort ? [scriptEffort] : []);
-  return mdTable(head, study.arms.map(arm => [armName(arm), study.models?.[arm]?.length ? study.models[arm].map(code).join(', ') : 'not recorded',
+  const table = mdTable(head, study.arms.map(arm => [armName(arm), study.models?.[arm]?.length ? study.models[arm].map(code).join(', ') : 'not recorded',
     effortOf(arm).join(', ') || 'not recorded', study.versions?.[arm]?.join(', ') || 'not recorded',
+    ...(engines ? [engineText(study.engines[arm], arm)] : []),
     ...(builds ? [study.builds?.[arm]?.map(code).join(', ') || 'not recorded'] : [])]));
+  return engines ? `${table}\n\n${study.engineMix ? mixText(study.engineMix) : 'The arms that drive the engine ran on one engine version.'} ${ENGINE_NOTE}` : table;
 }
+const ENGINE_NOTE = 'A version is "recorded" when the runner read it and "inferred" from the timeline in `bench/engine-versions.json` otherwise, and ' +
+  'a date is inferred when it comes from a file\'s stamp or modification time. LCU, Cua, Peekaboo, FowlBrowser, Claude in Chrome and Claude\'s computer use don\'t use the engine.';
 
 function lostTable(study) {
   if (!study.verdict.lost.length) return `By the loss rule, ${armName(study.me)} didn't lose a task.`;
@@ -733,9 +750,10 @@ function renderReleasePage(data) {
   let md = renderReleaseMarkdown(page, { title: data.title, chart: 'release-passes.html', rebuild: 'node bench/results-hub.mjs' });
   const extra = ['## Every head-to-head and sleight-only pass\n',
     'Every results file in [docs/benchmarks](../benchmarks/) in the benchmark runner\'s format, with its totals per arm. Totals add every run, failures included.\n',
-    mdTable(['File', 'Date', 'Kind', 'Model', 'Effort', 'Per arm: passed/runs, total s'], data.files.map(file => [
+    mdTable(['File', 'Date', 'Kind', 'Model', 'Effort', 'Per arm: passed/runs, total s', ...(data.files.some(f => f.engines) ? ['ChatGPT engine and UTC dates'] : [])], data.files.map(file => [
       `[${file.name}](../benchmarks/${file.name})`, file.date, file.kind === 'h2h' ? 'head-to-head' : file.kind === 'release' ? `release ${file.version}` : 'sleight only',
-      file.model ? code(file.model) : DASH, file.effort ?? DASH, file.arms.map(a => `${armName(a.arm)} ${a.passed}/${a.runs}, ${f0(a.seconds)} s`).join(', ')])) + '\n',
+      file.model ? code(file.model) : DASH, file.effort ?? DASH, file.arms.map(a => `${armName(a.arm)} ${a.passed}/${a.runs}, ${f0(a.seconds)} s`).join(', '),
+      ...(data.files.some(f => f.engines) ? [file.arms.map(a => `${armName(a.arm)}: ${file.engines?.[a.arm] ?? 'not recorded'}`).join('; ')] : [])])) + '\n',
     '## Data\n',
     '[data/release-passes.json](data/release-passes.json) has every run of the release passes and the two head-to-heads above, and the totals of every file. [explore.html](explore.html) charts them.\n'];
   md = md.replace(/\n## Run it yourself\n/, '\n' + extra.join('\n') + '\n## Run it yourself\n');
@@ -864,20 +882,21 @@ export function collect({ wt, out }) {
   const dataDir = join(out, 'data');
   const keep = id => { const file = join(dataDir, `${id}.json`); return existsSync(file) ? readJson(file) : undefined; };
   const claimDir = join(wt, 'app-claim');
+  const timeline = currentTimeline();
   const raceDir = join(wt, 'race-1017');
   const all = {};
   const notes = [];
   if (isDir(join(claimDir, 'native-results-1018b'))) {
-    all['native-claim'] = collectClaim({ id: 'native-claim', title: 'Native claim', dir: join(claimDir, 'native-results-1018b'), rulesFile: join(ROOT, 'bench/claim-exclusions.json') });
+    all['native-claim'] = collectClaim({ id: 'native-claim', title: 'Native claim', dir: join(claimDir, 'native-results-1018b'), rulesFile: join(ROOT, 'bench/claim-exclusions.json'), timeline });
   } else { all['native-claim'] = keep('native-claim'); notes.push('native-claim: raw folder missing, kept the data file'); }
   if (isDir(join(claimDir, 'results-1018'))) {
     all['app-claim'] = collectClaim({ id: 'app-claim', title: 'App claim', dir: join(claimDir, 'results-1018'), rulesFile: join(claimDir, 'scorer/bench/claim-exclusions.json'),
-      since: '2026-10-18T02-39', sinceNote: 'the first app-task claim pass' });
+      since: '2026-10-18T02-39', sinceNote: 'the first app-task claim pass', timeline });
   } else { all['app-claim'] = keep('app-claim'); notes.push('app-claim: raw folder missing, kept the data file'); }
   const gates = collectRunnerStudies();
   if (isDir(raceDir)) {
-    all['browser-race'] = collectRace({ raceDir, browsers: ['safari', 'firefox'], family: 'browser-race', title: 'Safari and Firefox race' });
-    const turboRace = collectRace({ raceDir, browsers: ['chrome', 'helium'], family: 'browser-turbo', title: 'Chrome and Helium race' });
+    all['browser-race'] = collectRace({ raceDir, browsers: ['safari', 'firefox'], family: 'browser-race', title: 'Safari and Firefox race', timeline });
+    const turboRace = collectRace({ raceDir, browsers: ['chrome', 'helium'], family: 'browser-turbo', title: 'Chrome and Helium race', timeline });
     all['browser-turbo'] = { family: 'browser-turbo', title: 'Browser turbo against FowlBrowser', race: turboRace, gates: gates.filter(s => s.family === 'browser-turbo'),
       headline: ['2026-10-16-gate-3', '2026-10-16-opus'] };
   } else {
@@ -890,7 +909,7 @@ export function collect({ wt, out }) {
   const coveredWriteUps = sortedUniq([...gates.map(s => s.writeUp), ...collectReleases().files.map(f => f.writeUp)]);
   all['ab-tests'] = { family: 'ab-tests', title: 'A/B tests and tuning experiments', studies: [...collectJsonAbs(), ...gates.filter(s => s.family === 'ab-tests')].sort((a, b) => (a.date + a.id < b.date + b.id ? -1 : 1)),
     catalog, coveredWriteUps };
-  all['release-passes'] = collectReleases();
+  all['release-passes'] = collectReleases({ timeline });
   for (const [id, data] of Object.entries(all)) if (!data) throw new Error(`${id}: no raw folder and no data file in ${dataDir}`);
   return { all, notes };
 }

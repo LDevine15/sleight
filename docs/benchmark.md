@@ -4,8 +4,29 @@
 
 The native speed claim runs the 9 tasks in `bench/claim-tasks.txt`, one per skill. They cover Calculator (by click and by menu),
 TextEdit (edit-and-save and text drag), Finder (a move), Preview (a read), Word, Excel, and Calculator into TextEdit. Browser
-tasks race turbo only, in the gate harness (`bench/fowl/rounds.sh --world`). Each arm runs 3 times, and 5 where sleight and that arm are within 20%. An arm's results stand until that arm, the engine
+tasks race turbo only, in the gate harness (`bench/fowl/rounds.sh --world`). Each arm runs 3 times, and 5 where sleight and that arm are within 20%. An arm's results stand until that arm
 or the model changes. The rules are in LAWS. The full 26-task world suite runs once per release as a regression check.
+
+## Engine versions
+
+ChatGPT updates its app several times a week, so an engine update doesn't force a rerun (owner, 2026-10-19). Every published
+result names the engine version it ran on and its UTC dates instead, and the benchmarks rerun periodically.
+
+Runners record the version with `bench/engine-version.mjs`. It reads the newest engine folder in the Codex plugin cache, as
+`sleight-mcp --doctor` does, and the ChatGPT app's version and build from its `Info.plist`. It only reads files, so a run doesn't
+start the engine or an app to learn the version. `bench/run.mjs` saves a read at the start and the last save of a pass, and each row gets the version and the UTC time it
+finished. A real-browser round writes `engine.json` beside `commits.json`, and `bench/fowl/rounds.sh` does the same for a runner
+round with `--out`. When the start and end reads differ, the record says `changed`.
+
+Results saved before 2026-10-19 get an inferred version from `bench/engine-versions.json`, a timeline built from the watch log, the
+saved engine docs, folder birth times and the versions earlier benchmark files recorded. It lists 7 versions from 26.930.31730
+(2026-10-03) to 26.1013.40934 (2026-10-18 21:47Z), each with its evidence. A run that starts inside a switch window, or spans a
+switch, is ambiguous. Older results take their dates from their own timestamps, and a date from a file's stamp or modification
+time is marked inferred.
+
+`bench/fowl/race-score.mjs`, `bench/claim-score.mjs` and the results hub print each arm's versions with their dates, and they flag a
+table whose sleight or Codex arms ran on different versions (allowed, but visible). LCU, Cua, Peekaboo, FowlBrowser, Claude in
+Chrome and Claude's computer use show "not used" with their dates. The latest Safari and Firefox tables compare sleight on 26.1013.40934 with Codex on 26.1007.71326.
 
 ## Parity battery
 

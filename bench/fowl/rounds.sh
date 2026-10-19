@@ -64,7 +64,13 @@ fi
 mkdir /tmp/sleight-live.lock || { echo "rounds.sh: the live lock is held" >&2; exit 1; }
 trap 'rmdir /tmp/sleight-live.lock' EXIT; trap 'exit 130' INT TERM HUP
 trap 'rmdir /tmp/sleight-live.lock; [ "$AUTH" = api ] && [ -n "$OUT" ] && [ -d "$OUT" ] && node "$REPO/bench/fowl/add-spend.mjs" "$OUT" "$SPEND"' EXIT
+# The ChatGPT engine version at the start and end goes into the --out folder as engine.json (bench/engine-version.mjs). Real-browser
+# rounds record it in real-gate.mjs. A round without --out writes to FowlBrowser's own temporary folder and records no version.
+ENGINE_START=""; [ -z "$OUT" ] || ENGINE_START=$(node "$REPO/bench/engine-version.mjs") || ENGINE_START=""
+RC=0
 env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
   CLAUDE_CONFIG_DIR="$HOME/Library/Caches/sleight-bench/fowl-claude-config" \
   SLEIGHT_REPO="$REPO" SLEIGHT_TRACE="${SLEIGHT_TRACE:-}" SLEIGHT_PROMPT="${SLEIGHT_PROMPT:-}" SLEIGHT_ENGINE_DOCS="${SLEIGHT_ENGINE_DOCS:-}" ${KEY:+ANTHROPIC_API_KEY="$KEY"} \
-  node tools/rounds.mjs --effort medium "$@" --model "$MODEL"
+  node tools/rounds.mjs --effort medium "$@" --model "$MODEL" || RC=$?
+[ -z "$OUT" ] || [ ! -d "$OUT" ] || node "$REPO/bench/engine-version.mjs" record "$OUT" --start "$ENGINE_START" || echo "rounds.sh: engine version not recorded in $OUT" >&2
+exit "$RC"

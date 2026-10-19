@@ -10,7 +10,9 @@
 // recorded reason was mislabelled; they never change exclusion, pass or fail, and result files stay untouched.
 //   node bench/claim-score.mjs [--since 2026-10-16T15-34] [--results <dir>] [--rules <exclusions.json>] [--json]
 // --rules scores another task set with its own exclusions, such as the app claim's VS Code, Slack and Spotify tasks.
-import { readFileSync, readdirSync } from 'node:fs';
+// Each arm's line names the ChatGPT engine versions its rows ran on with their UTC dates, read from the results or inferred from
+// bench/engine-versions.json (bench/engine-version.mjs), and says when the arms that drive the engine ran on different versions.
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -110,17 +112,24 @@ export function warnings(rows, rules, since) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const since = arg('--since') ?? rules.since, dir = arg('--results') ?? join(root, 'bench/results'), rows = [], dropped = {};
+  const { currentTimeline, passRowEngine } = await import('./engine-version.mjs'), timeline = currentTimeline();
   for (const file of readdirSync(dir).filter(f => f.endsWith('.json') && f >= since).sort()) {
-    for (const row of JSON.parse(readFileSync(join(dir, file), 'utf8')).results ?? []) {
+    const raw = JSON.parse(readFileSync(join(dir, file), 'utf8')), mtimeMs = statSync(join(dir, file)).mtimeMs;
+    for (const row of raw.results ?? []) {
       const why = excluded(row, file, rules);
       if (why) { if (why !== 'not a claim task') dropped[why] = (dropped[why] ?? 0) + 1; continue; }
       const passed = !!(row.passed || (row.cleanupContained && row.taskPassed)), g = !passed && regradeFor(row, file, rules);
-      rows.push({ arm: row.arm, task: row.task, seconds: row.seconds, passed, file, run: row.run,
+      rows.push({ arm: row.arm, task: row.task, seconds: row.seconds, passed, file, run: row.run, engine: passRowEngine(raw, row, { file, mtimeMs, timeline }),
         ...(!passed && { reason: (g && g.reason) || (row.reason ?? 'no reason recorded'), ...(g && { recorded: row.reason, regraded: g.why }) }) });
     }
   }
+  const { engineMix, engineText, mixText, summarizeEngines } = await import('./engine-version.mjs');
+  const engines = summarizeEngines(rows), mix = engineMix(engines);
   const table = score(rows), verdict = claim(table, rules), gpt = sameModel(table, rules), warned = warnings(rows, rules, since), failures = rows.filter(r => !r.passed);
-  if (process.argv.includes('--json')) { console.log(JSON.stringify({ since, dropped, table, claim: verdict, sameModel: gpt, failures, warnings: warned }, null, 1)); process.exit(0); }
+  if (process.argv.includes('--json')) {
+    console.log(JSON.stringify({ since, dropped, table, claim: verdict, sameModel: gpt, failures: failures.map(({ engine, ...f }) => f), warnings: warned, engines, engineMix: mix }, null, 1));
+    process.exit(0);
+  }
   const arms = rules.arms.filter(a => table[a]), n = x => x == null ? '-' : x.toFixed(0), pct = x => x == null ? '-' : `${(x * 100).toFixed(1)}%`;
   console.log(`Claim score since ${since}. Cell: expected s to a correct result (passes/runs), median of passes in brackets.`);
   console.log('task'.padEnd(20) + arms.map(a => a.padStart(22)).join(''));
@@ -130,6 +139,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }).join(''));
   console.log('completed'.padEnd(20) + arms.map(a => `${rules.tasks.filter(t => table[a]?.[t]?.passes.length).length}/${rules.tasks.length}`.padStart(22)).join(''));
   console.log('Excluded rows:', JSON.stringify(dropped));
+  for (const a of arms) console.log(`${a.padEnd(20)}${engineText(engines[a], a)}`);
+  if (mix) console.log(mixText(mix));
 
   console.log(`\nClaim rules (docs/status/LAWS.md). Expected time = mean seconds per attempt / pass rate; none without a pass.`);
   console.log(`Within 20% of ${ME}'s expected time, by |a-b|/min and |a-b|/max. The 5-run rule uses /${STRICT}, the denominator that marks more pairs within 20%.`);

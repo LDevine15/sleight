@@ -20,6 +20,7 @@ import { cleanupContained as realCleanupContained } from '../bench/real-run.mjs'
 import { mergeArmHooks as realMergeArmHooks } from '../bench/arm-hooks.mjs';
 import { codexSleightRunConfig, assertOnlyServers } from '../bench/codex-sleight.mjs';
 import { codexExecPlan } from '../bench/codex-arm.mjs';
+import { engineSpan } from '../bench/engine-version.mjs';
 const parserSkip = packageSkip('typescript');
 const { dragMethodAudit } = parserSkip ? {} : await import('../bench/world/method-check.mjs');
 
@@ -48,7 +49,7 @@ test('a refused dry run prints one JSON document with its configuration errors',
 
 // Execute the actual runner body with inert dependencies. No app, CLI, approval
 // file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError, daemonError, daemonStopError, declinedPrompts = [], sleightHomeServers = ['plugin_sleight_computer'], codexResult = {} } = {}) {
+async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError, daemonError, daemonStopError, declinedPrompts = [], sleightHomeServers = ['plugin_sleight_computer'], codexResult = {}, engineReads = ['26.1013.40934'] } = {}) {
   if (!auth) {
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
@@ -70,6 +71,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     existsSync: path => path === '/tmp/sleight-hold' ? holdAfterPreflight && preflightDone : true, realpathSync: path => path, mkdirSync: path => directories.push(path), rmdirSync() {}, statSync: () => ({ dev: 1, ino: 1 }),
     writeFileSync: (path, value) => { files.set(path, JSON.parse(value)); saved.push(JSON.parse(value)); }, randomBytes: () => ({ toString: () => 'nonce' }),
     privateMailResult, publicPrivateMailRow, publicPrivateMailRows,
+    readEngine: () => ({ version: engineReads.length > 1 ? engineReads.shift() : engineReads[0], at: 'fixture' }), engineSpan,
     privateDriverEnvironment, assertPrivateClaudePolicy: () => calls.push('policy audit'),
     DEFAULT_CAP_USD: 200, runCost: out => out?.total_cost_usd, archiveOldRuns: () => [], benchAuth: options => { calls.push(['auth mode', options.mode]); return auth; }, addSpend: usd => { calls.push(['spend', usd]); return spend(usd); },
     CONFIG_DIR: '/isolated/claude',
@@ -174,6 +176,19 @@ test('pass snapshots under the lock before discovery; temp and image cleanup run
   assert.ok(result.calls.indexOf('window baseline') > result.calls.indexOf('lock'));
   assert.ok(result.calls.indexOf('window baseline') < result.calls.findIndex(call => Array.isArray(call) && call[0] === 'login preflight'));
   for (const name of ['temp sweep', 'image retention']) assert.ok(result.calls.findIndex(call => Array.isArray(call) && call[0] === name) < result.calls.indexOf('real run'));
+});
+test('a pass names the engine it ran on and the UTC time per row, and flags a change by its last save', async () => {
+  const same = await runner({ suite: 'default', drive: true });
+  assert.equal(same.error, undefined);
+  const pass = same.saved.at(-1);
+  assert.deepEqual([pass.engine.version, pass.engine.changed], ['26.1013.40934', false]);
+  assert.ok(pass.results.length && pass.results.every(row => row.engineVersion === '26.1013.40934' && !Number.isNaN(Date.parse(row.finishedAt))));
+  assert.equal(pass.engine.startedAt, 'fixture');
+  const moved = (await runner({ suite: 'default', drive: true, engineReads: ['26.1007.71326', '26.1007.71326', '26.1013.40934'] })).saved.at(-1);
+  assert.deepEqual([moved.engine.version, moved.engine.changed, moved.engine.start.version, moved.engine.end.version], [null, true, '26.1007.71326', '26.1013.40934']);
+  assert.deepEqual(moved.results.map(row => row.engineVersion), ['26.1007.71326', '26.1013.40934', '26.1013.40934']);
+  const dry = await runner({ dryRun: true });
+  assert.equal(dry.plan.engine.version, '26.1013.40934');
 });
 test('window baseline failure is logged without skipping or losing timed runs', async () => {
   const result = await runner({ suite: 'default', drive: true, hygieneError: 'CGWindowList unavailable' });
