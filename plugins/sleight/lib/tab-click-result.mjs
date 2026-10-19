@@ -14,16 +14,55 @@ function installClickResults(cua, agent, snapshots, isDiffTree) {
   const factories = new Set(['locator', 'frameLocator', 'getByRole', 'getByLabel', 'getByText',
     'getByPlaceholder', 'getByTestId', 'filter', 'first', 'last', 'nth', 'and', 'or']);
   const note = text => { try { nodeRepl.write(text); } catch {} };
-  const bounded = read => {
+  const bounded = (read, timeout = 1500) => {
     let timer;
     try {
       const value = read();
       return Promise.race([Promise.resolve(value).catch(() => undefined),
-        new Promise(resolve => { timer = setTimeout(resolve, 1500); })]).finally(() => clearTimeout(timer));
+        new Promise(resolve => { timer = setTimeout(resolve, timeout); })]).finally(() => clearTimeout(timer));
     } catch { return Promise.resolve(undefined); }
   };
   const read = tab => Promise.all([bounded(() => tab.url()), bounded(() => tab.playwright.domSnapshot())])
     .then(([url, tree]) => typeof url === 'string' && typeof tree === 'string' && tree.trim() ? { url, tree } : undefined);
+  // Before a locator click: the engine scrolls the target to the center, waits for a stable box and inputs
+  // at its center with no in-page hit test (resolvePointerActionTarget; its own check covers only iframe
+  // borders). Do the same scroll and wait, then hit-test that point. Returns a cover's description or nothing.
+  const clickCover = async el => {
+    const doc = el.ownerDocument, view = doc.defaultView;
+    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    const frame = () => new Promise(resolve => {
+      const timer = view?.setTimeout?.(resolve, 50);
+      if (typeof view?.requestAnimationFrame === 'function') view.requestAnimationFrame(() => { view.clearTimeout?.(timer); resolve(); });
+      else if (timer === undefined) resolve();
+    });
+    let rect = el.getBoundingClientRect();
+    for (let i = 0, same = 0; i < 10 && same < 2; i++) {
+      await frame();
+      const next = el.getBoundingClientRect();
+      same = next.left === rect.left && next.top === rect.top && next.width === rect.width && next.height === rect.height ? same + 1 : 0;
+      rect = next;
+    }
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+    if (!(rect.width > 0 && rect.height > 0 && x >= 0 && y >= 0 &&
+      x < doc.documentElement.clientWidth && y < doc.documentElement.clientHeight)) return;
+    // An open shadow root hit-tests inside its own tree; the document would answer with its host.
+    const root = el.getRootNode?.();
+    const hit = (root && root !== doc && typeof root.elementFromPoint === 'function' ? root : doc).elementFromPoint(x, y);
+    if (!hit || hit === el || el.contains(hit) || hit.contains?.(el)) return;
+    for (let node = el; node;) {
+      if (node === hit) return;
+      node = node.parentElement ?? node.getRootNode?.().host;
+    }
+    // A click on the target's own label, or on the control of a label target, activates the target.
+    if (Array.from(el.labels ?? []).some(label => label.contains(hit)) || el.control === hit ||
+      Array.from(hit.labels ?? []).includes(el)) return;
+    const describe = node => {
+      const name = node.getAttribute('aria-label') || node.getAttribute('title') || node.textContent || '';
+      return ((node.getAttribute('role') || node.tagName.toLowerCase()) + ' ' + name.replace(/\s+/g, ' ').trim().slice(0, 60)).trim();
+    };
+    const owner = hit.parentElement?.closest('[role],[aria-label]');
+    return (describe(hit) + (owner ? ' in ' + describe(owner) : '')).slice(0, 160);
+  };
   const submitControl = (el, action) => {
     if (!el?.tagName && el?.active) { action = el.action; el = document.activeElement; }
     else if (!el?.tagName && Array.isArray(el?.point)) { action = el.action; el = document.elementFromPoint(...el.point); }
@@ -97,6 +136,10 @@ function installClickResults(cua, agent, snapshots, isDiffTree) {
       };
       if ((name === 'click' && kind !== 'playwright') || name === 'press' || (kind === 'tab' && name === 'pressKey')) return async (...args) => {
         const action = name === 'click' ? 'click' : 'enter';
+        if (action === 'click' && kind === 'locator' && args[0]?.force !== true && args[0]?.trial !== true) {
+          const cover = await bounded(() => target.evaluate(clickCover, undefined, { timeoutMs: 1000 }), 1000);
+          if (typeof cover === 'string' && cover) throw new Error(`sleight: click target is covered by ${cover}. Dismiss or move the cover before clicking.`);
+        }
         if (action === 'enter' ? !/^(?:(?:Control|Meta)\+)?(?:Enter|Return)$/i.test(String(args[kind === 'tab' ? 1 : 0])) || !submitLike(tab, target, kind, args, action)
             : !submitLike(tab, target, kind, args)) return value.apply(target, args.map(unwrap));
         const before = read(tab), submit = bounded(() => submitTarget(tab, target, kind, action, args));

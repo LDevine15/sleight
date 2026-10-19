@@ -79,16 +79,17 @@ doesn't require confirming it. Otherwise stop before the final click.
 
 Several Chromium browsers report as Chrome: pick `metadata.extensionInstanceId` from
 `await cua.listBrowsers()`. `cua.getBrowser({ extensionInstanceId })` runs in a call of its own.
-Open pages with `cua.createBrowserTab(browser.browserId, url)`.
+Open pages: `cua.createBrowserTab(browser.browserId, url)`.
 Tab-handle input's first argument: element index or `null`.
 Fill without submitting: `nodeRepl.write(await sleight.fillForm(tab, [{label:"Name",value:"Ada"}]))` takes each field by label or locator (an index needs a stable ID in the tree).
+Unverifiable switch: screenshot, click once if wrong, never again.
 List rows: `nodeRepl.write(await sleight.pickFromList(tab, list, "Portland"))`.
 Read once at the end.
-Use locators when validation or autocomplete can add or move fields, indices on static forms.
-Use only documented methods, leave tabs in the background, and stop if the user declines a browser approval.
+Use locators when validation/autocomplete moves fields, indices on static forms.
+Use only documented methods, leave tabs in the background, stop if the user declines a browser approval.
 `nodeRepl.write(await sleight.dragTo(tab, from, to))`: selectors, locators or page coordinates, reads back indices. `nodeRepl.write(await sleight.reorder(tab,list,order))`: row names, verified.
 Downloads: `locator.downloadMedia({})`, never `tab.click` (stalls later downloads).
-Click a button that may open a page dialog (pay, delete, leave) with
+A button that may open a page dialog (pay, delete, leave):
 `tab.click(index)`, not a locator, then answer it: `(await tab.getJsDialog()).accept()` or `.dismiss()`.
 
 ## sleight's other tools
