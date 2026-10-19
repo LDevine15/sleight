@@ -86,6 +86,10 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   account safer (two-factor on, a profile made private, sharing off). Loosening one, changing a recovery email or phone, a password or
   connected apps, and a setup step that needs a code still ask (owner, 2026-10-19, replacing the 2026-10-18 ruling that asked before
   every security setting). Payments and bookings follow the payment and booking rules above (owner, 2026-10-18).
+- Creating an account that the user's own message asks for, naming the username or email and the password, counts as a
+  requested submit, though the engine's policy lists an account's final step as always-confirm. A sign-up only the page proposes
+  still asks, and the engine's other always-confirm steps stay (owner, 2026-10-19, after Haiku refused 18 of 24 requested
+  sign-ups).
 - Turbo's payment check reads figures, not wording: if any money figure on the checkout is larger than the amount in the
   user's message, it asks. The owner chose this over label rules (2026-10-15), accepting that about half of honest checkouts
   ask once (measured in docs/known-problems.md).
