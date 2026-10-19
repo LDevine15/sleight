@@ -63,6 +63,7 @@ import { ensureCuaDaemon, isNativeArm, nativeArmPlan, prepareNativeArm } from '.
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from './world/native-world.mjs';
 import { interactivePlan, runInteractive, verifyInteractiveCLI } from './world/arms/claude-cu/interactive.mjs';
 import { dragMethodAudit } from './world/method-check.mjs';
+import { benchHand } from './hand/bench-hand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TIMEOUT_MS = 5 * 60 * 1000;
@@ -84,6 +85,9 @@ const ownerAway = process.argv.includes('--owner-away');
 const ownerPresent = process.argv.includes('--owner-present');
 if (ownerAway && ownerPresent) throw new Error('--owner-present is the opposite of --owner-away; pass only one');
 const calculatorGate = process.argv.includes('--calculator-gate');
+// The ghost hand stays off in every arm unless SLEIGHT_BENCH_HAND=1 (the H6 cost pass); a bad value stops here.
+const ghostHand = benchHand(process.env);
+if (ghostHand === '1') console.error('Ghost hand on in the sleight arms (SLEIGHT_BENCH_HAND=1): timing is comparable only with other hand-on rows.');
 const cleanArms = process.argv.includes('--clean-arms');
 const suite = option('suite', 'default');
 const world = suite === 'world';
@@ -279,9 +283,9 @@ if (armNames.includes('claude-cu') && !isDryRun) console.log('claude-cu uses its
 const HOST_SESSION = suite === 'world' ? /^CLAUDE/ : /^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_AGENT_SDK_|CLAUDE_PID$|CLAUDE_EFFORT$|CLAUDE_PREVIEW_)/;
 const hostFree = Object.fromEntries(Object.entries(process.env).filter(([key]) => !HOST_SESSION.test(key)));
 const armEnv = (arm, extra = {}) => {
-  // The ghost hand off, as the Firefox arms have turbo off: its panel stays out of timing. Only an arm's
-  // own env (the cost pass) turns it on.
-  const env = { ...hostFree, BENCH_ROOT: ROOT, SLEIGHT_APPROVAL_PROMPT: 'client', SLEIGHT_HAND: '0',
+  // The ghost hand off, as the Firefox arms have turbo off: its panel stays out of timing. SLEIGHT_BENCH_HAND=1 (the cost
+  // pass) or an arm's own env turns it on.
+  const env = { ...hostFree, BENCH_ROOT: ROOT, SLEIGHT_APPROVAL_PROMPT: 'client', SLEIGHT_HAND: ghostHand,
     ...arm.env, ...extra, BENCH_SUITE: suite, ENABLE_CLAUDEAI_MCP_SERVERS: 'false', ...auth.env,
     ...(ownerPresent ? { BENCH_OWNER_PRESENT: '1' } : {}),
     ...(['real', 'world'].includes(suite) ? { SLEIGHT_SURFACES: realSurfaces } : {}) };
@@ -493,7 +497,9 @@ const sleightBuild = sleightAt();
 let engineAtStart = readEngine();
 const publicRead = read => { if (!read) return read; const { error, ...rest } = read; return rest; };
 const sleightRow = () => { const { commit, dirty } = sleightAt();
-  return { sleightCommit: commit, sleightDirty: dirty, engineVersion: readEngine({ app: false }).version, finishedAt: new Date().toISOString() }; };
+  return { sleightCommit: commit, sleightDirty: dirty, engineVersion: readEngine({ app: false }).version, finishedAt: new Date().toISOString(),
+    // Each row says so too, so a row copied out of its pass still can't reach a claim table (claim-score.mjs excluded).
+    ...(ghostHand === '1' && { ghostHand: 'on' }) }; };
 
 function claudeArgs(prompt, arm,{ privateMail = false, fixtureLifecycle = false } = {}) {
   return [
@@ -564,7 +570,7 @@ const save = (final = false) => {
   }
   const json = JSON.stringify({ stamp, ...(['real', 'world'].includes(suite) ? { suite, surfaces: realSurfaces, ownerAway, ownerPresent } : {}),
     ...(guardedPass && { fixturePolicy: 'retained app observers for every arm', ownerAway }),
-    arms: armNames, sleight: sleightBuild, engine: engineSpan(engineAtStart, final ? readEngine() : undefined), ...(armNames.some(name => ARMS[name].codex) && { codexModels: Object.fromEntries(armNames.filter(name => ARMS[name].codex).map(name => [name, ARMS[name].codexModel])),
+    arms: armNames, sleight: sleightBuild, ghostHand: ghostHand === '1' ? 'on' : 'off', engine: engineSpan(engineAtStart, final ? readEngine() : undefined), ...(armNames.some(name => ARMS[name].codex) && { codexModels: Object.fromEntries(armNames.filter(name => ARMS[name].codex).map(name => [name, ARMS[name].codexModel])),
       codexEffort, codexCliVersions: [...new Set(results.map(row => row.codexCliVersion).filter(Boolean))], engineAllowList: setsEngineList ? 'benchmark apps for the pass' : 'untouched' }), ...(world ? { world: true } : {}), armMetadata: Object.fromEntries(armNames.filter(name => ARMS[name].generic || ARMS[name].world || ARMS[name].interactive || ARMS[name].sleightHost).map(name => [name, ARMS[name].identity])), model, effort, claude: claudeBin, auth: auth.mode,
     armSetup: cleanArms ? 'clean' : 'normal', ...(codexCleanConfig && { codexConfig: codexCleanConfig }), results,
     ...(hygieneError && { hygieneError }),
