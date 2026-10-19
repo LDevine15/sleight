@@ -40,7 +40,7 @@ scorer's own verdict). It had the lowest expected time on 8 of 9 tasks and the l
 against 453.9 s for the next arm, Claude's own computer use. It lost preview-read to Peekaboo, 5.3 s
 against 4.4 s, and Peekaboo also had one finder-move run faster than any of sleight's. Haiku 5.5 at
 high effort drove every Claude arm, and Codex ran gpt-6-luna at the same effort. Each arm ran each
-task 3 times, and 5 times where sleight and that arm were within 20%. These runs used ChatGPT engine
+native task 3 times, and 5 times where sleight and that arm were within 20%. These runs used ChatGPT engine
 26.1007.71326 on 2026-10-17 and 2026-10-18.
 
 - The suite is sleight's own: 9 tasks in Calculator, TextEdit, Finder, Preview, Word and Excel
@@ -50,16 +50,19 @@ task 3 times, and 5 times where sleight and that arm were within 20%. These runs
   calculator-click, calculator-menu and the three app tasks weren't tuned. Competitors ran their
   defaults.
 - App tasks in VS Code, Slack and Spotify: fastest on 3 of 3, 56.8 s total against 101.3 s for LCU.
-- Browsers on turbo, against FowlBrowser in real windows: fastest on 12 of 13 tasks in Chrome
-  (247.6 s against 441.8 s) and 11 of 13 in Helium (241.8 s against 338.3 s), every task passing.
+- Browsers on turbo, against FowlBrowser in real windows, 3 runs each: "completed every task, fastest
+  on 12 of 13" in Chrome (247.6 s against 441.8 s) and "fastest on 11 of 13" in Helium (241.8 s
+  against 338.3 s). Every task passed at least once, with one failed run in each browser, and the
+  pairs within 20% haven't had their top-up to 5 runs yet.
 - Safari and Firefox, which turbo can't drive yet, on the engine path (engine 26.1013.40934,
   2026-10-19): "fastest" in both, the lowest expected time on 11 of 12 tasks, 592.1 s in Safari and
-  557.1 s in Firefox, with every task passing. Most competitor runs there are from engine
+  557.1 s in Firefox, with every task passing. Most of Codex's runs there are from engine
   26.1007.71326 a day earlier, and the hub lists each arm's version.
-- sleight inside Codex on gpt-6-luna completed every task in both browsers, faster than Codex's own
-  computer use on 9 of 12 tasks in Safari and 8 of 12 in Firefox.
-- The 1.3.0 release pass on turbo in Chrome, FowlBrowser's 13 tasks: 13 of 13 on Haiku 5.5 in
-  257.8 s and 13 of 13 on Opus 5.5 in 249.9 s (2026-10-19, engine 26.1013.40934).
+- sleight inside Codex on gpt-6-luna completed every task in both browsers, with a lower expected
+  time than Codex's own computer use on 9 of 12 tasks in Safari and 8 of 12 in Firefox.
+- The 1.3.0 release pass, one round of FowlBrowser's 13 tasks on turbo in Chrome (2026-10-19, engine
+  26.1013.40934), passed 13 of 13 on Haiku 5.5 in 257.8 s and 13 of 13 on Opus 5.5 in 249.9 s. The
+  hub lists the round but leaves it out of the claim tables, which need 3 runs.
 
 The hub lists the runs, failures included, with the model each arm ran:
 [benchmark hub](docs/results/README.md), [interactive tables](docs/results/explore.html) and
@@ -99,7 +102,7 @@ start a new session, or turn on auto-update for the sleight marketplace under `/
 runs as a plain MCP server in Cursor and other MCP clients ([other hosts](docs/other-hosts.md)).
 
 In Codex, install from the same repo. It installs on Codex CLI 0.160.0, and two live tasks worked
-there on 2026-10-19:
+there on 2026-10-19, each after a retried first `getApp` (fixed since, not yet rerun live):
 
 ```bash
 codex plugin marketplace add Land-o-Clusters/sleight
@@ -171,7 +174,7 @@ Development: `npm run check` runs the relay tests, `claude plugin validate` and 
 - [LCU](https://github.com/amontlabs/lcu), started by 0xpolarzero, takes the same idea across several
   harnesses, and its notes mapped out the runtime's lifecycle.
 - Turbo includes [playwright-core](https://github.com/microsoft/playwright) 1.64.0, unmodified, with
-  its notices in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+  its notices in [THIRD-PARTY-NOTICES.md](plugins/sleight/THIRD-PARTY-NOTICES.md).
 
 ## License
 

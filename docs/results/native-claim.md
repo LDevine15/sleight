@@ -1,6 +1,6 @@
 # Native claim
 
-The claim suite's 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight against LCU, Codex, Cua, Peekaboo and Claude's own computer use, in real windows with the owner away. The suite is sleight's own, its skill was tuned on these tasks, and the competitors ran their defaults.
+The claim suite's 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight against LCU, Codex, Cua, Peekaboo and Claude's own computer use, in real windows with the owner away. The suite is sleight's own, its skill and tool wording were tuned on the runs of textedit-calculator, preview-read, excel-edit, word-edit, finder-move, textedit-save and textedit-drag (not calculator-click or calculator-menu), and the competitors ran their defaults.
 
 ## Method
 
