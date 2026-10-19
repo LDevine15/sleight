@@ -37,6 +37,13 @@ our own runs. Dates and engine versions are given where they matter.
   3 clicks), and the cause wasn't recorded. It no longer needs HID idle over the call, which the engine's key presses reset
   (above). It needs idle since the stop result arrived, so a user typing after the stop still refuses it. The relay trace
   records the refusal reason and the idle sample, but no traced round has run since.
+- Safari's tab continuation never fired in the b10 to b12 rounds (2026-10-19), where Cmd+T followed by typing stopped 6
+  of 6 times, a turn each. A one-tab window doesn't show a tab bar, and Safari marks its tabs `Value: on` or `off`, not
+  selected. `SLEIGHT_FS=1` names the keyboard route only for a window whose strip shows a selected tab.
+- A continued call's result reports the second engine call's `codex/nodeReplExecutionDurationMs`, not the sum. In Firefox
+  1.13 to 1.70 s per Cmd+T call fell outside it (b10, 2026-10-19): most likely the first call (a plain Cmd+T and read took
+  1.20 to 1.29 s) plus two helper probes, whose time isn't measured yet. The relay trace now records the stop's engine
+  time (`stopEngineMs`) and each probe's (`probeMs` on `tab-continuation-checked` and `tab-continuation-forwarded`).
 - A key call whose window comes back retitled doesn't get a window note when its tab strip is the one Claude last saw for
   that window plus exactly one selected tab (a new tab in Firefox, 12 of 60 b3 and b7 task-runs). A tab switch or a new
   window keeps the note. Another window of the same app also loses it when its strip lists every tab of the last-seen one

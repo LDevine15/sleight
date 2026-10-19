@@ -19,7 +19,7 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 1));
 // the engine realm: only the relay's injected read-only identity helper can observe it.
 // errorFirst: the real engine's order, the exception as the first content item ahead of what the call wrote.
 async function fixture(t, { initial, base = document, after = menu, nativeChange, identity, afterItem = after, actionOutput = false,
-  retryFirst, beforeRetry, onAction, onRead, errorFirst = false, windows = [{ title: 'report.txt' }], ...options } = {}) {
+  retryFirst, beforeRetry, onAction, onRead, errorFirst = false, windows = [{ title: 'report.txt' }], engineMs, ...options } = {}) {
   let text = base, writes = [];
   const clicks = [], keys = [], values = [], typed = [], sent = [], received = [];
   let identityChecks = 0;
@@ -76,7 +76,7 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
         if (error && !errorFirst) writes.push(String(error));
         serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { isError: !!error,
           content: [...(error && errorFirst ? [{ type: 'text', text: String(error?.message ?? error) }] : []), { type: 'text', text: writes.join('\n') }],
-          _meta: { 'codex/toolSurface': { app: { appId: 'org.test.editor' } } } } }) + '\n');
+          _meta: { 'codex/toolSurface': { app: { appId: 'org.test.editor' } }, ...(engineMs ? { 'codex/nodeReplExecutionDurationMs': engineMs() } : {}) } } }) + '\n');
       }
       const reply = received.find(msg => msg.id === id);
       if (reply) return reply.result;
@@ -947,6 +947,26 @@ test('AB1: the engine\'s own key press before the stop does not stop the tab con
   assert.deepEqual(h.refusals, []);
   const [checked] = h.traces.filter(trace => trace.direction === 'tab-continuation-checked');
   assert.deepEqual([checked.hidIdleSeconds, checked.idleSinceStop, checked.idleCoversCall], [0.4, true, false]);
+});
+
+// Loss study 2026-10-19 fix 5: every Firefox Cmd+T call spent 1.13 to 1.70 s beyond the engine time its result reported. That
+// result's _meta is the second engine call's, so the first call (Cmd+T and the read that saw the new tab) and the helper's two
+// probes were not split. The trace now carries each part: the stop reply's engine time and both probes' durations.
+test('AB1: the tab continuation trace times the stopped engine call and both helper probes', async t => {
+  let now = 1000;
+  const engine = [5, 1180, 2400]; // the fixture's own acquisition, the stopped call, the rest
+  const h = await tabFixture(t, { clock: () => now, engineMs: () => engine.shift() ?? 0,
+    // Identity checks: 1 the call's admission baseline, 2 the probe after the stop, 3 the final probe before forwarding.
+    identity: (expected, native, count) => {
+      now += count === 2 ? 120 : count === 3 ? 80 : 0;
+      return { ...expected, ...native, matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1 };
+    } });
+  const result = await h.call(tabCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  const checked = h.traces.find(trace => trace.direction === 'tab-continuation-checked');
+  const forwarded = h.traces.find(trace => trace.direction === 'tab-continuation-forwarded');
+  assert.deepEqual([checked.stopEngineMs, checked.probeMs], [1180, 120]);
+  assert.equal(forwarded.probeMs, 80);
 });
 
 // F2: a tab list inside the page is not the window's strip. The relay passes the earlier tree with its indentation, so the
