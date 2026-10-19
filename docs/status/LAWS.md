@@ -115,8 +115,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
 - Electron saves (owner, 2026-10-18): sleight reports a save as confirmed only when the window shows its file path. Otherwise the
   edit is reported done and the save unconfirmed, with no other evidence path. The relaunch flow avoids taking focus, or the card
   says the app comes to the front briefly.
-- The ghost hand (1.3.1, owner, 2026-10-18) is on by default, with an off switch in the menu bar dropdown, `sleight-mcp hand off`
-  and the settings file. A Fable art director designs its final art now. It shows in the user's own screenshots and recordings if
+- The ghost hand is off by default in 1.3.1 (owner, 2026-10-19, after the cost pass measured textedit-drag 31 to 37 s with it
+  against 23 to 26 s without), turned on from the menu bar dropdown, `sleight-mcp hand on` or the settings file. It becomes the
+  default once a fix measures no slowdown in an A/B (the owner's 2026-10-18 plan had it on by default). A Fable art director designs its final art now. It shows in the user's own screenshots and recordings if
   the capture test proves sleight's own screenshots never include it. Otherwise captures leave it out.
 - Browsers get turbo, sleight's own direct path, with no extension install. The user turns it on once through Chrome's built-in
   remote-debugging consent. Its benchmark proved it, so turbo is the default from 1.3.0 (owner, 2026-10-16).
