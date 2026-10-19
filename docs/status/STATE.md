@@ -14,8 +14,10 @@ The tag path is now the Safari r2 rerun (running), block b12 (codex-sleight luna
 started by `swap-b12.sh` once r2 ends), top-ups to 5 for pairs within 20%, EV1 (engine versions on results, `claude/ev1`,
 building), release pass, hub and README, then the owner's go. 1.3.1 `claude/p131-integration` f858cf8b (codex-turbo, FU1, gate
 fix) needs its full check, and 4f builds on `claude/p131-compat`. 1.4.0 `claude/p140` a96092aa holds analytics, Cursor and AM1
-(focused tests pass, full check owed, AM1 live rerun owed after its FOCUS_CHANGED stop). Items below marked as in flight at the
-clear are superseded by this paragraph.
+(focused tests pass, full check owed, AM1 live rerun owed after its FOCUS_CHANGED stop). Owner asleep from about 05:10Z until about 12:00Z
+(2026-10-19). Owner's go: tag 1.3.0 once these hold (luna pair, top-ups, EV1 with dates and engine versions, release pass,
+full check, lint, public CI), then roll into 1.3.1 and on down the ROADMAP rows into 1.4.0. Items below marked as in flight at
+the clear are superseded by this paragraph.
 
 **Release line** `pane/auto-mode` = main checkout. It holds the race fixes ft1, fs1 and md1, plus sec130, es1, ff1, rg1r2, fl3,
 form-2fa, the Safari harness fixes, mdn-note, OH1, the FM3 port (engine Chromium tab path only), list-pick, the native
