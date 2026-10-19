@@ -276,11 +276,34 @@ export function menuRemainder(plan, receipt, expected, content, { palette = fals
 // any page or document, where the rest's typing lands. `before` is the earlier tree's lines by element number.
 const TAB_KEY = /^(?:super|cmd|command|meta|ctrl|control)\+t$/i;
 // The tabs of a tree's entries ({ depth, line }), leaving out any under a page or document: an ARIA tab list inside page
-// content is not the window's own tab strip.
-const tabsOf = entries => entries.flatMap((entry, index) => {
-  const tab = /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(entry.line);
-  return tab && !underDocument(entries, index) ? [{ label: tab[2] ?? '', selected: /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]), index }] : [];
+// content is not the window's own tab strip. `valueOn`: a tab line with no state in parentheses is selected by its
+// `Value: on` attribute, as Safari marks its tabs (Value: on or off, no "(selected)").
+const tabsOf = (entries, { valueOn = false } = {}) => entries.flatMap((entry, index) => {
+  // "tab group" is the strip itself (and Safari's page area), never a tab; a tab titled "group chat" stays one (review).
+  const tab = !/^tab group(?:$|,| (?:Description|ID|Help|Secondary Actions): )/.test(entry.line) && /^tab((?: \([^)]*\))*)(?: (.*))?$/.exec(entry.line);
+  if (!tab || underDocument(entries, index)) return [];
+  const label = tab[2] ?? '';
+  const selected = tab[1] ? /\((?:[^)]*, )?selected(?:, [^)]*)?\)/.test(tab[1]) : valueOn && /, Value: on(?:,|$)/.test(label);
+  return [{ label, selected, index }];
 });
+// A tab's label without the attributes that follow selection: Safari's active tab alone carries a Help line and
+// `isActive=true` in its ID, and every tab a `Value: on` or `off`. The same tab before and after Cmd+T then compares equal.
+const tabKey = label => label.replace(/, Help: .*?(?=, (?:Value|Secondary Actions|ID): |$)/, '')
+  .replace(/, Value: (?:on|off)(?=,|$)/, '').replace(/\bisActive=(?:true|false)\b/g, 'isActive=');
+// The title a tab line names before its attributes ("Gate" in "tab Gate, Value: off, ID: ..."), or '' for a label that
+// starts with an attribute (Firefox's "Value: <title>, <title>").
+const tabTitle = label => /^(?:Description|Help|Value|Secondary Actions|ID): /.test(label) ? ''
+  : label.split(/, (?:Description|Help|Value|Secondary Actions|ID): /)[0];
+// An app that hides its tab strip for a single tab (Safari) shows none in the earlier tree, and the strip appears with two
+// tabs when Cmd+T opens the second: the window's own tab, unselected and named as the window Claude last saw (`title`, which
+// may carry a profile name in front), and the new one, selected. Anything else (more tabs, the old tab still selected, a tab
+// named otherwise) is not this window gaining one tab.
+function hiddenStripOpened(was, now, title) {
+  if (was.length !== 0 || now.length !== 2 || typeof title !== 'string' || !title) return false;
+  if (now.filter(tab => tab.selected).length !== 1) return false;
+  const old = tabTitle(now.find(tab => !tab.selected).label);
+  return !!old && (title === old || title.endsWith(' ' + old));
+}
 // The window's own tab strip: the tabs directly under the first tab group of a standard window's tree, read from the numbered
 // chain that runs 0, 1, 2... without a gap and stops at the first page or document. Page text shaped like a tab line sits
 // after the page's root or breaks the chain, so it never counts. undefined when the tree has no such strip.
@@ -309,12 +332,12 @@ function oneMoreTab(was, now) {
   const selected = now.filter(tab => tab.selected);
   if (now.length !== was.length + 1 || selected.length !== 1) return false;
   const left = new Map();
-  for (const tab of now) left.set(tab.label, (left.get(tab.label) ?? 0) + 1);
+  for (const tab of now) left.set(tabKey(tab.label), (left.get(tabKey(tab.label)) ?? 0) + 1);
   for (const tab of was) {
-    if (!left.get(tab.label)) return false;
-    left.set(tab.label, left.get(tab.label) - 1);
+    if (!left.get(tabKey(tab.label))) return false;
+    left.set(tabKey(tab.label), left.get(tabKey(tab.label)) - 1);
   }
-  return [...left].every(([label, count]) => count === (label === selected[0].label ? 1 : 0));
+  return [...left].every(([label, count]) => count === (label === tabKey(selected[0].label) ? 1 : 0));
 }
 // Whether `after` is the window Claude last saw as `before` with one new tab opened in it. A browser window's title follows its
 // active tab, so a new tab retitles the same window: Firefox's New Tab page has no title, and the window reads "Mozilla
@@ -363,7 +386,9 @@ function tabStripButton(entries, line) {
 }
 const DOCUMENT_ROLE = /^(?:web area|HTML content|text area|text entry area)(?: |,|$)/i;
 const APP_FIELD = /^(?:text field|combo box|search field|search text field)(?: |,|$)/i;
-export function tabRefusal(plan, receipt, expected, content, before) {
+// `hiddenStrip` (SLEIGHT_TABC, on by default): Safari's tabs count by `Value: on`, and a window that showed no strip before
+// may show two (hiddenStripOpened). Safari's Cmd+T stopped 36 of 36 runs inside Codex and 7 of 7 in Claude Code (race-1017).
+export function tabRefusal(plan, receipt, expected, content, before, { hiddenStrip = false } = {}) {
   if (!receipt) return 'no-receipt';
   if (receipt.windowStop !== true) return 'not-a-window-stop';
   if (!plan) return 'unsplit-call';
@@ -379,8 +404,15 @@ export function tabRefusal(plan, receipt, expected, content, before) {
   if (/^\s*\d+ (?:sheet|dialog|system dialog)\b/m.test(stopped.tree)) return 'sheet';
   if (!before || typeof before !== 'object') return 'no-earlier-tree';
   const entries = [...stopped.tree.matchAll(/^(\t*)(\d+) (.*)$/gm)].map(([, depth, number, line]) => ({ depth: depth.length, number: Number(number), line }));
-  const was = tabsOf(earlierEntries(before)), now = tabsOf(entries);
-  if (!oneMoreTab(was, now)) return 'no-new-tab';
+  const was = tabsOf(earlierEntries(before), { valueOn: hiddenStrip }), now = tabsOf(entries, { valueOn: hiddenStrip });
+  // The hidden strip needs the earlier tree to be this window's whole tree: its root line, under the title Claude saw, and
+  // every number from 0 up with none left out. A result that folded or trimmed lines (a toolbar holding a strip) leaves a gap,
+  // and a strip Claude never saw can't count as none (review: a tab switch would then look like a tab opening).
+  const numbers = Object.keys(before).map(Number).sort((a, b) => a - b);
+  const whole = numbers.every((number, i) => number === i) && typeof before[0] === 'string' &&
+    before[0].replace(/^\t*/, '').startsWith(`standard window ${expected.title}`);
+  const hidden = hiddenStrip && button === undefined && whole && hiddenStripOpened(was, now, expected.title);
+  if (!oneMoreTab(was, now) && !hidden) return 'no-new-tab';
   const selected = now.filter(tab => tab.selected);
   if (button !== undefined) {
     const at = tabStripButton(entries, button);
@@ -395,12 +427,54 @@ export function tabRefusal(plan, receipt, expected, content, before) {
   if (at < 0 || !APP_FIELD.test(entries[at].line)) return 'focus-not-app-field';
   if (underDocument(entries, at)) return 'focus-in-document';
 }
-export function tabRemainder(plan, receipt, expected, content, before) {
-  if (tabRefusal(plan, receipt, expected, content, before)) return;
+export function tabRemainder(plan, receipt, expected, content, before, options) {
+  if (tabRefusal(plan, receipt, expected, content, before, options)) return;
   const stopped = stopTree(receipt, content);
   return { code: plan.code.slice(plan.actions[stoppedAfter(plan, receipt)].start).trim(), window: stopped.window, tree: stopped.tree,
     navigation: true, tab: true };
 }
+// LB6: after a tab continuation's Return, the engine's header can name the page while the tree under it is still the new tab
+// (Firefox mdn inside Codex, 2 of 37 continuations: "Window: 418 I'm a teapot" over "0 standard window Mozilla Firefox" and
+// the New Tab page). Whether the last whole tree in `text` has landed: its standard window root names the header's title.
+// 'title-lag' when it doesn't, undefined when it does or there is no standard window tree to judge.
+const ROOT_ATTRIBUTE = /(?:^|, )(?:Secondary Actions|ID|Description|Help|URL|Value): /;
+export function landingRefusal(text) {
+  if (typeof text !== 'string') return;
+  const headers = [...text.matchAll(/^Window: .*$/gm)], last = headers.at(-1);
+  if (!last) return;
+  const tree = text.slice(last.index), window = windowFromText(tree), root = /^0 standard window(.*)$/m.exec(tree);
+  if (!window || !root || /^\d+ /m.exec(tree)?.index !== root.index) return;
+  const title = root[1].replace(/^ /, '').split(ROOT_ATTRIBUTE)[0];
+  return title === window.title ? undefined : 'title-lag';
+}
+// A text's last whole window tree: its header through the focus line, or up to a guard mark after it, or to the end.
+function lastTree(text) {
+  const header = [...text.matchAll(/^Window: .*\n0 /gm)].at(-1);
+  if (!header) return;
+  const rest = text.slice(header.index), focus = /^The focused UI element[^\n]*/m.exec(rest), mark = rest.search(/\n\[\/?sleight:/);
+  return { start: header.index, end: header.index + Math.min(focus ? focus.index + focus[0].length : rest.length, mark >= 0 ? mark : rest.length) };
+}
+// The window the last header in `text` names, or undefined.
+export function lastHeader(text) {
+  const header = typeof text === 'string' ? [...text.matchAll(/^Window: .*$/gm)].at(-1) : undefined;
+  return header ? windowFromText(text.slice(header.index)) : undefined;
+}
+// `content` with its last whole window tree replaced by the last whole tree in `fresh`, a later read's text (the guard may
+// print its own copy of the read first). Undefined when either has no tree.
+export function replaceLastTree(content, fresh) {
+  const found = typeof fresh === 'string' ? lastTree(fresh) : undefined;
+  if (!found || !Array.isArray(content)) return;
+  const tree = fresh.slice(found.start, found.end).replace(/\n+$/, '');
+  for (let i = content.length - 1; i >= 0; i--) {
+    const item = content[i];
+    if (item?.type !== 'text' || typeof item.text !== 'string') continue;
+    const at = lastTree(item.text);
+    if (!at) continue;
+    const { start, end } = at;
+    return content.map((other, j) => j === i ? { ...item, text: item.text.slice(0, start) + tree + item.text.slice(end) } : other);
+  }
+}
+
 // The native side of the same check, from the helper's focus observation of the window: no sheet, and focus on a
 // text field or combo box in it that isn't a password field and has no web area (or HTML content) above it. A helper
 // that doesn't report the page check refuses.

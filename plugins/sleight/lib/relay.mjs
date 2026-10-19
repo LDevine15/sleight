@@ -80,7 +80,7 @@ import { evaluateWrite } from './evaluate-write.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { guardStopMark, splitMenuActions, takeGuardStop, withoutStopTree, hasWholeTree, menuRemainder, dialogRemainder, dialogRefusal, returnRefusal, windowGone, stopNote, continuedNote, menuIdentity,
   unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, shownStandardWindows, parentLeaseRefusal, parentLeaseGate,
-  failedActionText, paletteRefusal, oneTabAdded } from './menu-continuation.mjs';
+  failedActionText, paletteRefusal, oneTabAdded, landingRefusal, replaceLastTree, lastHeader } from './menu-continuation.mjs';
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
 import { createStuckEscapes } from './stuck-escape.mjs';
@@ -706,6 +706,11 @@ export function createRelay({
   // A tab the call's own Cmd+T or Ctrl+T opened in the leased window carries the call on (menu-continuation.mjs
   // tabRefusal). SLEIGHT_TAB_CONTINUATION=0 stops there as before, for the A/B.
   tabContinuation = process.env.SLEIGHT_TAB_CONTINUATION !== '0',
+  // SLEIGHT_TABC=0 is the behavior before CC7, LB4 and LB6, for the A/B. On: a stop that passes the tab checks takes the tab
+  // continuation before menuRemainder's navigation branch (which claimed Safari's Start Page and then failed its whole-call
+  // idle check), Safari's hidden one-tab strip counts (tabRefusal's hiddenStrip), and after the rest's Return the result
+  // waits up to `tabLandingMs` for a tree that names the header's page (landingRefusal), reading every `tabLandingIntervalMs`.
+  tabFirst = process.env.SLEIGHT_TABC !== '0', tabLandingMs = 1500, tabLandingIntervalMs = 150,
   // A palette, gallery, floating window or popover covers the standard window under it the way a dialog does
   // (menu-continuation.mjs PALETTE_ROLES). SLEIGHT_POPOVER_CONTINUATION=0 is the behavior before it, for the A/B: plain
   // and floating windows still cover, popovers don't, and an untitled palette closed by a button isn't refused.
@@ -3144,8 +3149,9 @@ export function createRelay({
       taken.receipt.payment?.why !== 'point' ? taken.receipt.payment : undefined;
     if (paymentStop) paymentMessages.asked();
     // A tab this call opened in its window: the stop tree passes tabRefusal's checks, which tie it to that window.
+    const tabOptions = { hiddenStrip: tabFirst };
     const tabStop = !msg.error && msg.result.isError && taken.receipt?.windowStop === true &&
-      tabRefusal(call.plan, taken.receipt, call.target, taken.content, call.before) === undefined;
+      tabRefusal(call.plan, taken.receipt, call.target, taken.content, call.before, tabOptions) === undefined;
     // The retitled window is still the selected one and keeps its app handle, and select_window with the old title
     // would be refused (2026-10-18 Firefox race: 2 of 9 runs spent a call on it). The failure line repeats the stop's error.
     // Worded to hold whether or not the continuation then runs.
@@ -3201,17 +3207,24 @@ export function createRelay({
       const reason = ineligible ?? dialogRefusal(call.plan, taken.receipt, covered, taken.content);
       if (reason && reason !== 'palette-needs-close-check') refuse(reason);
     }
-    let remainder = !ineligible && (dialogRemainder(call.plan, taken.receipt, covered, taken.content) ||
+    // With tabFirst, a stop the tab checks pass takes the tab path before menuRemainder: its navigation branch claimed Safari's
+    // Start Page (no page content) and then refused on idle over the whole call, which the engine's own Cmd+T breaks.
+    const dialogRest = !ineligible && dialogRemainder(call.plan, taken.receipt, covered, taken.content);
+    let remainder = !ineligible && (dialogRest || (tabFirst && tabContinuation && tabStop &&
+      tabRemainder(call.plan, taken.receipt, call.target, taken.content, call.before, tabOptions)) ||
       menuRemainder(call.plan, taken.receipt, call.target, taken.content, { palette: routeSteering }));
     const refusePalette = reason => trace('palette-continuation-refused', { id: msg.id, reason });
     // Every window stop no other continuation took says why no tab continuation ran either.
     // `extra` carries what the HID-idle test saw (idleSample), once the helper has been asked.
     const refuseTab = (reason, extra) => trace('tab-continuation-refused', { id: msg.id, reason, ...extra });
     if (stopped && taken.receipt?.windowStop && !remainder) {
-      const reason = ineligible ?? (!tabContinuation ? 'off' : tabRefusal(call.plan, taken.receipt, call.target, taken.content, call.before));
+      const reason = ineligible ?? (!tabContinuation ? 'off' : tabRefusal(call.plan, taken.receipt, call.target, taken.content, call.before, tabOptions));
       if (reason) refuseTab(reason);
-      else remainder = tabRemainder(call.plan, taken.receipt, call.target, taken.content, call.before);
-    } else if (stopped && taken.receipt?.windowStop) refuseTab('other-continuation');
+      else remainder = tabRemainder(call.plan, taken.receipt, call.target, taken.content, call.before, tabOptions);
+    } else if (stopped && taken.receipt?.windowStop && !remainder.tab) {
+      // With tabFirst the tab checks ran first; say why they refused before another continuation took the stop.
+      refuseTab('other-continuation', tabFirst && tabContinuation ? { tab: tabRefusal(call.plan, taken.receipt, call.target, taken.content, call.before, tabOptions) ?? null } : undefined);
+    }
     if (remainder?.dialog && !call.baseline) refuse('no-baseline');
     // The helper skips windows without a title, so an untitled popover would look gone while still open.
     if (popoverContinuation && remainder?.closeCheck && !call.target.title) { refuse('palette-untitled'); return false; }
@@ -3282,7 +3295,10 @@ export function createRelay({
         splitHeads.set(msg.id, [...(splitHeads.get(msg.id) ?? []), ...(passed?.content ?? reply.result?.content ?? [])]);
         leaseWindow = lease;
         menuBaselines.set(msg.id, remainder.window);
-        menuForwards.set(msg.id, { call, expected: forward, baseline, lease, original, head, current, tab: !!remainder.tab, stopAt });
+        // A tab rest that ends by pressing Return loads a page: its result waits for the tree to land (LB6, landTab).
+        const last = call.plan.actions.at(-1).selector;
+        const landing = remainder.tab && tabFirst && last?.kind === 'key' && /^(?:return|enter)$/i.test(last.value) ? call.plan.actions[0].handle : undefined;
+        menuForwards.set(msg.id, { call, expected: forward, baseline, lease, original, head, current, tab: !!remainder.tab, stopAt, landing });
         nativeChecked.add(msg.id); focusedChecked.add(msg.id);
         handleClient({ ...call.request, params: { ...call.request.params,
           arguments: { ...call.request.params.arguments, code: remainder.code } } });
@@ -3291,6 +3307,48 @@ export function createRelay({
       continuedOutcomes.set(msg.id, { head: true });
       observeServerMessage(msg);
     });
+    return true;
+  }
+  // LB6: a tab continuation's rest pressed Return and its result's tree still shows the new tab under a header that names the
+  // page (Firefox mdn inside Codex, 2 of 37: Sol then spent a 3.3 s turn reading again). Read the window again, full, every
+  // tabLandingIntervalMs until a tree names the header's page or tabLandingMs pass, and deliver the latest read in place of
+  // the stale tree. A read that fails, or a stop meanwhile, delivers what the call had.
+  function landTab(msg) {
+    const forward = menuForwards.get(msg.id);
+    if (!forward?.landing || forward.landed || msg.error || msg.result?.isError || !Array.isArray(msg.result?.content)) return false;
+    const text = () => msg.result.content.filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
+    if (!landingRefusal(text())) return false;
+    forward.landed = true; // once: the reply comes back through here when the wait ends
+    // The read is the app's, not pinned to a window: it stands in only while it shows the window the result's header named.
+    const shown = lastHeader(text());
+    const generation = stopGeneration, started = clock(), live = () => generation === stopGeneration && !closing && !disposed && !stopCollected;
+    const read = timeoutMs => new Promise(resolve => {
+      const id = `sleight-tab-landing-${nextInternalId++}`;
+      const timer = setTimeout(() => { internalRequests.delete(id); lateHelperReplies.add(id); resolve(undefined); }, timeoutMs);
+      internalRequests.set(id, reply => { clearTimeout(timer); resolve(reply); });
+      toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
+        arguments: { code: `await ${forward.landing}.getAXState({ disableDiffing: true })` }, _meta: engineMeta() } });
+    });
+    (async () => {
+      let reads = 0, landed = false, other = false;
+      // At most one read per interval within the cap, so a clock that stands still can't loop.
+      const most = Math.max(1, Math.floor(tabLandingMs / Math.max(1, tabLandingIntervalMs)));
+      while (live() && reads < most && clock() - started < tabLandingMs) {
+        await new Promise(resolve => setTimeout(resolve, tabLandingIntervalMs));
+        if (!live()) break;
+        const reply = await read(Math.max(300, tabLandingMs - (clock() - started)));
+        reads++;
+        if (!live() || !reply?.result || reply.error || reply.result.isError) break;
+        const fresh = (reply.result.content ?? []).filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
+        const now = lastHeader(fresh);
+        if (!shown || !now || ['title', 'app', 'url'].some(key => now[key] !== shown[key])) { other = true; break; }
+        const content = replaceLastTree(msg.result.content, fresh);
+        if (!content) break;
+        msg.result.content = content;
+        if (!landingRefusal(fresh)) { landed = true; break; }
+      }
+      trace('tab-landing', { id: msg.id, reads, landed, other, waitedMs: Math.round(clock() - started) });
+    })().catch(() => {}).finally(() => observeServerMessage(msg));
     return true;
   }
   function handleClient(msg) {
@@ -4098,6 +4156,7 @@ export function createRelay({
       stoppedClients.add(msg.id); return;
     }
     if (msg.method === undefined && continueMenu(msg)) return;
+    if (msg.method === undefined && landTab(msg)) return;
     // Keep the original engine verdict even when close recovery rewrites noWindowsAvailable.
     const resultFailed = !!msg.error || !!msg.result?.isError;
     const failure = resultCalls.get(msg.id)?.failure ?? (resultFailed ?

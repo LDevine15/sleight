@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { guardStopMark, splitMenuActions, takeGuardStop, menuRemainder, dialogRemainder, dialogRefusal, returnedWindow, returnRefusal, stopNote, menuIdentity,
-  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows, parentLeaseGate, continuedNote, withoutStopTree, hasWholeTree, oneTabAdded } from '../plugins/sleight/lib/menu-continuation.mjs';
+  unchangedMenuWindow, menuWindowRefusal, idleSample, tabRefusal, tabRemainder, tabFocusRefusal, parentLeaseRefusal, shownStandardWindows, parentLeaseGate, continuedNote, withoutStopTree, hasWholeTree, oneTabAdded, landingRefusal, replaceLastTree } from '../plugins/sleight/lib/menu-continuation.mjs';
 import { GUARD_MARK, GUARD_END } from '../plugins/sleight/lib/document-scope.mjs';
 
 test('menu splitting preserves exact action spans across strings, comments and newlines', () => {
@@ -754,4 +754,104 @@ test('oneTabAdded: the recorded mdn-418 Firefox tree', () => {
   const gate = 'Sleight Gate f1c079f2-1fd9-4013-b924-5e6789a807e2';
   assert.equal(oneTabAdded(strip(gate, [gate]), readFileSync(new URL('fixtures/mdn-418-tree.txt', import.meta.url), 'utf8'), gate), true);
   assert.equal(oneTabAdded(strip(gate, [gate, 'Mail'], gate), readFileSync(new URL('fixtures/mdn-418-tree.txt', import.meta.url), 'utf8'), gate), false, 'Mail is gone');
+});
+
+// LB4 and CC7 (race-1017): Safari's Cmd+T, condensed from safari-sleight-fs2on-r1/form-checkout's second result. Safari hides
+// its tab strip for one tab, marks tabs Value: on or off, and names the new tab's window "<profile> — Start Page". Its Start
+// Page has no page content, so menuRemainder's navigation branch claimed it first and the tab path never ran (0 of 55).
+const sfGate = 'Window: "bench — Gate 3f34", App: Safari.\n0 standard window bench — Gate 3f34, ID: SafariWindow?UUID=85C2, Secondary Actions: Raise\n' +
+  '\t1 split group\n\t\t2 tab group\n\t\t\t3 scroll area\n\t\t\t\t4 HTML content Description: Gate 3f34, URL: 127.0.0.1:5413/gate\n\t\t\t\t\t5 heading Gate 3f34\n' +
+  '\t6 toolbar\n\t\t7 text field (settable) Description: smart search field, Value: 127.0.0.1:5413/gate, ID: WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD\n' +
+  '\t\t8 button Description: New Tab, ID: NewTabButton\n\nThe focused UI element is 4 HTML content Description: Gate 3f34, URL: 127.0.0.1:5413/gate';
+const sfTab = (title, { active = false, extra = '' } = {}) => `tab ${title}${active ? ', Help: To interact with the items in this button, press Control-Option-Shift-Down Arrow.' : ''}, ` +
+  `Value: ${active ? 'on' : 'off'}, Secondary Actions: close tab, ID: TabBarTab?isPinned=false&isActive=${active}${extra}`;
+const sfStart = (tabs = [sfTab('Gate 3f34'), sfTab('Start Page', { active: true })], focus = '7 text field (settable) Description: smart search field, Placeholder: Search or enter website name, ID: WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD') =>
+  'Window: "bench — Start Page", App: Safari.\n0 standard window bench — Start Page, ID: SafariWindow?UUID=85C2, Secondary Actions: Raise\n' +
+  '\t1 split group\n\t\t2 tab group\n\t\t\t3 scroll area\n\t\t\t\t4 collection StartPageCollectionView\n\t\t\t\t\t5 button Close\n' +
+  '\t6 toolbar\n\t\t7 text field (settable) Description: smart search field, Placeholder: Search or enter website name, ID: WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD\n' +
+  '\t\t8 button Description: New Tab, ID: NewTabButton\n' + `\t9 tab group Description: Tab bar, ${tabs.length} tabs, ID: TabBar?isSeparate=false\n` +
+  tabs.map((tab, i) => `\t\t${10 + i} ${tab}`).join('\n') + `\n\nThe focused UI element is ${focus}`;
+const sfStop = tree => [{ type: 'text', text: 'Input lease stopped this action: window or URL changed. Read the intended window again before acting. Observed {"title":"bench — Start Page","app":"Safari","url":null}\n' + tree }];
+const sfPlan = splitMenuActions('await app.pressKey("super+t");\nawait app.setValue({ id: "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD" }, "http://127.0.0.1:5413/checkout");\nawait app.pressKey("Return");\napp');
+const sfReceipt = { index: 1, prev: { kind: 'key', value: 'super+t' }, root: '0 standard window bench — Start Page, ID: SafariWindow?UUID=85C2, Secondary Actions: Raise', windowStop: true };
+const sfExpected = { title: 'bench — Gate 3f34', app: 'Safari', url: null };
+const hidden = { hiddenStrip: true };
+
+test('LB4: Safari\'s Cmd+T into a hidden one-tab strip passes the tab checks, and only with hiddenStrip', () => {
+  assert.equal(tabRefusal(sfPlan, sfReceipt, sfExpected, sfStop(sfStart()), linesOf(sfGate), hidden), undefined);
+  assert.equal(tabRefusal(sfPlan, sfReceipt, sfExpected, sfStop(sfStart()), linesOf(sfGate)), 'no-new-tab', 'SLEIGHT_TABC=0 keeps the old count');
+  const remainder = tabRemainder(sfPlan, sfReceipt, sfExpected, sfStop(sfStart()), linesOf(sfGate), hidden);
+  assert.equal(remainder.code, 'await app.setValue({ id: "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD" }, "http://127.0.0.1:5413/checkout");\nawait app.pressKey("Return");\napp');
+  assert.deepEqual([remainder.tab, remainder.window.title], [true, 'bench — Start Page']);
+  // The same window without a profile name in front of its title.
+  const bare = s => s.replaceAll('bench — ', '');
+  assert.equal(tabRefusal(sfPlan, { ...sfReceipt, root: bare(sfReceipt.root) }, { ...sfExpected, title: 'Gate 3f34' }, sfStop(bare(sfStart())), linesOf(bare(sfGate)), hidden), undefined);
+});
+
+test('LB4: a Safari window that already shows its strip gains one tab by Value: on, whatever its Help and isActive say', () => {
+  const before = sfStart([sfTab('Gate 3f34', { active: true }), sfTab('Shop')]).replace(/Start Page/g, 'Gate 3f34')
+    .replace('\t\t\t\t4 collection StartPageCollectionView\n\t\t\t\t\t5 button Close', '\t\t\t\t4 HTML content Description: Gate 3f34\n\t\t\t\t\t5 heading Gate 3f34');
+  const expected = { ...sfExpected };
+  const now = [sfTab('Gate 3f34'), sfTab('Shop'), sfTab('Start Page', { active: true })];
+  assert.equal(tabRefusal(sfPlan, sfReceipt, expected, sfStop(sfStart(now)), linesOf(before), hidden), undefined);
+  // A tab switch to the shop: the count stays.
+  assert.equal(tabRefusal(sfPlan, sfReceipt, expected, sfStop(sfStart([sfTab('Gate 3f34'), sfTab('Start Page', { active: true })])), linesOf(before), hidden), 'no-new-tab');
+});
+
+for (const [name, tree, before, reason, expected = sfExpected] of [
+  // The user typed a URL into another tab of the window: it is selected and retitled, and no tab was added.
+  ['a user typing a URL in another tab', sfStart([sfTab('Gate 3f34'), sfTab('Start Page', { active: true })]),
+    sfStart([sfTab('Gate 3f34', { active: true }), sfTab('Start Page')]).replace(/Window: "bench — Start Page"|standard window bench — Start Page/g, m => m.replace('Start Page', 'Gate 3f34')), 'no-new-tab'],
+  // Another Safari window the user raised, with two tabs of its own, none named as the leased window.
+  ['another window the user raised', sfStart([sfTab('Mail'), sfTab('Start Page', { active: true })]), sfGate, 'no-new-tab'],
+  // The page retitled itself during the call: one tab, no strip, the page still there.
+  ['a page that retitled itself', sfGate.replaceAll('Gate 3f34', 'Gate 3f34 (1 new)').replace(/HTML content[^\n]*/, 'HTML content Description: Gate'), sfGate, 'no-new-tab'],
+  ['three tabs from a hidden strip', sfStart([sfTab('Gate 3f34'), sfTab('Other'), sfTab('Start Page', { active: true })]), sfGate, 'no-new-tab'],
+  ['the old tab still selected', sfStart([sfTab('Gate 3f34', { active: true }), sfTab('Start Page')]), sfGate, 'no-new-tab'],
+  ['both tabs on', sfStart([sfTab('Gate 3f34', { active: true }), sfTab('Start Page', { active: true })]), sfGate, 'no-new-tab'],
+  ['an earlier tree without the window\'s root', sfStart(), sfGate.replace(/^0 standard window bench — Gate 3f34/m, '0 standard window Other'), 'no-new-tab'],
+  // Review: Claude's earlier tree with lines folded away (a gap in its numbers) may have hidden a strip of two tabs, and a tab
+  // switch in it would look like a tab opening.
+  ['an earlier tree with a gap in its numbers', sfStart(), sfGate.replace(/\n\t\t7 text field[^\n]*/, ''), 'no-new-tab'],
+  ['an earlier tree with a folded line', sfStart(), sfGate.replace('\t\t\t3 scroll area\n', ''), 'no-new-tab'],
+  ['focus in the page', sfStart(undefined, '5 button Close'), sfGate, 'focus-not-app-field'],
+  ['a sheet', sfStart().replace('\t6 toolbar', '\t11 sheet Confirm\n\t6 toolbar'), sfGate, 'sheet'],
+  ['another app', sfStart().replace('App: Safari.', 'App: Other.'), sfGate, 'other-app'],
+]) test(`LB4: Safari's Cmd+T stop stays a stop on ${name}`, () => {
+  const receipt = { ...sfReceipt, root: /^0 .*$/m.exec(tree)[0] };
+  const content = [{ type: 'text', text: 'Input lease stopped this action: window or URL changed.\n' + tree }];
+  assert.equal(tabRefusal(sfPlan, receipt, expected, content, linesOf(before), hidden), reason);
+});
+
+test('LB4 review: a tab titled "group chat" is a tab, and the strip\'s own tab group is not', () => {
+  const now = [sfTab('group chat'), sfTab('Start Page', { active: true })];
+  const gate = sfGate.replaceAll('Gate 3f34', 'group chat');
+  const expected = { ...sfExpected, title: 'bench — group chat' };
+  assert.equal(tabRefusal(sfPlan, sfReceipt, expected, sfStop(sfStart(now)), linesOf(gate), hidden), undefined);
+});
+
+test('LB4: the hidden strip never stands in for a click (the toolbar\'s New Tab button sits beside no tab)', () => {
+  const plan = splitMenuActions('await app.click({ id: "NewTabButton" }); await app.setValue({ id: "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD" }, "u");');
+  const receipt = { ...sfReceipt, prev: { kind: 'id', value: 'NewTabButton', line: 'button Description: New Tab, ID: NewTabButton' } };
+  assert.equal(tabRefusal(plan, receipt, sfExpected, sfStop(sfStart()), linesOf(sfGate), hidden), 'no-new-tab');
+});
+
+// LB6: firefox-codex-sleight-sol-b16-r2/mdn, the continued result: the header names the page, the tree is still New Tab.
+test('LB6: a tree whose root still names the new tab under the page\'s header has not landed', () => {
+  const lagged = 'sleight: all 3 actions ran.\nWindow: "418 I\'m a teapot - HTTP | MDN", App: Firefox.\n0 standard window Mozilla Firefox, Secondary Actions: Raise\n' +
+    '\t1 container Mozilla Firefox\n\t\t2 tab (selected) Value: New Tab, New Tab\n\nThe focused UI element is 1 container Mozilla Firefox';
+  const landed = 'Window: "418 I\'m a teapot - HTTP | MDN", App: Firefox.\n0 standard window 418 I\'m a teapot - HTTP | MDN, Secondary Actions: Raise\n' +
+    '\t1 container 418 I\'m a teapot - HTTP | MDN\n\t\t2 tab (selected) Value: 418 I\'m a teapot - HTTP | MDN, 418 I\'m a teapot - HTTP | MDN\n\nThe focused UI element is 1 container';
+  assert.equal(landingRefusal(lagged), 'title-lag');
+  assert.equal(landingRefusal(landed), undefined);
+  assert.equal(landingRefusal(sfStart()), undefined, 'Safari: root and header agree, attributes after the title');
+  assert.equal(landingRefusal(sfStart().replace('Window: "bench — Start Page"', 'Window: "bench — Checkout"')), 'title-lag');
+  for (const text of ['', 'no tree', 'Window: "x", App: Firefox.\n0 dialog y', 'Window: "x", App: Firefox.\n\t3 row y']) assert.equal(landingRefusal(text), undefined, text);
+  // The fresh read replaces the stale tree only, keeping what came before it and any guard mark after it.
+  const content = [{ type: 'text', text: 'out\n' + lagged + '\n[/sleight:guard-read]\ntail' }, { type: 'text', text: 'note' }];
+  const replaced = replaceLastTree(content, landed);
+  assert.equal(replaced[0].text, 'out\nsleight: all 3 actions ran.\n' + landed + '\n[/sleight:guard-read]\ntail');
+  assert.equal(replaced[1].text, 'note');
+  assert.equal(replaceLastTree(content, 'no tree'), undefined);
+  assert.equal(replaceLastTree([{ type: 'text', text: 'no tree' }], landed), undefined);
 });

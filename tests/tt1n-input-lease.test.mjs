@@ -19,7 +19,7 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 1));
 // the engine realm: only the relay's injected read-only identity helper can observe it.
 // errorFirst: the real engine's order, the exception as the first content item ahead of what the call wrote.
 async function fixture(t, { initial, base = document, after = menu, nativeChange, identity, afterItem = after, actionOutput = false,
-  retryFirst, beforeRetry, onAction, onRead, errorFirst = false, windows = [{ title: 'report.txt' }], engineMs, ...options } = {}) {
+  retryFirst, beforeRetry, onAction, onRead, errorFirst = false, windows = [{ title: 'report.txt' }], engineMs, landingRead, ...options } = {}) {
   let text = base, writes = [];
   const clicks = [], keys = [], values = [], typed = [], sent = [], received = [];
   let identityChecks = 0;
@@ -73,6 +73,8 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
         catch (e) { error = e; }
         // Acquisitions print their header in the real engine even without an explicit read.
         if (/cua\.getApp\(/.test(request.params.arguments.code) && !error) writes.push(text);
+        // The relay's own read after a tab continuation's Return (LB6) prints the window, as a bare read does in the engine.
+        if (String(request.id).startsWith('sleight-tab-landing-') && !error) writes.push(landingRead ? landingRead() : text);
         if (error && !errorFirst) writes.push(String(error));
         serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { isError: !!error,
           content: [...(error && errorFirst ? [{ type: 'text', text: String(error?.message ?? error) }] : []), { type: 'text', text: writes.join('\n') }],
@@ -1117,6 +1119,143 @@ test('AB1 review: a numbered click in the remainder after a tab continuation sto
   assert.equal(result.isError, true);
   assert.deepEqual(h.clicks, []);
   assert.match(JSON.stringify(result), /element 5 changed since you read the window/);
+});
+
+// CC7, LB4 (race-1017): Safari's Cmd+T, replayed. Safari hides its tab strip for one tab and marks tabs Value: on or off; the
+// new tab is its native Start Page (no page content), focus in the address field. menuRemainder's navigation branch claimed it
+// and then refused on HID idle over the whole call, which the engine's own Cmd+T breaks: 36 of 36 Codex runs stopped, 7 of 7
+// Claude Code ones. The fake clock puts the engine's press inside the call, as the real one is.
+const sfTabLine = (title, active) => `tab ${title}${active ? ', Help: To interact with the items in this button, press Control-Option-Shift-Down Arrow.' : ''}, ` +
+  `Value: ${active ? 'on' : 'off'}, Secondary Actions: close tab, ID: TabBarTab?isActive=${active}`;
+const sfWindow = (title, { page, tabs = [], focus, header = title, root = title } = {}) => `Window: "bench — ${header}", App: Fixture Editor.\n` +
+  `0 standard window bench — ${root}, ID: SafariWindow?UUID=85C2, Secondary Actions: Raise\n\t1 split group\n\t\t2 tab group\n\t\t\t3 scroll area\n` +
+  (page ? `\t\t\t\t4 HTML content Description: ${page}, URL: 127.0.0.1:5413/${page.toLowerCase()}\n` : '\t\t\t\t4 collection StartPageCollectionView\n') +
+  '\t5 toolbar\n\t\t6 text field (settable) Description: smart search field, ID: WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD\n\t\t7 button Description: New Tab, ID: NewTabButton\n' +
+  (tabs.length ? `\t8 tab group Description: Tab bar, ${tabs.length} tabs, ID: TabBar\n` + tabs.map(([name, active], i) => `\t\t${9 + i} ${sfTabLine(name, active)}`).join('\n') + '\n' : '') +
+  `\nThe focused UI element is ${focus ?? (page ? `4 HTML content Description: ${page}` : '6 text field (settable) Description: smart search field, ID: WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD')}`;
+const sfGate = sfWindow('Gate', { page: 'Gate' });
+const sfStart = sfWindow('Start Page', { tabs: [['Gate', false], ['Start Page', true]] });
+const sfShop = sfWindow('Shop', { page: 'Shop', tabs: [['Gate', false], ['Shop', true]] });
+// The engine's header already names the page while its tree is still the Start Page (LB6).
+const sfLag = sfWindow('Start Page', { header: 'Shop', tabs: [['Gate', false], ['Start Page', true]] });
+const sfCall = 'await app.pressKey("super+t");\nawait app.typeText("http://127.0.0.1:5413/shop");\nawait app.pressKey("Return");\nawait app.getAXState();';
+async function safariTab(t, { opened = sfStart, landed = sfShop, user, ...options } = {}) {
+  let now = 1000, enginePress, userPress;
+  return tabFixture(t, { base: sfGate, focus: { ...fieldFocus, role: 'AXTextField' }, clock: () => now, tabLandingIntervalMs: 2,
+    onAction: (name, argument, text) => {
+      if (name === 'pressKey' && argument === 'super+t') { now += 300; enginePress = now; now += 400; return opened; }
+      return name === 'pressKey' && argument === 'Return' ? landed : text;
+    },
+    identity: (expected, native, count) => {
+      if (count === user) { now += 300; userPress = now - 100; }
+      return { ...expected, ...native, matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1,
+        hidIdleSeconds: (now - (userPress ?? enginePress ?? 0)) / 1000 };
+    }, ...options });
+}
+
+test('LB4: Safari\'s Cmd+T, URL and Return run in one call, on the tab path', async t => {
+  const h = await safariTab(t);
+  const result = await h.call(sfCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.keys, ['super+t', 'Return']);
+  assert.deepEqual(h.typed, ['http://127.0.0.1:5413/shop']);
+  assert.deepEqual(h.continued, ['tab']);
+  assert.deepEqual(h.refusals, []);
+  const all = result.content.map(item => item.text).join('\n');
+  assert.match(result.content[0].text, /^sleight: all 3 actions ran: pressKey "super\+t" opened a tab, then typeText, pressKey "Return"/);
+  assert.match(all, /^Window: "bench — Shop"/m);
+  assert.doesNotMatch(all, /Input lease stopped|guard-stop/);
+});
+
+test('LB4: SLEIGHT_TABC=0 replays the race: the navigation branch claims the Start Page and the call stops after Cmd+T', async t => {
+  const h = await safariTab(t, { tabFirst: false });
+  stoppedAtTab(h, await h.call(sfCall));
+  assert.ok(!h.continued.includes('tab'));
+  assert.deepEqual(h.refusals, ['other-continuation']);
+});
+
+for (const [name, options, reason, tabReason] of [
+  // The user starts typing a URL in the window after the stop: their keys could interleave with the rest's.
+  ['a user typing a URL after the stop', { user: 2 }, 'hid-input'],
+  // The user typed a URL into the other tab during the call: that tab is selected and retitled, no tab was added.
+  ['a user typing a URL into another tab', { opened: sfWindow('Mail', { page: 'Mail' }).replace('Gate', 'Mail') }, 'no-new-tab'],
+  // A page that retitles itself: still one tab and no strip, its page still there (and the navigation branch refuses a page).
+  ['a page that retitles itself', { opened: sfWindow('Gate (2)', { page: 'Gate' }) }, 'no-new-tab'],
+  // The navigation branch then takes the stop and its own checks refuse it; the trace keeps the tab path's reason.
+  ['focus left in the Start Page', { opened: sfWindow('Start Page', { tabs: [['Gate', false], ['Start Page', true]], focus: '4 collection StartPageCollectionView' }) }, 'other-continuation', 'focus-not-app-field'],
+  ['a password field in focus', { focus: { ...fieldFocus, role: 'AXTextField', subrole: 'AXSecureTextField' } }, 'secure-field'],
+]) test(`LB4: Safari's Cmd+T stays a stop on ${name}`, async t => {
+  const h = await safariTab(t, options);
+  stoppedAtTab(h, await h.call(sfCall));
+  assert.ok(!h.continued.includes('tab'));
+  assert.deepEqual(h.refusals, [reason]);
+  if (tabReason) assert.equal(h.traces.find(trace => trace.reason === 'other-continuation').tab, tabReason);
+});
+
+// Another Safari window raised during the call, with a tab named as the leased window and its own address field focused,
+// passes the tree checks; the helper's window number pins the window the call started in.
+test('LB4: another window raised during the call stays a stop at the native check', async t => {
+  const h = await safariTab(t, { nativeChange: 'window' });
+  stoppedAtTab(h, await h.call(sfCall));
+  assert.deepEqual(h.continued, []);
+  assert.match(h.refusals[0], /^identity: Input lease: the selected window number changed/);
+});
+
+// LB6: the rest's Return result names the page in its header over the Start Page's tree; the relay reads again and delivers
+// the page. Firefox mdn inside Codex (2 of 37) spent a 3.3 s turn reading it itself.
+test('LB6: after the rest\'s Return, a tree still on the new tab is read again until it shows the page', async t => {
+  const reads = [sfLag, sfShop];
+  const h = await safariTab(t, { landed: sfLag, landingRead: () => reads.shift() ?? sfShop });
+  const result = await h.call(sfCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  const all = result.content.map(item => item.text).join('\n');
+  assert.match(all, /^0 standard window bench — Shop,/m);
+  assert.doesNotMatch(all, /StartPageCollectionView|standard window bench — Start Page/);
+  assert.equal(h.sent.filter(msg => String(msg.id).startsWith('sleight-tab-landing-')).length, 2);
+  assert.ok(h.sent.every(msg => !String(msg.id).startsWith('sleight-tab-landing-') || /^await app\.getAXState\(\{ disableDiffing: true \}\)$/.test(msg.params.arguments.code)));
+});
+
+// The same on the Firefox shape of firefox-codex-sleight-sol-b16-r2/mdn: "Window: <page>" over "0 standard window New Tab".
+test('LB6: Firefox\'s continued Return delivers the page, not the New Tab tree under the page\'s header', async t => {
+  const lagged = newTab.replace('Window: "New Tab"', 'Window: "Shop"');
+  const h = await tabFixture(t, { tabLandingIntervalMs: 2, landingRead: () => shop,
+    onAction: (name, argument, text) => name === 'pressKey' && argument === 'super+t' ? newTab : name === 'pressKey' && argument === 'Return' ? lagged : text });
+  const result = await h.call(tabCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  const all = result.content.map(item => item.text).join('\n');
+  assert.match(all, /^0 standard window Shop,/m);
+  assert.doesNotMatch(all, /standard window New Tab|Value: New Tab/);
+  assert.equal(h.sent.filter(msg => String(msg.id).startsWith('sleight-tab-landing-')).length, 1);
+});
+
+test('LB6: a tree that never lands is delivered as last read once the cap passes', async t => {
+  const h = await safariTab(t, { landed: sfLag, landingRead: () => sfLag, tabLandingMs: 50, tabLandingIntervalMs: 10 });
+  const result = await h.call(sfCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.equal(h.sent.filter(msg => String(msg.id).startsWith('sleight-tab-landing-')).length, 5, 'one read per interval within the cap, with a clock that stands still');
+  assert.match(result.content.map(item => item.text).join('\n'), /^Window: "bench — Shop"/m);
+});
+
+// The landing read is the app's front window, not pinned. A read that shows another window (one the user raised during the
+// wait) never stands in for the call's result, so the lease can't move to it.
+test('LB6: a landing read that shows another window keeps the call\'s own result', async t => {
+  const mail = sfWindow('Mail', { page: 'Mail', tabs: [['Mail', true]] });
+  const h = await safariTab(t, { landed: sfLag, landingRead: () => mail });
+  const result = await h.call(sfCall);
+  const all = result.content.map(item => item.text).join('\n');
+  assert.doesNotMatch(all, /bench — Mail|Description: Mail/);
+  assert.match(all, /^Window: "bench — Shop"/m);
+  assert.equal(h.sent.filter(msg => String(msg.id).startsWith('sleight-tab-landing-')).length, 1, 'no second read after another window');
+});
+
+for (const [name, options, code = sfCall] of [
+  ['a tree that already landed', {}],
+  ['SLEIGHT_TABC=0', { tabFirst: false, landed: sfLag, opened: sfStart }],
+  ['a rest that ends without Return', { landed: sfLag, onAction: undefined }, 'await app.pressKey("super+t");\nawait app.typeText("http://127.0.0.1:5413/shop");\nawait app.pressKey("Tab");'],
+]) test(`LB6: no extra read on ${name}`, async t => {
+  const h = await safariTab(t, options);
+  await h.call(code);
+  assert.equal(h.sent.filter(msg => String(msg.id).startsWith('sleight-tab-landing-')).length, 0);
 });
 
 // OT2 (SLEIGHT_POPOVER_CONTINUATION): a popover root covers the window under it like the palette path's plain window and

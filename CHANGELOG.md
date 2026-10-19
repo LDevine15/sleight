@@ -2,6 +2,14 @@
 
 ## 1.4.0 (TODO: release date)
 
+### New tabs on the engine path
+
+- A call's own Cmd+T in Safari carries on into the new tab, with the address and Return in the same call. It stopped after
+  Cmd+T in 36 of 36 Safari runs of sleight inside Codex (race-1017), a turn each. The window, focus, sheet, HID-idle and
+  payment checks are the same as Firefox's.
+- After that Return, a result whose tree still shows the new tab under the page's title reads the window again, for up to
+  1.5 s, so Claude gets the page. `SLEIGHT_TABC=0` turns both off. Not yet run live.
+
 ### Cursor
 
 - sleight is a Cursor plugin. The repo is a Cursor marketplace named like the Claude Code one, so in
