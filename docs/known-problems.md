@@ -159,6 +159,9 @@ our own runs. Dates and engine versions are given where they matter.
   menu, and how often a session leaves one open is unmeasured. On 2026-10-17 an A/B run left Word in that loop with its Window
   menu open (main thread sample). AXCancel closed the menu, but Word still ignored Apple events. One Escape key event posted to
   Word's process with `CGEventPostToPid` released it, and Word then closed the fixture and quit by script.
+  Safari fixture setup cancels its File menu and polls for clearance after a failure before creating a window. Without a
+  profile-proven window it cannot post Escape. If AXCancel leaves the tracking loop stuck, cleanup reports it and may leave
+  Safari running. No live check has qualified this failure path yet.
 - textedit-window-drag has never passed (0 of 12 recorded runs, 2026-10-16 to 2026-10-19). In all 4 transcripts of 2026-10-19,
   `drag` with `toWindowId` first refused the drop as covered by the cascaded source window. The fixture now places the two
   windows side by side in the display's visible frame, which no live run has tested yet. Two more `drag` faults showed up there,

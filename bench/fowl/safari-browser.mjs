@@ -14,16 +14,14 @@ const execute = promisify(execFile), profile = 'sleight benchmark';
 export function identifierProfile(identifier) {
   const match = /^TabGroupPickerButton\?(.*)$/.exec(typeof identifier === 'string' ? identifier : '');
   if (!match) return null;
-  for (const pair of match[1].split('&')) {
-    const at = pair.indexOf('=');
-    if (at < 0 || pair.slice(0, at) !== 'Profile') continue;
-    try { return decodeURIComponent(pair.slice(at + 1)); } catch { return null; }
-  }
-  return null;
+  const pairs = match[1].split('&').filter(pair => pair === 'Profile' || pair.startsWith('Profile='));
+  if (pairs.length !== 1 || !pairs[0].startsWith('Profile=')) return null;
+  try { return decodeURIComponent(pairs[0].slice('Profile='.length)); } catch { return null; }
 }
 export function safariProfileEvidence(window) {
   if (window.profileEvidence) {
     const evidence = window.profileEvidence;
+    if (String(evidence.identifier ?? '').startsWith('TabGroupPickerButton?') && identifierProfile(evidence.identifier) !== profile) return null;
     if (evidence.value === profile && typeof evidence.element === 'string' && evidence.element &&
         ['AXMenuButton', 'AXPopUpButton', 'AXButton'].includes(evidence.role) &&
         ['AXTitle', 'AXDescription', 'AXValue', 'AXIdentifier'].includes(evidence.attribute)) return evidence;
@@ -32,6 +30,8 @@ export function safariProfileEvidence(window) {
   const matches = [];
   for (const node of window.toolbar || []) {
     if (!node.id || !['AXMenuButton', 'AXPopUpButton', 'AXButton'].includes(node.role)) continue;
+    if (String(node.identifier ?? '').startsWith('TabGroupPickerButton?') &&
+        (identifierProfile(node.identifier) !== profile || [node.title, node.description, node.value].some(label => label && label !== profile))) return null;
     const attribute = [['title', 'AXTitle'], ['description', 'AXDescription'], ['value', 'AXValue']].find(([key]) => node[key] === profile)?.[1] ||
       (identifierProfile(node.identifier) === profile ? 'AXIdentifier' : null);
     if (attribute) matches.push({ element: node.id, role: node.role,

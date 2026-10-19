@@ -794,7 +794,7 @@ test('Safari records launch ownership before acquiring a new fixture window', as
     },
   });
   assert.deepEqual(actions, [
-    ['-g', '-a', 'Safari'],
+    ['-g', '-a', 'Safari', '--args', '-ApplePersistenceIgnoreState', 'YES'],
   ]);
   assert.equal(lease.running, false);
   assert.equal(lease.pid, 123);
@@ -1784,4 +1784,11 @@ test('placement fails setup when the window does not end inside its own slot', (
     if (expect === 'placed') assert.equal(placeFixtureWindow({}, { slot: 1, count: 2 }, api).slot, 1, label);
     else assert.throws(() => placeFixtureWindow({}, { slot: 1, count: 2 }, api), /placement unconfirmed/, label);
   }
+});
+
+test('the JXA setup path refuses Safari before any application lookup or menu action', () => {
+  const source = readFileSync(new URL('../bench/real-fixture.js', import.meta.url), 'utf8');
+  const sandbox = { ObjC: { import() {} } };
+  runInNewContext(source, sandbox);
+  assert.throws(() => sandbox.run([JSON.stringify({ bundle: 'com.apple.Safari', mode: 'window' })]), /profile-proven created-window helper/);
 });

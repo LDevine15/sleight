@@ -12,8 +12,8 @@ await liveTier({ ownerAway: true, holdPath: join(dir, 'hold'), lockPath: join(di
   open: async () => ({ close: async () => mark('client closed') }),
   live: { ...real, CALCULATOR: 'com.apple.calculator', idleSeconds: async () => 999, fixtures: {},
     launchApp: async () => ({ pid: 41 }), quitApp: async (bundle, launched) => mark(`quit ${launched.pid}`),
-    quitLaunchedSince: async (bundle, since) => mark(`quit ${bundle} launched since ${typeof since}`),
-    openSafariPage: async () => { throw new Error('Fixture setup failed'); },
+    quitLaunchedSince: async (bundle, since, options) => mark(`quit ${bundle} pid ${options.pid} launched since ${typeof since}`),
+    openSafariPage: async ({ onDiagnostics }) => { onDiagnostics({ pid: 41 }); throw new Error('Fixture setup failed'); },
     runCalculator: async (client, host) => {
       if (mode === 'browser') return { id: 'live-calculator', status: 'pass' };
       await host.launchApp('com.apple.calculator'); setInterval(() => {}, 1000); console.log('ready'); await new Promise(() => {});

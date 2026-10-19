@@ -248,9 +248,10 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
             diagnostics[event.phase + 'TotalWaitMs'] = event.totalWaitMs;
           } else diagnostics.retries.push(retry);
         }
-        for (const key of ['fixtureWindow', 'menuCleared', 'menuEscapePid', 'windows', 'fresh', 'totalWaitMs', 'actionTaken', 'cleanup', 'cleanupError', 'menuCancelled', 'menuCancelMethod', 'menuItems', 'menuCommands', 'readiness', 'navigation', 'creation', 'foregroundFallback', 'launchWait', 'readWait', 'cleanupReadWait', 'observationReadWait', 'setupCase', 'inheritReady', 'placement']) {
+        for (const key of ['fixtureWindow', 'menuCleanup', 'menuCleanupError', 'menuCleared', 'menuEscapePid', 'windows', 'fresh', 'totalWaitMs', 'actionTaken', 'cleanup', 'cleanupError', 'menuCancelled', 'menuCancelMethod', 'menuItems', 'menuCommands', 'readiness', 'navigation', 'creation', 'foregroundFallback', 'launchWait', 'readWait', 'cleanupReadWait', 'observationReadWait', 'setupCase', 'inheritReady', 'placement']) {
           if (event[key] !== undefined) diagnostics[key] = event[key];
         }
+        ctx.onFixtureDiagnostics?.(diagnostics);
         if (event.stage) stage(event.stage).resolve(event);
       }
     },
@@ -268,7 +269,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
   if (blankWindow) {
     await waitStage('launch');
     beginLaunch();
-    await open('/usr/bin/open', fixtureLaunch === 'retained-url' ? ['-g', '-a', request.app] : ['-g', '-b', request.bundle], { signal, timeout: 15000 });
+    await open('/usr/bin/open', fixtureLaunch === 'retained-url' ? ['-g', '-a', request.app, '--args', '-ApplePersistenceIgnoreState', 'YES'] : ['-g', '-b', request.bundle], { signal, timeout: 15000 });
   }
   await waitStage('armed');
   signal?.throwIfAborted();
@@ -289,6 +290,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
     // LaunchServices errors and readiness deadlines can precede the helper's
     // recovery receipt. Await that receipt before deciding acquisition status.
     try { await ctx.beforeFixtureCleanup?.(); await lease.close(); error.noMutation = true; } catch {}
+    error.fixtureDiagnostics = diagnostics;
     throw error;
   }
 }
