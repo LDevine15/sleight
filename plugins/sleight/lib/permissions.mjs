@@ -46,12 +46,15 @@ export function readPermissions(path = permissionsPath(), uid = process.getuid()
 }
 
 const UNSAFE = "sleight's permissions file is a link or has another owner, mode or format, so sleight acts nowhere until you run sleight-mcp permissions repair.";
+const MISSING = "sleight's permissions file is gone since this session read it, so sleight acts nowhere until you run sleight-mcp permissions repair.";
+// The line for a file sleight can't trust: unsafe, or missing after this session read it (createPermissionCheck).
+const stopped = perms => perms?.state === 'unsafe' ? UNSAFE : perms?.state === 'missing' ? MISSING : undefined;
 const words = list => list.length <= 4 ? list.slice(0, -1).join(', ') + (list.length > 1 ? ' and ' : '') + list.at(-1)
   : `${list.slice(0, 3).join(', ')} and ${list.length - 3} more`;
 
 /** The line Claude relays when the user blocked this app (by bundle id or name, either case), or undefined. */
 export function appRefusal(perms, { bundleId, name } = {}) {
-  if (perms?.state === 'unsafe') return UNSAFE;
+  if (stopped(perms)) return stopped(perms);
   const keys = [bundleId, name].filter(value => typeof value === 'string' && value.trim()).map(value => value.trim().toLowerCase());
   const hit = keys.length ? perms?.apps?.find(app => keys.includes(app.id.toLowerCase()) || app.name && keys.includes(app.name.toLowerCase())) : undefined;
   return hit && `You blocked sleight in ${hit.name ?? hit.id} (sleight-mcp permissions unblock ${hit.id} lifts it).`;
@@ -78,7 +81,7 @@ const TAB_UNPROVEN = "You limited the sites sleight acts on, and it can't tell w
  *  site limit exists the check fails closed: a URL that isn't http(s), or no URL at all, refuses, except a blank tab. A URL
  *  with credentials is judged by its host. Only turbo's browser runtime checks sites; its Electron app turns don't. */
 export function siteRefusal(perms, url) {
-  if (perms?.state === 'unsafe') return UNSAFE;
+  if (stopped(perms)) return stopped(perms);
   if (!sitesLimited(perms)) return undefined;
   if (url === 'about:blank') return undefined;
   let parsed;
@@ -127,7 +130,7 @@ export function pageSite(text, window) {
  *  nothing to check. Otherwise a site the read can't prove refuses, a blocked host refuses whatever its scheme, and in
  *  allow-only mode the host (and the scheme, when the read shows one) must be listed. */
 export function pageRefusal(perms, page) {
-  if (perms?.state === 'unsafe') return UNSAFE;
+  if (stopped(perms)) return stopped(perms);
   if (!perms?.sites?.length && !perms?.only) return undefined;
   if (!page || page.unproven) return "You limited the sites sleight acts on, and it can't tell which site this window shows, so it doesn't act here (sleight-mcp permissions lists your limits).";
   const blocked = perms.sites.find(origin => covers(origin, page.host));
@@ -135,7 +138,7 @@ export function pageRefusal(perms, page) {
   if (perms.only && !perms.only.some(origin => lists(origin, page))) return `You allow sleight only on ${words(perms.only)}, not ${page.scheme ? page.scheme + '://' : ''}${page.host} (sleight-mcp permissions lists them).`;
   return undefined;
 }
-export const sitesLimited = perms => perms?.state === 'unsafe' || !!perms?.sites?.length || !!perms?.only;
+export const sitesLimited = perms => !!stopped(perms) || !!perms?.sites?.length || !!perms?.only;
 
 // sleight's own menu bar glove, approval cards and payment cards belong to its consent host: a bare `consent-host` binary in
 // sleight's helper cache. Only the person's click may answer them, so no tool acts on that process.
@@ -143,13 +146,19 @@ export const OWN_HOST_LINE = "That is sleight's own menu or card, which only the
 export const isOwnHost = (...values) => values.some(value => typeof value === 'string' &&
   (/^(?:.*\/)?consent-host$/i.test(value.trim()) || /\/Library\/Caches\/sleight\/turbo-host\//i.test(value)));
 
-/** The checks the relay and turbo run before acting. The file is read again only when its inode, size or time changes. */
+/** The checks the relay and turbo run before acting. The file is read again only when its inode, size or time changes. Only
+ *  the user's command and click write the file, and neither ever deletes it, so a file this session read that is now gone
+ *  was removed by something else: that refuses every action, as an unsafe file does, until `permissions repair` writes one. */
 export function createPermissionCheck({ path = permissionsPath(), uid = process.getuid(), read = readPermissions } = {}) {
-  let seen, cached;
+  let seen, cached, existed = false;
   const state = () => {
     let key;
     try { const stat = lstatSync(path); key = `${stat.ino}:${stat.size}:${stat.mtimeMs}`; } catch (error) { key = error.code ?? 'error'; }
-    if (key !== seen || !cached) { seen = key; cached = read(path, uid); }
+    if (key !== seen || !cached) {
+      seen = key; cached = read(path, uid);
+      if (cached.state === 'ok') existed = true;
+      else if (cached.state === 'absent' && existed) cached = { state: 'missing', apps: [], sites: [] };
+    }
     return cached;
   };
   return Object.freeze({ state, app: query => appRefusal(state(), query), site: url => siteRefusal(state(), url),

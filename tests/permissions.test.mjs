@@ -146,6 +146,26 @@ test('the command compares sites the way the checks do', t => {
   assert.equal(w.command(['revoke', 'https://www.a.example']), 1, 'the last site stays, however it is spelled');
 });
 
+test('a permissions file that disappears after a session read it refuses every action until repair writes a new one', t => {
+  const w = world(t);
+  w.write('permissions.json', { version: 1, apps: [], sites: ['https://blocked.example'] });
+  const check = createPermissionCheck({ path: w.path });
+  assert.equal(check.app({ bundleId: 'com.any.app' }), undefined);
+  rmSync(w.path);
+  const line = "sleight's permissions file is gone since this session read it, so sleight acts nowhere until you run sleight-mcp permissions repair.";
+  assert.equal(check.app({ bundleId: 'com.any.app' }), line);
+  assert.equal(check.site('https://fine.example/'), line);
+  assert.equal(check.page({ host: 'fine.example' }), line);
+  assert.equal(check.sitesLimited(), true);
+  assert.equal(w.command(['repair']), 0);
+  assert.match(w.output(), /^Wrote an empty permissions\.json\. The old one is gone, and its blocks with it/);
+  assert.deepEqual(readPermissions(w.path), { state: 'ok', apps: [], sites: [] });
+  assert.equal(check.app({ bundleId: 'com.any.app' }), undefined, 'repair lets the session act again');
+  // A session that never read a file has nothing to miss.
+  rmSync(w.path);
+  assert.equal(createPermissionCheck({ path: w.path }).app({ bundleId: 'com.any.app' }), undefined);
+});
+
 test('revoking the last allow-only site is refused, so the list never empties into no limit at all', t => {
   const w = world(t);
   assert.equal(w.command(['sites', 'only', 'https://a.example']), 0); w.output();
@@ -352,7 +372,6 @@ test('the launcher runs the permissions command: an unknown op prints the usage,
 
 test('repair replaces an unsafe file with a private one that keeps every valid block, and leaves a safe file alone', t => {
   const w = world(t);
-  assert.equal(w.command(['repair']), 0); assert.match(w.output(), /no permissions\.json to repair/);
   w.write('permissions.json', { version: 1, apps: [{ id: 'com.example.app', name: 'Example' }, { id: 'not a bundle' }, { id: 'com.example.app' }],
     sites: ['https://blocked.example', 'nope'], only: ['https://a.example'], extra: true }, 0o644);
   assert.equal(readPermissions(w.path).state, 'unsafe');

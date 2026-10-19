@@ -126,7 +126,12 @@ function revokeAll(o, { includeTurbo = true } = {}) {
  *  no readable site, would come out with less in it than the user set, so repair changes nothing then unless told to discard. */
 function repair(o, discard = false) {
   const before = readPermissions(o.path, o.uid);
-  if (before.state === 'absent') return 'There is no permissions.json to repair.\n';
+  // A file gone since a session read it leaves that session acting nowhere until one exists again; an empty one ends that.
+  if (before.state === 'absent') {
+    writeConfigFile(o.path, { version: 1, apps: [], sites: [] }, o.uid);
+    if (readPermissions(o.path, o.uid).state !== 'ok') throw Error('PERMISSIONS_UNSAFE');
+    return 'Wrote an empty permissions.json. The old one is gone, and its blocks with it; sleight-mcp permissions block sets them again.\n';
+  }
   if (before.state === 'ok') return 'permissions.json is fine.\n';
   let data;
   try {

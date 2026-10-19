@@ -172,3 +172,21 @@ test('permissions block, unblock, revoke and sites are the user\'s commands: eve
     assert.equal(await guard({ tool: 'Bash', command }, { stat }), false, command);
   }
 });
+
+test('deleting, moving or changing the permissions file by a parent folder, find, perl, chmod or an import of the writers denies', async () => {
+  const home = '/Users/fixture';
+  for (const command of ['find ~/Library -name permissions.json -delete', 'find "$HOME/Library/Application Support" -exec rm {} +',
+    'find /Users/fixture/Library -type f -delete', 'find -L ~/Library -delete', 'find ~ -name "*.json" -execdir rm {} \\;',
+    `perl -e 'unlink "$ENV{HOME}/Library/Application Support/sleight/permissions.json"'`,
+    'chmod 644 ~/Library/Application\\ Support/sleight/permissions.json', 'chown root ~/Library/Application\\ Support/sleight/permissions.json',
+    'chmod -R 777 ~/Library', 'mv ~/Library/Application\\ Support ~/elsewhere', 'mv "$HOME/Library" /tmp/x', 'rm -rf ~/Library/Application\\ Support',
+    'rm -rf /Users/fixture', 'mv /Users/fixture/Library/Application\\ Support/sleight /tmp/s',
+    `node -e "import('/x/plugins/sleight/lib/permissions-command.mjs').then(m => m.permissionsCommand(['unblock', 'x.y']))"`,
+    `node -e "import('/x/lib/preapproved.mjs').then(m => m.removePreapproved('x'))"`]) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat, home }), true, command);
+  }
+  for (const command of ["find . -name '*.tmp' -delete", 'find ~/Projects -name x -delete', 'find ~/Library -name "*.log"', 'mv a.txt ~/',
+    'rm -rf /tmp/build', 'chmod +x script.sh', 'chmod -R 755 ~/Projects/x', "perl -e 'print 1'", `node -e "console.log(1)"`]) {
+    assert.equal(await guard({ tool: 'Bash', command }, { stat, home }), false, command);
+  }
+});
