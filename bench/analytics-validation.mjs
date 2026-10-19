@@ -1,7 +1,7 @@
 // Offline preparation and readback for one short native benchmark pass. Never starts a live run.
 import { constants, closeSync, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -34,12 +34,27 @@ const names = new Set(['ok', 'cancel', 'save', 'save as', "don't save", 'close',
 const key = /^(?:(?:super|cmd|command|ctrl|control)\+(?:(?:super|cmd|command|ctrl|control|shift|alt|option|opt|fn)\+)*(?:[a-z0-9]|return|enter|escape|tab|space)|return|enter|escape|esc|tab|space|backspace|delete|forwarddelete|left|right|up|down|home|end|pageup|pagedown|f\d{1,2})$/i;
 const callId = value => integer(value, Number.MAX_SAFE_INTEGER) || typeof value === 'string' && /^(?:\d{1,16}|[0-9a-f]{8}-[0-9a-f-]{27})$/i.test(value);
 
-/** A new bank owns its settings, traces and Claude config. The log remains in the product's fixed local log root. */
-export function prepareAnalytics({ tempRoot = '/private/tmp' } = {}) {
+function isolatedConfig(config) {
+  try {
+    const owner = join(homedir(), '.claude');
+    const canonicalOwner = existsSync(owner) ? realpathSync(owner) : owner;
+    if (typeof config !== 'string' || !isAbsolute(config) || resolve(config) !== config ||
+        config === homedir() || owner.startsWith(config + '/') || config === owner || config.startsWith(owner + '/') ||
+        canonicalOwner.startsWith(config + '/') || config === canonicalOwner || config.startsWith(canonicalOwner + '/') ||
+        realpathSync(config) !== config) fail('ANALYTICS_CONFIG');
+    const info = lstatSync(config);
+    if (!info.isDirectory() || info.uid !== process.getuid() || info.mode & 0o022) fail('ANALYTICS_CONFIG');
+    return config;
+  } catch { fail('ANALYTICS_CONFIG'); }
+}
+
+/** Each pass owns its settings, traces and log name. An existing isolated arm login may be reused. */
+export function prepareAnalytics({ tempRoot = '/private/tmp', claudeConfig } = {}) {
+  if (claudeConfig !== undefined) isolatedConfig(claudeConfig);
   const bank = realpathSync(mkdtempSync(join(realpathSync(tempRoot), 'lane-claude-analytics-')));
   for (const folder of ['arm', 'claude', 'traces']) mkdirSync(join(bank, folder), { mode: 0o700 });
   const log = `bench-analytics-${randomUUID()}.jsonl`;
-  writeFileSync(join(bank, 'plan.json'), JSON.stringify({ version: 1, log }) + '\n', { mode: 0o600, flag: 'wx' });
+  writeFileSync(join(bank, 'plan.json'), JSON.stringify({ version: 1, log, ...(claudeConfig !== undefined ? { claudeConfig } : {}) }) + '\n', { mode: 0o600, flag: 'wx' });
   return bank;
 }
 
@@ -64,8 +79,10 @@ export function analyticsArm(bank, { root = ROOT } = {}) {
       if (!info.isDirectory() || info.uid !== process.getuid() || (info.mode & 0o777) !== 0o700 || realpathSync(folder) !== folder) fail('ANALYTICS_BANK');
     }
     const plan = JSON.parse(checkLocalFile(join(bank, 'plan.json'), bank));
-    if (!exact(plan, ['version', 'log']) || plan.version !== 1 || !/^bench-analytics-[0-9a-f-]{36}\.jsonl$/.test(plan.log)) fail('ANALYTICS_BANK');
-    return { cwd: join(bank, 'arm'), env: { CLAUDE_CONFIG_DIR: join(bank, 'claude') }, log: plan.log,
+    if (!exact(plan, Object.hasOwn(plan, 'claudeConfig') ? ['version', 'log', 'claudeConfig'] : ['version', 'log']) ||
+        plan.version !== 1 || !/^bench-analytics-[0-9a-f-]{36}\.jsonl$/.test(plan.log)) fail('ANALYTICS_BANK');
+    const config = Object.hasOwn(plan, 'claudeConfig') ? isolatedConfig(plan.claudeConfig) : join(bank, 'claude');
+    return { cwd: join(bank, 'arm'), env: { CLAUDE_CONFIG_DIR: config }, log: plan.log,
       server: { command: join(root, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_ACTION_LOG: plan.log,
         SLEIGHT_TRACE: join(bank, 'traces'), SLEIGHT_TRACE_CODE: '0', SLEIGHT_HAND: '0', SLEIGHT_SURFACES: 'computer', SLEIGHT_APPROVAL_PROMPT: 'client' } } };
   } catch { fail('ANALYTICS_BANK'); }
@@ -124,23 +141,37 @@ export function parseStats(text) {
 function traceCalls(traces) {
   const calls = new Map();
   for (const { pid, events } of traces) {
-    const waits = new Map(), intervals = [];
+    const prompts = new Map(), active = new Map();
     let previous = -Infinity;
     for (const e of events) {
       const time = Date.parse(e.t), id = e.msg?.id, k = JSON.stringify([pid, id]);
       if (!Number.isFinite(time) || time < previous) fail('ANALYTICS_TRACE');
       previous = time;
-      if (e.direction === 'from-server' && e.msg?.method === 'elicitation/create') waits.set(id, time);
-      if (e.direction === 'to-client' && e.msg?.method === 'elicitation/create' && !waits.has(id)) fail('ANALYTICS_UNOBSERVABLE_PROMPT');
-      if (e.direction === 'to-server' && e.msg?.method === undefined && waits.has(id)) { intervals.push([waits.get(id), time]); waits.delete(id); }
+      if (e.direction === 'from-server' && e.msg?.method === 'elicitation/create') {
+        // Engine prompts carry no parent RPC id. Bind only when one call can own the wait.
+        if (active.size !== 1 || prompts.has(id)) fail('ANALYTICS_UNOBSERVABLE_PROMPT');
+        const owner = active.values().next().value;
+        owner.waits.set(id, time); prompts.set(id, owner);
+        continue;
+      }
+      if (e.direction === 'to-client' && e.msg?.method === 'elicitation/create') {
+        if (!prompts.has(id)) fail('ANALYTICS_UNOBSERVABLE_PROMPT');
+        continue;
+      }
+      if (e.direction === 'to-server' && e.msg?.method === undefined && prompts.has(id)) {
+        const owner = prompts.get(id);
+        owner.intervals.push([owner.waits.get(id), time]); owner.waits.delete(id); prompts.delete(id);
+        continue;
+      }
       if (e.direction === 'call-received' && nativeTools.has(e.msg?.params?.name)) {
         if (calls.has(k)) fail('ANALYTICS_TRACE');
-        calls.set(k, { tool: e.msg.params.name, received: time, intervals, waits });
+        const call = { tool: e.msg.params.name, received: time, intervals: [], waits: new Map() };
+        calls.set(k, call); active.set(k, call);
       }
       const call = calls.get(k);
       if (!call) continue;
       if (e.direction === 'to-server' && e.msg?.method === 'tools/call') call.sent ??= time;
-      if (e.direction === 'to-client' && e.msg?.method === undefined) call.end = time;
+      if (e.direction === 'to-client' && e.msg?.method === undefined) { call.end = time; active.delete(k); }
     }
   }
   return calls;
@@ -164,7 +195,7 @@ export function validateAnalytics({ rows, stats, traces }) {
     if (group.some(row => row.ms !== first.ms || row.time !== first.time || row.tool !== first.tool)) fail('ANALYTICS_CALL');
     if (!call || call.tool !== first.tool || call.end === undefined) fail('ANALYTICS_TRACE');
     const start = call.sent ?? call.received, end = call.end;
-    const pauses = [...call.intervals.filter(([a, b]) => b <= end || a >= start), ...[...call.waits.values()].filter(t => t >= start).map(t => [t, end])];
+    const pauses = [...call.intervals, ...[...call.waits.values()].map(t => [t, end])];
     const traceMs = end - start - intervalUnion(pauses.map(([a, b]) => [Math.max(a, start), Math.min(b, end)]));
     const delta = Math.abs(first.ms - traceMs);
     if (traceMs < 0 || delta > Math.max(250, traceMs * 0.1)) fail('ANALYTICS_TIMING');
@@ -242,8 +273,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const [command, bank, ...rest] = process.argv.slice(2);
     if (command === 'prepare' && bank === undefined) console.log(prepareAnalytics());
+    else if (command === 'prepare' && bank === '--claude-config' && rest.length === 1) console.log(prepareAnalytics({ claudeConfig: rest[0] }));
     else if (command === 'check' && bank && !rest.length) console.log(JSON.stringify(checkAnalytics(bank), null, 2));
-    else fail('ANALYTICS_USAGE: prepare | check BANK');
+    else fail('ANALYTICS_USAGE: prepare [--claude-config DIRECTORY] | check BANK');
   } catch (error) {
     console.error(/^ANALYTICS_[A-Z_]+(?::.*)?$/.test(error.message) ? error.message : 'ANALYTICS_CHECK_FAILED');
     process.exitCode = 1;

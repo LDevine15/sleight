@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { prepareAnalytics, analyticsArm, writeAnalyticsMcp, parseStats, checkPrivacy, validateAnalytics, checkLocalFile } from '../bench/analytics-validation.mjs';
 import { ActionLog } from '../plugins/sleight/lib/action-outcomes.mjs';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
@@ -53,6 +54,46 @@ test('MCP config writes cannot follow a link or truncate an owner file', t => {
   assert.equal(writeAnalyticsMcp(fresh), path, 'an unused bank can retry after login preflight');
 });
 
+test('passes reuse an isolated login config but keep separate logs, traces and MCP descriptors', t => {
+  const parent = registerTemp(t, realpathSync(mkdtempSync('/tmp/x3-login-')));
+  const claudeConfig = join(parent, 'arm/claude');
+  mkdirSync(claudeConfig, { recursive: true, mode: 0o700 });
+  const settings = join(claudeConfig, 'settings.json');
+  writeFileSync(settings, '{"loginFixture":true}', { mode: 0o600 });
+  const banks = [prepareAnalytics({ tempRoot: parent, claudeConfig }), prepareAnalytics({ tempRoot: parent, claudeConfig })];
+  const arms = banks.map(bank => analyticsArm(bank));
+  assert.equal(arms[0].env.CLAUDE_CONFIG_DIR, claudeConfig);
+  assert.equal(arms[1].env.CLAUDE_CONFIG_DIR, claudeConfig);
+  assert.notEqual(arms[0].log, arms[1].log);
+  assert.notEqual(arms[0].server.env.SLEIGHT_TRACE, arms[1].server.env.SLEIGHT_TRACE);
+  assert.notEqual(writeAnalyticsMcp(banks[0]), writeAnalyticsMcp(banks[1]));
+  assert.equal(readFileSync(settings, 'utf8'), '{"loginFixture":true}');
+  const cli = spawnSync(process.execPath, ['bench/analytics-validation.mjs', 'prepare', '--claude-config', claudeConfig], {
+    encoding: 'utf8', env: process.env,
+  });
+  assert.equal(cli.status, 0, cli.stderr);
+  const bank = registerTemp(t, cli.stdout.trim());
+  assert.equal(analyticsArm(bank).env.CLAUDE_CONFIG_DIR, claudeConfig);
+});
+
+test('persistent configs reject owner paths, links, unsafe permissions and changed plans', t => {
+  const parent = registerTemp(t, realpathSync(mkdtempSync('/tmp/x3-login-guard-')));
+  const claudeConfig = join(parent, 'claude'); mkdirSync(claudeConfig, { mode: 0o700 });
+  for (const config of [homedir(), join(homedir(), '.claude'), join(homedir(), '.claude/child'), 'relative', join(parent, 'missing')]) {
+    assert.throws(() => prepareAnalytics({ tempRoot: parent, claudeConfig: config }), /ANALYTICS_CONFIG/);
+  }
+  const alias = join(parent, 'alias'); symlinkSync(claudeConfig, alias);
+  assert.throws(() => prepareAnalytics({ tempRoot: parent, claudeConfig: alias }), /ANALYTICS_CONFIG/);
+  const bank = prepareAnalytics({ tempRoot: parent, claudeConfig });
+  chmodSync(claudeConfig, 0o777);
+  assert.throws(() => prepareAnalytics({ tempRoot: parent, claudeConfig }), /ANALYTICS_CONFIG/);
+  assert.throws(() => analyticsArm(bank), /ANALYTICS_BANK/);
+  chmodSync(claudeConfig, 0o700);
+  const plan = JSON.parse(readFileSync(join(bank, 'plan.json')));
+  writeFileSync(join(bank, 'plan.json'), JSON.stringify({ ...plan, claudeConfig: join(homedir(), '.claude') }) + '\n');
+  assert.throws(() => analyticsArm(bank), /ANALYTICS_BANK/);
+});
+
 test('stats parser rejects missing, nonfinite, negative, unknown and malformed fields', () => {
   assert.equal(parseStats(JSON.stringify(summary())).paths.native.median, 1);
   for (const bad of ['not json', '{}', JSON.stringify({ ...summary(), actions: -1 }),
@@ -96,6 +137,54 @@ test('trace timing subtracts overlapping engine approval waits once', () => {
     event(700, 'to-server', { id: 9, result: {} }), event(1100, 'to-server', { id: 10, result: {} }));
   const stats = summary(); stats.paths.native.median = stats.paths.native.p90 = 0.5;
   assert.equal(validate({ traces, rows: [row({ ms: 1000, saved: 1 }), row({ ms: 1000 })], stats }).maxTimingDeltaMs, 0);
+});
+
+for (const answered of [true, false]) test(`approval waits stay with their call when another call starts (${answered ? 'answered' : 'open'})`, () => {
+  const traces = trace();
+  traces[0].events = [
+    event(0, 'call-received', { id: 2, params: { name: 'js' } }),
+    event(0, 'to-server', { id: 2, method: 'tools/call' }),
+    event(100, 'from-server', { id: 9, method: 'elicitation/create' }),
+    event(100, 'to-client', { id: 9, method: 'elicitation/create' }),
+    event(200, 'call-received', { id: 1, params: { name: 'js' } }),
+    event(200, 'to-server', { id: 1, method: 'tools/call' }),
+    ...(answered ? [event(1500, 'to-server', { id: 9, result: {} })] : []),
+    event(2200, 'to-client', { id: 1, result: {} }),
+    event(2400, 'to-client', { id: 2, result: {} }),
+  ];
+  assert.equal(validate({ traces }).maxTimingDeltaMs, 0);
+  const rows = [row({ time: event(2200).t, saved: 1 }), row({ time: event(2200).t }),
+    row({ call: 2, time: event(2400).t, ms: answered ? 1000 : 100 })];
+  const both = summary();
+  Object.assign(both, { calls: 2, actions: 3, timed: 3, from: event(2200).t, to: event(2400).t });
+  both.paths.native = { actions: 3, timed: 3, median: 1, p90: 1 };
+  assert.equal(validateAnalytics({ rows, stats: both, traces }).maxTimingDeltaMs, 0);
+  const stats = summary(); stats.paths.native.median = stats.paths.native.p90 = 0.35;
+  assert.throws(() => validate({ traces, rows: [row({ ms: 700, saved: 1 }), row({ ms: 700 })], stats }), /ANALYTICS_TIMING/);
+});
+
+test('approval timing refuses ambiguous call ownership instead of subtracting a shared wait', () => {
+  const traces = trace();
+  traces[0].events.splice(2, 0,
+    event(0, 'call-received', { id: 2, params: { name: 'js' } }),
+    event(0, 'to-server', { id: 2, method: 'tools/call' }),
+    event(100, 'from-server', { id: 9, method: 'elicitation/create' }),
+    event(1500, 'to-server', { id: 9, result: {} }));
+  assert.throws(() => validate({ traces }), /ANALYTICS_UNOBSERVABLE_PROMPT/);
+});
+
+test('a completed wait is clipped to its owner call and prompt IDs do not collide with call IDs', () => {
+  const traces = trace();
+  traces[0].events = [
+    event(0, 'call-received', { id: 1, params: { name: 'js' } }),
+    event(0, 'to-server', { id: 1, method: 'tools/call' }),
+    event(100, 'from-server', { id: 1, method: 'elicitation/create' }),
+    event(100, 'to-client', { id: 1, method: 'elicitation/create' }),
+    event(2000, 'to-client', { id: 1, result: {} }),
+    event(2500, 'to-server', { id: 1, result: {} }),
+  ];
+  const stats = summary(); stats.paths.native.median = stats.paths.native.p90 = 0.05;
+  assert.equal(validate({ traces, rows: [row({ ms: 100, saved: 1 }), row({ ms: 100 })], stats }).maxTimingDeltaMs, 0);
 });
 
 test('native aggregates use weighted percentiles across calls, and preserve refusal and not-run counts', () => {
