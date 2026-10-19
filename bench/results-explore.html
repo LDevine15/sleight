@@ -212,7 +212,9 @@ function visibleStudyIdx() {
 const runOk = r => (!state.task || r.task === state.task) && (!state.arm || r.arm === state.arm) &&
   (!state.model || modelsOf(studies[r.si], r.arm).includes(state.model)) &&
   (!state.result || (state.result === 'pass') === r.passed);
-const cellOk = c => (!state.task || c.task === state.task) && (!state.arm || c.arm === state.arm) && (!state.model || modelsOf(studies[c.si], c.arm).includes(state.model));
+// A cell has runs of both kinds, so the result filter keeps cells with at least one run of the chosen kind.
+const cellOk = c => (!state.task || c.task === state.task) && (!state.arm || c.arm === state.arm) && (!state.model || modelsOf(studies[c.si], c.arm).includes(state.model)) &&
+  (!state.result || (state.result === 'pass' ? c.passes > 0 : c.passes < c.runs));
 
 function renderStudy(ids) {
   const box = $('study');

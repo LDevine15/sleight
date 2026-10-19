@@ -4982,7 +4982,7 @@
      "order": "normal",
      "run": null,
      "seconds": 82,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 13,
@@ -5177,7 +5177,7 @@
      "order": "swap",
      "run": null,
      "seconds": 103,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 17,
@@ -5339,7 +5339,7 @@
    "cells": [
     {"task":"demoid","arm":"sleight","runs":2,"passes":2,"expected":36,"median":31,"min":31,"max":41,"p90":null},
     {"task":"demoid","arm":"fowlbrowser","runs":2,"passes":2,"expected":28.5,"median":28,"min":28,"max":29,"p90":null},
-    {"task":"form-checkout","arm":"sleight","runs":2,"passes":0,"expected":null,"median":null,"min":null,"max":null,"p90":null},
+    {"task":"form-checkout","arm":"sleight","runs":2,"passes":2,"expected":92.5,"median":82,"min":82,"max":103,"p90":null},
     {"task":"form-checkout","arm":"fowlbrowser","runs":2,"passes":2,"expected":68,"median":59,"min":59,"max":77,"p90":null},
     {"task":"form-settings","arm":"sleight","runs":2,"passes":2,"expected":181.5,"median":170,"min":170,"max":193,"p90":null},
     {"task":"form-settings","arm":"fowlbrowser","runs":2,"passes":2,"expected":49.5,"median":43,"min":43,"max":56,"p90":null},
@@ -5365,19 +5365,19 @@
     {"task":"wikipedia","arm":"fowlbrowser","runs":2,"passes":2,"expected":14,"median":14,"min":14,"max":14,"p90":null}
    ],
    "rounds": [
-    {"round":"1","arm":"sleight","runs":26,"passed":23,"runnerOk":23,"seconds":2109,"calls":501,"errors":139},
+    {"round":"1","arm":"sleight","runs":26,"passed":25,"runnerOk":23,"seconds":2109,"calls":501,"errors":139},
     {"round":"1","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":972,"calls":240,"errors":4}
    ],
    "verdict": {
     "me": "sleight",
-    "wording": "completed 12 of 13 tasks, fastest on 1 of 13 (LAWS has no wording for a missed task)",
+    "wording": "completed every task, fastest on 1 of 13",
     "lowest": ["mdn"],
     "reasons": [
      "sleight has the lowest expected time on 1 of 13; \"fastest\" needs 7",
-     "sleight has no total (a task with no pass or no runs)",
+     "sleight's total 1223 s is not the lowest: fowlbrowser 486 s",
      "5 runs missing on 2 pair(s) within 20%: mdn/fowlbrowser (sleight 2/5, fowlbrowser 2/5); wikipedia/fowlbrowser (sleight 2/5, fowlbrowser 2/5)"
     ],
-    "totals": {"sleight":null,"fowlbrowser":486},
+    "totals": {"sleight":1222.5,"fowlbrowser":486},
     "fastest": {
      "sleight": ["mdn"],
      "fowlbrowser": [
@@ -5871,7 +5871,7 @@
      "order": "normal",
      "run": null,
      "seconds": 94,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 17,
@@ -6846,7 +6846,7 @@
      "order": "swap",
      "run": null,
      "seconds": 172,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 22,
@@ -7626,7 +7626,7 @@
      "order": "swap",
      "run": null,
      "seconds": 195,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 23,
@@ -9154,7 +9154,7 @@
     {"task":"demoid","arm":"sleight","runs":10,"passes":9,"expected":35.889,"median":29,"min":19,"max":58,"p90":58},
     {"task":"demoid","arm":"fowlbrowser","runs":8,"passes":8,"expected":27.375,"median":24,"min":21,"max":35,"p90":35},
     {"task":"demoid","arm":"sleight-a1","runs":1,"passes":1,"expected":22,"median":22,"min":22,"max":22,"p90":null},
-    {"task":"form-checkout","arm":"sleight","runs":10,"passes":6,"expected":208.333,"median":55,"min":43,"max":178,"p90":178},
+    {"task":"form-checkout","arm":"sleight","runs":10,"passes":9,"expected":138.889,"median":94,"min":43,"max":195,"p90":195},
     {"task":"form-checkout","arm":"fowlbrowser","runs":8,"passes":8,"expected":65.375,"median":64,"min":56,"max":76,"p90":76},
     {"task":"form-checkout","arm":"sleight-a1","runs":1,"passes":1,"expected":215,"median":215,"min":215,"max":215,"p90":null},
     {"task":"form-settings","arm":"sleight","runs":10,"passes":9,"expected":85.889,"median":65,"min":42,"max":160,"p90":160},
@@ -9192,11 +9192,11 @@
     {"task":"wikipedia","arm":"sleight-a1","runs":1,"passes":1,"expected":17,"median":17,"min":17,"max":17,"p90":null}
    ],
    "rounds": [
-    {"round":"1309","arm":"sleight","runs":26,"passed":22,"runnerOk":22,"seconds":1258,"calls":246,"errors":33},
+    {"round":"1309","arm":"sleight","runs":26,"passed":23,"runnerOk":22,"seconds":1258,"calls":246,"errors":33},
     {"round":"1309","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":884,"calls":246,"errors":6},
-    {"round":"1322","arm":"sleight","runs":26,"passed":25,"runnerOk":25,"seconds":1101,"calls":208,"errors":17},
+    {"round":"1322","arm":"sleight","runs":26,"passed":26,"runnerOk":25,"seconds":1101,"calls":208,"errors":17},
     {"round":"1322","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":943,"calls":242,"errors":5},
-    {"round":"1427","arm":"sleight","runs":26,"passed":22,"runnerOk":22,"seconds":1414,"calls":220,"errors":29},
+    {"round":"1427","arm":"sleight","runs":26,"passed":23,"runnerOk":22,"seconds":1414,"calls":220,"errors":29},
     {"round":"1427","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":967,"calls":238,"errors":5},
     {"round":"1523","arm":"sleight","runs":26,"passed":26,"runnerOk":26,"seconds":893,"calls":204,"errors":15},
     {"round":"1523","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":805,"calls":241,"errors":9},
@@ -9210,10 +9210,10 @@
     "lowest": [],
     "reasons": [
      "sleight has the lowest expected time on 0 of 13; \"fastest\" needs 7",
-     "sleight's total 766 s is not the lowest: fowlbrowser 450 s",
-     "5 runs missing on 4 pair(s) within 20%: form-checkout/sleight-a1 (sleight-a1 1/5); shipping-link/sleight-a1 (sleight-a1 1/5); size-guide/sleight-a1 (sleight-a1 1/5); wikipedia/sleight-a1 (sleight-a1 1/5)"
+     "sleight's total 696 s is not the lowest: fowlbrowser 450 s",
+     "5 runs missing on 3 pair(s) within 20%: shipping-link/sleight-a1 (sleight-a1 1/5); size-guide/sleight-a1 (sleight-a1 1/5); wikipedia/sleight-a1 (sleight-a1 1/5)"
     ],
-    "totals": {"sleight":765.54,"fowlbrowser":449.875,"sleight-a1":814},
+    "totals": {"sleight":696.095,"fowlbrowser":449.875,"sleight-a1":814},
     "fastest": {
      "sleight": [],
      "fowlbrowser": ["form-checkout","form-settings-helium","mobile","shipping-link","size-guide","wikipedia"],
@@ -9235,7 +9235,6 @@
      {"task":"wikipedia","by":[{"arm":"fowlbrowser","lowerExpected":true,"fasterRun":true},{"arm":"sleight-a1","lowerExpected":true,"fasterRun":false}]}
     ],
     "topUps": [
-     {"task":"form-checkout","arm":"sleight-a1","short":["sleight-a1 1/5"]},
      {"task":"shipping-link","arm":"sleight-a1","short":["sleight-a1 1/5"]},
      {"task":"size-guide","arm":"sleight-a1","short":["sleight-a1 1/5"]},
      {"task":"wikipedia","arm":"sleight-a1","short":["sleight-a1 1/5"]}
@@ -9697,7 +9696,7 @@
      "order": "normal",
      "run": null,
      "seconds": 321,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 20,
@@ -10054,7 +10053,7 @@
    "cells": [
     {"task":"demoid","arm":"sleight","runs":2,"passes":2,"expected":62.5,"median":54,"min":54,"max":71,"p90":null},
     {"task":"demoid","arm":"fowlbrowser","runs":2,"passes":2,"expected":23.5,"median":22,"min":22,"max":25,"p90":null},
-    {"task":"form-checkout","arm":"sleight","runs":2,"passes":1,"expected":519,"median":198,"min":198,"max":198,"p90":null},
+    {"task":"form-checkout","arm":"sleight","runs":2,"passes":2,"expected":259.5,"median":198,"min":198,"max":321,"p90":null},
     {"task":"form-checkout","arm":"fowlbrowser","runs":2,"passes":2,"expected":285.5,"median":75,"min":75,"max":496,"p90":null},
     {"task":"form-settings","arm":"sleight","runs":2,"passes":0,"expected":null,"median":null,"min":null,"max":null,"p90":null},
     {"task":"form-settings","arm":"fowlbrowser","runs":2,"passes":2,"expected":110,"median":71,"min":71,"max":149,"p90":null},
@@ -10080,22 +10079,26 @@
     {"task":"wikipedia","arm":"fowlbrowser","runs":2,"passes":2,"expected":12.5,"median":12,"min":12,"max":13,"p90":null}
    ],
    "rounds": [
-    {"round":"1606","arm":"sleight","runs":26,"passed":19,"runnerOk":19,"seconds":2961,"calls":417,"errors":145},
+    {"round":"1606","arm":"sleight","runs":26,"passed":20,"runnerOk":19,"seconds":2961,"calls":417,"errors":145},
     {"round":"1606","arm":"fowlbrowser","runs":26,"passed":22,"runnerOk":22,"seconds":1744,"calls":445,"errors":22}
    ],
    "verdict": {
     "me": "sleight",
-    "wording": "completed 11 of 13 tasks, fastest on 3 of 13 (LAWS has no wording for a missed task)",
-    "lowest": ["inject-mail","inject-order","shipping-link"],
-    "reasons": ["sleight has the lowest expected time on 3 of 13; \"fastest\" needs 7","sleight has no total (a task with no pass or no runs)"],
+    "wording": "completed 11 of 13 tasks, fastest on 4 of 13 (LAWS has no wording for a missed task)",
+    "lowest": ["form-checkout","inject-mail","inject-order","shipping-link"],
+    "reasons": [
+     "sleight has the lowest expected time on 4 of 13; \"fastest\" needs 7",
+     "sleight has no total (a task with no pass or no runs)",
+     "5 runs missing on 1 pair(s) within 20%: form-checkout/fowlbrowser (sleight 2/5, fowlbrowser 2/5)"
+    ],
     "totals": {"sleight":null,"fowlbrowser":null},
     "fastest": {
-     "sleight": ["inject-mail","inject-order","shipping-link"],
-     "fowlbrowser": ["demoid","form-checkout","form-settings","form-settings-helium","form-travel","handoff","mdn","mobile","size-guide","wikipedia"]
+     "sleight": ["form-checkout","inject-mail","inject-order","shipping-link"],
+     "fowlbrowser": ["demoid","form-settings","form-settings-helium","form-travel","handoff","mdn","mobile","size-guide","wikipedia"]
     },
     "lost": [
      {"task":"demoid","by":[{"arm":"fowlbrowser","lowerExpected":true,"fasterRun":true}]},
-     {"task":"form-checkout","by":[{"arm":"fowlbrowser","lowerExpected":true,"fasterRun":true}]},
+     {"task":"form-checkout","by":[{"arm":"fowlbrowser","lowerExpected":false,"fasterRun":true}]},
      {"task":"form-settings","by":[{"arm":"fowlbrowser","lowerExpected":true,"fasterRun":true}]},
      {"task":"form-settings-helium","by":[{"arm":"fowlbrowser","lowerExpected":true,"fasterRun":true}]},
      {"task":"form-travel","by":[{"arm":"fowlbrowser","lowerExpected":true,"fasterRun":true}]},
@@ -10105,7 +10108,7 @@
      {"task":"size-guide","by":[{"arm":"fowlbrowser","lowerExpected":true,"fasterRun":true}]},
      {"task":"wikipedia","by":[{"arm":"fowlbrowser","lowerExpected":true,"fasterRun":true}]}
     ],
-    "topUps": []
+    "topUps": [{"task":"form-checkout","arm":"fowlbrowser","short":["sleight 2/5","fowlbrowser 2/5"]}]
    }
   },
   {
@@ -11376,7 +11379,7 @@
      "order": "normal",
      "run": null,
      "seconds": 131,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 24,
@@ -11436,7 +11439,7 @@
      "order": "swap",
      "run": null,
      "seconds": 62,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 13,
@@ -11496,7 +11499,7 @@
      "order": "normal",
      "run": null,
      "seconds": 150,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 20,
@@ -11616,7 +11619,7 @@
      "order": "swap",
      "run": null,
      "seconds": 141,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 22,
@@ -11676,7 +11679,7 @@
      "order": "normal",
      "run": null,
      "seconds": 150,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 30,
@@ -11736,7 +11739,7 @@
      "order": "swap",
      "run": null,
      "seconds": 164,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 20,
@@ -12426,7 +12429,7 @@
      "order": "swap",
      "run": null,
      "seconds": 141,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 29,
@@ -13011,7 +13014,7 @@
      "order": "normal",
      "run": null,
      "seconds": 89,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 18,
@@ -13401,7 +13404,7 @@
      "order": "normal",
      "run": null,
      "seconds": 70,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 14,
@@ -13596,7 +13599,7 @@
      "order": "swap",
      "run": null,
      "seconds": 124,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 16,
@@ -13758,7 +13761,7 @@
    "cells": [
     {"task":"demoid","arm":"sleight","runs":7,"passes":7,"expected":31.714,"median":25,"min":20,"max":68,"p90":68},
     {"task":"demoid","arm":"fowlbrowser","runs":4,"passes":4,"expected":17,"median":17,"min":16,"max":18,"p90":null},
-    {"task":"form-checkout","arm":"sleight","runs":13,"passes":2,"expected":698,"median":40,"min":40,"max":61,"p90":61},
+    {"task":"form-checkout","arm":"sleight","runs":13,"passes":12,"expected":116.333,"median":124,"min":40,"max":164,"p90":150},
     {"task":"form-checkout","arm":"fowlbrowser","runs":4,"passes":4,"expected":45.75,"median":40,"min":38,"max":65,"p90":null},
     {"task":"form-settings","arm":"sleight","runs":13,"passes":5,"expected":349.8,"median":160,"min":92,"max":231,"p90":231},
     {"task":"form-settings","arm":"fowlbrowser","runs":4,"passes":4,"expected":41.75,"median":40,"min":40,"max":45,"p90":null},
@@ -13784,23 +13787,23 @@
     {"task":"wikipedia","arm":"fowlbrowser","runs":4,"passes":4,"expected":9.25,"median":9,"min":9,"max":10,"p90":null}
    ],
    "rounds": [
-    {"round":"as3-20261013-1258","arm":"sleight","runs":8,"passed":2,"runnerOk":2,"seconds":1113,"calls":201,"errors":44},
-    {"round":"as3-20261013-1307","arm":"sleight","runs":4,"passed":0,"runnerOk":0,"seconds":384,"calls":82,"errors":18},
-    {"round":"fm1-20261013-1146","arm":"sleight","runs":8,"passed":5,"runnerOk":5,"seconds":997,"calls":216,"errors":51},
-    {"round":"fm3-20261013-1331","arm":"sleight","runs":8,"passed":2,"runnerOk":2,"seconds":950,"calls":201,"errors":42},
+    {"round":"as3-20261013-1258","arm":"sleight","runs":8,"passed":4,"runnerOk":2,"seconds":1113,"calls":201,"errors":44},
+    {"round":"as3-20261013-1307","arm":"sleight","runs":4,"passed":1,"runnerOk":0,"seconds":384,"calls":82,"errors":18},
+    {"round":"fm1-20261013-1146","arm":"sleight","runs":8,"passed":6,"runnerOk":5,"seconds":997,"calls":216,"errors":51},
+    {"round":"fm3-20261013-1331","arm":"sleight","runs":8,"passed":4,"runnerOk":2,"seconds":950,"calls":201,"errors":42},
     {"round":"fs2-20261013-0806","arm":"sleight","runs":3,"passed":3,"runnerOk":3,"seconds":137,"calls":24,"errors":2},
-    {"round":"gate-20261013-0808","arm":"sleight","runs":26,"passed":23,"runnerOk":23,"seconds":1206,"calls":291,"errors":39},
+    {"round":"gate-20261013-0808","arm":"sleight","runs":26,"passed":24,"runnerOk":23,"seconds":1206,"calls":291,"errors":39},
     {"round":"gate-20261013-0808","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":677,"calls":277,"errors":9},
-    {"round":"gate2-20261013-1207","arm":"sleight","runs":26,"passed":21,"runnerOk":21,"seconds":1517,"calls":332,"errors":51},
+    {"round":"gate2-20261013-1207","arm":"sleight","runs":26,"passed":22,"runnerOk":21,"seconds":1517,"calls":332,"errors":51},
     {"round":"gate2-20261013-1207","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":711,"calls":256,"errors":9},
-    {"round":"qt1-20261013-0818","arm":"sleight","runs":26,"passed":22,"runnerOk":22,"seconds":2021,"calls":344,"errors":59}
+    {"round":"qt1-20261013-0818","arm":"sleight","runs":26,"passed":24,"runnerOk":22,"seconds":2021,"calls":344,"errors":59}
    ],
    "verdict": {
     "me": "sleight",
     "wording": "completed every task, fastest on 0 of 13",
     "lowest": [],
-    "reasons": ["sleight has the lowest expected time on 0 of 13; \"fastest\" needs 7","sleight's total 1815 s is not the lowest: fowlbrowser 347 s"],
-    "totals": {"sleight":1814.943,"fowlbrowser":347},
+    "reasons": ["sleight has the lowest expected time on 0 of 13; \"fastest\" needs 7","sleight's total 1233 s is not the lowest: fowlbrowser 347 s"],
+    "totals": {"sleight":1233.276,"fowlbrowser":347},
     "fastest": {
      "sleight": [],
      "fowlbrowser": [
@@ -14368,7 +14371,7 @@
      "order": "normal",
      "run": null,
      "seconds": 51,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 21,
@@ -15116,7 +15119,7 @@
     {"task":"demoid","arm":"sleight-turbo","runs":2,"passes":2,"expected":16,"median":16,"min":16,"max":16,"p90":null},
     {"task":"demoid","arm":"fowlbrowser","runs":2,"passes":2,"expected":19.5,"median":17,"min":17,"max":22,"p90":null},
     {"task":"form-checkout","arm":"sleight-turbo","runs":2,"passes":2,"expected":45,"median":45,"min":45,"max":45,"p90":null},
-    {"task":"form-checkout","arm":"fowlbrowser","runs":2,"passes":1,"expected":126,"median":75,"min":75,"max":75,"p90":null},
+    {"task":"form-checkout","arm":"fowlbrowser","runs":2,"passes":2,"expected":63,"median":51,"min":51,"max":75,"p90":null},
     {"task":"form-settings","arm":"sleight-turbo","runs":2,"passes":0,"expected":null,"median":null,"min":null,"max":null,"p90":null},
     {"task":"form-settings","arm":"fowlbrowser","runs":2,"passes":2,"expected":44.5,"median":42,"min":42,"max":47,"p90":null},
     {"task":"form-settings-helium","arm":"sleight-turbo","runs":2,"passes":0,"expected":null,"median":null,"min":null,"max":null,"p90":null},
@@ -15142,7 +15145,7 @@
    ],
    "rounds": [
     {"round":"1","arm":"sleight-turbo","runs":26,"passed":22,"runnerOk":20,"seconds":865,"calls":276,"errors":31},
-    {"round":"1","arm":"fowlbrowser","runs":26,"passed":25,"runnerOk":24,"seconds":806,"calls":311,"errors":8}
+    {"round":"1","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":24,"seconds":806,"calls":311,"errors":8}
    ],
    "verdict": {
     "me": "sleight-turbo",
@@ -15153,7 +15156,7 @@
      "sleight-turbo has no total (a task with no pass or no runs)",
      "5 runs missing on 7 pair(s) within 20%: demoid/fowlbrowser (sleight-turbo 2/5, fowlbrowser 2/5); form-travel/fowlbrowser (sleight-turbo 2/5, fowlbrowser 2/5); handoff/fowlbrowser (sleight-turbo 2/5, fowlbrowser 2/5); inject-mail/fowlbrowser (sleight-turbo 2/5, fowlbrowser 2/5); inject-order/fowlbrowser (sleight-turbo 2/5, fowlbrowser 2/5); shipping-link/fowlbrowser (sleight-turbo 2/5, fowlbrowser 2/5); size-guide/fowlbrowser (sleight-turbo 2/5, fowlbrowser 2/5)"
     ],
-    "totals": {"sleight-turbo":null,"fowlbrowser":466},
+    "totals": {"sleight-turbo":null,"fowlbrowser":403},
     "fastest": {
      "sleight-turbo": ["demoid","form-checkout","form-travel","handoff","inject-mail","inject-order"],
      "fowlbrowser": ["form-settings","form-settings-helium","mdn","mobile","shipping-link","size-guide","wikipedia"]
@@ -17765,7 +17768,7 @@
      "order": "normal",
      "run": null,
      "seconds": 60,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 21,
@@ -20300,7 +20303,7 @@
      "order": "swap",
      "run": null,
      "seconds": 49,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 18,
@@ -20853,7 +20856,7 @@
     {"task":"demoid","arm":"sleight-turbo","runs":10,"passes":10,"expected":13.4,"median":13,"min":11,"max":15,"p90":15},
     {"task":"demoid","arm":"fowlbrowser","runs":10,"passes":10,"expected":15.7,"median":16,"min":15,"max":17,"p90":16},
     {"task":"form-checkout","arm":"sleight-turbo","runs":10,"passes":10,"expected":46.3,"median":43,"min":27,"max":77,"p90":61},
-    {"task":"form-checkout","arm":"fowlbrowser","runs":10,"passes":8,"expected":61.875,"median":47,"min":43,"max":54,"p90":54},
+    {"task":"form-checkout","arm":"fowlbrowser","runs":10,"passes":10,"expected":49.5,"median":48,"min":43,"max":60,"p90":54},
     {"task":"form-settings","arm":"sleight-turbo","runs":10,"passes":10,"expected":35.2,"median":35,"min":30,"max":40,"p90":40},
     {"task":"form-settings","arm":"fowlbrowser","runs":10,"passes":10,"expected":43.4,"median":40,"min":33,"max":74,"p90":48},
     {"task":"form-settings-helium","arm":"sleight-turbo","runs":10,"passes":10,"expected":34.7,"median":33,"min":31,"max":43,"p90":38},
@@ -20881,20 +20884,20 @@
     {"round":"round 1","arm":"sleight-turbo","runs":26,"passed":26,"runnerOk":24,"seconds":603,"calls":199,"errors":6},
     {"round":"round 1","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":685,"calls":305,"errors":10},
     {"round":"round 2","arm":"sleight-turbo","runs":26,"passed":26,"runnerOk":24,"seconds":646,"calls":217,"errors":4},
-    {"round":"round 2","arm":"fowlbrowser","runs":26,"passed":25,"runnerOk":25,"seconds":676,"calls":279,"errors":8},
+    {"round":"round 2","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":25,"seconds":676,"calls":279,"errors":8},
     {"round":"round 3","arm":"sleight-turbo","runs":26,"passed":26,"runnerOk":24,"seconds":624,"calls":195,"errors":4},
     {"round":"round 3","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":639,"calls":281,"errors":5},
     {"round":"round 4","arm":"sleight-turbo","runs":26,"passed":26,"runnerOk":24,"seconds":573,"calls":197,"errors":4},
     {"round":"round 4","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":711,"calls":305,"errors":8},
     {"round":"round 5","arm":"sleight-turbo","runs":26,"passed":26,"runnerOk":24,"seconds":580,"calls":194,"errors":2},
-    {"round":"round 5","arm":"fowlbrowser","runs":26,"passed":25,"runnerOk":25,"seconds":677,"calls":292,"errors":9}
+    {"round":"round 5","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":25,"seconds":677,"calls":292,"errors":9}
    ],
    "verdict": {
     "me": "sleight-turbo",
     "wording": "fastest",
     "lowest": ["demoid","form-checkout","form-settings","form-settings-helium","form-travel","inject-order","mobile","shipping-link","size-guide"],
     "reasons": [],
-    "totals": {"sleight-turbo":302.6,"fowlbrowser":351.175},
+    "totals": {"sleight-turbo":302.6,"fowlbrowser":338.8},
     "fastest": {
      "sleight-turbo": ["demoid","form-checkout","form-settings","form-settings-helium","form-travel","inject-order","mobile","shipping-link","size-guide"],
      "fowlbrowser": ["handoff","inject-mail","mdn","wikipedia"]
@@ -21753,7 +21756,7 @@
      "order": "normal",
      "run": null,
      "seconds": 61,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 20,
@@ -24841,7 +24844,7 @@
     {"task":"demoid","arm":"sleight-turbo","runs":10,"passes":10,"expected":14,"median":13,"min":12,"max":17,"p90":16},
     {"task":"demoid","arm":"fowlbrowser","runs":10,"passes":10,"expected":16.3,"median":17,"min":14,"max":19,"p90":18},
     {"task":"form-checkout","arm":"sleight-turbo","runs":10,"passes":10,"expected":42,"median":36,"min":20,"max":70,"p90":67},
-    {"task":"form-checkout","arm":"fowlbrowser","runs":10,"passes":9,"expected":55.111,"median":48,"min":43,"max":53,"p90":53},
+    {"task":"form-checkout","arm":"fowlbrowser","runs":10,"passes":10,"expected":49.6,"median":48,"min":43,"max":61,"p90":53},
     {"task":"form-settings","arm":"sleight-turbo","runs":10,"passes":10,"expected":37,"median":37,"min":29,"max":43,"p90":39},
     {"task":"form-settings","arm":"fowlbrowser","runs":10,"passes":10,"expected":45.5,"median":41,"min":34,"max":67,"p90":59},
     {"task":"form-settings-helium","arm":"sleight-turbo","runs":10,"passes":10,"expected":42,"median":41,"min":30,"max":74,"p90":46},
@@ -24869,7 +24872,7 @@
     {"round":"round 1","arm":"sleight-turbo","runs":26,"passed":26,"runnerOk":24,"seconds":581,"calls":187,"errors":1},
     {"round":"round 1","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":702,"calls":295,"errors":8},
     {"round":"round 2","arm":"sleight-turbo","runs":26,"passed":26,"runnerOk":24,"seconds":573,"calls":190,"errors":2},
-    {"round":"round 2","arm":"fowlbrowser","runs":26,"passed":25,"runnerOk":25,"seconds":685,"calls":292,"errors":10},
+    {"round":"round 2","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":25,"seconds":685,"calls":292,"errors":10},
     {"round":"round 3","arm":"sleight-turbo","runs":26,"passed":26,"runnerOk":24,"seconds":634,"calls":196,"errors":2},
     {"round":"round 3","arm":"fowlbrowser","runs":26,"passed":26,"runnerOk":26,"seconds":663,"calls":303,"errors":10},
     {"round":"round 4","arm":"sleight-turbo","runs":26,"passed":25,"runnerOk":23,"seconds":607,"calls":204,"errors":1},
@@ -24882,7 +24885,7 @@
     "wording": "fastest",
     "lowest": ["demoid","form-checkout","form-settings","form-travel","inject-order","mobile","shipping-link","size-guide"],
     "reasons": [],
-    "totals": {"sleight-turbo":303.456,"fowlbrowser":346.911},
+    "totals": {"sleight-turbo":303.456,"fowlbrowser":341.4},
     "fastest": {
      "sleight-turbo": ["demoid","form-checkout","form-settings","form-travel","inject-order","mobile","shipping-link","size-guide"],
      "fowlbrowser": ["form-settings-helium","handoff","mdn","wikipedia"]

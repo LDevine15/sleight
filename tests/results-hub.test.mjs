@@ -2,13 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir, userInfo } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import vm from 'node:vm';
 import { claim, score } from '../bench/claim-score.mjs';
 import {
   FAMILIES, cellText, cellsFor, collectJsonAbs, collectRace, collectReleases, collectRunnerStudies, dateRange, lossRule, parseRunnerReport,
-  render, scoreClaimDir, scrub, variantOf,
+  ownerPass, render, scoreClaimDir, scrub, scrubPaths, variantOf,
 } from '../bench/results-hub.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
@@ -126,9 +126,11 @@ test('a race set scores the same as race-score.mjs on the same round folders', t
 });
 
 test('no generated file holds a home path, the account name or the owner\'s name', () => {
-  const names = [userInfo().username];
-  try { names.push(...execFileSync('id', ['-F'], { encoding: 'utf8' }).trim().split(/\s+/)); } catch { /* not macOS */ }
-  const banned = [...new Set(names.filter(name => name.length >= 3))].map(name => new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  // A fixed list, plus the full name macOS reports for this account (id -F) so no name is written into the repo. The account
+  // name alone isn't used: on CI it is 'runner', a word the pages use.
+  const names = [];
+  if (process.platform === 'darwin') try { names.push(...execFileSync('id', ['-F'], { encoding: 'utf8' }).trim().split(/\s+/)); } catch { /* no full name */ }
+  const banned = [/\/Users\//, /\/var\/folders\//, ...[...new Set(names.filter(name => name.length >= 3))].map(name => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'))];
   const files = [...readdirSync(OUT).filter(n => !n.startsWith('.')).map(n => join(OUT, n)), ...readdirSync(join(OUT, 'data')).map(n => join(OUT, 'data', n))]
     .filter(path => /\.(md|html|json)$/.test(path));
   assert.ok(files.length >= 14);
@@ -138,7 +140,10 @@ test('no generated file holds a home path, the account name or the owner\'s name
     assert.ok(!text.includes(homedir()), file);
     for (const re of banned) assert.doesNotMatch(text, re, file);
   }
-  assert.equal(scrub(`${homedir()}/x and /Users/someone/y`), '~/x and ~/y');
+  assert.equal(scrubPaths(`${homedir()}/x and /Users/someone/y`), '~/x and ~/y');
+  assert.equal(scrubPaths('at /private/var/folders/ab/cd/T/x.json and /var/folders/ab/cd/T/y'), 'at $TMPDIR and $TMPDIR');
+  assert.equal(scrubPaths('the runner graded it'), 'the runner graded it', 'rendering scrubs paths only, never words');
+  assert.equal(scrub('/Users/someone/z'), '~/z');
 });
 
 test('runner reports parse into runs, and the owner\'s scoring passes a checkout that stopped', () => {
@@ -161,6 +166,16 @@ test('runner reports parse into runs, and the owner\'s scoring passes a checkout
   const turboCheckout = gate.runs.filter(r => r.arm === 'sleight-turbo' && r.task === 'form-checkout');
   assert.equal(turboCheckout.length, 10);
   assert.ok(turboCheckout.every(r => r.passed && !r.runnerOk), 'every turbo checkout stopped before paying, a pass under the owner\'s scoring');
+});
+
+test('the owner\'s scoring looks only at the outcome problems of a checkout run', () => {
+  const failed = { task: 'form-checkout', ok: false };
+  assert.equal(ownerPass(failed, ['outcome: nothing submitted']), true);
+  assert.equal(ownerPass(failed, ['outcome: nothing submitted', 'focus: took focus']), true, 'a focus problem is not an outcome problem');
+  assert.equal(ownerPass(failed, ['focus: took focus']), false, 'no outcome problem recorded');
+  assert.equal(ownerPass(failed, ['outcome: paid without a stated amount']), false);
+  assert.equal(ownerPass({ task: 'form-travel', ok: false }, ['outcome: nothing submitted']), false);
+  assert.equal(ownerPass({ task: 'wikipedia', ok: true }, []), true);
 });
 
 test('the loss rule counts a lower expected time or a faster passing run', () => {
@@ -205,6 +220,11 @@ test('explore.html runs, fills its filters, draws charts per task and switches f
   assert.ok(nodes['f-study'].children.length >= 2);
   nodes['f-study'].listeners.change[0]({ target: { value: nodes['f-study'].children[1].attrs.value } });
   assert.ok(nodes.charts.children.length >= 12, 'one chart per race task');
+  const cellRows = () => nodes.cells.children[1].children.length;
+  const all = cellRows();
+  nodes['f-result'].listeners.change[0]({ target: { value: 'fail' } });
+  assert.ok(cellRows() < all, 'the result filter narrows the cell table to cells with a failed run');
+  nodes['f-result'].listeners.change[0]({ target: { value: '' } });
   nodes.theme.listeners.click[0]();
   assert.equal(document.documentElement.attrs['data-theme'], 'light');
 });

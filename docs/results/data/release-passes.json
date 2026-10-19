@@ -1650,7 +1650,7 @@
    "seconds": 336,
    "passed": false,
    "turns": null,
-   "problem": "/var/folders/1x/q5_9hz5j3gs1fcf2z5yz477m0000gn/T/sleight-bench/2026-10-09T00-51-10-427Z/sleight-chess-drag-1/a443891b.game was not saved",
+   "problem": "$TMPDIR was not saved",
    "file": "2026-10-09-release-0.16.0.json"
   },
   {"task":"simulator-form","arm":"sleight","run":1,"round":null,"seconds":39.9,"passed":true,"turns":6,"problem":null,"file":"2026-10-09-release-0.16.0.json"},
@@ -1681,7 +1681,7 @@
    "seconds": 84.5,
    "passed": false,
    "turns": 14,
-   "problem": "/var/folders/1x/q5_9hz5j3gs1fcf2z5yz477m0000gn/T/sleight-bench/2026-10-09T04-13-53-411Z/sleight-chess-drag-1/8c801a11.game was not saved",
+   "problem": "$TMPDIR was not saved",
    "file": "2026-10-09-release-1.0.0.json"
   },
   {

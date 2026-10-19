@@ -28,19 +28,28 @@ const sortedUniq = list => uniq(list).sort();
 // ---------------------------------------------------------------------------------------------------------------------------
 // Scrubbing. Published data shows the home folder as ~ and never the owner's account or full name (LAWS).
 
+// Paths are scrubbed everywhere, render included. Owner names are scrubbed only in collect(), on strings copied from raw data,
+// so rendering never depends on which account runs it (on CI the account is 'runner', a word the pages use).
 let nameParts;
 function ownerNames() {
   if (nameParts) return nameParts;
-  const names = [userInfo().username];
-  try { names.push(...execFileSync('id', ['-F'], { encoding: 'utf8' }).trim().split(/\s+/)); } catch { /* not macOS */ }
+  const names = [];
+  if (process.platform === 'darwin') {
+    names.push(userInfo().username);
+    try { names.push(...execFileSync('id', ['-F'], { encoding: 'utf8' }).trim().split(/\s+/)); } catch { /* no full name */ }
+  }
   nameParts = uniq(names.filter(name => name && name.length >= 3));
   return nameParts;
 }
 const escapeRe = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export function scrubPaths(value) {
+  return String(value ?? '').split(homedir()).join('~')
+    .replace(/(?:\/private)?\/var\/folders\/[^\s"'`)\],;:]+/g, '$TMPDIR')
+    .replace(/\/Users\/[^/\s"'`)\],;:]+/g, '~');
+}
 export function scrub(value) {
-  let text = String(value ?? '');
-  text = text.split(homedir()).join('~').replace(/\/Users\/[^/\s"'`)\],;:]+/g, '~');
-  for (const name of ownerNames()) text = text.replace(new RegExp(escapeRe(name), 'gi'), '[owner]');
+  let text = scrubPaths(value);
+  for (const name of ownerNames()) text = text.replace(new RegExp(`\\b${escapeRe(name)}\\b`, 'gi'), '[owner]');
   return text;
 }
 const tilde = path => scrub(path);
@@ -106,6 +115,8 @@ function summarizeVerdict(table, verdict, tasks, arms, me) {
   };
 }
 
+const scrubVerdict = verdict => ({ ...verdict, wording: scrub(verdict.wording), reasons: verdict.reasons.map(scrub) });
+
 // ---------------------------------------------------------------------------------------------------------------------------
 // Collect: native claim and app claim (bench/claim-score.mjs, its CLI loop over a results folder).
 
@@ -162,13 +173,13 @@ function collectClaim({ id, title, dir, rulesFile, since, sinceNote }) {
     problem: row.passed ? null : scrub(row.reason).slice(0, 200), regraded: row.regraded ? scrub(row.regraded) : undefined, file: row.file }));
   return {
     family: id, title,
-    source: { results: tilde(dir), rules: tilde(rulesFile).replace(tilde(ROOT) + '/', ''), since: since ?? rules.since, sinceNote: sinceNote ?? rules.sinceReason ?? null,
+    source: { results: tilde(dir), rules: tilde(rulesFile).replace(tilde(ROOT) + '/', ''), since: since ?? rules.since, sinceNote: scrub(sinceNote ?? rules.sinceReason ?? '') || null,
       files: result.files.filter(f => f.kept).map(f => ({ file: f.file, arm: (f.raw.arms ?? []).join(','), kept: f.kept })) },
     studies: [{
       id, family: id, title, browser: null, me: 'sleight', arms, tasks,
       date: stamps.length ? dateRange(sortedUniq(stamps)[0], sortedUniq(stamps).at(-1)) : null,
       models, effort: sortedUniq(effort), auth: sortedUniq(auth), versions,
-      runs, cells, verdict: summarizeVerdict(table, verdict, tasks, arms, 'sleight'),
+      runs, cells, verdict: scrubVerdict(summarizeVerdict(table, verdict, tasks, arms, 'sleight')),
       excluded: Object.entries(result.dropped).sort(([a], [b]) => (a < b ? -1 : 1)).map(([why, count]) => ({ why: scrub(why), count })),
       warnings: result.warnings.map(scrub),
     }],
@@ -212,6 +223,7 @@ function roundFacts(dir) {
 }
 
 export function collectRace({ raceDir, browsers, family, title }) {
+  // Folder names pick the candidates; a round's own browser.json decides where it is scored, as in race-score.mjs.
   const listed = listRaceRounds(raceDir).filter(round => browsers.includes(round.browser));
   const marked = listed.filter(round => !round.done && existsSync(join(round.dir, 'harness-failure.json')));
   const inProgress = listed.filter(round => !round.done && !marked.includes(round)).map(round => round.name);
@@ -223,8 +235,8 @@ export function collectRace({ raceDir, browsers, family, title }) {
   const studies = [], partial = [];
   for (const browser of browsers) {
     const me = sleightArmFor(browser);
-    const mine = usable.filter(round => round.browser === browser && round.loaded.arm === me);
-    const others = usable.filter(round => round.browser === browser && round.loaded.arm !== me);
+    const mine = usable.filter(round => round.loaded.browser === browser && round.loaded.arm === me);
+    const others = usable.filter(round => round.loaded.browser === browser && round.loaded.arm !== me);
     if (!mine.length) continue;
     const tasks = sortedUniq(others.flatMap(round => round.loaded.rows.map(row => row.task)));
     const labels = sortedUniq(mine.map(round => round.label));
@@ -311,7 +323,11 @@ export function variantOf(stem) {
 
 // Owner's scoring (LAWS): a run that stops before a payment the prompt didn't price counts as done. The runner grades a
 // form-checkout run that submitted nothing as a failure; here that run passes, and the runner's grade is kept beside it.
-const ownerPass = (row, problems) => row.ok || (row.task === 'form-checkout' && problems.length > 0 && problems.every(p => /nothing submitted/.test(p)));
+export function ownerPass(row, problems) {
+  if (row.ok) return true;
+  const outcome = problems.filter(p => p.startsWith('outcome:'));
+  return row.task === 'form-checkout' && outcome.length > 0 && outcome.every(p => /nothing submitted/.test(p));
+}
 
 // The write-up of a round folder: <study>.md, or the write-up whose section links to <study>/ (later sessions such as
 // 2026-10-16-gate-3 are written up as a section of 2026-10-16-gate.md). Model and effort come from that section first.
@@ -394,6 +410,12 @@ export function collectRunnerStudies() {
 // ---------------------------------------------------------------------------------------------------------------------------
 // Collect: A/B studies saved as JSON in docs/benchmarks ({ study, rounds: [{ arm, results }] } or { study, sides: [{ side, results }] }).
 
+// The study's first sentence, or the whole text (cut at 160) when that sentence is too short to name the study.
+const abTitle = (text, file) => {
+  const first = text.split(/(?<=[.:;])\s/)[0];
+  return (first.length >= 25 ? first : text).slice(0, 160) || file.replace(/\.json$/, '');
+};
+
 export function collectJsonAbs() {
   const studies = [];
   for (const name of readdirSync(BENCH).sort().filter(file => file.endsWith('.json'))) {
@@ -413,7 +435,7 @@ export function collectJsonAbs() {
     for (const run of runs) models[run.arm] = sortedUniq([...(models[run.arm] ?? []), ...run.models]);
     const effort = sortedUniq([...parts.map(p => p.effort), /\b(high|medium|low)\b/.exec(raw.model ?? '')?.[1]]);
     studies.push({
-      id: name.replace(/\.json$/, ''), family: 'ab-tests', title: scrub(raw.study).split(/(?<=[.:;])\s/)[0].slice(0, 160), date: raw.date ?? name.slice(0, 10),
+      id: name.replace(/\.json$/, ''), family: 'ab-tests', title: abTitle(scrub(raw.study ?? ''), name), date: raw.date ?? name.slice(0, 10),
       browser: null, me, arms, tasks, models, effort, commit: raw.commit ?? null, json: name,
       writeUp: existsSync(join(BENCH, name.replace(/\.json$/, '.md'))) ? name.replace(/\.json$/, '.md') : mentionedIn(name),
       runs: runs.map(({ models: _m, ...run }) => run), cells, verdict: summarizeVerdict(table, verdict, tasks, arms, me),
@@ -548,7 +570,7 @@ function renderClaimPage(data, { name, intro }) {
     SCORING,
     LAWS_RULES,
     `Rows come from ${code(data.source.results)} with the exclusions in ${code(data.source.rules)}. Scoring starts at file stamp ${code(data.source.since)}` +
-      (data.source.sinceNote ? `, and the reason given is ${code(scrub(data.source.sinceNote).replace(/[.\s]*$/, ''))}.` : '.'),
+      (data.source.sinceNote ? `, and the reason given is ${code(data.source.sinceNote.replace(/[.\s]*$/, ''))}.` : '.'),
     'The results files don\'t record sleight\'s commit or the Codex CLI version.',
   ]) + '\n');
   out.push(armTable(study) + '\n');
@@ -557,7 +579,7 @@ function renderClaimPage(data, { name, intro }) {
   out.push('## Result\n');
   out.push(`The scorer's wording is "${study.verdict.wording}". sleight has the lowest expected time on ${study.verdict.lowest.length} of ${study.tasks.length} tasks.\n`);
   out.push(lostTable(study) + '\n');
-  if (study.verdict.reasons.length) out.push('Why the wording isn\'t "fastest":\n\n' + list(study.verdict.reasons.map(r => code(scrub(r)))) + '\n');
+  if (study.verdict.reasons.length) out.push('Why the wording isn\'t "fastest":\n\n' + list(study.verdict.reasons.map(r => code(r))) + '\n');
   out.push(topUpTable(study) + '\n');
   out.push('Each cell is expected seconds, then passes/runs.\n');
   out.push(taskMatrix(study) + '\n');
@@ -635,7 +657,7 @@ function renderTurboPage(data, name) {
   out.push('## Method\n');
   out.push(list([
     'FowlBrowser\'s head-to-head runner, pinned with sleight\'s patch, runs each arm in both browser orders (normal and swap), so a gate round is 26 runs per arm. Its reports give whole seconds. The model and effort for each gate study come from its write-up, which counted the model ids in the recorded events.',
-    'A gate run passes under the owner\'s scoring (LAWS). That is the runner\'s grade, except that a form-checkout run that submitted nothing passes, since it stopped before an unpriced payment. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.',
+    'A gate run passes under the owner\'s scoring (LAWS). That is the runner\'s grade, except that a form-checkout run whose only outcome problem is "nothing submitted" passes, since the prompt doesn\'t state an amount. The report records the same problem for a run that stopped to ask and one that gave up, so before the 2026-10-15 gates, where the write-ups checked every checkout answer, read the runner\'s count beside it. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.',
     RACE_GRADING,
     SCORING,
     LAWS_RULES,
@@ -891,7 +913,7 @@ export function render(all) {
   const template = readFileSync(join(ROOT, 'bench/results-explore.html'), 'utf8');
   const data = JSON.stringify(exploreData(all)).replace(/</g, '\\u003c');
   files['explore.html'] = template.replace('/*__DATA__*/null', () => data);
-  for (const [name, text] of Object.entries(files)) files[name] = scrub(text);
+  for (const [name, text] of Object.entries(files)) files[name] = scrubPaths(text);
   return files;
 }
 

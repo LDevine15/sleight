@@ -9,7 +9,10 @@
    "reason": "harness: Safari identity check compared /Applications/Safari.app against the cryptex path a running Safari reports (fixed in adcebef9). Rerun."
   }
  ],
- "partial": [{"browser":"safari","label":"sleight-b7","rounds":["safari-sleight-b7-r2","safari-sleight-b7-r3"],"runs":13,"needed":36}],
+ "partial": [
+  {"browser":"safari","label":"sleight-b7","rounds":["safari-sleight-b7-r2","safari-sleight-b7-r3"],"runs":24,"needed":36},
+  {"browser":"firefox","label":"sleight-b7","rounds":["firefox-sleight-b7-r1","firefox-sleight-b7-r2","firefox-sleight-b7-r3"],"runs":26,"needed":36}
+ ],
  "studies": [
   {
    "id": "browser-race-safari-sleight",

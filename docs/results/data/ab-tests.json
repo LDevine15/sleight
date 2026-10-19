@@ -67,7 +67,7 @@
      "seconds": 30.1,
      "passed": false,
      "turns": null,
-     "problem": "/var/folders/1x/q5_9hz5j3gs1fcf2z5yz477m0000gn/T/sleight-bench/2026-10-10T08-03-51-596Z/sleight-textedit-save-1/f5e3ad67.txt was not saved",
+     "problem": "$TMPDIR was not saved",
      "file": "2026-10-10-merge-ab.json"
     },
     {"task":"textedit-save","arm":"default","round":"round 0","run":1,"seconds":45.1,"passed":true,"turns":9,"problem":null,"file":"2026-10-10-merge-ab.json"},
@@ -106,7 +106,7 @@
   {
    "id": "2026-10-11-firstcall-ab",
    "family": "ab-tests",
-   "title": "first-call wording A/B:",
+   "title": "first-call wording A/B: the default against SLEIGHT_FIRST_CALL_BATCH=app, calculator-click, textedit-edit and textedit-save x2 per round, 2 rounds alternating",
    "date": "2026-10-11",
    "browser": null,
    "me": "default",
@@ -636,7 +636,7 @@
   {
    "id": "2026-10-11-sheet-ab",
    "family": "ab-tests",
-   "title": "Save-sheet A/B:",
+   "title": "Save-sheet A/B: default against SLEIGHT_FIRST_CALL_BATCH=sheet (no Cmd+S stop, menu clicks in one call), calculator-click, textedit-edit and textedit-save x3 pe",
    "date": "2026-10-11",
    "browser": null,
    "me": "sheet",
@@ -824,7 +824,7 @@
   {
    "id": "2026-10-11-skill-ab",
    "family": "ab-tests",
-   "title": "skill A/B:",
+   "title": "skill A/B: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md) and SLEIGHT_SKILL=none, calculator-click and textedit-edit x3 per arm per round, 2 rounds, owner",
    "date": "2026-10-11",
    "browser": null,
    "me": "slim",
@@ -896,7 +896,7 @@
   {
    "id": "2026-10-11-skill-ab-2",
    "family": "ab-tests",
-   "title": "skill A/B rerun:",
+   "title": "skill A/B rerun: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md with placeholder ID and label examples) and SLEIGHT_SKILL=none, calculator-click and texted",
    "date": "2026-10-11",
    "browser": null,
    "me": "slim",
@@ -1262,7 +1262,7 @@
      "order": "normal",
      "run": null,
      "seconds": 231,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 42,
@@ -1457,7 +1457,7 @@
      "order": "swap",
      "run": null,
      "seconds": 217,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 51,
@@ -2789,7 +2789,7 @@
    "cells": [
     {"task":"demoid","arm":"default","runs":4,"passes":4,"expected":77.75,"median":61,"min":50,"max":124,"p90":null},
     {"task":"demoid","arm":"min","runs":4,"passes":2,"expected":353,"median":57,"min":57,"max":286,"p90":null},
-    {"task":"form-checkout","arm":"default","runs":4,"passes":2,"expected":318,"median":90,"min":90,"max":98,"p90":null},
+    {"task":"form-checkout","arm":"default","runs":4,"passes":4,"expected":159,"median":98,"min":90,"max":231,"p90":null},
     {"task":"form-checkout","arm":"min","runs":4,"passes":4,"expected":74.5,"median":65,"min":53,"max":104,"p90":null},
     {"task":"form-settings","arm":"default","runs":4,"passes":1,"expected":1146,"median":244,"min":244,"max":244,"p90":null},
     {"task":"form-settings","arm":"min","runs":4,"passes":1,"expected":863,"median":185,"min":185,"max":185,"p90":null},
@@ -2815,7 +2815,7 @@
     {"task":"wikipedia","arm":"min","runs":4,"passes":4,"expected":71,"median":35,"min":30,"max":168,"p90":null}
    ],
    "rounds": [
-    {"round":"1645","arm":"default","runs":26,"passed":17,"runnerOk":17,"seconds":2955,"calls":507,"errors":134},
+    {"round":"1645","arm":"default","runs":26,"passed":19,"runnerOk":17,"seconds":2955,"calls":507,"errors":134},
     {"round":"1645","arm":"min","runs":26,"passed":23,"runnerOk":23,"seconds":2674,"calls":466,"errors":86},
     {"round":"1707","arm":"default","runs":26,"passed":20,"runnerOk":20,"seconds":2865,"calls":429,"errors":123},
     {"round":"1707","arm":"min","runs":26,"passed":19,"runnerOk":19,"seconds":3040,"calls":508,"errors":127}
@@ -3108,7 +3108,7 @@
      "order": "swap",
      "run": null,
      "seconds": 102,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 14,
@@ -3303,7 +3303,7 @@
      "order": "normal",
      "run": null,
      "seconds": 88,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "helium",
      "calls": 12,
@@ -3498,7 +3498,7 @@
      "order": "swap",
      "run": null,
      "seconds": 164,
-     "passed": false,
+     "passed": true,
      "runnerOk": false,
      "browser": "chrome",
      "calls": 19,
@@ -3660,8 +3660,8 @@
    "cells": [
     {"task":"demoid","arm":"default","runs":2,"passes":2,"expected":29.5,"median":26,"min":26,"max":33,"p90":null},
     {"task":"demoid","arm":"lean","runs":2,"passes":2,"expected":26,"median":20,"min":20,"max":32,"p90":null},
-    {"task":"form-checkout","arm":"default","runs":2,"passes":1,"expected":150,"median":48,"min":48,"max":48,"p90":null},
-    {"task":"form-checkout","arm":"lean","runs":2,"passes":0,"expected":null,"median":null,"min":null,"max":null,"p90":null},
+    {"task":"form-checkout","arm":"default","runs":2,"passes":2,"expected":75,"median":48,"min":48,"max":102,"p90":null},
+    {"task":"form-checkout","arm":"lean","runs":2,"passes":2,"expected":126,"median":88,"min":88,"max":164,"p90":null},
     {"task":"form-settings","arm":"default","runs":2,"passes":2,"expected":51.5,"median":48,"min":48,"max":55,"p90":null},
     {"task":"form-settings","arm":"lean","runs":2,"passes":2,"expected":40.5,"median":39,"min":39,"max":42,"p90":null},
     {"task":"form-settings-helium","arm":"default","runs":2,"passes":2,"expected":52,"median":44,"min":44,"max":60,"p90":null},
@@ -3686,8 +3686,8 @@
     {"task":"wikipedia","arm":"lean","runs":2,"passes":2,"expected":20,"median":18,"min":18,"max":22,"p90":null}
    ],
    "rounds": [
-    {"round":"1","arm":"default","runs":26,"passed":25,"runnerOk":25,"seconds":1006,"calls":221,"errors":30},
-    {"round":"1","arm":"lean","runs":26,"passed":24,"runnerOk":24,"seconds":981,"calls":206,"errors":28}
+    {"round":"1","arm":"default","runs":26,"passed":26,"runnerOk":25,"seconds":1006,"calls":221,"errors":30},
+    {"round":"1","arm":"lean","runs":26,"passed":26,"runnerOk":24,"seconds":981,"calls":206,"errors":28}
    ],
    "verdict": {
     "me": "default",
@@ -3695,9 +3695,10 @@
     "lowest": ["form-checkout","handoff"],
     "reasons": [
      "default has the lowest expected time on 2 of 13; \"fastest\" needs 7",
+     "default's total 503 s is not the lowest: lean 491 s",
      "5 runs missing on 8 pair(s) within 20%: demoid/lean (default 2/5, lean 2/5); form-settings-helium/lean (default 2/5, lean 2/5); form-travel/lean (default 2/5, lean 2/5); handoff/lean (default 2/5, lean 2/5); inject-mail/lean (default 2/5, lean 2/5); mdn/lean (default 2/5, lean 2/5); shipping-link/lean (default 2/5, lean 2/5); wikipedia/lean (default 2/5, lean 2/5)"
     ],
-    "totals": {"default":578,"lean":null},
+    "totals": {"default":503,"lean":490.5},
     "fastest": {
      "default": ["form-checkout","handoff"],
      "lean": ["demoid","form-settings","form-settings-helium","form-travel","inject-mail","inject-order","mdn","mobile","shipping-link","size-guide"]

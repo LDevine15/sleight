@@ -16,7 +16,8 @@ Sets left out because they don't yet have 3 runs of every task:
 
 | Browser | Set | Runs so far | Rounds |
 | --- | --- | --- | --- |
-| Safari | `sleight-b7` | 13 of 36 | `safari-sleight-b7-r2`, `safari-sleight-b7-r3` |
+| Safari | `sleight-b7` | 24 of 36 | `safari-sleight-b7-r2`, `safari-sleight-b7-r3` |
+| Firefox | `sleight-b7` | 26 of 36 | `firefox-sleight-b7-r1`, `firefox-sleight-b7-r2`, `firefox-sleight-b7-r3` |
 
 Rounds left out, with the recorded reason:
 

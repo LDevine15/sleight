@@ -21,8 +21,8 @@ Each study compares sleight variants on the same tasks. The pages score them the
 | 2026-10-11 | `2026-10-11-skill-ab-2` | `claude-haiku-5-5` | 6 | slim 12/12 passed, 191 s. none 12/12 passed, 240 s. current 12/12 passed, 204 s | [benchmark.md](../benchmark.md) |
 | 2026-10-11 | `2026-10-11-skill-ab-save` | `claude-haiku-5-5` | 6 | slim 6/6 passed, 242 s. none 5/6 passed, 284 s. current 6/6 passed, 277 s | [benchmark.md](../benchmark.md) |
 | 2026-10-11 | `2026-10-11-three-arm-ab` | `claude-haiku-5-5` | 2 to 4 | headdrop 12/12 passed, 322 s. sheet 7/8 passed, 198 s. default 11/11 passed, 278 s | [benchmark.md](../benchmark.md) |
-| 2026-10-12 | `2026-10-12-d5-min-ab` | `claude-haiku-4-5` | 4 | default 37/52 passed, 5,820 s. min 42/52 passed, 5,714 s | [2026-10-12-d5-min-ab.md](../benchmarks/2026-10-12-d5-min-ab.md) |
-| 2026-10-12 | `2026-10-12-lean-skill-ab` | `claude-opus-5-5` | 2 | default 25/26 passed, 1,006 s. lean 24/26 passed, 981 s | [2026-10-12-lean-skill-ab.md](../benchmarks/2026-10-12-lean-skill-ab.md) |
+| 2026-10-12 | `2026-10-12-d5-min-ab` | `claude-haiku-4-5` | 4 | default 39/52 passed, 5,820 s. min 42/52 passed, 5,714 s | [2026-10-12-d5-min-ab.md](../benchmarks/2026-10-12-d5-min-ab.md) |
+| 2026-10-12 | `2026-10-12-lean-skill-ab` | `claude-opus-5-5` | 2 | default 26/26 passed, 1,006 s. lean 26/26 passed, 981 s | [2026-10-12-lean-skill-ab.md](../benchmarks/2026-10-12-lean-skill-ab.md) |
 | 2026-10-16 | `2026-10-16-turbo-ab` | `claude-haiku-5-5` | 10 | baseline 130/130 passed, 2,921 s. candidate 129/130 passed, 2,698 s | [2026-10-16-turbo-ab.md](../benchmarks/2026-10-16-turbo-ab.md) |
 | 2026-10-16 | `2026-10-16-turbo-ab-find` | `claude-haiku-5-5` | 6 | baseline 78/78 passed, 1,824 s. candidate 78/78 passed, 1,656 s | [2026-10-16-turbo-ab.md](../benchmarks/2026-10-16-turbo-ab.md) |
 
@@ -46,7 +46,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 
 ## 2026-10-11-firstcall-ab
 
-`first-call wording A/B:`. The baseline is `default`. Commit `4ee20df`. Write-up: [benchmark.md](../benchmark.md).
+`first-call wording A/B: the default against SLEIGHT_FIRST_CALL_BATCH=app, calculator-click, textedit-edit and textedit-save x2 per round, 2 rounds alternating`. The baseline is `default`. Commit `4ee20df`. Write-up: [benchmark.md](../benchmark.md).
 
 | Arm | Model ids in the runs | Effort | Versions recorded |
 | --- | --- | --- | --- |
@@ -80,7 +80,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 
 ## 2026-10-11-sheet-ab
 
-`Save-sheet A/B:`. The baseline is `sheet`. Commit `ebedb7e`. Write-up: [benchmark.md](../benchmark.md).
+`Save-sheet A/B: default against SLEIGHT_FIRST_CALL_BATCH=sheet (no Cmd+S stop, menu clicks in one call), calculator-click, textedit-edit and textedit-save x3 pe`. The baseline is `sheet`. Commit `ebedb7e`. Write-up: [benchmark.md](../benchmark.md).
 
 | Arm | Model ids in the runs | Effort | Versions recorded |
 | --- | --- | --- | --- |
@@ -113,7 +113,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 
 ## 2026-10-11-skill-ab
 
-`skill A/B:`. The baseline is `slim`. Commit `b03b5a7`. Write-up: [benchmark.md](../benchmark.md).
+`skill A/B: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md) and SLEIGHT_SKILL=none, calculator-click and textedit-edit x3 per arm per round, 2 rounds, owner`. The baseline is `slim`. Commit `b03b5a7`. Write-up: [benchmark.md](../benchmark.md).
 
 | Arm | Model ids in the runs | Effort | Versions recorded |
 | --- | --- | --- | --- |
@@ -130,7 +130,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 
 ## 2026-10-11-skill-ab-2
 
-`skill A/B rerun:`. The baseline is `slim`. Commit `ebedb7e`. Write-up: [benchmark.md](../benchmark.md).
+`skill A/B rerun: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md with placeholder ID and label examples) and SLEIGHT_SKILL=none, calculator-click and texted`. The baseline is `slim`. Commit `ebedb7e`. Write-up: [benchmark.md](../benchmark.md).
 
 | Arm | Model ids in the runs | Effort | Versions recorded |
 | --- | --- | --- | --- |
@@ -191,7 +191,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Task | default | min |
 | --- | --- | --- |
 | `demoid` | 77.8 (4/4) | 353.0 (2/4) |
-| `form-checkout` | 318.0 (2/4) | 74.5 (4/4) |
+| `form-checkout` | 159.0 (4/4) | 74.5 (4/4) |
 | `form-settings` | 1146.0 (1/4) | 863.0 (1/4) |
 | `form-settings-helium` | never (0/4) | 888.0 (1/4) |
 | `form-travel` | 520.0 (2/4) | 210.8 (4/4) |
@@ -218,7 +218,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Task | default | lean |
 | --- | --- | --- |
 | `demoid` | 29.5 (2/2) | 26.0 (2/2) |
-| `form-checkout` | 150.0 (1/2) | never (0/2) |
+| `form-checkout` | 75.0 (2/2) | 126.0 (2/2) |
 | `form-settings` | 51.5 (2/2) | 40.5 (2/2) |
 | `form-settings-helium` | 52.0 (2/2) | 49.0 (2/2) |
 | `form-travel` | 76.0 (2/2) | 61.5 (2/2) |
@@ -231,7 +231,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 | `size-guide` | 28.0 (2/2) | 22.0 (2/2) |
 | `wikipedia` | 20.0 (2/2) | 20.0 (2/2) |
 | Lowest expected time on | 2 of 13 | 10 of 13 |
-| Total expected s | 578.0 | none (a task has no pass) |
+| Total expected s | 503.0 | 490.5 |
 
 ## 2026-10-16-turbo-ab
 

@@ -5,7 +5,7 @@ Turbo is sleight's own browser path for Chrome and Helium. The gate rounds race 
 ## Method
 
 - FowlBrowser's head-to-head runner, pinned with sleight's patch, runs each arm in both browser orders (normal and swap), so a gate round is 26 runs per arm. Its reports give whole seconds. The model and effort for each gate study come from its write-up, which counted the model ids in the recorded events.
-- A gate run passes under the owner's scoring (LAWS). That is the runner's grade, except that a form-checkout run that submitted nothing passes, since it stopped before an unpriced payment. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.
+- A gate run passes under the owner's scoring (LAWS). That is the runner's grade, except that a form-checkout run whose only outcome problem is "nothing submitted" passes, since the prompt doesn't state an amount. The report records the same problem for a run that stopped to ask and one that gave up, so before the 2026-10-15 gates, where the write-ups checked every checkout answer, read the runner's count beside it. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.
 - `bench/fowl/race-score.mjs` grades every saved run again. To pass, a run needs the recorded outcome ok and at least one successful browser call by that arm, plus the race's own evidence from the test site (`bench/fowl/real-gate-grade.mjs`). Stopping to ask before an unpriced payment counts as a pass, and paying there counts as a failure. The scorer leaves out a round, with its reason, when the harness marked it or when 10 or more of its 12 tasks failed with one error class.
 - Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
 - The rules come from [LAWS](../status/LAWS.md). Each arm gets 3 runs per task, or 5 where sleight and another arm are within 20% (the difference over the slower expected time). "Fastest" needs the lowest expected time on a majority of tasks and the lowest total, with those 5 runs in place. Otherwise the wording is "completed every task, fastest on N". A task counts as lost when another arm has the lower expected time or a faster passing run.
@@ -587,15 +587,15 @@ Per task over all rounds, expected seconds, then passes/runs under the owner's s
 
 | Round | sleight | FowlBrowser |
 | --- | --- | --- |
-| 1 | 2,109 s, 23/26 passed (23 by the runner), 501 calls, 139 errors | 972 s, 26/26 passed (26 by the runner), 240 calls, 4 errors |
+| 1 | 2,109 s, 25/26 passed (23 by the runner), 501 calls, 139 errors | 972 s, 26/26 passed (26 by the runner), 240 calls, 4 errors |
 
 #### 2026-10-12-fowlbrowser-h2h-2
 
 | Round | sleight | FowlBrowser | sleight-a1 |
 | --- | --- | --- | --- |
-| 1309 | 1,258 s, 22/26 passed (22 by the runner), 246 calls, 33 errors | 884 s, 26/26 passed (26 by the runner), 246 calls, 6 errors | n/a |
-| 1322 | 1,101 s, 25/26 passed (25 by the runner), 208 calls, 17 errors | 943 s, 26/26 passed (26 by the runner), 242 calls, 5 errors | n/a |
-| 1427 | 1,414 s, 22/26 passed (22 by the runner), 220 calls, 29 errors | 967 s, 26/26 passed (26 by the runner), 238 calls, 5 errors | n/a |
+| 1309 | 1,258 s, 23/26 passed (22 by the runner), 246 calls, 33 errors | 884 s, 26/26 passed (26 by the runner), 246 calls, 6 errors | n/a |
+| 1322 | 1,101 s, 26/26 passed (25 by the runner), 208 calls, 17 errors | 943 s, 26/26 passed (26 by the runner), 242 calls, 5 errors | n/a |
+| 1427 | 1,414 s, 23/26 passed (22 by the runner), 220 calls, 29 errors | 967 s, 26/26 passed (26 by the runner), 238 calls, 5 errors | n/a |
 | 1523 | 893 s, 26/26 passed (26 by the runner), 204 calls, 15 errors | 805 s, 26/26 passed (26 by the runner), 241 calls, 9 errors | n/a |
 | r3 | 1,013 s, 13/13 passed (13 by the runner), 151 calls, 32 errors | n/a | n/a |
 | r4 | 684 s, 13/13 passed (13 by the runner), 125 calls, 20 errors | n/a | n/a |
@@ -606,7 +606,7 @@ Per task over all rounds, expected seconds, then passes/runs under the owner's s
 
 | Round | sleight | FowlBrowser |
 | --- | --- | --- |
-| 1606 | 2,961 s, 19/26 passed (19 by the runner), 417 calls, 145 errors | 1,744 s, 22/26 passed (22 by the runner), 445 calls, 22 errors |
+| 1606 | 2,961 s, 20/26 passed (19 by the runner), 417 calls, 145 errors | 1,744 s, 22/26 passed (22 by the runner), 445 calls, 22 errors |
 
 #### 2026-10-12-haiku-round-2
 
@@ -628,14 +628,14 @@ Per task over all rounds, expected seconds, then passes/runs under the owner's s
 
 | Round | sleight | FowlBrowser |
 | --- | --- | --- |
-| as3-20261013-1258 | 1,113 s, 2/8 passed (2 by the runner), 201 calls, 44 errors | n/a |
-| as3-20261013-1307 | 384 s, 0/4 passed (0 by the runner), 82 calls, 18 errors | n/a |
-| fm1-20261013-1146 | 997 s, 5/8 passed (5 by the runner), 216 calls, 51 errors | n/a |
-| fm3-20261013-1331 | 950 s, 2/8 passed (2 by the runner), 201 calls, 42 errors | n/a |
+| as3-20261013-1258 | 1,113 s, 4/8 passed (2 by the runner), 201 calls, 44 errors | n/a |
+| as3-20261013-1307 | 384 s, 1/4 passed (0 by the runner), 82 calls, 18 errors | n/a |
+| fm1-20261013-1146 | 997 s, 6/8 passed (5 by the runner), 216 calls, 51 errors | n/a |
+| fm3-20261013-1331 | 950 s, 4/8 passed (2 by the runner), 201 calls, 42 errors | n/a |
 | fs2-20261013-0806 | 137 s, 3/3 passed (3 by the runner), 24 calls, 2 errors | n/a |
-| gate-20261013-0808 | 1,206 s, 23/26 passed (23 by the runner), 291 calls, 39 errors | 677 s, 26/26 passed (26 by the runner), 277 calls, 9 errors |
-| gate2-20261013-1207 | 1,517 s, 21/26 passed (21 by the runner), 332 calls, 51 errors | 711 s, 26/26 passed (26 by the runner), 256 calls, 9 errors |
-| qt1-20261013-0818 | 2,021 s, 22/26 passed (22 by the runner), 344 calls, 59 errors | n/a |
+| gate-20261013-0808 | 1,206 s, 24/26 passed (23 by the runner), 291 calls, 39 errors | 677 s, 26/26 passed (26 by the runner), 277 calls, 9 errors |
+| gate2-20261013-1207 | 1,517 s, 22/26 passed (21 by the runner), 332 calls, 51 errors | 711 s, 26/26 passed (26 by the runner), 256 calls, 9 errors |
+| qt1-20261013-0818 | 2,021 s, 24/26 passed (22 by the runner), 344 calls, 59 errors | n/a |
 | Median round s | 997 | 677 |
 
 #### 2026-10-14-turbo-prototype
@@ -651,7 +651,7 @@ Per task over all rounds, expected seconds, then passes/runs under the owner's s
 
 | Round | sleight turbo | FowlBrowser |
 | --- | --- | --- |
-| 1 | 865 s, 22/26 passed (20 by the runner), 276 calls, 31 errors | 806 s, 25/26 passed (24 by the runner), 311 calls, 8 errors |
+| 1 | 865 s, 22/26 passed (20 by the runner), 276 calls, 31 errors | 806 s, 26/26 passed (24 by the runner), 311 calls, 8 errors |
 
 #### 2026-10-15-gate-2
 
@@ -670,10 +670,10 @@ Per task over all rounds, expected seconds, then passes/runs under the owner's s
 | Round | sleight turbo | FowlBrowser |
 | --- | --- | --- |
 | round 1 | 603 s, 26/26 passed (24 by the runner), 199 calls, 6 errors | 685 s, 26/26 passed (26 by the runner), 305 calls, 10 errors |
-| round 2 | 646 s, 26/26 passed (24 by the runner), 217 calls, 4 errors | 676 s, 25/26 passed (25 by the runner), 279 calls, 8 errors |
+| round 2 | 646 s, 26/26 passed (24 by the runner), 217 calls, 4 errors | 676 s, 26/26 passed (25 by the runner), 279 calls, 8 errors |
 | round 3 | 624 s, 26/26 passed (24 by the runner), 195 calls, 4 errors | 639 s, 26/26 passed (26 by the runner), 281 calls, 5 errors |
 | round 4 | 573 s, 26/26 passed (24 by the runner), 197 calls, 4 errors | 711 s, 26/26 passed (26 by the runner), 305 calls, 8 errors |
-| round 5 | 580 s, 26/26 passed (24 by the runner), 194 calls, 2 errors | 677 s, 25/26 passed (25 by the runner), 292 calls, 9 errors |
+| round 5 | 580 s, 26/26 passed (24 by the runner), 194 calls, 2 errors | 677 s, 26/26 passed (25 by the runner), 292 calls, 9 errors |
 | Median round s | 603 | 677 |
 
 #### 2026-10-16-gate-2
@@ -681,7 +681,7 @@ Per task over all rounds, expected seconds, then passes/runs under the owner's s
 | Round | sleight turbo | FowlBrowser |
 | --- | --- | --- |
 | round 1 | 581 s, 26/26 passed (24 by the runner), 187 calls, 1 errors | 702 s, 26/26 passed (26 by the runner), 295 calls, 8 errors |
-| round 2 | 573 s, 26/26 passed (24 by the runner), 190 calls, 2 errors | 685 s, 25/26 passed (25 by the runner), 292 calls, 10 errors |
+| round 2 | 573 s, 26/26 passed (24 by the runner), 190 calls, 2 errors | 685 s, 26/26 passed (25 by the runner), 292 calls, 10 errors |
 | round 3 | 634 s, 26/26 passed (24 by the runner), 196 calls, 2 errors | 663 s, 26/26 passed (26 by the runner), 303 calls, 10 errors |
 | round 4 | 607 s, 25/26 passed (23 by the runner), 204 calls, 1 errors | 658 s, 26/26 passed (25 by the runner), 283 calls, 8 errors |
 | round 5 | 625 s, 26/26 passed (24 by the runner), 204 calls, 0 errors | 706 s, 26/26 passed (26 by the runner), 301 calls, 8 errors |
