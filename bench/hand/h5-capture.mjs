@@ -6,7 +6,7 @@
 // user's own captures (a region selection and the launch film's window-plus-hand recording) and two one-window captures.
 // bench/hand/pixels.mjs holds the pixel rules and the verdicts. Captures are single windows or a region inside the target
 // window that no other app covers (LAWS: never the whole screen); the report holds counts, pids and frames, never pixels,
-// titles or names, and images stay local (--keep-images keeps one PNG per capture path and mode).
+// titles or names, and images stay local (--keep-images keeps one PNG per capture path and mode, never a region capture).
 //
 //   node bench/hand/h5-capture.mjs --owner-away [--samples 5] [--out DIR] [--keep-images] [--host PATH]
 //
@@ -35,12 +35,13 @@ const KEEPALIVE_MS = 700;  // a frame this often keeps the panel up: each holds 
 const intersects = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 const rectArg = r => [r.x, r.y, r.width, r.height].map(Math.round).join(',');
 
-/** Windows in front of the target (CGWindowList order, front first) that overlap rect, other than the target's own and the
- *  hand's. Layers 20 and up are the Dock, menu bar and similar, which sit outside a window's content area. */
+/** Windows in front of the target (CGWindowList order, front first) that overlap rect, at any layer (the Dock, the menu bar
+ *  and floating panels too), other than the target's own and the hand's. A region capture over any of them would hold
+ *  another window's pixels, which LAWS rules out. With no target in the list, every window counts. */
 export function covering(rect, target, windows, ignorePids = []) {
   const at = windows.findIndex(w => w.id === target.id);
   const above = at < 0 ? windows : windows.slice(0, at);
-  return above.filter(w => w.layer < 20 && w.alpha > 0 && w.pid !== target.pid && !ignorePids.includes(w.pid) && intersects(rect, w.bounds));
+  return above.filter(w => w.alpha > 0 && w.pid !== target.pid && !ignorePids.includes(w.pid) && intersects(rect, w.bounds));
 }
 
 /** The region the hand plays in and region captures cover: the window below its title bar, inset, or else the first of its
@@ -122,6 +123,11 @@ export async function runCaptureTest(deps, { target, samples = 5, tol = TOLERANC
     const result = [];
     const record = async (source, label, take, { hide = false } = {}) => {
       const before = await deps.windows();
+      // A region capture is taken only while nothing but the target and the hand is over the region, checked each time.
+      if (['region', 'hover'].includes(source) && covering(rect, target, before.windows, [host.pid]).length) {
+        result.push({ source, sample: label, handUp: false, result: 'skipped', reason: 'covered', frontPid: before.front });
+        return;
+      }
       let up = panelUp(before.windows, host.pid, target), frame, error;
       if (hide) { host.write(wire.hide()); await deps.sleep(HOVER_WAIT_MS); }
       try { frame = await take(); } catch (e) { error = String(e?.message ?? e).slice(0, 200); }
@@ -234,6 +240,33 @@ export function summary(report) {
 const home = homedir();
 const tilde = text => String(text).split(home).join('~');
 
+/** Runs work(state) holding the live lock. Everything after the lock is inside the try: setup that throws, a normal end, a
+ *  SIGINT or a SIGTERM all run state.cleanups (last added first) and then release the lock. On a signal the process exits
+ *  with 130 or 143 after cleanup; a second signal exits at once. Returns work's exit code, 1 when it threw, 3 when busy. */
+export async function underLiveLock({ acquire, signals = process, exit = code => process.exit(code), log = message => console.error(message) }, work) {
+  let unlock;
+  try { unlock = await acquire(); } catch (error) { log(error.message); return 3; }
+  const state = { cleanups: [] };
+  let cleaning, signalled = false;
+  const cleanup = () => cleaning ??= (async () => {
+    for (const fn of [...state.cleanups].reverse()) { try { await fn(); } catch (error) { log(`cleanup: ${tilde(error.message)}`); } }
+    try { await unlock(); } catch (error) { log(`live lock: ${error.message}`); }
+  })();
+  const handlers = Object.fromEntries([['SIGINT', 130], ['SIGTERM', 143]].map(([name, code]) => [name, () => {
+    if (signalled) return exit(code);
+    signalled = true;
+    log(`${name}: cleaning up and releasing the live lock`);
+    cleanup().finally(() => exit(code));
+  }]));
+  for (const [name, handler] of Object.entries(handlers)) signals.on(name, handler);
+  try { return await work(state); }
+  catch (error) { log(`H5 stopped: ${tilde(error.message)}`); return 1; }
+  finally {
+    await cleanup();
+    for (const [name, handler] of Object.entries(handlers)) signals.removeListener(name, handler);
+  }
+}
+
 async function main(argv) {
   let opts;
   try { opts = parseArgs(argv); } catch (error) { console.error(error.message); return 2; }
@@ -241,15 +274,12 @@ async function main(argv) {
   if (process.platform !== 'darwin') { console.error('macOS only'); return 2; }
   if (existsSync('/tmp/sleight-hold')) { console.error('/tmp/sleight-hold exists (another project\'s timed window): run later'); return 3; }
   const { acquireLiveLock } = await import('../live-lock.mjs');
-  let unlock;
-  try { unlock = await acquireLiveLock('/tmp/sleight-live.lock', { wait: false }); }
-  catch (error) { console.error(error.message); return 3; }
-  const out = resolve(opts.out ?? join(home, 'Library/Logs/sleight', `h5-${new Date().toISOString().replace(/[:.]/g, '-')}`));
-  mkdirSync(out, { recursive: true });
-  const work = mkdtempSync(join(tmpdir(), 'sleight-h5-'));
-  const live = await import('../compat/live.mjs');
-  let client, launched, code = 1;
-  try {
+  return underLiveLock({ acquire: () => acquireLiveLock('/tmp/sleight-live.lock', { wait: false }) }, async ({ cleanups }) => {
+    const out = resolve(opts.out ?? join(home, 'Library/Logs/sleight', `h5-${new Date().toISOString().replace(/[:.]/g, '-')}`));
+    mkdirSync(out, { recursive: true });
+    const work = mkdtempSync(join(tmpdir(), 'sleight-h5-'));
+    cleanups.push(() => rmSync(work, { recursive: true, force: true }));
+    const live = await import('../compat/live.mjs');
     const { swiftModuleCache } = await import('../swift-cache.mjs');
     const compile = async (source, binary) => execute('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(), source, '-o', binary], { timeout: 300000 });
     console.log('Building the capture helper and the hand host (first time: a few minutes)');
@@ -266,12 +296,18 @@ async function main(argv) {
     const grants = await helper(['preflight']);
     if (!grants.screenRecording) {
       console.error('Screen Recording is not granted to the app that started this shell. Run it from the Terminal window that runs the Peekaboo arm.');
-      code = 2; return code;
+      return 2;
     }
-    if ((await live.appState(TEXTEDIT)).running) { console.error('TextEdit is running and may be the owner\'s: quit it or run later'); code = 2; return code; }
+    if ((await live.appState(TEXTEDIT)).running) { console.error('TextEdit is running and may be the owner\'s: quit it or run later'); return 2; }
 
     const doc = join(work, 'sleight-h5.txt');
     writeFileSync(doc, Array.from({ length: 40 }, (_, i) => `sleight ghost hand capture test, line ${i + 1}. The quick brown fox jumps over the lazy dog.`).join('\n') + '\n');
+    // Registered before the launch: a stop between the launch and the pid lookup still quits the TextEdit this run started.
+    let launched;
+    cleanups.push(async () => {
+      if (!launched) { const state = await live.appState(TEXTEDIT); if (state.pids?.length === 1) launched = { pid: state.pids[0] }; }
+      if (launched) await live.quitApp(TEXTEDIT, launched);
+    });
     await execute('/usr/bin/open', ['-g', '-a', 'TextEdit', doc, ...DOCUMENT_LAUNCH], { timeout: 15000 });
     for (let i = 0; i < 100 && !launched; i++) {
       const state = await live.appState(TEXTEDIT);
@@ -287,9 +323,13 @@ async function main(argv) {
     }
     if (!target) throw new Error('TextEdit\'s window did not appear on this Space');
 
+    // Hand hosts this run started: killed on any stop, so no panel outlives the test.
+    const hosts = new Set();
+    cleanups.push(() => { for (const child of hosts) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
     const { openClient } = await import('../compat/client.mjs');
-    client = await openClient({ command: join(ROOT, 'plugins/sleight/bin/sleight-mcp'), approve: textEditApproval, timeoutMs: 60000, name: 'sleight-h5',
+    const client = await openClient({ command: join(ROOT, 'plugins/sleight/bin/sleight-mcp'), approve: textEditApproval, timeoutMs: 60000, name: 'sleight-h5',
       env: { ...process.env, SLEIGHT_APPROVAL_PROMPT: 'client', SLEIGHT_SURFACES: 'computer', SLEIGHT_HAND: '0' } });
+    cleanups.push(() => client.close());
     const acquired = await client.call('js', { code: ENGINE_ACQUIRE, timeout_ms: 60000 });
     if (acquired?.isError) throw new Error('the engine could not acquire TextEdit');
 
@@ -309,7 +349,8 @@ async function main(argv) {
       const frame = readFrame(raw, size);
       if (Array.isArray(size.handWindows)) frame.handWindows = size.handWindows;
       const mode = label.split('-')[0], key = label.replace(/-\d+$/, '');
-      if (opts.keepImages && ['hidden', 'visible'].includes(mode) && !kept.has(key)) {
+      // Region captures are never kept: they are screen regions, even if checked uncovered just before.
+      if (opts.keepImages && ['hidden', 'visible'].includes(mode) && source !== 'region' && !kept.has(key)) {
         kept.add(key);
         await helper(['encode', raw, String(size.width), String(size.height), join(out, `${label}.png`)]);
       }
@@ -318,6 +359,7 @@ async function main(argv) {
     };
     const startHost = async mode => {
       const child = spawn(hostBin, ['--hand', `--capture=${mode}`], { stdio: ['pipe', 'ignore', 'ignore'] });
+      hosts.add(child);
       await new Promise((ok, no) => { child.once('spawn', ok); child.once('error', no); });
       const exited = new Promise(r => child.once('exit', r));
       return { pid: child.pid, write: line => child.stdin.write(line),
@@ -332,17 +374,8 @@ async function main(argv) {
     writeFileSync(join(out, 'h5-report.json'), JSON.stringify(report, null, 2) + '\n');
     console.log(summary(report));
     console.log(`Report: ${tilde(join(out, 'h5-report.json'))}`);
-    code = report.ok ? 0 : 1;
-    return code;
-  } catch (error) {
-    console.error(`H5 stopped: ${tilde(error.message)}`);
-    return code;
-  } finally {
-    await client?.close().catch(() => {});
-    if (launched) await live.quitApp(TEXTEDIT, launched).catch(error => console.error(`TextEdit left running: ${error.message}`));
-    rmSync(work, { recursive: true, force: true });
-    await unlock?.().catch(error => console.error(`live lock: ${error.message}`));
-  }
+    return report.ok ? 0 : 1;
+  });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

@@ -197,13 +197,20 @@ test('the worker\'s hand events reach the relay\'s trace file with the operation
   trace('hand-skipped', { op: 'click', reason: 'hidden-tab', page: 'secret' });
   trace('hand-shown', { op: 'type', kind: 'type', text: 'secret' });
   trace('hand-skipped', { op: '<script>', reason: 'Not A Reason!' });
+  // Prototype names are not operations, and a reason that merely looks like one is not on the list.
+  trace('hand-skipped', { op: 'constructor', reason: 'user-typed-secret' });
+  trace('hand-skipped', { op: 'toString', reason: 'covered', kind: 'click' });
   trace('hand-beat', { op: 'click' });
-  assert.deepEqual(writes.map(([file]) => file), ['/tmp/trace-dir/trace-321.jsonl', '/tmp/trace-dir/trace-321.jsonl', '/tmp/trace-dir/trace-321.jsonl']);
+  assert.equal(writes.length, 5);
+  assert.ok(writes.every(([file]) => file === '/tmp/trace-dir/trace-321.jsonl'));
+  const t = '2026-10-19T00:00:00.000Z';
   assert.deepEqual(writes.map(([, text]) => JSON.parse(text)), [
-    { t: '2026-10-19T00:00:00.000Z', direction: 'hand-skipped', msg: { op: 'click', reason: 'hidden-tab' } },
-    { t: '2026-10-19T00:00:00.000Z', direction: 'hand-shown', msg: { op: 'type', kind: 'type' } },
-    { t: '2026-10-19T00:00:00.000Z', direction: 'hand-skipped', msg: { op: 'other' } }]);
-  assert.match(JSON.stringify(writes), /^(?!.*secret)/);
+    { t, direction: 'hand-skipped', msg: { op: 'click', reason: 'hidden-tab' } },
+    { t, direction: 'hand-shown', msg: { op: 'type', kind: 'type' } },
+    { t, direction: 'hand-skipped', msg: { op: 'other', reason: 'other' } },
+    { t, direction: 'hand-skipped', msg: { op: 'other', reason: 'other' } },
+    { t, direction: 'hand-skipped', msg: { op: 'other', reason: 'covered' } }]);
+  assert.equal(JSON.stringify(writes).includes('secret'), false);
   assert.equal(workerHandTrace({ setting: '1', parentPid: 5, home: () => '/h', append: (file) => writes.push([file]) })('hand-shown', { op: 'click', kind: 'click' }), undefined);
   assert.equal(writes.at(-1)[0], '/h/Library/Logs/sleight/trace-5.jsonl');
   // No SLEIGHT_TRACE: no writes; a failing write never throws.

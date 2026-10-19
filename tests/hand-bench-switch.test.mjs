@@ -95,3 +95,19 @@ test('H8: hidden-tab skips and no draws pass; a draw fails; no hand events say w
   assert.deepEqual(plan.args, ['--world', '--real-browser', 'chrome', '--surface', 'sleight-turbo', '--model', 'haiku', '--effort', 'high', '--only', 'demoid', '--out', '/o/r1']);
   assert.deepEqual(plan.env, { DISABLE_AUTOUPDATER: '1', SLEIGHT_BENCH_HAND: '1', SLEIGHT_TRACE: '/o/r1.trace' });
 });
+
+test('H8: --run refuses without --owner-away before it checks or starts anything; reading a trace needs no flag', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const script = join(root, 'bench/hand/h8-hidden-tab.mjs');
+  const run = spawnSync(process.execPath, [script, '--run', '--out', '/nonexistent/h8'], { encoding: 'utf8', timeout: 20000 });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /pass --owner-away/);
+  const dir = mkdtempSync(join(tmpdir(), 'h8-read-'));
+  try {
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(join(dir, 'trace-7.jsonl'), line('hand-skipped', { op: 'click', reason: 'hidden-tab' }) + '\n');
+    const read = spawnSync(process.execPath, [script, dir], { encoding: 'utf8', timeout: 20000 });
+    assert.equal(read.status, 0, read.stderr);
+    assert.equal(JSON.parse(read.stdout).verdict, 'pass');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

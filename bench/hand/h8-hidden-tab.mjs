@@ -6,7 +6,7 @@
 // hand-shown events (operation and reason only) to SLEIGHT_TRACE (lib/hand/browser-hand.mjs workerHandTrace).
 //
 //   node bench/hand/h8-hidden-tab.mjs <trace dir>...                     read a round's trace folder(s)
-//   node bench/hand/h8-hidden-tab.mjs --run --out DIR [--only demoid] [--model haiku]
+//   node bench/hand/h8-hidden-tab.mjs --run --owner-away --out DIR [--only demoid] [--model haiku]
 //        one Chrome turbo round with SLEIGHT_BENCH_HAND=1 and SLEIGHT_TRACE=DIR.trace (bench/fowl/rounds.sh), then the read
 //
 // Exit 0: pass. 1: fail or inconclusive. 2: usage or setup.
@@ -69,6 +69,7 @@ async function main(argv) {
   let dirs = argv.filter((arg, i) => !arg.startsWith('--') && !['--out', '--only', '--model'].includes(argv[i - 1]));
   if (argv.includes('--run')) {
     const out = value('--out');
+    if (!argv.includes('--owner-away')) { console.error('--run drives a Chrome turbo round with the hand on: pass --owner-away'); return 2; }
     if (!out) { console.error('--run needs --out DIR'); return 2; }
     const { handSetting } = await import('../../plugins/sleight/lib/hand/settings.mjs');
     if (!handSetting({ env: {} }).enabled) { console.error('The ghost hand is off: run plugins/sleight/bin/sleight-mcp hand on first'); return 2; }
@@ -82,7 +83,7 @@ async function main(argv) {
     if (code !== 0) console.error(`The round exited ${code}; reading its trace anyway`);
     dirs = [plan.env.SLEIGHT_TRACE];
   }
-  if (!dirs.length) { console.error('usage: node bench/hand/h8-hidden-tab.mjs <trace dir>... | --run --out DIR'); return 2; }
+  if (!dirs.length) { console.error('usage: node bench/hand/h8-hidden-tab.mjs <trace dir>... | --run --owner-away --out DIR'); return 2; }
   const events = readHandEvents(traceLines(dirs));
   const result = hiddenTabVerdict(events);
   console.log(JSON.stringify({ ...result, ...events }, null, 2));

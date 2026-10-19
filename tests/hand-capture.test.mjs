@@ -1,5 +1,6 @@
 // H5, the ghost hand capture test: the pixel rules, the verdicts and the whole run against a fake Mac.
 import test from 'node:test';
+import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -8,7 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { swiftModuleCache } from '../bench/swift-cache.mjs';
 import { compareFrames, classify, handColoured, modeVerdict, decision, SOURCES } from '../bench/hand/pixels.mjs';
-import { runCaptureTest, pickRegion, covering, panelUp, handWire, captureCommand, engineImage, parseArgs, readFrame, summary,
+import { underLiveLock, runCaptureTest, pickRegion, covering, panelUp, handWire, captureCommand, engineImage, parseArgs, readFrame, summary,
   ENGINE_ACQUIRE, DOCUMENT_LAUNCH } from '../bench/hand/h5-capture.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -106,6 +107,10 @@ test('the region is the window\'s body, or the first quarter nobody covers; cove
   const harmless = [win(9, 900, 3, { x: 200, y: 200, width: 100, height: 100 }), win(1, 30, 24, { x: 0, y: 0, width: 2000, height: 24 }),
     win(2, 31, 0, { x: 0, y: 0, width: 2000, height: 2000 }, 0), ...alone, win(3, 32, 0, { x: 0, y: 0, width: 2000, height: 2000 })];
   assert.deepEqual(covering({ x: 124, y: 160, width: 752, height: 516 }, TARGET, harmless, [900]), []);
+  // Any other window over the region covers it, whatever its layer: the Dock, a floating panel, an overlay.
+  for (const layer of [3, 20, 25, 1000]) {
+    assert.equal(covering({ x: 124, y: 160, width: 752, height: 516 }, TARGET, [win(8, 33, layer, { x: 100, y: 600, width: 900, height: 80 }), ...alone]).length, 1, `layer ${layer}`);
+  }
   assert.equal(panelUp(harmless, 900, TARGET), true);
   assert.equal(panelUp(harmless, 901, TARGET), false);
 });
@@ -155,12 +160,13 @@ test('engineImage takes the last image block; readFrame checks the raw size; arg
 // A fake Mac: the hand host's panel is up between its first act frame and a hide or close; policy decides which capture
 // paths show it.
 function fakeMac({ shows = (mode, source) => mode === 'visible' && ['region', 'composite'].includes(source), draws = true,
-  fadeKeeps = false, hitHost = false, cover } = {}) {
+  fadeKeeps = false, hitHost = false, cover, coverAfter = Infinity } = {}) {
+  let listings = 0;
   let host, hosts = 0, fading = false;
   const calls = [];
   const deps = {
     windows: async () => ({ front: 1, windows: [
-      ...(cover ? [cover] : []),
+      ...(cover && ++listings > coverAfter ? [cover] : cover && coverAfter === Infinity ? [cover] : []),
       ...(host?.up && draws ? [win(900 + hosts, host.pid, 3, { x: 300, y: 300, width: 200, height: 200 })] : []),
       win(77, 500, 0, TARGET.bounds)] }),
     capture: async (source, { hostPid, label }) => {
@@ -246,4 +252,56 @@ test('the capture helper builds, decodes and encodes raw sRGB frames without tou
   assert.deepEqual(compareFrames(frame, readFrame(join(dir, 'back.rgba'), { width: 60, height: 40 })), { differing: 0, handLike: 0 });
   assert.deepEqual(run(['sck-window', 'x', join(dir, 'x')]), { ok: false, error: 'usage' });
   assert.deepEqual(run(['display', '1']), { ok: false, error: 'usage' });
+});
+
+test('a window that comes over the region mid-run stops region captures there, and the run is not passed', async () => {
+  // The Dock-sized window appears after the region was picked: each region and hover capture checks again and skips.
+  const report = await runCaptureTest(fakeMac({ cover: win(8, 33, 20, { x: 0, y: 150, width: 2000, height: 700 }), coverAfter: 1 }).deps, { target: TARGET, samples: 3 });
+  assert.deepEqual([report.modes.hidden.sources.region.skipped, report.modes.hidden.sources.region.taken], [3, 0]);
+  assert.equal(report.modes.hidden.sources.hover.skipped, 3);
+  assert.ok(report.modes.hidden.samples.filter(s => s.source === 'region').every(s => s.reason === 'covered'));
+  assert.equal(report.ok, false);
+});
+
+function lockFixture() {
+  const signals = new EventEmitter(), events = [], exits = [];
+  return { signals, events, exits, deps: { signals, exit: code => exits.push(code), log: line => events.push(['log', line]),
+    acquire: async () => { events.push('lock'); return async () => events.push('unlock'); } } };
+}
+
+test('underLiveLock: setup that throws after the lock still cleans up, last first, and releases the lock', async () => {
+  const f = lockFixture();
+  const code = await underLiveLock(f.deps, async ({ cleanups }) => {
+    cleanups.push(() => f.events.push('rm work'));
+    cleanups.push(() => { f.events.push('quit TextEdit'); throw new Error('quit refused'); });
+    throw new Error('mkdtemp failed');
+  });
+  assert.equal(code, 1);
+  assert.deepEqual(f.events, ['lock', ['log', 'H5 stopped: mkdtemp failed'], 'quit TextEdit', ['log', 'cleanup: quit refused'], 'rm work', 'unlock']);
+  assert.deepEqual([f.signals.listenerCount('SIGINT'), f.signals.listenerCount('SIGTERM')], [0, 0]);
+  const busy = lockFixture();
+  assert.equal(await underLiveLock({ ...busy.deps, acquire: async () => { throw new Error('Another live run holds the lock'); } }, async () => 0), 3);
+  const ok = lockFixture();
+  assert.equal(await underLiveLock(ok.deps, async ({ cleanups }) => { cleanups.push(() => ok.events.push('rm')); return 0; }), 0);
+  assert.deepEqual(ok.events, ['lock', 'rm', 'unlock']);
+});
+
+test('underLiveLock: SIGINT or SIGTERM mid-run cleans up, releases the lock and exits; a second signal exits at once', async () => {
+  for (const [name, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+    const f = lockFixture();
+    let started;
+    const running = new Promise(resolve => { started = resolve; });
+    void underLiveLock(f.deps, async ({ cleanups }) => {
+      cleanups.push(() => f.events.push('kill hosts'));
+      started();
+      return new Promise(() => {}); // the capture loop, still running
+    });
+    await running;
+    f.signals.emit(name);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(f.events.filter(e => typeof e === 'string'), ['lock', 'kill hosts', 'unlock'], name);
+    assert.deepEqual(f.exits, [code], name);
+    f.signals.emit(name);
+    assert.deepEqual(f.exits, [code, code], name);
+  }
 });

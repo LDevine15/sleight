@@ -129,7 +129,7 @@ export function scoreClaimDir(dir, rules, since, timeline = loadTimeline()) {
     const raw = readJson(join(dir, file)), mtimeMs = statSync(join(dir, file)).mtimeMs;
     let kept = 0;
     for (const row of raw.results ?? []) {
-      const why = excluded(row, file, rules);
+      const why = excluded(row, file, rules, raw);
       if (why) { if (why !== 'not a claim task') dropped[why] = (dropped[why] ?? 0) + 1; continue; }
       const passed = !!(row.passed || (row.cleanupContained && row.taskPassed)), g = !passed && regradeFor(row, file, rules);
       rows.push({ arm: row.arm, task: row.task, seconds: row.seconds, passed, file, run: row.run,

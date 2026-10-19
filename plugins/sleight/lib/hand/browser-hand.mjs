@@ -127,15 +127,17 @@ export function createBrowserHand({ client, loadClient = () => import('./client.
 // Where the worker's hand events go: the relay's trace file (SLEIGHT_TRACE, see launch.mjs), named by the parent's pid as
 // worker.mjs's traceLoss does. An event holds the operation and a fixed reason or kind, never page content.
 const HAND_EVENTS = new Set(['hand-skipped', 'hand-shown']);
+// The skip reasons planBrowserFrame, exposure and locate.js give. Anything else is written as 'other'.
+const SKIP_REASONS = new Set(['hidden-tab', 'no-focus', 'no-geometry', 'no-box', 'offscreen', 'covered', 'other-space', 'side-stage', 'hidden']);
 export function workerHandTrace({ setting = process.env.SLEIGHT_TRACE, parentPid = process.ppid, now = Date.now,
   append = (file, line) => appendFileSync(file, line, { mode: 0o600 }), home = homedir } = {}) {
   if (!setting || !Number.isSafeInteger(parentPid) || parentPid < 1) return () => {};
   const file = join(setting === '1' ? join(home(), 'Library', 'Logs', 'sleight') : setting, `trace-${parentPid}.jsonl`);
   return (direction, msg) => {
     if (!HAND_EVENTS.has(direction)) return;
-    const fields = { op: typeof msg?.op === 'string' && KINDS[msg.op] ? msg.op : 'other',
-      ...(typeof msg?.reason === 'string' && /^[a-z][a-z-]{1,31}$/.test(msg.reason) ? { reason: msg.reason } : {}),
-      ...(typeof msg?.kind === 'string' && Object.values(KINDS).includes(msg.kind) ? { kind: msg.kind } : {}) };
+    const fields = { op: typeof msg?.op === 'string' && Object.hasOwn(KINDS, msg.op) ? msg.op : 'other',
+      ...(direction === 'hand-skipped' ? { reason: SKIP_REASONS.has(msg?.reason) ? msg.reason : 'other' } : {}),
+      ...(direction === 'hand-shown' && typeof msg?.kind === 'string' && Object.values(KINDS).includes(msg.kind) ? { kind: msg.kind } : {}) };
     try { append(file, JSON.stringify({ t: new Date(now()).toISOString(), direction, msg: fields }) + '\n'); } catch {}
   };
 }

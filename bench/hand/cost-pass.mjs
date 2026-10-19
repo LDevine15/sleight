@@ -82,7 +82,7 @@ export function compareSides(entries, budget = BUDGET) {
       hostAvgPct: hostPct.map(n => round(n, 3)),
       wsAvgPct: runs.map(e => e.window?.windowServer?.avgPct).filter(Number.isFinite),
       wsPeakPct: runs.map(e => e.window?.windowServer?.peakPct).filter(Number.isFinite),
-      peakRssMB: Math.max(0, ...runs.map(e => e.whole?.hand?.peakRssMB ?? 0)),
+      peakRssMB: runs.some(e => Number.isFinite(e.whole?.hand?.peakRssMB)) ? Math.max(...runs.map(e => e.whole?.hand?.peakRssMB ?? 0)) : null,
       idle: runs.reduce((n, e) => n + (e.window?.hand?.idleIntervals ?? 0), 0), live: runs.reduce((n, e) => n + (e.window?.hand?.liveIntervals ?? 0), 0),
       toolMs: runs.flatMap(e => e.trace?.toolMs ?? []),
       drift: runs.flatMap(e => e.trace?.hand?.drift ?? []),
@@ -95,11 +95,17 @@ export function compareSides(entries, budget = BUDGET) {
   if (off.hostsSeen.some(n => n > 0)) invalid.push('a hand host ran on the off side: SLEIGHT_HAND=0 did not reach the arm');
   if (on.hostsSeen.some(n => n === 0)) invalid.push(`no hand host ran in ${on.hostsSeen.filter(n => n === 0).length} on-side run(s): check sleight-mcp hand status and the host build`);
   const toolOn = median(on.toolMs), toolOff = median(off.toolMs);
-  const toolDelta = toolOn !== null && toolOff !== null ? toolOn - toolOff : null;
+  // A difference with a missing side is no figure, never 0 (null - null is 0 in JavaScript), and the pass can't be scored.
+  const minus = (a, b) => a === null || b === null ? null : a - b;
+  const wsAvg = [median(on.wsAvgPct), median(off.wsAvgPct)], wsPeak = [median(on.wsPeakPct), median(off.wsPeakPct)];
+  for (const [label, pair] of [['WindowServer average', wsAvg], ['WindowServer busiest second', wsPeak], ['tool time', [toolOn, toolOff]]]) {
+    pair.forEach((value, i) => { if (value === null) invalid.push(`no ${label} figure on the ${i ? 'off' : 'on'} side`); });
+  }
+  const toolDelta = minus(toolOn, toolOff);
   const checks = [
     { name: 'hand host CPU, highest task average', value: on.hostAvgPct.length ? Math.max(...on.hostAvgPct) : null, unit: '%', limit: budget.hostAvgPct },
-    { name: 'WindowServer added, median task average', value: round(median(on.wsAvgPct) - median(off.wsAvgPct)), unit: '%', limit: budget.wsAddedPct },
-    { name: 'WindowServer added, median busiest second', value: round(median(on.wsPeakPct) - median(off.wsPeakPct)), unit: '%', limit: budget.wsAddedPeakPct },
+    { name: 'WindowServer added, median task average', value: round(minus(...wsAvg)), unit: '%', limit: budget.wsAddedPct },
+    { name: 'WindowServer added, median busiest second', value: round(minus(...wsPeak)), unit: '%', limit: budget.wsAddedPeakPct },
     { name: 'hand host RSS, peak', value: on.peakRssMB, unit: 'MB', limit: budget.rssMB },
     { name: 'tool time per call, median on minus off', value: round(toolDelta, 0), unit: 'ms',
       limit: toolOff === null ? null : round(Math.max(budget.toolMedianMs, toolOff * budget.toolMedianPct / 100), 0) },
@@ -126,7 +132,7 @@ export function reportMarkdown(cmp, { tasks, rounds, model, effort, started, fin
     row('Host intervals idle of live', s => `${s.idle} of ${s.live}`),
     row('WindowServer CPU per task, %', s => list(s.wsAvgPct)),
     row('WindowServer busiest second, %', s => list(s.wsPeakPct)),
-    row('Hand host RSS peak, MB', s => s.peakRssMB),
+    row('Hand host RSS peak, MB', s => s.peakRssMB ?? 'none'),
     row('Tool time per call, median ms', s => `${s.medianToolMs ?? 'none'} (${s.calls} calls)`), '',
     '| Budget check | Value | Limit | Within |', '|---|---|---|---|',
     ...cmp.checks.map(c => `| ${c.name} | ${c.value ?? 'none'} ${c.unit} | ${c.limit ?? 'none'} ${c.unit} | ${c.ok ? 'yes' : 'no'} |`), '',

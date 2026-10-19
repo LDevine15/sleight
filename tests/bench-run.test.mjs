@@ -992,10 +992,12 @@ test('SLEIGHT_BENCH_HAND=1 turns the hand on in every arm and marks the pass; an
     assert.ok(result.envs.length > 0);
     for (const env of result.envs) assert.equal(env.SLEIGHT_HAND, '1', suite);
     assert.equal(result.saved.at(-1).ghostHand, 'on', suite);
+    assert.ok(result.saved.at(-1).results.length && result.saved.at(-1).results.every(row => row.ghostHand === 'on'), suite);
     assert.ok(result.logs.some(line => /Ghost hand on/.test(line)), suite);
   }
   const off = await runner({ suite: 'real', base: { SLEIGHT_BENCH_HAND: '0' }, drive: true });
   assert.equal(off.saved.at(-1).ghostHand, 'off');
+  assert.ok(off.saved.at(-1).results.every(row => !('ghostHand' in row)));
   for (const env of off.envs) assert.equal(env.SLEIGHT_HAND, '0');
   const bad = await runner({ suite: 'real', base: { SLEIGHT_BENCH_HAND: 'yes' } });
   assert.match(String(bad.error?.message), /SLEIGHT_BENCH_HAND must be 0 or 1/);

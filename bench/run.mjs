@@ -497,7 +497,9 @@ const sleightBuild = sleightAt();
 let engineAtStart = readEngine();
 const publicRead = read => { if (!read) return read; const { error, ...rest } = read; return rest; };
 const sleightRow = () => { const { commit, dirty } = sleightAt();
-  return { sleightCommit: commit, sleightDirty: dirty, engineVersion: readEngine({ app: false }).version, finishedAt: new Date().toISOString() }; };
+  return { sleightCommit: commit, sleightDirty: dirty, engineVersion: readEngine({ app: false }).version, finishedAt: new Date().toISOString(),
+    // Each row says so too, so a row copied out of its pass still can't reach a claim table (claim-score.mjs excluded).
+    ...(ghostHand === '1' && { ghostHand: 'on' }) }; };
 
 function claudeArgs(prompt, arm,{ privateMail = false, fixtureLifecycle = false } = {}) {
   return [

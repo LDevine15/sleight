@@ -96,6 +96,18 @@ test('compareSides: inside the budget, over it, and invalid when a side measured
   assert.match(compareSides([entry('on', { hosts: 0 }), entry('off')]).invalid[0], /no hand host ran in 1 on-side run/);
   assert.match(compareSides([entry('on'), entry('off', { hosts: 1 })]).invalid[0], /SLEIGHT_HAND=0 did not reach the arm/);
   assert.equal(compareSides([entry('on')]).verdict, 'invalid');
+  // No data on a side is no figure: null, never null - null = 0, and the pass is invalid rather than within.
+  const blank = e => ({ ...e, window: { windowServer: null, hand: e.window.hand }, trace: { toolMs: [], hand: e.trace.hand } });
+  const empty = compareSides([blank(entry('on')), blank(entry('off'))]);
+  assert.equal(empty.verdict, 'invalid');
+  assert.deepEqual(empty.checks.slice(1, 3).map(c => [c.value, c.ok]), [[null, false], [null, false]]);
+  assert.equal(empty.checks[4].value, null);
+  assert.deepEqual(empty.invalid, ['no WindowServer average figure on the on side', 'no WindowServer average figure on the off side',
+    'no WindowServer busiest second figure on the on side', 'no WindowServer busiest second figure on the off side',
+    'no tool time figure on the on side', 'no tool time figure on the off side']);
+  const oneSided = compareSides([entry('on'), blank(entry('off'))]);
+  assert.equal(oneSided.verdict, 'invalid');
+  assert.equal(oneSided.checks[1].value, null);
   assert.equal(BUDGET.hostAvgPct, 1);
 });
 
