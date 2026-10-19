@@ -2,7 +2,7 @@
 
 # Native claim
 
-The claim suite's 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight against LCU, Codex, Cua, Peekaboo and Claude's own computer use, in real windows with the owner away. The suite is sleight's own, its skill and tool wording were tuned on the runs of textedit-calculator, preview-read, excel-edit, word-edit, finder-move, textedit-save and textedit-drag (not calculator-click or calculator-menu), and the competitors ran their defaults. The scorer's wording is "fastest". sleight has the lowest expected time on 8 of 9 tasks.
+The claim suite's 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight against LCU, Codex, Cua, Peekaboo and Claude's own computer use, in real windows with the tester away. The suite is sleight's own, its skill and tool wording were tuned on the runs of textedit-calculator, preview-read, excel-edit, word-edit, finder-move, textedit-save and textedit-drag (not calculator-click or calculator-menu), and the competitors ran their defaults. The scorer's wording is "fastest". sleight has the lowest expected time on 8 of 9 tasks.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/family-native-claim-dark.svg">
@@ -17,15 +17,15 @@ Each cell is expected seconds, then passes/runs.
 | --- | --- | --- | --- | --- | --- | --- |
 | `calculator-click` | 6.5 (3/3) | 10.4 (5/5) | 12.9 (3/3) | 39.5 (3/3) | 23.7 (3/3) | 15.2 (3/3) |
 | `calculator-menu` | 9.6 (3/3) | 15.4 (3/3) | 67.7 (1/3) | 39.8 (3/3) | 42.5 (3/3) | 30.4 (3/3) |
-| `textedit-save` | 8.2 (3/3) | 11.3 (5/5) | 20.9 (3/3) | 540.6 (1/3) | never (0/3) | 104.0 (3/3) |
-| `textedit-drag` | 35.5 (3/3) | never (0/3) | never (0/3) | never (0/3) | never (0/3) | 57.2 (4/5) |
+| `textedit-save` | 8.2 (3/3) | 11.3 (5/5) | 20.9 (3/3) | 540.6 (1/3) | no pass (0/3) | 104.0 (3/3) |
+| `textedit-drag` | 35.5 (3/3) | no pass (0/3) | no pass (0/3) | no pass (0/3) | no pass (0/3) | 57.2 (4/5) |
 | `finder-move` | 23.2 (3/3) | 154.0 (1/3) | 40.3 (5/5) | 66.2 (3/3) | 75.9 (1/3) | 37.3 (5/5) |
 | `preview-read` | 5.3 (5/5) | 5.6 (5/5) | 8.4 (3/3) | 7.2 (5/5) | 4.4 (5/5) | 16.0 (3/3) |
-| `textedit-calculator` | 30.1 (3/3) | 63.8 (4/5) | 58.4 (3/3) | 77.5 (3/3) | never (0/3) | 45.3 (4/4) |
-| `word-edit` | 87.9 (5/5) | 104.7 (5/5) | 136.6 (2/3) | 732.9 (1/3) | never (0/3) | 100.7 (5/5) |
-| `excel-edit` | 44.8 (5/5) | 150.4 (3/5) | 136.4 (4/5) | 330.9 (2/3) | never (0/3) | 47.9 (5/5) |
+| `textedit-calculator` | 30.1 (3/3) | 63.8 (4/5) | 58.4 (3/3) | 77.5 (3/3) | no pass (0/3) | 45.3 (4/4) |
+| `word-edit` | 87.9 (5/5) | 104.7 (5/5) | 136.6 (2/3) | 732.9 (1/3) | no pass (0/3) | 100.7 (5/5) |
+| `excel-edit` | 44.8 (5/5) | 150.4 (3/5) | 136.4 (4/5) | 330.9 (2/3) | no pass (0/3) | 47.9 (5/5) |
 | Lowest expected time on | 8 of 9 | 0 of 9 | 0 of 9 | 0 of 9 | 1 of 9 | 0 of 9 |
-| Total expected s | 251.2 | none (a task has no pass) | none (a task has no pass) | none (a task has no pass) | none (a task has no pass) | 453.9 |
+| Total expected s | 251.2 | no total (a task has no pass) | no total (a task has no pass) | no total (a task has no pass) | no total (a task has no pass) | 453.9 |
 
 By the loss rule, sleight lost 2 of 9 tasks.
 
@@ -38,7 +38,7 @@ No pair within 20% of sleight is short of 5 runs.
 
 <details><summary>Method and arm versions</summary>
 
-- 197 runs counted, from 48 results files dated 2026-10-17 to 2026-10-18, on the owner's account login (auth `login`).
+- 197 runs counted, from 48 results files dated 2026-10-17 to 2026-10-18, on the tester's account login (auth `login`).
 - Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
 - The rules come from [LAWS](../status/LAWS.md). Each arm gets 3 runs per task, or 5 where sleight and another arm are within 20% (the difference over the slower expected time). "Fastest" needs the lowest expected time on a majority of tasks and the lowest total, with those 5 runs in place. Otherwise the wording is "completed every task, fastest on N". A task counts as lost when another arm has the lower expected time or a faster passing run.
 - Rows come from `~/Projects/sleight-wt/app-claim/native-results-1018b` with the exclusions in `bench/claim-exclusions.json`. Scoring starts at file stamp `2026-10-17T04-03`, and the reason given is `overnight claim run on the release build (ef833641 plus the Chess drag fix 1933db78); earlier runs measured older builds`.

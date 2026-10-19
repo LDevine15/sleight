@@ -553,7 +553,7 @@ const ARM_NAMES = { sleight: 'sleight', 'sleight-turbo': 'sleight turbo', lcu: '
 const armName = arm => ARM_NAMES[arm] ?? arm;
 
 // One cell per arm and task: expected seconds, then passes/runs.
-export const cellText = cell => (!cell ? 'no runs' : cell.passes === 0 ? `never (0/${cell.runs})` : `${f1(cell.expected)} (${cell.passes}/${cell.runs})`);
+export const cellText = cell => (!cell ? 'no runs' : cell.passes === 0 ? `no pass (0/${cell.runs})` : `${f1(cell.expected)} (${cell.passes}/${cell.runs})`);
 // Task names, file names and recorded reasons are data, so the pages show them as code.
 const code = value => '`' + String(value ?? '').replace(/`/g, "'") + '`';
 
@@ -561,7 +561,7 @@ export function taskMatrix(study) {
   const head = ['Task', ...study.arms.map(armName)];
   const rows = study.tasks.map(task => [code(task), ...study.arms.map(arm => cellText(study.cells.find(c => c.task === task && c.arm === arm)))]);
   rows.push(['Lowest expected time on', ...study.arms.map(arm => `${study.verdict.fastest[arm]?.length ?? 0} of ${study.tasks.length}`)]);
-  rows.push(['Total expected s', ...study.arms.map(arm => (study.verdict.totals[arm] == null ? 'none (a task has no pass)' : f1(study.verdict.totals[arm])))]);
+  rows.push(['Total expected s', ...study.arms.map(arm => (study.verdict.totals[arm] == null ? 'no total (a task has no pass)' : f1(study.verdict.totals[arm])))]);
   return mdTable(head, rows);
 }
 
@@ -678,7 +678,7 @@ function renderClaimPage(all, id, { intro }) {
   out.push(topUpTable(study) + '\n');
   out.push(details('Method and arm versions', [
     list([
-      `${study.runs.length} runs counted, from ${data.source.files.length} results files dated ${study.date}, on the owner's account login (auth ${code(study.auth.join(', ') || 'not recorded')}).`,
+      `${study.runs.length} runs counted, from ${data.source.files.length} results files dated ${study.date}, on the tester's account login (auth ${code(study.auth.join(', ') || 'not recorded')}).`,
       SCORING,
       LAWS_RULES,
       `Rows come from ${code(data.source.results)} with the exclusions in ${code(data.source.rules)}. Scoring starts at file stamp ${code(data.source.since)}` +
@@ -711,7 +711,7 @@ function gradersNote(study) {
     'Total expected s, saved', 'Total expected s, current'], study.arms.map(arm => {
     const a = g.saved[arm], b = g.current[arm];
     return [armName(arm), `${a.passes}/${a.runs}`, `${b.passes}/${b.runs}`, `${a.fastest} of ${study.tasks.length}`, `${b.fastest} of ${study.tasks.length}`,
-      a.total == null ? 'none (a task has no pass)' : f1(a.total), b.total == null ? 'none (a task has no pass)' : f1(b.total)];
+      a.total == null ? 'no total (a task has no pass)' : f1(a.total), b.total == null ? 'no total (a task has no pass)' : f1(b.total)];
   }));
 }
 
@@ -720,6 +720,7 @@ function gradersNote(study) {
 function raceStudySection(all, study, level, chartId) {
   const out = [`${level} ${study.title}${study.latest ? ' (newest)' : ''}\n`];
   out.push(`${study.date}, ${cap(study.browser)} ${study.browserVersion.join(', ')}, ${study.rounds.length} rounds and ${study.runs.length} runs. The scorer's wording is "${study.verdict.wording}".\n`);
+  if (unopposedTotal(study)) out.push('sleight is the only arm with a total: every competitor has a task with no pass. There is no competing complete-suite time.\n');
   const graders = gradersNote(study);
   if (graders) out.push(graders + '\n');
   const chart = study.latest && chartId ? chartFor(all, chartId) : null;
@@ -776,11 +777,11 @@ const raceGrading = race => RACE_GRADING + COVER_RULE(race?.cover) +
 const leftOutTables = race => [
   `Rounds come from ${code(race.source.race)}. Folders without ${code('results.json')} are still running and are left out${race.inProgress.length ? `: ${race.inProgress.map(code).join(', ')}` : ', and there were none'}.\n`,
   race.partial.length ? 'Sets left out because they don\'t yet have 3 runs of every task:\n\n' + mdTable(['Browser', 'Set', 'Runs so far', 'Rounds'], race.partial.map(p => [cap(p.browser), code(p.label), `${p.runs} of ${p.needed}`, p.rounds.map(code).join(', ')])) + '\n' : 'Every sleight set has 3 runs of every task.\n',
-  race.excludedRounds.length ? 'Rounds left out, with the recorded reason:\n\n' + mdTable(['Round', 'Reason'], race.excludedRounds.map(e => [code(e.round), code(e.reason)])) + '\n' : 'No round was left out.\n',
+  race.excludedRounds.length ? 'Rounds left out, with the recorded reason:\n\n' + mdTable(['Round', 'Reason'], race.excludedRounds.map(e => [code(e.round), code(e.reason.replace(/the owner allows/g, 'the tester allows'))])) + '\n' : 'No round was left out.\n',
 ].join('\n');
 
 const RACE_SETS = 'The scorer takes one sleight build set at a time (the folder label, such as `sleight-r` or `sleight-b3-r`) with every usable competitor round in the same browser, so two sleight builds are never pooled. A set is scored once it has 3 runs of every task.';
-const RACE_EFFORT = 'The race scripts pass `--effort high` to every Claude arm, and the Codex arm\'s rows record their own effort. Every Claude arm ran the pinned Claude Code on the owner\'s account login, each in its own config.';
+const RACE_EFFORT = 'The race scripts pass `--effort high` to every Claude arm, and the Codex arm\'s rows record their own effort. Every Claude arm ran the pinned Claude Code on the tester\'s account login, each in its own config.';
 
 function renderRacePage(all, id) {
   const data = all[id], fam = family(id);
@@ -807,12 +808,12 @@ function roundTable(study) {
 }
 
 const GATE_RUNNER = 'FowlBrowser\'s head-to-head runner, pinned with sleight\'s patch, runs each arm in both browser orders (normal and swap), so a gate round is 26 runs per arm. Its reports give whole seconds. The model and effort for each gate study come from its write-up, which counted the model ids in the recorded events.';
-const GATE_SCORING = 'A gate run passes under the owner\'s scoring (LAWS). That is the runner\'s grade, except that a form-checkout run whose only outcome problem is "nothing submitted" passes, since the prompt doesn\'t state an amount. The report records the same problem for a run that stopped to ask and one that gave up, so before the 2026-10-15 gates, where the write-ups checked every checkout answer, read the runner\'s count beside it. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.';
+const GATE_SCORING = 'A gate run passes under the published scoring rules (LAWS). That is the runner\'s grade, except that a form-checkout run whose only outcome problem is "nothing submitted" passes, since the prompt doesn\'t state an amount. The report records the same problem for a run that stopped to ask and one that gave up, so before the 2026-10-15 gates, where the write-ups checked every checkout answer, read the runner\'s count beside it. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.';
 
 function renderTurboPage(all, id) {
   const data = all[id], fam = family(id);
   const out = [pageHead(fam.page, fam.title)];
-  out.push('Turbo is sleight\'s own browser path for Chrome and Helium. The real-window race runs FowlBrowser and turbo in the owner\'s Chrome and Helium benchmark profiles, and the gate rounds, before production turbo, raced FowlBrowser on FowlBrowser\'s own 13-task runner.\n');
+  out.push('Turbo is sleight\'s own browser path for Chrome and Helium. The real-window race runs FowlBrowser and turbo in the tester\'s Chrome and Helium benchmark profiles, and the gate rounds, before production turbo, raced FowlBrowser on FowlBrowser\'s own 13-task runner.\n');
   const sets = raceSets(all, data.race.studies, data.race.source.browsers, 'family-browser-turbo');
   out.push(...sets.newest);
   out.push(details('Method, and the rounds and sets left out', [list([raceGrading(data.race), SCORING, LAWS_RULES, RACE_SETS, RACE_EFFORT]), leftOutTables(data.race)].join('\n\n')));
@@ -824,7 +825,7 @@ function renderTurboPage(all, id) {
     gates.push(`### ${study.title}\n`);
     gates.push(`Study ${code(study.id)}, model ${study.models[study.me]?.[0] ? code(study.models[study.me][0]) : 'not stated'} at ${study.effort[0] ?? 'unstated'} effort, from [the write-up](${writeUpLink(study.writeUp)}). Round totals:\n`);
     gates.push(roundTable(study) + '\n');
-    gates.push('Per task over all rounds, expected seconds, then passes/runs under the owner\'s scoring:\n');
+    gates.push('Per task over all rounds, expected seconds, then passes/runs under the published scoring rules:\n');
     gates.push(taskMatrix(study) + '\n');
   }
   gates.push('### Round totals for every other gate study\n');
@@ -862,7 +863,7 @@ function renderAbPage(all, id) {
   out.push('## Studies\n');
   for (const study of data.studies) {
     out.push(details(study.id, [
-      `${code(study.title)}. The baseline is ${code(study.me)}.${study.commit ? ` Commit ${code(study.commit)}.` : ''}${study.writeUp ? ` Write-up: [${basename(study.writeUp)}](${writeUpLink(study.writeUp)}).` : ''}`,
+      `${code(study.title.replace(/\bowner\b/g, 'tester'))}. The baseline is ${code(study.me)}.${study.commit ? ` Commit ${code(study.commit)}.` : ''}${study.writeUp ? ` Write-up: [${basename(study.writeUp)}](${writeUpLink(study.writeUp)}).` : ''}`,
       armTable(study),
       taskMatrix(study),
     ].join('\n\n')));
@@ -915,6 +916,7 @@ function renderReleasePage(all, id) {
     'These passes predate the claim rules, so they report pass counts and totals instead of expected time. The tables include the failed runs.',
   ]));
   md = swap(md, '\n## Latest release pass\n', '\n' + method + '\n## Latest release pass\n');
+  md = md.replace(/owner presence/g, 'tester presence').replace(/owner away/g, 'tester away');
   return md.trimEnd() + '\n\n' + pageFooter(fam.page, { data: id, dataText: 'contains every run of the release passes and of the two head-to-heads on this page, plus the totals of every file' });
 }
 
@@ -952,6 +954,21 @@ const headlineStudies = (id, data) => (id === 'browser-race' ? data.studies.filt
 const upFirst = text => text.charAt(0).toUpperCase() + text.slice(1);
 const lowFirst = text => text.charAt(0).toLowerCase() + text.slice(1);
 
+const unopposedTotal = study => study.verdict.totals[study.me] != null &&
+  !study.arms.some(arm => arm !== study.me && study.verdict.totals[arm] != null);
+
+function resultSummary(id, data) {
+  if (id === 'native-claim' || id === 'app-claim') {
+    const s = data.studies[0];
+    return `Lowest expected time on ${s.verdict.lowest.length} of ${s.tasks.length} tasks. Total ${f1(s.verdict.totals[s.me])} s.`;
+  }
+  if (id === 'browser-race' || id === 'browser-turbo') {
+    const studies = id === 'browser-turbo' ? data.race.studies : data.studies;
+    return studies.filter(s => s.latest).map(s => `${cap(s.browser)}: ${unopposedTotal(s) ? 'only arm with a total' : `lowest expected time on ${s.verdict.lowest.length} of ${s.tasks.length} tasks`}, total ${f1(s.verdict.totals[s.me])} s.`).join(' ');
+  }
+  return upFirst(headlineFor(id, data)) + '.';
+}
+
 function headlineFor(id, data) {
   const engine = engineBrief(headlineStudies(id, data));
   if (id === 'native-claim' || id === 'app-claim') {
@@ -960,13 +977,13 @@ function headlineFor(id, data) {
   }
   if (id === 'browser-race') {
     // Each line follows a colon in the README, so it starts in lower case.
-    return lowFirst(data.studies.filter(s => s.latest).map(s => `In ${cap(s.browser)}, "${s.verdict.wording}" (${code(s.label)}, ${s.date.slice(0, 10)})`).join('. ') || 'no complete set') + `. ${upFirst(engine)}`;
+    return lowFirst(data.studies.filter(s => s.latest).map(s => `In ${cap(s.browser)}, ${unopposedTotal(s) ? 'sleight is the only arm with a total' : `"${s.verdict.wording}"`} (${code(s.label)}, ${s.date.slice(0, 10)})`).join('. ') || 'no complete set') + `. ${upFirst(engine)}`;
   }
   if (id === 'browser-turbo') {
     const race = data.race.studies.filter(s => s.latest).map(s => `In ${cap(s.browser)}, the lowest expected time on ${s.verdict.fastest[s.me].length} of ${s.tasks.length} and ${s.verdict.totals[s.me] == null ? 'no total (a task has no pass)' : `a total of ${f1(s.verdict.totals[s.me])} s`} against FowlBrowser's ${f1(s.verdict.totals.fowlbrowser)} s (${code(s.label)})`);
     return lowFirst(race.join('. ')) + `. ${data.gates.length} gate studies. ${upFirst(engine)}`;
   }
-  if (id === 'ab-tests') return `${data.studies.length} studies with run data, ${data.catalog.length} write-ups in all`;
+  if (id === 'ab-tests') return `${data.studies.length} studies with run data. The catalog has ${data.catalog.length} benchmark write-ups and includes studies without structured run data`;
   if (id === 'release-passes') {
     const releases = data.files.filter(f => f.kind === 'release');
     return `${releases.length} release passes (${releases[0]?.date} to ${releases.at(-1)?.date}), ${data.files.length} results files in all`;
@@ -976,12 +993,13 @@ function headlineFor(id, data) {
 
 function renderIndex(all) {
   const out = [pageHead('README.md', 'Benchmark results')];
-  out.push('Every benchmark sleight has published, one page per family. Each page leads with its results and folds the method underneath: models, effort, runs per arm, scoring and loss rules, arm versions, and what was left out and why. `bench/results-hub.mjs` computes every number from the raw results with the same scorers the claims use, and failures are published with the passes.\n');
+  out.push('The results include failed runs. Each family page gives the task results, with the method and exclusions folded below. The claim scorers compute the figures from recorded runs.\n');
   for (const id of ['headline-native', 'overview']) { const chart = chartFor(all, id); if (chart) out.push(chart); }
   out.push(`The [interactive page](${PAGES_URL}explore.html) has the same data with sorting, filters and a chart per task. Its source is [explore.html](explore.html) in this folder.\n`);
   out.push(mdTable(['Family', 'What it measures', 'Where it stands', 'Data'], FAMILIES.map(fam => [
-    `[${fam.title}](${fam.page})`, fam.what, headlineFor(fam.id, all[fam.id]), `[json](data/${fam.id}.json)`])) + '\n');
-  out.push('[Insights](insights.md) (being written) covers what the runs taught us about run-to-run variation, Haiku against Opus, which tuning paid off, and engine quirks.\n');
+    `[${fam.title}](${fam.page})`, fam.what, resultSummary(fam.id, all[fam.id]), `[json](data/${fam.id}.json)`])) + '\n');
+  out.push('[Insights](insights.md) covers what the runs taught us about run-to-run variation, Haiku against Opus, which tuning paid off, and engine quirks.\n');
+  out.push(details('Run dates, engine versions and build labels', FAMILIES.map(fam => `- [${fam.title}](${fam.page}): ${headlineFor(fam.id, all[fam.id])}.`).join('\n')));
   out.push('## Terms\n');
   out.push(list([
     'Expected time is the mean seconds per attempt divided by the pass rate, the time to a correct result if failed attempts are retried.',
@@ -991,7 +1009,7 @@ function renderIndex(all) {
   ]) + '\n');
   out.push(details('Rebuild', '```sh\nnode bench/results-hub.mjs                # collect from the raw folders this Mac has, then render\nnode bench/results-hub.mjs --render-only  # render from docs/results/data only\nnode bench/results-hub.mjs --check        # exit 1 if a page, data file or README block would change\n```\n\n' +
     'The raw claim and race folders live outside the repo, in `~/Projects/sleight-wt/app-claim` and `~/Projects/sleight-wt/race-1017`. On a Mac without them, the generator keeps the data files already here. `--wt <dir>` points it at another copy.'));
-  out.push(pageFooter('README.md', { studies: FAMILIES.flatMap(fam => headlineStudies(fam.id, all[fam.id])) }));
+  out.push(engineFooter(FAMILIES.flatMap(fam => headlineStudies(fam.id, all[fam.id]))) + '\n');
   return out.join('\n');
 }
 
@@ -1027,9 +1045,14 @@ export function readmeBlocks(all) {
   const models = sortedUniq(study.models?.[study.me] ?? []).map(code).join(', ') || 'model not recorded';
   const effort = (Array.isArray(study.effort) ? study.effort : []).join(', ') || 'effort not recorded';
   const claim = [
-    `sleight's native claim is "${v.wording}": the lowest expected time on ${v.lowest.length} of ${study.tasks.length} native Mac tasks, and a total of ${f1(v.totals[study.me])} s` +
-      `${next ? ` against ${armName(next)}'s ${f1(v.totals[next])} s, the next lowest` : ''}, over ${study.runs.length} runs dated ${study.date} on ${models} at ${effort} effort` +
-      ` (${engineBrief([study])}). The hub lists each run, failures included, with the method and the model each arm ran.`,
+    `In sleight's own native Mac benchmark, its total expected time over ${study.tasks.length} tasks was ${f1(v.totals[study.me])} s.` +
+      `${next ? ` ${armName(next)} took ${f1(v.totals[next])} s, the next lowest total.` : ''}`,
+    `Expected time is the mean time per attempt divided by the pass rate. It estimates the time to a correct result when failed attempts are retried.`,
+    `The claim is "${v.wording}": the lowest expected time on ${v.lowest.length} of ${study.tasks.length} tasks and the lowest total, with 5 runs for pairs within 20%.`,
+    `This was measured over ${study.runs.length} runs dated ${study.date} on ${models} at ${effort} effort (${engineBrief([study])}).` +
+      ` The native lead has not been established on a larger model. The skill was tuned on some of these tasks. Competitors ran their defaults.`,
+    `The [compatibility record](${README_BASE}engine-compat.md) lists a newer ChatGPT release, 26.1013.40934, than these runs. Compatibility checks do not remeasure speed.`,
+    `The hub lists each run, failures included, with the method and the model each arm ran.`,
     '',
     `[Benchmark hub](${README_BASE}README.md) · [Interactive page](${PAGES_URL}explore.html)`,
   ].join('\n');
@@ -1037,11 +1060,6 @@ export function readmeBlocks(all) {
   const lines = FAMILIES.map(fam => `- [${fam.title}](${README_BASE}${fam.page}): ${headlineFor(fam.id, all[fam.id]).replace(/\]\((?!https?:)/g, `](${README_BASE}`)}.`);
   return { claim, headline: block('headline-native'), benchmarks: [lines.join('\n'), block('overview')].filter(Boolean).join('\n\n') };
 }
-
-const INDEX_HTML = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
-  '<title>sleight benchmarks</title>\n<meta http-equiv="refresh" content="0; url=explore.html">\n' +
-  '<style>body{font:16px/1.5 system-ui,sans-serif;margin:2rem 1rem;background:#fcfcfb;color:#0b0b0b}@media (prefers-color-scheme:dark){body{background:#1a1a19;color:#f0efec}a{color:#86b6ef}}</style>\n' +
-  '</head>\n<body>\n<p>The benchmark explorer is <a href="explore.html">explore.html</a>. The pages for each family start at <a href="README.md">README.md</a>.</p>\n</body>\n</html>\n';
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Explore data: every study flattened into indexed tables so the page stays small.
@@ -1134,9 +1152,9 @@ export function render(all) {
   const files = {};
   for (const [id, data] of Object.entries(all)) files[`data/${id}.json`] = json(data);
   files['native-claim.md'] = renderClaimPage(all, 'native-claim', {
-    intro: 'The claim suite\'s 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight against LCU, Codex, Cua, Peekaboo and Claude\'s own computer use, in real windows with the owner away. The suite is sleight\'s own, its skill and tool wording were tuned on the runs of textedit-calculator, preview-read, excel-edit, word-edit, finder-move, textedit-save and textedit-drag (not calculator-click or calculator-menu), and the competitors ran their defaults.' });
+    intro: 'The claim suite\'s 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight against LCU, Codex, Cua, Peekaboo and Claude\'s own computer use, in real windows with the tester away. The suite is sleight\'s own, its skill and tool wording were tuned on the runs of textedit-calculator, preview-read, excel-edit, word-edit, finder-move, textedit-save and textedit-drag (not calculator-click or calculator-menu), and the competitors ran their defaults.' });
   files['app-claim.md'] = renderClaimPage(all, 'app-claim', {
-    intro: 'The app tasks run on the native path with the same arms and rules as the native claim. In VS Code the agent edits a fixture file in a separate instance with a temporary profile. In Slack it posts one fixed message to a test channel of a throwaway account. In the owner\'s Spotify account it finds a track, plays it and pauses it.' });
+    intro: 'The app tasks run on the native path with the same arms and rules as the native claim. In VS Code the agent edits a fixture file in a separate instance with a temporary profile. In Slack it posts one fixed message to a test channel of a throwaway account. In the tester\'s personal Spotify account it finds a track, plays it and pauses it.' });
   files['browser-turbo.md'] = renderTurboPage(all, 'browser-turbo');
   files['browser-race.md'] = renderRacePage(all, 'browser-race');
   files['ab-tests.md'] = renderAbPage(all, 'ab-tests');
@@ -1145,12 +1163,15 @@ export function render(all) {
   for (const [name, text] of Object.entries(charts.renderCharts(all))) files[name] = text;
   const explore = JSON.stringify(exploreData(all)).replace(/</g, '\\u003c');
   files['explore.html'] = fillTemplate(readFileSync(join(ROOT, 'bench/results-explore.html'), 'utf8'), explore, 'explore.html');
-  // The Pages landing comes from bench/results-index.html once it exists, with the explore data and the chart captions.
-  const indexTemplate = join(ROOT, 'bench/results-index.html');
-  if (existsSync(indexTemplate)) {
-    const captions = Object.fromEntries(charts.CHARTS.map(chart => [chart.id, charts.chartCaption(chart.id, all)]));
-    files['index.html'] = fillTemplate(readFileSync(indexTemplate, 'utf8'), JSON.stringify({ ...exploreData(all), chartCaptions: captions }).replace(/</g, '\\u003c'), 'index.html');
-  } else files['index.html'] = INDEX_HTML;
+  const indexTemplate = readFileSync(join(ROOT, 'bench/results-index.html'), 'utf8');
+  const rows = FAMILIES.map(fam => `<tr><th scope="row"><a href="${REPO_RESULTS}${fam.page}">${escapeHtml(fam.title)}</a></th>` +
+    `<td>${escapeHtml(fam.what)}</td><td>${escapeHtml(resultSummary(fam.id, all[fam.id]))}</td>` +
+    `<td><a href="data/${fam.id}.json">JSON</a></td></tr>`).join('\n');
+  files['index.html'] = indexTemplate.replace('<!--__FAMILIES__-->', () => rows);
+  for (const id of ['headline-native', 'overview']) {
+    const caption = escapeHtml(charts.chartCaption(id, all));
+    files['index.html'] = files['index.html'].replaceAll(`<!--__${id}__-->`, () => caption);
+  }
   for (const [name, text] of Object.entries(files)) files[name] = scrubPaths(text);
   return files;
 }

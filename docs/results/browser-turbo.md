@@ -2,7 +2,7 @@
 
 # Chrome and Helium: turbo against FowlBrowser
 
-Turbo is sleight's own browser path for Chrome and Helium. The real-window race runs FowlBrowser and turbo in the owner's Chrome and Helium benchmark profiles, and the gate rounds, before production turbo, raced FowlBrowser on FowlBrowser's own 13-task runner.
+Turbo is sleight's own browser path for Chrome and Helium. The real-window race runs FowlBrowser and turbo in the tester's Chrome and Helium benchmark profiles, and the gate rounds, before production turbo, raced FowlBrowser on FowlBrowser's own 13-task runner.
 
 ## Chrome, sleight rounds `chrome-sleight-turbo-rel130-r*` (newest)
 
@@ -180,7 +180,7 @@ The arms that use the engine ran on one engine version, 26.1007.71326. A version
 - Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
 - The rules come from [LAWS](../status/LAWS.md). Each arm gets 3 runs per task, or 5 where sleight and another arm are within 20% (the difference over the slower expected time). "Fastest" needs the lowest expected time on a majority of tasks and the lowest total, with those 5 runs in place. Otherwise the wording is "completed every task, fastest on N". A task counts as lost when another arm has the lower expected time or a faster passing run.
 - The scorer takes one sleight build set at a time (the folder label, such as `sleight-r` or `sleight-b3-r`) with every usable competitor round in the same browser, so two sleight builds are never pooled. A set is scored once it has 3 runs of every task.
-- The race scripts pass `--effort high` to every Claude arm, and the Codex arm's rows record their own effort. Every Claude arm ran the pinned Claude Code on the owner's account login, each in its own config.
+- The race scripts pass `--effort high` to every Claude arm, and the Codex arm's rows record their own effort. Every Claude arm ran the pinned Claude Code on the tester's account login, each in its own config.
 
 Rounds come from `~/Projects/sleight-wt/race-1017`. Folders without `results.json` are still running and are left out, and there were none.
 
@@ -194,9 +194,9 @@ Rounds left out, with the recorded reason:
 
 | Round | Reason |
 | --- | --- |
-| `chrome-claude-in-chrome-r1` | `Claude in Chrome permission prompt timed out in every task (no site access granted in the sleight benchmark profile); not a result of the arm. Rerun after the owner allows the benchmark sites.` |
-| `chrome-claude-in-chrome-r2` | `Claude in Chrome permission prompt timed out in every task (no site access granted in the sleight benchmark profile); not a result of the arm. Rerun after the owner allows the benchmark sites.` |
-| `chrome-claude-in-chrome-r3` | `Claude in Chrome permission prompt timed out in every task (no site access granted in the sleight benchmark profile); not a result of the arm. Rerun after the owner allows the benchmark sites.` |
+| `chrome-claude-in-chrome-r1` | `Claude in Chrome permission prompt timed out in every task (no site access granted in the sleight benchmark profile); not a result of the arm. Rerun after the tester allows the benchmark sites.` |
+| `chrome-claude-in-chrome-r2` | `Claude in Chrome permission prompt timed out in every task (no site access granted in the sleight benchmark profile); not a result of the arm. Rerun after the tester allows the benchmark sites.` |
+| `chrome-claude-in-chrome-r3` | `Claude in Chrome permission prompt timed out in every task (no site access granted in the sleight benchmark profile); not a result of the arm. Rerun after the tester allows the benchmark sites.` |
 | `helium-fowlbrowser-r2-quota` | `the account hit its weekly usage limit during this round (claude-code: You have hit your weekly limit); not a result of the arm. Rerun.` |
 | `helium-fowlbrowser-r3-quota` | `the account hit its weekly usage limit during this round (claude-code: You have hit your weekly limit); not a result of the arm. Rerun.` |
 | `helium-sleight-turbo-r2-quota` | `the account hit its weekly usage limit during this round (claude-code: You have hit your weekly limit); not a result of the arm. Rerun.` |
@@ -222,13 +222,13 @@ Each cell is expected seconds, then passes/runs.
 | `size-guide` | 10.7 (3/3) | 13.7 (3/3) |
 | `demoid` | 15.1 (3/3) | 14.7 (3/3) |
 | `mobile` | 22.6 (2/3) | 14.3 (5/5) |
-| `handoff` | never (0/3) | 17.1 (5/5) |
+| `handoff` | no pass (0/3) | 17.1 (5/5) |
 | `inject-order` | 15.2 (3/3) | 18.1 (5/5) |
 | `inject-mail` | 15.8 (3/3) | 16.8 (5/5) |
 | `wikipedia` | 8.1 (3/3) | 6.8 (5/5) |
 | `mdn` | 14.3 (2/3) | 6.6 (5/5) |
 | Lowest expected time on | 6 of 13 | 7 of 13 |
-| Total expected s | none (a task has no pass) | 447.8 |
+| Total expected s | no total (a task has no pass) | 447.8 |
 
 By the loss rule, sleight turbo lost 7 of 13 tasks.
 
@@ -314,13 +314,13 @@ Each cell is expected seconds, then passes/runs.
 | `size-guide` | 9.1 (3/3) | 13.7 (3/3) |
 | `demoid` | 13.1 (3/3) | 14.7 (3/3) |
 | `mobile` | 12.6 (3/3) | 14.3 (5/5) |
-| `handoff` | never (0/3) | 17.1 (5/5) |
+| `handoff` | no pass (0/3) | 17.1 (5/5) |
 | `inject-order` | 16.3 (3/3) | 18.1 (5/5) |
 | `inject-mail` | 17.8 (3/3) | 16.8 (5/5) |
 | `wikipedia` | 5.4 (3/3) | 6.8 (5/5) |
 | `mdn` | 5.1 (3/3) | 6.6 (5/5) |
 | Lowest expected time on | 11 of 13 | 2 of 13 |
-| Total expected s | none (a task has no pass) | 447.8 |
+| Total expected s | no total (a task has no pass) | 447.8 |
 
 By the loss rule, sleight turbo lost 4 of 13 tasks.
 
@@ -476,13 +476,13 @@ Each cell is expected seconds, then passes/runs.
 | `size-guide` | 10.7 (3/3) | 15.6 (3/3) |
 | `demoid` | 19.3 (3/3) | 13.9 (3/3) |
 | `mobile` | 13.1 (3/3) | 12.3 (3/3) |
-| `handoff` | never (0/3) | 14.8 (3/3) |
+| `handoff` | no pass (0/3) | 14.8 (3/3) |
 | `inject-order` | 12.7 (3/3) | 16.3 (3/3) |
 | `inject-mail` | 15.1 (3/3) | 19.4 (3/3) |
 | `wikipedia` | 6.1 (3/3) | 5.9 (3/3) |
 | `mdn` | 7.2 (3/3) | 6.4 (3/3) |
 | Lowest expected time on | 6 of 13 | 7 of 13 |
-| Total expected s | none (a task has no pass) | 338.3 |
+| Total expected s | no total (a task has no pass) | 338.3 |
 
 By the loss rule, sleight turbo lost 7 of 13 tasks.
 
@@ -563,13 +563,13 @@ Each cell is expected seconds, then passes/runs.
 | `size-guide` | 9.9 (3/3) | 15.6 (3/3) |
 | `demoid` | 14.3 (3/3) | 13.9 (3/3) |
 | `mobile` | 11.4 (3/3) | 12.3 (3/3) |
-| `handoff` | never (0/3) | 14.8 (3/3) |
+| `handoff` | no pass (0/3) | 14.8 (3/3) |
 | `inject-order` | 13.6 (3/3) | 16.3 (3/3) |
 | `inject-mail` | 19.0 (3/3) | 19.4 (3/3) |
 | `wikipedia` | 5.7 (3/3) | 5.9 (3/3) |
 | `mdn` | 5.9 (3/3) | 6.4 (3/3) |
 | Lowest expected time on | 11 of 13 | 2 of 13 |
-| Total expected s | none (a task has no pass) | 338.3 |
+| Total expected s | no total (a task has no pass) | 338.3 |
 
 By the loss rule, sleight turbo lost 5 of 13 tasks.
 
@@ -640,7 +640,7 @@ The arms that use the engine ran on one engine version, 26.1007.71326. A version
 <details><summary>Gate rounds on FowlBrowser's runner, before production turbo</summary>
 
 - FowlBrowser's head-to-head runner, pinned with sleight's patch, runs each arm in both browser orders (normal and swap), so a gate round is 26 runs per arm. Its reports give whole seconds. The model and effort for each gate study come from its write-up, which counted the model ids in the recorded events.
-- A gate run passes under the owner's scoring (LAWS). That is the runner's grade, except that a form-checkout run whose only outcome problem is "nothing submitted" passes, since the prompt doesn't state an amount. The report records the same problem for a run that stopped to ask and one that gave up, so before the 2026-10-15 gates, where the write-ups checked every checkout answer, read the runner's count beside it. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.
+- A gate run passes under the published scoring rules (LAWS). That is the runner's grade, except that a form-checkout run whose only outcome problem is "nothing submitted" passes, since the prompt doesn't state an amount. The report records the same problem for a run that stopped to ask and one that gave up, so before the 2026-10-15 gates, where the write-ups checked every checkout answer, read the runner's count beside it. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.
 
 | Study | Date | Model | Effort | Arms | Rounds | Runs | Write-up |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -672,7 +672,7 @@ Study `2026-10-16-gate-3`, model `claude-haiku-5-5` at high effort, from [the wr
 | round 5 | 558 s, 26/26 passed (24 by the runner), 168 calls, 0 errors | 678 s, 26/26 passed (25 by the runner), 286 calls, 8 errors |
 | Median round s | 547 | 720 |
 
-Per task over all rounds, expected seconds, then passes/runs under the owner's scoring:
+Per task over all rounds, expected seconds, then passes/runs under the published scoring rules:
 
 | Task | sleight turbo | FowlBrowser |
 | --- | --- | --- |
@@ -705,7 +705,7 @@ Study `2026-10-16-opus`, model `claude-opus-5-5` at high effort, from [the write
 | round 5 | 675 s, 26/26 passed (24 by the runner), 155 calls, 0 errors | 935 s, 26/26 passed (26 by the runner), 259 calls, 5 errors |
 | Median round s | 675 | 885 |
 
-Per task over all rounds, expected seconds, then passes/runs under the owner's scoring:
+Per task over all rounds, expected seconds, then passes/runs under the published scoring rules:
 
 | Task | sleight turbo | FowlBrowser |
 | --- | --- | --- |

@@ -8,6 +8,8 @@ Turbo needs Chrome's debugging consent, which Safari and Firefox lack, so sleigh
 
 2026-10-18 to 2026-10-19, Safari 27.0.1, 28 rounds and 232 runs. The scorer's wording is "fastest".
 
+sleight is the only arm with a total: every competitor has a task with no pass. There is no competing complete-suite time.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/family-browser-race-safari-dark.svg">
   <img src="img/family-browser-race-safari-light.svg" width="900" alt="Safari, the engine path against Codex, LCU, Cua and Peekaboo, 2026-10-18 to 2026-10-19. Expected seconds per task for sleight, Codex, Cua, LCU and Peekaboo. sleight has the lowest expected time on 11 of 12 tasks. The scorer's wording is &quot;fastest&quot;. The same-model rows put sleight inside Codex against Codex, with the wording &quot;completed every task, fastest on 9 of 12&quot;.">
@@ -20,19 +22,19 @@ Each cell is expected seconds, then passes/runs.
 | Task | sleight | Codex | Cua | LCU | Peekaboo |
 | --- | --- | --- | --- | --- | --- |
 | `form-travel` | 74.8 (5/5) | 102.0 (4/5) | 262.4 (3/3) | 202.8 (3/3) | 627.3 (2/3) |
-| `form-settings` | 143.6 (3/3) | never (0/3) | 206.3 (3/3) | never (0/3) | never (0/3) |
-| `form-checkout` | 55.4 (3/3) | 170.0 (1/3) | never (0/3) | 81.8 (2/3) | 240.0 (2/3) |
-| `form-settings-helium` | 149.4 (3/3) | never (0/3) | 273.4 (3/3) | never (0/3) | never (0/3) |
+| `form-settings` | 143.6 (3/3) | no pass (0/3) | 206.3 (3/3) | no pass (0/3) | no pass (0/3) |
+| `form-checkout` | 55.4 (3/3) | 170.0 (1/3) | no pass (0/3) | 81.8 (2/3) | 240.0 (2/3) |
+| `form-settings-helium` | 149.4 (3/3) | no pass (0/3) | 273.4 (3/3) | no pass (0/3) | no pass (0/3) |
 | `shipping-link` | 14.6 (3/3) | 24.5 (3/3) | 37.3 (3/3) | 41.9 (2/3) | 25.3 (3/3) |
-| `size-guide` | 20.3 (3/3) | 32.4 (3/3) | 153.5 (1/3) | 41.0 (2/3) | never (0/3) |
-| `demoid` | 17.9 (3/3) | never (0/3) | never (0/3) | never (0/3) | never (0/3) |
+| `size-guide` | 20.3 (3/3) | 32.4 (3/3) | 153.5 (1/3) | 41.0 (2/3) | no pass (0/3) |
+| `demoid` | 17.9 (3/3) | no pass (0/3) | no pass (0/3) | no pass (0/3) | no pass (0/3) |
 | `handoff` | 28.3 (3/3) | 124.0 (1/3) | 58.6 (3/3) | 46.5 (2/3) | 123.2 (1/3) |
 | `inject-order` | 32.0 (3/3) | 123.1 (3/3) | 61.4 (3/3) | 53.2 (2/3) | 40.6 (3/3) |
 | `inject-mail` | 21.4 (3/3) | 50.5 (3/3) | 51.4 (3/3) | 46.9 (2/3) | 55.6 (2/3) |
 | `wikipedia` | 17.6 (5/5) | 21.1 (5/5) | 41.3 (3/3) | 45.5 (2/3) | 20.4 (5/5) |
 | `mdn` | 16.8 (5/5) | 16.6 (5/5) | 53.8 (2/3) | 27.2 (2/3) | 19.5 (5/5) |
 | Lowest expected time on | 11 of 12 | 1 of 12 | 0 of 12 | 0 of 12 | 0 of 12 |
-| Total expected s | 592.1 | none (a task has no pass) | none (a task has no pass) | none (a task has no pass) | none (a task has no pass) |
+| Total expected s | 592.1 | no total (a task has no pass) | no total (a task has no pass) | no total (a task has no pass) | no total (a task has no pass) |
 
 By the loss rule, sleight lost 2 of 12 tasks.
 
@@ -50,19 +52,19 @@ No pair within 20% of sleight is short of 5 runs.
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |
 | `form-travel` | 100.8 (3/3) | 102.0 (4/5) |
-| `form-settings` | 131.1 (3/3) | never (0/3) |
+| `form-settings` | 131.1 (3/3) | no pass (0/3) |
 | `form-checkout` | 134.2 (3/3) | 170.0 (1/3) |
-| `form-settings-helium` | 183.0 (3/3) | never (0/3) |
+| `form-settings-helium` | 183.0 (3/3) | no pass (0/3) |
 | `shipping-link` | 21.4 (3/3) | 24.5 (3/3) |
 | `size-guide` | 22.2 (3/3) | 32.4 (3/3) |
-| `demoid` | 41.9 (2/3) | never (0/3) |
+| `demoid` | 41.9 (2/3) | no pass (0/3) |
 | `handoff` | 173.1 (1/3) | 124.0 (1/3) |
 | `inject-order` | 49.1 (3/3) | 123.1 (3/3) |
 | `inject-mail` | 49.0 (3/3) | 50.5 (3/3) |
 | `wikipedia` | 23.7 (3/3) | 21.1 (5/5) |
 | `mdn` | 21.2 (3/3) | 16.6 (5/5) |
 | Lowest expected time on | 9 of 12 | 3 of 12 |
-| Total expected s | 950.6 | none (a task has no pass) |
+| Total expected s | 950.6 | no total (a task has no pass) |
 
 By the loss rule, sleight inside Codex lost 5 of 12 tasks.
 
@@ -197,20 +199,20 @@ Each cell is expected seconds, then passes/runs.
 
 | Task | sleight | Codex | Cua | LCU | Peekaboo |
 | --- | --- | --- | --- | --- | --- |
-| `form-travel` | 115.1 (3/3) | 159.0 (3/3) | 366.6 (3/3) | 156.5 (3/3) | never (0/3) |
-| `form-settings` | 89.9 (3/3) | never (0/3) | 349.0 (2/3) | never (0/3) | never (0/3) |
-| `form-checkout` | 91.1 (5/5) | 125.9 (3/5) | 877.4 (1/3) | 69.6 (3/3) | never (0/3) |
-| `form-settings-helium` | 90.9 (3/3) | never (0/3) | 437.1 (2/3) | never (0/3) | never (0/3) |
-| `shipping-link` | 16.6 (3/3) | 23.5 (3/3) | 39.0 (3/3) | 24.2 (3/3) | never (0/3) |
-| `size-guide` | 19.5 (3/3) | 29.4 (3/3) | 75.5 (3/3) | 32.8 (3/3) | never (0/3) |
-| `demoid` | 21.6 (3/3) | 38.2 (2/3) | 141.4 (1/3) | 28.0 (3/3) | never (0/3) |
+| `form-travel` | 115.1 (3/3) | 159.0 (3/3) | 366.6 (3/3) | 156.5 (3/3) | no pass (0/3) |
+| `form-settings` | 89.9 (3/3) | no pass (0/3) | 349.0 (2/3) | no pass (0/3) | no pass (0/3) |
+| `form-checkout` | 91.1 (5/5) | 125.9 (3/5) | 877.4 (1/3) | 69.6 (3/3) | no pass (0/3) |
+| `form-settings-helium` | 90.9 (3/3) | no pass (0/3) | 437.1 (2/3) | no pass (0/3) | no pass (0/3) |
+| `shipping-link` | 16.6 (3/3) | 23.5 (3/3) | 39.0 (3/3) | 24.2 (3/3) | no pass (0/3) |
+| `size-guide` | 19.5 (3/3) | 29.4 (3/3) | 75.5 (3/3) | 32.8 (3/3) | no pass (0/3) |
+| `demoid` | 21.6 (3/3) | 38.2 (2/3) | 141.4 (1/3) | 28.0 (3/3) | no pass (0/3) |
 | `handoff` | 26.8 (3/3) | 148.1 (1/3) | 56.8 (3/3) | 33.6 (3/3) | 147.4 (1/3) |
-| `inject-order` | 29.4 (5/5) | 74.4 (3/3) | 64.8 (3/3) | 32.7 (5/5) | never (0/3) |
-| `inject-mail` | 23.5 (3/3) | 41.3 (3/3) | 59.6 (3/3) | 37.6 (3/3) | never (0/3) |
+| `inject-order` | 29.4 (5/5) | 74.4 (3/3) | 64.8 (3/3) | 32.7 (5/5) | no pass (0/3) |
+| `inject-mail` | 23.5 (3/3) | 41.3 (3/3) | 59.6 (3/3) | 37.6 (3/3) | no pass (0/3) |
 | `wikipedia` | 15.5 (3/3) | 20.3 (3/3) | 37.7 (3/3) | 32.6 (3/3) | 38.0 (3/3) |
 | `mdn` | 17.1 (5/5) | 21.9 (5/5) | 36.4 (3/3) | 18.5 (5/5) | 53.4 (2/3) |
 | Lowest expected time on | 11 of 12 | 0 of 12 | 0 of 12 | 1 of 12 | 0 of 12 |
-| Total expected s | 557.1 | none (a task has no pass) | 2541.4 | none (a task has no pass) | none (a task has no pass) |
+| Total expected s | 557.1 | no total (a task has no pass) | 2541.4 | no total (a task has no pass) | no total (a task has no pass) |
 
 By the loss rule, sleight lost 4 of 12 tasks.
 
@@ -231,9 +233,9 @@ No pair within 20% of sleight is short of 5 runs.
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |
 | `form-travel` | 116.3 (3/3) | 159.0 (3/3) |
-| `form-settings` | 137.2 (2/3) | never (0/3) |
+| `form-settings` | 137.2 (2/3) | no pass (0/3) |
 | `form-checkout` | 129.2 (2/3) | 125.9 (3/5) |
-| `form-settings-helium` | 74.4 (3/3) | never (0/3) |
+| `form-settings-helium` | 74.4 (3/3) | no pass (0/3) |
 | `shipping-link` | 31.9 (3/3) | 23.5 (3/3) |
 | `size-guide` | 32.7 (3/3) | 29.4 (3/3) |
 | `demoid` | 23.5 (3/3) | 38.2 (2/3) |
@@ -243,7 +245,7 @@ No pair within 20% of sleight is short of 5 runs.
 | `wikipedia` | 26.4 (3/3) | 20.3 (3/3) |
 | `mdn` | 19.8 (3/3) | 21.9 (5/5) |
 | Lowest expected time on | 8 of 12 | 4 of 12 |
-| Total expected s | 747.7 | none (a task has no pass) |
+| Total expected s | 747.7 | no total (a task has no pass) |
 
 By the loss rule, sleight inside Codex lost 6 of 12 tasks.
 
@@ -367,7 +369,7 @@ The arms that use the engine ran on different engine versions: sleight on 26.101
 - Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
 - The rules come from [LAWS](../status/LAWS.md). Each arm gets 3 runs per task, or 5 where sleight and another arm are within 20% (the difference over the slower expected time). "Fastest" needs the lowest expected time on a majority of tasks and the lowest total, with those 5 runs in place. Otherwise the wording is "completed every task, fastest on N". A task counts as lost when another arm has the lower expected time or a faster passing run.
 - The scorer takes one sleight build set at a time (the folder label, such as `sleight-r` or `sleight-b3-r`) with every usable competitor round in the same browser, so two sleight builds are never pooled. A set is scored once it has 3 runs of every task.
-- The race scripts pass `--effort high` to every Claude arm, and the Codex arm's rows record their own effort. Every Claude arm ran the pinned Claude Code on the owner's account login, each in its own config.
+- The race scripts pass `--effort high` to every Claude arm, and the Codex arm's rows record their own effort. Every Claude arm ran the pinned Claude Code on the tester's account login, each in its own config.
 
 Rounds come from `~/Projects/sleight-wt/race-1017`. Folders without `results.json` are still running and are left out, and there were none.
 
@@ -394,24 +396,26 @@ Rounds left out, with the recorded reason:
 
 2026-10-18 to 2026-10-19, Safari 27.0.1, 27 rounds and 226 runs. The scorer's wording is "completed every task, fastest on 10 of 12".
 
+sleight is the only arm with a total: every competitor has a task with no pass. There is no competing complete-suite time.
+
 Each cell is expected seconds, then passes/runs.
 
 | Task | sleight | Codex | Cua | LCU | Peekaboo |
 | --- | --- | --- | --- | --- | --- |
 | `form-travel` | 106.6 (3/3) | 102.0 (4/5) | 262.4 (3/3) | 202.8 (3/3) | 627.3 (2/3) |
-| `form-settings` | 167.0 (2/3) | never (0/3) | 206.3 (3/3) | never (0/3) | never (0/3) |
-| `form-checkout` | 59.4 (3/3) | 170.0 (1/3) | never (0/3) | 81.8 (2/3) | 240.0 (2/3) |
-| `form-settings-helium` | 151.9 (3/3) | never (0/3) | 273.4 (3/3) | never (0/3) | never (0/3) |
+| `form-settings` | 167.0 (2/3) | no pass (0/3) | 206.3 (3/3) | no pass (0/3) | no pass (0/3) |
+| `form-checkout` | 59.4 (3/3) | 170.0 (1/3) | no pass (0/3) | 81.8 (2/3) | 240.0 (2/3) |
+| `form-settings-helium` | 151.9 (3/3) | no pass (0/3) | 273.4 (3/3) | no pass (0/3) | no pass (0/3) |
 | `shipping-link` | 17.9 (3/3) | 24.5 (3/3) | 37.3 (3/3) | 41.9 (2/3) | 25.3 (3/3) |
-| `size-guide` | 22.5 (3/3) | 32.4 (3/3) | 153.5 (1/3) | 41.0 (2/3) | never (0/3) |
-| `demoid` | 30.4 (2/3) | never (0/3) | never (0/3) | never (0/3) | never (0/3) |
+| `size-guide` | 22.5 (3/3) | 32.4 (3/3) | 153.5 (1/3) | 41.0 (2/3) | no pass (0/3) |
+| `demoid` | 30.4 (2/3) | no pass (0/3) | no pass (0/3) | no pass (0/3) | no pass (0/3) |
 | `handoff` | 28.2 (3/3) | 124.0 (1/3) | 58.6 (3/3) | 46.5 (2/3) | 123.2 (1/3) |
 | `inject-order` | 23.5 (3/3) | 123.1 (3/3) | 61.4 (3/3) | 53.2 (2/3) | 40.6 (3/3) |
 | `inject-mail` | 24.7 (3/3) | 50.5 (3/3) | 51.4 (3/3) | 46.9 (2/3) | 55.6 (2/3) |
 | `wikipedia` | 18.0 (3/3) | 21.1 (5/5) | 41.3 (3/3) | 45.5 (2/3) | 20.4 (5/5) |
 | `mdn` | 20.0 (3/3) | 16.6 (5/5) | 53.8 (2/3) | 27.2 (2/3) | 19.5 (5/5) |
 | Lowest expected time on | 10 of 12 | 2 of 12 | 0 of 12 | 0 of 12 | 0 of 12 |
-| Total expected s | 670.1 | none (a task has no pass) | none (a task has no pass) | none (a task has no pass) | none (a task has no pass) |
+| Total expected s | 670.1 | no total (a task has no pass) | no total (a task has no pass) | no total (a task has no pass) | no total (a task has no pass) |
 
 By the loss rule, sleight lost 3 of 12 tasks.
 
@@ -441,19 +445,19 @@ Pairs within 20% of sleight that still need 5 runs:
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |
 | `form-travel` | 100.8 (3/3) | 102.0 (4/5) |
-| `form-settings` | 131.1 (3/3) | never (0/3) |
+| `form-settings` | 131.1 (3/3) | no pass (0/3) |
 | `form-checkout` | 134.2 (3/3) | 170.0 (1/3) |
-| `form-settings-helium` | 183.0 (3/3) | never (0/3) |
+| `form-settings-helium` | 183.0 (3/3) | no pass (0/3) |
 | `shipping-link` | 21.4 (3/3) | 24.5 (3/3) |
 | `size-guide` | 22.2 (3/3) | 32.4 (3/3) |
-| `demoid` | 41.9 (2/3) | never (0/3) |
+| `demoid` | 41.9 (2/3) | no pass (0/3) |
 | `handoff` | 173.1 (1/3) | 124.0 (1/3) |
 | `inject-order` | 49.1 (3/3) | 123.1 (3/3) |
 | `inject-mail` | 49.0 (3/3) | 50.5 (3/3) |
 | `wikipedia` | 23.7 (3/3) | 21.1 (5/5) |
 | `mdn` | 21.2 (3/3) | 16.6 (5/5) |
 | Lowest expected time on | 9 of 12 | 3 of 12 |
-| Total expected s | 950.6 | none (a task has no pass) |
+| Total expected s | 950.6 | no total (a task has no pass) |
 
 By the loss rule, sleight inside Codex lost 5 of 12 tasks.
 
@@ -583,20 +587,20 @@ Each cell is expected seconds, then passes/runs.
 
 | Task | sleight | Codex | Cua | LCU | Peekaboo |
 | --- | --- | --- | --- | --- | --- |
-| `form-travel` | 184.6 (2/3) | 159.0 (3/3) | 366.6 (3/3) | 156.5 (3/3) | never (0/3) |
-| `form-settings` | 165.3 (2/3) | never (0/3) | 349.0 (2/3) | never (0/3) | never (0/3) |
-| `form-checkout` | 60.7 (3/3) | 125.9 (3/5) | 877.4 (1/3) | 69.6 (3/3) | never (0/3) |
-| `form-settings-helium` | 364.8 (1/3) | never (0/3) | 437.1 (2/3) | never (0/3) | never (0/3) |
-| `shipping-link` | 22.8 (3/3) | 23.5 (3/3) | 39.0 (3/3) | 24.2 (3/3) | never (0/3) |
-| `size-guide` | 26.4 (3/3) | 29.4 (3/3) | 75.5 (3/3) | 32.8 (3/3) | never (0/3) |
-| `demoid` | 41.4 (2/3) | 38.2 (2/3) | 141.4 (1/3) | 28.0 (3/3) | never (0/3) |
+| `form-travel` | 184.6 (2/3) | 159.0 (3/3) | 366.6 (3/3) | 156.5 (3/3) | no pass (0/3) |
+| `form-settings` | 165.3 (2/3) | no pass (0/3) | 349.0 (2/3) | no pass (0/3) | no pass (0/3) |
+| `form-checkout` | 60.7 (3/3) | 125.9 (3/5) | 877.4 (1/3) | 69.6 (3/3) | no pass (0/3) |
+| `form-settings-helium` | 364.8 (1/3) | no pass (0/3) | 437.1 (2/3) | no pass (0/3) | no pass (0/3) |
+| `shipping-link` | 22.8 (3/3) | 23.5 (3/3) | 39.0 (3/3) | 24.2 (3/3) | no pass (0/3) |
+| `size-guide` | 26.4 (3/3) | 29.4 (3/3) | 75.5 (3/3) | 32.8 (3/3) | no pass (0/3) |
+| `demoid` | 41.4 (2/3) | 38.2 (2/3) | 141.4 (1/3) | 28.0 (3/3) | no pass (0/3) |
 | `handoff` | 34.8 (3/3) | 148.1 (1/3) | 56.8 (3/3) | 33.6 (3/3) | 147.4 (1/3) |
-| `inject-order` | 35.7 (3/3) | 74.4 (3/3) | 64.8 (3/3) | 32.7 (5/5) | never (0/3) |
-| `inject-mail` | 36.3 (3/3) | 41.3 (3/3) | 59.6 (3/3) | 37.6 (3/3) | never (0/3) |
+| `inject-order` | 35.7 (3/3) | 74.4 (3/3) | 64.8 (3/3) | 32.7 (5/5) | no pass (0/3) |
+| `inject-mail` | 36.3 (3/3) | 41.3 (3/3) | 59.6 (3/3) | 37.6 (3/3) | no pass (0/3) |
 | `wikipedia` | 32.2 (3/3) | 20.3 (3/3) | 37.7 (3/3) | 32.6 (3/3) | 38.0 (3/3) |
 | `mdn` | 26.1 (3/3) | 21.9 (5/5) | 36.4 (3/3) | 18.5 (5/5) | 53.4 (2/3) |
 | Lowest expected time on | 6 of 12 | 1 of 12 | 0 of 12 | 5 of 12 | 0 of 12 |
-| Total expected s | 1031.1 | none (a task has no pass) | 2541.4 | none (a task has no pass) | none (a task has no pass) |
+| Total expected s | 1031.1 | no total (a task has no pass) | 2541.4 | no total (a task has no pass) | no total (a task has no pass) |
 
 By the loss rule, sleight lost 9 of 12 tasks.
 
@@ -647,9 +651,9 @@ Pairs within 20% of sleight that still need 5 runs:
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |
 | `form-travel` | 116.3 (3/3) | 159.0 (3/3) |
-| `form-settings` | 137.2 (2/3) | never (0/3) |
+| `form-settings` | 137.2 (2/3) | no pass (0/3) |
 | `form-checkout` | 129.2 (2/3) | 125.9 (3/5) |
-| `form-settings-helium` | 74.4 (3/3) | never (0/3) |
+| `form-settings-helium` | 74.4 (3/3) | no pass (0/3) |
 | `shipping-link` | 31.9 (3/3) | 23.5 (3/3) |
 | `size-guide` | 32.7 (3/3) | 29.4 (3/3) |
 | `demoid` | 23.5 (3/3) | 38.2 (2/3) |
@@ -659,7 +663,7 @@ Pairs within 20% of sleight that still need 5 runs:
 | `wikipedia` | 26.4 (3/3) | 20.3 (3/3) |
 | `mdn` | 19.8 (3/3) | 21.9 (5/5) |
 | Lowest expected time on | 8 of 12 | 4 of 12 |
-| Total expected s | 747.7 | none (a task has no pass) |
+| Total expected s | 747.7 | no total (a task has no pass) |
 
 By the loss rule, sleight inside Codex lost 6 of 12 tasks.
 
@@ -790,20 +794,20 @@ Each cell is expected seconds, then passes/runs.
 
 | Task | sleight | Codex | Cua | LCU | Peekaboo |
 | --- | --- | --- | --- | --- | --- |
-| `form-travel` | 116.2 (3/3) | 159.0 (3/3) | 366.6 (3/3) | 156.5 (3/3) | never (0/3) |
-| `form-settings` | 179.9 (2/3) | never (0/3) | 349.0 (2/3) | never (0/3) | never (0/3) |
-| `form-checkout` | 51.0 (3/3) | 125.9 (3/5) | 877.4 (1/3) | 69.6 (3/3) | never (0/3) |
-| `form-settings-helium` | never (0/3) | never (0/3) | 437.1 (2/3) | never (0/3) | never (0/3) |
-| `shipping-link` | 17.0 (3/3) | 23.5 (3/3) | 39.0 (3/3) | 24.2 (3/3) | never (0/3) |
-| `size-guide` | 23.4 (3/3) | 29.4 (3/3) | 75.5 (3/3) | 32.8 (3/3) | never (0/3) |
-| `demoid` | 26.6 (3/3) | 38.2 (2/3) | 141.4 (1/3) | 28.0 (3/3) | never (0/3) |
+| `form-travel` | 116.2 (3/3) | 159.0 (3/3) | 366.6 (3/3) | 156.5 (3/3) | no pass (0/3) |
+| `form-settings` | 179.9 (2/3) | no pass (0/3) | 349.0 (2/3) | no pass (0/3) | no pass (0/3) |
+| `form-checkout` | 51.0 (3/3) | 125.9 (3/5) | 877.4 (1/3) | 69.6 (3/3) | no pass (0/3) |
+| `form-settings-helium` | no pass (0/3) | no pass (0/3) | 437.1 (2/3) | no pass (0/3) | no pass (0/3) |
+| `shipping-link` | 17.0 (3/3) | 23.5 (3/3) | 39.0 (3/3) | 24.2 (3/3) | no pass (0/3) |
+| `size-guide` | 23.4 (3/3) | 29.4 (3/3) | 75.5 (3/3) | 32.8 (3/3) | no pass (0/3) |
+| `demoid` | 26.6 (3/3) | 38.2 (2/3) | 141.4 (1/3) | 28.0 (3/3) | no pass (0/3) |
 | `handoff` | 33.1 (3/3) | 148.1 (1/3) | 56.8 (3/3) | 33.6 (3/3) | 147.4 (1/3) |
-| `inject-order` | 30.2 (3/3) | 74.4 (3/3) | 64.8 (3/3) | 32.7 (5/5) | never (0/3) |
-| `inject-mail` | 35.1 (3/3) | 41.3 (3/3) | 59.6 (3/3) | 37.6 (3/3) | never (0/3) |
+| `inject-order` | 30.2 (3/3) | 74.4 (3/3) | 64.8 (3/3) | 32.7 (5/5) | no pass (0/3) |
+| `inject-mail` | 35.1 (3/3) | 41.3 (3/3) | 59.6 (3/3) | 37.6 (3/3) | no pass (0/3) |
 | `wikipedia` | 18.9 (3/3) | 20.3 (3/3) | 37.7 (3/3) | 32.6 (3/3) | 38.0 (3/3) |
 | `mdn` | 19.7 (3/3) | 21.9 (5/5) | 36.4 (3/3) | 18.5 (5/5) | 53.4 (2/3) |
 | Lowest expected time on | 10 of 12 | 0 of 12 | 1 of 12 | 1 of 12 | 0 of 12 |
-| Total expected s | none (a task has no pass) | none (a task has no pass) | 2541.4 | none (a task has no pass) | none (a task has no pass) |
+| Total expected s | no total (a task has no pass) | no total (a task has no pass) | 2541.4 | no total (a task has no pass) | no total (a task has no pass) |
 
 By the loss rule, sleight lost 7 of 12 tasks.
 
@@ -840,9 +844,9 @@ Pairs within 20% of sleight that still need 5 runs:
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |
 | `form-travel` | 116.3 (3/3) | 159.0 (3/3) |
-| `form-settings` | 137.2 (2/3) | never (0/3) |
+| `form-settings` | 137.2 (2/3) | no pass (0/3) |
 | `form-checkout` | 129.2 (2/3) | 125.9 (3/5) |
-| `form-settings-helium` | 74.4 (3/3) | never (0/3) |
+| `form-settings-helium` | 74.4 (3/3) | no pass (0/3) |
 | `shipping-link` | 31.9 (3/3) | 23.5 (3/3) |
 | `size-guide` | 32.7 (3/3) | 29.4 (3/3) |
 | `demoid` | 23.5 (3/3) | 38.2 (2/3) |
@@ -852,7 +856,7 @@ Pairs within 20% of sleight that still need 5 runs:
 | `wikipedia` | 26.4 (3/3) | 20.3 (3/3) |
 | `mdn` | 19.8 (3/3) | 21.9 (5/5) |
 | Lowest expected time on | 8 of 12 | 4 of 12 |
-| Total expected s | 747.7 | none (a task has no pass) |
+| Total expected s | 747.7 | no total (a task has no pass) |
 
 By the loss rule, sleight inside Codex lost 6 of 12 tasks.
 
@@ -982,20 +986,20 @@ Each cell is expected seconds, then passes/runs.
 
 | Task | sleight | Codex | Cua | LCU | Peekaboo |
 | --- | --- | --- | --- | --- | --- |
-| `form-travel` | 155.7 (3/3) | 159.0 (3/3) | 366.6 (3/3) | 156.5 (3/3) | never (0/3) |
-| `form-settings` | never (0/3) | never (0/3) | 349.0 (2/3) | never (0/3) | never (0/3) |
-| `form-checkout` | 46.7 (3/3) | 125.9 (3/5) | 877.4 (1/3) | 69.6 (3/3) | never (0/3) |
-| `form-settings-helium` | never (0/3) | never (0/3) | 437.1 (2/3) | never (0/3) | never (0/3) |
-| `shipping-link` | 18.0 (3/3) | 23.5 (3/3) | 39.0 (3/3) | 24.2 (3/3) | never (0/3) |
-| `size-guide` | 17.8 (3/3) | 29.4 (3/3) | 75.5 (3/3) | 32.8 (3/3) | never (0/3) |
-| `demoid` | 20.3 (3/3) | 38.2 (2/3) | 141.4 (1/3) | 28.0 (3/3) | never (0/3) |
+| `form-travel` | 155.7 (3/3) | 159.0 (3/3) | 366.6 (3/3) | 156.5 (3/3) | no pass (0/3) |
+| `form-settings` | no pass (0/3) | no pass (0/3) | 349.0 (2/3) | no pass (0/3) | no pass (0/3) |
+| `form-checkout` | 46.7 (3/3) | 125.9 (3/5) | 877.4 (1/3) | 69.6 (3/3) | no pass (0/3) |
+| `form-settings-helium` | no pass (0/3) | no pass (0/3) | 437.1 (2/3) | no pass (0/3) | no pass (0/3) |
+| `shipping-link` | 18.0 (3/3) | 23.5 (3/3) | 39.0 (3/3) | 24.2 (3/3) | no pass (0/3) |
+| `size-guide` | 17.8 (3/3) | 29.4 (3/3) | 75.5 (3/3) | 32.8 (3/3) | no pass (0/3) |
+| `demoid` | 20.3 (3/3) | 38.2 (2/3) | 141.4 (1/3) | 28.0 (3/3) | no pass (0/3) |
 | `handoff` | 31.0 (3/3) | 148.1 (1/3) | 56.8 (3/3) | 33.6 (3/3) | 147.4 (1/3) |
-| `inject-order` | 27.9 (3/3) | 74.4 (3/3) | 64.8 (3/3) | 32.7 (5/5) | never (0/3) |
-| `inject-mail` | 24.9 (3/3) | 41.3 (3/3) | 59.6 (3/3) | 37.6 (3/3) | never (0/3) |
+| `inject-order` | 27.9 (3/3) | 74.4 (3/3) | 64.8 (3/3) | 32.7 (5/5) | no pass (0/3) |
+| `inject-mail` | 24.9 (3/3) | 41.3 (3/3) | 59.6 (3/3) | 37.6 (3/3) | no pass (0/3) |
 | `wikipedia` | 16.2 (3/3) | 20.3 (3/3) | 37.7 (3/3) | 32.6 (3/3) | 38.0 (3/3) |
 | `mdn` | 26.9 (2/3) | 21.9 (5/5) | 36.4 (3/3) | 18.5 (5/5) | 53.4 (2/3) |
 | Lowest expected time on | 9 of 12 | 0 of 12 | 2 of 12 | 1 of 12 | 0 of 12 |
-| Total expected s | none (a task has no pass) | none (a task has no pass) | 2541.4 | none (a task has no pass) | none (a task has no pass) |
+| Total expected s | no total (a task has no pass) | no total (a task has no pass) | 2541.4 | no total (a task has no pass) | no total (a task has no pass) |
 
 By the loss rule, sleight lost 7 of 12 tasks.
 
@@ -1027,9 +1031,9 @@ Pairs within 20% of sleight that still need 5 runs:
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |
 | `form-travel` | 116.3 (3/3) | 159.0 (3/3) |
-| `form-settings` | 137.2 (2/3) | never (0/3) |
+| `form-settings` | 137.2 (2/3) | no pass (0/3) |
 | `form-checkout` | 129.2 (2/3) | 125.9 (3/5) |
-| `form-settings-helium` | 74.4 (3/3) | never (0/3) |
+| `form-settings-helium` | 74.4 (3/3) | no pass (0/3) |
 | `shipping-link` | 31.9 (3/3) | 23.5 (3/3) |
 | `size-guide` | 32.7 (3/3) | 29.4 (3/3) |
 | `demoid` | 23.5 (3/3) | 38.2 (2/3) |
@@ -1039,7 +1043,7 @@ Pairs within 20% of sleight that still need 5 runs:
 | `wikipedia` | 26.4 (3/3) | 20.3 (3/3) |
 | `mdn` | 19.8 (3/3) | 21.9 (5/5) |
 | Lowest expected time on | 8 of 12 | 4 of 12 |
-| Total expected s | 747.7 | none (a task has no pass) |
+| Total expected s | 747.7 | no total (a task has no pass) |
 
 By the loss rule, sleight inside Codex lost 6 of 12 tasks.
 

@@ -2,7 +2,7 @@ Benchmarks · [Native](native-claim.md) · [Apps](app-claim.md) · [Chrome and H
 
 # Benchmark results
 
-Every benchmark sleight has published, one page per family. Each page leads with its results and folds the method underneath: models, effort, runs per arm, scoring and loss rules, arm versions, and what was left out and why. `bench/results-hub.mjs` computes every number from the raw results with the same scorers the claims use, and failures are published with the passes.
+The results include failed runs. Each family page gives the task results, with the method and exclusions folded below. The claim scorers compute the figures from recorded runs.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/headline-native-dark.svg">
@@ -22,14 +22,25 @@ The [interactive page](https://land-o-clusters.github.io/sleight/results/explore
 
 | Family | What it measures | Where it stands | Data |
 | --- | --- | --- | --- |
-| [Native claim](native-claim.md) | The 9 native Mac app tasks, sleight against LCU, Codex, Cua, Peekaboo and Claude's own computer use. | "fastest", sleight's total expected time 251.2 s over 9 tasks (197 runs, 2026-10-17 to 2026-10-18). Engine 26.1007.71326, 2026-10-17 to 2026-10-18 | [json](data/native-claim.json) |
-| [App claim](app-claim.md) | VS Code, Slack and Spotify tasks with the same arms. | "fastest", sleight's total expected time 56.8 s over 3 tasks (60 runs, 2026-10-18, 02:39 to 03:16 UTC). Engine 26.1007.71326, 2026-10-18 | [json](data/app-claim.json) |
-| [Chrome and Helium: turbo against FowlBrowser](browser-turbo.md) | Turbo in Chrome and Helium, in the real-window race and the earlier gate rounds. | in Chrome, the lowest expected time on 10 of 13 and a total of 258.9 s against FowlBrowser's 447.8 s (`sleight-turbo-rel130`). In Helium, the lowest expected time on 11 of 13 and a total of 241.8 s against FowlBrowser's 338.3 s (`sleight-turbo-b5`). 14 gate studies. Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19 | [json](data/browser-turbo.json) |
-| [Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo](browser-race.md) | sleight's engine path in Safari and Firefox against Codex, LCU, Cua and Peekaboo. | in Safari, "fastest" (`sleight-b10`, 2026-10-18). In Firefox, "fastest" (`sleight-b10`, 2026-10-18). Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19 | [json](data/browser-race.json) |
-| [Experiments](ab-tests.md) | sleight against sleight, for skill, wording, tool and turbo changes. | 13 studies with run data, 94 write-ups in all | [json](data/ab-tests.json) |
-| [Release passes and the earlier head-to-heads](release-passes.md) | The per-release regression passes and the first native head-to-heads. | 7 release passes (2026-10-05 to 2026-10-09), 115 results files in all | [json](data/release-passes.json) |
+| [Native claim](native-claim.md) | The 9 native Mac app tasks, sleight against LCU, Codex, Cua, Peekaboo and Claude's own computer use. | Lowest expected time on 8 of 9 tasks. Total 251.2 s. | [json](data/native-claim.json) |
+| [App claim](app-claim.md) | VS Code, Slack and Spotify tasks with the same arms. | Lowest expected time on 3 of 3 tasks. Total 56.8 s. | [json](data/app-claim.json) |
+| [Chrome and Helium: turbo against FowlBrowser](browser-turbo.md) | Turbo in Chrome and Helium, in the real-window race and the earlier gate rounds. | Chrome: lowest expected time on 10 of 13 tasks, total 258.9 s. Helium: lowest expected time on 11 of 13 tasks, total 241.8 s. | [json](data/browser-turbo.json) |
+| [Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo](browser-race.md) | sleight's engine path in Safari and Firefox against Codex, LCU, Cua and Peekaboo. | Safari: only arm with a total, total 592.1 s. Firefox: lowest expected time on 11 of 12 tasks, total 557.1 s. | [json](data/browser-race.json) |
+| [Experiments](ab-tests.md) | sleight against sleight, for skill, wording, tool and turbo changes. | 13 studies with run data. The catalog has 94 benchmark write-ups and includes studies without structured run data. | [json](data/ab-tests.json) |
+| [Release passes and the earlier head-to-heads](release-passes.md) | The per-release regression passes and the first native head-to-heads. | 7 release passes (2026-10-05 to 2026-10-09), 115 results files in all. | [json](data/release-passes.json) |
 
-[Insights](insights.md) (being written) covers what the runs taught us about run-to-run variation, Haiku against Opus, which tuning paid off, and engine quirks.
+[Insights](insights.md) covers what the runs taught us about run-to-run variation, Haiku against Opus, which tuning paid off, and engine quirks.
+
+<details><summary>Run dates, engine versions and build labels</summary>
+
+- [Native claim](native-claim.md): "fastest", sleight's total expected time 251.2 s over 9 tasks (197 runs, 2026-10-17 to 2026-10-18). Engine 26.1007.71326, 2026-10-17 to 2026-10-18.
+- [App claim](app-claim.md): "fastest", sleight's total expected time 56.8 s over 3 tasks (60 runs, 2026-10-18, 02:39 to 03:16 UTC). Engine 26.1007.71326, 2026-10-18.
+- [Chrome and Helium: turbo against FowlBrowser](browser-turbo.md): in Chrome, the lowest expected time on 10 of 13 and a total of 258.9 s against FowlBrowser's 447.8 s (`sleight-turbo-rel130`). In Helium, the lowest expected time on 11 of 13 and a total of 241.8 s against FowlBrowser's 338.3 s (`sleight-turbo-b5`). 14 gate studies. Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19.
+- [Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo](browser-race.md): in Safari, sleight is the only arm with a total (`sleight-b10`, 2026-10-18). In Firefox, "fastest" (`sleight-b10`, 2026-10-18). Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19.
+- [Experiments](ab-tests.md): 13 studies with run data. The catalog has 94 benchmark write-ups and includes studies without structured run data.
+- [Release passes and the earlier head-to-heads](release-passes.md): 7 release passes (2026-10-05 to 2026-10-09), 115 results files in all.
+
+</details>
 
 ## Terms
 
@@ -50,6 +61,4 @@ The raw claim and race folders live outside the repo, in `~/Projects/sleight-wt/
 
 </details>
 
-Each arm table lists the ChatGPT engine versions its runs used, with their UTC dates. Rebuild every page with `node bench/results-hub.mjs`.
-
-Benchmarks · [Native](native-claim.md) · [Apps](app-claim.md) · [Chrome and Helium](browser-turbo.md) · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
+Each arm table lists the ChatGPT engine versions its runs used, with their UTC dates.

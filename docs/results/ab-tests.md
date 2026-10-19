@@ -111,7 +111,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 
 <details><summary>2026-10-11-sheet-edit-ab</summary>
 
-`SLEIGHT_FIRST_CALL_BATCH=sheet against the default on calculator-click and textedit-edit (no Save sheet), 3 runs a task per arm per round, 2 rounds, owner at th`. The baseline is `sheet`. Commit `f328943`. Write-up: [benchmark.md](../benchmark.md).
+`SLEIGHT_FIRST_CALL_BATCH=sheet against the default on calculator-click and textedit-edit (no Save sheet), 3 runs a task per arm per round, 2 rounds, tester at th`. The baseline is `sheet`. Commit `f328943`. Write-up: [benchmark.md](../benchmark.md).
 
 | Arm | Model ids in the runs | Effort | Versions recorded |
 | --- | --- | --- | --- |
@@ -129,7 +129,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 
 <details><summary>2026-10-11-skill-ab</summary>
 
-`skill A/B: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md) and SLEIGHT_SKILL=none, calculator-click and textedit-edit x3 per arm per round, 2 rounds, owner`. The baseline is `slim`. Commit `b03b5a7`. Write-up: [benchmark.md](../benchmark.md).
+`skill A/B: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md) and SLEIGHT_SKILL=none, calculator-click and textedit-edit x3 per arm per round, 2 rounds, tester`. The baseline is `slim`. Commit `b03b5a7`. Write-up: [benchmark.md](../benchmark.md).
 
 | Arm | Model ids in the runs | Effort | Versions recorded |
 | --- | --- | --- | --- |
@@ -217,7 +217,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 | `demoid` | 77.8 (4/4) | 353.0 (2/4) |
 | `form-checkout` | 159.0 (4/4) | 74.5 (4/4) |
 | `form-settings` | 1146.0 (1/4) | 863.0 (1/4) |
-| `form-settings-helium` | never (0/4) | 888.0 (1/4) |
+| `form-settings-helium` | no pass (0/4) | 888.0 (1/4) |
 | `form-travel` | 520.0 (2/4) | 210.8 (4/4) |
 | `handoff` | 46.0 (4/4) | 34.3 (4/4) |
 | `inject-mail` | 39.5 (4/4) | 29.5 (4/4) |
@@ -228,7 +228,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 | `size-guide` | 64.0 (4/4) | 233.0 (3/4) |
 | `wikipedia` | 33.7 (3/4) | 71.0 (4/4) |
 | Lowest expected time on | 4 of 13 | 9 of 13 |
-| Total expected s | none (a task has no pass) | 3004.8 |
+| Total expected s | no total (a task has no pass) | 3004.8 |
 
 </details>
 

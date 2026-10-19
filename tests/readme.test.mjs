@@ -32,7 +32,11 @@ test('the README is under 110 lines outside the generated blocks', () => {
   assert.ok(outside < 110, `${outside} hand-written lines`);
 });
 
-test('the claim block comes before the install block, so both are on the first screen', () => {
+test('the first screen explains the app, requirements and setup limits before the demo and claim', () => {
+  const demo = readme.indexOf('src="docs/assets/demo.gif"');
+  assert.ok(demo > readme.indexOf('ChatGPT desktop app'));
+  assert.ok(demo > readme.indexOf('fresh macOS user'));
+  assert.ok(demo < readme.indexOf('<!-- hub:claim -->'));
   assert.ok(readme.indexOf('<!-- hub:claim -->') < readme.indexOf('## Install'));
   assert.ok(readme.indexOf('## Install') < readme.indexOf('## Where it runs'));
 });
@@ -61,6 +65,8 @@ test("INSTALL.md's shell commands find the plugin through the host's listing and
   }
   assert.match(shell, /^claude plugin list --json$/m);
   assert.match(shell, /^codex plugin list --json$/m);
+  assert.ok(shell.includes('${CODEX_HOME:-$HOME/.codex}/plugins/'));
+  assert.doesNotMatch(shell, /"\$CODEX_HOME\//);
 });
 
 test('the hosts table carries a Cursor row, switched off inside the cursor-row comment or switched on', () => {

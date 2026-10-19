@@ -2,7 +2,7 @@
 
 # App claim
 
-The app tasks run on the native path with the same arms and rules as the native claim. In VS Code the agent edits a fixture file in a separate instance with a temporary profile. In Slack it posts one fixed message to a test channel of a throwaway account. In the owner's Spotify account it finds a track, plays it and pauses it. The scorer's wording is "fastest". sleight has the lowest expected time on 3 of 3 tasks.
+The app tasks run on the native path with the same arms and rules as the native claim. In VS Code the agent edits a fixture file in a separate instance with a temporary profile. In Slack it posts one fixed message to a test channel of a throwaway account. In the tester's personal Spotify account it finds a track, plays it and pauses it. The scorer's wording is "fastest". sleight has the lowest expected time on 3 of 3 tasks.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/family-app-claim-dark.svg">
@@ -15,11 +15,11 @@ Each cell is expected seconds, then passes/runs.
 
 | Task | sleight | LCU | Codex | Cua | Peekaboo | Claude computer use |
 | --- | --- | --- | --- | --- | --- | --- |
-| `vscode-edit` | 16.5 (3/3) | 31.9 (3/3) | 41.5 (3/3) | 44.9 (3/3) | never (0/3) | never (0/3) |
+| `vscode-edit` | 16.5 (3/3) | 31.9 (3/3) | 41.5 (3/3) | 44.9 (3/3) | no pass (0/3) | no pass (0/3) |
 | `slack-post` | 13.5 (5/5) | 14.2 (5/5) | 64.9 (1/3) | 26.2 (3/3) | 47.1 (3/3) | 16.0 (5/5) |
-| `spotify-play` | 26.7 (3/3) | 55.2 (3/3) | 40.7 (3/3) | 111.8 (3/3) | never (0/3) | never (0/3) |
+| `spotify-play` | 26.7 (3/3) | 55.2 (3/3) | 40.7 (3/3) | 111.8 (3/3) | no pass (0/3) | no pass (0/3) |
 | Lowest expected time on | 3 of 3 | 0 of 3 | 0 of 3 | 0 of 3 | 0 of 3 | 0 of 3 |
-| Total expected s | 56.8 | 101.3 | 147.1 | 182.9 | none (a task has no pass) | none (a task has no pass) |
+| Total expected s | 56.8 | 101.3 | 147.1 | 182.9 | no total (a task has no pass) | no total (a task has no pass) |
 
 By the loss rule, sleight didn't lose a task.
 
@@ -27,7 +27,7 @@ No pair within 20% of sleight is short of 5 runs.
 
 <details><summary>Method and arm versions</summary>
 
-- 60 runs counted, from 9 results files dated 2026-10-18, 02:39 to 03:16 UTC, on the owner's account login (auth `login`).
+- 60 runs counted, from 9 results files dated 2026-10-18, 02:39 to 03:16 UTC, on the tester's account login (auth `login`).
 - Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
 - The rules come from [LAWS](../status/LAWS.md). Each arm gets 3 runs per task, or 5 where sleight and another arm are within 20% (the difference over the slower expected time). "Fastest" needs the lowest expected time on a majority of tasks and the lowest total, with those 5 runs in place. Otherwise the wording is "completed every task, fastest on N". A task counts as lost when another arm has the lower expected time or a faster passing run.
 - Rows come from `~/Projects/sleight-wt/app-claim/results-1018` with the exclusions in `~/Projects/sleight-wt/app-claim/scorer/bench/claim-exclusions.json`. Scoring starts at file stamp `2026-10-18T02-39`, and the reason given is `the first app-task claim pass`.

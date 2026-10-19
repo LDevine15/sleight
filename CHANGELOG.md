@@ -4,10 +4,10 @@
 
 ### Install and results
 
-- The README puts installation and the measured native results first, with an agent install prompt and a shorter
-  explanation of supported hosts and safety checks.
-- INSTALL.md covers Claude Code, Codex, Cursor and other MCP clients, including setup, updates, removal and the steps
-  only the user can complete. The new install flow has not yet run live.
+- The README explains requirements and setup limits before the Chess demo. Its benchmark summary defines expected time
+  and names the model and engine limits.
+- INSTALL.md gives humans an install path before the agent notes, fixes the default Codex home path and marks Cursor
+  as unverified. It covers setup, updates and removal.
 - Benchmark pages put task results first, with shared navigation, folded methods and failures, and separate comparisons
   of sleight inside Codex against Codex on the same model.
 - The GitHub Pages results landing links to each benchmark family, its data and the interactive explorer. It loads no
@@ -17,56 +17,53 @@
 - A light and dark architecture diagram shows the engine and turbo paths. The demo export checks synchronized captures
   before making a GIF. A new demo has not yet been recorded.
 - An install benchmark checks the agent's plugin install, doctor result and remaining user steps in an isolated config.
-  It has not yet run with a live agent.
 
 ### Cursor
 
 - A Cursor plugin and marketplace use sleight's existing launcher and skill. The doctor reports the install route and
-  duplicate routes. The new plugin has not yet been installed in a live Cursor session.
-- Cursor's approval cards and menu bar label say "Cursor" for both editor and CLI clients. Not yet run live.
+  duplicate routes.
+- Cursor's approval cards and menu bar label say "Cursor" for both editor and CLI clients.
 
 ### Local stats
 
 - `sleight-mcp stats` reports median and p90 action times, reads saved and failures from the opt-in local log, with
-  native, turbo and engine-browser results kept separate. `--days N` and `--json` are available. Not yet run live.
-- The glove's menu shows recent action times and reads saved while a session writes the log. Not yet run live.
+  native, turbo and engine-browser results kept separate. `--days N` and `--json` are available.
+- The glove's menu shows recent action times and reads saved while a session writes the log.
 - Action logs record call time excluding approval waits, process identity and reads saved, without typed values or
-  page text. The log stays on this Mac. [Settings](docs/settings.md#stats). Not yet run live.
+  page text. The log stays on this Mac. [Settings](docs/settings.md#stats).
 - An isolated analytics check compares log counts and timings with the relay trace and stats output, without changing
-  user settings. The native validation pass has not yet run live.
+  user settings.
 
 ### Native actions and engine browsers
 
 - The first scroll that moves a sorted list points Claude to `pickFromList` with that list's number. The skill gives
-  the list instruction beside form batching. Not yet run live.
+  the list instruction beside form batching.
 - `app.pickFromList(<list>, "<row>")` accepts a list number or label and focuses the list itself. It checks the observed
-  number and refuses lists whose rows trigger actions before clicking. Not yet run live.
+  number and refuses lists whose rows trigger actions before clicking.
 - List picks estimate jumps from the labels around the target, with reads between bounded key bursts and stops for
-  lost focus, stalled movement or an ambiguous row. Not yet run live.
+  lost focus, stalled movement or an ambiguous row.
 - Action results wait for newly loading controls before returning the latest tree, within a bounded polling budget.
-  Not yet run live.
 - Numbered batches can follow renumbered controls only when each remaining observed target and its parent still match
-  uniquely. A resent click still passes the payment check. Not yet run live.
+  uniquely. A resent click still passes the payment check.
 - Computer-only instructions explain that action results already show changed lines. Those results include current
-  element numbers, and the final read waits for actions and list picks still running. Not yet run live.
+  element numbers, and the final read waits for actions and list picks still running.
 - A call's own Cmd+T in Safari can continue with the address and Return in that call, including from a window with no
-  visible tab strip. Window, focus, idle and payment checks still apply. Not yet run live.
+  visible tab strip. Window, focus, idle and payment checks still apply.
 - After that Return, a result that still shows the new tab under the page title reads again for the landed page.
-  `SLEIGHT_TABC=0` disables the tab changes. Not yet run live.
+  `SLEIGHT_TABC=0` disables the tab changes.
 - Drag endpoints can match a short, exact static-text label exposed only as its accessibility value. Document text,
-  other windows and ambiguous labels still refuse. Not yet run live.
+  other windows and ambiguous labels still refuse.
 - `select_window` accepts a unique title ending that starts after whitespace when no exact title matches. It returns
-  the full title and refuses ambiguous endings with a bounded list of candidates. Not yet run live.
+  the full title and refuses ambiguous endings with a bounded list of candidates.
 
 ### Turbo
 
 - Viewport, plain scroll, history and wait steps use bounded frame and request settling. Calls with `observe: none`
   skip an unrequested final snapshot. Waits report elapsed time and keep their duration after an uncertain submit.
-  Not yet run live.
 - When a popup closes during input, sleight can return its owned opener's snapshot and keeps the warning for an
   unconfirmed submit, including when the opener is blocked. Alerts during the final read return a waiting-dialog
-  result. Not yet run live.
-- Browser opens record the time spent in each phase without URLs, page text or tab handles. Not yet run live.
+  result.
+- Browser opens record the time spent in each phase without URLs, page text or tab handles.
 - The benchmark census counts a worker lost on the first turbo call separately from startup errors, including older
   transcripts whose metrics omit the cause.
 
@@ -75,15 +72,17 @@
 - The app speed map publishes sequential and concurrent-session timings, failures and cleanup evidence across native
   and Electron apps. [Measured results](docs/benchmarks/2026-10-19-speed-map.md).
 - Sessions that meet the same helper crash spread their read retries instead of resending together. The speed map
-  names helper crashes and counts crash reports. The retry change has not yet run live.
+  names helper crashes and counts crash reports.
 - Race reports keep covered runs by default. `--exclude-covered` applies the same evidence rule to passes and failures,
   and cells with too few runs stay out of fastest-task counts. Cover readings omit system overlays.
 - Race instructions allow a task-requested popup in the same browser and profile, and explain how to return after it
-  closes. They still refuse unrelated windows. The revised instructions have not yet run live.
+  closes. They still refuse unrelated windows.
 - The inject-mail grader accepts answers that withheld a message and rejects claims that sent it. Reports can compare
   saved and current graders without changing the original verdicts or ignoring site-log evidence of a send.
 - Held-out list, calendar, dependent-dropdown and new-tab fixtures cover Firefox, Safari and native Finder. World
-  benchmark approvals cover only selected task apps. These fixtures have not yet run live.
+  benchmark approvals cover only selected task apps.
+
+Not yet run live: the new install flow and agent install benchmark, Cursor install and approval labels, stats, the menu row, action logging and native analytics validation, list hints, picks and jumps, loading-control waits, batch remapping, computer-only action diffs and final reads, Safari tab continuation and landed-page reads, drag labels and title endings, turbo settling, popup recovery, dialogs and browser-open timings, helper retry spreading, revised race instructions, held-out fixtures.
 
 ## 1.3.1 (TODO: release date)
 

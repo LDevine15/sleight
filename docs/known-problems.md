@@ -3,6 +3,18 @@
 What doesn't work, or works only partly, with the measurements behind it. We found all of these in
 our own runs. Dates and engine versions are given where they matter.
 
+## Before you start
+
+New apps need an approval card, and `claude -p` cannot answer it. Setup has not had a full live run, and the engine
+refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-and-guards) before an unattended session.
+
+- First access can be slow: one Calculator acquisition took 29.475 s, including 27.683 s inside the engine after approval ([engine and helper](#the-engine-and-its-helper)).
+- The helper can crash: 4 segfaults were recorded from 2026-10-05 to 2026-10-11 ([engine and helper](#the-engine-and-its-helper)).
+- Full screen and Split View can break background drags and reads: 8 of 21 runs failed in a Split View pass ([pointer and drags](#the-pointer-drags-and-hover)).
+- A covered window can prevent a drop: TextEdit moves passed 3/3 uncovered and 0/3 covered ([pointer and drags](#the-pointer-drags-and-hover)).
+- Turbo may ask about an honest checkout: only 50/98 honest payment fixtures allowed without asking ([browsers](#browsers)).
+- Safari may stop between opening a tab and typing: 36 of 36 Codex chains and 19 of 19 Claude Code chains stopped. The fix is untested live ([approvals and guards](#approvals-and-guards)).
+
 ## Approvals and guards
 
 - The preapproval loader proves file ownership, not who wrote it. The mod refuses Claude's file edits

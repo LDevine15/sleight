@@ -1,17 +1,30 @@
 # Installing sleight
 
-If you're a coding agent installing sleight for a user, follow this file from the top. sleight lets a coding agent drive
-the user's Mac apps in the background, through the computer-use engine inside the ChatGPT desktop app. These steps belong
-to the user alone:
+## Installing it yourself
+
+Install the ChatGPT app first, then use the section for your coding agent below. Run the doctor, run setup if it asks,
+allow the macOS permissions, and start a new agent session. If Computer Use is already on in ChatGPT or Codex, skip setup.
+`installPath` means the installed sleight plugin folder, reported by your host's plugin listing.
+`setup` runs OpenAI's helper installer and opens Accessibility and Screen Recording for your approval.
+
+The new install flow and setup in a fresh macOS user haven't run live. Setup asks for an administrator's password or
+Touch ID. Chrome's browser connection also needs its debugging switch and your consent. These steps require you at the Mac.
+
+sleight is MIT-licensed and uses your coding agent's account or API access. It doesn't need a ChatGPT account or separate
+Codex sign-in. We haven't measured typical tokens or money per task, or a complete install's disk and background CPU cost.
+The ChatGPT app must be installed. Operation with its UI quit is not established here.
+
+## Agent notes
+
+If you're installing for someone else, follow the host's commands below and stop for these user steps:
 
 - typing an administrator's password or Touch ID during `sleight-mcp setup`,
 - allowing Codex Computer Use under Accessibility and Screen Recording in System Settings,
 - clicking Allow or Always allow on the first approval card for each app,
 - turning on Chrome's remote debugging at `chrome://inspect/#remote-debugging` and allowing Chrome's prompt, for turbo.
 
-At each one, stop and tell the user what to do. Don't run `sudo` or `sleight-mcp setup`, script System Settings, or
-work around a permission prompt or an approval card in any other way. Run each command below on its own, as written,
-without wrapping it in a script.
+At each step, tell the user what to do and wait. Leave passwords, System Settings and approval cards to them.
+Run each command below on its own. You may inspect setup with `--dry-run`. The user runs setup itself.
 
 ## Requirements
 
@@ -25,19 +38,24 @@ sleight runs on the Node runtime inside ChatGPT, so there's nothing to install w
 ## Claude Code
 
 ```bash
+claude --version
 claude plugin marketplace add Land-o-Clusters/sleight
 claude plugin install sleight@sleight
 ```
 
-Find the plugin folder in Claude Code's own listing. In the first command's output, sleight's entry (`sleight@sleight`)
-has an `installPath`. Run the doctor from that folder, with the path written out in full:
+The version must be 2.1.288 or later. Print the installed plugin listing:
 
 ```bash
 claude plugin list --json
-<installPath>/bin/sleight-mcp --doctor
 ```
 
-Then ask the user to start a new Claude Code session so the plugin loads.
+Copy `installPath` from the `sleight@sleight` entry. Replace `<installPath>` below with that entire path; keep the quotes:
+
+```bash
+"<installPath>/bin/sleight-mcp" --doctor
+```
+
+Start a new Claude Code session so the plugin loads.
 
 ## Codex
 
@@ -51,21 +69,22 @@ Codex's own listing gives sleight's installed `version`. Codex keeps the plugin 
 
 ```bash
 codex plugin list --json
-"$CODEX_HOME/plugins/cache/sleight/sleight/<version>/bin/sleight-mcp" --doctor
+"${CODEX_HOME:-$HOME/.codex}/plugins/cache/sleight/sleight/<version>/bin/sleight-mcp" --doctor
 ```
 
-Then the user starts a new Codex session from a project folder and trusts sleight's three hooks when Codex asks. What
+Start a new Codex session from a project folder and trust sleight's three hooks when Codex asks. What
 differs in Codex is in [other hosts](docs/other-hosts.md#codex).
 
 ## Cursor
 
-Cursor's install hasn't been run live yet. Signed in to cursor-agent 2026.09.10 or later:
+Cursor is not listed as a supported host in the README until its first live install passes. The following route is
+unverified. It needs a signed-in cursor-agent 2026.09.10 or later:
 
 ```bash
 cursor-agent plugin marketplace add https://github.com/Land-o-Clusters/sleight
 ```
 
-Then the user installs sleight from `/plugins` in cursor-agent, or from Customize in the Cursor app, and starts a new chat.
+Install sleight from `/plugins` in cursor-agent, or from Customize in the Cursor app, and start a new chat.
 Check it from Cursor's plugin cache, where the last folder is the commit Cursor installed. The doctor's Cursor section
 lists each route it finds and warns when Cursor would start sleight twice ([Cursor](docs/other-hosts.md#cursor)):
 
@@ -74,6 +93,8 @@ lists each route it finds and warns when Cursor would start sleight twice ([Curs
 ```
 
 ## Other MCP clients
+
+Install the ChatGPT desktop app in `/Applications` first. The launcher uses its Node runtime. Then clone sleight:
 
 ```bash
 git clone https://github.com/Land-o-Clusters/sleight.git ~/sleight
@@ -95,16 +116,15 @@ Add this server to the client's config, with the clone's absolute path (JSON doe
 ## Computer Use
 
 The doctor exits 0 and prints `live read ok (helper inventory)` when the engine works. If it prints `MISSING` lines or
-prints a line with `setup` in it, Computer Use isn't on yet, and turning it on is the user's step. Give them the setup
-command to run, from the folder the doctor ran from:
+prints a line with `setup` in it, Computer Use isn't on yet. Run setup from the same plugin folder:
 
 ```text
-<installPath>/bin/sleight-mcp setup
+"<installPath>/bin/sleight-mcp" setup
 ```
 
 Setup runs OpenAI's helper installer, which asks for an administrator's Touch ID or password. It then opens the
-Accessibility and Screen Recording panes, where the user allows Codex Computer Use, and runs the doctor again. To show
-the user what it will do, run it yourself with `--dry-run` added. Setup hasn't been run in a fresh macOS user.
+Accessibility and Screen Recording panes, where the user allows Codex Computer Use, and runs the doctor again. To preview
+what it will do, add `--dry-run`. Setup hasn't been run in a fresh macOS user.
 
 For turbo in Chrome, the user turns on remote debugging once at `chrome://inspect/#remote-debugging`. Chrome then asks
 them to allow each connection. The doctor's first lines say whether turbo is ready ([settings](docs/settings.md#turbo)).
@@ -114,7 +134,7 @@ them to allow each connection. The doctor's first lines say whether turbo is rea
 In the new session, ask:
 
 ```text
-Use sleight to open Calculator in the background and work out 12 × 12 by clicking its buttons.
+Use sleight to open Calculator in the background and work out 12 times 12 by clicking its buttons.
 ```
 
 The user sees an approval card for Calculator. Once they allow it, Calculator should end on 144 while the window the

@@ -1,9 +1,8 @@
 # Lessons from the benchmarks
 
-sleight's benchmarks ran from 2026-10-03 to 2026-10-18 on one Mac, mostly on Haiku 5.5 at high effort. This page collects
-what those runs showed us. Each lesson gives its number, its date and where it
-came from. Linked files are in this repo. A file named without a link is in the project's private working ledger, and its
-figures are quoted here. Where two sources disagree, the lesson says so.
+sleight's benchmarks ran from 2026-10-03 to 2026-10-18 on one Mac, mostly on Haiku 5.5 at high effort.
+Linked sources are public. Unlinked filenames refer to private working notes. Readers cannot audit those figures here.
+Use the hub's linked run data to check the published claims. Where sources disagree, the lesson says so.
 
 The per-benchmark tables are in the [benchmark hub](README.md) and the [interactive page](explore.html).
 

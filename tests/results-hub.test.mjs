@@ -249,38 +249,39 @@ class FakeNode {
   count(tag) { return (this.tagName === tag ? 1 : 0) + this.children.reduce((n, c) => n + c.count(tag), 0); }
 }
 
-// Runs the landing's script against FakeNodes and returns its nodes.
-function runLanding(html) {
-  const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
-  const nodes = Object.fromEntries(ids.map(id => [id, new FakeNode(id)]));
-  const document = { getElementById: id => nodes[id], createElement: tag => new FakeNode(tag) };
-  for (const [, script] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) vm.runInNewContext(script, { document });
-  return nodes;
-}
-
 test('the hub fills the Pages landing with the real chart captions', () => {
   const all = committed();
   const html = render(all)['index.html'];
-  const nodes = runLanding(html);
   for (const id of ['headline-native', 'overview']) {
     const caption = chartCaption(id, all);
     assert.ok(caption.length > 40, id);
-    assert.equal(nodes[`${id}-caption`].textContent, caption);
-    assert.equal(nodes[id].attrs.alt, caption);
+    assert.ok(html.includes(`id="${id}-caption">${caption}</figcaption>`));
+    assert.ok(html.includes(`alt="${caption}"`));
   }
 });
 
-test('benchmark wording in the Pages landing cannot close its script or open a comment', () => {
+test('the landing includes the family results and chart captions without JavaScript', () => {
   const all = committed();
-  const study = all['native-claim'].studies[0];
-  const wording = 'x</script><img src=//x> <!-- y';
-  study.verdict = { ...study.verdict, wording };
-  const html = render(all)['index.html'];
-  assert.doesNotMatch(html, /<img src=\/\/x>/);
-  assert.doesNotMatch(html, /<!-- y/);
-  assert.equal(html.split('</script>').length, page('index.html').split('</script>').length);
-  const nodes = runLanding(html);
-  assert.ok(nodes.families.textContent.includes(wording), 'the wording reaches the page as text');
+  const html = render(all)['index.html'].replace(/<script>[\s\S]*?<\/script>/g, '');
+  const body = /<tbody id="families">([\s\S]*?)<\/tbody>/.exec(html)[1];
+  for (const family of FAMILIES) {
+    assert.ok(body.includes(`data/${family.id}.json`), family.id);
+    assert.ok(body.includes(family.page), family.page);
+  }
+  for (const id of ['headline-native', 'overview']) assert.ok(html.includes(chartCaption(id, all)));
+  assert.match(body, /only arm with a total/);
+  assert.doesNotMatch(body, /See the task matrices and earlier sets/);
+});
+
+test('family text in the static landing is escaped as HTML', () => {
+  const family = FAMILIES[0], title = family.title;
+  try {
+    family.title = 'x</script><img src=//x> <!-- y & "z"';
+    const html = render(committed())['index.html'];
+    assert.doesNotMatch(html, /<img src=\/\/x>/);
+    assert.doesNotMatch(html, /<!-- y/);
+    assert.ok(html.includes('x&lt;/script&gt;&lt;img src=//x&gt; &lt;!-- y &amp; &quot;z&quot;'));
+  } finally { family.title = title; }
 });
 
 test('explore.html runs, fills its filters, draws charts per task and switches family', () => {
@@ -358,12 +359,13 @@ function outsideDetails(text) {
 }
 const firstTable = text => { const lines = text.split('\n'), at = lines.findIndex(l => l.startsWith('| ')); let end = at; while (lines[end]?.startsWith('| ')) end += 1; return lines.slice(at, end).join('\n'); };
 
-test('each generated page starts and ends with the nav line, and the current page is the one item without a link', () => {
+test('each generated page starts with navigation, and family pages repeat it at the end', () => {
   const files = render(committed());
   for (const name of GENERATED) {
     const nav = renderNav(name), text = files[name];
     assert.ok(text.startsWith(nav + '\n\n# '), `${name} starts with the nav line and then its title`);
-    assert.ok(text.endsWith('\n' + nav + '\n'), `${name} ends with the nav line`);
+    if (name === 'README.md') assert.equal(text.split(nav).length, 2, 'the hub has one navigation row');
+    else assert.ok(text.endsWith('\n' + nav + '\n'), `${name} ends with the nav line`);
     assert.equal(page(name), text);
   }
   assert.match(renderNav('native-claim.md'), /^\[Benchmarks\]\(README\.md\) · Native · \[Apps\]\(app-claim\.md\)/);
@@ -456,4 +458,3 @@ test('the README\'s generated blocks match the data, and every number in the cla
     assert.ok(landing.includes(text), `the landing holds "${text.slice(0, 50)}"`);
   }
 });
-
