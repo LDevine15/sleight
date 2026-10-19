@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import vm from 'node:vm';
 import { claim, score } from '../bench/claim-score.mjs';
 import { engineMix, summarizeEngines } from '../bench/engine-version.mjs';
+import { chartCaption } from '../bench/results-charts.mjs';
 import {
   FAMILIES, NAV, README_BLOCKS, cellText, cellsFor, collectJsonAbs, collectRace, collectReleases, collectRunnerStudies, dateRange, lossRule, parseRunnerReport,
   ownerPass, readmeBlocks, render, renderNav, renderNavHtml, renderReadme, scoreClaimDir, scrub, scrubPaths, spliceReadme, taskMatrix, variantOf,
@@ -247,6 +248,40 @@ class FakeNode {
   get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
   count(tag) { return (this.tagName === tag ? 1 : 0) + this.children.reduce((n, c) => n + c.count(tag), 0); }
 }
+
+// Runs the landing's script against FakeNodes and returns its nodes.
+function runLanding(html) {
+  const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  const nodes = Object.fromEntries(ids.map(id => [id, new FakeNode(id)]));
+  const document = { getElementById: id => nodes[id], createElement: tag => new FakeNode(tag) };
+  for (const [, script] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) vm.runInNewContext(script, { document });
+  return nodes;
+}
+
+test('the hub fills the Pages landing with the real chart captions', () => {
+  const all = committed();
+  const html = render(all)['index.html'];
+  const nodes = runLanding(html);
+  for (const id of ['headline-native', 'overview']) {
+    const caption = chartCaption(id, all);
+    assert.ok(caption.length > 40, id);
+    assert.equal(nodes[`${id}-caption`].textContent, caption);
+    assert.equal(nodes[id].attrs.alt, caption);
+  }
+});
+
+test('benchmark wording in the Pages landing cannot close its script or open a comment', () => {
+  const all = committed();
+  const study = all['native-claim'].studies[0];
+  const wording = 'x</script><img src=//x> <!-- y';
+  study.verdict = { ...study.verdict, wording };
+  const html = render(all)['index.html'];
+  assert.doesNotMatch(html, /<img src=\/\/x>/);
+  assert.doesNotMatch(html, /<!-- y/);
+  assert.equal(html.split('</script>').length, page('index.html').split('</script>').length);
+  const nodes = runLanding(html);
+  assert.ok(nodes.families.textContent.includes(wording), 'the wording reaches the page as text');
+});
 
 test('explore.html runs, fills its filters, draws charts per task and switches family', () => {
   const html = page('explore.html');

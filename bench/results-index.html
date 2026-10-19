@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sleight benchmarks</title>
+<style>
+:root { color-scheme: light dark; --paper: #FBF8F1; --ink: #141A26; --line: #E4DED2; --link: #315BAE; }
+@media (prefers-color-scheme: dark) {
+  :root { --paper: #141A26; --ink: #EFE9DC; --line: #2C3442; --link: #A9C4F5; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+main { max-width: 960px; margin: auto; padding: 24px 20px 48px; }
+h1 { margin: 0 0 12px; font-size: 1.8rem; }
+h2 { margin: 28px 0 12px; font-size: 1.2rem; }
+a { color: var(--link); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+nav { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 16px 0; }
+figure { margin: 24px 0; }
+img { display: block; width: 100%; height: auto; }
+figcaption, footer { font-size: 0.9rem; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+th:first-child, td:first-child { padding-left: 0; }
+caption { text-align: left; margin-bottom: 8px; }
+footer { margin-top: 32px; border-top: 1px solid var(--line); padding-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+<h1>sleight benchmarks</h1>
+<p>Each run, failures included, with the method and the model each arm ran.</p>
+<nav aria-label="Benchmarks">
+  <a href="https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/native-claim.md">Native</a>
+  <a href="https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/app-claim.md">Apps</a>
+  <a href="https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/browser-turbo.md">Chrome and Helium</a>
+  <a href="https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/browser-race.md">Safari and Firefox</a>
+  <a href="https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/ab-tests.md">Experiments</a>
+  <a href="https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/release-passes.md">Releases</a>
+  <a href="https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/insights.md">Insights</a>
+  <a href="explore.html">Interactive</a>
+</nav>
+<figure>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="img/headline-native-dark.svg">
+    <img id="headline-native" src="img/headline-native-light.svg" width="900" alt="Native claim">
+  </picture>
+  <figcaption id="headline-native-caption">Native claim</figcaption>
+</figure>
+<figure>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="img/overview-dark.svg">
+    <img id="overview" src="img/overview-light.svg" width="900" alt="Benchmark overview">
+  </picture>
+  <figcaption id="overview-caption">Benchmark overview</figcaption>
+</figure>
+<h2>Results by family</h2>
+<div class="tablewrap">
+<table>
+  <caption>The task matrices and methods are on GitHub.</caption>
+  <thead><tr><th scope="col">Family</th><th scope="col">What it measures</th><th scope="col">Where it stands</th><th scope="col">Data</th></tr></thead>
+  <tbody id="families"></tbody>
+</table>
+</div>
+<noscript><p>Read the <a href="https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/README.md">Markdown pages on GitHub</a> for the figures and task matrices.</p></noscript>
+<footer>
+  <p><a href="explore.html">Explore every run</a> · <a href="https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/README.md">Markdown pages on GitHub</a> · <a href="https://github.com/Land-o-Clusters/sleight/blob/main/docs/benchmark.md">Benchmark method</a></p>
+  <p>The results site doesn't load resources from third parties or use analytics.</p>
+</footer>
+</main>
+<script>
+// H2 injects { ...exploreData(all), chartCaptions: { 'headline-native': chartCaption(...), overview: chartCaption(...) } }.
+// Escape '<' as '\u003c' when serializing, as explore.html does. Missing captions allow H1 stubs during the parallel build.
+const DATA = /*__DATA__*/null;
+const data = DATA ?? { families: [], studies: [] };
+const $ = id => document.getElementById(id);
+const el = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
+for (const [id, fallback] of [['headline-native', 'Native claim'], ['overview', 'Benchmark overview']]) {
+  const caption = data.chartCaptions?.[id] || fallback;
+  $(id).setAttribute('alt', caption);
+  $(`${id}-caption`).textContent = caption;
+}
+const descriptions = {
+  'native-claim': 'Native apps, one task per skill',
+  'app-claim': 'VS Code, Slack and Spotify on the native path',
+  'browser-turbo': 'Chrome and Helium: turbo against FowlBrowser',
+  'browser-race': 'Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo',
+  'ab-tests': 'Experiments and tuning',
+  'release-passes': 'Full-suite release checks and head-to-head runs',
+};
+const rows = $('families');
+rows.replaceChildren();
+for (const family of data.families) {
+  const studies = data.studies.filter(study => study.family === family.id);
+  const row = el('tr');
+  const name = el('th');
+  name.setAttribute('scope', 'row');
+  const link = el('a', family.title);
+  link.setAttribute('href', `https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/${family.page}`);
+  name.appendChild(link);
+  row.appendChild(name);
+  row.appendChild(el('td', descriptions[family.id] ?? family.title));
+  const claim = ['native-claim', 'app-claim'].includes(family.id) ? studies[0] : null;
+  row.appendChild(el('td', claim?.wording ? `${claim.wording} (${claim.date}).` : studies.length ? `${studies.length} studies. See the task matrices and earlier sets.` : 'No studies published yet.'));
+  const cell = el('td');
+  const json = el('a', 'JSON');
+  json.setAttribute('href', `data/${family.id}.json`);
+  cell.appendChild(json);
+  row.appendChild(cell);
+  rows.appendChild(row);
+}
+</script>
+</body>
+</html>

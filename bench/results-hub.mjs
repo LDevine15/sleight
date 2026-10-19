@@ -1149,7 +1149,7 @@ export function render(all) {
   const indexTemplate = join(ROOT, 'bench/results-index.html');
   if (existsSync(indexTemplate)) {
     const captions = Object.fromEntries(charts.CHARTS.map(chart => [chart.id, charts.chartCaption(chart.id, all)]));
-    files['index.html'] = fillTemplate(readFileSync(indexTemplate, 'utf8'), JSON.stringify({ ...exploreData(all), captions }).replace(/</g, '\\u003c'), 'index.html');
+    files['index.html'] = fillTemplate(readFileSync(indexTemplate, 'utf8'), JSON.stringify({ ...exploreData(all), chartCaptions: captions }).replace(/</g, '\\u003c'), 'index.html');
   } else files['index.html'] = INDEX_HTML;
   for (const [name, text] of Object.entries(files)) files[name] = scrubPaths(text);
   return files;

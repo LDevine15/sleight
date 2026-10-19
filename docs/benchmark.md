@@ -1,5 +1,13 @@
 # Benchmark
 
+## Results hub
+
+Rebuild the results pages from the committed data with `node bench/results-hub.mjs --render-only`.
+Use `node bench/results-hub.mjs --render-only --check` to check for stale pages.
+
+Published at: [sleight benchmarks](https://land-o-clusters.github.io/sleight/results/) and the
+[interactive explorer](https://land-o-clusters.github.io/sleight/results/explore.html).
+
 ## Claim suite
 
 The native speed claim runs the 9 tasks in `bench/claim-tasks.txt`, one per skill. They cover Calculator (by click and by menu),
