@@ -278,6 +278,82 @@ for (const [name, output] of [
   const f = fixture(t); f.ownerOutput = output.replaceAll('UID', String(f.uid)); const p = await createSelectedConnection(f.options);
   await assert.rejects(p.connect(), /SELECTED_LISTENER_UNPROVED/); assert.equal(f.sockets.length, 0);
 });
+// Chrome rewrites Local State in the profile folder about 10 s after a pref change (a temp file renamed over it), which
+// changes the folder's size and times. Two real-Chrome turbo starts failed this way (2026-10-18 and 2026-10-19).
+test('Chrome writing an entry in the profile folder during selection and connect changes nothing', async t => {
+  const f = fixture(t), metadata = f.options.testDependencies.processMetadata;
+  let writes = 0;
+  f.options.testDependencies.processMetadata = async (...args) => {
+    const temp = join(f.root, `Local State~${++writes}`);
+    writeFileSync(temp, '{"n":' + writes + '}'); renameSync(temp, join(f.root, 'Local State'));
+    if (writes % 2) writeFileSync(join(f.root, `BrowserMetrics-spare-${writes}.pma`), 'x'); else rmSync(join(f.root, `BrowserMetrics-spare-${writes - 1}.pma`));
+    return metadata(...args);
+  };
+  const p = await createSelectedConnection(f.options);
+  assert.equal(f.counts().processCalls, 1, 'selection needed no second look');
+  assert.equal(await f.connect(p), p.session);
+  assert.equal(await p.verifyConnection(p.session), true);
+  const close = p.disconnect(); f.sockets[0].closed(); assert.equal(await close, true);
+});
+test('a replaced or re-permissioned profile folder during selection is still refused or re-read', async t => {
+  // Each look swaps in a complete copy of the folder (its own inode), so every look sees two different folders.
+  const f = fixture(t), metadata = f.options.testDependencies.processMetadata;
+  let swaps = 0;
+  f.options.testDependencies.retryDelayMs = 1;
+  f.options.testDependencies.processMetadata = async (...args) => {
+    const moved = f.root + '-moved-' + (++swaps); renameSync(f.root, moved); t.after(() => rmSync(moved, { recursive: true, force: true }));
+    mkdirSync(f.root, { mode: 0o700 }); copyFileSync(join(moved, 'browser'), f.executable); chmodSync(f.executable, 0o700);
+    symlinkSync(hostname() + '-4312', join(f.root, 'SingletonLock'));
+    writeFileSync(f.active, '9222\n/devtools/browser/fixture\n', { mode: 0o600 });
+    return metadata(...args);
+  };
+  await assert.rejects(createSelectedConnection(f.options), /^Error: STALE_INSTANCE$/);
+  assert.equal(swaps, 3, 'refused on each of the three looks'); assert.equal(f.sockets.length, 0);
+  // A permission change between two reads is still caught: that look is retried, and the next consistent look is used.
+  const g = fixture(t), base = g.options.testDependencies.processMetadata;
+  let changed = false;
+  g.options.testDependencies.retryDelayMs = 1;
+  g.options.testDependencies.processMetadata = async (...args) => { if (!changed) { changed = true; chmodSync(g.root, 0o750); } return base(...args); };
+  const p = await createSelectedConnection(g.options);
+  assert.equal(g.counts().processCalls, 2, 'the changed look was refused and read again');
+  assert.equal(g.sockets.length, 0); await p.disconnect();
+});
+test('a DevToolsActivePort Chrome is still writing is read again, within three looks', async t => {
+  const f = fixture(t), metadata = f.options.testDependencies.processMetadata;
+  f.options.testDependencies.retryDelayMs = 1;
+  writeFileSync(f.active, '');
+  let looks = 0;
+  f.options.testDependencies.processMetadata = async (...args) => {
+    if (++looks === 2) writeFileSync(f.active, '9222\n/devtools/browser/fixture\n');
+    return metadata(...args);
+  };
+  const p = await createSelectedConnection(f.options);
+  assert.equal(looks, 2); assert.equal(await f.connect(p), p.session);
+  const close = p.disconnect(); f.sockets[0].closed(); assert.equal(await close, true);
+  const g = fixture(t); g.options.testDependencies.retryDelayMs = 1; writeFileSync(g.active, '9222\n');
+  await assert.rejects(createSelectedConnection(g.options), /SELECTED_ENDPOINT_UNPROVED/);
+  assert.equal(g.counts().processCalls, 3, 'bounded at three looks'); assert.equal(g.sockets.length, 0);
+});
+test('an lsof that its timeout killed runs once more; an lsof that answered is final', async t => {
+  const f = fixture(t), lsof = f.options.testDependencies.execFile;
+  let kills = 1;
+  f.options.testDependencies.retryDelayMs = 1;
+  f.options.testDependencies.execFile = async (...args) => {
+    if (kills-- > 0) { await lsof(...args); throw Object.assign(Error('Command failed: lsof'), { killed: true, signal: 'SIGTERM', code: null }); }
+    return lsof(...args);
+  };
+  const p = await createSelectedConnection(f.options), opening = p.connect();
+  while (!f.sockets.length) await new Promise(resolve => setTimeout(resolve, 1));
+  f.sockets[0].open(); assert.equal(await opening, p.session);
+  assert.equal(f.counts().ownerCalls, 3, 'the killed run, its one retry, and the check after open');
+  const close = p.disconnect(); f.sockets[0].closed(); assert.equal(await close, true);
+  const g = fixture(t); g.ownerOutput = ''; const q = await createSelectedConnection(g.options);
+  await assert.rejects(q.connect(), /SELECTED_LISTENER_UNPROVED/); assert.equal(g.counts().ownerCalls, 1);
+  const h = fixture(t); h.options.testDependencies.retryDelayMs = 1;
+  h.options.testDependencies.execFile = async () => { throw Object.assign(Error('Command failed: lsof'), { killed: true, signal: 'SIGTERM' }); };
+  const r = await createSelectedConnection(h.options);
+  await assert.rejects(r.connect(), /SELECTED_LISTENER_UNPROVED/); assert.equal(h.sockets.length, 0);
+});
 test('changed listener after open closes exact socket and refuses connection', async t => {
   const f = fixture(t), p = await createSelectedConnection(f.options), opening = p.connect();
   await new Promise(resolve => setImmediate(resolve)); f.ownerOutput = ''; const socket = f.sockets[0]; socket.open();

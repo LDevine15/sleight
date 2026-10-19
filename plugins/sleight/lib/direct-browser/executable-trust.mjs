@@ -21,6 +21,7 @@ import { spawnSync } from 'node:child_process';
 import { userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { browserDefinitions } from './browsers.mjs';
+import { runOnceMore } from './transient.mjs';
 
 const CODESIGN = '/usr/bin/codesign';
 const environment = { PATH: '/usr/bin:/bin', LANG: 'C' };
@@ -93,7 +94,8 @@ export async function proveRunningCode(run, status, requirement, executable) {
     const bundle = dirname(dirname(dirname(executable)));
     if (!bundle.endsWith('.app') || join(bundle, 'Contents/MacOS') !== dirname(executable)) throw Error();
     const options = { env: environment, timeout: 10000, maxBuffer: 65536 };
-    await run(CODESIGN, ['--verify', '--strict', '--architecture', status.arch,
+    // A codesign that its timeout killed runs once more; a codesign that refused is final.
+    await runOnceMore(run, CODESIGN, ['--verify', '--strict', '--architecture', status.arch,
       `-R=(${requirement}) and cdhash H"${status.cdhash}"`, bundle], options);
     return true;
   } catch { throw Error('SELECTED_SIGNATURE_UNPROVED'); }

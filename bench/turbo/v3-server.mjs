@@ -7,20 +7,35 @@ import { dirname, basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createProtocol } from './v3-protocol.mjs';
 import { createSession, cleanupMetric } from './v3-session.mjs';
+import { traceStartupFailure } from '../../plugins/sleight/lib/direct-browser/worker.mjs';
 export { createProtocol, createSession };
 
+function appendMetric(file, metric) {
+  if (!file) return;
+  if (!file.startsWith('/') || resolve(file) !== file || basename(file) !== 'turbo-metrics.jsonl' ||
+      realpathSync(dirname(file)) !== dirname(file)) throw Error('Invalid metrics destination');
+  const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
+  try { writeSync(fd, JSON.stringify(metric) + '\n'); } finally { closeSync(fd); }
+}
 export function recordCleanup(file, receipt) {
   const metric = cleanupMetric(receipt);
-  if (file) {
-    if (!file.startsWith('/') || resolve(file) !== file || basename(file) !== 'turbo-metrics.jsonl' ||
-        realpathSync(dirname(file)) !== dirname(file)) throw Error('Invalid metrics destination');
-    const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
-    try { writeSync(fd, JSON.stringify(metric) + '\n'); } finally { closeSync(fd); }
-  }
+  appendMetric(file, metric);
+  return metric;
+}
+// A failed session start, one line per attempt in the task folder: the stage, the code and whether it starts once more.
+// The harness counts a start as unrecovered when a line has retrying false. SLEIGHT_TRACE gets the same event.
+export function recordStartupFailure(file, failure, { trace = traceStartupFailure } = {}) {
+  const metric = { version: 3, phase: 'startup-failed', attempt: failure.attempt, stage: failure.stage, code: failure.code,
+    reason: failure.reason, retrying: failure.retrying === true, ms: failure.ms };
+  try { appendMetric(file, metric); } catch {}
+  try { trace({ code: metric.code, stage: metric.stage, reason: metric.reason, attempt: metric.attempt, retrying: metric.retrying }); } catch {}
   return metric;
 }
 async function main() {
-  const protocol = createProtocol({ start: () => createSession({ origins: JSON.parse(process.env.SLEIGHT_TURBO_ORIGINS ?? '[]'),
+  const protocol = createProtocol({ onStartupFailure: failure => {
+    const metric = recordStartupFailure(process.env.SLEIGHT_TURBO_METRICS, failure);
+    process.stderr.write(JSON.stringify({ turboBenchStartupFailed: metric }) + '\n');
+  }, start: () => createSession({ origins: JSON.parse(process.env.SLEIGHT_TURBO_ORIGINS ?? '[]'),
     taskMessage: process.env.SLEIGHT_TURBO_TASK ?? '',
     realBrowser: process.env.SLEIGHT_TURBO_REAL_BROWSER ? JSON.parse(process.env.SLEIGHT_TURBO_REAL_BROWSER) : undefined }) });
   const lines = createInterface({ input: process.stdin }); let stopping;

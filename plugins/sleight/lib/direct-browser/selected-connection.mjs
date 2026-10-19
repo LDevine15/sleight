@@ -1,5 +1,5 @@
 // Fixed installed-loader connection provider. No discovery scan, HTTP lookup,
-// browser launch, retry or socket connection occurs until explicit connect().
+// browser launch or socket connection occurs until explicit connect(), and a lost socket never reconnects.
 import { constants, lstatSync, realpathSync, readlinkSync, openSync, fstatSync, readSync, closeSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { hostname } from 'node:os';
@@ -10,10 +10,16 @@ import { parseActivePort, validateEndpoint } from './discovery.mjs';
 import { createCDPFilter } from './cdp-filter.mjs';
 import { createNativeProcessProvider, isNativeProcessProvider } from './host.mjs';
 import { proofKey, proveRunningCode, signedBrowserAt, writeClass } from './executable-trust.mjs';
+import { retryCodes, runOnceMore } from './transient.mjs';
 
 const fail = code => { throw Error(code); };
 const ordinaryObject = value => value && typeof value === 'object' && !Array.isArray(value);
 const equalStat = (a, b) => ['dev', 'ino', 'uid', 'gid', 'mode', 'size', 'mtimeMs', 'ctimeMs'].every(k => a[k] === b[k]);
+// The profile folder is the same folder with the same owner and permissions. Its size and times are left out: Chrome
+// adds, renames and removes entries there on its own (Local State's atomic rewrite, about 10 s after a pref change),
+// which failed 2 of about 290 real-Chrome turbo starts on 2026-10-18 and 2026-10-19. The entries turbo reads
+// (SingletonLock, DevToolsActivePort) keep their own exact comparisons.
+const sameDirectory = (a, b) => ['dev', 'ino', 'uid', 'gid', 'mode'].every(k => a[k] === b[k]);
 const methodName = value => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*$/.test(value);
 
 // signed: the executable is a signed browser at its fixed place (executable-trust.mjs), so a group write bit for
@@ -64,12 +70,13 @@ function selectedPid(root, uid) {
   } catch { fail('SELECTED_PROCESS_UNPROVED'); }
 }
 
-async function listenerOwner(run, port, pid, uid) {
+async function listenerOwner(run, port, pid, uid, retryDelay = 100) {
   try {
     // Inspect all TCP listeners at this exact port. Restricting to -p would hide
     // an ambiguous/foreign listener; wildcard binds cannot prove loopback-only.
-    const { stdout } = await run('/usr/sbin/lsof', ['-nP', '-a', '-iTCP:' + port, '-sTCP:LISTEN', '-Fpun'],
-      { env: { PATH: '/usr/bin:/bin', LANG: 'C' }, timeout: 3000, maxBuffer: 16384 });
+    // An lsof that its timeout killed (a loaded Mac) runs once more; an lsof that answered is final.
+    const { stdout } = await runOnceMore(run, '/usr/sbin/lsof', ['-nP', '-a', '-iTCP:' + port, '-sTCP:LISTEN', '-Fpun'],
+      { env: { PATH: '/usr/bin:/bin', LANG: 'C' }, timeout: 3000, maxBuffer: 16384 }, { delayMs: retryDelay });
     if (typeof stdout !== 'string' || stdout.length > 16384) throw Error();
     let processId, userId, fileRecord = false, files = 0;
     for (const line of stdout.split('\n').filter(Boolean)) {
@@ -100,8 +107,8 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
   const Socket = deps.WebSocket ?? globalThis.WebSocket;
   if (typeof Socket !== 'function' || !testDependencies && Number(process.versions.node.split('.')[0]) < 24) fail('SELECTED_SOCKET_UNAVAILABLE');
   const run = deps.execFile ?? promisify(execFile);
-  const closeTimeout = deps.closeTimeoutMs ?? 3000, openTimeout = deps.openTimeoutMs ?? 10000;
-  if (![closeTimeout, openTimeout].every(v => Number.isSafeInteger(v) && v > 0 && v <= 30000)) fail('SELECTED_CONFIG_REQUIRED');
+  const closeTimeout = deps.closeTimeoutMs ?? 3000, openTimeout = deps.openTimeoutMs ?? 10000, retryDelay = deps.retryDelayMs ?? 100;
+  if (![closeTimeout, openTimeout, retryDelay].every(v => Number.isSafeInteger(v) && v > 0 && v <= 30000)) fail('SELECTED_CONFIG_REQUIRED');
   // Only a signed browser at its fixed place may have a group-writable executable, and only for a process whose
   // signature was proven (executable-trust.mjs). A proof is kept for one incarnation and executable inode.
   const requirement = signedBrowserAt(application, { appRoots: deps.signedAppRoots, browsers: deps.signedBrowsers })?.requirement;
@@ -133,12 +140,15 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
     if (!validInfo(info, lock.pid)) fail('SELECTED_PROCESS_UNPROVED');
     await proveSignature(executableStat, info);
     const file = endpointFile(root, uid, info.start);
-    if (!equalStat(rootStat, securePath(root, uid, true)) || !equalStat(executableStat, securePath(application, uid, false, true, signed, primaryGid)) ||
+    if (!sameDirectory(rootStat, securePath(root, uid, true)) || !equalStat(executableStat, securePath(application, uid, false, true, signed, primaryGid)) ||
         JSON.stringify(lock) !== JSON.stringify(selectedPid(root, uid))) fail('STALE_INSTANCE');
     return { root, application, uid, pid: info.pid, start: info.start, incarnation: info.incarnation,
       rootDevice: rootStat.dev, rootInode: rootStat.ino, executableDevice: executableStat.dev, executableInode: executableStat.ino, lock, file };
   }
-  const identity = Object.freeze(await observe()), identityJSON = JSON.stringify(identity);
+  // The first look waits boundedly (3 reads, 100 ms apart) through a DevToolsActivePort that Chrome is still writing
+  // or an entry that changed between two reads. Later looks (current()) compare against this identity and never retry.
+  const identity = Object.freeze(await retryCodes(observe, ['STALE_INSTANCE', 'SELECTED_ENDPOINT_UNPROVED'], { delayMs: retryDelay })),
+    identityJSON = JSON.stringify(identity);
   const browserIncarnation = 'p' + createHash('sha256').update(identityJSON).digest('hex');
   const selectedBrowser = 'b' + createHash('sha256').update(root + '\0' + application).digest('hex').slice(0, 32);
   const endpoint = validateEndpoint('ws://127.0.0.1:' + identity.file.port + identity.file.browserPath);
@@ -184,7 +194,7 @@ export async function createSelectedConnection({ config, nativeReceipt, processM
   }
   async function current() {
     if (JSON.stringify(await observe()) !== identityJSON) fail('STALE_INSTANCE');
-    await listenerOwner(run, identity.file.port, identity.pid, uid);
+    await listenerOwner(run, identity.file.port, identity.pid, uid, retryDelay);
   }
   function message(event) {
     let reason = 'FRAME_INVALID';
