@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, readdirSync } from 'node:fs';
+import { mkdtempSync, realpathSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,5 +36,12 @@ test('v3 stdio server lists five tools and refuses before allocation when the pi
   const text = replies[2].result.content.map(part => part.text).join('\n');
   assert.match(text, /Turbo bench unavailable/);
   assert.match(text, /Read before any retry/);
-  assert.deepEqual(readdirSync(root), [], 'refused startup must not manufacture allocation or cleanup receipts');
+  assert.match(text, /startup stage bench-browser/);
+  // The task folder keeps why the start failed, once per attempt, and never a cleanup receipt it has no evidence for.
+  assert.deepEqual(readdirSync(root), ['turbo-metrics.jsonl'], 'refused startup must not manufacture allocation or cleanup receipts');
+  const metrics = readFileSync(env.SLEIGHT_TURBO_METRICS, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(metrics.map(({ ms, ...rest }) => rest), [1, 2].map(attempt => ({ version: 3, phase: 'startup-failed', attempt,
+    stage: 'bench-browser', code: 'V3_RUNTIME_UNAVAILABLE', reason: 'BENCH_BROWSER_MISSING', retrying: attempt === 1 })));
+  assert.ok(metrics.every(({ ms }) => Number.isFinite(ms) && ms >= 0));
+  assert.doesNotMatch(readFileSync(env.SLEIGHT_TURBO_METRICS, 'utf8'), new RegExp(root.replaceAll('/', '\\/')));
 });

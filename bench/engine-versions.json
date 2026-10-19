@@ -1,0 +1,77 @@
+{
+  "about": "ChatGPT computer-use engine versions on the benchmark Mac, built 2026-10-19 from evidence on disk for results saved before runners recorded the version. Each version was current from firstSeenUTC until the next version's switchedAfterUTC; the switch happened somewhere between that version's switchedAfterUTC (the last evidence of the previous version) and its firstSeenUTC. bench/engine-version.mjs reads it. Times are UTC; ~/Library/Logs/sleight/watch.log writes local time (EDT, UTC-4).",
+  "checkedUTC": "2026-10-19T05:15:56.032Z",
+  "checkedEvidence": "the engine folder was still 26.1013.40934 (refresh)",
+  "versions": [
+    {
+      "version": "26.930.31730",
+      "switchedAfterUTC": null,
+      "firstSeenUTC": "2026-10-03T18:41:14Z",
+      "evidence": [
+        "first commit 744280ab (2026-10-03 18:41Z) names 26.930.31730 as the newer of two engine folders, beside 26.928.20755, in launch.mjs's version comparison",
+        "watch-engine-version created 2026-10-03T22:08:09Z with this version as the watch's baseline (watch.log 18:08:09 EDT)"
+      ]
+    },
+    {
+      "version": "26.930.51102",
+      "switchedAfterUTC": "2026-10-05T13:00:06Z",
+      "firstSeenUTC": "2026-10-06T02:40:50Z",
+      "evidence": [
+        "watch.log 2026-10-05 09:00:06 EDT: engine 26.930.31730 unchanged",
+        "watch.log 2026-10-05 22:40:50 EDT: engine 26.930.31730 -> 26.930.51102; engine-api-26.930.51102.md born 2026-10-06T02:42:30Z"
+      ]
+    },
+    {
+      "version": "26.1002.52244",
+      "switchedAfterUTC": "2026-10-06T02:43:02Z",
+      "firstSeenUTC": "2026-10-08T03:03:01Z",
+      "evidence": [
+        "watch.log 2026-10-05 22:43:02 EDT: benchmark PASS on engine 26.930.51102; the watch logged nothing on 2026-10-06 or 2026-10-07",
+        "docs/benchmarks/2026-10-07-guard-reads.json: first attempt started 2026-10-08T03:03:01Z on engine 26.1002.52244",
+        "engine-api-26.1002.52244.md born 2026-10-08T03:17:15Z; STATE (commit 6bfd9aa1): found at boot on 2026-10-08",
+        "not used as a bound: /Applications/ChatGPT.app/Contents/Info.plist was born 2026-10-07T07:03:43Z, which may be this install"
+      ]
+    },
+    {
+      "version": "26.1007.21159",
+      "switchedAfterUTC": "2026-10-10T05:37:39Z",
+      "firstSeenUTC": "2026-10-10T07:52:05Z",
+      "evidence": [
+        "docs/benchmarks/2026-10-10-waits-targeting-live-1791610659130.json: started 2026-10-10T05:37:39Z, engineVersion 26.1002.52244",
+        "docs/benchmarks/2026-10-10-footprint-parity-source-pairs-2026-10-10T07-52-05-352Z.json: started 2026-10-10T07:52:05Z, engine 26.1007.21159",
+        "watch.log 2026-10-10 04:18:57 EDT: engine 26.1002.52244 -> 26.1007.21159"
+      ]
+    },
+    {
+      "version": "26.1007.30912",
+      "switchedAfterUTC": "2026-10-11T15:29:03Z",
+      "firstSeenUTC": "2026-10-11T16:46:00Z",
+      "likelySwitchUTC": "2026-10-11T16:45:00Z",
+      "evidence": [
+        "docs/benchmarks/2026-10-11-sitting-select-all.json: started 2026-10-11T15:29:03Z, engineVersion 26.1007.21159",
+        "STATE (commit 5427cca8, 2026-10-11 23:57Z): the engine plugin folder 26.1007.30912 is dated 2026-10-11 12:45 (EDT, so 16:45Z, to the minute)",
+        "watch.log 2026-10-12 09:00:07 EDT: engine 26.1007.21159 -> 26.1007.30912"
+      ]
+    },
+    {
+      "version": "26.1007.71326",
+      "switchedAfterUTC": "2026-10-13T13:00:07Z",
+      "firstSeenUTC": "2026-10-14T13:00:05Z",
+      "evidence": [
+        "watch.log 2026-10-13 09:00:07 EDT: engine 26.1007.30912 unchanged",
+        "engine-api-26.1007.71326.md born 2026-10-14T13:00:05Z; watch.log 2026-10-14 09:00:07 EDT: engine 26.1007.30912 -> 26.1007.71326",
+        "STATE (commit 2dba518b): the Mac was off from about 05:05Z to 12:53Z on 2026-10-14"
+      ]
+    },
+    {
+      "version": "26.1013.40934",
+      "switchedAfterUTC": "2026-10-18T21:47:29Z",
+      "firstSeenUTC": "2026-10-18T21:47:50Z",
+      "evidence": [
+        "/Applications/ChatGPT.app was rewritten from 2026-10-18T21:47:29Z to 21:47:33Z (Contents and Info.plist modification times)",
+        "the engine folder 26.1013.40934 in the Codex plugin cache was born 2026-10-18T21:47:50Z (stat -f %B)",
+        "STATE: ChatGPT went from 26.1007.71326 to 26.1013.40934 on 2026-10-18 at 21:47Z"
+      ]
+    }
+  ]
+}

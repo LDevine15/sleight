@@ -58,6 +58,7 @@ import { genericTask } from './generic-task.mjs';
 import { guardGenericOperation } from './generic-approval.mjs';
 import { assertCalculatorReady } from './plugin-live.mjs';
 import { WORLD_APPS } from './world/tasks.mjs';
+import { engineSpan, readEngine } from './engine-version.mjs';
 import { ensureCuaDaemon, isNativeArm, nativeArmPlan, prepareNativeArm } from './world/native-arms.mjs';
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from './world/native-world.mjs';
 import { interactivePlan, runInteractive, verifyInteractiveCLI } from './world/arms/claude-cu/interactive.mjs';
@@ -486,7 +487,13 @@ const sleightAt = () => {
   } catch { return { commit: null }; }
 };
 const sleightBuild = sleightAt();
-const sleightRow = () => { const { commit, dirty } = sleightAt(); return { sleightCommit: commit, sleightDirty: dirty }; };
+// The ChatGPT engine version, a pure read of the doctor's engine folder: once for the pass (again at its last save, flagging a
+// change) and once per row, so a row names the engine it ran on, dated by the UTC time it finished (LAWS, owner 2026-10-19).
+// The read is taken again once the pass holds the live lock, so a pass that waited for the lock starts its span then.
+let engineAtStart = readEngine();
+const publicRead = read => { if (!read) return read; const { error, ...rest } = read; return rest; };
+const sleightRow = () => { const { commit, dirty } = sleightAt();
+  return { sleightCommit: commit, sleightDirty: dirty, engineVersion: readEngine({ app: false }).version, finishedAt: new Date().toISOString() }; };
 
 function claudeArgs(prompt, arm,{ privateMail = false, fixtureLifecycle = false } = {}) {
   return [
@@ -543,12 +550,12 @@ const save = (final = false) => {
   const hygieneError = count ? { errors: [...hygieneErrors, ...finishErrors, ...(tracking?.errors ?? [])].slice(0, 20), count } : undefined;
   if (final && hygieneError) console.error(privatePass ? 'Pass hygiene: inventory unavailable; tasks continued.' : `Pass hygiene: ${scrub(hygieneError.errors.join('; '))} (${count} errors)`);
   if (isDryRun) {
-    if (final) console.log(JSON.stringify({ dryRun: true, world, arms: armNames, sleight: sleightBuild, results }, null, 2));
+    if (final) console.log(JSON.stringify({ dryRun: true, world, arms: armNames, sleight: sleightBuild, engine: engineAtStart, results }, null, 2));
     return;
   }
   if (privatePass) {
     if (!fullName) throw new Error('PRIVATE_MAIL_OWNER_AUDIT_UNAVAILABLE');
-    const json = JSON.stringify({ results: publicPrivateMailRows(results),
+    const json = JSON.stringify({ engine: engineSpan(publicRead(engineAtStart), final ? publicRead(readEngine()) : undefined), results: publicPrivateMailRows(results),
       ...(hygieneError && { hygieneError: { count: hygieneError.count, code: 'HYGIENE_INVENTORY_UNAVAILABLE' } }),
       ...(hygieneResult && { leftWindows: hygieneResult.leftWindows.map(({ pid, id }) => ({ pid, ...(id && { id }) })) }) }, null, 2);
     publishPrivateMailResults(file, json, { ownerName: fullName,
@@ -557,7 +564,7 @@ const save = (final = false) => {
   }
   const json = JSON.stringify({ stamp, ...(['real', 'world'].includes(suite) ? { suite, surfaces: realSurfaces, ownerAway, ownerPresent } : {}),
     ...(guardedPass && { fixturePolicy: 'retained app observers for every arm', ownerAway }),
-    arms: armNames, sleight: sleightBuild, ...(armNames.some(name => ARMS[name].codex) && { codexModels: Object.fromEntries(armNames.filter(name => ARMS[name].codex).map(name => [name, ARMS[name].codexModel])),
+    arms: armNames, sleight: sleightBuild, engine: engineSpan(engineAtStart, final ? readEngine() : undefined), ...(armNames.some(name => ARMS[name].codex) && { codexModels: Object.fromEntries(armNames.filter(name => ARMS[name].codex).map(name => [name, ARMS[name].codexModel])),
       codexEffort, codexCliVersions: [...new Set(results.map(row => row.codexCliVersion).filter(Boolean))], engineAllowList: setsEngineList ? 'benchmark apps for the pass' : 'untouched' }), ...(world ? { world: true } : {}), armMetadata: Object.fromEntries(armNames.filter(name => ARMS[name].generic || ARMS[name].world || ARMS[name].interactive || ARMS[name].sleightHost).map(name => [name, ARMS[name].identity])), model, effort, claude: claudeBin, auth: auth.mode,
     armSetup: cleanArms ? 'clean' : 'normal', ...(codexCleanConfig && { codexConfig: codexCleanConfig }), results,
     ...(hygieneError && { hygieneError }),
@@ -607,6 +614,7 @@ if (!controller.signal.aborted && !isDryRun && armNames.some(name => !ARMS[name]
   console.error('Acquiring /tmp/sleight-live.lock.');
   unlock = await acquireLiveLock(undefined, { wait: !guardedPass, signal: controller.signal, interval: 2000 });
   lockIdentity = statSync('/tmp/sleight-live.lock');
+  engineAtStart = readEngine();
   // Without a baseline the receipts-only handle closes no window but still quits proven launches.
   try { windowHygiene = await beginPassHygiene({ cacheDir: ARM_HOME, signal: controller.signal }); }
   catch (error) { recordHygieneError(error); windowHygiene = error.receiptsOnly; }

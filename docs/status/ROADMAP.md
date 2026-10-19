@@ -34,13 +34,22 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
    its plugin against Codex out of the box, so the claim can say whether sleight makes GPT faster too. Browser race: codex-sleight
    (gpt-6-luna) and codex-sleight-sol x3 each, against the codex rounds already run and a new codex-sol baseline x3, in Safari and
    Firefox, on the final build with the engine-path payment gate. Native claim tasks need a sleight-in-Codex native arm, which the
-   claim runner doesn't have yet. The result is published whichever way it goes.
+   claim runner doesn't have yet. The result is published whichever way it goes. The luna pair (codex-sleight against codex)
+   runs for the 1.3.0 tag, and the Sol pair (codex-sleight-sol against a new codex-sol baseline) for 1.3.1 (owner, 2026-10-19).
+4f. Engine compatibility after every ChatGPT update, in 1.3.1 (owner, 2026-10-19): ChatGPT updates several times a week, so full
+   benchmarks rerun periodically, with the engine version recorded on every result, and an automated check for breaking
+   changes runs after every update. It builds on `scripts/watch.sh` (daily launchd job: doctor, API docs diff, one task on a
+   version change). The static half (new release detected, engine API and schemas diffed against sleight's contract) runs off
+   this Mac, on a GitHub-hosted runner or the owner's Linux CI box. The live smoke runs on this Mac (owner, 2026-10-19).
+   Public Actions logs don't show engine source or docs. Workflow files are the owner's to push.
 4c. sleight as a Codex plugin in 1.3.0 (owner, 2026-10-19: in 1.3.0 if possible): one repo for both hosts, the repo as a
    Codex marketplace, the skill delivered in Codex, approvals per LAWS, doctor and setup aware of Codex. The menu bar dropdown
    names the host each connected session runs in (Claude Code, Codex, Cursor, with version, from the MCP client's own
    introduction), and the model only where the host reports it. sleight never guesses a model. Publishing stays the owner's call.
    In 1.4.0 (owner, 2026-10-19): local performance analytics in the dropdown and a command, such as seconds per action and reads
-   saved, and turbo against the engine path, kept on this Mac, built on so1's action log, nothing sent anywhere.
+   saved, and turbo against the engine path, kept on this Mac, built on so1's action log, nothing sent anywhere. Reads saved
+   counts reads Claude asked for that went out as changed lines or were left out, and the engine browser path's per-action
+   seconds stay an estimate kept out of the menu row (owner took sleight-arch's recommendations, 2026-10-19).
 4e. Turbo inside Codex in 1.3.1 (owner, 2026-10-19): a way to tie each turbo turn to the user's own message that the model can't
    forge, since Codex's hooks can't hold the mod's private token. Building on `claude/codex-turbo`. AS-3 also comes in 1.3.1 as
    one tool, `browser_open`, behind `SLEIGHT_BROWSER_CORE=1` until its race A/B saves at least 30 s a round with every task still passing.
@@ -57,7 +66,8 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
    data file, plain HTML and JavaScript) that the README links to. The hub's pages also hold plain Markdown tables for GitHub, which
    doesn't run a repo's JavaScript, and serving the interactive page (GitHub Pages or another host) is the owner's call at release. Then the
    README rewrite on the final numbers. Everything people read goes through the humanizer skill and Vale.
-5. Then the claim post (owner publishes) and the launch video (`docs/design/video-storyboard.md`). No work on the film, art included,
+5. Then the claim post (owner publishes) and the launch video (`docs/design/video-storyboard.md`). The video isn't tied to
+   1.3.0 and can come with any later release (owner, 2026-10-19). No work on the film, art included,
    starts until the claim suite (2.2), native apps included, backs the claim that sleight is the fastest at computer use on macOS, in the world. The film costs
    too much time and tokens to make for a narrower claim (owner, 2026-10-16). Its billing then repeats the claim post's words.
    The owner greenlit the art on 2026-10-18 with the claim measured (native "fastest", 8 of 9). Numbers and captures lock after
@@ -139,6 +149,8 @@ native claim and the browser race run as Mac load allows, so that Electron's run
    only when merged and measured by a Haiku A/B on held-out native tasks plus the claim tasks. Model time is about 85% of a run,
    and sleight's first result is about 25,000 characters against Peekaboo's 4,600.
 5. The parity battery runs about 25 popular apps side by side with Codex. The harness is built, and 3 of 34 runs are done.
+1.4.0 builds now on its own branch, `claude/p140` from the 1.3.1 integration branch (owner, 2026-10-19 04:0xZ): local performance
+   analytics (4c), Cursor plugin support (4d) and the AM1 speed map (item 6), one Opus builder each on `claude/p140-*`.
 6. The AM1 speed map of app classes, in 1.4.0 (owner, 2026-10-19). Its VS Code and Word fixtures still fail setup (AM1E designs the
    wait for a late accessibility tree).
 7. The ghost hand (owner, 2026-10-16): when sleight acts in a background app, a small translucent hand glides to the point in

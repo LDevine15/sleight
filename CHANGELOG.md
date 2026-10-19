@@ -27,11 +27,43 @@
 
 ## 1.3.1 (TODO: release date)
 
+### Engine updates
+
+- A compatibility check runs after every ChatGPT update: a static half that reads each release's engine files on Linux
+  (`bench/compat-static.mjs`, hourly), and the installed engine plus optional live checks on the Mac through
+  `scripts/watch.sh`. Results go to [the compatibility record](docs/results/engine-compat.md). The live checks haven't
+  run yet.
+
 ### Codex
 
 - Turbo works in Codex 0.160.0 and later. A prompt hook ties each turbo turn to your message through a
   tool Codex hides from the model, and the Stop and Interrupt hooks end it. The plugin no longer sets
   `SLEIGHT_TURBO=0`. Trust the new hook when Codex asks. Not yet run live.
+
+### Turbo
+
+- A turbo start that fails before anything reaches the browser runs once more. Before, it left turbo off for the
+  session (in a benchmark round, for the task). The startup check no longer compares the times of Chrome's profile
+  folder. Chrome changes them on its own, the likeliest cause of the 2 failed starts in 185 Chrome race tasks.
+  The failed stage and code go to the trace and, in benchmark rounds, to the task's `turbo-metrics.jsonl`. Not yet run
+  live.
+
+### Windows
+
+- When an action brings up a pop-up window, such as a sign-in window in Safari, the result says it belongs to the task in
+  the window it came from. A later result says when the window in front has that window's ID again. This needs an app that
+  prints window IDs, and a read that counted the window the action ran in as the app's only window. Not yet run live.
+- When `select_window` doesn't find a match, it lists window titles whole up to 120 characters. It cut them at 60, and a Safari
+  profile window's 69-character title couldn't be copied.
+
+### Startup
+
+- A session started with an A/B switch such as `SLEIGHT_FS=1`, right after sessions without it, failed every call with
+  "Engine tools changed" (the first task of a Firefox race round, 2026-10-19). The startup cache now
+  keeps only the engine's own replies, keyed on what starts the engine, and each session applies its own settings to
+  them. A cached reply that turns out stale no longer ends the session: its calls run on the live engine, and the cache is
+  rewritten. [Known problems](docs/known-problems.md) lists what such a session keeps from the cache. Unit-tested on each
+  of the 67 `SLEIGHT_*` switches in the plugin's code with every value the code compares it to. Not yet run live.
 
 ## 1.3.0 (TODO: release date)
 

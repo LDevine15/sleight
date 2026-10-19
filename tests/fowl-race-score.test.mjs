@@ -269,3 +269,53 @@ test('a live round records the build and harness commits and marks itself a harn
   assert.equal(existsSync(join(ok, 'harness-failure.json')), false);
   assert.equal(existsSync(join(ok, 'commits.json')), true);
 });
+
+test('race-score names each arm\'s engine version, recorded or inferred, and flags engine arms on different versions', t => {
+  const root = mkdtempSync(join(tmpdir(), 'race-engine-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const timed = (dir, startIso) => {
+    const file = join(dir, 'results.json'), rows = JSON.parse(readFileSync(file, 'utf8'));
+    rows.forEach((row, i) => { row.run.started = Date.parse(startIso) + i * 60000; row.run.finished = row.run.started + 30000; });
+    writeFileSync(file, JSON.stringify(rows));
+  };
+  const span = version => ({ version, start: { version, at: '2026-10-19T06:00:00Z' }, end: { version, at: '2026-10-19T06:10:00Z' }, changed: false });
+  round(root, 'real-s1-sleight', 'safari', 'sleight', [['form-travel', 30, true], ['mdn', 20, true]], { 'engine.json': span('26.1013.40934') });
+  timed(round(root, 'real-c1-codex', 'safari', 'codex', [['form-travel', 35, true], ['mdn', 25, true]]), '2026-10-18T20:00:00Z');
+  timed(round(root, 'real-l1-lcu', 'safari', 'lcu', [['form-travel', 40, true], ['mdn', 25, true]]), '2026-10-18T21:46:30Z');
+  const rounds = expandRounds([join(root, 'real-*')]).map(dir => loadRound(dir));
+  const byName = Object.fromEntries(rounds.map(r => [r.name, r]));
+  assert.deepEqual(byName['real-s1-sleight'].engine,
+    { version: '26.1013.40934', provenance: 'recorded', startedAt: '2026-10-19T06:00:00.000Z', endedAt: '2026-10-19T06:10:00.000Z', dated: 'recorded' });
+  assert.deepEqual(byName['real-c1-codex'].engine,
+    { version: '26.1007.71326', provenance: 'inferred', startedAt: '2026-10-18T20:00:00.000Z', endedAt: '2026-10-18T20:01:30.000Z', dated: 'recorded' });
+  assert.equal(byName['real-l1-lcu'].engine.provenance, 'ambiguous');
+  const s = scoreRounds(rounds).safari;
+  assert.deepEqual([s.engines.sleight.versions['26.1013.40934'].runs, s.engines.sleight.versions['26.1013.40934'].recorded], [2, 2]);
+  assert.deepEqual([s.engines.lcu.versions['26.1007.71326'].runs, s.engines.lcu.ambiguous.runs], [1, 1]);
+  // LCU doesn't drive the ChatGPT engine, so only sleight against Codex counts as a mix.
+  assert.deepEqual(s.engineMix, { versions: ['26.1007.71326', '26.1013.40934'], arms: { sleight: ['26.1013.40934'], codex: ['26.1007.71326'] } });
+  const cli = spawnSync(process.execPath, [join(repo, 'bench/fowl/race-score.mjs'), join(root, 'real-*')], { encoding: 'utf8' });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.match(cli.stdout, /real-c1-codex \(safari, codex, 2 rows, engine 26\.1007\.71326 inferred, 2026-10-18\)/);
+  assert.match(cli.stdout, /Engine and UTC dates per arm \(runs\): sleight engine 26\.1013\.40934 \(2 recorded\), 2026-10-19 \| codex engine 26\.1007\.71326 \(2 inferred\), 2026-10-18 \| lcu not used, 2026-10-18\./);
+  assert.match(cli.stdout, /different engine versions: sleight on 26\.1013\.40934, codex on 26\.1007\.71326\./);
+  // A round without task times or engine.json is dated by its commits.json birth, as an inferred date.
+  const bare = round(root, 'bare-sleight', 'safari', 'sleight', [['mdn', 20, true]], { 'commits.json': {} });
+  assert.equal(loadRound(bare).rows[0].engine.dated, 'inferred');
+  assert.equal(loadRound(bare).rows[0].engine.startedAt.slice(0, 4), String(new Date().getUTCFullYear()));
+});
+
+test('a live round records the engine at its start and end, and flags a change', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'race-gate-engine-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const reads = [{ version: '26.1007.71326', at: '2026-10-18T21:40:00Z' }, { version: '26.1013.40934', at: '2026-10-18T21:55:00Z' }];
+  const out = join(dir, 'out');
+  await runRealGate({ args: { surface: 'codex', 'real-browser': 'firefox', out }, tasks: [gateTask],
+    runner: { gradeOutcome: () => ({ problems: [] }), gradeSite: () => ({ problems: [] }) }, runtime: { ...gateRuntime(dir, codexOk), readEngine: () => reads.shift() } });
+  process.exitCode = 0;
+  const span = JSON.parse(readFileSync(join(out, 'engine.json'), 'utf8'));
+  assert.equal(span.changed, true);
+  assert.deepEqual([span.start.version, span.end.version], ['26.1007.71326', '26.1013.40934']);
+  assert.match(readFileSync(join(out, 'report.md'), 'utf8'), /Engine: 26\.1007\.71326 at the start and 26\.1013\.40934 at the end \(changed during the round\)\. Round from 2026-10-18T21:40:00Z to 2026-10-18T21:55:00Z UTC\./);
+  const plan = await runRealGate({ args: { surface: 'codex', 'real-browser': 'firefox', out: join(dir, 'dry'), 'dry-run': true }, tasks: [gateTask],
+    runtime: { ...gateRuntime(dir, codexOk), readEngine: () => ({ version: '26.1013.40934' }), print: () => {}, readVersion: () => '1', preflight: () => ({}) } });
+  assert.equal(plan.engine.version, '26.1013.40934');
+});

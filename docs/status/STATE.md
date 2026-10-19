@@ -3,17 +3,20 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 03:00 UTC)
+## Banner (2026-10-19 06:45 UTC)
 
-**Since the clear (03:05Z).** Pay-gate is merged into the release line (`pane/auto-mode` 7a129a4a; full check 8317 tests 0
-fail, lint 0). Codex turbo finished (`claude/codex-turbo` 9612ea86, 570/570 focused, Sonnet review fixed, never run live;
-ledger/p130/cxt1-REPORT.md has the seven live-check steps). FU1's review found a Python/Ruby adjacent-literal bypass of the
-logging-switch guard and a false rotation warning. Both are fixed on `codex/fu1` ca7ab807. `claude/p131-integration` 4abeff67
-holds the release line, codex-turbo and FU1 (full check 8833 tests 0 fail). Ruling: the codex-sleight arms measure 1.3.0, which
-has no turbo in Codex, so they run with `SLEIGHT_TURBO=0` once 1.3.1 carries cxt1. The owner is at the Mac but not using it, so
-live runs are allowed: block b9 (`race-1017/block-b9.command`, one Terminal window, race-fx at cf29a636) runs the pay-gate live
-checks, then sleight's Safari and Firefox x3 on the new engine. Items below marked as in flight at the clear are superseded by
-this paragraph.
+**Since the clear (06:45Z).** Release line `pane/auto-mode` 1f6efff2 (plugin 1.3.0; full check 8338 tests 0 fail, lint 0): the
+pay-gate with its checkout-link fix, EV1 (engine version and UTC dates on every result, `bench/engine-versions.json`), the README
+rewrite. Final browser race on 8c6b08ca (engine 26.1013.40934, Haiku, with competitors mostly on 26.1007.71326, labeled per arm) puts
+Safari fastest on 11 of 12 (592.1 s), Firefox 11 of 12 (557.1 s), every sleight task passing (ledger/p130/final-*-score.txt).
+4b luna pair: codex-sleight passes all 12 tasks at least once in both browsers, fastest on 8 of 12 in Safari and 7 of 12 in Firefox against
+codex. The release pass (`race-1017/release-130.command`, turbo gate normal and swap, one Haiku and one Opus round) runs now on
+1f6efff2. Then the hub regen (`node bench/engine-version.mjs refresh` first), README `TODO(final)`, the CHANGELOG date, the public
+push with CI, the tag and the GitHub release, on the owner's go given before sleep. OWNER ASLEEP since 2026-10-19T05:09:45Z
+(/goodnight), back about 12:00Z. 1.3.1 `claude/p131-integration` 9f4e4751 adds codex-turbo, FU1, PG2 (promo Apply, security
+reviewed), 4f compatibility check (static half for ci-box or GitHub, workflow file in ledger/p130/cf1-engine-compat.yml), FS
+(behind `SLEIGHT_FS=1`, A/B owed) and SW1 (popup note), and its full check is owed. 1.4.0 `claude/p140` a96092aa holds analytics,
+Cursor and AM1. Items below marked as in flight at the clear are superseded by this paragraph.
 
 **Release line** `pane/auto-mode` = main checkout. It holds the race fixes ft1, fs1 and md1, plus sec130, es1, ff1, rg1r2, fl3,
 form-2fa, the Safari harness fixes, mdn-note, OH1, the FM3 port (engine Chromium tab path only), list-pick, the native

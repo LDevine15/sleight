@@ -72,7 +72,7 @@ import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
 import { createPaymentMessages, PAYMENT_ALLOWED, PAYMENT_WAITING } from './payment-gate.mjs';
-import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE, withFirstCallWindows } from './engine-app-docs.mjs';
+import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE, withFirstCallWindows, withInventoryNote } from './engine-app-docs.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
 import { evaluateWrite } from './evaluate-write.mjs';
@@ -120,6 +120,7 @@ import { compactJsDescription } from './tool-description.mjs';
 import { createLightReturn, lightReturnCode } from './light-return.mjs';
 import { hostLabel } from './host-label.mjs';
 import { TURN_START, TURN_START_TOOL, codexCallTurn, codexTurnClient, codexTurnFrame } from './codex-turn.mjs';
+import { rootWindowId, popupWindows } from './popup-window.mjs';
 
 // App handles have getAXState but no getState; only cua has getState. 13 of 27 sleight runs wrote app.getState
 // in their first call and 8 errored, losing a turn each (Fable study, 2026-10-17 11:53Z pass).
@@ -771,8 +772,14 @@ export function createRelay({
   // SLEIGHT_FIRST_CALL_BATCH=0: in 24 runs a side it cut turns 208 to 168 (2026-10-09). 'merge' picks
   // the wording under A/B.
   firstCallBatch = false,
+  // Under A/B (SLEIGHT_FS=1, loss study 2026-10-19 fixes 3 and 4): the js description notes at the engine's inventory
+  // sentence that getState lists no windows (INVENTORY_NOTE), FIRST_CALL_WINDOWS goes on, and a browser getApp result whose
+  // tab strip shows its selected tab names Cmd+T, typeText and Return for a new tab (KEYBOARD_TAB_SENTENCE). An engine
+  // description that matches a pin gets the compact text, which has no inventory sentence, so only TS3's goes there. The
+  // flag also turns on the pins of the engine's current descriptions (tool-description.mjs COMPUTER_JS_HASH).
+  firstCallSteering = process.env.SLEIGHT_FS === '1',
   // Under A/B (SLEIGHT_TS3=1): the js description says getState lists no windows (FIRST_CALL_WINDOWS).
-  firstCallWindows = process.env.SLEIGHT_TS3 === '1',
+  firstCallWindows = process.env.SLEIGHT_TS3 === '1' || firstCallSteering,
   // Under A/B (SLEIGHT_RESULT_TRIM=1): leaves out a split acquisition's tree when its call returns a
   // newer full one. Trimming Save-panel file lists with it lost (11/12, 2026-10-11) and is gone.
   resultTrim = false,
@@ -911,9 +918,32 @@ export function createRelay({
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
+  // The tool list as this session shows it: the engine's tools rewritten by this session's settings, then sleight's own.
+  // The handshake cache stores the engine's list and answers through this too (startup-cache.mjs).
+  const clientTools = ({ tools, ...result }) => ({ ...result, tools: tools
+    .filter(t => !HIDDEN_TOOLS.has(t.name))
+    .filter(t => !documentMode || t.name === 'js' || t.name === TURN_END_TOOL)
+    .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t, !modHost()) : t))
+    .map(t => {
+      if (t.name !== 'js') return t;
+      const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows, { current: firstCallSteering });
+      if (compact !== undefined) return { ...t, description: compact };
+      const batched = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt, firstCallWindows) : t.description;
+      const description = firstCallSteering ? withInventoryNote(batched) : batched;
+      return { ...t, description: leanCalls ? leanCallDescription(description) : description };
+    })
+    .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [],
+      (modHost() || codexTurbo()) && directBrowser ? directBrowser.tools().map(t => engineBrowserOpen ? widenTurboOpen(t, directBrowser.browser) : t)
+        : engineBrowserOpen && !documentMode ? [engineOpenTool(prompt)] : [],
+      codexTurbo() ? [structuredClone(TURN_START)] : [])
+    // Claude Code defers MCP tools behind a search, which cost a turn before the first call, and
+    // again before the first drag (3/3 textedit-drag runs, 2026-10-08). sleight's descriptions
+    // are short, so all but the internal turn_ended load up front, local tools included.
+    .map(t => promptTool(t, prompt))
+    .map(t => (t.name !== TURN_END_TOOL && t.name !== TURN_START_TOOL ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } } : t)) });
   let startup = startupCache?.bind({
-    context: { approvalScope, firstCallBatch, prompt, changeReview, leanCalls, flowRules: !!flowRules, tools: localTools?.tools },
     send: msg => toClient(msg), forward: msg => clientLine(JSON.stringify(msg), true),
+    present: { tools: clientTools }, log: line => stderr.write(line + '\n'),
   });
   const clickResults = new TabClickResults();
   const journal = receipts || stateReview ? new TurnJournal({ redactTitles: redactReceiptTitles }) : undefined;
@@ -1582,6 +1612,7 @@ export function createRelay({
     }
   }
   let leaseWindow;
+  const popups = popupWindows(); // the window IDs results showed, and which window each pop-up came up from
   let recoveryTarget, recoveryKnown = false; // recoveryKnown: the target is a bundle ID the engine confirmed
   let stateRead = false; // a getState read went to the engine this session, so its app ids are Claude's to use
   let lastConfirmedWindow; // the lease's last window with a confirmed bundle ID, kept when the lease drops
@@ -1973,7 +2004,7 @@ export function createRelay({
       if (continuation.checking) return;
       continuation.checking = true;
       const { call, expected, baseline, lease, original, head, current, tab, stopAt } = continuation;
-      const since = Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt);
+      const since = Math.min(call.forwardedAt, call.sampledAt ?? call.forwardedAt), probeAt = clock();
       menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs).then(observed => {
         if (!current() || leaseWindow !== lease ||
             !unchangedMenuWindow(expected, baseline, observed, tab ? stopAt : since, clock()) ||
@@ -1988,6 +2019,7 @@ export function createRelay({
           return;
         }
         continuation.checking = false;
+        if (tab) trace('tab-continuation-forwarded', { id: msg.id, probeMs: Math.round(clock() - probeAt) });
         toServer(msg, true);
       });
       return;
@@ -3187,6 +3219,7 @@ export function createRelay({
     // A palette the lease held must be gone, not just behind the document, unless Escape closed it.
     const gone = remainder.closeCheck ? windowGone(windowIdentity, { appId: covered.appId, title: call.target.title, url: call.target.url }, menuContinuationTimeoutMs)
       : Promise.resolve(true);
+    const probeAt = clock();
     gone.then(closed => closed ? menuIdentity(windowIdentity, expected, menuContinuationTimeoutMs, remainder.dialog ? error => refuse(`identity: ${error}`)
       : remainder.tab ? error => refuseTab(`identity: ${error}`) : remainder.palette ? error => refusePalette(`identity: ${error}`) : undefined)
       : (refuse('palette-still-open'), undefined)).then(observed => {
@@ -3208,7 +3241,10 @@ export function createRelay({
         observeServerMessage(msg); return;
       }
       // The sample also says whether idle over the whole call held: the cause of 0 of 9 Firefox continuations (2026-10-18) was not recorded.
-      if (remainder.tab) trace('tab-continuation-checked', { id: msg.id, ...idleSample(observed, stopAt, clock(), since) });
+      // With the stopped call's own engine time and the probe's: the client's result reports only the rest's engine time,
+      // so Firefox's 1.13 to 1.70 s per Cmd+T call outside it (loss study, 2026-10-19) had no split.
+      if (remainder.tab) trace('tab-continuation-checked', { id: msg.id, ...idleSample(observed, stopAt, clock(), since),
+        stopEngineMs: msg.result._meta?.['codex/nodeReplExecutionDurationMs'] ?? null, probeMs: Math.round(clock() - probeAt) });
       // The rest goes to the covered window under its own lease, pinned to the native window just observed. A palette's rest
       // is pinned to the palette the same way and keeps the call's lease, as a menu's does.
       const pinned = remainder.dialog || remainder.palette;
@@ -4174,6 +4210,9 @@ export function createRelay({
     let windowNote;
     // The tree Claude saw before this result, which the change block below replaces.
     const treeBefore = lastTree;
+    // The app's window count this read's health probe took (preHealth is cleared before the input-lease block): null when
+    // the probe gave no answer in time, undefined when the call had no probe.
+    const readHealth = msg.method === undefined && preHealth.has(msg.id) ? preHealth.get(msg.id) ?? null : undefined;
     const confirmedBrowser = msg.method === undefined && browserCalls.has(msg.id) && browserReply(msg);
     if (confirmedBrowser && !resultFailed) clickResults.observe(msg.result);
     if (browserCalls.has(msg.id) && msg.result?.content?.some(item => item.type === 'text' &&
@@ -4306,8 +4345,9 @@ export function createRelay({
       } else if (docs) msg.result.content = msg.result.content.map(c => c.type === 'text' && /^## Computer Use\n/.test(c.text ?? '')
         ? { ...c, text: rewritePaymentPolicy(c.text, confirmPayments, trace) } : c);
       if (msg.result._meta?.['codex/toolSurface']?.kind !== 'browserUse')
-        msg.result.content = msg.result.content.map(c => c.type === 'text' && c.text?.includes('<app_specific_instructions>')
-          ? { ...c, text: rewriteBrowserInstructions(c.text, trace) } : c);
+        msg.result.content = msg.result.content.map((c, i, all) => c.type === 'text' && c.text?.includes('<app_specific_instructions>')
+          ? { ...c, text: rewriteBrowserInstructions(c.text, trace, { keyboardTab: firstCallSteering,
+            tree: firstCallSteering ? all.slice(i + 1).map(item => item.type === 'text' ? item.text ?? '' : '').join('\n') : '' }) } : c);
       if (docs && docsShown && !requestsFullDocumentation(jsCode)) {
         // An un-awaited action that fails can end the engine's session (reproduced 2026-10-07).
         invalidateDiagnostics(); forgetHandles(); helperHandles.clear(); helperControls.clear(); helperActive = undefined;
@@ -4449,22 +4489,29 @@ export function createRelay({
       const call = leaseCalls.get(msg.id);
       const text = (msg.result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
       lastShown = msg.error ? new Set() : shownStandardWindows(text);
+      const shownId = msg.error ? undefined : rootWindowId(text);
       // A guard stop happens before its action and carries the header it just read.
       // A window-change stop carries the window it saw, and the lease moves to it. Leasing that
       // window still refuses if another session holds it.
       const guardStop = msg.result?.isError && /^(?:Error: )?(?:sleight stopped before |Input lease stopped this action: (?:window or URL|app) changed)/m.test(text);
       const window = !msg.error && (!msg.result?.isError || guardStop) && lastWindowFromText(text);
       const known = observedAppId(call, window, msg.result);
+      // A pop-up the action brought up, or the window it returns to (SW1, popup-window.mjs). It gets the note below even
+      // under its opener's title and URL, and the selected-window path's "outcome unconfirmed" note gets the same line.
+      const popupLine = call.key && window && !msg.result?.isError ? popups.note(leaseWindow, { ...window, rootId: shownId }) : popups.see(shownId);
+      if (call.read && window && !msg.result?.isError) popups.count(window.app, readHealth, shownId);
+      if (msg.error || msg.result?.isError) { popups.drop(leaseWindow?.app); popups.drop(window?.app); }
       // An action whose result shows another window of the same app (a close, a new window). Said
       // plainly, or a "no change" about the window now in front reads as a failed action: Claude
       // probed after closing a Chess game in 4/6 runs (2026-10-08).
-      if (call.key && !windowNote && window && !msg.result?.isError && leaseWindow?.app === window.app &&
-          !sameWindow(leaseWindow, window) && !newTabOf(leaseWindow, treeBefore, window, text.slice(text.lastIndexOf('Window: ')))) {
+      if (call.key && !windowNote && window && !msg.result?.isError && leaseWindow?.app === window.app && (popupLine ||
+          !sameWindow(leaseWindow, window) && !newTabOf(leaseWindow, treeBefore, window, text.slice(text.lastIndexOf('Window: '))))) {
         windowNote = `sleight: this call acted on ${documentLabel(leaseWindow)}. The window it shows now is ${documentLabel(window)}.`;
       }
+      if (popupLine && windowNote) { windowNote += ' ' + popupLine; trace('popup-window', { id: msg.id, app: window.app, opener: popupLine.startsWith('It has') }); }
       const previous = leaseWindow;
       if (guardStop && window && selectedWindow && window.app !== selectedWindow.app) clearSelection();
-      leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}) } : undefined;
+      leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}), ...(shownId ? { rootId: shownId } : {}) } : undefined;
       if (ownWindow(leaseWindow)) withheld.set(msg.id, OWN_HOST_LINE);
       else if (leaseWindow) {
         // The site this read shows. A read without web-area lines (a diff) keeps what the same window showed before.
@@ -4689,28 +4736,9 @@ export function createRelay({
             description: 'Always adds the app to your pre-approved list (sleight-mcp allow remove takes it off).' } } };
       }
     }
-    if (msg.method === undefined && listRequests.delete(msg.id) && Array.isArray(msg.result?.tools)) {
-      msg.result.tools = msg.result.tools
-        .filter(t => !HIDDEN_TOOLS.has(t.name))
-        .filter(t => !documentMode || t.name === 'js' || t.name === TURN_END_TOOL)
-        .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t, !modHost()) : t))
-        .map(t => {
-          if (t.name !== 'js') return t;
-          const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows);
-          if (compact !== undefined) return { ...t, description: compact };
-          const description = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt, firstCallWindows) : t.description;
-          return { ...t, description: leanCalls ? leanCallDescription(description) : description };
-        })
-        .concat(documentMode ? [DOCUMENT_TOOL, ...(localTools?.tools ?? []).filter(t => t.name === 'select_window')] : (localTools?.tools ?? []), changeReview ? [REVIEW_TOOL] : [], flowRules ? [FLOW_TOOL] : [],
-          (modHost() || codexTurbo()) && directBrowser ? directBrowser.tools().map(t => engineBrowserOpen ? widenTurboOpen(t, directBrowser.browser) : t)
-            : engineBrowserOpen && !documentMode ? [engineOpenTool(prompt)] : [],
-          codexTurbo() ? [structuredClone(TURN_START)] : [])
-        // Claude Code defers MCP tools behind a search, which cost a turn before the first call, and
-        // again before the first drag (3/3 textedit-drag runs, 2026-10-08). sleight's descriptions
-        // are short, so all but the internal turn_ended load up front, local tools included.
-        .map(t => promptTool(t, prompt))
-        .map(t => (t.name !== TURN_END_TOOL && t.name !== TURN_START_TOOL ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } } : t));
-    }
+    // The handshake cache checks and records the engine's own replies, before this session's rewrites.
+    const engineReply = msg.method === undefined && startup?.expects(msg.id) ? structuredClone(msg) : undefined;
+    if (msg.method === undefined && listRequests.delete(msg.id) && Array.isArray(msg.result?.tools)) msg.result = clientTools(msg.result);
     if (panelNote) {
       if (Array.isArray(msg.result?.content)) msg.result.content.push({ type: 'text', text: panelNote });
       else if (msg.error && typeof msg.error.message === 'string') msg.error.message += '\n' + panelNote;
@@ -4852,7 +4880,7 @@ export function createRelay({
           return;
         }
       }
-      if (!startup?.reply(msg)) toClient(msg);
+      if (!startup?.reply(msg, engineReply)) toClient(msg);
     };
     // A list row the call's click left unchanged: the helper says whether it lies outside the list's visible
     // frame, and its note replaces "UI changed". The result waits for at most the helper's deadline.

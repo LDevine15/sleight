@@ -46,7 +46,12 @@ test('census keeps other paths separate and does not invent ratios or zero cover
   result('engine', 'engine')]);
   assert.equal(row.actionCalls, 0); assert.equal(row.readsPerAction, null); assert.equal(row.otherCalls, 1);
   assert.deepEqual(observations(), { focusEvents: null, observedFocusEvents: null, turboTabsLeft: null,
-    tabsAfterBrowserClose: null, tabsLeft: null, cleanupProved: false });
+    tabsAfterBrowserClose: null, tabsLeft: null, cleanupProved: false, startupFailures: 0, startupUnrecovered: false });
+  const recovered = observations(undefined, [{ version: 3, phase: 'startup-failed', attempt: 1, retrying: true }]);
+  assert.deepEqual([recovered.startupFailures, recovered.startupUnrecovered], [1, false]);
+  const final = observations(undefined, [{ version: 3, phase: 'startup-failed', attempt: 1, retrying: true },
+    { version: 3, phase: 'startup-failed', attempt: 2, retrying: false }]);
+  assert.deepEqual([final.startupFailures, final.startupUnrecovered], [2, true]);
   const unknown = observations({ focusGrade: { cell: 'unqualified', events: [{ kind: 'host-front' }] } });
   assert.equal(unknown.focusEvents, null); assert.equal(unknown.observedFocusEvents, 1);
   const measured = observations({ focusGrade: { cell: 'ok', events: [] } }, [

@@ -25,7 +25,7 @@ import { createSurfaceCache, firstClientCallRefresh } from './surface-cache.mjs'
 import { createStartupCache, startupIdentity } from './startup-cache.mjs';
 import { createRelay, firstCallBatchSetting } from './relay.mjs';
 import { createRelayHand } from './hand/relay-hand.mjs';
-import { isV3Frontend, createV3Frontend } from './direct-browser/worker.mjs';
+import { isV3Frontend, createV3Frontend, transientStartup, traceStartupFailure } from './direct-browser/worker.mjs';
 import { prepareTextWrite, settleTextWrite } from './text-save.mjs';
 import { stuckEscapeOption } from './stuck-escape.mjs';
 import { createAppHealthHelper, diagnoseReadFailure } from './read-failure.mjs';
@@ -876,8 +876,10 @@ export function directBrowserRules(rules, frontend) {
 
 // Typed v3 unavailability is handled by installed startup, which keeps the
 // engine route available. Retired factories never get a second connection.
-function installedUnavailable(code) {
-  process.stderr.write(`sleight: turbo unavailable (${code}); using the engine. Check turbo settings and run sleight-mcp --doctor before retrying turbo.\n`);
+// detail: the stage the worker's startup stopped at and its code (worker.mjs unavailableFrame), when it said.
+const startupDetail = detail => detail?.stage ? ` at ${detail.stage}${detail.reason && detail.reason !== detail.code ? `: ${detail.reason}` : ''}` : '';
+function installedUnavailable(code, detail) {
+  process.stderr.write(`sleight: turbo unavailable (${code}${startupDetail({ ...detail, code })}); using the engine. Check turbo settings and run sleight-mcp --doctor before retrying turbo.\n`);
 }
 export async function createInstalledBrowserBridge(factories) {
   return (factories?.v3 ?? (await import('./direct-browser/worker.mjs')).createV3Bridge)();
@@ -898,17 +900,32 @@ export async function ensureInstalledTurbo(log = text => process.stderr.write(te
 // SLEIGHT_TURBO=0 keeps this server on the engine path: no turbo.json write, no bridge and no browser_* tools. It can only
 // turn turbo off, so an environment that sets it never gains anything (the Firefox and Safari benchmark arms set it).
 export const turboOff = (env = process.env) => env.SLEIGHT_TURBO === '0';
-export async function prepareInstalledStartup(factory, unavailable = installedUnavailable, { ensure, log = text => process.stderr.write(text), env = process.env } = {}) {
+// The bridge's startup forks the worker and selects the browser connection; it sends the browser nothing. A failure
+// that can pass on a second try (worker.mjs transientStartup: the worker died or hung, or Chrome changed an entry
+// between two reads) starts once more after retryDelayMs, instead of leaving turbo off for the whole session. Each
+// failed attempt goes to the trace (SLEIGHT_TRACE) with its stage and code.
+export async function prepareInstalledStartup(factory, unavailable = installedUnavailable, { ensure, log = text => process.stderr.write(text), env = process.env,
+  retryDelayMs = 300, trace = traceStartupFailure } = {}) {
   if (turboOff(env)) return { directBrowser: undefined, directHost: undefined };
   try { await ensure?.(log); } catch { /* Setup never blocks startup. */ }
-  try {
-    const bridge = await (factory ?? (() => createInstalledBrowserBridge()))();
-    if (!bridge) return { directBrowser: undefined, directHost: undefined };
-    return { directBrowser: createV3Frontend(bridge), directHost: bridge, turnHook: { close: () => bridge.detach() } };
-  } catch (error) {
-    const code = /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'TURBO_STARTUP_FAILED';
-    unavailable(code);
-    return { directBrowser: undefined, directHost: undefined, turboUnavailable: code };
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const bridge = await (factory ?? (() => createInstalledBrowserBridge()))();
+      if (!bridge) return { directBrowser: undefined, directHost: undefined };
+      return { directBrowser: createV3Frontend(bridge), directHost: bridge, turnHook: { close: () => bridge.detach() } };
+    } catch (error) {
+      const code = /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'TURBO_STARTUP_FAILED';
+      const detail = typeof error?.stage === 'string' ? { stage: error.stage, reason: error.reason } : undefined;
+      const retrying = attempt === 1 && transientStartup(error);
+      if (detail) try { trace({ code, ...detail, attempt, retrying }); } catch {}
+      if (retrying) {
+        log(`sleight: turbo startup failed (${code}${startupDetail({ ...detail, code })}); starting it once more.\n`);
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        continue;
+      }
+      if (detail) unavailable(code, detail); else unavailable(code);
+      return { directBrowser: undefined, directHost: undefined, turboUnavailable: code };
+    }
   }
 }
 

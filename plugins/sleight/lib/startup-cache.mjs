@@ -7,17 +7,18 @@ const limit = 1024 * 1024;
 const canonical = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
 const owned = stat => (!process.getuid || stat.uid === process.getuid()) && (stat.mode & 0o022) === 0;
-const handshakeEnv = new Set(['NODE_REPL_NODE_PATH', 'NODE_REPL_NODE_MODULE_DIRS', 'NODE_REPL_TRUSTED_CODE_PATHS',
-  'NODE_REPL_TRUSTED_SERVICES', 'NODE_REPL_INSTRUCTIONS_USE_CASE_COMPUTER_USE', 'NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS',
-  'NODE_REPL_VERSION', 'SKY_CUA_SERVICE_PATH', 'SKY_CUA_SERVICE_VERSION', 'BROWSER_USE_AVAILABLE_BACKENDS']);
-const valid = entry => entry?.schema === 1 && typeof entry.initialize?.protocolVersion === 'string' &&
+// The engine inherits sleight's whole environment. These are the names it or its node kernel can read, apart from
+// per-session values. The engine never reads SLEIGHT_* switches: sleight applies those to the engine's replies itself.
+const engineEnv = /^(?:CUA_|NODE_REPL_|SKY_|BROWSER_USE_)|^(?:CODEX_HOME|CODEX_CLI_PATH)$/;
+const sessionEnv = /(?:_ID|_PID|TOKEN|NONCE|SECRET|_KEY|_PORT|SOCKET|PIPE_PATH|VERIFYING_IDENTITY)$/;
+const valid = entry => entry?.schema === 2 && typeof entry.initialize?.protocolVersion === 'string' &&
   typeof entry.initialize?.serverInfo?.name === 'string' && typeof entry.initialize?.serverInfo?.version === 'string' &&
   entry.initialize.capabilities && typeof entry.initialize.capabilities === 'object' && !Array.isArray(entry.initialize.capabilities) &&
   Array.isArray(entry.tools?.tools) && !entry.tools.nextCursor &&
   entry.tools.tools.every(tool => typeof tool?.name === 'string' && tool.inputSchema?.type === 'object');
 
-// Include development builds that share a version, inherited engine settings, and the
-// engine launch path. Only the resulting digest is written, never environment values.
+// Everything that starts the engine: its launch path and environment, inherited engine settings, and the sleight build
+// and runtime. Only the resulting digest is written, never environment values.
 export function startupIdentity(server, pluginRoot, env = process.env) {
   if (!server.version) return;
   try {
@@ -27,8 +28,7 @@ export function startupIdentity(server, pluginRoot, env = process.env) {
     return { engine: [server.version, server.command, server.args],
       sleight: [JSON.parse(readFileSync(join(pluginRoot, '.claude-plugin/plugin.json'), 'utf8')).version, build.digest('hex')],
       runtime: [process.platform, process.arch, process.version], env: {
-        ...Object.fromEntries(Object.entries(env).filter(([name]) => (name.startsWith('CUA_') || handshakeEnv.has(name)) &&
-          !/(?:SESSION|THREAD|TURN|REQUEST)_ID$|(?:TOKEN|SOCKET|PIPE_PATH|VERIFYING_IDENTITY)$/.test(name))),
+        ...Object.fromEntries(Object.entries(env).filter(([name]) => engineEnv.test(name) && !sessionEnv.test(name))),
         ...server.env,
       } };
   } catch { return; } // Cache setup must not fail an otherwise usable engine.
@@ -72,19 +72,36 @@ export function createStartupCache({ identity, directory = join(homedir(), 'Libr
     } catch { /* An unavailable cache keeps the existing handshake path. */ }
     finally { try { rmSync(temporary, { force: true }); } catch { /* Unwritable cache. */ } }
   }
+  // The entry holds the engine's own initialize and first tools/list replies. The relay rewrites them for each session
+  // (present), so a sleight setting never makes an entry stale. A stale entry (the engine changed under the same key)
+  // costs at most the calls queued during startup: the session goes on with the engine's live answer.
   return {
-    bind({ context, send, forward }) {
+    bind({ send, forward, present = {}, log = () => {} }) {
       let file, cached, initializeId, initialized = false, notified = false, started = false, failed = false, cancelled = false;
-      let initializeResult, initializedTimer;
-      let firstList = true, failureMessage;
+      let initializeResult, initializedTimer, shown; // shown: the initialize answer the client got from the cache
+      let firstList = true, failureMessage, retryMessage; // retryMessage: set while a changed protocol refuses startup calls
       const lists = new Map(), queue = [];
+      const answer = (kind, result) => (present[kind] ?? (value => value))(structuredClone(result));
+      const drop = () => { try { if (file) rmSync(file, { force: true }); } catch { /* Unwritable cache. */ } };
       const fail = (message, invalidate = true) => {
         failed = true;
         clearTimeout(initializedTimer);
         failureMessage = message;
-        try { if (invalidate && file) rmSync(file, { force: true }); } catch { /* Unwritable cache. */ }
+        if (invalidate) drop();
         for (const msg of queue.splice(0)) if (msg.id !== undefined && !lists.get(msg.id)?.cached) {
           send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message } });
+        }
+      };
+      // Only the tool calls waiting in the queue, with their cancellations. Everything later goes to the engine.
+      const refuseQueued = message => {
+        const refused = new Set();
+        for (let index = 0; index < queue.length;) {
+          const msg = queue[index];
+          if (msg.method === 'tools/call') {
+            refused.add(msg.id); queue.splice(index, 1);
+            if (msg.id !== undefined) send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message } });
+          } else if (msg.method === 'notifications/cancelled' && refused.has(msg.params?.requestId)) queue.splice(index, 1);
+          else index++;
         }
       };
       function flush() {
@@ -105,10 +122,14 @@ export function createStartupCache({ identity, directory = join(homedir(), 'Libr
         initialize(msg) {
           if (started || msg.id === undefined) return;
           started = true; initializeId = msg.id;
-          const key = createHash('sha256').update(canonical([identity, context, msg.params])).digest('hex');
+          const key = createHash('sha256').update(canonical([identity, msg.params])).digest('hex');
           file = join(directory, key + '.json');
           try { cached = read(file); } catch { /* Cold or invalid cache. */ }
-          if (cached) send({ jsonrpc: '2.0', id: msg.id, result: structuredClone(cached.initialize) });
+          if (cached) send({ jsonrpc: '2.0', id: msg.id, result: shown = answer('initialize', cached.initialize) });
+        },
+        // Whether a reply is one this cache checks or records, so the relay keeps the engine's own copy of it.
+        expects(id) {
+          return started && !failed && id !== undefined && (id === initializeId || lists.has(id));
         },
         request(msg) {
           if (!started || cancelled || !['tools/list', 'tools/call', 'notifications/initialized', 'ping', 'notifications/cancelled'].includes(msg.method)) return false;
@@ -122,19 +143,37 @@ export function createStartupCache({ identity, directory = join(homedir(), 'Libr
             const cacheable = firstList && Object.keys(msg.params ?? {}).length === 0;
             firstList = false;
             lists.set(msg.id, { cacheable, cached: cacheable && !!cached });
-            if (cacheable && cached) send({ jsonrpc: '2.0', id: msg.id, result: structuredClone(cached.tools) });
+            if (cacheable && cached) {
+              // A cached list the session's rewrite can't take is answered live instead.
+              let result;
+              try { result = answer('tools', cached.tools); } catch { lists.get(msg.id).cached = false; }
+              if (result) send({ jsonrpc: '2.0', id: msg.id, result });
+            }
           }
           queue.push(msg); flush(); return true;
         },
-        reply(msg) {
+        // msg is the reply as the relay would send it; engine is the engine's own reply, before the relay rewrote it.
+        reply(msg, engine = msg) {
           if (msg.method !== undefined || !started) return false;
           if (failed) return (msg.id === initializeId && !!cached) || !!lists.get(msg.id)?.cached;
           if (initializeId !== undefined && msg.id === initializeId) {
             initializeId = undefined;
-            if (msg.error || !msg.result || (cached && canonical(msg.result) !== canonical(cached.initialize))) {
-              fail(msg.error?.message ?? 'Engine handshake changed or failed; reconnect sleight.'); return !!cached;
+            if (engine.error || !engine.result) {
+              fail(engine.error?.message ?? 'Engine handshake failed; reconnect sleight.'); return !!cached;
             }
-            initializeResult = structuredClone(msg.result); initialized = true; flush();
+            if (cached && canonical(engine.result) !== canonical(cached.initialize)) {
+              // The client keeps the cached answer for this session: MCP has no way to initialize a client again.
+              // The entry is rewritten once the first tool list verifies.
+              drop();
+              log('sleight: the cached engine handshake was stale; this session continues on the engine\'s live answer.');
+              // A different protocol version can change how the calls already sent should be read, so only those are
+              // refused, and the client sends them again.
+              if (engine.result.protocolVersion !== cached.initialize.protocolVersion) {
+                retryMessage = 'The engine changed while sleight started, so this call did not run. Call it again.';
+                refuseQueued(retryMessage);
+              }
+            }
+            initializeResult = structuredClone(engine.result); initialized = true; flush();
             if (!notified) {
               initializedTimer = setTimeout(() => {
                 notified = true;
@@ -148,12 +187,21 @@ export function createStartupCache({ identity, directory = join(homedir(), 'Libr
           const list = lists.get(msg.id);
           if (!list) return false;
           lists.delete(msg.id);
-          if (list.cached && (msg.error || canonical(msg.result) !== canonical(cached.tools))) {
-            fail(msg.error?.message ?? 'Engine tools changed; reconnect sleight.'); return true;
+          // Calls sent after a changed protocol's initialize reply, while the cached list waited, get the same refusal.
+          if (retryMessage && list.cached) { refuseQueued(retryMessage); retryMessage = undefined; }
+          if (list.cached && engine.error) {
+            // The client already has the cached list. The engine's error goes to the calls that waited on it.
+            drop();
+            refuseQueued(engine.error.message ?? 'Engine tool list failed.');
+          } else if (list.cacheable && !engine.error && initializeResult) {
+            if (list.cached && canonical(engine.result) !== canonical(cached.tools)) {
+              log('sleight: the cached engine tool list was stale; this session continues on the engine\'s live list.');
+              // A client that was told the list can change fetches it again. Others keep the cached descriptions for this
+              // session, and their calls run on the live engine.
+              if (shown?.capabilities?.tools?.listChanged === true) send({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+            }
+            write(file, { schema: 2, initialize: initializeResult, tools: engine.result });
           }
-          if (list.cacheable && !msg.error && initializeResult) write(file, {
-            schema: 1, initialize: initializeResult, tools: msg.result,
-          });
           flush(); return list.cached;
         },
         cancel() {

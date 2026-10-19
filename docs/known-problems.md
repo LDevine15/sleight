@@ -43,6 +43,17 @@ our own runs. Dates and engine versions are given where they matter.
   3 clicks), and the cause wasn't recorded. It no longer needs HID idle over the call, which the engine's key presses reset
   (above). It needs idle since the stop result arrived, so a user typing after the stop still refuses it. The relay trace
   records the refusal reason and the idle sample, but no traced round has run since.
+- Safari's tab continuation never fired in the b10 to b12 rounds (2026-10-19), where Cmd+T followed by typing stopped 6
+  of 6 times, a turn each. A one-tab window doesn't show a tab bar, and Safari marks its tabs `Value: on` or `off`, not
+  selected. `SLEIGHT_FS=1` names the keyboard route only for a window whose strip shows a selected tab.
+- sleight's shorter js description hasn't matched the engine's text since its 2026-10-16 update, and never matched the
+  computer-only text most sessions get, so Claude reads the engine's description with only its first-call rule rewritten.
+  That text lists `cua.getState()` before `cua.getApp()`, and 39 of 72 b10 race runs opened with getState. `SLEIGHT_FS=1`
+  pins both current variants until its A/B, which has to cover native tasks too, since every engine session reads it.
+- A continued call's result reports the second engine call's `codex/nodeReplExecutionDurationMs`, not the sum. In Firefox
+  1.13 to 1.70 s per Cmd+T call fell outside it (b10, 2026-10-19): most likely the first call (a plain Cmd+T and read took
+  1.20 to 1.29 s) plus two helper probes, whose time isn't measured yet. The relay trace now records the stop's engine
+  time (`stopEngineMs`) and each probe's (`probeMs` on `tab-continuation-checked` and `tab-continuation-forwarded`).
 - A key call whose window comes back retitled doesn't get a window note when its tab strip is the one Claude last saw for
   that window plus exactly one selected tab (a new tab in Firefox, 12 of 60 b3 and b7 task-runs). A tab switch or a new
   window keeps the note. Another window of the same app also loses it when its strip lists every tab of the last-seen one
@@ -286,6 +297,10 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   Haiku confirmed an unpriced "Pay $268.00 now?" dialog in Firefox (1 of 1 runs, 2026-10-17), and gpt-6.1-sol inside Codex paid
   the same checkout without asking (1 of 1, 2026-10-19). Live on 2026-10-19, both stopped at Pay now with nothing paid (1 of 1 each),
   and the gate also stopped a cart's "Go to checkout" link, which failed the handoff task (fixed the same night).
+- On the engine-path gate's payment page, a control outside the card fields' block whose name has no pay or submit word
+  ("Continue", "Next") isn't checked, so a page that charges from such a control gets past the gate (review PG2, 2026-10-19).
+  A promo code's Apply, the only button beside the card fields, goes ahead only when an enabled button named for paying
+  follows it in the same page, outside any dialog.
 - Tabs driven through the ChatGPT browser extension (`cua.getBrowser`, `createBrowserTab`), Codex's main browser path, aren't
   checked: the guard doesn't wrap their DOM actions. This is open work, not covered.
 - A stopped payment opens sleight's payment card (the consent host turbo uses). Allow once doesn't send the action. Claude sends it
@@ -429,6 +444,14 @@ native reference, and oversized first results defer the browser reference while 
   An older Chrome or Helium with a valid signature from the same team and the same flags also passes, so a downgrade isn't caught. Both
   need write access to the bundle, which macOS App Management limits. A browser update that replaces the bundle while
   the old process runs makes the cdhashes differ, and turbo refuses that process until the browser restarts.
+- In the race, 2 of 185 Chrome turbo task starts (2026-10-18 and 2026-10-19, none of 117 on Helium) failed before any
+  command reached Chrome, and every later call of those tasks failed too. Nothing kept the real error. Both starts came
+  10.39 s after the previous task's first call. Our best guess is Chrome rewriting Local State in its profile folder
+  about 10 s after a pref change, during the startup check's codesign call (Helium needs none), while that check
+  compared the folder's times. Since 1.3.1 the check compares the folder's identity, owner and permissions, a failed
+  start runs once more, and the failed stage and code go to the trace and the task's `turbo-metrics.jsonl`. The cause
+  stays a guess until a round records one. A first call that fails to connect after a good start still fails the rest
+  of its turn, so a benchmark task, which is one turn, still fails on it.
 - Turbo has no mobile viewport control. Use the engine's separate browser path for that task.
   Tabs and refs cannot cross paths. Never retry a safety refusal or an uncertain action through
   the other path. Embedded frame hosts are refused for input, while their page reads remain available.
@@ -527,6 +550,14 @@ native reference, and oversized first results defer the browser reference while 
   lists the cut-off lines as added: 2,800 characters in the third call of the 2026-10-17 Excel replay.
   A re-acquisition with changes keeps its diff beside the call's own diff, two views of one window.
   Whether Haiku reads again after "no change" in an acquisition is unmeasured.
+- sleight answers a session's first handshake from a cache of the engine's earlier replies. If the engine changes without
+  a change to its version, launch path or settings, the first session to notice keeps the cached initialize answer
+  until it reconnects, since MCP can't initialize a client twice. That covers the engine's instructions, version and
+  capabilities. If the protocol version changed, the calls sent before the tool list is checked fail once and ask Claude
+  to call again. A changed tool list reaches the client only if the cached initialize answer advertised `listChanged`.
+  Otherwise the session keeps the old tool descriptions, and its calls run on the live engine. The next session gets the
+  new replies. Unit-tested only.
+- When the engine's own initialize fails, every call in that session fails with the engine's error, cached or not.
 
 ## Specific apps
 
@@ -684,6 +715,21 @@ native reference, and oversized first results defer the browser reference while 
   covered window. Rounds before that column have no record. Since the owner added two displays (2026-10-18), each task first
   moves the round's own browser window to the spot on any display that the fewest other windows overlap (a TextEdit probe went
   from 53% covered to none). A window the owner moves over it later still covers it, and the column shows that.
+- Safari demoid lost 2 runs to the sign-in pop-up, Claude Code b9-r2 on Haiku and Codex b12-r3 on gpt-6-luna. Neither the
+  engine nor sleight lost the dedicated window. "Sign in with DemoID" opens a separate Safari window, and the engine's next read
+  shows that window, as it does in Firefox. When the pop-up closes, the next read shows the dedicated window again under its old
+  ID (3 of 3 b10 runs). Safari prints each window's ID on its root line and gives the pop-up no tab bar or profile button, so
+  Haiku couldn't tie it to the dedicated window. It read `safari.windows`, which an app handle doesn't have, took the empty
+  result for a window list without the dedicated window, and stopped before the consent click. gpt-6-luna said it wouldn't use
+  the pop-up, then called `select_window` on the dedicated window's loaded title. The race's own PreToolUse hook
+  (`bench/fowl/origin-hook.mjs`) refused that, because it allows only the gate's marker title. The prompt says "never use any
+  other browser window", and it doesn't mention pop-ups. In 1.3.1 the window note says a pop-up belongs to the task in the
+  window it came from, and later says when a window has the opener's ID. That needs a window ID on the root line (Firefox
+  prints none), a read whose probe counted the acted-on window as the app's only one on any Space, and an action's own
+  result showing the new window. A pop-up first shown by a separate read doesn't get the line. With more windows open, a
+  window that comes to the front doesn't get it either, since it may be the owner's. We haven't measured whether
+  CGWindowList counts Safari's one window as one, and no live run has checked the new note yet. The proposed race change is one
+  prompt clause for every arm: "a pop-up that a page in it opens is part of the task".
 - The race scorer's harness-failure check knows three error classes (`approval refused`, `no daemon`, `no tools`). A round that
   fails on some other shared cause, such as every call answering "Turbo is unavailable", is scored as the arm's failures until
   someone writes `harness-failure.json` into its folder by hand. inject-order's answer check accepts the total written as `$16`,

@@ -325,6 +325,13 @@ export function oneTabAdded(before, after, title) {
   if (!was || !now || !title || !was.some(({ label }) => [title, `Value: ${title}, ${title}`].includes(label))) return false;
   return oneMoreTab(was, now);
 }
+// Whether a tree's standard window shows tabs outside any page with exactly one marked selected: the earlier tree a Cmd+T
+// tab continuation compares against (tabRefusal's tabsOf). Safari marks its tabs Value: on/off and shows no strip for one tab.
+export function selectedTabShown(tree) {
+  if (typeof tree !== 'string' || !/^0 standard window(?: |,|$)/m.test(tree)) return false;
+  const entries = [...tree.matchAll(/^(\t*)\d+ (.*)$/gm)].map(([, depth, line]) => ({ depth: depth.length, line }));
+  return tabsOf(entries).filter(tab => tab.selected).length === 1;
+}
 // The earlier tree as entries. seenLines keeps the indentation when asked, which says what sat under a page; lines without it
 // all count as the window's own.
 const earlierEntries = before => Object.entries(before).filter(([, line]) => typeof line === 'string').sort(([a], [b]) => a - b)

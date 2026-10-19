@@ -69,10 +69,12 @@ function run(argv) {
       }
     }
     // A Finder window that navigated took its folder's title, and "found 0" alone sent Claude back
-    // to reading (finder-move-2, 2026-10-17). Name what the app's windows are titled now.
+    // to reading (finder-move-2, 2026-10-17). Name what the app's windows are titled now, whole up to 120 characters:
+    // a 60-character cut left a Safari profile window as "sleight benchmark — Sleight Gate 35290af9-80bf-414f-a32c-..."
+    // (69 characters whole), a title nobody can copy (Safari demoid, Codex b12-r3, 2026-10-19).
     if (!selected.length) {
       const titles = windows.map(window => attribute(window, 'AXTitle')).filter(title => typeof title === 'string');
-      const cut = title => JSON.stringify(title.length > 60 ? title.slice(0, 57) + '...' : title);
+      const cut = title => JSON.stringify(title.length > 120 ? title.slice(0, 117) + '...' : title);
       throw new Error(`Expected exactly one matching window, found 0. ${name} has ${titles.length} window${titles.length === 1 ? '' : 's'} now` +
         (titles.length ? ': ' + titles.slice(0, 5).map(cut).join(', ') + (titles.length > 5 ? ` and ${titles.length - 5} more` : '') : '') +
         '. A window that navigated or was renamed is still the same window: select it by the title it has now, or act on it through the handle you have.');

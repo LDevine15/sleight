@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'nod
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { serveV3Worker, startInstalledV3Worker } from '../../plugins/sleight/lib/direct-browser/worker.mjs';
+import { serveV3Worker, startInstalledV3Worker, unavailableFrame } from '../../plugins/sleight/lib/direct-browser/worker.mjs';
 import { createCDPFilter } from '../../plugins/sleight/lib/direct-browser/cdp-filter.mjs';
 
 const vendor = new URL('../../plugins/sleight/vendor/playwright-core/browsers.json', import.meta.url);
@@ -112,11 +112,17 @@ export async function realBrowserDependencies(browser, dependencies = {}) {
   };
 }
 
+// The bench's own steps before the installed worker's name their stage too, for the task folder's startup record.
+const atStage = (stage, work) => work().catch(error => {
+  try { if (error && typeof error === 'object' && error.stage === undefined) error.stage = stage; } catch {}
+  throw error;
+});
+
 export async function startBenchWorker({ channel = process, launch = launchOwnedBrowser,
   realBrowser = process.env.SLEIGHT_TURBO_REAL_BROWSER ? JSON.parse(process.env.SLEIGHT_TURBO_REAL_BROWSER) : null,
   startInstalled = startInstalledV3Worker, realOptions = realBrowserDependencies } = {}) {
-  if (realBrowser) return startInstalled({ channel }, await realOptions(realBrowser));
-  const owned = await launch();
+  if (realBrowser) return startInstalled({ channel }, await atStage('bench-config', () => realOptions(realBrowser)));
+  const owned = await atStage('bench-browser', () => launch());
   const host = await startInstalledV3Worker({ channel }, {
     readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
     prepareHelpers: async () => ({ status: 'ready', receipt: {} }),
@@ -129,6 +135,6 @@ export async function startBenchWorker({ channel = process, launch = launchOwned
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href && process.send) {
   startBenchWorker().catch(error => {
-    if (process.connected) { process.send({ version: 3, status: 'unavailable', code: error.message }); process.disconnect(); }
+    if (process.connected) { process.send(unavailableFrame(error, 'bench-setup')); process.disconnect(); }
   });
 }

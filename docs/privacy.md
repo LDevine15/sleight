@@ -43,8 +43,8 @@ either.
 
 The weekly or daily watch job is not part of the installed plugin. The marketplace installs only
 `plugins/sleight` (`.claude-plugin/marketplace.json`). If you install the job from a source
-checkout (`scripts/watch-install.sh`), a launchd job runs `scripts/watch.sh`, which logs and saves
-engine API snapshots under `~/Library/Logs/sleight/`. Remove it with `npm run watch:remove`.
+checkout (`scripts/watch-install.sh`), a launchd job runs `scripts/watch.sh`. It keeps its log, engine API
+snapshots and compatibility results under `~/Library/Logs/sleight/`. Remove it with `npm run watch:remove`.
 
 ## Deleting everything
 

@@ -44,7 +44,7 @@ fi
 [ "$(git rev-parse --short HEAD)" = "$PIN" ] || { echo "rounds.sh: $DIR is not at $PIN" >&2; exit 1; }
 if [ -n "$REAL" ]; then
   exec env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
-    SLEIGHT_REPO="$REPO" ${SLEIGHT_TRACE:+SLEIGHT_TRACE="$SLEIGHT_TRACE"} ${SLEIGHT_TS3:+SLEIGHT_TS3="$SLEIGHT_TS3"} node tools/rounds.mjs "$@" --model "$MODEL"
+    SLEIGHT_REPO="$REPO" ${SLEIGHT_TRACE:+SLEIGHT_TRACE="$SLEIGHT_TRACE"} ${SLEIGHT_TS3:+SLEIGHT_TS3="$SLEIGHT_TS3"} ${SLEIGHT_FS:+SLEIGHT_FS="$SLEIGHT_FS"} node tools/rounds.mjs "$@" --model "$MODEL"
 fi
 # Every Claude arm runs on the owner's account login, never the API credit (owner, 2026-10-15, LAWS). Browser Use
 # needs an API key by design, so it runs only in a round of its own (computer use keeps its login beside it), and the
@@ -64,7 +64,14 @@ fi
 mkdir /tmp/sleight-live.lock || { echo "rounds.sh: the live lock is held" >&2; exit 1; }
 trap 'rmdir /tmp/sleight-live.lock' EXIT; trap 'exit 130' INT TERM HUP
 trap 'rmdir /tmp/sleight-live.lock; [ "$AUTH" = api ] && [ -n "$OUT" ] && [ -d "$OUT" ] && node "$REPO/bench/fowl/add-spend.mjs" "$OUT" "$SPEND"' EXIT
+# The ChatGPT engine version and UTC time at the start and end go into the --out folder as engine.json (bench/engine-version.mjs),
+# the start before the round so an interrupted round keeps it. Real-browser rounds record it in real-gate.mjs. A round without
+# --out writes to FowlBrowser's own temporary folder and records no version.
+[ -z "$OUT" ] || node "$REPO/bench/engine-version.mjs" record "$OUT" || echo "rounds.sh: engine version at the start not recorded in $OUT" >&2
+RC=0
 env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
   CLAUDE_CONFIG_DIR="$HOME/Library/Caches/sleight-bench/fowl-claude-config" \
   SLEIGHT_REPO="$REPO" SLEIGHT_TRACE="${SLEIGHT_TRACE:-}" SLEIGHT_PROMPT="${SLEIGHT_PROMPT:-}" SLEIGHT_ENGINE_DOCS="${SLEIGHT_ENGINE_DOCS:-}" ${KEY:+ANTHROPIC_API_KEY="$KEY"} \
-  node tools/rounds.mjs --effort medium "$@" --model "$MODEL"
+  node tools/rounds.mjs --effort medium "$@" --model "$MODEL" || RC=$?
+[ -z "$OUT" ] || [ ! -d "$OUT" ] || node "$REPO/bench/engine-version.mjs" record "$OUT" --end || echo "rounds.sh: engine version at the end not recorded in $OUT" >&2
+exit "$RC"

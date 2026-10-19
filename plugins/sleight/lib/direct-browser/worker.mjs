@@ -31,6 +31,40 @@ function traceLoss(reason) {
     appendFileSync(join(dir, `trace-${process.ppid}.jsonl`), JSON.stringify({ t: new Date().toISOString(), direction: 'turbo-connection-lost', msg: { code: lossCode(reason) } }) + '\n');
   } catch {}
 }
+// Why a worker failed to start, for the trace and the bench's task folder: the stage that failed and a code (our own
+// error code, a system error code such as ETIMEDOUT, or the error's class), never a message, page content or a path.
+const startupStage = value => typeof value === 'string' && /^[a-z][a-z-]{1,31}$/.test(value) ? value : undefined;
+const startupCode = value => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_]{1,47}$/.test(value) ? value : undefined;
+export function startupReason(error) {
+  if (typeof error?.message === 'string' && /^[A-Z][A-Z0-9_]{2,47}$/.test(error.message)) return error.message;
+  if (typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{1,47}$/.test(error.code)) return error.code;
+  return startupCode(error?.constructor?.name) ?? 'UNKNOWN';
+}
+// The frame a worker that failed to start sends its relay. code keeps the relay's meaning (one of the unsafe codes, or
+// V3_RUNTIME_UNAVAILABLE); stage and reason are diagnostics only.
+export function unavailableFrame(error, fallbackStage = 'startup') {
+  return { version: 3, status: 'unavailable', code: unsafeStartup.has(error?.message) ? error.message : 'V3_RUNTIME_UNAVAILABLE',
+    stage: startupStage(error?.stage) ?? fallbackStage, reason: startupReason(error) };
+}
+// A failed start goes to the relay's trace file (SLEIGHT_TRACE) as one event. The bridge runs in the relay, so its own pid names the file.
+export function traceStartupFailure(detail, { setting = process.env.SLEIGHT_TRACE, relayPid = process.pid } = {}) {
+  if (!setting || !Number.isSafeInteger(relayPid) || relayPid < 1) return;
+  try {
+    const dir = setting === '1' ? join(homedir(), 'Library', 'Logs', 'sleight') : setting;
+    mkdirSync(dir, { recursive: true });
+    const msg = { code: startupCode(detail?.code) ?? 'UNKNOWN', stage: startupStage(detail?.stage) ?? 'startup',
+      reason: startupCode(detail?.reason) ?? 'UNKNOWN', ...(Number.isSafeInteger(detail?.attempt) ? { attempt: detail.attempt } : {}),
+      ...(typeof detail?.retrying === 'boolean' ? { retrying: detail.retrying } : {}) };
+    appendFileSync(join(dir, `trace-${relayPid}.jsonl`), JSON.stringify({ t: new Date().toISOString(), direction: 'turbo-startup-failed', msg }) + '\n', { mode: 0o600 });
+  } catch {}
+}
+// Only these failures of a relay's bridge startup can pass on a second try: the worker crashed (a signal or a non-zero
+// exit, or its channel closed first), the process table was full, or Chrome changed an entry between two reads. Chrome
+// closed, or open without remote debugging, stays as it is. A hung worker (worker-timeout, 120 s) is not retried, so the
+// wait never doubles and no second worker runs beside a stuck one.
+const transientReasons = new Set(['STALE_INSTANCE', 'EAGAIN', 'EMFILE', 'ENFILE', 'ENOMEM', 'EINTR', 'ETIMEDOUT']);
+export const transientStartup = error => error?.stage === 'worker-disconnect' ||
+  error?.stage === 'worker-exit' && error.reason !== 'EXIT_0' || transientReasons.has(error?.reason);
 const phases = new Set(('worker-spawn-start worker-spawned bridge-ready tools-registered turn-begin first-call-admitted call-start call-result '
   + 'turn-end-requested turn-end worker-entry helpers-check-start helpers-check-end connection-select-start connection-select-end '
   + 'worker-ready connection-start connection-end runtime-ready').split(' '));
@@ -119,19 +153,23 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
   try { shared = await (dependencies.shareConsent ?? (await import('../hand/client.mjs')).shareConsent)(); } catch {}
   try { child = (dependencies.forkWorker ?? fork)(fileURLToPath(new URL('./worker.mjs', import.meta.url)), shared ? ['--shared-ui'] : [],
     { env, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc', ...shared ? [shared.write, shared.read] : []], serialization: 'json' }); }
-  catch (error) { trace.close(); throw error; }
+  catch (error) { trace.close(); throw Object.assign(Error('V3_WORKER_UNAVAILABLE'), { stage: 'worker-spawn', reason: startupReason(error) }); }
   finally { shared?.release(); }
   trace('worker-spawned');
   let hello, active = false, lost = false, generation = 0, sequence = 0, ending, callTimeoutMs = timeoutMs;
   let traceTurn = 0, traceCall = 0, toolsRegistered = false;
   const pending = new Map(), turns = new Set(); let deliveries = new WeakMap(), resolveReady, rejectReady;
   const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
-  const timer = setTimeout(() => lose(), startupTimeoutMs);
+  const timer = setTimeout(() => lose(undefined, 'worker-timeout'), startupTimeoutMs);
   const current = () => { try { return accepted.current() === true; } catch { return false; } };
   function fence() { active = false; generation++; deliveries = new WeakMap(); }
-  function lose(code = 'V3_WORKER_UNAVAILABLE') {
+  // stage and reason say why a worker never became ready (unavailableFrame); after hello they are unused.
+  function lose(code = 'V3_WORKER_UNAVAILABLE', stage = 'worker-disconnect', reason) {
     if (lost) return;
-    lost = true; fence(); clearTimeout(timer); rejectReady(Error(typeof code === 'string' ? code : 'V3_WORKER_UNAVAILABLE'));
+    lost = true; fence(); clearTimeout(timer);
+    const error = Error(typeof code === 'string' ? code : 'V3_WORKER_UNAVAILABLE');
+    if (!hello) Object.assign(error, { stage, reason: reason ?? error.message });
+    rejectReady(error);
     for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(Error('V3_WORKER_UNAVAILABLE')); }
     pending.clear();
     try { if (child.connected) child.disconnect(); child.unref?.(); } catch {}
@@ -139,17 +177,24 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
   }
   child.on('message', frame => {
     if (lost) return;
-    if (!hello && exact(frame, ['version', 'status', 'code']) && frame.version === 3 && frame.status === 'unavailable') {
-      lose(unsafeStartup.has(frame.code) ? frame.code : 'V3_RUNTIME_UNAVAILABLE'); return;
+    if (!hello && (exact(frame, ['version', 'status', 'code']) || exact(frame, ['version', 'status', 'code', 'stage', 'reason'])) &&
+        frame.version === 3 && frame.status === 'unavailable') {
+      const code = unsafeStartup.has(frame.code) ? frame.code : 'V3_RUNTIME_UNAVAILABLE';
+      lose(code, startupStage(frame.stage) ?? 'startup', startupCode(frame.reason) ?? code); return;
     }
     if (!hello && exact(frame, ['version', 'session', 'nonce', 'browser']) && frame.version === 3 && id(frame.session) &&
         /^[a-f0-9]{64}$/.test(frame.nonce) && /^b[A-Za-z0-9_-]{1,63}$/.test(frame.browser)) {
       hello = frame; clearTimeout(timer); trace('bridge-ready'); resolveReady(); return;
     }
-    if (!hello || !exact(frame, ['version', 'id', 'result']) || frame.version !== 3 || !pending.has(frame.id)) { lose(); return; }
+    if (!hello || !exact(frame, ['version', 'id', 'result']) || frame.version !== 3 || !pending.has(frame.id)) { lose(undefined, 'worker-protocol'); return; }
     const entry = pending.get(frame.id); pending.delete(frame.id); clearTimeout(entry.timer); entry.resolve(frame.result);
   });
-  child.on('error', lose); child.on('exit', lose); child.on('disconnect', lose);
+  // Before hello, an exit or a closed channel waits 50 ms, so the worker's own unavailable frame (sent just before it
+  // disconnects) names the failure rather than the exit that followed it.
+  const ended = (stage, reason) => hello ? lose(undefined, stage, reason) : setTimeout(() => lose(undefined, stage, reason), 50);
+  child.on('error', error => lose(undefined, 'worker-spawn', startupReason(error)));
+  child.on('exit', (code, signal) => ended('worker-exit', startupCode(signal) ?? (Number.isSafeInteger(code) ? 'EXIT_' + code : undefined)));
+  child.on('disconnect', () => ended('worker-disconnect'));
   function rpc(method, params, deadlineMs = timeoutMs) {
     if (lost || !current() || pending.size >= 32) return Promise.reject(Error('V3_WORKER_UNAVAILABLE'));
     const frame = { version: 3, id: 'q' + (++sequence), method, params };
@@ -161,7 +206,7 @@ export async function createV3Bridge({ startupTimeoutMs = 120000, timeoutMs = 31
     });
   }
   await ready;
-  if (!current()) { lose(); throw Error('HOST_PACKAGE_MISMATCH'); }
+  if (!current()) { lose(); throw Object.assign(Error('HOST_PACKAGE_MISMATCH'), { stage: 'package', reason: 'HOST_PACKAGE_MISMATCH' }); }
   function endTurn() {
     fence();
     if (!ending) {
@@ -479,22 +524,29 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
       else if (event.action === 'pause') { stopped = true; await protocol?.end(); await revokeApps(); status(); }
     }, { deadline: Date.now() + 300000 });
   }
+  // Which startup step is running, so a failure can say where it stopped (unavailableFrame).
+  let stage = 'config';
   try {
     const config = (dependencies.readConfig ?? readInstalledConfig)();
     if (!config) throw Error('SETTING_OFF');
+    stage = 'package';
     accepted = (dependencies.acceptPackage ?? acceptedInstalledPackage)(config); startupCurrent();
     try { browserName = applicationName(config.executable); } catch {}
     const host = await import('./host.mjs'); startupCurrent();
+    stage = 'helpers';
     trace('helpers-check-start');
     const built = await (dependencies.prepareHelpers ?? host.prepareNativeHelpers)({ inventory: config.receipt }); startupCurrent();
     trace('helpers-check-end');
     if (built.status !== 'ready') throw Error(built.code);
     const { createSelectedConnection } = await import('./selected-connection.mjs'); startupCurrent();
+    stage = 'connection-select';
     trace('connection-select-start');
     selected = await (dependencies.selectConnection ?? createSelectedConnection)({ config, nativeReceipt: built.receipt }); startupCurrent();
     trace('connection-select-end');
+    stage = 'ui';
     ui = (dependencies.createUi ?? (sharedUi ? host.createSharedUi : host.createNativeUi))(built.receipt, () => { if (finalReceipt) return; terminalLoss = true; close().catch(() => {}); });
     startupCurrent();
+    stage = 'serve';
     const browser = selected.selectedBrowser;
     // Which opted-in apps this turn is for: enabled in the operator's opt-in file and approved by the engine this session.
     // An unreadable or unsafe opt-in file leaves the browser path as it is.
@@ -633,6 +685,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
     status(); trace('worker-ready'); protocol.ready();
     return Object.freeze({ close, closed });
   } catch (error) {
+    try { if (error && typeof error === 'object' && error.stage === undefined) error.stage = stage; } catch {}
     await close(); channel.off('disconnect', loss); throw error;
   }
 }
@@ -640,7 +693,7 @@ async function installedMain() { return startInstalledV3Worker({ channel: proces
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.send) {
   installedMain().catch(error => { if (process.connected) {
-    process.send({ version: 3, status: 'unavailable', code: unsafeStartup.has(error.message) ? error.message : 'V3_RUNTIME_UNAVAILABLE' });
+    process.send(unavailableFrame(error));
     process.disconnect();
   } });
 }
