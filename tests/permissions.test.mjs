@@ -92,6 +92,34 @@ test('block, unblock and sites from the command write a private file that the ch
   }
 });
 
+test('revoking the last allow-only site is refused, so the list never empties into no limit at all', t => {
+  const w = world(t);
+  assert.equal(w.command(['sites', 'only', 'https://a.example']), 0); w.output();
+  assert.equal(w.command(['revoke', 'https://a.example']), 1);
+  assert.equal(w.output(), "https://a.example is the only site sleight may act on, so it stays. sleight-mcp permissions sites all lifts the limit, and sleight-mcp permissions block https://a.example stops sleight there.\n");
+  assert.deepEqual(readPermissions(w.path).only, ['https://a.example'], 'allow-only stays on');
+  assert.match(createPermissionCheck({ path: w.path }).site('https://other.example/'), /^You allow sleight only on https:\/\/a\.example/);
+});
+
+test('repair keeps a broken allow-only list as a refusal and replaces an unreadable file only when told to discard it', t => {
+  const w = world(t);
+  w.write('permissions.json', { version: 1, apps: [{ id: 'com.example.app' }], sites: [], only: ['nope', 'ftp://x.example'] }, 0o644);
+  assert.equal(w.command(['repair']), 1);
+  assert.match(w.output(), /^permissions\.json limits sleight to some sites, and none of them can be read, so repair keeps it as it is\. sleight-mcp permissions repair --discard replaces it with an empty file, which removes every block and limit\.\n$/);
+  assert.equal(readPermissions(w.path).state, 'unsafe', 'nothing was written');
+  w.write('permissions.json', 'not json', 0o600);
+  assert.equal(w.command(['repair']), 1);
+  assert.match(w.output(), /^sleight couldn't read the old permissions\.json, so repair kept nothing and changed nothing\. sleight-mcp permissions repair --discard replaces it with an empty file/);
+  assert.equal(readPermissions(w.path).state, 'unsafe');
+  assert.equal(w.command(['repair', '--discard']), 0);
+  assert.match(w.output(), /^Replaced permissions\.json with an empty one: no blocks and no site limit\./);
+  assert.deepEqual(readPermissions(w.path), { state: 'ok', apps: [], sites: [] });
+  // A failure that leaves the file unsafe points at repair, never at deleting the file.
+  w.write('permissions.json', { version: 1, apps: [], sites: [] }, 0o644);
+  assert.equal(w.command(['block', 'com.example.app']), 1);
+  assert.match(w.output(), /failed: PERMISSIONS_UNSAFE \(.*; sleight-mcp permissions repair fixes it and keeps the valid blocks\)\n$/);
+});
+
 test('the listing: always-allowed apps with when sleight last used them, debugger grants, turbo, blocks and ChatGPT\'s own list', t => {
   const w = world(t);
   w.write('preapproved.json', { version: 1, apps: [{ app: 'Calculator', riskLevel: 'low', added: '2026-10-01', source: 'always-allow' }, { app: 'com.example.notes', riskLevel: 'high' }] });
@@ -288,10 +316,6 @@ test('repair replaces an unsafe file with a private one that keeps every valid b
   assert.equal(lstatSync(w.path).isSymbolicLink(), false);
   assert.deepEqual(readPermissions(w.path).apps, [{ id: 'com.example.kept' }]);
   assert.equal(readFileSync(target, 'utf8'), JSON.stringify({ version: 1, apps: [{ id: 'com.example.kept' }], sites: [] }), 'the link target is untouched');
-  w.write('permissions.json', 'not json', 0o600);
-  assert.equal(w.command(['repair']), 0);
-  assert.match(w.output(), /kept 0 blocked apps, 0 blocked sites\./);
-  assert.equal(readPermissions(w.path).state, 'ok');
 });
 
 test('the menu shows turbo\'s row without offering it, and its Revoke All leaves turbo on', t => {

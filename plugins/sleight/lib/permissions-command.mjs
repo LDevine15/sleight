@@ -78,6 +78,8 @@ function update(o, change) {
   if (before.state === 'unsafe') throw Error('PERMISSIONS_UNSAFE');
   const next = change({ apps: before.apps, sites: before.sites, only: before.only });
   if (!next) return false;
+  // An empty allow-only list would be written as no limit at all, so it never is: only `sites all` lifts the limit.
+  if (Array.isArray(next.only) && !next.only.length) throw Error('PERMISSIONS_LAST_SITE');
   const data = { version: 1, apps: next.apps, sites: next.sites, ...next.only?.length ? { only: next.only } : {} };
   // A file the reader would refuse would stop every action, so a write past its limits never happens.
   if (data.apps.length > LIMIT || data.sites.length > LIMIT || Buffer.byteLength(JSON.stringify(data)) > PERMISSIONS_BYTES) throw Error('PERMISSIONS_FULL');
@@ -119,8 +121,9 @@ function revokeAll(o, { includeTurbo = true } = {}) {
 
 /** `permissions repair`: an unsafe permissions.json (a link, another owner, a shared mode or a bad shape) is replaced by a
  *  private file holding every valid block and allow-only site it had. Everything in it only restricts, so keeping it is safe
- *  whatever wrote it. A link is removed, never followed for writing. */
-function repair(o) {
+ *  whatever wrote it. A link is removed, never followed for writing. A file it can't read at all, or an allow-only list with
+ *  no readable site, would come out with less in it than the user set, so repair changes nothing then unless told to discard. */
+function repair(o, discard = false) {
   const before = readPermissions(o.path, o.uid);
   if (before.state === 'absent') return 'There is no permissions.json to repair.\n';
   if (before.state === 'ok') return 'permissions.json is fine.\n';
@@ -129,6 +132,17 @@ function repair(o) {
     const stat = statSync(o.path);
     if (stat.isFile() && stat.size <= PERMISSIONS_BYTES) data = JSON.parse(readFileSync(o.path, 'utf8'));
   } catch {}
+  const discarding = 'sleight-mcp permissions repair --discard replaces it with an empty file, which removes every block and limit.';
+  if (discard) {
+    const link = lstatSync(o.path);
+    if (link.isSymbolicLink() || !link.isFile()) unlinkSync(o.path);
+    writeConfigFile(o.path, { version: 1, apps: [], sites: [] }, o.uid);
+    if (readPermissions(o.path, o.uid).state !== 'ok') throw Error('PERMISSIONS_UNSAFE');
+    return 'Replaced permissions.json with an empty one: no blocks and no site limit. sleight acts again from its next action.\n';
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw Object.assign(Error('PERMISSIONS_UNREADABLE'), { line: `sleight couldn't read the old permissions.json, so repair kept nothing and changed nothing. ${discarding}\n` });
+  }
   const apps = [], sites = [], only = [], seen = new Set();
   let dropped = 0;
   for (const app of Array.isArray(data?.apps) ? data.apps : []) {
@@ -143,6 +157,9 @@ function repair(o) {
     if (!origin || into.includes(origin) || into.length >= LIMIT) dropped++; else into.push(origin);
   } };
   origins(data?.sites, sites); origins(data?.only, only);
+  if (data.only !== undefined && !only.length) {
+    throw Object.assign(Error('PERMISSIONS_UNREADABLE'), { line: `permissions.json limits sleight to some sites, and none of them can be read, so repair keeps it as it is. ${discarding}\n` });
+  }
   // A link or anything but a file goes first; a plain file is replaced in one rename, so a failed write keeps the old blocks.
   const link = lstatSync(o.path);
   if (link.isSymbolicLink() || !link.isFile()) unlinkSync(o.path);
@@ -154,7 +171,7 @@ function repair(o) {
 }
 
 const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-const usage = 'usage: sleight-mcp permissions [list]\n       sleight-mcp permissions revoke <app|turbo|all|origin>\n       sleight-mcp permissions repair\n' +
+const usage = 'usage: sleight-mcp permissions [list]\n       sleight-mcp permissions revoke <app|turbo|all|origin>\n       sleight-mcp permissions repair [--discard]\n' +
   '       sleight-mcp permissions block|unblock <app bundle id|origin>\n       sleight-mcp permissions sites only <origin...>\n' +
   '       sleight-mcp permissions sites all\n';
 const target = value => typeof value === 'string' && value.includes('://') ? (siteOrigin(value) && { site: siteOrigin(value) })
@@ -182,7 +199,7 @@ export function permissionsCommand(args, options) {
   const o = context(options), [op = 'list', ...rest] = args;
   try {
     if (op === 'list' && !rest.length) { o.out(listing(o)); return 0; }
-    if (op === 'repair' && !rest.length) { o.out(repair(o)); return 0; }
+    if (op === 'repair' && (!rest.length || rest.length === 1 && rest[0] === '--discard')) { o.out(repair(o, rest[0] === '--discard')); return 0; }
     if (op === 'revoke' && rest.length === 1) {
       const [what] = rest;
       if (what === 'all') {
@@ -193,6 +210,12 @@ export function permissionsCommand(args, options) {
       const site = what.includes('://') ? siteOrigin(what) : undefined;
       if (what.includes('://')) {
         if (!site) { o.out(usage); return 2; }
+        // Taking the last site off would leave no limit, which widens what sleight may do, so that revoke is refused.
+        const only = readPermissions(o.path, o.uid).only;
+        if (only?.length === 1 && only[0] === site) {
+          o.out(`${site} is the only site sleight may act on, so it stays. sleight-mcp permissions sites all lifts the limit, and sleight-mcp permissions block ${site} stops sleight there.\n`);
+          return 1;
+        }
         const changed = update(o, p => p.only?.includes(site) ? { ...p, only: p.only.filter(s => s !== site) } : false);
         o.out(changed ? `${site} is off the sites turbo may act on.\n` : `${site} isn't on an allow-only list.\n`); return 0;
       }
@@ -224,8 +247,9 @@ export function permissionsCommand(args, options) {
       o.out(`Turbo acts only on ${only.join(', ')} from its next action. sleight-mcp permissions sites all lifts the limit.\n`); return 0;
     }
   } catch (error) {
+    if (typeof error?.line === 'string') { o.out(error.line); return 1; }
     const code = /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message.replace(/^TURBO_/, 'PERMISSIONS_') : error?.code ?? 'PERMISSIONS_FAILED';
-    o.out(`permissions ${args.join(' ')} failed: ${code}${code === 'PERMISSIONS_UNSAFE' ? ` (${o.path} is a link or has another owner, mode or format; delete it first)` : ''}\n`);
+    o.out(`permissions ${args.join(' ')} failed: ${code}${code === 'PERMISSIONS_UNSAFE' ? ` (${o.path} is a link or has another owner, mode or format; sleight-mcp permissions repair fixes it and keeps the valid blocks)` : ''}\n`);
     return 1;
   }
   o.out(usage); return 2;
