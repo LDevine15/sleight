@@ -114,7 +114,7 @@ export async function runCalculator(client, { appState, launchApp, quitApp }) {
 // One engine-path page read: a page served on 127.0.0.1 in a Safari window this run created, chosen by its title through
 // sleight's select_window, then acquired and read with getApp as Claude would.
 export async function runBrowserRead(client, { appState, openPage, axTrusted, quitLaunchedSince,
-  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), titleWaitMs = 3000 }) {
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), titleWaitMs = 10000 }) {
   const started = Date.now();
   const before = await appState(SAFARI);
   if (before.running) return result('live-browser-read', 'skip', 'Safari was already running, so it may be the owner\'s; the check uses only a Safari it launches');
@@ -134,11 +134,14 @@ export async function runBrowserRead(client, { appState, openPage, axTrusted, qu
     }
     else {
       const expectedTitle = `${page.window.profile} \u2014 ${page.marker}`;
-      const deadline = Date.now() + titleWaitMs;
+      // The title window starts when the first attempt ends, since a cold first getApp can take seconds (2026-10-19:
+      // a 3 s window that included it left the retries 1 ms). Every attempt keeps the full engine budgets.
+      let deadline;
+      const reasons = [];
       for (let attempt = 0; attempt <= Math.ceil(titleWaitMs / 100); attempt++) {
         try {
-          const selected = await client.call('select_window', { app: 'Safari', title: expectedTitle }, attempt === 0 ? 30000 : Math.min(30000, Math.max(1, deadline - Date.now())));
-          const read = selected?.isError ? undefined : await client.call('js', { code: `var page = await cua.getApp(${JSON.stringify(SAFARI)})`, timeout_ms: attempt === 0 ? 60000 : Math.min(60000, Math.max(1, deadline - Date.now())) });
+          const selected = await client.call('select_window', { app: 'Safari', title: expectedTitle }, 30000);
+          const read = selected?.isError ? undefined : await client.call('js', { code: `var page = await cua.getApp(${JSON.stringify(SAFARI)})`, timeout_ms: 60000 });
           const text = textOf(read);
           const header = WINDOW_HEADER.exec(text);
           if (selected?.isError) outcome = result('live-browser-read', 'fail', 'select_window returned an error', firstLine(textOf(selected)));
@@ -147,7 +150,12 @@ export async function runBrowserRead(client, { appState, openPage, axTrusted, qu
           else if (!text.includes(page.body)) outcome = result('live-browser-read', 'fail', "the read has the fixture window but not the page's text");
           else outcome = result('live-browser-read', 'pass', 'read the fixture page through the engine path');
         } catch (error) { outcome = result('live-browser-read', 'fail', 'the fixture title was not ready', firstLine(error.message)); }
-        if (outcome.status === 'pass' || Date.now() >= deadline || attempt === Math.ceil(titleWaitMs / 100)) break;
+        deadline ??= Date.now() + titleWaitMs;
+        if (outcome.status !== 'pass' && !reasons.includes(outcome.reason)) reasons.push(outcome.reason);
+        if (outcome.status === 'pass' || Date.now() >= deadline || attempt === Math.ceil(titleWaitMs / 100)) {
+          if (outcome.status !== 'pass' && reasons.length > 1) outcome = { ...outcome, attempts: reasons };
+          break;
+        }
         await sleep(100);
       }
     }

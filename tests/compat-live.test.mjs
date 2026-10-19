@@ -154,7 +154,7 @@ test('compat keeps the first engine budgets when acquiring the page takes longer
   assert.deepEqual(budgets, [['select_window', 30000], ['js', 60000]]);
 });
 
-test('compat bounds only retries by the time remaining in the title window', async t => {
+test('compat retries with full engine budgets until the title window after the first attempt ends', async t => {
   let now = 1000, reads = 0;
   t.mock.method(Date, 'now', () => now);
   const p = { ...fixturePage('retry'), window: { profile: 'sleight benchmark' }, close: async () => {} };
@@ -166,7 +166,20 @@ test('compat bounds only retries by the time remaining in the title window', asy
     return text(`Window: "${++reads === 1 ? 'Start Page' : `sleight benchmark — ${p.marker}`}", App: Safari.\n1 text ${p.body}`);
   } }, { appState: async () => ({ running: false }), openPage: async () => p, sleep: async ms => { now += ms; } });
   assert.equal(outcome.status, 'pass', outcome.reason);
-  assert.deepEqual(budgets, [['select_window', 30000], ['js', 60000], ['select_window', 2400], ['js', 2150]]);
+  assert.deepEqual(budgets, [['select_window', 30000], ['js', 60000], ['select_window', 30000], ['js', 60000]]);
+});
+
+test('compat still retries when the first attempt alone outlasts the title window', async t => {
+  let now = 1000, reads = 0;
+  t.mock.method(Date, 'now', () => now);
+  const p = { ...fixturePage('cold'), window: { profile: 'sleight benchmark' }, close: async () => {} };
+  const outcome = await runBrowserRead({ call: async name => {
+    now += name === 'js' && reads === 0 ? 12000 : 200;
+    if (name === 'select_window') return text('ok');
+    return text(`Window: "${++reads === 1 ? 'Start Page' : `sleight benchmark — ${p.marker}`}", App: Safari.\n1 text ${p.body}`);
+  } }, { appState: async () => ({ running: false }), openPage: async () => p, sleep: async ms => { now += ms; } });
+  assert.equal(outcome.status, 'pass', outcome.reason);
+  assert.equal(reads, 2);
 });
 
 test('compat reports Escape and passes the fixture pid to its quit fallback', async () => {
