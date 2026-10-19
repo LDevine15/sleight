@@ -59,7 +59,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
 import { fileURLToPath } from 'node:url';
-import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
+import { isV3Frontend, isV3Bridge, failure as turboFailure } from './direct-browser/worker.mjs';
 import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, lastWindowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot, selectedMenuEntry } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
@@ -3001,8 +3001,8 @@ export function createRelay({
       // In Codex, only a call from the thread and turn the prompt hook bound reaches the worker.
       const owner = codexTurbo() ? codexCallTurn(msg.params._meta) : undefined;
       if (codexTurbo() && (!owner || !codexBinding || owner.thread !== codexBinding.thread || owner.turn !== codexBinding.turn)) {
-        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true,
-          content: [{ type: 'text', text: 'Turbo is unavailable for this turn. Use the engine browser path.' }] } });
+        const unbound = turboFailure(); // the worker's own words for an unbound turn
+        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: unbound.isError, content: [{ type: 'text', text: unbound.text }] } });
         return;
       }
       running.add(msg.id);

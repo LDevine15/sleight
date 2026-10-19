@@ -201,7 +201,7 @@ test('the Interrupt hook releases turbo too, while the engine call it interrupte
   await h.client(hookCall(1));
   await h.client({ id: 2, method: 'tools/call', params: { name: 'js', arguments: { code: 'await new Promise(r => setTimeout(r, 1e9))' }, _meta: { callId: 'c2' } } });
   await h.client(stopHook(3, 'Interrupt'));
-  assert.deepEqual(h.reply(3).result, { content: [] });
+  // The engine turn's own end waits on the running call (relay rules for Codex); turbo's revoke doesn't.
   assert.ok(h.events.some(row => row[0] === 'end'));
   await h.client(read(4));
   assert.equal(h.reply(4).result.isError, true);

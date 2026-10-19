@@ -33,7 +33,7 @@ const hash = value => createHash('sha256').update(JSON.stringify(value)).digest(
 const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) &&
   Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 const unproved = () => ({ revoked: true, cleanup: [{ resource: 'v3-worker', status: 'retained', code: 'CLEANUP_UNPROVED' }] });
-const failure = (unknown = false) => ({ text: unknown ? 'Input outcome is unconfirmed. Read state before retrying; use the engine browser path if needed.'
+export const failure = (unknown = false) => ({ text: unknown ? 'Input outcome is unconfirmed. Read state before retrying; use the engine browser path if needed.'
   : 'Turbo is unavailable for this turn. Use the engine browser path.', isError: !unknown });
 // The model sees which application turbo selected, so a task naming it needs no engine search.
 // The name comes only from the operator-owned config's executable path and a fixed list, never a page.
