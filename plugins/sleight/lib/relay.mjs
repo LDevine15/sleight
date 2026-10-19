@@ -1080,7 +1080,7 @@ export function createRelay({
     ? createLightReturn({ directory: inputLease.directory, observe: windowIdentity }) : undefined;
   const promptFailures = new Map(); // call id -> native panel failure, distinct from a user decline
   const running = new Set(); // ids of engine calls waiting for a result
-  const nativeChecked = new Set();
+  const nativeChecked = new Map(); // call id -> its verified native admission, when available
   const focusedChecked = new Set();
   const callDetails = new Map();
   const pendingClients = new Map();
@@ -3149,11 +3149,15 @@ export function createRelay({
     // When the stop result arrived: a tab continuation asks for HID idle since then, not over the call.
     const stopAt = clock();
     if (!Array.isArray(msg.result?.content)) return false;
-    if (closeReadSkip && !msg.result.isError && msg.result.content.some(c => c.type === 'text' && c.text?.split('\n').includes(call.mark + ':closed'))) {
+    // A confirmed close can stop an explicit observation before the tail runs.
+    // A caught observation stop must not hide a later result or unrelated error.
+    const closedRead = msg.result.isError && msg.result.content.some(c => c.type === 'text' && c.text?.includes('[sleight:closed-read]'));
+    if (closeReadSkip && msg.result.content.some(c => c.type === 'text' && c.text?.split('\n').some(line =>
+      !msg.result.isError && line === call.mark + ':closed' || closedRead && line === call.mark + ':closed-read'))) {
       closedWindowResults.add(msg);
-      msg.result.content = msg.result.content.map(c => c.type === 'text'
-        ? { ...c, text: c.text.split('\n').filter(line => line !== call.mark + ':closed').join('\n') } : c);
     }
+    msg.result.content = msg.result.content.map(c => c.type === 'text'
+      ? { ...c, text: c.text.split('\n').filter(line => line !== call.mark + ':closed' && line !== call.mark + ':closed-read').join('\n') } : c);
     const taken = takeGuardStop(msg.result.content, call.mark);
     msg.result.content = taken.content;
     // The private mark proves the guard wrote these: payments it let through count for the request, and a payment stop is
@@ -3313,7 +3317,7 @@ export function createRelay({
         const last = call.plan.actions.at(-1).selector;
         const landing = remainder.tab && tabFirst && last?.kind === 'key' && /^(?:return|enter)$/i.test(last.value) ? call.plan.actions[0].handle : undefined;
         menuForwards.set(msg.id, { call, expected: forward, baseline, lease, original, head, current, tab: !!remainder.tab, stopAt, landing });
-        nativeChecked.add(msg.id); focusedChecked.add(msg.id);
+        nativeChecked.set(msg.id, undefined); focusedChecked.add(msg.id);
         handleClient({ ...call.request, params: { ...call.request.params,
           arguments: { ...call.request.params.arguments, code: remainder.code } } });
       });
@@ -3568,12 +3572,12 @@ export function createRelay({
         if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
         else focusedChecked.add(msg.id);
         trace('native-window-admission', { id: msg.id, ms: performance.now() - started, confirmed: !!identity });
-        running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg);
+        running.delete(msg.id); nativeChecked.set(msg.id, identity); handleClient(msg);
       }).catch(error => { if (stopCollected || generation !== stopGeneration) return;
         // An optional focus probe that is unavailable leaves the full first read in place.
         // Existing identity requirements and confirmed mismatches still stop admission.
         if (!expected.identityRequired && !/^Input lease:/.test(error.message)) {
-          running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg); return;
+          running.delete(msg.id); nativeChecked.set(msg.id, undefined); handleClient(msg); return;
         }
         finishedCall(msg.id); leaseStop(msg, error.message);
       });
@@ -3872,7 +3876,10 @@ export function createRelay({
             if (filteredCode !== swipeCode || typedTarget || receiptTyping || outcomeMark) filterMarks.set(msg.id, filterMark);
             const light = lightReturn && inputLease && !careful && !documentMode && !changeReview && !menuBaseline &&
               target === leaseWindow && lightReturnCode(originalCode) ? lightReturn.begin(msg.id, leaseWindow) : undefined;
-            msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? target, reason,
+            // A unique file window may have no stored identity baseline. Its current
+            // admission still supplies DP1's leased process and window for this call.
+            const admitted = closeReadSkip && target === leaseWindow && nativeChecked.get(msg.id);
+            msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? (admitted ? { ...target, nativeIdentity: admitted } : target), reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
               { ...setup, dp1: closeReadSkip, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, ...(outcomeMark ? { outcomeMark } : {}), timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
                 firstOff: !careful && !documentMode && !changeReview,

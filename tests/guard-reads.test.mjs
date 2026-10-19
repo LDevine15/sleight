@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import assert from 'node:assert/strict';
-import { runInNewContext } from 'node:vm';
+import { runInNewContext, constants as vmConstants } from 'node:vm';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 import { tmpdir } from 'node:os';
@@ -55,7 +55,8 @@ function fixture({ current = () => tree(), action = () => {}, screenshotState, s
     throw Error('unsupported engine method ' + key);
   } }) : raw;
   const context = { app: engine, setTimeout, clearTimeout, cua: { getApp: async () => engine, listApps: async () => [{ id: 'fixture.app', displayName: expected.app, windows: [{ id: 1, title: expected.title }] }] }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
-  const run = (code, options = ordinary ? defaultOptions() : {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, { focused: true, ...options })} })()`, context);
+  const run = (code, options = ordinary ? defaultOptions() : {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, { focused: true, ...options })} })()`, context,
+    { importModuleDynamically: vmConstants.USE_MAIN_CONTEXT_DEFAULT_LOADER });
   return { run, raw, calls, output, context };
 }
 
@@ -113,14 +114,165 @@ test('DP1 keeps the tail read for remaining windows, sheets, unknown inventory a
 test('DP1 retains caller reads and falls back after the inventory budget expires', async () => {
   const f = fixture();
   let inventories = 0;
-  f.context.cua.listApps = async () => { inventories++; return new Promise(() => {}); };
+  f.context.cua.listApps = async () => { inventories++; return [{ id: 'fixture.app', pid: 123, windows: [{ id: 44 }] }]; };
   await f.run('await app.pressKey("super+w"); await app.getAXState();', closeOptions, closeTarget);
-  assert.equal(inventories, 0, 'the explicit final read stays');
+  assert.equal(inventories, 1, 'the explicit final read checks inventory and stays with a remaining window');
+  f.context.cua.listApps = async () => { inventories++; return new Promise(() => {}); };
+  inventories = 0;
   f.context.setTimeout = (fn, ms) => { assert.equal(ms, 1000); return setTimeout(fn, 0); };
   f.calls.length = 0;
   await f.run('await app.pressKey("super+w");', closeOptions, closeTarget);
   assert.equal(inventories, 1);
   assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
+});
+
+// transcript.jsonl:50, evidence-dpb2/sleight-textedit-drag-1. The explicit
+// combined read satisfied the tail, so the old DP1 path never ran.
+const recordedClose = 'let app = __sleightOpenedApp2;\nawait app.pressKey("super+w");\n' +
+  'const s = await app.getAXStateAndScreenshot();\nnodeRepl.write(s.state.split("\\n").slice(0, 6).join("\\n"));';
+
+test('DP1 checks the recorded close plus screenshot before the caller read, fresh and cached', async () => {
+  for (const cached of [false, true]) for (const remaining of [false, true]) {
+    let closed = false, inventories = 0;
+    const target = { ...closeTarget, nativeIdentity: { pid: 123, windowNumber: 44 } };
+    const f = fixture({ action: () => { closed = true; }, current: () => {
+      if (closed && !remaining) throw Error('noWindowsAvailable');
+      return closed ? tree({ ...expected, title: 'Untitled', url: undefined }) : tree();
+    } });
+    await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("fixture.app");', closeOptions, target);
+    f.output.length = 0; f.calls.length = 0;
+    f.context.cua.listApps = async () => {
+      inventories++;
+      return [{ id: 'fixture.app', windows: remaining ? [{ id: 55, title: 'Untitled' }] : [] }];
+    };
+    const run = f.run(recordedClose, { ...closeOptions, reuseSetup: cached }, target);
+    if (remaining) await run;
+    else await assert.rejects(run, /\[sleight:closed-read\]/);
+    assert.equal(inventories, 1);
+    assert.equal(f.calls.filter(c => c[0] === 'both').length, remaining ? 1 : 0);
+    assert.equal(f.calls.filter(c => c[0] === 'pressKey').length, 1);
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 1, 'before-action read stays');
+    const events = f.output.filter(text => text.startsWith('[sleight:dp1]')).map(text => JSON.parse(text.slice('[sleight:dp1]'.length)));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].source, 'caller-read');
+    assert.equal(events[0].decision, remaining ? 'kept-read' : 'skipped-read');
+    assert.equal(events[0].reason, remaining ? 'windows non-empty' : 'no windows');
+    assert.ok(!JSON.stringify(events).includes('Untitled'));
+    assert.equal(f.output.some(text => text.includes('private-close-mark:closed-read')), !remaining);
+    if (remaining) assert.ok(f.output.some(text => text.includes('Untitled')));
+  }
+});
+
+test('DP1 covers each caller observation after close and keeps reads without conclusive inventory', async () => {
+  for (const method of ['getAXState', 'getAXStateAndScreenshot', 'getScreenshot']) {
+    for (const mode of ['closed', 'unknown', 'timeout', 'disabled', 'no-mark', 'other-handle']) {
+      const f = fixture();
+      await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("fixture.app");', closeOptions, closeTarget);
+      f.output.length = 0; f.calls.length = 0;
+      if (mode === 'other-handle') f.context.__sleightDocumentGuard.getApp = async () => ({ ...f.raw });
+      let inventories = 0;
+      f.context.cua.listApps = async () => {
+        inventories++;
+        if (mode === 'unknown') throw Error('inventory unavailable');
+        if (mode === 'timeout') return new Promise(() => {});
+        return [{ id: 'fixture.app', pid: 123, windows: [] }];
+      };
+      f.context.setTimeout = fn => setTimeout(fn, 0);
+      const options = { ...closeOptions, reuseSetup: true, ...(mode === 'disabled' ? { dp1: false } : {}),
+        ...(mode === 'no-mark' ? { guardStopMark: undefined } : {}) };
+      const code = `await app.pressKey("super+w"); ${mode === 'other-handle' ? 'const other = await cua.getApp("other.app"); await other' : 'await app'}.${method}();`;
+      const run = f.run(code, options, closeTarget);
+      if (mode === 'closed') await assert.rejects(run, /\[sleight:closed-read\]/);
+      else await run;
+      const callerReads = f.calls.filter(c => ['both', 'screenshot'].includes(c[0]) || c[0] === 'read').length;
+      assert.ok(callerReads >= (mode === 'closed' ? 1 : 2), method + ':' + mode);
+      if (mode === 'disabled' || mode === 'other-handle') assert.equal(inventories, 0);
+      assert.equal(f.output.some(text => text.includes('private-close-mark:closed-read')), mode === 'closed');
+    }
+  }
+});
+
+test('DP1 retains a Save sheet after the recorded close and rejects an inventory overtaken by input', async () => {
+  const f = fixture();
+  await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("fixture.app");', closeOptions, closeTarget);
+  f.context.cua.listApps = async () => [{ id: 'fixture.app', pid: 123, windows: [{ id: 44, title: 'Save', role: 'sheet' }] }];
+  await f.run(recordedClose, { ...closeOptions, reuseSetup: true }, closeTarget);
+  assert.equal(f.calls.filter(c => c[0] === 'both').length, 1);
+  assert.ok(f.output.some(text => text.includes('windows non-empty')));
+  let finish;
+  f.output.length = 0; f.calls.length = 0;
+  f.context.cua.listApps = () => new Promise(resolve => { finish = resolve; });
+  const run = f.run('await app.pressKey("super+w"); const observation = app.getAXStateAndScreenshot(); await app.typeText("x"); await observation;',
+    { ...closeOptions, reuseSetup: true }, closeTarget);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(f.calls.some(c => c[0] === 'typeText'));
+  finish([{ id: 'fixture.app', pid: 123, windows: [] }]);
+  await run;
+  assert.ok(f.output.some(text => text.includes('"reason":"action changed"')));
+  assert.equal(f.calls.filter(c => c[0] === 'both').length, 1);
+  assert.ok(!f.output.some(text => text.includes('private-close-mark:closed')));
+});
+
+test('DP1 recorded close runs through relay wrapping, emits its call id and returns the close notice', async () => {
+  for (const remaining of [false, true]) {
+    let closed = false;
+    const f = fixture({ action: () => { closed = true; }, current: () => {
+      if (closed && !remaining) throw Error('noWindowsAvailable');
+      return closed ? tree({ ...expected, title: 'Untitled', url: undefined }) : tree();
+    } });
+    f.context.cua.listApps = async () => [{ id: 'fixture.app', windows: remaining ? [{ id: 55, title: 'Untitled' }] : [] }];
+    const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+    const sent = [], replies = [], traces = [];
+    serverIn.on('data', data => sent.push(JSON.parse(data)));
+    clientOut.on('data', data => replies.push(JSON.parse(data)));
+    const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
+      inputLease: new InputLease({ directory: leaseDir, holder: 'recorded-close' }),
+      windowIdentity: async window => ({ ...window, status: 'ok', epoch: 'fixture', window: 1,
+        windowNumber: 44, pid: 123, processStart: 1, matches: 1 }),
+      trace: (direction, msg) => traces.push({ direction, msg }) });
+    const call = (id, code) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+    try {
+      call(1, 'let __sleightOpenedApp2 = await cua.getApp("TextEdit");');
+      // The VM wraps each execution in an async function; save the binding that
+      // the engine's persistent REPL would keep across calls.
+      await runInNewContext(`(async () => { ${sent.find(msg => msg.id === 1).params.arguments.code}
+        globalThis.__sleightOpenedApp2 = __sleightOpenedApp2; })()`, f.context,
+      { importModuleDynamically: vmConstants.USE_MAIN_CONTEXT_DEFAULT_LOADER });
+      serverOut.write(JSON.stringify({ id: 1, result: { content: [...f.output.map(text => ({ type: 'text', text })), { type: 'text', text: tree() }],
+        _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } }) + '\n');
+      await new Promise(resolve => setImmediate(resolve));
+      call(8, recordedClose);
+      await new Promise(resolve => setImmediate(resolve));
+      const forwarded = sent.find(msg => msg.id === 8)?.params.arguments.code;
+      assert.ok(forwarded?.includes('guardStopMark'), 'the recorded handle alias receives the native guard');
+      f.output.length = 0; f.calls.length = 0;
+      let error;
+      try { await runInNewContext(`(async () => { ${forwarded} })()`, f.context,
+        { importModuleDynamically: vmConstants.USE_MAIN_CONTEXT_DEFAULT_LOADER }); }
+      catch (caught) { error = caught; }
+      serverOut.write(JSON.stringify({ id: 8, result: { isError: !!error,
+        content: [...f.output.map(text => ({ type: 'text', text })), ...(error ? [{ type: 'text', text: error.message }] : [])],
+        _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } }) + '\n');
+      const decisions = traces.filter(t => t.direction === 'dp1-decision').map(t => t.msg);
+      assert.equal(decisions.length, 1, JSON.stringify({ error: error?.message, output: f.output }));
+      assert.equal(decisions[0].id, 8);
+      assert.equal(decisions[0].source, 'caller-read');
+      assert.equal(decisions[0].reason, remaining ? 'windows non-empty' : 'no windows');
+      const reply = replies.find(msg => msg.id === 8);
+      assert.equal(reply.result.isError, false);
+      const text = JSON.stringify(reply.result.content);
+      assert.match(text, remaining ? /Untitled/ : /the app has no windows left/);
+      assert.ok(!text.includes('[sleight:dp1]') && !text.includes(':closed-read'));
+      assert.equal(f.calls.filter(c => c[0] === 'both').length, remaining ? 1 : 0);
+      if (!remaining) {
+        const count = sent.length;
+        call(9, 'await app.click(1)');
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(sent.length, count, 'a confirmed last-window close clears the recovery target');
+        assert.equal(replies.find(msg => msg.id === 9).result.isError, true);
+      }
+    } finally { await relay.dispose(); }
+  }
 });
 
 test('DP1 keeps reads without a private mark or explicit opt-in, including cached setup', async () => {

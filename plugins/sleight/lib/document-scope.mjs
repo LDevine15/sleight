@@ -384,7 +384,8 @@ export function readCode(code, options = {}) {
 
 // Advisory only: all of this runs in the same mutable JS realm as Claude's code.
 async function closedLastWindow(state, cua, record) {
-  const previous = state.previous.get(state.activeApp), action = state.lastAction;
+  const active = state.activeApp, version = state.actionVersion;
+  const previous = state.previous.get(active), action = state.lastAction;
   const pid = state.expected?.nativeIdentity?.pid ?? state.expected?.pid;
   const window = state.expected?.nativeIdentity?.windowNumber ?? state.expected?.windowNumber;
   let inventory = {};
@@ -404,6 +405,7 @@ async function closedLastWindow(state, cua, record) {
     // Inventory has a 1 s budget. An unavailable or ambiguous answer keeps the full read.
     const timeout = {};
     const apps = await Promise.race([cua.listApps({ emit: false }), new Promise(resolve => { timer = setTimeout(() => resolve(timeout), 1000); })]);
+    if (state.activeApp !== active || state.actionVersion !== version || state.lastAction !== action) return decide('action changed');
     if (apps === timeout) return decide('timeout');
     if (!Array.isArray(apps)) return decide('error');
     inventory = { inventoryHasPid: apps.some(app => app != null && Object.hasOwn(app, 'pid')) };
@@ -434,11 +436,10 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   // last statement may be, so the call's read can't run beside it and return the window from before it (CC6 review).
   // An empty literal order is left out (the guard reads it as []), which keeps the per-call setup under 2,500 bytes.
   const literalOrder = checks.literalOrder ?? literalElements(code);
-  return guardSetup({ window, reason, lease, ...checks, literalOrder: literalOrder.length ? literalOrder : undefined }, { reuseSetup, acknowledge, prompt, outcomes, kernel, dp1 }) +
+  return guardSetup({ window, reason, lease, ...checks, ...(dp1 ? { dp1: true } : {}), literalOrder: literalOrder.length ? literalOrder : undefined }, { reuseSetup, acknowledge, prompt, outcomes, kernel, dp1 }) +
     (options.browserCandidate ? '\nglobalThis.__sleightDocumentGuard.activeApp = undefined;' : '') + /* generated code */ `\n${code}
 {
   const guard = globalThis.__sleightDocumentGuard, last = await guard.settle?.() ?? (guard.activeApp && guard.reads.get(guard.activeApp));
-  // The call finished, so any failed action was one it didn't await or caught itself.
   if (guard.failures?.length) nodeRepl.write('sleight: an action in this call failed' + ${quoted(/* lean notice */ ', and the call went on without it: ')} + guard.failures.join('; ') + '. Read the window, then redo it with await.\\n');
   // A caught getApp failure sent no input, so it isn't a failed action; a later getApp that worked cleared it.
   if (guard.getAppFailures?.length) {
@@ -502,6 +503,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     state.acted = false; state.startApp = state.activeApp;
     state.actionVersion ??= 0;
     state.actionIndex = 0; state.completedActions = 0; state.ran = []; state.unknown = []; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
+    state.dp1 = !!update?.dp1;
     state.inputSent = false;
     // This call's actions and picks still running, for the read that ends the call.
     state.inflight = new Set();
@@ -557,7 +559,17 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     const recordDP1 = event => nodeRepl.write('[sleight:dp1]' + JSON.stringify(withoutTitles(event)) + '\\n');
     state.readAfter = async (proxy, tail) => tail && await closedLast(state, cua, recordDP1)
       ? state.guardStopMark + ':closed'
-      : timedRead(state.raws.get(proxy), 'after-call');` : "state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');"}
+      : timedRead(state.raws.get(proxy), 'after-call');
+    // A caller's final observation can satisfy the tail or throw before it runs.
+    // Confirm the close here too. Stop instead of inventing a screenshot or state.
+    state.beforeRead = async proxy => {
+      if (!state.dp1 || proxy !== state.activeApp || state.lastAction?.kind !== 'key' ||
+          !/^(?:super|cmd|command|meta)\\+(?:shift\\+w|w|q)$/i.test(state.lastAction.value)) return;
+      if (await closedLast(state, cua, event => recordDP1({ ...event, source: 'caller-read' }))) {
+        nodeRepl.write(state.guardStopMark + ':closed-read\\n');
+        throw new Error('[sleight:closed-read]');
+      }
+    };` : "state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');"}
     state.raws ||= new WeakMap();
     // Windows whose bound capture lost an element, by app and URL or title, to the clean actions left before
     // they bind again: each reads before a numbered or named action until STALE_PASSES of those pass (see the
@@ -850,7 +862,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
         // Claude's tree reads are full reads the relay turns into changed lines,
         // and they double as the guard's own read until the next action.
         if (name === 'getAXState') return async (options = {}) => {
-          checkNative();
+          checkNative();${dp1 ? '\n          await state.beforeRead(proxy);' : ''}
           state.binding = undefined;
           const reads = state.reads, reading = {}, version = state.actionVersion;
           reads.set(proxy, reading);
@@ -865,7 +877,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           return text;
         };
         if (name === 'getAXStateAndScreenshot') return async (options = {}) => {
-          checkNative();
+          checkNative();${dp1 ? '\n          await state.beforeRead(proxy);' : ''}
           state.binding = undefined;
           // The combined observation already paid for a full AX walk. Keep its
           // state just as we keep getAXState, until the next action or call.
@@ -884,7 +896,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           return result;
         };
         if (name === 'getScreenshot') return async (options = {}) => {
-          checkNative();
+          checkNative();${dp1 ? '\n          await state.beforeRead(proxy);' : ''}
           state.binding = undefined;
           const reads = state.reads, reading = {};
           reads.set(proxy, reading);
