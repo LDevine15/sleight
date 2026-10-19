@@ -3,6 +3,14 @@
 What doesn't work, or works only partly, with the measurements behind it. We found all of these in
 our own runs. Dates and engine versions are given where they matter.
 
+## Ghost hand
+
+- The H6 cost pass (2026-10-19) measured textedit-drag at 31-37 s with the hand on against 23-26 s off. Peak hand host RSS
+  was 51.2 MB against a 50 MB budget. The report is `~/Library/Logs/sleight/h6-2026-10-19T20-40-23-315Z/cost-pass.md`
+  with the measurements in the adjacent `cost-pass.json`. The hand is off by default in 1.3.1; turn it on through the menu bar,
+  `sleight-mcp hand on` or the settings file. The H5 capture test is not proven, so we cannot claim sleight's own screenshots
+  exclude the hand when captures are set to visible.
+
 ## Flag A/B limits
 
 - Across five alternating rounds with Haiku 5.5 at high effort, open-shot won by about 1.1 SE

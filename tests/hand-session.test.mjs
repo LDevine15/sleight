@@ -16,7 +16,7 @@ function fixture(options = {}) {
   const client = { enabled: true, pid: 4242, sent, hidden: 0, closed: 0,
     send(frame) { sent.push({ ...frame, sentAt: clock }); }, hide() { this.hidden++; }, close() { this.closed++; } };
   let answer = () => GEOMETRY;
-  const hand = createRelayHand({ client, env: {}, now: () => clock, defer: fn => deferred.push(fn),
+  const hand = createRelayHand({ client, env: { SLEIGHT_HAND: '1' }, now: () => clock, defer: fn => deferred.push(fn),
     locate: async request => { requests.push(request); return answer(request); },
     trace: (direction, msg) => traces.push([direction, msg]), ...options });
   return { hand, client, sent, traces, requests, deferred,
@@ -218,4 +218,15 @@ test('hide and close reach the client, and a throwing client never reaches the r
   admit(g, 1, 'await app.click([400, 196])'); await g.run();
   g.hand.hide(); g.hand.result(1, true); g.hand.close();
   g.hand.admit(2, undefined); g.hand.approval(undefined, undefined); g.hand.answered(undefined);
+});
+
+test('default off installs no hand hooks; saved on enables hooks and env 0 still wins', () => {
+  const options = { env: {}, setting: () => ({ enabled: false }), locate: () => { throw Error('must not locate'); },
+    loadClient: () => { throw Error('must not load'); } };
+  assert.equal(createRelayHand(options), undefined);
+  const on = { ...options, setting: () => ({ enabled: true }) };
+  const hand = createRelayHand(on);
+  assert.ok(hand);
+  hand.close();
+  assert.equal(createRelayHand({ ...on, env: { SLEIGHT_HAND: '0' } }), undefined);
 });

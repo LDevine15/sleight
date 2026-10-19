@@ -13,7 +13,7 @@ const usage = 'usage: sleight-mcp hand on\n       sleight-mcp hand off\n       s
 export function writeHandSetting({ enabled, capture }, { path = handConfigPath(userInfo().homedir), uid = process.getuid() } = {}) {
   const before = readHandConfig(path, uid);
   if (enabled === undefined && before.state === 'unsafe') throw Error('HAND_CONFIG_UNSAFE');
-  const data = { version: 1, enabled: enabled ?? before.state !== 'off' };
+  const data = { version: 1, enabled: enabled ?? before.state === 'on' };
   const kept = capture ?? (before.state !== 'unsafe' ? before.capture : undefined);
   if (kept) data.capture = kept;
   try { writeConfigFile(path, data, uid); }
@@ -42,8 +42,9 @@ export function handCommand(args, { out = text => process.stdout.write(text), pa
     if (env.SLEIGHT_HAND_CAPTURE) out(`SLEIGHT_HAND_CAPTURE=${env.SLEIGHT_HAND_CAPTURE} in this environment still wins for servers started from here.\n`);
     return 0;
   }
-  out(op === 'on' ? 'The ghost hand is on. Running sessions show it at their next action.\n'
+  out(op === 'on' ? 'The ghost hand is on. Start a new sleight session if it started with the hand off.\n'
     : 'The ghost hand is off. Running sessions hide it at once. sleight-mcp hand on turns it back on.\n');
+  if (op === 'off' && env.SLEIGHT_HAND === '1') out('SLEIGHT_HAND=1 in this environment still keeps it on for servers started from here.\n');
   if (op === 'on' && env.SLEIGHT_HAND === '0') out('SLEIGHT_HAND=0 in this environment still keeps it off for servers started from here.\n');
   return 0;
 }

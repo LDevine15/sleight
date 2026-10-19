@@ -90,7 +90,7 @@ test('end to end, an admitted click(N) becomes one frame at the element, after t
   const sent = [];
   const client = { enabled: true, send: frame => sent.push(frame), hide() {}, close() {} };
   const requests = [];
-  const hand = createRelayHand({ client, env: {}, locate: async request => { requests.push(request); return GEOMETRY; } });
+  const hand = createRelayHand({ client, env: { SLEIGHT_HAND: '1' }, locate: async request => { requests.push(request); return GEOMETRY; } });
   const h = harness({ hand });
   await read(h);
   js(h, 2, 'await app.click(1); await app.click([116, 160]);');
@@ -125,7 +125,7 @@ test('the hand adds under 1 ms to admission', async t => {
     return { median: median(admission), p95: p95(admission), roundTrip: median(roundTrip) };
   }
   const sent = [];
-  const makeHand = () => createRelayHand({ client: { enabled: true, send: f => sent.push(f), hide() {}, close() {} }, env: {}, locate: async () => GEOMETRY });
+  const makeHand = () => createRelayHand({ client: { enabled: true, send: f => sent.push(f), hide() {}, close() {} }, env: { SLEIGHT_HAND: '1' }, locate: async () => GEOMETRY });
   await measure(); await measure(makeHand()); // warm both paths
   const off = await measure();
   sent.length = 0;

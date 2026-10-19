@@ -274,6 +274,11 @@ test('the session\'s hand client is the integration point: one per process, none
   t.after(() => setHandPid(0));
   createHandClient({ setting: () => ({ enabled: false }), watch: () => undefined }).close(); // no earlier test's client stays current
   assert.equal(sessionHandClient({ env: { SLEIGHT_HAND: '0' } }), undefined);
+  let watched = 0, prepared = 0;
+  const off = { env: {}, setting: () => ({ enabled: false }), watch: () => { watched++; }, prepare: () => { prepared++; } };
+  assert.equal(sessionHandClient(off), undefined);
+  assert.equal(await shareConsent(), undefined);
+  assert.deepEqual([watched, prepared], [0, 0], 'off creates no watcher or host');
   const children = [], options = { setting: () => ({ enabled: true }), built: () => true, watch: () => undefined,
     prepare: async () => ({ status: 'ready', spawn: spawnOptions => { const c = fakeChild(5000 + children.length, spawnOptions.consent); children.push(c); return c; } }) };
   const first = sessionHandClient(options);

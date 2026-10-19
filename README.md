@@ -128,6 +128,8 @@ lists what differs there: no pane, and turbo needs Codex 0.160.0 or later.
   them. `sleight-mcp turbo status|on|off` controls it ([settings](docs/settings.md#turbo)).
 - Electron apps such as VS Code, Slack and Spotify run on the native path in 1.3.0. Turbo for
   Electron comes in 1.3.1, opt-in per app, relaunching an app only when you click.
+- The ghost hand is off by default in 1.3.1. Turn it on in the menu bar dropdown or with `sleight-mcp hand on`
+  ([settings](docs/settings.md#ghost-hand)).
 - Several sessions can share one Mac. Input leases give one session a window at a time.
 - `/sleight` opens a pane with the app's latest picture and a log of each action, and `/sleight stop`
   ends the turn mid-call. `/sleight record` and `/sleight replay` rerun a finished task with no model

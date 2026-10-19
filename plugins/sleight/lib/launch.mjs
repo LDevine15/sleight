@@ -9,7 +9,7 @@
 //   launch.mjs --doctor  print what would run, and check it exists
 //   launch.mjs setup     install the helper, open permission panes, run doctor
 //   launch.mjs turbo on [--browser chrome|helium] | off | status   turbo is on by default; these are the user's controls
-//   launch.mjs hand on | off | capture hidden|visible | status   the ghost hand is on by default; the user's controls
+//   launch.mjs hand on | off | capture hidden|visible | status   the ghost hand is off by default; the user's controls
 //   launch.mjs permissions [list] | revoke … | block|unblock … | sites …   what sleight may do, and where it never acts
 //   launch.mjs record|replay …  turn a finished run into a script, and run it again (replay.mjs)
 
@@ -932,7 +932,7 @@ export function turboState(readConfig, env = process.env) {
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
   directBrowser, ensureTurbo = false } = {}) {
   // The ghost hand's session client, before turbo's bridge forks its worker so the worker can share the session's one host.
-  // It spawns nothing until sleight acts or turbo forks, and SLEIGHT_HAND=0 leaves it out. The relay's hand hooks take this
+  // It spawns nothing until sleight acts or turbo forks, and the default off setting leaves it out. The relay's hand hooks take this
   // same client.
   let handTrace;
   const hand = (await import('./hand/client.mjs')).sessionHandClient({ trace: (direction, msg) => handTrace?.(direction, msg) });
@@ -1112,7 +1112,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       },
     },
     trace,
-    // The ghost hand, on unless SLEIGHT_HAND=0, on the session's one client (made above, before turbo forks).
+    // The ghost hand, only when the settings enable it, on the session's one client (made above, before turbo forks).
     hand: hand && createRelayHand({ client: hand, locate: request => runScript('hand/locate.js', request), trace: (direction, msg) => trace?.(direction, msg),
       clientOptions: { trace: (direction, msg) => trace?.(direction, msg) } }),
     guardTiming: !!process.env.SLEIGHT_TRACE,

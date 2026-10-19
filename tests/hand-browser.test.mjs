@@ -77,7 +77,7 @@ function handFixture(options = {}) {
   const sent = [], traces = [], locates = [], reads = [], deferred = [];
   const client = { enabled: true, pid: 4242, send: frame => sent.push(frame), hidden: 0, hide() { this.hidden++; }, close() {} };
   let metrics = METRICS;
-  const hand = createBrowserHand({ client, env: {}, defer: fn => deferred.push(fn), now: () => 0,
+  const hand = createBrowserHand({ client, env: { SLEIGHT_HAND: '1' }, defer: fn => deferred.push(fn), now: () => 0,
     readMetrics: async page => { reads.push(page); return metrics; },
     locate: async request => { locates.push(request); return GEOMETRY; },
     trace: (direction, msg) => traces.push([direction, msg]), ...options });
@@ -177,7 +177,7 @@ test('act latency with the hand is within 0.1 ms of act without it', async t => 
     return { median: times[N >> 1], p95: times[Math.floor(N * 0.95)] };
   }
   const sent = [];
-  const make = () => createBrowserHand({ client: { enabled: true, send: frame => sent.push(frame), hide() {}, close() {} }, env: {},
+  const make = () => createBrowserHand({ client: { enabled: true, send: frame => sent.push(frame), hide() {}, close() {} }, env: { SLEIGHT_HAND: '1' },
     readMetrics: async () => METRICS, locate: async () => GEOMETRY });
   // The fake locators have no boundingBox, so give each step one the way Playwright locators do.
   const boxed = hand => ({ step: input => hand.step({ ...input, locator: { boundingBox: async () => BOX } }) });
@@ -220,4 +220,15 @@ test('the worker\'s hand events reach the relay\'s trace file with the operation
   const f = handFixture();
   f.hand.step({ op: 'click', page: f.page, locator: f.locator, ref: 'e1' }); await f.run();
   assert.deepEqual(f.traces.at(-1), ['hand-shown', { op: 'click', kind: 'click' }]);
+});
+
+test('default off installs no hand hooks; saved on enables hooks and env 0 still wins', () => {
+  const options = { env: {}, setting: () => ({ enabled: false }), locate: () => { throw Error('must not locate'); },
+    loadClient: () => { throw Error('must not load'); } };
+  assert.equal(createBrowserHand(options), undefined);
+  const on = { ...options, setting: () => ({ enabled: true }) };
+  const hand = createBrowserHand(on);
+  assert.ok(hand);
+  hand.close();
+  assert.equal(createBrowserHand({ ...on, env: { SLEIGHT_HAND: '0' } }), undefined);
 });

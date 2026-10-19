@@ -54,10 +54,11 @@ export async function shareConsent() {
   return share ? share() : undefined;
 }
 /** The ghost hand's integration point: the session's one client for the relay and its hooks, created on the first call and
- *  the same one after (while open), and none with SLEIGHT_HAND=0. The launcher creates it at startup, so turbo's first fork
+ *  the same one after (while open), and none while the settings keep it off. The launcher creates it at startup, so turbo's first fork
  *  can share its host. */
 export function sessionHandClient(options = {}) {
-  if ((options.env ?? process.env).SLEIGHT_HAND === '0') return undefined;
+  const env = options.env ?? process.env;
+  if (env.SLEIGHT_HAND === '0' || !(options.setting ?? (() => handSetting({ env })))().enabled) return undefined;
   return current ?? createHandClient(options);
 }
 

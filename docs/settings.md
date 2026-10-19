@@ -317,11 +317,13 @@ each with the one fix. It only reads.
 ## Ghost hand
 
 When sleight acts in a background window, a translucent glove glides to the spot, flourishes and fades. It only draws:
-it never moves the pointer, takes focus or catches a click, and it shows only over the window sleight is driving. It is on
-by default. The first time sleight acts it compiles in the background, and that session has no hand.
+it never moves the pointer, takes focus or catches a click, and it shows only over the window sleight is driving. It is off
+by default in 1.3.1. With no saved setting, sleight doesn't start a hand host or install hand hooks.
+The host compiles in the background on its first use after you enable it. That session has no hand.
 
-- `sleight-mcp hand off` writes `enabled: false` to `~/Library/Application Support/sleight/hand.json`, and
-  `sleight-mcp hand on` turns it back on. Off hides the hand in running sessions at once.
+- `sleight-mcp hand on` writes `enabled: true` to `~/Library/Application Support/sleight/hand.json`. A saved on setting
+  keeps working. You can also edit that file yourself (`version: 1`, a boolean `enabled`, mode `0600`).
+  Start a new sleight session if it started with the hand off. `sleight-mcp hand off` hides the hand in running sessions at once.
 - The glove's menu has a Ghost Hand row with a checkmark, which writes the same setting. The glove is in the menu bar
   while turbo is in use, and for five minutes after sleight last acted while the hand is on. Without turbo its menu holds
   only the Ghost Hand row, [Permissions](#permissions), Settings & Help and the version.
@@ -330,8 +332,8 @@ by default. The first time sleight acts it compiles in the background, and that 
   `SLEIGHT_HAND_CAPTURE=hidden|visible` in the server's environment takes precedence over the file.
 - `sleight-mcp hand status` prints the state, the capture mode and whether the host is compiled. `sleight-mcp --doctor`
   prints the same after its turbo section.
-- `SLEIGHT_HAND=0` in the MCP server's environment turns that server's hand off. It can only turn the hand off.
-- A `hand.json` that is a link or has another owner, mode or format keeps the hand off until you delete it.
+- `SLEIGHT_HAND=0` in the MCP server's environment turns that server's hand off. `SLEIGHT_HAND=1` forces it on for benchmarks, even with a saved off setting.
+- Without `SLEIGHT_HAND=1`, a `hand.json` that is a link or has another owner, mode or format keeps the hand off until you delete it.
 
 Claude's own file edits and shell commands can't write `hand.json` or run `hand on`, `hand off` or `hand capture`.
 
