@@ -39,7 +39,9 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
 4f. Engine compatibility after every ChatGPT update, in 1.3.1 (owner, 2026-10-19): ChatGPT updates several times a week, so full
    benchmarks rerun periodically, with the engine version recorded on every result, and an automated check for breaking
    changes runs after every update. It builds on `scripts/watch.sh` (daily launchd job: doctor, API docs diff, one task on a
-   version change) and becomes a CI job on this Mac. The workflow file is the owner's to push.
+   version change). The static half (new release detected, engine API and schemas diffed against sleight's contract) runs off
+   this Mac, on a GitHub-hosted runner or the owner's Linux CI box. The live smoke runs on this Mac (owner, 2026-10-19).
+   Public Actions logs don't show engine source or docs. Workflow files are the owner's to push.
 4c. sleight as a Codex plugin in 1.3.0 (owner, 2026-10-19: in 1.3.0 if possible): one repo for both hosts, the repo as a
    Codex marketplace, the skill delivered in Codex, approvals per LAWS, doctor and setup aware of Codex. The menu bar dropdown
    names the host each connected session runs in (Claude Code, Codex, Cursor, with version, from the MCP client's own

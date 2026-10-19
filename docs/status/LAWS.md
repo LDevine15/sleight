@@ -28,7 +28,7 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   (owner, 2026-10-17, so the rule can't loop). They give the median and range, and p90 only at 5 runs. The full suite runs once per release as a regression
   check. An arm's results stand until that arm or the model changes, so a new competitor or a sleight fix round reruns only
   that arm. ChatGPT updates its app several times a week, so an engine update doesn't force reruns. Every published result
-  names the engine version it ran on, and the benchmarks rerun periodically. What runs after every engine update is
+  names the engine version it ran on and its date, and the benchmarks rerun periodically. What runs after every engine update is
   an automated compatibility check for breaking changes (owner, 2026-10-19). A fixture cleanup failure skips to the next task when every app the run launched has exited, and any
   other stop still ends the pass (owner, 2026-10-16). Claude's own computer use runs Haiku 5.5 on the owner's login.
   Arms whose code isn't in the repo (the codex-cu and devtools bridges) are named as not run, with the reason.
@@ -135,7 +135,8 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   sleight-arch never answers macOS permission prompts for the owner.
 - Scripts never send Apple events to an app this Mac hasn't granted Automation for (Excel raised a prompt on 2026-10-17). Fixture
   apps quit through NSRunningApplication and their own Don't Save sheet, answered through System Events.
-- Apps are approved without the owner only through the benchmark's own allowlist.
+- Apps are approved without the owner only through the benchmark's own allowlist. Cursor may join it for testing (owner,
+  2026-10-19), and Cursor's tests run Grok 4.6 at high effort at normal speed, never fast mode, unless the owner says otherwise.
   For the claude-cu arm, the harness may press Claude Code's "Allow for this session" card in its own terminal only when every
   app the card names is on that allowlist (owner, 2026-10-17). sleight-arch may click Allow on Claude in Chrome's own permission
   prompts in the benchmark Chrome profile for the race's sites only (owner, 2026-10-18).
