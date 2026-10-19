@@ -238,6 +238,31 @@ test('engine path: a title or description that names an allowed site proves noth
   assert.match(h.reply(4).result.content[0].text, /can't tell which site this window shows/);
 });
 
+test('engine path: when the browser list failed, an app is judged by its read, so a native app acts and web content without a site does not', async t => {
+  const h = harness(t, { permissions: siteLimits({ state: 'ok', apps: [], sites: ['https://bestbuy.com'] }), webBrowser: () => null });
+  h.js(1, 'let notes = await cua.getApp("com.example.notes")'); await settle();
+  h.fromServer(read(1, 'Notes', 'com.example.notes')); await settle();
+  h.js(2, 'await notes.click(1)'); await settle();
+  assert.equal(h.sent(2), true, 'a native window with no web content acts');
+  h.fromServer(read(2, 'Notes', 'com.example.notes')); await settle();
+  h.js(3, 'let web = await cua.getApp("com.example.browserlike")'); await settle();
+  h.fromServer(treeReply(3, 'Window: "x", App: B.\n0 standard window x\n\t5 HTML content URL: a.example/x\n\t5 HTML content URL: b.example/y\n\t\t6 button Go', 'com.example.browserlike')); await settle();
+  h.js(4, 'await web.click(6)'); await settle();
+  assert.equal(h.sent(4), false);
+  assert.match(h.reply(4).result.content[0].text, /can't tell which site this window shows/);
+});
+
+test('engine path: a confirmed browser\'s read of a page whose site can\'t be proven is withheld, and a page-less read is not', async t => {
+  const h = harness(t, { permissions: siteLimits({ state: 'ok', apps: [], sites: ['https://bestbuy.com'] }), webBrowser: () => true });
+  h.js(1, 'let b = await cua.getApp("com.apple.Safari")'); await settle();
+  h.fromServer(treeReply(1, 'Window: "x", App: Safari.\n0 standard window x\n\t5 HTML content Description: x URL: allowed.example, URL: evil.example/x\n\t\t6 text secret page text', 'com.apple.Safari')); await settle();
+  assert.match(h.reply(1).result.content[0].text, /^You limited the sites sleight acts on, and it can't tell which site this window shows/);
+  assert.doesNotMatch(JSON.stringify(h.reply(1)), /secret page text/);
+  h.js(2, 'let f = await cua.getApp("org.mozilla.firefox")'); await settle();
+  h.fromServer(treeReply(2, firefoxTree, 'org.mozilla.firefox')); await settle();
+  assert.equal(h.reply(2).result.isError, undefined, 'a start page with no web area still reads');
+});
+
 test('engine path: an app that is no web browser acts with site limits, web content or not', async t => {
   const h = harness(t, { permissions: siteLimits({ state: 'ok', apps: [], sites: ['https://bestbuy.com'] }), webBrowser: () => false });
   h.js(1, 'let app = await cua.getApp("com.example.webview")'); await settle();

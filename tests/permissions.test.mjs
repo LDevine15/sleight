@@ -505,26 +505,53 @@ test('sleight\'s own consent host is recognized by its process name or its place
   for (const value of ['com.example.consent', 'Consent Host Pro', 'consent-hosting', undefined, '/Applications/Example.app']) assert.equal(isOwnHost(value), false, String(value));
 });
 
-test('which apps are web browsers is asked of LaunchServices once, in the background, and unknown until it answers', async () => {
+test('which apps are web browsers: LaunchServices\' answer joined with known browsers, and on a failed or empty answer the known ones only', async () => {
   const { webBrowserCheck } = await import('../plugins/sleight/lib/launch.mjs');
+  const flush = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve)); };
   const asked = [];
   const check = webBrowserCheck(async (script, request) => { asked.push([script, request]); return { ok: true, ids: ['com.example.Browser'] }; });
   assert.equal(check('com.example.browser'), undefined, 'unknown until the answer arrives');
-  await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(check('com.apple.Safari'), true, 'a known browser is one before the answer, too');
+  await flush();
   assert.equal(check('com.example.browser'), true);
+  assert.equal(check('com.apple.safari'), true, 'a short answer never clears a known browser');
   assert.equal(check('com.example.editor'), false);
-  assert.equal(check(undefined), undefined);
+  assert.equal(check(undefined), null, 'no bundle id: judged by what the read shows');
   assert.deepEqual(asked, [['web-browsers.js', {}]]);
-  let at = 0, tries = 0;
-  const failed = webBrowserCheck(async () => { tries++; return { ok: false, error: 'no' }; }, () => at);
-  failed('com.example.browser'); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
-  assert.equal(failed('com.example.browser'), undefined, 'a failed ask stays unknown, which refuses under site limits');
-  assert.equal(tries, 1);
-  at = 31000; failed('com.example.browser'); await new Promise(resolve => setImmediate(resolve));
-  assert.equal(tries, 2, 'and is asked again after 30 s');
+  // An empty answer is a failed one: known browsers stay browsers, every other app is judged by its read.
+  for (const answer of [{ ok: true, ids: [] }, { ok: false, error: 'no' }]) {
+    let at = 0, tries = 0;
+    const failed = webBrowserCheck(async () => { tries++; return answer; }, () => at);
+    failed('com.example.browser'); await flush();
+    assert.equal(failed('com.example.browser'), null, JSON.stringify(answer));
+    assert.equal(failed('org.mozilla.firefox'), true);
+    assert.equal(failed.failed(), true);
+    assert.equal(tries, 1);
+    at = 60000; failed('com.example.browser'); await flush();
+    assert.equal(tries, 1, 'no retry storm');
+    at = 301000; failed('com.example.browser'); await flush();
+    assert.equal(tries, 2, 'asked again after 5 minutes');
+  }
   // The launcher asks at startup when the file already has site limits.
   const primed = [];
-  webBrowserCheck(async script => { primed.push(script); return { ok: true, ids: [] }; }).ask();
-  await new Promise(resolve => setImmediate(resolve));
+  webBrowserCheck(async script => { primed.push(script); return { ok: true, ids: ['x.y'] }; }).ask();
+  await flush();
   assert.deepEqual(primed, ['web-browsers.js']);
+});
+
+test('the doctor says when sleight couldn\'t list the browsers', async () => {
+  const { browserDoctorLines } = await import('../plugins/sleight/lib/launch.mjs');
+  assert.deepEqual(await browserDoctorLines(async () => ({ ok: true, ids: ['com.example.browser', 'x.y'] })), ['ok        browsers: 2 apps open https links']);
+  for (const answer of [{ ok: true, ids: [] }, { ok: false, error: 'no' }]) {
+    assert.deepEqual(await browserDoctorLines(async () => answer), ['PROBLEM   sleight couldn\'t list your browsers, so site limits on the engine path hold for known browsers and for windows that show web content',
+      '          a session asks again every 5 minutes']);
+  }
+});
+
+test('a check primes itself when created, so a file deleted before the first call still reads as tampered', t => {
+  const w = world(t);
+  w.write('permissions.json', { version: 1, apps: [], sites: ['https://blocked.example'] });
+  const check = createPermissionCheck({ path: w.path });
+  rmSync(w.path);
+  assert.match(check.site('https://fine.example/'), /^sleight's permissions file is gone since this session read it/);
 });

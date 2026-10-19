@@ -167,6 +167,9 @@ export function createPermissionCheck({ path = permissionsPath(), uid = process.
     }
     return cached;
   };
+  // Read once now, so a file deleted before this process's first check (turbo's worker starts long before its first page)
+  // still reads as tampered.
+  state();
   return Object.freeze({ state, app: query => appRefusal(state(), query), site: url => siteRefusal(state(), url),
     page: page => pageRefusal(state(), page), sitesLimited: () => sitesLimited(state()) });
 }

@@ -1601,16 +1601,18 @@ export function createRelay({
     return undefined;
   }
   // Site blocks on the engine path: a browser window's action needs a read that proves an allowed site. webBrowser is asked
-  // only once the user has site limits. Until it answers (or when it can't), every app counts as a browser: a proven site is
-  // judged, and an action without one is refused.
+  // only once the user has site limits. While its answer is pending (undefined), every app counts as a browser: a proven
+  // site is judged, and an action without one is refused. When the lookup failed or the window has no bundle id (null), a
+  // window counts as a browser's when its read shows web content. A confirmed browser's read of a page whose site can't be
+  // proven is withheld; a read with no web content still reaches Claude, so a start page can be read.
   const UNKNOWN_BROWSERS = "You limited the sites sleight acts on, and it doesn't know yet whether this app is a web browser, so it doesn't act here. Try again in a moment (sleight-mcp permissions lists your limits).";
   const pageLine = (window, read = false) => {
     if (!permissions?.sitesLimited?.()) return undefined;
-    const browser = webBrowser(window?.appId);
-    if (browser === false) return undefined;
-    if (read && (!window?.page || window.page.unproven)) return undefined;
-    if (browser !== true && (!window?.page || window.page.unproven)) return UNKNOWN_BROWSERS;
-    return permissions.page(window?.page);
+    const browser = webBrowser(window?.appId), page = window?.page;
+    if (browser === false || browser === null && !page) return undefined;
+    if (read) return !page || page.unproven && browser !== true ? undefined : permissions.page(page);
+    if (browser === undefined && (!page || page.unproven)) return UNKNOWN_BROWSERS;
+    return permissions.page(page);
   };
   function leaseStop(msg, reason, browserAdvice = false) {
     const note = browserAdvice && msg.params?.name === 'js' && browserLeaseNote(msg.params.arguments?.code, browserHandles);

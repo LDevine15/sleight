@@ -33,6 +33,7 @@ import { lightReturnEnabled } from './light-return.mjs';
 import { collectOwnedEngine } from './checked-stop.mjs';
 import { addPreapproved, listPreapproved, livePreapproved, loadPreapproved, removePreapproved } from './preapproved.mjs';
 import { createPermissionCheck, noteCurrentApp } from './permissions.mjs';
+import { browserDefinitions } from './direct-browser/browsers.mjs';
 import { createGrantAudit } from './preapproved-audit.mjs';
 import { ALLOW_FORBIDDEN_COMMAND, forbiddenTargetsAllowed, matchBlockedApp } from './blocked-apps.mjs';
 import { SELECT_WINDOW_TOOL, selectWindow } from './select-window.mjs';
@@ -150,7 +151,10 @@ async function handDoctorSection() {
   } catch (err) { return ['ghost hand', `PROBLEM   could not read the hand's state (${err.message})`]; }
 }
 async function permissionsDoctorSection() {
-  try { return (await import('./permissions-command.mjs')).permissionsDoctorLines(); }
+  try {
+    const lines = (await import('./permissions-command.mjs')).permissionsDoctorLines();
+    return createPermissionCheck().sitesLimited() ? [...lines, ...await browserDoctorLines()] : lines;
+  }
   catch (err) { return ['permissions', `PROBLEM   could not read the permissions (${err.message})`]; }
 }
 
@@ -210,26 +214,43 @@ export async function doctor({ env = process.env, log = console.log, app = proce
   return 1;
 }
 
-// Which apps are web browsers, for site limits on the engine path: the apps LaunchServices lists for https (web-browsers.js).
-// Asked in the background, at startup when permissions.json already has site limits (ask) or else the first time a check
-// needs it. Until the answer arrives every app counts as a browser, so an action without a proven site is refused; a failed
-// ask stays unknown and is asked again after 30 s.
+// Which apps are web browsers, for site limits on the engine path: the apps LaunchServices lists for https (web-browsers.js),
+// joined with the browsers below, so a short or wrong answer never clears a real browser. Asked in the background, at
+// startup when permissions.json already has site limits (ask) or else the first time a check needs it. Answers: true or
+// false; undefined while the ask is pending, when an action without a proven site is refused; null when the ask failed or
+// came back empty, or the window has no bundle id, when the relay judges the window by whether its read shows web content.
+// A failed ask is repeated after 5 minutes.
+const KNOWN_BROWSERS = new Set([...browserDefinitions('/', '/').map(browser => browser.bundleId), 'com.apple.Safari', 'com.apple.SafariTechnologyPreview',
+  'org.mozilla.firefox', 'org.mozilla.firefoxdeveloperedition', 'org.mozilla.nightly', 'company.thebrowser.Browser', 'com.operasoftware.Opera',
+  'com.openai.atlas', 'com.kagi.kagimacOS', 'app.zen-browser.zen', 'com.duckduckgo.macos.browser'].map(id => id.toLowerCase()));
+const BROWSER_RETRY_MS = 300000;
+const browserIds = result => result?.ok === true && Array.isArray(result.ids) ? result.ids.filter(id => typeof id === 'string' && id) : [];
 export function webBrowserCheck(run = runScript, now = Date.now) {
   let ids, pending = false, failedAt;
   const ask = () => {
-    if (ids || pending || failedAt !== undefined && now() - failedAt < 30000) return;
+    if (ids || pending || failedAt !== undefined && now() - failedAt < BROWSER_RETRY_MS) return;
     pending = true;
     Promise.resolve().then(() => run('web-browsers.js', {})).then(result => {
-      if (result?.ok === true && Array.isArray(result.ids)) ids = new Set(result.ids.filter(id => typeof id === 'string').map(id => id.toLowerCase()));
-      else failedAt = now();
+      const found = browserIds(result);
+      if (found.length) { ids = new Set(found.map(id => id.toLowerCase())); failedAt = undefined; } else failedAt = now();
     }, () => { failedAt = now(); }).finally(() => { pending = false; });
   };
   const check = appId => {
-    if (ids) return typeof appId === 'string' && appId ? ids.has(appId.toLowerCase()) : undefined;
-    ask();
-    return undefined;
+    if (!ids) ask();
+    if (typeof appId !== 'string' || !appId) return null;
+    const id = appId.toLowerCase();
+    if (KNOWN_BROWSERS.has(id) || ids?.has(id)) return true;
+    return ids ? false : failedAt !== undefined ? null : undefined;
   };
-  return Object.assign(check, { ask });
+  return Object.assign(check, { ask, failed: () => !ids && failedAt !== undefined });
+}
+// The doctor's line for that lookup, shown while site limits exist.
+export async function browserDoctorLines(run = runScript) {
+  let found = [];
+  try { found = browserIds(await run('web-browsers.js', {})); } catch {}
+  return found.length ? [`ok        browsers: ${found.length} apps open https links`]
+    : ["PROBLEM   sleight couldn't list your browsers, so site limits on the engine path hold for known browsers and for windows that show web content",
+      '          a session asks again every 5 minutes'];
 }
 
 // SLEIGHT_TRACE=1 logs every relayed message to
