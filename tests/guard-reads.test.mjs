@@ -476,22 +476,109 @@ for (const target of ['{ id: "duplicate" }', '{ label: "Duplicate" }', '{ line: 
   });
 
 // AB3 (Firefox travel, 2026-10-17): a click re-rendered the elements the bound capture held, and the engine refused the next number.
-test('AB3: a bound element the engine refuses is not resent, the stop carries a fresh tree, and that window stops binding', async () => {
+// lp1 (fix 4): when the fresh read has the refused line in the same place, the click goes once more there.
+test('lp1: a bound click the engine refuses after an earlier action goes once more when its whole line is in the same place', async () => {
   let stale = false;
   const f = fixture({ strict: true, current: () => { stale = false; return tree(expected, '\t1 button First\n\t2 button Second'); },
     action: (name, [number]) => {
       if (stale) throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`);
       stale = true;
     } });
+  await f.run('await app.click(1); await app.click({ label: "Second" }); await app.click(1);', { bind: true, guardStopMark: '[stop]' });
+  assert.deepEqual(f.calls.map(c => c.slice(0, 2)), [['read', f.calls[0][1]], ['click', 1], ['click', 2], ['read', f.calls[3][1]], ['click', 2],
+    ['read', f.calls[5][1]], ['click', 1], ['read', f.calls[7][1]]]);
+  // A resend that worked shows no stop: no receipt, and no tree but the call's closing read.
+  assert.equal(f.output.filter(line => typeof line === 'string' && line.startsWith('[stop]{"index"')).length, 0);
+  assert.equal(f.output.filter(line => typeof line === 'string' && line.startsWith(GUARD_MARK)).length, 1);
+});
+
+test('AB3: a bound element the engine refuses is not resent when its line moved, the stop carries a fresh tree, and that window stops binding', async () => {
+  let stale = false, swapped = false;
+  // A sort swapped the two rows: "button Second" is now element 1, which samePlace refuses.
+  const rows = () => swapped ? '\t1 button Second\n\t2 button First' : '\t1 button First\n\t2 button Second';
+  const f = fixture({ strict: true, current: () => { stale = false; return tree(expected, rows()); },
+    action: (name, [number]) => {
+      if (stale) { swapped = true; throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`); }
+      stale = true;
+    } });
   await assert.rejects(f.run('await app.click(1); await app.click({ label: "Second" }); await app.click(1);', { bind: true, guardStopMark: '[stop]' }),
     /2 is an invalid element ID/);
   assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
-  assert.ok(f.output.includes(GUARD_MARK + tree(expected, '\t1 button First\n\t2 button Second') + GUARD_END));
+  assert.ok(f.output.includes(GUARD_MARK + tree(expected, '\t1 button Second\n\t2 button First') + GUARD_END));
+  swapped = false;
   const receipt = JSON.parse(f.output.find(line => line.startsWith('[stop]{"index"')).slice(6));
   assert.equal(receipt.refused, true); assert.equal(receipt.bound, true);
   f.calls.length = 0;
   await f.run('await app.click(1); await app.click({ label: "Second" });', { bind: true });
   assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'read', 'click', 'read']);
+});
+
+// lp1 (fix 4), Safari b7 r2 call 5 (race-1017): click(43) picked December 14, the picker rebuilt its day buttons, and the
+// engine refused click(48) with AXError.invalidUIElement although the fresh read had "button Saturday, December 19, 2026" at
+// 48 as before. The refusal cost 1.7 to 5.2 s a run in 10 of 11 sleight form-travel runs.
+const travel = { title: 'sleight benchmark — Book a trip · Skyway', app: 'Safari', url: null };
+const picker = (value, extra = '') => [`Window: ${JSON.stringify(travel.title)}, App: Safari.`, `0 standard window ${travel.title}, ID: SafariWindow?IsSecure=false`,
+  '\t5 HTML content Description: Book a trip · Skyway, URL: 127.0.0.1:5413/travel', '\t\t23 text Dates', '\t\t24 container',
+  `\t\t\t25 text field Dates, ${value}Placeholder: Check-in – check-out`, '\t\t\t26 container Choose dates', '\t\t\t\t27 button Previous month',
+  '\t\t\t\t28 text December 2026', '\t\t\t\t29 button Next month', ...extra ? [extra] : [],
+  ...Array.from({ length: 31 }, (_, i) => `\t\t\t\t${(extra ? 31 : 30) + i} button ${['Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday', 'Monday'][i % 7]}, December ${i + 1}, 2026`),
+  '\t\t61 text Pick check-in, then check-out.', '\t\t74 button Next'].join('\n');
+function pickerFixture({ before = () => picker(''), after = () => picker('Value: Dec 14, 2026 – choose check-out, '), refuse = 1,
+  error = 'Accessibility error: AXError.invalidUIElement' } = {}) {
+  let picked = false, refusals = refuse;
+  const f = fixture({ strict: true, current: () => picked ? after() : before(),
+    action: (name, [number]) => {
+      if (picked && refusals-- > 0) throw new Error(error.replace('N', number));
+      picked = true;
+    } });
+  return { ...f, run: (code, options = {}) => f.run(code, { bind: true, guardStopMark: '[stop]', ...options }, travel) };
+}
+
+test('lp1: the date picker\'s refused check-out click goes once more to the same day, and nothing else changes', async () => {
+  const f = pickerFixture();
+  await f.run('await app.click(43); await app.click(48);');
+  assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [43, 48, 48]);
+  assert.ok(!f.output.some(line => typeof line === 'string' && line.startsWith('sleight: click(')), 'same number: no note');
+  // The engine's own wording is resent the same way.
+  const g = pickerFixture({ error: 'Computer Use server error -10005: N is an invalid element ID' });
+  await g.run('await app.click(43); await app.click({ label: "Saturday, December 19, 2026" });');
+  assert.deepEqual(g.calls.filter(c => c[0] === 'click').map(c => c[1]), [43, 48, 48]);
+});
+
+test('lp1: a refused click whose line moved with an inserted row goes to its new number and says so', async () => {
+  // samePlace's rules: every other row is the same element, so only the inserted row differs here.
+  const f = pickerFixture({ after: () => picker('', '\t\t\t\t30 text Check-in Dec 14') });
+  await f.run('await app.click(43); await app.click(48);');
+  assert.deepEqual(f.calls.filter(c => c[0] === 'click').map(c => c[1]), [43, 48, 49]);
+  assert.ok(f.output.includes('sleight: click(48) went to element 49, the same "button Saturday, December 19, 2026": an earlier action in this call renumbered the window.\n'));
+});
+
+test('lp1: a refused click is not resent as the first action, for a bare role, after a reorder, in another window, or twice', async () => {
+  // First action: nothing in this call replaced the element.
+  const lone = fixture({ strict: true, current: () => picker(''), action: () => { throw new Error('Accessibility error: AXError.invalidUIElement'); } });
+  await assert.rejects(lone.run('await app.click(48);', { bind: true }, travel), /invalidUIElement/);
+  assert.equal(lone.calls.filter(c => c[0] === 'click').length, 1);
+  // A bare role says nothing about which element it was.
+  const unnamed = () => picker('').replace('29 button Next month', '29 button');
+  const bare = pickerFixture({ before: unnamed, after: unnamed });
+  await assert.rejects(bare.run('await app.click(43); await app.click(29);'), /invalidUIElement/);
+  assert.deepEqual(bare.calls.filter(c => c[0] === 'click').map(c => c[1]), [43, 29]);
+  // The fresh read is another window.
+  const moved = pickerFixture({ after: () => picker('').replaceAll(travel.title, 'Trips · Skyway') });
+  await assert.rejects(moved.run('await app.click(43); await app.click(48);'), /invalidUIElement/);
+  assert.deepEqual(moved.calls.filter(c => c[0] === 'click').map(c => c[1]), [43, 48]);
+  // The days were re-sorted: the same line at another number with no inserted block.
+  const sorted = pickerFixture({ after: () => picker('').replace('47 button Friday, December 18, 2026', '47 button Saturday, December 19, 2026')
+    .replace('48 button Saturday, December 19, 2026', '48 button Friday, December 18, 2026') });
+  await assert.rejects(sorted.run('await app.click(43); await app.click(48);'), /invalidUIElement/);
+  assert.deepEqual(sorted.calls.filter(c => c[0] === 'click').map(c => c[1]), [43, 48]);
+  assert.ok(sorted.output.some(line => typeof line === 'string' && line.startsWith(GUARD_MARK)), 'the stop keeps its fresh tree');
+  // Refused again: one resend only, and the stop carries the fresh tree and a receipt.
+  const twice = pickerFixture({ refuse: 2 });
+  await assert.rejects(twice.run('await app.click(43); await app.click(48);'), /invalidUIElement/);
+  assert.deepEqual(twice.calls.filter(c => c[0] === 'click').map(c => c[1]), [43, 48, 48]);
+  const receipt = JSON.parse(twice.output.find(line => line.startsWith('[stop]{"index"')).slice(6));
+  assert.equal(receipt.refused, true); assert.equal(receipt.fresh, true);
 });
 
 test('AB3 review: a flagged window binds again after three clean actions that read first', async () => {
@@ -502,7 +589,8 @@ test('AB3 review: a flagged window binds again after three clean actions that re
       if (stale && refuse) { refuse = false; throw new Error(`Computer Use server error -10005: ${number} is an invalid element ID`); }
       stale = true;
     } });
-  await assert.rejects(f.run('await app.click(1); await app.click(2);', { bind: true }), /2 is an invalid element ID/);
+  // The refused click goes once more (its line is in the same place), and the window is still flagged.
+  await f.run('await app.click(1); await app.click(2);', { bind: true });
   f.calls.length = 0;
   // The first action reads anyway; the next three read because the window is flagged, and the fifth binds.
   await f.run('await app.click(1); await app.click(2); await app.click(3); await app.click(2); await app.click(3);', { bind: true });
@@ -552,21 +640,23 @@ test('AB3: a refusal on a fresh read leaves binding on', async () => {
 // FM2 (Firefox travel, 2026-10-18): a date picker rebuilt its buttons after the first pick, and the batched second click
 // failed with a native error instead of the engine's "invalid element ID".
 test('FM2: AXError.invalidUIElement on a bound click gets the same fresh tree, keeps the error, resends nothing', async () => {
-  let stale = false;
+  let stale = false, gone = false;
+  // The rebuilt window no longer has the clicked line, so nothing is resent.
   const rows = '\t1 button First\n\t2 button Second';
-  const f = fixture({ strict: true, current: () => { stale = false; return tree(expected, rows); },
+  const f = fixture({ strict: true, current: () => { stale = false; return tree(expected, gone ? '\t1 button First\n\t2 button Second, Value: 1' : rows); },
     action: () => {
-      if (stale) throw new Error('Accessibility error: AXError.invalidUIElement');
+      if (stale) { gone = true; throw new Error('Accessibility error: AXError.invalidUIElement'); }
       stale = true;
     } });
   await assert.rejects(f.run('await app.click(1); await app.click({ label: "Second" }); await app.click(1);', { bind: true, guardStopMark: '[stop]' }),
     /Accessibility error: AXError\.invalidUIElement/);
   assert.deepEqual(f.calls.map(c => c[0]), ['read', 'click', 'click', 'read']);
   assert.equal(f.output.filter(line => typeof line === 'string' && line.startsWith(GUARD_MARK)).length, 1);
-  assert.ok(f.output.includes(GUARD_MARK + tree(expected, rows) + GUARD_END));
+  assert.ok(f.output.includes(GUARD_MARK + tree(expected, '\t1 button First\n\t2 button Second, Value: 1') + GUARD_END));
   const receipt = JSON.parse(f.output.find(line => line.startsWith('[stop]{"index"')).slice(6));
   assert.equal(receipt.refused, true); assert.equal(receipt.bound, true); assert.equal(receipt.fresh, true);
   assert.match(receipt.error, /AXError\.invalidUIElement/);
+  gone = false;
   // The binding is cleared: the next call reads before each action instead of trusting a capture.
   f.calls.length = 0;
   await f.run('await app.click(1); await app.click(2);', { bind: true });
