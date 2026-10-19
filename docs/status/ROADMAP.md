@@ -41,6 +41,9 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
    introduction), and the model only where the host reports it. sleight never guesses a model. Publishing stays the owner's call.
    In 1.4.0 (owner, 2026-10-19): local performance analytics in the dropdown and a command, such as seconds per action and reads
    saved, and turbo against the engine path, kept on this Mac, built on so1's action log, nothing sent anywhere.
+4e. Turbo inside Codex in 1.3.1 (owner, 2026-10-19): a way to tie each turbo turn to the user's own message that the model can't
+   forge, since Codex's hooks can't hold the mod's private token. Building on `claude/codex-turbo`. AS-3 also comes in 1.3.1 as
+   one tool, `browser_open`, behind `SLEIGHT_BROWSER_CORE=1` until its race A/B saves at least 30 s a round with every task still passing.
 4d. Cursor plugin support in 1.4.0 (owner, 2026-10-19): sleight already runs in Cursor as an MCP server, with approval prompts
    naming Cursor (docs/other-hosts.md). 1.4.0 makes it a first-class Cursor install in the same way 4c does for Codex. The server
    and skill come from the same source as the other hosts and install through Cursor's own packaging, Cursor's sessions get the
