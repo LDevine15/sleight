@@ -554,13 +554,17 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
   // 1.3.1 took in the release line's payment gate and Codex kernel epochs; the merged off path matched b8020ea5 byte for byte.
   // PG3's suggestion pick and its review fixes changed the gate the guard and the REPL setup embed, so those pins moved again.
   // CC6's wait for unawaited actions before the call's read (guard.settle) moved them once more.
+  // CC4 and CC5 add loading settlement and observed batch targets to the shared setup, including its off path.
+  // The X5 review fixes (payment gate on a resend, seen parents, settle budget) changed that setup again, and so did the
+  // re-review's (a resend's payment stop is not a refusal, the resend gate starts from the pre-attempt payment, bare parents).
+  // The 1.4.0 integration (CC6 with CC4/CC5) recomputed them from the merged setup.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
     guardedLean: hash(guardedCode('await app.click(1);', window, undefined, undefined, { prompt: 'lean' })),
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: '3c5e1ef660d9d3a2', guardedLean: '57a29e536cd63d50', reuse: 'a119c9db1f5d54fe', read: '99bbbb0d2225ee4f', repl: '99bbbb0d2225ee4f' });
+  }, { guarded: 'dcab3f0d42e13f6c', guardedLean: '37a827630bc345bb', reuse: 'b824edb3aa6dc2c4', read: '36c4fa230c249709', repl: '36c4fa230c249709' });
 });
 
 test('with both switches off the guard carries none of the outcome code', () => {

@@ -35,7 +35,7 @@ for (const [name, before, after, code] of [
   ['duplicate old label', tree(['\t17 button Continue', '\t18 button Continue']), tree(['\t22 button Continue'])],
   ['duplicate current label', tree(['\t17 button Continue']), tree(['\t22 button Continue', '\t23 button Continue'])],
   ['bare role', tree(['\t17 container']), tree(['\t22 container'])],
-  ['multiple literal numbers', tree(['\t17 button Continue']), tree(['\t22 button Continue']), 'await tab.click(17); await tab.click(18);'],
+  ['missing remaining literal', tree(['\t17 button Continue']), tree(['\t22 button Continue']), 'await tab.click(17); await tab.click(18);'],
   ['changed document', tree(['\t17 button Continue']), tree(['\t22 button Continue']).replace('/example.com', '/example.org')],
   ['missing old row', tree(['\t18 button Back']), tree(['\t22 button Continue'])],
 ]) test(`${name} never follows a stale number`, async () => {
@@ -205,14 +205,20 @@ test('a refusal includes the fresh tab tree', async () => {
   assert.deepEqual(f.actions, []);
 });
 
-test('a refused multi-index call includes its unique current row from the existing read', async () => {
+test('a multi-index call follows both unique rows from each fresh read', async () => {
   const f = fixture(tree(['\t17 button Continue, ID: continue', '\t18 button Cancel, ID: cancel']),
     tree(['\t17 button Back', '\t22 button Continue, ID: continue, Value: current', '\t23 button Cancel, ID: cancel']));
-  await assert.rejects(f.run("var tab = await cua.getTab('1', {browser:'one'}); await tab.click(17); await tab.click(18);"), err => {
-    assert.match(err.message, /Current unique row 22:.*button Continue, ID: continue, Value: current/);
-    return true;
-  });
-  assert.equal(f.reads.length, 1);
+  await f.run("var tab = await cua.getTab('1', {browser:'one'}); await tab.click(17); await tab.click(18);");
+  assert.equal(f.reads.length, 2);
+  assert.deepEqual(f.actions.map(a => a.args[0]), [22, 23]);
+});
+
+test('a timed-out batch read stops without sending unchecked input', async () => {
+  const f = fixture(tree(['\t17 button Continue', '\t18 button Cancel']), tree([]));
+  f.tab.getAXState = () => new Promise(() => {});
+  f.context.setTimeout = fn => { queueMicrotask(fn); return 1; };
+  f.context.clearTimeout = () => {};
+  await assert.rejects(f.run("var tab = await cua.getTab('1'); await tab.click(17); await tab.click(18);"), /sleight stopped before.*timed out/);
   assert.deepEqual(f.actions, []);
 });
 

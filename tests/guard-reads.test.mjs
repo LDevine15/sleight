@@ -906,11 +906,12 @@ test('the first action goes where the line Claude saw moved, and stops when that
   // Claude saw two such rows: the one left may be the other row's.
   const dup = fixture({ current: () => tree(expected, '\t14 text Inbox\n\t15 button Delete') });
   await assert.rejects(dup.run('await app.click(14);', { seenLines: { 14: 'button Delete' }, literals: [14], uniqueSeen: [] }), /changed since you read the window/);
-  // With a second literal, that number shifted too and nothing after the first action would catch it.
+  // CC5: both observed lines shifted and remain unique, so the whole batch can follow them.
   const two = fixture({ current: () => tree(expected, '\t14 menu bar item File\n\t15 menu bar item Format\n\t20 button Go') });
-  await assert.rejects(two.run('await app.click(14); await app.click(19);', { seenLines: { 14: 'menu bar item Format', 19: 'button Go' }, literals: [14, 19], uniqueSeen: [14, 19] }),
-    /changed since you read the window/);
-  assert.deepEqual([gone, twice, bare, dup, two].flatMap(x => x.calls.filter(c => c[0] === 'click')), []);
+  await two.run('await app.click(14); await app.click(19);', { seenLines: { 14: 'menu bar item Format', 19: 'button Go' }, literals: [14, 19], uniqueSeen: [14, 19],
+    seenParents: { 14: 'standard window, URL: file:///tmp/a.txt', 19: 'standard window, URL: file:///tmp/a.txt' } });
+  assert.deepEqual(two.calls.filter(c => c[0] === 'click'), [['click', 15], ['click', 20]]);
+  assert.deepEqual([gone, twice, bare, dup].flatMap(x => x.calls.filter(c => c[0] === 'click')), []);
   const same = fixture({ current: () => tree(expected, '\t14 menu bar item Format') });
   await same.run('await app.click(14);', { seenLines: { 14: 'menu bar item Format' }, literals: [14] });
   assert.deepEqual(same.calls.filter(c => c[0] === 'click'), [['click', 14]]);

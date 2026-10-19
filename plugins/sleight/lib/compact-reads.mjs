@@ -1904,6 +1904,23 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
       for (const n of numbers ?? believed.keys()) if (believed.has(n)) out[n] = indented ? believed.get(n) : believed.get(n).replace(/^\t*/, '');
       return Object.keys(out).length ? out : undefined;
     },
+    // number -> the whole line of its parent in that tree (null at the root), by indentation in number order, as the
+    // guard's elementParents reads a fresh tree. A line without an ID moving to another parent is another element.
+    seenParents(window, numbers) {
+      const entry = window && seen.get(documentKey({ title: window.title, app: window.app, url: window.url }));
+      if (!entry) return undefined;
+      const rows = [...new Map(entry.believed ?? numbered(entry.lines))].sort(([a], [b]) => a - b);
+      const stack = [], parents = new Map();
+      for (const [n, key] of rows) {
+        const depth = /^\t*/.exec(key)[0].length;
+        while (stack.length && stack.at(-1).depth >= depth) stack.pop();
+        parents.set(n, stack.at(-1)?.line ?? null);
+        stack.push({ depth, line: key.slice(depth) });
+      }
+      const out = {};
+      for (const n of numbers ?? parents.keys()) if (parents.has(n)) out[n] = parents.get(n);
+      return Object.keys(out).length ? out : undefined;
+    },
     // Each window's last full tree, for numbersMoved to compare a later read against.
     trees() { return new Map([...seen].map(([key, entry]) => [key, entry.lines])); },
     // Whether an element number up to `upTo` may name another element in the last window read in

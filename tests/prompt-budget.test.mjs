@@ -209,7 +209,8 @@ test('the launcher selects nosavestop without changing default, disabled or merg
 
 test('only lean selects shorter text and every default prompt stays byte-identical', { skip }, () => {
   assert.ok(leanSkill().length < skillRules(skillPath, {}).length);
-  assert.equal(hash(JSON.stringify(noticeInventory().map(e => e.text))), baseline.notices);
+  // Runtime guard notices belong to the same pinned inventory as relay advice.
+  assert.equal(hash(JSON.stringify([...noticeInventory(), ...sharedNoticeInventory(), ...taggedNoticeInventory()].map(e => e.text))), baseline.notices);
   for (const env of [{}, { SLEIGHT_PROMPT: 'default' }, { SLEIGHT_PROMPT: 'LEAN' }]) {
     assert.equal(hash(skillRules(skillPath, env)), baseline.skill);
     assert.equal(hash(JSON.stringify(localToolDefinitions(env))), baseline.tools);

@@ -43,6 +43,7 @@ async function run(code, { screens, advance, expected, seen = lines(screens[0]),
 }
 
 // 1. bind: a plain button that asks for confirmation. The engine header names the sheet.
+// Both numbers are literals Claude saw, so CC5's batch check stops first, with its own wording.
 test('bind stops the second numbered click after a confirmation sheet', async () => {
   const main = header('Groups') + '\n\t19 button Remove Group\n\t20 button Remove Member\n\t21 button Done';
   const sheet = header('Remove “Design”?') + '\n0 sheet\n\t19 button Cancel\n\t20 button Remove\n\t21 text Removing a group cannot be undone';
@@ -50,9 +51,13 @@ test('bind stops the second numbered click after a confirmation sheet', async ()
   const old = await run(code, { screens: [main, sheet], expected: win('Groups'), mode: 'old' });
   const now = await run(code, { screens: [main, sheet], expected: win('Groups'), mode: 'new' });
   assert.deepEqual(old.inputs, [['click', 19]]);
-  assert.match(old.error, /changed what element 20 is/);   // adopted the sheet, then saw 20 is now its Remove
+  assert.match(old.error, /changed what element 20 is|element 20 changed since you read the window/);   // adopted the sheet, then saw 20 is now its Remove
   assert.deepEqual(now.inputs, old.inputs);
-  assert.match(now.error, /changed what element 20 is/);
+  assert.match(now.error, /changed what element 20 is|element 20 changed since you read the window/);
+  // Without the lines Claude saw there is no batch check, and the bind path itself stops with its own wording.
+  const bound = await run(code, { screens: [main, sheet], expected: win('Groups'), mode: 'new', overrides: { seenLines: undefined, uniqueSeen: [] } });
+  assert.deepEqual(bound.inputs, old.inputs);
+  assert.match(bound.error, /an earlier action in this call changed what element 20 is/);
 });
 
 // 1b. bind: the same with a label: the old default looked the label up in the sheet and found none.
@@ -147,9 +152,12 @@ test('bind reads after secondary actions and scrolling', async () => {
     const code = `await app.${first}; await app.click(6);`;
     const old = await run(code, { screens: [list, scrolled], expected: win('Inbox', 'Mail'), mode: 'old' });
     const now = await run(code, { screens: [list, scrolled], expected: win('Inbox', 'Mail'), mode: 'new' });
-    assert.match(old.error, /changed what element 6 is/, first);          // old: re-read, row 6 is another message now
+    assert.match(old.error, /changed what element 6 is|element 6 changed since you read the window/, first);          // old: re-read, row 6 is another message now
     assert.deepEqual(now.inputs, old.inputs, first);
-    assert.match(now.error, /changed what element 6 is/);
+    assert.match(now.error, /changed what element 6 is|element 6 changed since you read the window/);
+    const bound = await run(code, { screens: [list, scrolled], expected: win('Inbox', 'Mail'), mode: 'new', overrides: { seenLines: undefined, uniqueSeen: [] } });
+    assert.deepEqual(bound.inputs, old.inputs, first);
+    assert.match(bound.error, /an earlier action in this call changed what element 6 is/, first);
   }
 });
 
