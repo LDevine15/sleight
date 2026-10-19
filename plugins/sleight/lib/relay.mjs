@@ -3802,7 +3802,7 @@ export function createRelay({
                 ...(light ? { lightReturn: light } : {}),
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
-                seenLines, literals: numbers, literalOrder: literalElements(originalCode),
+                seenLines, seenParents: compactor.seenParents(seenWindow, numbers), literals: numbers, literalOrder: literalElements(originalCode),
                 uniqueSeen, payment: paymentMessages.guard(confirmPayments) });
             if (receiptTyping) msg.params.arguments.code += typingReceiptCode(filterMark);
           } else msg.params.arguments.code = swipeCode;

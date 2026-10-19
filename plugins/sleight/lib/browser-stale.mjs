@@ -8,16 +8,22 @@ function parseTree(text) {
   const lines = text.split('\n'), header = lines[0];
   const id = /^Browser tab: (\d+), Title: "(?:[^"\\]|\\.)*", URL: "(?:[^"\\]|\\.)*"\.$/.exec(header)?.[1];
   if (!id) return;
-  const rows = {};
+  // parents: number -> its parent's number by indentation (null at the root).
+  const rows = {}, parents = {}, stack = [];
   let last;
   for (const line of lines.slice(1)) {
     if (/browser tree lines omitted|^[+~-] \t*\d+ /.test(line)) return { id };
-    const match = /^\t*(\d+) (.+)$/.exec(line);
-    if (match) { last = match[1]; rows[last] = match[2]; }
+    const match = /^(\t*)(\d+) (.+)$/.exec(line);
+    if (match) {
+      last = match[2]; rows[last] = match[3];
+      while (stack.length && stack.at(-1).depth >= match[1].length) stack.pop();
+      parents[last] = stack.at(-1)?.number ?? null;
+      stack.push({ depth: match[1].length, number: last });
+    }
     else if (line && last !== undefined && !/^The focused UI element /.test(line)) rows[last] += '\n' + line;
     else last = undefined;
   }
-  return { id, header, rows };
+  return { id, header, rows, parents };
 }
 
 function samePage(a, b) {
@@ -50,8 +56,11 @@ function install(cua, config, parse, methods, samePage, sameRow) {
           const current = state.config, seen = current.trees[String(raw.id)];
           if (typeof args[0] === 'number' && current.literals.includes(args[0]) && seen) {
             const requested = args[0];
-            const call = state.call.get(raw) ?? { moved: Object.create(null), remaining: current.order.slice() };
+            // This tab's batch leaves out numbers only another tab's tree holds. A number no tree holds stays, and stops it.
+            const call = state.call.get(raw) ?? { moved: Object.create(null), remaining: current.order.filter(n => seen.rows[n] !== undefined ||
+              !Object.values(current.trees).some(tree => tree.rows[n] !== undefined)) };
             state.call.set(raw, call);
+            state.tabs.add(String(raw.id));
             const number = call.moved[requested] ?? requested;
             if (number !== requested) args = [number, ...args.slice(1)];
             let text;
@@ -78,13 +87,18 @@ function install(cua, config, parse, methods, samePage, sameRow) {
             // one row from the tree the caller saw, including unchanged numbers.
             const remaining = [...new Set(call.remaining)];
             const shifted = remaining.some(n => !sameRow(seen.rows[n], fresh?.rows?.[n]));
+            // A line without an ID, description or help also keeps the parent it had: "button 15" under another month
+            // is another day. Literals on more than one tab in a call never recover.
+            const parentOf = (tree, number) => tree?.parents?.[number] == null ? null : tree.rows[tree.parents[number]];
+            const sameParent = (n, number) => /\b(?:ID|Description|Help): /.test(seen.rows[n]) || seen.parents?.[n] !== undefined &&
+              (seen.parents[n] === null ? parentOf(fresh, number) === null : sameRow(seen.parents[n], parentOf(fresh, number)));
             if (current.order.length > 1 && (call.shifted || shifted)) {
               const resolved = Object.create(null);
               for (const n of remaining) {
                 const line = seen.rows[n];
                 const matches = typeof line !== 'string' ? [] : Object.entries(fresh?.rows ?? {}).filter(([, row]) => sameRow(line, row));
-                if (owners.size !== 1 || !samePage(fresh?.header, seen.header) || !seen.unique.includes(n) ||
-                    /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(line ?? '') || matches.length !== 1) {
+                if (owners.size !== 1 || state.tabs.size > 1 || !samePage(fresh?.header, seen.header) || !seen.unique.includes(n) ||
+                    /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(line ?? '') || matches.length !== 1 || !sameParent(n, matches[0][0])) {
                   throw new Error(/* notice */ `sleight stopped before ${name}(${requested}): element ${n}${current.batchMissing}` + (typeof text === 'string' ? '\n' + text : ''));
                 }
                 resolved[n] = Number(matches[0][0]);
@@ -142,6 +156,7 @@ function install(cua, config, parse, methods, samePage, sameRow) {
   }
   state.config = config;
   state.call = new WeakMap();
+  state.tabs = new Set();
 }
 
 export function createBrowserStaleGuard() {
@@ -171,6 +186,8 @@ export function createBrowserStaleGuard() {
       const numbers = [...new Set(literals)], selected = {};
       for (const [id, tree] of trees) selected[id] = { header: tree.header,
         rows: Object.fromEntries(numbers.filter(n => tree.rows[n] !== undefined).map(n => [n, tree.rows[n]])),
+        parents: Object.fromEntries(numbers.filter(n => tree.rows[n] !== undefined)
+          .map(n => [n, tree.parents?.[n] == null ? null : tree.rows[tree.parents[n]] ?? null])),
         unique: numbers.filter(n => tree.rows[n] !== undefined && Object.values(tree.rows).filter(line => line === tree.rows[n]).length === 1) };
       const config = { trees: selected, literals: numbers, order: literals,
         batchTimeout: promptNotice(/* lean notice */ ': tab read timed out (1.5 s). Read this tab again.', prompt),

@@ -44,6 +44,8 @@ for (const method of ['click', 'setValue', 'selectText', 'performSecondaryAction
     const f = fixture(t);
     const { update } = f.act(`await second.${method}(2, "value")`);
     assert.deepEqual(update.seenLines, { 2: 'button Target, ID: target' });
+    // The parent from the same tree, so a batch remap can't follow a line to another parent (review of X5).
+    assert.deepEqual(update.seenParents, { 2: 'standard window' });
     assert.deepEqual(update.uniqueSeen, [2]);
     assert.equal(update.window.app, 'First');
     assert.deepEqual([...f.inputLease.owned.keys()], [leaseKey(update.window)]);

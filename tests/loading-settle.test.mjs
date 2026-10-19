@@ -88,3 +88,30 @@ for (const [name, before, after] of [
   await f.run('await app.click(1);');
   assert.deepEqual(f.delays, []);
 });
+
+// Review of X5: settling compares rows without their digits, keeps the last good tree when a poll read throws, and
+// spends at most 3 s per call.
+test('a ticking progress value matches its baseline and adds no wait', async () => {
+  const mk = row => `Window: "W", App: A.\n0 standard window W\n\t1 button Pay\n\t2 ${row}`;
+  let reads = 0;
+  const out = await settleLoading(async () => { reads++; return mk('progress indicator 12%'); }, mk('progress indicator 10%'), mk('progress indicator 11%'), t => t.split('\n')[0]);
+  assert.equal(out, mk('progress indicator 11%'));
+  assert.equal(reads, 0);
+});
+
+test('a poll read that throws returns the last good tree', async () => {
+  const mk = row => `Window: "W", App: A.\n0 standard window W\n\t1 button Pay${row}`;
+  const loading = mk('\n\t2 button (disabled) Loading');
+  assert.equal(await settleLoading(async () => { throw new Error('window gone'); }, mk(''), loading, t => t.split('\n')[0]), loading);
+});
+
+test('settling spends at most 3 s in one call however many actions start a load', async () => {
+  let now = 0, acted = 0;
+  const tree = `Window: "W", App: A.\n0 standard window W\n\t1 button Go\n\t2 button Go too\n\t3 button Go three`;
+  const raw = { getAXState: async () => acted ? tree + `\n\t4 button (disabled) Loading ${'ABC'[acted - 1] ?? 'C'}` : tree, click: async () => { acted++; } };
+  const code = guardedCode('await app.click(1); await app.click(2); await app.click(3); await app.getAXState();', { title: 'W', app: 'A', url: null });
+  await runInNewContext(`(async () => { ${code} })()`, { app: raw, cua: { getApp: async () => raw }, nodeRepl: { write() {} },
+    performance: { now: () => now }, setTimeout: (fn, ms) => setImmediate(() => { now += ms; fn(); }), clearTimeout: clearImmediate });
+  assert.ok(now <= 3000, `settled for ${now} ms`);
+  assert.ok(now >= 1500);
+});
