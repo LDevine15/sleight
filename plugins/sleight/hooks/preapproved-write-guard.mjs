@@ -247,5 +247,7 @@ export function loggingSwitchWriteDenied(input) {
   if (candidates.some(text => /\blaunchctl\s+setenv\b|\bclaude\s+(?:mcp|config)\b/.test(text))) return true;
   // A write to a config file, or an interpreter or editor tool run with one named: reads such as grep pass.
   return shellWritePaths(command).some(({ path }) => CONFIG.test(folded(normalize(path)))) ||
-    candidates.some(text => CONFIG_TEXT.test(text) && SETTERS.test(text));
+    // Each test on its own spelling: a fold that reaches the path can join the interpreter's name onto the argument before it
+    // (Python's and Ruby's adjacent literals), and the raw spelling keeps the name but not the path.
+    candidates.some(text => CONFIG_TEXT.test(text)) && candidates.some(text => SETTERS.test(text));
 }

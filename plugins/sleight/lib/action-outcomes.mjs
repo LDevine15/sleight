@@ -7,6 +7,15 @@ import { execFileSync } from 'node:child_process';
 import { homedir, userInfo } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
+// A lock file's age. One another session removed meanwhile reads as fresh, so recovery is left to that session (no
+// rotation-failure warning for a race two sessions lose fairly).
+const age = path => {
+  try { return Date.now() - lstatSync(path).mtimeMs; } catch (error) {
+    if (error.code === 'ENOENT') return 0;
+    throw error;
+  }
+};
+
 // The account's short and full names, as receipts scrub them: once per log, on its first write.
 // userInfo() throws for a uid with no passwd entry; the log then scrubs only the home path.
 function ownerNames() {
@@ -411,16 +420,19 @@ export class ActionLog {
       if (error.code !== 'EEXIST') throw error;
       // Only one session may recover a stale lock. Recheck its age after the exclusive claim: a different
       // session may already have replaced the stale file with a fresh lock while we waited.
-      if (Date.now() - lstatSync(lock).mtimeMs < 30000) return;
+      if (age(lock) < 30000) return;
       const reclaim = lock + '.reclaim';
       let claim;
       try { claim = openSync(reclaim, flags, 0o600); } catch (error) {
         if (error.code === 'EEXIST') {
           // A recovery holder can die too. Leave live holders alone; retry recovery on the next write.
-          if (Date.now() - lstatSync(reclaim).mtimeMs >= 30000) {
+          if (age(reclaim) >= 30000) {
             // Move first, then check the file we actually took. The old pathname may now name a fresh holder.
             const expired = reclaim + '.' + randomUUID();
-            renameSync(reclaim, expired);
+            try { renameSync(reclaim, expired); } catch (error) {
+              if (error.code === 'ENOENT') return; // another session took it first
+              throw error;
+            }
             if (Date.now() - lstatSync(expired).mtimeMs >= 30000) unlinkSync(expired);
             else {
               // Never overwrite a new claim. If one won the name, retain the moved holder at its unique path.
@@ -433,7 +445,7 @@ export class ActionLog {
         throw error;
       }
       try {
-        if (Date.now() - lstatSync(lock).mtimeMs < 30000) return;
+        if (age(lock) < 30000) return;
         unlinkSync(lock);
         try { fd = openSync(lock, flags, 0o600); } catch (error) {
           if (error.code === 'EEXIST') return;

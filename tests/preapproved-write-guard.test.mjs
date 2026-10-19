@@ -285,3 +285,13 @@ test('the logging switch hook folds JS joins without joining quoted shell argume
   }
   assert.equal(denied({ tool: 'Bash', command: `env 'A=1' 'grep' SLEIGHT_OUTCOMES '/Users/u/.zs'+'hrc'` }), false);
 });
+
+test('the logging switch hook catches Python and Ruby adjacent literals beside separate quoted shell arguments', async () => {
+  const { loggingSwitchWriteDenied: denied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
+  for (const command of [
+    `env 'A=1' 'python3' -c "open('/Users/u/.zs' 'hrc','a').write('SLEIGHT_OUTCOMES=1')"`,
+    `env 'A=1' 'ruby' -e "File.write('/Users/u/.zs' 'hrc','SLEIGHT_OUTCOMES=1',mode:'a')"`,
+    `env 'A=1' 'python3' -c "open('/Users/u/.zs' 'hrc','a').write('SLEIGHT_OUT' 'COMES=1')"`,
+  ]) assert.equal(denied({ tool: 'Bash', command }), true, command);
+  assert.equal(denied({ tool: 'Bash', command: `env 'A=1' 'grep' SLEIGHT_OUTCOMES '/Users/u/.zs' 'hrc'` }), false);
+});

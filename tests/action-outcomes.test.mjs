@@ -919,3 +919,31 @@ test('sensitive names and IDs suppress typed lengths in both plain text area kin
     }
   }
 });
+
+test('a lock or recovery claim another session removes meanwhile is a lost race, not a rotation failure', async t => {
+  for (const vanish of ['lock', 'reclaim rename']) {
+    const fs = (await import('node:fs')).default, { syncBuiltinESMExports } = await import('node:module');
+    const root = mkdtempSync(join(dir, 'vanish-')), path = join(root, 'shared.jsonl'), lock = path + '.lock', reclaim = lock + '.reclaim';
+    writeFileSync(path, 'x'.repeat(390) + '\n', { mode: 0o600 });
+    for (const file of vanish === 'lock' ? [lock] : [lock, reclaim]) {
+      writeFileSync(file, '', { mode: 0o600 });
+      utimesSync(file, new Date(0), new Date(0));
+    }
+    const said = [], method = vanish === 'lock' ? 'lstatSync' : 'renameSync', original = fs[method], target = vanish === 'lock' ? lock : reclaim;
+    let hits = 0;
+    t.mock.method(process.stderr, 'write', text => { said.push(text); return true; });
+    t.mock.method(fs, method, (...args) => {
+      if (args[0] === target && ++hits === 1) throw Object.assign(new Error('fixture'), { code: 'ENOENT' });
+      return original(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      const log = new ActionLog({ path, root, maxBytes: 400 });
+      log.write([{ call: vanish }]);
+      assert.equal(hits, 1, `${vanish}: the race site was reached`);
+      assert.equal(log.rotationFailures, 0, vanish);
+      assert.deepEqual(said, [], vanish);
+      assert.ok(readFileSync(path, 'utf8').includes(JSON.stringify({ call: vanish }).slice(1, -1)), vanish);
+    } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+  }
+});
