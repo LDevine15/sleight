@@ -11,7 +11,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const win = { id: 11, pid: 7, owner: 'Firefox', title: 'Settings', layer: 0, bounds: { X: 0, Y: 0, Width: 800, Height: 600 } };
 const cover = (X, Y, Width, Height) => ({ id: 33, pid: 9, owner: 'Finder', title: '', layer: 0, bounds: { X, Y, Width, Height } });
 const row = { X: 10, Y: 100, Width: 700, Height: 30 };
-const exposedIn = list => p => { const top = topAt(list, p); return !!top && top.id === win.id && top.pid === win.pid; };
+const exposedIn = list => p => { const top = topAt(list, p, win.pid); return !!top && top.id === win.id && top.pid === win.pid; };
 
 test('the exposed point is inside the same element and the nearest one to the original', () => {
   const list = [cover(300, 90, 120, 60), win];
@@ -104,4 +104,52 @@ test('recheck refuses when a relocated point is covered again, the element moved
   assert.match(result.recheck(list), /moved/);
   state.frame = row; state.hit = false;
   assert.match(result.recheck(list), /no longer on the same element/);
+});
+
+// A second context whose system-wide hit test answers with eventPid(p), the process the window server gives the click to.
+function passThroughContext(eventPid) {
+  let hits = 0;
+  const systemWide = {};
+  const $ = {
+    AXUIElementCreateSystemWide: () => systemWide,
+    AXUIElementCopyElementAtPosition: (el, x, y, out) => { assert.equal(el, systemWide); hits++; const pid = eventPid({ x, y }); out[0] = { pid }; return pid ? 0 : -25212; },
+    AXUIElementGetPid: (el, out) => { out[0] = el.pid; return 0; },
+  };
+  const c = vm.createContext({ $, Ref: () => [], ObjC: { import() {}, castRefToObject: v => v }, Application: () => ({}) });
+  vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8'), c);
+  return { c, topAt: vm.runInContext('topAt', c), hits: () => hits };
+}
+const banner = { id: 40, pid: 739, owner: 'Notification Center', title: 'Notification Center', layer: 21, bounds: { X: 0, Y: 0, Width: 1512, Height: 982 } };
+const backdrop = { id: 310887, pid: 633, owner: 'Dock', title: 'half-backdrop', layer: 0, bounds: { X: -4, Y: 32, Width: 762, Height: 950 } };
+
+test('a window that lets the click through is not cover; one hit test per point and window list', () => {
+  const { c, topAt, hits } = passThroughContext(() => 7);
+  const list = [banner, backdrop, win], p = { x: 360, y: 115 };
+  assert.equal(topAt(list, p, win.pid).id, win.id);
+  assert.equal(c.exposedAt(list, win, p), true);
+  assert.equal(c.coveringApp(list, win, { start: p, end: { x: 40, y: 50 } }), null);
+  assert.doesNotThrow(() => c.exposedEndpoints(list, win, { start: p, end: { x: 40, y: 50 } }, false));
+  assert.equal(hits(), 2, 'two distinct points');
+  // Nothing in front of the target from another app: no hit test at all.
+  const quiet = passThroughContext(() => assert.fail('no hit test needed'));
+  assert.equal(quiet.topAt([win, banner], p, win.pid).id, win.id);
+});
+
+test('a banner over the point, or no hit-test answer, still covers', () => {
+  const over = passThroughContext(() => 739), p = { x: 360, y: 115 };
+  assert.equal(over.topAt([banner, win], p, win.pid).id, 40);
+  assert.equal(over.c.exposedAt([banner, win], win, p), false);
+  assert.throws(() => over.c.exposedEndpoints([banner, win], win, { start: p, end: p }, false), /from is covered by Notification Center \(windowId 40/);
+  // The click goes to the Dock window's own process there: the backdrop counts for the posted-path decision.
+  assert.equal(passThroughContext(() => 633).c.coveringApp([backdrop, win], win, { start: p, end: p }), 'Dock');
+  const unknown = passThroughContext(() => null);
+  assert.equal(unknown.topAt([banner, win], p, win.pid).id, 40);
+  assert.equal(unknown.c.coveringApp([backdrop, win], win, { start: p, end: p }), 'Dock');
+});
+
+test('a pass-through answer at the point never waives clearance from a real window edge nearby', () => {
+  const { c } = passThroughContext(() => 7);
+  const near = { ...cover(0, 90, 300, 60), layer: 0 };
+  assert.equal(c.exposedAt([near, win], win, { x: 303, y: 115 }), false);
+  assert.equal(c.exposedAt([banner, near, win], win, { x: 304, y: 115 }), true);
 });

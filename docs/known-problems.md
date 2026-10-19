@@ -160,9 +160,19 @@ our own runs. Dates and engine versions are given where they matter.
   Word's process with `CGEventPostToPid` released it, and Word then closed the fixture and quit by script.
 - textedit-window-drag has never passed (0 of 12 recorded runs, 2026-10-16 to 2026-10-19). In all 4 transcripts of 2026-10-19,
   `drag` with `toWindowId` first refused the drop as covered by the cascaded source window. The fixture now places the two
-  windows side by side in the display's visible frame, which no live run has tested yet. Two more `drag` faults showed up there:
-  its Accessibility move failed with "Ref has incompatible type" (2 of 4 runs), and one run read Notification Center
-  (window 40) as covering the source point. Claude then called `notifications`, the arm's approval was refused, and the pass stopped.
+  windows side by side in the display's visible frame, which no live run has tested yet. Two more `drag` faults showed up there,
+  both fixed on 2026-10-19 and not yet run live. The Accessibility text move failed with "Ref has incompatible type" in all 64
+  benchmark transcripts that tried it (2026-10-16 to 2026-10-19): the formatting check passed a malloc'd buffer where JXA
+  wants a Ref or null. The cover check also counted two system windows that the window server doesn't send clicks to. One is the
+  Dock's tiling backdrop (layer 0, left on screen after Move & Resize). The other is Notification Center's full-display window
+  (layer 21), on screen while a banner shows. A Mimestream banner appeared at 15:38:53Z, half a screen from the source point,
+  and `drag` refused the source point as covered. Claude then called `notifications`, the arm's approval was refused, and the
+  pass stopped. Another app's window now counts as cover at a point when the system-wide Accessibility hit test at that point
+  returns an element of that app, or fails. In a read-only probe on 2026-10-19, that hit test returned the TextEdit window
+  under the Dock backdrop. No banner was on screen during the probe. The banner case is untested and assumes the window server
+  routes clicks outside the banner to the window below. A banner over the point still stops the drag, and the refusal now says
+  to wait about 5 s and retry once.
+- `hover` still counts every on-screen window in front of the point as a blocker, and the same two system windows can refuse it.
 - In both Firefox settings runs of 2026-10-17, `drag` by element number failed on the web list's rows (3 of 3 tries), so Claude
   used coordinates. Claude then sent 3 drags in the shown image's 2000-pixel frame, while the engine and `drag` read the
   2560-pixel original. Those runs got the frame note late or never. It now comes with the first screenshot of each window
