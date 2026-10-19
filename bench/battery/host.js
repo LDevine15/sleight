@@ -134,10 +134,10 @@ function run(argv) {
       // Keep the codes of the last window actually read; a window skipped at the deadline has none.
       var read = pending.filter(function(row) { return row.documentStatus !== null; })[0];
       if (read) { startWait.pendingDocumentStatus = read.documentStatus; startWait.pendingTitleStatus = read.titleStatus; }
-      return false;
     }
     // An app that was already running may reuse a window (a browser tab); it is ready on its windows, as before.
-    if (!expected || !launched) return current.length > 0;
+    if (!expected || !launched) return !pending.length && current.length > 0;
+    // Readiness follows the fixture match. A window still unidentified is never retained, so cleanup leaves it alone.
     return retained.some(function(w) { return current.some(function(now) { return same(w, now); }); });
   }
   function startupStep() {

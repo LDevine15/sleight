@@ -241,7 +241,7 @@ function cleanupHost(options = {}) {
   let command = '', now = 0, opened = false, present = true, terminations = 0, windowReads = 0, foreignGone = false, earlyWindowReads = 0;
   let nextTerminations = 0;
   const path = options.path ?? fixturePath, expected = pathToFileURL(path).href;
-  const window = {}, secondWindow = {}, foreignWindow = {}, close = {}, appElement = {}, nextElement = {};
+  const window = {}, secondWindow = {}, foreignWindow = {}, close = {}, appElement = {}, nextElement = {}, extraWindow = {};
   const list = values => ({ count: values.length, objectAtIndex: n => values[n] });
   const app = { processIdentifier: 42, bundleIdentifier: 'org.example.fixture', terminated: false,
     launchDate: { timeIntervalSince1970: (options.wasRunning ? -60 : 0) },
@@ -295,7 +295,8 @@ function cleanupHost(options = {}) {
         if (opened && options.startupFailures && windowReads <= options.startupFailures) return -25204;
         const foreign = !foreignGone && ((options.restoredWindow && opened) || (options.restoredOnRead && windowReads >= options.restoredOnRead) ||
           (options.extraWindowAfterPress && presses.length) || (options.transientWindow && now >= 400 && now < 5000));
-        out[0] = list([...((opened || options.baselineWindow) && present ? options.multipleWindows ? [window, secondWindow] : [window] : []), ...(foreign ? [foreignWindow] : [])]); return 0;
+        out[0] = list([...((opened || options.baselineWindow) && present ? options.multipleWindows ? [window, secondWindow] : [window] : []), ...(foreign ? [foreignWindow] : []),
+          ...(opened && options.pendingExtra ? [extraWindow] : [])]); return 0;
       }
       if (element === foreignWindow && options.invalidForeign && now >= (options.invalidForeignAfter ?? 0) && ['AXDocument', 'AXSheets'].includes(name)) {
         if (!options.foreignStaysPresent) foreignGone = true;
@@ -1132,4 +1133,23 @@ test('a generic file stem is not accepted as a window marker', async t => {
     new AbortController().signal, recorder.runProcess);
   assert.equal(recorder.request.windowMarker, undefined);
   recorder.done(); await host.finish();
+});
+
+test('the fixture match makes a launch ready while another new window stays unidentified and untouched', () => {
+  const result = cleanupHost({ pendingExtra: true, axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'ready'), true, JSON.stringify(result.events.find(e => e.stage === 'error')));
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.terminations, 0);
+  assert.equal(result.confirmed, false);
+  assert.ok(result.details.windows.some(row => !row.retained && row.reasons.includes('WINDOW_NOT_RETAINED')));
+});
+
+test('a second instance appearing after the launched pid is known stops as ambiguous, and recovery stays with the launched pid', () => {
+  const result = cleanupHost({ nextAt: 1000, finishLaunchingAt: 3000, axCloses: true });
+  const error = result.events.find(e => e.stage === 'error').error;
+  assert.equal(error.message, 'APP_INSTANCE_AMBIGUOUS');
+  assert.equal(error.startWait.instances, 2);
+  assert.equal(result.nextTerminations, 0);
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.terminations, 1);
 });
