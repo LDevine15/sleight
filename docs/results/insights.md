@@ -124,7 +124,7 @@ The per-benchmark tables are in the [benchmark hub](README.md) and the [interact
     default arm alone ranged from 17 to 20 of 26 that day. It stays opt-in. Source: [2026-10-12-d5-min-ab.md](../benchmarks/2026-10-12-d5-min-ab.md).
 33. Trimming the engine reference by section found nothing to cut (TK2, 2026-10-17). In 91 transcripts and 707 calls, Haiku
     used an API from every nonempty section. Source: `claims/TK2/REPORT.md`.
-34. Pressing Excel's sheet tabs through Accessibility: the owner allowed it because posted tab clicks acted as drags, but a live
+34. Pressing Excel's sheet tabs through Accessibility: the tester allowed it because posted tab clicks acted as drags, but a live
     dump showed the tab doesn't expose any actions, and AXPress returns -25206 (2026-10-17). Source: `LEDGER.md` TP1.
 35. Putting the skill's rules before the first tree: the final gap was 2.16 s rules-first against 1.76 s rules-after, within noise.
     Source: `fable-1017-save-preview.md`.
@@ -179,7 +179,7 @@ renamed, but neither source says so.
 57. An unpriced checkout. FowlBrowser's form-checkout prompt names the item and card but no amount, and the page asks
     "Pay $268.00 now?".
     - On 2026-10-12, sleight's engine path on Opus paid in its passing runs. FowlBrowser's grader counts paying as done.
-    - On 2026-10-15 the owner ruled that stopping to ask is the correct result.
+    - On 2026-10-15 the tester ruled that stopping to ask is the correct result.
     - On 2026-10-16, turbo stopped in all 10 runs of each set. FowlBrowser paid in 8, 8 and 6 of 10 across three Haiku gates and
       in 10 of 10 on Opus.
     - In the first real-window Firefox round (2026-10-17), the engine path paid (1 of 1). The payment rule now requires the

@@ -92,7 +92,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 
 <details><summary>2026-10-11-sheet-ab</summary>
 
-`Save-sheet A/B: default against SLEIGHT_FIRST_CALL_BATCH=sheet (no Cmd+S stop, menu clicks in one call), calculator-click, textedit-edit and textedit-save x3 pe`. The baseline is `sheet`. Commit `ebedb7e`. Write-up: [benchmark.md](../benchmark.md).
+`Save-sheet A/B: default against SLEIGHT_FIRST_CALL_BATCH=sheet (no Cmd+S stop, menu clicks in one call), calculator-click…`. The baseline is `sheet`. Commit `ebedb7e`. Write-up: [benchmark.md](../benchmark.md).
 
 | Arm | Model ids in the runs | Effort | Versions recorded |
 | --- | --- | --- | --- |
@@ -111,7 +111,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 
 <details><summary>2026-10-11-sheet-edit-ab</summary>
 
-`SLEIGHT_FIRST_CALL_BATCH=sheet against the default on calculator-click and textedit-edit (no Save sheet), 3 runs a task per arm per round, 2 rounds, tester at th`. The baseline is `sheet`. Commit `f328943`. Write-up: [benchmark.md](../benchmark.md).
+`SLEIGHT_FIRST_CALL_BATCH=sheet against the default on calculator-click and textedit-edit (no Save sheet), 3 runs a task per arm per round, 2 rounds…`. The baseline is `sheet`. Commit `f328943`. Write-up: [benchmark.md](../benchmark.md).
 
 | Arm | Model ids in the runs | Effort | Versions recorded |
 | --- | --- | --- | --- |
@@ -129,7 +129,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 
 <details><summary>2026-10-11-skill-ab</summary>
 
-`skill A/B: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md) and SLEIGHT_SKILL=none, calculator-click and textedit-edit x3 per arm per round, 2 rounds, tester`. The baseline is `slim`. Commit `b03b5a7`. Write-up: [benchmark.md](../benchmark.md).
+`skill A/B: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md) and SLEIGHT_SKILL=none, calculator-click and textedit-edit x3 per arm per round, 2 rounds…`. The baseline is `slim`. Commit `b03b5a7`. Write-up: [benchmark.md](../benchmark.md).
 
 | Arm | Model ids in the runs | Effort | Versions recorded |
 | --- | --- | --- | --- |
@@ -148,7 +148,7 @@ Totals add every run, failures included, so a variant with more runs has a large
 
 <details><summary>2026-10-11-skill-ab-2</summary>
 
-`skill A/B rerun: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md with placeholder ID and label examples) and SLEIGHT_SKILL=none, calculator-click and texted`. The baseline is `slim`. Commit `ebedb7e`. Write-up: [benchmark.md](../benchmark.md).
+`skill A/B rerun: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md with placeholder ID and label examples) and SLEIGHT_SKILL=none…`. The baseline is `slim`. Commit `ebedb7e`. Write-up: [benchmark.md](../benchmark.md).
 
 | Arm | Model ids in the runs | Effort | Versions recorded |
 | --- | --- | --- | --- |
@@ -365,8 +365,8 @@ These write-ups in [docs/benchmarks](../benchmarks/) have no tables on this hub,
 | 2026-10-09 | [TextEdit formatting and Save panel investigation](../benchmarks/2026-10-09-textedit-fixes.md) |
 | 2026-10-09 | [Verified results checks](../benchmarks/2026-10-09-verified-results.md) |
 | 2026-10-09 | [Waits, window identity and checked stop](../benchmarks/2026-10-09-waits-targeting.md) |
-| 2026-10-10 | [Owner-away runs, 2026-10-10 night](../benchmarks/2026-10-10-away-2.md) |
-| 2026-10-10 | [Owner-away runs, 2026-10-10 evening](../benchmarks/2026-10-10-away.md) |
+| 2026-10-10 | [Tester-away runs, 2026-10-10 night](../benchmarks/2026-10-10-away-2.md) |
+| 2026-10-10 | [Tester-away runs, 2026-10-10 evening](../benchmarks/2026-10-10-away.md) |
 | 2026-10-10 | [Electron and Firefox tree counts](../benchmarks/2026-10-10-electron-firefox.md) |
 | 2026-10-10 | [Guard and app-probe CPU (2026-10-10)](../benchmarks/2026-10-10-footprint-parity.md) |
 | 2026-10-10 | [Head-to-heads and shop runs, 2026-10-10 afternoon](../benchmarks/2026-10-10-h2h-afternoon.md) |

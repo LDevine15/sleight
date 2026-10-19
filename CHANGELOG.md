@@ -82,7 +82,14 @@
 - Held-out list, calendar, dependent-dropdown and new-tab fixtures cover Firefox, Safari and native Finder. World
   benchmark approvals cover only selected task apps.
 
-Not yet run live: the new install flow and agent install benchmark, Cursor install and approval labels, stats, the menu row, action logging and native analytics validation, list hints, picks and jumps, loading-control waits, batch remapping, computer-only action diffs and final reads, Safari tab continuation and landed-page reads, drag labels and title endings, turbo settling, popup recovery, dialogs and browser-open timings, helper retry spreading, revised race instructions, held-out fixtures.
+### Not yet run live
+
+- The new install flow and agent install benchmark, Cursor install and approval labels.
+- Stats, the menu row, action logging and native analytics validation.
+- List hints, picks and jumps, loading-control waits, batch remapping, computer-only action diffs and final reads.
+- Safari tab continuation and landed-page reads, drag labels and title endings.
+- Turbo settling, popup recovery, dialogs and browser-open timings.
+- Helper retry spreading, revised race instructions, held-out fixtures.
 
 ## 1.3.1 (TODO: release date)
 

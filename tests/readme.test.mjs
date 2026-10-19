@@ -47,6 +47,9 @@ test('INSTALL.md exists, the README links it, and it names the steps only the us
   const install = readFileSync(new URL('INSTALL.md', root), 'utf8');
   for (const step of [/administrator/, /Accessibility and Screen Recording/, /Always allow/, /chrome:\/\/inspect\/#remote-debugging/])
     assert.match(install, step);
+  assert.match(install, /^# Installing sleight\n\nCoding agents: \[read Agent notes first\]\(#agent-notes\)\./);
+  assert.match(install, /Don't run `sudo` or `sleight-mcp setup`/);
+  assert.match(install, /Give the user this setup command to run from the same plugin folder:/);
 });
 
 test('the README carries the agent prompt on a line of its own, as the plan writes it', () => {

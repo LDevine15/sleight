@@ -459,10 +459,14 @@ export function collectRunnerStudies() {
 // ---------------------------------------------------------------------------------------------------------------------------
 // Collect: A/B studies saved as JSON in docs/benchmarks ({ study, rounds: [{ arm, results }] } or { study, sides: [{ side, results }] }).
 
-// The study's first sentence, or the whole text (cut at 160) when that sentence is too short to name the study.
+// The study's first sentence, shortened at a clause when needed. Older collected titles were cut at 160 characters.
 const abTitle = (text, file) => {
   const first = text.split(/(?<=[.:;])\s/)[0];
-  return (first.length >= 25 ? first : text).slice(0, 160) || file.replace(/\.json$/, '');
+  const title = (first.length >= 25 ? first : text) || file.replace(/\.json$/, '');
+  if (title.length < 160) return title;
+  const prefix = title.slice(0, 160);
+  const end = prefix.lastIndexOf(', ');
+  return prefix.slice(0, end > 0 ? end : prefix.lastIndexOf(' ')) + '…';
 };
 
 export function collectJsonAbs() {
@@ -551,6 +555,8 @@ const ARM_NAMES = { sleight: 'sleight', 'sleight-turbo': 'sleight turbo', lcu: '
   fowlbrowser: 'FowlBrowser', 'claude-in-chrome': 'Claude in Chrome', 'codex-sleight': 'sleight inside Codex', 'codex-sleight-sol': 'sleight inside Codex (Sol)',
   'codex-sol': 'Codex (Sol)' };
 const armName = arm => ARM_NAMES[arm] ?? arm;
+// Apply to prose and labels before Markdown rendering, so recorded paths and command flags keep their names.
+export const publicVoice = text => String(text).replace(/\bowner\b/gi, word => word === 'Owner' ? 'Tester' : 'tester');
 
 // One cell per arm and task: expected seconds, then passes/runs.
 export const cellText = cell => (!cell ? 'no runs' : cell.passes === 0 ? `no pass (0/${cell.runs})` : `${f1(cell.expected)} (${cell.passes}/${cell.runs})`);
@@ -720,7 +726,9 @@ function gradersNote(study) {
 function raceStudySection(all, study, level, chartId) {
   const out = [`${level} ${study.title}${study.latest ? ' (newest)' : ''}\n`];
   out.push(`${study.date}, ${cap(study.browser)} ${study.browserVersion.join(', ')}, ${study.rounds.length} rounds and ${study.runs.length} runs. The scorer's wording is "${study.verdict.wording}".\n`);
-  if (unopposedTotal(study)) out.push('sleight is the only arm with a total: every competitor has a task with no pass. There is no competing complete-suite time.\n');
+  const summary = study.latest && study.family === 'browser-race';
+  if (summary) out.push(`sleight is ${raceResult(study)}.\n`);
+  if (unopposedTotal(study)) out.push(`${summary ? 'The competitors each have' : 'sleight is the only arm with a total: every competitor has'} a task with no pass. There is no competing complete-suite time.\n`);
   const graders = gradersNote(study);
   if (graders) out.push(graders + '\n');
   const chart = study.latest && chartId ? chartFor(all, chartId) : null;
@@ -777,7 +785,7 @@ const raceGrading = race => RACE_GRADING + COVER_RULE(race?.cover) +
 const leftOutTables = race => [
   `Rounds come from ${code(race.source.race)}. Folders without ${code('results.json')} are still running and are left out${race.inProgress.length ? `: ${race.inProgress.map(code).join(', ')}` : ', and there were none'}.\n`,
   race.partial.length ? 'Sets left out because they don\'t yet have 3 runs of every task:\n\n' + mdTable(['Browser', 'Set', 'Runs so far', 'Rounds'], race.partial.map(p => [cap(p.browser), code(p.label), `${p.runs} of ${p.needed}`, p.rounds.map(code).join(', ')])) + '\n' : 'Every sleight set has 3 runs of every task.\n',
-  race.excludedRounds.length ? 'Rounds left out, with the recorded reason:\n\n' + mdTable(['Round', 'Reason'], race.excludedRounds.map(e => [code(e.round), code(e.reason.replace(/the owner allows/g, 'the tester allows'))])) + '\n' : 'No round was left out.\n',
+  race.excludedRounds.length ? 'Rounds left out, with the recorded reason:\n\n' + mdTable(['Round', 'Reason'], race.excludedRounds.map(e => [code(e.round), code(publicVoice(e.reason))])) + '\n' : 'No round was left out.\n',
 ].join('\n');
 
 const RACE_SETS = 'The scorer takes one sleight build set at a time (the folder label, such as `sleight-r` or `sleight-b3-r`) with every usable competitor round in the same browser, so two sleight builds are never pooled. A set is scored once it has 3 runs of every task.';
@@ -863,7 +871,7 @@ function renderAbPage(all, id) {
   out.push('## Studies\n');
   for (const study of data.studies) {
     out.push(details(study.id, [
-      `${code(study.title.replace(/\bowner\b/g, 'tester'))}. The baseline is ${code(study.me)}.${study.commit ? ` Commit ${code(study.commit)}.` : ''}${study.writeUp ? ` Write-up: [${basename(study.writeUp)}](${writeUpLink(study.writeUp)}).` : ''}`,
+      `${code(publicVoice(abTitle(study.title, study.id)))}. The baseline is ${code(study.me)}.${study.commit ? ` Commit ${code(study.commit)}.` : ''}${study.writeUp ? ` Write-up: [${basename(study.writeUp)}](${writeUpLink(study.writeUp)}).` : ''}`,
       armTable(study),
       taskMatrix(study),
     ].join('\n\n')));
@@ -871,7 +879,7 @@ function renderAbPage(all, id) {
   out.push('## Other measurements\n');
   out.push('These write-ups in [docs/benchmarks](../benchmarks/) have no tables on this hub, and each states its own method. The release passes and head-to-heads are on [release-passes.md](release-passes.md).\n');
   const covered = new Set([...data.studies.map(s => s.writeUp), ...data.coveredWriteUps]);
-  out.push(mdTable(['Date', 'Write-up'], data.catalog.filter(item => !covered.has(item.file)).map(item => [item.date ?? DASH, `[${item.title}](../benchmarks/${item.file})`])) + '\n');
+  out.push(mdTable(['Date', 'Write-up'], data.catalog.filter(item => !covered.has(item.file)).map(item => [item.date ?? DASH, `[${publicVoice(item.title)}](../benchmarks/${item.file})`])) + '\n');
   out.push(pageFooter(fam.page, { data: id, studies: data.studies }));
   return out.join('\n');
 }
@@ -916,7 +924,7 @@ function renderReleasePage(all, id) {
     'These passes predate the claim rules, so they report pass counts and totals instead of expected time. The tables include the failed runs.',
   ]));
   md = swap(md, '\n## Latest release pass\n', '\n' + method + '\n## Latest release pass\n');
-  md = md.replace(/owner presence/g, 'tester presence').replace(/owner away/g, 'tester away');
+  md = md.replace(/owner presence|owner away/g, publicVoice);
   return md.trimEnd() + '\n\n' + pageFooter(fam.page, { data: id, dataText: 'contains every run of the release passes and of the two head-to-heads on this page, plus the totals of every file' });
 }
 
@@ -957,6 +965,14 @@ const lowFirst = text => text.charAt(0).toLowerCase() + text.slice(1);
 const unopposedTotal = study => study.verdict.totals[study.me] != null &&
   !study.arms.some(arm => arm !== study.me && study.verdict.totals[arm] != null);
 
+function raceResult(study) {
+  const v = study.verdict;
+  const count = `${v.lowest.length} of ${study.tasks.length} tasks`;
+  const wording = v.wording === 'fastest' ? `fastest on ${count}` : v.wording;
+  const total = v.totals[study.me] == null ? 'no total (a task has no pass)' : `with a total of ${f1(v.totals[study.me])} s`;
+  return `${wording}, ${unopposedTotal(study) ? `the only arm with a total (${f1(v.totals[study.me])} s)` : total}`;
+}
+
 function resultSummary(id, data) {
   if (id === 'native-claim' || id === 'app-claim') {
     const s = data.studies[0];
@@ -964,7 +980,7 @@ function resultSummary(id, data) {
   }
   if (id === 'browser-race' || id === 'browser-turbo') {
     const studies = id === 'browser-turbo' ? data.race.studies : data.studies;
-    return studies.filter(s => s.latest).map(s => `${cap(s.browser)}: ${unopposedTotal(s) ? 'only arm with a total' : `lowest expected time on ${s.verdict.lowest.length} of ${s.tasks.length} tasks`}, total ${f1(s.verdict.totals[s.me])} s.`).join(' ');
+    return studies.filter(s => s.latest).map(s => `${cap(s.browser)}: ${id === 'browser-race' ? raceResult(s) : `lowest expected time on ${s.verdict.lowest.length} of ${s.tasks.length} tasks, total ${f1(s.verdict.totals[s.me])} s`}.`).join(' ');
   }
   return upFirst(headlineFor(id, data)) + '.';
 }
@@ -976,8 +992,7 @@ function headlineFor(id, data) {
     return `"${s.verdict.wording}", sleight's total expected time ${f1(s.verdict.totals.sleight)} s over ${s.tasks.length} tasks (${s.runs.length} runs, ${s.date}). ${upFirst(engine)}`;
   }
   if (id === 'browser-race') {
-    // Each line follows a colon in the README, so it starts in lower case.
-    return lowFirst(data.studies.filter(s => s.latest).map(s => `In ${cap(s.browser)}, ${unopposedTotal(s) ? 'sleight is the only arm with a total' : `"${s.verdict.wording}"`} (${code(s.label)}, ${s.date.slice(0, 10)})`).join('. ') || 'no complete set') + `. ${upFirst(engine)}`;
+    return lowFirst(data.studies.filter(s => s.latest).map(s => `In ${cap(s.browser)} sleight is ${raceResult(s)} (${code(s.label)}, ${s.date.slice(0, 10)})`).join('. ') || 'No complete set') + `. ${upFirst(engine)}`;
   }
   if (id === 'browser-turbo') {
     const race = data.race.studies.filter(s => s.latest).map(s => `In ${cap(s.browser)}, the lowest expected time on ${s.verdict.fastest[s.me].length} of ${s.tasks.length} and ${s.verdict.totals[s.me] == null ? 'no total (a task has no pass)' : `a total of ${f1(s.verdict.totals[s.me])} s`} against FowlBrowser's ${f1(s.verdict.totals.fowlbrowser)} s (${code(s.label)})`);
@@ -1043,15 +1058,23 @@ export function readmeBlocks(all) {
   const others = study.arms.filter(arm => arm !== study.me && v.totals[arm] != null).sort((a, b) => v.totals[a] - v.totals[b]);
   const next = others[0];
   const models = sortedUniq(study.models?.[study.me] ?? []).map(code).join(', ') || 'model not recorded';
+  const codexModels = sortedUniq(study.models?.codex ?? []).map(code).join(', ');
   const effort = (Array.isArray(study.effort) ? study.effort : []).join(', ') || 'effort not recorded';
+  const compat = all['engine-compat'] ?? readJson(join(ROOT, 'docs/results/data/engine-compat.json'));
+  const newest = [...compat.entries].sort((a, b) => Date.parse(b.checkedAt) - Date.parse(a.checkedAt))[0];
+  const version = newest?.appVersion ?? newest?.engineVersion;
+  const engines = Object.values(study.engines ?? {}).flatMap(e => Object.keys(e.versions ?? {}));
+  const newer = version && engines.length && engines.every(v => version.localeCompare(v, 'en', { numeric: true }) > 0);
+  const comparison = next ? ` ${armName(next)}, ${others.length === 1 ? 'the only other arm' : `the fastest of ${others.length} other arms`} that passed every task, took ${f1(v.totals[next])} s.` : '';
   const claim = [
-    `In sleight's own native Mac benchmark, its total expected time over ${study.tasks.length} tasks was ${f1(v.totals[study.me])} s.` +
-      `${next ? ` ${armName(next)} took ${f1(v.totals[next])} s, the next lowest total.` : ''}`,
+    `In sleight's own native Mac benchmark, its total expected time over ${study.tasks.length} tasks was ${f1(v.totals[study.me])} s.` + comparison,
     `Expected time is the mean time per attempt divided by the pass rate. It estimates the time to a correct result when failed attempts are retried.`,
-    `The claim is "${v.wording}": the lowest expected time on ${v.lowest.length} of ${study.tasks.length} tasks and the lowest total, with 5 runs for pairs within 20%.`,
+    `The claim is "${v.wording}": the lowest expected time on ${v.lowest.length} of ${study.tasks.length} tasks and the lowest total, with 5 runs wherever sleight and another arm were within 20%.`,
     `This was measured over ${study.runs.length} runs dated ${study.date} on ${models} at ${effort} effort (${engineBrief([study])}).` +
-      ` The native lead has not been established on a larger model. The skill was tuned on some of these tasks. Competitors ran their defaults.`,
-    `The [compatibility record](${README_BASE}engine-compat.md) lists a newer ChatGPT release, 26.1013.40934, than these runs. Compatibility checks do not remeasure speed.`,
+      ` The skill was tuned on some of these tasks. Competitors ran their defaults.${codexModels ? ` Codex ran ${codexModels}.` : ''}`,
+    `Haiku 5.5 drove this native claim. Earlier Opus 5.5 runs include the [2026-10-03 native comparison against LCU](docs/benchmark.md#earlier-benchmarks) and the [2026-10-08 sleight-only pass at medium effort](docs/benchmark.md#time-per-run).`,
+    `Opus browser runs include the [2026-10-12 engine comparison against FowlBrowser](docs/benchmarks/2026-10-12-fowlbrowser-h2h.md), its [later rounds](docs/benchmarks/2026-10-12-fowlbrowser-h2h-2.md), the [2026-10-12 lean-skill A/B](docs/benchmarks/2026-10-12-lean-skill-ab.md) and the [2026-10-16 turbo comparison against FowlBrowser](docs/benchmarks/2026-10-16-opus.md).`,
+    ...(newer ? [`The [compatibility record](${README_BASE}engine-compat.md) lists a newer ChatGPT release, ${version}, than these runs. Compatibility checks do not remeasure speed.`] : []),
     `The hub lists each run, failures included, with the method and the model each arm ran.`,
     '',
     `[Benchmark hub](${README_BASE}README.md) · [Interactive page](${PAGES_URL}explore.html)`,
@@ -1164,9 +1187,9 @@ export function render(all) {
   const explore = JSON.stringify(exploreData(all)).replace(/</g, '\\u003c');
   files['explore.html'] = fillTemplate(readFileSync(join(ROOT, 'bench/results-explore.html'), 'utf8'), explore, 'explore.html');
   const indexTemplate = readFileSync(join(ROOT, 'bench/results-index.html'), 'utf8');
-  const rows = FAMILIES.map(fam => `<tr><th scope="row"><a href="${REPO_RESULTS}${fam.page}">${escapeHtml(fam.title)}</a></th>` +
+  const rows = FAMILIES.map(fam => `<tr><th scope="row"><a href="${escapeHtml(REPO_RESULTS + fam.page)}">${escapeHtml(fam.title)}</a></th>` +
     `<td>${escapeHtml(fam.what)}</td><td>${escapeHtml(resultSummary(fam.id, all[fam.id]))}</td>` +
-    `<td><a href="data/${fam.id}.json">JSON</a></td></tr>`).join('\n');
+    `<td><a href="${escapeHtml(`data/${fam.id}.json`)}">JSON</a></td></tr>`).join('\n');
   files['index.html'] = indexTemplate.replace('<!--__FAMILIES__-->', () => rows);
   for (const id of ['headline-native', 'overview']) {
     const caption = escapeHtml(charts.chartCaption(id, all));
@@ -1197,7 +1220,8 @@ export function main(argv = process.argv.slice(2)) {
     all = Object.fromEntries(FAMILIES.map(f => [f.id, readJson(join(out, 'data', `${f.id}.json`))]));
   } else ({ all, notes } = collect({ wt, out, excludeCovered: argv.includes('--exclude-covered') }));
   const files = render(all);
-  const readmeFile = join(ROOT, 'README.md'), readme = renderReadme(all);
+  const readmeFile = join(ROOT, 'README.md');
+  const readme = renderReadme({ ...all, 'engine-compat': readJson(join(out, 'data/engine-compat.json')) });
   if (argv.includes('--check')) {
     const changed = Object.entries(files).filter(([name, text]) => !existsSync(join(out, name)) || readFileSync(join(out, name), 'utf8') !== text).map(([name]) => name);
     for (const name of changed) console.log(`would change ${name}`);

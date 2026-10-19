@@ -10,7 +10,7 @@ import { engineMix, summarizeEngines } from '../bench/engine-version.mjs';
 import { chartCaption } from '../bench/results-charts.mjs';
 import {
   FAMILIES, NAV, README_BLOCKS, cellText, cellsFor, collectJsonAbs, collectRace, collectReleases, collectRunnerStudies, dateRange, lossRule, parseRunnerReport,
-  ownerPass, readmeBlocks, render, renderNav, renderNavHtml, renderReadme, scoreClaimDir, scrub, scrubPaths, spliceReadme, taskMatrix, variantOf,
+  ownerPass, publicVoice, readmeBlocks, render, renderNav, renderNavHtml, renderReadme, scoreClaimDir, scrub, scrubPaths, spliceReadme, taskMatrix, variantOf,
 } from '../bench/results-hub.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
@@ -274,14 +274,76 @@ test('the landing includes the family results and chart captions without JavaScr
 });
 
 test('family text in the static landing is escaped as HTML', () => {
-  const family = FAMILIES[0], title = family.title;
+  const family = { ...FAMILIES[0], title: 'x</script><img src=//x> <!-- y & "z"', page: 'x" onclick="bad', id: 'y" onclick="bad' };
+  const all = committed();
+  all[family.id] = all['native-claim'];
+  FAMILIES.push(family);
   try {
-    family.title = 'x</script><img src=//x> <!-- y & "z"';
-    const html = render(committed())['index.html'];
+    const html = render(all)['index.html'];
     assert.doesNotMatch(html, /<img src=\/\/x>/);
     assert.doesNotMatch(html, /<!-- y/);
     assert.ok(html.includes('x&lt;/script&gt;&lt;img src=//x&gt; &lt;!-- y &amp; &quot;z&quot;'));
-  } finally { family.title = title; }
+    assert.doesNotMatch(html, / onclick="bad/);
+    assert.ok(html.includes('x&quot; onclick=&quot;bad'));
+    assert.ok(html.includes('y&quot; onclick=&quot;bad.json'));
+  } finally { FAMILIES.pop(); }
+});
+
+test('the README follows the newest compatibility entry and only calls out a newer engine', () => {
+  const all = committed();
+  const compat = readJson(join(OUT, 'data/engine-compat.json'));
+  all['engine-compat'] = compat;
+  const before = readmeBlocks(all).claim;
+  compat.entries.unshift({ checkedAt: '2026-11-01T00:00:00Z', appVersion: '26.1101.100', engineVersion: '26.1101.200' });
+  const after = readmeBlocks(all).claim;
+  assert.notEqual(after, before);
+  assert.match(after, /newer ChatGPT release, 26\.1101\.100/);
+  assert.doesNotMatch(after, /26\.1013\.40934/);
+  compat.entries = [{ checkedAt: '2026-11-02T00:00:00Z', appVersion: null, engineVersion: '26.1007.71326' }];
+  assert.doesNotMatch(readmeBlocks(all).claim, /newer ChatGPT release|Compatibility checks do not remeasure speed/);
+  compat.entries[0].engineVersion = '26.1007.21159';
+  assert.doesNotMatch(readmeBlocks(all).claim, /newer ChatGPT release/);
+  compat.entries[0].engineVersion = '26.1102.200';
+  assert.match(readmeBlocks(all).claim, /newer ChatGPT release, 26\.1102\.200/);
+});
+
+test('the native comparison changes when the number or order of competing totals changes', () => {
+  const all = committed(), study = all['native-claim'].studies[0];
+  assert.match(readmeBlocks(all).claim, /Claude computer use, the only other arm that passed every task, took 453\.9 s/);
+  study.verdict.totals.lcu = 400;
+  assert.match(readmeBlocks(all).claim, /LCU, the fastest of 2 other arms that passed every task, took 400\.0 s/);
+  for (const arm of study.arms.filter(a => a !== study.me)) study.verdict.totals[arm] = null;
+  assert.doesNotMatch(readmeBlocks(all).claim, /\bother arm\b|next lowest total/);
+});
+
+test('Safari and Firefox keep their task counts and totals across every summary', () => {
+  const all = committed(), files = render(all), { benchmarks } = readmeBlocks(all);
+  for (const browser of ['safari', 'firefox']) {
+    const s = all['browser-race'].studies.find(s => s.latest && s.browser === browser);
+    const count = `${s.verdict.lowest.length} of ${s.tasks.length} tasks`;
+    const total = `${s.verdict.totals[s.me].toFixed(1)} s`;
+    for (const text of [benchmarks, files['README.md'], files['index.html'], files['browser-race.md']]) {
+      assert.ok(text.includes(`fastest on ${count}`), `${browser}: task count`);
+      assert.ok(text.includes(total), `${browser}: total`);
+    }
+  }
+  assert.match(benchmarks, /in Safari sleight is fastest on 11 of 12 tasks, the only arm with a total \(592\.1 s\)/);
+  const safari = all['browser-race'].studies.find(s => s.latest && s.browser === 'safari');
+  safari.verdict.lowest.pop();
+  safari.verdict.totals[safari.me] = 601;
+  safari.verdict.totals.cua = 900;
+  for (const text of [readmeBlocks(all).benchmarks, render(all)['index.html'], render(all)['README.md'], render(all)['browser-race.md']]) {
+    assert.ok(text.includes('fastest on 10 of 12 tasks, with a total of 601.0 s'));
+  }
+});
+
+test('public study titles and catalog labels use complete tester wording without changing recorded data', () => {
+  const all = committed(), original = JSON.stringify(all);
+  const files = render(all);
+  assert.doesNotMatch(files['ab-tests.md'], /tester at th`|2 rounds, tester`|\b[Oo]wner\b/);
+  assert.match(files['ab-tests.md'], /Tester-away runs/);
+  assert.equal(publicVoice("Owner-away, the owner's account and the owner allowed it"), "Tester-away, the tester's account and the tester allowed it");
+  assert.equal(JSON.stringify(all), original);
 });
 
 test('explore.html runs, fills its filters, draws charts per task and switches family', () => {

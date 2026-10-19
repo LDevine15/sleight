@@ -8,7 +8,9 @@ Turbo needs Chrome's debugging consent, which Safari and Firefox lack, so sleigh
 
 2026-10-18 to 2026-10-19, Safari 27.0.1, 28 rounds and 232 runs. The scorer's wording is "fastest".
 
-sleight is the only arm with a total: every competitor has a task with no pass. There is no competing complete-suite time.
+sleight is fastest on 11 of 12 tasks, the only arm with a total (592.1 s).
+
+The competitors each have a task with no pass. There is no competing complete-suite time.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/family-browser-race-safari-dark.svg">
@@ -187,6 +189,8 @@ The arms that use the engine ran on different engine versions: sleight on 26.101
 ## Firefox, sleight rounds `firefox-sleight-b10-r*` (newest)
 
 2026-10-18 to 2026-10-19, Firefox 157.0.1, 24 rounds and 230 runs. The scorer's wording is "fastest".
+
+sleight is fastest on 11 of 12 tasks, with a total of 557.1 s.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/family-browser-race-firefox-dark.svg">

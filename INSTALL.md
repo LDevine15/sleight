@@ -1,5 +1,7 @@
 # Installing sleight
 
+Coding agents: [read Agent notes first](#agent-notes).
+
 ## Installing it yourself
 
 Install the ChatGPT app first, then use the section for your coding agent below. Run the doctor, run setup if it asks,
@@ -7,7 +9,7 @@ allow the macOS permissions, and start a new agent session. If Computer Use is a
 `installPath` means the installed sleight plugin folder, reported by your host's plugin listing.
 `setup` runs OpenAI's helper installer and opens Accessibility and Screen Recording for your approval.
 
-The new install flow and setup in a fresh macOS user haven't run live. Setup asks for an administrator's password or
+The [install validation limits](README.md#install-validation) apply here. Setup asks for an administrator's password or
 Touch ID. Chrome's browser connection also needs its debugging switch and your consent. These steps require you at the Mac.
 
 sleight is MIT-licensed and uses your coding agent's account or API access. It doesn't need a ChatGPT account or separate
@@ -23,14 +25,13 @@ If you're installing for someone else, follow the host's commands below and stop
 - clicking Allow or Always allow on the first approval card for each app,
 - turning on Chrome's remote debugging at `chrome://inspect/#remote-debugging` and allowing Chrome's prompt, for turbo.
 
-At each step, tell the user what to do and wait. Leave passwords, System Settings and approval cards to them.
-Run each command below on its own. You may inspect setup with `--dry-run`. The user runs setup itself.
+At each step, tell the user what to do and wait. Don't run `sudo` or `sleight-mcp setup`, and don't script System Settings
+or work around a prompt or approval card. Run each command below on its own. You may inspect setup with `--dry-run`.
 
 ## Requirements
 
 - macOS on Apple Silicon. We've tested on macOS 27 and haven't measured a minimum version. Intel builds are untested.
-- The [ChatGPT desktop app](https://chatgpt.com/download/) in `/Applications`. It holds the engine. A ChatGPT account and a
-  Codex sign-in aren't needed.
+- The [ChatGPT desktop app](https://chatgpt.com/download/) in `/Applications`. It holds the engine.
 - A host, such as Claude Code 2.1.288 or later, Codex CLI (tested on 0.160.0), or any MCP client that starts a stdio server.
 
 sleight runs on the Node runtime inside ChatGPT, so there's nothing to install with npm.
@@ -116,7 +117,7 @@ Add this server to the client's config, with the clone's absolute path (JSON doe
 ## Computer Use
 
 The doctor exits 0 and prints `live read ok (helper inventory)` when the engine works. If it prints `MISSING` lines or
-prints a line with `setup` in it, Computer Use isn't on yet. Run setup from the same plugin folder:
+prints a line with `setup` in it, Computer Use isn't on yet. Give the user this setup command to run from the same plugin folder:
 
 ```text
 "<installPath>/bin/sleight-mcp" setup
@@ -124,7 +125,7 @@ prints a line with `setup` in it, Computer Use isn't on yet. Run setup from the 
 
 Setup runs OpenAI's helper installer, which asks for an administrator's Touch ID or password. It then opens the
 Accessibility and Screen Recording panes, where the user allows Codex Computer Use, and runs the doctor again. To preview
-what it will do, add `--dry-run`. Setup hasn't been run in a fresh macOS user.
+what it will do, add `--dry-run`. See the [install validation limits](README.md#install-validation).
 
 For turbo in Chrome, the user turns on remote debugging once at `chrome://inspect/#remote-debugging`. Chrome then asks
 them to allow each connection. The doctor's first lines say whether turbo is ready ([settings](docs/settings.md#turbo)).
