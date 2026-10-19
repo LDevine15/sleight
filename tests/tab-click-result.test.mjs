@@ -119,11 +119,12 @@ test('numbered submit buttons without an ID use their exact visible role and nam
   assert.match(f.notes.join('\n'), /retry may submit twice/);
 });
 
-test('unreadable target metadata stays silent without delaying input dispatch', async t => {
+test('unreadable target metadata stays silent after the bounded pre-click hit test', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const f = fixture({ hang: 'metadata' });
   const pending = f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("button[type=submit]").click();');
-  await tick(); assert.deepEqual(f.calls, ['click']);
+  await tick(); assert.deepEqual(f.calls, []);
+  t.mock.timers.tick(1001); await tick(); assert.deepEqual(f.calls, ['click']);
   t.mock.timers.tick(1501); await pending;
   assert.deepEqual(f.notes, []);
 });
@@ -167,12 +168,12 @@ test('click reporting composes with the alias prelude without duplicate input', 
 for (const code of ['await tab.playwright.getByRole("button", { name: "Expand details" }).click();',
   'await tab.playwright.getByRole("link", { name: "Pay" }).click();',
   'await tab.playwright.locator("#details").click();', 'await tab.click(12);']) {
-  test(`an ordinary click adds zero engine reads with 100 ms observations: ${code}`, async t => {
+  test(`an ordinary click reads only the locator hit test, with no submit observations: ${code}`, async t => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
     const f = fixture({ row: 'Expand details', readMs: 100 });
     const pending = f.run('var tab = await cua.getTab("1");' + code);
     await tick();
-    assert.deepEqual(f.reads, []);
+    assert.deepEqual(f.reads, code.includes('playwright') ? ['metadata'] : []);
     await pending;
     assert.deepEqual(f.calls, ['click']);
     assert.deepEqual(f.notes, []);
@@ -254,4 +255,116 @@ test('a full reply with no buttons clears the previous submit classification', a
   const f = fixture();
   await runInContext('(async()=>{' + observer.code('var tab = await cua.getTab("1"); await tab.click(12);') + '})()', f.context);
   assert.deepEqual(f.reads, []);
+});
+
+function coveredFixture({ cover = true, descendant = false, shadowHost = false, unread = false, hang = false, rect, ancestors = [] } = {}) {
+  const f = fixture();
+  let clicks = 0;
+  const coverElement = { tagName: 'DIV', textContent: 'Fixture notice',
+    getAttribute: name => ({ role: 'region', 'aria-label': 'Fixture notice' })[name] ?? null,
+    closest: () => coverElement };
+  let parent;
+  for (const box of [...ancestors].reverse()) parent = { parentElement: parent, getRootNode: () => ({}),
+    getBoundingClientRect: () => { if (box === null) throw Error('ancestor bounds unavailable'); return box; } };
+  const element = { tagName: 'BUTTON', type: 'submit',
+    parentElement: parent,
+    getAttribute: () => null, closest: name => name === 'form' ? {} : null,
+    getBoundingClientRect: () => rect ?? ({ left: 10, top: 20, right: 110, bottom: 60, width: 100, height: 40 }),
+    contains: hit => hit === element || descendant,
+    getRootNode: () => ({ host: shadowHost ? coverElement : undefined }),
+    ownerDocument: { documentElement: { clientWidth: 800, clientHeight: 600 },
+      elementFromPoint: (x, y) => {
+        assert.equal(x, rect ? (Math.max(0, rect.left) + Math.min(800, rect.right)) / 2 : 60);
+        assert.equal(y, rect ? (Math.max(0, rect.top) + Math.min(600, rect.bottom)) / 2 : 40);
+        return cover ? coverElement : element;
+      } },
+  };
+  const raw = { count: async () => 1, click: async () => { clicks++; },
+    evaluate: async (fn, arg, options) => {
+      if (unread) throw Error('hit test unavailable');
+      if (hang) return new Promise(() => {});
+      if (options) assert.equal(options.timeoutMs, 1000);
+      return fn(element, arg);
+    }, first: () => loc };
+  const loc = new Proxy(raw, { get(target, key) {
+    if (!(key in target)) throw Error('unsupported engine locator method: ' + String(key));
+    return target[key];
+  } });
+  f.tab.playwright.locator = () => loc;
+  return { ...f, clicks: () => clicks };
+}
+
+test('a locator click covered by a named region reports the cover before dispatch', async () => {
+  const f = coveredFixture();
+  await assert.rejects(f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();'), /covered by region Fixture notice/);
+  assert.equal(f.clicks(), 0);
+  assert.match(f.notes.join('\n'), /covered by region Fixture notice/);
+  assert.doesNotMatch(f.notes.join('\n'), /no change yet|submit twice/);
+});
+
+for (const [edge, rect] of Object.entries({
+  top: { left: 10, top: -10, right: 110, bottom: 30, width: 100, height: 40 },
+  bottom: { left: 10, top: 580, right: 110, bottom: 620, width: 100, height: 40 },
+  left: { left: -10, top: 20, right: 90, bottom: 60, width: 100, height: 40 },
+  right: { left: 750, top: 20, right: 850, bottom: 60, width: 100, height: 40 },
+})) test(`a partially visible ${edge} target reaches the engine scroll-before-click path`, async () => {
+  const f = coveredFixture({ rect });
+  let scrolls = 0;
+  const click = f.tab.playwright.locator().click;
+  f.tab.playwright.locator().click = async () => {
+    // resolvePointerActionTarget scrolls before resolving its actual click point.
+    scrolls++;
+    rect.left = 10; rect.top = 20; rect.right = 110; rect.bottom = 60;
+    await click();
+  };
+  await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();');
+  assert.equal(scrolls, 1);
+  assert.equal(f.clicks(), 1);
+  assert.deepEqual(f.notes, []);
+});
+
+for (const [edge, ancestor] of Object.entries({
+  top: { left: 0, top: 100, right: 800, bottom: 200 },
+  bottom: { left: 0, top: 0, right: 800, bottom: 100 },
+  left: { left: 20, top: 0, right: 800, bottom: 600 },
+  right: { left: 0, top: 0, right: 100, bottom: 600 },
+})) test(`a target clipped at its ancestor's ${edge} edge reaches engine scrolling`, async () => {
+  const rect = { left: 10, top: 90, right: 110, bottom: 130, width: 100, height: 40 };
+  const f = coveredFixture({ rect, ancestors: [ancestor] });
+  let scrolls = 0;
+  const click = f.tab.playwright.locator().click;
+  f.tab.playwright.locator().click = async () => { scrolls++; await click(); };
+  await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();');
+  assert.equal(scrolls, 1); assert.equal(f.clicks(), 1); assert.deepEqual(f.notes, []);
+});
+test('a contained target keeps a confirmed cover check through ordinary ancestors', async () => {
+  const f = coveredFixture({ ancestors: [{ left: 0, top: 0, right: 800, bottom: 600 }] });
+  await assert.rejects(f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();'), /covered by region Fixture notice/);
+  assert.equal(f.clicks(), 0);
+});
+for (const bounds of [null, {}, { left: 0, top: NaN, right: 800, bottom: 600 }]) {
+  test('uncertain ancestor bounds defer rather than asserting a cover: ' + JSON.stringify(bounds), async () => {
+    const f = coveredFixture({ ancestors: [bounds] });
+    await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();');
+    assert.equal(f.clicks(), 1); assert.deepEqual(f.notes, []);
+  });
+}
+
+for (const spec of [{ cover: false }, { descendant: true }, { shadowHost: true }, { unread: true }]) {
+  test(`an unobstructed or unreadable hit test preserves one locator click: ${JSON.stringify(spec)}`, async () => {
+    const f = coveredFixture(spec);
+    await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").first().click();');
+    assert.equal(f.clicks(), 1);
+    assert.deepEqual(f.notes, []);
+  });
+}
+
+test('a hanging hit test expires and never stalls or repeats an ordinary locator click', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = coveredFixture({ hang: true });
+  const pending = f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();');
+  await tick(); assert.equal(f.clicks(), 0);
+  t.mock.timers.tick(1001); await pending;
+  assert.equal(f.clicks(), 1);
+  assert.deepEqual(f.notes, []);
 });

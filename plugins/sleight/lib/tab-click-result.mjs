@@ -14,16 +14,46 @@ function installClickResults(cua, agent, snapshots, isDiffTree) {
   const factories = new Set(['locator', 'frameLocator', 'getByRole', 'getByLabel', 'getByText',
     'getByPlaceholder', 'getByTestId', 'filter', 'first', 'last', 'nth', 'and', 'or']);
   const note = text => { try { nodeRepl.write(text); } catch {} };
-  const bounded = read => {
+  const bounded = (read, timeout = 1500) => {
     let timer;
     try {
       const value = read();
       return Promise.race([Promise.resolve(value).catch(() => undefined),
-        new Promise(resolve => { timer = setTimeout(resolve, 1500); })]).finally(() => clearTimeout(timer));
+        new Promise(resolve => { timer = setTimeout(resolve, timeout); })]).finally(() => clearTimeout(timer));
     } catch { return Promise.resolve(undefined); }
   };
   const read = tab => Promise.all([bounded(() => tab.url()), bounded(() => tab.playwright.domSnapshot())])
     .then(([url, tree]) => typeof url === 'string' && typeof tree === 'string' && tree.trim() ? { url, tree } : undefined);
+  const clickCover = el => {
+    const rect = el.getBoundingClientRect(), doc = el.ownerDocument;
+    const width = doc.documentElement.clientWidth, height = doc.documentElement.clientHeight;
+    // The engine scrolls clipped targets before choosing the click point.
+    if (!rect.width || !rect.height || rect.left < 0 || rect.top < 0 || rect.right > width || rect.bottom > height) return;
+    // An ancestor can clip a viewport-contained target. Its current center is
+    // not evidence of a cover after the engine scrolls that ancestor. Unknown
+    // geometry defers too; the engine remains responsible for the hit test.
+    let depth = 0;
+    for (let node = el.parentElement ?? el.getRootNode?.().host; node;
+      node = node.parentElement ?? node.getRootNode?.().host) {
+      if (++depth > 64) return;
+      const box = node.getBoundingClientRect();
+      if (![box.left, box.top, box.right, box.bottom].every(Number.isFinite) ||
+          box.right <= box.left || box.bottom <= box.top ||
+          rect.left < box.left || rect.top < box.top || rect.right > box.right || rect.bottom > box.bottom) return;
+    }
+    const x = (rect.left + rect.right) / 2;
+    const y = (rect.top + rect.bottom) / 2;
+    const hit = doc.elementFromPoint(x, y);
+    if (!hit || hit === el || el.contains(hit) || hit.contains?.(el)) return;
+    for (let node = el; node;) {
+      if (node === hit) return;
+      node = node.parentElement ?? node.getRootNode?.().host;
+    }
+    const owner = hit.closest('[role],[aria-label]') ?? hit;
+    const role = owner.getAttribute('role') || owner.tagName.toLowerCase();
+    const name = owner.getAttribute('aria-label') || owner.getAttribute('title') || owner.textContent || '';
+    return (role + ' ' + name.replace(/\s+/g, ' ').trim()).trim().slice(0, 160);
+  };
   const submitControl = (el, action) => {
     if (!el?.tagName && el?.active) { action = el.action; el = document.activeElement; }
     else if (!el?.tagName && Array.isArray(el?.point)) { action = el.action; el = document.elementFromPoint(...el.point); }
@@ -97,6 +127,14 @@ function installClickResults(cua, agent, snapshots, isDiffTree) {
       };
       if ((name === 'click' && kind !== 'playwright') || name === 'press' || (kind === 'tab' && name === 'pressKey')) return async (...args) => {
         const action = name === 'click' ? 'click' : 'enter';
+        if (action === 'click' && kind === 'locator') {
+          const cover = await bounded(() => target.evaluate(clickCover, undefined, { timeoutMs: 1000 }), 1000);
+          if (cover) {
+            const message = `sleight: click target is covered by ${cover}. Dismiss or move the cover before clicking.`;
+            note(message);
+            throw new Error(message);
+          }
+        }
         if (action === 'enter' ? !/^(?:(?:Control|Meta)\+)?(?:Enter|Return)$/i.test(String(args[kind === 'tab' ? 1 : 0])) || !submitLike(tab, target, kind, args, action)
             : !submitLike(tab, target, kind, args)) return value.apply(target, args.map(unwrap));
         const before = read(tab), submit = bounded(() => submitTarget(tab, target, kind, action, args));
