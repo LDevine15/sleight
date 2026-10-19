@@ -69,6 +69,28 @@ test('browser-use live path uses ChatAnthropic, a throwaway profile, and kill()'
   assert.match(cli, /BROWSER_USE_CLOUD_SYNC/);
 });
 
+test('Browser Use locks patched dependencies despite upstream exact pins', { skip: uvSkip }, () => {
+  const ran = py(`
+import re, tomllib
+from pathlib import Path
+arm = Path(${JSON.stringify(ARM)})
+project = tomllib.loads((arm / 'pyproject.toml').read_text())
+lock = tomllib.loads((arm / 'uv.lock').read_text())
+patched = {'anyio': '4.14.2', 'pypdf': '6.19.0', 'mcp': '2.2.0', 'aiohttp': '3.14.4'}
+for name, minimum in patched.items():
+    packages = [p for p in lock['package'] if p['name'] == name]
+    assert len(packages) == 1, (name, packages)
+    package = packages[0]
+    assert tuple(map(int, package['version'].split('.'))) >= tuple(map(int, minimum.split('.'))), package
+    assert f"{name}=={package['version']}" in project['tool']['uv']['override-dependencies']
+    assert {'name': name, 'specifier': '==' + package['version']} in lock['manifest']['overrides']
+    for artifact in [package['sdist'], *package['wheels']]:
+        assert re.fullmatch(r'sha256:[0-9a-f]{64}', artifact['hash']), artifact
+print('ok')
+`);
+  assert.equal(ran.status, 0, ran.stderr + ran.stdout);
+});
+
 test('UsageSummary fakes of the 0.13.11 shape price from PRICES, not total_cost', { skip: uvSkip }, () => {
   const prices = JSON.stringify(PRICES);
   const ran = py(`
@@ -333,7 +355,8 @@ test('setup.sh --dry-run prints the pin and does not create a venv', t => {
   const script = join(ROOT, 'bench/world/arms/browser-use/setup.sh');
   const ran = spawnSync('sh', [script, '--dry-run'], { encoding: 'utf8', cwd });
   assert.equal(ran.status, 0, ran.stderr);
-  assert.match(ran.stdout, /uv sync/);
+  assert.match(ran.stdout, /uv sync --python 3\.12 --frozen/);
+  assert.match(ran.stdout, /browser-use==0\.13\.11, security overrides in pyproject\.toml/);
   const listing = spawnSync('/bin/ls', ['-A', cwd], { encoding: 'utf8' });
   assert.equal(listing.stdout.trim(), '');
 });
