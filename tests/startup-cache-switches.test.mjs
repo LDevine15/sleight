@@ -33,11 +33,14 @@ function switches() {
   for (const text of sources()) {
     for (const [name] of text.matchAll(/SLEIGHT_[A-Z0-9_]+/g)) if (!found.has(name)) found.set(name, new Set(['1', '0']));
     for (const [, name, value] of text.matchAll(/(SLEIGHT_[A-Z0-9_]+)\s*[!=]==?\s*'([^']*)'/g)) found.get(name).add(value);
+    for (const [, list, argument] of text.matchAll(/\[([^\]]*)\]\.includes\(([^)]*)\)/g)) {
+      for (const [name] of argument.matchAll(/SLEIGHT_[A-Z0-9_]+/g)) for (const [, value] of list.matchAll(/'([^']*)'/g)) found.get(name).add(value);
+    }
   }
   return found;
 }
 
-function session(t, directory, options = {}) {
+function session(t, directory, options = {}, clientInfo = { name: 'claude-code', version: '1' }) {
   const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
   const client = [], server = [];
   for (const [stream, messages] of [[clientOut, client], [serverIn, server]]) {
@@ -47,7 +50,7 @@ function session(t, directory, options = {}) {
     startupCache: createStartupCache({ identity: { engine: 'fixture', sleight: 'fixture' }, directory }), ...options });
   t.after(() => relay.dispose());
   const send = msg => clientIn.write(JSON.stringify(msg) + '\n'), reply = msg => serverOut.write(JSON.stringify(msg) + '\n');
-  send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', clientInfo: { name: 'claude-code', version: '1' }, capabilities: {} } });
+  send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', clientInfo, capabilities: {} } });
   send({ jsonrpc: '2.0', method: 'notifications/initialized' });
   send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
   const early = structuredClone(client);
@@ -67,7 +70,8 @@ test('every SLEIGHT_* switch: a warm session answers exactly as a cold session w
   t.after(() => removeTemp(primed));
   session(t, primed);
   const found = switches();
-  assert.ok(found.has('SLEIGHT_FS') && found.has('SLEIGHT_TS3') && found.size > 40, [...found.keys()].join(' '));
+  assert.ok(found.has('SLEIGHT_FS') && found.has('SLEIGHT_TS3') && found.size >= 60, [...found.keys()].join(' '));
+  assert.ok(found.get('SLEIGHT_APPROVAL_SCOPE').has('document'));
   for (const [name, values] of found) for (const value of values) withEnv(name, value, () => {
     const empty = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-switch-')));
     t.after(() => removeTemp(empty));
@@ -80,8 +84,10 @@ test('every SLEIGHT_* switch: a warm session answers exactly as a cold session w
 });
 
 // Relay settings the launcher derives from switches (launch.mjs createRelay options), with values other than their defaults.
-for (const [label, options] of [
+for (const [label, options, clientInfo] of [
   ['SLEIGHT_APPROVAL_SCOPE=document', { approvalScope: 'document' }],
+  ['SLEIGHT_FIRST_CALL_BATCH=nosavestop', { firstCallBatch: 'nosavestop' }],
+  ['a Codex client without the mod', { modHost: () => false }, { name: 'codex-mcp-client', version: '9.0.0' }],
   ['SLEIGHT_FIRST_CALL_BATCH', { firstCallBatch: true }],
   ['SLEIGHT_FIRST_CALL_BATCH=merge', { firstCallBatch: 'merge' }],
   ['SLEIGHT_CHANGE_REVIEW=0', { changeReview: false }],
@@ -95,8 +101,8 @@ for (const [label, options] of [
 ]) test(`${label}: a warm session answers exactly as a cold one`, t => {
   const primed = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-switch-'))), empty = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-switch-')));
   t.after(() => { removeTemp(primed); removeTemp(empty); });
-  session(t, primed);
-  const cold = session(t, empty, options), warm = session(t, primed, options);
+  session(t, primed, {}, clientInfo);
+  const cold = session(t, empty, options, clientInfo), warm = session(t, primed, options, clientInfo);
   assert.equal(warm.early.length, 2);
   assert.deepEqual(warm.early, cold.client);
   assert.deepEqual(warm.client, cold.client);

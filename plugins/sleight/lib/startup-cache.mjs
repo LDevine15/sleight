@@ -10,7 +10,7 @@ const owned = stat => (!process.getuid || stat.uid === process.getuid()) && (sta
 // The engine inherits sleight's whole environment. These are the names it or its node kernel can read, apart from
 // per-session values. The engine never reads SLEIGHT_* switches: sleight applies those to the engine's replies itself.
 const engineEnv = /^(?:CUA_|NODE_REPL_|SKY_|BROWSER_USE_)|^(?:CODEX_HOME|CODEX_CLI_PATH)$/;
-const sessionEnv = /(?:_ID|TOKEN|SOCKET|PIPE_PATH|VERIFYING_IDENTITY)$/;
+const sessionEnv = /(?:_ID|_PID|TOKEN|NONCE|SECRET|_KEY|_PORT|SOCKET|PIPE_PATH|VERIFYING_IDENTITY)$/;
 const valid = entry => entry?.schema === 2 && typeof entry.initialize?.protocolVersion === 'string' &&
   typeof entry.initialize?.serverInfo?.name === 'string' && typeof entry.initialize?.serverInfo?.version === 'string' &&
   entry.initialize.capabilities && typeof entry.initialize.capabilities === 'object' && !Array.isArray(entry.initialize.capabilities) &&
@@ -79,7 +79,7 @@ export function createStartupCache({ identity, directory = join(homedir(), 'Libr
     bind({ send, forward, present = {}, log = () => {} }) {
       let file, cached, initializeId, initialized = false, notified = false, started = false, failed = false, cancelled = false;
       let initializeResult, initializedTimer, shown; // shown: the initialize answer the client got from the cache
-      let firstList = true, failureMessage;
+      let firstList = true, failureMessage, retryMessage; // retryMessage: set while a changed protocol refuses startup calls
       const lists = new Map(), queue = [];
       const answer = (kind, result) => (present[kind] ?? (value => value))(structuredClone(result));
       const drop = () => { try { if (file) rmSync(file, { force: true }); } catch { /* Unwritable cache. */ } };
@@ -143,7 +143,12 @@ export function createStartupCache({ identity, directory = join(homedir(), 'Libr
             const cacheable = firstList && Object.keys(msg.params ?? {}).length === 0;
             firstList = false;
             lists.set(msg.id, { cacheable, cached: cacheable && !!cached });
-            if (cacheable && cached) send({ jsonrpc: '2.0', id: msg.id, result: answer('tools', cached.tools) });
+            if (cacheable && cached) {
+              // A cached list the session's rewrite can't take is answered live instead.
+              let result;
+              try { result = answer('tools', cached.tools); } catch { lists.get(msg.id).cached = false; }
+              if (result) send({ jsonrpc: '2.0', id: msg.id, result });
+            }
           }
           queue.push(msg); flush(); return true;
         },
@@ -164,7 +169,8 @@ export function createStartupCache({ identity, directory = join(homedir(), 'Libr
               // A different protocol version can change how the calls already sent should be read, so only those are
               // refused, and the client sends them again.
               if (engine.result.protocolVersion !== cached.initialize.protocolVersion) {
-                refuseQueued('The engine changed while sleight started, so this call did not run. Call it again.');
+                retryMessage = 'The engine changed while sleight started, so this call did not run. Call it again.';
+                refuseQueued(retryMessage);
               }
             }
             initializeResult = structuredClone(engine.result); initialized = true; flush();
@@ -181,6 +187,8 @@ export function createStartupCache({ identity, directory = join(homedir(), 'Libr
           const list = lists.get(msg.id);
           if (!list) return false;
           lists.delete(msg.id);
+          // Calls sent after a changed protocol's initialize reply, while the cached list waited, get the same refusal.
+          if (retryMessage && list.cached) { refuseQueued(retryMessage); retryMessage = undefined; }
           if (list.cached && engine.error) {
             // The client already has the cached list. The engine's error goes to the calls that waited on it.
             drop();

@@ -199,14 +199,37 @@ test('a changed protocol version fails only the calls queued during startup, wit
   h.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
   h.send({ jsonrpc: '2.0', id: 11, method: 'tools/list' });
   h.send({ jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
+  h.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 12 } });
   h.reply({ jsonrpc: '2.0', id: 10, result: { ...structuredClone(init), protocolVersion: '2025-11-25' } });
+  assert.equal(h.server.some(msg => msg.method === 'notifications/cancelled'), false, 'a refused call\'s cancellation stays here');
+  h.send({ jsonrpc: '2.0', id: 15, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
   h.reply({ jsonrpc: '2.0', id: 11, result: structuredClone(tools) });
   assert.match(h.client.find(msg => msg.id === 12).error.message, /again/i);
   assert.equal(h.server.some(msg => msg.id === 12), false);
+  assert.match(h.client.find(msg => msg.id === 15).error.message, /again/i, 'a call sent while the cached list waited');
+  assert.equal(h.server.some(msg => msg.id === 15), false);
   h.send({ jsonrpc: '2.0', id: 13, method: 'tools/call', params: { name: 'js', arguments: { code: '1' } } });
   assert.ok(h.server.some(msg => msg.id === 13), 'the retry runs');
   const next = connect(); next.send(initialization(20));
   assert.equal(next.client.find(msg => msg.id === 20).result.protocolVersion, '2025-11-25');
+});
+test('a cached list the session cannot rewrite is answered live', t => {
+  const { directory } = fixture(t);
+  const cache = createStartupCache({ identity: { engine: '1', sleight: '1' }, directory });
+  const cold = cache.bind({ send() {}, forward() {} });
+  cold.initialize(initialization(1)); cold.request({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+  cold.reply({ jsonrpc: '2.0', id: 1, result: structuredClone(init) }); cold.reply({ jsonrpc: '2.0', id: 2, result: structuredClone(tools) });
+  const sent = [], forwarded = [];
+  const startup = cache.bind({
+    send: msg => sent.push(msg), forward: msg => forwarded.push(msg), present: { tools: () => { throw new Error('fixture'); } } });
+  startup.initialize(initialization(10));
+  assert.equal(sent.length, 1, 'the initialize answer comes from the cache');
+  startup.request({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  startup.request({ jsonrpc: '2.0', id: 11, method: 'tools/list' });
+  assert.equal(sent.length, 1, 'no cached list');
+  assert.equal(startup.reply({ jsonrpc: '2.0', id: 10, result: structuredClone(init) }), true);
+  assert.equal(startup.reply({ jsonrpc: '2.0', id: 11, result: structuredClone(tools) }), false, 'the live list goes to the client');
+  assert.deepEqual(forwarded.map(msg => msg.method), ['notifications/initialized', 'tools/list']);
 });
 test('initialization failure fails pending calls without forwarding them', t => {
   const { connect } = fixture(t); warm(connect()); const h = connect();

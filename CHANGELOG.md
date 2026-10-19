@@ -36,9 +36,9 @@
 - A session started with an A/B switch such as `SLEIGHT_FS=1`, right after sessions without it, failed every call with
   "Engine tools changed" (the first task of a Firefox race round, 2026-10-19). The startup cache now
   keeps only the engine's own replies, keyed on what starts the engine, and each session applies its own settings to
-  them. A cached reply that turns out stale no longer ends the session, which goes on with the engine's live reply, and
-  the cache is rewritten. Unit-tested on each of the 67 `SLEIGHT_*` switches in the plugin's code with every value it
-  checks for. Not yet run live.
+  them. A cached reply that turns out stale no longer ends the session: its calls run on the live engine, and the cache is
+  rewritten. [Known problems](docs/known-problems.md) lists what such a session keeps from the cache. Unit-tested on each
+  of the 67 `SLEIGHT_*` switches in the plugin's code with every value the code compares it to. Not yet run live.
 
 ## 1.3.0 (TODO: release date)
 
