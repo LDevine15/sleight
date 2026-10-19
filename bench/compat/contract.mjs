@@ -4,6 +4,7 @@
 import { engineJsVariant } from '../../plugins/sleight/lib/tool-description.mjs';
 import { rewritePaymentPolicy } from '../../plugins/sleight/lib/payment-policy.mjs';
 import { compactConfirmationsPolicy } from '../../plugins/sleight/lib/compact-confirmations.mjs';
+import { rewriteWorkflow } from '../../plugins/sleight/lib/workflow-docs.mjs';
 
 // cua methods the relay, guard and helpers call (relay.mjs, document-scope.mjs, helper-health.mjs, browser-*.mjs).
 export const CUA_METHODS = ['getApp', 'getState', 'listApps', 'listBrowsers', 'getBrowser', 'getTab', 'createBrowserTab', 'listTabs'];
@@ -171,6 +172,15 @@ export function checkPolicyRewrite(texts) {
   return compactConfirmationsPolicy(rewritten) === undefined
     ? [result('policy-rewrite', 'warn', 'the payment rewrite applies, but the compact policy no longer matches it, so the full policy is sent')]
     : [result('policy-rewrite', 'pass')];
+}
+
+// sleight rewrites the engine's Workflow lines that ask for a getAXState() after actions (workflow-docs.mjs), matching
+// each whole line by hash, so a new wording turns the rewrite off and Claude reads after its actions again.
+export function checkWorkflowRewrite(texts) {
+  const item = texts.find(text => typeof text === 'string' && text.startsWith('## Computer Use\n'));
+  if (!item) return [result('workflow-rewrite', 'warn', 'no result item starts with "## Computer Use", so sleight skips its Workflow rewrite')];
+  return rewriteWorkflow(item).status === 'rewritten' ? [result('workflow-rewrite', 'pass')]
+    : [result('workflow-rewrite', 'warn', "the engine's Workflow lines changed or are gone, so sleight leaves them whole and Claude may end calls on a read again")];
 }
 
 // One js call on the raw engine with no app: which cua methods exist, and the shape (key names and value types, never

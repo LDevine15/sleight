@@ -6,7 +6,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node
 import { join } from 'node:path';
 import { HELPER_REL, MODULES_REL, NODE_REL, NODE_REPL_REL, REPL_REL } from '../../plugins/sleight/lib/setup.mjs';
 import { engineJsVariant } from '../../plugins/sleight/lib/tool-description.mjs';
-import { API_MEMBERS, CUA_METHODS, checkApiContract, checkPolicyRewrite, jsDescriptionResult } from './contract.mjs';
+import { API_MEMBERS, CUA_METHODS, checkApiContract, checkPolicyRewrite, checkWorkflowRewrite, jsDescriptionResult } from './contract.mjs';
 
 const OAI = join(MODULES_REL, '@oai');
 export const BUNDLE = {
@@ -136,6 +136,7 @@ export function analyzeBundle(app) {
   results.push(jsDescriptionResult(pins.computer, known.length && !pins.computer ? 'computer' : undefined));
 
   results.push(...checkPolicyRewrite([`${coreDoc.trimEnd()}\n\n${policy}`]));
+  results.push(...checkWorkflowRewrite([coreDoc]));
 
   // One hash over everything checked, so a later run can say whether any of it changed without keeping engine text.
   const hash = createHash('sha256');

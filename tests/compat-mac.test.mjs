@@ -43,8 +43,9 @@ test('the doctor result carries the engine version or the first problem line', a
 
 test('the raw engine checks pass on the recorded engine and name what broke', async () => {
   const ok = await rawEngineChecks(server(), process.env);
-  assert.deepEqual(ok.steps.filter(s => s.status !== 'pass'), []);
-  assert.deepEqual(ok.steps.map(s => s.id), ['tool-surface', 'js-description', 'api-contract', 'doc-headings', 'policy-rewrite', 'repl-probe', 'turn-end']);
+  // The recorded docs have no Workflow section (its lines are pinned by hash only), so that rewrite warns here.
+  assert.deepEqual(ok.steps.filter(s => s.status !== 'pass').map(s => s.id), ['workflow-rewrite']);
+  assert.deepEqual(ok.steps.map(s => s.id), ['tool-surface', 'js-description', 'api-contract', 'doc-headings', 'policy-rewrite', 'workflow-rewrite', 'repl-probe', 'turn-end']);
   assert.match(ok.docs, /^## Computer Use/);
   assert.match((await rawEngineChecks(server('no-turn-end'), process.env)).steps[0].reason, /no turn_ended/);
   assert.equal((await rawEngineChecks(server('new-policy'), process.env)).steps.find(s => s.id === 'policy-rewrite').status, 'warn');

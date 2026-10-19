@@ -13,11 +13,12 @@ import { claudeHostManifest } from './real-browser.mjs';
 
 // The sleight arm's MCP server gets an explicit env, so a trace the launching shell asked for stopped at the harness
 // (no relay trace in the 36 Firefox b3 runs, 2026-10-18). SLEIGHT_TRACE goes through, and SLEIGHT_TS3=1, SLEIGHT_FS=1 and
-// SLEIGHT_BROWSER_CORE=1 for their A/Bs; no other host variable does.
+// SLEIGHT_BROWSER_CORE=1 for their A/Bs, and SLEIGHT_WORKFLOW_DOCS=0 (CC6's baseline); no other host variable does.
 const AB_FLAGS = ['SLEIGHT_TS3', 'SLEIGHT_FS', 'SLEIGHT_BROWSER_CORE'];
 export function traceEnv(host = process.env) {
   return { ...(typeof host.SLEIGHT_TRACE === 'string' && host.SLEIGHT_TRACE ? { SLEIGHT_TRACE: host.SLEIGHT_TRACE } : {}),
-    ...Object.fromEntries(AB_FLAGS.filter(key => host[key] === '1').map(key => [key, '1'])) };
+    ...Object.fromEntries(AB_FLAGS.filter(key => host[key] === '1').map(key => [key, '1'])),
+    ...(host.SLEIGHT_WORKFLOW_DOCS === '0' ? { SLEIGHT_WORKFLOW_DOCS: '0' } : {}) };
 }
 // The A/B flags the engine arm ran with, for its metadata: every row then names its variant (off when absent).
 export const abFlags = (host = process.env) => Object.fromEntries(AB_FLAGS.map(key => [key, host[key] === '1']));

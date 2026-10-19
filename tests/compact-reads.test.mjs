@@ -127,7 +127,9 @@ test('the relay remaps a stale number Claude saw, refuses one it never saw, and 
   serverIn.setEncoding('utf8').on('data', d => d.split('\n').filter(Boolean).forEach(l => toServer.push(JSON.parse(l))));
   clientOut.setEncoding('utf8').on('data', d => d.split('\n').filter(Boolean).forEach(l => toClient.push(JSON.parse(l))));
   const directory = mkdtempSync(join(tmpdir(), 'sleight-stale-'));
-  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, sessionId: 's', changeReview: false, inputLease: new InputLease({ directory, holder: 'A' }) });
+  // SLEIGHT_WORKFLOW_DOCS=0: by default an action result shows renumbered lines with current numbers (workflow-docs.test.mjs),
+  // so the remap below only comes up with the A/B baseline or a number the result didn't show.
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, sessionId: 's', changeReview: false, workflowDocs: false, inputLease: new InputLease({ directory, holder: 'A' }) });
   t.after(() => { relay.close(); removeTemp(directory); });
   const js = (id, code) => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
   const reply = (id, text) => serverOut.write(JSON.stringify({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }],
