@@ -55,6 +55,9 @@
   other windows and ambiguous labels still refuse.
 - `select_window` accepts a unique title ending that starts after whitespace when no exact title matches. It returns
   the full title and refuses ambiguous endings with a bounded list of candidates.
+- With `SLEIGHT_BROWSER_CORE=1`, `browser_open` uses observed browser toolbars, keeps full trees through same-window
+  re-reads and returns the window identity. It handles content-first toolbars and refuses duplicate or forged IDs.
+  Invalid app targets return guidance to correct the browser argument. The flag stays off by default.
 
 ### Turbo
 
@@ -66,6 +69,13 @@
 - Browser opens record the time spent in each phase without URLs, page text or tab handles.
 - The benchmark census counts a worker lost on the first turbo call separately from startup errors, including older
   transcripts whose metrics omit the cause.
+- Turbo accepts a hidden radio's own label and retries a cancelled click once after the same target settles, when
+  the page didn't receive input. Removed, replaced or covered targets still refuse. The trusted classification excludes
+  submits and payments from retries. `SLEIGHT_MC1=0` disables this change in the plugin and race harness.
+- Multi-select fills set exactly the requested option texts, and an empty array clears the selection. ARIA option
+  clicks use the background-click guards, including card-frame focus and target sealing.
+- Click steps accept Command or Control on targets without links, controls or window-opening handlers. On macOS,
+  Control uses a trusted left click with the requested modifier flags. All 20 headless multi-select cases passed.
 
 ### Measurements and benchmark rules
 
@@ -81,6 +91,11 @@
   saved and current graders without changing the original verdicts or ignoring site-log evidence of a send.
 - Held-out list, calendar, dependent-dropdown and new-tab fixtures cover Firefox, Safari and native Finder. World
   benchmark approvals cover only selected task apps.
+- The compatibility check recognizes its own benchmark session's Safari window-selection approval.
+- Browser-open A/B runs keep prompt cells separate from product cells and rotate their run order.
+- The Browser Use benchmark pins AnyIO 4.14.2, pypdf 6.19.0, MCP 2.2.0 and aiohttp 3.14.4 through uv overrides.
+  Browser Use stays at 0.13.11. Earlier results used the original dependency environment. Offline imports and all
+  14 focused arm tests passed, including the Anthropic SDK request check.
 
 ### Not yet run live
 

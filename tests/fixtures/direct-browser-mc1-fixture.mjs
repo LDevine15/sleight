@@ -19,7 +19,12 @@ export function mc1Fixture() {
       get metaKey() { return false; }
       getModifierState() { return false; }
     }
-    class KeyboardEvent extends Event { get key() { return ''; } }
+    class KeyboardEvent extends Event {
+      get key() { return ''; }
+      get ctrlKey() { return false; }
+      get metaKey() { return false; }
+      getModifierState() { return false; }
+    }
     class EventTarget {
       constructor() { this.listeners = new Map(); }
       addEventListener(type, fn) { if (!this.listeners.has(type)) this.listeners.set(type, new Set()); this.listeners.get(type).add(fn); }
