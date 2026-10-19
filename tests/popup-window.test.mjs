@@ -36,7 +36,7 @@ test('popupWindows names a new ID as a pop-up after a one-window count of the wi
   // CGWindowList's count with a window no Space holds (Safari's ordered-out launch window, SW1b): the Space count decides,
   // and it must agree with what is on screen. Without a Space count, a second window still stops it.
   for (const [health, counts] of [[{ ...one, allWindows: 2, spaceWindows: 1, onScreen: 1 }, true],
-    [{ ...one, allWindows: 2, spaceWindows: 1, onScreen: 0 }, true], [{ ...one, allWindows: 2, spaceWindows: 2, onScreen: 1 }, false],
+    [{ ...one, allWindows: 2, spaceWindows: 1, onScreen: 0 }, false], [{ ...one, allWindows: 2, spaceWindows: 2, onScreen: 1 }, false],
     [{ ...one, allWindows: 2, onScreen: 1 }, false], [{ ...one, allWindows: 2, spaceWindows: 0, onScreen: 1 }, false],
     [{ ...one, allWindows: 2, spaceWindows: 1, onScreen: 2 }, false], [{ ...one, allWindows: 2, spaceWindows: 1 }, false],
     [{ ...one, windows: 2, allWindows: 3, spaceWindows: 1, onScreen: 1 }, false], [{ ...one, allWindows: 2, spaceWindows: '1', onScreen: 1 }, false]]) {

@@ -7,7 +7,7 @@ const window = (pid, onScreen, extra = {}) => ({ onScreen, info: { kCGWindowOwne
   kCGWindowBounds: { Width: 600, Height: 400 }, ...extra } });
 
 function probe({ trusted = true, error = 0, count = 1, apps = ['com.apple.TextEdit'], name = 'TextEdit', timeoutError = 0, hidden = false,
-  minimized = [], cg = [window(42, true)], fullScreen = false, spaces, connection = 7 } = {}) {
+  minimized = [], cg = [window(42, true)], fullScreen = false, spaces, connection = 7, bindThrows = false } = {}) {
   const calls = [];
   const $ = value => value;
   const array = values => ({ count: values.length, objectAtIndex: i => values[i],
@@ -40,7 +40,7 @@ function probe({ trusted = true, error = 0, count = 1, apps = ['com.apple.TextEd
       return name === 'AXMinimized' ? 0 : error;
     },
   });
-  const bindFunction = spaces ? (name, signature) => { calls.push(['bind', name, JSON.stringify(signature)]); } : undefined;
+  const bindFunction = spaces ? (name, signature) => { calls.push(['bind', name, JSON.stringify(signature)]); if (bindThrows) throw Error('no symbol'); } : undefined;
   const context = vm.createContext({ $, Ref: () => [], ObjC: { import() {}, unwrap: value => value, castRefToObject: value => value, deepUnwrap: value => value,
     ...(bindFunction ? { bindFunction } : {}) } });
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/app-health.js', import.meta.url), 'utf8'), context);
@@ -118,6 +118,11 @@ test('spaceWindows counts the windows a Space holds, leaving out ordered-out one
     { cg: [shown, hidden], spaces: { 311216: [4] } }, { cg: [shown, window(42, false)], spaces: { 311216: [4] } }]) {
     assert.equal(probe(options).run('TextEdit').spaceWindows, undefined, JSON.stringify(options.spaces));
   }
+  // A binding that throws is not tried again by the long-lived helper, and later probes still answer.
+  const broken = probe({ cg: [shown, hidden], spaces: { 311216: [4], 311209: [] }, bindThrows: true });
+  for (let i = 0; i < 2; i++) assert.equal(broken.run('TextEdit').spaceWindows, undefined);
+  assert.equal(broken.run('TextEdit').status, 'responding');
+  assert.equal(broken.calls.filter(c => c[0] === 'bind').length, 1);
   // A probe that times out on AX still reports it, like the other counts.
   assert.equal(probe({ error: -25204, cg: [shown, hidden], spaces: { 311216: [4], 311209: [] } }).run('TextEdit').spaceWindows, 1);
 });

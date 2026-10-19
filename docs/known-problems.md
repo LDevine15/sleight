@@ -740,8 +740,10 @@ native reference, and oversized first results defer the browser reference while 
   a new window doesn't get the line, as `popup-window`. The second live check (6ba7204b, 3 rounds) showed the line 0 times.
   CGWindowList counted 2 windows for Safari's one, because Safari keeps a 500x500 window from launch that it never shows and no Space
   holds. The count now leaves out windows no Space holds (the private `CGSCopySpacesForWindows`) and keeps another Space's.
-  Not yet rerun live. We haven't measured whether a minimized window on another Space counts. Haiku stopped at the pop-up
-  in 1 of those 3 rounds. The proposed race change is one prompt clause for every arm: "a pop-up that a page in it opens is
+  Not yet rerun live. We haven't measured whether a minimized window or a full-screen window on another Space counts. Many
+  apps keep such hidden windows (TextEdit, Messages and Mail did on 2026-10-19). If the owner brings one back between the
+  read and the action (a closed Mail window reopened from the Dock), the line calls it the task's pop-up. Haiku
+  stopped at the pop-up in 1 of those 3 rounds. The proposed race change is one prompt clause for every arm: "a pop-up that a page in it opens is
   part of the task".
 - The race scorer's harness-failure check knows three error classes (`approval refused`, `no daemon`, `no tools`). A round that
   fails on some other shared cause, such as every call answering "Turbo is unavailable", is scored as the arm's failures until

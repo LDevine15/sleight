@@ -46,10 +46,10 @@ export function popupWindows(trace = () => {}) {
       if (!app) return;
       if (health === undefined) { trace({ event: 'census-unprobed', app, id: id ?? null, held: census.get(app) ?? null }); return; }
       // CGWindowList's count includes windows no Space holds (Safari keeps one from launch, SW1b); `spaceWindows` leaves
-      // them out and keeps another Space's. Without it, any second CGWindowList window still stops the count.
+      // them out and keeps another Space's. One window on screen ties the one held window to the one AX window (with none on
+      // screen, the held one could be another Space's). Without a Space count, a second window still stops the count.
       const counted = health?.status === 'responding' && health.windows === 1 &&
-        (typeof health.allWindows !== 'number' || health.allWindows <= 1 ||
-          (health.spaceWindows === 1 && typeof health.onScreen === 'number' && health.onScreen <= 1));
+        (typeof health.allWindows !== 'number' || health.allWindows <= 1 || (health.spaceWindows === 1 && health.onScreen === 1));
       if (counted && id) census.set(app, id); else census.delete(app);
       trace({ event: 'census', app, id: id ?? null, counted: counted && !!id, status: health?.status ?? null,
         windows: health?.windows ?? null, allWindows: health?.allWindows ?? null, spaceWindows: health?.spaceWindows ?? null,

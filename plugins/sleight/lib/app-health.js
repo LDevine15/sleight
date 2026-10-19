@@ -72,13 +72,16 @@ function frontFullScreen() {
 // counted (SW1b, 2026-10-19). Another Space's window is held by one and still counts. Whether a
 // minimized window is held is unmeasured (AXWindows counts this Space's minimized windows anyway).
 // Undefined when the call is missing or answers oddly.
-let spacesOf;
+let spacesOf, spacesBroken = false;
 function spaceWindows(ids) {
+  if (spacesBroken) return undefined;
   try {
     if (!ids.every(id => Number.isInteger(id) && id > 0)) return undefined;
     if (!spacesOf) {
-      ObjC.bindFunction('CGSMainConnectionID', ['int', []]);
-      ObjC.bindFunction('CGSCopySpacesForWindows', ['id', ['int', 'int', 'id']]);
+      try {
+        ObjC.bindFunction('CGSMainConnectionID', ['int', []]);
+        ObjC.bindFunction('CGSCopySpacesForWindows', ['id', ['int', 'int', 'id']]);
+      } catch (error) { spacesBroken = true; throw error; }
       const connection = Number($.CGSMainConnectionID());
       if (!Number.isInteger(connection) || connection <= 0) return undefined;
       // 7: the current, other and user Spaces. The copied array is never released: one small array a window a read.

@@ -927,7 +927,7 @@ test('Safari\'s ordered-out launch window does not stop the count (the SW1 live 
   // The same answer with two windows on this Space (r3's later read, the pop-up open) or a Space count that disagrees with
   // what is on screen counts nothing.
   for (const probe of [{ ...SAFARI_LIVE, windows: 2, allWindows: 3, spaceWindows: 2, onScreen: 2 }, { ...SAFARI_LIVE, onScreen: 2 },
-    { ...SAFARI_LIVE, spaceWindows: 0 }, { ...SAFARI_LIVE, onScreen: undefined }]) {
+    { ...SAFARI_LIVE, spaceWindows: 0 }, { ...SAFARI_LIVE, onScreen: undefined }, { ...SAFARI_LIVE, onScreen: 0 }]) {
     const other = await safariHarness(t, { probes: [probe] });
     assert.match(await clickResult(other, 'signin', safariResult('signin', popupTree)), PLAIN, JSON.stringify(probe));
   }
