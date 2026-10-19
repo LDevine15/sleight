@@ -11,7 +11,7 @@ import { installedConfigPath, readInstalledConfigFile } from './direct-browser/i
 import { grantStorePath } from './direct-browser/electron-config.mjs';
 import { createGrantStore } from './direct-browser/electron-consent.mjs';
 import { browserApplicationName } from './direct-browser/browsers.mjs';
-import { BUNDLE_ID, LIMIT, PERMISSIONS_BYTES, currentApp, lastUse, permissionsPath, readPermissions, siteOrigin, usedFolder, usedWords } from './permissions.mjs';
+import { BUNDLE_ID, LIMIT, PERMISSIONS_BYTES, currentApp, lastUse, permissionsPath, readPermissions, coveringBlock, sameBlock, sameListed, siteOrigin, usedFolder, usedWords } from './permissions.mjs';
 
 // ChatGPT's own Always allow list, which its helper honors itself. sleight only reads it, for the listing.
 const engineFile = home => join(home, 'Library/Group Containers/2DC432GLL2.com.openai.sky.CUAService/Library/Application Support/Software/ComputerUseAppApprovals.json');
@@ -90,7 +90,8 @@ function update(o, change) {
 }
 const blockApp = (o, id, name) => update(o, p => p.apps.some(app => app.id.toLowerCase() === id.toLowerCase()) ? false
   : { ...p, apps: [...p.apps, { id, ...name && name !== id ? { name: name.slice(0, 128) } : {} }] });
-const blockSite = (o, origin) => update(o, p => p.sites.includes(origin) ? false : { ...p, sites: [...p.sites, origin] });
+// A site an existing block already covers (the same host, www. or not, or a subdomain) is already blocked.
+const blockSite = (o, origin) => update(o, p => coveringBlock(p.sites, origin) ? false : { ...p, sites: [...p.sites, origin] });
 
 /** Turbo's worker writes the menu's Never Act on row through this. */
 export function blockSiteForUser(origin, options) {
@@ -212,11 +213,11 @@ export function permissionsCommand(args, options) {
         if (!site) { o.out(usage); return 2; }
         // Taking the last site off would leave no limit, which widens what sleight may do, so that revoke is refused.
         const only = readPermissions(o.path, o.uid).only;
-        if (only?.length === 1 && only[0] === site) {
+        if (only?.length && only.every(listed => sameListed(listed, site))) {
           o.out(`${site} is the only site sleight may act on, so it stays. sleight-mcp permissions sites all lifts the limit, and sleight-mcp permissions block ${site} stops sleight there.\n`);
           return 1;
         }
-        const changed = update(o, p => p.only?.includes(site) ? { ...p, only: p.only.filter(s => s !== site) } : false);
+        const changed = update(o, p => p.only?.some(s => sameListed(s, site)) ? { ...p, only: p.only.filter(s => !sameListed(s, site)) } : false);
         o.out(changed ? `${site} is off the sites turbo may act on.\n` : `${site} isn't on an allow-only list.\n`); return 0;
       }
       const removed = revokeApp(o, what);
@@ -232,7 +233,7 @@ export function permissionsCommand(args, options) {
       }
       const changed = update(o, p => chosen.app
         ? p.apps.some(app => app.id.toLowerCase() === chosen.app.toLowerCase()) && { ...p, apps: p.apps.filter(app => app.id.toLowerCase() !== chosen.app.toLowerCase()) }
-        : p.sites.includes(chosen.site) && { ...p, sites: p.sites.filter(site => site !== chosen.site) });
+        : p.sites.some(site => sameBlock(site, chosen.site)) && { ...p, sites: p.sites.filter(site => !sameBlock(site, chosen.site)) });
       o.out(changed ? `sleight may act ${chosen.app ? 'in' : 'on'} ${name} again. Approvals still ask as before.\n` : `${name} isn't blocked.\n`); return 0;
     }
     if (op === 'sites' && rest[0] === 'all' && rest.length === 1) {
@@ -242,7 +243,7 @@ export function permissionsCommand(args, options) {
     if (op === 'sites' && rest[0] === 'only' && rest.length > 1) {
       const sites = rest.slice(1).map(siteOrigin);
       if (sites.some(site => !site) || sites.length > 256) { o.out(usage); return 2; }
-      const only = [...new Set(sites)];
+      const only = sites.filter((site, at) => sites.findIndex(other => sameListed(other, site)) === at);
       update(o, p => ({ ...p, only }));
       o.out(`Turbo acts only on ${only.join(', ')} from its next action. sleight-mcp permissions sites all lifts the limit.\n`); return 0;
     }

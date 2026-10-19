@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { browserTools, createToolDispatcher } from '../plugins/sleight/lib/direct-browser/tools.mjs';
+import { siteRefusal } from '../plugins/sleight/lib/permissions.mjs';
 
 const names = ['browser_open', 'browser_read', 'browser_act', 'browser_fill', 'browser_tabs'];
 test('five eager schemas use type arrays without schema compositions at any level', () => {
@@ -249,4 +250,21 @@ test('a blocked site: no read or input on its page, and a step that lands on one
   const fill = await h.dispatcher.call({ name: 'browser_fill', arguments: { tab: 't1', fields: [{ ref: 'e1', value: 'x' }] } });
   assert.equal(fill.text, `e1: set\n${LINE}`);
   assert.equal(h.calls.filter(c => c[0] === 'snapshot').length, 0);
+});
+
+test('with the real site check, a page whose URL can\'t be read, a credentials link and a non-web page refuse while limits exist', async () => {
+  const perms = { state: 'ok', apps: [], sites: ['https://blocked.example'] };
+  for (const url of [() => { throw Error('page closed'); }, () => undefined, () => 'https://u:p@www.blocked.example/', () => 'blob:https://fine.example/1']) {
+    const calls = [], entry = { page: { url, title: async () => 'x' }, state: { snapshotNo: 0 } };
+    const dispatcher = createToolDispatcher({ browser: 'bfixture', sites: value => siteRefusal(perms, value),
+      pages: { tab: () => entry, enqueue: async (id, fn) => fn(entry), closedOpener: () => undefined, endTurn: async () => ({ cleanedUp: true }) },
+      snapshot: async () => { calls.push('snapshot'); return { text: 'page', number: 1 }; },
+      runSteps: async () => { calls.push('act'); return { lines: [] }; }, fillFields: async () => { calls.push('fill'); return { rows: [] }; } });
+    for (const [name, args] of [['browser_read', { tab: 't1' }], ['browser_act', { tab: 't1', steps: [{ do: 'click', ref: 'e1' }] }]]) {
+      const result = await dispatcher.call({ name, arguments: args });
+      assert.equal(result.isError, true, name);
+      assert.match(result.text, /^You (?:blocked sleight on https:\/\/blocked\.example|limited the sites sleight acts on)/, name);
+    }
+    assert.deepEqual(calls, []);
+  }
 });

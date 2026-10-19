@@ -57,14 +57,38 @@ export function appRefusal(perms, { bundleId, name } = {}) {
   return hit && `You blocked sleight in ${hit.name ?? hit.id} (sleight-mcp permissions unblock ${hit.id} lifts it).`;
 }
 
-/** The line Claude relays when the user blocked this page's site, or limited sleight to other sites, or undefined. Only web
- *  origins can be blocked; an app's own documents have none. */
+// Sites are compared by host: lowercased, one trailing dot and a leading www. removed, so www.example.com, example.com and
+// example.com. are one site. A block covers that host's subdomains too, on any scheme and port. An allow-only entry matches
+// its own scheme and port (a default port is no port) and no subdomain, since a looser match there would widen access.
+const siteHost = host => String(host ?? '').toLowerCase().replace(/\.$/, '').replace(/^www\./, '');
+// host[:port] as a URL writes it, split without parsing so a bracketed IPv6 address keeps its colons.
+const hostPort = value => { const [, host, port = ''] = /^(.*?)(?::(\d+))?$/.exec(String(value ?? '')); return { host: siteHost(host), port }; };
+const covers = (origin, host) => { const blocked = siteHost(new URL(origin).hostname), seen = hostPort(host).host; return !!blocked && (seen === blocked || seen.endsWith('.' + blocked)); };
+const lists = (origin, { host, scheme }) => {
+  const url = new URL(origin), seen = hostPort(host);
+  return siteHost(url.hostname) === seen.host && url.port === seen.port && (!scheme || url.protocol === scheme + ':');
+};
+/** The stored block or allow-only entry the user would mean by this origin, compared as the checks compare. */
+export const sameBlock = (a, b) => siteHost(new URL(a).hostname) === siteHost(new URL(b).hostname);
+export const sameListed = (a, b) => { const url = new URL(b); return lists(a, { host: url.host, scheme: url.protocol.slice(0, -1) }); };
+export const coveringBlock = (sites, origin) => sites?.find(site => covers(site, new URL(origin).host));
+
+const TAB_UNPROVEN = "You limited the sites sleight acts on, and it can't tell which site this tab shows, so it doesn't act here (sleight-mcp permissions lists your limits).";
+/** The line Claude relays when the user blocked this page's site, or limited sleight to other sites, or undefined. While any
+ *  site limit exists the check fails closed: a URL that isn't http(s), or no URL at all, refuses, except a blank tab. A URL
+ *  with credentials is judged by its host. Only turbo's browser runtime checks sites; its Electron app turns don't. */
 export function siteRefusal(perms, url) {
   if (perms?.state === 'unsafe') return UNSAFE;
-  const origin = siteOrigin(url);
-  if (!origin) return undefined;
-  if (perms?.sites?.includes(origin)) return `You blocked sleight on ${origin} (sleight-mcp permissions unblock ${origin} lifts it).`;
-  if (perms?.only && !perms.only.includes(origin)) return `You allow sleight only on ${words(perms.only)}, not ${origin} (sleight-mcp permissions lists them).`;
+  if (!sitesLimited(perms)) return undefined;
+  if (url === 'about:blank') return undefined;
+  let parsed;
+  try { parsed = new URL(url); } catch { return TAB_UNPROVEN; }
+  if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) return TAB_UNPROVEN;
+  const blocked = perms.sites?.find(site => covers(site, parsed.host));
+  if (blocked) return `You blocked sleight on ${blocked} (sleight-mcp permissions unblock ${blocked} lifts it).`;
+  if (perms.only && !perms.only.some(site => lists(site, { host: parsed.host, scheme: parsed.protocol.slice(0, -1) }))) {
+    return `You allow sleight only on ${words(perms.only)}, not ${parsed.origin} (sleight-mcp permissions lists them).`;
+  }
   return undefined;
 }
 
@@ -97,10 +121,9 @@ export function pageRefusal(perms, page) {
   if (perms?.state === 'unsafe') return UNSAFE;
   if (!perms?.sites?.length && !perms?.only) return undefined;
   if (!page || page.unproven) return "You limited the sites sleight acts on, and it can't tell which site this window shows, so it doesn't act here (sleight-mcp permissions lists your limits).";
-  const blocked = perms.sites.find(origin => new URL(origin).host === page.host);
+  const blocked = perms.sites.find(origin => covers(origin, page.host));
   if (blocked) return `You blocked sleight on ${blocked} (sleight-mcp permissions unblock ${blocked} lifts it).`;
-  const listed = origin => { const url = new URL(origin); return url.host === page.host && (!page.scheme || url.protocol === page.scheme + ':'); };
-  if (perms.only && !perms.only.some(listed)) return `You allow sleight only on ${words(perms.only)}, not ${page.scheme ? page.scheme + '://' : ''}${page.host} (sleight-mcp permissions lists them).`;
+  if (perms.only && !perms.only.some(origin => lists(origin, page))) return `You allow sleight only on ${words(perms.only)}, not ${page.scheme ? page.scheme + '://' : ''}${page.host} (sleight-mcp permissions lists them).`;
   return undefined;
 }
 export const sitesLimited = perms => perms?.state === 'unsafe' || !!perms?.sites?.length || !!perms?.only;

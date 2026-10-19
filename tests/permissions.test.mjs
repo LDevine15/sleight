@@ -52,7 +52,8 @@ test('refusal lines: a blocked app by bundle id or name, a blocked site, allow-o
   assert.equal(appRefusal(perms, { bundleId: 'com.other.app', name: 'Other' }), undefined);
   assert.equal(siteRefusal(perms, 'https://blocked.example/path?q=1'), 'You blocked sleight on https://blocked.example (sleight-mcp permissions unblock https://blocked.example lifts it).');
   assert.equal(siteRefusal(perms, 'https://fine.example/'), undefined);
-  assert.equal(siteRefusal(perms, 'vscode-file://vscode-app/x'), undefined, 'app documents have no web origin to block');
+  // Only the browser runtime checks sites (Electron app turns get none), so a page that isn't http(s) there proves no site.
+  assert.match(siteRefusal(perms, 'vscode-file://vscode-app/x'), /can't tell which site/);
   const only = { ...perms, only: ['https://a.example', 'https://b.example'] };
   assert.equal(siteRefusal(only, 'https://a.example/x'), undefined);
   assert.equal(siteRefusal(only, 'https://c.example/'), 'You allow sleight only on https://a.example and https://b.example, not https://c.example (sleight-mcp permissions lists them).');
@@ -90,6 +91,59 @@ test('block, unblock and sites from the command write a private file that the ch
   for (const args of [['block'], ['block', 'not a target'], ['block', 'ftp://x.example'], ['sites'], ['sites', 'only'], ['sites', 'only', 'nope'], ['frobnicate']]) {
     assert.equal(w.command(args), 2, args.join(' ')); w.output();
   }
+});
+
+test('a site block covers its bare host, www., a trailing dot, subdomains, any port and both schemes, on turbo and the engine path', () => {
+  const blocks = { state: 'ok', apps: [], sites: ['https://bestbuy.com'] };
+  const LINE = 'You blocked sleight on https://bestbuy.com (sleight-mcp permissions unblock https://bestbuy.com lifts it).';
+  for (const url of ['https://www.bestbuy.com/x', 'https://bestbuy.com./x', 'https://BestBuy.com:8443/', 'http://bestbuy.com/', 'https://m.bestbuy.com/', 'https://www.bestbuy.com.:443/']) {
+    assert.equal(siteRefusal(blocks, url), LINE, url);
+  }
+  for (const page of [{ host: 'www.bestbuy.com' }, { host: 'bestbuy.com.' }, { host: 'bestbuy.com:8443', scheme: 'https' }, { host: 'm.bestbuy.com', scheme: 'http' }]) {
+    assert.equal(pageRefusal(blocks, page), LINE, JSON.stringify(page));
+  }
+  assert.equal(siteRefusal(blocks, 'https://notbestbuy.com/'), undefined);
+  assert.equal(pageRefusal(blocks, { host: 'notbestbuy.com' }), undefined);
+  assert.match(siteRefusal({ ...blocks, sites: ['https://www.bestbuy.com'] }, 'https://bestbuy.com/'), /^You blocked sleight on https:\/\/www\.bestbuy\.com/);
+});
+
+test('allow-only treats www. and the bare host as one site and ignores a default port, but keeps the scheme, a port and subdomains apart', () => {
+  const only = { state: 'ok', apps: [], sites: [], only: ['https://www.a.example'] };
+  for (const url of ['https://a.example/x', 'https://a.example.:443/', 'https://WWW.A.EXAMPLE/']) assert.equal(siteRefusal(only, url), undefined, url);
+  for (const url of ['http://a.example/', 'https://a.example:8443/', 'https://sub.a.example/']) assert.match(siteRefusal(only, url), /^You allow sleight only on https:\/\/www\.a\.example, not /, url);
+  assert.equal(pageRefusal(only, { host: 'a.example' }), undefined);
+  assert.equal(pageRefusal(only, { host: 'www.a.example.', scheme: 'https' }), undefined);
+  assert.match(pageRefusal(only, { host: 'a.example:8443' }), /^You allow sleight only/);
+});
+
+test('turbo\'s site check fails closed while limits exist: credentials are judged by their host, and other schemes or no URL refuse', () => {
+  const blocks = { state: 'ok', apps: [], sites: ['https://bestbuy.com'] };
+  assert.match(siteRefusal(blocks, 'https://u:p@bestbuy.com/'), /^You blocked sleight on https:\/\/bestbuy\.com /);
+  for (const url of ['blob:https://bestbuy.com/0d5c', 'view-source:https://bestbuy.com/', 'data:text/html,x', 'file:///x.html', 'chrome://settings', undefined, '', 'not a url']) {
+    assert.match(siteRefusal(blocks, url), /^You limited the sites sleight acts on, and it can't tell which site this tab shows/, String(url));
+  }
+  assert.equal(siteRefusal(blocks, 'about:blank'), undefined, 'a blank tab shows no site');
+  const only = { state: 'ok', apps: [], sites: [], only: ['https://a.example'] };
+  assert.equal(siteRefusal(only, 'https://u:p@a.example/'), undefined);
+  assert.match(siteRefusal(only, 'https://u:p@b.example/'), /not https:\/\/b\.example /);
+  assert.match(siteRefusal(only, 'blob:https://a.example/1'), /can't tell which site/);
+  const none = { state: 'ok', apps: [], sites: [] };
+  for (const url of ['blob:x', undefined, 'https://u:p@bestbuy.com/']) assert.equal(siteRefusal(none, url), undefined, 'without limits nothing is checked');
+});
+
+test('the command compares sites the way the checks do', t => {
+  const w = world(t);
+  assert.equal(w.command(['block', 'https://example.com']), 0); w.output();
+  assert.equal(w.command(['block', 'https://www.example.com/x']), 0);
+  assert.match(w.output(), /^https:\/\/www\.example\.com is already blocked/);
+  assert.equal(w.command(['unblock', 'http://www.example.com.']), 0);
+  assert.match(w.output(), /^sleight may act on http:\/\/www\.example\.com\. again/);
+  assert.deepEqual(readPermissions(w.path).sites, []);
+  assert.equal(w.command(['sites', 'only', 'https://a.example', 'https://www.a.example', 'https://b.example']), 0); w.output();
+  assert.deepEqual(readPermissions(w.path).only, ['https://a.example', 'https://b.example']);
+  assert.equal(w.command(['revoke', 'https://www.b.example']), 0);
+  assert.deepEqual(readPermissions(w.path).only, ['https://a.example']);
+  assert.equal(w.command(['revoke', 'https://www.a.example']), 1, 'the last site stays, however it is spelled');
 });
 
 test('revoking the last allow-only site is refused, so the list never empties into no limit at all', t => {
