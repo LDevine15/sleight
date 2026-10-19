@@ -74,6 +74,42 @@ test('MC1 action reports the settled retry in the same step and disables recover
   }
 });
 
+for (const [modifier, want] of [['cmd', 'Meta'], ['ctrl', 'Control']])
+  test(`click modifier ${modifier} reaches the observed element through the background guard`, async () => {
+    let guarded = 0;
+    const f = fixture({ backgroundClick: async (tab, loc, click, opts) => {
+      assert.equal(opts.modifier, want);
+      assert.equal(typeof opts.recover, 'function');
+      assert.equal(typeof opts.onRetry, 'function');
+      guarded++; return click({ modifiers: ['ControlOrMeta'] });
+    } });
+    const result = await f.run(f.tab, [{ do: 'click', ref: 'e1', modifier }], {});
+    assert.equal(result.stoppedAt, null); assert.equal(guarded, 1);
+    assert.deepEqual(f.actions[0][2].modifiers, ['ControlOrMeta', process.platform === 'darwin' && modifier === 'ctrl' ? 'Meta' : want]);
+    assert.equal(f.checks[0].target.ref, 'e1');
+  });
+
+test('click modifiers cannot bypass payment refusal, pending input or element cover checks', async () => {
+  const paid = fixture({ submit: true }); paid.states.set('e1', { payment: true });
+  paid.tab.state.submitUnconfirmed = { snapshotNo: 1 };
+  const result = await paid.run(paid.tab, [{ do: 'click', ref: 'e1', modifier: 'cmd' }], {});
+  assert.match(result.lines[0], /not run:.*Read before resubmitting/); assert.deepEqual(paid.actions, []);
+  const pending = fixture(); pending.tab.state.actionPending = {};
+  assert.match((await pending.run(pending.tab, [{ do: 'click', ref: 'e1', modifier: 'ctrl' }], {})).lines[0], /pending/);
+  assert.deepEqual(pending.actions, []);
+  const covered = fixture({ fail: 'Timeout: covering element intercepts pointer events' });
+  assert.match((await covered.run(covered.tab, [{ do: 'click', ref: 'e1', modifier: 'cmd' }], {})).lines[0], /not run:.*cover/);
+  assert.equal(covered.actions.length, 1, 'Playwright checks the hit and refuses without replay');
+});
+
+test('invalid modifiers or modifiers on non-click steps reject the whole batch before input', async () => {
+  const f = fixture();
+  for (const step of [{ do: 'click', ref: 'e1', modifier: 'shift' }, { do: 'click', ref: 'e1', modifier: 'alt' }, { do: 'click', ref: 'e1', modifier: 'super' }, { do: 'click', ref: 'e1', modifier: ['cmd'] },
+    { do: 'press', ref: 'e1', key: 'Enter', modifier: 'cmd' }, { do: 'navigate', ref: 'e1', modifier: 'cmd' }])
+    await assert.rejects(f.run(f.tab, [{ do: 'click', ref: 'e1' }, step], {}), /modifier/);
+  assert.deepEqual(f.actions, []);
+});
+
 test('v3 validates the whole batch before input, including every required field', async () => {
   const f = fixture();
   for (const step of [{ do: 'click' }, { do: 'type', ref: 'e1' }, { do: 'press' }, { do: 'select', ref: 'e1' },
@@ -214,12 +250,17 @@ test('v3 upload goes through the private file provider and releases staging afte
 });
 
 test('v3 confirmation is returned without executing input', async () => {
-  const f = fixture();
-  const run = createActionRunner({ check: () => ({ kind: 'confirm', terms: { amount: '25' } }),
+  for (const modifier of [undefined, 'cmd', 'ctrl']) {
+    const f = fixture({ submit: true }); f.states.set('e1', { payment: true }); let guarded = 0;
+    const run = createActionRunner({ check: (ctx, kind, target) => {
+      assert.equal(kind, 'click'); assert.equal(target.element.payment, true);
+      return { kind: 'confirm', terms: { amount: '25' } };
+    }, backgroundClick: () => { guarded++; throw Error('payment input must not start'); },
     snapshot: async () => ({ text: 'untrusted page', number: 2 }) });
-  const result = await run(f.tab, [{ do: 'click', ref: 'e1' }], { userMessage: 'Read' });
-  assert.match(result.lines[0], /confirm/i); assert.equal(f.actions.length, 0);
-  assert.deepEqual(result.confirmation, { step: 1, terms: { amount: '25' } });
+    const result = await run(f.tab, [{ do: 'click', ref: 'e1', ...(modifier ? { modifier } : {}) }], { userMessage: 'Read' });
+    assert.match(result.lines[0], /confirm/i); assert.equal(f.actions.length, 0); assert.equal(guarded, 0);
+    assert.deepEqual(result.confirmation, { step: 1, terms: { amount: '25' } });
+  }
 });
 
 test('v3 read failure after input remains an observation, with no automatic resend', async () => {

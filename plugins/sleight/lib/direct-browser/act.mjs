@@ -13,6 +13,7 @@ const OPS = new Set('click type press select check uncheck hover scroll drag upl
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
 const WAIT_CAP = 5000, SCROLL_CAP = 10000, navigateNeeds = 'the ref of an http(s) link (browser_open takes a url); to press other elements use click';
 const TIMEOUT = 1000;
+const clickModifiers = Object.freeze({ cmd: 'Meta', ctrl: 'Control' });
 const pendingInputs = new WeakMap();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 export const closedSubmitWarning = 'its submit is unconfirmed; check the opener or the account before paying again';
@@ -42,6 +43,8 @@ function validate(steps) {
   if (!Array.isArray(steps) || !steps.length || steps.length > 12) throw Error('steps needs 1 to 12 operations');
   for (const s of steps) {
     if (!s || !OPS.has(s.do)) throw Error('unsupported do operation');
+    if (s.modifier !== undefined && (s.do !== 'click' || typeof s.modifier !== 'string' || !Object.hasOwn(clickModifiers, s.modifier)))
+      throw Error('click modifier must be cmd or ctrl');
     const needs = name => { throw Error(s.do + ' needs ' + name); };
     if (REF_OPS.has(s.do) && !refOf(s.ref)) needs('ref');
     if (s.do === 'navigate' && !refOf(s.ref)) needs(navigateNeeds);
@@ -308,8 +311,13 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             const aim = await aimedAt(locator);
             // The rules read the element inside gate(); the page confirms those words are the ones it sealed.
             if (trusted) { target.verifySeal = verifySeal; await gate(); ctx.beginInput(target); }
-            begin(); return locator.click({ ...options, ...extra, ...aim });
-          }, { recover: () => recoverClick, onRetry: () => { clickRetry = '; waited for the page to settle and retried the click once'; } });
+            // Chromium on macOS turns native Control+left into a context click.
+            // Carry Control on Meta there; the sealed hook exposes ctrlKey to the page.
+            const physical = step.modifier === 'ctrl' && process.platform === 'darwin' ? 'Meta' : clickModifiers[step.modifier];
+            const modifiers = step.modifier === undefined ? {} : { modifiers: [...new Set([...(extra.modifiers ?? []), physical])] };
+            begin(); return locator.click({ ...options, ...extra, ...aim, ...modifiers });
+          }, { recover: () => recoverClick, onRetry: () => { clickRetry = '; waited for the page to settle and retried the click once'; },
+            ...(step.modifier === undefined ? {} : { modifier: clickModifiers[step.modifier] }) });
           const pressKey = keys => trusted ? ctx.pressTarget(target, step.key, options, keys) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);
           // Enter and Space can follow a link or submit a form into a new tab: arm the popup hook, as a click does. In a trusted turn
           // the key also goes through the key shield (armed before the key, every other frame locked), so the gate's verdict and the

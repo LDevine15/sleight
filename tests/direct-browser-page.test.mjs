@@ -213,6 +213,7 @@ function hookFixture({ clock = Date, handle, credentials: given, parent, rewrita
     constructor(localName = 'button', attrs = {}) { Object.assign(this, { localName, attrs, isConnected: true }); }
     getAttribute(name) { return this.attrs[name] ?? null; }
     hasAttribute(name) { return Object.hasOwn(this.attrs, name); }
+    querySelectorAll() { return (this.children ?? []).flatMap(child => [child, ...child.querySelectorAll('*')]); }
     matches() { return !!this.interactive; }
     getRootNode() { return {}; }
     scrollIntoView(options) { (this.scrolls ??= []).push(options.block); }
@@ -397,6 +398,118 @@ test('CR8 pointer events stay plain when their first modifier read is after disp
     for (const event of retained) assert.deepEqual(read(event), [false, false, false, false], event.type + ' after retirement');
   } finally { f.hook.off(); }
   for (const type of types) assert.equal(f.window.captureListeners[type]?.size ?? 0, 0, type + ' listener removed');
+});
+
+for (const [modifier, control] of [['Meta', true], ['Control', true], ['Control', false]]) test(`explicit ${modifier} clicks keep the requested modifier visible after retirement (native Control: ${control})`, t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = hookFixture(), option = new f.Element('div', { role: 'option' }), events = [];
+  try {
+    f.hook.prepare(option, 'explicit', 1000, false, modifier);
+    for (const key of ['Meta', 'Control']) for (const fn of f.window.listeners.keydown)
+      fn(Object.assign(new f.Event(), { key, type: 'keydown', isTrusted: true }));
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      const event = Object.assign(new f.MouseEvent(), { type, nodes: [option], isTrusted: true, control, meta: true });
+      for (const fn of f.window.captureListeners[type] ?? []) fn(event);
+      event.nodes = []; events.push(event);
+    }
+    t.mock.timers.tick(0); f.hook.finish('explicit');
+    f.hook.prepare(option, 'next', 1000);
+    for (const event of events) assert.deepEqual([event.ctrlKey, event.metaKey, event.getModifierState('Control'), event.getModifierState('Meta')],
+      modifier === 'Meta' ? [false, true, false, true] : [true, false, true, false]);
+  } finally { f.hook.off(); }
+});
+
+test('explicit modifier clicks on links refuse before a native foreground action can run', () => {
+  const f = hookFixture();
+  try {
+    const link = new f.Element('a', { href: '/destination' });
+    assert.deepEqual(f.hook.prepare(link, 'explicit-link', 1000, false, 'Shift'), { kind: 'refuse', reason: 'modifier' });
+  } finally { f.hook.off(); }
+});
+
+test('the Control carrier changes only trusted events on its armed target and restores native getters on teardown', () => {
+  const f = hookFixture(), option = new f.Element('div', { role: 'option' }), other = new f.Element('div');
+  const read = event => [event.ctrlKey, event.metaKey, event.getModifierState('Control'), event.getModifierState('Meta')];
+  const event = (node, trusted) => Object.assign(new f.MouseEvent(), { nodes: [node], isTrusted: trusted, control: false, meta: true });
+  const retained = event(option, true);
+  try {
+    f.hook.prepare(option, 'carrier', 1000, false, 'Control');
+    for (const fn of f.window.listeners.keydown) fn(Object.assign(new f.Event(), { key: 'Meta', type: 'keydown', isTrusted: true }));
+    assert.deepEqual(read(event(other, true)), [false, true, false, true]);
+    assert.deepEqual(read(event(option, false)), [false, true, false, true]);
+    assert.deepEqual(read(retained), [true, false, true, false]);
+    f.hook.finish('carrier');
+    assert.deepEqual(read(event(option, true)), [false, true, false, true]);
+    assert.deepEqual(read(retained), [true, false, true, false]);
+  } finally { f.hook.off(); }
+  assert.deepEqual(read(retained), [false, true, false, true]);
+});
+
+for (const modifier of ['Meta', 'Control']) test(`explicit ${modifier} refuses links, controls and forwarded submits throughout the target tree`, () => {
+  const f = hookFixture();
+  try {
+    const form = new f.Element('form'), submit = new f.HTMLButtonElement({}, form), label = new f.HTMLLabelElement(submit);
+    const link = new f.Element('a', { href: '/destination' });
+    const targets = [submit, label, link, new f.HTMLInputElement({ type: 'checkbox' }), new f.HTMLSelectElement({ multiple: '' }),
+      new f.Element('textarea'), new f.Element('div', { role: 'button' })];
+    for (const target of targets) {
+      const inside = new f.Element('span'); inside.parentElement = target;
+      const around = new f.Element('div'); around.children = [target];
+      for (const element of [target, inside, around])
+        assert.deepEqual(f.call('prepare', element, 'refused', 1000, false, modifier), { kind: 'refuse', reason: 'modifier' }, target.localName);
+    }
+    assert.deepEqual(f.opens, []);
+  } finally { f.hook.off(); }
+});
+
+for (const modifier of ['Shift', 'Alt']) test(`explicit ${modifier} refuses even a plain ARIA option`, () => {
+  const f = hookFixture();
+  try { assert.deepEqual(f.hook.prepare(new f.Element('div', { role: 'option' }), 'bad-key', 1000, false, modifier), { kind: 'refuse', reason: 'modifier' }); }
+  finally { f.hook.off(); }
+});
+
+test('explicit modifiers refuse inline window.open handlers and block indirect opens during dispatch', () => {
+  const f = hookFixture();
+  try {
+    const option = new f.Element('div', { role: 'option', onclick: "window.open('/destination')" });
+    assert.deepEqual(f.hook.prepare(option, 'inline-open', 1000, false, 'Meta'), { kind: 'refuse', reason: 'modifier' });
+    delete option.attrs.onclick;
+    option.onclick = () => window.open('/destination');
+    assert.deepEqual(f.hook.prepare(option, 'property-open', 1000, false, 'Control'), { kind: 'refuse', reason: 'modifier' });
+    delete option.onclick;
+    assert.equal(f.hook.prepare(option, 'indirect-open', 1000, false, 'Meta'), true);
+    const event = Object.assign(new f.MouseEvent(), { type: 'click', nodes: [option], isTrusted: true });
+    for (const fn of f.window.listeners.click) fn(event);
+    assert.equal(f.window.open('/destination', '_blank'), null);
+    assert.deepEqual(f.opens, []);
+  } finally { f.hook.off(); }
+});
+
+test('explicit modifiers refuse registered window.open listeners and allow a removed listener', () => {
+  const f = hookFixture(), option = new f.Element('div', { role: 'option' });
+  const listener = () => window.open('/destination');
+  option.listeners = {}; option.captureListeners = {};
+  try {
+    f.EventTarget.prototype.addEventListener.call(option, 'click', listener);
+    assert.deepEqual(f.hook.prepare(option, 'registered-open', 1000, false, 'Meta'), { kind: 'refuse', reason: 'modifier' });
+    f.EventTarget.prototype.removeEventListener.call(option, 'click', listener);
+    assert.equal(f.hook.prepare(option, 'removed-open', 1000, false, 'Meta'), true);
+    f.hook.finish('removed-open');
+    f.EventTarget.prototype.addEventListener.call(f.window, 'click', listener);
+    assert.deepEqual(f.hook.prepare(option, 'delegated-open', 1000, false, 'Control'), { kind: 'refuse', reason: 'modifier' });
+  } finally { f.hook.off(); }
+});
+
+for (const modifier of ['Meta', 'Control']) test(`explicit ${modifier} checks card-frame focus on an ARIA option`, () => {
+  const f = hookFixture();
+  try {
+    const option = new f.Element('div', { role: 'option' }), card = new f.Element('iframe');
+    f.document.activeElement = card;
+    assert.equal(f.hook.prepare(option, 'blurred', 1000, false, modifier), true);
+    assert.equal(card.blurred, true); f.hook.finish('blurred');
+    card.keepsFocus = true; f.document.activeElement = card;
+    assert.throws(() => f.hook.prepare(option, 'held', 1000, false, modifier), /document focus is inside a frame/);
+  } finally { f.hook.off(); }
 });
 
 test('CR8 pointer capture masks only trusted events on the prepared element during its click', t => {
