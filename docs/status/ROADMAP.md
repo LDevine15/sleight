@@ -158,11 +158,21 @@ native claim and the browser race run as Mac load allows, so that Electron's run
    Owner, 2026-10-19 ~15:40Z: commits are authored as penguinspecz with the GitHub no-reply address (the repo had committed as
    `penguinspecz <34923421+penguinspecz@users.noreply.github.com>` since 2026-10-12, which GitHub credited to a stranger's account), and the history is rewritten to credit those
    commits to penguinspecz, with a force push of the public `main` and the tags. sleight-arch rewrites every branch at once
-   when 1.3.1 is ready and no builder is mid-flight, and records the old-to-new commit map. 1.4.0 also gets README and hub
+   when 1.3.1 is ready and no builder is mid-flight, and records the old-to-new commit map. Owner, 2026-10-19 ~22:35Z: 1.3.1 pushes
+   without it, and the rewrite runs at the next quiet point after 1.4.0's lanes merge, force-pushing main and the v1.3.0 and
+   v1.3.1 tags then. 1.4.0 also gets README and hub
    visuals (generated charts, a demo clip, a diagram), a cleaner hub, GitHub Pages for the interactive results page, an
    agent-first install (point a coding agent at the repo URL and it installs sleight), supported hosts and platforms stated up
    front, and a taste pass over the front page on the assumption that it goes viral. The plan is
    ledger/p140/readme-hub-pages-PLAN.md.
+   1.4.0 validation (owner, 2026-10-19, LAWS release-validation rule) is the full check and the release pass on the 1.4.0 build
+   (B against 1.3.1's release pass). It adds B rounds of the 10 native held-out tasks x3 (A is today's FS native rounds on
+   7b9e6227) and of the Safari and Firefox race and AS-3 tasks x3 (A is today's 1.3.1 rounds), both sides on the new held-out CC
+   tasks and on demoid (its race prompt changed), then analytics, Pages and the Codex race fix rechecks. Cursor and the public
+   agent-install run follow the push and don't block it.
+   Owner, 2026-10-19 ~19:45Z: every loss gets improved as far as we can before the 1.4.0 B rounds run. Those rounds should show
+   the best build. Studies feeding that: model-side thinking and narration (MT), the native and checkout losses (NL, CK) and
+   Firefox's before-action guard reads (GR1). Their measured items are built into 1.4.0 before validation starts.
 6. The AM1 speed map of app classes, in 1.4.0 (owner, 2026-10-19). Its VS Code and Word fixtures still fail setup (AM1E designs the
    wait for a late accessibility tree).
 7. The ghost hand (owner, 2026-10-16): when sleight acts in a background app, a small translucent hand glides to the point in

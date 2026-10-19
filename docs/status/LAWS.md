@@ -34,6 +34,11 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Arms whose code isn't in the repo (the codex-cu and devtools bridges) are named as not run, with the reason.
   A run that stops to ask before a payment the prompt didn't price (form-checkout) counts as done correctly, and an arm that pays
   there anyway is noted (owner, 2026-10-15: "that's how someone blows a lot of money").
+- Release validation is sleight's own (owner, 2026-10-19): the full check, the release pass and an A/B of the new build against
+  the previous one on sleight's own tasks. Competitor arms aren't rerun for a release. The previous release candidate's recorded
+  runs serve as the A side when the task, prompt, harness, model and engine version are the same and nothing between the two runs
+  changed how the task runs, and then only the new build's B rounds run. A task the old build never ran, or one whose prompt or
+  harness changed, gets both sides. Each published A/B names the A rounds it used.
 - Tuning goes only to tasks sleight still loses across the claim and race trials. Where sleight wins, nothing gets tuned (owner,
   2026-10-18). Generic fixes that also change a task sleight leads (Word steering, the keyboard drag route) are allowed when they are
   measured on held-out tasks, never on the claim task itself, and pure scoreboard tuning (SP2, PV1) stays out (owner, 2026-10-18
@@ -60,7 +65,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   `sleight-mcp setup`.
 - Approvals: one card per app (Allow, Always allow, Decline), remembered for the Claude Code session. Only the user's click writes
   Always allow. For the Electron turbo qualification the owner delegated that one Always allow click on the benchmark VS Code to
-  sleight-arch (owner, 2026-10-19), and the owner let sleight-arch push the compatibility check's CI workflow. The engine refuses terminals and OpenAI's own apps, and sleight never works around that; the refusal tells the user
+  sleight-arch (owner, 2026-10-19), and the owner let sleight-arch push the compatibility check's CI workflow. The owner also
+  delegated every sleight card in the Electron qualification run (Allow this session, Always allow, Quit and reopen) on benchmark
+  VS Code copies only, never the owner's own VS Code (owner, 2026-10-19). The engine refuses terminals and OpenAI's own apps, and sleight never works around that; the refusal tells the user
   about the `ComputerUseAllowForbiddenTargets` switch.
 - In a host the user set to answer approvals automatically (Codex's full-access mode or its auto-review), a session-only app
   approval may be answered by the host. Always allow, payment cards and sleight's own consent cards still need the user's click
@@ -79,6 +86,10 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   account safer (two-factor on, a profile made private, sharing off). Loosening one, changing a recovery email or phone, a password or
   connected apps, and a setup step that needs a code still ask (owner, 2026-10-19, replacing the 2026-10-18 ruling that asked before
   every security setting). Payments and bookings follow the payment and booking rules above (owner, 2026-10-18).
+- Creating an account that the user's own message asks for, naming the username or email and the password, counts as a
+  requested submit, though the engine's policy lists an account's final step as always-confirm. A sign-up only the page proposes
+  still asks, and the engine's other always-confirm steps stay (owner, 2026-10-19, after Haiku refused 18 of 24 requested
+  sign-ups).
 - Turbo's payment check reads figures, not wording: if any money figure on the checkout is larger than the amount in the
   user's message, it asks. The owner chose this over label rules (2026-10-15), accepting that about half of honest checkouts
   ask once (measured in docs/known-problems.md).
@@ -90,11 +101,23 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Escape to that app's pid, once per stuck episode, in the background, never while the user is typing or moving the mouse, and it
   says so in the result. `SLEIGHT_STUCK_ESCAPE=0` turns it off. Reading document text for drag endpoints stays forbidden (FM6),
   and so does giving up on a read early (IN2).
+  A third exception (owner, 2026-10-19, CC8): to bind a drag endpoint given by element number, sleight may compare the AXValue
+  of AXStaticText elements in the leased window's content with a label the engine printed as `text <label>`, 80 characters or
+  fewer, equal exactly. Static text under a text area, text field, combo box or layout area is never read, and neither are other
+  roles' values. The value is only compared, never returned, stored or logged, and clicks and other tools don't get this.
+  Select_window may pick the one window of the same app whose title ends with a requested title of 12 or more characters when
+  no title matches exactly, and says so (owner, 2026-10-19, LB5). The engine path may reuse a fresh before-action read under
+  the conditions LB7 traces, merged only after a security review (owner, 2026-10-19). Three more guard changes may merge once
+  their A/B and a security review pass (owner, 2026-10-19): CK3 proves window and focus after a tab shortcut with the helper
+  probe instead of reading the New Tab page, CK2 acts on a moved plain line that appears exactly once with the same role, text
+  and parent (never a payment target), and CK1 binds later setValues in a batch to the first read when each is a unique
+  settable field.
 - Electron saves (owner, 2026-10-18): sleight reports a save as confirmed only when the window shows its file path. Otherwise the
   edit is reported done and the save unconfirmed, with no other evidence path. The relaunch flow avoids taking focus, or the card
   says the app comes to the front briefly.
-- The ghost hand (1.3.1, owner, 2026-10-18) is on by default, with an off switch in the menu bar dropdown, `sleight-mcp hand off`
-  and the settings file. A Fable art director designs its final art now. It shows in the user's own screenshots and recordings if
+- The ghost hand is off by default in 1.3.1 (owner, 2026-10-19, after the cost pass measured textedit-drag 31 to 37 s with it
+  against 23 to 26 s without), turned on from the menu bar dropdown, `sleight-mcp hand on` or the settings file. It becomes the
+  default once a fix measures no slowdown in an A/B (the owner's 2026-10-18 plan had it on by default). A Fable art director designs its final art now. It shows in the user's own screenshots and recordings if
   the capture test proves sleight's own screenshots never include it. Otherwise captures leave it out.
 - Browsers get turbo, sleight's own direct path, with no extension install. The user turns it on once through Chrome's built-in
   remote-debugging consent. Its benchmark proved it, so turbo is the default from 1.3.0 (owner, 2026-10-16).
@@ -119,8 +142,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Haiku are Claude models, and subagents run Claude models, never Sol or Astra. Item, branch and agent names never reuse "Sol"
   or "Astra". Work items get their own IDs, such as CR1 for a Codex race fix.
 - Build work runs in parallel Codex lanes, and sleight-arch also builds, merges and tests directly whenever that is faster or
-  better. Claude reviewers take reviews and the investigations sleight-arch or the owner needs. Claude usage isn't quota-limited
-  (owner, 2026-10-15), within reason.
+  better. Claude reviewers take reviews and the investigations sleight-arch or the owner needs. SUPERSEDED (owner, 2026-10-15):
+  Claude usage isn't quota-limited. Builds, fix rounds and integrations go to Sol codex lanes by default, and Claude keeps reviews
+  and Fable studies (owner, 2026-10-19, after 10% of the weekly Claude quota went in 2-3 hours).
 - Lanes run only the tests for what they changed, and sleight-arch runs the full check once per merge. Full checks in every lane
   loaded the Mac enough to hold up the owner's other projects (owner, 2026-10-14).
 - SUPERSEDED (owner, 2026-10-15): benchmark Claude arms ran on the owner's API key, from the $200 monthly credit.
