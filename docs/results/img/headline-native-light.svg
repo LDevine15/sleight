@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 498" width="900" height="498" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 480" width="900" height="480" role="img" aria-labelledby="title desc">
 <title id="title">Native claim: total expected seconds over 9 tasks</title>
 <desc id="desc">Native claim, 2026-10-17 to 2026-10-18: sleight's total expected time over 9 tasks is 251.2 s against Claude computer use at 453.9 s, and LCU, Codex, Cua and Peekaboo have no total because each never passed at least one task.</desc>
 <style>
@@ -16,7 +16,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 .hsl{stroke:#7A879A}
 </style>
 <defs><pattern id="h-me" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="hme" x1="1" y1="0" x2="1" y2="6" stroke-width="2"/></pattern><pattern id="h-ot" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="hot" x1="1" y1="0" x2="1" y2="6" stroke-width="2"/></pattern><pattern id="h-sl" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="hsl" x1="1" y1="0" x2="1" y2="6" stroke-width="2"/></pattern></defs>
-<rect class="bg" width="900" height="498" rx="12"/>
+<rect class="bg" width="900" height="480" rx="12"/>
 <text x="24" y="34" class="t">Native claim: total expected seconds over 9 tasks</text>
 <text x="24" y="54" class="m">2026-10-17 to 2026-10-18. Expected time is the mean seconds per attempt divided by the pass rate. Shorter</text>
 <text x="24" y="72" class="m">bars are faster.</text>
@@ -58,8 +58,7 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <rect class="sl" fill-opacity="0.16" x="183.3" y="318" width="22" height="24"/><rect fill="url(#h-sl)" x="183.3" y="318" width="22" height="24"/>
 <text x="213.3" y="334.5" class="m" data-arm="peekaboo" data-kind="total">no total: never passed textedit-save, textedit-drag and 3 more</text>
 <text x="24" y="402" class="m">The scorer's wording is &quot;fastest&quot;. sleight has the lowest expected time on 8 of 9 tasks.</text>
-<text x="24" y="420" class="m">ChatGPT engine version: not in this data file, which predates engine tracking (2026-10-19). The pages name it</text>
-<text x="24" y="438" class="m">once the data is collected again.</text>
-<text x="24" y="456" class="m">Models: claude-haiku-5-5 (sleight, LCU, Cua, Peekaboo and Claude computer use), gpt-6-luna (Codex). Effort:</text>
-<text x="24" y="474" class="m">high.</text>
+<text x="24" y="420" class="m">ChatGPT engine for sleight and Codex: 26.1007.71326 (2026-10-17 to 2026-10-18, inferred). Dates are UTC.</text>
+<text x="24" y="438" class="m">Models: claude-haiku-5-5 (sleight, LCU, Cua, Peekaboo and Claude computer use), gpt-6-luna (Codex). Effort:</text>
+<text x="24" y="456" class="m">high.</text>
 </svg>

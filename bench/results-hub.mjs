@@ -621,7 +621,7 @@ const chartFor = (all, id) => { const block = charts.chartBlock(id, all, { base:
 // Data collected before 2026-10-19 carries no engine versions, and the footer says so until a collect adds them.
 const hasEngines = studies => studies.some(study => study?.engines && Object.keys(study.engines).length);
 const engineFooter = studies => (hasEngines(studies)
-  ? 'Each arm table names the ChatGPT engine versions its runs used, with their UTC dates.'
+  ? 'Each arm table lists the ChatGPT engine versions its runs used, with their UTC dates.'
   : 'The ChatGPT engine version is missing from this data, which was collected before the results recorded it (2026-10-19).');
 
 function pageFooter(current, { data, dataText = 'has every counted run and the scored cells', studies = [] }) {
@@ -888,23 +888,27 @@ function engineBrief(studies) {
     }
   }
   const parts = Object.entries(versions).sort(([a], [b]) => (a < b ? -1 : 1)).map(([version, v]) => `engine ${version}${v.first ? `, ${dayRange(v.first, v.last)}` : ''}`);
-  return parts.length ? parts.join('; ') : 'no arm here drives the engine with a known version';
+  return parts.length ? joinAnd(parts) : 'no arm here drives the engine with a known version';
 }
 const headlineStudies = (id, data) => (id === 'browser-race' ? data.studies.filter(s => s.latest) : id === 'browser-turbo' ? data.race.studies.filter(s => s.latest)
   : id === 'ab-tests' ? data.studies : id === 'release-passes' ? [] : data.studies);
+
+const upFirst = text => text.charAt(0).toUpperCase() + text.slice(1);
+const lowFirst = text => text.charAt(0).toLowerCase() + text.slice(1);
 
 function headlineFor(id, data) {
   const engine = engineBrief(headlineStudies(id, data));
   if (id === 'native-claim' || id === 'app-claim') {
     const s = data.studies[0];
-    return `"${s.verdict.wording}", sleight's total expected time ${f1(s.verdict.totals.sleight)} s over ${s.tasks.length} tasks (${s.runs.length} runs, ${s.date}; ${engine})`;
+    return `"${s.verdict.wording}", sleight's total expected time ${f1(s.verdict.totals.sleight)} s over ${s.tasks.length} tasks (${s.runs.length} runs, ${s.date}). ${upFirst(engine)}`;
   }
   if (id === 'browser-race') {
-    return (data.studies.filter(s => s.latest).map(s => `${cap(s.browser)} "${s.verdict.wording}" (${code(s.label)}, ${s.date.slice(0, 10)})`).join('. ') || 'no complete set') + `. ${engine[0].toUpperCase()}${engine.slice(1)}`;
+    // Each line follows a colon in the README, so it starts in lower case.
+    return lowFirst(data.studies.filter(s => s.latest).map(s => `In ${cap(s.browser)}, "${s.verdict.wording}" (${code(s.label)}, ${s.date.slice(0, 10)})`).join('. ') || 'no complete set') + `. ${upFirst(engine)}`;
   }
   if (id === 'browser-turbo') {
-    const race = data.race.studies.filter(s => s.latest).map(s => `${cap(s.browser)} lowest expected time on ${s.verdict.fastest[s.me].length} of ${s.tasks.length}, ${s.verdict.totals[s.me] == null ? 'no total (a task has no pass)' : `total ${f1(s.verdict.totals[s.me])} s`} against FowlBrowser's ${f1(s.verdict.totals.fowlbrowser)} s (${code(s.label)})`);
-    return race.join('. ') + `. ${data.gates.length} gate studies. ${engine[0].toUpperCase()}${engine.slice(1)}`;
+    const race = data.race.studies.filter(s => s.latest).map(s => `In ${cap(s.browser)}, the lowest expected time on ${s.verdict.fastest[s.me].length} of ${s.tasks.length} and ${s.verdict.totals[s.me] == null ? 'no total (a task has no pass)' : `a total of ${f1(s.verdict.totals[s.me])} s`} against FowlBrowser's ${f1(s.verdict.totals.fowlbrowser)} s (${code(s.label)})`);
+    return lowFirst(race.join('. ')) + `. ${data.gates.length} gate studies. ${upFirst(engine)}`;
   }
   if (id === 'ab-tests') return `${data.studies.length} studies with run data, ${data.catalog.length} write-ups in all`;
   if (id === 'release-passes') {

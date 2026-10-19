@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1498" width="900" height="1498" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 2182" width="900" height="2182" role="img" aria-labelledby="title desc">
 <title id="title">Safari, the engine path against Codex, LCU, Cua and Peekaboo: expected seconds per task</title>
-<desc id="desc">Safari, the engine path against Codex, LCU, Cua and Peekaboo, 2026-10-18, 18:16 to 23:34 UTC. Expected seconds per task for sleight, Codex, Cua, LCU and Peekaboo. sleight has the lowest expected time on 9 of 12 tasks. The scorer's wording is &quot;completed every task, fastest on 9 of 12&quot;.</desc>
+<desc id="desc">Safari, the engine path against Codex, LCU, Cua and Peekaboo, 2026-10-18 to 2026-10-19. Expected seconds per task for sleight, Codex, Cua, LCU and Peekaboo. sleight has the lowest expected time on 11 of 12 tasks. The scorer's wording is &quot;fastest&quot;. The same-model rows put sleight inside Codex against Codex, with the wording &quot;completed every task, fastest on 9 of 12&quot;.</desc>
 <style>
 .bg{fill:#141A26}
 text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:#EFE9DC}
@@ -16,10 +16,10 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 .hsl{stroke:#9AA6B8}
 </style>
 <defs><pattern id="h-me" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="hme" x1="1" y1="0" x2="1" y2="6" stroke-width="2"/></pattern><pattern id="h-ot" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="hot" x1="1" y1="0" x2="1" y2="6" stroke-width="2"/></pattern><pattern id="h-sl" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="hsl" x1="1" y1="0" x2="1" y2="6" stroke-width="2"/></pattern></defs>
-<rect class="bg" width="900" height="1498" rx="12"/>
+<rect class="bg" width="900" height="2182" rx="12"/>
 <text x="24" y="34" class="t">Safari, the engine path against Codex, LCU, Cua and Peekaboo: expected seconds per task</text>
-<text x="24" y="54" class="m">2026-10-18, 18:16 to 23:34 UTC. Set sleight. Each label is expected seconds, then passes/runs. Each task</text>
-<text x="24" y="72" class="m">has its own scale, and shorter bars are faster.</text>
+<text x="24" y="54" class="m">2026-10-18 to 2026-10-19. Set sleight-b10. Each label is expected seconds, then passes/runs. Each task has</text>
+<text x="24" y="72" class="m">its own scale, and shorter bars are faster.</text>
 <g transform="translate(840 8) scale(0.8)"><g transform="translate(0.6 0.6)"><g transform="translate(10 10) rotate(-35)"><g fill="#141A26" stroke="#141A26" fill-opacity="0.08" stroke-opacity="0.08" stroke-width="3" stroke-linejoin="round"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z"/><path d="M0.83 13.52 L-5.04 7.13 A1.25 1.25 0 0 0 -6.93 8.76 L-1.43 15.48 Z"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z"/><path d="M6.15 11.51 L5.17 -0.67 A1.2 1.2 0 0 0 2.77 -0.53 L3.25 11.69 Z"/><path d="M9.85 11.59 L9.51 0.29 A1.2 1.2 0 0 0 7.11 0.31 L6.95 11.61 Z"/><path d="M13.5 11.68 L13.68 3.81 A1.15 1.15 0 0 0 11.39 3.68 L10.7 11.52 Z"/></g><g fill="#141A26" stroke="#141A26" fill-opacity="0.12" stroke-opacity="0.12" stroke-width="1.8" stroke-linejoin="round"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z"/><path d="M0.83 13.52 L-5.04 7.13 A1.25 1.25 0 0 0 -6.93 8.76 L-1.43 15.48 Z"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z"/><path d="M6.15 11.51 L5.17 -0.67 A1.2 1.2 0 0 0 2.77 -0.53 L3.25 11.69 Z"/><path d="M9.85 11.59 L9.51 0.29 A1.2 1.2 0 0 0 7.11 0.31 L6.95 11.61 Z"/><path d="M13.5 11.68 L13.68 3.81 A1.15 1.15 0 0 0 11.39 3.68 L10.7 11.52 Z"/></g><g fill="#141A26" stroke="#141A26" fill-opacity="0.2" stroke-opacity="0.2" stroke-width="0.8" stroke-linejoin="round"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z"/><path d="M0.83 13.52 L-5.04 7.13 A1.25 1.25 0 0 0 -6.93 8.76 L-1.43 15.48 Z"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z"/><path d="M6.15 11.51 L5.17 -0.67 A1.2 1.2 0 0 0 2.77 -0.53 L3.25 11.69 Z"/><path d="M9.85 11.59 L9.51 0.29 A1.2 1.2 0 0 0 7.11 0.31 L6.95 11.61 Z"/><path d="M13.5 11.68 L13.68 3.81 A1.15 1.15 0 0 0 11.39 3.68 L10.7 11.52 Z"/></g></g></g><g transform="translate(10 10) rotate(-35)"><rect x="-1.95" y="-1.95" width="3.9" height="3.9" rx="0.62" fill="#4E79D9" fill-opacity="0.2" transform="translate(4.2 23) rotate(8)"/><rect x="-1.6" y="-1.6" width="3.2" height="3.2" rx="0.51" fill="#4E79D9" fill-opacity="0.92" transform="translate(4.2 23) rotate(8)"/><rect x="-1.83" y="-1.83" width="3.66" height="3.66" rx="0.59" fill="#7299EA" fill-opacity="0.2" transform="translate(8.8 23.5) rotate(-6)"/><rect x="-1.5" y="-1.5" width="3" height="3" rx="0.48" fill="#7299EA" fill-opacity="0.92" transform="translate(8.8 23.5) rotate(-6)"/><rect x="-1.71" y="-1.71" width="3.42" height="3.42" rx="0.55" fill="#7299EA" fill-opacity="0.2" transform="translate(6.5 26.5) rotate(4)"/><rect x="-1.4" y="-1.4" width="2.8" height="2.8" rx="0.45" fill="#7299EA" fill-opacity="0.92" transform="translate(6.5 26.5) rotate(4)"/><rect x="-1.59" y="-1.59" width="3.17" height="3.17" rx="0.51" fill="#A9C4F5" fill-opacity="0.2" transform="translate(11.5 26.2) rotate(-11)"/><rect x="-1.3" y="-1.3" width="2.6" height="2.6" rx="0.42" fill="#A9C4F5" fill-opacity="0.92" transform="translate(11.5 26.2) rotate(-11)"/><rect x="-1.34" y="-1.34" width="2.68" height="2.68" rx="0.43" fill="#A9C4F5" fill-opacity="0.2" transform="translate(2.6 27.5) rotate(-4)"/><rect x="-1.1" y="-1.1" width="2.2" height="2.2" rx="0.35" fill="#A9C4F5" fill-opacity="0.92" transform="translate(2.6 27.5) rotate(-4)"/><rect x="-1.34" y="-1.34" width="2.68" height="2.68" rx="0.43" fill="#7299EA" fill-opacity="0.2" transform="translate(9.2 29.6) rotate(7)"/><rect x="-1.1" y="-1.1" width="2.2" height="2.2" rx="0.35" fill="#7299EA" fill-opacity="0.92" transform="translate(9.2 29.6) rotate(7)"/><rect x="-1.1" y="-1.1" width="2.2" height="2.2" rx="0.35" fill="#A9C4F5" fill-opacity="0.2" transform="translate(13.9 29.2) rotate(3)"/><rect x="-0.9" y="-0.9" width="1.8" height="1.8" rx="0.29" fill="#A9C4F5" fill-opacity="0.92" transform="translate(13.9 29.2) rotate(3)"/><rect x="-0.98" y="-0.98" width="1.95" height="1.95" rx="0.31" fill="#A9C4F5" fill-opacity="0.2" transform="translate(5.6 30.6) rotate(-8)"/><rect x="-0.8" y="-0.8" width="1.6" height="1.6" rx="0.26" fill="#A9C4F5" fill-opacity="0.92" transform="translate(5.6 30.6) rotate(-8)"/></g><g transform="translate(10 10) rotate(-35)"><path d="M-2 12.39 Q-2.2 10.8 -0.6 10.8 L12.4 10.8 Q14 10.8 13.82 12.39 L13.48 15.41 Q13.3 17 12.56 18.42 L11.94 19.58 Q11.2 21 9.6 21 L5.2 21 Q3.6 21 2.35 20 L-0.15 18 Q-1.4 17 -1.6 15.41 Z" fill="#B9BFC9"/><path d="M-2.02 12.19 Q-2.2 10.8 -0.8 10.8 L10 10.8 Q11.4 10.8 11.24 12.19 L10.86 15.61 Q10.7 17 9.89 18.14 L9.81 18.26 Q9 19.4 7.6 19.4 L5 19.4 Q3.6 19.4 2.34 18.79 L-0.14 17.61 Q-1.4 17 -1.58 15.61 Z" fill="#EFE9DC"/><path d="M-3.8 14.6 A2.5 3.3 0 1 0 1.2 14.6 A2.5 3.3 0 1 0 -3.8 14.6 Z" fill="#B9BFC9"/><path d="M-4 14 A2 2.8 0 1 0 0 14 A2 2.8 0 1 0 -4 14 Z" fill="#EFE9DC"/><path d="M0.83 13.52 L-5.04 7.13 A1.25 1.25 0 0 0 -6.93 8.76 L-1.43 15.48 Z" fill="#B9BFC9"/><path d="M0.83 13.51 L-5.21 6.91 A0.78 0.78 0 0 0 -6.38 7.93 L-0.57 14.74 Z" fill="#EFE9DC"/><path d="M2.44 11.48 L1.3 1.09 A1.2 1.2 0 0 0 -1.09 1.3 L-0.44 11.72 Z" fill="#B9BFC9"/><path d="M1.35 11.58 L0.36 0.91 A0.74 0.74 0 0 0 -1.12 1.03 L-0.45 11.72 Z" fill="#EFE9DC"/><path d="M6.15 11.51 L5.17 -0.67 A1.2 1.2 0 0 0 2.77 -0.53 L3.25 11.69 Z" fill="#B9BFC9"/><path d="M5.05 11.59 L4.24 -0.88 A0.74 0.74 0 0 0 2.75 -0.8 L3.25 11.68 Z" fill="#EFE9DC"/><path d="M9.85 11.59 L9.51 0.29 A1.2 1.2 0 0 0 7.11 0.31 L6.95 11.61 Z" fill="#B9BFC9"/><path d="M8.75 11.6 L8.59 0.04 A0.74 0.74 0 0 0 7.1 0.04 L6.95 11.6 Z" fill="#EFE9DC"/><path d="M13.5 11.68 L13.68 3.81 A1.15 1.15 0 0 0 11.39 3.68 L10.7 11.52 Z" fill="#B9BFC9"/><path d="M12.43 11.63 L12.82 3.52 A0.71 0.71 0 0 0 11.39 3.42 L10.7 11.51 Z" fill="#EFE9DC"/></g></g>
 <rect class="me" x="24" y="86" width="12" height="12" rx="2"/>
 <text x="42" y="96">sleight</text>
@@ -29,224 +29,338 @@ text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:1
 <text x="393.4" y="96">never passed</text>
 <line class="g" x1="24" y1="115" x2="876" y2="115"/>
 <text x="24" y="135" class="b">form-travel</text>
-<line class="g" x1="265.1" y1="122" x2="265.1" y2="208"/>
+<line class="g" x1="355.6" y1="122" x2="355.6" y2="208"/>
 <text x="190.8" y="135" class="b">sleight</text>
-<path class="me" d="M266.1 125h83.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-83.7z"/>
-<text x="359.8" y="135" data-task="form-travel" data-arm="sleight" data-kind="cell" data-section="main">106.6 (3/3)</text>
+<path class="me" d="M356.6 125h46.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-46.7z"/>
+<text x="413.3" y="135" data-task="form-travel" data-arm="sleight" data-kind="cell" data-section="main">74.8 (5/5)</text>
 <text x="190.8" y="153" class="m">Codex</text>
-<path class="sl" d="M266.1 143h68.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-68.1z"/>
-<text x="344.2" y="153" data-task="form-travel" data-arm="codex" data-kind="cell" data-section="main">87.7 (3/3)</text>
+<path class="sl" d="M356.6 143h65.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-65.2z"/>
+<text x="431.8" y="153" data-task="form-travel" data-arm="codex" data-kind="cell" data-section="main">102.0 (4/5)</text>
 <text x="190.8" y="171" class="m">Cua</text>
-<path class="sl" d="M266.1 161h211.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-211.8z"/>
-<text x="487.9" y="171" data-task="form-travel" data-arm="cua" data-kind="cell" data-section="main">262.4 (3/3)</text>
+<path class="sl" d="M356.6 161h174a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-174z"/>
+<text x="540.6" y="171" data-task="form-travel" data-arm="cua" data-kind="cell" data-section="main">262.4 (3/3)</text>
 <text x="190.8" y="189" class="m">LCU</text>
-<path class="sl" d="M266.1 179h162.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-162.8z"/>
-<text x="438.9" y="189" data-task="form-travel" data-arm="lcu" data-kind="cell" data-section="main">202.8 (3/3)</text>
+<path class="sl" d="M356.6 179h133.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-133.6z"/>
+<text x="500.2" y="189" data-task="form-travel" data-arm="lcu" data-kind="cell" data-section="main">202.8 (3/3)</text>
 <text x="190.8" y="207" class="m">Peekaboo</text>
-<path class="sl" d="M266.1 197h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
+<path class="sl" d="M356.6 197h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
 <text x="788.1" y="207" data-task="form-travel" data-arm="peekaboo" data-kind="cell" data-section="main">627.3 (2/3)</text>
 <line class="g" x1="24" y1="219" x2="876" y2="219"/>
 <text x="24" y="239" class="b">form-settings</text>
-<line class="g" x1="265.1" y1="226" x2="265.1" y2="312"/>
+<line class="g" x1="355.6" y1="226" x2="355.6" y2="312"/>
 <text x="190.8" y="239" class="b">sleight</text>
-<path class="me" d="M266.1 229h413.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-413.8z"/>
-<text x="689.9" y="239" data-task="form-settings" data-arm="sleight" data-kind="cell" data-section="main">167.0 (2/3)</text>
+<path class="me" d="M356.6 229h292.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-292.2z"/>
+<text x="658.8" y="239" data-task="form-settings" data-arm="sleight" data-kind="cell" data-section="main">143.6 (3/3)</text>
 <text x="190.8" y="257" class="m">Codex</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="247" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="247" width="22" height="12"/>
-<text x="294.1" y="257" class="m" data-task="form-settings" data-arm="codex" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="247" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="247" width="22" height="12"/>
+<text x="384.6" y="257" class="m" data-task="form-settings" data-arm="codex" data-kind="cell" data-section="main">never (0/3)</text>
 <text x="190.8" y="275" class="m">Cua</text>
-<path class="sl" d="M266.1 265h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
+<path class="sl" d="M356.6 265h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
 <text x="788.1" y="275" data-task="form-settings" data-arm="cua" data-kind="cell" data-section="main">206.3 (3/3)</text>
 <text x="190.8" y="293" class="m">LCU</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="283" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="283" width="22" height="12"/>
-<text x="294.1" y="293" class="m" data-task="form-settings" data-arm="lcu" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="283" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="283" width="22" height="12"/>
+<text x="384.6" y="293" class="m" data-task="form-settings" data-arm="lcu" data-kind="cell" data-section="main">never (0/3)</text>
 <text x="190.8" y="311" class="m">Peekaboo</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="301" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="301" width="22" height="12"/>
-<text x="294.1" y="311" class="m" data-task="form-settings" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="301" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="301" width="22" height="12"/>
+<text x="384.6" y="311" class="m" data-task="form-settings" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
 <line class="g" x1="24" y1="323" x2="876" y2="323"/>
 <text x="24" y="343" class="b">form-checkout</text>
-<line class="g" x1="265.1" y1="330" x2="265.1" y2="416"/>
+<line class="g" x1="355.6" y1="330" x2="355.6" y2="416"/>
 <text x="190.8" y="343" class="b">sleight</text>
-<path class="me" d="M266.1 333h123.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-123.7z"/>
-<text x="399.8" y="343" data-task="form-checkout" data-arm="sleight" data-kind="cell" data-section="main">59.4 (3/3)</text>
+<path class="me" d="M356.6 333h94.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-94.1z"/>
+<text x="460.7" y="343" data-task="form-checkout" data-arm="sleight" data-kind="cell" data-section="main">55.4 (3/3)</text>
 <text x="190.8" y="361" class="m">Codex</text>
-<path class="sl" d="M266.1 351h361.3a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-361.3z"/>
-<text x="637.5" y="361" data-task="form-checkout" data-arm="codex" data-kind="cell" data-section="main">170.0 (1/3)</text>
+<path class="sl" d="M356.6 351h297.3a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-297.3z"/>
+<text x="663.9" y="361" data-task="form-checkout" data-arm="codex" data-kind="cell" data-section="main">170.0 (1/3)</text>
 <text x="190.8" y="379" class="m">Cua</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="369" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="369" width="22" height="12"/>
-<text x="294.1" y="379" class="m" data-task="form-checkout" data-arm="cua" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="369" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="369" width="22" height="12"/>
+<text x="384.6" y="379" class="m" data-task="form-checkout" data-arm="cua" data-kind="cell" data-section="main">never (0/3)</text>
 <text x="190.8" y="397" class="m">LCU</text>
-<path class="sl" d="M266.1 387h171.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-171.8z"/>
-<text x="447.9" y="397" data-task="form-checkout" data-arm="lcu" data-kind="cell" data-section="main">81.8 (2/3)</text>
+<path class="sl" d="M356.6 387h141a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-141z"/>
+<text x="507.6" y="397" data-task="form-checkout" data-arm="lcu" data-kind="cell" data-section="main">81.8 (2/3)</text>
 <text x="190.8" y="415" class="m">Peekaboo</text>
-<path class="sl" d="M266.1 405h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
+<path class="sl" d="M356.6 405h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
 <text x="788.1" y="415" data-task="form-checkout" data-arm="peekaboo" data-kind="cell" data-section="main">240.0 (2/3)</text>
 <line class="g" x1="24" y1="427" x2="876" y2="427"/>
 <text x="24" y="447" class="b">form-settings-helium</text>
-<line class="g" x1="265.1" y1="434" x2="265.1" y2="520"/>
+<line class="g" x1="355.6" y1="434" x2="355.6" y2="520"/>
 <text x="190.8" y="447" class="b">sleight</text>
-<path class="me" d="M266.1 437h282.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-282.8z"/>
-<text x="558.9" y="447" data-task="form-settings-helium" data-arm="sleight" data-kind="cell" data-section="main">151.9 (3/3)</text>
+<path class="me" d="M356.6 437h228.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-228.6z"/>
+<text x="595.2" y="447" data-task="form-settings-helium" data-arm="sleight" data-kind="cell" data-section="main">149.4 (3/3)</text>
 <text x="190.8" y="465" class="m">Codex</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="455" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="455" width="22" height="12"/>
-<text x="294.1" y="465" class="m" data-task="form-settings-helium" data-arm="codex" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="455" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="455" width="22" height="12"/>
+<text x="384.6" y="465" class="m" data-task="form-settings-helium" data-arm="codex" data-kind="cell" data-section="main">never (0/3)</text>
 <text x="190.8" y="483" class="m">Cua</text>
-<path class="sl" d="M266.1 473h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
+<path class="sl" d="M356.6 473h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
 <text x="788.1" y="483" data-task="form-settings-helium" data-arm="cua" data-kind="cell" data-section="main">273.4 (3/3)</text>
 <text x="190.8" y="501" class="m">LCU</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="491" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="491" width="22" height="12"/>
-<text x="294.1" y="501" class="m" data-task="form-settings-helium" data-arm="lcu" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="491" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="491" width="22" height="12"/>
+<text x="384.6" y="501" class="m" data-task="form-settings-helium" data-arm="lcu" data-kind="cell" data-section="main">never (0/3)</text>
 <text x="190.8" y="519" class="m">Peekaboo</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="509" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="509" width="22" height="12"/>
-<text x="294.1" y="519" class="m" data-task="form-settings-helium" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="509" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="509" width="22" height="12"/>
+<text x="384.6" y="519" class="m" data-task="form-settings-helium" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
 <line class="g" x1="24" y1="531" x2="876" y2="531"/>
 <text x="24" y="551" class="b">shipping-link</text>
-<line class="g" x1="265.1" y1="538" x2="265.1" y2="624"/>
+<line class="g" x1="355.6" y1="538" x2="355.6" y2="624"/>
 <text x="190.8" y="551" class="b">sleight</text>
-<path class="me" d="M266.1 541h216.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-216.7z"/>
-<text x="492.8" y="551" data-task="shipping-link" data-arm="sleight" data-kind="cell" data-section="main">17.9 (3/3)</text>
+<path class="me" d="M356.6 541h144.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-144.6z"/>
+<text x="511.2" y="551" data-task="shipping-link" data-arm="sleight" data-kind="cell" data-section="main">14.6 (3/3)</text>
 <text x="190.8" y="569" class="m">Codex</text>
-<path class="sl" d="M266.1 559h297.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-297.5z"/>
-<text x="573.6" y="569" data-task="shipping-link" data-arm="codex" data-kind="cell" data-section="main">24.5 (3/3)</text>
+<path class="sl" d="M356.6 559h244.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-244.6z"/>
+<text x="611.2" y="569" data-task="shipping-link" data-arm="codex" data-kind="cell" data-section="main">24.5 (3/3)</text>
 <text x="190.8" y="587" class="m">Cua</text>
-<path class="sl" d="M266.1 577h455.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-455.5z"/>
-<text x="731.6" y="587" data-task="shipping-link" data-arm="cua" data-kind="cell" data-section="main">37.3 (3/3)</text>
+<path class="sl" d="M356.6 577h374.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-374.9z"/>
+<text x="741.5" y="587" data-task="shipping-link" data-arm="cua" data-kind="cell" data-section="main">37.3 (3/3)</text>
 <text x="190.8" y="605" class="m">LCU</text>
-<path class="sl" d="M266.1 595h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
+<path class="sl" d="M356.6 595h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
 <text x="788.1" y="605" data-task="shipping-link" data-arm="lcu" data-kind="cell" data-section="main">41.9 (2/3)</text>
 <text x="190.8" y="623" class="m">Peekaboo</text>
-<path class="sl" d="M266.1 613h308.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-308.2z"/>
-<text x="584.3" y="623" data-task="shipping-link" data-arm="peekaboo" data-kind="cell" data-section="main">25.3 (3/3)</text>
+<path class="sl" d="M356.6 613h253.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-253.5z"/>
+<text x="620.1" y="623" data-task="shipping-link" data-arm="peekaboo" data-kind="cell" data-section="main">25.3 (3/3)</text>
 <line class="g" x1="24" y1="635" x2="876" y2="635"/>
 <text x="24" y="655" class="b">size-guide</text>
-<line class="g" x1="265.1" y1="642" x2="265.1" y2="728"/>
+<line class="g" x1="355.6" y1="642" x2="355.6" y2="728"/>
 <text x="190.8" y="655" class="b">sleight</text>
-<path class="me" d="M266.1 645h71.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-71.7z"/>
-<text x="347.8" y="655" data-task="size-guide" data-arm="sleight" data-kind="cell" data-section="main">22.5 (3/3)</text>
+<path class="me" d="M356.6 645h52.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-52.4z"/>
+<text x="419" y="655" data-task="size-guide" data-arm="sleight" data-kind="cell" data-section="main">20.3 (3/3)</text>
 <text x="190.8" y="673" class="m">Codex</text>
-<path class="sl" d="M266.1 663h105a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-105z"/>
-<text x="381.1" y="673" data-task="size-guide" data-arm="codex" data-kind="cell" data-section="main">32.4 (3/3)</text>
+<path class="sl" d="M356.6 663h85.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-85.9z"/>
+<text x="452.5" y="673" data-task="size-guide" data-arm="codex" data-kind="cell" data-section="main">32.4 (3/3)</text>
 <text x="190.8" y="691" class="m">Cua</text>
-<path class="sl" d="M266.1 681h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
+<path class="sl" d="M356.6 681h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
 <text x="788.1" y="691" data-task="size-guide" data-arm="cua" data-kind="cell" data-section="main">153.5 (1/3)</text>
 <text x="190.8" y="709" class="m">LCU</text>
-<path class="sl" d="M266.1 699h134a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-134z"/>
-<text x="410.1" y="709" data-task="size-guide" data-arm="lcu" data-kind="cell" data-section="main">41.0 (2/3)</text>
+<path class="sl" d="M356.6 699h109.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-109.8z"/>
+<text x="476.4" y="709" data-task="size-guide" data-arm="lcu" data-kind="cell" data-section="main">41.0 (2/3)</text>
 <text x="190.8" y="727" class="m">Peekaboo</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="717" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="717" width="22" height="12"/>
-<text x="294.1" y="727" class="m" data-task="size-guide" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="717" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="717" width="22" height="12"/>
+<text x="384.6" y="727" class="m" data-task="size-guide" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
 <line class="g" x1="24" y1="739" x2="876" y2="739"/>
 <text x="24" y="759" class="b">demoid</text>
-<line class="g" x1="265.1" y1="746" x2="265.1" y2="832"/>
+<line class="g" x1="355.6" y1="746" x2="355.6" y2="832"/>
 <text x="190.8" y="759" class="b">sleight</text>
-<path class="me" d="M266.1 749h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
-<text x="788.1" y="759" data-task="demoid" data-arm="sleight" data-kind="cell" data-section="main">30.4 (2/3)</text>
+<path class="me" d="M356.6 749h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="759" data-task="demoid" data-arm="sleight" data-kind="cell" data-section="main">17.9 (3/3)</text>
 <text x="190.8" y="777" class="m">Codex</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="767" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="767" width="22" height="12"/>
-<text x="294.1" y="777" class="m" data-task="demoid" data-arm="codex" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="767" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="767" width="22" height="12"/>
+<text x="384.6" y="777" class="m" data-task="demoid" data-arm="codex" data-kind="cell" data-section="main">never (0/3)</text>
 <text x="190.8" y="795" class="m">Cua</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="785" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="785" width="22" height="12"/>
-<text x="294.1" y="795" class="m" data-task="demoid" data-arm="cua" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="785" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="785" width="22" height="12"/>
+<text x="384.6" y="795" class="m" data-task="demoid" data-arm="cua" data-kind="cell" data-section="main">never (0/3)</text>
 <text x="190.8" y="813" class="m">LCU</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="803" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="803" width="22" height="12"/>
-<text x="294.1" y="813" class="m" data-task="demoid" data-arm="lcu" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="803" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="803" width="22" height="12"/>
+<text x="384.6" y="813" class="m" data-task="demoid" data-arm="lcu" data-kind="cell" data-section="main">never (0/3)</text>
 <text x="190.8" y="831" class="m">Peekaboo</text>
-<rect class="sl" fill-opacity="0.16" x="266.1" y="821" width="22" height="12"/><rect fill="url(#h-sl)" x="266.1" y="821" width="22" height="12"/>
-<text x="294.1" y="831" class="m" data-task="demoid" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
+<rect class="sl" fill-opacity="0.16" x="356.6" y="821" width="22" height="12"/><rect fill="url(#h-sl)" x="356.6" y="821" width="22" height="12"/>
+<text x="384.6" y="831" class="m" data-task="demoid" data-arm="peekaboo" data-kind="cell" data-section="main">never (0/3)</text>
 <line class="g" x1="24" y1="843" x2="876" y2="843"/>
 <text x="24" y="863" class="b">handoff</text>
-<line class="g" x1="265.1" y1="850" x2="265.1" y2="936"/>
+<line class="g" x1="355.6" y1="850" x2="355.6" y2="936"/>
 <text x="190.8" y="863" class="b">sleight</text>
-<path class="me" d="M266.1 853h113.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-113.2z"/>
-<text x="389.4" y="863" data-task="handoff" data-arm="sleight" data-kind="cell" data-section="main">28.2 (3/3)</text>
+<path class="me" d="M356.6 853h92.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-92.9z"/>
+<text x="459.5" y="863" data-task="handoff" data-arm="sleight" data-kind="cell" data-section="main">28.3 (3/3)</text>
 <text x="190.8" y="881" class="m">Codex</text>
-<path class="sl" d="M266.1 871h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
+<path class="sl" d="M356.6 871h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
 <text x="788.1" y="881" data-task="handoff" data-arm="codex" data-kind="cell" data-section="main">124.0 (1/3)</text>
 <text x="190.8" y="899" class="m">Cua</text>
-<path class="sl" d="M266.1 889h239.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-239.8z"/>
-<text x="516" y="899" data-task="handoff" data-arm="cua" data-kind="cell" data-section="main">58.6 (3/3)</text>
+<path class="sl" d="M356.6 889h197.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-197.1z"/>
+<text x="563.7" y="899" data-task="handoff" data-arm="cua" data-kind="cell" data-section="main">58.6 (3/3)</text>
 <text x="190.8" y="917" class="m">LCU</text>
-<path class="sl" d="M266.1 907h189.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-189.5z"/>
-<text x="465.6" y="917" data-task="handoff" data-arm="lcu" data-kind="cell" data-section="main">46.5 (2/3)</text>
+<path class="sl" d="M356.6 907h155.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-155.6z"/>
+<text x="522.2" y="917" data-task="handoff" data-arm="lcu" data-kind="cell" data-section="main">46.5 (2/3)</text>
 <text x="190.8" y="935" class="m">Peekaboo</text>
-<path class="sl" d="M266.1 925h508.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-508.5z"/>
-<text x="784.7" y="935" data-task="handoff" data-arm="peekaboo" data-kind="cell" data-section="main">123.2 (1/3)</text>
+<path class="sl" d="M356.6 925h418.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-418.7z"/>
+<text x="785.3" y="935" data-task="handoff" data-arm="peekaboo" data-kind="cell" data-section="main">123.2 (1/3)</text>
 <line class="g" x1="24" y1="947" x2="876" y2="947"/>
 <text x="24" y="967" class="b">inject-order</text>
-<line class="g" x1="265.1" y1="954" x2="265.1" y2="1040"/>
+<line class="g" x1="355.6" y1="954" x2="355.6" y2="1040"/>
 <text x="190.8" y="967" class="b">sleight</text>
-<path class="me" d="M266.1 957h94.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-94.4z"/>
-<text x="370.5" y="967" data-task="inject-order" data-arm="sleight" data-kind="cell" data-section="main">23.5 (3/3)</text>
+<path class="me" d="M356.6 957h106.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-106.6z"/>
+<text x="473.2" y="967" data-task="inject-order" data-arm="sleight" data-kind="cell" data-section="main">32.0 (3/3)</text>
 <text x="190.8" y="985" class="m">Codex</text>
-<path class="sl" d="M266.1 975h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
+<path class="sl" d="M356.6 975h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
 <text x="788.1" y="985" data-task="inject-order" data-arm="codex" data-kind="cell" data-section="main">123.1 (3/3)</text>
 <text x="190.8" y="1003" class="m">Cua</text>
-<path class="sl" d="M266.1 993h253.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-253.2z"/>
-<text x="529.4" y="1003" data-task="inject-order" data-arm="cua" data-kind="cell" data-section="main">61.4 (3/3)</text>
+<path class="sl" d="M356.6 993h208.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-208.1z"/>
+<text x="574.7" y="1003" data-task="inject-order" data-arm="cua" data-kind="cell" data-section="main">61.4 (3/3)</text>
 <text x="190.8" y="1021" class="m">LCU</text>
-<path class="sl" d="M266.1 1011h218.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-218.9z"/>
-<text x="495" y="1021" data-task="inject-order" data-arm="lcu" data-kind="cell" data-section="main">53.2 (2/3)</text>
+<path class="sl" d="M356.6 1011h179.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-179.8z"/>
+<text x="546.4" y="1021" data-task="inject-order" data-arm="lcu" data-kind="cell" data-section="main">53.2 (2/3)</text>
 <text x="190.8" y="1039" class="m">Peekaboo</text>
-<path class="sl" d="M266.1 1029h166.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-166.1z"/>
-<text x="442.2" y="1039" data-task="inject-order" data-arm="peekaboo" data-kind="cell" data-section="main">40.6 (3/3)</text>
+<path class="sl" d="M356.6 1029h136.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-136.2z"/>
+<text x="502.8" y="1039" data-task="inject-order" data-arm="peekaboo" data-kind="cell" data-section="main">40.6 (3/3)</text>
 <line class="g" x1="24" y1="1051" x2="876" y2="1051"/>
 <text x="24" y="1071" class="b">inject-mail</text>
-<line class="g" x1="265.1" y1="1058" x2="265.1" y2="1144"/>
+<line class="g" x1="355.6" y1="1058" x2="355.6" y2="1144"/>
 <text x="190.8" y="1071" class="b">sleight</text>
-<path class="me" d="M266.1 1061h225a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-225z"/>
-<text x="501.1" y="1071" data-task="inject-mail" data-arm="sleight" data-kind="cell" data-section="main">24.7 (3/3)</text>
+<path class="me" d="M356.6 1061h159.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-159.4z"/>
+<text x="526" y="1071" data-task="inject-mail" data-arm="sleight" data-kind="cell" data-section="main">21.4 (3/3)</text>
 <text x="190.8" y="1089" class="m">Codex</text>
-<path class="sl" d="M266.1 1079h464.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-464.8z"/>
-<text x="740.9" y="1089" data-task="inject-mail" data-arm="codex" data-kind="cell" data-section="main">50.5 (3/3)</text>
+<path class="sl" d="M356.6 1079h382.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-382.6z"/>
+<text x="749.2" y="1089" data-task="inject-mail" data-arm="codex" data-kind="cell" data-section="main">50.5 (3/3)</text>
 <text x="190.8" y="1107" class="m">Cua</text>
-<path class="sl" d="M266.1 1097h472.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-472.6z"/>
-<text x="748.8" y="1107" data-task="inject-mail" data-arm="cua" data-kind="cell" data-section="main">51.4 (3/3)</text>
+<path class="sl" d="M356.6 1097h389a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-389z"/>
+<text x="755.6" y="1107" data-task="inject-mail" data-arm="cua" data-kind="cell" data-section="main">51.4 (3/3)</text>
 <text x="190.8" y="1125" class="m">LCU</text>
-<path class="sl" d="M266.1 1115h431a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-431z"/>
-<text x="707.1" y="1125" data-task="inject-mail" data-arm="lcu" data-kind="cell" data-section="main">46.9 (2/3)</text>
+<path class="sl" d="M356.6 1115h354.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-354.7z"/>
+<text x="721.3" y="1125" data-task="inject-mail" data-arm="lcu" data-kind="cell" data-section="main">46.9 (2/3)</text>
 <text x="190.8" y="1143" class="m">Peekaboo</text>
-<path class="sl" d="M266.1 1133h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
+<path class="sl" d="M356.6 1133h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
 <text x="788.1" y="1143" data-task="inject-mail" data-arm="peekaboo" data-kind="cell" data-section="main">55.6 (2/3)</text>
 <line class="g" x1="24" y1="1155" x2="876" y2="1155"/>
 <text x="24" y="1175" class="b">wikipedia</text>
-<line class="g" x1="265.1" y1="1162" x2="265.1" y2="1248"/>
+<line class="g" x1="355.6" y1="1162" x2="355.6" y2="1248"/>
 <text x="190.8" y="1175" class="b">sleight</text>
-<path class="me" d="M266.1 1165h200.6a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-200.6z"/>
-<text x="476.7" y="1175" data-task="wikipedia" data-arm="sleight" data-kind="cell" data-section="main">18.0 (3/3)</text>
+<path class="me" d="M356.6 1165h160.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-160.4z"/>
+<text x="527" y="1175" data-task="wikipedia" data-arm="sleight" data-kind="cell" data-section="main">17.6 (5/5)</text>
 <text x="190.8" y="1193" class="m">Codex</text>
-<path class="sl" d="M266.1 1183h217a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-217z"/>
-<text x="493.1" y="1193" data-task="wikipedia" data-arm="codex" data-kind="cell" data-section="main">19.5 (3/3)</text>
+<path class="sl" d="M356.6 1183h193.3a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-193.3z"/>
+<text x="559.9" y="1193" data-task="wikipedia" data-arm="codex" data-kind="cell" data-section="main">21.1 (5/5)</text>
 <text x="190.8" y="1211" class="m">Cua</text>
-<path class="sl" d="M266.1 1201h464.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-464.7z"/>
-<text x="740.9" y="1211" data-task="wikipedia" data-arm="cua" data-kind="cell" data-section="main">41.3 (3/3)</text>
+<path class="sl" d="M356.6 1201h382.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-382.5z"/>
+<text x="749.1" y="1211" data-task="wikipedia" data-arm="cua" data-kind="cell" data-section="main">41.3 (3/3)</text>
 <text x="190.8" y="1229" class="m">LCU</text>
-<path class="sl" d="M266.1 1219h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
+<path class="sl" d="M356.6 1219h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
 <text x="788.1" y="1229" data-task="wikipedia" data-arm="lcu" data-kind="cell" data-section="main">45.5 (2/3)</text>
 <text x="190.8" y="1247" class="m">Peekaboo</text>
-<path class="sl" d="M266.1 1237h195.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-195.9z"/>
-<text x="472" y="1247" data-task="wikipedia" data-arm="peekaboo" data-kind="cell" data-section="main">17.6 (3/3)</text>
+<path class="sl" d="M356.6 1237h186.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186.7z"/>
+<text x="553.3" y="1247" data-task="wikipedia" data-arm="peekaboo" data-kind="cell" data-section="main">20.4 (5/5)</text>
 <line class="g" x1="24" y1="1259" x2="876" y2="1259"/>
 <text x="24" y="1279" class="b">mdn</text>
-<line class="g" x1="265.1" y1="1266" x2="265.1" y2="1352"/>
+<line class="g" x1="355.6" y1="1266" x2="355.6" y2="1352"/>
 <text x="190.8" y="1279" class="b">sleight</text>
-<path class="me" d="M266.1 1269h187.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-187.5z"/>
-<text x="463.6" y="1279" data-task="mdn" data-arm="sleight" data-kind="cell" data-section="main">20.0 (3/3)</text>
+<path class="me" d="M356.6 1269h128.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-128.9z"/>
+<text x="495.5" y="1279" data-task="mdn" data-arm="sleight" data-kind="cell" data-section="main">16.8 (5/5)</text>
 <text x="190.8" y="1297" class="m">Codex</text>
-<path class="sl" d="M266.1 1287h149.2a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-149.2z"/>
-<text x="425.4" y="1297" data-task="mdn" data-arm="codex" data-kind="cell" data-section="main">16.0 (3/3)</text>
+<path class="sl" d="M356.6 1287h127.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-127.7z"/>
+<text x="494.3" y="1297" data-task="mdn" data-arm="codex" data-kind="cell" data-section="main">16.6 (5/5)</text>
 <text x="190.8" y="1315" class="m">Cua</text>
-<path class="sl" d="M266.1 1305h511.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-511.9z"/>
+<path class="sl" d="M356.6 1305h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
 <text x="788.1" y="1315" data-task="mdn" data-arm="cua" data-kind="cell" data-section="main">53.8 (2/3)</text>
 <text x="190.8" y="1333" class="m">LCU</text>
-<path class="sl" d="M266.1 1323h257.3a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-257.3z"/>
-<text x="533.4" y="1333" data-task="mdn" data-arm="lcu" data-kind="cell" data-section="main">27.2 (2/3)</text>
+<path class="sl" d="M356.6 1323h211.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-211.5z"/>
+<text x="578.1" y="1333" data-task="mdn" data-arm="lcu" data-kind="cell" data-section="main">27.2 (2/3)</text>
 <text x="190.8" y="1351" class="m">Peekaboo</text>
-<path class="sl" d="M266.1 1341h204.1a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-204.1z"/>
-<text x="480.2" y="1351" data-task="mdn" data-arm="peekaboo" data-kind="cell" data-section="main">21.7 (3/3)</text>
-<text x="24" y="1384" class="m">The scorer's wording is &quot;completed every task, fastest on 9 of 12&quot;. sleight has the lowest expected time on 9 of</text>
-<text x="24" y="1402" class="m">12 tasks.</text>
-<text x="24" y="1420" class="m">ChatGPT engine version: not in this data file, which predates engine tracking (2026-10-19). The pages name it</text>
-<text x="24" y="1438" class="m">once the data is collected again.</text>
-<text x="24" y="1456" class="m">Models: claude-haiku-5-5 (sleight, Cua, LCU and Peekaboo), gpt-6-luna (Codex). Effort: high as recorded for</text>
-<text x="24" y="1474" class="m">Codex, and high from the race scripts' flag for the others.</text>
+<path class="sl" d="M356.6 1341h150.7a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-150.7z"/>
+<text x="517.3" y="1351" data-task="mdn" data-arm="peekaboo" data-kind="cell" data-section="main">19.5 (5/5)</text>
+<text x="24" y="1395" class="t">Same model: sleight inside Codex against Codex</text>
+<rect class="me" x="24" y="1406" width="12" height="12" rx="2"/>
+<text x="42" y="1416.5">sleight inside Codex</text>
+<rect class="ot" x="214.8" y="1406" width="12" height="12" rx="2"/>
+<text x="232.8" y="1416.5">Codex</text>
+<line class="g" x1="24" y1="1429" x2="876" y2="1429"/>
+<text x="24" y="1449" class="b">form-travel</text>
+<line class="g" x1="355.6" y1="1436" x2="355.6" y2="1468"/>
+<text x="190.8" y="1449" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1439h416.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-416.5z"/>
+<text x="783.1" y="1449" data-task="form-travel" data-arm="codex-sleight" data-kind="cell" data-section="same">100.8 (3/3)</text>
+<text x="190.8" y="1467" class="m">Codex</text>
+<path class="ot" d="M356.6 1457h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1467" data-task="form-travel" data-arm="codex" data-kind="cell" data-section="same">102.0 (4/5)</text>
+<line class="g" x1="24" y1="1479" x2="876" y2="1479"/>
+<text x="24" y="1499" class="b">form-settings</text>
+<line class="g" x1="355.6" y1="1486" x2="355.6" y2="1518"/>
+<text x="190.8" y="1499" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1489h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1499" data-task="form-settings" data-arm="codex-sleight" data-kind="cell" data-section="same">131.1 (3/3)</text>
+<text x="190.8" y="1517" class="m">Codex</text>
+<rect class="ot" fill-opacity="0.16" x="356.6" y="1507" width="22" height="12"/><rect fill="url(#h-ot)" x="356.6" y="1507" width="22" height="12"/>
+<text x="384.6" y="1517" class="m" data-task="form-settings" data-arm="codex" data-kind="cell" data-section="same">never (0/3)</text>
+<line class="g" x1="24" y1="1529" x2="876" y2="1529"/>
+<text x="24" y="1549" class="b">form-checkout</text>
+<line class="g" x1="355.6" y1="1536" x2="355.6" y2="1568"/>
+<text x="190.8" y="1549" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1539h331.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-331.9z"/>
+<text x="698.5" y="1549" data-task="form-checkout" data-arm="codex-sleight" data-kind="cell" data-section="same">134.2 (3/3)</text>
+<text x="190.8" y="1567" class="m">Codex</text>
+<path class="ot" d="M356.6 1557h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1567" data-task="form-checkout" data-arm="codex" data-kind="cell" data-section="same">170.0 (1/3)</text>
+<line class="g" x1="24" y1="1579" x2="876" y2="1579"/>
+<text x="24" y="1599" class="b">form-settings-helium</text>
+<line class="g" x1="355.6" y1="1586" x2="355.6" y2="1618"/>
+<text x="190.8" y="1599" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1589h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1599" data-task="form-settings-helium" data-arm="codex-sleight" data-kind="cell" data-section="same">183.0 (3/3)</text>
+<text x="190.8" y="1617" class="m">Codex</text>
+<rect class="ot" fill-opacity="0.16" x="356.6" y="1607" width="22" height="12"/><rect fill="url(#h-ot)" x="356.6" y="1607" width="22" height="12"/>
+<text x="384.6" y="1617" class="m" data-task="form-settings-helium" data-arm="codex" data-kind="cell" data-section="same">never (0/3)</text>
+<line class="g" x1="24" y1="1629" x2="876" y2="1629"/>
+<text x="24" y="1649" class="b">shipping-link</text>
+<line class="g" x1="355.6" y1="1636" x2="355.6" y2="1668"/>
+<text x="190.8" y="1649" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1639h367.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-367.5z"/>
+<text x="734.1" y="1649" data-task="shipping-link" data-arm="codex-sleight" data-kind="cell" data-section="same">21.4 (3/3)</text>
+<text x="190.8" y="1667" class="m">Codex</text>
+<path class="ot" d="M356.6 1657h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1667" data-task="shipping-link" data-arm="codex" data-kind="cell" data-section="same">24.5 (3/3)</text>
+<line class="g" x1="24" y1="1679" x2="876" y2="1679"/>
+<text x="24" y="1699" class="b">size-guide</text>
+<line class="g" x1="355.6" y1="1686" x2="355.6" y2="1718"/>
+<text x="190.8" y="1699" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1689h288a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-288z"/>
+<text x="654.6" y="1699" data-task="size-guide" data-arm="codex-sleight" data-kind="cell" data-section="same">22.2 (3/3)</text>
+<text x="190.8" y="1717" class="m">Codex</text>
+<path class="ot" d="M356.6 1707h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1717" data-task="size-guide" data-arm="codex" data-kind="cell" data-section="same">32.4 (3/3)</text>
+<line class="g" x1="24" y1="1729" x2="876" y2="1729"/>
+<text x="24" y="1749" class="b">demoid</text>
+<line class="g" x1="355.6" y1="1736" x2="355.6" y2="1768"/>
+<text x="190.8" y="1749" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1739h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1749" data-task="demoid" data-arm="codex-sleight" data-kind="cell" data-section="same">41.9 (2/3)</text>
+<text x="190.8" y="1767" class="m">Codex</text>
+<rect class="ot" fill-opacity="0.16" x="356.6" y="1757" width="22" height="12"/><rect fill="url(#h-ot)" x="356.6" y="1757" width="22" height="12"/>
+<text x="384.6" y="1767" class="m" data-task="demoid" data-arm="codex" data-kind="cell" data-section="same">never (0/3)</text>
+<line class="g" x1="24" y1="1779" x2="876" y2="1779"/>
+<text x="24" y="1799" class="b">handoff</text>
+<line class="g" x1="355.6" y1="1786" x2="355.6" y2="1818"/>
+<text x="190.8" y="1799" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1789h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1799" data-task="handoff" data-arm="codex-sleight" data-kind="cell" data-section="same">173.1 (1/3)</text>
+<text x="190.8" y="1817" class="m">Codex</text>
+<path class="ot" d="M356.6 1807h300.9a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-300.9z"/>
+<text x="667.5" y="1817" data-task="handoff" data-arm="codex" data-kind="cell" data-section="same">124.0 (1/3)</text>
+<line class="g" x1="24" y1="1829" x2="876" y2="1829"/>
+<text x="24" y="1849" class="b">inject-order</text>
+<line class="g" x1="355.6" y1="1836" x2="355.6" y2="1868"/>
+<text x="190.8" y="1849" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1839h165.8a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-165.8z"/>
+<text x="532.4" y="1849" data-task="inject-order" data-arm="codex-sleight" data-kind="cell" data-section="same">49.1 (3/3)</text>
+<text x="190.8" y="1867" class="m">Codex</text>
+<path class="ot" d="M356.6 1857h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1867" data-task="inject-order" data-arm="codex" data-kind="cell" data-section="same">123.1 (3/3)</text>
+<line class="g" x1="24" y1="1879" x2="876" y2="1879"/>
+<text x="24" y="1899" class="b">inject-mail</text>
+<line class="g" x1="355.6" y1="1886" x2="355.6" y2="1918"/>
+<text x="190.8" y="1899" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1889h409a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-409z"/>
+<text x="775.6" y="1899" data-task="inject-mail" data-arm="codex-sleight" data-kind="cell" data-section="same">49.0 (3/3)</text>
+<text x="190.8" y="1917" class="m">Codex</text>
+<path class="ot" d="M356.6 1907h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1917" data-task="inject-mail" data-arm="codex" data-kind="cell" data-section="same">50.5 (3/3)</text>
+<line class="g" x1="24" y1="1929" x2="876" y2="1929"/>
+<text x="24" y="1949" class="b">wikipedia</text>
+<line class="g" x1="355.6" y1="1936" x2="355.6" y2="1968"/>
+<text x="190.8" y="1949" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1939h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1949" data-task="wikipedia" data-arm="codex-sleight" data-kind="cell" data-section="same">23.7 (3/3)</text>
+<text x="190.8" y="1967" class="m">Codex</text>
+<path class="ot" d="M356.6 1957h375.4a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-375.4z"/>
+<text x="742" y="1967" data-task="wikipedia" data-arm="codex" data-kind="cell" data-section="same">21.1 (5/5)</text>
+<line class="g" x1="24" y1="1979" x2="876" y2="1979"/>
+<text x="24" y="1999" class="b">mdn</text>
+<line class="g" x1="355.6" y1="1986" x2="355.6" y2="2018"/>
+<text x="190.8" y="1999" class="b">sleight inside Codex</text>
+<path class="me" d="M356.6 1989h421.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-421.5z"/>
+<text x="788.1" y="1999" data-task="mdn" data-arm="codex-sleight" data-kind="cell" data-section="same">21.2 (3/3)</text>
+<text x="190.8" y="2017" class="m">Codex</text>
+<path class="ot" d="M356.6 2007h330.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-330.5z"/>
+<text x="697.1" y="2017" data-task="mdn" data-arm="codex" data-kind="cell" data-section="same">16.6 (5/5)</text>
+<text x="24" y="2050" class="m">The scorer's wording is &quot;fastest&quot;. sleight has the lowest expected time on 11 of 12 tasks.</text>
+<text x="24" y="2068" class="m">Same model: the scorer's wording for sleight inside Codex against Codex is &quot;completed every task, fastest on 9</text>
+<text x="24" y="2086" class="m">of 12&quot;.</text>
+<text x="24" y="2104" class="m">ChatGPT engine for sleight, Codex and sleight inside Codex: 26.1007.71326 (2026-10-18, inferred) and</text>
+<text x="24" y="2122" class="m">26.1013.40934 (2026-10-19, inferred). Dates are UTC.</text>
+<text x="24" y="2140" class="m">Models: claude-haiku-5-5 (sleight, Cua, LCU and Peekaboo), gpt-6-luna (Codex and sleight inside Codex). Effort:</text>
+<text x="24" y="2158" class="m">high as recorded for Codex and sleight inside Codex, and high from the race scripts' flag for the others.</text>
 </svg>

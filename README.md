@@ -13,10 +13,9 @@
 > the ChatGPT desktop app, so a ChatGPT update can break it. It contains no OpenAI code.
 
 <!-- hub:claim -->
-On sleight's own suite of 9 native Mac tasks, the scorer's wording is "fastest": sleight had the lowest expected time on
-8 of 9 tasks and a total of 251.2 s, against 453.9 s for Claude's own computer use (197 runs, 2026-10-17 to 2026-10-18).
-The hub lists each run, failures included, with the method and the model each arm ran:
-[benchmark hub](docs/results/README.md), [interactive page](https://land-o-clusters.github.io/sleight/results/explore.html).
+sleight's native claim is "fastest": the lowest expected time on 8 of 9 native Mac tasks, and a total of 251.2 s against Claude computer use's 453.9 s, the next lowest, over 197 runs dated 2026-10-17 to 2026-10-18 on `claude-haiku-5-5` at high effort (engine 26.1007.71326, 2026-10-17 to 2026-10-18). The hub lists each run, failures included, with the method and the model each arm ran.
+
+[Benchmark hub](docs/results/README.md) · [Interactive page](https://land-o-clusters.github.io/sleight/results/explore.html)
 <!-- /hub:claim -->
 
 ## Install
@@ -52,6 +51,12 @@ and Helium through turbo, sleight's own direct path to the browser (on by defaul
 Safari and Firefox through the engine's accessibility path. The engine refuses terminals and OpenAI's own apps ([how it works](docs/how-it-works.md)).
 
 <!-- hub:headline -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/results/img/headline-native-dark.svg">
+  <img src="docs/results/img/headline-native-light.svg" width="900" alt="Native claim, 2026-10-17 to 2026-10-18: sleight's total expected time over 9 tasks is 251.2 s against Claude computer use at 453.9 s, and LCU, Codex, Cua and Peekaboo have no total because each never passed at least one task.">
+</picture>
+
+<sub>Native claim, 2026-10-17 to 2026-10-18: sleight's total expected time over 9 tasks is 251.2 s against Claude computer use at 453.9 s, and LCU, Codex, Cua and Peekaboo have no total because each never passed at least one task.</sub>
 <!-- /hub:headline -->
 
 <!-- demo-slot: the film's trick take (cut by bench/capture/demo-gif.sh) replaces docs/assets/demo.gif and this caption once the capture exists. Until then the Chess clip stays. -->
@@ -61,7 +66,19 @@ Safari and Firefox through the engine's accessibility path. The engine refuses t
 ## How fast
 
 <!-- hub:benchmarks -->
-Every family's result, method and failed runs are on the [benchmark hub](docs/results/README.md).
+- [Native claim](docs/results/native-claim.md): "fastest", sleight's total expected time 251.2 s over 9 tasks (197 runs, 2026-10-17 to 2026-10-18). Engine 26.1007.71326, 2026-10-17 to 2026-10-18.
+- [App claim](docs/results/app-claim.md): "fastest", sleight's total expected time 56.8 s over 3 tasks (60 runs, 2026-10-18, 02:39 to 03:16 UTC). Engine 26.1007.71326, 2026-10-18.
+- [Chrome and Helium: turbo against FowlBrowser](docs/results/browser-turbo.md): in Chrome, the lowest expected time on 10 of 13 and a total of 258.9 s against FowlBrowser's 447.8 s (`sleight-turbo-rel130`). In Helium, the lowest expected time on 11 of 13 and a total of 241.8 s against FowlBrowser's 338.3 s (`sleight-turbo-b5`). 14 gate studies. Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19.
+- [Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo](docs/results/browser-race.md): in Safari, "fastest" (`sleight-b10`, 2026-10-18). In Firefox, "fastest" (`sleight-b10`, 2026-10-18). Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19.
+- [Experiments](docs/results/ab-tests.md): 13 studies with run data, 94 write-ups in all.
+- [Release passes and the earlier head-to-heads](docs/results/release-passes.md): 7 release passes (2026-10-05 to 2026-10-09), 115 results files in all.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/results/img/overview-dark.svg">
+  <img src="docs/results/img/overview-light.svg" width="900" alt="Total expected seconds of sleight against the next-best arm with a total, in the newest complete set of each benchmark. Native apps, 251.2 s against Claude computer use at 453.9 s. VS Code, Slack, Spotify, 56.8 s against LCU at 101.3 s. Chrome, turbo, 258.9 s against FowlBrowser at 447.8 s. Helium, turbo, 241.8 s against FowlBrowser at 338.3 s. Safari, engine path, 592.1 s, and no other arm has a total. Firefox, engine path, 557.1 s against Cua at 2541.4 s.">
+</picture>
+
+<sub>Total expected seconds of sleight against the next-best arm with a total, in the newest complete set of each benchmark. Native apps, 251.2 s against Claude computer use at 453.9 s. VS Code, Slack, Spotify, 56.8 s against LCU at 101.3 s. Chrome, turbo, 258.9 s against FowlBrowser at 447.8 s. Helium, turbo, 241.8 s against FowlBrowser at 338.3 s. Safari, engine path, 592.1 s, and no other arm has a total. Firefox, engine path, 557.1 s against Cua at 2541.4 s.</sub>
 <!-- /hub:benchmarks -->
 
 ## How it works
