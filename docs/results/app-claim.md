@@ -1,8 +1,24 @@
+[Benchmarks](README.md) · [Native](native-claim.md) · Apps · [Chrome and Helium](browser-turbo.md) · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
+
 # App claim
 
-The app tasks run on the native path with the same arms and rules as the native claim. In VS Code the agent edits a fixture file in a separate instance with a temporary profile. In Slack it posts one fixed message to a test channel of a throwaway account. In the owner's Spotify account it finds a track, plays it and pauses it.
+The app tasks run on the native path with the same arms and rules as the native claim. In VS Code the agent edits a fixture file in a separate instance with a temporary profile. In Slack it posts one fixed message to a test channel of a throwaway account. In the owner's Spotify account it finds a track, plays it and pauses it. The scorer's wording is "fastest". sleight has the lowest expected time on 3 of 3 tasks.
 
-## Method
+Each cell is expected seconds, then passes/runs.
+
+| Task | sleight | LCU | Codex | Cua | Peekaboo | Claude computer use |
+| --- | --- | --- | --- | --- | --- | --- |
+| `vscode-edit` | 16.5 (3/3) | 31.9 (3/3) | 41.5 (3/3) | 44.9 (3/3) | never (0/3) | never (0/3) |
+| `slack-post` | 13.5 (5/5) | 14.2 (5/5) | 64.9 (1/3) | 26.2 (3/3) | 47.1 (3/3) | 16.0 (5/5) |
+| `spotify-play` | 26.7 (3/3) | 55.2 (3/3) | 40.7 (3/3) | 111.8 (3/3) | never (0/3) | never (0/3) |
+| Lowest expected time on | 3 of 3 | 0 of 3 | 0 of 3 | 0 of 3 | 0 of 3 | 0 of 3 |
+| Total expected s | 56.8 | 101.3 | 147.1 | 182.9 | none (a task has no pass) | none (a task has no pass) |
+
+By the loss rule, sleight didn't lose a task.
+
+No pair within 20% of sleight is short of 5 runs.
+
+<details><summary>Method and arm versions</summary>
 
 - 60 runs counted, from 9 results files dated 2026-10-18, 02:39 to 03:16 UTC, on the owner's account login (auth `login`).
 - Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
@@ -19,6 +35,10 @@ The app tasks run on the native path with the same arms and rules as the native 
 | Peekaboo | `claude-haiku-5-5` | high | @steipete/peekaboo 4.9.2, Claude Code 2.1.289 |
 | Claude computer use | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
 
+</details>
+
+<details><summary>Rows left out and scorer warnings</summary>
+
 No rows were left out.
 
 The scorer warned:
@@ -26,23 +46,9 @@ The scorer warned:
 - `sleight's included rows come from 2 passes: 2026-10-18T02-39-41-149Z.json (9), 2026-10-18T03-14-39-374Z.json (2)`
 - `regrade 2026-10-17T15-51-43-164Z.json claude-cu textedit-drag #1 matches no included failed run`
 
-## Result
+</details>
 
-The scorer's wording is "fastest". sleight has the lowest expected time on 3 of 3 tasks.
-
-By the loss rule, sleight didn't lose a task.
-
-No pair within 20% of sleight is short of 5 runs.
-
-Each cell is expected seconds, then passes/runs.
-
-| Task | sleight | LCU | Codex | Cua | Peekaboo | Claude computer use |
-| --- | --- | --- | --- | --- | --- | --- |
-| `vscode-edit` | 16.5 (3/3) | 31.9 (3/3) | 41.5 (3/3) | 44.9 (3/3) | never (0/3) | never (0/3) |
-| `slack-post` | 13.5 (5/5) | 14.2 (5/5) | 64.9 (1/3) | 26.2 (3/3) | 47.1 (3/3) | 16.0 (5/5) |
-| `spotify-play` | 26.7 (3/3) | 55.2 (3/3) | 40.7 (3/3) | 111.8 (3/3) | never (0/3) | never (0/3) |
-| Lowest expected time on | 3 of 3 | 0 of 3 | 0 of 3 | 0 of 3 | 0 of 3 | 0 of 3 |
-| Total expected s | 56.8 | 101.3 | 147.1 | 182.9 | none (a task has no pass) | none (a task has no pass) |
+<details><summary>Spread of passing runs</summary>
 
 Passing runs, median [fastest to slowest], with p90 at 5 or more runs:
 
@@ -52,7 +58,9 @@ Passing runs, median [fastest to slowest], with p90 at 5 or more runs:
 | `slack-post` | 12.4 [11.3 to 19.4], p90 19.4 | 15.1 [11.8 to 15.4], p90 15.4 | 32.3 [32.3 to 32.3] | 27.3 [23.3 to 27.9] | 50.9 [34.8 to 55.5] | 16.3 [14.4 to 16.8], p90 16.8 |
 | `spotify-play` | 25.6 [24.3 to 30.2] | 49.3 [43.0 to 73.2] | 43.1 [33.1 to 45.9] | 130.0 [64.7 to 140.8] | no passes | no passes |
 
-## Failed runs (14)
+</details>
+
+<details><summary>Failed runs (14)</summary>
 
 | Task | Arm | File | s | Reason |
 | --- | --- | --- | --- | --- |
@@ -71,6 +79,8 @@ Passing runs, median [fastest to slowest], with p90 at 5 or more runs:
 | `vscode-edit` | Peekaboo | `2026-10-18T03-08-08-477Z.json` | 45.1 | `saved document does not contain the replaced word` |
 | `spotify-play` | Peekaboo | `2026-10-18T03-08-08-477Z.json` | 26.5 | `SPOTIFY_NO_EVENTS` |
 
-## Data
+</details>
 
-[data/app-claim.json](data/app-claim.json) has every counted run and the scored cells. [explore.html](explore.html) charts them.
+[data/app-claim.json](data/app-claim.json) has every counted run and the scored cells, and the [interactive page](https://land-o-clusters.github.io/sleight/results/explore.html) charts them. The ChatGPT engine version is missing from this data, which was collected before the results recorded it (2026-10-19). Rebuild every page with `node bench/results-hub.mjs`.
+
+[Benchmarks](README.md) · [Native](native-claim.md) · Apps · [Chrome and Helium](browser-turbo.md) · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)

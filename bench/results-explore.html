@@ -7,50 +7,53 @@
 <style>
 :root {
   color-scheme: light;
-  --page: #f9f9f7;
-  --surface: #fcfcfb;
-  --text: #0b0b0b;
-  --text-2: #52514e;
-  --muted: #898781;
-  --grid: #e1e0d9;
-  --axis: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.10);
-  --wash: rgba(11, 11, 11, 0.04);
-  --series: #2a78d6;
-  --fail: #d03b3b;
-  --link: #1c5cab;
+  --page: #fbf8f1;
+  --surface: #fffdf8;
+  --text: #141a26;
+  --text-2: #3e4a56;
+  --muted: #6b7584;
+  --grid: #e4ded2;
+  --axis: #c9c2b4;
+  --border: rgba(20, 26, 38, 0.12);
+  --wash: rgba(20, 26, 38, 0.04);
+  --me: #e8622c;
+  --series: #4e79d9;
+  --fail: #7a879a;
+  --link: #2f58b8;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --page: #0d0d0d;
-    --surface: #1a1a19;
-    --text: #f0efec;
-    --text-2: #c3c2b7;
-    --muted: #898781;
-    --grid: #2c2c2a;
-    --axis: #383835;
-    --border: rgba(255, 255, 255, 0.10);
-    --wash: rgba(255, 255, 255, 0.05);
-    --series: #3987e5;
-    --fail: #e66767;
-    --link: #86b6ef;
+    --page: #141a26;
+    --surface: #1b2232;
+    --text: #efe9dc;
+    --text-2: #c9c3b6;
+    --muted: #9aa6b8;
+    --grid: #2c3442;
+    --axis: #3a4456;
+    --border: rgba(239, 233, 220, 0.12);
+    --wash: rgba(239, 233, 220, 0.05);
+    --me: #e8622c;
+    --series: #7299ea;
+    --fail: #9aa6b8;
+    --link: #a9c4f5;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: #0d0d0d;
-  --surface: #1a1a19;
-  --text: #f0efec;
-  --text-2: #c3c2b7;
-  --muted: #898781;
-  --grid: #2c2c2a;
-  --axis: #383835;
-  --border: rgba(255, 255, 255, 0.10);
-  --wash: rgba(255, 255, 255, 0.05);
-  --series: #3987e5;
-  --fail: #e66767;
-  --link: #86b6ef;
+  --page: #141a26;
+  --surface: #1b2232;
+  --text: #efe9dc;
+  --text-2: #c9c3b6;
+  --muted: #9aa6b8;
+  --grid: #2c3442;
+  --axis: #3a4456;
+  --border: rgba(239, 233, 220, 0.12);
+  --wash: rgba(239, 233, 220, 0.05);
+  --me: #e8622c;
+  --series: #7299ea;
+  --fail: #9aa6b8;
+  --link: #a9c4f5;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -84,6 +87,9 @@ button:hover { background: var(--wash); }
 .chart .grid { stroke: var(--grid); stroke-width: 1; }
 .chart .base { stroke: var(--axis); stroke-width: 1; }
 .chart .pass { fill: var(--series); stroke: var(--surface); stroke-width: 2; }
+.chart .pass.me { fill: var(--me); }
+.chart .fail.me { stroke: var(--me); }
+nav.pages { font-size: 0.9rem; color: var(--text-2); margin: 0 0 12px; }
 .chart .fail { fill: var(--surface); stroke: var(--fail); stroke-width: 2; }
 .chart .exp { stroke: var(--text); stroke-width: 2; stroke-linecap: round; }
 .chart .hit { fill: transparent; cursor: default; }
@@ -109,11 +115,12 @@ tr:hover td { background: var(--wash); }
 </head>
 <body>
 <main>
+<!--__NAV__-->
 <header>
   <h1>sleight benchmark explorer</h1>
   <button id="theme" type="button" aria-label="Color theme">Theme: auto</button>
 </header>
-<p class="note">Every run the hub scores, from the same data files as the <a href="README.md">results pages</a>. Expected time is the mean seconds per attempt divided by the pass rate; a task an arm never passed has none. Filters apply to the charts and both tables.</p>
+<p class="note">Every run the hub scores, from the same data files as the <a href="https://github.com/Land-o-Clusters/sleight/tree/main/docs/results">Markdown pages on GitHub</a>. Expected time is the mean seconds per attempt divided by the pass rate; a task an arm never passed has none. Filters apply to the charts and both tables.</p>
 
 <div class="filters" id="filters">
   <label>Family<select id="f-family"></select></label>
@@ -129,7 +136,8 @@ tr:hover td { background: var(--wash); }
 
 <h2>Per task: every run, and expected time</h2>
 <div class="legend" aria-hidden="true">
-  <span><svg width="14" height="14"><circle cx="7" cy="7" r="4.5" class="pass" style="fill:var(--series);stroke:var(--surface);stroke-width:2"/></svg>passed run</span>
+  <span><svg width="14" height="14"><circle cx="7" cy="7" r="4.5" style="fill:var(--me);stroke:var(--surface);stroke-width:2"/></svg>sleight, passed run</span>
+  <span><svg width="14" height="14"><circle cx="7" cy="7" r="4.5" style="fill:var(--series);stroke:var(--surface);stroke-width:2"/></svg>other arm, passed run</span>
   <span><svg width="14" height="14"><circle cx="7" cy="7" r="4" style="fill:var(--surface);stroke:var(--fail);stroke-width:2"/></svg>failed run</span>
   <span><svg width="14" height="14"><line x1="7" y1="1" x2="7" y2="13" style="stroke:var(--text);stroke-width:2;stroke-linecap:round"/></svg>expected time</span>
 </div>
@@ -150,8 +158,10 @@ const $ = id => document.getElementById(id);
 const el = (tag, attrs = {}, text) => { const node = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v); if (text !== undefined) node.textContent = text; return node; };
 const svgEl = (tag, attrs = {}) => { const node = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v); return node; };
 const f1 = v => (v === null || v === undefined ? '' : (Math.round(v * 10) / 10).toFixed(1));
-const ARM = { sleight: 'sleight', 'sleight-turbo': 'sleight turbo', lcu: 'LCU', codex: 'Codex', cua: 'Cua', peekaboo: 'Peekaboo', 'claude-cu': 'Claude computer use', fowlbrowser: 'FowlBrowser', 'claude-in-chrome': 'Claude in Chrome' };
+const ARM = { sleight: 'sleight', 'sleight-turbo': 'sleight turbo', lcu: 'LCU', codex: 'Codex', cua: 'Cua', peekaboo: 'Peekaboo', 'claude-cu': 'Claude computer use', fowlbrowser: 'FowlBrowser', 'claude-in-chrome': 'Claude in Chrome', 'codex-sleight': 'sleight inside Codex', 'codex-sleight-sol': 'sleight inside Codex (Sol)', 'codex-sol': 'Codex (Sol)' };
 const armName = a => ARM[a] || a;
+// The Markdown pages, with their method sections, on github.com (the Pages copy of this folder serves them as plain text).
+const MD_BASE = 'https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/';
 
 // Theme: auto follows the OS; light and dark are stamped on <html> and remembered when storage allows.
 const THEMES = ['auto', 'light', 'dark'];
@@ -235,7 +245,7 @@ function renderStudy(ids) {
   if (s.effort && s.effort.length) row('Effort', s.effort.join(', '));
   if (s.wording) row('Scorer wording', s.wording);
   dl.appendChild(el('dt', {}, 'Method'));
-  const dd = el('dd'); dd.appendChild(el('a', { href: s.page }, s.page)); dl.appendChild(dd);
+  const dd = el('dd'); dd.appendChild(el('a', { href: MD_BASE + s.page }, s.page)); dl.appendChild(dd);
   box.appendChild(dl);
 }
 
@@ -300,7 +310,7 @@ function renderCharts(ids) {
         hit.addEventListener('focus', e => showTip(e, lines));
         hit.addEventListener('blur', hideTip);
         svg.appendChild(hit);
-        svg.appendChild(svgEl('circle', { cx, cy: cy + dy, r: r.passed ? 4.5 : 4, class: r.passed ? 'pass' : 'fail', 'pointer-events': 'none' }));
+        svg.appendChild(svgEl('circle', { cx, cy: cy + dy, r: r.passed ? 4.5 : 4, class: (r.passed ? 'pass' : 'fail') + (arm === s.me ? ' me' : ''), 'pointer-events': 'none' }));
       });
       if (cell && cell.expected !== null) {
         const ex = x(cell.expected);

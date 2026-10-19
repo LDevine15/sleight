@@ -1,52 +1,8 @@
+[Benchmarks](README.md) · Native · [Apps](app-claim.md) · [Chrome and Helium](browser-turbo.md) · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
+
 # Native claim
 
-The claim suite's 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight against LCU, Codex, Cua, Peekaboo and Claude's own computer use, in real windows with the owner away. The suite is sleight's own, its skill was tuned on these tasks, and the competitors ran their defaults.
-
-## Method
-
-- 197 runs counted, from 48 results files dated 2026-10-17 to 2026-10-18, on the owner's account login (auth `login`).
-- Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
-- The rules come from [LAWS](../status/LAWS.md). Each arm gets 3 runs per task, or 5 where sleight and another arm are within 20% (the difference over the slower expected time). "Fastest" needs the lowest expected time on a majority of tasks and the lowest total, with those 5 runs in place. Otherwise the wording is "completed every task, fastest on N". A task counts as lost when another arm has the lower expected time or a faster passing run.
-- Rows come from `~/Projects/sleight-wt/app-claim/native-results-1018b` with the exclusions in `bench/claim-exclusions.json`. Scoring starts at file stamp `2026-10-17T04-03`, and the reason given is `overnight claim run on the release build (ef833641 plus the Chess drag fix 1933db78); earlier runs measured older builds`.
-- The results files don't record sleight's commit or the Codex CLI version.
-
-| Arm | Model ids in the runs | Effort | Versions recorded |
-| --- | --- | --- | --- |
-| sleight | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
-| LCU | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
-| Codex | `gpt-6-luna` | high | not recorded |
-| Cua | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
-| Peekaboo | `claude-haiku-5-5` | high | @steipete/peekaboo 4.9.2, Claude Code 2.1.289 |
-| Claude computer use | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
-
-Rows left out, with the reasons from the exclusions file:
-
-| Reason | Rows |
-| --- | --- |
-| a macOS permission prompt was on screen | 1 |
-| claude-cu harness development runs before its first full claim pass (tool search, card parser, hooks) | 3 |
-| claude-cu harness stopped before or during the approval card (its parser and hooks were fixed during the 2026-10-17 run); not a result of Claude's computer use | 3 |
-| claude-cu harness stopped the session at 6.9 s when Claude Code refused a Read call ("No such tool available"); other arms carry on after a refused tool (harness fixed in f644b96b) | 1 |
-| cua pass stopped at word-edit #1 when Word's fixture cleanup failed (a Don't Save sheet), with 7 of 27 runs done; the arm was rerun in full | 6 |
-| skipped | 1 |
-| the task gave the claude-cu arm no clipboard grant, so the hook denied its request_access (fixed in a4692c75) | 1 |
-
-The scorer warned:
-
-- `sleight's included rows come from 2 passes: 2026-10-18T03-17-17-752Z.json (27), 2026-10-18T03-33-15-135Z.json (6)`
-
-## Result
-
-The scorer's wording is "fastest". sleight has the lowest expected time on 8 of 9 tasks.
-
-By the loss rule, sleight lost 2 of 9 tasks.
-
-| Task | Arm ahead | How |
-| --- | --- | --- |
-| `finder-move` | Peekaboo | faster passing run |
-| `preview-read` | Peekaboo | lower expected time and a faster passing run |
-
-No pair within 20% of sleight is short of 5 runs.
+The claim suite's 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight against LCU, Codex, Cua, Peekaboo and Claude's own computer use, in real windows with the owner away. The suite is sleight's own, its skill was tuned on these tasks, and the competitors ran their defaults. The scorer's wording is "fastest". sleight has the lowest expected time on 8 of 9 tasks.
 
 Each cell is expected seconds, then passes/runs.
 
@@ -64,6 +20,56 @@ Each cell is expected seconds, then passes/runs.
 | Lowest expected time on | 8 of 9 | 0 of 9 | 0 of 9 | 0 of 9 | 1 of 9 | 0 of 9 |
 | Total expected s | 251.2 | none (a task has no pass) | none (a task has no pass) | none (a task has no pass) | none (a task has no pass) | 453.9 |
 
+By the loss rule, sleight lost 2 of 9 tasks.
+
+| Task | Arm ahead | How |
+| --- | --- | --- |
+| `finder-move` | Peekaboo | faster passing run |
+| `preview-read` | Peekaboo | lower expected time and a faster passing run |
+
+No pair within 20% of sleight is short of 5 runs.
+
+<details><summary>Method and arm versions</summary>
+
+- 197 runs counted, from 48 results files dated 2026-10-17 to 2026-10-18, on the owner's account login (auth `login`).
+- Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
+- The rules come from [LAWS](../status/LAWS.md). Each arm gets 3 runs per task, or 5 where sleight and another arm are within 20% (the difference over the slower expected time). "Fastest" needs the lowest expected time on a majority of tasks and the lowest total, with those 5 runs in place. Otherwise the wording is "completed every task, fastest on N". A task counts as lost when another arm has the lower expected time or a faster passing run.
+- Rows come from `~/Projects/sleight-wt/app-claim/native-results-1018b` with the exclusions in `bench/claim-exclusions.json`. Scoring starts at file stamp `2026-10-17T04-03`, and the reason given is `overnight claim run on the release build (ef833641 plus the Chess drag fix 1933db78); earlier runs measured older builds`.
+- The results files don't record sleight's commit or the Codex CLI version.
+
+| Arm | Model ids in the runs | Effort | Versions recorded |
+| --- | --- | --- | --- |
+| sleight | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
+| LCU | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
+| Codex | `gpt-6-luna` | high | not recorded |
+| Cua | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
+| Peekaboo | `claude-haiku-5-5` | high | @steipete/peekaboo 4.9.2, Claude Code 2.1.289 |
+| Claude computer use | `claude-haiku-5-5` | high | Claude Code 2.1.289 |
+
+</details>
+
+<details><summary>Rows left out and scorer warnings</summary>
+
+Rows left out, with the reasons from the exclusions file:
+
+| Reason | Rows |
+| --- | --- |
+| a macOS permission prompt was on screen | 1 |
+| claude-cu harness development runs before its first full claim pass (tool search, card parser, hooks) | 3 |
+| claude-cu harness stopped before or during the approval card (its parser and hooks were fixed during the 2026-10-17 run); not a result of Claude's computer use | 3 |
+| claude-cu harness stopped the session at 6.9 s when Claude Code refused a Read call ("No such tool available"); other arms carry on after a refused tool (harness fixed in f644b96b) | 1 |
+| cua pass stopped at word-edit #1 when Word's fixture cleanup failed (a Don't Save sheet), with 7 of 27 runs done; the arm was rerun in full | 6 |
+| skipped | 1 |
+| the task gave the claude-cu arm no clipboard grant, so the hook denied its request_access (fixed in a4692c75) | 1 |
+
+The scorer warned:
+
+- `sleight's included rows come from 2 passes: 2026-10-18T03-17-17-752Z.json (27), 2026-10-18T03-33-15-135Z.json (6)`
+
+</details>
+
+<details><summary>Spread of passing runs</summary>
+
 Passing runs, median [fastest to slowest], with p90 at 5 or more runs:
 
 | Task | sleight | LCU | Codex | Cua | Peekaboo | Claude computer use |
@@ -78,7 +84,9 @@ Passing runs, median [fastest to slowest], with p90 at 5 or more runs:
 | `word-edit` | 87.7 [60.2 to 119.8], p90 119.8 | 97.3 [65.9 to 162.6], p90 162.6 | 81.2 [81.2 to 85.2] | 292.4 [292.4 to 292.4] | no passes | 100.5 [94.7 to 110.1], p90 110.1 |
 | `excel-edit` | 36.8 [33.2 to 66.2], p90 66.2 | 106.9 [38.2 to 110.0], p90 110.0 | 103.7 [88.1 to 228.1], p90 228.1 | 162.5 [162.5 to 199.0] | no passes | 39.5 [36.7 to 71.4], p90 71.4 |
 
-## Failed runs (41)
+</details>
+
+<details><summary>Failed runs (41)</summary>
 
 | Task | Arm | File | s | Reason |
 | --- | --- | --- | --- | --- |
@@ -124,6 +132,8 @@ Passing runs, median [fastest to slowest], with p90 at 5 or more runs:
 | `textedit-drag` | Claude computer use | `2026-10-17T15-51-43-164Z.json` | 40.8 | `the word was not moved; the file was unchanged` |
 | `textedit-calculator` | LCU | `2026-10-17T17-22-14-603Z.json` | 123.3 | `WORLD_CROSS_FILE_MISMATCH` |
 
-## Data
+</details>
 
-[data/native-claim.json](data/native-claim.json) has every counted run and the scored cells. [explore.html](explore.html) charts them.
+[data/native-claim.json](data/native-claim.json) has every counted run and the scored cells, and the [interactive page](https://land-o-clusters.github.io/sleight/results/explore.html) charts them. The ChatGPT engine version is missing from this data, which was collected before the results recorded it (2026-10-19). Rebuild every page with `node bench/results-hub.mjs`.
+
+[Benchmarks](README.md) · Native · [Apps](app-claim.md) · [Chrome and Helium](browser-turbo.md) · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)

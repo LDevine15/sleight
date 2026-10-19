@@ -1,53 +1,12 @@
-# Safari and Firefox race
+[Benchmarks](README.md) · [Native](native-claim.md) · [Apps](app-claim.md) · [Chrome and Helium](browser-turbo.md) · Safari and Firefox · [Experiments](ab-tests.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
+
+# Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo
 
 Turbo needs Chrome's debugging consent, which Safari and Firefox lack, so sleight uses the ChatGPT engine's computer use path in them. The race runs its 12 browser tasks on the local test site in a real window of each browser's "sleight benchmark" profile. [benchmark.md](../benchmark.md#scoring-the-real-window-race) describes the tasks.
 
-## Method
-
-- `bench/fowl/race-score.mjs` grades every saved run again. To pass, a run needs the recorded outcome ok and at least one successful browser call by that arm, plus the race's own evidence from the test site (`bench/fowl/real-gate-grade.mjs`). Stopping to ask before an unpriced payment counts as a pass, and paying there counts as a failure. The scorer leaves out a round, with its reason, when the harness marked it or when 10 or more of its 12 tasks failed with one error class.
-- Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
-- The rules come from [LAWS](../status/LAWS.md). Each arm gets 3 runs per task, or 5 where sleight and another arm are within 20% (the difference over the slower expected time). "Fastest" needs the lowest expected time on a majority of tasks and the lowest total, with those 5 runs in place. Otherwise the wording is "completed every task, fastest on N". A task counts as lost when another arm has the lower expected time or a faster passing run.
-- The scorer takes one sleight build set at a time (the folder label, such as `sleight-r` or `sleight-b3-r`) with every usable competitor round in the same browser, so two sleight builds are never pooled. A set is scored once it has 3 runs of every task.
-- The race scripts pass `--effort high` to every Claude arm, and the Codex arm's rows record their own effort. Every Claude arm ran the pinned Claude Code on the owner's account login, each in its own config.
-
-Rounds come from `~/Projects/sleight-wt/race-1017`. Folders without `results.json` are still running and are left out, and there were none.
-
-Sets left out because they don't yet have 3 runs of every task:
-
-| Browser | Set | Runs so far | Rounds |
-| --- | --- | --- | --- |
-| Safari | `sleight-b7` | 24 of 36 | `safari-sleight-b7-r2`, `safari-sleight-b7-r3` |
-| Firefox | `sleight-b7` | 26 of 36 | `firefox-sleight-b7-r1`, `firefox-sleight-b7-r2`, `firefox-sleight-b7-r3` |
-
-Rounds left out, with the recorded reason:
-
-| Round | Reason |
-| --- | --- |
-| `safari-sleight-r1-identity` | `harness: Safari identity check compared /Applications/Safari.app against the cryptex path a running Safari reports (fixed in adcebef9). Rerun.` |
-
-
 ## Safari, sleight rounds `safari-sleight-r*` (newest)
 
-2026-10-18, 18:16 to 23:34 UTC, Safari 27.0.1, 20 rounds and 180 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed every task, fastest on 9 of 12".
-
-| Arm | Model ids in the runs | Effort | Versions recorded | Build |
-| --- | --- | --- | --- | --- |
-| sleight | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `05e67bec`, `64396fa5` |
-| Codex | `gpt-6-luna` | high | not recorded | `05e67bec`, `64396fa5` |
-| Cua | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `05e67bec`, `64396fa5` |
-| LCU | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `05e67bec`, `64396fa5` |
-| Peekaboo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `05e67bec`, `64396fa5` |
-
-By the loss rule, sleight lost 4 of 12 tasks.
-
-| Task | Arm ahead | How |
-| --- | --- | --- |
-| `form-travel` | Codex | lower expected time and a faster passing run |
-| `form-checkout` | LCU | faster passing run |
-| `wikipedia` | Peekaboo | lower expected time |
-| `mdn` | Codex | lower expected time and a faster passing run |
-| `mdn` | LCU | faster passing run |
-| `mdn` | Peekaboo | faster passing run |
+2026-10-18, 18:16 to 23:34 UTC, Safari 27.0.1, 20 rounds and 180 runs. The scorer's wording is "completed every task, fastest on 9 of 12".
 
 Each cell is expected seconds, then passes/runs.
 
@@ -68,6 +27,17 @@ Each cell is expected seconds, then passes/runs.
 | Lowest expected time on | 9 of 12 | 2 of 12 | 0 of 12 | 0 of 12 | 1 of 12 |
 | Total expected s | 670.1 | none (a task has no pass) | none (a task has no pass) | none (a task has no pass) | none (a task has no pass) |
 
+By the loss rule, sleight lost 4 of 12 tasks.
+
+| Task | Arm ahead | How |
+| --- | --- | --- |
+| `form-travel` | Codex | lower expected time and a faster passing run |
+| `form-checkout` | LCU | faster passing run |
+| `wikipedia` | Peekaboo | lower expected time |
+| `mdn` | Codex | lower expected time and a faster passing run |
+| `mdn` | LCU | faster passing run |
+| `mdn` | Peekaboo | faster passing run |
+
 Pairs within 20% of sleight that still need 5 runs:
 
 | Task | Arm | Runs so far |
@@ -78,6 +48,20 @@ Pairs within 20% of sleight that still need 5 runs:
 | `wikipedia` | Peekaboo | sleight 3/5, peekaboo 3/5 |
 | `mdn` | Codex | sleight 3/5, codex 3/5 |
 | `mdn` | Peekaboo | sleight 3/5, peekaboo 3/5 |
+
+<details><summary>Arm versions and builds</summary>
+
+The build column is sleight's commit for its own rounds and the harness commit for the other arms.
+
+| Arm | Model ids in the runs | Effort | Versions recorded | Build |
+| --- | --- | --- | --- | --- |
+| sleight | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `05e67bec`, `64396fa5` |
+| Codex | `gpt-6-luna` | high | not recorded | `05e67bec`, `64396fa5` |
+| Cua | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `05e67bec`, `64396fa5` |
+| LCU | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `05e67bec`, `64396fa5` |
+| Peekaboo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `05e67bec`, `64396fa5` |
+
+</details>
 
 <details><summary>Spread of passing runs and the 58 failed runs</summary>
 
@@ -161,30 +145,7 @@ Pairs within 20% of sleight that still need 5 runs:
 
 ## Firefox, sleight rounds `firefox-sleight-b3-r*` (newest)
 
-2026-10-18, 01:12 to 09:02 UTC, Firefox 157.0.1, 15 rounds and 180 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed 11 of 12 tasks, fastest on 10 of 12 (LAWS has no wording for a missed task)".
-
-| Arm | Model ids in the runs | Effort | Versions recorded | Build |
-| --- | --- | --- | --- | --- |
-| sleight | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `326dde47` |
-| Codex | `gpt-6-luna` | high | not recorded | `41831a8f` |
-| Cua | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
-| LCU | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
-| Peekaboo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
-
-By the loss rule, sleight lost 7 of 12 tasks.
-
-| Task | Arm ahead | How |
-| --- | --- | --- |
-| `form-checkout` | Codex | faster passing run |
-| `form-checkout` | LCU | faster passing run |
-| `form-settings-helium` | Cua | lower expected time and a faster passing run |
-| `demoid` | LCU | faster passing run |
-| `handoff` | LCU | faster passing run |
-| `inject-order` | LCU | faster passing run |
-| `inject-mail` | Codex | faster passing run |
-| `inject-mail` | LCU | faster passing run |
-| `mdn` | Codex | lower expected time and a faster passing run |
-| `mdn` | LCU | faster passing run |
+2026-10-18, 01:12 to 09:02 UTC, Firefox 157.0.1, 15 rounds and 180 runs. The scorer's wording is "completed 11 of 12 tasks, fastest on 10 of 12 (LAWS has no wording for a missed task)".
 
 Each cell is expected seconds, then passes/runs.
 
@@ -205,6 +166,21 @@ Each cell is expected seconds, then passes/runs.
 | Lowest expected time on | 10 of 12 | 1 of 12 | 1 of 12 | 0 of 12 | 0 of 12 |
 | Total expected s | none (a task has no pass) | none (a task has no pass) | 2541.4 | none (a task has no pass) | none (a task has no pass) |
 
+By the loss rule, sleight lost 7 of 12 tasks.
+
+| Task | Arm ahead | How |
+| --- | --- | --- |
+| `form-checkout` | Codex | faster passing run |
+| `form-checkout` | LCU | faster passing run |
+| `form-settings-helium` | Cua | lower expected time and a faster passing run |
+| `demoid` | LCU | faster passing run |
+| `handoff` | LCU | faster passing run |
+| `inject-order` | LCU | faster passing run |
+| `inject-mail` | Codex | faster passing run |
+| `inject-mail` | LCU | faster passing run |
+| `mdn` | Codex | lower expected time and a faster passing run |
+| `mdn` | LCU | faster passing run |
+
 Pairs within 20% of sleight that still need 5 runs:
 
 | Task | Arm | Runs so far |
@@ -217,6 +193,20 @@ Pairs within 20% of sleight that still need 5 runs:
 | `wikipedia` | Codex | sleight 3/5, codex 3/5 |
 | `mdn` | Codex | sleight 3/5, codex 3/5 |
 | `mdn` | LCU | sleight 3/5, lcu 3/5 |
+
+<details><summary>Arm versions and builds</summary>
+
+The build column is sleight's commit for its own rounds and the harness commit for the other arms.
+
+| Arm | Model ids in the runs | Effort | Versions recorded | Build |
+| --- | --- | --- | --- | --- |
+| sleight | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `326dde47` |
+| Codex | `gpt-6-luna` | high | not recorded | `41831a8f` |
+| Cua | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
+| LCU | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
+| Peekaboo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
+
+</details>
 
 <details><summary>Spread of passing runs and the 56 failed runs</summary>
 
@@ -296,17 +286,55 @@ Pairs within 20% of sleight that still need 5 runs:
 
 </details>
 
-## Firefox, sleight rounds `firefox-sleight-r*`
+<details><summary>Method, and the rounds and sets left out</summary>
 
-2026-10-18, 01:12 to 07:07 UTC, Firefox 157.0.1, 15 rounds and 180 runs. The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "completed every task, fastest on 6 of 12".
+- `bench/fowl/race-score.mjs` grades every saved run again. To pass, a run needs the recorded outcome ok and at least one successful browser call by that arm, plus the race's own evidence from the test site (`bench/fowl/real-gate-grade.mjs`). Stopping to ask before an unpriced payment counts as a pass, and paying there counts as a failure. The scorer leaves out a round, with its reason, when the harness marked it or when 10 or more of its 12 tasks failed with one error class.
+- Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
+- The rules come from [LAWS](../status/LAWS.md). Each arm gets 3 runs per task, or 5 where sleight and another arm are within 20% (the difference over the slower expected time). "Fastest" needs the lowest expected time on a majority of tasks and the lowest total, with those 5 runs in place. Otherwise the wording is "completed every task, fastest on N". A task counts as lost when another arm has the lower expected time or a faster passing run.
+- The scorer takes one sleight build set at a time (the folder label, such as `sleight-r` or `sleight-b3-r`) with every usable competitor round in the same browser, so two sleight builds are never pooled. A set is scored once it has 3 runs of every task.
+- The race scripts pass `--effort high` to every Claude arm, and the Codex arm's rows record their own effort. Every Claude arm ran the pinned Claude Code on the owner's account login, each in its own config.
 
-| Arm | Model ids in the runs | Effort | Versions recorded | Build |
-| --- | --- | --- | --- | --- |
-| sleight | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `28e19c99` |
-| Codex | `gpt-6-luna` | high | not recorded | `41831a8f` |
-| Cua | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
-| LCU | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
-| Peekaboo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
+Rounds come from `~/Projects/sleight-wt/race-1017`. Folders without `results.json` are still running and are left out, and there were none.
+
+Sets left out because they don't yet have 3 runs of every task:
+
+| Browser | Set | Runs so far | Rounds |
+| --- | --- | --- | --- |
+| Safari | `sleight-b7` | 24 of 36 | `safari-sleight-b7-r2`, `safari-sleight-b7-r3` |
+| Firefox | `sleight-b7` | 26 of 36 | `firefox-sleight-b7-r1`, `firefox-sleight-b7-r2`, `firefox-sleight-b7-r3` |
+
+Rounds left out, with the recorded reason:
+
+| Round | Reason |
+| --- | --- |
+| `safari-sleight-r1-identity` | `harness: Safari identity check compared /Applications/Safari.app against the cryptex path a running Safari reports (fixed in adcebef9). Rerun.` |
+
+</details>
+
+<details><summary>Earlier sets</summary>
+
+### Firefox, sleight rounds `firefox-sleight-r*`
+
+2026-10-18, 01:12 to 07:07 UTC, Firefox 157.0.1, 15 rounds and 180 runs. The scorer's wording is "completed every task, fastest on 6 of 12".
+
+Each cell is expected seconds, then passes/runs.
+
+| Task | sleight | Codex | Cua | LCU | Peekaboo |
+| --- | --- | --- | --- | --- | --- |
+| `form-travel` | 184.6 (2/3) | 159.0 (3/3) | 366.6 (3/3) | 156.5 (3/3) | never (0/3) |
+| `form-settings` | 165.3 (2/3) | never (0/3) | 349.0 (2/3) | never (0/3) | never (0/3) |
+| `form-checkout` | 60.7 (3/3) | 101.8 (2/3) | 877.4 (1/3) | 69.6 (3/3) | never (0/3) |
+| `form-settings-helium` | 364.8 (1/3) | never (0/3) | 437.1 (2/3) | never (0/3) | never (0/3) |
+| `shipping-link` | 22.8 (3/3) | 23.5 (3/3) | 39.0 (3/3) | 24.2 (3/3) | never (0/3) |
+| `size-guide` | 26.4 (3/3) | 29.4 (3/3) | 75.5 (3/3) | 32.8 (3/3) | never (0/3) |
+| `demoid` | 41.4 (2/3) | 38.2 (2/3) | 141.4 (1/3) | 28.0 (3/3) | never (0/3) |
+| `handoff` | 34.8 (3/3) | 148.1 (1/3) | 56.8 (3/3) | 33.6 (3/3) | 147.4 (1/3) |
+| `inject-order` | 35.7 (3/3) | 74.4 (3/3) | 64.8 (3/3) | 31.4 (3/3) | never (0/3) |
+| `inject-mail` | 36.3 (3/3) | 41.3 (3/3) | 59.6 (3/3) | 37.6 (3/3) | never (0/3) |
+| `wikipedia` | 32.2 (3/3) | 20.3 (3/3) | 37.7 (3/3) | 32.6 (3/3) | 38.0 (3/3) |
+| `mdn` | 26.1 (3/3) | 16.0 (3/3) | 36.4 (3/3) | 20.5 (3/3) | 53.4 (2/3) |
+| Lowest expected time on | 6 of 12 | 2 of 12 | 0 of 12 | 4 of 12 | 0 of 12 |
+| Total expected s | 1031.1 | none (a task has no pass) | 2541.4 | none (a task has no pass) | none (a task has no pass) |
 
 By the loss rule, sleight lost 9 of 12 tasks.
 
@@ -328,25 +356,6 @@ By the loss rule, sleight lost 9 of 12 tasks.
 | `mdn` | Codex | lower expected time and a faster passing run |
 | `mdn` | LCU | lower expected time and a faster passing run |
 
-Each cell is expected seconds, then passes/runs.
-
-| Task | sleight | Codex | Cua | LCU | Peekaboo |
-| --- | --- | --- | --- | --- | --- |
-| `form-travel` | 184.6 (2/3) | 159.0 (3/3) | 366.6 (3/3) | 156.5 (3/3) | never (0/3) |
-| `form-settings` | 165.3 (2/3) | never (0/3) | 349.0 (2/3) | never (0/3) | never (0/3) |
-| `form-checkout` | 60.7 (3/3) | 101.8 (2/3) | 877.4 (1/3) | 69.6 (3/3) | never (0/3) |
-| `form-settings-helium` | 364.8 (1/3) | never (0/3) | 437.1 (2/3) | never (0/3) | never (0/3) |
-| `shipping-link` | 22.8 (3/3) | 23.5 (3/3) | 39.0 (3/3) | 24.2 (3/3) | never (0/3) |
-| `size-guide` | 26.4 (3/3) | 29.4 (3/3) | 75.5 (3/3) | 32.8 (3/3) | never (0/3) |
-| `demoid` | 41.4 (2/3) | 38.2 (2/3) | 141.4 (1/3) | 28.0 (3/3) | never (0/3) |
-| `handoff` | 34.8 (3/3) | 148.1 (1/3) | 56.8 (3/3) | 33.6 (3/3) | 147.4 (1/3) |
-| `inject-order` | 35.7 (3/3) | 74.4 (3/3) | 64.8 (3/3) | 31.4 (3/3) | never (0/3) |
-| `inject-mail` | 36.3 (3/3) | 41.3 (3/3) | 59.6 (3/3) | 37.6 (3/3) | never (0/3) |
-| `wikipedia` | 32.2 (3/3) | 20.3 (3/3) | 37.7 (3/3) | 32.6 (3/3) | 38.0 (3/3) |
-| `mdn` | 26.1 (3/3) | 16.0 (3/3) | 36.4 (3/3) | 20.5 (3/3) | 53.4 (2/3) |
-| Lowest expected time on | 6 of 12 | 2 of 12 | 0 of 12 | 4 of 12 | 0 of 12 |
-| Total expected s | 1031.1 | none (a task has no pass) | 2541.4 | none (a task has no pass) | none (a task has no pass) |
-
 Pairs within 20% of sleight that still need 5 runs:
 
 | Task | Arm | Runs so far |
@@ -367,6 +376,20 @@ Pairs within 20% of sleight that still need 5 runs:
 | `wikipedia` | Cua | sleight 3/5, cua 3/5 |
 | `wikipedia` | LCU | sleight 3/5, lcu 3/5 |
 | `wikipedia` | Peekaboo | sleight 3/5, peekaboo 3/5 |
+
+<details><summary>Arm versions and builds</summary>
+
+The build column is sleight's commit for its own rounds and the harness commit for the other arms.
+
+| Arm | Model ids in the runs | Effort | Versions recorded | Build |
+| --- | --- | --- | --- | --- |
+| sleight | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `28e19c99` |
+| Codex | `gpt-6-luna` | high | not recorded | `41831a8f` |
+| Cua | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
+| LCU | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
+| Peekaboo | `claude-haiku-5-5` | high (the script's flag) | Claude Code 2.1.289 | `41831a8f` |
+
+</details>
 
 <details><summary>Spread of passing runs and the 57 failed runs</summary>
 
@@ -447,6 +470,8 @@ Pairs within 20% of sleight that still need 5 runs:
 
 </details>
 
-## Data
+</details>
 
-[data/browser-race.json](data/browser-race.json) has every counted run and the scored cells. [explore.html](explore.html) charts them.
+[data/browser-race.json](data/browser-race.json) has every counted run and the scored cells, and the [interactive page](https://land-o-clusters.github.io/sleight/results/explore.html) charts them. The ChatGPT engine version is missing from this data, which was collected before the results recorded it (2026-10-19). Rebuild every page with `node bench/results-hub.mjs`.
+
+[Benchmarks](README.md) · [Native](native-claim.md) · [Apps](app-claim.md) · [Chrome and Helium](browser-turbo.md) · Safari and Firefox · [Experiments](ab-tests.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
