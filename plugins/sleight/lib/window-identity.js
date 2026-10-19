@@ -5,16 +5,30 @@ ObjC.import('CoreGraphics');
 const windowEpoch = ObjC.unwrap($.NSUUID.UUID.UUIDString);
 const windowReferences = [];
 const chromeReferences = [];
+const chromeReferenceBuckets = new Map();
 // References belong to this helper epoch, never to an engine element number. Only browser chrome metadata is read.
-function tabCertificate(app, window, attr, scalar) {
+function tabCertificate(app, window, readAttr, scalar) {
+  const started = Date.now();
+  const budget = () => { if (Date.now() - started >= 250 || Date.now() < started) throw new Error('chrome-deadline'); };
+  // A single in-flight AX query can use its existing 100 ms messaging timeout after this check.
+  const attr = (...args) => { budget(); const value = readAttr(...args); budget(); return value; };
+  const bucket = (map, element) => {
+    budget();
+    const hash = Number($.CFHash(element));
+    if (!Number.isFinite(hash)) throw new Error('chrome-hash-unknown');
+    if (!map.has(hash)) map.set(hash, []);
+    return map.get(hash);
+  };
+  const equal = (a, b) => { budget(); return $.CFEqual(a, b); };
   try {
     const ref = element => {
-      let i = chromeReferences.findIndex(other => $.CFEqual(other, element));
-      if (i < 0) {
-        if (chromeReferences.length >= 4096) throw new Error('chrome-reference-capacity');
-        i = chromeReferences.push(element) - 1;
-      }
-      return i + 1;
+      const entries = bucket(chromeReferenceBuckets, element);
+      const found = entries.find(entry => equal(entry.element, element));
+      if (found) return found.ref;
+      if (chromeReferences.length >= 4096) throw new Error('chrome-reference-capacity');
+      const id = chromeReferences.push(element);
+      entries.push({ element, ref: id });
+      return id;
     };
     const children = (element, leaf = false) => {
       const value = attr(element, 'AXChildren', leaf);
@@ -23,22 +37,41 @@ function tabCertificate(app, window, attr, scalar) {
       if (!Number.isSafeInteger(n) || n < 0 || n > 256) throw new Error('incomplete-children');
       return Array.from({ length: n }, (_, i) => value.objectAtIndex(i));
     };
-    const groups = [], fields = [], seen = [];
+    const groups = [], fields = [], seen = new Map();
+    let visited = 0;
+    const menuState = element => {
+      const selected = attr(element, 'AXSelectedChildren', true);
+      if ([true, 1].includes(scalar(attr(element, 'AXVisible', true))) || Number(selected?.count ?? 0) > 0) throw new Error('chrome-transient');
+    };
     const walk = (element, toolbar = false, depth = 0) => {
-      if (depth > 32 || seen.length >= 1024 || seen.some(other => $.CFEqual(other, element))) throw new Error('incomplete-chrome');
-      seen.push(element);
+      budget();
+      const entries = bucket(seen, element);
+      if (depth > 32 || visited >= 1024 || entries.some(other => equal(other, element))) throw new Error('incomplete-chrome');
+      entries.push(element); visited++;
       const role = scalar(attr(element, 'AXRole'));
       const description = scalar(attr(element, 'AXRoleDescription', true));
       // Stop at content roots before inspecting attributes, values or children within them.
       if (['AXWebArea', 'AXTextArea'].includes(role) || /html content/i.test(String(description ?? ''))) return;
-      if (['AXSheet', 'AXDialog', 'AXAlert', 'AXPopover', 'AXMenu'].includes(role) ||
+      if (['AXSheet', 'AXDialog', 'AXAlert', 'AXPopover'].includes(role) ||
           [true, 1].includes(scalar(attr(element, 'AXModal', true))) ||
           role === 'AXMenuBarItem' && [true, 1].includes(scalar(attr(element, 'AXSelected', true)))) throw new Error('chrome-transient');
+      // Closed menu children exist even while the menu bar and popup controls are idle.
+      // Inspect only their open-state metadata. Never enumerate a menu's descendants.
+      if (role === 'AXMenu') { menuState(element); return; }
+      if (['AXMenuBarItem', 'AXPopUpButton', 'AXMenuButton'].includes(role)) {
+        if ([true, 1].includes(scalar(attr(element, 'AXExpanded', true)))) throw new Error('chrome-transient');
+        for (const child of children(element, true)) {
+          if (scalar(attr(child, 'AXRole')) === 'AXMenu') menuState(child);
+          else throw new Error('unknown-menu-child');
+        }
+        return;
+      }
       toolbar ||= role === 'AXToolbar';
       if (role === 'AXTabGroup') groups.push(element);
       if (['AXTextField', 'AXComboBox', 'AXSearchField'].includes(role)) {
         const identifier = scalar(attr(element, 'AXIdentifier', true));
         const settable = Ref();
+        budget();
         if (Number($.AXUIElementIsAttributeSettable(element, $('AXValue'), settable)) !== 0) throw new Error('editable-unknown');
         fields.push({ element, toolbar, editable: Number(settable[0]) === 1,
           enabled: [true, 1].includes(scalar(attr(element, 'AXEnabled'))),
@@ -69,15 +102,18 @@ function tabCertificate(app, window, attr, scalar) {
     let owner = field, reached = false;
     const parents = [];
     for (let depth = 0; owner && depth < 40; depth++) {
-      if ($.CFEqual(owner, window)) { reached = true; break; }
-      if (parents.some(other => $.CFEqual(other, owner))) break;
+      budget();
+      if (equal(owner, window)) { reached = true; break; }
+      if (parents.some(other => equal(other, owner))) break;
       parents.push(owner); owner = attr(owner, 'AXParent', true);
     }
     if (!reached) throw new Error('address-ancestry-unknown');
     const focused = attr(app, 'AXFocusedUIElement');
-    return { complete: true, group: ref(group), childCount: direct.length, children: direct.map(ref), tabCount: tabs.length, tabs,
-      addressField: ref(field), focused: $.CFEqual(field, focused) ? ref(field) : null };
-  } catch (error) { return { complete: false, reason: String(error.message ?? error) }; }
+    const certificate = { complete: true, group: ref(group), childCount: direct.length, children: direct.map(ref), tabCount: tabs.length, tabs,
+      addressField: ref(field), focused: equal(field, focused) ? ref(field) : null };
+    budget();
+    return { ...certificate, walkMs: Date.now() - started };
+  } catch (error) { return { complete: false, reason: String(error.message ?? error), walkMs: Date.now() - started }; }
 }
 // JXA's Ref('CGPoint') reads back as the number 0, so this fallback never matched (macOS 27.0.1, 2026-10-16).
 // Copy the struct into bytes and read it back through NSValue.

@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 const source = readFileSync(new URL('../plugins/sleight/lib/window-identity.js', import.meta.url), 'utf8');
-function fixture() {
+function fixture({ tickMs = 0, collide = false } = {}) {
+  let time = 0, equalCalls = 0;
+  const hashes = new Map();
   const list = values => ({ count: values.length, objectAtIndex: i => values[i] });
   const node = (AXRole, more = {}) => ({ AXRole, AXChildren: list([]), ...more });
   const window = node('AXWindow', { AXTitle: 'Before', AXSubrole: 'AXStandardWindow', AXWindowNumber: 22 });
@@ -24,7 +26,7 @@ function fixture() {
     NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list([{ processIdentifier: 123, launchDate: { timeIntervalSince1970: 1 } }]) },
     AXUIElementCreateApplication: () => app, AXUIElementSetMessagingTimeout: () => 0,
     AXUIElementCopyAttributeValue: (element, name, ref) => {
-      reads.push([element, name]);
+      reads.push([element, name]); time += tickMs;
       assert.ok(element !== page || ['AXRole', 'AXRoleDescription'].includes(name), 'no document content or children');
       assert.ok(name !== 'AXValue' || element.AXRole === 'AXRadioButton', 'no field values');
       if (element.failure === name) return -25204;
@@ -32,12 +34,13 @@ function fixture() {
       ref[0] = element[name]; return 0;
     },
     AXUIElementIsAttributeSettable: (element, name, ref) => { assert.equal(name, 'AXValue'); ref[0] = !!element.settable; return 0; },
-    CFEqual: (a, b) => a === b, CGEventSourceSecondsSinceLastEventType: () => 1000 });
-  const context = { $, Ref: () => [], ObjC: { import() {}, unwrap: x => x, deepUnwrap: x => x, castRefToObject: x => x } };
+    CFHash: element => { if (!hashes.has(element)) hashes.set(element, hashes.size + 1); return collide ? 1 : hashes.get(element); },
+    CFEqual: (a, b) => { equalCalls++; return a === b; }, CGEventSourceSecondsSinceLastEventType: () => 1000 });
+  const context = { Date: { now: () => time }, $, Ref: () => [], ObjC: { import() {}, unwrap: x => x, deepUnwrap: x => x, castRefToObject: x => x } };
   runInNewContext(source, context);
   const request = { appId: 'org.test.browser', app: 'Fixture Browser', title: 'Before', url: null, windowNumber: 22, focus: true, tabCertificate: true };
   const read = (extra = {}) => { context.request = { ...request, ...extra }; return JSON.parse(runInNewContext('run([JSON.stringify(request)])', context)); };
-  return { list, node, window, tab, tabs, field, toolbar, page, app, menu, reads, read };
+  return { list, node, window, tab, tabs, field, toolbar, page, app, menu, reads, read, equalCalls: () => equalCalls };
 }
 
 test('CK3 native certificate retains tab and group references without reading document content', () => {
@@ -97,4 +100,45 @@ test('CK3 certificate off performs no chrome enumeration', () => {
   const f = fixture();
   assert.equal(f.read({ tabCertificate: false, focus: false }).chrome, undefined);
   assert.equal(f.reads.some(([element]) => element === f.field || element === f.tabs || element === f.page), false);
+});
+
+for (const role of ['AXMenuBarItem', 'AXPopUpButton', 'AXMenuButton']) {
+  test(`CK3 accepts closed ${role} menus without walking their contents`, () => {
+    const f = fixture();
+    const content = f.node('AXSheet');
+    const menu = f.node('AXMenu', { AXVisible: false, AXSelectedChildren: f.list([]), AXChildren: f.list([content]) });
+    const owner = f.node(role, { AXSelected: false, AXChildren: f.list([menu]) });
+    if (role === 'AXMenuBarItem') f.menu.AXChildren = f.list([owner]);
+    else f.toolbar.AXChildren = f.list([f.field, owner]);
+    assert.equal(f.read().chrome?.complete, true);
+    assert.equal(f.reads.some(([element, name]) => element === content || element === menu && name === 'AXChildren'), false);
+  });
+}
+for (const state of [{ AXVisible: true }, { AXSelectedChildren: { count: 1 } }]) {
+  test(`CK3 refuses an open menu with ${Object.keys(state)[0]}`, () => {
+    const f = fixture(), menu = f.node('AXMenu', state);
+    f.menu.AXChildren = f.list([f.node('AXMenuBarItem', { AXChildren: f.list([menu]) })]);
+    assert.equal(f.read().chrome?.reason, 'chrome-transient');
+  });
+}
+test('CK3 stops the native walk at its wall-clock budget', () => {
+  const f = fixture({ tickMs: 10 });
+  f.toolbar.AXChildren = f.list([f.field, ...Array.from({ length: 100 }, () => f.node('AXButton'))]);
+  const result = f.read();
+  assert.equal(result.chrome?.complete, false);
+  assert.equal(result.chrome?.reason, 'chrome-deadline');
+  assert.ok(result.chrome.walkMs >= 250 && result.chrome.walkMs <= 260);
+  assert.ok(f.reads.filter(([element]) => element.AXRole === 'AXButton').length < 10);
+});
+test('CK3 buckets native identity comparisons and preserves references on CFHash collisions', () => {
+  const f = fixture();
+  f.toolbar.AXChildren = f.list([f.field, ...Array.from({ length: 200 }, () => f.node('AXButton'))]);
+  assert.equal(f.read().chrome?.complete, true);
+  assert.ok(f.equalCalls() < 100, 'distinct hashes must not incur pairwise CFEqual scans');
+  const collision = fixture({ collide: true }), before = collision.read();
+  assert.equal(before.chrome?.complete, true);
+  assert.notEqual(before.chrome.addressField, before.chrome.group);
+  assert.deepEqual(collision.read().chrome, before.chrome);
+  collision.toolbar.AXChildren = collision.list([collision.field, collision.field]);
+  assert.equal(collision.read().chrome?.reason, 'incomplete-chrome');
 });

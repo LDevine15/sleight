@@ -9,34 +9,21 @@ const before = tree('\t1 container Delivery\n\t\t21 text field (settable) Phone\
 const after = before.replace('38 radio button', '38 container\n\t\t39 radio button').replace('48 text field', '48 text CVC\n\t\t49 text field');
 function fixture({ first = before, next = after } = {}) {
   let changed = false;
-  const calls = [], output = [];
+  const calls = [], output = [], bindingReads = [];
   const raw = { getAXState: async () => { calls.push(['read']); return changed ? next : first; } };
   for (const name of ['setValue', 'click', 'pressKey', 'typeText']) raw[name] = async (...args) => {
     calls.push([name, ...args]); changed = true;
   };
-  const context = { app: raw, cua: { getApp: async () => raw }, nodeRepl: { write: value => output.push(value) } };
-  return { calls, output, run: (code, options = {}) => runInNewContext(`(async () => { ${guardedCode(code, expected, 'changed window', undefined, {
+  const context = { app: raw, cua: { getApp: async () => raw }, nodeRepl: { write: value => { output.push(value); if (value.includes('"binding"')) bindingReads.push(calls.filter(c => c[0] === 'read').length); } } };
+  return { calls, output, bindingReads, run: (code, options = {}) => runInNewContext(`(async () => { ${guardedCode(code, expected, 'changed window', undefined, {
     literalOrder: [], seenLines: Object.fromEntries(elementLines(first)), seenParents: Object.fromEntries(elementParents(first)), ...options,
   })} })()`, context) };
 }
 
-test('CK2 remaps the Safari moved-line shape after a non-opening action', async () => {
+test('CK2 does not recover radio buttons or payment fields after a non-opening action', async () => {
   const f = fixture();
-  await f.run('await app.click(21); await app.click(38); await app.setValue(48, "12/28");');
-  assert.deepEqual(f.calls.filter(c => c[0] !== 'read').map(c => c.slice(0, 2)), [['click', 21], ['click', 39], ['setValue', 49]]);
-  assert.equal(f.output.filter(line => /renumbered the window/.test(line)).length, 2);
-});
-
-for (const [reason, next] of [
-  ['duplicate line', after + '\n\t\t50 radio button Overnight Next business day · $29'],
-  ['changed role', after.replace('39 radio button', '39 button')],
-  ['changed text', after.replace('Overnight Next business day', 'Overnight Two days')],
-  ['changed parent', after.replace('1 container Delivery', '1 container Other delivery')],
-  ['bare parent', after.replace('1 container Delivery', '1 container')],
-]) test(`CK2 refuses a moved line with ${reason}`, async () => {
-  const f = fixture({ next });
   await assert.rejects(f.run('await app.click(21); await app.click(38);'), /changed what element/);
-  assert.equal(f.calls.filter(c => c[0] === 'click' && c[1] !== 21).length, 0);
+  assert.deepEqual(f.calls.filter(c => c[0] !== 'read').map(c => c.slice(0, 2)), [['click', 21]]);
 });
 
 test('CK2 keeps payment-worded targets and actions after openers stopped', async () => {
@@ -63,6 +50,7 @@ test('CK1 traces every setValue decision and keeps reads between renumbering set
   assert.deepEqual(f.calls.filter(c => c[0] === 'setValue').map(c => c[1]), [46]);
   const decisions = f.output.filter(line => line.startsWith('[ck]{"binding"')).map(line => JSON.parse(line.slice(4)).binding);
   assert.equal(decisions.length, 2);
+  assert.deepEqual(f.bindingReads, [1, 2]);
   assert.deepEqual(decisions.map(d => [d.decision, d.reason]), [['read', 'first-capture'], ['read', 'previous-opens']]);
 });
 
@@ -135,4 +123,47 @@ test('CK1 retains the full read when an engine capture reassigns a number withou
   const f = fixture({ first: plainBefore, next: plainBefore.replace('3 text field (settable) Email', '3 text field (settable) Recovery code') });
   await assert.rejects(f.run('await app.setValue(2, "owner"); await app.setValue(3, "c@example.test");', { bind: true }), /changed what element/);
   assert.deepEqual(f.calls.map(c => c[0]), ['read', 'setValue', 'read']);
+});
+
+const watched = ['Pay now', 'Buy now', 'Checkout', 'Cardholder name', 'CardNumber', 'Expires', 'Exp. date', 'MM/YY',
+  'Credit', 'Debit', 'IBAN', 'Routing', 'Account number', 'SSN', 'Social security', 'PIN', 'OTP', 'Billing', 'Bank',
+  'CVV', 'CVC', 'Password', 'Passcode', 'Secret', 'Security code', 'Secure'];
+for (const prior of ['setValue(2, "owner")', 'typeText("owner")']) {
+  for (const word of watched) test(`CK2 refuses ${word} after ${prior.split('(')[0]} on either recovery path`, async () => {
+    for (const ancestor of [false, true]) {
+      const from = ancestor ? 'container Contact' : 'Email', to = ancestor ? `container ${word}` : word;
+      const f = fixture({ first: plainBefore.replaceAll(from, to), next: plainAfter.replaceAll(from, to) });
+      await assert.rejects(f.run(`await app.${prior}; await app.setValue(3, "value");`, { bind: prior.startsWith('setValue') }), /changed what element/);
+      assert.equal(f.calls.filter(c => c[0] === 'setValue' && c[1] !== 2).length, 0);
+    }
+  });
+}
+for (const prior of ['setValue(2, "owner")', 'typeText("owner")']) {
+  test(`CK2 refuses an untitled sheet after ${prior.split('(')[0]}`, async () => {
+    const f = fixture({ first: plainBefore, next: plainAfter + '\n\t8 sheet, ID: confirm' });
+    await assert.rejects(f.run(`await app.${prior}; await app.setValue(3, "value");`, { bind: prior.startsWith('setValue') }), /changed what element/);
+  });
+  test(`CK2 refuses secure text roles after ${prior.split('(')[0]}`, async () => {
+    const f = fixture({ first: plainBefore.replace('text field (settable) Email', 'secure text field (settable) Email'),
+      next: plainAfter.replace('text field (settable) Email', 'secure text field (settable) Email') });
+    await assert.rejects(f.run(`await app.${prior}; await app.setValue(3, "value");`, { bind: prior.startsWith('setValue') }), /changed what element/);
+  });
+}
+test('CK2 still recovers an ordinary plain field after typing', async () => {
+  const f = fixture({ first: plainBefore, next: plainAfter });
+  await f.run('await app.typeText("owner"); await app.setValue(3, "c@example.test");', { bind: false });
+  assert.deepEqual(f.calls.filter(c => c[0] === 'setValue'), [['setValue', 4, 'c@example.test']]);
+});
+test('CK1 reports a completed read when a predicted binding is replaced by fresh evidence', async () => {
+  const f = fixture({ first: plainBefore, next: plainBefore });
+  await f.run('await app.click(2); await app.setValue(3, "c@example.test");', { bind: true, careful: true, guardStopMark: '[ck]' });
+  const decisions = f.output.filter(line => line.startsWith('[ck]{"binding"')).map(line => JSON.parse(line.slice(4)).binding);
+  assert.equal(decisions[0].decision, 'read');
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 3);
+});
+
+for (const prior of ['setValue(2, "owner")', 'typeText("owner")']) test(`CK2 checks payment ancestors above the parent after ${prior.split('(')[0]}`, async () => {
+  const nest = text => text.replace('\n\t1 container Contact', '\n\t9 container Billing\n\t\t1 container Contact').replaceAll('\n\t\t2 ', '\n\t\t\t2 ').replaceAll('\n\t\t3 ', '\n\t\t\t3 ').replaceAll('\n\t\t4 ', '\n\t\t\t4 ');
+  const f = fixture({ first: nest(plainBefore), next: nest(plainAfter) });
+  await assert.rejects(f.run(`await app.${prior}; await app.setValue(3, "value");`, { bind: prior.startsWith('setValue') }), /changed what element/);
 });

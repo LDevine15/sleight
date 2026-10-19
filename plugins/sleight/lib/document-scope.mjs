@@ -212,6 +212,13 @@ export function samePlace(before, number, after) {
   return hit && hit.line === line && hit.number === number + (at < start ? 0 : size) ? [[hit.number, line]] : [];
 }
 
+// Both CK2 recoveries exclude payment and credential targets, including their non-root ancestors.
+export function isPaymentTarget(line, parents = []) {
+  const watched = /\b(?:pay|card|cc-|credit|debit|cvv|cvc|expir|exp\b|mm\/yy|iban|routing|account|ssn|social security|passw|passcode|pin|otp|secret|security code|billing|bank|secure)/i;
+  return [line, ...parents.slice(1)].some(text => paymentWords(text) || watched.test(String(text ?? '')) ||
+    /^(?:AXSecureTextField|secure (?:text )?field|password (?:text )?field)(?: |,|$)/i.test(String(text ?? '')));
+}
+
 // CK2 keeps the engine read and its integer mapping. Only a plain field may move after setValue.
 // Compare the complete settable inventory, not just its count: a removed field plus a new one is not unchanged.
 export function plainFieldRemap(before, number, after, seen, parent) {
@@ -228,11 +235,10 @@ export function plainFieldRemap(before, number, after, seen, parent) {
   };
   const old = rows(before), current = rows(after), target = old.find(r => r.number === number);
   const plain = /^text field \(settable\) .+/;
-  const watched = /\b(?:pay(?:ment)?|card|cc-|cvv|cvc|expiry|expiration|security code|password|secure)\b/i;
   if (!target || target.line !== seen || !plain.test(seen) || /\b(?:ID|Description|Help): /.test(seen) ||
-      watched.test(seen) || typeof parent !== 'string' || /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(parent) ||
-      target.parents.at(-1) !== parent || target.parents.slice(1).some(p => watched.test(p)) ||
-      [...old, ...current].some(r => /^(?:sheet|dialog|alert|system dialog)(?: |$)/.test(r.line))) return [];
+      isPaymentTarget(seen, target.parents) || typeof parent !== 'string' || /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(parent) ||
+      target.parents.at(-1) !== parent ||
+      [...old, ...current].some(r => /^(?:sheet|dialog|alert|system dialog)(?: |,|$)/.test(r.line))) return [];
   if (old.filter(r => r.line === seen).length !== 1 || old.filter(r => r.line === parent).length !== 1 ||
       current.filter(r => r.line === parent).length !== 1) return [];
   const matches = current.filter(r => r.line === seen);
@@ -593,6 +599,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     const disabledLabelNote = ${disabledLabelNote.toString()};
     const sameElement = ${sameElement.toString()};
     const samePlace = ${samePlace.toString()};
+    const isPaymentTarget = ${isPaymentTarget.toString()};
     const plainFieldRemap = ${plainFieldRemap.toString()};
     const refusedPlace = ${refusedPlace.toString()};
     const differentFocusTarget = ${differentFocusTarget.toString()};
@@ -694,26 +701,32 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
     const verifyWindowIdentity = ${verifyWindowIdentity.toString()};
     const tabFocusRefusal = ${tabFocusRefusal.toString()};
     const tabProbeRefusal = ${tabProbeRefusal.toString()};
-    const tabCheck = async (before, transition = false, baselineOnly = false) => {
-      const probe = state.tabProbe, started = clock(), entered = Date.now(), ready = Math.max(entered, (before?.done ?? entered - 250) + (baselineOnly ? 0 : 250));
-      let reason = 'probe-timeout', sample, first;
+    const tabCheck = async (before, transition = false) => {
+      const probe = state.tabProbe, started = clock(), entered = Date.now(), ready = Math.max(entered, (before?.done ?? entered - 250) + 250);
+      let reason = 'probe-timeout', sample, first, pending, serial = 0;
       try {
         const fs = await import('node:fs/promises');
         do {
-          try { sample = JSON.parse(await fs.readFile(probe.path, 'utf8')); } catch {}
           const now = Date.now();
+          if (!pending && now >= ready && (!first || now >= first.start + 50)) {
+            pending = entered + ':' + state.tabStep + ':' + (++serial);
+            await fs.writeFile(probe.request, JSON.stringify({ id: pending }), { mode: 0o600 });
+          }
+          try { sample = JSON.parse(await fs.readFile(probe.path, 'utf8')); } catch {}
           if (now < entered || now < probe.since) { reason = 'clock-reversed'; break; }
-          if (Number.isFinite(sample?.start) && sample.start > entered && sample.start >= ready && Number.isFinite(sample.end) &&
+          if (pending && sample?.request === pending && Number.isFinite(sample?.start) && sample.start >= entered && sample.start >= ready && Number.isFinite(sample.end) &&
               sample.end >= sample.start && sample.end <= now && now - sample.end <= probe.freshMs) {
             // The engine's own input can reset HID idle. Require no input since that action finished,
             // earlier than the original continuation's post-read stop boundary.
-            reason = tabProbeRefusal(state.tabTarget, sample.observed, Math.max(probe.since, before?.done ?? probe.since), sample.end, transition, baselineOnly);
-            if (reason || baselineOnly) break;
-            const signature = JSON.stringify([sample.observed.title, sample.observed.url, sample.observed.chrome]);
+            reason = tabProbeRefusal(state.tabTarget, sample.observed, Math.max(probe.since, before?.done ?? probe.since), sample.end, transition);
+            if (reason) break;
+            const { walkMs, ...chrome } = sample.observed.chrome;
+            const signature = JSON.stringify([sample.observed.title, sample.observed.url, chrome]);
             if (first && first.signature !== signature) { reason = 'unstable-chrome'; break; }
             first ??= { start: sample.start, signature };
             if (sample.start - first.start >= 50) break;
             reason = 'readiness-unconfirmed';
+            pending = undefined;
           }
           if (clock() - started >= probe.deadlineMs) break;
           await new Promise(resolve => setTimeout(resolve, 5));
@@ -1061,18 +1074,6 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           const staleKey = captureKey(state.callHeaders.get(proxy));
           const unbound = bindable && state.staleCaptures.has(staleKey);
           const bind = bindable && !unbound;
-          if (state.ck1 && state.guardStopMark && name === 'setValue') {
-            const line = byId && firstTree ? findTarget(firstTree).filter((_, i, all) => all.length === 1)[0]?.[1]
-              : literal === undefined ? undefined : firstTree?.get(literal);
-            const uniqueField = typeof line === 'string' && /\\(settable\\)/.test(line) &&
-              /^(?:text field|email field|text area|text entry area|search (?:text )?field|combo box)(?: |$)/i.test(line) &&
-              [...firstTree.values()].filter(other => other === line).length === 1;
-            const reason = !state.bind ? 'binding-off' : !firstTree ? 'first-capture' : before?.opens ? 'previous-opens'
-              : codeRead ? 'code-read' : unbound ? 'stale-capture' : bind ? 'existing-binding'
-              : !uniqueField ? 'not-unique-settable-field' : 'capture-unavailable';
-            nodeRepl.write(state.guardStopMark + JSON.stringify({ binding: { index: attempt.index,
-              decision: bind && text === undefined ? 'bound' : 'read', reason: text !== undefined ? 'fresh-capture' : reason } }) + '\\n');
-          }
           // setValue changes a field and no window, like typing: Return after setValue({ id }) in a
           // Save sheet skipped its 54,000-character read (owner, 2026-10-10, 1.85 s a save).
           const quiet = before && (['typeText', 'paste', 'setValue'].includes(before.name) || (before.name === 'pressKey' &&
@@ -1087,10 +1088,8 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             header && state.expected && state.expected.app === state.light.app && ['title', 'app', 'url'].every(key => header[key] === state.expected[key]);
           const tabKey = name === 'pressKey' && /^(?:super|cmd|command|meta)\\+t$/i.test(String(args[0]));
           const tabStart = state.tabProbe?.mode === 'new-tab' && state.tabStep === 0 && firstAction && tabKey;
-          if (tabStart) {
-            const native = await tabCheck(undefined, false, true);
-            if (native) { state.tabTarget = { ...state.tabTarget, nativeIdentity: native }; state.tabStep = 1; }
-          }
+          // The ordinary first-action read (or its admitted acquisition read) already checks the baseline.
+          if (tabStart) state.tabStep = 1;
           const urlText = name === 'typeText' && typeof args[0] === 'string' && /^https?:\\/\\/[^\\s\\u0000-\\u001f]+$/i.test(args[0]);
           const tabAction = state.tabProbe && state.guarded && !checkFocus && (state.tabStep === 1 && urlText ||
             state.tabStep === 2 && name === 'pressKey' && /^(?:return|enter)$/i.test(String(args[0])));
@@ -1117,6 +1116,18 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             text ??= await timedRead(raw, 'before-action');
             if (cached?.text === undefined) modalOpened = clickOpenedModal(proxy, text);
             observed = parse(text);
+          }
+          if (state.ck1 && state.guardStopMark && name === 'setValue') {
+            const line = byId && firstTree ? findTarget(firstTree).filter((_, i, all) => all.length === 1)[0]?.[1]
+              : literal === undefined ? undefined : firstTree?.get(literal);
+            const uniqueField = typeof line === 'string' && /\\(settable\\)/.test(line) &&
+              /^(?:text field|email field|text area|text entry area|search (?:text )?field|combo box)(?: |$)/i.test(line) &&
+              [...firstTree.values()].filter(other => other === line).length === 1;
+            const reason = !state.bind ? 'binding-off' : !firstTree ? 'first-capture' : before?.opens ? 'previous-opens'
+              : codeRead ? 'code-read' : unbound ? 'stale-capture' : bind ? 'existing-binding'
+              : !uniqueField ? 'not-unique-settable-field' : 'capture-unavailable';
+            nodeRepl.write(state.guardStopMark + JSON.stringify({ binding: { index: attempt.index,
+              decision: attempt.bound ? 'bound' : 'read', reason: attempt.bound ? 'existing-binding' : reason === 'existing-binding' ? 'fresh-capture' : reason } }) + '\\n');
           }
           if (observed) state.callHeaders.set(proxy, observed);
           attempt.text = text;
@@ -1325,19 +1336,10 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             let moved = sameElement(was, now) || typeof was !== 'string' ? []
               : /\\b(?:ID|Description|Help): /.test(was) ? [...elements(text)].filter(([, line]) => sameElement(was, line))
               : bound === undefined ? samePlace(state.callTrees.get(proxy), args[0], text) : [];
-            // CK2 adds only exact plain-line recovery. The original remap above stays intact for the A/B.
-            if (!moved.length && state.ck2 && before?.name === 'setValue' && Number.isFinite(before.done) && name === 'setValue' &&
-                typeof was === 'string' && !sameElement(was, now) && !paymentWords(was)) {
+            // Both CK2 paths use the same plain-field, ancestor, payment and inventory checks.
+            if (!moved.length && state.ck2 && typeof was === 'string' && !sameElement(was, now) &&
+                (before?.name === 'setValue' && Number.isFinite(before.done) && name === 'setValue' || !before?.opens)) {
               moved = plainFieldRemap(state.callTrees.get(proxy), literal, text, state.seenLines?.[literal], state.seenParents?.[literal]);
-            }
-            if (!moved.length && state.ck2 && !before?.opens && !paymentWords(was) && typeof was === 'string' &&
-                !sameElement(was, now) && !/\\b(?:ID|Description|Help): /.test(was) &&
-                state.seenLines?.[literal] === was && [...state.callElements.get(proxy).values()].filter(line => line === was).length === 1) {
-              const parent = state.seenParents?.[literal];
-              const exact = sameLine(was).filter(([number]) => parentsOf(text).get(number) === parent);
-              if (sameLine(was).length === 1 && (parent === null || typeof parent === 'string' &&
-                  !/^[a-z][a-z ]*(?: \\([^)]*\\))*$/.test(parent)) &&
-                  parentsOf(state.callTrees.get(proxy)).get(literal) === parent && exact.length === 1) moved = exact;
             }
             if (moved.length === 1) {
               renumbered(moved[0][0], was);

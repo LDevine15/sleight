@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, existsSync, writeFileSync, readFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
@@ -138,7 +138,8 @@ test('CK3 ending a call prevents a late helper reply from recreating its observa
   const probe = createTabProbe({ directory, observe: () => new Promise(resolve => { finish = resolve; }) });
   t.after(() => probe.dispose());
   const info = probe.begin(1, target);
-  await new Promise(resolve => setImmediate(resolve));
+  if (info.request) writeFileSync(info.request, JSON.stringify({ id: 'late' }));
+  for (let i = 0; i < 100 && !finish; i++) await new Promise(r => setTimeout(r, 5));
   probe.end(1);
   finish(identity);
   await new Promise(resolve => setImmediate(resolve));
@@ -165,7 +166,7 @@ test('CK3 original Cmd+T sequence uses a new-tab certificate and only the final 
       { tabProbe: info, firstOff: true, focused: true, adoptUrl: true, guardStopMark: '[ck]', payment: { setting: 'always', message: null } }))(
       raw, { getApp: async () => raw }, { write: line => output.push(line) });
     assert.deepEqual(calls, ['super+t', 'typeText', 'Return', 'read']);
-    assert.equal(output.filter(line => /"decision":"probe"/.test(line)).length, 3);
+    assert.equal(output.filter(line => /"decision":"probe"/.test(line)).length, 2);
     assert.equal(globalThis.__sleightDocumentGuard.binding, undefined, 'metadata never seeds bindings');
     assert.equal(globalThis.__sleightDocumentGuard.callTrees.has(globalThis.__sleightDocumentGuard.activeApp), false);
   } finally { delete globalThis.__sleightDocumentGuard; delete globalThis.__sleightDocumentGuardSetup; }
@@ -220,5 +221,78 @@ for (const [reason, next] of [
       { ...expected, title: 'Before' }, 'window changed', undefined,
       { tabProbe: info, firstOff: true, focused: true, adoptUrl: true }))(raw, { getApp: async () => raw }, { write() {} }), /window changed/);
     assert.deepEqual(calls, ['super+t', 'read']);
+  } finally { delete globalThis.__sleightDocumentGuard; delete globalThis.__sleightDocumentGuardSetup; }
+});
+
+test('CK3 performs no native work until the guard requests samples', async t => {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-demand-'))));
+  let count = 0;
+  const probe = createTabProbe({ directory, observe: async () => { count++; return identity; }, intervalMs: 2 });
+  t.after(() => probe.dispose());
+  const info = probe.begin(1, target);
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(count, 0);
+  writeFileSync(info.request, JSON.stringify({ id: 'one' }));
+  for (let i = 0; i < 100 && !existsSync(info.path); i++) await new Promise(r => setTimeout(r, 5));
+  assert.equal(JSON.parse(readFileSync(info.path)).request, 'one');
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(count, 1);
+  writeFileSync(info.request, JSON.stringify({ id: 'two' }));
+  for (let i = 0; i < 100 && count < 2; i++) await new Promise(r => setTimeout(r, 5));
+  assert.equal(count, 2);
+  probe.end(1);
+  assert.equal(existsSync(info.request), false);
+});
+test('CK3 startup removes only stale observation and request files', t => {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-stale-'))));
+  for (const name of ['tab-old.obs', 'tab-old.obs.tmp', 'tab-old.req', 'tab-old.req.tmp', 'lease.json', 'other.obs']) {
+    const path = join(directory, name); writeFileSync(path, '{}'); utimesSync(path, new Date(Date.now() - 120000), new Date(Date.now() - 120000));
+  }
+  writeFileSync(join(directory, 'tab-active.obs'), '{}');
+  const probe = createTabProbe({ directory, observe: async () => identity });
+  t.after(() => probe.dispose());
+  for (const name of ['tab-old.obs', 'tab-old.obs.tmp', 'tab-old.req', 'tab-old.req.tmp']) assert.equal(existsSync(join(directory, name)), false);
+  for (const name of ['lease.json', 'other.obs', 'tab-active.obs']) assert.equal(existsSync(join(directory, name)), true);
+});
+
+test('CK3 timing variation does not change the chrome stability signature', async t => {
+  let walkMs = 0;
+  const f = await fixture(t, { observe: async () => ({ ...identity, chrome: { ...identity.chrome, walkMs: ++walkMs } }) });
+  await f.run();
+  assert.deepEqual(f.calls, ['typeText', 'pressKey', 'read']);
+});
+test('CK3 a timed-out request never queues another native walk or publishes a late reply', async t => {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-timeout-'))));
+  let count = 0, finish;
+  const probe = createTabProbe({ directory, timeoutMs: 10, intervalMs: 2, observe: () => { count++; return new Promise(r => { finish = r; }); } });
+  t.after(() => probe.dispose());
+  const info = probe.begin(1, target);
+  writeFileSync(info.request, JSON.stringify({ id: 'first' }));
+  for (let i = 0; i < 100 && !existsSync(info.path); i++) await new Promise(r => setTimeout(r, 5));
+  assert.equal(JSON.parse(readFileSync(info.path)).observed, undefined);
+  writeFileSync(info.request, JSON.stringify({ id: 'second' }));
+  finish(identity);
+  await new Promise(r => setTimeout(r, 40));
+  assert.equal(count, 1);
+  assert.equal(JSON.parse(readFileSync(info.path)).observed, undefined);
+});
+
+test('CK3 skips the baseline probe when the ordinary first read covers Cmd+T', async t => {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-first-read-'))));
+  let current = initial, samples = 0;
+  const calls = [];
+  const probe = createTabProbe({ directory, intervalMs: 2, observe: async () => { samples++; return current; } });
+  t.after(() => probe.dispose());
+  const info = probe.begin(1, { ...expected, title: 'Before', nativeIdentity: initial }, Date.now(), 'new-tab');
+  const raw = { getAXState: async () => { calls.push('read'); return current === initial ? tree.replaceAll('New Tab', 'Before') : tree; },
+    pressKey: async key => { if (key === 'super+t') assert.equal(samples, 0); calls.push(key); current = added; },
+    typeText: async () => calls.push('typeText') };
+  try {
+    await new AsyncFunction('app', 'cua', 'nodeRepl', guardedCode(
+      'await app.pressKey("super+t"); await app.typeText("https://example.test"); await app.pressKey("Return");',
+      { ...expected, title: 'Before' }, 'window changed', undefined, { tabProbe: info }))(
+      raw, { getApp: async () => raw }, { write() {} });
+    assert.deepEqual(calls, ['read', 'super+t', 'typeText', 'Return', 'read']);
+    assert.equal(samples, 4);
   } finally { delete globalThis.__sleightDocumentGuard; delete globalThis.__sleightDocumentGuardSetup; }
 });
