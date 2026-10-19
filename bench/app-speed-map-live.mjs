@@ -11,12 +11,45 @@ import { probeClient } from './double-keys-client.mjs';
 import { benchmarkDecision } from './approve.mjs';
 import { acquireLiveLock } from './live-lock.mjs';
 import { speedMarkdown, speedScope } from './app-speed-map.mjs';
+import { EDITOR_FLAGS, EDITOR_SETTINGS } from './editor-profile.mjs';
 
 const cleanupCodes = new Set(['FIXTURE_WINDOW_AMBIGUOUS', 'FOREIGN_WINDOW_ON_START', 'DOCUMENT_NOT_MATCHED', 'WINDOW_NOT_RETAINED',
   'SHEET_PRESENT', 'SHEETS_READ_FAILED', 'FIXTURE_WINDOW_NOT_RETAINED', 'CLOSE_BUTTON_MISSING', 'AXPRESS_FAILED',
   'WINDOW_STILL_PRESENT_AFTER_10S', 'SCRIPTING_NOT_OWN_FIXTURE', 'SCRIPTING_FAILED', 'WINDOW_STILL_PRESENT_AFTER_SCRIPTING',
   'APP_IDENTITY_UNCONFIRMED', 'APP_HAS_WINDOWS', 'APP_NOT_TERMINATED', 'WINDOWS_READ_FAILED', 'HOST_ABORTED', 'HOST_TIMEOUT',
   'HOST_PROCESS_UNCONFIRMED', 'HOST_RECEIPT_MISSING', 'HOST_DETAILS_MISSING', 'CLEANUP_FAILED', 'SERVER_CLEANUP_FAILED']);
+
+// Fixed words only: a setup failure is published as codes and counts, never paths, titles or error text.
+const setupCodes = new Set(['APP_EXITED', 'APP_NOT_RUNNING', 'APP_INSTANCE_AMBIGUOUS', 'APP_NOT_FINISHED_LAUNCHING', 'WINDOWS_READ_FAILED',
+  'FIXTURE_WINDOW_UNIDENTIFIED', 'FIXTURE_WINDOW_ABSENT', 'FOREIGN_WINDOW_ON_START', 'FIXTURE_WINDOW_AMBIGUOUS', 'HOST_DEADLINE', 'HOST_EXITED',
+  'HOST_STOP', 'FIXTURE_OPEN_FAILED', 'APP_ALREADY_RUNNING', 'FIXTURE_NOT_OPEN', 'Ref has incompatible type']);
+const setupStages = new Set(['baseline', 'armed', 'open', 'retain', 'ready']);
+const waitKeys = ['budgetMs', 'elapsedMs', 'polls', 'instances', 'relaunches', 'exited', 'ambiguousPolls', 'launchingPolls', 'finishedLaunching',
+  'lastWindowsStatus', 'windowCount', 'pending', 'pendingDocumentStatus', 'pendingTitleStatus'];
+export function setupDiagnosis(startError) {
+  if (!startError || typeof startError !== 'object') return undefined;
+  const out = { message: setupCodes.has(startError.message) ? startError.message : 'OTHER',
+    stage: setupStages.has(startError.stage) ? startError.stage : 'other',
+    windowCount: Number.isInteger(startError.windowCount) ? startError.windowCount : null };
+  if (Number.isInteger(startError.axStatus)) out.axStatus = startError.axStatus;
+  const wait = startError.startWait;
+  if (wait && typeof wait === 'object') {
+    out.startWait = {};
+    for (const key of waitKeys) if (typeof wait[key] === 'boolean' || Number.isInteger(wait[key])) out.startWait[key] = wait[key];
+    if (wait.windowsStatus && typeof wait.windowsStatus === 'object') out.startWait.windowsStatus = Object.fromEntries(Object.entries(wait.windowsStatus)
+      .filter(([status, count]) => /^-?\d+$/.test(status) && Number.isInteger(count)));
+  }
+  return out;
+}
+
+// The editor's own throwaway profile, inside the fixture folder. Its main IPC socket lives there, so the path stays short.
+export function editorProfileArgs(dir) {
+  const profile = join(dir, 'p'), extensions = join(dir, 'x');
+  if (join(profile, '0000-shared.sock').length > 103) throw Error('FIXTURE_SETUP_FAILED');
+  mkdirSync(join(profile, 'User'), { recursive: true, mode: 0o700 }); mkdirSync(extensions, { mode: 0o700 });
+  writeFileSync(join(profile, 'User', 'settings.json'), JSON.stringify(EDITOR_SETTINGS, null, 2), { mode: 0o600 });
+  return [`--user-data-dir=${profile}`, `--extensions-dir=${extensions}`, ...EDITOR_FLAGS];
+}
 
 export function validateSpeedReceipt(task, receipt) {
   if (task.fixture === 'browser') {
@@ -88,13 +121,17 @@ export async function liveSpeedRuntime(plan, options, {
       try {
         const name = 'AM1-' + randomUUID();
         if (['txt', 'docx', 'xlsx'].includes(task.fixture)) {
-          fixture.path = fixture.target = join(dir, name + '.' + task.fixture); fixture.marker = basename(fixture.target);
+          fixture.path = fixture.target = join(dir, name + '.' + task.fixture);
+          // The unique name without its extension: some apps title a document window without it.
+          fixture.marker = fixture.windowMarker = name;
           writeDocument(fixture.path, task.fixture, name);
         } else if (task.fixture === 'workspace' || task.fixture === 'folder') {
           fixture.target = join(dir, name); mkdirSync(fixture.target);
           fixture.marker = fixture.windowMarker = name;
-          if (task.fixture === 'folder') fixture.requiredText = fixture.scrollMarker = name + '-row';
-          writeFileSync(join(fixture.target, fixture.scrollMarker ?? 'fixture.txt'), name + '\n'.repeat(100), { mode: 0o600 });
+          fixture.scrollMarker = name + '-row';
+          if (task.fixture === 'folder') fixture.requiredText = fixture.scrollMarker;
+          writeFileSync(join(fixture.target, fixture.scrollMarker), name + '\n'.repeat(100), { mode: 0o600 });
+          if (task.fixture === 'workspace') fixture.launchArgs = editorProfileArgs(dir);
         } else if (task.fixture === 'browser') {
           fixture.marker = name;
           const server = createServer((req, res) => {
@@ -110,7 +147,8 @@ export async function liveSpeedRuntime(plan, options, {
         fixture.requireRunning = ['existing', 'local-container', 'browser'].includes(task.fixture);
         fixture.onSample = sample => { if (sample.focusChanged || sample.targetOverOwner) attentionFault = true; };
         fixture.hostAttempted = true;
-        fixture.host = await startFixtureHost({ bundle: task.bundle, fixtureKind: fixture.path ? 'doc-file' : 'read' }, fixture, controller.signal);
+        // No AppleScript fallback in cleanup: it would send Apple events to an app that may lack an Automation grant (LAWS).
+        fixture.host = await startFixtureHost({ bundle: task.bundle, fixtureKind: fixture.path ? 'doc-file' : 'read', noScripting: true }, fixture, controller.signal);
         return fixture;
       } catch (error) {
         let serverClean = true;
@@ -118,7 +156,14 @@ export async function liveSpeedRuntime(plan, options, {
         const confirmed = (!fixture.hostAttempted || error.hostCleanup?.confirmed === true) && serverClean;
         if (confirmed) resources.delete(fixture); else cleanupFault = true;
         const safe = Error(/^(APP_ALREADY_RUNNING|FIXTURE_NOT_OPEN)$/.test(error.message) ? error.message : 'FIXTURE_SETUP_FAILED');
-        safe.cleanupConfirmed = confirmed; throw safe;
+        safe.cleanupConfirmed = confirmed;
+        const details = error.hostCleanup?.details;
+        if (details) {
+          safe.setup = setupDiagnosis(details.startError);
+          safe.cleanupReasons = [...new Set([...(details.reasons ?? []), ...(details.windows ?? []).flatMap(row => row.reasons ?? [])]
+            .filter(reason => cleanupCodes.has(reason)))];
+        }
+        throw safe;
       }
     },
     async openSession(task, fixture) {

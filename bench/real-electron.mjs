@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { runOwned } from './preapproved-process.mjs';
 import { processExitConfirmed } from './real-fixture.mjs';
 import { acquireFixture } from './real-run.mjs';
+import { EDITOR_FLAGS, EDITOR_SETTINGS } from './editor-profile.mjs';
 
 const execute = promisify(execFile);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -77,11 +78,6 @@ export const EDITORS = {
     names: ['Visual Studio Code', 'VS Code', 'Code', 'com.microsoft.VSCode'] },
   'com.todesktop.230313mzl4w4u92': { app: 'Cursor', path: '/Applications/Cursor.app', names: ['Cursor', 'com.todesktop.230313mzl4w4u92'] },
 };
-const EDITOR_FLAGS = ['--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--disable-telemetry',
-  '--disable-updates', '--disable-crash-reporter', '--skip-add-to-recently-opened', '--new-window'];
-const EDITOR_SETTINGS = { 'update.mode': 'none', 'telemetry.telemetryLevel': 'off', 'workbench.startupEditor': 'none',
-  'window.restoreWindows': 'none', 'security.workspace.trust.enabled': false, 'extensions.autoCheckUpdates': false,
-  'extensions.autoUpdate': false, 'workbench.enableExperiments': false, 'workbench.tips.enabled': false };
 const EDITOR_HELPER = fileURLToPath(new URL('./real-electron.js', import.meta.url));
 
 // A browser opened by this run may quit only its observed process. Existing instances stay running.

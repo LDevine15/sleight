@@ -113,7 +113,9 @@ export async function runSpeedMap(plan, runtime) {
       report.rows.push({ app: task.id, class: task.class, ownerAccount: plan.ownerPresent || task.ownerPresent,
         scope: scope ?? 'unqualified-local-container', mode, trial, status: 'refused', failure: failureCode(error),
         acquireMs: null, firstReadMs: null, warmReadMs: null, actionMs: null, afterReadMs: null,
-        chars: null, nodes: null, cleanupConfirmed });
+        chars: null, nodes: null, cleanupConfirmed,
+        // Setup diagnosis is codes and counts from the live runtime (setupDiagnosis), never text.
+        ...(error.setup && { setup: error.setup }), ...(Array.isArray(error.cleanupReasons) && { cleanupReasons: error.cleanupReasons }) });
       await runtime.publish(report);
       if (!cleanupConfirmed) throw Error('CLEANUP_UNCONFIRMED');
       return;
@@ -207,7 +209,7 @@ export function summarizeSpeedMap({ rows, cohorts = [] }) {
       group.rows.filter(row => row.trial === cohort.trial).every(row => row.status === 'complete' && row.cleanupConfirmed !== false)) : [];
     return { app: group.app, class: group.class, ownerAccount: group.ownerAccount, mode: group.mode,
       scope: [...new Set(group.rows.map(row => row.scope ?? 'unknown'))].join(', '),
-      failures: [...new Set(group.rows.filter(row => row.failure).map(row => row.failure))],
+      failures: [...new Set(group.rows.filter(row => row.failure).map(row => row.setup?.message ? `${row.failure}:${row.setup.message}` : row.failure))],
       cohortWallMs: stats(qualifiedCohorts.map(cohort => cohort.wallMs)), attempted: group.rows.length, completed: completed.length,
       ...Object.fromEntries(['acquireMs', 'firstReadMs', 'warmReadMs', 'actionMs', 'afterReadMs', 'chars', 'nodes']
         .map(key => [key, stats(completed.map(row => row[key]))])) };
@@ -229,6 +231,58 @@ export function speedMarkdown(report) {
     (account.length ? '\n## Owner-present reads\n\nTiming and tree counts only. Local-container membership is unproved.\n\n' + table(account) : '');
 }
 
+// Rough per-cell seconds for the dry run's estimate, not a measurement. TextEdit measured acquisition at 1.25 s and a
+// scroll at 0.92 s (2026-10-14); launch, client start and quit are assumed. The bound adds every timeout a cell can reach.
+const ESTIMATE = { sequential: 15, concurrent: 20, startup: 70, phase: 60, cleanup: 50 };
+
+// Runs the real scheduler against an in-memory runtime: every planned cell, its engine calls and refusals, with no app,
+// engine, lock, file or child process.
+export async function simulateSpeedMap(plan) {
+  const steps = new Map(), sessions = new Map(), totals = { fixtures: 0, engineCalls: 0, scrolls: 0 };
+  const key = (app, mode, trial) => `${app}:${mode}:${trial}`;
+  const runtime = {
+    held: () => false, now: () => 0, async publish() {}, async closeFixture() { return { confirmed: true, reasons: [] }; },
+    async prepare(task, { trial, mode }) {
+      totals.fixtures++;
+      return { marker: 'AM1-simulated', cell: key(task.id, mode, trial),
+        ...(task.fixture === 'browser' && { url: 'http://127.0.0.1:1/fixture', browserId: 'simulated', profileName: 'simulated' }) };
+    },
+    async openSession(task, fixture) {
+      const index = sessions.get(fixture.cell) ?? 0; sessions.set(fixture.cell, index + 1);
+      if (!index) steps.set(fixture.cell, []);
+      return { async close() {}, async js(code) {
+        totals.engineCalls++;
+        if (code.includes('AM1METRICS')) return { content: [{ type: 'text', text: 'AM1METRICS:' + JSON.stringify({ chars: 0, nodes: 0, scrollTarget: 1 }) }] };
+        const step = /getApp|createBrowserTab/.test(code) ? 'acquire' : /scroll\(/.test(code) ? 'scroll' : /getAXState/.test(code) ? 'read' : 'other';
+        if (step === 'scroll') totals.scrolls++;
+        if (!index) steps.get(fixture.cell).push(step);
+        return { content: [] };
+      } };
+    },
+  };
+  const report = await runSpeedMap(plan, runtime);
+  const cells = [];
+  for (const row of report.rows) {
+    const id = key(row.app, row.mode, row.trial);
+    if (cells.some(cell => cell.id === id)) continue;
+    cells.push({ id, app: row.app, mode: row.mode, trial: row.trial, status: row.status, ...(row.failure && { failure: row.failure }),
+      sessions: sessions.get(id) ?? 0, steps: steps.get(id) ?? [] });
+  }
+  const sequential = cells.filter(cell => cell.mode === 'sequential' && cell.sessions).length;
+  const concurrent = cells.filter(cell => cell.mode === 'concurrent' && cell.sessions).length;
+  const typicalSeconds = sequential * ESTIMATE.sequential + concurrent * ESTIMATE.concurrent;
+  const boundSeconds = cells.filter(cell => cell.sessions).reduce((sum, cell) =>
+    sum + ESTIMATE.startup + cell.steps.length * ESTIMATE.phase + ESTIMATE.cleanup, 0);
+  const defaultCohort = plan.concurrentApp === 'textedit' || plan.concurrentApp === plan.apps[0].id;
+  const liveCommand = ['node bench/app-speed-map.mjs', plan.ownerPresent ? '--owner-present' : '--owner-away',
+    '--apps', plan.apps.map(app => app.id).join(','), '--runs', String(plan.runs),
+    ...(defaultCohort ? [] : ['--concurrent-app', plan.concurrentApp])].join(' ');
+  // The live runtime refuses the whole run before any lock or app when one of these receipts is missing.
+  const receiptsRequired = plan.apps.filter(app => app.fixture === 'browser' || app.fixture === 'local-container' && plan.ownerPresent).map(app => app.id);
+  return { cells: cells.map(({ id, ...cell }) => cell), totals, receiptsRequired, estimate: { typicalSeconds, boundSeconds,
+    basis: 'estimate, not measured: 15 s per sequential cell and 20 s per cohort; the bound adds every timeout' }, liveCommand };
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const values = {}, flags = new Set(['--dry-run', '--owner-present', '--owner-away']);
   for (let i = 0; i < argv.length; i++) {
@@ -239,7 +293,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (values['owner-away'] && values['owner-present']) throw Error('CONFLICTING_OWNER_BOUNDARY');
   const plan = speedPlan({ ids: values.apps?.split(','), runs: values.runs === undefined ? 10 : Number(values.runs),
     ownerPresent: Boolean(values['owner-present']), concurrentApp: values['concurrent-app'] ?? 'textedit', dryRun: Boolean(values['dry-run']) });
-  if (plan.dryRun) { console.log(JSON.stringify(plan, null, 2)); return 0; }
+  if (plan.dryRun) { console.log(JSON.stringify({ ...plan, simulation: await simulateSpeedMap(plan) }, null, 2)); return 0; }
   if (!values['owner-away'] && !values['owner-present']) throw Error('OWNER_BOUNDARY_REQUIRED');
   const { liveSpeedRuntime } = await import('./app-speed-map-live.mjs');
   const runtime = await liveSpeedRuntime(plan, values);

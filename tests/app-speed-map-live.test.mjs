@@ -4,11 +4,11 @@ import { mkdtempSync, mkdirSync, existsSync, readFileSync, symlinkSync, writeFil
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
-import { liveSpeedRuntime, speedOutput } from '../bench/app-speed-map-live.mjs';
+import { liveSpeedRuntime, speedOutput, setupDiagnosis, editorProfileArgs } from '../bench/app-speed-map-live.mjs';
 import { speedPlan } from '../bench/app-speed-map.mjs';
 
-async function setup(t, { confirmed = true, focusChanged = false, startupFailure = false, details, id = 'textedit' } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'sleight-am1-test-'));
+async function setup(t, { confirmed = true, focusChanged = false, startupFailure = false, details, id = 'textedit', hostError, hosts, base = tmpdir() } = {}) {
+  const root = mkdtempSync(join(base, 'sleight-am1-test-'));
   t.after(() => removeTemp(root));
   const bank = join(root, 'bank'), calls = []; let unlocks = 0, approver;
   const plan = speedPlan({ ids: [id], runs: 1 });
@@ -20,7 +20,9 @@ async function setup(t, { confirmed = true, focusChanged = false, startupFailure
       assert.equal(task.bundle, plan.apps[0].bundle); assert.ok(fixture.target.startsWith(bank));
       assert.ok(existsSync(fixture.target));
       if (id === 'textedit') { assert.equal(fixture.path,fixture.target); assert.match(readFileSync(fixture.target,'utf8'),/^AM1-/); }
-      calls.push('host'); fixture.onSample({focusChanged,targetOverOwner:false});
+      calls.push('host'); hosts?.push({ task, fixture });
+      if (hostError) throw hostError;
+      fixture.onSample({focusChanged,targetOverOwner:false});
       return {finish:async()=>({confirmed,details,samples:[{focusChanged}]})};
     },
     makeClient:async(server, options)=>{
@@ -141,4 +143,75 @@ test('local-container runtime entry points cannot bypass the plan preflight', as
   assert.deepEqual(h.calls, ['lock']);
   await h.runtime.close();
   assert.equal(h.unlocks, 1);
+});
+
+// AM1 setup fixes (1.4.0): VS Code and Word failed setup on 2026-10-14 (ledger claims/_evidence-AM1-live).
+test('a document fixture names its window by the file stem and withholds AppleScript from cleanup', async t => {
+  const hosts = [], h = await setup(t, { id: 'word', hosts });
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['word'], runs: 1 }).apps[0]);
+  assert.match(fixture.target, /\/AM1-[0-9a-f-]{36}\.docx$/);
+  assert.equal(fixture.marker, fixture.target.split('/').at(-1).replace(/\.docx$/, ''));
+  assert.equal(fixture.windowMarker, fixture.marker);
+  assert.equal(hosts[0].task.fixtureKind, 'doc-file');
+  assert.equal(hosts[0].task.noScripting, true);
+  assert.equal(fixture.launchArgs, undefined);
+  assert.equal((await h.runtime.closeFixture(fixture)).confirmed, true);
+  await h.runtime.close();
+});
+
+test('a workspace fixture launches the editor on a throwaway profile inside the private fixture folder', async t => {
+  // A live bank is /private/tmp/sleight-battery-am1-XXXXXX; the default macOS tmpdir is too long for the editor's socket.
+  const hosts = [], h = await setup(t, { id: 'vscode', hosts, base: '/private/tmp' });
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['vscode'], runs: 1 }).apps[0]);
+  assert.equal(fixture.requireStopped, true);
+  assert.equal(fixture.windowMarker, fixture.marker);
+  assert.equal(fixture.scrollMarker, fixture.marker + '-row');
+  assert.equal(fixture.requiredText, undefined);
+  assert.ok(existsSync(join(fixture.target, fixture.scrollMarker)));
+  const profile = fixture.launchArgs.find(arg => arg.startsWith('--user-data-dir='))?.slice(16);
+  const extensions = fixture.launchArgs.find(arg => arg.startsWith('--extensions-dir='))?.slice(17);
+  assert.ok(profile.startsWith(fixture.dir + '/') && extensions.startsWith(fixture.dir + '/'));
+  for (const flag of ['--disable-workspace-trust', '--disable-extensions', '--skip-welcome', '--skip-add-to-recently-opened'])
+    assert.ok(fixture.launchArgs.includes(flag), flag);
+  const settings = JSON.parse(readFileSync(join(profile, 'User', 'settings.json'), 'utf8'));
+  assert.equal(settings['security.workspace.trust.enabled'], false);
+  assert.equal(settings['window.restoreWindows'], 'none');
+  // The editor's main IPC socket lives in the profile folder; macOS caps socket paths at 103 characters.
+  assert.ok(join('/private/tmp/sleight-battery-am1-XXXXXX', 'a'.repeat(36), profile.slice(fixture.dir.length + 1), '0000-shared.sock').length <= 103);
+  assert.equal((await h.runtime.closeFixture(fixture)).confirmed, true);
+  await h.runtime.close();
+});
+
+test('a failed setup keeps a sanitized diagnosis and the cleanup reason codes', async t => {
+  const hostError = Object.assign(Error('FIXTURE_WINDOW_UNIDENTIFIED'), { hostCleanup: { confirmed: true, details: {
+    reasons: ['FIXTURE_WINDOW_NOT_RETAINED', 'PRIVATE_TOKEN'], windows: [{ document: 'file:///private/x', reasons: ['WINDOW_NOT_RETAINED'] }],
+    startError: { message: 'FIXTURE_WINDOW_UNIDENTIFIED', stage: 'retain', windowCount: 1, axStatus: -25204,
+      startWait: { budgetMs: 60000, elapsedMs: 60200, polls: 301, pending: 1, pendingDocumentStatus: -25205, finishedLaunching: true,
+        windowsStatus: { 0: 280, '-25204': 21, private: 3 }, title: 'private title' } } } } });
+  const h = await setup(t, { id: 'word', hostError });
+  await assert.rejects(h.runtime.prepare(speedPlan({ ids: ['word'], runs: 1 }).apps[0]), error => {
+    assert.equal(error.message, 'FIXTURE_SETUP_FAILED');
+    assert.equal(error.cleanupConfirmed, true);
+    assert.deepEqual(error.setup, { message: 'FIXTURE_WINDOW_UNIDENTIFIED', stage: 'retain', windowCount: 1, axStatus: -25204,
+      startWait: { budgetMs: 60000, elapsedMs: 60200, polls: 301, pending: 1, pendingDocumentStatus: -25205, finishedLaunching: true,
+        windowsStatus: { 0: 280, '-25204': 21 } } });
+    assert.deepEqual(error.cleanupReasons, ['FIXTURE_WINDOW_NOT_RETAINED', 'WINDOW_NOT_RETAINED']);
+    assert.doesNotMatch(JSON.stringify(error.setup), /private/);
+    return true;
+  });
+  await h.runtime.close();
+  assert.equal(h.unlocks, 1);
+});
+
+test('setup diagnosis replaces unknown messages and stages with fixed words', () => {
+  assert.deepEqual(setupDiagnosis({ message: 'execution error at ~/private', stage: 'somewhere', windowCount: 'x' }),
+    { message: 'OTHER', stage: 'other', windowCount: null });
+  assert.equal(setupDiagnosis(undefined), undefined);
+});
+
+test('an editor profile that would exceed the socket path limit refuses before writing it', t => {
+  const root = mkdtempSync(join(tmpdir(), 'sleight-am1-long-')); t.after(() => removeTemp(root));
+  const dir = join(root, 'd'.repeat(80));
+  assert.throws(() => editorProfileArgs(dir), /FIXTURE_SETUP_FAILED/);
+  assert.equal(existsSync(join(dir, 'p')), false);
 });

@@ -688,6 +688,11 @@ native reference, and oversized first results defer the browser reference while 
   field that fills `engineMs` in the codex arm's rows. In a pass that also runs `codex` or `codex-sol`, the engine's Always
   allow list holds the benchmark apps for the whole pass. The sleight arms there meet fewer engine prompts than they would
   alone. The results record it (`engineAllowList`), and nothing refuses such a pass.
+- The speed map's VS Code and Word fixtures failed setup live on 2026-10-14, and no live run has followed the fix. We found
+  the VS Code cause offline. VS Code read AppKit's persistence switch as `--status` and quit, and its pid then answered
+  -25204. The Word cause comes from the code path, not from a live receipt. Word's new window wasn't identified as the fixture
+  in time, and that stop left Word open. The 60 s startup budget is a guess, since no run has measured how long VS Code,
+  Cursor, Word or Excel take to show an identifiable window here. Cursor, Excel and the concurrent cohort have never run.
 
 ## Turbo in unattended runs
 
