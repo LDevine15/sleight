@@ -1,0 +1,39 @@
+{
+  "entries": [
+    {
+      "checkedAt": "2026-10-10T08:19:18Z",
+      "source": "watch-task",
+      "appVersion": null,
+      "engineVersion": "26.1007.21159",
+      "verdict": "pass",
+      "notes": []
+    },
+    {
+      "checkedAt": "2026-10-12T13:00:24Z",
+      "source": "watch-task",
+      "appVersion": null,
+      "engineVersion": "26.1007.30912",
+      "verdict": "pass",
+      "notes": []
+    },
+    {
+      "checkedAt": "2026-10-14T13:00:30Z",
+      "source": "watch-task",
+      "appVersion": null,
+      "engineVersion": "26.1007.71326",
+      "verdict": "pass",
+      "notes": []
+    },
+    {
+      "checkedAt": "2026-10-19T05:42:31.672Z",
+      "source": "static",
+      "appVersion": "26.1013.40934",
+      "engineVersion": "26.1013.1001501",
+      "sleight": "88f8c0c1",
+      "verdict": "pass",
+      "notes": [
+        "js-description: the engine's js description changed, so sleight sends it whole instead of its shorter version (tool-description.mjs ENGINE_JS_HASH)"
+      ]
+    }
+  ]
+}

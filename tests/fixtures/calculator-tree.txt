@@ -1,0 +1,164 @@
+Window: "Calculator", App: Calculator.
+0 standard window Calculator, ID: main, Secondary Actions: Raise
+	1 split group main, SidebarNavigationSplitView
+		2 scroll area Secondary Actions: Scroll Up, Scroll Down
+			3 list HistoryView
+				4 row (selectable) Today
+				5 row (selected) Secondary Actions: Copy, Delete, Value: ‎17‎×‎23
+‎391
+				6 row (selectable) Secondary Actions: Copy, Delete, Value: ‎2‎‎10
+‎1,024
+				7 row (selectable) Secondary Actions: Copy, Delete, Value: ‎3‎+‎3
+‎6
+				8 row (selectable) Secondary Actions: Copy, Delete, Value: ‎0‎+‎3
+‎3
+				9 row (selectable) Secondary Actions: Copy, Delete, Value: ‎17‎×‎23
+‎391
+				10 row (selectable) Secondary Actions: Copy, Delete, Value: ‎2‎‎10
+‎1,024
+				11 row (selectable) ‎0‎+‎3
+‎3
+				12 row (selectable) ‎17‎×‎23
+‎391
+				13 row (selectable) ‎2‎‎10
+‎1,024
+				14 row (selectable) ‎17‎×‎23
+‎391
+				15 row (selectable) ‎2‎‎10
+‎1,024
+				16 row (selectable) ‎17‎×‎23
+‎391
+				17 row (selectable) ‎17‎×‎23
+‎391
+				18 row (selectable) ‎√‎(‎1‎÷‎3‎)‎+‎17‎×‎23
+‎391.577
+				19 row (selectable) Yesterday
+				20 row (selectable) ‎2‎‎10
+‎1,024
+				21 row (selectable) ‎17‎×‎23
+‎391
+				22 row (selectable) ‎2‎‎10
+‎1,024
+				23 row (selectable) ‎17‎×‎23
+‎391
+				24 row (selectable) ‎2‎‎10
+‎1,024
+				25 row (selectable) ‎17‎×‎23
+‎391
+				26 row (selectable) ‎2‎‎10
+‎1,024
+				27 row (selectable) ‎17‎×‎23
+‎391
+				28 row (selectable) ‎2‎‎10
+‎1,024
+				29 row (selectable) ‎17‎×‎23
+‎391
+				30 row (selectable) ‎2‎‎10
+‎1,024
+				31 row (selectable) ‎17‎×‎23
+‎391
+				32 row (selectable) ‎2‎‎10
+‎1,024
+				33 row (selectable) ‎17‎×‎23
+‎391
+				34 row (selectable) ‎2‎‎10
+‎1,024
+				35 row (selectable) ‎17‎×‎23
+‎391
+				36 row (selectable) ‎2‎‎10
+‎1,024
+				37 row (selectable) ‎17‎×‎23
+‎391
+				38 row (selectable) ‎1‎+‎2‎+‎3‎+‎4‎+‎5‎+‎6‎+‎7‎+‎8‎+‎9
+‎45
+				39 row (selectable) ‎2‎‎10
+‎1,024
+				40 row (selectable) ‎17‎×‎23
+‎391
+				41 row (selectable) ‎18‎×‎23
+‎414
+				42 row (selectable) ‎17‎×‎23
+‎391
+				43 row (selectable) ‎12‎×‎12
+‎144
+				44 row (selectable) ‎144‎+‎1
+‎145
+				45 row (selectable) ‎12‎×‎12
+‎144
+				46 row (selectable) ‎12‎×‎12‎×‎12
+‎1,728
+			47 scroll bar (settable, float) 0
+				48 value indicator (settable, float) 0
+				49 increment arrow button
+				50 decrement arrow button
+				51 increment page button
+				52 decrement page button
+		53 splitter (disabled, settable, float) 220
+		54 container CalculatorKeypadView
+			55 scroll area ID: StandardResultView, Secondary Actions: Copy
+				56 text Description: Last Expression, Value: 17 × 23
+			57 scroll area ID: StandardInputView;value:391, Secondary Actions: Copy
+				58 text Description: Edit field, Value: 391
+			59 button Description: Open Parenthesis, ID: OpenParenthesis
+			60 button Description: Close Parenthesis, ID: CloseParenthesis
+			61 button Description: Clear Memory, ID: MemoryClear
+			62 button Description: Add to Memory, Help: Add the displayed value to the memory, ID: MemoryAdd
+			63 button Description: Subtract from Memory, Help: Subtract the displayed value from the memory, ID: MemorySubtract
+			64 button Description: Recall Memory, Help: Recall the value stored in the memory, ID: MemoryRecall
+			65 button Description: Delete, Help: Delete the last digit or operation entered (long press to delete all)
+			66 button Description: All Clear, ID: AllClear
+			67 button Percent
+			68 button Divide
+			69 toggle button Description: Secondary Functions, Help: Show alternate functions for some buttons, Value: 0, ID: Shift
+			70 button Description: X Squared, Help: Calculate the square of a value, ID: Square
+			71 button Description: X Cubed, Help: Calculate the cube of a value, ID: Cube
+			72 button Description: X to the Y, Help: Calculate a first value to the power of a second value, ID: Power
+			73 button Description: e to the X, Help: Calculate e to the power of a value, ID: Expontential
+			74 button Description: 10 to the X, Help: Calculate 10 to the power of a value, ID: ExponentialBase10
+			75 button Description: 7, ID: Seven
+			76 button Description: 8, ID: Eight
+			77 button Description: 9, ID: Nine
+			78 button Multiply
+			79 button Description: 1 over x, Help: Calculate the reciprocal of a value, ID: Reciprocal
+			80 button Description: Square Root, Help: Calculate the square root of a value, ID: SquareRoot
+			81 button Description: Cube Root, Help: Calculate the cube root of a value, ID: CubeRoot
+			82 button Description: Y root of X, Help: Calculate an arbitrary root of a value (y-th root of x), ID: Root
+			83 button Description: Natural Log, Help: Calculate the natural logarithm of a value, ID: LogarithmNatural
+			84 button Description: Log Base 10, Help: Calculate the logarithm to base 10 of a value, ID: LogarithmBase10
+			85 button Description: 4, ID: Four
+			86 button Description: 5, ID: Five
+			87 button Description: 6, ID: Six
+			88 button Subtract
+			89 button Description: X Factorial, Help: Calculate the factorial of a value, ID: Factorial
+			90 button Description: Sine, Help: Calculate the sine of a value
+			91 button Description: Cosine, Help: Calculate the cosine of a value
+			92 button Description: Tangent, Help: Calculate the tangent of a value
+			93 button Description: e, Help: Enter e (2.71828…), ID: EulerNumber
+			94 button Description: Enter Exponent, Help: Enter exponent for a value (scientific notation), ID: TimesPowerOfTen
+			95 button Description: 1, ID: One
+			96 button Description: 2, ID: Two
+			97 button Description: 3, ID: Three
+			98 button Add
+			99 button Description: Random Number, Help: Generate a random number between 0 and 1, ID: Random
+			100 button Description: Hyperbolic Sine, Help: Calculate the hyperbolic sine of a value, ID: HyperbolicSine
+			101 button Description: Hyperbolic Cosine, Help: Calculate the hyperbolic cosine of a value, ID: HyperbolicCosine
+			102 button Description: Hyperbolic Tangent, Help: Calculate the hyperbolic tangent of a value, ID: HyperbolicTangent
+			103 button Description: Pi, Help: Enter pi (3.14159…)
+			104 button Description: Radians, Help: Change angular units to radians
+			105 button Description: Change Sign, Help: Change sign of a value, ID: Negate
+			106 button Description: 0, ID: Zero
+			107 button Description: Point, ID: Decimal
+			108 button Equals
+	109 toolbar
+		110 button Description: Delete, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Move next, Remove from toolbar
+		111 button Description: Hide Sidebar, Secondary Actions: Increment, Decrement, Delete, Cancel
+		112 button Description: Mode, Help: Change Calculator mode, ID: Mode: scientific; unitConversion: false, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Remove from toolbar
+	113 close button
+	114 zoom button (disabled)
+	115 minimize button
+116 menu bar
+	117 Calculator
+	118 Edit
+	119 View
+	120 Window
+	121 Help

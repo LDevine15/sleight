@@ -25,3 +25,38 @@ engine does, so recheck them after an engine update.
 - The engine rejects `getApp({ windowId })`, so routines acquire by bundle ID and confirm the window's exact title.
 - The engine takes only element numbers or points, so actions by sleight ID or label need a fresh read to find the current number.
 - The engine's warm write takes about 72 ms (AA1). Reads and settle waits, not writes, are most of sleight's tool time.
+
+## Checking an engine update
+
+ChatGPT updates several times a week, so benchmarks rerun periodically, and each published result states the engine
+version it ran on. What runs after every update is a compatibility check in two halves. Each writes the UTC date and the
+ChatGPT and engine versions to [the compatibility record](results/engine-compat.md).
+
+- `bench/compat-static.mjs --feed` reads ChatGPT's update feed and, when the version changes, downloads the release,
+  checks its Sparkle signature against the key the app pins, and unpacks it without running anything. It then checks
+  the engine files sleight depends on against `bench/compat/contract.mjs`. That covers the API declarations, the `js`
+  and `turn_ended` arguments in `node_repl` and the methods the engine's JavaScript defines. It also covers the bundle
+  layout `sleight-mcp setup` uses and whether sleight's js description and policy rewrites still match. A check that
+  can't finish (a bad signature, a failed unpack) retries on the next two runs, then is recorded as an error. It runs
+  on Linux, hourly, as a systemd timer (`scripts/ci-box/`, install steps in the service file) or as a GitHub workflow
+  once the owner adds one (`--probe` reads only the feed, so a job can skip the rest until a release changes). Its output mentions only sleight's check items. `--keep-docs` keeps the engine's docs and their
+  diff in the state folder, for a private machine. `--app /Applications/ChatGPT.app` checks an installed app.
+- `bench/compat.mjs` runs the installed engine on this Mac: the doctor, the raw engine's tool list, docs and a REPL
+  probe of method types and result shapes (never values), sleight's launcher, and a diff of the docs against the last
+  version that passed (`~/Library/Logs/sleight/engine-raw-<version>.diff`). It doesn't open an app and takes about 20 s
+  (an estimate). It doesn't start while `/tmp/sleight-hold` or `/tmp/sleight-live.lock` exists. With `--owner-away` it
+  adds the live checks, about 2 minutes (an estimate): 17 × 23 in Calculator by clicks with a screenshot, and one
+  engine-path read of a page served on 127.0.0.1 in a Safari window the benchmark's fixture helper creates. They take
+  the live lock without waiting, check the hold again between apps, use only an app they launched, and approve only
+  Calculator and Safari from the benchmark allowlist. Engine text stays in the local report's `detail` fields.
+- `scripts/watch.sh`, the launchd job, runs the doctor daily and `bench/compat.mjs` when the engine version changes.
+  Installed with `scripts/watch-install.sh --daily --live` it also runs the live checks once the Mac has been idle for
+  5 minutes, retrying daily while they're pending and the engine checks passed. A launchd job has no Accessibility
+  grant. Its Safari check skips, and `npm run compat -- --owner-away` from a terminal covers it.
+- `node bench/compat.mjs --publish --static-log <file>` merges the Mac log and static results into the record. The
+  file is a `results.jsonl` from a state folder, or the workflow's report: `gh run download -n engine-compat-report`.
+
+The live checks haven't run yet (2026-10-19). The first static run, on ChatGPT 26.1013.40934 (engine 26.1013.1001501),
+found that sleight's shorter js description doesn't apply. sleight starts the engine with
+`CUA_REPL_ENABLED_SURFACES=computer` unless a Codex browser extension is connected, and the pinned hash is of the
+description with the browser APIs on. That one changed too, by one browser bullet in an update installed on 2026-10-16.

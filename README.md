@@ -320,22 +320,20 @@ SLEIGHT_TRACE=1 claude --plugin-dir plugins/sleight   # logs every relayed messa
 
 ### Update watch
 
-`scripts/watch.sh` runs `--doctor` and saves the engine's runtime API docs to
-`~/Library/Logs/sleight/engine-api-<version>.md`. The capture calls `getApp` with a bundle ID that
-doesn't exist, so it doesn't touch an app or prompt for approval.
-When the version changes, it writes `engine-api-<version>.diff` against the previous snapshot and runs
-one benchmark task, with the diff path in the macOS notification (the first run saves a baseline).
-It logs to `~/Library/Logs/sleight/watch.log` and also notifies when a check fails; an older watch
-without a previous snapshot reports that the diff is unavailable.
+`scripts/watch.sh` runs `--doctor` daily. When the engine version changes, it runs `bench/compat.mjs`: the engine
+checks in [engine-notes.md](docs/engine-notes.md#checking-an-engine-update), which don't touch an app or prompt for
+approval, and with `--live` the Calculator and Safari checks too. It logs to `~/Library/Logs/sleight/watch.log`,
+records each result in `compat.jsonl` there, and notifies when the engine changed or a check failed.
 
 ```bash
 npm run watch            # check now
 npm run watch:install    # run it every Monday at 9:00 (a launchd job)
-scripts/watch-install.sh --daily   # or every day at 9:00
+scripts/watch-install.sh --daily --live   # every day at 9:00, live checks included
 npm run watch:remove     # remove the job
+npm run compat           # the engine checks, now
 ```
 
-The benchmark task auto-approves Calculator, like any benchmark run.
+The live checks approve only Calculator and Safari, from the benchmark's allowlist.
 
 ## Roadmap
 

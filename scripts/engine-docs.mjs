@@ -6,6 +6,24 @@ import { fileURLToPath } from 'node:url';
 
 const SERVER = fileURLToPath(new URL('../plugins/sleight/bin/sleight-mcp', import.meta.url));
 export const NO_APP = 'com.landoclusters.sleight.no-such-app';
+export const DOCS_CODE = `let app = await cua.getApp(${JSON.stringify(NO_APP)})`;
+
+// The docs snapshot from the getApp result. A failed getApp sets isError while still returning the API docs.
+export function engineDocsText(result) {
+  const text = result?.content?.filter(block => block.type === 'text' && typeof block.text === 'string')
+    .map(block => block.text).join('\n\n');
+  if (!text?.trim()) throw new Error('engine docs call returned no text');
+  if (!/^#{1,6} .*\bAPI\b/im.test(text)) {
+    throw new Error(`engine docs call returned no API docs: ${text.slice(0, 500)}`);
+  }
+  // Drop the engine's "Invalid app" line, and sleight's own skill, which the relay sends with the
+  // first result, so snapshots differ only when the engine's docs do (the skill filled the whole
+  // diff for 26.1007.21159).
+  let docs = text.slice(text.search(/^#{1,6} /m));
+  const skill = docs.search(/^# Driving Mac apps with sleight$/m);
+  if (skill > 0) docs = docs.slice(0, skill).trimEnd();
+  return docs.endsWith('\n') ? docs : docs + '\n';
+}
 
 export async function captureEngineDocs({
   command = SERVER, args = [], env = process.env, timeoutMs = 60000,
@@ -62,22 +80,9 @@ export async function captureEngineDocs({
     // An app that can't exist: a real one may be on the user's pre-approved list,
     // and then the engine appends that app's window to the docs.
     const result = await request('tools/call', {
-      name: 'js', arguments: { code: `let app = await cua.getApp(${JSON.stringify(NO_APP)})` },
+      name: 'js', arguments: { code: DOCS_CODE },
     });
-    // A failed getApp sets isError while still returning the API docs.
-    const text = result?.content?.filter(block => block.type === 'text' && typeof block.text === 'string')
-      .map(block => block.text).join('\n\n');
-    if (!text?.trim()) throw new Error('engine docs call returned no text');
-    if (!/^#{1,6} .*\bAPI\b/im.test(text)) {
-      throw new Error(`engine docs call returned no API docs: ${text.slice(0, 500)}`);
-    }
-    // Drop the engine's "Invalid app" line, and sleight's own skill, which the relay sends with the
-    // first result, so snapshots differ only when the engine's docs do (the skill filled the whole
-    // diff for 26.1007.21159).
-    let docs = text.slice(text.search(/^#{1,6} /m));
-    const skill = docs.search(/^# Driving Mac apps with sleight$/m);
-    if (skill > 0) docs = docs.slice(0, skill).trimEnd();
-    return docs.endsWith('\n') ? docs : docs + '\n';
+    return engineDocsText(result);
   } finally {
     clearTimeout(timer);
     child.stdin.end(); // The launcher ends the turn and stops its engine child.

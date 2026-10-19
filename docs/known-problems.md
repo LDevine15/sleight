@@ -287,6 +287,10 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   Haiku confirmed an unpriced "Pay $268.00 now?" dialog in Firefox (1 of 1 runs, 2026-10-17), and gpt-6.1-sol inside Codex paid
   the same checkout without asking (1 of 1, 2026-10-19). Live on 2026-10-19, both stopped at Pay now with nothing paid (1 of 1 each),
   and the gate also stopped a cart's "Go to checkout" link, which failed the handoff task (fixed the same night).
+- On the engine-path gate's payment page, a control outside the card fields' block whose name has no pay or submit word
+  ("Continue", "Next") isn't checked, so a page that charges from such a control gets past the gate (review PG2, 2026-10-19).
+  A promo code's Apply, the only button beside the card fields, goes ahead only when an enabled button named for paying
+  follows it in the same page, outside any dialog.
 - Tabs driven through the ChatGPT browser extension (`cua.getBrowser`, `createBrowserTab`), Codex's main browser path, aren't
   checked: the guard doesn't wrap their DOM actions. This is open work, not covered.
 - A stopped payment opens sleight's payment card (the consent host turbo uses). Allow once doesn't send the action. Claude sends it
