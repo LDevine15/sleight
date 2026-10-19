@@ -62,6 +62,7 @@ import { fileURLToPath } from 'node:url';
 import { isV3Frontend, isV3Bridge } from './direct-browser/worker.mjs';
 import { browserBundleId } from './direct-browser/browsers.mjs';
 import { OWN_HOST_LINE, isOwnHost, pageSite } from './permissions.mjs';
+import { getAppTargets } from './own-host.mjs';
 import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromText, lastWindowFromText, isDocumentRead, withoutEcho, readCode, guardedCode, WINDOWS_MARK, GUARD_READY, GUARD_MARK, GUARD_END, GUARD_OMIT_MARK, menuRoot, selectedMenuEntry } from './document-scope.mjs';
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
@@ -1568,6 +1569,15 @@ export function createRelay({
     onLeaseFault(error);
   }
 
+  // An app the user blocked is declined without asking them; the read or action then reaches Claude as the user's line.
+  function declineBlockedApproval(msg) {
+    const asked = msg.params?._meta?.tool_params?.app, refusal = appLine(asked, asked);
+    if (!refusal) return false;
+    trace('blocked-app-approval', { id: msg.id });
+    for (const id of running) if (!localRunning.has(id)) withheld.set(id, refusal);
+    toServer({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline' } });
+    return true;
+  }
   // A blocked app answers with the user's one line and nothing reaches the engine.
   function blockStop(msg, line) {
     toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: line }] } });
@@ -1578,9 +1588,9 @@ export function createRelay({
   function callBlock(name, args) {
     if (name !== 'js') return typeof args.app === 'string' ? appLine(args.app, args.app) : undefined;
     const code = String(args.code ?? '');
-    for (const match of code.matchAll(/\bcua\.getApp\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*\)/g)) {
-      let literal;
-      try { literal = match[1].startsWith('"') ? JSON.parse(match[1]) : match[1].slice(1, -1); } catch { literal = match[1].slice(1, -1); }
+    // Every getApp argument made of string literals, however spelled (own-host.mjs). A computed name is left to the
+    // engine's approval card, which the relay declines for a blocked app, and to the read, which is withheld.
+    for (const literal of getAppTargets(code)) {
       const line = appLine(literal, literal);
       if (line) return line;
     }
@@ -3978,6 +3988,8 @@ export function createRelay({
       flowRules.observe(msg.result, flowCalls.get(msg.id));
       flowCalls.delete(msg.id);
     }
+    // A blocked app's card is declined before any path answers it, the document path included.
+    if (isAppApproval(msg) && declineBlockedApproval(msg)) return;
     if (documentMode && isAppApproval(msg)) { documentEngineApproval(msg); return; }
     if (msg.method === undefined && changeCalls.has(msg.id)) {
       const call = changeCalls.get(msg.id);
@@ -4250,14 +4262,6 @@ export function createRelay({
       if (warning && msg.params) msg.params.message = `${msg.params.message ?? 'Allow Computer Use?'} ${warning}`;
     }
     if (isAppApproval(msg)) {
-      // An app the user blocked is declined without asking them; the read or action then reaches Claude as the user's line.
-      const asked = msg.params?._meta?.tool_params?.app, refusal = appLine(asked, asked);
-      if (refusal) {
-        trace('blocked-app-approval', { id: msg.id });
-        for (const id of running) if (!localRunning.has(id)) withheld.set(id, refusal);
-        toServer({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline' } });
-        return;
-      }
       // Observation only: the answer below is unchanged. The light check needs the key's time.
       if (msg.params?._meta?.tool_name === 'press_key') lightReturn?.keyPressed(msg.params._meta.tool_params?.app);
       const diagnostic = [...helperProbes.entries()].filter(([id, probe]) => probe.control && running.has(id));

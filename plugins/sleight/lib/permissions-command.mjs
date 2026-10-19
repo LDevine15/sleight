@@ -2,22 +2,33 @@
 // and `unblock` set where sleight never acts, and `permissions sites only` limits turbo to some sites. The glove's Permissions
 // menu uses the same list and writers (permissionsMenu, applyMenuEvent). Revoking and blocking only remove access, so neither
 // asks. Nothing here grants: Always allow is written only by the user's click on an approval card.
+import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, lstatSync, statSync, unlinkSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { listPreapproved, removePreapproved } from './preapproved.mjs';
 import { writeConfigFile } from './direct-browser/turbo-setup.mjs';
 import { installedConfigPath, readInstalledConfigFile } from './direct-browser/installed-config.mjs';
 import { grantStorePath } from './direct-browser/electron-config.mjs';
 import { createGrantStore } from './direct-browser/electron-consent.mjs';
 import { browserApplicationName } from './direct-browser/browsers.mjs';
-import { BUNDLE_ID, LIMIT, PERMISSIONS_BYTES, currentApp, lastUse, permissionsPath, readPermissions, coveringBlock, sameBlock, sameListed, siteOrigin, usedFolder, usedWords } from './permissions.mjs';
+import { ALIASES, BUNDLE_ID, LIMIT, NAME, PERMISSIONS_BYTES, currentApp, lastUse, permissionsPath, readPermissions, coveringBlock, sameBlock, sameListed, siteOrigin, usedFolder, usedWords } from './permissions.mjs';
 
 // ChatGPT's own Always allow list, which its helper honors itself. sleight only reads it, for the listing.
 const engineFile = home => join(home, 'Library/Group Containers/2DC432GLL2.com.openai.sky.CUAService/Library/Application Support/Software/ComputerUseAppApprovals.json');
 
-function context({ home = userInfo().homedir, uid = process.getuid(), out = text => process.stdout.write(text), now = Date.now, ...rest } = {}) {
-  return { home, uid, out, now, path: permissionsPath(home), folder: usedFolder(home), logs: join(home, 'Library/Logs/sleight'),
+// The names macOS gives an installed app, from LaunchServices (app-names.js, read-only: it finds the bundle and opens no app).
+function installedAppNames(bundleId) {
+  try {
+    const names = JSON.parse(execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', fileURLToPath(new URL('./app-names.js', import.meta.url)), bundleId],
+      { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }));
+    return Array.isArray(names) ? names : [];
+  } catch { return []; }
+}
+
+function context({ home = userInfo().homedir, uid = process.getuid(), out = text => process.stdout.write(text), now = Date.now, appNames = installedAppNames, ...rest } = {}) {
+  return { home, uid, out, now, appNames, path: permissionsPath(home), folder: usedFolder(home), logs: join(home, 'Library/Logs/sleight'),
     grants: () => createGrantStore({ path: grantStorePath(home) }), engineFile: engineFile(home), ...rest };
 }
 
@@ -88,8 +99,12 @@ function update(o, change) {
   if (after.state !== 'ok' || JSON.stringify(after.apps) !== JSON.stringify(data.apps) || JSON.stringify(after.sites) !== JSON.stringify(data.sites)) throw Error('PERMISSIONS_UNSAFE');
   return true;
 }
-const blockApp = (o, id, name) => update(o, p => p.apps.some(app => app.id.toLowerCase() === id.toLowerCase()) ? false
-  : { ...p, apps: [...p.apps, { id, ...name && name !== id ? { name: name.slice(0, 128) } : {} }] });
+// An app's names, first the one to show, without the bundle id, repeats or anything the reader would refuse.
+const appNames = (id, names) => names.filter(NAME).filter((name, at, all) => name.toLowerCase() !== id.toLowerCase() &&
+  all.findIndex(other => other.toLowerCase() === name.toLowerCase()) === at).slice(0, ALIASES + 1);
+// A block by bundle id alone also stores the names the app goes by, so Claude's getApp("Its Name") matches it.
+const blockApp = (o, id, name, names = name ? [name] : o.appNames(id)) => update(o, p => p.apps.some(app => app.id.toLowerCase() === id.toLowerCase()) ? false
+  : (([first, ...aliases]) => ({ ...p, apps: [...p.apps, { id, ...first ? { name: first } : {}, ...aliases.length ? { aliases } : {} }] }))(appNames(id, names.map(n => String(n).slice(0, 128)))));
 // A site an existing block already covers (the same host, www. or not, or a subdomain) is already blocked.
 const blockSite = (o, origin) => update(o, p => coveringBlock(p.sites, origin) ? false : { ...p, sites: [...p.sites, origin] });
 
@@ -155,8 +170,8 @@ function repair(o, discard = false) {
     const id = typeof app?.id === 'string' && app.id.length <= 255 && BUNDLE_ID.test(app.id) ? app.id : undefined;
     if (!id || seen.has(id.toLowerCase()) || apps.length >= LIMIT) { dropped++; continue; }
     seen.add(id.toLowerCase());
-    const name = typeof app.name === 'string' && app.name.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(app.name) && app.name ? app.name : undefined;
-    apps.push({ id, ...name ? { name } : {} });
+    const name = NAME(app.name) ? app.name : undefined, aliases = Array.isArray(app.aliases) ? app.aliases.filter(NAME).slice(0, ALIASES) : [];
+    apps.push({ id, ...name ? { name } : {}, ...aliases.length ? { aliases } : {} });
   }
   const origins = (list, into) => { for (const site of Array.isArray(list) ? list : []) {
     const origin = siteOrigin(site);
@@ -234,7 +249,8 @@ export function permissionsCommand(args, options) {
       const name = chosen.app ?? chosen.site;
       if (op === 'block') {
         const changed = chosen.app ? blockApp(o, chosen.app) : blockSite(o, chosen.site);
-        o.out(changed ? `sleight won't act ${chosen.app ? 'in' : 'on'} ${name} from its next action, in every session.\n` : `${name} is already blocked.\n`); return 0;
+        const shown = chosen.app && readPermissions(o.path, o.uid).apps.find(app => app.id === chosen.app)?.name;
+        o.out(changed ? `sleight won't act ${chosen.app ? 'in' : 'on'} ${shown ? `${shown} (${name})` : name} from its next action, in every session.\n` : `${name} is already blocked.\n`); return 0;
       }
       const changed = update(o, p => chosen.app
         ? p.apps.some(app => app.id.toLowerCase() === chosen.app.toLowerCase()) && { ...p, apps: p.apps.filter(app => app.id.toLowerCase() !== chosen.app.toLowerCase()) }
@@ -300,7 +316,8 @@ export function applyMenuEvent(event, offered, options) {
     return false;
   }
   if (event?.permissions === 'block' && typeof event.target === 'string' && offered?.has('block:' + event.target)) {
-    return blockApp(o, event.target, currentApp()?.bundleId === event.target ? currentApp().name : undefined);
+    // The menu names the app it offers; it never asks LaunchServices from inside the session.
+    return blockApp(o, event.target, undefined, currentApp()?.bundleId === event.target ? [currentApp().name] : []);
   }
   return false;
 }

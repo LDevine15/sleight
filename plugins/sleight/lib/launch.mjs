@@ -531,8 +531,10 @@ const runOpen = (file, argv) => new Promise((resolve, reject) =>
 // doesn't resolve, the apps the engine refuses (terminals and OpenAI's apps), launchers, script and
 // executable files, relative paths, and anything but an existing regular file. The open goes to the
 // resolved bundle ID, so the app checked is the app that opens the file.
+// blocked(bundleId, app) is the user's line for an app they blocked (permissions.mjs), checked once the name resolves, so a
+// block by bundle id holds whatever name Claude used and whether or not the app runs.
 export async function openDocument(args, { exec = runOpen, resolve = resolveAppId, home = homedir(),
-  fast = false, bundleId: preparedId, current = () => {}, openedFiles, target,
+  fast = false, bundleId: preparedId, current = () => {}, openedFiles, target, blocked = () => undefined,
   hasDocument = async (appId, path) => {
     const result = await runScript('open-file-window.js', { appId, path });
     return result.ok === true && result.matches === true;
@@ -549,6 +551,8 @@ export async function openDocument(args, { exec = runOpen, resolve = resolveAppI
   if (info.mode & 0o111) return text(`open_file doesn't open executable files (${raw}).`, true);
   const bundleId = await (preparedId ?? resolve(app));
   if (!BUNDLE_ID.test(bundleId)) return text(`macOS has no app named ${app}.`, true);
+  const refusal = blocked(bundleId, app);
+  if (refusal) return text(refusal, true);
   if (matchBlockedApp(app, bundleId) || LAUNCHER_BUNDLES.has(bundleId.toLowerCase())) {
     return text(`open_file doesn't open files in ${app}, which runs or installs what it opens or isn't driven by sleight.`, true);
   }
@@ -695,7 +699,7 @@ async function performDrag(args, runLocal) {
   return text(rest, !ok);
 }
 
-export async function callLocalTool(name, args, approve, runLocal = runScript, resolved, prepared) {
+export async function callLocalTool(name, args, approve, runLocal = runScript, resolved, prepared, { blocked } = {}) {
   if (name === 'hover') {
     if (!await approve(['hover', args.app], `Allow Claude to hover in ${args.app}? It moves your pointer briefly.`)) {
       return text(`The user didn't allow hovering in ${args.app}. Stop and tell them; don't work around it.`, true);
@@ -710,7 +714,7 @@ export async function callLocalTool(name, args, approve, runLocal = runScript, r
     if (!await approveOpenFile(args, approve)) {
       return text(`The user didn't allow opening files in ${args.app}. Stop and tell them; don't work around it.`, true);
     }
-    return openDocument(args, prepared ? { ...prepared, fast: true, target: resolved } : undefined);
+    return openDocument(args, { ...prepared ? { ...prepared, fast: true, target: resolved } : {}, ...blocked ? { blocked } : {} });
   }
   if (name === 'drag') {
     if (!await approve(['drag', args.app], `Allow Claude to drag in ${args.app}? Background comes first; foreground fallback can move your pointer for a few seconds.`)) {
@@ -982,7 +986,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
         approve(parts, wordForHost(message, wording()), options), { openedFiles }),
       reopen: (bundleId, path) => reopenDocument(bundleId, path, { openedFiles }),
       call: (name, args, approve, runLocal, resolved, prepared) => callLocalTool(name, args, (parts, message, options) =>
-        approve(parts, wordForHost(message, wording()), options), runLocal, resolved, prepared),
+        approve(parts, wordForHost(message, wording()), options), runLocal, resolved, prepared,
+        { blocked: (bundleId, app) => permissionCheck.app({ bundleId, name: app }) }),
       target: async args => {
         const result = await appHealth.target(args);
         if (!result.ok) throw new Error(`Input lease: ${result.error}`);

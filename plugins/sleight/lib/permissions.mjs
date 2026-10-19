@@ -14,8 +14,8 @@ export const permissionsPath = (home = userInfo().homedir) => join(support(home)
 export const usedFolder = (home = userInfo().homedir) => join(support(home), 'used');
 export const BUNDLE_ID = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 // The most blocks of each kind, and the file's size limit, which 256 apps with long names and ids fit inside.
-export const LIMIT = 256, PERMISSIONS_BYTES = 262144;
-const NAME = value => typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
+export const LIMIT = 256, PERMISSIONS_BYTES = 262144, ALIASES = 4;
+export const NAME = value => typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
 
 /** The web origin of an http(s) URL without credentials, lowercased as URL writes it, or undefined. */
 export function siteOrigin(value) {
@@ -25,8 +25,9 @@ export function siteOrigin(value) {
   } catch { return undefined; }
 }
 
-/** { state: 'absent' | 'ok' | 'unsafe', apps: [{ id, name? }], sites: [origin], only?: [origin] }. Unsafe is a link, another
- *  owner, a mode other than 0600, or anything but { version: 1, apps, sites, only? } with bundle ids and canonical origins. */
+/** { state: 'absent' | 'ok' | 'unsafe', apps: [{ id, name?, aliases? }], sites: [origin], only?: [origin] }. Unsafe is a link,
+ *  another owner, a mode other than 0600, or anything but { version: 1, apps, sites, only? } with bundle ids and canonical
+ *  origins. aliases are the app's other names (at most 4), so a block by bundle id matches what Claude calls the app. */
 export function readPermissions(path = permissionsPath(), uid = process.getuid()) {
   const empty = state => ({ state, apps: [], sites: [] });
   let stat;
@@ -39,9 +40,10 @@ export function readPermissions(path = permissionsPath(), uid = process.getuid()
     if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['version', 'apps', 'sites', 'only'].includes(key)) ||
         data.version !== 1 || !Array.isArray(data.apps) || data.apps.length > LIMIT || !origins(data.sites) ||
         data.only !== undefined && (!origins(data.only) || !data.only.length) ||
-        !data.apps.every(app => app && typeof app === 'object' && Object.keys(app).every(key => ['id', 'name'].includes(key)) &&
-          typeof app.id === 'string' && app.id.length <= 255 && BUNDLE_ID.test(app.id) && (app.name === undefined || NAME(app.name)))) return empty('unsafe');
-    return { state: 'ok', apps: data.apps.map(app => ({ ...app })), sites: [...data.sites], ...data.only ? { only: [...data.only] } : {} };
+        !data.apps.every(app => app && typeof app === 'object' && Object.keys(app).every(key => ['id', 'name', 'aliases'].includes(key)) &&
+          typeof app.id === 'string' && app.id.length <= 255 && BUNDLE_ID.test(app.id) && (app.name === undefined || NAME(app.name)) &&
+          (app.aliases === undefined || Array.isArray(app.aliases) && app.aliases.length > 0 && app.aliases.length <= ALIASES && app.aliases.every(NAME)))) return empty('unsafe');
+    return { state: 'ok', apps: data.apps.map(app => ({ ...app, ...app.aliases ? { aliases: [...app.aliases] } : {} })), sites: [...data.sites], ...data.only ? { only: [...data.only] } : {} };
   } catch { return empty('unsafe'); }
 }
 
@@ -52,11 +54,15 @@ const stopped = perms => perms?.state === 'unsafe' ? UNSAFE : perms?.state === '
 const words = list => list.length <= 4 ? list.slice(0, -1).join(', ') + (list.length > 1 ? ' and ' : '') + list.at(-1)
   : `${list.slice(0, 3).join(', ')} and ${list.length - 3} more`;
 
-/** The line Claude relays when the user blocked this app (by bundle id or name, either case), or undefined. */
+// An app name as Claude may write it: either case, and a path or .app around it.
+const appName = value => value.trim().replace(/^.*\//, '').replace(/\.app$/i, '').toLowerCase();
+/** The line Claude relays when the user blocked this app (by bundle id, name or alias, either case), or undefined. */
 export function appRefusal(perms, { bundleId, name } = {}) {
   if (stopped(perms)) return stopped(perms);
-  const keys = [bundleId, name].filter(value => typeof value === 'string' && value.trim()).map(value => value.trim().toLowerCase());
-  const hit = keys.length ? perms?.apps?.find(app => keys.includes(app.id.toLowerCase()) || app.name && keys.includes(app.name.toLowerCase())) : undefined;
+  const given = [bundleId, name].filter(value => typeof value === 'string' && value.trim());
+  const ids = given.map(value => value.trim().toLowerCase()), names = [...ids, ...given.map(appName)];
+  const hit = given.length ? perms?.apps?.find(app => ids.includes(app.id.toLowerCase()) ||
+    [app.name, ...app.aliases ?? []].some(known => known && names.includes(appName(known)))) : undefined;
   return hit && `You blocked sleight in ${hit.name ?? hit.id} (sleight-mcp permissions unblock ${hit.id} lifts it).`;
 }
 

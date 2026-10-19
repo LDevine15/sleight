@@ -18,7 +18,7 @@ function world(t) {
   const records = [];
   const grants = { list: () => [...records], remove: key => { const at = records.findIndex(r => r.key === key); if (at < 0) return false; records.splice(at, 1); return true; } };
   const engineFile = join(home, 'engine-approvals.json');
-  const options = { home, out: text => lines.push(text), grants: () => grants, logs, engineFile, now: () => 10 * 24 * HOUR };
+  const options = { home, out: text => lines.push(text), grants: () => grants, logs, engineFile, now: () => 10 * 24 * HOUR, appNames: () => [] };
   const command = (args, extra = {}) => permissionsCommand(args, { ...options, ...extra });
   const write = (name, data, mode = 0o600) => { const file = join(support, name); writeFileSync(file, typeof data === 'string' ? data : JSON.stringify(data), { mode }); chmodSync(file, mode); return file; };
   const output = () => { const text = lines.join(''); lines.length = 0; return text; };
@@ -164,6 +164,34 @@ test('a permissions file that disappears after a session read it refuses every a
   // A session that never read a file has nothing to miss.
   rmSync(w.path);
   assert.equal(createPermissionCheck({ path: w.path }).app({ bundleId: 'com.any.app' }), undefined);
+});
+
+test('a block by bundle id stores the app\'s names, so a display name, a path or a .app name matches it too', t => {
+  const w = world(t), asked = [];
+  assert.equal(w.command(['block', 'com.example.editor'], { appNames: id => { asked.push(id); return ['Example Editor', 'Editor', 'com.example.editor', 'example editor']; } }), 0);
+  assert.match(w.output(), /^sleight won't act in Example Editor \(com\.example\.editor\) from its next action, in every session\.\n$/);
+  assert.deepEqual(asked, ['com.example.editor']);
+  assert.deepEqual(readPermissions(w.path).apps, [{ id: 'com.example.editor', name: 'Example Editor', aliases: ['Editor'] }]);
+  const check = createPermissionCheck({ path: w.path });
+  for (const name of ['Example Editor', 'editor', '/Applications/Example Editor.app', 'Example Editor.app']) {
+    assert.match(check.app({ bundleId: name, name }), /^You blocked sleight in Example Editor \(sleight-mcp permissions unblock com\.example\.editor lifts it\)\.$/, name);
+  }
+  assert.equal(check.app({ name: 'Other Editor' }), undefined);
+  // A file with aliases is repaired with them.
+  chmodSync(w.path, 0o644);
+  assert.equal(w.command(['repair']), 0); w.output();
+  assert.deepEqual(readPermissions(w.path).apps, [{ id: 'com.example.editor', name: 'Example Editor', aliases: ['Editor'] }]);
+});
+
+test('open_file refuses an app the user blocked once its name resolves, before anything opens', async t => {
+  const { openDocument } = await import('../plugins/sleight/lib/launch.mjs');
+  const w = world(t), path = join(w.home, 'note.txt'), opened = [];
+  writeFileSync(path, 'hello');
+  const line = 'You blocked sleight in Example Editor (sleight-mcp permissions unblock com.example.editor lifts it).';
+  const result = await openDocument({ app: 'Some Other Name', path }, { resolve: async () => 'com.example.editor', exec: async (...args) => opened.push(args),
+    blocked: (bundleId, app) => bundleId === 'com.example.editor' ? line : undefined });
+  assert.deepEqual(result, { content: [{ type: 'text', text: line }], isError: true });
+  assert.deepEqual(opened, []);
 });
 
 test('revoking the last allow-only site is refused, so the list never empties into no limit at all', t => {

@@ -52,6 +52,29 @@ test('a call that names a blocked app, by bundle id or name, gets the user\'s li
   }
 });
 
+test('getApp spellings the engine accepts are read like plain strings: spacing, brackets, template literals, joined strings and .app', async t => {
+  const h = harness(t);
+  const codes = ['let a = await cua.getApp ("Blocked App")', 'let a = await cua["getApp"]("Blocked App")', 'let a = await cua.getApp(`Blocked App`)',
+    'let a = await cua.getApp("Blocked" + " App")', 'let a = await cua.getApp("Blocked App.app")', 'let a = await cua.getApp("/Applications/Blocked App.app")'];
+  for (const [i, code] of codes.entries()) {
+    h.js(i + 1, code); await settle();
+    assert.equal(h.sent(i + 1), false, code);
+    assert.equal(h.reply(i + 1).result.content[0].text, LINE, code);
+  }
+});
+
+test('in document scope the engine\'s approval for a blocked app is declined too, before the document path answers it', async t => {
+  const asked = [];
+  const h = harness(t, { approvalScope: 'document', ask: async message => { asked.push(message); return 'accept'; } });
+  h.js(1, 'let app = await cua.getApp("Alias")'); await settle();
+  assert.equal(h.sent(1), true, 'a read in document scope, whose approval the document path would ask about');
+  h.fromServer({ jsonrpc: '2.0', id: 'e1', method: 'elicitation/create', params: { message: 'Allow Computer Use to use "Blocked App"?',
+    _meta: { connector_id: 'computer-use', persist: ['session', 'always'], riskLevel: 'high', tool_params: { app: 'Blocked App' } } } });
+  await settle();
+  assert.deepEqual(asked, []);
+  assert.deepEqual(h.toServer.find(m => m.id === 'e1').result, { action: 'decline' });
+});
+
 test('a read that turns out to be a blocked app shows Claude only the line, and the next action stops before the engine', async t => {
   const h = harness(t);
   h.js(1, 'let app = await cua.getApp("Some Alias")');
