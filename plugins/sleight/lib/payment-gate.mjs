@@ -37,10 +37,10 @@ export function enginePayment(name, args, text, payment, probe = false) {
   const PAYS = /\b(?:place (?:your )?order|confirm (?:order|purchase|payment|and pay)|submit (?:order|payment)|reserve)\b/i;
   const LEAVE = /^(?:cancel|close|dismiss|no|no thanks|not now|back)$/i;
   const rows = new Map(), stack = [];
-  let focus, roots = 0;
+  let focus, focusBody, roots = 0;
   for (const raw of text.split('\n')) {
-    const focused = /^The focused UI element is (\d+) /.exec(raw);
-    if (focused) { focus = Number(focused[1]); continue; }
+    const focused = /^The focused UI element is (\d+) (.*)$/.exec(raw);
+    if (focused) { focus = Number(focused[1]); focusBody = focused[2]; continue; }
     const m = /^(\t*)(\d+) (.*)$/.exec(raw);
     if (!m) continue;
     while (stack.length && stack[stack.length - 1].depth >= m[1].length) stack.pop();
@@ -65,7 +65,7 @@ export function enginePayment(name, args, text, payment, probe = false) {
     row.native = !!parent?.native || !parent?.web && /^(?:sheet|dialog|alert)\b/.test(body) || root && roots > 1;
     // A dialog only adds checks: the browser's own, or a page's role=dialog.
     row.modal = !!parent?.modal || row.native || /^(?:sheet|dialog|alert)\b/.test(body);
-    row.id = Number(m[2]);
+    row.id = Number(m[2]); row.index = rows.size;
     // The name the row shows itself, without a Description the page can set on an otherwise blank control.
     row.ownName = parts[0].replace(/^[a-z][a-z ]*?(?: \([^)]*\))*(?: |$)/, '').replace(/^(?:Description|Help|Value): .*$/, '');
     rows.set(row.id, row); stack.push(row);
@@ -128,13 +128,54 @@ export function enginePayment(name, args, text, payment, probe = false) {
   const typed = ['typeText', 'paste'].includes(name) ? args.find(arg => typeof arg === 'string') : undefined;
   const enter = ['return', 'enter', 'kp_enter', 'keypadenter'].includes(key) || /[\r\n]/.test(typed ?? '');
   const space = key === 'space' || key === ' ' || !enter && /^[ \t]+$/.test(typed ?? '');
+  // PG3: a plain Enter or Return that picks the selected option of a field's open suggestion list, which the browser or the
+  // page applies to the field (race b16, 2026-10-19). Decided from the tree's structure only: a combo box (or a field the tree
+  // marks expanded) that isn't collapsed, isn't a card field and sits in the page, its list as its child or the row right after
+  // it, and exactly one selected row in that list, an option that isn't a button or link, holds none and has no pay or submit
+  // words. Focus is on the field or on that option; browsers report the highlighted option as focused while the keys still go
+  // to the field. Safari can leave that option out of the tree, numbering it after every row it printed: then the page has
+  // exactly one such field, marked expanded, whose list shows options of the focused row's role and none selected.
+  const OPTION = /^(text|option|list item|menu item|cell|row)((?: \([^)]*\))*)(?: |,|$)/;
+  const LIST = /^(?:list box|list(?! item\b)|menu(?! (?:item|button|bar)\b))(?: \([^)]*\))*(?: |,|$)/;
+  const COMBO = /^(combo box|text field|search (?:text )?field)((?: \([^)]*\))*)(?: |,|$)/;
+  const flags = body => /^[a-z][a-z ]*?((?: \([^)]*\))+)(?: |,|$)/.exec(body)?.[1] ?? '';
+  const all = [...rows.values()];
+  const listOf = field => all.find(row => row.ancestors[0] === field && LIST.test(row.body)) ??
+    [all.find(row => row.index > field.index && row.ancestors[0] === field.ancestors[0])].find(row => row && LIST.test(row.body));
+  const opens = row => !!row && row.web && !row.native && !(row.modal && modalPayment) && !cards.includes(row) && COMBO.test(row.body) &&
+    !/\b(?:collapsed|disabled)\b/.test(COMBO.exec(row.body)[2]) && (/^combo box/.test(row.body) || /\bexpanded\b/.test(COMBO.exec(row.body)[2]));
+  const chosen = list => all.filter(row => under(list, row) && /\bselected\b/.test(flags(row.body)));
+  const option = (row, list) => OPTION.test(row.body) && /\bselected\b/.test(OPTION.exec(row.body)[2]) && !payWords(row) &&
+    !all.some(other => under(row, other) && (BUTTON.test(other.body) || LINK.test(other.body) || other.field)) &&
+    !row.ancestors.slice(0, row.ancestors.indexOf(list)).some(at => BUTTON.test(at.body) || LINK.test(at.body) || at.field);
+  const pick = () => {
+    if (!enter || !['pressKey', 'press'].includes(name) || args[0].includes('+')) return false;
+    if (target?.field) {
+      const list = opens(target) && listOf(target), picked = list ? chosen(list) : [];
+      return picked.length === 1 && option(picked[0], list);
+    }
+    if (target) {
+      const list = target.ancestors.find(at => LIST.test(at.body));
+      const field = list && (list.ancestors[0]?.field ? list.ancestors[0] : all.filter(row => row.index < list.index && row.ancestors[0] === list.ancestors[0]).pop());
+      return !!list && opens(field) && listOf(field) === list && chosen(list).length === 1 && chosen(list)[0] === target && option(target, list);
+    }
+    const role = OPTION.exec(focusBody ?? '');
+    if (!role || !(focus > Math.max(...rows.keys())) || !/\bselected\b/.test(role[2]) || paymentWords(focusBody) || SUBMIT.test(focusBody) || PAYS.test(focusBody)) return false;
+    const fields = all.filter(row => opens(row) && listOf(row));
+    if (fields.length !== 1 || !/\bexpanded\b/.test(COMBO.exec(fields[0].body)[2])) return false;
+    const list = listOf(fields[0]);
+    return !chosen(list).length && all.some(row => under(list, row) && OPTION.exec(row.body)?.[1] === role[1]);
+  };
+  // The highlighted option a browser reports as focused stands for the field that holds the keys: Enter there is Enter in a field.
+  const fieldLike = target && (target.field || enter && OPTION.test(target.body));
   let gated = false, pays = false;
   if (point) gated = paymentPage || modalPayment;
+  else if (enter && pick()) gated = false;
   else if (enter || space) {
     // Enter in any field submits its form. Enter or Space on a dialog answers it. Focus outside the page submits nothing on it.
     gated = !target ? enter && (paymentPage || modalPayment) : target.modal && modalPayment && !exempt(target) && !target.field ? true
-      : target.field ? enter && paymentPage : (enter || BUTTON.test(target.body)) && gatedClick(target);
-    pays = gated && (!target || target.modal || target.field && cards.length > 0 || !target.link && reads(target, row => paymentWords(row.label) || PAYS.test(row.label)));
+      : fieldLike ? enter && paymentPage : (enter || BUTTON.test(target.body)) && gatedClick(target);
+    pays = gated && (!target || target.modal || fieldLike && cards.length > 0 || !target.link && reads(target, row => paymentWords(row.label) || PAYS.test(row.label)));
   } else if (!keyed) {
     gated = gatedClick(target);
     pays = gated && !target.link && (target.modal || reads(target, row => paymentWords(row.label) || PAYS.test(row.label)));

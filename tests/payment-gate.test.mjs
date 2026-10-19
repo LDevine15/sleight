@@ -275,7 +275,7 @@ test("the relay's copy of the message lasts one user turn, counts its payments a
 async function guarded(tree, code, payment, mark) {
   const clicked = [], written = [];
   const raw = { getAXState: async () => tree, click: async number => { clicked.push(number); }, doubleClick: async number => { clicked.push('double ' + number); },
-    performAction: async number => { clicked.push('action ' + number); } };
+    performAction: async number => { clicked.push('action ' + number); }, pressKey: async key => { clicked.push('key ' + key); } };
   const context = { cua: { getApp: async () => raw }, nodeRepl: { write(text) { written.push(text); } } };
   const run = source => runInNewContext(`(async () => { ${source} })()`, context);
   await run(readCode('await cua.getApp("Firefox");'));
@@ -543,4 +543,117 @@ test('PG2: only the page submit that follows Apply, enabled and in the same page
     ['in a dialog', after(noPay, 90, '200 dialog Offer', '\t201 button Pay now')],
     ['a newsletter Subscribe', after(noPay, 90, '200 button Subscribe')],
   ]) assert.equal(go(tree)?.why, 'none', name);
+});
+
+// PG3 (race b16, 2026-10-19): in Safari gpt-6.1-sol typed into the checkout's address combo box, pressed Down three times and
+// Return to pick the Asheville suggestion, and the gate stopped the Return as a submit. Safari moves focus to the highlighted
+// option and doesn't print that row (94); Firefox prints it in the list, and a page can keep focus on the combo box itself.
+const suggestions = fixture('safari-checkout-suggestions');
+// Adds rows before a row of the tree, at that row's depth (an injected earlier sibling).
+const before = (tree, number, ...rows) => tree.split('\n').flatMap(line => {
+  const m = new RegExp('^(\\t*)' + number + ' ').exec(line);
+  return m ? [...rows.map(row => m[1] + row), line] : [line];
+}).join('\n');
+const firstOption = '30 text (selected) 47 Juniper Court, Portland, OR 97214';
+// Safari after one Down: the first suggestion is selected and holds focus.
+const oneDown = focus(suggestions.replace('30 text 47 Juniper Court, Portland, OR 97214,', firstOption + ','), firstOption);
+const comboBox = '26 combo box (expanded, settable) Address, Value: 47 Juniper Court, Placeholder: Start typing your street address, Secondary Actions: Collapse';
+const fxList = ['900 list Address suggestions', '\t901 text (selectable) 47 Juniper Court, Portland, OR 97214', '\t902 text (selected) 47 Juniper Court, Asheville, NC 28801'];
+const firefox = focus(before(luna, 54, ...fxList), '902 text (selected) 47 Juniper Court, Asheville, NC 28801');
+const enter = (tree, payment = gate('requested', null), key = 'Return') => enginePayment('pressKey', [key], tree, payment);
+
+test('PG3: Return on an open suggestion list with a selected option picks it, in Safari, Firefox and a page that keeps focus on the combo box', () => {
+  for (const payment of [gate('requested', null), gate('requested', prompt)]) {
+    assert.equal(enter(suggestions, payment), undefined, 'the race: focus on the selected option Safari leaves out of the tree');
+    assert.equal(enter(oneDown, payment), undefined, 'Safari after one Down');
+    assert.equal(enter(firefox, payment), undefined, 'Firefox');
+    assert.equal(enter(focus(oneDown, comboBox), payment), undefined, 'focus kept on the combo box');
+  }
+  assert.equal(enter(suggestions, gate('requested', null), 'Enter'), undefined);
+  assert.equal(enginePayment('press', ['Return'], suggestions, gate('requested', null)), undefined);
+});
+
+test('PG3: the race call goes through the guard', async () => {
+  const result = await guarded(suggestions, 'await app.pressKey("Return");', gate('requested', null));
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.clicked, ['key Return']);
+});
+
+test('PG3: Return stays gated when the list is closed or nothing in it is selected', () => {
+  assert.equal(enter(suggestions.replaceAll('combo box (expanded,', 'combo box (collapsed,'))?.why, 'nocopy', 'collapsed, elided focus');
+  assert.equal(enter(oneDown.replace('combo box (expanded,', 'combo box (collapsed,'))?.why, 'nocopy', 'collapsed, focus on the option');
+  assert.equal(enter(focus(suggestions, comboBox))?.why, 'nocopy', 'open, nothing selected');
+  assert.equal(enter(focus(before(luna, 54, ...fxList.slice(0, 2)), '52 combo box (settable) Address'))?.why, 'nocopy', 'Firefox, nothing selected');
+  // Without a list next to the combo box, a selected row Safari leaves out is not known to be an option of it.
+  assert.equal(enter(suggestions.split('\n').filter(line => !/^\t*(?:29|30) /.test(line)).join('\n'))?.why, 'nocopy', 'no list');
+});
+
+test('PG3: only a plain Enter or Return key picks; a typed line break or a modified Return stays gated', () => {
+  assert.equal(enginePayment('typeText', ['\n'], oneDown, gate('requested', null))?.why, 'nocopy');
+  assert.equal(enginePayment('typeText', ['47 Juniper Court\n'], focus(oneDown, comboBox), gate('requested', null))?.why, 'nocopy');
+  for (const key of ['shift+Return', 'cmd+Return', 'ctrl+Enter']) assert.equal(enter(oneDown, gate('requested', null), key)?.why, 'nocopy', key);
+});
+
+test('PG3: the highlighted option a browser reports as focused stands for its field, so Enter there is gated without the pick', () => {
+  // Before PG3, Enter on a focused text row that didn't read as a submit went ahead, though the keys reach the field.
+  const stray = focus(suggestions.replace('30 text 47 Juniper Court, Portland, OR 97214,', firstOption + ','), '30 text (selected) 47 Juniper Court, Portland, OR 97214')
+    .replace('29 list (settable) Address suggestions', '29 group Address suggestions');
+  assert.equal(enter(stray)?.why, 'nocopy', 'a selected row outside any list');
+  assert.equal(enter(focus(suggestions, '31 text Choose your address from the suggestions.'))?.why, 'nocopy', 'a focused text row');
+});
+
+test('PG3 attacks: a list beside a card field or a plain field, a list away from the field, or one in another web area', () => {
+  const cardList = after(suggestions, 48, '900 list Card suggestions', '\t901 text (selected) 5555 5555 5555 4444');
+  assert.equal(enter(focus(cardList, '48 text field (settable) Card number'))?.why, 'nocopy', 'focus on the card field');
+  assert.equal(enter(focus(cardList, '901 text (selected) 5555 5555 5555 4444'))?.why, 'nocopy', 'focus on its option');
+  // A plain text field the tree doesn't mark expanded is not a combo box with a list, even with a list after it.
+  const promo = after(suggestions, 56, '900 list Promo suggestions', '\t901 text (selected) WINTER15');
+  assert.equal(enter(focus(promo, '56 text field (settable) Promo code, Value: WINTER15'))?.why, 'nocopy', 'promo field');
+  assert.equal(enter(focus(promo, '901 text (selected) WINTER15'))?.why, 'nocopy', 'promo option');
+  // The list moved one row away from the combo box.
+  const away = oneDown.replace(/^(\t*)31 text Choose your address from the suggestions\.\n/m, '').replace(/^(\t*)(29 list)/m, '$131 text Choose your address from the suggestions.\n$1$2');
+  assert.notEqual(away, oneDown);
+  assert.equal(enter(away)?.why, 'nocopy', 'not adjacent');
+  // A list in the card frame's web area, beside nothing.
+  const frame = focus(after(suggestions, 53, '900 list Address suggestions', '\t901 text (selected) 47 Juniper Court, Asheville, NC 28801'), '901 text (selected) 47 Juniper Court, Asheville, NC 28801');
+  assert.equal(enter(frame)?.why, 'nocopy', 'list in another web area');
+  // A second open combo box and list (here in the card frame) leaves Safari's left-out option without a field.
+  // (The left-out row is numbered after the added rows, as Safari numbers it after every row it printed.)
+  const late = tree => focus(tree, '1000 text (selected) 47 Juniper Court, Asheville, NC 28801');
+  const second = after(suggestions, 53, '900 combo box (expanded, settable) Saved address', '901 list Saved addresses', '\t902 text 12 Elm Street');
+  assert.equal(enter(late(after(suggestions, 53, '900 text Saved address'))), undefined, 'control: one open list');
+  assert.equal(enter(late(second))?.why, 'nocopy', 'two open lists');
+});
+
+test('PG3 attacks: a selected option that is a pay button, says pay, holds a button, or is one of two selected', () => {
+  const variant = row => focus(oneDown.replace(/^(\t*)30 text \(selected\)[^\n]*$/m, '$1' + row), row);
+  for (const row of ['30 button (selected) Pay now', '30 link (selected) Pay now', '30 text (selected) Pay $268.00 now', '30 text (selected) Place order',
+    '30 option (selected) Confirm purchase', '30 text field (selected) Pay'])
+    assert.equal(enter(variant(row))?.why, 'nocopy', row);
+  const holds = after(oneDown, 30, '\t900 button Place order');
+  assert.equal(enter(holds)?.why, 'nocopy', 'holds a button');
+  const inButton = oneDown.replace(/^(\t*)(30 text \(selected\))/m, '$1900 button Pay now\n$1\t$2');
+  assert.equal(enter(inButton)?.why, 'nocopy', 'inside a button');
+  const two = after(oneDown, 30, '900 text (selected) 47 Juniper Court, Asheville, NC 28801');
+  assert.equal(enter(two)?.why, 'nocopy', 'two selected');
+  // Safari's left-out focused row that is a button, has no selected flag or names a payment.
+  for (const line of ['94 button (selected) Pay now', '94 text 47 Juniper Court, Asheville, NC 28801', '94 text (selected) Pay $268.00 now'])
+    assert.equal(enter(focus(suggestions, line))?.why, 'nocopy', line);
+  // A focused row the tree doesn't print but numbered below its last row is not a row Safari left out of this list.
+  assert.equal(enter(focus(suggestions.split('\n').filter(line => !/^\t*40 /.test(line)).join('\n'), '40 text (selected) 47 Juniper Court, Asheville, NC 28801'))?.why, 'nocopy');
+  // A list that already shows a selected row of its own, or whose options have another role.
+  assert.equal(enter(suggestions.replace('30 text 47 Juniper Court, Portland, OR 97214,', firstOption + ','))?.why, 'nocopy', 'list shows its own selection');
+  assert.equal(enter(focus(suggestions, '94 cell (selected) 47 Juniper Court, Asheville, NC 28801'))?.why, 'nocopy', 'another role');
+});
+
+test("PG3 attacks: a combo box in the browser's own sheet or in a page dialog that shows the payment", () => {
+  const combo = ['900 combo box (expanded, settable) Shipping address', '901 list Addresses', '\t902 text (selected) 12 Elm Street'];
+  const go = tree => enginePayment('pressKey', ['Return'], focus(tree, '902 text (selected) 12 Elm Street'), gate('requested', prompt));
+  // Control: the same combo box and list in the page go ahead.
+  assert.equal(go(after(beforePay, 88, ...combo)), undefined);
+  const native = after(sol, 97, ...combo);
+  assert.notEqual(native, sol);
+  assert.equal(go(native)?.why, 'none');
+  const aria = after(beforePay, 88, '89 dialog Pay $268.00 now?', ...combo.map(row => '\t' + row), '\t93 button Pay');
+  assert.equal(go(aria)?.why, 'none');
 });
