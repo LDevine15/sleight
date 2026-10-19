@@ -78,7 +78,7 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
     };
     const labeled = kids.map(kid => ({ number: kid.number, body: kid.body, label: labelOf(kid.body), name: kid.extra[0] }))
       .filter(row => row.label);
-    return { list: list.body, rows: labeled, labels: labeled.map(row => row.label) };
+    return { list: list.body, rows: labeled, labels: labeled.map(row => row.label), focused: !!focus };
   };
   return async (label, options = {}) => {
     const maxReads = options?.maxReads ?? 60, coarse = options?.coarse ?? 4, timeoutMs = options?.timeoutMs ?? 20000;
@@ -126,8 +126,15 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
       return at >= 0 ? at : undefined;
     };
     // A list held at an end shifts its rendered rows less than it moved, so the largest measurement stands.
-    const measure = (how, a, b, d, units) => { const rows = shifted(a, b, d); if (rows !== undefined) rate[how] = Math.max(rate[how] ?? 0, rows / units); };
+    // A step past every rendered row moved at least that many rows: a lower bound (`atLeast`), never a rate for moves.
+    const atLeast = {};
+    const measure = (how, a, b, d, units) => {
+      const rows = shifted(a, b, d);
+      if (rows !== undefined) rate[how] = Math.max(rate[how] ?? 0, rows / units);
+      else atLeast[how] = Math.max(atLeast[how] ?? 0, a.labels.length / units);
+    };
     const move = async (d, units, how = mover) => {
+      if (how === 'key' && !v.focused) throw new Error('pickFromList stopped: no read shows the focus on the list, so no key was sent. Read the window again.');
       if (how === 'key') for (let i = 0; i < units; i++) { await press(d > 0 ? 'Page_Down' : 'Page_Up'); keys++; }
       else { await scroll(v.list, d > 0 ? 'down' : 'up', units); ticks += units; }
       lastStep = units; lastMover = how;
@@ -137,15 +144,23 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
       if (sameRows(next, v) && reads < maxReads) { await sleep(80); next = await look(); }
       return next;
     };
-    // The finest measured mover, for small moves; a key when nothing was measured yet.
+    // The finest measured mover, for small moves; a key when nothing was measured yet. Keys only after a read that shows
+    // the focus on the list: with only a "Selected:" row nothing shows where keys go.
     const finest = () => {
-      const movers = ['key', 'wheel'].filter(how => rate[how] > 0 && (how === 'key' || scroll));
-      return movers.sort((a, b) => rate[a] - rate[b])[0] ?? (scroll && rate.key === 0 ? 'wheel' : 'key');
+      const keyed = v.focused || !scroll;
+      const movers = ['key', 'wheel'].filter(how => rate[how] > 0 && (how === 'key' ? keyed : scroll));
+      return movers.sort((a, b) => rate[a] - rate[b])[0] ?? (scroll && (rate.key === 0 || !keyed) ? 'wheel' : 'key');
     };
     const moverName = how => how === 'key' ? (direction > 0 ? 'Page_Down' : 'Page_Up') : 'the scroll wheel';
     v = await look();
+    // A read that names only a selected row: the wheel on the list, which needs no focus, until a read shows the focus.
+    let blind = !v.problem && !v.focused;
+    if (blind) {
+      if (!scroll) return stop('not-a-list', 'Only a selected row names the list, and keys need a read that shows the focus on it.');
+      mover = 'wheel'; step = FIRST_TICKS;
+    }
     for (;;) {
-      if (v.problem) return stop(listLine ? 'focus-lost' : 'not-a-list', v.problem + (listLine ? ' Keys may have reached another control.' : ' Click the list or one of its rows just before pickFromList, in the same call.'));
+      if (v.problem) return stop(listLine ? 'focus-lost' : 'not-a-list', v.problem + (listLine ? (keys ? ' Keys may have reached another control.' : ' No key was sent.') : ' Click the list or one of its rows just before pickFromList, in the same call.'));
       if (listLine && !sameElement(listLine, v.list)) {
         return stop('focus-lost', 'Focus moved from ' + JSON.stringify(listLine.slice(0, 60)) + ' to ' + JSON.stringify(v.list.slice(0, 60)) + '. Keys may have reached another control.');
       }
@@ -162,6 +177,13 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
             v = await move(direction, step);
             continue;
           }
+          // Firefox's wheel moves about half a row a tick (10 ticks, 5 rows: b7 r2 c16), which the overscan held at the top
+          // of the list hides. The ticks double up to 8 before the wheel counts as stuck.
+          if (lastMover === 'wheel' && lastStep < 8 && ticks + lastStep * 2 <= MAX_TICKS && now() < deadline) {
+            step = lastStep * 2;
+            v = await move(direction, step);
+            continue;
+          }
           return stop('no-progress', 'The list did not move after ' + moverName(lastMover) + ' (' + (direction > 0 ? 'the end' : 'the top') + ' of the list, or ' + (lastMover === 'key' ? 'keys' : 'the wheel') + ' not reaching it).');
         }
         const was = previous.labels;
@@ -175,6 +197,11 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
         heldAt = 0;
         // Safari's web list: about 2.2 rows a Page_Down against 10 a wheel tick (b7 r1 and r3).
         if (mover === 'key' && lastMover === 'key' && rate.key < MIN_KEY_ROWS && scroll) { mover = 'wheel'; step = FIRST_TICKS; }
+      }
+      // Focus shows on the list now: keys may go, and they take over from a wheel slower than MIN_KEY_ROWS rows a tick.
+      if (blind && v.focused) {
+        blind = false;
+        if (!(Math.max(rate.wheel ?? 0, atLeast.wheel ?? 0) >= MIN_KEY_ROWS)) { mover = 'key'; step = fine ? 1 : coarse; }
       }
       const hits = v.rows.filter(isMatch);
       if (hits.length > 1) return stop('ambiguous', hits.length + ' rows match ' + JSON.stringify(target) + '.');
@@ -247,6 +274,14 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
           }
           return { found: true, clicked: false, reason: 'click-failed', reads, keys, ...(ticks ? { ticks } : {}), label: hits[0].label,
             note: 'The row was found but could not be clicked (' + String(error.message ?? error).split('\n')[0] + '). Input may have been sent. Read the window before retrying.' };
+        }
+        // The read after the click must show this row selected: a click on a row the list does not show reaches what is
+        // drawn there (in Firefox's travel form, the Back and Next buttons sit right under the list).
+        const after = await look();
+        const picked = after.rows?.find(isMatch);
+        if (!picked || !/\((?:[^()]*, )?selected(?:, [^()]*)?\)/.test(picked.body)) {
+          return { found: true, clicked: false, reason: 'click-unverified', reads, keys, ...(ticks ? { ticks } : {}), label: hits[0].label,
+            note: 'The row was clicked, but the read after it does not show it selected, so the click may have reached another control. Read the window before retrying.' };
         }
         return { found: true, clicked: true, label: hits[0].label, reads, keys, ...(ticks ? { ticks } : {}) };
       }

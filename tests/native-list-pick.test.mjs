@@ -16,7 +16,7 @@ const sortedNames = n => Array.from({ length: n }, (_, i) =>
 
 // A virtualized list: `visible` rows show, `overscan` more render on each side, a page key moves `page` rows.
 function fakeList(names, { visible = 10, page = 9, overscan = 2, start = 0, focus = 'list', hook } = {}) {
-  const model = { names, position: start, keys: [], reads: 0, focus, stuck: false, snapshot: [], numbers: new Map() };
+  const model = { names, position: start, keys: [], reads: 0, focus, stuck: false, snapshot: [], numbers: new Map(), selected: undefined };
   const clamp = value => Math.max(0, Math.min(model.names.length - visible, value));
   model.key = async key => {
     model.keys.push(key);
@@ -34,7 +34,7 @@ function fakeList(names, { visible = 10, page = 9, overscan = 2, start = 0, focu
       const number = 4 + i - from;
       const name = model.names[i];
       model.numbers.set(number, name);
-      lines.push(`\t\t\t${number} text (selectable) ${name}\n${name.split(' Airport ')[0]}\n${name.split(' ').at(-1)}`);
+      lines.push(`\t\t\t${number} text (${model.selected === name ? 'selected' : 'selectable'}) ${name}\n${name.split(' Airport ')[0]}\n${name.split(' ').at(-1)}`);
     }
     lines.push('\t\t90 text Selected: none', '\t\t91 button Next', '', model.focus === 'list' ? 'The focused UI element is 3 list Departing from'
       : 'The focused UI element is 91 button Next');
@@ -47,7 +47,7 @@ function fakeList(names, { visible = 10, page = 9, overscan = 2, start = 0, focu
 function picker(model, extra = {}) {
   const clicks = [];
   const run = listPicker({ read: model.tree, observe() {}, press: model.key, parse: windowFromText, sameElement, expected: window,
-    sleep: async () => {}, click: async line => { clicks.push(line); }, ...extra });
+    sleep: async () => {}, click: async line => { clicks.push(line); model.selected = /^text \(selectable\) (.*)$/.exec(line)?.[1]; }, ...extra });
   return { clicks, run };
 }
 const labelOfClick = (model, line) => /^text \(selectable\) (.*)$/.exec(line)?.[1];
@@ -237,7 +237,7 @@ test('never clicks a row from a tree that a redraw has already replaced', async 
   const clicks = [];
   const { run } = picker(model, { click: async line => {
     assert.ok(model.snapshot.some(row => row.includes(line)), 'the newest tree shows the row being clicked');
-    clicks.push(line);
+    clicks.push(line); model.selected = labelOfClick(model, line);
   } });
   const result = await run(target);
   assert.equal(shown, 2);
@@ -278,10 +278,10 @@ test('the Safari list shape from the travel race is searched and its whole-label
     'Norcrest Point International MAO', 'Nordale Bay Airport DIT', 'Rosford Valley Field YZB'];
   const compare = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
   const names = [...new Set([...shown, ...sortedNames(990)])].sort(compare);
-  let position = 0;
+  let position = 0, chosen;
   const keys = [];
   const tree = async () => {
-    const rows = names.slice(position, position + 16).map((name, i) => `\t\t\t\t\t\t\t${25 + i} text ${name}`);
+    const rows = names.slice(position, position + 16).map((name, i) => `\t\t\t\t\t\t\t${25 + i} text ${name === chosen ? '(selected) ' : ''}${name}`);
     return ['Window: "sleight benchmark — Book a trip · Skyway", App: Safari.', '0 standard window sleight benchmark — Book a trip · Skyway',
       '\t\t\t\t\t\t23 text Departing from', '\t\t\t\t\t\t24 list (settable) Departing from', ...rows,
       '\t\t\t\t\t\t41 text Selected: Ashbridge International (FTZ)', '\t\t\t\t\t\t42 button Back', '',
@@ -291,7 +291,7 @@ test('the Safari list shape from the travel race is searched and its whole-label
   const run = listPicker({ read: tree, observe() {}, parse: windowFromText, sameElement, sleep: async () => {},
     expected: { title: 'sleight benchmark — Book a trip · Skyway', app: 'Safari', url: null },
     press: async key => { keys.push(key); position = Math.max(0, Math.min(names.length - 16, position + (key === 'Page_Down' ? 15 : -15))); },
-    click: async line => { clicks.push(line); } });
+    click: async line => { clicks.push(line); chosen = line.replace(/^text /, ''); } });
   const result = await run('Norcrest Point International MAO');
   assert.equal(result.clicked, true, JSON.stringify(result));
   assert.deepEqual(clicks, ['text Norcrest Point International MAO']);
@@ -324,7 +324,7 @@ test('input is checked', async () => {
 function guarded(model, { raw = {} } = {}) {
   const clicks = [], keys = [];
   const handle = { getAXState: async () => model.tree(), pressKey: async key => { keys.push(key); await model.key(key); },
-    click: async number => { clicks.push(model.numbers.get(number)); }, ...raw };
+    click: async number => { clicks.push(model.numbers.get(number)); model.selected = model.numbers.get(number); }, ...raw };
   const context = { cua: { getApp: async () => handle }, setTimeout, nodeRepl: { write() {} } };
   const run = code => runInNewContext(`(async () => { ${code} })()`, context);
   return { clicks, keys, run, handle, start: () => run(readCode('await cua.getApp("Firefox");')),
@@ -543,7 +543,11 @@ test('lp1: the recorded Safari and Firefox reads after a list click are accepted
     [safari, 'safari', { number: 24, line: 'list (settable) Departing from' }, 'Ashcrest Municipal EUD'],
     [firefox, 'firefox', { number: 57, line: 'text (selectable) Belcliff Field ABT' }, 'Belbury Valley Municipal JIC']]) {
     const clicks = [];
-    const result = await listPicker({ read: async () => text, observe() {}, press: async () => { throw new Error('no key needed'); },
+    // After the click the row reads as selected, as the recorded reads after a row click show.
+    const result = await listPicker({ read: async () => clicks.length
+      ? text.replace('text (selectable) ' + want, 'text (selected) ' + want).replace('text ' + want, 'text (selected) ' + want) : text,
+    observe() {}, press: async () => { throw new Error('no key needed'); },
+      scroll: async () => { throw new Error('no wheel needed'); },
       parse: windowFromText, sameElement, expected: travelWindow(browser), sleep: async () => {}, clicked,
       click: async line => { clicks.push(line); } })(want);
     assert.equal(result.clicked, true, browser + ' ' + JSON.stringify(result));
@@ -566,7 +570,7 @@ test('lp1: a target named on two lines matches the row whose name and code they 
 const cost = { safari: { read: 0.2, key: 0.18 }, firefox: { read: 0.2, key: 0.02 } };
 const seconds = (browser, r, wheel = 0.27) => (r.reads - (r.ticks ? r.wheelSteps : 0)) * cost[browser].read + r.keys * cost[browser].key + (r.wheelSteps ?? 0) * wheel;
 
-test('lp1: the mover is chosen by measured rows: Safari moves to the wheel, Firefox stays on keys; row 612 of 1,000', async t => {
+test('lp1: the mover is chosen by measured rows: Safari stays on the wheel, Firefox takes keys once focus shows; row 612 of 1,000', async t => {
   const out = {};
   for (const browser of ['safari', 'firefox']) {
     const names = airports(), m = webList(names, { browser, focus: 'city' });
@@ -581,11 +585,13 @@ test('lp1: the mover is chosen by measured rows: Safari moves to the wheel, Fire
       seconds: +seconds(browser, r).toFixed(1), secondsAtB7Wheel: +seconds(browser, r, 1.0).toFixed(1) };
   }
   t.diagnostic('row 612: ' + JSON.stringify(out));
-  // Safari: one 4-key step measures 2.2 rows a key, under 5, so the wheel does the rest.
-  assert.ok(out.safari.keys <= 8 && out.safari.ticks >= 55 && out.safari.wheelSteps <= 16, JSON.stringify(out.safari));
+  // After the click only a selected row names the list, so both start on the wheel (lp1 review). Safari's wheel moves 10
+  // rows a tick and keeps going; Firefox's half a row, so keys take over once a read shows the focus on the list.
+  // Safari's keys are the last centering moves, 2.2 rows each, after a read shows the focus.
+  assert.ok(out.safari.keys <= 4 && out.safari.ticks >= 55 && out.safari.wheelSteps <= 16, JSON.stringify(out.safari));
   assert.ok(out.safari.secondsAtB7Wheel < 20, 'inside the 20 s cap even at 1 s a wheel step');
-  assert.ok(out.firefox.ticks === 0 && out.firefox.keys >= 60, JSON.stringify(out.firefox));
-  assert.ok(out.firefox.reads <= 24, JSON.stringify(out.firefox));
+  assert.ok(out.firefox.wheelSteps <= 4 && out.firefox.keys >= 60, JSON.stringify(out.firefox));
+  assert.ok(out.firefox.reads <= 30, JSON.stringify(out.firefox));
   // The old picker paged Safari by key only: 612 rows at 2.2 rows a key.
   const old = { keys: Math.ceil(612 / 2.2), reads: Math.ceil(612 / 2.2 / 4) + 2 };
   t.diagnostic('old Safari keys-only estimate: ' + JSON.stringify({ ...old, seconds: +(old.keys * 0.18 + old.reads * 0.2).toFixed(1) }));
@@ -691,4 +697,43 @@ test('lp1: app.pickFromList after app.click on the list, through the guard: keys
   other.focus = 'city';
   await assert.rejects(run2(guardedCode(`await app.click(24); await app.pressKey("Tab"); return await app.pickFromList(${JSON.stringify(TARGET)});`, travelWindow('safari'))),
     /not-a-list/);
+});
+
+// lp1 review finding 2: with only a "Selected:" row naming the list, nothing shows where keys go, so the search uses the
+// wheel on the list until a read shows the focus on it. A page script that moves focus mid-search gets no key.
+test('lp1 review: no key while only a selection names the list; focus moved elsewhere stops the search with no key sent', async () => {
+  for (const browser of ['safari', 'firefox']) {
+    const names = airports(), m = webList(names, { browser });
+    let blind = 0;
+    const tree = m.tree;
+    m.tree = async () => { const text = await tree(); m.blind = !/^The focused UI element is /m.test(text); return text; };
+    const key = m.key;
+    m.key = async k => { if (m.blind) blind++; await key(k); };
+    await m.tree(); await m.clickNumber(m.list);
+    const { run, clicks } = webPicker(m, browser, { clicked: { number: m.list, line: m.listLine } });
+    const result = await run(TARGET);
+    assert.equal(result.clicked, true, browser + ' ' + JSON.stringify(result));
+    assert.deepEqual(clicks, [TARGET]);
+    assert.equal(blind, 0, browser + ': keys sent after a read with no focus line');
+    // Focus moves to the City pop up button after the click: the search reaches a read that shows it and stops.
+    const moved = webList(names, { browser });
+    await moved.tree(); await moved.clickNumber(moved.list); moved.focus = 'city';
+    const stopped = await webPicker(moved, browser, { clicked: { number: moved.list, line: moved.listLine } }).run(TARGET);
+    assert.equal(stopped.reason, 'focus-lost', browser + ' ' + JSON.stringify(stopped));
+    assert.equal(moved.keysElsewhere, 0);
+  }
+});
+
+// lp1 review finding 3: the read after the pick's click must show the row selected. A click that reached something else
+// (a Firefox row drawn under the form's buttons) reports clicked: false with the reason, never a pick.
+test('lp1 review: a click the next read does not show as selected is reported unverified, through the guard too', async () => {
+  const names = airports().slice(0, 200), m = webList(names, { browser: 'firefox' });
+  const { run } = webPicker(m, 'firefox', { click: async () => { m.misclicks++; } });
+  const result = await run(names[40]);
+  assert.equal(result.clicked, false);
+  assert.equal(result.reason, 'click-unverified');
+  assert.match(result.note, /another control/);
+  const g = guarded(fakeList(sortedNames(100)), { raw: { click: async () => {} } });
+  await g.start();
+  await assert.rejects(g.call(`return await app.pickFromList(${JSON.stringify(sortedNames(100)[40])});`), /pickFromList stopped \(click-unverified\)/);
 });
