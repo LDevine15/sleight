@@ -238,7 +238,7 @@ test('with turbo off in Codex the hook is answered at once and binds nothing', a
 
 // Claude Code byte for byte: one scripted session through the mod's handshake, a turbo call, its turn end, and a
 // turn_started a model might name. tests/fixtures/codex/claude-code-parity.json was written from the relay before
-// Codex turbo (SLEIGHT_WRITE_PARITY=1 on the base commit) and every later run must match it.
+// Codex turbo (SLEIGHT_WRITE_PARITY=1 on the base commit). The MT fixture changes only the three reviewed descriptions.
 test('under Claude Code the relay\'s traffic is unchanged by Codex turbo', async t => {
   const h = await harness(t, { clientInfo: CLAUDE, mod: true });
   await h.client({ id: 1, method: 'tools/list' });
@@ -261,7 +261,7 @@ test('under Claude Code the relay\'s traffic is unchanged by Codex turbo', async
   // The engine-bound js code carries the relay's guard setup, which other work changes; Codex turbo never touches it.
   const toServer = h.toServer.map(m => m.params?.name === 'js' ? { ...m, params: { ...m.params, arguments: { ...m.params.arguments, code: '<engine code>' } } } : m);
   const transcript = normalize({ toClient: h.toClient, toServer, worker: h.events });
-  const path = fixturePath('claude-code-parity.json');
+  const path = fixturePath(process.env.SLEIGHT_MT === '0' ? 'claude-code-parity.json' : 'claude-code-parity-mt.json');
   if (process.env.SLEIGHT_WRITE_PARITY === '1') writeFileSync(path, JSON.stringify(transcript, null, 1) + '\n');
   assert.deepEqual(transcript, json(path));
 });

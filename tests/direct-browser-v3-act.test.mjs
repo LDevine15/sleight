@@ -567,8 +567,8 @@ test('inspectTarget marks only an a or area with an http(s) href and no credenti
 
 for (const [name, background, pageOpened, expected] of [
   ['an unmodified click and a tab the page opened', false, true, /probably took the foreground/],
-  ['an unmodified click and a tab sleight opened', false, false, /opened background tab/],
-  ['a click with the background modifier', true, true, /opened background tab/],
+  ['an unmodified click and a tab sleight opened', false, false, (process.env.SLEIGHT_MT === '0' ? /opened background tab/ : /opened tab/)],
+  ['a click with the background modifier', true, true, (process.env.SLEIGHT_MT === '0' ? /opened background tab/ : /opened tab/)],
 ]) test(`AD1 backstop: the popup outcome for ${name}`, async () => {
   const f = fixture({ onClick: page => page.emit('popup', { url: () => 'https://example.invalid/popup', isClosed: () => false }) });
   f.tab.background = background; f.tab.pageOpened = () => pageOpened;
@@ -586,8 +586,8 @@ test('AD1 backstop: a popup counted at settle time is reported once, without a p
 });
 
 for (const [name, background, backgroundPopup, expected, notExpected] of [
-  ['a modified click and a popup no settling classified as background (a script opened it later)', true, false, /probably took the foreground \(the page opened it after a click, outside the background handling/, /opened background tab/],
-  ['a modified click and a popup its settling classified as background', true, true, /opened background tab/, /probably took the foreground/],
+  ['a modified click and a popup no settling classified as background (a script opened it later)', true, false, /probably took the foreground \(the page opened it after a click, outside the background handling/, (process.env.SLEIGHT_MT === '0' ? /opened background tab/ : /opened tab/)],
+  ['a modified click and a popup its settling classified as background', true, true, (process.env.SLEIGHT_MT === '0' ? /opened background tab/ : /opened tab/), /probably took the foreground/],
 ]) test(`AD1 pop4: the popup outcome for ${name}`, async () => {
   const f = fixture({ onClick: page => page.emit('popup', { url: () => 'https://example.invalid/popup', isClosed: () => false }) });
   f.tab.background = background; f.tab.pageOpened = () => true; f.tab.popupIsBackground = () => backgroundPopup;
@@ -606,16 +606,16 @@ test('AD1 pop4: a popup counted late says why, and a modified click is not blame
 test('AD1 pop4: tabs the page can raise are listed after a click or key press, and only then', async () => {
   const f = fixture(); f.tab.raisablePopups = async () => ['t7', 't9'];
   const clicked = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
-  assert.match(clicked.lines[0], /Tabs t7, t9 \(opened by this page, another origin\) can be raised to the foreground by the page at any time, and sleight cannot block or detect that/);
+  assert.match(clicked.lines[0], process.env.SLEIGHT_MT === '0' ? /Tabs t7, t9 \(opened by this page, another origin\) can be raised to the foreground by the page at any time, and sleight cannot block or detect that/ : /the page can bring t7, t9 forward on its own/);
   f.tab.raisablePopups = async () => ['t7'];
   const single = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
-  assert.match(single.lines[0], /Tab t7 \(opened by this page, another origin\) can be raised/);
+  assert.match(single.lines[0], process.env.SLEIGHT_MT === '0' ? /Tab t7 \(opened by this page, another origin\) can be raised/ : /the page can bring t7 forward on its own/);
   f.tab.raisablePopups = async () => [];
   const none = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
-  assert.doesNotMatch(none.lines[0], /can be raised/);
+  assert.doesNotMatch(none.lines[0], /can be raised|the page can bring/);
   f.tab.raisablePopups = async () => { throw Error('closed'); };
   const failed = await f.run(f.tab, [{ do: 'click', ref: 'e1' }], {});
-  assert.doesNotMatch(failed.lines[0], /can be raised/, 'a failed lookup adds nothing and breaks nothing');
+  assert.doesNotMatch(failed.lines[0], /can be raised|the page can bring/, 'a failed lookup adds nothing and breaks nothing');
 });
 
 test('v3 accepts a literal space and a literal newline as keys, and still rejects an empty or oversized key', async () => {
@@ -638,3 +638,28 @@ test('v3 checks the page\'s site before every step\'s input, so a step that land
   assert.equal(result.lines[2], '3 press: not reached');
   assert.deepEqual(checked, ['https://example.invalid/', 'https://blocked.example/next']);
 });
+
+
+import { withMT } from './fixtures/mt-env.mjs';
+import { check as ruleCheck } from '../plugins/sleight/lib/direct-browser/rules.mjs';
+import { fixture as ruleFixture } from './direct-browser-rules-fixture.mjs';
+for (const mode of [undefined, '0']) test(`MT1 popup ownership and foreground disclosure, switch=${mode}`, async () => withMT(mode, async () => {
+  const popup = { url: () => 'https://other.invalid/private', isClosed: () => false };
+  const f = fixture({ onClick(page) { f.tab.popups.push({ tab: 'tchild' }); page.emit('popup', popup); } });
+  Object.assign(f.tab, { tab: 'tparent', background: true, popups: [], popupIsBackground: () => true, raisablePopups: async () => ['tchild'] });
+  const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'type', ref: 'e2', text: 'never sent' }], {});
+  assert.equal(result.lines[0], mode === '0'
+    ? '1 click e1: opened background tab tchild at https://other.invalid (opener tparent). Tab tchild (opened by this page, another origin) can be raised to the foreground by the page at any time, and sleight cannot block or detect that'
+    : '1 click e1: opened tab tchild at https://other.invalid (you control it; opener tparent); the page can bring it forward on its own');
+  assert.equal(f.actions.length, 1); assert.equal(result.stoppedAt, 1); assert.match(result.lines[1], /not reached/);
+}));
+for (const mode of [undefined, '0']) test(`MT2 confirmation still refuses every input, switch=${mode}`, async () => withMT(mode, async () => {
+  const f = fixture(), payment = ruleFixture();
+  const run = createActionRunner({ check: () => ruleCheck(payment.ctx, 'click', payment.pay()),
+    snapshot: async () => ({ text: 'page', number: 2 }) });
+  const result = await run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'type', ref: 'e2', text: 'must not run' }], {});
+  assert.equal(result.lines[0], '1 click e1: not run: confirmation required through the trusted consent UI' + (mode === '0' ? '; use the engine browser path if needed' : ''));
+  assert.equal(result.stoppedAt, 1); assert.match(result.lines[1], /not reached/); assert.deepEqual(f.actions, []);
+  const refused = ruleCheck(payment.ctx, 'Target.activateTarget', payment.target());
+  assert.deepEqual(refused, { verdict: 'refuse', message: 'Background-only operation required.' + (mode === '0' ? ' Use the engine browser path if needed.' : '') });
+}));

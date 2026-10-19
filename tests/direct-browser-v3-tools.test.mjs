@@ -184,7 +184,7 @@ test('act accepts wait ms and navigate, and a rejected field or value says which
   const verb = await d.call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'goto', ref: 'e1' }] } });
   assert.match(verb.text, /arguments\.steps\.do has an unsupported value; use click, .*navigate/);
   const bare = await d.call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'navigate' }] } });
-  assert.equal(bare.isError, true); assert.match(bare.text, /^navigate needs the ref of an http\(s\) link .*use click\. Use the engine/);
+  assert.equal(bare.isError, true); assert.match(bare.text, process.env.SLEIGHT_MT === '0' ? /^navigate needs the ref of an http\(s\) link .*use click\. Use the engine/ : /^navigate needs the ref of an http\(s\) link .*use click\.$/);
 });
 
 test('an error that already ends in a period gets one period before the hint, not two', async () => {
@@ -192,7 +192,7 @@ test('an error that already ends in a period gets one period before the hint, no
   const d = createToolDispatcher({ browser: 'bfixture', pages: { enqueue: async (id, run) => run(entry), tab: () => entry },
     snapshot: async () => { throw Error('Snapshot unavailable; try again.'); }, runSteps: async () => assert.fail('no'), fillFields: async () => assert.fail('no') });
   const out = await d.call({ name: 'browser_read', arguments: { tab: 't1' } });
-  assert.equal(out.text, 'Snapshot unavailable; try again. Use the engine browser path if needed.');
+  assert.equal(out.text, 'Snapshot unavailable; try again.' + (process.env.SLEIGHT_MT === '0' ? ' Use the engine browser path if needed.' : ''));
   assert.doesNotMatch(out.text, /\.\./);
 });
 
@@ -210,7 +210,7 @@ test('a read of a tab the page closed itself returns its owned opener with a one
   assert.equal(act.isError, true); assert.match(act.text, /^owned tab closed; read its opener\./); // only a read follows the opener
   closed.add('t3'); pages.closedOpener = () => undefined;
   const lost = await d.call({ name: 'browser_read', arguments: { tab: 't3' } });
-  assert.equal(lost.isError, true); assert.match(lost.text, /^owned tab closed; read its opener\. Use the engine browser path if needed\.$/);
+  assert.equal(lost.isError, true); assert.equal(lost.text, 'owned tab closed; read its opener.' + (process.env.SLEIGHT_MT === '0' ? ' Use the engine browser path if needed.' : ''));
 });
 
 test('an app window lists with its trusted label instead of the opaque app origin, cleaned of line breaks', async () => {
@@ -224,7 +224,7 @@ test('an app window lists with its trusted label instead of the opaque app origi
 
 test('browser_fill names the list reorder it already performs', () => {
   const fill = browserTools('bfixture').find(t => t.name === 'browser_fill');
-  assert.match(fill.description, /drag-reorderable list takes all its row names in the wanted order/);
+  assert.match(fill.description, process.env.SLEIGHT_MT === '0' ? /drag-reorderable list takes all its row names in the wanted order/ : /all row names in the wanted order for a drag-reorderable list/);
 });
 
 // The user's site blocks (permissions.mjs): sites(url) gives the line to relay, and onSite reports the origin turbo acts on.
@@ -308,3 +308,40 @@ test('browser_act hands runSteps a site check that refuses once the page moves t
   assert.equal(act.isError, true);
   assert.equal(f.calls.length, 0);
 });
+
+
+// MT3, MT5, MT6 and MT7 share one switch; schemas and safety clauses stay fixed.
+import { withMT } from './fixtures/mt-env.mjs';
+for (const mode of [undefined, '0']) test(`MT descriptions and scroll guidance, switch=${mode}`, async () => withMT(mode, async () => {
+  const tools = browserTools('bfixture'), descriptions = Object.fromEntries(tools.map(t => [t.name, t.description]));
+  for (const tool of tools) assert.ok(tool.description.length <= 2048);
+  if (mode === '0') {
+    assert.match(descriptions.browser_act, /Stops at boundaries or failure/);
+    assert.match(descriptions.browser_fill, /Values are text, boolean, number or string array/);
+    assert.match(descriptions.browser_tabs, /Never acquire engine-path tabs/);
+  } else {
+    assert.match(descriptions.browser_act, /A step that navigates, opens a tab or raises a dialog ends the batch \(later steps read "not reached"\), so put one such step last/);
+    assert.match(descriptions.browser_fill, /true or false for a checkbox, switch or the radio option to choose/);
+    assert.match(descriptions.browser_fill, /submit is an observed ref, only when the user asked for that submit/);
+    assert.match(descriptions.browser_tabs, /keep one open for the user to look at after the turn/);
+    assert.match(descriptions.browser_tabs, /hand one off when the user must act in it/);
+  }
+  assert.match(descriptions.browser_act, /Never blindly resend an uncertain submit/);
+  const { dispatcher, calls } = fixture();
+  const result = await dispatcher.call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'scroll', to: 'e1' }] } });
+  assert.equal(result.isError, true); assert.equal(calls.length, 0);
+  assert.equal(result.text, mode === '0' ? 'scroll needs until, dx or dy. Use the engine browser path if needed.'
+    : 'scroll needs until (text to bring into view), dx or dy.');
+}));
+for (const mode of [undefined, '0']) test(`MT2 dispatcher failures preserve outcome and no-send status, switch=${mode}`, async () => withMT(mode, async () => {
+  const entry = { page: {}, state: {} };
+  const make = error => createToolDispatcher({ pages: { enqueue: async (_, run) => run(entry) },
+    snapshot: async () => { throw error; }, runSteps: async () => { throw error; }, fillFields: async () => { throw error; } });
+  const hint = mode === '0' ? ' Use the engine browser path if needed.' : '';
+  const refused = await make(Error('Read the target before input.')).call({ name: 'browser_read', arguments: { tab: 't1' } });
+  assert.deepEqual(refused, { isError: true, text: 'Read the target before input.' + hint });
+  const uncertain = await make(Error('connection closed')).call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'click', ref: 'e1' }] } });
+  assert.deepEqual(uncertain, { isError: false, text: 'Operation outcome is unconfirmed. Read current state before deciding what remains; do not replay input blindly.' + hint });
+  const notRun = await make(Object.assign(Error('rule refused'), { notRun: true })).call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'click', ref: 'e1' }] } });
+  assert.deepEqual(notRun, { isError: true, text: 'rule refused. Nothing was sent.' });
+}));

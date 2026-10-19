@@ -53,5 +53,7 @@
   },
   "js": "9ec4a1d4a94be18503d350cf9cd3433d1adb9b6479ff5aa870df59e06574b491",
   "browserReviewOutcomes": "5c573cbc59689bbf2ba45e41b65b742c79050aa11cf002ec7d4f43a1acd80438",
-  "browserClosedOutcome": "9e5f2ae21e3b53f89a2f31705de162fed1496da007e66246fdf84beb669a8698"
+  "browserClosedOutcome": "9e5f2ae21e3b53f89a2f31705de162fed1496da007e66246fdf84beb669a8698",
+  "browserToolsLegacy": "a5c49b3a88412c5912fb0b509d4c817335affe187af2880a6f7b4888bd97e839",
+  "browserToolsMT": "d6ba0da365c53e8bcccd76525aae3e0898c4b654e2ba4fc9094fbddc4be67238"
 }

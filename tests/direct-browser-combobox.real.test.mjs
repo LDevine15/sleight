@@ -35,7 +35,7 @@ async function harness() {
   return { logs, call, async open(path = '/') {
       const result = await call('browser_open', { url: origin + path });
       assert.equal(result.isError, false, result.text);
-      return { tab: /\bt[0-9a-f]{32}\b/.exec(result.text)?.[0], text: result.text };
+      return { tab: /\bt(?:[a-z2-7]{9}|[0-9a-f]{32})\b/.exec(result.text)?.[0], text: result.text };
     },
     async ref(tab, name, role) {
       const read = await call('browser_read', { tab }), found = new RegExp(role + '[^\\n]*"' + name + '"[^\\n]*\\[ref=((?:f\\d+)?[es]\\d+)\\]').exec(read.text)?.[1];

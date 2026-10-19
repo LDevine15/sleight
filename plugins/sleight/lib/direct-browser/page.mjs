@@ -2259,7 +2259,12 @@ export function createPageRegistry({ browser, session, context = browser?.contex
     catch (error) { if (error.message !== endpointBlock) throw error; blocked = true; }
     if (blocked) { await blockPage(page, info, opener); return; }
     if (targets.has(info.targetInfo.targetId)) return targets.get(info.targetInfo.targetId);
-    const entry = { tab: 't' + randomUUID().replaceAll('-', ''), targetId: info.targetInfo.targetId, page, cdp: info.cdp,
+    // Nine independent base32 digits carry 45 random bits. Check every retained record too, so a stale handle is never reused.
+    let handle;
+    if (process.env.SLEIGHT_MT === '0') handle = 't' + randomUUID().replaceAll('-', '');
+    else do { handle = 't' + Array.from(randomBytes(9), byte => 'abcdefghijklmnopqrstuvwxyz234567'[byte & 31]).join(''); }
+    while (records.has(handle));
+    const entry = { tab: handle, targetId: info.targetInfo.targetId, page, cdp: info.cdp,
       state: { snapshotNo: 0, submitUnconfirmed: false }, opener: opener?.tab, popups: [], popupWaitMs, endpoint,
       closed: page.isClosed(), released: false, queue: Promise.resolve(), openedBySleight: allocations.get(info.targetInfo.targetId)?.bySleight === true,
       canAccessOpener: info.targetInfo.canAccessOpener };

@@ -5,7 +5,7 @@
 // dispatch. target carries final element metadata, prior metadata, page-observed
 // {terms:{page:{item,amount,payee,currency?},method}}, and the owning tab state.
 const allow = Object.freeze({ verdict: 'allow' });
-const refuse = message => ({ verdict: 'refuse', message: message + ' Use the engine browser path if needed.' });
+const refuse = message => ({ verdict: 'refuse', message: message + (process.env.SLEIGHT_MT === '0' ? ' Use the engine browser path if needed.' : '') });
 const payments = new WeakMap();
 const captures = new WeakMap();
 const paymentPages = new WeakSet(), historyRequests = new WeakMap();

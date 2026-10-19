@@ -601,3 +601,10 @@ folder (default `~/Library/Caches/sleight-bench/sleight-arm`). `SLEIGHT_STUB_OSA
 `osascript` and `open` in the startup-cost measurement scripts. A measurement then doesn't run a
 real app. `SLEIGHT_CHATGPT_APP` points `bin/sleight-mcp` and `sleight-mcp setup` at another ChatGPT copy
 (default `/Applications/ChatGPT.app`).
+
+## Model-time A/B switch
+
+`SLEIGHT_MT=0` restores the earlier turbo wording and 33-character tab handles for an A/B.
+The default uses shorter popup and refusal lines, explains field values, batch boundaries and tab actions,
+and explains viewport markers. Tab handles use nine random base32 characters after `t` (45 random bits),
+with collision checks against registered handles. Payments, confirmations and approvals follow the same rules.

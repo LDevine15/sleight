@@ -34,7 +34,7 @@ test('benchmark worker opens and reads a real local page by 127.0.0.1 and by nam
     try {
       const opened = await call('browser_open', { url: origin + '/' });
       assert.equal(opened.isError, false, opened.text);
-      const tab = /\bt[0-9a-f]{32}\b/.exec(opened.text)?.[0];
+      const tab = /\bt(?:[a-z2-7]{9}|[0-9a-f]{32})\b/.exec(opened.text)?.[0];
       assert.ok(tab, opened.text);
       const read = await call('browser_read', { tab });
       assert.equal(read.isError, false, read.text);
@@ -89,7 +89,7 @@ test('benchmark worker follows a plain Go to checkout anchor on a page with wind
     try {
       const opened = await call('browser_open', { url: origin + '/shop/cart' });
       assert.equal(opened.isError, false, opened.text);
-      const tab = /\bt[0-9a-f]{32}\b/.exec(opened.text)?.[0];
+      const tab = /\bt(?:[a-z2-7]{9}|[0-9a-f]{32})\b/.exec(opened.text)?.[0];
       const ref = label => new RegExp('link "' + label + '" \\[ref=([a-z0-9]+)\\]').exec(opened.text)?.[1];
       const go = /link "Go to checkout" \[ref=([a-z0-9]+)\]/.exec(opened.text)?.[1];
       const own = [...opened.text.matchAll(/link "Go to checkout" \[ref=([a-z0-9]+)\]/g)].map(match => match[1])[1], buy = ref('Buy now');

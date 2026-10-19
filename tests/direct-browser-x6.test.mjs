@@ -205,7 +205,7 @@ for (const rejects of [false, true]) test(`a closing submit retains its warning 
   assert.equal(out.isError, false, out.text);
   assert.match(out.text, /tab closed itself.*opener t1 below/);
   assert.match(out.text, /its submit is unconfirmed; check the opener or the account before paying again/);
-  if (!rejects) assert.match(out.text, /t3.*can be raised/);
+  if (!rejects) assert.match(out.text, process.env.SLEIGHT_MT === '0' ? /t3.*can be raised/ : /the page can bring t3 forward on its own/);
 });
 
 test('history navigation waits for its document and stops before the next step', async () => {

@@ -218,7 +218,7 @@ function ownInput(state, dialog) {
 
 function ruleMessage(result) {
   if (result === 'allow' || result?.verdict === 'allow' || result?.kind === 'allow') return null;
-  if (result?.verdict === 'confirm' || result?.kind === 'confirm') return 'confirmation required through the trusted consent UI; use the engine browser path if needed';
+  if (result?.verdict === 'confirm' || result?.kind === 'confirm') return 'confirmation required through the trusted consent UI' + (process.env.SLEIGHT_MT === '0' ? '; use the engine browser path if needed' : '');
   return clean(result?.message ?? result?.msg ?? 'rule check refused; read the page or use the engine browser path');
 }
 
@@ -459,6 +459,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           : boundary?.kind === 'dialog' ? dialogOutcome(boundary.dialog)
           : boundary?.kind === 'popup' ? endpointURL(boundary.popup.url(), tab.endpoint) ? endpointBlock : boundary.popup.isClosed() ? 'opened background tab that closed itself; opener below'
             : foregroundTabs > 0 ? `opened a tab that probably took the foreground (${why}, and sleight cannot tell which tab was active before); opener below: ` + originOf(boundary.popup.url())
+            : process.env.SLEIGHT_MT !== '0' ? `opened tab${popupTab ? ' ' + popupTab : ''} at ${originOf(boundary.popup.url())} (you control it; opener ${tab.tab ?? 'this tab'})`
             : `opened background tab${popupTab ? ' ' + popupTab : ''} at ${originOf(boundary.popup.url())} (opener ${tab.tab ?? 'this tab'})`
           : boundary?.kind === 'close' ? 'tab closed' + (submit && state.submitUnconfirmed === submit ? '; ' + closedSubmitWarning : '')
           : popupTab && foregroundTabs > 0 ? `opened a tab ${popupTab} that probably took the foreground (${why}, and sleight cannot tell which tab was active before); the opener's page is below`
@@ -472,7 +473,11 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         // A page can raise a window it opened from another origin with focus(); no patch in the page, and no CDP call, stops or reports that.
         const raisable = clicked ? (await tab.raisablePopups?.().catch(() => []) ?? []) : [];
         lines.push(label + ': ' + outcome + (foregroundTabs > 0 && boundary?.kind !== 'popup' && !popupTab ? `. A tab the page opened probably took the foreground (${why})` : '')
-          + (raisable.length ? `. ${raisable.length > 1 ? 'Tabs' : 'Tab'} ${raisable.join(', ')} (opened by this page, another origin) can be raised to the foreground by the page at any time, and sleight cannot block or detect that` : '') + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
+          + (raisable.length ? process.env.SLEIGHT_MT !== '0'
+            ? boundary?.kind === 'popup' && raisable.length === 1 && raisable[0] === popupTab && !foregroundTabs
+              ? '; the page can bring it forward on its own'
+              : `; the page can bring ${raisable.join(', ')} forward on its own`
+            : `. ${raisable.length > 1 ? 'Tabs' : 'Tab'} ${raisable.join(', ')} (opened by this page, another origin) can be raised to the foreground by the page at any time, and sleight cannot block or detect that` : '') + (heldOpenings > 0 ? '. Page script tried to open ' + (heldOpenings > 1 ? heldOpenings + ' tabs' : 'a tab') + ' after this input; held, nothing opened' : ''));
         if (boundary || settleCapped) { stoppedAt = index + 1; break; }
       } catch (error) {
         if (lossFixes && started && armed?.boundary?.kind === 'close') {
