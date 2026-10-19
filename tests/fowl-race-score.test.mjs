@@ -5,8 +5,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gradeGateTask, harnessFailure, raceProblems, runErrorClass } from '../bench/fowl/real-gate-grade.mjs';
-import { expandRounds, flipped, loadRound, regradeRow, scoreRounds } from '../bench/fowl/race-score.mjs';
+import { COVER_MIN, coverRefusals, gradeGateTask, harnessCover, harnessFailure, raceProblems, runErrorClass } from '../bench/fowl/real-gate-grade.mjs';
+import { coveredRows, expandRounds, flipped, loadRound, regradeRow, scoreRounds } from '../bench/fowl/race-score.mjs';
 import { runRealGate } from '../bench/fowl/real-gate.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
@@ -318,4 +318,81 @@ test('a live round records the engine at its start and end, and flags a change',
   const plan = await runRealGate({ args: { surface: 'codex', 'real-browser': 'firefox', out: join(dir, 'dry'), 'dry-run': true }, tasks: [gateTask],
     runtime: { ...gateRuntime(dir, codexOk), readEngine: () => ({ version: '26.1013.40934' }), print: () => {}, readVersion: () => '1', preflight: () => ({}) } });
   assert.equal(plan.engine.version, '26.1013.40934');
+});
+
+// SOL-L1: event lines in the shapes race-1017's Sol rounds saved (firefox-codex-sleight-sol-b16-r3, firefox-codex-sol-r3).
+const dragRefused = owner => JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', server: 'plugin_sleight_computer', tool: 'drag',
+  arguments: { app: 'Firefox', from: [700, 1470], to: [700, 1350] }, status: 'failed', error: null, result: { content: [{ type: 'text',
+    text: JSON.stringify({ path: 'none', error: `${owner} covers the window at the drag points, and this drag has no selected text; nothing was pressed` }, null, 1) }] } } });
+const engineDrag = JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', server: 'cua_repl', tool: 'js', status: 'completed', error: null,
+  arguments: { code: 'await ff.drag([700,1011], [700,887]); await ff.getAXState();' }, result: { content: [{ type: 'text', text: 'no change' }] } } });
+const claudeDrag = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'd', name: 'mcp__plugin_sleight_computer__drag', input: { app: 'Firefox', from: 91, to: 90 } }] } });
+const docsOnly = JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', tool: 'js', status: 'completed', error: null,
+  arguments: { code: 'let app = await cua.getApp("Firefox")' }, result: { content: [{ type: 'text', text: 'drag(from: Vec2, to: Vec2): Promise<void>; use app.drag(from, to)' }] } } });
+const claude83 = { frame: { x: 4, y: 33, width: 1280, height: 854 }, covering: [{ owner: 'Claude', layer: 0, fraction: 0.826 }], moved: false };
+
+test('a failed row whose drag met another app\'s window is harness-covered, by refusal or by reading, for every arm', () => {
+  assert.deepEqual(coverRefusals(dragRefused('Claude')), ['Claude']);
+  assert.deepEqual(coverRefusals('{"fallbackReason":"background skipped: Claude covers the window at the drag points"}'), [], 'a text drag that went ahead');
+  // sleight in Codex: the drag tool named the app, and the start reading had nothing over the window (b16-r2 helium).
+  assert.deepEqual(harnessCover({ ok: false, eventsText: [codexOk, dragRefused('Claude')].join('\n'), readings: [{ covering: [] }, null] }),
+    { owner: 'Claude', owners: ['Claude'], source: 'refusal', reason: 'harness-covered by Claude, drag refused' });
+  // Codex's own computer use: no refusal text, the engine's drag in js and a reading of 83%.
+  assert.equal(harnessCover({ ok: false, eventsText: engineDrag, readings: [claude83] }).reason, 'harness-covered by Claude 83%');
+  assert.equal(harnessCover({ ok: false, eventsText: claudeDrag, readings: [null, { covering: [{ owner: 'Terminal', fraction: 0.12 }] }] }).reason, 'harness-covered by Terminal 12%');
+  assert.equal(harnessCover({ ok: false, eventsText: [engineDrag, dragRefused('Claude')].join('\n'), readings: [claude83] }).reason, 'harness-covered by Claude 83%, drag refused');
+  // A pass, a run with no drag (tool docs naming drag don't count), and a notification banner under COVER_MIN stay scored.
+  assert.equal(harnessCover({ ok: true, eventsText: dragRefused('Claude'), readings: [claude83] }), null);
+  assert.equal(harnessCover({ ok: false, eventsText: docsOnly, readings: [claude83] }), null);
+  assert.equal(harnessCover({ ok: false, eventsText: engineDrag, readings: [{ covering: [{ owner: 'UserNotificationCenter', fraction: COVER_MIN - 0.01 }] }, { error: 'timeout' }] }), null);
+});
+
+test('race-score leaves harness-covered failures out of the table and names them with the app', t => {
+  const root = mkdtempSync(join(tmpdir(), 'race-score-cover-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const covered = round(root, 'real-f1-codex-sol', 'firefox', 'codex-sol', [['form-settings', 170, false, { events: engineDrag }], ['form-travel', 60, true],
+    ['mdn', 20, false, { events: codexOk }]]);
+  const results = JSON.parse(readFileSync(join(covered, 'results.json'), 'utf8'));
+  for (const row of results) row.cover = claude83;
+  writeFileSync(join(covered, 'results.json'), JSON.stringify(results));
+  round(root, 'real-f1-sleight', 'firefox', 'sleight', [['form-settings', 90, false, { events: [claudeDrag, dragRefused('Claude')].join('\n') }], ['form-travel', 50, true]]);
+  round(root, 'real-f2-sleight', 'firefox', 'sleight', [['form-settings', 80, true, { events: [claudeDrag, dragRefused('Claude'), codexOk].join('\n') }]]);
+  const rounds = expandRounds([join(root, 'real-*')]).map(loadRound);
+  assert.deepEqual(coveredRows(rounds).map(c => [c.round, c.arm, c.task, c.reason]), [
+    ['real-f1-codex-sol', 'codex-sol', 'form-settings', 'harness-covered by Claude 83%'],
+    ['real-f1-sleight', 'sleight', 'form-settings', 'harness-covered by Claude, drag refused']]);
+  const table = scoreRounds(rounds).firefox.table;
+  assert.deepEqual([table.sleight['form-settings'].runs.length, table.sleight['form-settings'].passes.length], [1, 1]);
+  assert.equal(table['codex-sol']['form-settings'], undefined);
+  // A failure with no drag in a covered window still counts against the arm.
+  assert.deepEqual([table['codex-sol'].mdn.runs.length, table['codex-sol'].mdn.passes.length], [1, 0]);
+  const cli = spawnSync(process.execPath, [join(repo, 'bench/fowl/race-score.mjs'), root], { encoding: 'utf8' });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.match(cli.stdout, /Failed rows excluded as harness-covered, every arm alike \(2\):\n  real-f1-codex-sol codex-sol form-settings: harness-covered by Claude 83%/);
+  const json = JSON.parse(spawnSync(process.execPath, [join(repo, 'bench/fowl/race-score.mjs'), root, '--json'], { encoding: 'utf8' }).stdout);
+  assert.equal(json.covered.length, 2);
+  // A saved row without its events keeps what the gate recorded.
+  const saved = { task: { name: 'form-settings' }, surface: 'codex-sol', wallMs: 1000, successfulBrowserCalls: 3, outcome: { ok: false, cell: 'FAIL: x', problems: ['x'] },
+    harnessCover: { owner: 'Claude', reason: 'harness-covered by Claude 83%' } };
+  assert.equal(regradeRow(saved).harnessCover.reason, 'harness-covered by Claude 83%');
+});
+
+test('a live round reads the cover during the run, records it, and excludes a covered drag failure in the report', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'race-gate-cover-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const out = join(dir, 'out'), places = [], watched = [];
+  // The start reading is clean after placing; the Claude app's window comes over during the run.
+  const runtime = { ...gateRuntime(dir, [codexOk, engineDrag].join('\n')),
+    windowCover: async (pid, options) => { places.push([pid, options]); return { frame: claude83.frame, covering: [], moved: false, screens: 1, bestOverlap: 0 }; },
+    watchCover: pid => { watched.push(pid); return { stop: async () => ({ readings: 4, errors: 0, covering: [{ owner: 'Claude', fraction: 0.826 }] }) }; } };
+  const rows = await runRealGate({ args: { surface: 'codex-sol', 'real-browser': 'firefox', out }, tasks: [{ ...gateTask, name: 'form-settings' }],
+    runner: { gradeOutcome: () => ({ problems: ['nothing submitted'] }), gradeSite: () => ({ problems: [] }) }, runtime });
+  process.exitCode = 0;
+  assert.deepEqual(places.map(([, options]) => options), [{ place: true }]);
+  assert.equal(watched.length, 1);
+  assert.equal(watched[0], places[0][0]);
+  assert.deepEqual(rows[0].coverRun.covering, [{ owner: 'Claude', fraction: 0.826 }]);
+  assert.equal(rows[0].harnessCover.reason, 'harness-covered by Claude 83%');
+  const report = readFileSync(join(out, 'report.md'), 'utf8');
+  assert.match(report, /\| form-settings \| codex-sol \| FAIL: nothing submitted \| not measured \| none; during: Claude 83% \|/);
+  assert.match(report, /\n\nExcluded from scoring: form-settings, harness-covered by Claude 83%\.\n$/);
+  assert.equal(coveredRows([loadRound(out)]).length, 1);
 });

@@ -111,6 +111,38 @@ export function harnessFailure(rows, total = rows.length) {
     count: hit.length, total, tasks: hit.map(row => row.task) };
 }
 
+// Another app's window over the benchmark browser's window measures the Mac's desk, not the arm. In race-1017 the Claude app's
+// window covered 82 to 83% of the browser in the Sol rounds' form-settings cells, sleight's drag refused, the engine's app.drag
+// changed nothing, and both Sol arms failed there. A failed row is harness-covered when the run tried a drag and either a drag
+// tool refused because another app covered its points, or a cover reading during the run (window-cover.mjs: the task's start,
+// every few seconds, its end) shows another app over at least COVER_MIN of the browser's window. Notification banners covered
+// 2 to 4% of it in the same rounds. The rule is the same for every arm; only sleight's drag tool also names the app in a refusal.
+export const COVER_MIN = 0.05;
+// A drag call in a tool's input: a drag tool, the engine's drag in js code (any handle name), or a computer tool's drag action.
+// Tool documentation in results names these too, so only inputs count.
+const DRAG_CALL = /"(?:tool|name)":\s*"(?:mcp__[\w-]+__)?drag"|"code":\s*"(?:[^"\\]|\\.)*?\.drag\(|"action":\s*"left_click_drag"/;
+const COVER_REFUSAL = /([^"\\]{1,80}) covers the window at the drag points/g;
+export function coverRefusals(eventsText = '') {
+  const owners = new Set();
+  for (const [, owner] of String(eventsText).matchAll(COVER_REFUSAL)) {
+    // A text drag that went ahead says "background skipped: X covers the window" and is no refusal.
+    if (!/^\s*background skipped:/.test(owner)) owners.add(owner.trim());
+  }
+  return [...owners];
+}
+// readings: window-cover results ({ covering: [{ owner, fraction }] }, { error } or null) for the task's start and its run.
+export function harnessCover({ ok, eventsText = '', readings = [] }) {
+  if (ok || !DRAG_CALL.test(String(eventsText))) return null;
+  const share = new Map();
+  for (const reading of readings) for (const { owner, fraction } of reading?.covering ?? [])
+    if (fraction >= COVER_MIN) share.set(owner, Math.max(share.get(owner) ?? 0, fraction));
+  const refused = coverRefusals(eventsText);
+  if (!refused.length && !share.size) return null;
+  const owners = [...new Set([...refused, ...share.keys()])];
+  const parts = owners.map(owner => `${owner}${share.has(owner) ? ` ${Math.round(share.get(owner) * 100)}%` : ''}${refused.includes(owner) ? ', drag refused' : ''}`);
+  return { owner: owners[0], owners, source: refused.length ? 'refusal' : 'reading', reason: `harness-covered by ${parts.join('; ')}` };
+}
+
 // Task outcome is site evidence for every arm; model text cannot certify an
 // unsubmitted checkout. A page visit and zero submissions corroborate an ask.
 export function gradeGateTask({ task, run, grade, site, runner, after = run.afterExit, startKeys, journal = [], controlled = () => false,

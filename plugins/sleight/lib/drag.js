@@ -674,8 +674,11 @@ function focusedSelection(pid) {
 }
 
 // The engine's app.drag reaches a covered window (a Chess pawn moved 1/1) but changed no list order in 13 of 13
-// Firefox reorders (2026-10-17), so it gets one try, and an unchanged result ends the attempt.
-const COVERED_NO_TEXT = (cover, detail = '') => `${cover} covers the window at the drag points, and this drag has no selected text${detail}. Use the engine's app.drag in js once if the content may change; if the order or content is unchanged afterwards, don't repeat it: stop and tell the user that part of the window needs uncovering; nothing was pressed`;
+// Firefox reorders (2026-10-17), so it gets one try, and an unchanged result ends the attempt. Posting here is no
+// option: the window server drops on whatever is on screen at the point, which is the covering app's window. A move
+// the app offers without a drag (a row's move button or menu command, or keys it names) needs no pointer, so it comes
+// first; race-1017's settings page offered none, and the agent stopped after app.drag as before.
+const COVERED_NO_TEXT = (cover, detail = '') => `${cover} covers the window at the drag points, and this drag has no selected text${detail}. If the app offers this move without a drag (a button or menu command on the item, or keys it names), use that. Otherwise use the engine's app.drag in js once if the content may change; if the order or content is unchanged afterwards, don't repeat it: stop and tell the user that part of the window needs uncovering; nothing was pressed`;
 
 function raiseWindow(win) {
   attempt(() => { win.attributes.byName('AXMain').value = true; });

@@ -76,7 +76,8 @@ test('relocation does nothing for an endpoint that only the same app covers or n
 test('the covered refusal names the endpoint and stops a repeated engine fallback', () => {
   const message = COVERED_NO_TEXT('Finder', '; to is covered by Finder and no part of that element is exposed');
   assert.match(message, /Finder covers the window at the drag points, and this drag has no selected text; to is covered/);
-  assert.match(message, /Use the engine's app\.drag in js once/);
+  // A move the app offers without a drag comes before app.drag and before asking the user.
+  assert.match(message, /\. If the app offers this move without a drag \(a button or menu command on the item, or keys it names\), use that\. Otherwise use the engine's app\.drag in js once/);
   assert.match(message, /don't repeat it: stop and tell the user.*nothing was pressed$/);
 });
 

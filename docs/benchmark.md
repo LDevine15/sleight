@@ -202,6 +202,11 @@ tools) is a harness failure. The gate writes `harness-failure.json` into the rou
 scorer drops the round with that reason. Each round also writes `commits.json` with the commits of
 the build the arms load, the bench code and FowlBrowser's runner.
 
+A failed run that tried a drag while another app's window covered the browser's is left out on its
+own, for every arm, and the scorer lists it with the app (`harnessCover` in
+`bench/fowl/real-gate-grade.mjs`). The cover counts when a drag tool refused for it, or when a reading
+at the task's start, every 5 s or at its end shows another app over at least 5% of the window.
+
 ## Earlier benchmarks
 
 `bench/` runs each task through headless `claude -p` and checks it outside the agent, against the file

@@ -5,7 +5,8 @@
 // Each saved row is graded again offline: a pass needs the recorded outcome ok, at least one successful browser call by
 // that arm (counted again from events.jsonl where it was saved) and the race's positive site evidence (real-gate-grade.mjs
 // RACE_EXPECT). A round with harness-failure.json, or one where 10 or more of 12 tasks failed with one error class, is
-// excluded with its reason. --mark writes harness-failure.json into a newly detected round's folder.
+// excluded with its reason. --mark writes harness-failure.json into a newly detected round's folder. A failed row whose drag
+// met another app's window over the browser's (real-gate-grade.mjs harnessCover) is excluded on its own, named with the app.
 // Each task carries the ChatGPT engine version it ran on and its UTC dates: the round's engine.json when the gate recorded one,
 // otherwise inferred from the task's recorded start and end against bench/engine-versions.json (bench/engine-version.mjs). A row
 // without times takes the birth time of the round's commits.json, marked as an inferred date. Per browser, the output names each
@@ -16,7 +17,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claim, score } from '../claim-score.mjs';
-import { browserEvidence, harnessFailure, raceProblems, runErrorClass } from './real-gate-grade.mjs';
+import { browserEvidence, harnessCover, harnessFailure, raceProblems, runErrorClass } from './real-gate-grade.mjs';
 import { currentTimeline, dayRange, engineForRun, engineMix, engineNote, engineText, loadTimeline, summarizeEngines } from '../engine-version.mjs';
 
 const DEFAULT = join(homedir(), 'Projects/sleight-wt/race-1017/*');
@@ -48,8 +49,11 @@ export function regradeRow(row, { eventsText = '', stderr = '' } = {}) {
   if (!(calls >= 1) && !problems.includes('no successful browser tool call')) problems.push(calls == null ? 'browser calls not recorded' : 'no successful browser tool call');
   problems.push(...raceProblems({ task: row.task, site: row.site, answer: row.run?.result?.result }).filter(p => !problems.includes(p)));
   const passed = problems.length === 0;
+  // Rows saved before the cover watch have only the start reading; a saved row without events keeps what the gate recorded.
+  const covered = passed ? null : eventsText ? harnessCover({ ok: false, eventsText, readings: [row.cover, row.coverRun] }) : row.harnessCover ?? null;
   return { task: row.task.name, arm: row.surface, seconds: row.wallMs / 1000, passed, problems, successfulCalls: calls,
-    recordedOk: row.outcome?.ok === true, errorClass: passed ? null : row.errorClass ?? runErrorClass({ eventsText, stderr }) };
+    recordedOk: row.outcome?.ok === true, errorClass: passed ? null : row.errorClass ?? runErrorClass({ eventsText, stderr }),
+    ...(covered ? { harnessCover: covered } : {}) };
 }
 
 let staticTimeline;
@@ -76,7 +80,7 @@ const sleightArm = browser => ['firefox', 'safari'].includes(browser) ? 'sleight
 
 export function scoreRounds(rounds) {
   const browsers = {};
-  for (const round of rounds) if (!round.excluded) for (const row of round.rows) (browsers[round.browser] ??= []).push({ ...row, file: round.name });
+  for (const round of rounds) if (!round.excluded) for (const row of round.rows) if (!row.harnessCover) (browsers[round.browser] ??= []).push({ ...row, file: round.name });
   const out = {};
   for (const [browser, rows] of Object.entries(browsers)) {
     const me = sleightArm(browser), tasks = [...new Set(rows.map(r => r.task))];
@@ -94,6 +98,10 @@ export function scoreRounds(rounds) {
   }
   return out;
 }
+
+// Failed rows left out of scoring because another app's window covered the browser's at a drag, with the app.
+export const coveredRows = rounds => rounds.filter(r => !r.excluded).flatMap(r => r.rows.filter(row => row.harnessCover)
+  .map(row => ({ round: r.name, browser: r.browser, arm: row.arm, task: row.task, reason: row.harnessCover.reason })));
 
 // Rows that passed as recorded and fail under the race rules.
 export const flipped = rounds => rounds.flatMap(r => r.rows.filter(row => row.recordedOk && !row.passed).map(row => ({ round: r.name, browser: r.browser, ...row })));
@@ -119,6 +127,9 @@ function print(rounds, scored) {
     console.log(engineNote(s.engines, s.engineMix));
     console.log(s.topUps.length ? `Within 20% of ${s.me}, need 5 runs: ${s.topUps.map(p => `${p.task}/${p.arm} (${p.short.join(', ')})`).join('; ')}` : `No pair within 20% of ${s.me} is short of 5 runs.`);
   }
+  const covered = coveredRows(rounds);
+  console.log(`\nFailed rows excluded as harness-covered, every arm alike (${covered.length}):`);
+  for (const c of covered) console.log(`  ${c.round} ${c.arm} ${c.task}: ${c.reason}`);
   const flips = flipped(rounds);
   console.log(`\nPasses as recorded that fail under the race rules (${flips.length}):`);
   for (const f of flips) console.log(`  ${f.round} ${f.arm} ${f.task}: ${f.problems.join('; ')}`);
@@ -131,6 +142,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (args.includes('--mark')) for (const r of rounds) if (r.detected) writeFileSync(join(r.dir, 'harness-failure.json'),
     JSON.stringify({ ...r.detected, decided: 'automatic (race-score --mark)', at: new Date().toISOString() }, null, 2));
   const scored = scoreRounds(rounds);
-  if (args.includes('--json')) console.log(JSON.stringify({ rounds, browsers: scored, flipped: flipped(rounds) }, null, 1));
+  if (args.includes('--json')) console.log(JSON.stringify({ rounds, browsers: scored, flipped: flipped(rounds), covered: coveredRows(rounds) }, null, 1));
   else print(rounds, scored);
 }

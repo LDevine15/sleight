@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { windowCover } from '../bench/fowl/window-cover.mjs';
+import { summarizeCover, watchCover, windowCover } from '../bench/fowl/window-cover.mjs';
 import { coverCell } from '../bench/fowl/real-gate.mjs';
 
 const binary = async () => '/fake/window-cover';
@@ -22,6 +22,42 @@ test('windowCover with place asks the helper to move the window and records wher
   assert.deepEqual(cover, { frame: reply.frame, covering: [], moved: true, from });
   assert.deepEqual(await windowCover(4242, { place: true, binary, run: async () => JSON.stringify({ ok: true, frame: from.frame, covering: [], moved: false }) }),
     { frame: from.frame, covering: [], moved: false });
+});
+
+test('a window that stays says how many displays there were and how covered the best spot was', async () => {
+  const frame = { x: 4, y: 33, width: 1280, height: 854 }, covering = [{ owner: 'Claude', layer: 0, fraction: 0.826 }];
+  const reply = { ok: true, frame, covering, moved: false, screens: 1, bestOverlap: 0.826 };
+  assert.deepEqual(await windowCover(4242, { place: true, binary, run: async () => JSON.stringify(reply) }),
+    { frame, covering, moved: false, screens: 1, bestOverlap: 0.826 });
+});
+
+test('summarizeCover keeps each covering app once at its largest share and counts unread readings', () => {
+  assert.deepEqual(summarizeCover([{ covering: [] }, { covering: [{ owner: 'Claude', fraction: 0.4 }] }, { error: 'timeout' }, null,
+    { covering: [{ owner: 'Claude', fraction: 0.83 }, { owner: 'UserNotificationCenter', fraction: 0.019 }] }]),
+  { readings: 5, errors: 2, covering: [{ owner: 'Claude', fraction: 0.83 }, { owner: 'UserNotificationCenter', fraction: 0.019 }] });
+});
+
+test('watchCover reads while the agent runs and once more at stop, never two reads at once, and only reads', async () => {
+  let reads = 0, open = 0, most = 0;
+  const read = async (pid, options) => {
+    assert.equal(pid, 4242); assert.equal(options, undefined, 'no place: a watch never moves a window');
+    open++; most = Math.max(most, open); reads++;
+    await new Promise(resolve => setTimeout(resolve, 15));
+    open--;
+    return reads === 2 ? { covering: [{ owner: 'Claude', fraction: 0.83 }] } : { covering: [] };
+  };
+  const watch = watchCover(4242, { every: 5, read });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  const seen = await watch.stop();
+  assert.equal(most, 1);
+  assert.ok(seen.readings >= 2, JSON.stringify(seen));
+  assert.equal(seen.readings, reads);
+  assert.deepEqual(seen.covering, [{ owner: 'Claude', fraction: 0.83 }]);
+  const after = reads;
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(reads, after, 'no reads after stop');
+  // A read that throws is kept as an unread reading.
+  assert.deepEqual(await watchCover(1, { every: 1000, read: async () => { throw Error('boom'); } }).stop(), { readings: 1, errors: 1, covering: [] });
 });
 
 test('windowCover records an error instead of failing the round', async () => {

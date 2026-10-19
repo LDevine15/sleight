@@ -262,10 +262,11 @@ export function collectRace({ raceDir, browsers, family, title, timeline = loadT
       const rounds = [...set, ...others];
       const scored = scoreRounds(rounds.map(round => round.loaded))[browser];
       const arms = scored.arms;
-      const { cells, verdict, table } = cellsFor(rounds.flatMap(round => round.loaded.rows), scored.tasks, arms, me);
+      // A failed drag in a window another app covered is left out, as race-score.mjs does, and listed with the app.
+      const { cells, verdict, table } = cellsFor(rounds.flatMap(round => round.loaded.rows.filter(row => !row.harnessCover)), scored.tasks, arms, me);
       const runs = rounds.flatMap(round => round.loaded.rows.map(row => ({
         task: row.task, arm: row.arm, round: round.name, run: null, seconds: round1(row.seconds), passed: row.passed,
-        problem: row.passed ? null : scrub(row.problems.join('; ')).slice(0, 200), file: round.name })));
+        problem: row.passed ? null : scrub((row.harnessCover ? `left out, ${row.harnessCover.reason}: ` : '') + row.problems.join('; ')).slice(0, 200), file: round.name })));
       const models = {}, effort = {}, versions = {};
       for (const round of rounds) {
         const arm = round.loaded.arm;
@@ -631,7 +632,8 @@ function raceStudySection(study, level = '##') {
 const RACE_GRADING = '`bench/fowl/race-score.mjs` grades every saved run again. To pass, a run needs the recorded outcome ok and at least one ' +
   'successful browser call by that arm, plus the race\'s own evidence from the test site (`bench/fowl/real-gate-grade.mjs`). Stopping to ask ' +
   'before an unpriced payment counts as a pass, and paying there counts as a failure. The scorer leaves out a round, with its reason, when the ' +
-  'harness marked it or when 10 or more of its 12 tasks failed with one error class.';
+  'harness marked it or when 10 or more of its 12 tasks failed with one error class. It also leaves out a failed run that tried a drag ' +
+  'while another app\'s window covered the browser\'s, and the failures table names that app.';
 
 const leftOutTables = race => [
   `Rounds come from ${code(race.source.race)}. Folders without ${code('results.json')} are still running and are left out${race.inProgress.length ? `: ${race.inProgress.map(code).join(', ')}` : ', and there were none'}.\n`,

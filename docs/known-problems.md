@@ -724,6 +724,19 @@ native reference, and oversized first results defer the browser reference while 
   covered window. Rounds before that column have no record. Since the owner added two displays (2026-10-18), each task first
   moves the round's own browser window to the spot on any display that the fewest other windows overlap (a TextEdit probe went
   from 53% covered to none). A window the owner moves over it later still covers it, and the column shows that.
+- In race-1017's Sol rounds (2026-10-19) the Claude app's window covered 82 to 83% of the browser's window in both r3 rounds, and
+  placing left the window where it was. Those rounds didn't record the display count, so we don't know why no spot was free.
+  sleight failed 5 of its 12 Sol form-settings cells, each after `drag` refused at the priority list (in one, the Claude window
+  came over after a clean start reading). Codex's own computer use failed 3 of its 6 covered cells. It passed the other 3, all in
+  Firefox, by typing synthetic drag events into Firefox's web console, which sleight doesn't do. The page has no keyboard or button
+  reorder, so there was no pointer-free route. The refusal's first step is now a move the app offers without a drag (a button, a
+  menu command or keys the app shows), before `app.drag` and before asking the user. It wouldn't have changed these cells, and
+  it's unmeasured on a page that does offer one. Each task now also reads the cover every 5 s and at its end, and a place that
+  doesn't find a free spot records the display count and the best spot's overlap. A failed run that tried a drag while another
+  app covered at least 5% of the browser's window, or whose `drag` refused for cover, is left out of race scoring for every arm,
+  named with the app. That also drops 7 sleight failures from the 2026-10-17 Firefox rounds, where a Finder window was over the
+  list. A reading covers the whole window and doesn't know the drag points, so a covered corner can exclude a failure with
+  another cause. We picked the 5% floor because notification banners covered 2 to 4%, and no run measured it.
 - Safari demoid lost 2 runs to the sign-in pop-up, Claude Code b9-r2 on Haiku and Codex b12-r3 on gpt-6-luna. Neither the
   engine nor sleight lost the dedicated window. "Sign in with DemoID" opens a separate Safari window, and the engine's next read
   shows that window, as it does in Firefox. When the pop-up closes, the next read shows the dedicated window again under its old
