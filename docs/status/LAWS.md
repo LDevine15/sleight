@@ -92,6 +92,13 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Escape to that app's pid, once per stuck episode, in the background, never while the user is typing or moving the mouse, and it
   says so in the result. `SLEIGHT_STUCK_ESCAPE=0` turns it off. Reading document text for drag endpoints stays forbidden (FM6),
   and so does giving up on a read early (IN2).
+  A third exception (owner, 2026-10-19, CC8): to bind a drag endpoint given by element number, sleight may compare the AXValue
+  of AXStaticText elements in the leased window's content with a label the engine printed as `text <label>`, 80 characters or
+  fewer, equal exactly. Static text under a text area, text field, combo box or layout area is never read, and neither are other
+  roles' values. The value is only compared, never returned, stored or logged, and clicks and other tools don't get this.
+  Select_window may pick the one window of the same app whose title ends with a requested title of 12 or more characters when
+  no title matches exactly, and says so (owner, 2026-10-19, LB5). The engine path may reuse a fresh before-action read under
+  the conditions LB7 traces, merged only after a security review (owner, 2026-10-19).
 - Electron saves (owner, 2026-10-18): sleight reports a save as confirmed only when the window shows its file path. Otherwise the
   edit is reported done and the save unconfirmed, with no other evidence path. The relaunch flow avoids taking focus, or the card
   says the app comes to the front briefly.
