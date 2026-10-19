@@ -38,14 +38,14 @@ async function fixture(t, { initial, base = document, after = menu, nativeChange
     if (nativeChange === 'unfocused') native.status = 'mismatch';
   }, setValue: async (number, value) => { values.push([number, value]); if (onAction) text = onAction('setValue', number, text); },
   typeText: async value => { typed.push(value); if (onAction) text = onAction('typeText', value, text); } };
-  const context = createContext({ cua: { getApp: async () => raw, listApps: async () => [
+  const context = createContext({ setTimeout, cua: { getApp: async () => raw, listApps: async () => [
     { id: 'org.test.editor', windows }
   ] }, nodeRepl: { write: value => writes.push(String(value)) } });
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
   const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-tt1n-'))));
   const inputLease = new InputLease({ directory, holder: 'TT1N2 test' });
-  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease, changeReview: false,
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease, changeReview: false, ck3: false,
     // Recovery needs a running check; this app is always running.
     runningProbe: () => ({ status: 'responding' }),
     windowIdentity: async expected => { identityChecks++; return identity ? identity(expected, native, identityChecks) : ({ ...expected, ...native,
@@ -1638,4 +1638,56 @@ test('WB1: a plain menu still continues as a menu with the flag on', async t => 
   assert.notEqual(result.isError, true);
   assert.deepEqual(h.clicks, [2, 4]);
   assert.deepEqual(events, ['menu']);
+});
+
+test('CK3: the admitted tab remainder probes while the original tab-tree and final identity checks stay in place', async t => {
+  let reads = 0;
+  const h = await tabFixture(t, { ck3: true, onRead: () => { reads++; }, identity: (expected, native) => ({ ...expected, ...native,
+    matches: 1, headerMatches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1, windowSubrole: 'AXStandardWindow',
+    ...(expected.focus ? { chrome: ckChrome(true) } : {}) }) });
+  reads = 0;
+  const result = await h.call(tabCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.keys, ['super+t', 'Return']);
+  assert.deepEqual(h.typed, ['http://127.0.0.1:5420/shop']);
+  assert.deepEqual(h.continued, ['tab']);
+  assert.ok(h.identityChecks() >= 5, 'admission, tab check, final boundary and two fresh action probes');
+  assert.equal(reads, 2, 'the original stop tree and final read remain, neither remainder action reads');
+});
+
+const ckChrome = added => ({ complete: true, group: 8, children: added ? [10, 11] : [10], childCount: added ? 2 : 1,
+  tabCount: added ? 2 : 1, tabs: added ? [{ ref: 10, selected: false }, { ref: 11, selected: true }] : [{ ref: 10, selected: true }],
+  addressField: 20, focused: 20 });
+
+test('CK3: the real relay certifies Cmd+T before its first changed-window read', async t => {
+  let opened = false, reads = 0;
+  const h = await tabFixture(t, { ck3: true, onRead: () => { reads++; },
+    onAction: (name, arg, text) => { if (name === 'pressKey' && arg === 'super+t') opened = true; return tabScript()(name, arg, text); },
+    identity: (expected, native) => ({ ...expected, ...native, title: opened ? 'New Tab' : 'Marker', url: null,
+      matches: 1, headerMatches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1,
+      windowSubrole: 'AXStandardWindow', focus: fieldFocus, chrome: ckChrome(opened) }) });
+  reads = 0;
+  const result = await h.call(tabCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.keys, ['super+t', 'Return']);
+  assert.deepEqual(h.typed, ['http://127.0.0.1:5420/shop']);
+  assert.deepEqual(h.continued, [], 'no stopped engine call needs a continuation');
+  assert.equal(h.sent.length, 1);
+  assert.equal(reads, 1, 'the final engine read remains');
+});
+
+test('CK3: a certified chain still performs the existing landing read on a lagging page tree', async t => {
+  let opened = false;
+  const lagged = newTab.replace('Window: "New Tab"', 'Window: "Shop"');
+  const h = await tabFixture(t, { ck3: true, tabLandingIntervalMs: 2, landingRead: () => shop,
+    onAction: (name, arg, text) => {
+      if (name === 'pressKey' && arg === 'super+t') opened = true;
+      return name === 'pressKey' && arg === 'Return' ? lagged : tabScript()(name, arg, text);
+    }, identity: (expected, native) => ({ ...expected, ...native, title: opened ? 'New Tab' : 'Marker', url: null,
+      matches: 1, headerMatches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1,
+      windowSubrole: 'AXStandardWindow', focus: fieldFocus, chrome: ckChrome(opened) }) });
+  const result = await h.call(tabCall);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.equal(h.sent.filter(r => String(r.id).startsWith('sleight-tab-landing-')).length, 1);
+  assert.match(JSON.stringify(result), /standard window Shop/);
 });

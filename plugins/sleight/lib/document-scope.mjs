@@ -7,6 +7,9 @@ import { actionOutcome, outcomeRecord } from './action-outcomes.mjs';
 import { moneyFigures, moneyConflicts } from './payment-figures.mjs';
 import { enginePayment, paymentAction } from './payment-gate.mjs';
 import { paymentWords, refundableName } from './direct-browser/rules.mjs';
+import { tabProbeRefusal } from './tab-probe.mjs';
+import { verifyWindowIdentity } from './window-identity.mjs';
+import { tabFocusRefusal } from './menu-continuation.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -209,6 +212,37 @@ export function samePlace(before, number, after) {
   return hit && hit.line === line && hit.number === number + (at < start ? 0 : size) ? [[hit.number, line]] : [];
 }
 
+// CK2 keeps the engine read and its integer mapping. Only a plain field may move after setValue.
+// Compare the complete settable inventory, not just its count: a removed field plus a new one is not unchanged.
+export function plainFieldRemap(before, number, after, seen, parent) {
+  const rows = text => {
+    const stack = [], result = [];
+    for (const line of String(text ?? '').split('\n')) {
+      const m = /^(\t*)(\d+) (.*)\r?$/.exec(line);
+      if (!m) continue;
+      while (stack.length && stack.at(-1).depth >= m[1].length) stack.pop();
+      const row = { number: Number(m[2]), line: m[3], depth: m[1].length, parents: stack.map(r => r.line) };
+      result.push(row); stack.push(row);
+    }
+    return result;
+  };
+  const old = rows(before), current = rows(after), target = old.find(r => r.number === number);
+  const plain = /^text field \(settable\) .+/;
+  const watched = /\b(?:pay(?:ment)?|card|cc-|cvv|cvc|expiry|expiration|security code|password|secure)\b/i;
+  if (!target || target.line !== seen || !plain.test(seen) || /\b(?:ID|Description|Help): /.test(seen) ||
+      watched.test(seen) || typeof parent !== 'string' || /^[a-z][a-z ]*(?: \([^)]*\))*$/.test(parent) ||
+      target.parents.at(-1) !== parent || target.parents.slice(1).some(p => watched.test(p)) ||
+      [...old, ...current].some(r => /^(?:sheet|dialog|alert|system dialog)(?: |$)/.test(r.line))) return [];
+  if (old.filter(r => r.line === seen).length !== 1 || old.filter(r => r.line === parent).length !== 1 ||
+      current.filter(r => r.line === parent).length !== 1) return [];
+  const matches = current.filter(r => r.line === seen);
+  if (matches.length !== 1 || JSON.stringify(matches[0].parents) !== JSON.stringify(target.parents)) return [];
+  const inventory = all => all.filter(r => /\(settable\)/.test(r.line)).map(r =>
+    JSON.stringify([r.line.replace(/, Value: .*?(?=, (?:ID|Description|Help|URL|Secondary Actions): |$)/g, ''), r.parents])).sort();
+  if (JSON.stringify(inventory(old)) !== JSON.stringify(inventory(current))) return [];
+  return [[matches[0].number, matches[0].line]];
+}
+
 // Where element `number` of the tree `before` is in the tree `after`, for a click the engine refused because an earlier action
 // in the call replaced the element: the travel form's date picker rebuilt its day buttons after the check-in click, and the
 // check-out click was refused in 10 of 11 sleight form-travel runs, Safari and Firefox (race-1017). The line stays where it was
@@ -386,6 +420,11 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   // The lease needs a full header after the call. A read Claude made after its
   // last action already wrote one, so the guard reads again only without it.
   const { reuseSetup, acknowledge, prompt, outcomes, kernel, ...checks } = options;
+  const ck = ((checks.ck1 ?? process.env.SLEIGHT_CK1 !== '0') ? 1 : 0) |
+    ((checks.ck2 ?? process.env.SLEIGHT_CK2 !== '0') ? 2 : 0);
+  delete checks.ck1; delete checks.ck2;
+  // On is the runtime default. The two off bits share six bytes in warm calls, within the 2,500-byte setup budget.
+  if (ck !== 3) checks.c = ck;
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
   // The tail first waits (guard.settle, which resolves to undefined) for an action or pick the code left unawaited, as its
   // last statement may be, so the call's read can't run beside it and return the window from before it (CC6 review).
@@ -443,6 +482,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     state.firstOff = !!update?.firstOff && !!update?.focused && !state.careful && !state.fileOnly && !state.cancelOnly;
     state.quietEdits = !!update?.quietEdits && !state.careful;
     state.bind = !!update?.bind && !state.careful && !state.fileOnly && !state.cancelOnly;
+    state.ck1 = !!((update?.c ?? 3) & 1);
+    state.ck2 = !!((update?.c ?? 3) & 2);
+    state.tabProbe = !state.fileOnly && !state.cancelOnly ? update?.tabProbe : undefined;
+    state.tabTarget = state.tabProbe?.target; state.tabStep = state.tabProbe?.mode === 'new-tab' ? 0 : 1;
     // The relay's native observations after a key press (light-return.mjs), for the light check below.
     state.light = update?.lightReturn?.path && !state.careful && !state.fileOnly && !state.cancelOnly ? { ...update.lightReturn } : undefined;
     state.binding = undefined;
@@ -550,6 +593,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     const disabledLabelNote = ${disabledLabelNote.toString()};
     const sameElement = ${sameElement.toString()};
     const samePlace = ${samePlace.toString()};
+    const plainFieldRemap = ${plainFieldRemap.toString()};
     const refusedPlace = ${refusedPlace.toString()};
     const differentFocusTarget = ${differentFocusTarget.toString()};
     const selectedMenuEntry = ${selectedMenuEntry.toString()};
@@ -647,6 +691,40 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
     // observation, or none before deadlineMs, reads the whole tree as before. A call stops trying after
     // a wait that got no observation at all, or after two refusals.
     const lightRole = /^AX(?:TextField|TextArea|ComboBox|SearchField|Cell|Table|Grid|LayoutArea)$/;
+    const verifyWindowIdentity = ${verifyWindowIdentity.toString()};
+    const tabFocusRefusal = ${tabFocusRefusal.toString()};
+    const tabProbeRefusal = ${tabProbeRefusal.toString()};
+    const tabCheck = async (before, transition = false, baselineOnly = false) => {
+      const probe = state.tabProbe, started = clock(), entered = Date.now(), ready = Math.max(entered, (before?.done ?? entered - 250) + (baselineOnly ? 0 : 250));
+      let reason = 'probe-timeout', sample, first;
+      try {
+        const fs = await import('node:fs/promises');
+        do {
+          try { sample = JSON.parse(await fs.readFile(probe.path, 'utf8')); } catch {}
+          const now = Date.now();
+          if (now < entered || now < probe.since) { reason = 'clock-reversed'; break; }
+          if (Number.isFinite(sample?.start) && sample.start > entered && sample.start >= ready && Number.isFinite(sample.end) &&
+              sample.end >= sample.start && sample.end <= now && now - sample.end <= probe.freshMs) {
+            // The engine's own input can reset HID idle. Require no input since that action finished,
+            // earlier than the original continuation's post-read stop boundary.
+            reason = tabProbeRefusal(state.tabTarget, sample.observed, Math.max(probe.since, before?.done ?? probe.since), sample.end, transition, baselineOnly);
+            if (reason || baselineOnly) break;
+            const signature = JSON.stringify([sample.observed.title, sample.observed.url, sample.observed.chrome]);
+            if (first && first.signature !== signature) { reason = 'unstable-chrome'; break; }
+            first ??= { start: sample.start, signature };
+            if (sample.start - first.start >= 50) break;
+            reason = 'readiness-unconfirmed';
+          }
+          if (clock() - started >= probe.deadlineMs) break;
+          await new Promise(resolve => setTimeout(resolve, 5));
+        } while (true);
+      } catch { reason = 'probe-failed'; }
+      if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ tabProbe: { decision: reason ? 'read' : 'probe', reason: reason ?? 'address-field',
+        waitMs: clock() - started, sampleMs: sample?.end - sample?.start, ageMs: Date.now() - sample?.end,
+        transition, tabCount: sample?.observed?.chrome?.tabCount } }) + '\\n');
+      if (reason) { state.tabProbe = undefined; return; }
+      return { ...sample.observed, sampledEnd: sample.end };
+    };
     const lightCheck = async before => {
       const light = state.light, start = clock(), entered = Date.now();
       const windowMs = light.windowMs ?? 700, gap = light.gapMs ?? 50, freshMs = light.freshMs ?? 150;
@@ -983,6 +1061,18 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           const staleKey = captureKey(state.callHeaders.get(proxy));
           const unbound = bindable && state.staleCaptures.has(staleKey);
           const bind = bindable && !unbound;
+          if (state.ck1 && state.guardStopMark && name === 'setValue') {
+            const line = byId && firstTree ? findTarget(firstTree).filter((_, i, all) => all.length === 1)[0]?.[1]
+              : literal === undefined ? undefined : firstTree?.get(literal);
+            const uniqueField = typeof line === 'string' && /\\(settable\\)/.test(line) &&
+              /^(?:text field|email field|text area|text entry area|search (?:text )?field|combo box)(?: |$)/i.test(line) &&
+              [...firstTree.values()].filter(other => other === line).length === 1;
+            const reason = !state.bind ? 'binding-off' : !firstTree ? 'first-capture' : before?.opens ? 'previous-opens'
+              : codeRead ? 'code-read' : unbound ? 'stale-capture' : bind ? 'existing-binding'
+              : !uniqueField ? 'not-unique-settable-field' : 'capture-unavailable';
+            nodeRepl.write(state.guardStopMark + JSON.stringify({ binding: { index: attempt.index,
+              decision: bind && text === undefined ? 'bound' : 'read', reason: text !== undefined ? 'fresh-capture' : reason } }) + '\\n');
+          }
           // setValue changes a field and no window, like typing: Return after setValue({ id }) in a
           // Save sheet skipped its 54,000-character read (owner, 2026-10-10, 1.85 s a save).
           const quiet = before && (['typeText', 'paste', 'setValue'].includes(before.name) || (before.name === 'pressKey' &&
@@ -995,7 +1085,30 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             ['typeText', 'paste'].includes(name) && before?.name === 'pressKey' && typeof before.key === 'string' &&
             /^(?:return|enter|escape|esc|tab|space)$/i.test(before.key) && typeof before.done === 'number' &&
             header && state.expected && state.expected.app === state.light.app && ['title', 'app', 'url'].every(key => header[key] === state.expected[key]);
-          if (text === undefined && !checkFocus && (skipFirst || treeFree && quiet && !state.careful && state.callHeaders.has(proxy))) {
+          const tabKey = name === 'pressKey' && /^(?:super|cmd|command|meta)\\+t$/i.test(String(args[0]));
+          const tabStart = state.tabProbe?.mode === 'new-tab' && state.tabStep === 0 && firstAction && tabKey;
+          if (tabStart) {
+            const native = await tabCheck(undefined, false, true);
+            if (native) { state.tabTarget = { ...state.tabTarget, nativeIdentity: native }; state.tabStep = 1; }
+          }
+          const urlText = name === 'typeText' && typeof args[0] === 'string' && /^https?:\\/\\/[^\\s\\u0000-\\u001f]+$/i.test(args[0]);
+          const tabAction = state.tabProbe && state.guarded && !checkFocus && (state.tabStep === 1 && urlText ||
+            state.tabStep === 2 && name === 'pressKey' && /^(?:return|enter)$/i.test(String(args[0])));
+          const tabEligible = tabAction && (state.tabProbe.mode === 'remainder' && firstAction || before && Number.isFinite(before.done) &&
+            state.touches === before.touches + 1 && (state.tabStep === 1 ? before.name === 'pressKey' &&
+              /^(?:super|cmd|command|meta)\\+t$/i.test(String(before.key)) : before.name === 'typeText'));
+          const transition = tabEligible && state.tabProbe.mode === 'new-tab' && state.tabStep === 1;
+          const tabExpected = state.expected, tabTouches = state.touches;
+          let nativeTab;
+          if (tabEligible && text === undefined) nativeTab = await tabCheck(before, transition);
+          if (!tabStart && !nativeTab && state.tabProbe) state.tabProbe = undefined;
+          if (nativeTab) {
+            // This action-specific metadata never enters the engine-tree/binding cache or claims an engine element number.
+            observed = { app: state.expected.app, title: nativeTab.title, url: nativeTab.url };
+            if (transition) state.expected = observed;
+            state.tabTarget = { ...state.tabTarget, ...observed, nativeIdentity: nativeTab };
+            state.tabStep++;
+          } else if (!tabAction && text === undefined && !checkFocus && (skipFirst || treeFree && quiet && !state.careful && state.callHeaders.has(proxy))) {
             observed = skipFirst ? state.expected : state.callHeaders.get(proxy);
             if (state.timing) nodeRepl.write('[sleight:guard-timing]' + JSON.stringify({ phase: 'skipped', ms: 0, chars: 0, failed: false }) + '\\n');
           } else if (light && await lightCheck(before)) {
@@ -1209,9 +1322,23 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             // (calculator-click, 2026-10-10). The element Claude meant is the line it saw: when that
             // line, with an ID, description or help, is in the new tree exactly once, act on it there.
             // A line without them must also keep its place in the call's first tree (samePlace).
-            const moved = sameElement(was, now) || typeof was !== 'string' ? []
+            let moved = sameElement(was, now) || typeof was !== 'string' ? []
               : /\\b(?:ID|Description|Help): /.test(was) ? [...elements(text)].filter(([, line]) => sameElement(was, line))
               : bound === undefined ? samePlace(state.callTrees.get(proxy), args[0], text) : [];
+            // CK2 adds only exact plain-line recovery. The original remap above stays intact for the A/B.
+            if (!moved.length && state.ck2 && before?.name === 'setValue' && Number.isFinite(before.done) && name === 'setValue' &&
+                typeof was === 'string' && !sameElement(was, now) && !paymentWords(was)) {
+              moved = plainFieldRemap(state.callTrees.get(proxy), literal, text, state.seenLines?.[literal], state.seenParents?.[literal]);
+            }
+            if (!moved.length && state.ck2 && !before?.opens && !paymentWords(was) && typeof was === 'string' &&
+                !sameElement(was, now) && !/\\b(?:ID|Description|Help): /.test(was) &&
+                state.seenLines?.[literal] === was && [...state.callElements.get(proxy).values()].filter(line => line === was).length === 1) {
+              const parent = state.seenParents?.[literal];
+              const exact = sameLine(was).filter(([number]) => parentsOf(text).get(number) === parent);
+              if (sameLine(was).length === 1 && (parent === null || typeof parent === 'string' &&
+                  !/^[a-z][a-z ]*(?: \\([^)]*\\))*$/.test(parent)) &&
+                  parentsOf(state.callTrees.get(proxy)).get(literal) === parent && exact.length === 1) moved = exact;
+            }
             if (moved.length === 1) {
               renumbered(moved[0][0], was);
               args = [moved[0][0], ...args.slice(1)];
@@ -1230,8 +1357,8 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           if (submenu) throw stop('sleight stopped before ' + shown + ': element ' + args[0] + ' (' + submenu.title + ')' + ${quoted(/* lean notice */ ' opens a submenu; click the item you want inside it in the same call')} + (submenu.items.length ? ' (e.g. ' + submenu.items.join(', ') + ')' : '') + '.');
           // Keys while a menu is in tracking or while the window itself has focus reach nothing: positive evidence
           // from this call's read, or for the menu the previous call's last tree. Escape and paste go ahead.
-          const evidence = text ?? priorText;
-          const trapEvidence = evidence ?? lastTree;
+          const evidence = nativeTab ? undefined : text ?? priorText;
+          const trapEvidence = nativeTab ? undefined : evidence ?? lastTree;
           const plainKey = name === 'typeText' || name === 'pressKey' && typeof args[0] === 'string' && !args[0].includes('+') && !/^(?:escape|esc)$/i.test(args[0]);
           if (trapEvidence !== undefined && (name === 'typeText' || name === 'pressKey' && !/^(?:escape|esc)$/i.test(String(args[0])))) {
             // Keys go to a dialog or sheet even while the menu bar shows a title selected (word-edit-1, 2026-10-18).
@@ -1283,7 +1410,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           // when the newest tree it has shows a payment page (focus in it may be stale), or when there is none.
           // A refused attempt sent nothing, so a resend's gate starts from the payment state before this action's gate.
           const paymentBefore = state.payment;
-          if (state.payment) {
+          if (state.payment && !nativeTab) {
             const newest = text ?? priorText ?? state.callTrees.get(proxy) ?? lastTree;
             // After this call has acted, the page may have changed step under the same window (review N4): a submit-shaped action
             // on a web page or dialog reads again rather than trusting the call's first tree.
@@ -1295,6 +1422,15 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             payGate(text);
           }
           await checkLease();
+          if (nativeTab && (state.touches !== tabTouches || Date.now() < nativeTab.sampledEnd ||
+              Date.now() - nativeTab.sampledEnd > state.tabProbe.freshMs)) {
+            // Recheck age after the asynchronous lease read. Earlier keyboard checks used the certificate;
+            // a delayed dispatch reads and stops so changed focus or a newly tracking menu cannot receive input.
+            if (transition) state.expected = tabExpected;
+            nativeTab = undefined; state.tabProbe = undefined;
+            text = await timedRead(raw, 'before-action'); observed = parse(text); checkWindow(false);
+            throw stop('sleight stopped before ' + shown + ${quoted(/* lean notice */ ': native tab certificate expired. Read the current window before retrying.')});
+          }
           state.activeApp = proxy;
           // Only the resolved target's role makes a field click quiet; coordinates and words in a
           // button's description say nothing about whether it takes text input.

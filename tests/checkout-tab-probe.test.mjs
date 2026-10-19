@@ -1,0 +1,224 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, existsSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
+import { guardedCode } from '../plugins/sleight/lib/document-scope.mjs';
+import { createTabProbe, tabProbeRefusal, nativeTabPlan } from '../plugins/sleight/lib/tab-probe.mjs';
+import { splitMenuActions } from '../plugins/sleight/lib/menu-continuation.mjs';
+
+const chrome = (tabs = [{ ref: 10, selected: true }]) => ({ complete: true, group: 8,
+  childCount: tabs.length, children: tabs.map(t => t.ref), tabCount: tabs.length, tabs, addressField: 20, focused: 20 });
+
+const expected = { appId: 'org.test.browser', app: 'Fixture Browser', title: 'New Tab', url: null, windowNumber: 22 };
+const identity = { ...expected, status: 'ok', matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1,
+  headerMatches: 1, windowSubrole: 'AXStandardWindow', chrome: chrome(), hidIdleSeconds: 1000, focus: { sheets: 0, role: 'AXComboBox', subrole: null, inWindow: true, inPage: false } };
+const target = { ...expected, nativeIdentity: identity };
+const tree = 'Window: "New Tab", App: Fixture Browser.\n0 standard window New Tab\n\t1 combo box (settable) Address\n\t2 HTML content New Tab\n\nThe focused UI element is 1 combo box (settable) Address';
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+
+test('CK3 admits only a literal awaited new-tab URL and Return chain', () => {
+  const code = 'await app.pressKey("super+t"); await app.typeText("https://example.test"); await app.pressKey("Return");';
+  assert.equal(nativeTabPlan(splitMenuActions(code)), true);
+  for (const other of [code.replace('super+t', 'super+l'), code.replace('typeText', 'paste'),
+    code.replace('https://example.test', 'Confirm purchase'), code.replace('https://example.test', 'https://example.test\\n'),
+    code.replace('await app.typeText', 'app.typeText'), code.replace('Return', 'Tab'),
+    code.replace('await app.typeText', 'await app.getAXState(); await app.typeText')]) {
+    assert.equal(nativeTabPlan(splitMenuActions(other)), false, other);
+  }
+});
+
+async function fixture(t, { observe = async () => identity, current = () => tree, onType = () => {}, onOutput = () => {}, guardDate = Date } = {}) {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-'))));
+  const probe = createTabProbe({ directory, observe, intervalMs: 2, timeoutMs: 20, deadlineMs: 650, freshMs: 30 });
+  const info = probe.begin(1, target);
+  t.after(() => probe.dispose());
+  const calls = [], output = [];
+  const raw = { getAXState: async () => { calls.push('read'); return current(); },
+    typeText: async () => { calls.push('typeText'); onType(); }, pressKey: async () => calls.push('pressKey') };
+  return { info, calls, output, run: async (options = {}) => {
+    const { lease, ...checks } = options;
+    try {
+      await new AsyncFunction('app', 'cua', 'nodeRepl', 'Date', guardedCode('await app.typeText("https://example.test"); await app.pressKey("Return");',
+        expected, 'window changed', lease, { careful: true, tabProbe: info, guardStopMark: '[ck]', ...checks }))(raw,
+        { getApp: async () => raw }, { write: value => { output.push(value); onOutput(value); } }, guardDate);
+    } finally { delete globalThis.__sleightDocumentGuard; delete globalThis.__sleightDocumentGuardSetup; probe.end(1); }
+  } };
+}
+
+test('CK3 remainder probes address focus before typing and Return and keeps its final tree', async t => {
+  const f = await fixture(t);
+  await f.run({ payment: { setting: 'always', message: null } });
+  assert.deepEqual(f.calls, ['typeText', 'pressKey', 'read']);
+  assert.equal(existsSync(f.info.path), false);
+  assert.equal(f.output.filter(line => /"tabProbe"/.test(line)).length, 2);
+});
+
+for (const [reason, observed] of [
+  ['page focus', { ...identity, focus: { ...identity.focus, inPage: true } }],
+  ['outside window', { ...identity, focus: { ...identity.focus, inWindow: false } }],
+  ['sheet', { ...identity, focus: { ...identity.focus, sheets: 1 } }],
+  ['password', { ...identity, focus: { ...identity.focus, subrole: 'AXSecureTextField' } }],
+  ['button', { ...identity, focus: { ...identity.focus, role: 'AXButton' } }],
+  ['missing focus', { ...identity, focus: undefined }],
+  ['pid', { ...identity, pid: 456 }],
+  ['process start', { ...identity, processStart: 2 }],
+  ['epoch', { ...identity, epoch: 'other' }],
+  ['window ref', { ...identity, window: 2 }],
+  ['window number', { ...identity, windowNumber: 23 }],
+  ['title', { ...identity, title: 'Other' }],
+  ['url', { ...identity, url: 'https://other.test' }],
+  ['ambiguous', { ...identity, matches: 2 }],
+  ['user input', { ...identity, hidIdleSeconds: 0 }],
+  ['unknown', { status: 'unknown' }],
+]) test(`CK3 reads the tree on ${reason}`, async t => {
+  assert.ok(tabProbeRefusal(target, observed, Date.now() - 100, Date.now()));
+  const f = await fixture(t, { observe: async () => observed });
+  await f.run();
+  assert.deepEqual(f.calls, ['read', 'typeText', 'read', 'pressKey', 'read']);
+});
+
+for (const [reason, observe] of [['failed probe', async () => { throw Error('failed'); }], ['timeout', () => new Promise(() => {})]]) {
+  test(`CK3 reads on ${reason}`, async t => {
+    const f = await fixture(t, { observe });
+    await f.run();
+    assert.deepEqual(f.calls, ['read', 'typeText', 'read', 'pressKey', 'read']);
+  });
+}
+
+test('CK3 off restores the old continuation reads', async t => {
+  const f = await fixture(t);
+  await f.run({ tabProbe: undefined });
+  assert.deepEqual(f.calls, ['read', 'typeText', 'read', 'pressKey', 'read']);
+});
+
+test('CK3 a certificate that ages before dispatch reads and stops before input', async t => {
+  let offset = 0;
+  const f = await fixture(t, { guardDate: { now: () => Date.now() + offset },
+    onOutput: value => { if (value.includes('"decision":"probe"')) offset = 200; } });
+  await assert.rejects(f.run(), /native tab certificate expired/);
+  assert.deepEqual(f.calls, ['read']);
+});
+
+test('CK3 an expired certificate cannot type into a newly tracking menu', async t => {
+  let offset = 0;
+  const f = await fixture(t, { guardDate: { now: () => Date.now() + offset },
+    current: () => tree + '\n3 menu bar\n\t4 menu bar item File, Selected: true',
+    onOutput: value => { if (value.includes('"decision":"probe"')) offset = 200; } });
+  await assert.rejects(f.run(), /native tab certificate expired/);
+  assert.deepEqual(f.calls, ['read']);
+});
+
+test('CK3 loss of the lease during certification stops before sending input', async t => {
+  let path;
+  const f = await fixture(t, { onOutput: value => {
+    if (value.includes('"decision":"probe"')) writeFileSync(path, JSON.stringify({ token: 'other', expires: Date.now() + 10000 }));
+  } });
+  path = f.info.path + '.lease';
+  writeFileSync(path, JSON.stringify({ token: 'owned', expires: Date.now() + 10000 }));
+  await assert.rejects(f.run({ lease: { path, token: 'owned' } }), /ownership lost or expired/);
+  assert.deepEqual(f.calls, []);
+});
+
+test('CK3 rechecks focus after typing and a payment-page fallback still stops Return', async t => {
+  let inPage = false;
+  const checkout = 'Window: "New Tab", App: Fixture Browser.\n0 standard window New Tab\n' +
+    '\t1 HTML content Checkout, URL: https://shop.test/checkout\n\t\t2 text field (settable) Card number\n' +
+    '\t\t3 button Pay now $268.00\nThe focused UI element is 2 text field (settable) Card number';
+  const f = await fixture(t, { observe: async () => inPage ? { ...identity, focus: { ...identity.focus, inPage: true } } : identity,
+    onType: () => { inPage = true; }, current: () => inPage ? checkout : tree });
+  await assert.rejects(f.run({ payment: { setting: 'always', message: null } }), /sleight stopped this payment/);
+  assert.deepEqual(f.calls, ['typeText', 'read']);
+});
+
+test('CK3 ending a call prevents a late helper reply from recreating its observation file', async t => {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-late-'))));
+  let finish;
+  const probe = createTabProbe({ directory, observe: () => new Promise(resolve => { finish = resolve; }) });
+  t.after(() => probe.dispose());
+  const info = probe.begin(1, target);
+  await new Promise(resolve => setImmediate(resolve));
+  probe.end(1);
+  finish(identity);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(existsSync(info.path), false);
+  assert.equal(existsSync(info.path + '.tmp'), false);
+});
+
+const initial = { ...identity, title: 'Before', chrome: chrome() };
+const added = { ...identity, chrome: chrome([{ ref: 10, selected: false }, { ref: 11, selected: true }]) };
+
+test('CK3 original Cmd+T sequence uses a new-tab certificate and only the final engine read', async t => {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-chain-'))));
+  let current = initial, ownInputAt = Date.now() - 1000;
+  const probe = createTabProbe({ directory, observe: async () => ({ ...current, hidIdleSeconds: (Date.now() - ownInputAt) / 1000 }), intervalMs: 2, deadlineMs: 1000 });
+  t.after(() => probe.dispose());
+  const info = probe.begin(7, { ...expected, title: 'Before', nativeIdentity: initial }, Date.now(), 'new-tab');
+  const calls = [], output = [];
+  const raw = { getAXState: async () => { calls.push('read'); return tree; },
+    pressKey: async key => { calls.push(key); if (key === 'super+t') current = added; ownInputAt = Date.now(); await new Promise(r => setTimeout(r, 10)); },
+    typeText: async () => { calls.push('typeText'); ownInputAt = Date.now(); await new Promise(r => setTimeout(r, 10)); } };
+  try {
+    await new AsyncFunction('app', 'cua', 'nodeRepl', guardedCode('await app.pressKey("super+t"); await app.typeText("https://example.test"); await app.pressKey("Return");',
+      { ...expected, title: 'Before' }, 'window changed', undefined,
+      { tabProbe: info, firstOff: true, focused: true, adoptUrl: true, guardStopMark: '[ck]', payment: { setting: 'always', message: null } }))(
+      raw, { getApp: async () => raw }, { write: line => output.push(line) });
+    assert.deepEqual(calls, ['super+t', 'typeText', 'Return', 'read']);
+    assert.equal(output.filter(line => /"decision":"probe"/.test(line)).length, 3);
+    assert.equal(globalThis.__sleightDocumentGuard.binding, undefined, 'metadata never seeds bindings');
+    assert.equal(globalThis.__sleightDocumentGuard.callTrees.has(globalThis.__sleightDocumentGuard.activeApp), false);
+  } finally { delete globalThis.__sleightDocumentGuard; delete globalThis.__sleightDocumentGuardSetup; }
+});
+
+for (const [reason, update] of [
+  ['no native strip', { chrome: undefined }],
+  ['same count tab switch', { chrome: chrome([{ ref: 10, selected: true }]) }],
+  ['two new tabs', { chrome: chrome([{ ref: 10, selected: false }, { ref: 11, selected: true }, { ref: 12, selected: false }]) }],
+  ['old tab replaced', { chrome: chrome([{ ref: 12, selected: false }, { ref: 11, selected: true }]) }],
+  ['old tab remains selected', { chrome: chrome([{ ref: 10, selected: true }, { ref: 11, selected: false }]) }],
+  ['group replacement', { chrome: { ...added.chrome, group: 9 } }],
+  ['address field replacement', { chrome: { ...added.chrome, addressField: 21, focused: 21 } }],
+  ['focus on another chrome control', { chrome: { ...added.chrome, focused: 21 } }],
+  ['incomplete traversal', { chrome: { ...added.chrome, complete: false } }],
+  ['child count mismatch', { chrome: { ...added.chrome, childCount: 3 } }],
+  ['ambiguous header', { headerMatches: 2 }],
+  ['nonstandard window', { windowSubrole: 'AXDialog' }],
+  ['missing title', { title: undefined }],
+  ['missing URL identity', { url: undefined }],
+  ['invalid process id', { pid: 0 }],
+]) test(`CK3 native transition refuses ${reason}`, () => {
+  assert.ok(tabProbeRefusal({ ...expected, title: 'Before', nativeIdentity: initial }, { ...added, ...update }, 1000, 1001, true));
+});
+
+test('CK3 native transition accepts one retained-strip addition selected in the address field', () => {
+  assert.equal(tabProbeRefusal({ ...expected, title: 'Before', nativeIdentity: initial }, added, 1000, 1001, true), undefined);
+  assert.ok(tabProbeRefusal({ ...expected, nativeIdentity: added }, { ...added, chrome: chrome() }, 1000, 1001));
+});
+
+for (const [reason, next] of [
+  ['missing strip', { ...added, chrome: undefined }],
+  ['tab switch', { ...added, chrome: chrome() }],
+  ['replacement tab', { ...added, chrome: chrome([{ ref: 12, selected: false }, { ref: 11, selected: true }]) }],
+  ['page focus', { ...added, focus: { ...added.focus, inPage: true } }],
+  ['late sheet', { ...added, focus: { ...added.focus, sheets: 1 } }],
+  ['unproved traversal', { ...added, chrome: { complete: false } }],
+  ['user input', { ...added, hidIdleSeconds: 0 }],
+  ['helper restart', { ...added, epoch: 'new' }],
+]) test(`CK3 original chain takes the full read before typing on ${reason}`, async t => {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-fallback-'))));
+  let current = initial;
+  const probe = createTabProbe({ directory, observe: async () => current, intervalMs: 2 });
+  t.after(() => probe.dispose());
+  const info = probe.begin(1, { ...expected, title: 'Before', nativeIdentity: initial }, Date.now(), 'new-tab');
+  const calls = [];
+  const raw = { getAXState: async () => { calls.push('read'); return tree; },
+    pressKey: async key => { calls.push(key); current = next; }, typeText: async () => calls.push('typeText') };
+  try {
+    await assert.rejects(new AsyncFunction('app', 'cua', 'nodeRepl', guardedCode(
+      'await app.pressKey("super+t"); await app.typeText("https://example.test"); await app.pressKey("Return");',
+      { ...expected, title: 'Before' }, 'window changed', undefined,
+      { tabProbe: info, firstOff: true, focused: true, adoptUrl: true }))(raw, { getApp: async () => raw }, { write() {} }), /window changed/);
+    assert.deepEqual(calls, ['super+t', 'read']);
+  } finally { delete globalThis.__sleightDocumentGuard; delete globalThis.__sleightDocumentGuardSetup; }
+});

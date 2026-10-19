@@ -4,6 +4,81 @@ ObjC.import('ApplicationServices');
 ObjC.import('CoreGraphics');
 const windowEpoch = ObjC.unwrap($.NSUUID.UUID.UUIDString);
 const windowReferences = [];
+const chromeReferences = [];
+// References belong to this helper epoch, never to an engine element number. Only browser chrome metadata is read.
+function tabCertificate(app, window, attr, scalar) {
+  try {
+    const ref = element => {
+      let i = chromeReferences.findIndex(other => $.CFEqual(other, element));
+      if (i < 0) {
+        if (chromeReferences.length >= 4096) throw new Error('chrome-reference-capacity');
+        i = chromeReferences.push(element) - 1;
+      }
+      return i + 1;
+    };
+    const children = (element, leaf = false) => {
+      const value = attr(element, 'AXChildren', leaf);
+      if (leaf && value === null) return [];
+      const n = Number(value?.count);
+      if (!Number.isSafeInteger(n) || n < 0 || n > 256) throw new Error('incomplete-children');
+      return Array.from({ length: n }, (_, i) => value.objectAtIndex(i));
+    };
+    const groups = [], fields = [], seen = [];
+    const walk = (element, toolbar = false, depth = 0) => {
+      if (depth > 32 || seen.length >= 1024 || seen.some(other => $.CFEqual(other, element))) throw new Error('incomplete-chrome');
+      seen.push(element);
+      const role = scalar(attr(element, 'AXRole'));
+      const description = scalar(attr(element, 'AXRoleDescription', true));
+      // Stop at content roots before inspecting attributes, values or children within them.
+      if (['AXWebArea', 'AXTextArea'].includes(role) || /html content/i.test(String(description ?? ''))) return;
+      if (['AXSheet', 'AXDialog', 'AXAlert', 'AXPopover', 'AXMenu'].includes(role) ||
+          [true, 1].includes(scalar(attr(element, 'AXModal', true))) ||
+          role === 'AXMenuBarItem' && [true, 1].includes(scalar(attr(element, 'AXSelected', true)))) throw new Error('chrome-transient');
+      toolbar ||= role === 'AXToolbar';
+      if (role === 'AXTabGroup') groups.push(element);
+      if (['AXTextField', 'AXComboBox', 'AXSearchField'].includes(role)) {
+        const identifier = scalar(attr(element, 'AXIdentifier', true));
+        const settable = Ref();
+        if (Number($.AXUIElementIsAttributeSettable(element, $('AXValue'), settable)) !== 0) throw new Error('editable-unknown');
+        fields.push({ element, toolbar, editable: Number(settable[0]) === 1,
+          enabled: [true, 1].includes(scalar(attr(element, 'AXEnabled'))),
+          secure: scalar(attr(element, 'AXSubrole', true)) === 'AXSecureTextField',
+          // An explicit chrome identifier is required. Unknown or localized identifiers take the full read.
+          address: typeof identifier === 'string' && /(?:^|[-_ ])(?:urlbar|address|location)(?:[-_ ]|$)/i.test(identifier) });
+      }
+      const leaf = ['AXButton', 'AXRadioButton', 'AXTab', 'AXTextField', 'AXComboBox', 'AXSearchField', 'AXStaticText', 'AXImage', 'AXMenuBarItem'].includes(role);
+      for (const child of children(element, leaf)) walk(child, toolbar, depth + 1);
+    };
+    if (scalar(attr(window, 'AXSubrole')) !== 'AXStandardWindow') throw new Error('nonstandard-window');
+    walk(window);
+    // A tracking menu can live outside AXWindows. A missing menu bar is unknown, not an empty menu.
+    walk(attr(app, 'AXMenuBar'));
+    if (groups.length !== 1) throw new Error('ambiguous-tab-group');
+    const group = groups[0], direct = children(group), tabs = [];
+    for (const child of direct) {
+      const role = scalar(attr(child, 'AXRole'));
+      if (!['AXRadioButton', 'AXTab'].includes(role)) continue;
+      const selected = scalar(attr(child, 'AXValue'));
+      if (![true, false, 0, 1].includes(selected)) throw new Error('unknown-tab-selection');
+      tabs.push({ ref: ref(child), selected: selected === true || selected === 1 });
+    }
+    if (!tabs.length || tabs.filter(tab => tab.selected).length !== 1) throw new Error('ambiguous-selected-tab');
+    if (fields.length !== 1 || !fields[0].toolbar || !fields[0].editable || !fields[0].enabled ||
+        fields[0].secure || !fields[0].address) throw new Error('unproved-address-field');
+    const field = fields[0].element;
+    let owner = field, reached = false;
+    const parents = [];
+    for (let depth = 0; owner && depth < 40; depth++) {
+      if ($.CFEqual(owner, window)) { reached = true; break; }
+      if (parents.some(other => $.CFEqual(other, owner))) break;
+      parents.push(owner); owner = attr(owner, 'AXParent', true);
+    }
+    if (!reached) throw new Error('address-ancestry-unknown');
+    const focused = attr(app, 'AXFocusedUIElement');
+    return { complete: true, group: ref(group), childCount: direct.length, children: direct.map(ref), tabCount: tabs.length, tabs,
+      addressField: ref(field), focused: $.CFEqual(field, focused) ? ref(field) : null };
+  } catch (error) { return { complete: false, reason: String(error.message ?? error) }; }
+}
 // JXA's Ref('CGPoint') reads back as the number 0, so this fallback never matched (macOS 27.0.1, 2026-10-16).
 // Copy the struct into bytes and read it back through NSValue.
 function axPair(value, type) {
@@ -20,6 +95,9 @@ function run(argv) {
     const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(request.appId);
     if (Number(apps.count) !== 1) throw new Error('Expected one running app');
     const running = apps.objectAtIndex(0), pid = Number(running.processIdentifier);
+    if (request.followTab && (!request.tabCertificate || request.nativeIdentity?.epoch !== windowEpoch ||
+        request.nativeIdentity?.pid !== pid || request.nativeIdentity?.processStart !== Number(running.launchDate.timeIntervalSince1970) ||
+        !windowReferences[request.nativeIdentity?.window - 1])) throw new Error('Tab window baseline unavailable');
     const app = $.AXUIElementCreateApplication(pid);
     if (Number($.AXUIElementSetMessagingTimeout(app, 0.1)) !== 0) throw new Error('AX deadline unavailable');
     const attr = (element, name, optional = false) => {
@@ -40,10 +118,11 @@ function run(argv) {
       // Finder's desktop window has no AXTitle (-25212), and requiring one failed every Finder identity
       // (late-alert probe, 2026-10-17: 5 of 5 baselines empty). A window without a title matches no header.
       const title = scalar(attr(window, 'AXTitle', true));
-      if (title !== null && title === request.title && scalar(attr(window, 'AXDocument', true)) === request.url) matches.push(window);
+      if (request.followTab ? $.CFEqual(window, windowReferences[request.nativeIdentity.window - 1])
+        : title !== null && title === request.title && scalar(attr(window, 'AXDocument', true)) === request.url) matches.push(window);
     }
     // Before the number or focus narrows them: a caller with no number for the window needs exactly one.
-    const headerMatches = matches.length;
+    let headerMatches = matches.length;
     const focused = attr(app, 'AXFocusedWindow');
     let cg;
     const number = window => {
@@ -79,6 +158,15 @@ function run(argv) {
       appId: request.appId, title: request.title, url: request.url, epoch: windowEpoch, window: 0,
       pid, processStart: Number(running.launchDate.timeIntervalSince1970), hidIdleSeconds: hidIdleSeconds() });
     const window = matches[0];
+    if (request.followTab) {
+      request.title = scalar(attr(window, 'AXTitle'));
+      request.url = scalar(attr(window, 'AXDocument', true));
+      headerMatches = 0;
+      for (let i = 0; i < Number(windows.count); i++) {
+        const candidate = windows.objectAtIndex(i);
+        if (scalar(attr(candidate, 'AXTitle', true)) === request.title && scalar(attr(candidate, 'AXDocument', true)) === request.url) headerMatches++;
+      }
+    }
     // A unique header must also describe the app's focused window. Otherwise the engine's handle
     // and Accessibility disagree about which window a background input would reach.
     if (!$.CFEqual(window, focused)) return JSON.stringify({ status: 'mismatch', error: 'Focused window differs' });
@@ -118,7 +206,9 @@ function run(argv) {
       focus = { sheets, role: element ? scalar(attr(element, 'AXRole', true)) : null,
         subrole: element ? scalar(attr(element, 'AXSubrole', true)) ?? null : null, inWindow, inPage };
     }
-    return JSON.stringify({ status: 'ok', matches: 1, headerMatches, appId: request.appId, title: request.title,
+    const chrome = request.tabCertificate ? tabCertificate(app, window, attr, scalar) : undefined;
+    if (request.tabCertificate && !$.CFEqual(window, attr(app, 'AXFocusedWindow'))) throw new Error('Window changed during certificate');
+    return JSON.stringify({ status: 'ok', matches: 1, headerMatches, appId: request.appId, title: request.title, ...(chrome ? { chrome } : {}),
       url: request.url, epoch: windowEpoch, window: index + 1, windowNumber: number(window), pid,
       // The parent lease takes only a standard window (SLEIGHT_PARENT_LEASE), read before HID idle is sampled.
       windowSubrole: scalar(attr(window, 'AXSubrole', true)) ?? null,

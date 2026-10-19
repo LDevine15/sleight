@@ -561,13 +561,16 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
   // CC2 and CC3 (the list helper's own focusing click and its jumps, then the CC13 review fixes) changed the list helper
   // the guard and setup embed.
   // X11 recomputed these pins with CC6 tracking and CC13 list arguments together.
+  // CK adds binding diagnostics, exact plain-line remaps and tab probe checks to the shared installation.
+  // CK2 adds the field inventory proof and native tab certificates with dispatch-age fallback to that installation.
+  // The warm-call pin is unchanged: default-on CK switches occupy no per-call bytes.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
     guardedLean: hash(guardedCode('await app.click(1);', window, undefined, undefined, { prompt: 'lean' })),
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: '24b38349b21f2975', guardedLean: 'db6cfa77928bf90d', reuse: 'b824edb3aa6dc2c4', read: 'ac55e55ba6957fcd', repl: 'ac55e55ba6957fcd' });
+  }, { guarded: '0ff3793502a0d574', guardedLean: 'b1d8e25269c88a53', reuse: 'b824edb3aa6dc2c4', read: '19411529a1a05443', repl: '19411529a1a05443' });
 });
 
 test('with both switches off the guard carries none of the outcome code', () => {

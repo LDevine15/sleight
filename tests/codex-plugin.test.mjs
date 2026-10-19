@@ -52,7 +52,7 @@ test('one launcher serves both hosts, under the server key that gives the same t
   // exceptions: the benchmark and test switches.
   const NOT_FORWARDED = { SLEIGHT_ARM_DIR: 'benchmark arms only',
     SLEIGHT_BENCH_API_CAP_USD: 'benchmark arms only', SLEIGHT_STUB_OSASCRIPT: 'tests only' };
-  const documented = [...new Set(readFileSync(join(repo, 'docs/settings.md'), 'utf8').match(/SLEIGHT_[A-Z_]+/g))]
+  const documented = [...new Set(readFileSync(join(repo, 'docs/settings.md'), 'utf8').match(/SLEIGHT_[A-Z0-9_]+/g))]
     .filter(name => !Object.hasOwn(NOT_FORWARDED, name)).toSorted();
   assert.deepEqual(server.env_vars.filter(name => name.startsWith('SLEIGHT_')).toSorted(), documented);
   assert.deepEqual(server.env_vars.filter(name => !name.startsWith('SLEIGHT_')), ['CODEX_HOME']);
