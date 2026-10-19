@@ -39,6 +39,8 @@ sleight runs inside Claude Code, and what Claude Code sends is handled under
 [Anthropic's privacy policy](https://www.anthropic.com/legal/privacy). This page can't speak for
 either.
 
+The results site doesn't load resources from third parties or use analytics.
+
 ## The update watch
 
 The weekly or daily watch job is not part of the installed plugin. The marketplace installs only
