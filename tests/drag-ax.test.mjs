@@ -420,3 +420,124 @@ test('known semantic elements moved into window chrome still refuse before input
   h.area.AXParent = h.toolbar; h.toolbar.AXChildren = [h.area]; h.win.AXChildren = [h.toolbar];
   assert.throws(() => h.context.checkSemantic(before, request, 7, h.window(), { id: 11, title: 'document', bounds: h.bounds }), /chrome|content|toolbar/);
 });
+
+// CC8, owner ruling 2026-10-19 (LAWS native apps line): a web list row named only by AXValue binds to the label the
+// engine printed, and nothing else's value is read.
+function labelFixture() {
+  const h = semanticFixture(), valueReads = [];
+  const copy = h.context.$.AXUIElementCopyAttributeValue;
+  h.context.$.AXUIElementCopyAttributeValue = (el, name, out) => {
+    if (name === 'AXValue') valueReads.push(el);
+    return copy(el, name, out);
+  };
+  const list = { ...h.element('AXGroup', 300, 160, 200, 120), AXParent: h.win };
+  const row = (label, y) => ({ ...h.element('AXStaticText', 310, y, 80, 20), AXValue: label, AXParent: list });
+  list.AXChildren = [row('Billing', 170), row('Security', 200), row('Product updates', 230)];
+  h.win.AXChildren.push(list);
+  const hit = h.context.$.AXUIElementCopyElementAtPosition;
+  h.context.$.AXUIElementCopyElementAtPosition = (el, x, y, out) => {
+    const found = list.AXChildren.find(r => x >= r.AXPosition.x && x < r.AXPosition.x + r.AXSize.width &&
+      y >= r.AXPosition.y && y < r.AXPosition.y + r.AXSize.height);
+    if (found) { out[0] = found; return 0; }
+    return hit(el, x, y, out);
+  };
+  const request = (lines, from = 90, to = 91) => ({ from, to, elementWindow: { title: 'document', windowId: 11 }, elementLines: lines });
+  return { ...h, list, row, valueReads, request };
+}
+const main = h => ({ id: 11, title: 'document', bounds: h.bounds });
+
+test('an engine-printed static-text label binds by exact AXValue and reads no other kind of value', () => {
+  const h = labelFixture();
+  const request = h.request({ 90: 'text Security', 91: 'text Billing' });
+  const points = h.resolve(request);
+  assert.deepEqual(Array.from(points.from), [250, 110]);
+  assert.deepEqual(Array.from(points.to), [250, 80]);
+  assert.ok(h.valueReads.length > 0);
+  assert.ok(h.valueReads.every(el => el.AXRole === 'AXStaticText'), 'only static text values are read');
+  assert.equal(h.valueReads.includes(h.area), false, "the document's text area value is never read");
+  h.list.AXChildren[1].AXValue = 'Security changed';
+  assert.throws(() => h.context.checkSemantic(points, request, 7, h.window(), main(h)), /identity|changed/);
+});
+
+test('a static-text label refuses a different, cased, padded or substring value without naming it', () => {
+  for (const value of ['Security alerts', 'security', 'Security ', ' Security', 'Secur']) {
+    const h = labelFixture(); h.list.AXChildren[1].AXValue = value;
+    assert.throws(() => h.resolve(h.request({ 90: 'text Security' }, 90, [40, 60])), error =>
+      /missing/.test(error.message) && !error.message.includes(value.trim() === 'Security' ? 'Security ' : value));
+  }
+});
+
+test('a label longer than the cap is refused without reading any AXValue', () => {
+  const h = labelFixture(), long = 'Security '.repeat(9) + 'x';
+  assert.ok(long.length > 80);
+  h.list.AXChildren[1].AXValue = long;
+  assert.throws(() => h.resolve(h.request({ 90: 'text ' + long }, 90, [40, 60])), /missing/);
+  assert.equal(h.valueReads.length, 0);
+  const h2 = labelFixture(), atCap = 'S'.repeat(80);
+  h2.list.AXChildren[1].AXValue = atCap;
+  assert.deepEqual(Array.from(h2.resolve(h2.request({ 90: 'text ' + atCap }, 90, [40, 60])).from), [250, 110]);
+});
+
+test('text fields, text areas and other roles never bind by value, and values under them are never read', () => {
+  for (const role of ['AXTextField', 'AXTextArea', 'AXComboBox', 'AXRow', 'AXButton']) {
+    const h = labelFixture(); h.list.AXChildren[1].AXRole = role;
+    assert.throws(() => h.resolve(h.request({ 90: 'text Security' }, 90, [40, 60])), /missing/);
+    assert.equal(h.valueReads.includes(h.list.AXChildren[1]), false, role + ' value read');
+  }
+  for (const role of ['AXTextArea', 'AXTextField', 'AXComboBox', 'AXLayoutArea']) {
+    const h = labelFixture(); h.list.AXRole = role;
+    assert.throws(() => h.resolve(h.request({ 90: 'text Security' }, 90, [40, 60])), /missing/);
+    assert.equal(h.valueReads.length, 0, 'static text under ' + role + ' was read');
+  }
+  const h = labelFixture();
+  assert.throws(() => h.resolve(h.request({ 90: 'row Security' }, 90, [40, 60])), /missing/);
+  assert.throws(() => h.resolve(h.request({ 90: 'text field Security' }, 90, [40, 60])), /missing/);
+});
+
+test("a document's text never gets read for a drag endpoint, even when it equals the label", () => {
+  const h = labelFixture();
+  h.win.AXChildren = [h.toolbar, h.area];
+  h.area.AXValue = 'Security';
+  const paragraph = { ...h.element('AXStaticText', 110, 140, 80, 20), AXValue: 'Security', AXParent: h.area };
+  h.area.AXChildren = [paragraph];
+  assert.throws(() => h.resolve(h.request({ 90: 'text Security' }, 90, [40, 60])), /missing/);
+  assert.deepEqual(h.valueReads, [], 'no AXValue read from the document or its text');
+});
+
+test('a label value outside the leased window or in its toolbar is never bound or read', () => {
+  const h = labelFixture();
+  h.win.AXChildren = h.win.AXChildren.filter(el => el !== h.list);
+  const other = { ...h.element('AXWindow', 700, 100, 400, 400, [h.list]), AXWindowNumber: 22, AXTitle: 'other' };
+  h.list.AXParent = other; h.app.AXWindows.push(other);
+  assert.throws(() => h.resolve(h.request({ 90: 'text Security' }, 90, [40, 60])), /missing/);
+  assert.equal(h.valueReads.length, 0);
+  const t = labelFixture();
+  t.win.AXChildren = t.win.AXChildren.filter(el => el !== t.list);
+  t.toolbar.AXChildren = [t.list]; t.list.AXParent = t.toolbar;
+  assert.throws(() => t.resolve(t.request({ 90: 'text Security' }, 90, [40, 60])), /missing/);
+  assert.equal(t.valueReads.length, 0);
+});
+
+test('label binding keeps uniqueness, the character-count gate and the move-into-input refusal', () => {
+  const dup = labelFixture(); dup.list.AXChildren.push(dup.row('Security', 260));
+  assert.throws(() => dup.resolve(dup.request({ 90: 'text Security' }, 90, [40, 60])), /ambiguous/);
+  const counted = labelFixture();
+  for (const r of counted.list.AXChildren) r.AXNumberOfCharacters = r.AXValue.length + 5;
+  assert.throws(() => counted.resolve(counted.request({ 90: 'text Security' }, 90, [40, 60])), /missing/);
+  assert.equal(counted.valueReads.length, 0, 'a count that differs rules the value out unread');
+  const exact = labelFixture();
+  for (const r of exact.list.AXChildren) r.AXNumberOfCharacters = r.AXValue.length;
+  const request = exact.request({ 90: 'text Security' }, 90, [40, 60]);
+  const before = exact.resolve(request);
+  assert.ok(exact.valueReads.length && exact.valueReads.every(el => el === exact.list.AXChildren[1]), 'only the row whose count equals the label is read');
+  const field = { ...exact.element('AXTextField', 300, 160, 200, 120), AXParent: exact.win };
+  exact.list.AXParent = field;
+  assert.throws(() => exact.context.checkSemantic(before, request, 7, exact.window(), main(exact)), /text input|document/);
+});
+
+test('a titled static text still binds by name without reading its value', () => {
+  const h = labelFixture(), row = h.list.AXChildren[1];
+  row.AXTitle = 'Security'; row.AXValue = 'something else';
+  assert.deepEqual(Array.from(h.resolve(h.request({ 90: 'text Security' }, 90, [40, 60])).from), [250, 110]);
+  assert.equal(h.valueReads.includes(row), false);
+});
