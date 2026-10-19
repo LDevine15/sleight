@@ -114,6 +114,12 @@ fixture's profile in its arguments is the run's own, so cleanup quits it whole. 
 Chromium framework don't get AppKit's `-ApplePersistenceIgnoreState` switch, because VS Code 1.141 reads its letters as
 short flags and `-s` (`--status`) quits a first instance.
 
+The scroll target comes from the fixture's own text. It is the one scroll area around a row with the fixture marker.
+When no scroll area holds the marker, it is the nearest list, outline, table, grid, layout area or text region that
+does, and a tie goes to the largest (a sheet's cell table, an editor's explorer list). An instance proven to be the
+run's own may fall back to its largest scrollable region. Each row's `treeShape` records which rule applied (`tier`) and
+counts of fixed role words, never labels or values.
+
 Every cell records focus and cover changes from the host's 200 ms samples. Each record gives the phase, the host stage,
 the time and the frontmost bundle ID before and after. Before the first engine call the only actor is the fixture app's
 own launch, so the app activating itself or covering the owner's window then counts as `launch-activation` or

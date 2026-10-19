@@ -171,6 +171,8 @@ export async function liveSpeedRuntime(plan, options, {
             // The folder goes in argv: with --new-window and no path there, VS Code opens an empty window instead.
             fixture.launchArgs = [...editorProfileArgs(dir), fixture.target]; fixture.targetInArgs = true;
             fixture.ownedArg = fixture.launchArgs[0];
+            // The instance runs on this fixture's own profile, so any of its regions may take the measured scroll.
+            fixture.anyRegion = true;
           }
         } else if (task.fixture === 'browser') {
           fixture.marker = name;

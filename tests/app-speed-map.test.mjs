@@ -412,7 +412,8 @@ test('a document fixture picks the scroll area around its own text among several
   const app = closed({ getAXState: async () => wordTree });
   const found = await readMetrics(app, { marker: 'AM1-fixture', scrollMarker: 'AM1-fixture' });
   assert.equal(found.scrollTarget, 3);
-  assert.deepEqual(found.shape, { scrollAreas: 3, fallbackTargets: 0, markerRows: 2, markerScrollAreas: 1, scrollDepths: [1, 1, 1] });
+  assert.deepEqual(found.shape, { scrollAreas: 3, fallbackTargets: 0, markerRows: 2, markerScrollAreas: 1, scrollDepths: [1, 1, 1],
+    markerRegions: 0, tier: 1, roles: { 'scroll area': 3, 'layout area': 1, 'text entry area': 1, 'tab group': 1, 'standard window': 1 } });
   const blind = await readMetrics(app, { marker: 'AM1-fixture' });
   assert.equal(blind.scrollTarget, null);
   assert.equal(blind.shape.scrollAreas, 3);
@@ -426,6 +427,34 @@ test('each sequential row keeps the warm read shape and the cleanup window codes
   let published; r.publish = async report => { published = structuredClone(report); };
   await assert.rejects(runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r), /CLEANUP_UNCONFIRMED/);
   const row = published.rows[0];
-  assert.deepEqual(row.treeShape, { scrollAreas: 1, fallbackTargets: 0, markerRows: 0, markerScrollAreas: 0, scrollDepths: [1] });
+  assert.deepEqual(row.treeShape, { scrollAreas: 1, fallbackTargets: 0, markerRows: 0, markerScrollAreas: 0, scrollDepths: [1],
+    markerRegions: 0, tier: 0, roles: { 'scroll area': 1, 'static text': 1, 'standard window': 1 } });
   assert.deepEqual(row.cleanupWindows, [{ retained: false, present: true, matched: false, documentStatus: -25204, sheetStatus: -25204, reasons: ['WINDOW_NOT_RETAINED'] }]);
+});
+
+// AM1 full map (2026-10-19 08:57Z): Excel 0/10 (1 scroll area, 3 marker rows, none inside it) and Cursor 0/10 (no scroll
+// area, list or marker row in 104 nodes) failed NO_UNIQUE_SCROLL_AREA; VS Code passed through its explorer list.
+const excelTree = 'Window: "AM1-fixture.xlsx", App: Microsoft Excel.\n0 standard window AM1-fixture.xlsx\n\t1 scroll area Ribbon\n\t\t2 button Home\n' +
+  '\t3 group Formula Bar\n\t\t4 text entry area Value: AM1-fixture PENDING\n\t5 layout area Content Area, Description: Workbook area\n' +
+  '\t\t6 table Sheet1\n\t\t\t7 row\n\t\t\t\t8 cell A1, Value: AM1-fixture PENDING\n\t\t\t9 row\n\t\t\t\t10 cell A2';
+test('a sheet scrolls the table around its own cell when no scroll area holds the marker', async () => {
+  const found = await readMetrics(closed({ getAXState: async () => excelTree }), { marker: 'AM1-fixture', scrollMarker: 'AM1-fixture' });
+  assert.equal(found.scrollTarget, 6);
+  assert.equal(found.shape.tier, 2);
+  assert.equal(found.shape.markerRegions, 2);
+  assert.equal(found.shape.roles.table, 1);
+});
+
+const agentTree = 'Window: "AM1-fixture", App: Cursor.\n0 standard window AM1-fixture\n\t1 web area\n\t\t2 group\n\t\t\t3 button Agents\n' +
+  '\t\t4 group\n\t\t\t5 text entry area (settable) Placeholder: Ask\n\t\t\t6 static text Plan, search, build anything';
+test('only the run\'s own editor instance falls back to its largest scrollable region when no region holds the marker', async () => {
+  const app = closed({ getAXState: async () => agentTree });
+  const blind = await readMetrics(app, { marker: 'AM1-fixture', scrollMarker: 'AM1-fixture-row' });
+  assert.equal(blind.scrollTarget, null);
+  assert.equal(blind.shape.markerRows, 0);
+  const owned = await readMetrics(app, { marker: 'AM1-fixture', scrollMarker: 'AM1-fixture-row', anyRegion: true });
+  assert.equal(owned.scrollTarget, 5);
+  assert.equal(owned.shape.tier, 3);
+  assert.equal(owned.shape.roles['web area'], 1);
+  assert.doesNotMatch(JSON.stringify(owned.shape), /Ask|Agents|Plan/);
 });

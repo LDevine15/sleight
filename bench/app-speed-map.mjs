@@ -49,41 +49,72 @@ export function speedScope(plan, task) {
   return plan.ownerPresent === true ? 'owner-present-read-only' : 'owned-fixture';
 }
 
-export async function readMetrics(handle, { marker, requiredText, scrollMarker } = {}) {
+export async function readMetrics(handle, { marker, requiredText, scrollMarker, anyRegion } = {}) {
   const tree = await handle.getAXState({ disableDiffing: true, emit: false });
-  return treeMetrics(tree, { marker, requiredText, scrollMarker });
+  return treeMetrics(tree, { marker, requiredText, scrollMarker, anyRegion });
 }
 
 // Serialized into the engine. Receives text, never a native handle.
-function treeMetrics(tree, { marker, requiredText, scrollMarker } = {}) {
+function treeMetrics(tree, { marker, requiredText, scrollMarker, anyRegion } = {}) {
   if (typeof tree !== 'string') throw Error('TREE_UNAVAILABLE');
   if (marker && !tree.split('\n')[0].includes(marker) || requiredText && !tree.includes(requiredText)) throw Error('FIXTURE_IDENTITY');
   const numbered = [...tree.matchAll(/^\t*\d+ /gm)].length;
   const dom = [...tree.matchAll(/\bnode_id=/g)].length;
-  const scrolls = [...tree.matchAll(/^(\t*)(\d+) (?:scroll area|scroll view|AXScrollArea)\b/gmi)].map(row => [row[0], row[2], row[1].length]);
-  const fallback = [...tree.matchAll(/^\t*(\d+) (?:text area|text view|outline|list)\b/gmi)];
-  const targets = scrolls.length ? scrolls : fallback;
-  // Counts and depths only, never text: enough to tell why a scroll target was or wasn't unique.
-  const shape = { scrollAreas: scrolls.length, fallbackTargets: fallback.length, markerRows: 0, markerScrollAreas: 0,
-    scrollDepths: scrolls.slice(0, 10).map(row => row[2]) };
-  if (scrollMarker) {
-    const targetIds = new Set(targets.map(row => Number(row[1]))), matches = new Set(), ancestors = [];
-    for (const line of tree.split('\n')) {
-      const row = /^(\t*)(\d+) (.+)$/.exec(line);
-      if (!row) continue;
-      const depth = row[1].length, id = Number(row[2]);
-      while (ancestors.length && ancestors.at(-1).depth >= depth) ancestors.pop();
-      if (row[3].includes(scrollMarker)) {
-        shape.markerRows++;
-        const parent = ancestors.findLast(item => targetIds.has(item.id));
-        if (parent) matches.add(parent.id);
-      }
-      ancestors.push({ depth, id });
-    }
-    shape.markerScrollAreas = matches.size;
-    return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: matches.size === 1 ? [...matches][0] : null, shape };
+  // Role words counted for the receipt, longest first. Labels and values are never kept.
+  const vocabulary = ['standard window', 'scroll area', 'scroll view', 'layout area', 'text entry area', 'text area', 'text view', 'web area',
+    'tab group', 'static text', 'pop up button', 'menu button', 'radio button', 'check box', 'menu bar', 'menu item', 'table', 'grid',
+    'outline', 'list', 'row', 'cell', 'group', 'button', 'toolbar', 'splitter', 'image', 'link', 'heading', 'window', 'dialog', 'sheet'];
+  const tier1 = /^(?:scroll area|scroll view|AXScrollArea)\b/i, tier2 = /^(?:list|outline|table|grid|layout area|text area|text entry area|text view)\b/i;
+  const tier3 = /^web area\b/i, legacy = /^(?:text area|text view|outline|list)\b/i;
+  const rows = [], stack = [], roles = {};
+  for (const line of tree.split('\n')) {
+    const match = /^(\t*)(\d+) (.+)$/.exec(line);
+    if (!match) continue;
+    const row = { depth: match[1].length, id: Number(match[2]), text: match[3], size: 0 };
+    while (stack.length && stack.at(-1).depth >= row.depth) stack.pop();
+    row.parents = stack.slice(); for (const parent of stack) parent.size++;
+    stack.push(row); rows.push(row);
+    const role = vocabulary.find(word => row.text.toLowerCase() === word || row.text.toLowerCase().startsWith(word + ' ') || row.text.toLowerCase().startsWith(word + ','));
+    if (role) roles[role] = (roles[role] ?? 0) + 1;
   }
-  return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: targets.length === 1 ? Number(targets[0][1]) : null, shape };
+  const scrolls = rows.filter(row => tier1.test(row.text)), fallback = rows.filter(row => legacy.test(row.text));
+  // Counts, depths and role words only, never text: enough to tell why a scroll target was or wasn't unique.
+  const shape = { scrollAreas: scrolls.length, fallbackTargets: fallback.length, markerRows: 0, markerScrollAreas: 0,
+    scrollDepths: scrolls.slice(0, 10).map(row => row.depth), markerRegions: 0, tier: 0, roles };
+  const largest = list => {
+    const top = Math.max(...list.map(row => row.size));
+    const best = list.filter(row => row.size === top);
+    return best.length === 1 ? best[0].id : null;
+  };
+  let scrollTarget = null;
+  if (scrollMarker) {
+    const marked = rows.filter(row => row.text.includes(scrollMarker));
+    shape.markerRows = marked.length;
+    // Tier 1: the one scroll area around the fixture's own text (Word, TextEdit, Finder).
+    const areas = new Map();
+    for (const row of marked) { const area = row.parents.findLast(parent => tier1.test(parent.text)); if (area) areas.set(area.id, area); }
+    shape.markerScrollAreas = areas.size;
+    if (areas.size === 1) { scrollTarget = [...areas.keys()][0]; shape.tier = 1; }
+    else if (!areas.size) {
+      // Tier 2: no scroll area holds it, so the nearest list, outline, table, grid, layout or text region that does (a
+      // sheet's cell table, an editor's explorer list); several such regions resolve to the largest.
+      const regions = new Map();
+      for (const row of marked) { const region = [...row.parents, row].findLast(item => tier2.test(item.text)); if (region) regions.set(region.id, region); }
+      shape.markerRegions = regions.size;
+      if (regions.size) { scrollTarget = largest([...regions.values()]); if (scrollTarget !== null) shape.tier = 2; }
+    }
+    // Tier 3: in an instance that is wholly the run's own, the largest scrollable region when nothing holds the marker.
+    if (scrollTarget === null && anyRegion) {
+      for (const tier of [tier1, tier2, tier3]) {
+        const regions = rows.filter(row => tier.test(row.text));
+        if (regions.length) { scrollTarget = largest(regions); break; }
+      }
+      if (scrollTarget !== null) shape.tier = 3;
+    }
+    return { chars: tree.length, nodes: numbered || dom || null, scrollTarget, shape };
+  }
+  const targets = scrolls.length ? scrolls : fallback;
+  return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: targets.length === 1 ? targets[0].id : null, shape };
 }
 
 function metrics(reply) {
@@ -95,10 +126,14 @@ function metrics(reply) {
       value.nodes !== null && (!Number.isInteger(value.nodes) || value.nodes < 0) ||
       value.scrollTarget !== null && (!Number.isInteger(value.scrollTarget) || value.scrollTarget < 0)) throw Error('METRICS_INVALID');
   const shape = value.shape, count = item => Number.isInteger(item) && item >= 0;
-  if (shape !== undefined && !(shape && ['scrollAreas', 'fallbackTargets', 'markerRows', 'markerScrollAreas'].every(key => count(shape[key])) &&
-      Array.isArray(shape.scrollDepths) && shape.scrollDepths.length <= 10 && shape.scrollDepths.every(count))) throw Error('METRICS_INVALID');
+  const roles = shape?.roles;
+  if (shape !== undefined && !(shape && ['scrollAreas', 'fallbackTargets', 'markerRows', 'markerScrollAreas', 'markerRegions'].every(key => count(shape[key])) &&
+      Array.isArray(shape.scrollDepths) && shape.scrollDepths.length <= 10 && shape.scrollDepths.every(count) && [0, 1, 2, 3].includes(shape.tier) &&
+      roles && typeof roles === 'object' && Object.keys(roles).length <= 40 &&
+      Object.entries(roles).every(([role, n]) => /^[a-z ]{1,24}$/.test(role) && count(n)))) throw Error('METRICS_INVALID');
   return shape === undefined ? value : { ...value, shape: { scrollAreas: shape.scrollAreas, fallbackTargets: shape.fallbackTargets,
-    markerRows: shape.markerRows, markerScrollAreas: shape.markerScrollAreas, scrollDepths: shape.scrollDepths } };
+    markerRows: shape.markerRows, markerScrollAreas: shape.markerScrollAreas, scrollDepths: shape.scrollDepths,
+    markerRegions: shape.markerRegions, tier: shape.tier, roles: { ...roles } } };
 }
 const failures = new Set(['HOLD', 'TREE_UNAVAILABLE', 'FIXTURE_IDENTITY', 'ENGINE_CALL_FAILED', 'METRICS_UNAVAILABLE', 'METRICS_INVALID',
   'NO_UNIQUE_SCROLL_AREA', 'CLEANUP_UNCONFIRMED', 'SESSION_CLEANUP_UNCONFIRMED', 'FOCUS_CHANGED', 'APP_ALREADY_RUNNING',
@@ -157,7 +192,7 @@ export async function runSpeedMap(plan, runtime) {
           // concurrent read-only sessions avoid taking an action lease.
           await timed(key, read);
           boundary();
-          return metrics(await session.js(`nodeRepl.write('AM1METRICS:' + JSON.stringify((${treeMetrics.toString()})(am1Tree, ${JSON.stringify({ marker: fixture.marker, requiredText: fixture.requiredText, scrollMarker: fixture.scrollMarker })})));`));
+          return metrics(await session.js(`nodeRepl.write('AM1METRICS:' + JSON.stringify((${treeMetrics.toString()})(am1Tree, ${JSON.stringify({ marker: fixture.marker, requiredText: fixture.requiredText, scrollMarker: fixture.scrollMarker, anyRegion: fixture.anyRegion === true })})));`));
         }
         const first = await measuredRead('firstReadMs');
         row.chars = first.chars; row.nodes = first.nodes;

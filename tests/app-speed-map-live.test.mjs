@@ -340,3 +340,14 @@ test('a workspace fixture passes its folder as a launch argument and names the p
   assert.ok(fixture.ownedArg.slice(16).startsWith(fixture.dir + '/'));
   await h.runtime.closeFixture(fixture); await h.runtime.close();
 });
+
+test('only a fixture proven to be the run\'s own instance asks for the any-region scroll fallback', async t => {
+  const h = await setup(t, { id: 'vscode', base: '/private/tmp' });
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['vscode'], runs: 1 }).apps[0]);
+  assert.equal(fixture.anyRegion, true);
+  await h.runtime.closeFixture(fixture); await h.runtime.close();
+  const w = await setup(t, { id: 'word' });
+  const word = await w.runtime.prepare(speedPlan({ ids: ['word'], runs: 1 }).apps[0]);
+  assert.equal(word.anyRegion, undefined);
+  await w.runtime.closeFixture(word); await w.runtime.close();
+});

@@ -704,7 +704,11 @@ native reference, and oversized first results defer the browser reference while 
   readback 106 ms) and confirmed cleanup, then stopped because Word's window covered Terminal while its document closed. That
   cover is now `cleanup-cover`. The fourth (09:0x UTC) completed Word's cell. VS Code reached setup for the first time and
   opened an empty window instead of the fixture folder, and cleanup left the run's own instance running. The folder now goes
-  in argv, and cleanup quits an instance proven to be the run's own. No run has measured VS Code yet.
+  in argv, and cleanup quits an instance proven to be the run's own. The full map (08:57 UTC, 10 runs) completed Finder,
+  TextEdit, VS Code and Word 10/10 and the TextEdit cohort 40/40. Cursor and Excel were 0/10 on NO_UNIQUE_SCROLL_AREA. Excel's
+  marker cell sat outside its only scroll area. Cursor 3.25's tree had neither a scroll area, a list nor a marker row, likely
+  its agent-first layout on an empty profile, which no setting we found turns off. The scroll target rule now covers both, and
+  neither has run since.
 
 ## Turbo in unattended runs
 
