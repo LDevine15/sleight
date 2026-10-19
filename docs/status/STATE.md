@@ -3,16 +3,18 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 03:00 UTC)
+## Banner (2026-10-19 03:50 UTC)
 
-**Since the clear (03:05Z).** Pay-gate is merged into the release line (`pane/auto-mode` 7a129a4a; full check 8317 tests 0
+**Since the clear (03:50Z).** Pay-gate is merged into the release line (`pane/auto-mode` 7a129a4a; full check 8317 tests 0
 fail, lint 0). Codex turbo finished (`claude/codex-turbo` 9612ea86, 570/570 focused, Sonnet review fixed, never run live;
 ledger/p130/cxt1-REPORT.md has the seven live-check steps). FU1's review found a Python/Ruby adjacent-literal bypass of the
 logging-switch guard and a false rotation warning. Both are fixed on `codex/fu1` ca7ab807. `claude/p131-integration` 4abeff67
 holds the release line, codex-turbo and FU1 (full check 8833 tests 0 fail). Ruling: the codex-sleight arms measure 1.3.0, which
-has no turbo in Codex, so they run with `SLEIGHT_TURBO=0` once 1.3.1 carries cxt1. The owner is at the Mac but not using it, so
-live runs are allowed: block b9 (`race-1017/block-b9.command`, one Terminal window, race-fx at cf29a636) runs the pay-gate live
-checks, then sleight's Safari and Firefox x3 on the new engine. Items below marked as in flight at the clear are superseded by
+has no turbo in Codex, so they run with `SLEIGHT_TURBO=0` once 1.3.1 carries cxt1. The owner gave us the Mac (keep Dia open). In the pay-gate live checks (b9), Firefox Haiku and Codex Sol both stopped at Pay now with
+nothing paid. Safari's confirm sheet is still untested, since Haiku stopped by itself. The gate also stopped a cart's "Go to
+checkout" link, which failed handoff in two rounds. Fixed on 8c6b08ca (full check 8318 tests 0 fail) and merged into 1.3.1
+f858cf8b, whose full check hasn't run since. Block b10 (`race-1017/block-b10.command`, race-fx at 8c6b08ca) runs sleight's
+Safari and Firefox x3 on the new engine. The b9 rounds are diagnostics only. Items below marked as in flight at the clear are superseded by
 this paragraph.
 
 **Release line** `pane/auto-mode` = main checkout. It holds the race fixes ft1, fs1 and md1, plus sec130, es1, ff1, rg1r2, fl3,
