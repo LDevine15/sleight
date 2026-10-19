@@ -180,17 +180,39 @@ export function renderOutcomes(record, { notSent = false, continuing = false, st
   return /* lean notice */ 'sleight outcomes:\n' + lines.join('\n');
 }
 
-// The log's words for a fact: structure only, no titles, names or values.
+// The log's words for a fact: structure only, no titles, names or values. A sheet or dialog keeps only its role,
+// never its name or that name's length.
+const modalRole = label => role(String(label ?? '').split(/ [["]/)[0]) ?? 'window';
 const logged = fact => ({
-  app: 'app changed', window: 'window changed', opened: `${String(fact.d ?? '').split(' "')[0] || 'window'} opened`,
-  closed: `${fact.d || 'window'} closed`, menu: 'menu opened', 'menu-': 'menu closed',
+  app: 'app changed', window: 'window changed', opened: `${modalRole(fact.d)} opened`, closed: `${modalRole(fact.d)} closed`,
+  menu: 'menu opened', 'menu-': 'menu closed',
   value: fact.m === true ? 'value matches' : fact.m === false ? 'value differs' : 'value changed',
   state: /^(?:not )?(?:checked|unchecked|selected|unselected|expanded|collapsed|disabled)$/.test(fact.d) ? `now ${fact.d}` : 'state changed',
   gone: 'element gone', focus: 'focus moved', lines: 'other lines changed', none: 'no visible change',
 })[fact?.o];
 // The log keeps a name only from actionOutcome's generic control words, checked again here.
 const genericName = name => typeof name === 'string' && name.length <= 20 && actionOutcome([{ body: 'button ' + name }]).targets[0]?.m === name;
-const NAMED_KEY = /^(?:return|enter|escape|esc|tab|space|backspace|delete|forwarddelete|left|right|up|down|home|end|pageup|pagedown|f\d{1,2})$/i;
+const NAMED = 'return|enter|escape|esc|tab|space|backspace|delete|forwarddelete|left|right|up|down|home|end|pageup|pagedown|f\\d{1,2}';
+const NAMED_KEY = new RegExp(`^(?:${NAMED})$`, 'i');
+// A shortcut with Command or Control, whose last key is a letter, digit or named key: a lone printable key is typed text.
+const SHORTCUT = new RegExp(`^(?=(?:\\w+\\+)*(?:super|cmd|command|ctrl|control)\\+)(?:(?:super|cmd|command|ctrl|control|shift|alt|option|opt|fn)\\+)+(?:[a-z0-9]|${NAMED})$`, 'i');
+// Claude's code can reach the guard's records and choose tool arguments, and a log line is text another program may read,
+// so every word in a row comes from these sets or is cleaned.
+const TOOLS = new Set(['js', 'menu_bar', 'notifications', 'document_scope', 'drag', 'flow_exception', 'hover', 'open_file', 'replay',
+  'review_changes', 'select_window', 'browser_open', 'browser_act', 'browser_fill', 'browser_read', 'browser_tabs']);
+const OPS = { menu_bar: ['apps', 'open', 'choose', 'press', 'close'], notifications: ['list', 'press'], review_changes: ['list', 'review'],
+  browser_tabs: ['list', 'close', 'keep', 'handoff'] };
+const ACTIONS = new Set(['click', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction', 'paste', 'pressKey', 'typeText']);
+const TURBO_STEPS = new Set(['click', 'type', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'drag', 'upload', 'dialog', 'wait',
+  'navigate', 'back', 'forward', 'reload', 'viewport']);
+// refusalReason's categories, the guard's refusalOf kinds, and the log's own.
+const REASONS = new Set(['app changed', 'window changed', 'input lease', 'document scope', 'change review', 'flow rule', 'approval declined',
+  'payment confirmation', 'element changed', 'element not found', 'user changed the app', 'stopped by sleight', 'bad locator', 'submenu',
+  'menu open', 'no focus target', 'close button', 'native access', 'stopped']);
+const role = value => typeof value === 'string' && /^[a-z]+(?: [a-z]+){0,3}$/.test(value) && value.length <= 40 ? value : undefined;
+const loggedKey = key => typeof key === 'string' && (NAMED_KEY.test(key) || SHORTCUT.test(key)) ? key : undefined;
+// An origin with only host characters: URL keeps $ and backticks in a host name.
+const cleanOrigin = origin => typeof origin === 'string' && /^https?:\/\/(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/.test(origin) ? origin : undefined;
 
 // Why a call or action didn't run, as a category: the notice itself can quote titles and element lines.
 export function refusalReason(text = '') {
@@ -229,7 +251,8 @@ export class ActionLog {
     this.names ??= ownerNames().filter(Boolean).sort((a, b) => b.length - a.length);
     let clean = String(text).replaceAll(this.home, '~');
     for (const name of this.names) clean = clean.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'), '[owner]');
-    return clean.slice(0, 60);
+    // No $, backtick or backslash: a shell reading a line in double quotes would expand them.
+    return clean.replace(/[$`\\]/g, '').slice(0, 60);
   }
   request(msg) {
     if (msg?.method !== 'tools/call' || msg.id === undefined) return;
@@ -251,7 +274,8 @@ export class ActionLog {
     if (!call) return;
     this.calls.delete(msg.id);
     const text = (msg.result?.content ?? []).filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
-    const error = !!msg.error || !!msg.result?.isError, base = { call: msg.id, tool: call.name };
+    const tool = TOOLS.has(call.name) ? call.name : 'other';
+    const error = !!msg.error || !!msg.result?.isError, base = { call: typeof msg.id === 'string' ? this.scrub(msg.id) : msg.id, tool };
     // A category means sleight or the user refused it; anything else is an error from the engine or the app.
     const refused = row => {
       const reason = refusalReason(msg.error?.message ?? text);
@@ -261,11 +285,12 @@ export class ActionLog {
     if (call.name === 'js') {
       const app = call.app ? { app: this.scrub(call.app) } : {};
       call.outcomes.forEach((rec, i) => {
-        const target = rec.t?.r ? { role: String(rec.t.r).slice(0, 40), ...(rec.t.s ? { secure: true } : genericName(rec.t.m) ? { name: rec.t.m } : {}) } : undefined;
+        const targetRole = role(rec.t?.r), key = loggedKey(rec.k);
+        const target = targetRole ? { role: targetRole, ...(rec.t.s ? { secure: true } : genericName(rec.t.m) ? { name: rec.t.m } : {}) } : undefined;
         const facts = Array.isArray(rec.f) ? rec.f.map(logged).filter(Boolean) : [];
-        rows.push({ ...base, ...app, kind: rec.a, ...(target ? { target } : {}), ...(Number.isSafeInteger(rec.c) ? { chars: rec.c } : {}),
-          ...(rec.k && (NAMED_KEY.test(rec.k) || /(?:^|\+)(?:super|cmd|command|ctrl|control)\+/i.test(rec.k)) ? { key: rec.k } : {}),
-          ...(rec.x === 'refused' ? { result: 'refused', reason: rec.r ?? 'stopped by sleight' } : rec.x === 'failed' ? { result: 'failed', reason: 'engine error' }
+        rows.push({ ...base, ...app, kind: ACTIONS.has(rec.a) ? rec.a : 'action', ...(target ? { target } : {}), ...(Number.isSafeInteger(rec.c) ? { chars: rec.c } : {}),
+          ...(key ? { key } : {}),
+          ...(rec.x === 'refused' ? { result: 'refused', reason: REASONS.has(rec.r) ? rec.r : 'stopped by sleight' } : rec.x === 'failed' ? { result: 'failed', reason: 'engine error' }
             : { result: 'ok', outcome: facts.length ? facts.join('; ') : rec.g && call.outcomes[i + 1] ? 'checked with the next action' : 'unverified' }) });
       });
       const stopped = call.outcomes.findIndex(rec => rec.x);
@@ -278,7 +303,9 @@ export class ActionLog {
     } else {
       const { args } = call;
       const read = (call.name === 'menu_bar' && args.op === 'apps') || (['notifications', 'review_changes'].includes(call.name) && args.op === 'list');
-      if (!read) rows.push({ ...base, ...(typeof args.app === 'string' ? { app: this.scrub(args.app) } : {}), kind: args.op ? `${call.name} ${args.op}` : call.name,
+      // An op outside the tool's own list is dropped, never written as Claude sent it.
+      const op = OPS[tool]?.includes(args.op) ? ` ${args.op}` : '';
+      if (!read) rows.push({ ...base, ...(typeof args.app === 'string' ? { app: this.scrub(args.app) } : {}), kind: tool + op,
         ...(error ? refused({}) : { result: 'ok', outcome: 'done' }) });
     }
     this.write(rows);
@@ -286,7 +313,7 @@ export class ActionLog {
   turbo(call, text, error, base, refused) {
     const { args } = call;
     const opened = /^(t[\w-]+) (https?:\/\/\S+)/m.exec(text);
-    const origin = url => { try { return new URL(url).origin; } catch { return undefined; } };
+    const origin = url => { try { return cleanOrigin(new URL(url).origin); } catch { return undefined; } };
     if (opened && origin(opened[2])) this.origins.set(opened[1], origin(opened[2]));
     const tab = args.tab ?? opened?.[1];
     let at = this.origins.get(tab) ?? (call.name === 'browser_open' ? origin(args.url) : undefined);
@@ -297,7 +324,7 @@ export class ActionLog {
     for (const line of text.split('\n')) {
       const step = /^(\d+) (\w+)(?: ((?:f\d+)?e\d+|s\d+))?: (.*)$/.exec(line) ?? (call.name === 'browser_fill' && /^()()((?:f\d+)?e\d+|s\d+): (.*)$/.exec(line));
       if (!step) continue;
-      const outcome = step[4].trim(), kind = step[2] || 'fill', target = step[3] ? { target: { ref: step[3] } } : {};
+      const outcome = step[4].trim(), kind = !step[2] ? 'fill' : TURBO_STEPS.has(step[2]) ? step[2] : 'step', target = step[3] ? { target: { ref: step[3] } } : {};
       const row = { ...base, ...where, kind, ...target };
       // Steps after a navigation act on the new page: only its origin is kept, never the path.
       const moved = /^navigated\b/.test(outcome) && origin(/https?:\/\/\S+/.exec(outcome)?.[0]);
@@ -307,8 +334,8 @@ export class ActionLog {
           : /^not run/.test(outcome) ? { result: 'refused', reason: /covered/.test(outcome) ? 'covered' : 'stopped by sleight' }
           : { result: 'ok', outcome: turboOutcome(outcome) }) });
     }
-    if (!rows.length && error) rows.push(refused({ ...base, ...where, kind: call.name.slice(8) }));
-    if (!rows.length && call.name === 'browser_tabs') rows.push({ ...base, ...where, kind: `tabs ${args.do}`, result: 'ok', outcome: 'done' });
+    if (!rows.length && error) rows.push(refused({ ...base, ...where, kind: base.tool === 'other' ? 'other' : base.tool.slice(8) }));
+    if (!rows.length && call.name === 'browser_tabs') rows.push({ ...base, ...where, kind: OPS.browser_tabs.includes(args.do) ? `tabs ${args.do}` : 'tabs', result: 'ok', outcome: 'done' });
     return rows;
   }
   write(rows) {
@@ -329,11 +356,20 @@ export class ActionLog {
         }
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
       // O_NOFOLLOW: a symlink at the path can't send the log elsewhere. O_NONBLOCK: a FIFO can't hold the open.
-      const fd = openSync(this.path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+      const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+      let fd, created = true;
+      try { fd = openSync(this.path, flags | constants.O_CREAT | constants.O_EXCL, 0o600); } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        created = false;
+        fd = openSync(this.path, flags);
+      }
       try {
+        // One link only: a hard link to a shell startup file would take the rows. A file the log didn't create must
+        // already be private.
         const stat = fstatSync(fd);
-        if (!stat.isFile() || stat.uid !== process.getuid()) throw new Error('action log is not a regular file of this account');
-        fchmodSync(fd, 0o600);
+        if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid()) throw new Error('action log is not a single-link regular file of this account');
+        if (created) fchmodSync(fd, 0o600);
+        else if ((stat.mode & 0o777) !== 0o600) throw new Error('action log is not 0600');
         writeSync(fd, text);
       } finally { closeSync(fd); }
     } catch { this.failures++; }

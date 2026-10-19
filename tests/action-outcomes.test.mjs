@@ -2,7 +2,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { runInNewContext, createContext, runInContext, constants } from 'node:vm';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, statSync, symlinkSync, existsSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, statSync, symlinkSync, linkSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
@@ -500,7 +500,7 @@ test('the log path stays under ~/Library/Logs/sleight/', () => {
 });
 
 test('the log makes its file 0600, writes only a regular file, and never through a symlinked folder', () => {
-  const root = mkdtempSync(join(dir, 'root-')), loose = join(root, 'loose.jsonl');
+  const root = mkdtempSync(join(dir, 'root-')), loose = join(root, 'loose.jsonl'), fresh = join(root, 'fresh.jsonl');
   writeFileSync(loose, ''); chmodSync(loose, 0o644);
   const write = (path, id = 1) => {
     const log = new ActionLog({ path, root });
@@ -508,12 +508,55 @@ test('the log makes its file 0600, writes only a regular file, and never through
     log.reply({ id, result: { content: [{ type: 'text', text: 'ok' }] } });
     return log.failures;
   };
-  assert.equal(write(loose), 0);
-  assert.equal(statSync(loose).mode & 0o777, 0o600);
+  assert.equal(write(fresh), 0);
+  assert.equal(statSync(fresh).mode & 0o777, 0o600);
+  // A file the log didn't create must already be 0600.
+  assert.equal(write(loose), 1);
+  assert.equal(readFileSync(loose, 'utf8'), '');
   mkdirSync(join(root, 'folder.jsonl'));
   assert.equal(write(join(root, 'folder.jsonl')), 1);
   const outside = mkdtempSync(join(dir, 'outside-'));
   symlinkSync(outside, join(root, 'away'));
   assert.equal(write(join(root, 'away', 'a.jsonl')), 1);
   assert.ok(!existsSync(join(outside, 'a.jsonl')));
+});
+
+test('a hard link at the log path is refused, so a row can never land in another file', () => {
+  const root = mkdtempSync(join(dir, 'hard-')), rc = join(root, 'zshrc'), link = join(root, 'linked.jsonl');
+  writeFileSync(rc, 'export A=1\n'); chmodSync(rc, 0o600);
+  linkSync(rc, link);
+  const log = new ActionLog({ path: link, root });
+  log.request({ id: 1, method: 'tools/call', params: { name: 'menu_bar', arguments: { op: 'open' } } });
+  log.reply({ id: 1, result: { content: [{ type: 'text', text: 'ok' }] } });
+  assert.equal(log.failures, 1);
+  assert.equal(readFileSync(rc, 'utf8'), 'export A=1\n');
+});
+
+test('kind, key, role, reason, tool, app and origin come from fixed words or are cleaned, never Claude\'s raw text', () => {
+  const root = mkdtempSync(join(dir, 'vocab-')), path = join(root, 'vocab.jsonl');
+  const log = new ActionLog({ path, root, names: [], now: () => new Date(0) });
+  const call = (id, name, args, text = 'ok', record) => {
+    log.request({ id, method: 'tools/call', params: { name, arguments: args } });
+    if (record) log.outcomes(id, record);
+    log.reply({ id, result: { content: [{ type: 'text', text }] } });
+  };
+  call(1, 'menu_bar', { op: 'open $(touch /tmp/x)', app: 'Text$(id)`id`Edit' });
+  call(2, 'menu_bar', { op: 'choose', app: 'TextEdit' });
+  call(3, 'js', { code: '' }, 'ok', { app: 'A$(id)', outcomes: [
+    { a: 'click$(id)', t: { r: 'button $(id)' }, k: 'cmd+$(id)', x: 'refused', r: 'window $(id)' },
+    { a: 'pressKey', k: 'cmd+s', t: { r: 'text field', m: 'Save' }, f: [{ o: 'opened', d: 'sheet$(id)' }] }] });
+  call(4, 'browser_open', { url: 'http://$(id).example/' }, 't1 http://$(id).example/');
+  call(5, 'browser_act', { tab: 't9' }, '1 evaluate e2: no visible change\n2 click e3: no visible change');
+  call(6, 'tool$(id)', {});
+  const text = readFileSync(path, 'utf8');
+  assert.doesNotMatch(text, /[$`\\]|touch/);
+  const rows = text.trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(rows[0].app, 'Text(id)idEdit');
+  assert.deepEqual(rows.map(row => [row.tool, row.kind]), [['menu_bar', 'menu_bar'], ['menu_bar', 'menu_bar choose'], ['js', 'action'], ['js', 'pressKey'],
+    ['browser_open', 'open'], ['browser_act', 'step'], ['browser_act', 'click'], ['other', 'other']]);
+  assert.equal(rows[2].target, undefined);
+  assert.equal(rows[2].key, undefined);
+  assert.equal(rows[2].reason, 'stopped by sleight');
+  assert.equal(rows[3].key, 'cmd+s');
+  assert.equal(rows[4].origin, undefined);
 });
