@@ -3,8 +3,9 @@
 //   collect: reads the raw results (docs/benchmarks, and the claim and race folders under ~/Projects/sleight-wt) and writes one
 //            scrubbed data file per family to docs/results/data/. A family whose raw folder is missing on this Mac keeps the
 //            data file already in the repo, so the pages rebuild anywhere.
-//   render:  reads only those data files and writes the index (README.md, index.html), one Markdown page per family,
-//            release-passes.html, and explore.html with the data inlined (fetch from file:// fails in browsers).
+//   render:  reads only those data files and writes the index (README.md, index.html), one Markdown page per family, the chart
+//            images in img/, explore.html with the data inlined (fetch from file:// fails in browsers), and the three generated
+//            blocks of the repo's README.md (between the hub:claim, hub:headline and hub:benchmarks markers).
 // Scores come from the scorers themselves: bench/claim-score.mjs for the claims and every per-task table, and
 // bench/fowl/race-score.mjs for the browser race rounds. Nothing in the output depends on the clock. Every arm's numbers name the
 // ChatGPT engine versions they ran on with their UTC dates, read from the results or inferred from the checked-in timeline
@@ -17,11 +18,15 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { claim, excluded, regradeFor, score, warnings } from './claim-score.mjs';
 import { loadRound, scoreRounds } from './fowl/race-score.mjs';
-import { engineMix, engineNote, engineText, loadTimeline, passRowEngine, summarizeEngines } from './engine-version.mjs';
-import { buildPage, loadResults, perArm, renderHtml as renderReleaseHtml, renderMarkdown as renderReleaseMarkdown, summarize } from './results-page.mjs';
+import { dayRange, engineMix, engineNote, engineText, loadTimeline, passRowEngine, summarizeEngines, usesEngine } from './engine-version.mjs';
+import { buildPage, loadResults, perArm, renderMarkdown as renderReleaseMarkdown } from './results-page.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BENCH = join(ROOT, 'docs', 'benchmarks');
+// The charts come from bench/results-charts.mjs. Until that file exists the pages render without charts, and an error inside it
+// still stops the render.
+const NO_CHARTS = { CHARTS: [], renderCharts: () => ({}), chartCaption: () => '', chartBlock: () => '' };
+const charts = existsSync(join(ROOT, 'bench/results-charts.mjs')) ? await import('./results-charts.mjs') : NO_CHARTS;
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
 const tryJson = file => { try { return readJson(file); } catch { return undefined; } };
 const isDir = path => { try { return statSync(path).isDirectory(); } catch { return false; } };
@@ -514,7 +519,8 @@ export const mdTable = (head, rows) => ['| ' + head.join(' | ') + ' |', '| ' + h
 const list = items => items.map(item => `- ${item}`).join('\n');
 const joinAnd = items => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
 const ARM_NAMES = { sleight: 'sleight', 'sleight-turbo': 'sleight turbo', lcu: 'LCU', codex: 'Codex', cua: 'Cua', peekaboo: 'Peekaboo', 'claude-cu': 'Claude computer use',
-  fowlbrowser: 'FowlBrowser', 'claude-in-chrome': 'Claude in Chrome' };
+  fowlbrowser: 'FowlBrowser', 'claude-in-chrome': 'Claude in Chrome', 'codex-sleight': 'sleight inside Codex', 'codex-sleight-sol': 'sleight inside Codex (Sol)',
+  'codex-sol': 'Codex (Sol)' };
 const armName = arm => ARM_NAMES[arm] ?? arm;
 
 // One cell per arm and task: expected seconds, then passes/runs.
@@ -580,72 +586,130 @@ const LAWS_RULES = 'The rules come from [LAWS](../status/LAWS.md). Each arm gets
   '(the difference over the slower expected time). "Fastest" needs the lowest expected time on a majority of tasks and the lowest total, ' +
   'with those 5 runs in place. Otherwise the wording is "completed every task, fastest on N". A task counts as lost when another arm ' +
   'has the lower expected time or a faster passing run.';
-const DATA_LINE = name => `[data/${name}.json](data/${name}.json) has every counted run and the scored cells. [explore.html](explore.html) charts them.\n`;
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Navigation, folds and footers shared by every generated page.
+
+// The interactive page and the chart images on GitHub Pages (deployed from main, folder /docs), and the Markdown pages on github.com.
+export const PAGES_URL = 'https://land-o-clusters.github.io/sleight/results/';
+export const REPO_RESULTS = 'https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/';
+export const NAV = [
+  { page: 'native-claim.md', label: 'Native' }, { page: 'app-claim.md', label: 'Apps' }, { page: 'browser-turbo.md', label: 'Chrome and Helium' },
+  { page: 'browser-race.md', label: 'Safari and Firefox' }, { page: 'ab-tests.md', label: 'Experiments' }, { page: 'release-passes.md', label: 'Releases' },
+  { page: 'insights.md', label: 'Insights' }, { page: 'explore.html', label: 'Interactive', href: `${PAGES_URL}explore.html` },
+];
+
+// The line each generated page starts and ends with. The current page is plain text; 'README.md' is the hub landing.
+export function renderNav(current) {
+  const item = ({ page, label, href }) => (page === current ? label : `[${label}](${href ?? page})`);
+  return [current === 'README.md' ? 'Benchmarks' : '[Benchmarks](README.md)', ...NAV.map(item)].join(' · ');
+}
+
+// The same line as HTML for the pages Pages serves, where the Markdown pages link to github.com.
+const escapeHtml = text => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+export function renderNavHtml(current) {
+  const link = (href, label) => `<a href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
+  const item = ({ page, label, href }) => (page === current ? `<span aria-current="page">${escapeHtml(label)}</span>` : link(href ?? REPO_RESULTS + page, label));
+  return `<nav class="pages" aria-label="Benchmark pages">${[link(REPO_RESULTS.replace('/blob/', '/tree/'), 'Benchmarks'), ...NAV.map(item)].join(' · ')}</nav>`;
+}
+
+const details = (summary, body) => `<details><summary>${escapeHtml(summary)}</summary>\n\n${body.trim()}\n\n</details>\n`;
+
+// A chart picture block from bench/results-charts.mjs, or nothing while that module is missing.
+const chartFor = (all, id) => { const block = charts.chartBlock(id, all, { base: '' }); return block ? block.trim() + '\n' : null; };
+
+// Data collected before 2026-10-19 carries no engine versions, and the footer says so until a collect adds them.
+const hasEngines = studies => studies.some(study => study?.engines && Object.keys(study.engines).length);
+const engineFooter = studies => (hasEngines(studies)
+  ? 'Each arm table names the ChatGPT engine versions its runs used, with their UTC dates.'
+  : 'The ChatGPT engine version is missing from this data, which was collected before the results recorded it (2026-10-19).');
+
+function pageFooter(current, { data, dataText = 'has every counted run and the scored cells', studies = [] }) {
+  const parts = [];
+  if (data) parts.push(`[data/${data}.json](data/${data}.json) ${dataText}, and the [interactive page](${PAGES_URL}explore.html) charts them.`);
+  parts.push(engineFooter(studies), 'Rebuild every page with `node bench/results-hub.mjs`.');
+  return `${parts.join(' ')}\n\n${renderNav(current)}\n`;
+}
+const pageHead = (current, title) => `${renderNav(current)}\n\n# ${title}\n`;
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Family pages.
 
-function renderClaimPage(data, { name, intro }) {
-  const study = data.studies[0];
-  const out = [`# ${data.title}\n`, intro + '\n', '## Method\n'];
-  out.push(list([
-    `${study.runs.length} runs counted, from ${data.source.files.length} results files dated ${study.date}, on the owner's account login (auth ${code(study.auth.join(', ') || 'not recorded')}).`,
-    SCORING,
-    LAWS_RULES,
-    `Rows come from ${code(data.source.results)} with the exclusions in ${code(data.source.rules)}. Scoring starts at file stamp ${code(data.source.since)}` +
-      (data.source.sinceNote ? `, and the reason given is ${code(data.source.sinceNote.replace(/[.\s]*$/, ''))}.` : '.'),
-    'The results files don\'t record sleight\'s commit or the Codex CLI version.',
-  ]) + '\n');
-  out.push(armTable(study) + '\n');
-  out.push(study.excluded.length ? 'Rows left out, with the reasons from the exclusions file:\n\n' + mdTable(['Reason', 'Rows'], study.excluded.map(e => [e.why, e.count])) + '\n' : 'No rows were left out.\n');
-  if (study.warnings.length) out.push('The scorer warned:\n\n' + list(study.warnings.map(code)) + '\n');
-  out.push('## Result\n');
-  out.push(`The scorer's wording is "${study.verdict.wording}". sleight has the lowest expected time on ${study.verdict.lowest.length} of ${study.tasks.length} tasks.\n`);
+// Verdict first, then the chart and the task matrix (the evidence), then the method and the detail tables folded.
+function renderClaimPage(all, id, { intro }) {
+  const data = all[id], study = data.studies[0], fam = family(id);
+  const out = [pageHead(fam.page, fam.title)];
+  out.push(`${intro} The scorer's wording is "${study.verdict.wording}". sleight has the lowest expected time on ${study.verdict.lowest.length} of ${study.tasks.length} tasks.\n`);
+  const chart = chartFor(all, `family-${id}`);
+  if (chart) out.push(chart);
+  out.push('Each cell is expected seconds, then passes/runs.\n');
+  out.push(taskMatrix(study) + '\n');
   out.push(lostTable(study) + '\n');
   if (study.verdict.reasons.length) out.push('Why the wording isn\'t "fastest":\n\n' + list(study.verdict.reasons.map(r => code(r))) + '\n');
   out.push(topUpTable(study) + '\n');
-  out.push('Each cell is expected seconds, then passes/runs.\n');
-  out.push(taskMatrix(study) + '\n');
-  out.push('Passing runs, median [fastest to slowest], with p90 at 5 or more runs:\n');
-  out.push(spreadTable(study) + '\n');
+  out.push(details('Method and arm versions', [
+    list([
+      `${study.runs.length} runs counted, from ${data.source.files.length} results files dated ${study.date}, on the owner's account login (auth ${code(study.auth.join(', ') || 'not recorded')}).`,
+      SCORING,
+      LAWS_RULES,
+      `Rows come from ${code(data.source.results)} with the exclusions in ${code(data.source.rules)}. Scoring starts at file stamp ${code(data.source.since)}` +
+        (data.source.sinceNote ? `, and the reason given is ${code(data.source.sinceNote.replace(/[.\s]*$/, ''))}.` : '.'),
+      'The results files don\'t record sleight\'s commit or the Codex CLI version.',
+    ]),
+    armTable(study),
+  ].join('\n\n')));
+  out.push(details('Rows left out and scorer warnings', [
+    study.excluded.length ? 'Rows left out, with the reasons from the exclusions file:\n\n' + mdTable(['Reason', 'Rows'], study.excluded.map(e => [e.why, e.count])) : 'No rows were left out.',
+    study.warnings.length ? 'The scorer warned:\n\n' + list(study.warnings.map(code)) : 'The scorer gave no warnings.',
+  ].join('\n\n')));
+  out.push(details('Spread of passing runs', 'Passing runs, median [fastest to slowest], with p90 at 5 or more runs:\n\n' + spreadTable(study)));
   const failures = failureRows(study);
-  out.push(`## Failed runs (${failures.length})\n`);
-  out.push((failures.length ? mdTable(['Task', 'Arm', 'File', 's', 'Reason'], failures) : 'None.') + '\n');
-  out.push('## Data\n');
-  out.push(DATA_LINE(name));
+  out.push(details(`Failed runs (${failures.length})`, failures.length ? mdTable(['Task', 'Arm', 'File', 's', 'Reason'], failures) : 'None.'));
+  out.push(pageFooter(fam.page, { data: id, studies: [study] }));
   return out.join('\n');
 }
 
-function raceStudySection(study, level = '##') {
+// One sleight build set: the verdict line, the chart (newest sets only), the matrix and the loss rule, then the arm table and
+// the spread folded.
+function raceStudySection(all, study, level, chartId) {
   const out = [`${level} ${study.title}${study.latest ? ' (newest)' : ''}\n`];
-  out.push(`${study.date}, ${cap(study.browser)} ${study.browserVersion.join(', ')}, ${study.rounds.length} rounds and ${study.runs.length} runs. ` +
-    `The build column is sleight's commit for its own rounds and the harness commit for the other arms. The scorer's wording is "${study.verdict.wording}".\n`);
-  out.push(armTable(study, { builds: true, scriptEffort: 'high (the script\'s flag)' }) + '\n');
-  out.push(lostTable(study) + '\n');
+  out.push(`${study.date}, ${cap(study.browser)} ${study.browserVersion.join(', ')}, ${study.rounds.length} rounds and ${study.runs.length} runs. The scorer's wording is "${study.verdict.wording}".\n`);
+  const chart = study.latest && chartId ? chartFor(all, chartId) : null;
+  if (chart) out.push(chart);
   out.push('Each cell is expected seconds, then passes/runs.\n');
   out.push(taskMatrix(study) + '\n');
+  out.push(lostTable(study) + '\n');
   out.push(topUpTable(study) + '\n');
   for (const pair of study.sameModel ?? []) out.push(sameModelSection(study, pair, level + '#'));
+  out.push(details('Arm versions and builds', 'The build column is sleight\'s commit for its own rounds and the harness commit for the other arms.\n\n' +
+    armTable(study, { builds: true, scriptEffort: 'high (the script\'s flag)' })));
   const failures = failureRows(study);
-  out.push(`<details><summary>Spread of passing runs and the ${failures.length} failed runs</summary>\n`);
-  out.push(spreadTable(study) + '\n');
-  if (failures.length) out.push(mdTable(['Task', 'Arm', 'Round', 's', 'Problems'], failures) + '\n');
-  out.push('</details>\n');
+  out.push(details(`Spread of passing runs and the ${failures.length} failed run${failures.length === 1 ? '' : 's'}`, [spreadTable(study), ...(failures.length ? [mdTable(['Task', 'Arm', 'Round', 's', 'Problems'], failures)] : [])].join('\n\n')));
   return out.join('\n');
 }
 
 // ROADMAP 4b: sleight inside Codex against Codex's own computer use on the same model, scored like sleight against its rivals.
 function sameModelSection(study, pair, level) {
   const view = { ...study, me: pair.hosted, arms: [pair.hosted, pair.base], verdict: pair };
-  const out = [`${level} Same model: ${pair.hosted} against ${armName(pair.base)}\n`];
+  const out = [`${level} Same model: ${armName(pair.hosted)} against ${armName(pair.base)}\n`];
   out.push(`${code(pair.hosted)} is sleight running inside Codex, and ${armName(pair.base)} is Codex with its own computer use, on the same model. ` +
     `It is sleight itself and stays out of sleight's verdict above. Here it takes sleight's place against ${armName(pair.base)} under the same rules. ` +
     `The scorer's wording for it is "${pair.wording}".\n`);
   if (pair.wording === 'no comparison') return out.concat(list(pair.reasons.map(code)) + '\n').join('\n');
-  out.push(lostTable(view) + '\n');
   out.push(taskMatrix(view) + '\n');
+  out.push(lostTable(view) + '\n');
   out.push(topUpTable(view) + '\n');
   return out.join('\n');
+}
+
+// Newest set per browser first and visible; every earlier set inside one fold.
+const byBrowser = (studies, browsers) => browsers.flatMap(browser => studies.filter(s => s.browser === browser)
+  .sort((a, b) => Number(b.latest) - Number(a.latest) || (a.label < b.label ? -1 : 1)));
+function raceSets(all, studies, browsers, chartPrefix) {
+  const ordered = byBrowser(studies, browsers);
+  const newest = ordered.filter(s => s.latest).map(s => raceStudySection(all, s, '##', `${chartPrefix}-${s.browser}`));
+  const earlier = ordered.filter(s => !s.latest).map(s => raceStudySection(all, s, '###'));
+  return { newest, earlier: earlier.length ? details('Earlier sets', earlier.join('\n')) : null };
 }
 
 const RACE_GRADING = '`bench/fowl/race-score.mjs` grades every saved run again. To pass, a run needs the recorded outcome ok and at least one ' +
@@ -659,21 +723,18 @@ const leftOutTables = race => [
   race.excludedRounds.length ? 'Rounds left out, with the recorded reason:\n\n' + mdTable(['Round', 'Reason'], race.excludedRounds.map(e => [code(e.round), code(e.reason)])) + '\n' : 'No round was left out.\n',
 ].join('\n');
 
-function renderRacePage(data, name) {
-  const out = [`# ${data.title}\n`];
+const RACE_SETS = 'The scorer takes one sleight build set at a time (the folder label, such as `sleight-r` or `sleight-b3-r`) with every usable competitor round in the same browser, so two sleight builds are never pooled. A set is scored once it has 3 runs of every task.';
+const RACE_EFFORT = 'The race scripts pass `--effort high` to every Claude arm, and the Codex arm\'s rows record their own effort. Every Claude arm ran the pinned Claude Code on the owner\'s account login, each in its own config.';
+
+function renderRacePage(all, id) {
+  const data = all[id], fam = family(id);
+  const out = [pageHead(fam.page, fam.title)];
   out.push('Turbo needs Chrome\'s debugging consent, which Safari and Firefox lack, so sleight uses the ChatGPT engine\'s computer use path in them. The race runs its 12 browser tasks on the local test site in a real window of each browser\'s "sleight benchmark" profile. [benchmark.md](../benchmark.md#scoring-the-real-window-race) describes the tasks.\n');
-  out.push('## Method\n');
-  out.push(list([
-    RACE_GRADING,
-    SCORING,
-    LAWS_RULES,
-    'The scorer takes one sleight build set at a time (the folder label, such as `sleight-r` or `sleight-b3-r`) with every usable competitor round in the same browser, so two sleight builds are never pooled. A set is scored once it has 3 runs of every task.',
-    'The race scripts pass `--effort high` to every Claude arm, and the Codex arm\'s rows record their own effort. Every Claude arm ran the pinned Claude Code on the owner\'s account login, each in its own config.',
-  ]) + '\n');
-  out.push(leftOutTables(data) + '\n');
-  for (const browser of data.source.browsers) for (const study of data.studies.filter(s => s.browser === browser).sort((a, b) => Number(b.latest) - Number(a.latest) || (a.label < b.label ? -1 : 1))) out.push(raceStudySection(study));
-  out.push('## Data\n');
-  out.push(DATA_LINE(name));
+  const sets = raceSets(all, data.studies, data.source.browsers, 'family-browser-race');
+  out.push(...sets.newest);
+  out.push(details('Method, and the rounds and sets left out', [list([RACE_GRADING, SCORING, LAWS_RULES, RACE_SETS, RACE_EFFORT]), leftOutTables(data)].join('\n\n')));
+  if (sets.earlier) out.push(sets.earlier);
+  out.push(pageFooter(fam.page, { data: id, studies: data.studies }));
   return out.join('\n');
 }
 
@@ -689,50 +750,46 @@ function roundTable(study) {
   return mdTable(head, rows);
 }
 
-function renderTurboPage(data, name) {
-  const out = [`# ${data.title}\n`];
-  out.push('Turbo is sleight\'s own browser path for Chrome and Helium. The gate rounds race FowlBrowser on FowlBrowser\'s own 13-task runner, and the real-window race runs FowlBrowser and turbo in the owner\'s Chrome and Helium benchmark profiles.\n');
-  out.push('## Method\n');
-  out.push(list([
-    'FowlBrowser\'s head-to-head runner, pinned with sleight\'s patch, runs each arm in both browser orders (normal and swap), so a gate round is 26 runs per arm. Its reports give whole seconds. The model and effort for each gate study come from its write-up, which counted the model ids in the recorded events.',
-    'A gate run passes under the owner\'s scoring (LAWS). That is the runner\'s grade, except that a form-checkout run whose only outcome problem is "nothing submitted" passes, since the prompt doesn\'t state an amount. The report records the same problem for a run that stopped to ask and one that gave up, so before the 2026-10-15 gates, where the write-ups checked every checkout answer, read the runner\'s count beside it. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.',
-    RACE_GRADING,
-    SCORING,
-    LAWS_RULES,
-  ]) + '\n');
-  out.push('## Real-window race, Chrome and Helium\n');
-  out.push(leftOutTables(data.race) + '\n');
-  for (const browser of data.race.source.browsers) for (const study of data.race.studies.filter(s => s.browser === browser).sort((a, b) => Number(b.latest) - Number(a.latest) || (a.label < b.label ? -1 : 1))) out.push(raceStudySection(study, '###'));
-  out.push('## Gate rounds on FowlBrowser\'s runner\n');
-  out.push(mdTable(['Study', 'Date', 'Model', 'Effort', 'Arms', 'Rounds', 'Runs', 'Write-up'], data.gates.map(s => [code(s.id), s.date, s.models[s.me]?.[0] ? code(s.models[s.me][0]) : 'not stated', s.effort[0] ?? 'not stated',
-    s.arms.map(armName).join(', '), sortedUniq(s.rounds.map(r => r.round)).length, s.runs.length, s.writeUp ? `[${basename(s.writeUp)}](${writeUpLink(s.writeUp)})` : DASH])) + '\n');
+const GATE_RUNNER = 'FowlBrowser\'s head-to-head runner, pinned with sleight\'s patch, runs each arm in both browser orders (normal and swap), so a gate round is 26 runs per arm. Its reports give whole seconds. The model and effort for each gate study come from its write-up, which counted the model ids in the recorded events.';
+const GATE_SCORING = 'A gate run passes under the owner\'s scoring (LAWS). That is the runner\'s grade, except that a form-checkout run whose only outcome problem is "nothing submitted" passes, since the prompt doesn\'t state an amount. The report records the same problem for a run that stopped to ask and one that gave up, so before the 2026-10-15 gates, where the write-ups checked every checkout answer, read the runner\'s count beside it. The tables show both counts. Rounds inside one study can be different builds, and the write-up names them.';
+
+function renderTurboPage(all, id) {
+  const data = all[id], fam = family(id);
+  const out = [pageHead(fam.page, fam.title)];
+  out.push('Turbo is sleight\'s own browser path for Chrome and Helium. The real-window race runs FowlBrowser and turbo in the owner\'s Chrome and Helium benchmark profiles, and the gate rounds, before production turbo, raced FowlBrowser on FowlBrowser\'s own 13-task runner.\n');
+  const sets = raceSets(all, data.race.studies, data.race.source.browsers, 'family-browser-turbo');
+  out.push(...sets.newest);
+  out.push(details('Method, and the rounds and sets left out', [list([RACE_GRADING, SCORING, LAWS_RULES, RACE_SETS, RACE_EFFORT]), leftOutTables(data.race)].join('\n\n')));
+  if (sets.earlier) out.push(sets.earlier);
+  const gates = [list([GATE_RUNNER, GATE_SCORING]) + '\n',
+    mdTable(['Study', 'Date', 'Model', 'Effort', 'Arms', 'Rounds', 'Runs', 'Write-up'], data.gates.map(s => [code(s.id), s.date, s.models[s.me]?.[0] ? code(s.models[s.me][0]) : 'not stated', s.effort[0] ?? 'not stated',
+      s.arms.map(armName).join(', '), sortedUniq(s.rounds.map(r => r.round)).length, s.runs.length, s.writeUp ? `[${basename(s.writeUp)}](${writeUpLink(s.writeUp)})` : DASH])) + '\n'];
   for (const study of data.gates.filter(s => data.headline.includes(s.id))) {
-    out.push(`### ${study.title}\n`);
-    out.push(`Study ${code(study.id)}, model ${study.models[study.me]?.[0] ? code(study.models[study.me][0]) : 'not stated'} at ${study.effort[0] ?? 'unstated'} effort, from [the write-up](${writeUpLink(study.writeUp)}). Round totals:\n`);
-    out.push(roundTable(study) + '\n');
-    out.push('Per task over all rounds, expected seconds, then passes/runs under the owner\'s scoring:\n');
-    out.push(taskMatrix(study) + '\n');
+    gates.push(`### ${study.title}\n`);
+    gates.push(`Study ${code(study.id)}, model ${study.models[study.me]?.[0] ? code(study.models[study.me][0]) : 'not stated'} at ${study.effort[0] ?? 'unstated'} effort, from [the write-up](${writeUpLink(study.writeUp)}). Round totals:\n`);
+    gates.push(roundTable(study) + '\n');
+    gates.push('Per task over all rounds, expected seconds, then passes/runs under the owner\'s scoring:\n');
+    gates.push(taskMatrix(study) + '\n');
   }
-  out.push('<details><summary>Round totals for every other gate study</summary>\n');
+  gates.push('### Round totals for every other gate study\n');
   for (const study of data.gates.filter(s => !data.headline.includes(s.id))) {
-    out.push(`#### ${study.id}\n`);
-    out.push(roundTable(study) + '\n');
+    gates.push(`#### ${study.id}\n`);
+    gates.push(roundTable(study) + '\n');
   }
-  out.push('</details>\n');
-  out.push('## Data\n');
-  out.push(DATA_LINE(name));
+  out.push(details('Gate rounds on FowlBrowser\'s runner, before production turbo', gates.join('\n')));
+  out.push(pageFooter(fam.page, { data: id, studies: [...data.race.studies, ...data.gates] }));
   return out.join('\n');
 }
 
-function renderAbPage(data, name) {
-  const out = [`# ${data.title}\n`];
+function renderAbPage(all, id) {
+  const data = all[id], fam = family(id);
+  const out = [pageHead(fam.page, fam.title)];
   out.push('Each study compares sleight variants on the same tasks. The pages score them the same way as the claims, with the first variant as the baseline.\n');
-  out.push('## Method\n');
-  out.push(list([
+  out.push(details('Method', list([
     'Studies saved as JSON (`{ study, rounds }` or `{ study, sides }` in docs/benchmarks) are read run by run, and their model ids come from the runs. Studies saved as FowlBrowser-runner reports are parsed from their tables, and their model and effort come from the write-up.',
     SCORING,
     'Rounds alternate the variants, but load and model variation still move single rounds. Each write-up says what its study controlled, and the summary gives the runs per task.',
-  ]) + '\n');
+  ])));
   out.push('## Summary\n');
   const summaryRows = data.studies.map(study => {
     const counts = study.cells.map(c => c.runs);
@@ -746,49 +803,63 @@ function renderAbPage(data, name) {
   });
   out.push(mdTable(['Date', 'Study', 'Model', 'Runs per task', 'Variants: passed, total s', 'Write-up'], summaryRows) + '\n');
   out.push('Totals add every run, failures included, so a variant with more runs has a larger total. The per-task tables below compare like with like.\n');
+  out.push('## Studies\n');
   for (const study of data.studies) {
-    out.push(`## ${study.id}\n`);
-    out.push(`${code(study.title)}. The baseline is ${code(study.me)}.${study.commit ? ` Commit ${code(study.commit)}.` : ''}${study.writeUp ? ` Write-up: [${basename(study.writeUp)}](${writeUpLink(study.writeUp)}).` : ''}\n`);
-    out.push(armTable(study) + '\n');
-    out.push(taskMatrix(study) + '\n');
+    out.push(details(study.id, [
+      `${code(study.title)}. The baseline is ${code(study.me)}.${study.commit ? ` Commit ${code(study.commit)}.` : ''}${study.writeUp ? ` Write-up: [${basename(study.writeUp)}](${writeUpLink(study.writeUp)}).` : ''}`,
+      armTable(study),
+      taskMatrix(study),
+    ].join('\n\n')));
   }
   out.push('## Other measurements\n');
   out.push('These write-ups in [docs/benchmarks](../benchmarks/) have no tables on this hub, and each states its own method. The release passes and head-to-heads are on [release-passes.md](release-passes.md).\n');
   const covered = new Set([...data.studies.map(s => s.writeUp), ...data.coveredWriteUps]);
   out.push(mdTable(['Date', 'Write-up'], data.catalog.filter(item => !covered.has(item.file)).map(item => [item.date ?? DASH, `[${item.title}](../benchmarks/${item.file})`])) + '\n');
-  out.push('## Data\n');
-  out.push(DATA_LINE(name));
+  out.push(pageFooter(fam.page, { data: id, studies: data.studies }));
   return out.join('\n');
 }
 
-function renderReleasePage(data) {
+// Replaces one exact piece of bench/results-page.mjs's output, and stops the render when that piece is gone.
+function swap(text, from, to) {
+  if (!text.includes(from)) throw new Error(`release page: results-page.mjs no longer prints ${JSON.stringify(from.slice(0, 60))}`);
+  return text.replace(from, () => to);
+}
+
+function renderReleasePage(all, id) {
+  const data = all[id], fam = family(id);
   const inputs = data.releaseInputs.map(name => {
     const raw = readJson(join(BENCH, name));
     const writeUp = existsSync(join(BENCH, name.replace(/\.json$/, '.md'))) ? name.replace(/\.json$/, '.md') : undefined;
     return loadResults(name, raw, writeUp);
   });
   const page = buildPage(inputs);
-  let md = renderReleaseMarkdown(page, { title: data.title, chart: 'release-passes.html', rebuild: 'node bench/results-hub.mjs' });
+  // explore.html charts these runs, so the page links it where results-page.mjs names its own chart page.
+  let md = renderReleaseMarkdown(page, { title: fam.title, chart: 'explore.html', rebuild: 'node bench/results-hub.mjs' });
+  md = swap(md, ' The same page with a chart is [explore.html](explore.html).', ` The [interactive page](${PAGES_URL}explore.html) charts every run.`);
+  md = swap(md, ' The chart is in [explore.html](explore.html).', '');
+  md = swap(md, `# ${fam.title}\n`, pageHead(fam.page, fam.title));
   const extra = ['## Every head-to-head and sleight-only pass\n',
     'Every results file in [docs/benchmarks](../benchmarks/) in the benchmark runner\'s format, with its totals per arm. Totals add every run, failures included.\n',
     mdTable(['File', 'Date', 'Kind', 'Model', 'Effort', 'Per arm: passed/runs, total s', ...(data.files.some(f => f.engines) ? ['ChatGPT engine and UTC dates'] : [])], data.files.map(file => [
       `[${file.name}](../benchmarks/${file.name})`, file.date, file.kind === 'h2h' ? 'head-to-head' : file.kind === 'release' ? `release ${file.version}` : 'sleight only',
       file.model ? code(file.model) : DASH, file.effort ?? DASH, file.arms.map(a => `${armName(a.arm)} ${a.passed}/${a.runs}, ${f0(a.seconds)} s`).join(', '),
-      ...(data.files.some(f => f.engines) ? [file.arms.map(a => `${armName(a.arm)}: ${file.engines?.[a.arm] ?? 'not recorded'}`).join(' · ')] : [])])) + '\n',
-    '## Data\n',
-    '[data/release-passes.json](data/release-passes.json) has every run of the release passes and the two head-to-heads above, and the totals of every file. [explore.html](explore.html) charts them.\n'];
-  md = md.replace(/\n## Run it yourself\n/, '\n' + extra.join('\n') + '\n## Run it yourself\n');
+      ...(data.files.some(f => f.engines) ? [file.arms.map(a => `${armName(a.arm)}: ${file.engines?.[a.arm] ?? 'not recorded'}`).join(' · ')] : [])])) + '\n'];
+  md = swap(md, '\n## Run it yourself\n', '\n' + extra.join('\n') + '\n## Run it yourself\n');
+  // The per-file method list folds like every other page's method.
+  const caveats = /\n## Method and caveats\n\n([\s\S]*?)\n## Every head-to-head/.exec(md);
+  if (!caveats) throw new Error('release page: no Method and caveats section');
+  md = md.replace(caveats[0], () => `\n${details('Method and caveats', caveats[1])}\n## Every head-to-head`);
   const releases = data.files.filter(f => f.kind === 'release');
   const perTask = sortedUniq(data.runs.filter(r => releases.some(f => f.name === r.file)).map(r => r.run)).length;
-  const method = ['## Method\n', list([
+  const method = details('Method', list([
     `Release passes run sleight alone on the benchmark's default suite (\`bench/run.mjs\`), up to ${perTask} runs per task. Every pass ran ${sortedUniq(releases.map(f => `${code(f.model)} at ${f.effort} effort`)).join(', ')}.`,
     'A run passes when the task\'s own checker confirms the result in the app, and a failure\'s reason is the checker\'s output.',
     'The page reports the last pass of each release file. Where a file kept the passes made on the way to the release, Method and caveats says how many.',
-    `The head-to-heads above are ${joinAnd(RELEASE_RIVALS.map(n => `[${n}](../benchmarks/${n})`))}, picked per rival by \`buildPage\` in \`bench/results-page.mjs\`. The table near the end lists every other head-to-head.`,
+    `The head-to-heads on this page are ${joinAnd(RELEASE_RIVALS.map(n => `[${n}](../benchmarks/${n})`))}, picked per rival by \`buildPage\` in \`bench/results-page.mjs\`. The table near the end lists every other head-to-head.`,
     'These passes predate the claim rules, so they report pass counts and totals instead of expected time. The tables include the failed runs.',
-  ]) + '\n'].join('\n');
-  md = md.replace(/\n## Latest release pass\n/, '\n' + method + '\n## Latest release pass\n');
-  return { md, html: renderReleaseHtml(page, { title: data.title, rebuild: 'node bench/results-hub.mjs' }) };
+  ]));
+  md = swap(md, '\n## Latest release pass\n', '\n' + method + '\n## Latest release pass\n');
+  return md.trimEnd() + '\n\n' + pageFooter(fam.page, { data: id, dataText: 'contains every run of the release passes and of the two head-to-heads on this page, plus the totals of every file' });
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -797,23 +868,43 @@ function renderReleasePage(data) {
 export const FAMILIES = [
   { id: 'native-claim', page: 'native-claim.md', title: 'Native claim', what: 'The 9 native Mac app tasks, sleight against LCU, Codex, Cua, Peekaboo and Claude\'s own computer use.' },
   { id: 'app-claim', page: 'app-claim.md', title: 'App claim', what: 'VS Code, Slack and Spotify tasks with the same arms.' },
-  { id: 'browser-turbo', page: 'browser-turbo.md', title: 'Browser turbo against FowlBrowser', what: 'Turbo in Chrome and Helium, in the gate rounds and the real-window race.' },
-  { id: 'browser-race', page: 'browser-race.md', title: 'Safari and Firefox race', what: 'sleight\'s engine path in Safari and Firefox against Codex, LCU, Cua and Peekaboo.' },
-  { id: 'ab-tests', page: 'ab-tests.md', title: 'A/B tests and tuning experiments', what: 'sleight against sleight, for skill, wording, tool and turbo changes.' },
-  { id: 'release-passes', page: 'release-passes.md', title: 'Release passes', what: 'The per-release regression passes and the first native head-to-heads.' },
+  { id: 'browser-turbo', page: 'browser-turbo.md', title: 'Chrome and Helium: turbo against FowlBrowser', what: 'Turbo in Chrome and Helium, in the real-window race and the earlier gate rounds.' },
+  { id: 'browser-race', page: 'browser-race.md', title: 'Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo', what: 'sleight\'s engine path in Safari and Firefox against Codex, LCU, Cua and Peekaboo.' },
+  { id: 'ab-tests', page: 'ab-tests.md', title: 'Experiments', what: 'sleight against sleight, for skill, wording, tool and turbo changes.' },
+  { id: 'release-passes', page: 'release-passes.md', title: 'Release passes and the earlier head-to-heads', what: 'The per-release regression passes and the first native head-to-heads.' },
 ];
+const family = id => FAMILIES.find(fam => fam.id === id);
+
+// The ChatGPT engine versions behind a family's headline, from the data's per-arm summaries.
+function engineBrief(studies) {
+  if (!hasEngines(studies)) return 'no engine version in this data, which predates 2026-10-19';
+  const versions = {};
+  for (const byArm of studies.filter(s => s?.engines).map(s => s.engines)) for (const [arm, summary] of Object.entries(byArm)) {
+    if (!usesEngine(arm)) continue;
+    for (const [version, b] of Object.entries(summary.versions)) {
+      const v = versions[version] ??= { first: null, last: null };
+      if (b.first && (!v.first || b.first < v.first)) v.first = b.first;
+      if (b.last && (!v.last || b.last > v.last)) v.last = b.last;
+    }
+  }
+  const parts = Object.entries(versions).sort(([a], [b]) => (a < b ? -1 : 1)).map(([version, v]) => `engine ${version}${v.first ? `, ${dayRange(v.first, v.last)}` : ''}`);
+  return parts.length ? parts.join('; ') : 'no arm here drives the engine with a known version';
+}
+const headlineStudies = (id, data) => (id === 'browser-race' ? data.studies.filter(s => s.latest) : id === 'browser-turbo' ? data.race.studies.filter(s => s.latest)
+  : id === 'ab-tests' ? data.studies : id === 'release-passes' ? [] : data.studies);
 
 function headlineFor(id, data) {
+  const engine = engineBrief(headlineStudies(id, data));
   if (id === 'native-claim' || id === 'app-claim') {
     const s = data.studies[0];
-    return `"${s.verdict.wording}", sleight's total expected time ${f1(s.verdict.totals.sleight)} s over ${s.tasks.length} tasks (${s.runs.length} runs, ${s.date})`;
+    return `"${s.verdict.wording}", sleight's total expected time ${f1(s.verdict.totals.sleight)} s over ${s.tasks.length} tasks (${s.runs.length} runs, ${s.date}; ${engine})`;
   }
   if (id === 'browser-race') {
-    return data.studies.filter(s => s.latest).map(s => `${cap(s.browser)} "${s.verdict.wording}" (${code(s.label)}, ${s.date.slice(0, 10)})`).join('. ') || 'no complete set';
+    return (data.studies.filter(s => s.latest).map(s => `${cap(s.browser)} "${s.verdict.wording}" (${code(s.label)}, ${s.date.slice(0, 10)})`).join('. ') || 'no complete set') + `. ${engine[0].toUpperCase()}${engine.slice(1)}`;
   }
   if (id === 'browser-turbo') {
     const race = data.race.studies.filter(s => s.latest).map(s => `${cap(s.browser)} lowest expected time on ${s.verdict.fastest[s.me].length} of ${s.tasks.length}, ${s.verdict.totals[s.me] == null ? 'no total (a task has no pass)' : `total ${f1(s.verdict.totals[s.me])} s`} against FowlBrowser's ${f1(s.verdict.totals.fowlbrowser)} s (${code(s.label)})`);
-    return race.join('. ') + `. ${data.gates.length} gate studies`;
+    return race.join('. ') + `. ${data.gates.length} gate studies. ${engine[0].toUpperCase()}${engine.slice(1)}`;
   }
   if (id === 'ab-tests') return `${data.studies.length} studies with run data, ${data.catalog.length} write-ups in all`;
   if (id === 'release-passes') {
@@ -824,9 +915,10 @@ function headlineFor(id, data) {
 }
 
 function renderIndex(all) {
-  const out = ['# Benchmark results\n'];
-  out.push('Every benchmark sleight has published, one page per family. Each page opens with its method: models, effort, runs per arm, scoring and loss rules, arm versions, and what was left out and why. The tables and the data file follow. `bench/results-hub.mjs` computes every number from the raw results with the same scorers the claims use, and failures are published with the passes.\n');
-  out.push('[explore.html](explore.html) has the same data with sorting, filters and a chart per task. GitHub shows only its source, so open it from a checkout or from a host that serves this folder.\n');
+  const out = [pageHead('README.md', 'Benchmark results')];
+  out.push('Every benchmark sleight has published, one page per family. Each page leads with its results and folds the method underneath: models, effort, runs per arm, scoring and loss rules, arm versions, and what was left out and why. `bench/results-hub.mjs` computes every number from the raw results with the same scorers the claims use, and failures are published with the passes.\n');
+  for (const id of ['headline-native', 'overview']) { const chart = chartFor(all, id); if (chart) out.push(chart); }
+  out.push(`The [interactive page](${PAGES_URL}explore.html) has the same data with sorting, filters and a chart per task. Its source is [explore.html](explore.html) in this folder.\n`);
   out.push(mdTable(['Family', 'What it measures', 'Where it stands', 'Data'], FAMILIES.map(fam => [
     `[${fam.title}](${fam.page})`, fam.what, headlineFor(fam.id, all[fam.id]), `[json](data/${fam.id}.json)`])) + '\n');
   out.push('[Insights](insights.md) (being written) covers what the runs taught us about run-to-run variation, Haiku against Opus, which tuning paid off, and engine quirks.\n');
@@ -837,10 +929,53 @@ function renderIndex(all) {
     'A round runs every task once per arm. A claim or race task gets 3 runs per arm, or 5 where sleight and another arm are within 20%.',
     'The full rules are in [LAWS](../status/LAWS.md), and the tasks and harnesses in [benchmark.md](../benchmark.md).',
   ]) + '\n');
-  out.push('## Rebuild\n');
-  out.push('```sh\nnode bench/results-hub.mjs                # collect from the raw folders this Mac has, then render\nnode bench/results-hub.mjs --render-only  # render from docs/results/data only\nnode bench/results-hub.mjs --check        # exit 1 if a page or data file would change\n```\n');
-  out.push('The raw claim and race folders live outside the repo, in `~/Projects/sleight-wt/app-claim` and `~/Projects/sleight-wt/race-1017`. On a Mac without them, the generator keeps the data files already here. `--wt <dir>` points it at another copy.\n');
+  out.push(details('Rebuild', '```sh\nnode bench/results-hub.mjs                # collect from the raw folders this Mac has, then render\nnode bench/results-hub.mjs --render-only  # render from docs/results/data only\nnode bench/results-hub.mjs --check        # exit 1 if a page, data file or README block would change\n```\n\n' +
+    'The raw claim and race folders live outside the repo, in `~/Projects/sleight-wt/app-claim` and `~/Projects/sleight-wt/race-1017`. On a Mac without them, the generator keeps the data files already here. `--wt <dir>` points it at another copy.'));
+  out.push(pageFooter('README.md', { studies: FAMILIES.flatMap(fam => headlineStudies(fam.id, all[fam.id])) }));
   return out.join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// The repo README's generated blocks. Each sits between <!-- hub:<name> --> and <!-- /hub:<name> -->, and nothing outside the
+// markers is touched.
+
+export const README_BLOCKS = ['claim', 'headline', 'benchmarks'];
+const README_BASE = 'docs/results/';
+
+// Pure: returns text with each named block's contents replaced. A block whose markers are missing is left alone, and a marker
+// that appears twice or a closing marker before its opening one throws.
+export function spliceReadme(text, blocks) {
+  let out = text;
+  for (const [name, body] of Object.entries(blocks)) {
+    const open = `<!-- hub:${name} -->`, close = `<!-- /hub:${name} -->`;
+    const count = marker => out.split(marker).length - 1;
+    if (count(open) > 1 || count(close) > 1) throw new Error(`README.md: the hub:${name} marker appears more than once`);
+    if (count(open) !== count(close)) throw new Error(`README.md: hub:${name} has an opening or a closing marker without the other`);
+    if (!count(open)) continue;
+    const start = out.indexOf(open) + open.length, end = out.indexOf(close);
+    if (end < start) throw new Error(`README.md: the closing hub:${name} marker comes before the opening one`);
+    out = out.slice(0, start) + (body.trim() ? `\n${body.trim()}\n` : '\n') + out.slice(end);
+  }
+  return out;
+}
+
+// The three blocks, from the same data and text as the hub landing.
+export function readmeBlocks(all) {
+  const study = all['native-claim'].studies[0], v = study.verdict;
+  const others = study.arms.filter(arm => arm !== study.me && v.totals[arm] != null).sort((a, b) => v.totals[a] - v.totals[b]);
+  const next = others[0];
+  const models = sortedUniq(study.models?.[study.me] ?? []).map(code).join(', ') || 'model not recorded';
+  const effort = (Array.isArray(study.effort) ? study.effort : []).join(', ') || 'effort not recorded';
+  const claim = [
+    `sleight's native claim is "${v.wording}": the lowest expected time on ${v.lowest.length} of ${study.tasks.length} native Mac tasks, and a total of ${f1(v.totals[study.me])} s` +
+      `${next ? ` against ${armName(next)}'s ${f1(v.totals[next])} s, the next lowest` : ''}, over ${study.runs.length} runs dated ${study.date} on ${models} at ${effort} effort` +
+      ` (${engineBrief([study])}). The hub lists each run, failures included, with the method and the model each arm ran.`,
+    '',
+    `[Benchmark hub](${README_BASE}README.md) · [Interactive page](${PAGES_URL}explore.html)`,
+  ].join('\n');
+  const block = id => charts.chartBlock(id, all, { base: README_BASE }).trim();
+  const lines = FAMILIES.map(fam => `- [${fam.title}](${README_BASE}${fam.page}): ${headlineFor(fam.id, all[fam.id]).replace(/\]\((?!https?:)/g, `](${README_BASE}`)}.`);
+  return { claim, headline: block('headline-native'), benchmarks: [lines.join('\n'), block('overview')].filter(Boolean).join('\n\n') };
 }
 
 const INDEX_HTML = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
@@ -938,23 +1073,37 @@ export function collect({ wt, out }) {
 export function render(all) {
   const files = {};
   for (const [id, data] of Object.entries(all)) files[`data/${id}.json`] = json(data);
-  files['native-claim.md'] = renderClaimPage(all['native-claim'], { name: 'native-claim',
+  files['native-claim.md'] = renderClaimPage(all, 'native-claim', {
     intro: 'The claim suite\'s 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight against LCU, Codex, Cua, Peekaboo and Claude\'s own computer use, in real windows with the owner away. The suite is sleight\'s own, its skill and tool wording were tuned on the runs of textedit-calculator, preview-read, excel-edit, word-edit, finder-move, textedit-save and textedit-drag (not calculator-click or calculator-menu), and the competitors ran their defaults.' });
-  files['app-claim.md'] = renderClaimPage(all['app-claim'], { name: 'app-claim',
+  files['app-claim.md'] = renderClaimPage(all, 'app-claim', {
     intro: 'The app tasks run on the native path with the same arms and rules as the native claim. In VS Code the agent edits a fixture file in a separate instance with a temporary profile. In Slack it posts one fixed message to a test channel of a throwaway account. In the owner\'s Spotify account it finds a track, plays it and pauses it.' });
-  files['browser-turbo.md'] = renderTurboPage(all['browser-turbo'], 'browser-turbo');
-  files['browser-race.md'] = renderRacePage(all['browser-race'], 'browser-race');
-  files['ab-tests.md'] = renderAbPage(all['ab-tests'], 'ab-tests');
-  const release = renderReleasePage(all['release-passes']);
-  files['release-passes.md'] = release.md;
-  files['release-passes.html'] = release.html;
+  files['browser-turbo.md'] = renderTurboPage(all, 'browser-turbo');
+  files['browser-race.md'] = renderRacePage(all, 'browser-race');
+  files['ab-tests.md'] = renderAbPage(all, 'ab-tests');
+  files['release-passes.md'] = renderReleasePage(all, 'release-passes');
   files['README.md'] = renderIndex(all);
-  files['index.html'] = INDEX_HTML;
-  const template = readFileSync(join(ROOT, 'bench/results-explore.html'), 'utf8');
-  const data = JSON.stringify(exploreData(all)).replace(/</g, '\\u003c');
-  files['explore.html'] = template.replace('/*__DATA__*/null', () => data);
+  for (const [name, text] of Object.entries(charts.renderCharts(all))) files[name] = text;
+  const explore = JSON.stringify(exploreData(all)).replace(/</g, '\\u003c');
+  files['explore.html'] = fillTemplate(readFileSync(join(ROOT, 'bench/results-explore.html'), 'utf8'), explore, 'explore.html');
+  // The Pages landing comes from bench/results-index.html once it exists, with the explore data and the chart captions.
+  const indexTemplate = join(ROOT, 'bench/results-index.html');
+  if (existsSync(indexTemplate)) {
+    const captions = Object.fromEntries(charts.CHARTS.map(chart => [chart.id, charts.chartCaption(chart.id, all)]));
+    files['index.html'] = fillTemplate(readFileSync(indexTemplate, 'utf8'), JSON.stringify({ ...exploreData(all), captions }).replace(/</g, '\\u003c'), 'index.html');
+  } else files['index.html'] = INDEX_HTML;
   for (const [name, text] of Object.entries(files)) files[name] = scrubPaths(text);
   return files;
+}
+
+// A page template's data slot and its nav slot.
+function fillTemplate(template, data, page) {
+  if (!template.includes('/*__DATA__*/null')) throw new Error(`${page}: the template has no /*__DATA__*/null slot`);
+  return template.replace('/*__DATA__*/null', () => data).replace('<!--__NAV__-->', () => renderNavHtml(page));
+}
+
+// The repo README with its generated blocks filled in, or null when the repo has no README.
+export function renderReadme(all, text = existsSync(join(ROOT, 'README.md')) ? readFileSync(join(ROOT, 'README.md'), 'utf8') : null) {
+  return text === null ? null : scrubPaths(spliceReadme(text, readmeBlocks(all)));
 }
 
 function argValue(argv, name) { const i = argv.indexOf(name); return i < 0 ? undefined : argv[i + 1]; }
@@ -967,16 +1116,22 @@ export function main(argv = process.argv.slice(2)) {
     all = Object.fromEntries(FAMILIES.map(f => [f.id, readJson(join(out, 'data', `${f.id}.json`))]));
   } else ({ all, notes } = collect({ wt, out }));
   const files = render(all);
+  const readmeFile = join(ROOT, 'README.md'), readme = renderReadme(all);
   if (argv.includes('--check')) {
     const changed = Object.entries(files).filter(([name, text]) => !existsSync(join(out, name)) || readFileSync(join(out, name), 'utf8') !== text).map(([name]) => name);
     for (const name of changed) console.log(`would change ${name}`);
-    process.exitCode = changed.length ? 1 : 0;
+    const readmeStale = readme !== null && readFileSync(readmeFile, 'utf8') !== readme;
+    if (readmeStale) console.log('would change README.md (the repo README\'s hub blocks)');
+    process.exitCode = changed.length || readmeStale ? 1 : 0;
     return;
   }
-  mkdirSync(join(out, 'data'), { recursive: true });
-  for (const [name, text] of Object.entries(files)) writeFileSync(join(out, name), text);
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(out, name)), { recursive: true });
+    writeFileSync(join(out, name), text);
+  }
+  if (readme !== null && readFileSync(readmeFile, 'utf8') !== readme) writeFileSync(readmeFile, readme);
   for (const note of notes) console.log(note);
-  console.log(`wrote ${Object.keys(files).length} files to ${relative(ROOT, out) || '.'}`);
+  console.log(`wrote ${Object.keys(files).length} files to ${relative(ROOT, out) || '.'}${readme !== null ? ' and the README.md blocks' : ''}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();

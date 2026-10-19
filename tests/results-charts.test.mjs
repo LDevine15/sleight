@@ -138,6 +138,8 @@ test('chartBlock gives the picture pair for a page\'s path and repeats the capti
 test('footers name the engine versions and UTC dates once the data carries them', () => {
   const all = committed();
   const study = clone(studyFor(all, 'native-claim'));
+  // A data file collected before engine tracking has no engines field.
+  delete study.engines;
   assert.match(engineLine(study), /not in this data file/);
   const bucket = (runs, recorded, first, last) => ({ runs, recorded, first, last, datesInferred: 0, undated: 0 });
   const none = () => bucket(0, 0, null, null);

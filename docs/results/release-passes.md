@@ -1,14 +1,18 @@
+[Benchmarks](README.md) · [Native](native-claim.md) · [Apps](app-claim.md) · [Chrome and Helium](browser-turbo.md) · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · Releases · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
+
 # Release passes and the earlier head-to-heads
 
-One section per release pass, generated from the results files in [benchmarks](../benchmarks/). Every number comes from those files. Every run the benchmark made is published, failures included ([LAWS](../status/LAWS.md), Method). Known limits are quoted in [known-problems](../known-problems.md), not copied here. The same page with a chart is [release-passes.html](release-passes.html).
+One section per release pass, generated from the results files in [benchmarks](../benchmarks/). Every number comes from those files. Every run the benchmark made is published, failures included ([LAWS](../status/LAWS.md), Method). Known limits are quoted in [known-problems](../known-problems.md), not copied here. The [interactive page](https://land-o-clusters.github.io/sleight/results/explore.html) charts every run.
 
-## Method
+<details><summary>Method</summary>
 
 - Release passes run sleight alone on the benchmark's default suite (`bench/run.mjs`), up to 3 runs per task. Every pass ran `claude-sonnet-5-5` at medium effort.
 - A run passes when the task's own checker confirms the result in the app, and a failure's reason is the checker's output.
 - The page reports the last pass of each release file. Where a file kept the passes made on the way to the release, Method and caveats says how many.
-- The head-to-heads above are [2026-10-10-h2h-5.json](../benchmarks/2026-10-10-h2h-5.json) and [2026-10-03-sleight-vs-lcu.json](../benchmarks/2026-10-03-sleight-vs-lcu.json), picked per rival by `buildPage` in `bench/results-page.mjs`. The table near the end lists every other head-to-head.
+- The head-to-heads on this page are [2026-10-10-h2h-5.json](../benchmarks/2026-10-10-h2h-5.json) and [2026-10-03-sleight-vs-lcu.json](../benchmarks/2026-10-03-sleight-vs-lcu.json), picked per rival by `buildPage` in `bench/results-page.mjs`. The table near the end lists every other head-to-head.
 - These passes predate the claim rules, so they report pass counts and totals instead of expected time. The tables include the failed runs.
+
+</details>
 
 ## Latest release pass
 
@@ -168,9 +172,9 @@ Own CPU is the run's own process group plus the shared engine helper and the tar
 | 1.0.0 | 2026-10-09 | 19/21 | 165 | 912 | 2.6 |
 | 1.1.0 | 2026-10-09 | 20/21 | 150 | 1,469 | 2.8 |
 
-Run counts differ between versions: the task set grew from 18 runs to 21, and 0.8.0 and 0.11.0 ran partial sets. The chart is in [release-passes.html](release-passes.html).
+Run counts differ between versions: the task set grew from 18 runs to 21, and 0.8.0 and 0.11.0 ran partial sets.
 
-## Method and caveats
+<details><summary>Method and caveats</summary>
 
 - [2026-10-05-release-0.7.0.json](../benchmarks/2026-10-05-release-0.7.0.json): 2026-10-05, claude-sonnet-5-5 at medium, arm sleight, owner presence not in the file, last of 6 passes in the file. write-up [2026-10-05-release-0.7.0.md](../benchmarks/2026-10-05-release-0.7.0.md). Every benchmark run made for the 0.7.0 release on 2026-10-05, in order, failures included. sleight arm only, Sonnet 5.5 at medium effort, Claude Code 2.1.289, engine 26.930.31730, owner away from the Mac.
 - [2026-10-05-release-0.8.0.json](../benchmarks/2026-10-05-release-0.8.0.json): 2026-10-05, claude-sonnet-5-5 at medium, arm sleight, owner presence not in the file, last of 3 passes in the file. write-up [2026-10-05-release-0.8.0.md](../benchmarks/2026-10-05-release-0.8.0.md). Every benchmark run made for the 0.8.0 release on 2026-10-05, in order, failures included. sleight arm only (folder outside any repo), Sonnet 5.5 at medium effort, Claude Code 2.1.289, engine 26.930.31730, ComputerUseAllowForbiddenTargets on (it only affects terminals and OpenAI's apps).
@@ -183,6 +187,8 @@ Run counts differ between versions: the task set grew from 18 runs to 21, and 0.
 - [2026-10-03-sleight-vs-lcu.json](../benchmarks/2026-10-03-sleight-vs-lcu.json): 2026-10-03, default, arm sleight and LCU, owner presence not in the file.
 
 The standard results files don't record an engine version or load figures. Passes that measured them state them in a write-up or note. Turns differ between harnesses.
+
+</details>
 
 ## Every head-to-head and sleight-only pass
 
@@ -306,10 +312,6 @@ Every results file in [docs/benchmarks](../benchmarks/) in the benchmark runner'
 | [2026-10-11-web-depth-partial.json](../benchmarks/2026-10-11-web-depth-partial.json) | 2026-10-11 | head-to-head | `claude-haiku-5-5` | high | sleight 1/3, 38 s, Codex 0/2, 29 s | sleight: engine 26.1007.21159 (3 inferred), 2026-10-11 (dates inferred) · Codex: engine 26.1007.21159 (2 inferred), 2026-10-11 (dates inferred) |
 | [2026-10-11-web-h2h.json](../benchmarks/2026-10-11-web-h2h.json) | 2026-10-11 | head-to-head | `claude-haiku-5-5` | high | sleight 24/24, 685 s, Codex 24/24, 1,002 s | sleight: engine 26.1007.21159 (24 inferred), 2026-10-11 (dates inferred) · Codex: engine 26.1007.21159 (24 inferred), 2026-10-11 (dates inferred) |
 
-## Data
-
-[data/release-passes.json](data/release-passes.json) has every run of the release passes and the two head-to-heads above, and the totals of every file. [explore.html](explore.html) charts them.
-
 ## Run it yourself
 
 ```sh
@@ -328,3 +330,7 @@ Rebuild this page after a release pass with:
 ```sh
 node bench/results-hub.mjs
 ```
+
+[data/release-passes.json](data/release-passes.json) contains every run of the release passes and of the two head-to-heads on this page, plus the totals of every file, and the [interactive page](https://land-o-clusters.github.io/sleight/results/explore.html) charts them. The ChatGPT engine version is missing from this data, which was collected before the results recorded it (2026-10-19). Rebuild every page with `node bench/results-hub.mjs`.
+
+[Benchmarks](README.md) · [Native](native-claim.md) · [Apps](app-claim.md) · [Chrome and Helium](browser-turbo.md) · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · Releases · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)

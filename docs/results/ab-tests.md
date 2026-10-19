@@ -1,12 +1,16 @@
-# A/B tests and tuning experiments
+[Benchmarks](README.md) · [Native](native-claim.md) · [Apps](app-claim.md) · [Chrome and Helium](browser-turbo.md) · [Safari and Firefox](browser-race.md) · Experiments · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
+
+# Experiments
 
 Each study compares sleight variants on the same tasks. The pages score them the same way as the claims, with the first variant as the baseline.
 
-## Method
+<details><summary>Method</summary>
 
 - Studies saved as JSON (`{ study, rounds }` or `{ study, sides }` in docs/benchmarks) are read run by run, and their model ids come from the runs. Studies saved as FowlBrowser-runner reports are parsed from their tables, and their model and effort come from the write-up.
 - Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`). A failed run adds its time to the mean and lowers the rate. A task an arm never passed has no expected time, and that arm then has no total. Median and range are over passing runs, and p90 (nearest rank) appears only at 5 or more runs.
 - Rounds alternate the variants, but load and model variation still move single rounds. Each write-up says what its study controlled, and the summary gives the runs per task.
+
+</details>
 
 ## Summary
 
@@ -28,7 +32,9 @@ Each study compares sleight variants on the same tasks. The pages score them the
 
 Totals add every run, failures included, so a variant with more runs has a larger total. The per-task tables below compare like with like.
 
-## 2026-10-10-merge-ab
+## Studies
+
+<details><summary>2026-10-10-merge-ab</summary>
 
 `SLEIGHT_FIRST_CALL_BATCH=merge against the default wording, textedit-edit and textedit-save`. The baseline is `default`. Write-up: [2026-10-10-merge-ab.md](../benchmarks/2026-10-10-merge-ab.md).
 
@@ -44,7 +50,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 0 of 2 | 2 of 2 |
 | Total expected s | 169.9 | 139.0 |
 
-## 2026-10-11-firstcall-ab
+</details>
+
+<details><summary>2026-10-11-firstcall-ab</summary>
 
 `first-call wording A/B: the default against SLEIGHT_FIRST_CALL_BATCH=app, calculator-click, textedit-edit and textedit-save x2 per round, 2 rounds alternating`. The baseline is `default`. Commit `4ee20df`. Write-up: [benchmark.md](../benchmark.md).
 
@@ -61,7 +69,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 0 of 3 | 3 of 3 |
 | Total expected s | 94.2 | 85.9 |
 
-## 2026-10-11-result-trim-ab
+</details>
+
+<details><summary>2026-10-11-result-trim-ab</summary>
 
 `SLEIGHT_RESULT_TRIM=1 at e212204 against the default, calculator-click, textedit-edit and textedit-save x2 per round, 2 rounds`. The baseline is `SLEIGHT_RESULT_TRIM=1 (list trim and acquisition-tree drop)`. Commit `e212204`. Write-up: [benchmark.md](../benchmark.md).
 
@@ -78,7 +88,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 1 of 3 | 2 of 3 |
 | Total expected s | 117.1 | 85.0 |
 
-## 2026-10-11-sheet-ab
+</details>
+
+<details><summary>2026-10-11-sheet-ab</summary>
 
 `Save-sheet A/B: default against SLEIGHT_FIRST_CALL_BATCH=sheet (no Cmd+S stop, menu clicks in one call), calculator-click, textedit-edit and textedit-save x3 pe`. The baseline is `sheet`. Commit `ebedb7e`. Write-up: [benchmark.md](../benchmark.md).
 
@@ -95,7 +107,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 1 of 3 | 2 of 3 |
 | Total expected s | 91.9 | 73.4 |
 
-## 2026-10-11-sheet-edit-ab
+</details>
+
+<details><summary>2026-10-11-sheet-edit-ab</summary>
 
 `SLEIGHT_FIRST_CALL_BATCH=sheet against the default on calculator-click and textedit-edit (no Save sheet), 3 runs a task per arm per round, 2 rounds, owner at th`. The baseline is `sheet`. Commit `f328943`. Write-up: [benchmark.md](../benchmark.md).
 
@@ -111,7 +125,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 2 of 2 | 0 of 2 |
 | Total expected s | 31.8 | 35.3 |
 
-## 2026-10-11-skill-ab
+</details>
+
+<details><summary>2026-10-11-skill-ab</summary>
 
 `skill A/B: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md) and SLEIGHT_SKILL=none, calculator-click and textedit-edit x3 per arm per round, 2 rounds, owner`. The baseline is `slim`. Commit `b03b5a7`. Write-up: [benchmark.md](../benchmark.md).
 
@@ -128,7 +144,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 0 of 2 | 1 of 2 | 1 of 2 |
 | Total expected s | 34.8 | 41.6 | 32.6 |
 
-## 2026-10-11-skill-ab-2
+</details>
+
+<details><summary>2026-10-11-skill-ab-2</summary>
 
 `skill A/B rerun: current SKILL.md, SLEIGHT_SKILL=slim (SKILL-slim.md with placeholder ID and label examples) and SLEIGHT_SKILL=none, calculator-click and texted`. The baseline is `slim`. Commit `ebedb7e`. Write-up: [benchmark.md](../benchmark.md).
 
@@ -145,7 +163,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 1 of 2 | 1 of 2 | 0 of 2 |
 | Total expected s | 31.8 | 40.0 | 34.0 |
 
-## 2026-10-11-skill-ab-save
+</details>
+
+<details><summary>2026-10-11-skill-ab-save</summary>
 
 `skill A/B on textedit-save:`. The baseline is `slim`. Commit `ebedb7e`. Write-up: [benchmark.md](../benchmark.md).
 
@@ -161,7 +181,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 1 of 1 | 0 of 1 | 0 of 1 |
 | Total expected s | 40.3 | 56.9 | 46.2 |
 
-## 2026-10-11-three-arm-ab
+</details>
+
+<details><summary>2026-10-11-three-arm-ab</summary>
 
 `three arms, one change each:`. The baseline is `headdrop`. Commit `7f49b40`. Write-up: [benchmark.md](../benchmark.md).
 
@@ -179,7 +201,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 1 of 3 | 0 of 3 | 2 of 3 |
 | Total expected s | 80.4 | 91.4 | 81.3 |
 
-## 2026-10-12-d5-min-ab
+</details>
+
+<details><summary>2026-10-12-d5-min-ab</summary>
 
 `Engine docs on demand, and where first calls queue (2026-10-12)`. The baseline is `default`. Write-up: [2026-10-12-d5-min-ab.md](../benchmarks/2026-10-12-d5-min-ab.md).
 
@@ -206,7 +230,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 4 of 13 | 9 of 13 |
 | Total expected s | none (a task has no pass) | 3004.8 |
 
-## 2026-10-12-lean-skill-ab
+</details>
+
+<details><summary>2026-10-12-lean-skill-ab</summary>
 
 `Lean skill A/B on FowlBrowser's tasks (2026-10-12)`. The baseline is `default`. Write-up: [2026-10-12-lean-skill-ab.md](../benchmarks/2026-10-12-lean-skill-ab.md).
 
@@ -233,7 +259,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 2 of 13 | 10 of 13 |
 | Total expected s | 503.0 | 490.5 |
 
-## 2026-10-16-turbo-ab
+</details>
+
+<details><summary>2026-10-16-turbo-ab</summary>
 
 `Turbo A/B, gate candidate against v3-gate, 2026-10-16`. The baseline is `baseline`. Write-up: [2026-10-16-turbo-ab.md](../benchmarks/2026-10-16-turbo-ab.md).
 
@@ -260,7 +288,9 @@ Totals add every run, failures included, so a variant with more runs has a large
 | Lowest expected time on | 5 of 13 | 8 of 13 |
 | Total expected s | 292.1 | 271.2 |
 
-## 2026-10-16-turbo-ab-find
+</details>
+
+<details><summary>2026-10-16-turbo-ab-find</summary>
 
 `Find alternation A/B, 05:25 to 05:43 UTC`. The baseline is `baseline`. Write-up: [2026-10-16-turbo-ab.md](../benchmarks/2026-10-16-turbo-ab.md).
 
@@ -286,6 +316,8 @@ Totals add every run, failures included, so a variant with more runs has a large
 | `wikipedia` | 8.3 (6/6) | 7.2 (6/6) |
 | Lowest expected time on | 4 of 13 | 9 of 13 |
 | Total expected s | 304.0 | 276.0 |
+
+</details>
 
 ## Other measurements
 
@@ -369,6 +401,6 @@ These write-ups in [docs/benchmarks](../benchmarks/) have no tables on this hub,
 | n/a | [Battery report template](../benchmarks/battery-report-template.md) |
 | n/a | [Release audit, 2026-10-11](../benchmarks/release-audit-2026-10-11.md) |
 
-## Data
+[data/ab-tests.json](data/ab-tests.json) has every counted run and the scored cells, and the [interactive page](https://land-o-clusters.github.io/sleight/results/explore.html) charts them. The ChatGPT engine version is missing from this data, which was collected before the results recorded it (2026-10-19). Rebuild every page with `node bench/results-hub.mjs`.
 
-[data/ab-tests.json](data/ab-tests.json) has every counted run and the scored cells. [explore.html](explore.html) charts them.
+[Benchmarks](README.md) · [Native](native-claim.md) · [Apps](app-claim.md) · [Chrome and Helium](browser-turbo.md) · [Safari and Firefox](browser-race.md) · Experiments · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)

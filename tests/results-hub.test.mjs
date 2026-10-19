@@ -8,8 +8,8 @@ import vm from 'node:vm';
 import { claim, score } from '../bench/claim-score.mjs';
 import { engineMix, summarizeEngines } from '../bench/engine-version.mjs';
 import {
-  FAMILIES, cellText, cellsFor, collectJsonAbs, collectRace, collectReleases, collectRunnerStudies, dateRange, lossRule, parseRunnerReport,
-  ownerPass, render, scoreClaimDir, scrub, scrubPaths, variantOf,
+  FAMILIES, NAV, README_BLOCKS, cellText, cellsFor, collectJsonAbs, collectRace, collectReleases, collectRunnerStudies, dateRange, lossRule, parseRunnerReport,
+  ownerPass, readmeBlocks, render, renderNav, renderNavHtml, renderReadme, scoreClaimDir, scrub, scrubPaths, spliceReadme, taskMatrix, variantOf,
 } from '../bench/results-hub.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
@@ -159,13 +159,15 @@ test('a race set leaves sleight inside Codex out of sleight\'s verdict and shows
   assert.equal(pair.wording, 'completed every task, fastest on 1 of 2');
   const md = render({ ...committed(), 'browser-race': race })['browser-race.md'];
   const section = md.slice(md.indexOf('## Safari'));
-  const sameAt = section.indexOf('Same model: codex-sleight');
+  const sameAt = section.indexOf('Same model: sleight inside Codex against Codex');
   assert.ok(sameAt > 0, 'the page has a same-model section');
   assert.match(section.slice(0, sameAt), /By the loss rule, sleight didn't lose a task\./);
   assert.match(section.slice(0, sameAt), /\| Task \| sleight \| Codex \|\n/, 'sleight\'s task table has no codex-sleight column');
   assert.ok(!section.slice(0, sameAt).includes('Arm ahead'));
-  assert.match(section.slice(sameAt), /\| Task \| codex-sleight \| Codex \|/);
-  assert.match(section.slice(sameAt), /By the loss rule, codex-sleight lost 1 of 2 tasks\./);
+  assert.match(section.slice(sameAt), /\| Task \| sleight inside Codex \| Codex \|/);
+  assert.match(section.slice(sameAt), /By the loss rule, sleight inside Codex lost 1 of 2 tasks\./);
+  // The same-model section sits outside the folds, under its own heading.
+  assert.match(outsideDetails(section), /### Same model: sleight inside Codex against Codex\n[\s\S]*\| Task \| sleight inside Codex \| Codex \|/);
 });
 
 test('no generated file holds a home path, the account name or the owner\'s name', () => {
@@ -303,3 +305,120 @@ test('claim rows and claim-score carry the engine and date inferred from the pas
   assert.match(execFileSync(process.execPath, [join(ROOT, 'bench/claim-score.mjs'), '--results', dir], { encoding: 'utf8' }),
     /sleight +engine 26\.1007\.71326 \(1 inferred\), 2026-10-18 \(dates inferred\)/);
 });
+
+// The generated Markdown pages: the hub landing and one per family.
+const GENERATED = ['README.md', ...FAMILIES.map(f => f.page)];
+
+// Text outside every <details> fold, nested folds included.
+function outsideDetails(text) {
+  let depth = 0, out = '';
+  for (const part of text.split(/(<details>|<\/details>)/)) {
+    if (part === '<details>') depth += 1;
+    else if (part === '</details>') depth -= 1;
+    else if (!depth) out += part;
+    assert.ok(depth >= 0, 'a </details> without its <details>');
+  }
+  assert.equal(depth, 0, 'every <details> is closed');
+  return out;
+}
+const firstTable = text => { const lines = text.split('\n'), at = lines.findIndex(l => l.startsWith('| ')); let end = at; while (lines[end]?.startsWith('| ')) end += 1; return lines.slice(at, end).join('\n'); };
+
+test('each generated page starts and ends with the nav line, and the current page is the one item without a link', () => {
+  const files = render(committed());
+  for (const name of GENERATED) {
+    const nav = renderNav(name), text = files[name];
+    assert.ok(text.startsWith(nav + '\n\n# '), `${name} starts with the nav line and then its title`);
+    assert.ok(text.endsWith('\n' + nav + '\n'), `${name} ends with the nav line`);
+    assert.equal(page(name), text);
+  }
+  assert.match(renderNav('native-claim.md'), /^\[Benchmarks\]\(README\.md\) · Native · \[Apps\]\(app-claim\.md\)/);
+  assert.match(renderNav('README.md'), /^Benchmarks · \[Native\]\(native-claim\.md\)/);
+  for (const { page: target } of NAV.filter(n => n.page.endsWith('.md'))) assert.ok(existsSync(join(OUT, target)), `the nav links ${target}, which exists`);
+  const html = renderNavHtml('explore.html');
+  assert.match(html, /<span aria-current="page">Interactive<\/span>/);
+  for (const [, host] of html.matchAll(/href="https:\/\/([^/"]+)/g)) assert.ok(['github.com', 'land-o-clusters.github.io'].includes(host), host);
+  assert.match(page('explore.html'), /<nav class="pages" aria-label="Benchmark pages">/);
+});
+
+test('each family page with a race or claim opens with the task matrix of its newest set as its first table', () => {
+  const all = committed();
+  const newest = (studies, browser) => studies.find(s => s.browser === browser && s.latest);
+  const expected = {
+    'native-claim.md': all['native-claim'].studies[0], 'app-claim.md': all['app-claim'].studies[0],
+    'browser-turbo.md': newest(all['browser-turbo'].race.studies, 'chrome'), 'browser-race.md': newest(all['browser-race'].studies, 'safari'),
+  };
+  for (const [name, study] of Object.entries(expected)) assert.equal(firstTable(page(name)), taskMatrix(study), `${name}'s first table is ${study.id}'s task matrix`);
+  // Only the newest set per browser shows outside the folds.
+  for (const [name, studies] of [['browser-turbo.md', all['browser-turbo'].race.studies], ['browser-race.md', all['browser-race'].studies]]) {
+    const visible = outsideDetails(page(name));
+    for (const study of studies) assert.equal(visible.includes(`## ${study.title}`), study.latest, `${name}: ${study.id} is ${study.latest ? 'visible' : 'folded'}`);
+  }
+  assert.match(page('browser-turbo.md'), /^# Chrome and Helium: turbo against FowlBrowser$/m);
+  assert.match(page('browser-race.md'), /^# Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo$/m);
+  assert.match(page('ab-tests.md'), /^# Experiments$/m);
+  assert.ok(page('browser-turbo.md').includes('<details><summary>Gate rounds on FowlBrowser\'s runner, before production turbo</summary>'));
+});
+
+test('the method bullets appear on the pages only inside <details>', () => {
+  const method = [
+    'Expected time is the mean seconds per attempt divided by the pass rate (`bench/claim-score.mjs`)',
+    'The rules come from [LAWS](../status/LAWS.md). Each arm gets 3 runs per task',
+    '`bench/fowl/race-score.mjs` grades every saved run again',
+    'FowlBrowser\'s head-to-head runner, pinned with sleight\'s patch',
+    'Release passes run sleight alone on the benchmark\'s default suite',
+    'Studies saved as JSON',
+  ];
+  let seen = 0;
+  for (const name of GENERATED) {
+    const text = page(name), visible = outsideDetails(text);
+    for (const bullet of method) {
+      assert.ok(!visible.includes(bullet), `${name} shows "${bullet.slice(0, 40)}" outside a fold`);
+      if (text.includes(bullet)) seen += 1;
+    }
+  }
+  assert.ok(seen >= 10, `the method is still on the pages, folded (${seen} bullets found)`);
+});
+
+test('release-passes.html is gone, and no generated page links it', () => {
+  const files = render(committed());
+  assert.ok(!('release-passes.html' in files));
+  assert.ok(!existsSync(join(OUT, 'release-passes.html')), 'docs/results/release-passes.html is deleted');
+  for (const [name, text] of Object.entries(files)) assert.ok(!text.includes('release-passes.html'), `${name} links release-passes.html`);
+});
+
+test('spliceReadme fills only the marked blocks and refuses broken markers', () => {
+  const shells = 'intro 1\n<!-- hub:claim -->\n<!-- /hub:claim -->\nhand-typed 2\n<!-- hub:headline --><!-- /hub:headline -->\n<!-- hub:benchmarks -->\nstale 3\n<!-- /hub:benchmarks -->\nend\n';
+  const filled = spliceReadme(shells, { claim: 'A', headline: 'B', benchmarks: 'C\n\nD' });
+  assert.equal(filled, 'intro 1\n<!-- hub:claim -->\nA\n<!-- /hub:claim -->\nhand-typed 2\n<!-- hub:headline -->\nB\n<!-- /hub:headline -->\n<!-- hub:benchmarks -->\nC\n\nD\n<!-- /hub:benchmarks -->\nend\n');
+  assert.equal(spliceReadme(filled, { claim: 'A', headline: 'B', benchmarks: 'C\n\nD' }), filled, 'a second splice changes nothing');
+  assert.equal(spliceReadme('no markers here\n', { claim: 'A' }), 'no markers here\n', 'a README without the markers is left alone');
+  assert.equal(spliceReadme(shells, { headline: '' }).includes('<!-- hub:headline -->\n<!-- /hub:headline -->'), true, 'an empty block leaves an empty shell');
+  assert.throws(() => spliceReadme('<!-- hub:claim --><!-- /hub:claim --><!-- hub:claim --><!-- /hub:claim -->', { claim: 'A' }), /more than once/);
+  assert.throws(() => spliceReadme('<!-- hub:claim -->', { claim: 'A' }), /without the other/);
+  assert.throws(() => spliceReadme('<!-- /hub:claim --><!-- hub:claim -->', { claim: 'A' }), /before the opening/);
+  assert.deepEqual(Object.keys(readmeBlocks(committed())), README_BLOCKS);
+});
+
+test('the README\'s generated blocks match the data, and every number in the claim block comes from it', () => {
+  const all = committed();
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  assert.equal(renderReadme(all, readme), readme, 'README.md hub blocks are stale: run node bench/results-hub.mjs');
+  for (const name of README_BLOCKS) {
+    const opens = readme.split(`<!-- hub:${name} -->`).length - 1;
+    assert.ok(opens <= 1, `hub:${name} appears at most once`);
+  }
+  const { claim, benchmarks } = readmeBlocks(all);
+  const study = all['native-claim'].studies[0];
+  assert.match(claim, new RegExp(`"${study.verdict.wording}": the lowest expected time on ${study.verdict.lowest.length} of ${study.tasks.length} `));
+  assert.ok(claim.includes(`${(Math.round(study.verdict.totals.sleight * 10) / 10).toFixed(1)} s`));
+  assert.ok(claim.includes(`over ${study.runs.length} runs dated ${study.date}`));
+  assert.ok(claim.includes('The hub lists each run, failures included, with the method and the model each arm ran.'));
+  for (const fam of FAMILIES) assert.ok(benchmarks.includes(`](docs/results/${fam.page})`), `the benchmarks block links ${fam.page}`);
+  // The hub landing's table and the README's lines are the same text.
+  const landing = page('README.md');
+  for (const line of benchmarks.split('\n').filter(l => l.startsWith('- '))) {
+    const text = line.replace(/^- \[[^\]]+\]\([^)]+\): /, '').replace(/\.$/, '');
+    assert.ok(landing.includes(text), `the landing holds "${text.slice(0, 50)}"`);
+  }
+});
+
