@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { claim, excluded, regradeFor, score, warnings } from '../bench/claim-score.mjs';
+import { claim, excluded, regradeFor, score, warnings, HAND_ON } from '../bench/claim-score.mjs';
 
 const rules = JSON.parse(readFileSync(new URL('../bench/claim-exclusions.json', import.meta.url), 'utf8'));
 
@@ -12,6 +12,14 @@ test('the claim score drops each written exclusion with its reason and keeps the
   assert.equal(excluded({ task: 'calculator-click', arm: 'sleight', seconds: 6 }, '2026-10-16T17-43-02.json', rules), undefined);
   assert.match(excluded({ task: 'textedit-drag', arm: 'sleight', seconds: 30 }, '2026-10-16T18-53.json', rules), /overlay/);
   assert.equal(excluded({ task: 'textedit-drag', arm: 'sleight', seconds: 30 }, '2026-10-16T20-23.json', rules), undefined);
+});
+
+test('a row or a pass with the ghost hand on never reaches the claim, and says why', () => {
+  const row = { task: 'calculator-click', arm: 'sleight', seconds: 6 }, file = '2026-10-19T12-00-00.json';
+  assert.equal(excluded(row, file, rules, { ghostHand: 'off' }), undefined);
+  assert.equal(excluded({ ...row, ghostHand: 'on' }, file, rules), HAND_ON);
+  assert.equal(excluded(row, file, rules, { ghostHand: 'on' }), HAND_ON);
+  assert.match(HAND_ON, /SLEIGHT_BENCH_HAND=1/);
 });
 
 test('expected time is the mean attempt divided by the pass rate, and never-passed tasks have none', () => {

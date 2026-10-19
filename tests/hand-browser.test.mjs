@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
-import { planBrowserFrame, createBrowserHand, pageMetrics } from '../plugins/sleight/lib/hand/browser-hand.mjs';
+import { planBrowserFrame, createBrowserHand, pageMetrics, workerHandTrace } from '../plugins/sleight/lib/hand/browser-hand.mjs';
 import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mjs';
 import { utilityLocator } from './direct-browser-utility-fixture.mjs';
 
@@ -189,4 +189,35 @@ test('act latency with the hand is within 0.1 ms of act without it', async t => 
   hand.close();
   t.diagnostic(`act median off ${off.median.toFixed(4)} ms, on ${on.median.toFixed(4)} ms; p95 off ${off.p95.toFixed(4)}, on ${on.p95.toFixed(4)}; hand.step ${(stepping / 10).toFixed(2)} µs`);
   assert.ok(on.median - off.median < 0.1, `act ${on.median} ms with the hand against ${off.median} ms without`);
+});
+
+test('the worker\'s hand events reach the relay\'s trace file with the operation and a fixed reason or kind only', async () => {
+  const writes = [];
+  const trace = workerHandTrace({ setting: '/tmp/trace-dir', parentPid: 321, now: () => Date.UTC(2026, 9, 19), append: (file, text) => writes.push([file, text]) });
+  trace('hand-skipped', { op: 'click', reason: 'hidden-tab', page: 'secret' });
+  trace('hand-shown', { op: 'type', kind: 'type', text: 'secret' });
+  trace('hand-skipped', { op: '<script>', reason: 'Not A Reason!' });
+  // Prototype names are not operations, and a reason that merely looks like one is not on the list.
+  trace('hand-skipped', { op: 'constructor', reason: 'user-typed-secret' });
+  trace('hand-skipped', { op: 'toString', reason: 'covered', kind: 'click' });
+  trace('hand-beat', { op: 'click' });
+  assert.equal(writes.length, 5);
+  assert.ok(writes.every(([file]) => file === '/tmp/trace-dir/trace-321.jsonl'));
+  const t = '2026-10-19T00:00:00.000Z';
+  assert.deepEqual(writes.map(([, text]) => JSON.parse(text)), [
+    { t, direction: 'hand-skipped', msg: { op: 'click', reason: 'hidden-tab' } },
+    { t, direction: 'hand-shown', msg: { op: 'type', kind: 'type' } },
+    { t, direction: 'hand-skipped', msg: { op: 'other', reason: 'other' } },
+    { t, direction: 'hand-skipped', msg: { op: 'other', reason: 'other' } },
+    { t, direction: 'hand-skipped', msg: { op: 'other', reason: 'covered' } }]);
+  assert.equal(JSON.stringify(writes).includes('secret'), false);
+  assert.equal(workerHandTrace({ setting: '1', parentPid: 5, home: () => '/h', append: (file) => writes.push([file]) })('hand-shown', { op: 'click', kind: 'click' }), undefined);
+  assert.equal(writes.at(-1)[0], '/h/Library/Logs/sleight/trace-5.jsonl');
+  // No SLEIGHT_TRACE: no writes; a failing write never throws.
+  const quiet = workerHandTrace({ setting: '', append: () => assert.fail('wrote') }); quiet('hand-shown', { op: 'click' });
+  workerHandTrace({ setting: '/x', parentPid: 5, append: () => { throw Error('EACCES'); } })('hand-shown', { op: 'click', kind: 'click' });
+  // A drawn step traces hand-shown after its frame goes out.
+  const f = handFixture();
+  f.hand.step({ op: 'click', page: f.page, locator: f.locator, ref: 'e1' }); await f.run();
+  assert.deepEqual(f.traces.at(-1), ['hand-shown', { op: 'click', kind: 'click' }]);
 });

@@ -12,12 +12,19 @@ import { withManifestBackup } from '../world/arms/chrome.mjs';
 import { claudeHostManifest } from './real-browser.mjs';
 
 // The sleight arm's MCP server gets an explicit env, so a trace the launching shell asked for stopped at the harness
-// (no relay trace in the 36 Firefox b3 runs, 2026-10-18). SLEIGHT_TRACE goes through, and SLEIGHT_TS3=1 and SLEIGHT_FS=1
-// for their A/Bs; no other host variable does.
+// (no relay trace in the 36 Firefox b3 runs, 2026-10-18). SLEIGHT_TRACE goes through, and SLEIGHT_TS3=1, SLEIGHT_FS=1 and
+// SLEIGHT_BROWSER_CORE=1 for their A/Bs; no other host variable does.
+const AB_FLAGS = ['SLEIGHT_TS3', 'SLEIGHT_FS', 'SLEIGHT_BROWSER_CORE'];
 export function traceEnv(host = process.env) {
   return { ...(typeof host.SLEIGHT_TRACE === 'string' && host.SLEIGHT_TRACE ? { SLEIGHT_TRACE: host.SLEIGHT_TRACE } : {}),
-    ...(host.SLEIGHT_TS3 === '1' ? { SLEIGHT_TS3: '1' } : {}), ...(host.SLEIGHT_FS === '1' ? { SLEIGHT_FS: '1' } : {}) };
+    ...Object.fromEntries(AB_FLAGS.filter(key => host[key] === '1').map(key => [key, '1'])) };
 }
+// The A/B flags the engine arm ran with, for its metadata: every row then names its variant (off when absent).
+export const abFlags = (host = process.env) => Object.fromEntries(AB_FLAGS.map(key => [key, host[key] === '1']));
+// AS-3: with SLEIGHT_BROWSER_CORE=1 the server lists browser_open, and a user's install can call it, so the arm allows it.
+const ENGINE_TOOLS = ['js', 'js_reset', 'open_file', 'drag', 'select_window'];
+export const engineAllowed = (host = process.env) => [...ENGINE_TOOLS, ...(host.SLEIGHT_BROWSER_CORE === '1' ? ['browser_open'] : [])]
+  .map(tool => `mcp__plugin_sleight_computer__${tool}`).join(',');
 const defaultMcpRoot = () => join(homedir(), 'Library/Caches/sleight-bench/fowlbrowser');
 // The two extension arms run in the round's own browser, which is the whole browser process: no window prompt.
 // FowlBrowser keeps the previous gate's world prompt and Stop hook; Claude in Chrome keeps its world arm's device pin.
@@ -118,8 +125,8 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
     // browser_* tools that point at the owner's Chrome or Helium (real round 2026-10-17: 5 of 12 tasks stopped on them).
     mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0', SLEIGHT_HAND: '0', ...traceEnv() } } },
     env: { ...common.env, SLEIGHT_TURBO: '0', FOWL_GATE_WINDOW: JSON.stringify(gateWindowApps(realBrowser)) },
-    allowed: 'mcp__plugin_sleight_computer__js,mcp__plugin_sleight_computer__js_reset,mcp__plugin_sleight_computer__open_file,mcp__plugin_sleight_computer__drag,mcp__plugin_sleight_computer__select_window',
-    metadata: { ...common.metadata, surface, connectionMode: 'engine-computer' } }
+    allowed: engineAllowed(),
+    metadata: { ...common.metadata, surface, connectionMode: 'engine-computer', abFlags: abFlags() } }
     : kind === 'sleight-turbo' ? turboSetup({ task: { ...task, browser: realBrowser.browser }, repo, dir, prompt, realBrowser, env })
     : nativeBrowserSetup({ surface, repo, dir, realBrowser, armHome, dryRun, env });
   // The engine arm identifies the window natively. The turbo arm cannot (its tools show tabs, not windows), so it gets its own tools' truth.

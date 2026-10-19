@@ -465,21 +465,21 @@ function settleAfterTextWrite(pid) {
   }
 }
 
+// The effective range is optional and passed as null. JXA refuses a malloc'd void* for that NSRangePointer
+// with "Ref has incompatible type", which failed the Accessibility text move in all 64 benchmark transcripts
+// that tried one (2026-10-16 to 2026-10-19).
 function attributedTextHasAttributes(value, length, start = 0) {
   if (!value || Number(value.length) !== length) throw new Error('the selected attributed string is unavailable or incomplete');
-  const buffer = $.malloc(32);
-  try {
-    const attributesAt = i => {
-      const attributes = value.attributesAtIndexEffectiveRange(i, buffer);
-      if (!attributes || !Number.isSafeInteger(Number(attributes.count))) throw new Error('the selected text attributes are unavailable');
-      return attributes;
-    };
-    const baseline = attributesAt(0);
-    for (let i = start; i < length; i++) {
-      if (!attributesAt(i).isEqualToDictionary(baseline)) return true;
-    }
-    return false;
-  } finally { $.free(buffer); }
+  const attributesAt = i => {
+    const attributes = value.attributesAtIndexEffectiveRange(i, null);
+    if (!attributes || !Number.isSafeInteger(Number(attributes.count))) throw new Error('the selected text attributes are unavailable');
+    return attributes;
+  };
+  const baseline = attributesAt(0);
+  for (let i = start; i < length; i++) {
+    if (!attributesAt(i).isEqualToDictionary(baseline)) return true;
+  }
+  return false;
 }
 
 // The text area under a screen point, through the Accessibility C API, which
@@ -682,16 +682,59 @@ function raiseWindow(win) {
   win.actions.byName('AXRaise').perform();
 }
 
+// The process the window server gives a click at p to, from the system-wide Accessibility hit test, or null
+// when it can't say (nothing there, an error or a timeout). One test per point and window list.
+function eventPidAt(list, p) {
+  const key = `${p.x},${p.y}`;
+  if (!list.eventPids) list.eventPids = new Map();
+  if (!list.eventPids.has(key)) {
+    let pid = null, systemWide = null;
+    try {
+      const hit = Ref(), owner = Ref();
+      systemWide = $.AXUIElementCreateSystemWide();
+      // On the system-wide element this deadline is process-wide, so it goes back to the default (0) after the test.
+      if (Number($.AXUIElementSetMessagingTimeout(systemWide, 0.5)) === 0 &&
+          Number($.AXUIElementCopyElementAtPosition(systemWide, p.x, p.y, hit)) === 0 &&
+          Number($.AXUIElementGetPid(ObjC.castRefToObject(hit[0]), owner)) === 0) pid = Number(owner[0]);
+    } catch (_) {
+    } finally { if (systemWide) try { $.AXUIElementSetMessagingTimeout(systemWide, 0); } catch (_) {} }
+    list.eventPids.set(key, Number.isSafeInteger(pid) && pid > 0 ? pid : null);
+  }
+  return list.eventPids.get(key);
+}
+// A macOS background agent's window (activation policy not regular, bundle under /System/Library), such as
+// Notification Center's or the Dock's, rather than a window of an app someone works in.
+const systemOverlay = w => attempt(() => {
+  const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(w.pid);
+  if (!app || app.isNil() || Number(app.activationPolicy) === 0) return false;
+  const path = ObjC.unwrap(app.bundleURL.path);
+  return typeof path === 'string' && path.startsWith('/System/Library/');
+}, false);
+// A system agent's window that lets the click at p through to the target. Some are on screen and in front without
+// taking events: Notification Center's full-display window (layer 21) whenever a banner shows, which stopped a
+// drag whose point was half a screen from the banner (2026-10-19), and the Dock's tiling backdrop (layer 0,
+// "half-backdrop") after Move & Resize, where the hit test reached the app below it (read-only probe, 2026-10-19).
+// Only a hit on the target itself waives cover. A hit on a third app, no answer, a banner over the point (the hit
+// is then the banner's) or any other app's window keep the cover.
+const passesThrough = (list, w, p, pid) => eventPidAt(list, p) === pid && systemOverlay(w);
+const blocks = (list, w, p, pid) => !overlay(w) && (w.pid === pid || !passesThrough(list, w, p, pid));
+
 function exposedEndpoints(list, main, points, sameAppOnly, destination = main) {
   for (const [name, point, target] of [['from', points.start, main], ['to', points.end, destination]]) {
-    const top = list.find(w => inside(w.bounds, point) && !overlay(w) &&
-      (!sameAppOnly || w.pid === target.pid));
+    const top = list.find(w => inside(w.bounds, point) && (sameAppOnly ? w.pid === target.pid && !overlay(w) : blocks(list, w, point, target.pid)));
     if (!top || top.id !== target.id || top.pid !== target.pid) {
+      const shown = top && ` (windowId ${top.id}${top.title ? ', "' + top.title + '"' : ''})`;
+      // A system overlay seldom stays, and acting on it is not the drag's business: in a 2026-10-19 run Claude
+      // turned to the notifications tool, whose approval the run refused, and the pass stopped.
+      if (top && top.pid !== target.pid && systemOverlay(top)) {
+        // The window title is another process's text, so it stays out of a message that goes on to give instructions.
+        throw Object.assign(new Error(`${name} is covered by ${top.owner} (windowId ${top.id}), a system window such as a notification banner or a system prompt; nothing was pressed. If it is a security, permission, password or sign-in prompt, don't interact with it: tell the user now. Otherwise it usually goes away within seconds: wait about 5 s, read the window again and retry the drag once, and if it's still covered, tell the user rather than acting on it`), { systemOverlay: true });
+      }
       // A window of the same app with no title over the target is usually a dialog: Chess's New Game
       // dialog covered the board and stopped 9 drags in one run (2026-10-09).
       const dialog = top && top.pid === target.pid && !top.title
         ? ` by another window of ${top.owner} with no title (windowId ${top.id}), likely a dialog or sheet: finish or close it, read the window again, then drag`
-        : top ? ` by ${top.pid === target.pid ? 'another window of ' + top.owner : top.owner} (windowId ${top.id}${top.title ? ', "' + top.title + '"' : ''})` : '';
+        : top ? ` by ${top.pid === target.pid ? 'another window of ' + top.owner : top.owner}${shown}` : '';
       throw new Error(`${name} is covered${dialog || ' by another window'}; nothing was pressed`);
     }
   }
@@ -700,24 +743,26 @@ function exposedEndpoints(list, main, points, sameAppOnly, destination = main) {
 // The other app on top at either drag point, or null when the window is exposed at both.
 function coveringApp(list, main, points) {
   for (const point of [points.start, points.end]) {
-    const top = list.find(w => w.layer === 0 && inside(w.bounds, point) && !overlay(w));
+    const top = list.find(w => w.layer === 0 && inside(w.bounds, point) && blocks(list, w, point, main.pid));
     if (top && top.pid !== main.pid) return top.owner || 'another app';
   }
   return null;
 }
 
-// The topmost on-screen window at a point, as the window server would pick the drop target. Every layer
-// counts (Dock, menu bar, floating panels, picture-in-picture, banners), not only layer 0.
-const topAt = (list, p) => list.find(w => inside(w.bounds, p) && !overlay(w));
+// The topmost on-screen window at a point that takes the click, as the window server would pick the drop
+// target. Every layer counts (Dock, menu bar, floating panels, picture-in-picture, banners), not only layer 0.
+const topAt = (list, p, pid) => list.find(w => inside(w.bounds, p) && blocks(list, w, p, pid));
 // Points of clearance a relocated point keeps from the edge of any window of another app in front of the target.
 const EDGE_CLEARANCE = 4;
 function exposedAt(list, main, p) {
-  const top = topAt(list, p);
+  const top = topAt(list, p, main.pid);
   if (!top || top.id !== main.id || top.pid !== main.pid) return false;
   const index = list.findIndex(w => w.id === main.id && w.pid === main.pid);
+  // A window that lets the click at p through needs no clearance; one whose edge is near p still does.
   return list.slice(0, index).every(w => w.pid === main.pid || overlay(w) ||
     !inside({ X: w.bounds.X - EDGE_CLEARANCE, Y: w.bounds.Y - EDGE_CLEARANCE,
-      Width: w.bounds.Width + 2 * EDGE_CLEARANCE, Height: w.bounds.Height + 2 * EDGE_CLEARANCE }, p));
+      Width: w.bounds.Width + 2 * EDGE_CLEARANCE, Height: w.bounds.Height + 2 * EDGE_CLEARANCE }, p) ||
+    (inside(w.bounds, p) && passesThrough(list, w, p, main.pid)));
 }
 
 // Only a leaf item can take a point of its own: a group, list or web area holds other rows and controls, and
@@ -755,7 +800,7 @@ function exposedPointIn(rect, point, exposed, accept, tries = 6) {
 function relocateCovered(list, main, points, endpointElement) {
   const result = { start: points.start, end: points.end, moved: [] }, kept = [];
   for (const [name, key] of [['from', 'start'], ['to', 'end']]) {
-    const top = topAt(list, points[key]);
+    const top = topAt(list, points[key], main.pid);
     if (!top || top.pid === main.pid) continue;
     const covered = `${name} is covered by ${top.owner || 'another app'}`;
     const target = endpointElement(name, points[key]);
@@ -952,7 +997,10 @@ function runCrossWindow(request) {
     const exposed = (list, sameAppOnly) => {
       try {
         exposedEndpoints(list, a, points, sameAppOnly, b);
-      } catch (error) { throw new Error(`${error.message}; tile the windows with Window > Move & Resize, then read again`); }
+      } catch (error) {
+        if (error.systemOverlay) throw error;
+        throw new Error(`${error.message}; tile the windows with Window > Move & Resize, then read again`);
+      }
     };
     exposed(checkBoth(), true);
     const sourceInfo = dragContent(pid, aw, a.bounds, startState.from, startState.from);
@@ -1149,14 +1197,14 @@ function run(argv) {
         verifySemantic();
         let area;
         try { area = axTextArea(pid, points.end); }
-        catch (e) { fallbackReason += `; accessibility move unavailable: ${e.message || e}`; return null; }
+        catch (e) { fallbackReason = [fallbackReason, `accessibility move unavailable: ${e.message || e}`].filter(Boolean).join('; '); return null; }
         try {
           const outcome = accessibilityMove(area, points.text, points.end, main);
           path = 'accessibility';
           return JSON.stringify({ ok: !outcome.error, app, windowId: main.id, from, to, ...units, path, fallbackReason, ...outcome });
         } catch (e) {
           if (/changed before the move|inside the selection/.test(String(e.message))) throw e;
-          fallbackReason += `; accessibility move failed: ${e.message || e}`;
+          fallbackReason = [fallbackReason, `accessibility move failed: ${e.message || e}`].filter(Boolean).join('; ');
           return null;
         }
       };

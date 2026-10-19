@@ -7,7 +7,7 @@ const window = (pid, onScreen, extra = {}) => ({ onScreen, info: { kCGWindowOwne
   kCGWindowBounds: { Width: 600, Height: 400 }, ...extra } });
 
 function probe({ trusted = true, error = 0, count = 1, apps = ['com.apple.TextEdit'], name = 'TextEdit', timeoutError = 0, hidden = false,
-  minimized = [], cg = [window(42, true)], fullScreen = false } = {}) {
+  minimized = [], cg = [window(42, true)], fullScreen = false, spaces, connection = 7, bindThrows = false } = {}) {
   const calls = [];
   const $ = value => value;
   const array = values => ({ count: values.length, objectAtIndex: i => values[i],
@@ -27,6 +27,9 @@ function probe({ trusted = true, error = 0, count = 1, apps = ['com.apple.TextEd
       const list = cg.filter(w => !(options & 1) || w.onScreen).map(w => w.info);
       return array(list);
     },
+    // `spaces`: window number -> the Spaces CGSCopySpacesForWindows names for it; absent, the private call is unbound.
+    CGSMainConnectionID: () => connection,
+    CGSCopySpacesForWindows: (cid, mask, ids) => { calls.push(['spaces', cid, mask, ...ids]); return spaces[ids[0]]; },
     AXUIElementCreateApplication: pid => { if (pid !== 9) calls.push(['create', pid]); return pid; },
     AXUIElementSetMessagingTimeout: (app, deadline) => { if (app !== 9) calls.push(['deadline', deadline]); return app === 9 ? 0 : timeoutError; },
     AXUIElementCopyAttributeValue: (app, name, ref) => {
@@ -37,7 +40,9 @@ function probe({ trusted = true, error = 0, count = 1, apps = ['com.apple.TextEd
       return name === 'AXMinimized' ? 0 : error;
     },
   });
-  const context = vm.createContext({ $, Ref: () => [], ObjC: { import() {}, unwrap: value => value, castRefToObject: value => value, deepUnwrap: value => value } });
+  const bindFunction = spaces ? (name, signature) => { calls.push(['bind', name, JSON.stringify(signature)]); if (bindThrows) throw Error('no symbol'); } : undefined;
+  const context = vm.createContext({ $, Ref: () => [], ObjC: { import() {}, unwrap: value => value, castRefToObject: value => value, deepUnwrap: value => value,
+    ...(bindFunction ? { bindFunction } : {}) } });
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/app-health.js', import.meta.url), 'utf8'), context);
   return { run: (selector, deadlineSeconds) => JSON.parse(context.run([JSON.stringify(selector), JSON.stringify(deadlineSeconds)])), calls };
 }
@@ -95,4 +100,29 @@ test('a second AppKit app with zero AX windows gets the orphan-panel diagnosis',
   assert.equal(result.app, 'Preview');
   assert.equal(result.pid, 42);
   assert.deepEqual(result.savePanelWindowIds, [72]);
+});
+
+// SW1b (2026-10-19): Safari keeps an ordered-out 500x500 window from launch. CGWindowList lists it and no Space holds it, so
+// allWindows said 2 for one open window. Measured on this Mac: Safari's two windows answered [4] and [].
+test('spaceWindows counts the windows a Space holds, leaving out ordered-out ones and keeping another Space\'s', () => {
+  const shown = window(42, true, { kCGWindowNumber: 311216 }), hidden = window(42, false, { kCGWindowNumber: 311209,
+    kCGWindowBounds: { Width: 500, Height: 500 } }), elsewhere = window(42, false, { kCGWindowNumber: 311300 });
+  const p = probe({ cg: [shown, hidden], spaces: { 311216: [4], 311209: [] } });
+  const result = p.run('TextEdit');
+  assert.deepEqual({ allWindows: result.allWindows, spaceWindows: result.spaceWindows, onScreen: result.onScreen }, { allWindows: 2, spaceWindows: 1, onScreen: 1 });
+  assert.deepEqual(p.calls.filter(c => c[0] === 'spaces'), [['spaces', 7, 7, 311216], ['spaces', 7, 7, 311209]]);
+  assert.equal(probe({ cg: [shown, hidden, elsewhere], spaces: { 311216: [4], 311209: [], 311300: [5] } }).run('TextEdit').spaceWindows, 2);
+  assert.equal(probe({ cg: [], count: 0, spaces: {} }).run('TextEdit').spaceWindows, 0);
+  // Unknown whenever the window server can't say: no binding, no connection, an odd answer, or a window without a number.
+  for (const options of [{ cg: [shown, hidden] }, { cg: [shown], spaces: { 311216: [4] }, connection: 0 },
+    { cg: [shown, hidden], spaces: { 311216: [4] } }, { cg: [shown, window(42, false)], spaces: { 311216: [4] } }]) {
+    assert.equal(probe(options).run('TextEdit').spaceWindows, undefined, JSON.stringify(options.spaces));
+  }
+  // A binding that throws is not tried again by the long-lived helper, and later probes still answer.
+  const broken = probe({ cg: [shown, hidden], spaces: { 311216: [4], 311209: [] }, bindThrows: true });
+  for (let i = 0; i < 2; i++) assert.equal(broken.run('TextEdit').spaceWindows, undefined);
+  assert.equal(broken.run('TextEdit').status, 'responding');
+  assert.equal(broken.calls.filter(c => c[0] === 'bind').length, 1);
+  // A probe that times out on AX still reports it, like the other counts.
+  assert.equal(probe({ error: -25204, cg: [shown, hidden], spaces: { 311216: [4], 311209: [] } }).run('TextEdit').spaceWindows, 1);
 });

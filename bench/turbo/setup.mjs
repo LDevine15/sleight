@@ -2,6 +2,7 @@ import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { browserTools } from '../../plugins/sleight/lib/direct-browser/tools.mjs';
 import { worldAgentSetup } from '../world/arms/browser.mjs';
+import { benchHand } from '../hand/bench-hand.mjs';
 
 export const SURFACE = 'sleight-turbo';
 export const MEASUREMENT = 'v3 tools and worker boundary plus engine companion; V10 runtime join excluded';
@@ -41,14 +42,18 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env, realBro
   if (!section.test(rules)) throw Error('Installed browser skill is missing');
   const installed = rules.replace(section, browserRules + '\n');
   const common = worldAgentSetup({ surface: 'fowlbrowser', dir, hostEnv: env });
+  // Off unless the runner's SLEIGHT_BENCH_HAND=1, read from the runner's env (env here is the arm's filtered host env).
+  const hand = benchHand(process.env);
   const configDir = join(dirname(dirname(common.env.CLAUDE_CONFIG_DIR)), SURFACE, 'claude-config');
   const guard = { matcher: 'mcp__plugin_sleight_computer__js', hooks: [{ type: 'command', timeout: 5,
     command: `node "${join(repo, 'bench/turbo/engine-browser-guard.mjs')}" ${browser}` }] };
   return { command: common.command, args: common.args, settings: { ...common.settings, hooks: { PreToolUse: [guard] } },
     mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'),
-      env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none', SLEIGHT_HAND: '0' } },
+      env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none', SLEIGHT_HAND: hand } },
+      // The worker's hand (H8) follows the same switch, and its hand-skipped and hand-shown events reach SLEIGHT_TRACE.
       'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/v3-server.mjs')],
-      env: { ...(realBrowser ? { SLEIGHT_TURBO_REAL_BROWSER: JSON.stringify(realBrowser) } : {}), SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl') } } },
+      env: { ...(realBrowser ? { SLEIGHT_TURBO_REAL_BROWSER: JSON.stringify(realBrowser) } : {}), SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl'),
+        SLEIGHT_HAND: hand, ...(typeof process.env.SLEIGHT_TRACE === 'string' && process.env.SLEIGHT_TRACE ? { SLEIGHT_TRACE: process.env.SLEIGHT_TRACE } : {}) } } },
     allowed: [...browserTools(browser).map(tool => 'mcp__sleight-turbo__' + tool.name),
       'mcp__plugin_sleight_computer__js', 'mcp__plugin_sleight_computer__js_reset', 'mcp__plugin_sleight_computer__open_file'].join(','),
     promptPrefix: installed + '\n\n',

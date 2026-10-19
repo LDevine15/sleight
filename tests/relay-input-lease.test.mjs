@@ -840,9 +840,12 @@ const shopTree = safariTree('Sign in · Tidewell Demo Shop', SHOP), popupTree = 
 const safariResult = (id, text) => firefoxResult(id, text, 'com.apple.Safari');
 const settled = () => new Promise(resolve => setTimeout(resolve, 20));
 // The health probe's answers as app-health.js gives them: one window carries no titles (it reads titles only for two or
-// more), and allWindows counts every Space.
-const ONE = { status: 'responding', windows: 1, allWindows: 1, onScreen: 1 };
-const TWO = { status: 'responding', windows: 2, windowTitles: [SHOP_TITLE, 'Personal — Mail'], allWindows: 2, onScreen: 2 };
+// more), allWindows counts CGWindowList's windows, and spaceWindows those a Space holds (every Space).
+const ONE = { status: 'responding', windows: 1, allWindows: 1, spaceWindows: 1, onScreen: 1 };
+const TWO = { status: 'responding', windows: 2, windowTitles: [SHOP_TITLE, 'Personal — Mail'], allWindows: 2, spaceWindows: 2, onScreen: 2 };
+// What the probe gave for Safari's one window in all three SW1 live rounds (2026-10-19), plus the count SW1b added: Safari
+// keeps a 500x500 window from launch that is ordered out and held by no Space.
+const SAFARI_LIVE = { status: 'responding', windows: 1, allWindows: 2, spaceWindows: 1, onScreen: 1 };
 // `probes`: the health probe's answers for successive getApp reads; the last one repeats.
 async function safariHarness(t, { select, tree = shopTree, probes = [ONE], events } = {}) {
   const { harness } = setup(t);
@@ -894,7 +897,8 @@ test('a pop-up an action brought up is tied to the window it came from, and so i
 test('a lease stop that shows the counted window keeps the count (the FS2 flow)', async t => {
   const events = [];
   const h = await safariHarness(t, { events });
-  assert.deepEqual(events.at(-1), { event: 'census', app: 'Safari', id: SHOP, counted: true, status: 'responding', windows: 1, allWindows: 1, onScreen: 1 });
+  assert.deepEqual(events.at(-1), { event: 'census', app: 'Safari', id: SHOP, counted: true, status: 'responding', windows: 1, allWindows: 1,
+    spaceWindows: 1, onScreen: 1 });
   h.send(rpc('tab', 'js', { code: 'await app.pressKey("super+t"); await app.setValue({ id: "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD" }, "x"); await app.pressKey("Return"); await app.getAXState()' }));
   await settled();
   h.reply({ jsonrpc: '2.0', id: h.forwarded.at(-1).id, result: { isError: true, content: [{ type: 'text', text:
@@ -905,6 +909,28 @@ test('a lease stop that shows the counted window keeps the count (the FS2 flow)'
   await clickResult(h, 'url', safariResult('url', shopTree));
   assert.match(await clickResult(h, 'signin', safariResult('signin', popupTree)), POPUP_LINE);
   assert.equal(events.at(-1).event, 'popup-line');
+});
+// SW1b (2026-10-19, safari-sleight-sw1-r{1,2,3} on 6ba7204b): every round's getApp census said windows 1, allWindows 2,
+// onScreen 1, so no click got the line, and r3's Haiku stopped at the pop-up. The flow is r3's: Start Page tab, the shop URL,
+// then "Sign in with DemoID".
+test('Safari\'s ordered-out launch window does not stop the count (the SW1 live flow)', async t => {
+  const events = [];
+  const h = await safariHarness(t, { probes: [SAFARI_LIVE], events, tree: safariTree('Sleight Gate 2bd281c3', SHOP) });
+  assert.deepEqual(events.at(-1), { event: 'census', app: 'Safari', id: SHOP, counted: true, status: 'responding', windows: 1, allWindows: 2,
+    spaceWindows: 1, onScreen: 1 });
+  await clickResult(h, 'tab', safariResult('tab', safariTree('Start Page', SHOP)));
+  await clickResult(h, 'url', safariResult('url', shopTree));
+  assert.match(await clickResult(h, 'signin', safariResult('signin', popupTree)), POPUP_LINE);
+  assert.equal(events.at(-1).event, 'popup-line');
+  const back = await clickResult(h, 'consent', safariResult('consent', safariTree('Account · Tidewell Demo Shop', SHOP)));
+  assert.match(back, /It has the ID of "sleight benchmark — Sign in · Tidewell Demo Shop" in Safari, the pop-up's opener\.$/);
+  // The same answer with two windows on this Space (r3's later read, the pop-up open) or a Space count that disagrees with
+  // what is on screen counts nothing.
+  for (const probe of [{ ...SAFARI_LIVE, windows: 2, allWindows: 3, spaceWindows: 2, onScreen: 2 }, { ...SAFARI_LIVE, onScreen: 2 },
+    { ...SAFARI_LIVE, spaceWindows: 0 }, { ...SAFARI_LIVE, onScreen: undefined }, { ...SAFARI_LIVE, onScreen: 0 }]) {
+    const other = await safariHarness(t, { probes: [probe] });
+    assert.match(await clickResult(other, 'signin', safariResult('signin', popupTree)), PLAIN, JSON.stringify(probe));
+  }
 });
 test('the trace names why a new window got no line', async t => {
   let events = [];
@@ -945,9 +971,12 @@ test('no pop-up claim without a one-window count of the window acted on, or for 
   // The read counted two windows: the other one may be the owner's.
   let h = await safariHarness(t, { probes: [TWO] });
   assert.match(await clickResult(h, 'two', safariResult('two', popupTree)), PLAIN);
-  // One window on this Space, another on a different Space (AXWindows leaves it out, CGWindowList counts it).
-  h = await safariHarness(t, { probes: [{ ...ONE, allWindows: 2 }] });
-  assert.match(await clickResult(h, 'space', safariResult('space', popupTree)), PLAIN);
+  // One window on this Space, another on a different Space (AXWindows leaves it out, CGWindowList and a Space hold it), and
+  // a second CGWindowList window when the probe could not say which Space holds it.
+  for (const probe of [{ ...ONE, allWindows: 2, spaceWindows: 2 }, { ...ONE, allWindows: 2, spaceWindows: undefined }]) {
+    h = await safariHarness(t, { probes: [probe] });
+    assert.match(await clickResult(h, 'space', safariResult('space', popupTree)), PLAIN, JSON.stringify(probe));
+  }
   // A later getApp read whose probe gave no answer, or counted two windows, drops the count.
   for (const later of [undefined, { status: 'timeout' }, TWO]) {
     h = await safariHarness(t, { probes: [ONE, later] });

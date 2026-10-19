@@ -25,8 +25,11 @@ export const SAME_MODEL = [['codex-sleight', 'codex'], ['codex-sleight-sol', 'co
 // |a-b|/max calls more pairs "within 20%" than |a-b|/min, so it demands more 5-run top-ups: the strict reading of the LAWS rule.
 const STRICT = 'max';
 
-export function excluded(row, file, rules) {
+export const HAND_ON = 'ghost hand on (SLEIGHT_BENCH_HAND=1, a cost-pass row)';
+// raw: the row's results file. A row or pass with the ghost hand on (bench/hand/bench-hand.mjs) never reaches a claim table.
+export function excluded(row, file, rules, raw) {
   if (!rules.tasks.includes(row.task)) return 'not a claim task';
+  if (row.ghostHand === 'on' || raw?.ghostHand === 'on') return HAND_ON;
   if (row.skipped || row.seconds == null) return 'skipped';
   if (row.modelMismatch || row.effortMismatch) return 'Codex ran another model or effort than its arm names';
   for (const r of rules.reasons) if (new RegExp(r.match, 'i').test(row.reason ?? '')) return r.why;
@@ -116,7 +119,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   for (const file of readdirSync(dir).filter(f => f.endsWith('.json') && f >= since).sort()) {
     const raw = JSON.parse(readFileSync(join(dir, file), 'utf8')), mtimeMs = statSync(join(dir, file)).mtimeMs;
     for (const row of raw.results ?? []) {
-      const why = excluded(row, file, rules);
+      const why = excluded(row, file, rules, raw);
       if (why) { if (why !== 'not a claim task') dropped[why] = (dropped[why] ?? 0) + 1; continue; }
       const passed = !!(row.passed || (row.cleanupContained && row.taskPassed)), g = !passed && regradeFor(row, file, rules);
       rows.push({ arm: row.arm, task: row.task, seconds: row.seconds, passed, file, run: row.run, engine: passRowEngine(raw, row, { file, mtimeMs, timeline }),

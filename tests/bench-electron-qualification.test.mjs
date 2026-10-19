@@ -300,7 +300,7 @@ test('the driver\'s recipe passes the registry and matches the bundle the runtim
 // H1, F2: the live worker composes a turn the installed worker's way and takes the app host's secret from its parent only.
 test('the live worker uses the installed path: connectAppHost with the parent\'s secret, createAppTurn, createAppTurnRuntime', () => {
   const worker = readFileSync(new URL('../bench/electron-qualification-worker.mjs', import.meta.url), 'utf8');
-  for (const call of ['runtimeMod.connectAppHost(', 'secret: msg.appSecret', "profile: 'temporary'", 'runtimeMod.selectAppConnection(', 'windows: b.runtimeMod.runWindowHelper',
+  for (const call of ['runtimeMod.connectAppHost(', 'secret: msg.appSecret', "profile: msg.profile === 'user' ? 'user' : 'temporary'", 'runtimeMod.selectAppConnection(', 'windows: b.runtimeMod.runWindowHelper',
     'profile: b.host.profile', 'runtimeMod.createAppTurn(', 'workerMod.createAppTurnRuntime(', 'releaseAppConnection(']) assert.ok(worker.includes(call), call);
   for (const shortcut of ['ensureHost(', 'adminSecret', 'createAppRunners(', 'createAppSnapshot(', 'snapshotMod.snapshot']) assert.ok(!worker.includes(shortcut), shortcut);
   const live = readFileSync(new URL('../bench/electron-qualification-live.mjs', import.meta.url), 'utf8');
