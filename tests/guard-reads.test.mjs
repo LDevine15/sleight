@@ -59,6 +59,9 @@ function fixture({ current = () => tree(), action = () => {}, screenshotState, s
   return { run, raw, calls, output, context };
 }
 
+const closeTarget = { ...expected, appId: 'fixture.app', nativeIdentity: { pid: 123 } };
+const closeOptions = { dp1: true, guardStopMark: 'private-close-mark' };
+
 test('DP1 skips only the tail read after an inventory-confirmed last-window close', async () => {
   for (const key of ['super+w', 'cmd+shift+w', 'command+q']) {
     let closed = false, inventories = 0;
@@ -69,37 +72,40 @@ test('DP1 skips only the tail read after an inventory-confirmed last-window clos
     f.context.cua.listApps = async options => {
       inventories++;
       assert.equal(options.emit, false);
-      return [{ id: 'fixture.app', windows: [] }];
+      return [{ id: 'fixture.app', pid: 123, windows: [] }];
     };
-    await f.run(`await app.pressKey(${JSON.stringify(key)});`, {}, { ...expected, appId: 'fixture.app' });
+    await f.run(`await app.pressKey(${JSON.stringify(key)});`, closeOptions, closeTarget);
     assert.equal(inventories, 1);
     assert.equal(f.calls.filter(c => c[0] === 'read').length, 1, 'before-action read stays');
-    assert.ok(f.output.some(text => text.includes('[sleight:last-window-closed]')));
+    assert.ok(f.output.some(text => text.includes('private-close-mark:closed')));
   }
 });
 
 test('DP1 keeps the tail read for remaining windows, sheets, unknown inventory and every other ending', async () => {
   const cases = [
-    { apps: [{ id: 'fixture.app', windows: [{ title: 'Other' }] }] },
-    { apps: [{ id: 'fixture.app', windows: [{ title: 'Save', role: 'sheet' }] }] },
-    { apps: [{ id: 'fixture.app' }] },
-    { apps: [{ id: 'other.app', displayName: expected.app, windows: [] }] },
-    { apps: [{ id: 'fixture.app', windows: [] }, { id: 'fixture.app', windows: [] }] },
+    { apps: [{ id: 'fixture.app', pid: 123, windows: [{ title: 'Other' }] }] },
+    { apps: [{ id: 'fixture.app', pid: 123, windows: [{ title: 'Save', role: 'sheet' }] }] },
+    { apps: [{ id: 'fixture.app', pid: 123 }] },
+    { apps: [{ id: 'other.app', pid: 123, displayName: expected.app, windows: [] }] },
+    { apps: [{ id: 'fixture.app', pid: 123, windows: [] }, { id: 'fixture.app', pid: 123, windows: [] }] },
+    { apps: [{ id: 'fixture.app', windows: [] }] },
+    { apps: [{ id: 'fixture.app', pid: 456, windows: [] }] },
     { apps: null }, { error: true }, { noTimers: true },
     { key: 'super+s' }, { key: 'ctrl+w' }, { key: 'super+alt+w' },
     { code: 'await app.pressKey("super+w"); await app.typeText("x");' },
     { code: 'await app.pressKey("super+w"); try { await app.click(1); } catch {}', fail: true },
     { code: 'try { await app.pressKey("super+w"); } catch {}', fail: true },
     { options: { dp1: false } }, { target: expected },
+    { target: { ...expected, appId: 'fixture.app' } },
   ];
   for (const c of cases) {
     const f = fixture({ action: name => { if (c.fail && (name === 'click' || !c.code.includes('app.click'))) throw Error('failed'); } });
     if (c.noTimers) f.context.clearTimeout = undefined;
     let inventories = 0;
-    f.context.cua.listApps = async () => { inventories++; if (c.error) throw Error('inventory unavailable'); return c.apps === undefined ? [{ id: 'fixture.app', windows: [] }] : c.apps; };
-    await f.run(c.code ?? `await app.pressKey(${JSON.stringify(c.key ?? 'super+w')});`, c.options ?? {}, c.target ?? { ...expected, appId: 'fixture.app' });
+    f.context.cua.listApps = async () => { inventories++; if (c.error) throw Error('inventory unavailable'); return c.apps === undefined ? [{ id: 'fixture.app', pid: 123, windows: [] }] : c.apps; };
+    await f.run(c.code ?? `await app.pressKey(${JSON.stringify(c.key ?? 'super+w')});`, { ...closeOptions, ...c.options }, c.target ?? closeTarget);
     assert.ok(f.calls.filter(call => call[0] === 'read').length >= 2, JSON.stringify(c));
-    assert.ok(!f.output.some(text => text.includes('[sleight:last-window-closed]')), JSON.stringify(c));
+    assert.ok(!f.output.some(text => text.includes('private-close-mark:closed')), JSON.stringify(c));
     if (c.options?.dp1 === false) assert.equal(inventories, 0);
   }
 });
@@ -108,13 +114,37 @@ test('DP1 retains caller reads and falls back after the inventory budget expires
   const f = fixture();
   let inventories = 0;
   f.context.cua.listApps = async () => { inventories++; return new Promise(() => {}); };
-  await f.run('await app.pressKey("super+w"); await app.getAXState();', {}, { ...expected, appId: 'fixture.app' });
+  await f.run('await app.pressKey("super+w"); await app.getAXState();', closeOptions, closeTarget);
   assert.equal(inventories, 0, 'the explicit final read stays');
   f.context.setTimeout = (fn, ms) => { assert.equal(ms, 1000); return setTimeout(fn, 0); };
   f.calls.length = 0;
-  await f.run('await app.pressKey("super+w");', {}, { ...expected, appId: 'fixture.app' });
+  await f.run('await app.pressKey("super+w");', closeOptions, closeTarget);
   assert.equal(inventories, 1);
   assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
+});
+
+test('DP1 keeps reads without a private mark or explicit opt-in, including cached setup', async () => {
+  for (const cached of [false, true]) for (const options of [{}, { dp1: true }, { guardStopMark: 'private-close-mark' }]) {
+    const f = fixture();
+    let inventories = 0;
+    f.context.cua.listApps = async () => { inventories++; return [{ id: 'fixture.app', pid: 123, windows: [] }]; };
+    // A cached native setup must also refuse the skip when a later call has no mark.
+    if (cached) await f.run('await app.pressKey("super+w");', closeOptions, closeTarget);
+    f.calls.length = 0; f.output.length = 0; inventories = 0;
+    await f.run('await app.pressKey("super+w");', { ...options, reuseSetup: cached }, closeTarget);
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 2, JSON.stringify(options));
+    assert.equal(inventories, 0);
+    assert.ok(!f.output.some(text => /last-window-closed|private-close-mark:closed/.test(text)));
+  }
+});
+
+test('DP1 selects the leased pid when another instance of the bundle still has windows', async () => {
+  const f = fixture();
+  f.context.cua.listApps = async () => [{ id: 'fixture.app', pid: 456, windows: [{ title: 'Other instance' }] },
+    { id: 'fixture.app', pid: 123, windows: [] }];
+  await f.run('await app.pressKey("super+w");', closeOptions, closeTarget);
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 1);
+  assert.ok(f.output.some(text => text.includes('private-close-mark:closed')));
 });
 
 test('lean calls keep a strict native handle across calls and report an unchanged action compactly', async () => {

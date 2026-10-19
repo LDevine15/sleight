@@ -612,3 +612,14 @@ folder (default `~/Library/Caches/sleight-bench/sleight-arm`). `SLEIGHT_STUB_OSA
 `osascript` and `open` in the startup-cost measurement scripts. A measurement then doesn't run a
 real app. `SLEIGHT_CHATGPT_APP` points `bin/sleight-mcp` and `sleight-mcp setup` at another ChatGPT copy
 (default `/Applications/ChatGPT.app`).
+
+### Close-read and handle API A/B switches
+
+`SLEIGHT_DP1=0` keeps the guard's final read after a close shortcut. By default, the guard can skip
+that read after Cmd+W, Cmd+Shift+W or Cmd+Q when the engine inventory returns one row matching
+both the leased bundle ID and PID, with an explicit empty window list. Missing identity, unknown
+inventory or remaining windows keep the read. The native relay must supply the call's private mark.
+This switch is on by default and needs live checks of unsaved TextEdit and Word close dialogs before release.
+
+`SLEIGHT_DP3=0` omits the engine app API list from confirmed `open_file` results. The list is on
+by default. Use sleight's `drag` tool for selected text moves.

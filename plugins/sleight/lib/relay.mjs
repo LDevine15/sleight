@@ -2659,7 +2659,7 @@ export function createRelay({
             ...(!state.isError ? [{ type: 'text', text: promptNotice((pictured ? 'sleight: screenshot added, the tree has no document text. ' : '') +
               `Window handle: \`${handle}\`` + (!confirmed ? '.' : constApp ? ', already acquired. Use it in place of `app`.'
                 : `, already acquired, but \`app\` isn't set: start the next call with \`let app = ${handle};\`.`) +
-              (handleApi && confirmed ? '\n' + "It has the engine's app API: click, doubleClick, rightClick, pressKey, typeText, paste, setValue, selectText, scroll, drag, performSecondaryAction, getAXState, getScreenshot, getAXStateAndScreenshot." : ''), prompt) }] : [])] };
+              (handleApi && confirmed ? '\n' + "It has the engine's app API: click, doubleClick, rightClick, pressKey, typeText, paste, setValue, selectText, scroll, performSecondaryAction, getAXState, getScreenshot, getAXStateAndScreenshot." : ''), prompt) }] : [])] };
           if (pictured) recordScreenshot(combined.content);
           const response = { jsonrpc: '2.0', id: msg.id, result: combined };
           reportPreapprovals(response); toClient(response);

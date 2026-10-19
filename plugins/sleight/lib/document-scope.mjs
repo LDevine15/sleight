@@ -384,7 +384,9 @@ export function readCode(code, options = {}) {
 // Advisory only: all of this runs in the same mutable JS realm as Claude's code.
 async function closedLastWindow(state, cua) {
   const previous = state.previous.get(state.activeApp), action = state.lastAction;
+  const pid = state.expected?.nativeIdentity?.pid ?? state.expected?.pid;
   if (typeof setTimeout !== 'function' || typeof clearTimeout !== 'function' ||
+      !state.guardStopMark || !Number.isSafeInteger(pid) || pid <= 0 ||
       !state.expected?.appId || !previous?.done || state.failures?.length || action?.kind !== 'key' ||
       previous.key !== action.value || !/^(?:super|cmd|command|meta)\+(?:shift\+w|w|q)$/i.test(action.value) ||
       state.callHeaders.get(state.activeApp)?.app !== state.expected.app) return false;
@@ -393,7 +395,7 @@ async function closedLastWindow(state, cua) {
     // Inventory has a 1 s budget. An unavailable or ambiguous answer keeps the full read.
     const apps = await Promise.race([cua.listApps({ emit: false }), new Promise(resolve => { timer = setTimeout(resolve, 1000); })]);
     if (!Array.isArray(apps)) return false;
-    const matches = apps.filter(app => app?.id === state.expected.appId);
+    const matches = apps.filter(app => app?.id === state.expected.appId && app.pid === pid);
     return matches.length === 1 && Array.isArray(matches[0].windows) && matches[0].windows.length === 0;
   } catch { return false; }
   finally { clearTimeout(timer); }
@@ -402,7 +404,7 @@ async function closedLastWindow(state, cua) {
 export function guardedCode(code, window, reason = /* notice */ 'Document scope stopped this action: window or URL changed. Read the window and ask the user with document_scope.', lease, options = {}) {
   // The lease needs a full header after the call. A read Claude made after its
   // last action already wrote one, so the guard reads again only without it.
-  const { reuseSetup, acknowledge, prompt, outcomes, kernel, dp1 = process.env.SLEIGHT_DP1 !== '0', ...checks } = options;
+  const { reuseSetup, acknowledge, prompt, outcomes, kernel, dp1 = false, ...checks } = options;
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
   // The tail first waits (guard.settle, which resolves to undefined) for an action or pick the code left unawaited, as its
   // last statement may be, so the call's read can't run beside it and return the window from before it (CC6 review).
@@ -529,7 +531,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     };
     ${dp1 ? `const closedLast = ${closedLastWindow.toString()};
     state.readAfter = async (proxy, tail) => tail && await closedLast(state, cua)
-      ? (state.guardStopMark ? state.guardStopMark + ':closed' : '[sleight:last-window-closed]')
+      ? state.guardStopMark + ':closed'
       : timedRead(state.raws.get(proxy), 'after-call');` : "state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');"}
     state.raws ||= new WeakMap();
     // Windows whose bound capture lost an element, by app and URL or title, to the clean actions left before
