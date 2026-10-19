@@ -21,8 +21,10 @@ Task metadata and prompts are in [cc-held-out.json](tasks/cc-held-out.json), als
 The existing benchmark site serves default fixtures at
 `http://127.0.0.1:5431/held-out/<kind>/held-out/`.
 World task setup creates a fresh fixture on an ephemeral loopback port and retains its server for grading.
-The runner closes the server through its existing fixture lifecycle. App setup and cleanup use the existing retained-window helpers.
-Use an isolated benchmark browser profile and the owner-away boundary for any later host run.
+The runner closes the server through its existing fixture lifecycle. Browser setup requires `--real-profile fresh` and `--owner-away`.
+It uses the race launcher. Firefox gets a fresh private profile, and Safari gets its verified `sleight benchmark` profile window.
+The race launcher owns the browser process and its cleanup. A missing profile selection stops setup before the server starts.
+The native task uses the existing retained-window helper.
 
 Offline checks run with:
 

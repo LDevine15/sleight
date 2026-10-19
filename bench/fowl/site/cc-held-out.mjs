@@ -75,7 +75,7 @@ function page(fixture, path, origin) {
     const arrival = path === 'arrival';
     body = arrival ? `<h1>Archive arrival</h1><p>${esc(fixture.expected.receipt)}</p><button id="submit">Confirm arrival</button>`
       : `<h1>Archive departure</h1><p>Open this address in a new tab using Command-T, type the address and press Return:</p><code>${esc(origin + base + 'arrival')}</code><p>Keep this departure tab open.</p>`;
-    script = `let tab=sessionStorage.getItem('cc-tab');if(!tab){tab=crypto.randomUUID();sessionStorage.setItem('cc-tab',tab);}
+    script = `let tab=sessionStorage.getItem('cc-tab');if(!tab){tab=globalThis.crypto?.randomUUID?.()??(Date.now().toString(36)+'-'+Math.random().toString(36).slice(2));sessionStorage.setItem('cc-tab',tab);}
       await post('tab',{page:${JSON.stringify(arrival ? 'arrival' : 'start')},tab});` +
       (arrival ? `byId('submit').onclick=async()=>{await post('state',{receipt:${JSON.stringify(fixture.expected.receipt)},tab});saved();};` : '');
   }
@@ -125,7 +125,8 @@ export function ccHandler(fixture, origin) {
 export function checkCCFixture(fixture, answer) {
   if (!fixture?.views?.includes('')) return 'CC_PAGE_NOT_READ';
   if (fixture.kind === 'calendar-ambiguous' || fixture.kind === 'list-pop-up') {
-    let refused;try { refused = JSON.parse(String(answer).trim()); } catch { return 'CC_REFUSAL_NOT_REPORTED'; }
+    const text = String(answer).trim(), fenced = /^\x60\x60\x60(?:json)?\s*\n([\s\S]*?)\n\x60\x60\x60$/i.exec(text);
+    let refused;try { refused = JSON.parse(fenced ? fenced[1] : text); } catch { return 'CC_REFUSAL_NOT_REPORTED'; }
     return isDeepStrictEqual(refused, { refused: true }) && fixture.posted === undefined || 'CC_AMBIGUOUS_ACTION_NOT_STOPPED';
   }
   if (fixture.kind.startsWith('dropdown') && !fixture.childLoads.includes(fixture.expected.parent)) return 'CC_CHILD_LIST_NOT_LOADED';

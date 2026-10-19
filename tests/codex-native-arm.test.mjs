@@ -65,7 +65,7 @@ test('with the default homes, the arm\'s Codex home lists only sleight\'s server
 test('the proxy accepts every app of the 12 native claim tasks and nothing else, under the claim allowlist, without Always', async () => {
   const tasks = getTasks('world').filter(task => NATIVE.includes(task.id));
   assert.deepEqual(tasks.map(task => task.id).sort(), [...NATIVE].sort());
-  const world = { BENCH_SUITE: 'world' };
+  const world = { BENCH_SUITE: 'world', BENCH_WORLD_TASKS: JSON.stringify(tasks.map(task => task.id)) };
   const schemas = [undefined, { properties: { remember: { enum: ['This session', 'Always'] } } },
     { properties: { choice: { enum: ['once', 'session', 'always'] } } }];
   const names = [...new Set(tasks.flatMap(task => task.allowedApps.filter(app => !/^(com|net)\./.test(app))))];

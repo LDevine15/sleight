@@ -11,6 +11,9 @@ import { createHandler } from '../bench/fowl/site/server.mjs';
 import { getTasks } from '../bench/tasks.mjs';
 import { suite, resolveTask, planSuite } from '../bench/world/suite.mjs';
 import { selectSuiteTasks } from '../bench/shop.mjs';
+import { benchmarkDecision } from '../bench/approve.mjs';
+import { WORLD_APPS } from '../bench/world/tasks.mjs';
+import { initialBrowserPage, realBrowserPlan } from '../bench/fowl/real-browser.mjs';
 
 const origin = 'http://127.0.0.1:5431';
 async function request(fixture, path = '', value, overrides = {}) {
@@ -88,7 +91,7 @@ test('dependent child response is asynchronous, parent-specific and has a slow c
 
 // This DOM stub executes the shipped page scripts in Node. It has no browser,
 // app, accessibility or computer-use connection.
-async function render(fixture, path = '', storage = new Map()) {
+async function render(fixture, path = '', storage = new Map(), crypto = { randomUUID: () => `tab-${storage.size}-${render.counter++}` }) {
   const { body } = await request(fixture, path);
   class Element {
     constructor(tag) { this.tag = tag; this.children = []; this.attributes = {}; this.style = {}; this.scrollTop = 0; this.disabled = false; this.value = ''; this.textContent = ''; }
@@ -105,7 +108,7 @@ async function render(fixture, path = '', storage = new Map()) {
     [...ids.values()].flatMap(descendants).find(node => node.id === id) };
   const context = createContext({ document, Option: function(text, value) { const node = new Element('option'); node.textContent = text; node.value = value; return node; },
     sessionStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
-    crypto: { randomUUID: () => `tab-${storage.size}-${render.counter++}` },
+    crypto,
     fetch: async (url, options) => {
       const prefix = `/held-out/${fixture.kind}/${fixture.nonce}/`;
       assert.ok(url.startsWith(prefix));
@@ -182,20 +185,120 @@ test('new-tab scripts preserve a tab marker on same-tab navigation and distingui
   assert.equal(checkCCFixture(fixture, ''), true);
 });
 
-test('world setup retains a local server and passes only the selected browser to the fixture helper', async t => {
+test('world setup uses the race isolated-profile launcher and collects its browser', async t => {
   for (const browser of ['firefox', 'safari']) {
-    const task = ccHeldOutTasks(async (ctx, request) => { ctx.openRequest = request; return { fixture: true }; }).find(task => task.id === `cc-calendar-${browser}`);
-    const ctx = { nonce: browser, seed: 'fixed' };
+    let launched, stopped = 0;
+    const task = ccHeldOutTasks(() => assert.fail('generic window helper must not run'), { launchBrowser: async (plan, options) => {
+      launched = { plan, options }; return { stop: async () => { stopped++; return { browserClosed: true }; } };
+    } }).find(task => task.id === `cc-calendar-${browser}`);
+    const ctx = { nonce: browser, seed: 'fixed', ownerAway: true, realProfile: 'fresh' };
+    t.after(() => ctx.closeServer?.());
     await task.setup(ctx);
-    t.after(() => ctx.closeServer());
-    assert.equal(ctx.openRequest.app, browser === 'firefox' ? 'Firefox' : 'Safari');
-    assert.equal(ctx.openRequest.fixtureKind, 'web-page');
-    assert.equal(ctx.openRequest.target, ctx.url);
+    assert.equal(launched.plan.browser, browser);
+    assert.equal(launched.options.initialPage.url, ctx.url);
+    if (browser === 'firefox') assert.ok(launched.plan.args.includes(launched.plan.profileRoot));
+    else assert.equal(launched.plan.profileName, 'sleight benchmark');
     assert.equal(ctx.pendingAcquisitions.size, 0);
     const page = await fetch(ctx.url);
     assert.equal(page.status, 200);
     assert.match(await page.text(), /Studio access dates/);
     assert.equal(await task.check(ctx), 'CC_SUBMISSION_MISMATCH');
+    await task.cleanup(ctx);
+    assert.equal(stopped, 1);
+  }
+});
+
+test('browser setup refuses missing or default profiles before serving or opening anything', async t => {
+  for (const browser of ['firefox', 'safari']) for (const realProfile of [undefined, 'default', 'benchmark']) {
+    const task = ccHeldOutTasks(() => assert.fail('generic helper'), { launchBrowser: () => assert.fail('launch') })
+      .find(task => task.id === `cc-list-${browser}`);
+    const ctx = { nonce: browser, ownerAway: true, realProfile };
+    t.after(() => ctx.closeServer?.());
+    await assert.rejects(task.setup(ctx), /CC_ISOLATED_PROFILE_REQUIRED/);
+    assert.equal(ctx.closeServer, undefined);
+  }
+});
+
+test('browser setup requires the owner-away boundary and preserves failed cleanup', async t => {
+  const task = ccHeldOutTasks(undefined, { launchBrowser: async () => ({ stop: async () => ({ browserClosed: false }) }) })
+    .find(task => task.id === 'cc-list-safari');
+  const ctx = { nonce: 'cleanup', realProfile: 'fresh' };
+  t.after(() => ctx.closeServer?.());
+  await assert.rejects(task.setup(ctx), /CC_OWNER_AWAY_REQUIRED/);
+  assert.equal(ctx.closeServer, undefined);
+  ctx.ownerAway = true;
+  await task.setup(ctx);
+  await assert.rejects(task.cleanup(ctx), /BENCH_BROWSER_CLEANUP_UNPROVED/);
+});
+
+test('race initial page preserves isolation and rejects external or unsupported starts', () => {
+  for (const browser of ['firefox', 'safari']) {
+    const plan = realBrowserPlan({ browser, round: 'cc-fixture' });
+    assert.equal(initialBrowserPage(plan), plan);
+    const page = { url: 'http://127.0.0.1:5431/held-out/list/test/', title: 'Held-out list test' };
+    const start = initialBrowserPage(plan, page);
+    assert.equal(start.profileRoot, plan.profileRoot);
+    assert.equal(start.marker, page.title);
+    assert.equal(start.executable, plan.executable);
+    if (browser === 'firefox') {
+      assert.deepEqual(start.args.slice(0, -1), plan.args.slice(0, -1));
+      assert.deepEqual(start.launchArgs.slice(0, -1), plan.launchArgs.slice(0, -1));
+      assert.equal(start.args.at(-1), page.url);
+      assert.equal(start.launchArgs.at(-1), page.url);
+    } else {
+      assert.equal(start.profileName, 'sleight benchmark');
+      assert.equal(start.markerUrl, page.url);
+    }
+    for (const url of ['https://example.com/', 'file:///tmp/test', 'http://127.0.0.1/', 'http://user:pass@127.0.0.1:5431/']) {
+      assert.throws(() => initialBrowserPage(plan, { ...page, url }), /BENCH_INITIAL_PAGE_UNSAFE/);
+    }
+    assert.notEqual(plan.marker, page.title, 'original race plan stays unchanged');
+  }
+});
+
+test('world approvals come only from selected tasks and never extend the global list', () => {
+  const event = app => ({ mcp_server_name: 'plugin:sleight:computer', message: `Allow Computer Use to use "${app}"?` });
+  const allowed = (app, tasks) => benchmarkDecision(event(app), { BENCH_SUITE: 'world', BENCH_WORLD_TASKS: JSON.stringify(tasks) })?.hookSpecificOutput.action === 'accept';
+  for (const app of ['Safari', 'com.apple.Safari', 'Firefox', 'org.mozilla.firefox']) {
+    assert.ok(!WORLD_APPS.includes(app));
+    assert.equal(allowed(app, ['calculator-click']), false);
+    assert.equal(allowed(app, []), false);
+  }
+  assert.equal(allowed('Calculator', ['calculator-click']), true);
+  assert.equal(allowed('Safari', ['cc-calendar-safari']), true);
+  assert.equal(allowed('Firefox', ['cc-calendar-safari']), false);
+  assert.equal(allowed('org.mozilla.firefox', ['cc-list-firefox']), true);
+  assert.equal(allowed('Calculator', ['cc-list-firefox']), false);
+  for (const value of [undefined, '{}', 'null', '["unknown"]']) {
+    assert.notEqual(benchmarkDecision(event('Safari'), { BENCH_SUITE: 'world', BENCH_WORLD_TASKS: value })?.hookSpecificOutput.action, 'accept');
+  }
+});
+
+test('new-tab markers work when secure-context crypto is unavailable', async () => {
+  for (const crypto of [undefined, {}]) {
+    const fixture = createCCFixture('new-tab', { nonce: 'fallback', seed: 'fixed' }), storage = new Map();
+    // null explicitly overrides render's default crypto stub.
+    await render(fixture, '', storage, crypto ?? null);
+    const same = await render(fixture, 'arrival', storage, crypto ?? null);
+    await same.ids.get('submit').onclick();
+    assert.notEqual(checkCCFixture(fixture, ''), true);
+    const fresh = await render(fixture, 'arrival', new Map(), crypto ?? null);
+    await fresh.ids.get('submit').onclick();
+    assert.equal(checkCCFixture(fixture, ''), true);
+  }
+});
+
+test('popup refusal accepts fenced JSON and still rejects a saved action or extra claims', async () => {
+  const fixture = createCCFixture('list-pop-up', { nonce: 'refusal', seed: 'fixed' });
+  await request(fixture);
+  for (const fence of ['```json\n{"refused":true}\n```', '```\n{"refused":true}\n```']) {
+    assert.equal(checkCCFixture(fixture, fence), true);
+    fixture.posted = fixture.expected;
+    assert.notEqual(checkCCFixture(fixture, fence), true);
+    fixture.posted = undefined;
+  }
+  for (const answer of ['```json\n{"refused":false}\n```', '```json\n{"refused":true,"saved":true}\n```', '```json\ninvalid\n```']) {
+    assert.notEqual(checkCCFixture(fixture, answer), true);
   }
 });
 

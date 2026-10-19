@@ -1,12 +1,22 @@
 #!/usr/bin/env node
 // Elicitation hook for benchmark runs only. The decision is also used by the model-free speed map.
-import { BENCH_APPS, REAL_APPS } from './tasks.mjs';
-import { WORLD_APPS } from './world/tasks.mjs';
+import { BENCH_APPS, REAL_APPS, getTasks } from './tasks.mjs';
+import { worldPassApps } from './world/tasks.mjs';
 import { approvedApps, tasks as batteryTasks } from './battery/tasks.mjs';
 import { speedPlan } from './app-speed-map.mjs';
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+function worldApps(env) {
+  try {
+    const ids = JSON.parse(env.BENCH_WORLD_TASKS ?? '[]');
+    if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) return [];
+    const tasks = getTasks('world');
+    if (ids.some(id => !tasks.some(task => task.id === id))) return [];
+    return worldPassApps(tasks.filter(task => ids.includes(task.id)));
+  } catch { return []; }
+}
 
 export function benchmarkDecision(e, env = process.env) {
   const app = /^Allow Computer Use to use "(.+)"\?$/.exec(e.message ?? '')?.[1] ??
@@ -23,7 +33,7 @@ export function benchmarkDecision(e, env = process.env) {
   const raceApps = env.BENCH_SUITE === 'browser-race' ? (() => {
     try { return JSON.parse(env.BENCH_RACE_APPS ?? '[]').filter(app => [...BENCH_APPS, ...REAL_APPS].includes(app)); } catch { return []; }
   })() : undefined;
-  const apps = speedApps ?? raceApps ?? (env.BENCH_SUITE === 'world' ? WORLD_APPS : env.BENCH_SUITE === 'battery' ? approvedApps(env.BENCH_OWNER_PRESENT === '1') :
+  const apps = speedApps ?? raceApps ?? (env.BENCH_SUITE === 'world' ? worldApps(env) : env.BENCH_SUITE === 'battery' ? approvedApps(env.BENCH_OWNER_PRESENT === '1') :
     [...BENCH_APPS, ...(env.BENCH_SUITE === 'real' ? REAL_APPS : []),
     ...(env.BENCH_SUITE === 'real' && env.BENCH_OWNER_PRESENT === '1' ? ownerPresentApps : [])]);
   const choices = e.requested_schema?.properties?.choice?.enum ?? [];

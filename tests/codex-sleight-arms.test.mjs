@@ -222,12 +222,12 @@ test('race policy: the round\'s browser and hand-off apps are accepted, everythi
 });
 
 test('bench policy: the claim and world suites\' allowlist, from approve.mjs', async () => {
-  const world = { BENCH_SUITE: 'world' };
+  const world = { BENCH_SUITE: 'world', BENCH_WORLD_TASKS: '["calculator-click","slack-post","textedit-save"]' };
   const form = { properties: { choice: { enum: ['once', 'session'] }, remember: { enum: ['This session', 'Always'] } } };
   const accepted = await answerElicitation(engineForm('Calculator', form), { policy: 'bench', env: world });
   assert.deepEqual([accepted.action, accepted.content], ['accept', { choice: 'session' }]);
   assert.equal((await answerElicitation(engineForm('Terminal', form), { policy: 'bench', env: world })).action, 'decline');
-  assert.equal((await answerElicitation(engineForm('Firefox', form), { policy: 'bench', env: world })).action, 'decline', 'the world suite has no Firefox');
+  assert.equal((await answerElicitation(engineForm('Firefox', form), { policy: 'bench', env: world })).action, 'decline', 'the selected world tasks have no Firefox');
   assert.equal((await answerElicitation(engineForm('Slack', form), { policy: 'bench', env: world })).action, 'accept');
   assert.equal((await answerElicitation({ message: 'Allow Codex to open files in TextEdit? x', mode: 'form' }, { policy: 'bench', env: world })).action, 'accept');
   assert.equal((await answerElicitation(engineForm('iPhone Mirroring'), { policy: 'bench', env: { BENCH_SUITE: 'real' } })).action, 'decline', 'owner-present apps stay out unless the pass says so');
@@ -271,7 +271,7 @@ const throughProxy = async (t, { policy, env = {}, guards = [] }) => {
 };
 
 test('behind the proxy the engine\'s approval is answered from the bench policy, with no dialog and nothing remembered', async t => {
-  const { client, entries } = await throughProxy(t, { policy: 'bench', env: { BENCH_SUITE: 'world' } });
+  const { client, entries } = await throughProxy(t, { policy: 'bench', env: { BENCH_SUITE: 'world', BENCH_WORLD_TASKS: '["calculator-click"]' } });
   const result = await client.call('js', { code: 'var app = await cua.getApp("Calculator")' });
   assert.equal(result.isError, undefined);
   assert.equal(result._meta.fixture.dialogs, 0, 'no native panel');

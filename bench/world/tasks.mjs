@@ -13,9 +13,10 @@ import { ccHeldOutTasks } from './cc-held-out.mjs';
 
 export const WORLD_APPS = ['Calculator', 'com.apple.calculator', 'TextEdit', 'com.apple.TextEdit', 'Chess', 'com.apple.Chess',
   'Finder', 'com.apple.finder', 'Preview', 'com.apple.Preview', 'Microsoft Word', 'Word', 'com.microsoft.Word',
-  'Microsoft Excel', 'Excel', 'com.microsoft.Excel', 'Helium', 'net.imput.helium', 'Safari', 'com.apple.Safari', 'Firefox', 'org.mozilla.firefox',
+  'Microsoft Excel', 'Excel', 'com.microsoft.Excel', 'Helium', 'net.imput.helium',
   // The claim's app tasks (owner, 2026-10-18): VS Code, Slack's throwaway workspace and Spotify.
   'Visual Studio Code', 'VS Code', 'Code', 'com.microsoft.VSCode', 'Slack', 'com.tinyspeck.slackmacgap', 'Spotify', 'com.spotify.client'];
+export const worldPassApps = tasks => [...new Set(tasks.flatMap(task => task.allowedApps ?? []))];
 const fixtureApps = {
   Calculator: ['Calculator', 'com.apple.calculator'], TextEdit: ['TextEdit', 'com.apple.TextEdit'], Chess: ['Chess', 'com.apple.Chess'],
   Finder: ['Finder', 'com.apple.finder'], Preview: ['Preview', 'com.apple.Preview'],

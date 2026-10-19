@@ -4,10 +4,11 @@ import { acquireFixture } from '../real-run.mjs';
 import { openFixture, closeFixtures, webBrowsers } from '../real-fixture.mjs';
 import { startServer } from '../fowl/site/server.mjs';
 import { ccBase, checkCCFixture, createCCFixture } from '../fowl/site/cc-held-out.mjs';
+import { realBrowserPlan, launchRealBrowser } from '../fowl/real-browser.mjs';
 
 export const ccCatalog = JSON.parse(readFileSync(new URL('./tasks/cc-held-out.json', import.meta.url)));
 
-function browserTask(row, open) {
+function browserTask(row, launchBrowser) {
   const browser = webBrowsers.find(browser => browser.id === row.browser);
   const prepare = async ctx => {
     if (ctx.closeServer) throw Error('CC fixture server already exists');
@@ -16,14 +17,25 @@ function browserTask(row, open) {
     ctx.closeServer = server.close;
     ctx.url = `http://127.0.0.1:${server.port}${ccBase(ctx.cc)}`;
   };
-  return { id: row.task, app: browser.app, half: 'browser', heldOut: true, prepare,
+  return { id: row.task, app: browser.app, half: 'browser', heldOut: true, requiredProfile: 'fresh', prepare,
     setup: async ctx => {
+      if (ctx.realProfile !== 'fresh') throw Error('CC_ISOLATED_PROFILE_REQUIRED: select --real-profile fresh');
+      if (ctx.ownerAway !== true) throw Error('CC_OWNER_AWAY_REQUIRED');
+      ctx.signal?.throwIfAborted();
       await prepare(ctx);
-      await acquireFixture(ctx, 'browser', () => open(ctx, { app: browser.app, bundle: browser.bundle, target: ctx.url,
-        token: ctx.nonce, mode: 'window', fixtureKind: 'web-page' }));
+      const plan = realBrowserPlan({ browser: row.browser, round: `cc-${row.browser}-${ctx.nonce}`, profile: ctx.realProfile });
+      await acquireFixture(ctx, 'browser', () => launchBrowser(plan, {
+        initialPage: { url: ctx.url, title: `Held-out ${row.kind} ${ctx.nonce}` },
+      }));
     },
     prompt: ctx => row.prompt.replaceAll('{url}', ctx.url).replaceAll('{target}', ctx.cc.target.label),
-    check: ctx => checkCCFixture(ctx.cc, ctx.answer), cleanup: closeFixtures,
+    check: ctx => checkCCFixture(ctx.cc, ctx.answer), cleanup: async ctx => {
+      if (!ctx.browser) return;
+      await ctx.beforeFixtureCleanup?.();
+      ctx.cleanupSignal?.throwIfAborted();
+      const receipt = await ctx.browser.stop();
+      if (receipt?.browserClosed !== true) throw Error('BENCH_BROWSER_CLEANUP_UNPROVED');
+    },
   };
 }
 
@@ -60,4 +72,5 @@ function nativeTask(row, open) {
   };
 }
 
-export const ccHeldOutTasks = (open = openFixture) => ccCatalog.map(row => row.half === 'native' ? nativeTask(row, open) : browserTask(row, open));
+export const ccHeldOutTasks = (open = openFixture, { launchBrowser = launchRealBrowser } = {}) =>
+  ccCatalog.map(row => row.half === 'native' ? nativeTask(row, open) : browserTask(row, launchBrowser));
