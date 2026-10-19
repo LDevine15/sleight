@@ -49,7 +49,8 @@ test('a bundle built from the recorded engine passes every static check', t => {
   const report = analyzeBundle(bundle(temp(t)));
   assert.equal(report.appVersion, '26.1013.40934');
   assert.equal(report.engineVersion, '26.1013.1001501');
-  assert.deepEqual(report.results.filter(r => r.status !== 'pass'), []);
+  // The fixture core doc has no Workflow section (its lines are pinned by hash only), so that rewrite warns here.
+  assert.deepEqual(report.results.filter(r => r.status !== 'pass').map(r => r.id), ['workflow-rewrite']);
   assert.match(report.fingerprint, /^[0-9a-f]{64}$/);
 });
 

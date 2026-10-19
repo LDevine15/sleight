@@ -71,6 +71,7 @@ import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './b
 import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
+import { rewriteWorkflow } from './workflow-docs.mjs';
 import { createPaymentMessages, PAYMENT_ALLOWED, PAYMENT_WAITING } from './payment-gate.mjs';
 import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE, withFirstCallWindows, withInventoryNote } from './engine-app-docs.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
@@ -116,7 +117,7 @@ import { withoutPageCallbacks } from './page-callbacks.mjs';
 import { leanCallDescription } from './lean-calls.mjs';
 import { initializationAdvice } from './initialization-guidance.mjs';
 import { syntaxErrorHint, syntaxOrigin } from './syntax-errors.mjs';
-import { compactJsDescription } from './tool-description.mjs';
+import { compactJsDescription, engineJsVariant } from './tool-description.mjs';
 import { createLightReturn, lightReturnCode } from './light-return.mjs';
 import { hostLabel } from './host-label.mjs';
 import { TURN_START, TURN_START_TOOL, codexCallTurn, codexTurnClient, codexTurnFrame } from './codex-turn.mjs';
@@ -798,6 +799,10 @@ export function createRelay({
   // answer-bearing tree. With 5 KB of rules after preview-read's 2.3 KB tree, Haiku thought on turn 2 in 5/5
   // sleight runs against 2/5 for Peekaboo (2026-10-17). SLEIGHT_RULES_FIRST=0 keeps them last, for the A/B.
   rulesFirst = process.env.SLEIGHT_RULES_FIRST !== '0',
+  // CC6 (codex-vs-cc-1019): the engine's Workflow lines that ask for a getAXState() after actions say instead that the
+  // result already holds the state (workflow-docs.mjs), on the computer surface under the guard. SLEIGHT_WORKFLOW_DOCS=0
+  // keeps the engine's lines, for the A/B.
+  workflowDocs = process.env.SLEIGHT_WORKFLOW_DOCS !== '0',
   // SLEIGHT_OPEN_RULES=short (A/B, off by default): an open_file result carries only the rules that matter after
   // an open, and the whole skill comes with Claude's first js result. Haiku thought before answering in 18/18
   // sleight preview-read runs, all given the whole skill in their first result, against 2/5 for Peekaboo (correlational, 2026-10-17).
@@ -918,6 +923,8 @@ export function createRelay({
   const browserStale = createBrowserStaleGuard();
   const resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
+  // Whether the engine's js description is its computer-only one, from the last tool list.
+  let computerSurface = false;
   // The tool list as this session shows it: the engine's tools rewritten by this session's settings, then sleight's own.
   // The handshake cache stores the engine's list and answers through this too (startup-cache.mjs).
   const clientTools = ({ tools, ...result }) => ({ ...result, tools: tools
@@ -926,7 +933,10 @@ export function createRelay({
     .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t, !modHost()) : t))
     .map(t => {
       if (t.name !== 'js') return t;
-      const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows, { current: firstCallSteering });
+      // The engine's computer-only description says its browser APIs are disabled (cua-repl's browser-disabled part).
+      computerSurface = typeof t.description === 'string' &&
+        (engineJsVariant(t.description)?.variant === 'computer' || /(?:^|\n)Browser APIs are disabled\.(?:\n|$)/.test(t.description));
+      const compact =compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows, { current: firstCallSteering });
       if (compact !== undefined) return { ...t, description: compact };
       const batched = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt, firstCallWindows) : t.description;
       const description = firstCallSteering ? withInventoryNote(batched) : batched;
@@ -4345,6 +4355,13 @@ export function createRelay({
         trace('payment-confirmation-policy', { status: 'unmatched' });
       } else if (docs) msg.result.content = msg.result.content.map(c => c.type === 'text' && /^## Computer Use\n/.test(c.text ?? '')
         ? { ...c, text: rewritePaymentPolicy(c.text, confirmPayments, trace) } : c);
+      // Only where the guard reads after the call: a native call under the lease or document scope.
+      if (docs && workflowDocs && computerSurface && (inputLease || documentMode)) msg.result.content = msg.result.content.map(c => {
+        if (c.type !== 'text' || !/^## Computer Use\n/.test(c.text ?? '')) return c;
+        const { text, status } = rewriteWorkflow(c.text);
+        trace('workflow-docs', { status });
+        return { ...c, text };
+      });
       if (msg.result._meta?.['codex/toolSurface']?.kind !== 'browserUse')
         msg.result.content = msg.result.content.map((c, i, all) => c.type === 'text' && c.text?.includes('<app_specific_instructions>')
           ? { ...c, text: rewriteBrowserInstructions(c.text, trace, { keyboardTab: firstCallSteering,

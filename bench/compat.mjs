@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DOCS_CODE, engineDocsText } from '../scripts/engine-docs.mjs';
 import { openClient, textOf } from './compat/client.mjs';
-import { PROBE_CODE, checkApiContract, checkPolicyRewrite, checkReplProbe, checkToolSurface, parseProbe } from './compat/contract.mjs';
+import { PROBE_CODE, checkApiContract, checkPolicyRewrite, checkWorkflowRewrite, checkReplProbe, checkToolSurface, parseProbe } from './compat/contract.mjs';
 import { SAFE_VERSION, plistString } from './compat/static.mjs';
 
 const execute = promisify(execFile);
@@ -63,7 +63,7 @@ export async function rawEngineChecks(server, env, { open = openClient } = {}) {
     const items = (first?.content ?? []).filter(item => item?.type === 'text').map(item => item.text);
     try { docs = engineDocsText(first); steps.push(...checkApiContract(docs)); }
     catch (error) { steps.push(step('api-contract', 'fail', error.message.split(':')[0])); }
-    steps.push(...checkPolicyRewrite(items));
+    steps.push(...checkPolicyRewrite(items), ...checkWorkflowRewrite(items));
     const probe = await client.call('js', { code: PROBE_CODE, timeout_ms: 30000 });
     steps.push(...(probe?.isError ? [step('repl-probe', 'fail', 'the probe returned an error', textOf(probe).split('\n')[0])] : checkReplProbe(parseProbe(textOf(probe)))));
     const ended = await client.endTurn();

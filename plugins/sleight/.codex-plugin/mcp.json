@@ -51,7 +51,8 @@
         "SLEIGHT_TRACE",
         "SLEIGHT_TRACE_CODE",
         "SLEIGHT_TRACE_CUT",
-        "SLEIGHT_TURBO"
+        "SLEIGHT_TURBO",
+        "SLEIGHT_WORKFLOW_DOCS"
       ]
     }
   }
