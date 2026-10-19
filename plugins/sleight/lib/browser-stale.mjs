@@ -88,9 +88,11 @@ function install(cua, config, parse, methods, samePage, sameRow) {
             const remaining = [...new Set(call.remaining)];
             const shifted = remaining.some(n => !sameRow(seen.rows[n], fresh?.rows?.[n]));
             // A line without an ID, description or help also keeps the parent it had: "button 15" under another month
-            // is another day. Literals on more than one tab in a call never recover.
+            // is another day. A bare-role parent ("row", "group") names nothing, so that line stops. Literals on more than
+            // one tab in a call never recover.
             const parentOf = (tree, number) => tree?.parents?.[number] == null ? null : tree.rows[tree.parents[number]];
             const sameParent = (n, number) => /\b(?:ID|Description|Help): /.test(seen.rows[n]) || seen.parents?.[n] !== undefined &&
+              !/^[a-z][a-z ]*(?: \([^)]*\))*$/.test(seen.parents[n] ?? '') &&
               (seen.parents[n] === null ? parentOf(fresh, number) === null : sameRow(seen.parents[n], parentOf(fresh, number)));
             if (current.order.length > 1 && (call.shifted || shifted)) {
               const resolved = Object.create(null);

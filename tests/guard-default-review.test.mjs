@@ -54,6 +54,10 @@ test('bind stops the second numbered click after a confirmation sheet', async ()
   assert.match(old.error, /changed what element 20 is|element 20 changed since you read the window/);   // adopted the sheet, then saw 20 is now its Remove
   assert.deepEqual(now.inputs, old.inputs);
   assert.match(now.error, /changed what element 20 is|element 20 changed since you read the window/);
+  // Without the lines Claude saw there is no batch check, and the bind path itself stops with its own wording.
+  const bound = await run(code, { screens: [main, sheet], expected: win('Groups'), mode: 'new', overrides: { seenLines: undefined, uniqueSeen: [] } });
+  assert.deepEqual(bound.inputs, old.inputs);
+  assert.match(bound.error, /an earlier action in this call changed what element 20 is/);
 });
 
 // 1b. bind: the same with a label: the old default looked the label up in the sheet and found none.
@@ -151,6 +155,9 @@ test('bind reads after secondary actions and scrolling', async () => {
     assert.match(old.error, /changed what element 6 is|element 6 changed since you read the window/, first);          // old: re-read, row 6 is another message now
     assert.deepEqual(now.inputs, old.inputs, first);
     assert.match(now.error, /changed what element 6 is|element 6 changed since you read the window/);
+    const bound = await run(code, { screens: [list, scrolled], expected: win('Inbox', 'Mail'), mode: 'new', overrides: { seenLines: undefined, uniqueSeen: [] } });
+    assert.deepEqual(bound.inputs, old.inputs, first);
+    assert.match(bound.error, /an earlier action in this call changed what element 6 is/, first);
   }
 });
 

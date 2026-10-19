@@ -105,6 +105,11 @@ our own runs. Dates and engine versions are given where they matter.
   each numbered or named action until three of them pass, about 50 to 400 ms an action (the read timings measured
   2026-10-09). The read after the refusal gives up after 5 s, and the note then doesn't list targets. We can't read the
   engine's source, so we don't know for sure that a refused number doesn't send input. The stop doesn't resend it.
+- A batch remap after a renumber (1.4.0) follows a line without an ID, description or help only under the parent Claude saw,
+  and never under a bare-role parent such as `row` or `group`. With `SLEIGHT_COMPACT_ACQUISITION`, `SLEIGHT_RESULT_TRIM` or
+  `SLEIGHT_COMPACT_TOOLBARS` on, the relay takes those parents from the trimmed tree Claude was shown, where omitted groups
+  leave the wrong parent (a probe gave `button Next` for days under `group October`). Those batches stop instead of remapping.
+  If one of those settings becomes the default, the parents should come from the untrimmed tree.
 
 ## The pointer, drags and hover
 

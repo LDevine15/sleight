@@ -1114,10 +1114,13 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           const sameLine = line => typeof line === 'string' && !/^[a-z][a-z ]*(?: \\([^)]*\\))*$/.test(line)
             ? [...elements(text ?? '')].filter(([, other]) => other === line) : [];
           // A line without an ID, description or help says little about which element it is: "button 15" under another
-          // month is another day (review of X5). Such a line also needs the parent Claude saw it under.
+          // month is another day (review of X5). Such a line also needs the parent Claude saw it under, and a parent that is a
+          // bare role ("row", "group") names no month either: the month can sit in a heading beside the table, or twin groups
+          // can swap their children, so that line stops.
           const sameParent = (n, number, tree) => {
             if (/\\b(?:ID|Description|Help): /.test(state.seenLines?.[n] ?? '')) return true;
             const was = state.seenParents?.[n], now = parentsOf(tree ?? '').get(number);
+            if (typeof was === 'string' && /^[a-z][a-z ]*(?: \\([^)]*\\))*$/.test(was)) return false;
             return was === null ? now === null : was !== undefined && sameElement(was, now);
           };
           const goTo = (to, line, why) => {
@@ -1128,7 +1131,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             }
             args = [to, ...args.slice(1)];
           };
-          const renumbered = (to, was) => nodeRepl.write('sleight: ' + name + '(' + args[0] + ') went to element ' + to + ', the same ' + JSON.stringify(was) + ${quoted(/* lean notice */ ': an earlier action in this call renumbered the window.')} + '\\n');
+          const renumbered = (to, was, from = args[0]) => nodeRepl.write('sleight: ' + name + '(' + from + ') went to element ' + to + ', the same ' + JSON.stringify(was) + ${quoted(/* lean notice */ ': an earlier action in this call renumbered the window.')} + '\\n');
           // A number the code computed from its own read in this call (a match over getAXState) means
           // that read's element. Checked against the tree from before the call, correct clicks stopped,
           // and Claude fell back to one action per call in ZCode (2026-10-12).
@@ -1263,6 +1266,8 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           // The payment gate: a submit-shaped action on a page that shows a payment stops unless the user's own message named
           // an amount no figure on the page exceeds. A submit-shaped key, text or point action that skipped its read reads now
           // when the newest tree it has shows a payment page (focus in it may be stale), or when there is none.
+          // A refused attempt sent nothing, so a resend's gate starts from the payment state before this action's gate.
+          const paymentBefore = state.payment;
           if (state.payment) {
             const newest = text ?? priorText ?? state.callTrees.get(proxy) ?? lastTree;
             // After this call has acted, the page may have changed step under the same window (review N4): a submit-shaped action
@@ -1364,14 +1369,19 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
                 if (batch) batch.moved = true;
                 // The read after the refusal can take REFUSAL_READ_MS: the lease is checked again before anything goes.
                 try { await checkLease(); } catch (lost) { state.unknown.push(shown); keep(); throw lost; }
-                if (to[0][0] !== args[0]) renumbered(to[0][0], to[0][1]);
+                const from = args[0];
                 args = [to[0][0], ...args.slice(1)];
                 // The resend's element is in the fresh tree, so the payment gate decides on that tree (a stale "Add gift
-                // wrap" resent as "Pay now" went through ungated, review of X5). The refusal sent nothing.
+                // wrap" resent as "Pay now" went through ungated, review of X5). The refusal sent nothing, so a stop here is
+                // a payment stop, not a refusal, and a spend the refused attempt recorded doesn't count.
                 if (state.payment && paymentAction(name, args)) {
                   attempt.text = fresh;
+                  attempt.refused = false;${O ? ' attempt.sent = false;' : ''}
+                  state.payment = paymentBefore;
                   payGate(fresh, fresh);
+                  attempt.refused = true;${O ? ' attempt.sent = true;' : ''}
                 }
+                if (to[0][0] !== from) renumbered(to[0][0], to[0][1], from);
                 // The call's last click is this element now, for a pickFromList right after it, and for a bound literal.
                 previous.at = to[0][0]; previous.line = to[0][1];
                 if (state.bind && literal !== undefined) {

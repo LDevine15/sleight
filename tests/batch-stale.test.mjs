@@ -105,27 +105,57 @@ for (const ambiguous of [false, true]) test(`bound native capture recovery check
 });
 
 // Review of X5: a resend after a refused stale ID goes to an element of the fresh tree, and the payment gate decides there.
-// The call's tree showed no payment; the fresh one is the checkout with "Pay now" under the same kind of parent.
-const checkout = readFileSync(new URL('./fixtures/payment-gate/firefox-checkout-sol.txt', import.meta.url), 'utf8')
-  .split('\n').filter(line => !/^\t*(?:89|9[0-7]) /.test(line)).join('\n');
-for (const [target, resent] of [['button Pay now', null], ['radio button Standard 5–7 business days · Free, Value: 0', 59]]) test(`bound refusal resend to ${target.split(' ').slice(0, 3).join(' ')} on the fresh checkout ${resent ? 'goes' : 'stops at the payment gate'}`, async () => {
-  const cart = `Window: "Checkout · Northbound Supply", App: Firefox.\n0 standard window Checkout · Northbound Supply\n\t1 HTML content Cart\n\t\t2 button Add gift wrap\n\t\t3 container\n\t\t\t4 ${target}`;
+// The call's tree showed no payment; the fresh one is the checkout with "Pay now" under the same parent. A bare-role parent
+// never remaps, so the fixture's two "container" parents get names here.
+const named = text => text.replace(/^(\t*)(58|86) container$/gm, '$1$2 container Group $2');
+const checkoutFull = named(readFileSync(new URL('./fixtures/payment-gate/firefox-checkout-sol.txt', import.meta.url), 'utf8'));
+const checkout = checkoutFull.split('\n').filter(line => !/^\t*(?:89|9[0-7]) /.test(line)).join('\n');
+for (const [target, parent, resent] of [['button Pay now', 'container Group 86', null],
+  ['radio button Standard 5–7 business days · Free, Value: 0', 'container Group 58', 59]]) test(`bound refusal resend to ${target.split(' ').slice(0, 3).join(' ')} on the fresh checkout ${resent ? 'goes' : 'stops at the payment gate'}`, async () => {
+  const cart = `Window: "Checkout · Northbound Supply", App: Firefox.\n0 standard window Checkout · Northbound Supply\n\t1 HTML content Cart\n\t\t2 button Add gift wrap\n\t\t3 ${parent}\n\t\t\t4 ${target}`;
   let acted = false;
   const clicked = [], output = [];
   const raw = { getAXState: async () => acted ? checkout : cart,
     click: async n => { if (acted && n === 4) throw new Error('4 is an invalid element ID'); clicked.push(n); acted = true; } };
   const code = guardedCode('await app.click(2); await app.click(4);', { title: 'Checkout · Northbound Supply', app: 'Firefox', url: null }, undefined, undefined,
-    { bind: true, payment: { setting: 'requested', message: null, spent: null, allow: null, now: 1e6 },
-      seenLines: { 2: 'button Add gift wrap', 4: target }, seenParents: { 2: 'HTML content Cart', 4: 'container' }, uniqueSeen: [2, 4], literals: [2, 4] });
+    { bind: true, guardStopMark: '[M]', outcomes: true, outcomeMark: '[O]', payment: { setting: 'requested', message: null, spent: null, allow: null, now: 1e6 },
+      seenLines: { 2: 'button Add gift wrap', 4: target }, seenParents: { 2: 'HTML content Cart', 4: parent }, uniqueSeen: [2, 4], literals: [2, 4] });
   const run = runInNewContext(`(async () => { ${code} })()`, { app: raw, cua: { getApp: async () => raw },
     nodeRepl: { write: s => output.push(s) }, setTimeout, clearTimeout, performance });
   if (resent) {
     await run;
     assert.deepEqual(clicked, [2, resent]);
+    assert.match(output.join(''), /click\(4\) went to element 59/);
   } else {
     await assert.rejects(run, /sleight stopped this payment: the page shows \$268\.00 and sleight has no copy/);
     assert.deepEqual(clicked, [2]);
+    // A payment stop, not an engine refusal: no renumber note, no refused receipt, and the outcome says nothing was sent.
+    assert.doesNotMatch(output.join(''), /went to element/);
+    const receipt = JSON.parse(output.filter(s => s.startsWith('[M]')).at(-1).slice(3));
+    assert.equal(receipt.refused, undefined);
+    assert.equal(receipt.payment.why, 'nocopy');
+    const outcomes = JSON.parse(output.filter(s => s.startsWith('[O]{"outcomes"')).at(-1).slice(3)).outcomes;
+    assert.equal(outcomes.find(rec => rec.n === 4).x, 'refused');
   }
+});
+
+// Review of X5: the refused first attempt's gate allowed the named payment and recorded a spend, and the resend then stopped as
+// "a payment already went through". The refusal sent nothing, so the resend's gate starts from the state before it.
+test('a refused payment click resends once under the payment the user named', async () => {
+  const { namedAmount } = await import('../plugins/sleight/lib/payment-gate.mjs');
+  let acted = false;
+  const clicked = [], output = [];
+  const raw = { getAXState: async () => checkoutFull,
+    click: async n => { if (acted && n === 88) { clicked.push('refused'); acted = false; throw new Error('88 is an invalid element ID'); } clicked.push(n); acted = true; } };
+  const lines = new Map(checkoutFull.split('\n').map(l => /^\t*(\d+) (.*)$/.exec(l)).filter(Boolean).map(m => [Number(m[1]), m[2]]));
+  const code = guardedCode('await app.click(59); await app.click(88);', { title: 'Checkout · Northbound Supply', app: 'Firefox', url: null }, undefined, undefined,
+    { bind: true, guardStopMark: '[M]', payment: { setting: 'requested', message: { ...namedAmount('pay $268.00 please'), afterAsk: false }, spent: null, allow: null, now: 1e6 },
+      seenLines: { 59: lines.get(59), 88: lines.get(88) }, seenParents: Object.fromEntries([...elementParents(checkoutFull)].filter(([n]) => n === 59 || n === 88)),
+      uniqueSeen: [59, 88], literals: [59, 88] });
+  await runInNewContext(`(async () => { ${code} })()`, { app: raw, cua: { getApp: async () => raw },
+    nodeRepl: { write: s => output.push(s) }, setTimeout, clearTimeout, performance });
+  assert.deepEqual(clicked, [59, 'refused', 88]);
+  assert.equal(output.filter(s => s.startsWith('[M]{"paid"')).length, 2, 'the resend writes its own paid mark, which replaces the first');
 });
 
 // Review of X5: "button 15" under October and "button 15" under November are different days.
@@ -197,4 +227,34 @@ test('tab: literals on two tabs in one call never recover a renumber', async () 
   const code = guard.code('var a = await cua.getTab("1", { browser: "f" }); var b = await cua.getTab("2", { browser: "f" }); await a.click(10); await b.click(11); await b.click(10);');
   await assert.rejects(runInNewContext(`(async () => { ${code} })()`, { cua: { getTab: async id => tabs[id].raw }, nodeRepl: { write() {} }, setTimeout, clearTimeout }), /sleight stopped before click\(10\): element/);
   assert.deepEqual(clicked, ['1:10', '2:11']);
+});
+
+// Re-review of X5: a bare-role parent names nothing. The month sat in a heading beside the table ("row" parent both times), and
+// twin bare groups swapped their children; both remapped to the wrong day before.
+for (const [name, before, after, target] of [
+  ['month in a heading beside the table',
+    '\t1 button Go\n\t2 heading October\n\t3 table\n\t\t4 row\n\t\t\t5 button 15\n\t\t\t6 button 16',
+    '\t1 button Go\n\t2 button Prev\n\t3 heading November\n\t4 table\n\t\t5 row\n\t\t\t6 button 15\n\t\t\t7 button 16', 5],
+  ['twin bare groups', '\t1 button Go\n\t2 group\n\t\t3 button 15\n\t4 group\n\t\t5 button 20',
+    '\t1 button Go\n\t2 group\n\t\t3 button 20\n\t4 group\n\t\t5 button 15', 3],
+]) for (const browser of [false, true]) test(`${browser ? 'tab' : 'window'}: a line under a bare-role parent never remaps (${name})`, async () => {
+  const head = browser ? 'Browser tab: 1, Title: "Cal", URL: "https://example.test".\n0 AXWebArea Cal\n' : 'Window: "Cal", App: Fixture.\n0 standard window Cal\n';
+  const A = head + before, B = head + after;
+  let acted = false;
+  const clicked = [];
+  const raw = { id: '1', getAXState: async () => acted ? B : A, click: async n => { clicked.push(n); acted = true; } };
+  const source = `await app.click(1); await app.click(${target});`;
+  let code;
+  if (browser) {
+    const guard = createBrowserStaleGuard();
+    guard.observe([{ type: 'text', text: A }]);
+    code = guard.code('var app = await cua.getTab("1", { browser: "fixture" }); ' + source);
+  } else {
+    const lines = new Map(A.split('\n').map(l => /^\t*(\d+) (.*)$/.exec(l)).filter(Boolean).map(m => [Number(m[1]), m[2]]));
+    code = guardedCode(source, { title: 'Cal', app: 'Fixture', url: null }, undefined, undefined,
+      { seenLines: { 1: lines.get(1), [target]: lines.get(target) }, seenParents: Object.fromEntries(elementParents(A)), uniqueSeen: [1, target], literals: [1, target] });
+  }
+  await assert.rejects(runInNewContext(`(async () => { ${code} })()`, { app: raw, cua: { getApp: async () => raw, getTab: async () => raw },
+    nodeRepl: { write() {} }, setTimeout, clearTimeout, performance }), new RegExp(`sleight stopped before click\\(${target}\\)`));
+  assert.deepEqual(clicked, [1]);
 });
