@@ -3,13 +3,12 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 18:20 UTC; flag A/Bs in round 5 of 5, then T1, then block-next with the compat rerun and AS-3 A/B, and 1.4.0 at ab510184 with H7)
+## Banner (2026-10-19 20:50 UTC, 1.3.1 candidate live checks running, 1.4.0 fix lanes and studies in flight)
 
-Goal (owner, 2026-10-19): push 1.3.1 public today when every check is done (flag A/Bs and AS-3 included, the release push is
-approved), then validate and release 1.4.0 the same day under the LAWS release-validation rule (reuse 1.3.1's runs as the A
-side). The ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`) records every result and ruling in time order. Builds, fix rounds
-and integrations go to Sol codex lanes (Claude used 10% of the owner's week in 2-3 h). Sonnet-high reviews and Fable studies
-stay on Claude.
+Goal (owner, 2026-10-19): push 1.3.1 public today when every check is done (release push approved, ETA ~9 PM ET), then
+validate and release 1.4.0. Before the 1.4.0 B rounds every loss gets improved as far as we can (owner, ROADMAP). The ledger
+(`~/Projects/sleight-wt/ledger/LEDGER.md`) records every result and ruling in time order. Builds, fixes and integrations go to
+Sol codex lanes. Sonnet-high reviews and Fable studies stay on Claude.
 
 **1.3.0, released 2026-10-19.** Tag `v1.3.0` on `ca2188b4`, public `main` and the private repo, GitHub release from the CHANGELOG.
 Public CI runs on Node 24 (the Node ChatGPT bundles). The private repo's org ruleset 22105960 refuses workflow edits; the owner
@@ -21,53 +20,37 @@ on Haiku and on Opus. Helium on the release build (2026-10-19, rel130 r1-r5, own
 against FowlBrowser's 343.6 s, every pair within 20% at 5 runs (README updated, hub not regenerated yet). Known 1.3.0 problems found
 since: the startup cache (HS1) and the promo-code Apply stop (PG2), both in known-problems.
 
-**1.3.1, `claude/p131-integration` 60fe1319 (pushed private; full check 9075 tests, 0 fail).** Everything for 1.3.1 is merged
-and reviewed: PG2, PG3, compat check and workflow, CF2, CF3, FS split (FS2 Firefox keyboard new-tab route on by default, FS1
-description text behind `SLEIGHT_FS=1` after the native A/B lost passes), NT1, DR1 with review fixes, SW1b, TU1, HS1, the live
-harnesses G1 (ghost hand H5/H6/H8), G2 (AS-3), G3 (flag A/Bs), G4 (Electron). Live results today: PG3/PG2 stopped before the
-unpriced payment 4 of 4; SW1 demoid 2 of 3 before SW1b; compat engine tier PASS, live tier failed on check bugs (CF3 fixed them,
-rerun owed). The native FS A/B summed medians of 371.5 s off and 364.3 s on. Runbook: ledger/p130/live-runbook-1019.md.
-Still to run, in order: the flag A/Bs (running now), the film T1 take and the compat live rerun. After them come the AS-3 A/B (`bench/fowl/as3-ab.command`,
-~1 h 25 min, bar 2.5 s per task), Electron qualification (G4 runner; the owner delegated all its cards on benchmark VS Code
-copies), ghost hand H5/H6/H8, SW1b and DR1 rechecks (textedit-window-drag, demoid) and Codex turbo (cxt1, perhaps with one
-hook-trust prompt for the owner). Flags that measure faster become defaults, then the version bump, Chrome release pass with the TU1 census,
-CHANGELOG date, public push with the history rewrite (prepared and dry-run: ledger/p131/rewrite-REPORT.md, rewrite-identity.sh,
-push-rewritten.sh; also rewrite OLD_EMAIL=x for two commits; ruleset toggled around the pushes), tag, GitHub release, update
-the owner's installed copy.
+**1.3.1 candidate, `claude/p131-integration` 6b75fc01 (pushed private, full check 9094 tests with 0 fail, version 1.3.1).**
+Since 60fe1319: flag A/B verdicts (FL2: SLEIGHT_OPEN_SHOT and the screenshot skill sentence on by default, compact
+confirmations removed, compact toolbars still opt-in, race-1017/flags-score.txt, docs/benchmarks/2026-10-19-flag-ab.md),
+CF4 Safari fixtures bound to the benchmark profile (the compat check had opened its page in the owner's Personal Safari profile),
+the compat title-window fix, CHANGELOG 1.3.1 lines. In the AS-3 A/B Haiku called browser_open 0 times in 30 tasks, so it
+remains opt-in behind SLEIGHT_BROWSER_CORE=1 (CHANGELOG says so). Live today on the candidate: SW1b demoid passed 3/3 with popup and opener lines. In compat the engine tier and the
+Calculator check passed and the browser read failed on the title window (fixed, rerun queued). H8 was inconclusive
+(2 no-geometry skips, 0 hand drawn); H5 not proven and DR1 window-drag 0/3, both with a leftover bench Finder window on top
+(closed by AX, reruns queued). Still to run: H6 (running), block-rel131b (compat, H5, DR1 reruns), Electron qualification
+(cards are sleight-arch's on benchmark VS Code), Codex turbo cxt1 (maybe one hook-trust prompt for the owner), the Chrome
+release pass with the TU1 census, then CHANGELOG date, history rewrite and public push (ruleset toggle is the owner's), tag,
+GitHub release, the owner's installed copy. Film T1 retake on claude/p131-t1-cf4 0105a301 after the checks.
 
-**1.4.0, `claude/p140` ab510184 (pushed private, full check owed).** H7 taste pass merged (outside Sonnet read, Sol fixes,
-Sonnet-high review, H7b fixes: README first screen, INSTALL human path, known-problems user top, static hub landing); the owner's
-read of README and INSTALL is the last H7 step. Owner questions in ledger/p140/lanes/h7-REPORT.md. Merged before that: 1.3.1 60fe1319, analytics, Cursor, AM1 and AM1E, CR1+CR3, CR2,
-CC1-CC3 (list helper), CC4/CC5 (X5), CC6, CC7+LB4+LB6 (tabc), CC8 (drag labels by AXValue, LAWS), LB1-LB3 (X6 turbo), LB5 (X8
-select_window suffix), LB8 (X7 census), X3 analytics validation, X4 held-out fixtures, README and hub H1-H6 plus H3 Pages, and
-the CHANGELOG 1.4.0 section. Every branch had a Sonnet-high review; reviews found and fixed a payment-gate bypass on resend
-(X5), a drag pass-through hole (DR1), approvals widened for every world pass (X4) and more. Sol lane X11b trimmed the window-selection notice so the lean prompt
-ratio is 0.70992 (limit 0.71), with 702 focused tests passing. LB7 (`claude/p140-lb7` 12ca040a) passed its fifth review (MERGE-OK) but reuses ~0% of reads on this Mac (it
-stays off while another engine client runs), so sleight-arch did NOT merge it: no measured win. 1.4.0 validation (ROADMAP):
-full check, release pass, B rounds against 1.3.1's runs, both sides on the new CC held-out tasks and demoid, analytics (X3),
-Pages (`gh api` enable from main /docs after the public push), H7 taste pass (fresh Sonnet read, then the owner). Owner steps,
-none blocking the push: one-time logins for the agent-install test (`node bench/agent-install.mjs --setup` prints them), the
-Cursor sign-in for its first install (Cursor is listed only after it passes).
+**1.4.0, `claude/p140` ab510184 (pushed private).** Everything listed in ledger 15:4xZ-17:44Z plus H7 (README, INSTALL,
+known-problems top, static hub, with the owner's read as the last step). In flight for 1.4.0: X12 (merge the 1.3.1 candidate),
+MTb (fixes to MT1-MT7 model-time wording, claude/p140-mt), studies done and queued for build after X12: RS (requested sign-ups,
+owner ruled yes, LAWS), AO (browser_open adoption, AO1-AO7), NL1/NL2 (preview-read, Finder move chain). CK (claude/p140-ck
+53bdfa1e) is BLOCKED by design because each shortcut skipped a proof. CK1-CK3 get a redesign with GR1 (Astra, Firefox guard read
+cost, running). LB7 not merged (no measured win). 1.4.0 validation per ROADMAP after these merge.
 
-**Running across the clear (Terminal windows and nohup lanes keep running).**
-- `race-1017/block-flags.command` (pid 89050): the flag A/Bs on race-131 at 60fe1319 (started 17:34:53Z, 5 rounds, ~1 h 35 min,
-  logs `race-1017/flags.log`, manifest `flags-manifest.tsv`, score with `node bench/flag-ab.mjs score` from p131-int). It pauses on
-  a STOP with `race-1017/flags-pause`.
-- `race-1017/cap-t1b.command` (pid 99021): waits for block-flags' "done", then the film T1 take via the runner in
-  `~/Projects/sleight-wt/p131-t1` (c30fcf5d), log `~/Movies/sleight-film/t1-take.log`. Send loc arch the folder, take length and
-  frame-delta numbers after.
-- `race-1017/block-next.command` (Terminal): waits for T1's exit, then the compat engine and live rerun from p131-int (logs
-  `race-1017/compat-*-1019b.log`), then the AS-3 A/B (`as3-ab.log`, score `as3-score.txt`), CLEAR closed through it.
-- Worktrees: race-131 at 60fe1319 (the A/B build), race-fx at 1f6efff2 (1.3.0), p131-int, p140, p140-* and p131-* branch worktrees.
+**Running now.** `race-1017/block-rel131.command` (H6 last) then `block-rel131b.command` (compat, H5, DR1 reruns), Terminal.
+Lanes: X12, MTb, GR1 (Astra). Worktrees: race-131 at 452c1aef (candidate before the compat bench fix), race-fx 1f6efff2 (1.3.0),
+p131-int, p140, p140-mt, p140-ck, p131-cf4, p131-t1-cf4.
 
 **Launch film.** T0b recorded and approved by loc arch (sRGB tagging and name scrubbing added). T1 runner built (plain "Thursday"
 front window, Chess 1157x900, payment-free Tidewell checkout); three attempts stopped in setup (Chess open, Chess width, Safari
 marker), all fixed. T2 race take (sleight turbo vs FowlBrowser, one task) not built yet. loc arch renders only while
 `race-1017/CLEAR` exists and holds `/tmp/sleight-hold` per segment: ask loc arch before removing a hold.
 
-**Opt-in flags still opt-in (A/B running 2026-10-19):** `SLEIGHT_FS=1` (FS1 only), `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
-build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
-`SLEIGHT_COMPACT_CONFIRMATIONS=1` (wording approved by the owner).
+**Opt-in flags after the A/Bs:** `SLEIGHT_FS=1` (FS1), `SLEIGHT_COMPACT_TOOLBARS=1` (replace-all +16%), `SLEIGHT_BROWSER_CORE=1`
+(AS-3, never adopted). A/B off switches for the new defaults: `SLEIGHT_OPEN_SHOT=0`, `SLEIGHT_SCREENSHOT_READS=0`.
 
 **Gotchas from 2026-10-17.** Never send Apple events to Office from this session (Excel had no Automation grant and a macOS prompt
 appeared). Quit fixture apps with NSRunningApplication and answer their own Don't Save sheet or dialog by System Events. An
