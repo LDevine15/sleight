@@ -13,13 +13,17 @@
 // otherwise inferred from the task's recorded start and end against bench/engine-versions.json (bench/engine-version.mjs). A row
 // without times takes the birth time of the round's commits.json, marked as an inferred date. Per browser, the output names each
 // arm's versions with their dates and says when the arms that drive the engine ran on different versions.
-//   node bench/fowl/race-score.mjs [round folders or <dir>/<prefix>*] [--json] [--mark] [--exclude-covered]
+// Answer patterns: by default each row is graded with the task it saved, so a score keeps the patterns it ran with. Opt-in
+// --current-graders checks each saved answer against the current bench/world/tasks/fowlbrowser.json instead, in both directions,
+// for rows whose saved patterns differ; the output says which patterns it used and lists every row that changed.
+//   node bench/fowl/race-score.mjs [round folders or <dir>/<prefix>*] [--json] [--mark] [--exclude-covered] [--current-graders]
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claim, score } from '../claim-score.mjs';
-import { browserEvidence, coverEvidence, coverExclusions, harnessFailure, raceProblems, runErrorClass } from './real-gate-grade.mjs';
+import { ANSWER_GRADER_FILE, answerProblems, browserEvidence, coverEvidence, coverExclusions, currentAnswerGraders, graderId, harnessFailure, isAnswerProblem,
+  raceProblems, runErrorClass, runnerGradesAnswer } from './real-gate-grade.mjs';
 import { currentTimeline, dayRange, engineForRun, engineMix, engineNote, engineText, loadTimeline, summarizeEngines } from '../engine-version.mjs';
 
 const DEFAULT = join(homedir(), 'Projects/sleight-wt/race-1017/*');
@@ -45,8 +49,13 @@ export function expandRounds(args) {
 }
 
 // One saved row graded again. Problems already recorded stay; the new rules can only turn a pass into a failure.
-export function regradeRow(row, { eventsText = '', stderr = '' } = {}) {
-  const problems = row.outcome?.ok ? [] : [...(row.outcome?.problems?.length ? row.outcome.problems : [row.outcome?.cell ?? 'no outcome recorded'])];
+// graders (opt-in, currentAnswerGraders()): where the task's current answer patterns differ from the saved ones, the saved answer
+// problems are dropped and the answer is checked against the current patterns, so the row can move either way.
+export function regradeRow(row, { eventsText = '', stderr = '', graders } = {}) {
+  const saved = graderId(row.task), wanted = graders?.get(row.task.name);
+  const swap = wanted && runnerGradesAnswer(row.task) && graderId(wanted) !== saved;
+  const recorded = row.outcome?.ok ? [] : [...(row.outcome?.problems?.length ? row.outcome.problems : [row.outcome?.cell ?? 'no outcome recorded'])];
+  const problems = swap ? [...recorded.filter(p => !isAnswerProblem(p)), ...answerProblems(wanted, row.run?.result?.result)] : recorded;
   const calls = eventsText ? browserEvidence(eventsText).successfulCalls : row.successfulBrowserCalls ?? row.run?.evidence?.successfulCalls ?? null;
   if (!(calls >= 1) && !problems.includes('no successful browser tool call')) problems.push(calls == null ? 'browser calls not recorded' : 'no successful browser tool call');
   problems.push(...raceProblems({ task: row.task, site: row.site, answer: row.run?.result?.result }).filter(p => !problems.includes(p)));
@@ -55,18 +64,19 @@ export function regradeRow(row, { eventsText = '', stderr = '' } = {}) {
   const cover = eventsText ? coverEvidence({ eventsText, readings: [row.cover, row.coverRun] }) : row.coverEvidence ?? null;
   return { task: row.task.name, arm: row.surface, seconds: row.wallMs / 1000, passed, problems, successfulCalls: calls,
     recordedOk: row.outcome?.ok === true, errorClass: passed ? null : row.errorClass ?? runErrorClass({ eventsText, stderr }),
+    graders: swap ? { used: 'current', saved, current: graderId(wanted), passedSaved: regradeRow(row, { eventsText, stderr }).passed } : { used: 'saved', saved },
     ...(cover ? { coverEvidence: cover } : {}) };
 }
 
 let staticTimeline;
-export function loadRound(dir, { timeline = staticTimeline ??= loadTimeline() } = {}) {
+export function loadRound(dir, { timeline = staticTimeline ??= loadTimeline(), graders } = {}) {
   const browser = readJson(join(dir, 'browser.json'))?.browser;
   let saved = readJson(join(dir, 'results.json'));
   if (!Array.isArray(saved)) saved = readdirSync(dir).map(n => readJson(join(dir, n, 'run.json'))).filter(r => r?.outcome && r.task);
   const span = readJson(join(dir, 'engine.json'));
   const born = span ? undefined : birthMs(join(dir, 'commits.json'));
   const when = row => (Number.isFinite(row.run?.started) ? { startMs: row.run.started, endMs: row.run.finished } : { startMs: born, dated: 'inferred' });
-  const rows = saved.map(row => ({ ...regradeRow(row, { eventsText: readText(join(dir, row.task.name, 'events.jsonl')), stderr: readText(join(dir, row.task.name, 'stderr.txt')) }),
+  const rows = saved.map(row => ({ ...regradeRow(row, { eventsText: readText(join(dir, row.task.name, 'events.jsonl')), stderr: readText(join(dir, row.task.name, 'stderr.txt')), graders }),
     engine: engineForRun({ recorded: row.engineVersion ?? span, ...when(row) }, timeline) }));
   const starts = saved.map(row => row.run?.started).filter(Number.isFinite), ends = saved.map(row => row.run?.finished).filter(Number.isFinite);
   const engine = engineForRun({ recorded: span, ...(starts.length ? { startMs: Math.min(...starts), endMs: Math.max(...ends) } : { startMs: born, dated: 'inferred' }) }, timeline);
@@ -126,12 +136,19 @@ export function coveredRows(rounds) {
 
 // Rows that passed as recorded and fail under the race rules.
 export const flipped = rounds => rounds.flatMap(r => r.rows.filter(row => row.recordedOk && !row.passed).map(row => ({ round: r.name, browser: r.browser, ...row })));
+// Rows whose verdict the current answer patterns change, either way (--current-graders).
+export const regraded = rounds => rounds.flatMap(r => r.rows.filter(row => row.graders?.used === 'current' && row.graders.passedSaved !== row.passed)
+  .map(row => ({ round: r.name, browser: r.browser, ...row })));
+export const gradersLine = current => current
+  ? `Answer patterns: CURRENT ${ANSWER_GRADER_FILE} (opt-in --current-graders). Rows whose saved patterns differ are checked again in both directions.`
+  : `Answer patterns: as saved with each run (the default). --current-graders checks saved answers against the current ${ANSWER_GRADER_FILE}.`;
 
 export const coverLabel = excludeCovered => excludeCovered ? 'Cover exclusions: ON (opt-in --exclude-covered)' : 'Cover exclusions: OFF (default)';
 
-function print(rounds, scored, { excludeCovered = false } = {}) {
+function print(rounds, scored, { current = false, excludeCovered = false } = {}) {
   const n = x => x == null ? '-' : x.toFixed(1), col = s => ' ' + String(s).padStart(36);
   console.log(coverLabel(excludeCovered));
+  console.log(gradersLine(current) + '\n');
   console.log('Rounds:');
   const roundEngine = e => (e.version ? `engine ${e.version} ${e.provenance}` : `engine ${e.provenance}${e.candidates ? ` (${e.candidates.join(' or ')})` : ''}`) +
     (e.startedAt ? `, ${dayRange(e.startedAt, e.endedAt)}${e.dated === 'inferred' ? ' (date inferred)' : ''}` : ', no date');
@@ -160,16 +177,23 @@ function print(rounds, scored, { excludeCovered = false } = {}) {
   const flips = flipped(rounds);
   console.log(`\nPasses as recorded that fail under the race rules (${flips.length}):`);
   for (const f of flips) console.log(`  ${f.round} ${f.arm} ${f.task}: ${f.problems.join('; ')}`);
+  if (!current) return;
+  const moved = regraded(rounds);
+  console.log(`\nRows the current answer patterns change (${moved.length}):`);
+  for (const m of moved) console.log(`  ${m.round} ${m.arm} ${m.task}: ${m.graders.passedSaved ? 'pass' : 'fail'} with saved patterns ${m.graders.saved}, ` +
+    `${m.passed ? 'pass' : `fail (${m.problems.join('; ')})`} with current ${m.graders.current}`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2), dirs = args.filter(a => !a.startsWith('--'));
-  const timeline = currentTimeline();
-  const rounds = expandRounds(dirs.length ? dirs : [DEFAULT]).map(dir => loadRound(dir, { timeline }));
+  const timeline = currentTimeline(), current = args.includes('--current-graders');
+  const graders = current ? currentAnswerGraders() : undefined;
+  const rounds = expandRounds(dirs.length ? dirs : [DEFAULT]).map(dir => loadRound(dir, { timeline, graders }));
   if (args.includes('--mark')) for (const r of rounds) if (r.detected) writeFileSync(join(r.dir, 'harness-failure.json'),
     JSON.stringify({ ...r.detected, decided: 'automatic (race-score --mark)', at: new Date().toISOString() }, null, 2));
   const excludeCovered = args.includes('--exclude-covered');
   const scored = scoreRounds(rounds, { excludeCovered });
-  if (args.includes('--json')) console.log(JSON.stringify({ coverExclusions: excludeCovered, rounds, browsers: scored, flipped: flipped(rounds), covered: coveredRows(rounds) }, null, 1));
-  else print(rounds, scored, { excludeCovered });
+  if (args.includes('--json')) console.log(JSON.stringify({ coverExclusions: excludeCovered, graders: current ? `current ${ANSWER_GRADER_FILE}` : 'saved', rounds,
+    browsers: scored, flipped: flipped(rounds), covered: coveredRows(rounds), ...(current ? { regraded: regraded(rounds) } : {}) }, null, 1));
+  else print(rounds, scored, { current, excludeCovered });
 }

@@ -18,7 +18,7 @@ import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
 import { startRoundAllow, allowPlan } from './chrome-allow.mjs';
 import { watchCover, windowCover } from './window-cover.mjs';
-import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure, coverEvidence, coverText } from './real-gate-grade.mjs';
+import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure, coverEvidence, coverText, withAnswerGraders, currentAnswerGraders } from './real-gate-grade.mjs';
 import { taskSupport, raceBundles, isCodexSurface, isCodexSleightSurface, runsCodexExec, sleightKind, codexModelFor } from './support.mjs';
 import { CODEX_SLEIGHT_HOME, ensureCodexSleightHome, writeCodexSleightConfig, approvalSummary, PROXY, SLEIGHT_MCP } from '../codex-sleight.mjs';
 import { engineSpan, readEngine } from '../engine-version.mjs';
@@ -277,7 +277,11 @@ export async function admitRealGate(plan, { terminal = terminalAncestor } = {}) 
 // Runtime injection is only for offline lifecycle tests, never CLI/environment input.
 export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, tasks,
   runtime = {} }) {
-  tasks ??= JSON.parse(readFileSync(resolve(mcpRoot, args.tasks || 'tools/agents/codex-h2h.json'), 'utf8'));
+  // The answer patterns come from sleight's task file (real-gate-grade.mjs ANSWER_GRADER_FILE); each row saves the task it ran with.
+  if (!tasks) {
+    const graders = currentAnswerGraders();
+    tasks = JSON.parse(readFileSync(resolve(mcpRoot, args.tasks || 'tools/agents/codex-h2h.json'), 'utf8')).map(task => withAnswerGraders(task, graders));
+  }
   let plan = realGatePlan({ args, tasks, repo, mcpRoot });
   if (args['dry-run']) {
     // Read-only previews of what launch records: the app version and the benchmark profile's folder.
