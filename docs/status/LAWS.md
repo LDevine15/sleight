@@ -133,8 +133,9 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   Haiku are Claude models, and subagents run Claude models, never Sol or Astra. Item, branch and agent names never reuse "Sol"
   or "Astra". Work items get their own IDs, such as CR1 for a Codex race fix.
 - Build work runs in parallel Codex lanes, and sleight-arch also builds, merges and tests directly whenever that is faster or
-  better. Claude reviewers take reviews and the investigations sleight-arch or the owner needs. Claude usage isn't quota-limited
-  (owner, 2026-10-15), within reason.
+  better. Claude reviewers take reviews and the investigations sleight-arch or the owner needs. SUPERSEDED (owner, 2026-10-15):
+  Claude usage isn't quota-limited. Builds, fix rounds and integrations go to Sol codex lanes by default, and Claude keeps reviews
+  and Fable studies (owner, 2026-10-19, after 10% of the weekly Claude quota went in 2-3 hours).
 - Lanes run only the tests for what they changed, and sleight-arch runs the full check once per merge. Full checks in every lane
   loaded the Mac enough to hold up the owner's other projects (owner, 2026-10-14).
 - SUPERSEDED (owner, 2026-10-15): benchmark Claude arms ran on the owner's API key, from the $200 monthly credit.

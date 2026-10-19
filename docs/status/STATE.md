@@ -3,12 +3,13 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 16:35 UTC)
+## Banner (2026-10-19 17:58 UTC, flushed before the owner's clear)
 
-Goal (owner): 1.3.0 is out. 1.3.1 validation runs now, then sleight holds at 1.3.1 while the owner uses it. 1.4.0 (analytics,
-Cursor plugin, AM1 speed map) builds on its own branch. The video isn't tied to any release (owner, 2026-10-19). Published results show their engine
-version and UTC date, and engine updates no longer force reruns (LAWS). The ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`)
-records every result and ruling in time order.
+Goal (owner, 2026-10-19): push 1.3.1 public today when every check is done (flag A/Bs and AS-3 included, the release push is
+approved), then validate and release 1.4.0 the same day under the LAWS release-validation rule (reuse 1.3.1's runs as the A
+side). The ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`) records every result and ruling in time order. Builds, fix rounds
+and integrations go to Sol codex lanes (Claude used 10% of the owner's week in 2-3 h). Sonnet-high reviews and Fable studies
+stay on Claude.
 
 **1.3.0, released 2026-10-19.** Tag `v1.3.0` on `ca2188b4`, public `main` and the private repo, GitHub release from the CHANGELOG.
 Public CI runs on Node 24 (the Node ChatGPT bundles). The private repo's org ruleset 22105960 refuses workflow edits; the owner
@@ -20,55 +21,47 @@ on Haiku and on Opus. Helium on the release build (2026-10-19, rel130 r1-r5, own
 against FowlBrowser's 343.6 s, every pair within 20% at 5 runs (README updated, hub not regenerated yet). Known 1.3.0 problems found
 since: the startup cache (HS1) and the promo-code Apply stop (PG2), both in known-problems.
 
-**1.3.1, `claude/p131-integration` 8aba0c2b (local; 6ba7204b pushed with a full check of 8969 tests, 0 fail).** Merged since:
-CF2 (compat probe uses the launcher's surfaces), NT1 (fixture cleanup and window placement, the cause of today's native STOPs),
-DR1 with its review fixes (drag cover check passes a window only when the hit test returns the target's own process and the
-window is a /System/Library agent; the Accessibility text move had failed every time since 2026-10-11), SW1b (one-window count
-uses windows a Space holds; Safari keeps a hidden launch window), and the live-check harness G1 (ghost hand H5/H6/H8), G2 (AS-3
-A/B), G3 (flag A/Bs), G4 (Electron qualification runner). Every merge had a Sonnet-high review. In today's live checks PG3 stopped
-before the unpriced payment in 3 of 3 (a Safari sleight rerun is queued). SW1 passed demoid 2 of 3, though its pop-up line fired
-0 of 3, which SW1b fixes. The compat engine tier needs a rerun with CF2. By the owner's call every check runs today, the flag A/Bs and AS-3
-included, and then sleight-arch pushes 1.3.1 public with the history rewrite (prepared, dry run PASS, ledger/p131/rewrite-*).
-The owner delegated all Electron qualification cards on benchmark VS Code copies (LAWS). Live queue after the native A/B:
-compat, PG3 rerun, the film's T1 take, then race-131 to the merged candidate with a full check, the flag A/Bs (bench/flag-ab.command,
-~1 h 35 min), AS-3 (~1 h 25 min), Electron (G4), ghost hand H5/H6/H8, SW1b and DR1 rechecks, Codex turbo, the version bump, the
-Chrome release pass with the TU1 census, and the release. Runbook: ledger/p130/live-runbook-1019.md.
+**1.3.1, `claude/p131-integration` 60fe1319 (pushed private; full check 9075 tests, 0 fail).** Everything for 1.3.1 is merged
+and reviewed: PG2, PG3, compat check and workflow, CF2, CF3, FS split (FS2 Firefox keyboard new-tab route on by default, FS1
+description text behind `SLEIGHT_FS=1` after the native A/B lost passes), NT1, DR1 with review fixes, SW1b, TU1, HS1, the live
+harnesses G1 (ghost hand H5/H6/H8), G2 (AS-3), G3 (flag A/Bs), G4 (Electron). Live results today: PG3/PG2 stopped before the
+unpriced payment 4 of 4; SW1 demoid 2 of 3 before SW1b; compat engine tier PASS, live tier failed on check bugs (CF3 fixed them,
+rerun owed). The native FS A/B summed medians of 371.5 s off and 364.3 s on. Runbook: ledger/p130/live-runbook-1019.md.
+Still to run, in order: the flag A/Bs (running now), the film T1 take and the compat live rerun. After them come the AS-3 A/B (`bench/fowl/as3-ab.command`,
+~1 h 25 min, bar 2.5 s per task), Electron qualification (G4 runner; the owner delegated all its cards on benchmark VS Code
+copies), ghost hand H5/H6/H8, SW1b and DR1 rechecks (textedit-window-drag, demoid) and Codex turbo (cxt1, perhaps with one
+hook-trust prompt for the owner). Flags that measure faster become defaults, then the version bump, Chrome release pass with the TU1 census,
+CHANGELOG date, public push with the history rewrite (prepared and dry-run: ledger/p131/rewrite-REPORT.md, rewrite-identity.sh,
+push-rewritten.sh; also rewrite OLD_EMAIL=x for two commits; ruleset toggled around the pushes), tag, GitHub release, update
+the owner's installed copy.
 
-**1.4.0, `claude/p140` 130e7ebe (local).** Merged: 1.3.1 8aba0c2b, CR1+CR3 (cover exclusion opt-in, default output identical;
-inject-mail grader), CR2, AM1E, CC6 (premise wrong, ~0 s; fixed a stale-tree race), CC8 (drag binds printed labels by AXValue,
-owner ruling in LAWS), X7, README and hub rows H1 (charts), H2 (hub layout), H4 (README 188 to 106 lines, INSTALL.md for agents),
-H5 (diagram, demo pipeline), H6 (agent-install harness under sandbox-exec). Published numbers unchanged by the merges. Still in review
-or fixing are X5 (CC4/CC5, whose payment-gate bypass on resend is fixed, with small follow-ups left), X6 (turbo LB1-LB3, Sol lane fixing),
-X1/H3 Pages, X3 analytics, X4 held-out fixtures (Sol lanes fixing), TABC a4990639 (CC7+LB4+LB6, reviewed), CC13, LB7 (behind a
-review), X8 LB5. Owner steps: one-time logins for the agent-install test (`node bench/agent-install.mjs --setup` prints them) and the
-Cursor sign-in when its live install runs. The owner's calls cover Pages from main /docs on github.io, README demo from the film's trick take,
-Cursor listed after its live install, "tested on macOS 27, minimum not measured".
+**1.4.0, `claude/p140` e58329e1 (pushed private).** Merged: 1.3.1 60fe1319, analytics, Cursor, AM1 and AM1E, CR1+CR3, CR2,
+CC1-CC3 (list helper), CC4/CC5 (X5), CC6, CC7+LB4+LB6 (tabc), CC8 (drag labels by AXValue, LAWS), LB1-LB3 (X6 turbo), LB5 (X8
+select_window suffix), LB8 (X7 census), X3 analytics validation, X4 held-out fixtures, README and hub H1-H6 plus H3 Pages, and
+the CHANGELOG 1.4.0 section. Every branch had a Sonnet-high review; reviews found and fixed a payment-gate bypass on resend
+(X5), a drag pass-through hole (DR1), approvals widened for every world pass (X4) and more. Sol lane X11b trimmed the window-selection notice so the lean prompt
+ratio is 0.70992 (limit 0.71), with 702 focused tests passing. LB7 (`claude/p140-lb7` 12ca040a) passed its fifth review (MERGE-OK) but reuses ~0% of reads on this Mac (it
+stays off while another engine client runs), so sleight-arch did NOT merge it: no measured win. 1.4.0 validation (ROADMAP):
+full check, release pass, B rounds against 1.3.1's runs, both sides on the new CC held-out tasks and demoid, analytics (X3),
+Pages (`gh api` enable from main /docs after the public push), H7 taste pass (fresh Sonnet read, then the owner). Owner steps,
+none blocking the push: one-time logins for the agent-install test (`node bench/agent-install.mjs --setup` prints them), the
+Cursor sign-in for its first install (Cursor is listed only after it passes).
 
-**ROADMAP 4b Sol pair, done 14:03Z** (race-131, 1.3.1 327fa383, Safari and Firefox x3, wall sums of 12 tasks). Safari: sleight
-inside Codex 10, 9, 8 of 12 (739.5, 798.9, 791.1 s), codex-sol 8, 7, 8 (801.2, 734.7, 827.2 s). Firefox: sleight inside Codex 10,
-9, 8 (569.8, 870.8, 585.3 s), codex-sol 10, 10, 9 (698.5, 940.0, 772.8 s). On the unpriced checkout codex-sol paid 6 of 6 and
-sleight inside Codex 0 of 6. sleight's repeated misses (form-settings and its Helium twin "nothing submitted", demoid,
-inject-mail) become loss-study items once FS native ends.
+**Running across the clear (Terminal windows and nohup lanes keep running).**
+- `race-1017/block-flags.command` (pid 89050): the flag A/Bs on race-131 at 60fe1319 (started 17:34:53Z, 5 rounds, ~1 h 35 min,
+  logs `race-1017/flags.log`, manifest `flags-manifest.tsv`, score with `node bench/flag-ab.mjs score` from p131-int). It pauses on
+  a STOP with `race-1017/flags-pause`.
+- `race-1017/cap-t1b.command` (pid 99021): waits for block-flags' "done", then the film T1 take via the runner in
+  `~/Projects/sleight-wt/p131-t1` (c30fcf5d), log `~/Movies/sleight-film/t1-take.log`. Send loc arch the folder, take length and
+  frame-delta numbers after.
+- Worktrees: race-131 at 60fe1319 (the A/B build), race-fx at 1f6efff2 (1.3.0), p131-int, p140, p140-* and p131-* branch worktrees.
 
-**Running: `race-1017/block-helium.command` (Terminal, from 14:29Z, lid open, owner away).** Helium top-ups to 5 runs for
-FowlBrowser on form-settings, form-settings-helium, demoid, mobile, inject-order, inject-mail, wikipedia and mdn (owner's go).
-The harness won't start a round while the owner's Helium or Chrome is open. The block deleted `CLEAR` and touches it at the end,
-and `race-1017/pause3` pauses it.
-**FS native half, blocked.** Both fresh rounds (`native-fs4-*`, 14:26Z) stopped at textedit-two-windows cleanup, because TextEdit pid
-55100 is a bench leftover from 2026-10-18 22:12 local (windows `Target-97d3bf15.txt` and an unsaved "Untitled 6"), and fixture
-recovery refuses an app the run didn't launch. Asked the owner whether to quit it without saving. Then rerun the native half
-fresh with `block-native2.command` (it waits for a check log, so drop that line first).
-- The race watchdog `race-1017/watchdog.sh` (pid 63290, nohup), harmless while rounds run.
-- Worktrees: race-fx at the release build 1f6efff2, race-131 at 327fa383.
+**Launch film.** T0b recorded and approved by loc arch (sRGB tagging and name scrubbing added). T1 runner built (plain "Thursday"
+front window, Chess 1157x900, payment-free Tidewell checkout); three attempts stopped in setup (Chess open, Chess width, Safari
+marker), all fixed. T2 race take (sleight turbo vs FowlBrowser, one task) not built yet. loc arch renders only while
+`race-1017/CLEAR` exists and holds `/tmp/sleight-hold` per segment: ask loc arch before removing a hold.
 
-**Launch film.** No progress since 2026-10-19 00:58Z (LoC 50f50d58, animatic v0 scene and renderer). loc arch renders only while
-`race-1017/CLEAR` exists. Delete it before each timed block and touch it when one ends. The owner ruled the trick prompt is typed
-by script (2026-10-19), so the owner doesn't have to be present for captures. After block-native2 ends, cap1 (`claude/p130-cap1`
-2bed084f, run from Terminal) records the 5 s test take for loc arch, and the take list (T1 trick, T2 race) follows its go. The take list is in loc arch's message of 14:28Z.
-
-**Owner items.** The owner has none open and is away with the lid open (2026-10-19 ~14:25Z).
-
-**Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
+**Opt-in flags still opt-in (A/B running 2026-10-19):** `SLEIGHT_FS=1` (FS1 only), `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
 `SLEIGHT_COMPACT_CONFIRMATIONS=1` (wording approved by the owner).
 
@@ -82,7 +75,7 @@ and a force-quit leaves a "Recovered" fixture. Before an Office window, check th
 `Report-*` or `Inventory-*` recovered document with Word scripting (`close ... saving no`), never AX presses. Puddle gives 10-minute
 gaps between windows and wants 15 minutes' notice before a long one. Its spin guard renices spinning waiters (nice 20).
 
-How work runs. Sonnet-high agents build and review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
+How work runs. Sol codex lanes build, Sonnet-high agents review, and sleight-arch integrates and runs one full check per merge (`npm run check`,
 with `PATH="$HOME/.local/bin:$PATH"` so `claude plugin validate` uses 2.1.289). Every real-page test needs `SLEIGHT_LIVE_DOM_TEST=1`.
 Benchmark windows come from Puddle's architect. Ask with a length and a cap, start on "HOLD live", and release with one fresh
 touch of `/tmp/sleight-bench-done`. The scripts in `ledger/claims/GATE2/` (gate5.sh with `REPO`, `SPECS`, `PREFIX` and `MODEL`) do the touch.
