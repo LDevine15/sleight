@@ -168,6 +168,9 @@ native claim and the browser race run as Mac load allows, so that Electron's run
    7b9e6227) and of the Safari and Firefox race and AS-3 tasks x3 (A is today's 1.3.1 rounds), both sides on the new held-out CC
    tasks and on demoid (its race prompt changed), then analytics, Pages and the Codex race fix rechecks. Cursor and the public
    agent-install run follow the push and don't block it.
+   Owner, 2026-10-19 ~19:45Z: every loss gets improved as far as we can before the 1.4.0 B rounds run. Those rounds should show
+   the best build. Studies feeding that: model-side thinking and narration (MT), the native and checkout losses (NL, CK) and
+   Firefox's before-action guard reads (GR1). Their measured items are built into 1.4.0 before validation starts.
 6. The AM1 speed map of app classes, in 1.4.0 (owner, 2026-10-19). Its VS Code and Word fixtures still fail setup (AM1E designs the
    wait for a late accessibility tree).
 7. The ghost hand (owner, 2026-10-16): when sleight acts in a background app, a small translucent hand glides to the point in
