@@ -7,17 +7,22 @@ import { fixture, skip } from './fixtures/cr4-real.mjs';
 import { createFillFields } from '../plugins/sleight/lib/direct-browser/fill.mjs';
 import { createActionRunner, inspectTarget } from '../plugins/sleight/lib/direct-browser/act.mjs';
 import { backgroundClick } from '../plugins/sleight/lib/direct-browser/page.mjs';
-import { snapshot } from '../plugins/sleight/lib/direct-browser/snapshot.mjs';
+import { snapshot, acknowledgeSnapshot, snapshotRefBinding } from '../plugins/sleight/lib/direct-browser/snapshot.mjs';
 
 async function setup(t, html, observeTabs = false) {
   const f = await fixture(t, html, {}, { observeTabs }), { page } = f.entry;
+  await page.waitForLoadState('load');
   const runSteps = createActionRunner({ check: () => 'allow', snapshot, backgroundClick });
   const fill = createFillFields({ check: () => 'allow', runSteps, inspectElement: inspectTarget });
   const ref = async selector => {
-    await snapshot(page);
-    const tree = await page.locator(selector).ariaSnapshot({ mode: 'ai' });
-    const match = tree.match(/\[ref=(e\d+)\]/);
-    assert.ok(match, tree); return match[1];
+    // Deliver public refs as the worker does. A private locator snapshot neither
+    // acknowledges delivery nor preserves the full page's latest ref listing.
+    const read = await snapshot(page);
+    assert.equal(acknowledgeSnapshot(page, read.number), true);
+    for (const [, ref] of read.text.matchAll(/\[ref=(e\d+)\]/g)) {
+      if (await snapshotRefBinding(page, ref).evaluate((el, selector) => el.matches(selector), selector)) return ref;
+    }
+    assert.fail('No observed ref for ' + selector + ':\n' + read.text);
   };
   return { ...f, page, ref, runSteps, fill: async (selector, value) => fill(f.entry, [{ ref: await ref(selector), value }], {}, {}) };
 }
@@ -47,9 +52,13 @@ const aria = `<div role="listbox" aria-label="Languages" aria-multiselectable="t
   <div role="option" aria-selected="true">Portuguese (Brazil)</div>
   <div role="option" aria-selected="false">Japanese</div>
 </div><script>
-window.selections=[];
+window.selections=[]; window.clicks=[]; window.retainedClicks=[]; window.contextClicks=0;
+languages.addEventListener('contextmenu',()=>contextClicks++);
 languages.addEventListener('click',event=>{
   const row=event.target.closest('[role="option"]'); if(!row)return;
+  retainedClicks.push(event);
+  clicks.push({button:event.button,ctrlKey:event.ctrlKey,metaKey:event.metaKey,trusted:event.isTrusted,
+    controlState:event.getModifierState('Control'),metaState:event.getModifierState('Meta')});
   if(!event.metaKey&&!event.ctrlKey) for(const other of languages.children)other.setAttribute('aria-selected','false');
   row.setAttribute('aria-selected',String(row.getAttribute('aria-selected')!=='true'));
   selections.push([...languages.children].filter(o=>o.getAttribute('aria-selected')==='true').map(o=>o.textContent));
@@ -79,6 +88,12 @@ for (const modifier of ['cmd', 'ctrl']) test(`real browser_act ${modifier} toggl
   const result = await f.runSteps(f.entry, [{ do: 'click', ref: await f.ref('[role="option"]:last-child'), modifier }], {});
   assert.equal(result.stoppedAt, null, result.lines.join('\n'));
   assert.deepEqual(await selected(f.page), ['English', 'Portuguese (Brazil)', 'Japanese']);
+  const expected = [{ button: 0, ctrlKey: modifier === 'ctrl', metaKey: modifier === 'cmd', trusted: true,
+    controlState: modifier === 'ctrl', metaState: modifier === 'cmd' }];
+  assert.deepEqual(await f.page.evaluate(() => clicks), expected);
+  assert.deepEqual(await f.page.evaluate(() => retainedClicks.map(event => ({button:event.button,ctrlKey:event.ctrlKey,
+    metaKey:event.metaKey,trusted:event.isTrusted,controlState:event.getModifierState('Control'),metaState:event.getModifierState('Meta')}))), expected);
+  assert.equal(await f.page.evaluate(() => contextClicks), 0);
   assert.equal(f.context.pages().length, pages);
   assert.deepEqual((await f.tabState()).filter(tab => tab.active).map(tab => tab.id), before.filter(tab => tab.active).map(tab => tab.id));
 });
@@ -96,11 +111,14 @@ const refusedTargets = [
   ['ancestor control', '<button><span id="target">Button</span></button>', 'ctrl'],
 ];
 for (const [name, html, modifier] of refusedTargets) test('real modified click refuses ' + name + ' without a popup or tab activation', { skip, timeout: 30000 }, async t => {
-  const f = await setup(t, html, true), before = await f.tabState(), pages = f.context.pages().length;
+  // Custom targets need an accessible role and name to survive the AI snapshot's
+  // generic-node folding. Keep the native label/link/control ancestry under test.
+  const observed = html.replace(/<(div|span|label) id="target"/, '<$1 role="option" aria-label="Target" id="target"');
+  const f = await setup(t, observed, true), before = await f.tabState(), pages = f.context.pages().length;
   let popups = 0; f.page.on('popup', () => popups++);
   const steps = [{ do: 'click', ref: await f.ref('#target'), modifier }];
   if (modifier === 'shift') await assert.rejects(f.runSteps(f.entry, steps, {}), /modifier/);
-  else assert.match((await f.runSteps(f.entry, steps, {})).lines[0], /not run/);
+  else assert.match((await f.runSteps(f.entry, steps, {})).lines[0], /not run: modified clicks require Command or Control/);
   assert.equal(popups, 0); assert.equal(f.context.pages().length, pages);
   assert.deepEqual((await f.tabState()).filter(tab => tab.active).map(tab => tab.id), before.filter(tab => tab.active).map(tab => tab.id));
 });

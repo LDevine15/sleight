@@ -400,7 +400,7 @@ test('CR8 pointer events stay plain when their first modifier read is after disp
   for (const type of types) assert.equal(f.window.captureListeners[type]?.size ?? 0, 0, type + ' listener removed');
 });
 
-for (const modifier of ['Meta', 'Control']) test(`explicit ${modifier} clicks keep the requested modifier visible after retirement`, t => {
+for (const [modifier, control] of [['Meta', true], ['Control', true], ['Control', false]]) test(`explicit ${modifier} clicks keep the requested modifier visible after retirement (native Control: ${control})`, t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const f = hookFixture(), option = new f.Element('div', { role: 'option' }), events = [];
   try {
@@ -408,7 +408,7 @@ for (const modifier of ['Meta', 'Control']) test(`explicit ${modifier} clicks ke
     for (const key of ['Meta', 'Control']) for (const fn of f.window.listeners.keydown)
       fn(Object.assign(new f.Event(), { key, type: 'keydown', isTrusted: true }));
     for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
-      const event = Object.assign(new f.MouseEvent(), { type, nodes: [option], isTrusted: true, control: true, meta: true });
+      const event = Object.assign(new f.MouseEvent(), { type, nodes: [option], isTrusted: true, control, meta: true });
       for (const fn of f.window.captureListeners[type] ?? []) fn(event);
       event.nodes = []; events.push(event);
     }
@@ -425,6 +425,24 @@ test('explicit modifier clicks on links refuse before a native foreground action
     const link = new f.Element('a', { href: '/destination' });
     assert.deepEqual(f.hook.prepare(link, 'explicit-link', 1000, false, 'Shift'), { kind: 'refuse', reason: 'modifier' });
   } finally { f.hook.off(); }
+});
+
+test('the Control carrier changes only trusted events on its armed target and restores native getters on teardown', () => {
+  const f = hookFixture(), option = new f.Element('div', { role: 'option' }), other = new f.Element('div');
+  const read = event => [event.ctrlKey, event.metaKey, event.getModifierState('Control'), event.getModifierState('Meta')];
+  const event = (node, trusted) => Object.assign(new f.MouseEvent(), { nodes: [node], isTrusted: trusted, control: false, meta: true });
+  const retained = event(option, true);
+  try {
+    f.hook.prepare(option, 'carrier', 1000, false, 'Control');
+    for (const fn of f.window.listeners.keydown) fn(Object.assign(new f.Event(), { key: 'Meta', type: 'keydown', isTrusted: true }));
+    assert.deepEqual(read(event(other, true)), [false, true, false, true]);
+    assert.deepEqual(read(event(option, false)), [false, true, false, true]);
+    assert.deepEqual(read(retained), [true, false, true, false]);
+    f.hook.finish('carrier');
+    assert.deepEqual(read(event(option, true)), [false, true, false, true]);
+    assert.deepEqual(read(retained), [true, false, true, false]);
+  } finally { f.hook.off(); }
+  assert.deepEqual(read(retained), [false, true, false, true]);
 });
 
 for (const modifier of ['Meta', 'Control']) test(`explicit ${modifier} refuses links, controls and forwarded submits throughout the target tree`, () => {

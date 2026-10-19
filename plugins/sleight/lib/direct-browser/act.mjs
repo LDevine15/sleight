@@ -307,7 +307,10 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
             const aim = await aimedAt(locator);
             // The rules read the element inside gate(); the page confirms those words are the ones it sealed.
             if (trusted) { target.verifySeal = verifySeal; await gate(); ctx.beginInput(target); }
-            const modifiers = step.modifier === undefined ? {} : { modifiers: [...new Set([...(extra.modifiers ?? []), clickModifiers[step.modifier]])] };
+            // Chromium on macOS turns native Control+left into a context click.
+            // Carry Control on Meta there; the sealed hook exposes ctrlKey to the page.
+            const physical = step.modifier === 'ctrl' && process.platform === 'darwin' ? 'Meta' : clickModifiers[step.modifier];
+            const modifiers = step.modifier === undefined ? {} : { modifiers: [...new Set([...(extra.modifiers ?? []), physical])] };
             begin(); return locator.click({ ...options, ...extra, ...aim, ...modifiers });
           }, { ...(step.modifier === undefined ? {} : { modifier: clickModifiers[step.modifier] }) });
           const pressKey = keys => trusted ? ctx.pressTarget(target, step.key, options, keys) : step.ref ? locator.press(step.key, options) : page.keyboard.press(step.key);

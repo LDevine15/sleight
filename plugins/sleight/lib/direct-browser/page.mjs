@@ -261,23 +261,35 @@ export function popupHook(options) {
     } catch { return false; /* Not a mouse event: the browser reads no modifier from it. */ }
   };
   const isCancelable = event => { try { return (cancelableGetter ? cancelableGetter.call(event) : event.cancelable) !== false; } catch { return true; } };
+  // On macOS a Control click uses the injected Meta as its carrier, keeping the
+  // trusted event a left click. Only events bound to that explicit arm expose it
+  // as Control. The weak maps preserve the flags on retained events after finish.
+  const exposeModifier = (event, name, actual, meta) => !hide(event, name) &&
+    (actual || name === 'Control' && visibleModifiers.get(event) === 'Control' && meta());
   for (const name of ['ctrlKey', 'metaKey']) {
     const descriptor = getOwn(MouseEvent.prototype, name);
-    replace(MouseEvent.prototype, name, { ...descriptor, get() { return hide(this, name === 'ctrlKey' ? 'Control' : 'Meta') ? false : descriptor.get.call(this); } });
+    replace(MouseEvent.prototype, name, { ...descriptor, get() {
+      return exposeModifier(this, name === 'ctrlKey' ? 'Control' : 'Meta', descriptor.get.call(this), () => mouseGetters[3][1].call(this));
+    } });
   }
   const modifierState = MouseEvent.prototype.getModifierState;
   replace(MouseEvent.prototype, 'getModifierState', { configurable: true, writable: true, value(name) {
-    return (name === 'Control' || name === 'Meta') && hide(this, name) ? false : modifierState.call(this, name);
+    return name === 'Control' || name === 'Meta'
+      ? exposeModifier(this, name, modifierState.call(this, name), () => modifierState.call(this, 'Meta')) : modifierState.call(this, name);
   } });
   // Enter pressed with the modifier held (a keyboard-started link or form) hides it the same way.
   if (globalThis.KeyboardEvent) {
+    const keyMeta = getOwn(KeyboardEvent.prototype, 'metaKey').get;
     for (const name of ['ctrlKey', 'metaKey']) {
       const descriptor = getOwn(KeyboardEvent.prototype, name);
-      replace(KeyboardEvent.prototype, name, { ...descriptor, get() { return hide(this, name === 'ctrlKey' ? 'Control' : 'Meta') ? false : descriptor.get.call(this); } });
+      replace(KeyboardEvent.prototype, name, { ...descriptor, get() {
+        return exposeModifier(this, name === 'ctrlKey' ? 'Control' : 'Meta', descriptor.get.call(this), () => keyMeta.call(this));
+      } });
     }
     const keyModifierState = KeyboardEvent.prototype.getModifierState;
     replace(KeyboardEvent.prototype, 'getModifierState', { configurable: true, writable: true, value(name) {
-      return (name === 'Control' || name === 'Meta') && hide(this, name) ? false : keyModifierState.call(this, name);
+      return name === 'Control' || name === 'Meta'
+        ? exposeModifier(this, name, keyModifierState.call(this, name), () => keyModifierState.call(this, 'Meta')) : keyModifierState.call(this, name);
     } });
   }
   replace(Event.prototype, 'preventDefault', { configurable: true, writable: true, value() {

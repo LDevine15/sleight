@@ -67,7 +67,7 @@ for (const [modifier, want] of [['cmd', 'Meta'], ['ctrl', 'Control']])
     } });
     const result = await f.run(f.tab, [{ do: 'click', ref: 'e1', modifier }], {});
     assert.equal(result.stoppedAt, null); assert.equal(guarded, 1);
-    assert.deepEqual(f.actions[0][2].modifiers, ['ControlOrMeta', want]);
+    assert.deepEqual(f.actions[0][2].modifiers, ['ControlOrMeta', process.platform === 'darwin' && modifier === 'ctrl' ? 'Meta' : want]);
     assert.equal(f.checks[0].target.ref, 'e1');
   });
 
