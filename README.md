@@ -9,11 +9,11 @@
 </p>
 
 sleight is an MIT-licensed plugin for Claude Code, Codex and other MCP clients. Ask it to work out a sum in Calculator
-or edit a document, and it operates that app in the background. The Chess clip below shows the actions it takes.
+or edit a document, and it operates that app in the background.
 
 You need an Apple Silicon Mac and the [ChatGPT desktop app](https://chatgpt.com/download/) in `/Applications` for its
-computer-use software. Use your coding agent's account or API access; a ChatGPT account and a separate Codex sign-in
-aren't required by sleight. We haven't measured a typical task's token cost or price.
+computer-use software. sleight uses your coding agent's account or API access and doesn't need a ChatGPT account or separate
+Codex sign-in. We haven't measured a typical task's token cost or price.
 
 <a id="install-validation"></a>
 
@@ -64,7 +64,7 @@ To install by hand, follow [INSTALL.md](INSTALL.md). If Computer Use is already 
 plugin is enough. Otherwise run `"<installPath>/bin/sleight-mcp" setup` from the installed plugin folder, as described
 under [Computer Use](INSTALL.md#computer-use). It uses ChatGPT's Node runtime. npm isn't needed.
 
-It drives native apps through the engine, Electron apps such as VS Code, Slack and Spotify on the same native path, Chrome
+sleight drives native apps through the engine, Electron apps such as VS Code, Slack and Spotify on the same native path, Chrome
 and Helium through turbo, which reads and operates web pages directly (on by default after a one-time switch in Chrome), and
 Safari and Firefox through the engine's accessibility path. The engine refuses terminals and OpenAI's own apps ([how it works](docs/how-it-works.md)).
 

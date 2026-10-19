@@ -4,17 +4,17 @@ Coding agents: [read Agent notes first](#agent-notes).
 
 ## Installing it yourself
 
-Install the ChatGPT app first, then use the section for your coding agent below. Run the doctor, run setup if it asks,
+Install the ChatGPT app first, then use the section for your coding agent. Run the doctor, run setup if it asks,
 allow the macOS permissions, and start a new agent session. If Computer Use is already on in ChatGPT or Codex, skip setup.
 `installPath` means the installed sleight plugin folder, reported by your host's plugin listing.
 `setup` runs OpenAI's helper installer and opens Accessibility and Screen Recording for your approval.
 
 The [install validation limits](README.md#install-validation) apply here. Setup asks for an administrator's password or
-Touch ID. Chrome's browser connection also needs its debugging switch and your consent. These steps require you at the Mac.
+Touch ID, and Chrome's browser connection needs its debugging switch and your consent, so you need to be at the Mac.
 
 sleight is MIT-licensed and uses your coding agent's account or API access. It doesn't need a ChatGPT account or separate
 Codex sign-in. We haven't measured typical tokens or money per task, or a complete install's disk and background CPU cost.
-The ChatGPT app must be installed. Operation with its UI quit is not established here.
+The ChatGPT app must be installed, and we haven't established that sleight works while the app's UI is quit.
 
 ## Agent notes
 
@@ -78,7 +78,7 @@ differs in Codex is in [other hosts](docs/other-hosts.md#codex).
 
 ## Cursor
 
-Cursor is not listed as a supported host in the README until its first live install passes. The following route is
+Cursor is not listed as a supported host in the README until its first live install passes. This route is
 unverified. It needs a signed-in cursor-agent 2026.09.10 or later:
 
 ```bash
@@ -149,5 +149,5 @@ user was working in stays in front. In Codex on 2026-10-19 this took 22.5 s.
 | Codex | `codex plugin marketplace upgrade sleight && codex plugin add sleight@sleight`, then a new session | `codex plugin remove sleight@sleight && codex plugin marketplace remove sleight` |
 | Other MCP clients | `git pull --ff-only` in the clone, then reconnect | Remove the `mcpServers` entry and the clone |
 
-The Codex update has been checked against a local marketplace only. [Privacy](docs/privacy.md#deleting-everything) lists
+We've checked the Codex update against a local marketplace only. [Privacy](docs/privacy.md#deleting-everything) lists
 the files sleight keeps on the Mac and how to delete them.
