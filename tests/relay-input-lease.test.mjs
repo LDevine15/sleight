@@ -839,12 +839,17 @@ const SHOP_TITLE = 'sleight benchmark — Sign in · Tidewell Demo Shop';
 const shopTree = safariTree('Sign in · Tidewell Demo Shop', SHOP), popupTree = safariTree('DemoID', POPUP, '127.0.0.1:5421/t/demoid/demoid/authorize');
 const safariResult = (id, text) => firefoxResult(id, text, 'com.apple.Safari');
 const settled = () => new Promise(resolve => setTimeout(resolve, 20));
-// `titles`: the app's windows getApp's health probe counts at the first read.
-async function safariHarness(t, { select, tree = shopTree, titles = [SHOP_TITLE] } = {}) {
+// The health probe's answers as app-health.js gives them: one window carries no titles (it reads titles only for two or
+// more), and allWindows counts every Space.
+const ONE = { status: 'responding', windows: 1, allWindows: 1, onScreen: 1 };
+const TWO = { status: 'responding', windows: 2, windowTitles: [SHOP_TITLE, 'Personal — Mail'], allWindows: 2, onScreen: 2 };
+// `probes`: the health probe's answers for successive getApp reads; the last one repeats.
+async function safariHarness(t, { select, tree = shopTree, probes = [ONE] } = {}) {
   const { harness } = setup(t);
   const target = { appId: 'com.apple.Safari', app: 'Safari', title: SHOP_TITLE, url: null };
+  let probe = 0;
   const h = harness('safari', { fresh: true, changeReview: false,
-    spaceProbe: async () => ({ status: 'responding', windows: titles.length, windowTitles: titles }), ...(select ? { localTools: {
+    spaceProbe: async () => probes[Math.min(probe++, probes.length - 1)], ...(select ? { localTools: {
     tools: [SELECT_WINDOW_TOOL], target: async () => target,
     call: async () => ({ content: [{ type: 'text', text: JSON.stringify({ ok: true, target }) }] }),
   } } : {}) });
@@ -854,6 +859,10 @@ async function safariHarness(t, { select, tree = shopTree, titles = [SHOP_TITLE]
   h.forwarded.length = h.received.length = 0;
   return h;
 }
+async function readResult(h, id, tree, code = 'await app.getAXState()') {
+  h.send(rpc(id, 'js', { code })); await settled();
+  h.reply(safariResult(h.forwarded.at(-1).id, tree)); await settled();
+}
 async function clickResult(h, id, reply) {
   h.send(rpc(id, 'js', { code: 'await app.click(4); await app.getAXState()' }));
   await settled();
@@ -862,7 +871,8 @@ async function clickResult(h, id, reply) {
   await settled();
   return noteText(h.received.at(-1));
 }
-const POPUP_LINE = /Your last read showed the app's only window, so an action since opened this one \(a pop-up, say\), part of the task in "sleight benchmark — Sign in · Tidewell Demo Shop" in Safari\.$/;
+const POPUP_LINE = /An earlier read counted "sleight benchmark — Sign in · Tidewell Demo Shop" in Safari as the app's only window, so this newer one belongs to its task \(a pop-up, say\)\.$/;
+const PLAIN = /The window it shows now is "sleight benchmark — DemoID" in Safari\.$/;
 test('a pop-up an action brought up is tied to the window it came from, and so is the window it returns to', async t => {
   for (const select of [false, true]) {
     const h = await safariHarness(t, { select });
@@ -873,13 +883,15 @@ test('a pop-up an action brought up is tied to the window it came from, and so i
     assert.match(opened, POPUP_LINE, `select ${select}`);
     // The consent click closes the pop-up, and Safari shows the shop window again.
     const back = await clickResult(h, 'consent', safariResult('consent', safariTree('Account · Tidewell Demo Shop', SHOP)));
-    assert.match(back, /The window it shows now is "sleight benchmark — Account · Tidewell Demo Shop" in Safari\. It has the window ID of "sleight benchmark — Sign in · Tidewell Demo Shop" in Safari, the pop-up's opener\.$/, `select ${select}`);
+    assert.match(back, /The window it shows now is "sleight benchmark — Account · Tidewell Demo Shop" in Safari\. It has the ID of "sleight benchmark — Sign in · Tidewell Demo Shop" in Safari, the pop-up's opener\.$/, `select ${select}`);
+    // After a selection the pop-up's result released it, so the next action goes through.
+    h.send(rpc('next', 'js', { code: 'await app.click(4)' })); await settled();
+    assert.equal(h.forwarded.at(-1)?.id, 'next', `select ${select}`);
   }
 });
 test('the window count also comes from a first call that reads a property after getApp (Haiku b9-r2)', async t => {
   const { harness } = setup(t);
-  const h = harness('safari', { fresh: true, changeReview: false,
-    spaceProbe: async () => ({ status: 'responding', windows: 1, windowTitles: [SHOP_TITLE] }) });
+  const h = harness('safari', { fresh: true, changeReview: false, spaceProbe: async () => ONE });
   h.send(rpc('read', 'js', { code: 'let safari = await cua.getApp("com.apple.Safari"); safari.windows ?? null;' }));
   await settled();
   for (let i = 0; i < 3 && h.forwarded.length; i++) {
@@ -893,38 +905,54 @@ test('the window count also comes from a first call that reads a property after 
   h.reply(safariResult('signin', popupTree)); await settled();
   assert.match(noteText(h.received.at(-1)), POPUP_LINE);
 });
-test('a pop-up under its opener\'s title and URL still gets the note and the line', async t => {
+test('a handle read of the same window between the count and the click keeps it; a pop-up under its opener\'s title gets the note', async t => {
   const h = await safariHarness(t);
-  const opened = await clickResult(h, 'same', safariResult('same', safariTree('Sign in · Tidewell Demo Shop', POPUP)));
-  assert.match(opened, /^sleight: this call acted on "sleight benchmark — Sign in · Tidewell Demo Shop" in Safari\. The window it shows now is "sleight benchmark — Sign in · Tidewell Demo Shop" in Safari\. Your last read showed/m);
+  // Codex b12-r3 read the window again through its handle after Cmd+T.
+  await readResult(h, 'again', safariTree('Start Page', SHOP));
+  const opened = await clickResult(h, 'same', safariResult('same', safariTree('Start Page', POPUP)));
+  assert.match(opened, /^sleight: this call acted on "sleight benchmark — Start Page" in Safari\. The window it shows now is "sleight benchmark — Start Page" in Safari\. An earlier read counted/m);
 });
-test('no pop-up claim without a one-window count, for a window the session has seen, the same ID, no ID, or a failed call', async t => {
-  // The first read counted two windows: the other one may be the owner's, so a new ID in front claims nothing.
-  let h = await safariHarness(t, { titles: [SHOP_TITLE, 'Personal — Mail'] });
-  let note = await clickResult(h, 'two', safariResult('two', popupTree));
-  assert.match(note, /The window it shows now is "sleight benchmark — DemoID" in Safari\.$/);
-  // The read showed a window other than the one the probe counted.
-  h = await safariHarness(t, { titles: ['Personal — Mail'] });
-  assert.doesNotMatch(await clickResult(h, 'other', safariResult('other', popupTree)), /Your last read/);
+test('no pop-up claim without a one-window count of the window acted on, or for a seen ID, the same ID, no ID, or a failed call', async t => {
+  // The read counted two windows: the other one may be the owner's.
+  let h = await safariHarness(t, { probes: [TWO] });
+  assert.match(await clickResult(h, 'two', safariResult('two', popupTree)), PLAIN);
+  // One window on this Space, another on a different Space (AXWindows leaves it out, CGWindowList counts it).
+  h = await safariHarness(t, { probes: [{ ...ONE, allWindows: 2 }] });
+  assert.match(await clickResult(h, 'space', safariResult('space', popupTree)), PLAIN);
+  // A later getApp read whose probe gave no answer, or counted two windows, drops the count.
+  for (const later of [undefined, { status: 'timeout' }, TWO]) {
+    h = await safariHarness(t, { probes: [ONE, later] });
+    await readResult(h, 'later', shopTree, 'app = await cua.getApp("Safari")');
+    assert.match(await clickResult(h, 'stale', safariResult('stale', popupTree)), PLAIN, JSON.stringify(later));
+  }
+  // The count is used once: a second new window from the shop gets the plain note.
+  h = await safariHarness(t);
+  assert.match(await clickResult(h, 'first', safariResult('first', popupTree)), POPUP_LINE);
+  await clickResult(h, 'close', safariResult('close', shopTree));
+  assert.match(await clickResult(h, 'second', safariResult('second', safariTree('DemoID', 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE'))),
+    /The window it shows now is "sleight benchmark — DemoID" in Safari\.$/);
+  // The action ran in a window other than the counted one: a window the session saw after the count, through a read whose
+  // probe gave no answer.
+  h = await safariHarness(t, { probes: [ONE, null] });
+  await readResult(h, 'other', safariTree('Mail', 'BBBBBBBB-BBBB-CCCC-DDDD-EEEEEEEEEEEE'));
+  assert.match(await clickResult(h, 'fromother', safariResult('fromother', popupTree)), /The window it shows now is "sleight benchmark — DemoID" in Safari\.$/);
   // Back to a window this session already read.
   h = await safariHarness(t);
-  h.send(rpc('popup', 'js', { code: 'await app.getAXState()' })); h.reply(safariResult('popup', popupTree)); await settled();
-  h.send(rpc('shop', 'js', { code: 'await app.getAXState()' })); h.reply(safariResult('shop', shopTree)); await settled();
-  note = await clickResult(h, 'switch', safariResult('switch', popupTree));
-  assert.match(note, /The window it shows now is "sleight benchmark — DemoID" in Safari\.$/);
-  // The same window ID under a new title (a navigation in the same window).
+  await readResult(h, 'popup', popupTree);
+  await readResult(h, 'shop', shopTree);
+  assert.match(await clickResult(h, 'switch', safariResult('switch', popupTree)), PLAIN);
+  // The same window ID under a new title (a navigation in the same window), and with Safari's IsSecure flipped.
   h = await safariHarness(t);
-  assert.doesNotMatch(await clickResult(h, 'nav', safariResult('nav', safariTree('Cart · Tidewell Demo Shop', SHOP))), /Your last read|window ID of/);
+  assert.doesNotMatch(await clickResult(h, 'nav', safariResult('nav', safariTree('Cart · Tidewell Demo Shop', SHOP).replace('IsSecure=false', 'IsSecure=true'))), /earlier read counted|the pop-up's opener/);
   // Roots without an ID (Firefox) keep the plain note.
   h = await safariHarness(t, { tree: shopTree.replace(/, ID: [^,]+/, '') });
-  note = await clickResult(h, 'noid', safariResult('noid', popupTree.replace(/, ID: [^,]+/, '')));
-  assert.match(note, /The window it shows now is "sleight benchmark — DemoID" in Safari\.$/);
-  // A result that failed says nothing about where a window came from.
+  assert.match(await clickResult(h, 'noid', safariResult('noid', popupTree.replace(/, ID: [^,]+/, ''))), PLAIN);
+  // A result that failed says nothing about where a window came from (popup-window.test.mjs covers the dropped count).
   h = await safariHarness(t);
   h.send(rpc('fail', 'js', { code: 'await app.click(4); await app.getAXState()' })); await settled();
   h.reply({ jsonrpc: '2.0', id: 'fail', result: { isError: true, content: [{ type: 'text', text: popupTree }], _meta: { 'codex/toolSurface': { app: { appId: 'com.apple.Safari' } } } } });
   await settled();
-  assert.doesNotMatch(noteText(h.received.at(-1)), /Your last read|window ID of/);
+  assert.doesNotMatch(noteText(h.received.at(-1)), /earlier read counted|the pop-up's opener/);
 });
 function setup(t) {
   const directory = mkdtempSync(join(tmpdir(), 'sleight-relay-lease-'));

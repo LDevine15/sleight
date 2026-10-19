@@ -17,9 +17,9 @@
 
 ### Windows
 
-- When an action brings up a pop-up window, such as a sign-in window in Safari, the result says it is part of the task in
+- When an action brings up a pop-up window, such as a sign-in window in Safari, the result says it belongs to the task in
   the window it came from. A later result says when the window in front has that window's ID again. This needs an app that
-  prints window IDs and a read since which the app had one window. Not yet run live.
+  prints window IDs, and a read that counted the window the action ran in as the app's only window. Not yet run live.
 - When `select_window` doesn't find a match, it lists window titles whole up to 120 characters. It cut them at 60, and a Safari
   profile window's 69-character title couldn't be copied.
 

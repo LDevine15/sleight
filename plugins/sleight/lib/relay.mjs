@@ -4179,8 +4179,9 @@ export function createRelay({
     let windowNote;
     // The tree Claude saw before this result, which the change block below replaces.
     const treeBefore = lastTree;
-    // The app's window count this read's health probe took (preHealth is cleared before the input-lease block).
-    const readHealth = msg.method === undefined ? preHealth.get(msg.id) : undefined;
+    // The app's window count this read's health probe took (preHealth is cleared before the input-lease block): null when
+    // the probe gave no answer in time, undefined when the call had no probe.
+    const readHealth = msg.method === undefined && preHealth.has(msg.id) ? preHealth.get(msg.id) ?? null : undefined;
     const confirmedBrowser = msg.method === undefined && browserCalls.has(msg.id) && browserReply(msg);
     if (confirmedBrowser && !resultFailed) clickResults.observe(msg.result);
     if (browserCalls.has(msg.id) && msg.result?.content?.some(item => item.type === 'text' &&
@@ -4467,7 +4468,8 @@ export function createRelay({
       // A pop-up the action brought up, or the window it returns to (SW1, popup-window.mjs). It gets the note below even
       // under its opener's title and URL, and the selected-window path's "outcome unconfirmed" note gets the same line.
       const popupLine = call.key && window && !msg.result?.isError ? popups.note(leaseWindow, { ...window, rootId: shownId }) : popups.see(shownId);
-      if (call.read && window && !msg.result?.isError) popups.count(window.app, readHealth, window.title, shownId);
+      if (call.read && window && !msg.result?.isError) popups.count(window.app, readHealth, shownId);
+      if (msg.error || msg.result?.isError) { popups.drop(leaseWindow?.app); popups.drop(window?.app); }
       // An action whose result shows another window of the same app (a close, a new window). Said
       // plainly, or a "no change" about the window now in front reads as a failed action: Claude
       // probed after closing a Chess game in 4/6 runs (2026-10-08).
@@ -4475,7 +4477,7 @@ export function createRelay({
           !sameWindow(leaseWindow, window) && !newTabOf(leaseWindow, treeBefore, window, text.slice(text.lastIndexOf('Window: '))))) {
         windowNote = `sleight: this call acted on ${documentLabel(leaseWindow)}. The window it shows now is ${documentLabel(window)}.`;
       }
-      if (popupLine && windowNote) windowNote += ' ' + popupLine;
+      if (popupLine && windowNote) { windowNote += ' ' + popupLine; trace('popup-window', { id: msg.id, app: window.app, opener: popupLine.startsWith('It has') }); }
       const previous = leaseWindow;
       if (guardStop && window && selectedWindow && window.app !== selectedWindow.app) clearSelection();
       leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}), ...(shownId ? { rootId: shownId } : {}) } : undefined;

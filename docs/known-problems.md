@@ -694,10 +694,12 @@ native reference, and oversized first results defer the browser reference while 
   result for a window list without the dedicated window, and stopped before the consent click. gpt-6-luna said it wouldn't use
   the pop-up, then called `select_window` on the dedicated window's loaded title. The race's own PreToolUse hook
   (`bench/fowl/origin-hook.mjs`) refused that, because it allows only the gate's marker title. The prompt says "never use any
-  other browser window", and it doesn't mention pop-ups. In 1.3.1 the window note says a pop-up is part of the task in the
+  other browser window", and it doesn't mention pop-ups. In 1.3.1 the window note says a pop-up belongs to the task in the
   window it came from, and later says when a window has the opener's ID. That needs a window ID on the root line (Firefox
-  prints none) and an app read since which the app had one window. With more windows open, a window that comes to the front
-  doesn't get that line, since it may be the owner's. No live run has checked the new note yet. The proposed race change is one
+  prints none), a read whose probe counted the acted-on window as the app's only one on any Space, and an action's own
+  result showing the new window. A pop-up first shown by a separate read doesn't get the line. With more windows open, a
+  window that comes to the front doesn't get it either, since it may be the owner's. We haven't measured whether
+  CGWindowList counts Safari's one window as one, and no live run has checked the new note yet. The proposed race change is one
   prompt clause for every arm: "a pop-up that a page in it opens is part of the task".
 - The race scorer's harness-failure check knows three error classes (`approval refused`, `no daemon`, `no tools`). A round that
   fails on some other shared cause, such as every call answering "Turbo is unavailable", is scored as the arm's failures until
