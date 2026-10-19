@@ -1,5 +1,5 @@
 // Offline preparation and readback for one short native benchmark pass. Never starts a live run.
-import { constants, closeSync, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { constants, closeSync, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -36,26 +36,44 @@ const callId = value => integer(value, Number.MAX_SAFE_INTEGER) || typeof value 
 
 function isolatedConfig(config) {
   try {
+    const armHome = realpathSync(process.env.BENCH_ARM_HOME || join(homedir(), 'Library/Caches/sleight-bench'));
     const owner = join(homedir(), '.claude');
     const canonicalOwner = existsSync(owner) ? realpathSync(owner) : owner;
     if (typeof config !== 'string' || !isAbsolute(config) || resolve(config) !== config ||
         config === homedir() || owner.startsWith(config + '/') || config === owner || config.startsWith(owner + '/') ||
         canonicalOwner.startsWith(config + '/') || config === canonicalOwner || config.startsWith(canonicalOwner + '/') ||
-        realpathSync(config) !== config) fail('ANALYTICS_CONFIG');
+        realpathSync(config) !== config || !config.startsWith(armHome + '/')) fail('ANALYTICS_CONFIG');
     const info = lstatSync(config);
     if (!info.isDirectory() || info.uid !== process.getuid() || info.mode & 0o022) fail('ANALYTICS_CONFIG');
     return config;
   } catch { fail('ANALYTICS_CONFIG'); }
 }
 
+const configMarker = config => join(config, '.sleight-analytics.lock');
+const reservation = (bank, log) => JSON.stringify({ bank, log }) + '\n';
+
+function checkReservation(bank, config, log) {
+  const path = configMarker(config), info = lstatSync(path);
+  if (checkLocalFile(path, config) !== reservation(bank, log)) fail('ANALYTICS_CONFIG_BUSY');
+  return info;
+}
+
 /** Each pass owns its settings, traces and log name. An existing isolated arm login may be reused. */
 export function prepareAnalytics({ tempRoot = '/private/tmp', claudeConfig } = {}) {
   if (claudeConfig !== undefined) isolatedConfig(claudeConfig);
   const bank = realpathSync(mkdtempSync(join(realpathSync(tempRoot), 'lane-claude-analytics-')));
-  for (const folder of ['arm', 'claude', 'traces']) mkdirSync(join(bank, folder), { mode: 0o700 });
-  const log = `bench-analytics-${randomUUID()}.jsonl`;
-  writeFileSync(join(bank, 'plan.json'), JSON.stringify({ version: 1, log, ...(claudeConfig !== undefined ? { claudeConfig } : {}) }) + '\n', { mode: 0o600, flag: 'wx' });
-  return bank;
+  try {
+    for (const folder of ['arm', 'claude', 'traces']) mkdirSync(join(bank, folder), { mode: 0o700 });
+    const log = `bench-analytics-${randomUUID()}.jsonl`;
+    writeFileSync(join(bank, 'plan.json'), JSON.stringify({ version: 1, log, ...(claudeConfig !== undefined ? { claudeConfig } : {}) }) + '\n', { mode: 0o600, flag: 'wx' });
+    // Atomic reservation survives the preparation CLI exiting and remains through driver cleanup and readback.
+    try { writeFileSync(configMarker(claudeConfig ?? join(bank, 'claude')), reservation(bank, log), { mode: 0o600, flag: 'wx' }); }
+    catch (error) { fail(error.code === 'EEXIST' ? 'ANALYTICS_CONFIG_BUSY' : 'ANALYTICS_CONFIG'); }
+    return bank;
+  } catch (error) {
+    rmSync(bank, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export function checkLocalFile(path, root) {
@@ -82,10 +100,19 @@ export function analyticsArm(bank, { root = ROOT } = {}) {
     if (!exact(plan, Object.hasOwn(plan, 'claudeConfig') ? ['version', 'log', 'claudeConfig'] : ['version', 'log']) ||
         plan.version !== 1 || !/^bench-analytics-[0-9a-f-]{36}\.jsonl$/.test(plan.log)) fail('ANALYTICS_BANK');
     const config = Object.hasOwn(plan, 'claudeConfig') ? isolatedConfig(plan.claudeConfig) : join(bank, 'claude');
+    checkReservation(bank, config, plan.log);
     return { cwd: join(bank, 'arm'), env: { CLAUDE_CONFIG_DIR: config }, log: plan.log,
       server: { command: join(root, 'plugins/sleight/bin/sleight-mcp'), env: { SLEIGHT_ACTION_LOG: plan.log,
         SLEIGHT_TRACE: join(bank, 'traces'), SLEIGHT_TRACE_CODE: '0', SLEIGHT_HAND: '0', SLEIGHT_SURFACES: 'computer', SLEIGHT_APPROVAL_PROMPT: 'client' } } };
   } catch { fail('ANALYTICS_BANK'); }
+}
+
+/** Call only after the driver and its children have exited and readback has finished. Never steals a reservation. */
+export function releaseAnalytics(bank) {
+  const arm = analyticsArm(bank), config = arm.env.CLAUDE_CONFIG_DIR;
+  const owned = checkReservation(bank, config, arm.log), current = lstatSync(configMarker(config));
+  if (current.dev !== owned.dev || current.ino !== owned.ino) fail('ANALYTICS_CONFIG_BUSY');
+  unlinkSync(configMarker(config));
 }
 
 export function writeAnalyticsMcp(bank, options) {
@@ -275,7 +302,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (command === 'prepare' && bank === undefined) console.log(prepareAnalytics());
     else if (command === 'prepare' && bank === '--claude-config' && rest.length === 1) console.log(prepareAnalytics({ claudeConfig: rest[0] }));
     else if (command === 'check' && bank && !rest.length) console.log(JSON.stringify(checkAnalytics(bank), null, 2));
-    else fail('ANALYTICS_USAGE: prepare [--claude-config DIRECTORY] | check BANK');
+    else if (command === 'release' && bank && !rest.length) releaseAnalytics(bank);
+    else fail('ANALYTICS_USAGE: prepare [--claude-config DIRECTORY] | check BANK | release BANK');
   } catch (error) {
     console.error(/^ANALYTICS_[A-Z_]+(?::.*)?$/.test(error.message) ? error.message : 'ANALYTICS_CHECK_FAILED');
     process.exitCode = 1;

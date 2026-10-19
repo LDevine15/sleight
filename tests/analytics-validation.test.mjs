@@ -1,12 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { prepareAnalytics, analyticsArm, writeAnalyticsMcp, parseStats, checkPrivacy, validateAnalytics, checkLocalFile } from '../bench/analytics-validation.mjs';
+import { prepareAnalytics, analyticsArm, releaseAnalytics, writeAnalyticsMcp, parseStats, checkPrivacy, validateAnalytics, checkLocalFile } from '../bench/analytics-validation.mjs';
 import { ActionLog } from '../plugins/sleight/lib/action-outcomes.mjs';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
+
+function armHome(t) {
+  const parent = registerTemp(t, realpathSync(mkdtempSync('/tmp/x3-arm-home-')));
+  const previous = process.env.BENCH_ARM_HOME;
+  process.env.BENCH_ARM_HOME = parent;
+  t.after(() => {
+    if (previous === undefined) delete process.env.BENCH_ARM_HOME;
+    else process.env.BENCH_ARM_HOME = previous;
+  });
+  return parent;
+}
 
 const row = (changes = {}) => ({ time: '2026-10-19T12:00:02.000Z', pid: 41, call: 1, tool: 'js', app: 'Calculator',
   kind: 'click', result: 'ok', outcome: 'no visible change', ms: 2000, ...changes });
@@ -54,19 +65,37 @@ test('MCP config writes cannot follow a link or truncate an owner file', t => {
   assert.equal(writeAnalyticsMcp(fresh), path, 'an unused bank can retry after login preflight');
 });
 
-test('passes reuse an isolated login config but keep separate logs, traces and MCP descriptors', t => {
-  const parent = registerTemp(t, realpathSync(mkdtempSync('/tmp/x3-login-')));
+test('passes reserve a login config until release, then reuse it with separate artifacts', t => {
+  const parent = armHome(t);
   const claudeConfig = join(parent, 'arm/claude');
   mkdirSync(claudeConfig, { recursive: true, mode: 0o700 });
   const settings = join(claudeConfig, 'settings.json');
   writeFileSync(settings, '{"loginFixture":true}', { mode: 0o600 });
-  const banks = [prepareAnalytics({ tempRoot: parent, claudeConfig }), prepareAnalytics({ tempRoot: parent, claudeConfig })];
-  const arms = banks.map(bank => analyticsArm(bank));
+  const first = prepareAnalytics({ tempRoot: parent, claudeConfig });
+  const firstArm = analyticsArm(first);
+  const firstMcp = writeAnalyticsMcp(first);
+  assert.throws(() => prepareAnalytics({ tempRoot: parent, claudeConfig }), /ANALYTICS_CONFIG_BUSY/);
+  const blocked = spawnSync(process.execPath, ['bench/analytics-validation.mjs', 'prepare', '--claude-config', claudeConfig], {
+    encoding: 'utf8', env: process.env,
+  });
+  assert.equal(blocked.status, 1, blocked.stderr);
+  assert.equal(blocked.stderr.trim(), 'ANALYTICS_CONFIG_BUSY');
+  assert.equal(blocked.stdout, '');
+  assert.equal(analyticsArm(first).log, firstArm.log);
+  releaseAnalytics(first);
+  const second = prepareAnalytics({ tempRoot: parent, claudeConfig });
+  const arms = [firstArm, analyticsArm(second)];
   assert.equal(arms[0].env.CLAUDE_CONFIG_DIR, claudeConfig);
   assert.equal(arms[1].env.CLAUDE_CONFIG_DIR, claudeConfig);
   assert.notEqual(arms[0].log, arms[1].log);
   assert.notEqual(arms[0].server.env.SLEIGHT_TRACE, arms[1].server.env.SLEIGHT_TRACE);
-  assert.notEqual(writeAnalyticsMcp(banks[0]), writeAnalyticsMcp(banks[1]));
+  assert.notEqual(firstMcp, writeAnalyticsMcp(second));
+  assert.throws(() => analyticsArm(first), /ANALYTICS_BANK/);
+  assert.throws(() => releaseAnalytics(first), /ANALYTICS_BANK/);
+  assert.equal(analyticsArm(second).log, arms[1].log, 'an old bank cannot release the current reservation');
+  const released = spawnSync(process.execPath, ['bench/analytics-validation.mjs', 'release', second], { encoding: 'utf8', env: process.env });
+  assert.equal(released.status, 0, released.stderr);
+  assert.equal(released.stdout, '');
   assert.equal(readFileSync(settings, 'utf8'), '{"loginFixture":true}');
   const cli = spawnSync(process.execPath, ['bench/analytics-validation.mjs', 'prepare', '--claude-config', claudeConfig], {
     encoding: 'utf8', env: process.env,
@@ -77,7 +106,7 @@ test('passes reuse an isolated login config but keep separate logs, traces and M
 });
 
 test('persistent configs reject owner paths, links, unsafe permissions and changed plans', t => {
-  const parent = registerTemp(t, realpathSync(mkdtempSync('/tmp/x3-login-guard-')));
+  const parent = armHome(t);
   const claudeConfig = join(parent, 'claude'); mkdirSync(claudeConfig, { mode: 0o700 });
   for (const config of [homedir(), join(homedir(), '.claude'), join(homedir(), '.claude/child'), 'relative', join(parent, 'missing')]) {
     assert.throws(() => prepareAnalytics({ tempRoot: parent, claudeConfig: config }), /ANALYTICS_CONFIG/);
@@ -92,6 +121,75 @@ test('persistent configs reject owner paths, links, unsafe permissions and chang
   const plan = JSON.parse(readFileSync(join(bank, 'plan.json')));
   writeFileSync(join(bank, 'plan.json'), JSON.stringify({ ...plan, claudeConfig: join(homedir(), '.claude') }) + '\n');
   assert.throws(() => analyticsArm(bank), /ANALYTICS_BANK/);
+});
+
+test('persistent configs must resolve strictly inside the benchmark arm home', t => {
+  const parent = armHome(t);
+  const outside = registerTemp(t, realpathSync(mkdtempSync('/tmp/x3-other-project-')));
+  chmodSync(outside, 0o755);
+  const alias = join(parent, 'outside'); symlinkSync(outside, alias);
+  const sibling = registerTemp(t, parent + '-sibling'); mkdirSync(sibling, { mode: 0o755 });
+  for (const claudeConfig of [outside, parent, alias, sibling]) {
+    assert.throws(() => prepareAnalytics({ tempRoot: parent, claudeConfig }), /ANALYTICS_CONFIG/);
+  }
+  const claudeConfig = join(parent, 'claude'); mkdirSync(claudeConfig, { mode: 0o755 });
+  const bank = prepareAnalytics({ tempRoot: parent, claudeConfig });
+  const plan = JSON.parse(readFileSync(join(bank, 'plan.json')));
+  writeFileSync(join(bank, 'plan.json'), JSON.stringify({ ...plan, claudeConfig: outside }) + '\n');
+  assert.throws(() => analyticsArm(bank), /ANALYTICS_BANK/);
+});
+
+test('the default arm home rejects an unrelated project config without changing it', t => {
+  const home = registerTemp(t, realpathSync(mkdtempSync('/tmp/x3-default-home-')));
+  const claudeConfig = join(home, 'Library/Caches/sleight-bench/claude-cu/claude');
+  mkdirSync(claudeConfig, { recursive: true, mode: 0o700 });
+  const project = join(home, 'Projects/another-project/claude'); mkdirSync(project, { recursive: true, mode: 0o755 });
+  const settings = join(project, 'settings.json'); writeFileSync(settings, '{"owner":true}', { mode: 0o600 });
+  const env = { ...process.env, HOME: home }; delete env.BENCH_ARM_HOME;
+  const prepare = config => spawnSync(process.execPath, ['bench/analytics-validation.mjs', 'prepare', '--claude-config', config], { encoding: 'utf8', env });
+  const rejected = prepare(project);
+  assert.equal(rejected.status, 1, rejected.stderr);
+  assert.equal(rejected.stderr.trim(), 'ANALYTICS_CONFIG');
+  assert.equal(rejected.stdout, '');
+  assert.equal(readFileSync(settings, 'utf8'), '{"owner":true}');
+  const accepted = prepare(claudeConfig);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  registerTemp(t, accepted.stdout.trim());
+});
+
+test('simultaneous preparations admit only one process per config', async t => {
+  const parent = armHome(t), claudeConfig = join(parent, 'claude');
+  mkdirSync(claudeConfig, { mode: 0o700 });
+  const prepare = () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['bench/analytics-validation.mjs', 'prepare', '--claude-config', claudeConfig], { env: process.env });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', status => resolve({ status, stdout, stderr }));
+  });
+  const results = await Promise.all([prepare(), prepare()]);
+  assert.deepEqual(results.map(result => result.status).sort(), [0, 1]);
+  assert.equal(results.find(result => result.status === 1).stderr.trim(), 'ANALYTICS_CONFIG_BUSY');
+  const bank = registerTemp(t, results.find(result => result.status === 0).stdout.trim());
+  releaseAnalytics(bank);
+  const next = prepareAnalytics({ tempRoot: parent, claudeConfig });
+  assert.equal(analyticsArm(next).env.CLAUDE_CONFIG_DIR, claudeConfig);
+});
+
+test('missing, changed or linked reservations stop bank use and cannot be released', t => {
+  const bank = prepareAnalytics({ tempRoot: registerTemp(t, realpathSync(mkdtempSync('/tmp/x3-marker-'))) });
+  const marker = join(bank, 'claude/.sleight-analytics.lock'), content = readFileSync(marker, 'utf8');
+  writeFileSync(marker, '{}\n');
+  assert.throws(() => analyticsArm(bank), /ANALYTICS_BANK/);
+  assert.throws(() => releaseAnalytics(bank), /ANALYTICS_BANK/);
+  assert.equal(readFileSync(marker, 'utf8'), '{}\n');
+  unlinkSync(marker);
+  assert.throws(() => analyticsArm(bank), /ANALYTICS_BANK/);
+  const target = join(bank, 'target'); writeFileSync(target, content, { mode: 0o600 });
+  symlinkSync(target, marker);
+  assert.throws(() => releaseAnalytics(bank), /ANALYTICS_BANK/);
+  assert.equal(readFileSync(target, 'utf8'), content);
 });
 
 test('stats parser rejects missing, nonfinite, negative, unknown and malformed fields', () => {
