@@ -5,7 +5,7 @@ import { PassThrough } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
-import { enginePayment, namedAmount, createPaymentMessages } from '../plugins/sleight/lib/payment-gate.mjs';
+import { enginePayment, namedAmount, createPaymentMessages, paymentAction } from '../plugins/sleight/lib/payment-gate.mjs';
 import { createPaymentCard } from '../plugins/sleight/lib/payment-card.mjs';
 import { guardedCode, readCode, windowFromText } from '../plugins/sleight/lib/document-scope.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
@@ -656,4 +656,59 @@ test("PG3 attacks: a combo box in the browser's own sheet or in a page dialog th
   assert.equal(go(native)?.why, 'none');
   const aria = after(beforePay, 88, '89 dialog Pay $268.00 now?', ...combo.map(row => '\t' + row), '\t93 button Pay');
   assert.equal(go(aria)?.why, 'none');
+});
+
+// The PG3 security review (Sonnet, 2026-10-19).
+test('PG3 review: a combo box in a page dialog that names no payment stays gated', () => {
+  const combo = ['\t900 combo box (expanded, settable) Shipping address', '\t901 list Addresses', '\t\t902 text (selected) 12 Elm Street'];
+  const dialog = after(beforePay, 88, '89 dialog Review order', '\t90 text Total $268.00 will be charged', ...combo, '\t93 button Confirm');
+  assert.notEqual(enginePayment('pressKey', ['Return'], focus(dialog, '902 text (selected) 12 Elm Street'), gate('requested', prompt)), undefined);
+});
+
+test("PG3 review: Safari's left-out option doesn't pick while a sheet or dialog is open", () => {
+  const late = tree => enter(focus(tree, '1000 text (selected) 47 Juniper Court, Asheville, NC 28801'));
+  assert.equal(late(suggestions), undefined, 'control');
+  assert.equal(late(after(suggestions, 58, '950 dialog Pay $268.00 now?', '\t951 button Pay'))?.why, 'nocopy', 'page dialog');
+  assert.equal(late(after(suggestions, 84, '999 sheet Pay with card?', '\t998 button Pay'))?.why, 'nocopy', "the browser's sheet");
+});
+
+test("PG3 review: a combo box that shows a value picks only an option that holds it", () => {
+  const other = tree => tree.replace('Address, Value: 47 Juniper Court,', 'Address, Value: 12 Elm,');
+  const blank = tree => tree.replace('Address, Value: 47 Juniper Court,', 'Address,');
+  assert.equal(enter(other(suggestions))?.why, 'nocopy', "left-out option");
+  assert.equal(enter(other(oneDown))?.why, 'nocopy', 'focus on the option');
+  assert.equal(enter(focus(other(oneDown), comboBox.replace('Value: 47 Juniper Court', 'Value: 12 Elm')))?.why, 'nocopy', 'focus on the combo box');
+  assert.equal(enter(oneDown.replace('Address, Value: 47 Juniper Court,', 'Address, Value: 47 JUNIPER court,')), undefined, 'case differs');
+  assert.equal(enter(blank(suggestions)), undefined, 'no value');
+  assert.equal(enter(blank(oneDown)), undefined, 'no value, focus on the option');
+});
+
+test("PG3 review: Enter in Safari's email and phone fields is Enter in a field", () => {
+  assert.equal(enter(focus(suggestions, '19 email field (settable) Email, Value: jonah.whitfield@example.io'))?.why, 'nocopy', 'email');
+  assert.equal(enter(focus(suggestions, '21 telephone number field (settable) Phone, Value: (828) 555-0193'))?.why, 'nocopy', 'phone');
+  // A text row whose words end in "field" isn't a field.
+  assert.equal(enginePayment('click', [35], suggestions.replace('35 radio button Standard', '35 text a waxed field'), gate('requested', null)), undefined);
+});
+
+test('PG3 review: a selected option whose child names a payment is no pick', () => {
+  assert.equal(enter(after(oneDown, 30, '\t900 text Place order now'))?.why, 'nocopy');
+  assert.equal(enter(after(oneDown, 30, '\t900 text Portland')), undefined, 'control');
+});
+
+test('PG3 review: NumpadEnter, a line break key and a key name with stray spaces are Enter; a lone space is Space', () => {
+  for (const key of ['NumpadEnter', '\n', '\r', 'Return ', ' Enter', 'shift+NumpadEnter', ' ']) assert.equal(paymentAction('pressKey', [key]), true, JSON.stringify(key));
+  assert.equal(paymentAction('pressKey', ['Tab']), false);
+  const email = focus(suggestions, '19 email field (settable) Email, Value: jonah.whitfield@example.io');
+  for (const key of ['NumpadEnter', '\n', '\r', 'Return ']) assert.equal(enter(email, gate('requested', null), key)?.why, 'nocopy', JSON.stringify(key));
+  assert.equal(enter(suggestions, gate('requested', null), 'Return '), undefined, 'the pick with a stray space');
+});
+
+test("PG3 review: a stopped Enter on a listed option that goes ahead on the message's amount doesn't spend the payment", () => {
+  const stopped = oneDown.replace('Address, Value: 47 Juniper Court,', 'Address, Value: 12 Elm,');
+  const option = enter(stopped, gate('requested', named));
+  assert.equal(option?.allowed, 'message');
+  assert.equal(option.payment, false);
+  const field = enter(focus(suggestions, '17 text field (settable) Full name, Value: Jonah Whitfield'), gate('requested', named));
+  assert.equal(field?.allowed, 'message');
+  assert.equal(field.payment, true, 'Enter in a field beside card fields still counts');
 });
