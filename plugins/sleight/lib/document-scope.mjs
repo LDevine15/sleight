@@ -343,9 +343,9 @@ export function readCode(code, options = {}) {
 export function guardedCode(code, window, reason = /* notice */ 'Document scope stopped this action: window or URL changed. Read the window and ask the user with document_scope.', lease, options = {}) {
   // The lease needs a full header after the call. A read Claude made after its
   // last action already wrote one, so the guard reads again only without it.
-  const { reuseSetup, acknowledge, prompt, ...checks } = options;
+  const { reuseSetup, acknowledge, prompt, kernel, ...checks } = options;
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
-  return guardSetup({ window, reason, lease, ...checks }, { reuseSetup, acknowledge, prompt }) +
+  return guardSetup({ window, reason, lease, ...checks }, { reuseSetup, acknowledge, prompt, kernel }) +
     (options.browserCandidate ? '\nglobalThis.__sleightDocumentGuard.activeApp = undefined;' : '') + /* generated code */ `\n${code}
 {
   const guard = globalThis.__sleightDocumentGuard, last = guard.activeApp && guard.reads.get(guard.activeApp);
@@ -366,7 +366,7 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
 }`;
 }
 
-function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } = {}) {
+function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, kernel } = {}) {
   // Notice text the guard throws or writes, in its SLEIGHT_PROMPT wording.
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
   // Keep executable code in the runtime, never observations. The relay selects the small form
@@ -374,9 +374,13 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
   const install = reuseSetup ? '' : /* generated code */ `globalThis.__sleightDocumentGuardSetup = update => {
     const parse = ${windowFromText.toString()};
     const isCancel = ${isCancelAction.toString()};
-    const state = globalThis.__sleightDocumentGuard ||= {
+    ${kernel === undefined ? `const state = globalThis.__sleightDocumentGuard ||= {
       getApp: typeof cua.getApp === 'function' ? cua.getApp.bind(cua) : undefined, proxies: new WeakSet(), wrapped: new WeakMap()
-    };
+    };` : /* A host whose calls reach more than one kernel (Codex's sandbox states): state from another epoch is stale, so
+      start clean, keeping the raw getApp rather than binding a wrapper an earlier setup installed. */ `const __sleightGuardKernel = ${Number(kernel)};
+    const prior = globalThis.__sleightDocumentGuard;
+    const state = prior && prior.kernel === __sleightGuardKernel ? prior : (globalThis.__sleightDocumentGuard = { kernel: __sleightGuardKernel,
+      getApp: prior?.getApp ?? (typeof cua.getApp === 'function' ? cua.getApp.bind(cua) : undefined), proxies: new WeakSet(), wrapped: new WeakMap() });`}
     if (update) {
       state.guarded = true; state.expected = update.window; state.reason = update.reason;
       state.lease = update.lease;
