@@ -528,3 +528,19 @@ test('a checkout-only link on a cart with no card field is navigation, so it goe
   const withCard = cart('link Go to checkout, Value: 127.0.0.1:5420/checkout').replace('\t\t2 text', '\t\t6 text field Card number\n\t\t2 text');
   assert.equal(enginePayment('click', [5], withCard, gate('requested', null))?.why, 'nocopy');
 });
+
+test('PG2: only the page submit that follows Apply, enabled and in the same page, lets Apply go', () => {
+  const noPay = luna.replace(/^(\t*)(\d+) button Pay now\b.*$/m, '$1$2 text Pay now');
+  const go = tree => enginePayment('click', [82], tree, gate('requested', prompt));
+  assert.equal(go(noPay)?.why, 'none');
+  // The fixture's own Pay now, after Apply in the same page, is the submit.
+  assert.equal(go(luna), undefined);
+  for (const [name, tree] of [
+    ['disabled', after(noPay, 90, '200 button (disabled) Pay now')],
+    ['Description only', after(noPay, 90, '200 button Description: Pay')],
+    ['before Apply', noPay.replace(/^(\t*)(\d+) text Northbound Supply$/m, '$1$2 button Pay now')],
+    ['in a third-party frame', after(noPay, 90, '200 HTML Content Description: ad, URL: ad.test/', '\t201 button Pay now')],
+    ['in a dialog', after(noPay, 90, '200 dialog Offer', '\t201 button Pay now')],
+    ['a newsletter Subscribe', after(noPay, 90, '200 button Subscribe')],
+  ]) assert.equal(go(tree)?.why, 'none', name);
+});

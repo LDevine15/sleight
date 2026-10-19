@@ -65,7 +65,10 @@ export function enginePayment(name, args, text, payment, probe = false) {
     row.native = !!parent?.native || !parent?.web && /^(?:sheet|dialog|alert)\b/.test(body) || root && roots > 1;
     // A dialog only adds checks: the browser's own, or a page's role=dialog.
     row.modal = !!parent?.modal || row.native || /^(?:sheet|dialog|alert)\b/.test(body);
-    rows.set(Number(m[2]), row); stack.push(row);
+    row.id = Number(m[2]);
+    // The name the row shows itself, without a Description the page can set on an otherwise blank control.
+    row.ownName = parts[0].replace(/^[a-z][a-z ]*?(?: \([^)]*\))*(?: |$)/, '').replace(/^(?:Description|Help|Value): .*$/, '');
+    rows.set(row.id, row); stack.push(row);
   }
   const page = [...rows.values()].filter(row => row.web || row.modal);
   // press takes a key name or, like click, an element; text that is only spaces presses Space on a focused control.
@@ -99,11 +102,14 @@ export function enginePayment(name, args, text, payment, probe = false) {
   // A name the page sets can exempt only a button (never a div or group) with no pay or submit word, and not the only button
   // near the card fields (review N5): turbo's closed list (Apply, Remove, a stepper) and Cancel-like names.
   const exemptName = row => BUTTON.test(row.body) && (refundableName(row.name) || LEAVE.test(row.name.trim())) && !payWords(row);
-  // The only button near the card fields stays checked unless the page has a pay-worded button of its own elsewhere, which is
-  // then the submit (a promo code's Apply beside "Pay now" in the next block, race b9 and b12, 2026-10-19).
-  const payButton = row => BUTTON.test(row.body) && (paymentWords(row.label) || PAYS.test(row.label));
-  const exempt = row => exemptName(row) && !(near && buttons(near).length === 1 && under(near, row) &&
-    !page.some(other => other !== row && other.web && !under(near, other) && payButton(other)));
+  // The only button near the card fields stays checked unless the page's own submit follows it: an enabled button outside the
+  // block, later in the tree, in the same web area and outside any dialog, whose own name pays (a promo code's Apply beside
+  // "Pay now" in the next block, race b9 and b12, 2026-10-19; review PG2 tightened what counts).
+  const area = row => row.ancestors.find(at => /^HTML content\b/i.test(at.body));
+  const submitAfter = row => page.some(other => other.id > row.id && other.web && !other.modal && area(other) === area(row) &&
+    !under(near, other) && BUTTON.test(other.body) && !/\bdisabled\b/.test(/^button((?: \([^)]*\))*)/.exec(other.body)?.[1] ?? '') &&
+    (PAYS.test(other.ownName) || /\bpay\b|\bplace (?:your )?order\b|\bcheckout\b|\bcomplete (?:order|purchase)\b/i.test(other.ownName)));
+  const exempt = row => exemptName(row) && !(near && buttons(near).length === 1 && under(near, row) && !submitAfter(row));
   // The card fields' block: climbed until it holds a button without an exempt name; with none, the buttons near the fields.
   let block = near;
   while (block && !buttons(block).some(row => !exemptName(row))) block = block.ancestors[0];
