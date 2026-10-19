@@ -12,8 +12,8 @@ const texts = (content) => content.map((c) => c.text).join('\n');
 
 const confirmationPolicy = readFileSync(new URL('fixtures/engine-confirmations-policy.txt', import.meta.url), 'utf8').trimEnd();
 const confirmationDocs = '## Computer Use\nNative reference.\n\n' + confirmationPolicy;
-for (const mode of ['always', 'requested', 'never']) test(`native confirmations preserve the full payment policy byte for byte: ${mode}`, () => {
-  const docs = rewritePaymentPolicy(confirmationDocs, mode);
+for (const mode of ['always', 'requested', 'never']) for (const rs of ['0', '1']) test(`native confirmations preserve the full payment policy byte for byte: ${mode}, RS=${rs}`, () => {
+  const docs = rewritePaymentPolicy(confirmationDocs, mode, () => {}, { SLEIGHT_RS: rs });
   for (const fullDocs of [false, true]) {
     const budget = createResultBudget({ platform: 'linux', fullDocs });
     budget.request(1, { browser: false });

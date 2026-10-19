@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { skillRules, localToolDefinitions, SCREENSHOT_GUIDANCE_START, SCREENSHOT_GUIDANCE_END } from '../plugins/sleight/lib/launch.mjs';
 import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
+import { requestedSubmitRules } from '../plugins/sleight/lib/requested-submit.mjs';
 
 test('the shipped skill becomes the first-call rules without its front matter', () => {
   const rules = skillRules();
@@ -181,12 +182,25 @@ test('the skill sends only a window other than getApp\'s through select_window',
 });
 
 
-test('skill sources preserve every byte of ab510184 outside the measured screenshot insertion', () => {
+test('skill sources preserve every byte of ab510184 outside RS2 and the measured screenshot insertion', () => {
   const hash = bytes => createHash('sha256').update(bytes).digest('hex');
   const source = readFileSync(new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', import.meta.url), 'utf8');
   const start = source.indexOf(SCREENSHOT_GUIDANCE_START), end = source.indexOf(SCREENSHOT_GUIDANCE_END);
   assert.ok(start >= 0 && end > start);
-  const restored = source.slice(0, start) + source.slice(end + SCREENSHOT_GUIDANCE_END.length + 2);
+  const restored = requestedSubmitRules(source.slice(0, start) + source.slice(end + SCREENSHOT_GUIDANCE_END.length + 2), { SLEIGHT_RS: '0' });
   assert.equal(hash(restored), '5f9e4b39c6bf7638d9006abc6f9c8f1f6e3c1b03668b3d4002b83b7c6d216a7d');
-  assert.equal(hash(readFileSync(new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.lean.md', import.meta.url))), '62502136c34e67375904132bce9418bdda9275cb2f11a3b2fb1210d0619008a0');
+  assert.equal(hash(requestedSubmitRules(readFileSync(new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.lean.md', import.meta.url), 'utf8'), { SLEIGHT_RS: '0', SLEIGHT_PROMPT: 'lean' })), '62502136c34e67375904132bce9418bdda9275cb2f11a3b2fb1210d0619008a0');
+});
+
+test('RS2 prioritizes requested submits within the original budgets and RS off restores both skills byte for byte', () => {
+  for (const [prompt, limit, hash] of [[undefined, 1055, '27ef178a69d561519cfe87bf39f15f7a64bd15b64f2f71e531fdc8c93cb92140'],
+    ['lean', 505, '244d4d7a168e5c8dea9325b87a23290ef4044c3ed0d20ee33431bbb30218d6a2']]) {
+    const env = { SLEIGHT_PROMPT: prompt };
+    const on = skillRules(undefined, env), off = skillRules(undefined, { ...env, SLEIGHT_RS: '0' });
+    assert.match(on, /Submit in that call when requested \(\[9\], \[10\] confirm it\)\./);
+    assert.match(on, /Stop before the final click for unpriced payments, unnamed dialog terms or other required confirmations\./);
+    assert.ok(on.trim().split(/\s+/).length <= limit);
+    assert.equal(createHash('sha256').update(off).digest('hex'), hash);
+    for (const value of [undefined, '', '1', 'false', '00']) assert.equal(skillRules(undefined, { ...env, SLEIGHT_RS: value }), on);
+  }
 });

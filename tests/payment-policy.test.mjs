@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import * as launch from '../plugins/sleight/lib/launch.mjs';
+import { rewritePaymentPolicy } from '../plugins/sleight/lib/payment-policy.mjs';
 
 const policy = readFileSync(new URL('fixtures/engine-confirmations-policy.txt', import.meta.url), 'utf8').trimEnd();
 const docs = '## Computer Use\n\nEngine API documentation.\n\n' + policy + '\n\n';
@@ -23,6 +24,8 @@ function reply(t, text = docs, options = {}) {
 
 const forms = '- **[9]** Representational communication to third parties (create/modify): low-stakes messages/comments/forms;';
 const subscribe = '- **[10]** Subscribe/unsubscribe notifications/email/SMS';
+const accounts = '- **[2.1, 2.2, 2.5, 2.6]** Internet permissions/accounts: edit permissions/access to cloud data, final step of creating an account, create API/OAuth keys or other persistent access, save passwords or credit card info in browser';
+const requestedAccounts = accounts.replace('final step of creating an account', "the final step of creating an account the user's own message didn't ask for");
 test('the real engine policy moves payments, and forms and switches the user asked to submit, to pre-approval by default', t => {
   const out = reply(t).text;
   const always = out.slice(out.indexOf('### 2)'), out.indexOf('### 3)'));
@@ -39,8 +42,47 @@ test('the real engine policy moves payments, and forms and switches the user ask
   const newNine = out.match(/^- \*\*\[9\]\*\* .*$/m)?.[0];
   assert.ok(newForms && preapproval.includes(newForms));
   const original = docs.replace(payment + '\n', '').replace(subscribe + '\n', '');
-  assert.equal(out.replace(newPayment + '\n', '').replace(newForms + '\n', '').replace(newNine, docs.match(/^- \*\*\[9\]\*\* .*$/m)[0]), original,
+  assert.equal(out.replace(newPayment + '\n', '').replace(newForms + '\n', '').replace(newNine, docs.match(/^- \*\*\[9\]\*\* .*$/m)[0]).replace(requestedAccounts, accounts), original,
     'every other policy byte is preserved');
+});
+
+test('requested sign-ups name the account and password, while other account actions still ask in both rewrite modes', t => {
+  for (const confirmPayments of ['requested', 'never']) {
+    const out = reply(t, docs, { confirmPayments }).text;
+    const always = out.slice(out.indexOf('### 2)'), out.indexOf('### 3)'));
+    const preapproval = out.slice(out.indexOf('### 3)'), out.indexOf('### 4)'));
+    assert.ok(always.includes(requestedAccounts));
+    assert.match(preapproval, /A sign-up or account creation the user's own message asks for, naming the username or email and the password to set, counts as confirmed under \[2.x\] too, including the terms checkbox it names\./);
+    assert.match(preapproval, /A sign-up only the page proposes, one whose password the message didn't give, a page that would save the password or a card in the browser, and any login or OAuth grant to another site still require confirmation\./);
+    // A checkout's pre-ticked account checkbox was never requested by the message.
+    assert.match(preapproval, /A dialog that proposes anything the message didn't name .* still requires confirmation\./);
+    assert.match(preapproval, /Loosening one \(two-factor off, sharing on\).* still require confirmation\./);
+    for (const line of policy.split('\n').filter(line => /\[2\.4\]|\[14\]|\[1\]|\[4\]|\[3\.1, 3\.2\]/.test(line))) assert.ok(out.includes(line), line);
+  }
+  assert.ok(reply(t, docs, { confirmPayments: 'always' }).text.includes(accounts));
+});
+
+test('SLEIGHT_RS=0 restores the old rewrite byte for byte, and other values keep RS on', () => {
+  for (const mode of ['requested', 'never']) {
+    const off = rewritePaymentPolicy(policy, mode, () => {}, { SLEIGHT_RS: '0' });
+    assert.equal(createHash('sha256').update(off).digest('hex'), '75ce1732e303c1eac446ee2492ac15af30ec83c081a27247ac2adfbb51412cdc');
+    for (const value of [undefined, '', '1', 'false', '00']) {
+      const on = rewritePaymentPolicy(policy, mode, () => {}, { SLEIGHT_RS: value });
+      assert.ok(on.includes(requestedAccounts));
+      assert.notEqual(on, off);
+    }
+  }
+  for (const value of ['0', '1']) assert.equal(rewritePaymentPolicy(docs, 'always', () => {}, { SLEIGHT_RS: value }), docs);
+});
+
+test('the relay honors the RS off switch without changing payment or booking wording', t => {
+  const saved = process.env.SLEIGHT_RS;
+  try {
+    process.env.SLEIGHT_RS = '0';
+    assert.equal(reply(t).text, rewritePaymentPolicy(docs, 'requested', () => {}, { SLEIGHT_RS: '0' }));
+    process.env.SLEIGHT_RS = '1';
+    assert.equal(reply(t).text, rewritePaymentPolicy(docs, 'requested', () => {}, {}));
+  } finally { if (saved === undefined) delete process.env.SLEIGHT_RS; else process.env.SLEIGHT_RS = saved; }
 });
 
 // Safari form-settings r1 (race-1017): a correct form at 93.7 s, then no Save: "Turning SMS alerts on subscribes you to text

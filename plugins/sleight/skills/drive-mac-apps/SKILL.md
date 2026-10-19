@@ -72,8 +72,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
 
 With a connected ChatGPT extension, web pages use the tab handle, never `getApp`.
 The engine masks protected field reads as `<redacted>`. This does not mean input was replaced. Use validation or submission results. Never try to unmask it.
-Submit in that call only when the user asked for that submit and the engine's confirmation policy
-doesn't require confirming it. Otherwise stop before the final click.
+Submit in that call when requested ([9], [10] confirm it). Stop before the final click for unpriced payments, unnamed dialog terms or other required confirmations.
 
 <!-- vale ai-tells.NegatedObject = NO -->
 When a document pane or table exposes no text, read the window with `nodeRepl.emitImage(await app.getScreenshot())`.

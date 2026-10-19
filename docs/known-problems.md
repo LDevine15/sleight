@@ -22,11 +22,17 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   come from `flags-score.txt`. The error estimate excludes pass-rate uncertainty. The screenshot
   rows measured Word only, word-memo and word-brief. Neither flag's held-out A/B measured Excel
   or Opus. See the [four flag A/Bs](benchmarks/2026-10-19-flag-ab.md) for every task and attempt.
-- The default skill restores `60fe1319` plus the exact measured screenshot sentence.
-  The lean skill restores `60fe1319` without that sentence. The screenshot A/B never measured lean.
+- Outside the RS2 submit instruction, both skills restore `60fe1319`. Only the default skill adds
+  the exact measured screenshot sentence. The screenshot A/B never measured lean.
 
 ## Approvals and guards
 
+- On the engine path, Haiku 5.5 stopped before Create account in 18 of 24 requested sign-up runs
+  (AS-3, 2026-10-19). The engine listed account creation under Always confirm, even if pre-approved,
+  while sleight's requested-form rule covered only [9] and [10]. The owner ruled on 2026-10-19 that a
+  sign-up the user's own message asks for, naming the username or email and password, is confirmed.
+  RS adds that exception and changes the skill's submit instruction. Focused tests cover the text;
+  the live sign-up A/B has not run. `SLEIGHT_RS=0` restores the old wording.
 - The preapproval loader proves file ownership, not who wrote it. The mod refuses Claude's file edits
   and common shell writes to it (unit-tested, 2026-10-12), but any other process running as you can
   write it, and a path built at run time gets past the check.
