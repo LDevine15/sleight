@@ -26,8 +26,10 @@ Facts about the engine are in [engine-notes.md](../engine-notes.md), and current
   within 20%, measured as the difference over the slower arm's expected time. After sleight's final claim run, the arms that
   land within 20% get one top-up round to 5 runs, and then the results stand; a later sleight change makes a new claim
   (owner, 2026-10-17, so the rule can't loop). They give the median and range, and p90 only at 5 runs. The full suite runs once per release as a regression
-  check. An arm's results stand until that arm, the engine or the model changes, so a new competitor or a sleight fix round
-  reruns only that arm. A fixture cleanup failure skips to the next task when every app the run launched has exited, and any
+  check. An arm's results stand until that arm or the model changes, so a new competitor or a sleight fix round reruns only
+  that arm. ChatGPT updates its app several times a week, so an engine update doesn't force reruns. Every published result
+  names the engine version it ran on, and the benchmarks rerun periodically. What runs after every engine update is
+  an automated compatibility check for breaking changes (owner, 2026-10-19). A fixture cleanup failure skips to the next task when every app the run launched has exited, and any
   other stop still ends the pass (owner, 2026-10-16). Claude's own computer use runs Haiku 5.5 on the owner's login.
   Arms whose code isn't in the repo (the codex-cu and devtools bridges) are named as not run, with the reason.
   A run that stops to ask before a payment the prompt didn't price (form-checkout) counts as done correctly, and an arm that pays

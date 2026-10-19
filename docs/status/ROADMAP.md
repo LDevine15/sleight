@@ -34,13 +34,20 @@ the release-pass and claim-suite runners. The release notes (RL1) wait on `codex
    its plugin against Codex out of the box, so the claim can say whether sleight makes GPT faster too. Browser race: codex-sleight
    (gpt-6-luna) and codex-sleight-sol x3 each, against the codex rounds already run and a new codex-sol baseline x3, in Safari and
    Firefox, on the final build with the engine-path payment gate. Native claim tasks need a sleight-in-Codex native arm, which the
-   claim runner doesn't have yet. The result is published whichever way it goes.
+   claim runner doesn't have yet. The result is published whichever way it goes. The luna pair (codex-sleight against codex)
+   runs for the 1.3.0 tag, and the Sol pair (codex-sleight-sol against a new codex-sol baseline) for 1.3.1 (owner, 2026-10-19).
+4f. Engine compatibility after every ChatGPT update, in 1.3.1 (owner, 2026-10-19): ChatGPT updates several times a week, so full
+   benchmarks rerun periodically, with the engine version recorded on every result, and an automated check for breaking
+   changes runs after every update. It builds on `scripts/watch.sh` (daily launchd job: doctor, API docs diff, one task on a
+   version change) and becomes a CI job on this Mac. The workflow file is the owner's to push.
 4c. sleight as a Codex plugin in 1.3.0 (owner, 2026-10-19: in 1.3.0 if possible): one repo for both hosts, the repo as a
    Codex marketplace, the skill delivered in Codex, approvals per LAWS, doctor and setup aware of Codex. The menu bar dropdown
    names the host each connected session runs in (Claude Code, Codex, Cursor, with version, from the MCP client's own
    introduction), and the model only where the host reports it. sleight never guesses a model. Publishing stays the owner's call.
    In 1.4.0 (owner, 2026-10-19): local performance analytics in the dropdown and a command, such as seconds per action and reads
-   saved, and turbo against the engine path, kept on this Mac, built on so1's action log, nothing sent anywhere.
+   saved, and turbo against the engine path, kept on this Mac, built on so1's action log, nothing sent anywhere. Reads saved
+   counts reads Claude asked for that went out as changed lines or were left out, and the engine browser path's per-action
+   seconds stay an estimate kept out of the menu row (owner took sleight-arch's recommendations, 2026-10-19).
 4e. Turbo inside Codex in 1.3.1 (owner, 2026-10-19): a way to tie each turbo turn to the user's own message that the model can't
    forge, since Codex's hooks can't hold the mod's private token. Building on `claude/codex-turbo`. AS-3 also comes in 1.3.1 as
    one tool, `browser_open`, behind `SLEIGHT_BROWSER_CORE=1` until its race A/B saves at least 30 s a round with every task still passing.
