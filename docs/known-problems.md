@@ -260,27 +260,40 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   26-run round on 2026-10-13, down from 74, against 0 for FowlBrowser.
 - A payment the user didn't ask for in their own message still stops for confirmation, by design. One the user asked for, naming what to pay and with what, goes through (`SLEIGHT_CONFIRM_PAYMENTS=always` restores the stop). `SLEIGHT_CONFIRM_PAYMENTS=never` also skips the figure check below for such a payment, so a page that hides a larger total behind a matching amount field is not caught. It asks as before for an unrequested payment, a second payment in the same request and an amount that differs from the message.
 - Turbo follows a plain `<a href>` to an http(s) URL without asking only when its one payment word is "checkout" and its words contain no money figure. The link also needs to be outside a payment form and free of handler attributes (`on*`, `ping`, `data-method`, Turbo, Stimulus, htmx, Vue, Alpine, Angular). The DevTools protocol must report that nothing on it or inside it listens for click, mousedown, pointerdown, pointerup, auxclick or keydown. A listener on an ancestor or the document doesn't count, because frameworks and analytics listen there on nearly every page (the race's own shop logs pointerdown on the window), so a delegated handler that charges from a checkout-only link isn't caught at the link. The figure check still applies wherever a money figure shows. If the listener list can't be read, the link asks. A page that charges on a plain GET to such a link isn't stopped at the link, and the later "Place order" button still asks. Not measured on a live site.
-- On the engine path (Safari, Firefox, native apps) a guard check stops a click, Enter or Space that could pay. It lets one
-  through when the user's message stated one amount and the page shows that amount and no larger figure, once per request. It reads only
-  the accessibility tree the guard already read, and only page content: a web area and the window's sheets, dialogs and alerts.
-  Before it, Haiku confirmed an unpriced "Pay $268.00 now?" dialog in Firefox (1 of 1 runs, 2026-10-17), and gpt-6.1-sol inside
-  Codex paid the same checkout without asking (1 of 1, 2026-10-19). Tested on recorded trees only, with no live run yet.
+- On the engine path in Safari and Firefox (the accessibility tree), a guard check holds back the submits on a page that shows a payment:
+  card fields, a frame named for card payment, or a money figure above zero beside a control that reads as a submit. Held back are a click
+  on a button, link or other row whose words read as a submit, any other button in the card fields' block except turbo's closed list
+  (Apply, Remove, a stepper), Enter or a typed line break in any field, and Enter, Space or a click on the confirm dialog. A payment
+  goes through when the user's message stated one amount and the page shows it, with no larger figure, once per request. Before it,
+  Haiku confirmed an unpriced "Pay $268.00 now?" dialog in Firefox (1 of 1 runs, 2026-10-17), and gpt-6.1-sol inside Codex paid
+  the same checkout without asking (1 of 1, 2026-10-19). Tested on recorded and edited trees only, with no live run yet.
+- Tabs driven through the ChatGPT browser extension (`cua.getBrowser`, `createBrowserTab`), Codex's main browser path, aren't
+  checked: the guard doesn't wrap their DOM actions. This is open work, not covered.
 - A stopped payment opens sleight's payment card (the consent host turbo uses). Allow once doesn't send the action. Claude sends it
-  again, and the allowance then covers one matching action (same site, largest figure and control) in the next guarded call, within
-  two minutes. The relay builds the card's helper from the plugin's Swift source, or reuses turbo's build. If the build isn't ready
-  within 20 s, or the host can't start (no window server), the payment stops without a card and Claude asks the user.
+  again, and the allowance covers the one action that matches it (same site, largest figure and control) until a new user message,
+  the turn's end or two minutes. A page with no URL row has no site, and no allowance matches it. The relay builds the card's helper
+  from the plugin's Swift source, or reuses turbo's build. If the build isn't ready within 20 s, or the host can't start (no window
+  server), the payment stops without a card and Claude asks the user.
+- Claude's result waits at most 45 s for the card, under Codex's `tool_timeout_sec` default of 60 s (from Codex's config reference,
+  not measured here). After that Claude gets the stop with a note to resend after the user answers, and the card remains open up to
+  120 s.
+- The card's helper accepts any click on its own window, so another automation tool in the session (not sleight's, which refuses that
+  process) could press Allow once. turbo's card has the same limit.
 - sleight's copy of the user's message comes only from the Claude Code mod, with turbo's turn start. In Codex, and in Claude Code
   with turbo off, every engine-path payment goes to the card.
 - The amount is the one money figure with a currency in the message. A message with two figures ("$29 overnight", "$268.00") doesn't
   state one, so it asks. Wording isn't read, so "never more than $300" names $300.
-- It doesn't see a figure drawn in an image or canvas, a page that charges from a control with no pay word outside the card
-  fields' form, or a payment in a native app window (only a sheet, dialog or alert whose words mention a payment is checked). The tree
-  has no forms: the card fields' form is their nearest common ancestor that holds a button, and every button in it asks except
-  turbo's closed list (Apply, Remove, a stepper). Tabs opened through the ChatGPT browser extension aren't checked.
-- The relay keeps the payment count and resets it with each user message. Codex sends none, so there every later payment in the
-  session asks. A "checkout" link asks because the engine path can't see the page's click listeners, and a point click on a payment
-  page asks, since the element under it is unknown. The check runs in the engine's JavaScript session like the guard's other
-  checks, so code that edits the guard gets past it. With turbo on, a pending card can show a second sleight icon in the menu bar.
+- The words are English only: turbo's pay words plus place (your) order, confirm, submit, complete, reserve, book and buy. A
+  saved-card checkout with no card fields and a pay button in another language isn't a payment page to the check, and neither are
+  card fields labelled only in another language ("Kartennummer").
+- It doesn't see a figure drawn in an image or canvas, or a payment in a native app window (only a sheet, dialog or alert whose words
+  mention a payment and that shows a figure or card words is checked). setValue, typing without a line break and drags aren't gated,
+  so a page that submits on an input event isn't caught. A page with no money figure above zero and no card field (a free booking or
+  subscription) isn't a payment page.
+- The relay keeps the payment count and resets it with each user message. A link never counts. Codex doesn't send the message, so there
+  every later payment in the session asks, and the confirm dialog's exception lasts 60 s. A point click on a payment page stops and
+  asks for the element number. The check runs in the engine's JavaScript session like the guard's other checks, so code that edits
+  the guard gets past it. With turbo on, a pending card can show a second sleight icon in the menu bar.
 - The turbo v3 payment read asks whenever any visible money figure in the payment form or dialog is larger than the amount in the
   user's message, in any currency and with any label or sign (a discount, a was price, a gift card, a late fee, a coverage limit,
   a later total, an estimate, "-$500.00"). It doesn't read wording. Rounds 4 to 12 added label lists that cleared such a figure, and
