@@ -13,7 +13,7 @@ const OPS = new Set('click type press select check uncheck hover scroll drag upl
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
 const WAIT_CAP = 5000, SCROLL_CAP = 10000, navigateNeeds = 'the ref of an http(s) link (browser_open takes a url); to press other elements use click';
 const TIMEOUT = 1000;
-const clickModifiers = Object.freeze({ cmd: 'Meta', shift: 'Shift', ctrl: 'Control', alt: 'Alt' });
+const clickModifiers = Object.freeze({ cmd: 'Meta', ctrl: 'Control' });
 const pendingInputs = new WeakMap();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 export const closedSubmitWarning = 'its submit is unconfirmed; check the opener or the account before paying again';
@@ -44,7 +44,7 @@ function validate(steps) {
   for (const s of steps) {
     if (!s || !OPS.has(s.do)) throw Error('unsupported do operation');
     if (s.modifier !== undefined && (s.do !== 'click' || typeof s.modifier !== 'string' || !Object.hasOwn(clickModifiers, s.modifier)))
-      throw Error('click modifier must be cmd, shift, ctrl or alt');
+      throw Error('click modifier must be cmd or ctrl');
     const needs = name => { throw Error(s.do + ' needs ' + name); };
     if (REF_OPS.has(s.do) && !refOf(s.ref)) needs('ref');
     if (s.do === 'navigate' && !refOf(s.ref)) needs(navigateNeeds);

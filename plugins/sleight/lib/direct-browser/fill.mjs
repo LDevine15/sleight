@@ -1,5 +1,6 @@
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { isV3Context } from './v3-context.mjs';
+import { backgroundClick as guardedClick } from './page.mjs';
 import { readOptions, moveList, pickElement, findPopup, searchOptions, describeMiss, normalize, queries } from './pick-option.mjs';
 import { lineBreakRefusal } from './rules.mjs';
 // Whole-form strategies are sleight's own (the v2 forms.mjs they came from is gone). Playwright's
@@ -84,7 +85,7 @@ function refusal(result) {
   throw new FieldError(message || 'rules refused input; use the engine browser path');
 }
 
-export function createFillFields({ check, runSteps, inspectElement = inspect, now = Date.now, sleep = pause } = {}) {
+export function createFillFields({ check, runSteps, backgroundClick = guardedClick, inspectElement = inspect, now = Date.now, sleep = pause } = {}) {
   if (typeof check !== 'function' || typeof runSteps !== 'function') throw new FieldError('fill requires rules and actions');
   return async function fillFields(tab, fields, { submit } = {}, ctx) {
     validate(fields, submit);
@@ -128,7 +129,7 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
           if (state.readonly && state.kind !== 'combo') throw new FieldError('readonly picker; use browser_act on its choices');
           const prior = await trustedLocatorRead(loc, inspectElement);
           if (stopped) throw new FieldError(stopped);
-          const send = async (action, kind = 'type', locator = loc) => {
+          const send = async (action, kind = 'type', locator = loc, modifier) => {
             if (stopped) throw new FieldError(stopped);
             if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
             const element = await trustedLocatorRead(locator, inspectElement);
@@ -153,13 +154,20 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
             }
             const pending = {};
             try {
-              // Private page inspection may await, so repeat both fences after
-              // it. Newly submit-capable choices refuse without consuming consent.
-              refusal(trusted ? await ctx.check(kind, target, { fieldOnly: true }) : check(ctx, kind, target));
-              if (stopped) throw new FieldError(stopped);
-              if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
-              tab.state.actionPending = pending;
-              sent = true; return await action(trusted ? target.locator : locator, target);
+              const perform = async (extra = {}, verifySeal) => {
+                if (stopped) throw new FieldError(stopped);
+                if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
+                target.verifySeal = verifySeal;
+                // Private page inspection may await, so repeat both fences after
+                // it. Newly submit-capable choices refuse without consuming consent.
+                refusal(trusted ? await ctx.check(kind, target, { fieldOnly: true }) : check(ctx, kind, target));
+                if (stopped) throw new FieldError(stopped);
+                if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
+                tab.state.actionPending = pending;
+                if (trusted && modifier) ctx.beginInput(target);
+                sent = true; return await action(trusted ? target.locator : locator, target, extra);
+              };
+              return modifier ? await backgroundClick(tab, trusted ? target.locator : locator, perform, { modifier }) : await perform();
             } finally {
               if (tab.state.actionPending === pending) tab.state.actionPending = false;
               if (trusted) await ctx.releaseTarget(target);
@@ -221,7 +229,9 @@ export function createFillFields({ check, runSteps, inspectElement = inspect, no
               if (!matches(rowsOf(await trustedLocatorRead(loc, inspect, value)), selected)) throw new FieldError('list changed; read it before continuing');
               // Let the page's handler update its own state. Writing aria-selected would bypass frameworks.
               const choice = loc.getByRole('option', { name: rows[i].label, exact: true });
-              await send(checked => checked.click({ ...options, modifiers: ['ControlOrMeta'] }), 'click', choice);
+              const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+              await send((checked, target, extra) => checked.click({ ...options, ...extra,
+                modifiers: [...new Set([...(extra.modifiers ?? []), modifier])] }), 'click', choice, modifier);
               if (stopped) break;
               await sleep(60);
               selected = selected.map((was, j) => j === i ? wanted[i] : was);

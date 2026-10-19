@@ -13,7 +13,7 @@ function element(tag = 'INPUT', attrs = {}, value = '') {
     closest: () => null,
     matches: selector => selector === ':disabled' && false };
 }
-function harness(nodes, { check = () => 'allow', mutate, submit, event, sleep, now } = {}) {
+function harness(nodes, { check = () => 'allow', mutate, submit, event, sleep, now, backgroundClick } = {}) {
   const listeners = new Map(), input = [], resolve = [];
   const emit = name => { for (const fn of listeners.get(name) ?? []) fn(event ?? page); };
   const locator = node => utilityLocator({
@@ -38,7 +38,7 @@ function harness(nodes, { check = () => 'allow', mutate, submit, event, sleep, n
     url() { return 'http://fixture.invalid/form'; },
   };
   const tab = { page, state: { snapshotNo: 1, submitUnconfirmed: false } };
-  const fill = createFillFields({ check, sleep, now, runSteps: submit ?? (async () => { throw Error('unexpected submit'); }) });
+  const fill = createFillFields({ check, sleep, now, backgroundClick, runSteps: submit ?? (async () => { throw Error('unexpected submit'); }) });
   return { fill: (fields, options = {}) => fill(tab, fields, options, { userMessage: 'fill this form', consent: null, files: [] }),
     input, resolve, listeners, tab, locator, emit };
 }
@@ -70,7 +70,7 @@ test('native multi-select replaces prior choices and an empty array clears every
   assert.deepEqual(node.options.map(o => o.selected), [false, false, false]);
 });
 
-function multiList({ refuse, broken = false, disabled = false, duplicate = false, incomplete = false, boundary } = {}) {
+function multiList({ refuse, broken = false, disabled = false, duplicate = false, incomplete = false, boundary, guardRefusal, guardBoundary, guardPending } = {}) {
   const node = element('DIV', { role: 'listbox', 'aria-multiselectable': 'true' });
   const attrs = [
     { role: 'option', 'aria-selected': 'true' },
@@ -80,7 +80,16 @@ function multiList({ refuse, broken = false, disabled = false, duplicate = false
   const names = ['English', 'Portuguese (Brazil)', duplicate ? 'Portuguese (Brazil)' : 'Japanese'];
   node.children = names.map((textContent, i) => Object.assign(element('DIV', attrs[i]), { textContent, closest: () => node }));
   node.querySelectorAll = selector => { assert.equal(selector, '[role="option"]'); return node.children; };
-  const clicks = [], checks = [], h = harness({ e1: node }, { sleep: async () => {}, check: (ctx, kind, target) => {
+  const clicks = [], checks = [], guards = [], h = harness({ e1: node }, { sleep: async () => {},
+    backgroundClick: async (tab, locator, click, opts) => {
+      assert.equal(tab, h.tab); assert.ok(!tab.state.actionPending);
+      assert.equal(opts.modifier, process.platform === 'darwin' ? 'Meta' : 'Control');
+      guards.push(locator);
+      if (guardRefusal) throw Error(guardRefusal);
+      if (guardBoundary) h.emit(guardBoundary);
+      if (guardPending) tab.state.actionPending = guardPending;
+      return click({ modifiers: ['ControlOrMeta'] });
+    }, check: (ctx, kind, target) => {
     checks.push(target.element);
     return refuse ? { status: 'refuse', message: 'payment confirmation required' } : 'allow';
   } });
@@ -93,7 +102,7 @@ function multiList({ refuse, broken = false, disabled = false, duplicate = false
         const option = h.locator(node.children[i]);
         option.click = async opts => {
           clicks.push([i, opts]);
-          assert.deepEqual(opts.modifiers, ['ControlOrMeta']);
+          assert.deepEqual(opts.modifiers, ['ControlOrMeta', process.platform === 'darwin' ? 'Meta' : 'Control']);
           if (!broken) attrs[i]['aria-selected'] = String(attrs[i]['aria-selected'] !== 'true');
           if (boundary) h.emit(boundary);
         };
@@ -101,7 +110,7 @@ function multiList({ refuse, broken = false, disabled = false, duplicate = false
     };
     return list;
   };
-  return { ...h, node, attrs, clicks, checks, selection: () => attrs.map(a => a['aria-selected']) };
+  return { ...h, node, attrs, clicks, checks, guards, selection: () => attrs.map(a => a['aria-selected']) };
 }
 
 test('ARIA multi-select sets exactly the requested texts through option clicks, then clears', async () => {
@@ -111,8 +120,31 @@ test('ARIA multi-select sets exactly the requested texts through option clicks, 
   assert.deepEqual(h.selection(), ['false', 'true', 'true']);
   assert.deepEqual(h.clicks.map(([i]) => i), [0, 2]);
   assert.equal(h.checks.length, 2);
+  assert.equal(h.guards.length, 2);
   assert.equal((await h.fill([{ ref: 'e1', value: [] }])).rows[0].status, 'set');
   assert.deepEqual(h.selection(), ['false', 'false', 'false']);
+});
+
+for (const reason of ['modified target contains a link', 'modified target is inside a control',
+  'modified target has a window.open handler', 'focus is held inside a frame (a card field)'])
+  test('ARIA multi-select stops before input when backgroundClick refuses: ' + reason, async () => {
+    const h = multiList({ guardRefusal: reason }), before = h.selection();
+    const result = await h.fill([{ ref: 'e1', value: ['Japanese'] }]);
+    assert.equal(result.rows[0].status, 'failed');
+    assert.equal(h.guards.length, 1); assert.deepEqual(h.clicks, []); assert.deepEqual(h.checks, []);
+    assert.deepEqual(h.selection(), before); assert.equal(h.tab.state.actionPending, undefined);
+  });
+
+for (const guardBoundary of ['framenavigated', 'dialog', 'popup', 'close']) test('ARIA modifier preparation respects a new boundary: ' + guardBoundary, async () => {
+  const h = multiList({ guardBoundary }), before = h.selection();
+  assert.equal((await h.fill([{ ref: 'e1', value: ['Japanese'] }])).rows[0].status, 'failed');
+  assert.deepEqual(h.clicks, []); assert.deepEqual(h.checks, []); assert.deepEqual(h.selection(), before);
+});
+
+test('ARIA modifier preparation cannot consume authority after another input becomes pending', async () => {
+  const pending = {}, h = multiList({ guardPending: pending });
+  assert.equal((await h.fill([{ ref: 'e1', value: ['Japanese'] }])).rows[0].status, 'failed');
+  assert.deepEqual(h.clicks, []); assert.deepEqual(h.checks, []); assert.equal(h.tab.state.actionPending, pending);
 });
 
 for (const opts of [{ disabled: true }, { duplicate: true }, { incomplete: true }]) test('ARIA multi-select refuses unavailable choices before changing any option: ' + JSON.stringify(opts), async () => {

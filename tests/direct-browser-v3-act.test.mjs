@@ -59,7 +59,7 @@ test('v3 action reports an unproved click as an observation and returns a diff',
   assert.equal(f.actions.filter(a => a[0] === 'click').length, 1);
 });
 
-for (const [modifier, want] of [['cmd', 'Meta'], ['shift', 'Shift'], ['ctrl', 'Control'], ['alt', 'Alt']])
+for (const [modifier, want] of [['cmd', 'Meta'], ['ctrl', 'Control']])
   test(`click modifier ${modifier} reaches the observed element through the background guard`, async () => {
     let guarded = 0;
     const f = fixture({ backgroundClick: async (tab, loc, click, opts) => {
@@ -77,16 +77,16 @@ test('click modifiers cannot bypass payment refusal, pending input or element co
   const result = await paid.run(paid.tab, [{ do: 'click', ref: 'e1', modifier: 'cmd' }], {});
   assert.match(result.lines[0], /not run:.*Read before resubmitting/); assert.deepEqual(paid.actions, []);
   const pending = fixture(); pending.tab.state.actionPending = {};
-  assert.match((await pending.run(pending.tab, [{ do: 'click', ref: 'e1', modifier: 'alt' }], {})).lines[0], /pending/);
+  assert.match((await pending.run(pending.tab, [{ do: 'click', ref: 'e1', modifier: 'ctrl' }], {})).lines[0], /pending/);
   assert.deepEqual(pending.actions, []);
   const covered = fixture({ fail: 'Timeout: covering element intercepts pointer events' });
-  assert.match((await covered.run(covered.tab, [{ do: 'click', ref: 'e1', modifier: 'shift' }], {})).lines[0], /not run:.*cover/);
+  assert.match((await covered.run(covered.tab, [{ do: 'click', ref: 'e1', modifier: 'cmd' }], {})).lines[0], /not run:.*cover/);
   assert.equal(covered.actions.length, 1, 'Playwright checks the hit and refuses without replay');
 });
 
 test('invalid modifiers or modifiers on non-click steps reject the whole batch before input', async () => {
   const f = fixture();
-  for (const step of [{ do: 'click', ref: 'e1', modifier: 'super' }, { do: 'click', ref: 'e1', modifier: ['cmd'] },
+  for (const step of [{ do: 'click', ref: 'e1', modifier: 'shift' }, { do: 'click', ref: 'e1', modifier: 'alt' }, { do: 'click', ref: 'e1', modifier: 'super' }, { do: 'click', ref: 'e1', modifier: ['cmd'] },
     { do: 'press', ref: 'e1', key: 'Enter', modifier: 'cmd' }, { do: 'navigate', ref: 'e1', modifier: 'cmd' }])
     await assert.rejects(f.run(f.tab, [{ do: 'click', ref: 'e1' }, step], {}), /modifier/);
   assert.deepEqual(f.actions, []);
@@ -232,7 +232,7 @@ test('v3 upload goes through the private file provider and releases staging afte
 });
 
 test('v3 confirmation is returned without executing input', async () => {
-  for (const modifier of [undefined, 'cmd', 'shift', 'ctrl', 'alt']) {
+  for (const modifier of [undefined, 'cmd', 'ctrl']) {
     const f = fixture({ submit: true }); f.states.set('e1', { payment: true }); let guarded = 0;
     const run = createActionRunner({ check: (ctx, kind, target) => {
       assert.equal(kind, 'click'); assert.equal(target.element.payment, true);

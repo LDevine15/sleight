@@ -8,11 +8,11 @@ const names = ['browser_open', 'browser_read', 'browser_act', 'browser_fill', 'b
 
 test('tool validation accepts only named click modifiers', () => {
   const call = step => ({ name: 'browser_act', arguments: { tab: 't1', steps: [step] } });
-  for (const modifier of ['cmd', 'shift', 'ctrl', 'alt']) {
+  for (const modifier of ['cmd', 'ctrl']) {
     const request = call({ do: 'click', ref: 'e1', modifier });
     assert.deepEqual(validateToolCall(request), request);
   }
-  for (const step of [{ do: 'click', ref: 'e1', modifier: 'meta' }, { do: 'press', key: 'Enter', modifier: 'cmd' }])
+  for (const step of [{ do: 'click', ref: 'e1', modifier: 'shift' }, { do: 'click', ref: 'e1', modifier: 'alt' }, { do: 'click', ref: 'e1', modifier: 'meta' }, { do: 'press', key: 'Enter', modifier: 'cmd' }])
     assert.throws(() => validateToolCall(call(step)), /modifier|unsupported/);
 });
 

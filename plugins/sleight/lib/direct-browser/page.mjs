@@ -326,6 +326,8 @@ export function popupHook(options) {
     if (!hooked(opened)) coverInitialDocument(opened);
   };
   const open = { open(url, target, features) {
+    // Explicit selection modifiers never authorize a page handler to open a window.
+    if (live() && arm.modifier) { held++; if (shield?.token === arm.token) shield.violation ??= changedReason; return null; }
     if (/^_(self|parent|top)$/i.test(String(target))) return nativeOpen.apply(this, arguments);
     if (!active() || !navigator.userActivation?.isActive) { held++; return null; }
     const kept = String(features ?? '').split(',').map(value => value.trim()).filter(value => /^(noopener|noreferrer)(?:=|$)/i.test(value));
@@ -622,6 +624,59 @@ export function popupHook(options) {
     return { url: url.href, target, rel, signature: stringify([url.href, target, rel]) };
   };
   const pointerEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+  const handlerNames = [...pointerEvents, 'auxclick', 'dblclick', 'contextmenu', 'keydown', 'keyup'];
+  const handlerGetters = handlerNames.map(name => [name, getOwn(HTMLElement.prototype, 'on' + name)?.get]);
+  const handlerText = fn => typeof fn === 'function' ? reflectApply(nativeToString, fn, []) : '';
+  const opensWindow = text => /\bopen\s*(?:\(|\[)/.test(text);
+  const openListeners = new WeakMap();
+  // Remember visible window.open listeners before the page can hide their source. Object options stay
+  // conservative after removal, since reading capture again could call a page getter or see a changed value.
+  const rememberListener = (node, type, listener, options) => {
+    if (handlerNames.includes(type) && (typeof listener === 'object' && listener !== null || opensWindow(handlerText(listener)))) {
+      const rows = openListeners.get(node) ?? [];
+      rows.push({ type, listener, capture: typeof options === 'object' && options !== null ? options : !!options });
+      openListeners.set(node, rows);
+    }
+  };
+  replace(EventTarget.prototype, 'removeEventListener', { configurable: true, writable: true, value(type, listener, options) {
+    const result = remove.apply(this, arguments), rows = openListeners.get(this);
+    if (rows && (options === undefined || typeof options === 'boolean')) openListeners.set(this,
+      rows.filter(row => row.type !== type || row.listener !== listener || row.capture !== !!options));
+    return result;
+  } });
+  const registeredOpen = node => !!openListeners.get(node)?.length;
+  const openHandler = node => handlerGetters.some(([name, get]) =>
+    opensWindow(attribute(node, 'on' + name) ?? '') || opensWindow(handlerText(get ? get.call(node) : node['on' + name]))) || registeredOpen(node);
+  const modifierControl = node => {
+    const tag = nameOfElement(node), role = attribute(node, 'role') ?? '';
+    return isLinkTag(node) && hasHref(node) || labelTarget(node) !== node ||
+      /^(button|input|select|option|textarea|label|iframe|object|embed|frame|fencedframe|details|summary)$/.test(tag) ||
+      /^(audio|video)$/.test(tag) && has(node, 'controls') || tag === 'img' && has(node, 'usemap') || isEditable(node) ||
+      /^(button|link|checkbox|radio|switch|textbox|searchbox|combobox|slider|spinbutton|scrollbar|menuitem|menuitemcheckbox|menuitemradio|tab|treeitem|gridcell)$/.test(role);
+  };
+  const shadowRootGetter = getOwn(Element.prototype, 'shadowRoot')?.get;
+  const fragmentQueryAll = globalThis.DocumentFragment?.prototype.querySelectorAll;
+  const nodeListLength = getOwn(NodeList?.prototype ?? {}, 'length')?.get;
+  // Check both the forwarding chain and every possible descendant hit, including open shadow roots.
+  // The page's option/listbox roles remain available for selection through its own handlers.
+  const refusesModifier = element => {
+    try {
+      if (registeredOpen(document) || registeredOpen(window)) return true;
+      if (ancestors(element).some(node => modifierControl(node) || openHandler(node))) return true;
+      const roots = [element]; let count = 0;
+      for (let i = 0; i < roots.length; i++) {
+        const root = roots[i], list = root === element ? elementQueryAll.call(root, '*') : fragmentQueryAll.call(root, '*');
+        const length = nodeListLength ? nodeListLength.call(list) : list.length;
+        for (let index = -1; index < length; index++) {
+          const node = index < 0 ? root : list[index];
+          if (++count > 4096 || isElement(node) && (modifierControl(node) || openHandler(node))) return true;
+          const shadow = isElement(node) && (shadowRootGetter ? shadowRootGetter.call(node) : node.shadowRoot);
+          if (shadow) roots.push(shadow);
+        }
+      }
+      return false;
+    } catch { return true; }
+  };
   // A link that would open a new context, whether or not sleight can decide where.
   const opensLink = element => isLinkTag(element) && hasHref(element) && !has(element, 'download') && !sameContext(element);
   // Cancel the browser's own open and keep the request for the background tab. Inline handlers that return false
@@ -1045,6 +1100,7 @@ export function popupHook(options) {
   const inspect = (event, type) => {
     const { element, anchor, forwarded, areas, keys, activation, form, submitter } = shield;
     if (!connected(element)) return 'target left the page';
+    if (arm?.modifier && refusesModifier(element)) return changedReason;
     const path = pathOf(event);
     if (keys && type === 'submit') {
       // The submit event names the button that submitted; it must be the one that was sealed (null when no button).
@@ -1160,9 +1216,11 @@ export function popupHook(options) {
   }
   // A page that registers a capture listener on a reused window before anything restores ours would run first, so a
   // registration on the window while a shield is armed restores ours before it is recorded.
-  replace(EventTarget.prototype, 'addEventListener', { configurable: true, writable: true, value: { addEventListener() {
+  replace(EventTarget.prototype, 'addEventListener', { configurable: true, writable: true, value: { addEventListener(type, listener, options) {
     if (this === window && shield && attachedTo !== document) install(); // a settled window keeps its place ahead of the page's
-    return reflectApply(add, this, arguments);
+    const result = reflectApply(add, this, arguments);
+    rememberListener(this, type, listener, options);
+    return result;
   } }.addEventListener });
   replace(Function.prototype, 'toString', { configurable: true, writable: true, value: { toString() {
     return looksHas(looks, this) ? looksGet(looks, this) : reflectApply(nativeToString, this, arguments);
@@ -1349,11 +1407,10 @@ export function popupHook(options) {
         if (CR2_NESTED_DOCUMENT(document.activeElement)) throw Error('document focus is inside a frame');
       }
       if (!isElement(element) || !isConnected(element) || !isFinite(capMs) || capMs <= 0) return false;
-      // Explicit link modifiers can change native window disposition. Refuse them before any input.
-      if (modifier && ancestors(element).some(node => isLinkTag(node) && hasHref(node))) return { kind: 'refuse', reason: 'modifier' };
+      if (modifier && (modifier !== 'Meta' && modifier !== 'Control' || refusesModifier(element))) return { kind: 'refuse', reason: 'modifier' };
       // The native getter inherits editability and keeps a non-editable island inside an editor non-editable, so
       // only the element itself is asked, beside document.designMode (read through its captured getter).
-      if (inDesignMode() || isEditable(element)) return false;
+      if (inDesignMode() || isEditable(element)) return modifier ? { kind: 'refuse', reason: 'modifier' } : false;
       const space = press === 'space';
       const chain = ancestors(element);
       let watch;
@@ -1398,6 +1455,7 @@ export function popupHook(options) {
           watch = { kind: 'link', element: linkElement };
         } else link = linkState(linkElement);
       }
+      if (modifier && watch) return { kind: 'refuse', reason: 'modifier' };
       arm = { element, anchor: armAnchor(element), token, until: now() + capMs, masking: false, modifiers: new Set(), modifier, link, linkElement, watch, handlers: [] };
       arm.timer = setTimeout(() => finish(token), capMs);
       if (watch) { watchChanges(); return { kind: 'watch' }; }
@@ -1931,7 +1989,7 @@ export async function backgroundClick(tab, locator, click = options => locator.c
       throw failure = Error(/document focus is inside a frame/.test(error?.message) ? 'focus is held inside a frame (a card field, say) that would receive the background modifier; click a page element outside it first'
         : 'background popup preparation failed; use the engine browser path');
     }
-    if (prepared?.kind === 'refuse' && prepared.reason === 'modifier') throw Error('modified link clicks cannot guarantee background input; use navigate or a plain click');
+    if (prepared?.kind === 'refuse' && prepared.reason === 'modifier') throw Error('modified clicks require Command or Control on a target without links, controls or window.open handlers; use a plain click');
     if (prepared?.kind === 'refuse') throw Error(prepared.reason === 'link'
       ? 'Enter would open this link in a new tab, and sleight cannot check where it goes; click the link instead'
       : 'Enter would submit this form into a new tab; click its submit button instead');

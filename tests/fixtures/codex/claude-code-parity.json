@@ -150,9 +150,7 @@
             "type": "string",
             "enum": [
              "cmd",
-             "shift",
-             "ctrl",
-             "alt"
+             "ctrl"
             ]
            },
            "values": {

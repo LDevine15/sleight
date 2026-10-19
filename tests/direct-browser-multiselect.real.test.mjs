@@ -9,8 +9,8 @@ import { createActionRunner, inspectTarget } from '../plugins/sleight/lib/direct
 import { backgroundClick } from '../plugins/sleight/lib/direct-browser/page.mjs';
 import { snapshot } from '../plugins/sleight/lib/direct-browser/snapshot.mjs';
 
-async function setup(t, html) {
-  const f = await fixture(t, html), { page } = f.entry;
+async function setup(t, html, observeTabs = false) {
+  const f = await fixture(t, html, {}, { observeTabs }), { page } = f.entry;
   const runSteps = createActionRunner({ check: () => 'allow', snapshot, backgroundClick });
   const fill = createFillFields({ check: () => 'allow', runSteps, inspectElement: inspectTarget });
   const ref = async selector => {
@@ -72,4 +72,61 @@ test('real browser_act exposes its requested command modifier through the backgr
   const result = await f.runSteps(f.entry, [{ do: 'click', ref: await f.ref('[role="option"]:last-child'), modifier: 'cmd' }], {});
   assert.equal(result.stoppedAt, null, result.lines.join('\n'));
   assert.deepEqual(await selected(f.page), ['English', 'Portuguese (Brazil)', 'Japanese']);
+});
+
+for (const modifier of ['cmd', 'ctrl']) test(`real browser_act ${modifier} toggles an ARIA option without opening or activating a tab`, { skip, timeout: 30000 }, async t => {
+  const f = await setup(t, aria, true), before = await f.tabState(), pages = f.context.pages().length;
+  const result = await f.runSteps(f.entry, [{ do: 'click', ref: await f.ref('[role="option"]:last-child'), modifier }], {});
+  assert.equal(result.stoppedAt, null, result.lines.join('\n'));
+  assert.deepEqual(await selected(f.page), ['English', 'Portuguese (Brazil)', 'Japanese']);
+  assert.equal(f.context.pages().length, pages);
+  assert.deepEqual((await f.tabState()).filter(tab => tab.active).map(tab => tab.id), before.filter(tab => tab.active).map(tab => tab.id));
+});
+
+const refusedTargets = [
+  ['submit', '<form><button id="target">Submit</button></form>', 'cmd'],
+  ['submit label', '<form><button id="submit">Submit</button><label id="target" for="submit">Forward</label></form>', 'ctrl'],
+  ['Shift submit', '<form><button id="target">Submit</button></form>', 'shift'],
+  ['Shift window.open', '<div id="target" onclick="window.open(\'/landed\')">Open</div>', 'shift'],
+  ['window.open', '<div id="target" onclick="window.open(\'/landed\')">Open</div>', 'cmd'],
+  ['registered window.open', '<div id="target">Open</div><script>target.addEventListener("click",()=>window.open("/landed"))</script>', 'ctrl'],
+  ['descendant link', '<div id="target"><a href="/landed">Link</a></div>', 'cmd'],
+  ['ancestor link', '<a href="/landed"><span id="target">Link</span></a>', 'ctrl'],
+  ['descendant control', '<div id="target"><button>Button</button></div>', 'cmd'],
+  ['ancestor control', '<button><span id="target">Button</span></button>', 'ctrl'],
+];
+for (const [name, html, modifier] of refusedTargets) test('real modified click refuses ' + name + ' without a popup or tab activation', { skip, timeout: 30000 }, async t => {
+  const f = await setup(t, html, true), before = await f.tabState(), pages = f.context.pages().length;
+  let popups = 0; f.page.on('popup', () => popups++);
+  const steps = [{ do: 'click', ref: await f.ref('#target'), modifier }];
+  if (modifier === 'shift') await assert.rejects(f.runSteps(f.entry, steps, {}), /modifier/);
+  else assert.match((await f.runSteps(f.entry, steps, {})).lines[0], /not run/);
+  assert.equal(popups, 0); assert.equal(f.context.pages().length, pages);
+  assert.deepEqual((await f.tabState()).filter(tab => tab.active).map(tab => tab.id), before.filter(tab => tab.active).map(tab => tab.id));
+});
+
+for (const child of ['<a href="/landed">Japanese</a>', '<button>Japanese</button>'])
+  test('real ARIA fill refuses an option containing ' + child, { skip, timeout: 30000 }, async t => {
+    const f = await setup(t, aria.replace('aria-selected="false">Japanese', 'aria-selected="false">' + child), true);
+    const before = await f.tabState(), pages = f.context.pages().length;
+    const result = await f.fill('#languages', ['English', 'Portuguese (Brazil)', 'Japanese']);
+    assert.equal(result.rows[0].status, 'failed');
+    assert.deepEqual(await selected(f.page), ['English', 'Portuguese (Brazil)']);
+    assert.equal(f.context.pages().length, pages);
+    assert.deepEqual((await f.tabState()).filter(tab => tab.active).map(tab => tab.id), before.filter(tab => tab.active).map(tab => tab.id));
+  });
+
+for (const modifier of ['cmd', 'ctrl', 'fill']) test('real modified option refuses persistent card-frame focus: ' + modifier, { skip, timeout: 30000 }, async t => {
+  const f = await setup(t, '<iframe id="card" srcdoc="<input>"></iframe>' + aria, true);
+  const ref = await f.ref('[role="option"]:last-child'), before = await f.tabState();
+  await f.page.evaluate(() => {
+    window.inputs = 0;
+    for (const event of ['keydown', 'pointerdown', 'click']) window.addEventListener(event, () => inputs++);
+    Object.defineProperty(document, 'activeElement', { configurable: true, get: () => document.getElementById('card') });
+  });
+  if (modifier === 'fill') assert.equal((await f.fill('#languages', ['English', 'Portuguese (Brazil)', 'Japanese'])).rows[0].status, 'failed');
+  else assert.match((await f.runSteps(f.entry, [{ do: 'click', ref, modifier }], {})).lines[0], /focus is held inside a frame/);
+  assert.equal(await f.page.evaluate(() => inputs), 0);
+  assert.deepEqual(await selected(f.page), ['English', 'Portuguese (Brazil)']);
+  assert.deepEqual((await f.tabState()).filter(tab => tab.active).map(tab => tab.id), before.filter(tab => tab.active).map(tab => tab.id));
 });

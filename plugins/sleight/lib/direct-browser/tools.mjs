@@ -7,7 +7,7 @@ const ref = { type: 'string', pattern: '^(?:(?:f[0-9]+)?e[0-9]+|s[0-9]+)$' };
 const tab = { type: 'string', pattern: '^t[A-Za-z0-9_-]{1,64}$' };
 const strings = { type: 'array', maxItems: 100, items: text };
 const ops = 'click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport navigate'.split(' ');
-const step = object({ do: { type: 'string', enum: ops }, ref, text, key: text, modifier: { type: 'string', enum: ['cmd', 'shift', 'ctrl', 'alt'] },
+const step = object({ do: { type: 'string', enum: ops }, ref, text, key: text, modifier: { type: 'string', enum: ['cmd', 'ctrl'] },
   values: { type: ['string', 'array'], items: text, maxItems: 100 }, to: ref, until: text,
   ms: { type: 'number', minimum: 0 }, dx: { type: 'number' }, dy: { type: 'number' }, accept: { type: 'boolean' }, paths: strings,
   width: { type: 'integer', minimum: 1, maximum: 10000 }, height: { type: 'integer', minimum: 1, maximum: 10000 } }, ['do']);
