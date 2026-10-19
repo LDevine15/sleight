@@ -22,9 +22,14 @@ After a guard stop, a full read restores the target. Reset clears handles and th
 current target; an acquisition can reuse a bundle ID only for a known selector
 and matching full window identity. Display names alone never supply a bundle ID.
 Ambiguous or missing identity stops actions with exact recovery code.
-`select_window` raises one exact title or AXDocument file URL through Accessibility,
-without activating the app. Selection holds an app lease and requires a matching
-standalone `getApp` read before acting. Recovery hints repeat that selection.
+`select_window` raises a window by title or AXDocument file URL through Accessibility,
+without activating the app. Exact titles take precedence. If no exact title matches,
+one unique title ending in the requested app may match at the title start or after
+whitespace. The request must have at least 12 Unicode code points after `trim()`,
+excluding format (`Cf`) and combining (`M`) characters from the count. Matching uses
+the original request. Ambiguity stops selection and lists at most five titles, each
+cut to 200 characters, with the number omitted. Selection holds an app lease and
+requires a matching standalone `getApp` read before acting. Recovery hints repeat that selection.
 An active selection adds an "outcome unconfirmed" note for changed or missing
 action headers. Reset, failed reselection or a confirmed window change
 clears it. Document mode keeps its document_scope guard.

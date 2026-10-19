@@ -1268,6 +1268,37 @@ test('window selection holds the app lease and needs a matching standalone acqui
   assert.equal(h.forwarded.at(-1).id, 11); h.reply(other);
 });
 
+test('suffix selection keeps the full-title acquisition guard and app lease', async t => {
+  const { harness, b } = setup(t);
+  const target = { appId: 'com.apple.TextEdit', app: 'TextEdit', title: 'Work: Project page', url: null };
+  const h = harness('suffix selector', { fresh: true, changeReview: false,
+    localTools: { tools: [SELECT_WINDOW_TOOL], target: async () => ({ appId: target.appId, app: target.app }),
+      call: async (_, args) => {
+        assert.equal(args.expectedAppId, target.appId);
+        assert.equal(args.title, 'Project page');
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, target,
+          identity: { pid: 123, windowNumber: 22 }, note: 'matched by its title ending: Work: Project page' }) }] };
+      } } });
+  h.send(rpc('select', 'select_window', { app: 'TextEdit', title: 'Project page' }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(h.received.at(-1).result.content[0].text, /matched by its title ending: Work: Project page/);
+  b.send(rpc('competing', 'js', { code: 'await app.typeText("x")' }));
+  assert.equal(b.forwarded.length, 0);
+  assert.match(b.received.at(-1).result.content[0].text, /Input lease.*suffix selector/);
+  h.send(rpc('short', 'js', { code: 'let app = await cua.getApp("TextEdit")' }));
+  h.reply(result('short', 'Window: "Project page", App: TextEdit'));
+  assert.match(h.received.at(-1).result.content.at(-1).text, /selected window not observed/);
+  h.send(rpc('blocked', 'js', { code: 'await app.typeText("x")' }));
+  assert.equal(h.forwarded.length, 1);
+  h.send(rpc('full', 'js', { code: 'app = await cua.getApp("TextEdit")' }));
+  h.reply(result('full', 'Window: "Work: Project page", App: TextEdit'));
+  h.send(rpc('action', 'js', { code: 'await app.typeText("x")' }));
+  assert.equal(h.forwarded.at(-1).id, 'action');
+  assert.match(h.forwarded.at(-1).params.arguments.code, /Work: Project page/);
+  assert.match(h.forwarded.at(-1).params.arguments.code, /Selected window changed/);
+  h.reply(result('action', 'Window: "Work: Project page", App: TextEdit'));
+});
+
 test('window selection cannot raise an app while another session holds one of its documents', async t => {
   const { a, harness } = setup(t);
   let selections = 0;

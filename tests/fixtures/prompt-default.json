@@ -1,9 +1,9 @@
 {
   "skill": "d0cd3db666c2e2765674998ddc639eaca136f4a2bb4cb31d1c57d8fe76026834",
-  "tools": "8e313529887b3d10ad5f25282a9f7ffbf7d21f2229f8c2769667df8be15a63f0",
+  "tools": "c1b796e8a8b2a155cadd5e5ae0463d12d5f90ad8147698050352bc95dde8b40b",
   "batch": "aab9c612b29e726dcacf915b1c565dfc65ae3c455bc7561a3f1ea2d3733d4406",
   "merge": "5bd0464e07e16924b32d03a806ec8a6f47c2ed254026b394cbaa26b5c3e8a32d",
-  "notices": "eee07772eaa46cc32ecdd95569276b215b92404b67db1f01b86509115e1cb1b2",
+  "notices": "44890d6be4ca11d1c1e20154aa297812428225d7ccf96dd7e25263ce286e7ddc",
   "skillSafety": [
     "Never create or edit `~/Library/Application Support/sleight/preapproved.json`; only the user writes\nit. If an app isn't approved, ask the user, or stop when a headless run refuses it.",
     "- A sign-in, update, permission or first-run screen: stop and tell the user. Don't answer it.",
