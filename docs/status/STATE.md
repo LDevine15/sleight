@@ -3,103 +3,59 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 11:30 UTC)
+## Banner (2026-10-19 12:45 UTC, flushed before the owner's clear)
 
-**Since the clear (11:30Z).** 1.3.0 is released as tag `v1.3.0` on `ca2188b4` (public `main`) with a GitHub release from the
-CHANGELOG. Public CI passed on Node 24, the Node ChatGPT bundles, after 18 fork tests were cancelled on Node 22. The private
-`sleight-dev` refuses `ca2188b4` (org ruleset against workflow edits, the owner's), so private `pane/auto-mode` is at
-`808ced5f` and later release-line commits wait locally until the owner pushes with the ruleset off. The owner's installed copy
-is still 1.2.5. A macOS permission prompt for Terminal access to Downloads has been on screen since before 11:16Z. It's the owner's,
-and it blocks the native benchmark runner. 1.3.1 `claude/p131-integration` bc9ac747 adds HS1, TU1 and SW1's follow-up (its first
-live check failed: the popup note never fired). The FS A/B race half is in. Firefox with FS was faster in all 3 rounds (474.2,
-450.8, 440.1 s against 517.8, 488.5, 512.0 s), while Safari was mixed and lost 2 tasks once, so FS2's Firefox keyboard route is
-the candidate default. FS1's native half waits on the prompt. The Sol pair (block SOL on race-131) runs now. 1.4.0 `claude/p140`
-26d4389f holds analytics, Cursor, the AM1 speed map (published) and the 1.3.1 sync. OWNER ASLEEP since 2026-10-19T05:09:45Z
-(/goodnight), back about 12:00Z. Items below marked as in flight at the clear are superseded by this paragraph.
+Goal (owner): 1.3.0 is out. 1.3.1 validation runs now, then sleight holds at 1.3.1 while the owner uses it. 1.4.0 (analytics,
+Cursor plugin, AM1 speed map) builds on its own branch. The video isn't tied to any release (owner, 2026-10-19). Published results show their engine
+version and UTC date, and engine updates no longer force reruns (LAWS). The ledger (`~/Projects/sleight-wt/ledger/LEDGER.md`)
+records every result and ruling in time order.
 
-**Release line** `pane/auto-mode` = main checkout. It holds the race fixes ft1, fs1 and md1, plus sec130, es1, ff1, rg1r2, fl3,
-form-2fa, the Safari harness fixes, mdn-note, OH1, the FM3 port (engine Chromium tab path only), list-pick, the native
-sleight-in-Codex claim arms with the Calculator reader fix, the benchmark hub, and the Codex plugin with the dropdown's host line
-(`claude/codex-plugin` c8ac627b, merged at the clear; one live Codex rerun with the owner is still owed, as cxp1-REPORT.md describes). The flush full check, with the Codex plugin merged, ran 8279 tests
-with no failures, and lint is clean. LAWS gained the Codex auto-approval rule.
+**1.3.0, released 2026-10-19.** Tag `v1.3.0` on `ca2188b4`, public `main` and the private repo, GitHub release from the CHANGELOG.
+Public CI runs on Node 24 (the Node ChatGPT bundles). The private repo's org ruleset 22105960 refuses workflow edits; the owner
+okayed one toggle (disable, push, re-enable, verified active). Release line `pane/auto-mode` c4625506 (private, local, main
+checkout). The owner's installed copy is 1.3.0 (`claude plugin update`, reads from the main checkout). Claim: native "fastest" 8 of
+9 (251.2 s against 453.9 s), app 3 of 3, Chrome turbo "fastest" 10 of 13 on the release build (258.9 s against 447.8 s), Safari and
+Firefox "fastest" 11 of 12 (592.1 s, 557.1 s), sleight inside Codex (luna) ahead of Codex on 9 and 8 of 12, release pass 13 of 13
+on Haiku and on Opus. Helium's top-ups are owed (Helium is the owner's browser, so ask before running it). Known 1.3.0 problems found
+since: the startup cache (HS1) and the promo-code Apply stop (PG2), both in known-problems.
 
-**In flight at the clear** (Opus agents in the old session, which may stop at the clear: check each branch first):
-- `claude/pay-gate` d39236bb: the engine-path payment gate with sleight's card. Both security review rounds are done (38/38,
-  1441 focused and 2528 adversarial headless tests pass). It is NOT merged: the merge conflicts with the Codex plugin in
-  launch.mjs and relay.mjs. Resolve that first next session, keeping both sides, then run the full check. Live checks are still
-  owed: one Sol and one Haiku Firefox form-checkout and a Safari confirm sheet.
-- `claude/codex-turbo` (no pushed commit yet): turbo inside Codex for 1.3.1, in the worktree `~/Projects/sleight-wt/codex-turbo`.
-  The report goes to ledger/p130/cxt1-REPORT.md. If nothing was pushed, restart it from the ROADMAP 4e brief.
-- `codex/fu1` 50438a18: the Sol lane is DONE (claims/FU1). It needs a Sonnet-high review, then a merge into `claude/p131-integration`.
+**1.3.1, `claude/p131-integration` bc9ac747 (pushed; 327fa383 had a full check of 8949 tests, 0 fail).** Merged: codex-turbo
+9612ea86, FU1 ca7ab807, PG2 b8020ea5 (promo Apply, security reviewed), 4f compatibility check 948554e1 (static half for ci-box or
+GitHub, with the workflow file at ledger/p130/cf1-engine-compat.yml, okayed by the owner but not pushed yet), FS ddb51401 (behind
+`SLEIGHT_FS=1`), SW1 f98ef207, TU1 0de1cf41, HS1 bafd37b1. In flight: PG3 on `claude/p131-pg3` (an Opus builder makes Enter on a
+combo box with its suggestion list open select instead of submit, with its own security review, report in ledger/p130/pg3-REPORT.md). Merge it when it
+reports, after a read of its review. The owner said no more subagents after PG3.
+In the FS A/B race half, Firefox with FS was faster in all 3 rounds (474.2, 450.8, 440.1 s against 517.8, 488.5, 512.0 s), Safari mixed (one
+round lost 2 tasks). The candidate default is FS2's Firefox keyboard new-tab route. FS1 (the description text) waits on the native half.
+1.3.1 live checks still owed are the FS native half (queued), SW1 (its first live check failed; the follow-up f98ef207 traces every
+reason), Codex turbo's seven steps (ledger/p130/cxt1-REPORT.md), AS-3 A/B, Electron qualification (the owner delegated the one
+Always allow click on the benchmark VS Code), ghost hand capture test and cost pass, WK4 and DC1, the flag A/Bs, the compatibility
+suite's first live run, TU1's census over the next Chrome turbo rounds. Then the 1.3.1 version bump, release pass and tag.
 
-**1.3.1 branch** `claude/p131-integration` 199bf5c7 holds every 1.3.1 branch: pm1, so1 with SF1R, OH2, EL4, and AS-3's
-`browser_open` behind `SLEIGHT_BROWSER_CORE=1`. Its full check hasn't run. Still to come: FU1 and codex-turbo. AS-9's runner is
-`claude/as9` fc9ce104 (ledger/p130/as9-PLAN.md). It needs an away window with every other engine client closed (11 were running at
-02:25Z), so it's the owner's to schedule. AS-8 and TB2 are closed (owner).
+**1.4.0, `claude/p140` 26d4389f (pushed, synced with 1.3.1 bc9ac747's parent).** Analytics 5ed05cbb (`sleight-mcp stats`, menu
+row), Cursor 19ed72e5 (plugin manifest, marketplace, doctor; never installed in a real Cursor; Cursor is on the benchmark
+allowlist with Grok 4.6 high, normal speed), AM1 67d240b5 (speed map published in docs/benchmarks/2026-10-19-speed-map.md: six
+apps 10 of 10, Excel cohorts 29 of 40). Its full check hasn't run.
 
-**Owner checks done on 2026-10-19.** The owner ran the Codex plugin interactively in `~/.codex-sleight-check`. Calculator gave
-144 and TextEdit typed its line. The approval appeared as Codex's own prompt offering one time or always, and the owner chose
-always, which put TextEdit in preapproved.json. com.apple.Terminal joined the same list through always-allow while sleight-arch
-read the Terminal window.
+**Running across the clear (Terminal windows, they survive it).**
+- `race-1017/block-sol.command` (pid 64675): ROADMAP 4b Sol pair on race-131 (1.3.1 327fa383), codex-sleight-sol and codex-sol,
+  Safari and Firefox x3, log `race-1017/block-sol.log`. So far codex-sol paid the unpriced checkout in 3 of 3 rounds; sleight
+  inside Codex never paid.
+- `race-1017/block-fsnative.command` (pid 4324): waits for block-sol's done, runs the FS native half (10 held-out tasks x3 per
+  side, logs `race-1017/native-fs3-*.log`), then touches `race-1017/CLEAR`, loc arch's render window for the film.
+- The race watchdog `race-1017/watchdog.sh` (pid 63290, nohup), harmless while rounds run.
+- Worktrees: race-fx at the release build 1f6efff2, race-131 at 327fa383.
 
-**Engine changed mid-race.** ChatGPT went from 26.1007.71326 to 26.1013.40934 on 2026-10-18 at 21:47Z. An action now takes about
-1.0-1.1 s, against about 0.6 s before, and the latency A/B saw the same on the old and new builds. The engine arms' results
-(codex, lcu, sleight, codex-sleight) must be rerun on the new engine, while cua's and Peekaboo's results stand. The new engine
-leaves an unproven AXDialog window in driven apps, which the harness and the Calculator reader now skip.
+**Launch film.** No progress since 2026-10-19 00:58Z (LoC 50f50d58, animatic v0 scene and renderer). loc arch renders only while
+`race-1017/CLEAR` exists. Delete it before the next timed block and touch it when a block ends (missed overnight). Captures need the
+owner (lid open, live typing, the cap1 recorder `claude/p130-cap1` 2bed084f from Terminal), a 5 s test stream to loc arch first.
 
-**Next steps:**
-1. Done 03:00Z: pay-gate merged (7a129a4a).
-2. Done 03:05Z: 1.3.1 integration 4abeff67 pushed with FU1 and codex-turbo.
-3. Final runs on the new engine, in an away window, through one queue-runner Terminal window rather than one window per job
-   (the owner flagged the pile-up):
-   - Safari and Firefox x3 for sleight, codex and lcu;
-   - codex-sleight and codex-sleight-sol x3 against codex and a new codex-sol baseline (ROADMAP 4b);
-   - the native claim rerun, including the Codex arms;
-   - top-ups to 5 where an arm is within 20%;
-   - live checks for pay-gate (one Sol and one Haiku Firefox form-checkout, plus a Safari confirm sheet), Codex turbo, and the AS-3 A/B.
-4. Regenerate the hub (`node bench/results-hub.mjs`), merge `claude/insights-readme` b92792ff, fill its README `TODO(final)`
-   markers through the humanizer, run the release pass, and tag (owner's call).
-
-**Running across the clear:** the race watchdog (`race-1017/watchdog.sh`, pid 63290, nohup), harmless while idle. Nothing else
-runs, since the Codex lanes have exited and the live lock and `/tmp/sleight-hold` are both clear.
-
-**Where the claim stands (Haiku 5.5 high, real windows).** Native 9 tasks "fastest", 8 of 9, 251 s against claude-cu's 454 s (lost
-preview-read to Peekaboo). App tasks 3 of 3. Chrome and Helium turbo 12 of 13 each. Firefox 10 of 12 (older build). Safari is complete (3 rounds an arm, all reruns done 23:35Z): sleight fastest on 9 of 12
-by expected time, total 670.1 s, the only arm that passed all 12 tasks. Codex leads form-travel and mdn, and Peekaboo leads
-wikipedia (17.6 against 18.0). By the owner's loss rule (a faster passing run also counts), lcu's one 42.3 s form-checkout pass
-makes that task a loss too. form-settings is now sleight's (167.0 against cua's 206.3), though the two-factor switch can make it
-ask (LAWS). Fixes for form-travel, mdn and form-checkout are on ft1, fs1 and md1. Close pairs for top-ups: form-travel, wikipedia
-and mdn against Codex and Peekaboo, form-settings against cua.
-
-**Running now.**
-- The race is idle since Safari finished at 23:35Z. Neither the live lock nor `/tmp/sleight-hold` exists.
-- `nohup` watchdog `race-1017/watchdog.sh` (pid 63290, log `watchdog.log`): ALERT and exit if the live lock is held with no round
-  for 3 min, a round runs over 40 min, or Safari stays up with no round. Read it first after the clear.
-
-**Order from here.**
-1. Safari is scored (`node bench/fowl/race-score.mjs ~/Projects/sleight-wt/race-1017/safari-*-r[0-9]*`).
-2. Done 23:5xZ (0917b8e9).
-3. Live checks the merges need first: sec130's engine card text for the consent host and a press_key probe against a frontmost
-   consent-host card, and ft1's Page Down in Safari's and Firefox's long lists.
-4. sleight's Safari x3 and Firefox x3 on the new build, rescore, then one top-up round to 5 for pairs still within 20%.
-5. sleight-in-Codex smoke and rounds; Claude in Chrome rounds (Allow watcher) and reconnect GitHub; native claim rerun on the final
-   build, then the release pass (including MB1 live with turbo connected) and the 1.3.0 tag (owner's call).
-6. 1.3.1: merge the post-1.3.0 branches in the order above, then validation in an away window with the owner, covering Electron qualification
-   (one Always allow click; watch the first relaunch of the real VS Code), ghost hand capture test (decides capture `visible`) and
-   cost pass, WK4 and DC1 live, AM1 fixtures, the flag A/Bs (GA1T2, TS3, FA1, WB1/WB2, SO1), then the 1.3.1 tag.
-7. Launch video (art greenlit, loc arch directs). Film captures after the 1.3.0 pass with the lid open, owner typing live in the
-   trick. cap1's recorder runs from a Terminal.app .command (Terminal already holds Screen Recording); send loc arch a 5 s test
-   stream and sync.json first, then the final numbers and the playbill CSV.
-
-**Owner items.** The 1.3.0 tag and publishing. GitHub Integration on claude.ai reconnect after the Claude in Chrome rounds
-(passkey if asked). The capture sitting (lid open, live typing). Electron qualification's one Always allow click.
+**Owner items.** Helium top-ups (go or not). The film's capture sitting. Pushing the compatibility workflow and installing the
+ci-box timer (both okayed, with the install commands in ledger/p130/cf1-REPORT.md).
 
 **Opt-in flags still opt-in:** `SLEIGHT_OPEN_SHOT=1`, `SLEIGHT_SKILL=screenshot` (SK1 ran excel-edit 50-53 s in 3/3 on the pre-FL1
 build; recheck), `SLEIGHT_COMPACT_TOOLBARS=1` (made word-edit ~40% slower; FL1 now leaves Word and Excel unfolded),
 `SLEIGHT_COMPACT_CONFIRMATIONS=1` (wording approved by the owner).
-
-**Older owner items.** One "Always allow" click on the VS Code debugger card at the Electron turbo qualification (1.3.1). The engine's Always-allow list has listed only Word and Codex since 2026-10-11 (below). The
-Microsoft Error Reporting window from an earlier Office crash is theirs to read or dismiss.
 
 **Gotchas from 2026-10-17.** Never send Apple events to Office from this session (Excel had no Automation grant and a macOS prompt
 appeared). Quit fixture apps with NSRunningApplication and answer their own Don't Save sheet or dialog by System Events. An
@@ -120,7 +76,8 @@ This session works in `.claude/worktrees/boot-sleight-arch-*`, because a hook re
 `git push private HEAD:pane/auto-mode`, then `git -C ~/Projects/sleight merge --ff-only <branch>`. A release also pushes
 `HEAD:refs/heads/main` and the tag to `origin` with `SLEIGHT_RELEASE_PUSH=1` (owner's call), then `gh release create` from the
 CHANGELOG section. Public CI is Linux, without `npm install`, on Claude Code 2.1.288. Released so far: `v1.2.0` to `v1.2.5`
-(2026-10-11, public `main` `b2eb9d8`). The owner's install is 1.2.5. Public `origin/pane/auto-mode` stays at `332e3ca`.
+(2026-10-11) and `v1.3.0` (2026-10-19, public `main` `ca2188b4`). The owner's install is 1.3.0. Public `origin/pane/auto-mode`
+stays at `332e3ca`. A workflow edit needs the org ruleset off for the private push (owner's call each time).
 
 Bench setup: every Claude arm runs on the owner's login in its own config (`node bench/world/login-readiness.mjs` reads all five
 native arms as logged in, 2026-10-16). The gate uses `--world` (both arms on the pinned Claude Code 2.1.289). Hand-run arm CLIs need
