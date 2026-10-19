@@ -234,7 +234,7 @@ export function speedMarkdown(report) {
 
 // Rough per-cell seconds for the dry run's estimate, not a measurement. TextEdit measured acquisition at 1.25 s and a
 // scroll at 0.92 s (2026-10-14); launch, client start and quit are assumed. The bound adds every timeout a cell can reach.
-const ESTIMATE = { sequential: 15, concurrent: 20, startup: 70, phase: 60, cleanup: 50 };
+const ESTIMATE = { sequential: 15, concurrent: 20, startup: 80, phase: 60, cleanup: 50 };
 
 // Runs the real scheduler against an in-memory runtime: every planned cell, its engine calls and refusals, with no app,
 // engine, lock, file or child process.
