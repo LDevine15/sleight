@@ -1,7 +1,7 @@
 // What sleight needs from the ChatGPT computer-use engine, and the checks that read it back after an engine update.
 // Every name here is one sleight's code calls or parses (plugins/sleight/lib). tests/compat-contract.test.mjs fails when the
 // code starts calling a cua method this file doesn't list, so a new dependency can't skip the check.
-import { compactJsDescription } from '../../plugins/sleight/lib/tool-description.mjs';
+import { engineJsVariant } from '../../plugins/sleight/lib/tool-description.mjs';
 import { rewritePaymentPolicy } from '../../plugins/sleight/lib/payment-policy.mjs';
 import { compactConfirmationsPolicy } from '../../plugins/sleight/lib/compact-confirmations.mjs';
 
@@ -136,9 +136,10 @@ export function checkToolSurface(tools) {
   if (!byName.has('turn_ended')) problems.push('no turn_ended tool');
   const results = [problems.length ? result('tool-surface', 'fail', problems.join('; '))
     : result('tool-surface', 'pass', `js and turn_ended present (${tools.length} tools)`)];
-  if (js && typeof js.description === 'string' && compactJsDescription(js.description, undefined, false) === undefined) {
-    results.push(result('js-description', 'warn', "the engine's js description changed, so sleight sends it whole instead of its shorter version (tool-description.mjs ENGINE_JS_HASH)"));
-  } else if (js) results.push(result('js-description', 'pass'));
+  const pin = js && typeof js.description === 'string' ? engineJsVariant(js.description) : undefined;
+  if (js && typeof js.description === 'string' && !pin) {
+    results.push(result('js-description', 'warn', "the engine's js description changed, so sleight sends it whole instead of its shorter version (tool-description.mjs pins)"));
+  } else if (js) results.push(pin?.current ? result('js-description', 'pass', "sleight's shorter version applies with SLEIGHT_FS=1, under A/B") : result('js-description', 'pass'));
   return results;
 }
 

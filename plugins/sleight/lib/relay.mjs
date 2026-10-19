@@ -774,7 +774,8 @@ export function createRelay({
   // Under A/B (SLEIGHT_FS=1, loss study 2026-10-19 fixes 3 and 4): the js description notes at the engine's inventory
   // sentence that getState lists no windows (INVENTORY_NOTE), FIRST_CALL_WINDOWS goes on, and a browser getApp result whose
   // tab strip shows its selected tab names Cmd+T, typeText and Return for a new tab (KEYBOARD_TAB_SENTENCE). An engine
-  // description that matches ENGINE_JS_HASH gets the compact text, which has no inventory sentence, so only TS3's there.
+  // description that matches a pin gets the compact text, which has no inventory sentence, so only TS3's goes there. The
+  // flag also turns on the pins of the engine's current descriptions (tool-description.mjs COMPUTER_JS_HASH).
   firstCallSteering = process.env.SLEIGHT_FS === '1',
   // Under A/B (SLEIGHT_TS3=1): the js description says getState lists no windows (FIRST_CALL_WINDOWS).
   firstCallWindows = process.env.SLEIGHT_TS3 === '1' || firstCallSteering,
@@ -4699,7 +4700,7 @@ export function createRelay({
         .map(t => (t.name === TURN_END_TOOL ? internalTurnEnd(t, !modHost()) : t))
         .map(t => {
           if (t.name !== 'js') return t;
-          const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows);
+          const compact = compactJsDescription(t.description, firstCallBatch, leanCalls, firstCallWindows, { current: firstCallSteering });
           if (compact !== undefined) return { ...t, description: compact };
           const batched = firstCallBatch ? batchingDescription(t.description, firstCallBatch, prompt, firstCallWindows) : t.description;
           const description = firstCallSteering ? withInventoryNote(batched) : batched;

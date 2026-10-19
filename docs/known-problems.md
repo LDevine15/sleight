@@ -40,6 +40,10 @@ our own runs. Dates and engine versions are given where they matter.
 - Safari's tab continuation never fired in the b10 to b12 rounds (2026-10-19), where Cmd+T followed by typing stopped 6
   of 6 times, a turn each. A one-tab window doesn't show a tab bar, and Safari marks its tabs `Value: on` or `off`, not
   selected. `SLEIGHT_FS=1` names the keyboard route only for a window whose strip shows a selected tab.
+- sleight's shorter js description hasn't matched the engine's text since its 2026-10-16 update, and never matched the
+  computer-only text most sessions get, so Claude reads the engine's description with only its first-call rule rewritten.
+  That text lists `cua.getState()` before `cua.getApp()`, and 39 of 72 b10 race runs opened with getState. `SLEIGHT_FS=1`
+  pins both current variants until its A/B, which has to cover native tasks too, since every engine session reads it.
 - A continued call's result reports the second engine call's `codex/nodeReplExecutionDurationMs`, not the sum. In Firefox
   1.13 to 1.70 s per Cmd+T call fell outside it (b10, 2026-10-19): most likely the first call (a plain Cmd+T and read took
   1.20 to 1.29 s) plus two helper probes, whose time isn't measured yet. The relay trace now records the stop's engine
