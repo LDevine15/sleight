@@ -50,10 +50,11 @@ native task 3 times, and 5 times where sleight and that arm were within 20%. The
   calculator-click, calculator-menu and the three app tasks weren't tuned. Competitors ran their
   defaults.
 - App tasks in VS Code, Slack and Spotify: fastest on 3 of 3, 56.8 s total against 101.3 s for LCU.
-- Browsers on turbo, against FowlBrowser in real windows, 3 runs each: "completed every task, fastest
-  on 12 of 13" in Chrome (247.6 s against 441.8 s) and "fastest on 11 of 13" in Helium (241.8 s
-  against 338.3 s). Every task passed at least once, with one failed run in each browser, and the
-  pairs within 20% haven't had their top-up to 5 runs yet.
+- Browsers on turbo, against FowlBrowser in real windows: "fastest" in Chrome on the 1.3.0 build
+  (2026-10-19), the lowest expected time on 10 of 13 tasks and 258.9 s against 447.8 s, with 5 runs
+  where the two were within 20%. One demoid run failed when turbo didn't start. In Helium, on the
+  2026-10-18 build with 3 runs each, "completed every task, fastest on 11 of 13" (241.8 s against
+  338.3 s), with the top-ups to 5 runs still owed.
 - Safari and Firefox, which turbo can't drive yet, on the engine path (engine 26.1013.40934,
   2026-10-19): "fastest" in both, the lowest expected time on 11 of 12 tasks, 592.1 s in Safari and
   557.1 s in Firefox, with every task passing. Most of Codex's runs there are from engine
@@ -61,8 +62,8 @@ native task 3 times, and 5 times where sleight and that arm were within 20%. The
 - sleight inside Codex on gpt-6-luna completed every task in both browsers, with a lower expected
   time than Codex's own computer use on 9 of 12 tasks in Safari and 8 of 12 in Firefox.
 - The 1.3.0 release pass, one round of FowlBrowser's 13 tasks on turbo in Chrome (2026-10-19, engine
-  26.1013.40934), passed 13 of 13 on Haiku 5.5 in 257.8 s and 13 of 13 on Opus 5.5 in 249.9 s. The
-  hub lists the round but leaves it out of the claim tables, which need 3 runs.
+  26.1013.40934), passed 13 of 13 on Haiku 5.5 in 257.8 s and 13 of 13 on Opus 5.5 in 249.9 s. The Haiku
+  round is the first of the Chrome set above, and the hub lists the Opus round on its own.
 
 The hub lists the runs, failures included, with the model each arm ran:
 [benchmark hub](docs/results/README.md), [interactive tables](docs/results/explore.html) and
