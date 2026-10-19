@@ -2141,6 +2141,24 @@ test('GA1: closing the last window forgets the recovery target, so the next acti
   assert.equal(a.forwarded.length, 0);
   assert.equal(a.received.at(-1).result.isError, true);
 });
+test('DP1 inventory-confirmed close keeps the old result and clears the recovery target in both prompt forms', t => {
+  for (const prompt of [undefined, 'lean']) {
+    const a = setup(t).harness('dp1-' + (prompt ?? 'default'), { fresh: true, changeReview: false, prompt });
+    a.send(rpc(1, 'js', { code: 'let app = await cua.getApp("TextEdit")' })); a.reply(result(1));
+    a.send(rpc(2, 'js', { code: 'await app.pressKey("super+shift+w")' }));
+    const code = a.forwarded.find(m => m.id === 2).params.arguments.code;
+    const mark = JSON.parse(/__sleightDocumentGuardSetup\((\{[^\n]*\})\);/.exec(code)[1]).guardStopMark;
+    a.reply(result(2, 'earlier output\n' + mark + ':closed\n'));
+    assert.deepEqual(a.received.at(-1).result.content, [{ type: 'text', text: prompt === 'lean'
+      ? 'sleight: last window closed; nothing more to read.'
+      : 'sleight: the app has no windows left, so the window this call closed was its last. Nothing more to read.' }]);
+    assert.equal(a.received.at(-1).result.isError, false);
+    a.forwarded.length = 0;
+    a.send(rpc(3, 'js', { code: 'await app.click(1)' }));
+    assert.equal(a.forwarded.length, 0);
+    assert.equal(a.received.at(-1).result.isError, true);
+  }
+});
 test('GA1: recovery sends nothing when the app is not running or the check gets no answer', async t => {
   for (const health of [{ status: 'absent' }, undefined]) {
     const { h, probed } = await droppedOnHelium(t, { runningProbe: async app => { probes.push(app); return health; } });

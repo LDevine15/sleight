@@ -8,7 +8,7 @@ const tree = 'Window: "note.txt", App: Example Editor.\n0 standard window note.t
 const image = { type: 'image', data: 'AA==', mimeType: 'image/png' };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-async function open(t, { flag = '0', autoFlag, window = tree, openedFile, failShot = false, failOpen = false, failRead = false, changeReview = false, warmRepl = false } = {}) {
+async function open(t, { flag = '0', autoFlag, window = tree, openedFile, failShot = false, failOpen = false, failRead = false, changeReview = false, warmRepl = false, ...relayOptions } = {}) {
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
   const sent = [], received = [], events = [], approvals = [], leases = [];
@@ -17,7 +17,7 @@ async function open(t, { flag = '0', autoFlag, window = tree, openedFile, failSh
   else process.env.SLEIGHT_OPEN_SHOT = flag;
   if (autoFlag === undefined) delete process.env.SLEIGHT_OPEN_AUTO_SHOT;
   else process.env.SLEIGHT_OPEN_AUTO_SHOT = autoFlag;
-  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview, warmRepl,
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview, warmRepl, ...relayOptions,
     ask: async message => { approvals.push(message); return 'accept'; },
     inputLease: { acquire: target => { leases.push(target); return 'lease'; }, renew() {}, release() {}, close() {} },
     localTools: { tools: [{ name: 'open_file' }], target: async () => ({ appId: 'org.example.editor', app: 'Example Editor' }),
@@ -124,6 +124,20 @@ const sheet = ['Window: "Book", App: Example Editor.', '0 standard window Book, 
   '\t3 combo box (settable) Description: name box, Value: A1, ID: NameBox'].join('\n');
 const textlessNote = /the document area exposes no text values/;
 const all = h => h.result.content.map(c => c.text ?? '').join('\n');
+
+test('DP3 names the acquired handle API in both prompt forms and preserves the off result', async t => {
+  const api = "It has the engine's app API: click, doubleClick, rightClick, pressKey, typeText, paste, setValue, selectText, scroll, drag, performSecondaryAction, getAXState, getScreenshot, getAXStateAndScreenshot.";
+  for (const prompt of [undefined, 'lean']) {
+    const off = await open(t, { prompt, handleApi: false });
+    const on = await open(t, { prompt });
+    assert.doesNotMatch(all(off), /engine's app API/);
+    assert.ok(all(on).includes('\n' + api));
+    const normalize = text => text.replace(/__sleightOpenedApp\d+/g, '__sleightOpenedAppN');
+    assert.equal(normalize(all(on).replace('\n' + api, '')), normalize(all(off)));
+    const failed = await open(t, { prompt, failRead: true });
+    assert.doesNotMatch(all(failed), /engine's app API/);
+  }
+});
 
 test('a textless document gets its screenshot in the open result, with no note to take one', async t => {
   const h = await open(t, { window: sheet, openedFile: { path: '/tmp/book.xlsx', size: 9000 } });

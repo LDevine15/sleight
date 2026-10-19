@@ -861,6 +861,8 @@ export function createRelay({
   warmEngine = false,
   openFast = false,
   openShot = process.env.SLEIGHT_OPEN_SHOT !== '0',
+  closeReadSkip = process.env.SLEIGHT_DP1 !== '0',
+  handleApi = process.env.SLEIGHT_DP3 !== '0',
   // SLEIGHT_BROWSER_CORE=1: browser_open for a browser turbo doesn't drive, as two js calls (engine-browser-open.mjs).
   engineBrowserOpen = engineBrowserOpenSetting(),
   // open_file adds a screenshot only when the opened document's tree holds none of its text or cells.
@@ -2656,7 +2658,8 @@ export function createRelay({
           const combined = { ...state, content: [...opened, ...(state.content ?? []),
             ...(!state.isError ? [{ type: 'text', text: promptNotice((pictured ? 'sleight: screenshot added, the tree has no document text. ' : '') +
               `Window handle: \`${handle}\`` + (!confirmed ? '.' : constApp ? ', already acquired. Use it in place of `app`.'
-                : `, already acquired, but \`app\` isn't set: start the next call with \`let app = ${handle};\`.`), prompt) }] : [])] };
+                : `, already acquired, but \`app\` isn't set: start the next call with \`let app = ${handle};\`.`) +
+              (handleApi && confirmed ? '\n' + "It has the engine's app API: click, doubleClick, rightClick, pressKey, typeText, paste, setValue, selectText, scroll, drag, performSecondaryAction, getAXState, getScreenshot, getAXStateAndScreenshot." : ''), prompt) }] : [])] };
           if (pictured) recordScreenshot(combined.content);
           const response = { jsonrpc: '2.0', id: msg.id, result: combined };
           reportPreapprovals(response); toClient(response);
@@ -3137,6 +3140,7 @@ export function createRelay({
     handleClient({ ...msg, id: prefixId, params: { ...msg.params, arguments: { ...msg.params.arguments, code: acquire } } });
     return true;
   }
+  const closedWindowResults = new WeakSet();
   function continueMenu(msg) {
     const call = menuCalls.get(msg.id);
     if (!call) return false;
@@ -3144,6 +3148,11 @@ export function createRelay({
     // When the stop result arrived: a tab continuation asks for HID idle since then, not over the call.
     const stopAt = clock();
     if (!Array.isArray(msg.result?.content)) return false;
+    if (closeReadSkip && !msg.result.isError && msg.result.content.some(c => c.type === 'text' && c.text?.split('\n').includes(call.mark + ':closed'))) {
+      closedWindowResults.add(msg);
+      msg.result.content = msg.result.content.map(c => c.type === 'text'
+        ? { ...c, text: c.text.split('\n').filter(line => line !== call.mark + ':closed').join('\n') } : c);
+    }
     const taken = takeGuardStop(msg.result.content, call.mark);
     msg.result.content = taken.content;
     // The private mark proves the guard wrote these: payments it let through count for the request, and a payment stop is
@@ -3864,7 +3873,7 @@ export function createRelay({
               target === leaseWindow && lightReturnCode(originalCode) ? lightReturn.begin(msg.id, leaseWindow) : undefined;
             msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
-              { ...setup, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, ...(outcomeMark ? { outcomeMark } : {}), timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
+              { ...setup, dp1: closeReadSkip, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, ...(outcomeMark ? { outcomeMark } : {}), timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
                 firstOff: !careful && !documentMode && !changeReview,
                 focused: focusedChecked.has(msg.id),
                 quietEdits: !careful && !documentMode && !changeReview,
@@ -4404,10 +4413,10 @@ export function createRelay({
     }
     // A "call failed" line after this message sent Claude to check again (h2h-3, 2026-10-10), so the
     // close it reports gets no verified-results line.
-    let closedLast = false;
+    let closedLast = closedWindowResults.has(msg);
     // Reading after ⌘W closed the last window fails with noWindowsAvailable, but the
     // close worked (7 of 437 calls, 2026-10-07). Say so instead of reporting an error.
-    if (jsCode !== undefined && msg.result?.isError && /\bsuper\+w\b|cmd\+w\b|command\+w\b/i.test(jsCode) &&
+    if (closedLast || jsCode !== undefined && msg.result?.isError && /\bsuper\+w\b|cmd\+w\b|command\+w\b/i.test(jsCode) &&
         (msg.result.content ?? []).some(c => c.type === 'text' && /noWindowsAvailable/.test(c.text ?? ''))) {
       msg.result = { ...msg.result, isError: false, content: [{ type: 'text', text: promptNotice('sleight: the app has no windows left, so the window this call closed was its last. Nothing more to read.', prompt) }] };
       closedLast = true;

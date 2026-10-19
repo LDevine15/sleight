@@ -382,16 +382,33 @@ export function readCode(code, options = {}) {
 }
 
 // Advisory only: all of this runs in the same mutable JS realm as Claude's code.
+async function closedLastWindow(state, cua) {
+  const previous = state.previous.get(state.activeApp), action = state.lastAction;
+  if (typeof setTimeout !== 'function' || typeof clearTimeout !== 'function' ||
+      !state.expected?.appId || !previous?.done || state.failures?.length || action?.kind !== 'key' ||
+      previous.key !== action.value || !/^(?:super|cmd|command|meta)\+(?:shift\+w|w|q)$/i.test(action.value) ||
+      state.callHeaders.get(state.activeApp)?.app !== state.expected.app) return false;
+  let timer;
+  try {
+    // Inventory has a 1 s budget. An unavailable or ambiguous answer keeps the full read.
+    const apps = await Promise.race([cua.listApps({ emit: false }), new Promise(resolve => { timer = setTimeout(resolve, 1000); })]);
+    if (!Array.isArray(apps)) return false;
+    const matches = apps.filter(app => app?.id === state.expected.appId);
+    return matches.length === 1 && Array.isArray(matches[0].windows) && matches[0].windows.length === 0;
+  } catch { return false; }
+  finally { clearTimeout(timer); }
+}
+
 export function guardedCode(code, window, reason = /* notice */ 'Document scope stopped this action: window or URL changed. Read the window and ask the user with document_scope.', lease, options = {}) {
   // The lease needs a full header after the call. A read Claude made after its
   // last action already wrote one, so the guard reads again only without it.
-  const { reuseSetup, acknowledge, prompt, outcomes, kernel, ...checks } = options;
+  const { reuseSetup, acknowledge, prompt, outcomes, kernel, dp1 = process.env.SLEIGHT_DP1 !== '0', ...checks } = options;
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
   // The tail first waits (guard.settle, which resolves to undefined) for an action or pick the code left unawaited, as its
   // last statement may be, so the call's read can't run beside it and return the window from before it (CC6 review).
   // An empty literal order is left out (the guard reads it as []), which keeps the per-call setup under 2,500 bytes.
   const literalOrder = checks.literalOrder ?? literalElements(code);
-  return guardSetup({ window, reason, lease, ...checks, literalOrder: literalOrder.length ? literalOrder : undefined }, { reuseSetup, acknowledge, prompt, outcomes, kernel }) +
+  return guardSetup({ window, reason, lease, ...checks, literalOrder: literalOrder.length ? literalOrder : undefined }, { reuseSetup, acknowledge, prompt, outcomes, kernel, dp1 }) +
     (options.browserCandidate ? '\nglobalThis.__sleightDocumentGuard.activeApp = undefined;' : '') + /* generated code */ `\n${code}
 {
   const guard = globalThis.__sleightDocumentGuard, last = await guard.settle?.() ?? (guard.activeApp && guard.reads.get(guard.activeApp));
@@ -404,7 +421,7 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   }
   if (guard.activeApp && !last?.emitted && !last?.omit) {
     const split = !guard.acted && guard.activeApp === guard.startApp && guard.prior?.split;
-    const text = last?.text ?? (split ? guard.prior.text : await guard.readAfter(guard.activeApp));
+    const text = last?.text ?? (split ? guard.prior.text : await guard.readAfter(guard.activeApp${dp1 ? ', true' : ''}));
     guard.noteFocus?.(text);
     nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
   }
@@ -413,7 +430,7 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
 }
 
 // outcomes: the session records action outcomes (SLEIGHT_OUTCOMES or SLEIGHT_ACTION_LOG); without it the guard is unchanged.
-function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, outcomes = false, kernel } = {}) {
+function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, outcomes = false, kernel, dp1 = process.env.SLEIGHT_DP1 !== '0' } = {}) {
   const O = outcomes;
   // Notice text the guard throws or writes, in its SLEIGHT_PROMPT wording.
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
@@ -510,7 +527,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
           ms: clock() - start, chars: typeof text === 'string' ? text.length : 0, failed: text === undefined }) + '\\n');
       }
     };
-    state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');
+    ${dp1 ? `const closedLast = ${closedLastWindow.toString()};
+    state.readAfter = async (proxy, tail) => tail && await closedLast(state, cua)
+      ? (state.guardStopMark ? state.guardStopMark + ':closed' : '[sleight:last-window-closed]')
+      : timedRead(state.raws.get(proxy), 'after-call');` : "state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');"}
     state.raws ||= new WeakMap();
     // Windows whose bound capture lost an element, by app and URL or title, to the clean actions left before
     // they bind again: each reads before a numbered or named action until STALE_PASSES of those pass (see the

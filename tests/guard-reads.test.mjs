@@ -54,10 +54,68 @@ function fixture({ current = () => tree(), action = () => {}, screenshotState, s
     if (key in object || typeof key === 'symbol' || key === 'then') return object[key];
     throw Error('unsupported engine method ' + key);
   } }) : raw;
-  const context = { app: engine, setTimeout, cua: { getApp: async () => engine, listApps: async () => [{ id: 'fixture.app', displayName: expected.app, windows: [{ id: 1, title: expected.title }] }] }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
+  const context = { app: engine, setTimeout, clearTimeout, cua: { getApp: async () => engine, listApps: async () => [{ id: 'fixture.app', displayName: expected.app, windows: [{ id: 1, title: expected.title }] }] }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
   const run = (code, options = ordinary ? defaultOptions() : {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, { focused: true, ...options })} })()`, context);
   return { run, raw, calls, output, context };
 }
+
+test('DP1 skips only the tail read after an inventory-confirmed last-window close', async () => {
+  for (const key of ['super+w', 'cmd+shift+w', 'command+q']) {
+    let closed = false, inventories = 0;
+    const f = fixture({ action: () => { closed = true; }, current: () => {
+      if (closed) throw Error('noWindowsAvailable');
+      return tree();
+    } });
+    f.context.cua.listApps = async options => {
+      inventories++;
+      assert.equal(options.emit, false);
+      return [{ id: 'fixture.app', windows: [] }];
+    };
+    await f.run(`await app.pressKey(${JSON.stringify(key)});`, {}, { ...expected, appId: 'fixture.app' });
+    assert.equal(inventories, 1);
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 1, 'before-action read stays');
+    assert.ok(f.output.some(text => text.includes('[sleight:last-window-closed]')));
+  }
+});
+
+test('DP1 keeps the tail read for remaining windows, sheets, unknown inventory and every other ending', async () => {
+  const cases = [
+    { apps: [{ id: 'fixture.app', windows: [{ title: 'Other' }] }] },
+    { apps: [{ id: 'fixture.app', windows: [{ title: 'Save', role: 'sheet' }] }] },
+    { apps: [{ id: 'fixture.app' }] },
+    { apps: [{ id: 'other.app', displayName: expected.app, windows: [] }] },
+    { apps: [{ id: 'fixture.app', windows: [] }, { id: 'fixture.app', windows: [] }] },
+    { apps: null }, { error: true }, { noTimers: true },
+    { key: 'super+s' }, { key: 'ctrl+w' }, { key: 'super+alt+w' },
+    { code: 'await app.pressKey("super+w"); await app.typeText("x");' },
+    { code: 'await app.pressKey("super+w"); try { await app.click(1); } catch {}', fail: true },
+    { code: 'try { await app.pressKey("super+w"); } catch {}', fail: true },
+    { options: { dp1: false } }, { target: expected },
+  ];
+  for (const c of cases) {
+    const f = fixture({ action: name => { if (c.fail && (name === 'click' || !c.code.includes('app.click'))) throw Error('failed'); } });
+    if (c.noTimers) f.context.clearTimeout = undefined;
+    let inventories = 0;
+    f.context.cua.listApps = async () => { inventories++; if (c.error) throw Error('inventory unavailable'); return c.apps === undefined ? [{ id: 'fixture.app', windows: [] }] : c.apps; };
+    await f.run(c.code ?? `await app.pressKey(${JSON.stringify(c.key ?? 'super+w')});`, c.options ?? {}, c.target ?? { ...expected, appId: 'fixture.app' });
+    assert.ok(f.calls.filter(call => call[0] === 'read').length >= 2, JSON.stringify(c));
+    assert.ok(!f.output.some(text => text.includes('[sleight:last-window-closed]')), JSON.stringify(c));
+    if (c.options?.dp1 === false) assert.equal(inventories, 0);
+  }
+});
+
+test('DP1 retains caller reads and falls back after the inventory budget expires', async () => {
+  const f = fixture();
+  let inventories = 0;
+  f.context.cua.listApps = async () => { inventories++; return new Promise(() => {}); };
+  await f.run('await app.pressKey("super+w"); await app.getAXState();', {}, { ...expected, appId: 'fixture.app' });
+  assert.equal(inventories, 0, 'the explicit final read stays');
+  f.context.setTimeout = (fn, ms) => { assert.equal(ms, 1000); return setTimeout(fn, 0); };
+  f.calls.length = 0;
+  await f.run('await app.pressKey("super+w");', {}, { ...expected, appId: 'fixture.app' });
+  assert.equal(inventories, 1);
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
+});
 
 test('lean calls keep a strict native handle across calls and report an unchanged action compactly', async () => {
   const f = fixture({ strict: true });
