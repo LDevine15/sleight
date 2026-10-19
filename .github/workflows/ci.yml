@@ -13,9 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # sleight runs on the Node that ChatGPT bundles (24.21 on 2026-10-19), so CI tests on 24 too.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       # Mods need Claude Code 2.1.287 or later; pinned so a CLI release can't
       # change what CI checks without a commit here.
       - name: Install Claude Code
