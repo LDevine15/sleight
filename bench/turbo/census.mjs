@@ -69,11 +69,14 @@ export function observations(result, metrics = []) {
   const grade = result?.focusGrade, events = Array.isArray(grade?.events) ? grade.events.length : null;
   const focusEvents = grade && (grade.cell === 'ok' || /^FAIL: \d+$/.test(grade.cell)) ? events : null;
   const cleanup = metrics.filter(record => record.version === 3 && record.phase === 'cleanup').at(-1);
+  // Failed session starts (v3-server.mjs recordStartupFailure): each failed attempt, and whether one was final for the task.
+  const starts = metrics.filter(record => record.version === 3 && record.phase === 'startup-failed');
   const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
   return { focusEvents, observedFocusEvents: events, turboTabsLeft: count(cleanup?.turboTabsLeft),
     tabsAfterBrowserClose: count(cleanup?.tabsAfterBrowserClose),
     // A turbo browser receipt cannot prove the companion's engine tab cleanup.
-    tabsLeft: null, cleanupProved: cleanup?.browserClosed === true && cleanup?.profileDeleted === true && cleanup?.socketsClosed === true };
+    tabsLeft: null, cleanupProved: cleanup?.browserClosed === true && cleanup?.profileDeleted === true && cleanup?.socketsClosed === true,
+    startupFailures: starts.length, startupUnrecovered: starts.some(record => record.retrying !== true) };
 }
 
 function ordinary(file) {

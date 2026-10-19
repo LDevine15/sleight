@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { immutableJSON } from './ipc.mjs';
+import { runOnceMore } from './transient.mjs';
 
 // Fixed entry. The installed loader supplies source acceptance outside model or
 // project input. Only this local compiler can issue a native launch receipt.
@@ -223,7 +224,8 @@ export function createNativeProcessProvider(receipt) {
     if (!Number.isSafeInteger(pid) || pid < 1 || typeof expected !== 'string' ||
         !isAbsolute(expected) || normalize(expected) !== expected) throw Error(failure);
     try {
-      const { stdout } = await promisify(execFile)(executable('peer-host', receipt),
+      // A helper that its timeout killed runs once more; a helper that refused (exit 64 or 65) is final.
+      const { stdout } = await runOnceMore(promisify(execFile), executable('peer-host', receipt),
         [mode, String(pid), expected], { env: environment(), timeout: 3000, maxBuffer: 1024 });
       return parseProcessMetadata(stdout, pid, code);
     } catch { throw Error(failure); }

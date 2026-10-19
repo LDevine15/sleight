@@ -438,6 +438,14 @@ native reference, and oversized first results defer the browser reference while 
   An older Chrome or Helium with a valid signature from the same team and the same flags also passes, so a downgrade isn't caught. Both
   need write access to the bundle, which macOS App Management limits. A browser update that replaces the bundle while
   the old process runs makes the cdhashes differ, and turbo refuses that process until the browser restarts.
+- In the race, 2 of 185 Chrome turbo task starts (2026-10-18 and 2026-10-19, none of 117 on Helium) failed before any
+  command reached Chrome, and every later call of those tasks failed too. Nothing kept the real error. Both starts came
+  10.39 s after the previous task's first call. Our best guess is Chrome rewriting Local State in its profile folder
+  about 10 s after a pref change, during the startup check's codesign call (Helium needs none), while that check
+  compared the folder's times. Since 1.3.1 the check compares the folder's identity, owner and permissions, a failed
+  start runs once more, and the failed stage and code go to the trace and the task's `turbo-metrics.jsonl`. The cause
+  stays a guess until a round records one. A first call that fails to connect after a good start still fails the rest
+  of its turn, so a benchmark task, which is one turn, still fails on it.
 - Turbo has no mobile viewport control. Use the engine's separate browser path for that task.
   Tabs and refs cannot cross paths. Never retry a safety refusal or an uncertain action through
   the other path. Embedded frame hosts are refused for input, while their page reads remain available.

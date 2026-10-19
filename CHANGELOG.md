@@ -15,6 +15,14 @@
   tool Codex hides from the model, and the Stop and Interrupt hooks end it. The plugin no longer sets
   `SLEIGHT_TURBO=0`. Trust the new hook when Codex asks. Not yet run live.
 
+### Turbo
+
+- A turbo start that fails before anything reaches the browser runs once more. Before, it left turbo off for the
+  session (in a benchmark round, for the task). The startup check no longer compares the times of Chrome's profile
+  folder. Chrome changes them on its own, the likeliest cause of the 2 failed starts in 185 Chrome race tasks.
+  The failed stage and code go to the trace and, in benchmark rounds, to the task's `turbo-metrics.jsonl`. Not yet run
+  live.
+
 ### Windows
 
 - When an action brings up a pop-up window, such as a sign-in window in Safari, the result says it belongs to the task in
