@@ -14,15 +14,17 @@ race and security branches are merged: sec130, ft1 (through fs1), fs1, md1, es1,
 relay.mjs keeps the own-host reply check ahead of fs1's offscreen-row delivery, and the prompt fixture's skill hash is repinned. The merged lean
 prompt measured 0.7105 of default against the 0.71 cap, so md1's app-handle hint got a lean wording (28,403 of 40,009), and opens
 drop md1's renamed select_window line. The full check on the merged line ran 8152 tests with 0 failures (368 skipped) and exit 0, and lint is clean.
-CHANGELOG and known-problems have the merged lines. No open PRs. race-fx moves to 0917b8e9 before the next live round.
+CHANGELOG and known-problems have the merged lines. No open PRs. race-fx is at f2f587c9.
 
-**1.3.1 branches, all on `private`, none merged** (reports in `ledger/p130/<id>-REPORT.md`). Merge after the tag: gh-c, then gh-a,
-then gh-b with `client: hand` passed to createRelayHand, then h8, sh1. Others: rf1, rf2, wk4, wb1, pm1, so1, spd, in1, cap1, codex/el3,
-ga1t2, fa1, tt7, wk2, am1fr3. A dry merge onto 0917b8e9 (`git merge-tree`) is clean for in1, gh-a/b/c, h8, sh1, spd, cap1, el3,
-ga1t2, fa1, tt7 and am1fr3. Conflicts: rf1 and rf2 (tests/bench-electron-qualification.test.mjs, against es1), wk4 and wk2 (relay.mjs),
-wb1 and so1 (compact-reads.mjs, relay.mjs), pm1 (menubar.js, relay.mjs, against sec130's port of its own-host code). Sonnet-high reviews
-running: pm1 (`p130/pm1-REVIEW.md`) and so1's privacy fixes (`p130/so1-REVIEW2.md`). Closed with evidence: IN1, TT6, WK5, DR2, ET1,
-EL2, DC1 (live).
+**1.3.1 integration** on `claude/p131-integration` (worktree `~/Projects/sleight-wt/p131-int`, pushed, head e858d554): every 1.3.1
+branch merged onto f2f587c9 except pm1 and so1, which Opus agents are fixing after their Sonnet-high reviews (both "mergeable after fixes":
+`p130/pm1-REVIEW.md`, 2 high and 7 medium; `p130/so1-REVIEW2.md`, 4 medium). Hand-resolved: the relay's hand on the session's hand client
+(sh1's note), worker.mjs (shared host, rf1's call timeout, tt7's phase trace), relay.mjs (own-host check, then deliver, then a finish step
+for the offscreen note, which wk4's stuck-escape path also ends in; wb1 and wk2 kept beside), and a shorter lean undo note that keeps
+lean/default at 0.7099. Not yet run: the full check (waits for the race). pm1 at merge drops its own-host code for sec130's.
+
+**Owner away since 23:5xZ 2026-10-18.** `race-b7.command` (Terminal) runs sleight's Safari x3, then Firefox x3, on race-fx f2f587c9,
+into `race-1017/{safari,firefox}-sleight-b7-r{1,2,3}`. loc arch holds its animatic renders until sleight-arch messages "clear".
 
 **Where the claim stands (Haiku 5.5 high, real windows).** Native 9 tasks "fastest", 8 of 9, 251 s against claude-cu's 454 s (lost
 preview-read to Peekaboo). App tasks 3 of 3. Chrome and Helium turbo 12 of 13 each. Firefox 10 of 12 (older build). Safari is complete (3 rounds an arm, all reruns done 23:35Z): sleight fastest on 9 of 12
@@ -39,7 +41,7 @@ and mdn against Codex and Peekaboo, form-settings against cua.
 
 **Order from here.**
 1. Safari is scored (`node bench/fowl/race-score.mjs ~/Projects/sleight-wt/race-1017/safari-*-r[0-9]*`).
-2. Done 23:5xZ (0917b8e9). Move race-fx to it before the next live round.
+2. Done 23:5xZ (0917b8e9).
 3. Live checks the merges need first: sec130's engine card text for the consent host and a press_key probe against a frontmost
    consent-host card, and ft1's Page Down in Safari's and Firefox's long lists.
 4. sleight's Safari x3 and Firefox x3 on the new build, rescore, then one top-up round to 5 for pairs still within 20%.
