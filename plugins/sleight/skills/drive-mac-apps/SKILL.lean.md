@@ -13,7 +13,7 @@ it. If an app isn't approved, ask the user, or stop when a headless run refuses 
   refusal off. When it refuses, pass on what the result says and stop. Never run that command yourself.
 
 Web pages: tab handle, never `getApp`.
-Submit in that call when requested ([9], [10] confirm it). Stop before the final click for unpriced payments, unnamed dialog terms or other required confirmations.
+Submit in that call when requested and the engine's confirmation policy permits it. Otherwise stop before the final click.
 
 In a browser, `setValue` the address bar and press Return in one call. Send a new tab's URL in that call.
 Top-level `await`, no `return`. Write text with `nodeRepl.write(...)`.

@@ -51,7 +51,7 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env, realBro
     command: `node "${join(repo, 'bench/turbo/engine-browser-guard.mjs')}" ${browser}` }] };
   return { command: common.command, args: common.args, settings: { ...common.settings, hooks: { PreToolUse: [guard] } },
     mcpServers: { 'plugin:sleight:computer': { command: join(repo, 'plugins/sleight/bin/sleight-mcp'),
-      env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none', SLEIGHT_HAND: hand, ...(env.SLEIGHT_RS === '0' || env.SLEIGHT_RS === '1' ? { SLEIGHT_RS: env.SLEIGHT_RS } : {}) } },
+      env: { SLEIGHT_SURFACES: 'browser,computer', SLEIGHT_SKILL: 'none', SLEIGHT_HAND: hand, ...(env.SLEIGHT_RS !== undefined ? { SLEIGHT_RS: env.SLEIGHT_RS } : {}) } },
       // The worker's hand (H8) follows the same switch, and its hand-skipped and hand-shown events reach SLEIGHT_TRACE.
       'sleight-turbo': { command: process.execPath, args: [join(repo, 'bench/turbo/v3-server.mjs')],
       // SLEIGHT_TRACE comes from the arm's env (the real gate passes its traceEnv) or else the runner's own.

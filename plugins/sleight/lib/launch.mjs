@@ -1072,6 +1072,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     openFast: process.env.SLEIGHT_OPEN_FAST !== '0',
     onClientReply: message => firstCallObserver?.reply(message),
     confirmPayments: paymentConfirmationSetting(),
+    rs: process.env.SLEIGHT_RS,
     // sleight's own card for an engine-path payment the gate stopped (payment-card.mjs); opened on the first such payment.
     paymentCard: createPaymentCard(),
     clientIn: replayClient.clientIn,

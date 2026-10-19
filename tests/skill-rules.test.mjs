@@ -197,10 +197,11 @@ test('RS2 prioritizes requested submits within the original budgets and RS off r
     ['lean', 505, '244d4d7a168e5c8dea9325b87a23290ef4044c3ed0d20ee33431bbb30218d6a2']]) {
     const env = { SLEIGHT_PROMPT: prompt };
     const on = skillRules(undefined, env), off = skillRules(undefined, { ...env, SLEIGHT_RS: '0' });
-    assert.match(on, /Submit in that call when requested \(\[9\], \[10\] confirm it\)\./);
-    assert.match(on, /Stop before the final click for unpriced payments, unnamed dialog terms or other required confirmations\./);
+    assert.match(on, /Submit in that call when requested and the engine's confirmation policy permits it\. Otherwise stop before the final click\./);
     assert.ok(on.trim().split(/\s+/).length <= limit);
     assert.equal(createHash('sha256').update(off).digest('hex'), hash);
-    for (const value of [undefined, '', '1', 'false', '00']) assert.equal(skillRules(undefined, { ...env, SLEIGHT_RS: value }), on);
+    for (const value of [undefined, '1']) assert.equal(skillRules(undefined, { ...env, SLEIGHT_RS: value }), on);
+    for (const value of ['0', '', 'off', 'false', '00', '2']) assert.equal(skillRules(undefined, { ...env, SLEIGHT_RS: value }), off);
+    for (const value of [undefined, '0', '1']) assert.equal(skillRules(undefined, { ...env, SLEIGHT_RS: value, SLEIGHT_CONFIRM_PAYMENTS: 'always' }), off);
   }
 });

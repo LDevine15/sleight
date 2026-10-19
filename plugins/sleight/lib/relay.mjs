@@ -71,6 +71,7 @@ import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './b
 import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
+import { requestedSubmitRules } from './requested-submit.mjs';
 import { rewriteWorkflow } from './workflow-docs.mjs';
 import { createPaymentMessages, PAYMENT_ALLOWED, PAYMENT_WAITING } from './payment-gate.mjs';
 import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE, withFirstCallWindows, withInventoryNote } from './engine-app-docs.mjs';
@@ -824,6 +825,7 @@ export function createRelay({
   // SLEIGHT_TEXTLESS_HINT=0 leaves it out, including the open_file textless fallback.
   textlessHint = process.env.SLEIGHT_TEXTLESS_HINT !== '0',
   confirmPayments = 'requested',
+  rs,
   // sleight's own payment card for the engine-path payment gate (payment-card.mjs); the launcher supplies it. Without it a
   // payment stop reaches Claude as it is.
   paymentCard,
@@ -871,6 +873,9 @@ export function createRelay({
   // the relay never awaits it or reads its state, and without it nothing changes.
   hand,
 }) {
+  if (rs !== undefined && rs !== '0' && rs !== '1') {
+    stderr.write('sleight: unknown SLEIGHT_RS value; using previous account policy and submit instruction. Use 1 or unset to enable, 0 to disable.\n');
+  }
   if (directBrowser !== undefined && !isV3Frontend(directBrowser)) throw Error('TRUSTED_ROUTE_REQUIRED');
   if (directHost !== undefined && !(isV3Bridge(directHost) && isV3Frontend(directBrowser))) throw Error('TRUSTED_ROUTE_REQUIRED');
   let installedBootstrapped = false;
@@ -1336,12 +1341,14 @@ export function createRelay({
   let browserRulesShown = false;
   const browserRules = firstCallRules?.match(/## Browsers\n[\s\S]*?(?=\n## |$)/)?.[0];
   const nativeRules = browserRules ? firstCallRules.replace(browserRules, '').trim() : firstCallRules;
-  function rulesFor(browser) {
+  function rulesFor(browser, policyRewritten = false) {
     if (!firstCallRules) return;
     if (!rulesShown) {
       rulesShown = true;
       if (browser) browserRulesShown = true;
-      return browser ? firstCallRules : nativeRules;
+      return requestedSubmitRules(browser ? firstCallRules : nativeRules, {
+        SLEIGHT_RS: policyRewritten ? rs : '0', SLEIGHT_CONFIRM_PAYMENTS: confirmPayments, SLEIGHT_PROMPT: prompt,
+      });
     }
     if (browser && !browserRulesShown && browserRules) {
       browserRulesShown = true;
@@ -4418,11 +4425,16 @@ export function createRelay({
       msg.result.content.push({ type: 'text', text: promptNotice("sleight: noWindowsAvailable means the engine found no window of this app on the current desktop. If the app has a window, it's on another Space (the user may be in full screen or Split View), minimized or hidden. Clicks may still reach it, but drags and some reads won't. Don't retry the same call: ask the user to show the window on the current desktop, or open a window if the app has none.", prompt) });
     }
     if (msg.method === undefined && jsCalls.delete(msg.id) && Array.isArray(msg.result?.content)) {
+      let policyRewritten = false;
       const docs = msg.result.content.some(c => c.type === 'text' && /(^|\n)## Computer Use\n/.test(c.text ?? ''));
       if (docs && !msg.result.content.some(c => c.type === 'text' && /^## Computer Use\n/.test(c.text ?? ''))) {
         trace('payment-confirmation-policy', { status: 'unmatched' });
-      } else if (docs) msg.result.content = msg.result.content.map(c => c.type === 'text' && /^## Computer Use\n/.test(c.text ?? '')
-        ? { ...c, text: rewritePaymentPolicy(c.text, confirmPayments, trace) } : c);
+      } else if (docs) msg.result.content = msg.result.content.map(c => {
+        if (c.type !== 'text' || !/^## Computer Use\n/.test(c.text ?? '')) return c;
+        const text = rewritePaymentPolicy(c.text, confirmPayments, trace, { SLEIGHT_RS: rs });
+        policyRewritten ||= text !== c.text;
+        return { ...c, text };
+      });
       // Only where the guard reads after the call: a native call under the lease or document scope.
       if (docs && workflowDocs && computerSurface && (inputLease || documentMode)) msg.result.content = msg.result.content.map(c => {
         if (c.type !== 'text' || !/^## Computer Use\n/.test(c.text ?? '')) return c;
@@ -4446,7 +4458,7 @@ export function createRelay({
       // result, including an acquisition refusal, and remain in context across engine restarts.
       const browserResult = pendingBrowser && (confirmedBrowser || !msg.result._meta?.['codex/toolSurface']?.app?.appId &&
         /\bcua\.(?:getBrowser|getTab|createBrowserTab|listBrowsers|listTabs)\s*\(/.test(jsCode ?? ''));
-      let rules = (docs || browserResult) && rulesFor(browserResult);
+      let rules = (docs || browserResult) && rulesFor(browserResult, policyRewritten);
       if (rules && openRules === 'short' && !browserResult && String(msg.id).startsWith('sleight-open-file-')) {
         deferredRules = ruleItem(rules);
         rules = openFileRules(rules);

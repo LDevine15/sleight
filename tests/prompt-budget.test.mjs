@@ -167,8 +167,8 @@ test('both skill variants explain browser routing and script input within their 
     if (!env.SLEIGHT_PROMPT) assert.match(skill, /nodeRepl\.write\(await sleight\.pickFromList\(tab, list, "Portland"\)\)/);
     else assert.doesNotMatch(skill, /sleight\.pickFromList/);
     assert.match(skill, /[Rr]ead once at the end/);
-    assert.match(skill, /Submit in that call when requested \(\[9\], \[10\] confirm it\)\./);
-    assert.match(skill, /Stop before the final click for unpriced payments, unnamed dialog terms or other required confirmations\./);
+    assert.match(skill, /Submit in that call when requested and the engine's confirmation policy permits it\./);
+    assert.match(skill, /Otherwise stop before the final click\./);
     assert.doesNotMatch(skill, /submit in (?:that|the same) call when nothing is uncertain/i);
     assert.match(skill, /Use locators when validation(?: or |\/)autocomplete (?:can add or move|moves) fields, indices on static forms\./);
     assert.match(skill, /nodeRepl\.write\(await sleight\.dragTo\(tab, from, to\)\)/);
@@ -197,7 +197,7 @@ test('the default skill retains extension selection and lean retains precise saf
   assert.match(lean, /leave tabs in the background/i);
   assert.match(lean, /stop if the user declines a browser approval/i);
   assert.match(lean, /brings the app forward for about two seconds/);
-  assert.match(lean, /other required confirmations/);
+  assert.match(lean, /the engine's confirmation policy permits it\. Otherwise stop before the final click\./);
   assert.match(lean, /Before `hover`, try `Help:`/);
 });
 
