@@ -9,7 +9,7 @@ const refuse = message => ({ verdict: 'refuse', message: message + ' Use the eng
 const payments = new WeakMap();
 const captures = new WeakMap();
 const paymentPages = new WeakSet(), historyRequests = new WeakMap();
-const paymentWords = text => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(text ?? '');
+export const paymentWords = text => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(text ?? '');
 const ordinary = new Set(['read', 'open', 'click', 'type', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'drag', 'upload',
   'dialog', 'wait', 'back', 'forward', 'reload', 'viewport', 'close', 'keep', 'handoff', 'Target.createTarget']);
 const text = value => typeof value === 'string' && value.trim().length > 0;
@@ -145,9 +145,10 @@ export function intent(kind, target = {}) {
 // activity of any kind followed the click until the next payment check (activity.mjs: every request started, WebSocket, worker
 // and new page, not only finished fetches). The decision waits for that next check (settleRefund), so a request that starts
 // later still keeps the budget spent. A real submit button keeps what it spent whatever the page showed.
-const REFUND_VERBS = new Set('apply update remove delete increase decrease plus minus show hide edit change more less'.split(' '));
-const CHARGE_WORDS = new Set('pay paying payment purchase buy checkout donate donation subscribe place complete confirm submit send charge book continue next finish upgrade now tip add'.split(' '));
+// Closure-free: the engine-path payment gate (payment-gate.mjs) runs it in the engine's REPL.
 export function refundableName(name) {
+  const REFUND_VERBS = new Set('apply update remove delete increase decrease plus minus show hide edit change more less'.split(' '));
+  const CHARGE_WORDS = new Set('pay paying payment purchase buy checkout donate donation subscribe place complete confirm submit send charge book continue next finish upgrade now tip add'.split(' '));
   const n = String(name ?? '').normalize('NFKC').trim().toLowerCase();
   if (!n || n.length > 40) return false;
   if (/^[+\u2212\-\u2013\u2795\u2796]$/.test(n)) return true;

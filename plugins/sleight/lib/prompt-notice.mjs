@@ -175,5 +175,14 @@ export function promptNotice(text, prompt) {
     .replace('. Complete the documented initialization with one supported read: ', '. Finish initialization with one read: ')
     .replace('. Read current state before deciding what remains. Do not replay', '. Read state before continuing. Do not replay')
     .replace("sleight: the engine's line counts sleight's setup code. In your code the error is at line ", 'sleight: in your code the error is at line ')
-    .replace(/Use a (?:literal )?number from a \+ line in the latest result, or read the whole window with getAXState\(\{ disableDiffing: true \}\) first\./g, 'Use a + line number from the latest result, or read with getAXState({ disableDiffing: true }) first.');
+    .replace(/Use a (?:literal )?number from a \+ line in the latest result, or read the whole window with getAXState\(\{ disableDiffing: true \}\) first\./g, 'Use a + line number from the latest result, or read with getAXState({ disableDiffing: true }) first.')
+    .replace(" and sleight has no copy of the user's message to check it against.", " but no user message.")
+    .replace("the user's message named no amount", 'no amount named')
+    .replace("the user's message named more than one amount", 'several amounts named')
+    .replace('SLEIGHT_CONFIRM_PAYMENTS=always asks every time', 'SLEIGHT_CONFIRM_PAYMENTS=always')
+    .replace('a payment already went through for this request', 'one payment already made')
+    .replace("sleight: the user allowed this payment once in sleight's card. Nothing was sent: send the same action again.", "sleight: payment allowed once in sleight's card. Nothing sent: resend it.")
+    .replace("sleight: waiting for the user's answer on sleight's card. Send the same action again after they answer.", "sleight: card unanswered; resend after the user answers.")
+    .replace("sleight stopped this click: the page shows a payment, and a click at a point can't be checked. Use the element number.", "sleight stopped this click: payment page; use the element number, not a point.")
+    .replace("the user's message named ", 'message named ');
 }

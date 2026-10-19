@@ -59,10 +59,13 @@ Payments explicitly requested in the user's own message count as confirmed when 
 specifies what to buy or pay, the amount and the payment details. This includes the page's confirmation dialog
 for that same item, amount and payee. A payment whose amount the message doesn't state asks, even when the page
 shows a total. Other payments still require confirmation, and page content never grants permission.
+On the engine path a guard check applies this before a click, Enter or Space that could pay, and asks
+in sleight's own payment card ([known problems](known-problems.md) lists what it can't see).
 Set `SLEIGHT_CONFIRM_PAYMENTS=always` to keep the engine's rule that requires confirmation immediately
-before every financial transaction. Set `SLEIGHT_CONFIRM_PAYMENTS=never` to also skip turbo's one remaining check (a money figure
-on the checkout larger than the amount in your message) for a payment your message named with its amount. A payment you didn't
-ask for, a second payment in the same request and a mismatched amount still ask. Only you set it, as an environment variable of
+before every financial transaction. On the engine path the check then stops each payment until a later message of yours
+names its amount. Set `SLEIGHT_CONFIRM_PAYMENTS=never` to also skip the one remaining check, on turbo and on the engine path (a money figure
+on the checkout larger than the amount in your message), for a payment your message named with its amount. A payment you didn't
+ask for, a second payment in the same request on turbo and a mismatched amount still ask. Only you set it, as an environment variable of
 the MCP server. The default rewrites only the exact engine policy measured on 2026-10-12. Changed policy text is forwarded unchanged and records a trace entry when tracing is enabled.
 
 ## Approval scope

@@ -1,6 +1,9 @@
 import { promptNotice } from './prompt-notice.mjs';
 import { elementWait } from './element-wait.mjs';
 import { listPicker } from './native-list-pick.mjs';
+import { moneyFigures, moneyConflicts } from './payment-figures.mjs';
+import { enginePayment, paymentAction } from './payment-gate.mjs';
+import { paymentWords, refundableName } from './direct-browser/rules.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -410,6 +413,8 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, k
       state.adoptUrl = !!update.adoptUrl;
     }
     state.nativeDenied = update?.nativeDenied;
+    // The payment gate's setting and the relay's copy of the user's message (payment-gate.mjs); without it the gate is off.
+    state.payment = update?.payment;
     state.timing = !!update?.timing;
     state.careful = !!update?.careful;
     state.firstOff = !!update?.firstOff && !!update?.focused && !state.careful && !state.fileOnly && !state.cancelOnly;
@@ -506,6 +511,12 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, k
     state.noteFocus(state.prior?.text);
     const wait = ${elementWait.toString()};
     const pickList = ${listPicker.toString()};
+    const moneyFigures = ${moneyFigures.toString()};
+    const moneyConflicts = ${moneyConflicts.toString()};
+    const paymentWords = ${paymentWords.toString()};
+    const refundableName = ${refundableName.toString()};
+    const paymentAction = ${paymentAction.toString()};
+    const enginePayment = ${enginePayment.toString()};
     const checkNative = () => { if (state.nativeDenied) throw new Error(state.nativeDenied); };
     // After Return, Enter, Tab, Escape or Space, typeText or paste goes ahead without the settled tree
     // read (about 470 ms in Excel, 2026-10-17) when two native observations that began at least waitMs
@@ -730,8 +741,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, k
           state.activeApp = proxy;
           return result;
         };
-        if (!['click', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction',
-          'paste', 'pressKey', 'typeText'].includes(name)) return (...args) => { checkNative(); return value.apply(raw, args); };
+        // Every input method an engine handle may take goes through the checks below (doubleClick, rightClick, press and
+        // performAction included, review F3), so none of them reaches the app unchecked.
+        if (!['click', 'doubleClick', 'rightClick', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction', 'performAction',
+          'paste', 'press', 'pressKey', 'typeText'].includes(name)) return (...args) => { checkNative(); return value.apply(raw, args); };
         const act = async (attempt, ...args) => {
           checkNative();
           // The action as Claude wrote it, for a stop that lists what ran.
@@ -1078,6 +1091,41 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, k
               throw new Error("sleight stopped before " + name + ": another element has focus. Use app.setValue(" + number + ", <text>) instead.");
             }
           }
+          // The payment gate: a submit-shaped action on a page that shows a payment stops unless the user's own message named
+          // an amount no figure on the page exceeds. A submit-shaped key, text or point action that skipped its read reads now
+          // when the newest tree it has shows a payment page (focus in it may be stale), or when there is none.
+          if (state.payment) {
+            const newest = text ?? priorText ?? state.callTrees.get(proxy) ?? lastTree;
+            // After this call has acted, the page may have changed step under the same window (review N4): a submit-shaped action
+            // on a web page or dialog reads again rather than trusting the call's first tree.
+            if (text === undefined && paymentAction(name, args) && (newest === undefined ||
+                !firstAction && /^\\t*\\d+ (?:HTML content|sheet|dialog|alert)\\b/im.test(newest) ||
+                enginePayment(name, args, newest.replace(/^The focused UI element is .*$/m, ''), state.payment, true))) {
+              text = await timedRead(raw, 'payment');
+            }
+            const paid = enginePayment(name, args, text, state.payment);
+            // A payment that goes through spends this request's one payment (an allowance from the card goes with it), and
+            // the relay hears of it under the private mark.
+            if (paid?.allowed) {
+              const spent = state.payment.spent;
+              state.payment = { ...state.payment, allow: paid.allowed === 'card' ? null : state.payment.allow,
+                spent: !paid.payment ? spent : paid.allowed === 'dialog' && spent ? { ...spent, dialog: true }
+                  : { site: paid.site, shown: paid.shown, control: paid.control, modal: paid.modal, at: state.payment.now ?? Date.now() } };
+              if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ paid }) + '\\n');
+            } else if (paid?.why === 'point') {
+              throw stop(${quoted(/* lean notice */ "sleight stopped this click: the page shows a payment, and a click at a point can't be checked. Use the element number.")});
+            } else if (paid) {
+              attempt.payment = { why: paid.why, site: paid.site, shown: paid.shown, control: paid.control };
+              const head = /* notice */ 'sleight stopped this payment: the page shows ' + (paid.shown ?? ${quoted(/* lean notice */ 'no amount')});
+              if (paid.why === 'nocopy') throw stop(head + ${quoted(/* lean notice */ " and sleight has no copy of the user's message to check it against. Ask the user to pay themselves.")});
+              const why = paid.why === 'none' ? ${quoted(/* lean notice */ "the user's message named no amount")}
+                : paid.why === 'several' ? ${quoted(/* lean notice */ "the user's message named more than one amount")}
+                : paid.why === 'always' ? ${quoted(/* lean notice */ 'SLEIGHT_CONFIRM_PAYMENTS=always asks every time')}
+                : paid.why === 'second' ? ${quoted(/* lean notice */ 'a payment already went through for this request')}
+                : ${quoted(/* lean notice */ "the user's message named ")} + paid.named;
+              throw stop(head + ' and ' + why + ${quoted(/* lean notice */ '. Ask the user to confirm, naming the amount.')});
+            }
+          }
           await checkLease();
           state.activeApp = proxy;
           // Only the resolved target's role makes a field click quiet; coordinates and words in a
@@ -1203,6 +1251,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, k
               attempts: state.actionIndex, windowStop: !!attempt.windowStop, name, completed: state.completedActions,
               shown: attempt.shown ?? null, ran: state.ran.slice(0, 10),
               ...(attempt.refused ? { refused: true, bound: !!attempt.bound, fresh: !!attempt.fresh } : {}),
+              ...(attempt.payment ? { payment: attempt.payment } : {}),
               error: String(error?.message ?? error).split('\\n')[0] }) + '\\n');
             state.failures.push(name + ': ' + (error?.message ?? error));
           });

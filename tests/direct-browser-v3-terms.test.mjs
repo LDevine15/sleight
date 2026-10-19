@@ -25,7 +25,7 @@ function fixture({ style={}, box=rect(), parentStyle={}, parentBox=rect(0,0,500,
     }};
   amount.ownerDocument=doc; root.ownerDocument=doc;
   if (fragments) root.querySelectorAll=() => [];
-  return {doc,root,amount,read:() => runInNewContext('(' + readPaymentPage.toString() + ')(el)',{
+  return {doc,root,amount,read:() => runInNewContext(readPaymentPage.helpers.map(helper => 'const ' + helper.name + ' = (' + helper + ');').join('') + '(' + readPaymentPage.toString() + ')(el)',{
     el:{ownerDocument:doc,form:root,closest:() => root,getAttribute:() => null},
   })};
 }

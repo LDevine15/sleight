@@ -67,6 +67,7 @@ import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './b
 import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
+import { createPaymentMessages, PAYMENT_ALLOWED, PAYMENT_WAITING } from './payment-gate.mjs';
 import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE } from './engine-app-docs.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
@@ -762,6 +763,12 @@ export function createRelay({
   // SLEIGHT_TEXTLESS_HINT=0 leaves the note out, for the A/B; SLEIGHT_SKILL=screenshot keeps it on.
   textlessHint = process.env.SLEIGHT_TEXTLESS_HINT !== '0' || process.env.SLEIGHT_SKILL === 'screenshot',
   confirmPayments = 'requested',
+  // sleight's own payment card for the engine-path payment gate (payment-card.mjs); the launcher supplies it. Without it a
+  // payment stop reaches Claude as it is.
+  paymentCard,
+  // How long Claude's result waits for the card. Codex ends an MCP call after its tool_timeout_sec (60 s by default), so
+  // the hold stays under it; after it Claude gets the stop and a note, and a later Allow once still counts.
+  paymentCardHoldMs = 45000,
   prompt = process.env.SLEIGHT_PROMPT,
   diagnoseRead,
   staleHelperCheck,
@@ -819,6 +826,11 @@ export function createRelay({
     : JSON.stringify(value);
   let kernelEpoch = 0;
   const HOOK_ARGS = ['hook_event_name', 'session_id', 'turn_id'];
+  // The user's own message for the engine-path payment gate (payment-gate.mjs): only an authenticated turbo begin sets it.
+  const paymentMessages = createPaymentMessages();
+  // The client's name, for the card's "sleight request for ..." line, and the cards that already granted their allowance.
+  let clientName;
+  const grantedCards = new WeakSet();
   let turboNoticeShown = false;
   const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ??
     (turboUnavailable ? ['browser_open','browser_read','browser_act','browser_fill','browser_tabs'] : []));
@@ -2504,7 +2516,10 @@ export function createRelay({
         reply({ isError: false, content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: directHost.bootstrapEnvelope() }) }] }); return;
       }
       if (!installedBootstrapped || frame?.event !== 'begin') { refuse(); return; }
+      // bind refuses a frame without this session's envelope before it resolves, so only the user's own message is kept, and
+      // a frame it refuses leaves the payment state as it was.
       directHost.bind(frame, turboApps(), clientHost).then(available => {
+        paymentMessages.set(frame.text);
         if (available) { resumeRequested = true; resumeAfterStop(); }
         reply({ isError: !available, content: [] });
       }).catch(refuse);
@@ -2854,6 +2869,12 @@ export function createRelay({
     if (!Array.isArray(msg.result?.content)) return false;
     const taken = takeGuardStop(msg.result.content, call.mark);
     msg.result.content = taken.content;
+    // The private mark proves the guard wrote these: payments it let through count for the request, and a payment stop is
+    // answered by the next user message (SLEIGHT_CONFIRM_PAYMENTS=always) or by sleight's own card below.
+    for (const record of taken.paid ?? []) paymentMessages.paid(record);
+    const paymentStop = typeof taken.receipt?.error === 'string' && taken.receipt.error.startsWith('sleight stopped this payment:') &&
+      taken.receipt.payment?.why !== 'point' ? taken.receipt.payment : undefined;
+    if (paymentStop) paymentMessages.asked();
     // A tab this call opened in its window: the stop tree passes tabRefusal's checks, which tie it to that window.
     const tabStop = !msg.error && msg.result.isError && taken.receipt?.windowStop === true &&
       tabRefusal(call.plan, taken.receipt, call.target, taken.content, call.before) === undefined;
@@ -2872,6 +2893,36 @@ export function createRelay({
       closed: !!(call.target ?? leaseWindow)?.parent, tab: tabStop });
     // First, not after the tree: in an Office study (2026-10-17) the ran/not-sent line sat at line 134 of a 7 KB result.
     if (note) msg.result.content = [{ type: 'text', text: promptNotice(note, prompt) }, ...msg.result.content];
+    // A payment stop asks the user in sleight's card while Claude's result waits. Allow once lets the next guarded call send
+    // that one action; Cancel, a closed card or no card leaves the stop as it is.
+    if (paymentCard && paymentStop && !msg.error && msg.result.isError) {
+      const generation = stopGeneration, live = () => generation === stopGeneration && !closing && !disposed && !stopCollected;
+      let replied = false;
+      const reply = (note, content = msg.result.content, isError = true) => {
+        if (replied) return;
+        replied = true; clearTimeout(timer);
+        msg.result = { ...msg.result, isError, content: [{ type: 'text', text: promptNotice(note, prompt) }, ...content] };
+        observeServerMessage(msg);
+      };
+      const timer = setTimeout(() => reply(PAYMENT_WAITING), paymentCardHoldMs);
+      // A resend while the card is open gets the same card (payment-card.mjs), and one card grants one allowance.
+      let answer;
+      try { answer = paymentCard.ask({ session: clientName ?? 'the agent', site: paymentStop.site, shown: paymentStop.shown, control: paymentStop.control }); }
+      catch { answer = undefined; }
+      Promise.resolve(answer).catch(() => undefined).then(choice => {
+          if (choice === 'once' && live()) {
+            if (answer && typeof answer === 'object' && !grantedCards.has(answer)) { grantedCards.add(answer); paymentMessages.allowed(paymentStop); }
+            // Nothing failed that Claude should report: the call ends with the note and the tree it stopped on.
+            if (action) action.failure = undefined;
+            reply(PAYMENT_ALLOWED, msg.result.content.flatMap(item => {
+              if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
+              const text = item.text.split('\n').filter(line => !line.includes('sleight stopped this payment:')).join('\n');
+              return text.trim() ? [{ ...item, text }] : [];
+            }), false);
+          } else if (!replied) { replied = true; clearTimeout(timer); observeServerMessage(msg); }
+        });
+      return true;
+    }
     const stopped = !msg.error && msg.result.isError;
     const ineligible = !stopped ? 'no-stop' : documentMode ? 'document-scope' : changeReview ? 'change-review' : menuContinued.has(msg.id) ? 'continued'
       : guardMode?.split(',').some(mode => mode.trim() === 'careful') ? 'careful' : !call.target ? 'not-admitted' : undefined;
@@ -2997,6 +3048,7 @@ export function createRelay({
     if (msg.method === 'initialize') {
       onInitialize(msg.params?.clientInfo);
       clientHost = hostLabel(msg.params?.clientInfo);
+      if (typeof msg.params?.clientInfo?.name === 'string') clientName = msg.params.clientInfo.name.slice(0, 64);
       const capabilities = msg.params?.capabilities ?? {};
       const elicitation = capabilities.elicitation;
       // MCP 2025-06-18 used {}; later versions distinguish form and URL prompts.
@@ -3330,6 +3382,8 @@ export function createRelay({
       if (clipboard && name === 'js_reset') clipboardResets.add(msg.id);
       if (name === TURN_END_TOOL) {
         collectDirectEnd(msg.id);
+        // The mod's Stop or Interrupt: the user's turn is over, and so is the payment gate's copy of their message.
+        if (msg.params.arguments?.hook_event_name) paymentMessages.end();
         const generation = stopGeneration;
         const end = note => {
           if (generation !== stopGeneration || disposed) return;
@@ -3453,7 +3507,7 @@ export function createRelay({
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
                 seenLines, literals: numbers,
-                uniqueSeen });
+                uniqueSeen, payment: paymentMessages.guard(confirmPayments) });
           } else msg.params.arguments.code = swipeCode;
           if (msg.params.arguments.code !== originalCode) guardCalls.set(msg.id, guardGeneration);
           const restore = restoreEngineBindings(originalCode);
@@ -4642,6 +4696,7 @@ export function createRelay({
     for (const resolve of elicitations.values()) resolve({ result: { action: 'cancel' } });
     elicitations.clear();
     lightReturn?.dispose();
+    paymentCard?.close?.();
     promptFailures.clear();
     flowRules?.dispose();
     flowCalls.clear(); flowPending = undefined; flowPermit = undefined;

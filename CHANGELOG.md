@@ -232,6 +232,17 @@ TODO: full release pass result.
   `SLEIGHT_CONFIRM_PAYMENTS=always` keeps asking. `SLEIGHT_CONFIRM_PAYMENTS=never` also skips turbo's
   check of a money figure larger than your amount, for a payment your message named with its amount.
   An unrequested payment, a second payment in the same request and a different amount still ask.
+- In Safari and Firefox driven through the accessibility tree, a guard check now applies turbo's payment
+  rule before the input goes out. On a page that shows a payment (card fields, or a money figure above zero
+  beside a pay, order, confirm, submit, reserve or book control), it checks every click that reads as a
+  submit, Enter or a typed line break in any field, and the browser's confirm dialog. A payment goes through
+  when your message stated its amount, the page shows that amount and no larger figure, and it's the
+  request's first payment (the confirm dialog within 60 s after it, showing the same figure, counts as the
+  same one). Any other payment opens sleight's own payment card, the one turbo uses, naming the site, the
+  largest figure and the control. Allow once lets Claude send that one action again, and Cancel keeps the
+  stop. This works in Codex and with turbo off. Tabs driven through the ChatGPT browser extension aren't
+  checked yet. On the recorded race trees it stops the unasked $268.00 payment and passes the same click when
+  the message states $268.00. Not run live yet.
 - No tool can answer sleight's own menu or its approval and payment cards. The menu bar tool, hover,
   drag, window selection and every engine call refuse the process that shows them (sleight's consent
   host), matched by name, by its file and by its pid, so only your click answers them.
