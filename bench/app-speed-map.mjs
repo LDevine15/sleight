@@ -65,7 +65,7 @@ function treeMetrics(tree, { marker, requiredText, scrollMarker, anyRegion } = {
     'tab group', 'static text', 'pop up button', 'menu button', 'radio button', 'check box', 'menu bar', 'menu item', 'table', 'grid',
     'outline', 'list', 'row', 'cell', 'group', 'button', 'toolbar', 'splitter', 'image', 'link', 'heading', 'window', 'dialog', 'sheet'];
   const tier1 = /^(?:scroll area|scroll view|AXScrollArea)\b/i, tier2 = /^(?:list|outline|table|grid|layout area|text area|text entry area|text view)\b/i;
-  const tier3 = /^web area\b/i, legacy = /^(?:text area|text view|outline|list)\b/i;
+  const tier3 = /^web area\b/i, legacy = /^(?:text area|text view|outline|list)\b/i, field = /^text entry area\b/i, canvas = /^layout area\b/i;
   const rows = [], stack = [], roles = {};
   for (const line of tree.split('\n')) {
     const match = /^(\t*)(\d+) (.+)$/.exec(line);
@@ -80,7 +80,7 @@ function treeMetrics(tree, { marker, requiredText, scrollMarker, anyRegion } = {
   const scrolls = rows.filter(row => tier1.test(row.text)), fallback = rows.filter(row => legacy.test(row.text));
   // Counts, depths and role words only, never text: enough to tell why a scroll target was or wasn't unique.
   const shape = { scrollAreas: scrolls.length, fallbackTargets: fallback.length, markerRows: 0, markerScrollAreas: 0,
-    scrollDepths: scrolls.slice(0, 10).map(row => row.depth), markerRegions: 0, tier: 0, roles };
+    scrollDepths: scrolls.slice(0, 10).map(row => row.depth), markerRegions: 0, tier: 0, targetRole: null, roles };
   const largest = list => {
     const top = Math.max(...list.map(row => row.size));
     const best = list.filter(row => row.size === top);
@@ -98,10 +98,19 @@ function treeMetrics(tree, { marker, requiredText, scrollMarker, anyRegion } = {
     else if (!areas.size) {
       // Tier 2: no scroll area holds it, so the nearest list, outline, table, grid, layout or text region that does (a
       // sheet's cell table, an editor's explorer list); several such regions resolve to the largest.
+      // An editable field holding the text is excluded: it shows a value (Excel's formula bar), not the document.
       const regions = new Map();
-      for (const row of marked) { const region = [...row.parents, row].findLast(item => tier2.test(item.text)); if (region) regions.set(region.id, region); }
+      for (const row of marked) {
+        const region = [...row.parents, row].findLast(item => tier2.test(item.text) && !(item === row && field.test(row.text)));
+        if (region) regions.set(region.id, region);
+      }
       shape.markerRegions = regions.size;
       if (regions.size) { scrollTarget = largest([...regions.values()]); if (scrollTarget !== null) shape.tier = 2; }
+      // Tier 4: the document's text isn't in the tree (Excel exposes no cells), so the document canvas, AXLayoutArea.
+      if (scrollTarget === null) {
+        const canvases = rows.filter(row => canvas.test(row.text));
+        if (canvases.length) { scrollTarget = largest(canvases); if (scrollTarget !== null) shape.tier = 4; }
+      }
     }
     // Tier 3: in an instance that is wholly the run's own, the largest scrollable region when nothing holds the marker.
     if (scrollTarget === null && anyRegion) {
@@ -111,10 +120,13 @@ function treeMetrics(tree, { marker, requiredText, scrollMarker, anyRegion } = {
       }
       if (scrollTarget !== null) shape.tier = 3;
     }
-    return { chars: tree.length, nodes: numbered || dom || null, scrollTarget, shape };
+  } else {
+    const targets = scrolls.length ? scrolls : fallback;
+    scrollTarget = targets.length === 1 ? targets[0].id : null;
   }
-  const targets = scrolls.length ? scrolls : fallback;
-  return { chars: tree.length, nodes: numbered || dom || null, scrollTarget: targets.length === 1 ? targets[0].id : null, shape };
+  const chosen = rows.find(row => row.id === scrollTarget);
+  shape.targetRole = chosen ? vocabulary.find(word => chosen.text.toLowerCase().startsWith(word)) ?? 'other' : null;
+  return { chars: tree.length, nodes: numbered || dom || null, scrollTarget, shape };
 }
 
 function metrics(reply) {
@@ -128,18 +140,27 @@ function metrics(reply) {
   const shape = value.shape, count = item => Number.isInteger(item) && item >= 0;
   const roles = shape?.roles;
   if (shape !== undefined && !(shape && ['scrollAreas', 'fallbackTargets', 'markerRows', 'markerScrollAreas', 'markerRegions'].every(key => count(shape[key])) &&
-      Array.isArray(shape.scrollDepths) && shape.scrollDepths.length <= 10 && shape.scrollDepths.every(count) && [0, 1, 2, 3].includes(shape.tier) &&
+      Array.isArray(shape.scrollDepths) && shape.scrollDepths.length <= 10 && shape.scrollDepths.every(count) && [0, 1, 2, 3, 4].includes(shape.tier) &&
+      (shape.targetRole === null || /^[a-z ]{1,24}$/.test(shape.targetRole)) &&
       roles && typeof roles === 'object' && Object.keys(roles).length <= 40 &&
       Object.entries(roles).every(([role, n]) => /^[a-z ]{1,24}$/.test(role) && count(n)))) throw Error('METRICS_INVALID');
   return shape === undefined ? value : { ...value, shape: { scrollAreas: shape.scrollAreas, fallbackTargets: shape.fallbackTargets,
     markerRows: shape.markerRows, markerScrollAreas: shape.markerScrollAreas, scrollDepths: shape.scrollDepths,
-    markerRegions: shape.markerRegions, tier: shape.tier, roles: { ...roles } } };
+    markerRegions: shape.markerRegions, tier: shape.tier, targetRole: shape.targetRole, roles: { ...roles } } };
 }
 const failures = new Set(['HOLD', 'TREE_UNAVAILABLE', 'FIXTURE_IDENTITY', 'ENGINE_CALL_FAILED', 'METRICS_UNAVAILABLE', 'METRICS_INVALID',
   'NO_UNIQUE_SCROLL_AREA', 'CLEANUP_UNCONFIRMED', 'SESSION_CLEANUP_UNCONFIRMED', 'FOCUS_CHANGED', 'APP_ALREADY_RUNNING',
   'FIXTURE_NOT_OPEN', 'FIXTURE_SETUP_FAILED', 'LOCAL_CONTAINER_RECEIPT_REQUIRED', 'LOCAL_CONTAINER_UNQUALIFIED', 'MACOS_REQUIRED', 'INVALID_OPTIONS',
   'CONFLICTING_OWNER_BOUNDARY', 'OWNER_BOUNDARY_REQUIRED', 'BROWSER_PROFILE_RECEIPT_REQUIRED', 'OUTPUT_OUTSIDE_BENCH_RESULTS', 'OUTPUT_SYMLINK', 'OUTPUT_ALREADY_EXISTS', 'TEMP_CLEANUP_UNCONFIRMED']);
 const failureCode = error => failures.has(error?.message) ? error.message : 'READ_FAILED';
+// A failed engine call keeps only AX codes and fixed error kinds, never its text.
+const errorKinds = ['not scrollable', 'not found', 'timed out', 'timeout', 'invalid', 'unsupported', 'denied', 'lease', 'stale', 'covered',
+  'offscreen', 'not visible', 'approval', 'busy', 'cannot complete'];
+export function engineError(reply) {
+  const text = (reply?.content ?? []).filter(item => item.type === 'text').map(item => item.text).join('\n').toLowerCase();
+  return { codes: [...new Set((text.match(/-25\d{3}\b/g) ?? []).map(Number))].slice(0, 5), kinds: errorKinds.filter(kind => text.includes(kind)) };
+}
+const steps = { acquireMs: 'acquire', firstReadMs: 'firstRead', warmReadMs: 'warmRead', actionMs: 'action', afterReadMs: 'afterRead' };
 
 export async function runSpeedMap(plan, runtime) {
   const report = { startedUTC: new Date().toISOString(), runs: plan.runs, concurrency: plan.concurrency,
@@ -176,7 +197,7 @@ export async function runSpeedMap(plan, runtime) {
       async function timed(key, code) {
         boundary(); const start = runtime.now();
         const reply = await session.js(code);
-        if (reply?.isError) throw Error('ENGINE_CALL_FAILED');
+        if (reply?.isError) throw Object.assign(Error('ENGINE_CALL_FAILED'), { step: steps[key], engine: engineError(reply) });
         row[key] = runtime.now() - start;
       }
       try {
@@ -192,7 +213,9 @@ export async function runSpeedMap(plan, runtime) {
           // concurrent read-only sessions avoid taking an action lease.
           await timed(key, read);
           boundary();
-          return metrics(await session.js(`nodeRepl.write('AM1METRICS:' + JSON.stringify((${treeMetrics.toString()})(am1Tree, ${JSON.stringify({ marker: fixture.marker, requiredText: fixture.requiredText, scrollMarker: fixture.scrollMarker, anyRegion: fixture.anyRegion === true })})));`));
+          const reply = await session.js(`nodeRepl.write('AM1METRICS:' + JSON.stringify((${treeMetrics.toString()})(am1Tree, ${JSON.stringify({ marker: fixture.marker, requiredText: fixture.requiredText, scrollMarker: fixture.scrollMarker, anyRegion: fixture.anyRegion === true })})));`);
+          if (reply?.isError) throw Object.assign(Error('ENGINE_CALL_FAILED'), { step: steps[key] + 'Metrics', engine: engineError(reply) });
+          return metrics(reply);
         }
         const first = await measuredRead('firstReadMs');
         row.chars = first.chars; row.nodes = first.nodes;
@@ -206,7 +229,10 @@ export async function runSpeedMap(plan, runtime) {
           row.afterChars = after.chars; row.afterNodes = after.nodes;
         }
         row.status = 'complete';
-      } catch (error) { row.failure = failureCode(error); if (!session) row.cleanupConfirmed = error.cleanupConfirmed === true; }
+      } catch (error) {
+        row.failure = failureCode(error); if (!session) row.cleanupConfirmed = error.cleanupConfirmed === true;
+        if (error.step) { row.failedStep = error.step; row.engineError = error.engine; }
+      }
       finally {
         if (session) {
           try { await session.close(); }
@@ -261,7 +287,8 @@ export function summarizeSpeedMap({ rows, cohorts = [] }) {
       group.rows.filter(row => row.trial === cohort.trial).every(row => row.status === 'complete' && row.cleanupConfirmed !== false)) : [];
     return { app: group.app, class: group.class, ownerAccount: group.ownerAccount, mode: group.mode,
       scope: [...new Set(group.rows.map(row => row.scope ?? 'unknown'))].join(', '),
-      failures: [...new Set(group.rows.filter(row => row.failure).map(row => row.setup?.message ? `${row.failure}:${row.setup.message}` : row.failure))],
+      failures: [...new Set(group.rows.filter(row => row.failure).map(row => row.setup?.message ? `${row.failure}:${row.setup.message}`
+        : row.failedStep ? `${row.failure}:${row.failedStep}` : row.failure))],
       // One fixture per cell: count its attention events once, not once per concurrent session.
       attention: group.rows.filter(row => !row.sessionIndex).flatMap(row => row.attention ?? [])
         .reduce((counts, event) => ({ ...counts, [event.class]: (counts[event.class] ?? 0) + 1 }), {}),

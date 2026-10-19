@@ -413,7 +413,7 @@ test('a document fixture picks the scroll area around its own text among several
   const found = await readMetrics(app, { marker: 'AM1-fixture', scrollMarker: 'AM1-fixture' });
   assert.equal(found.scrollTarget, 3);
   assert.deepEqual(found.shape, { scrollAreas: 3, fallbackTargets: 0, markerRows: 2, markerScrollAreas: 1, scrollDepths: [1, 1, 1],
-    markerRegions: 0, tier: 1, roles: { 'scroll area': 3, 'layout area': 1, 'text entry area': 1, 'tab group': 1, 'standard window': 1 } });
+    markerRegions: 0, tier: 1, targetRole: 'scroll area', roles: { 'scroll area': 3, 'layout area': 1, 'text entry area': 1, 'tab group': 1, 'standard window': 1 } });
   const blind = await readMetrics(app, { marker: 'AM1-fixture' });
   assert.equal(blind.scrollTarget, null);
   assert.equal(blind.shape.scrollAreas, 3);
@@ -428,7 +428,7 @@ test('each sequential row keeps the warm read shape and the cleanup window codes
   await assert.rejects(runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r), /CLEANUP_UNCONFIRMED/);
   const row = published.rows[0];
   assert.deepEqual(row.treeShape, { scrollAreas: 1, fallbackTargets: 0, markerRows: 0, markerScrollAreas: 0, scrollDepths: [1],
-    markerRegions: 0, tier: 0, roles: { 'scroll area': 1, 'static text': 1, 'standard window': 1 } });
+    markerRegions: 0, tier: 0, targetRole: 'scroll area', roles: { 'scroll area': 1, 'static text': 1, 'standard window': 1 } });
   assert.deepEqual(row.cleanupWindows, [{ retained: false, present: true, matched: false, documentStatus: -25204, sheetStatus: -25204, reasons: ['WINDOW_NOT_RETAINED'] }]);
 });
 
@@ -441,7 +441,7 @@ test('a sheet scrolls the table around its own cell when no scroll area holds th
   const found = await readMetrics(closed({ getAXState: async () => excelTree }), { marker: 'AM1-fixture', scrollMarker: 'AM1-fixture' });
   assert.equal(found.scrollTarget, 6);
   assert.equal(found.shape.tier, 2);
-  assert.equal(found.shape.markerRegions, 2);
+  assert.equal(found.shape.markerRegions, 1, 'the formula bar field showing the cell is not a region');
   assert.equal(found.shape.roles.table, 1);
 });
 
@@ -457,4 +457,34 @@ test('only the run\'s own editor instance falls back to its largest scrollable r
   assert.equal(owned.shape.tier, 3);
   assert.equal(owned.shape.roles['web area'], 1);
   assert.doesNotMatch(JSON.stringify(owned.shape), /Ask|Agents|Plan/);
+});
+
+// Excel rerun (2026-10-19 09:31Z): 8/10 sequential cells failed ENGINE_CALL_FAILED at the scroll. Excel's tree exposes no
+// cells: the marker shows only in the formula bar field, which tier 2 picked as the scroll target.
+const excelLive = 'Window: "AM1-fixture.xlsx", App: Microsoft Excel.\n0 standard window AM1-fixture.xlsx\n\t1 scroll area Ribbon\n\t\t2 button Home\n' +
+  '\t3 toolbar\n\t\t4 text entry area Description: Formula Bar, Value: AM1-fixture PENDING\n\t5 layout area Content Area, Description: Workbook area, Sheet1\n' +
+  '\t6 tab group\n\t\t7 radio button Sheet1';
+test('when only a field shows the fixture text, the document canvas (layout area) takes the scroll', async () => {
+  const found = await readMetrics(closed({ getAXState: async () => excelLive }), { marker: 'AM1-fixture', scrollMarker: 'AM1-fixture' });
+  assert.equal(found.scrollTarget, 5);
+  assert.equal(found.shape.tier, 4);
+  assert.equal(found.shape.targetRole, 'layout area');
+  assert.equal(found.shape.markerRegions, 0);
+});
+
+test('a failed engine call records its step and only AX codes and fixed error kinds', async () => {
+  const r = runtime(), open = r.openSession;
+  r.openSession = async (...args) => {
+    const session = await open(...args);
+    return { ...session, js: async code => /\.scroll\(/.test(code)
+      ? { isError: true, content: [{ type: 'text', text: 'AX error -25205: element is not scrollable (private label)' }] } : session.js(code) };
+  };
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r);
+  const row = report.rows.find(item => item.mode === 'sequential');
+  assert.equal(row.failure, 'ENGINE_CALL_FAILED');
+  assert.equal(row.failedStep, 'action');
+  assert.deepEqual(row.engineError, { codes: [-25205], kinds: ['not scrollable'] });
+  assert.ok(Number.isFinite(row.warmReadMs) && row.actionMs === null);
+  assert.deepEqual(report.summary.find(item => item.mode === 'sequential').failures, ['ENGINE_CALL_FAILED:action']);
+  assert.doesNotMatch(JSON.stringify(report), /private label/);
 });

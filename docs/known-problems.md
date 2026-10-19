@@ -710,8 +710,10 @@ native reference, and oversized first results defer the browser reference while 
   its agent-first layout on an empty profile, which no setting we found turns off. The scroll target rule now covers both. A
   Cursor rerun (09:18 UTC) measured its cell through the owned-instance fallback, but Cursor's 102-node tree had one text
   entry area (likely the agent prompt) and no document region, so its scroll timing isn't a document scroll. The run then
-  stopped when macOS handed focus to Finder as Cursor quit, which now counts as `quit-handoff`. Excel hasn't run since the
-  fix.
+  stopped when macOS handed focus to Finder as Cursor quit, which now counts as `quit-handoff`. The 09:31 UTC rerun measured
+  Cursor 10/10 that way and the Excel cohort 40/40, but Excel's sequential cells passed 2/10. All eight failures were at the
+  scroll, which went to the formula bar field because Excel's tree doesn't list its cells. The engine's error text wasn't
+  kept, so its code is unknown. Excel now scrolls its workbook canvas, and failed calls keep their step and AX codes.
 
 ## Turbo in unattended runs
 
