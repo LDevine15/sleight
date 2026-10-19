@@ -261,6 +261,11 @@ test('window selection is accepted only for the gate browser and only with the e
   const call = input => gateWindowCheck({ hook_event_name: 'PreToolUse', tool_name: 'mcp__plugin_sleight_computer__select_window', tool_input: input }, env);
   assert.equal(call({ app: 'Firefox', title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971' }), null);
   assert.equal(call({ app: 'org.mozilla.firefox', title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971' }), null);
+  // Safari with a profile titles the window "<profile> — <title>" (b7 r1 shipping-link, 2026-10-19: two refused calls).
+  assert.equal(call({ app: 'Firefox', title: 'sleight benchmark — Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971' }), null);
+  for (const title of ['sleight benchmark Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971', 'x — Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe970',
+    'x — Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971 — y', ' — Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971'])
+    assert.match(call({ app: 'Firefox', title }), /only for the gate's own window/, title);
   for (const input of [{ app: 'Firefox', title: 'Mozilla Firefox' }, { app: 'Firefox', title: 'Sleight Gate c1c0b0b2' },
     { app: 'Safari', title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971' },
     { app: 'Firefox', title: 'Sleight Gate c1c0b0b2-e352-4977-be8a-7b93ec6fe971', windowNumber: 7 },

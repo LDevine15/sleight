@@ -93,11 +93,28 @@ func isStartPage(_ window: AXUIElement) throws -> Bool {
     try hasWebArea(window, 0)
     return try !web && chrome(window).contains { string($0, "AXIdentifier") == "StartPageCollectionView" }
 }
-func windowSnapshot(_ id: String, evidence: [String: Any]?, startPage: Bool = false, content: () throws -> [String: Any]) rethrows -> [String: Any] {
+// A window without profile evidence gets only its shape (no title, URL or content), so an unexpected window can be described.
+func windowSnapshot(_ id: String, evidence: [String: Any]?, startPage: Bool = false, shape: () -> [String: Any] = { [:] },
+                    content: () throws -> [String: Any]) rethrows -> [String: Any] {
     var result: [String: Any] = ["id": id, "profileEvidence": evidence as Any? ?? NSNull()]
     if startPage { result["startPage"] = true }
-    if evidence != nil { result.merge(try content()) { _, new in new } }
+    if evidence != nil { result.merge(try content()) { _, new in new } } else { result.merge(shape()) { current, _ in current } }
     return result
+}
+func windowShape(_ window: AXUIElement, focused: CFTypeRef?) -> [String: Any] {
+    var frame: [String: Any] = [:]
+    if let value = attribute(window, "AXPosition"), CFGetTypeID(value) == AXValueGetTypeID() {
+        var point = CGPoint.zero
+        if AXValueGetValue(value as! AXValue, .cgPoint, &point) { frame["x"] = Double(point.x); frame["y"] = Double(point.y) }
+    }
+    if let value = attribute(window, "AXSize"), CFGetTypeID(value) == AXValueGetTypeID() {
+        var size = CGSize.zero
+        if AXValueGetValue(value as! AXValue, .cgSize, &size) { frame["width"] = Double(size.width); frame["height"] = Double(size.height) }
+    }
+    return ["role": string(window, "AXRole"), "subrole": string(window, "AXSubrole"), "frame": frame.isEmpty ? NSNull() : frame,
+            "minimized": (attribute(window, "AXMinimized") as? NSNumber)?.boolValue as Any? ?? NSNull(),
+            "focused": focused.map { CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, window) } ?? false,
+            "childRoles": elements(window).map { string($0, "AXRole") }]
 }
 func address(_ window: AXUIElement) throws -> AXUIElement {
     let toolbars = try chrome(window).filter { string($0, "AXRole") == "AXToolbar" }
@@ -109,8 +126,10 @@ func address(_ window: AXUIElement) throws -> AXUIElement {
     return fields[0]
 }
 func snapshot(_ application: AXUIElement) throws -> [String: Any] {
+    let focused = attribute(application, "AXFocusedWindow")
     let result = try elements(application, "AXWindows").map { window in
-        try windowSnapshot(identifier(window), evidence: profileEvidence(window), startPage: isStartPage(window)) {
+        try windowSnapshot(identifier(window), evidence: profileEvidence(window), startPage: isStartPage(window),
+                           shape: { windowShape(window, focused: focused) }) {
             let groups = try chrome(window).filter { string($0, "AXRole") == "AXTabGroup" }
             // Safari 26 puts the tab bar in an AXOpaqueProviderGroup beside the split group, with AXRadioButton/AXTabButton children,
             // and draws no tab bar for a single tab.
@@ -397,7 +416,11 @@ if CommandLine.arguments.dropFirst() == ["--self-test-owner-safety"] {
     var ownerReads = 0, verifiedReads = 0, result: [String: Any] = [:]
     result["ownerSnapshot"] = windowSnapshot("owner", evidence: nil) { ownerReads += 1; return ["title": "private"] }
     _ = windowSnapshot("profile", evidence: ["value": profileName]) { verifiedReads += 1; return ["title": "marker"] }
-    result["ownerContentReads"] = ownerReads; result["verifiedContentReads"] = verifiedReads
+    // The shape reaches only an unproven window and never overrides its id or evidence.
+    var verifiedShapeReads = 0
+    result["ownerShape"] = windowSnapshot("owner", evidence: nil, shape: { ["id": "renamed", "subrole": "AXFloatingWindow"] }) { ownerReads += 1; return ["title": "private"] }
+    _ = windowSnapshot("profile", evidence: ["value": profileName], shape: { verifiedShapeReads += 1; return [:] }) { ["title": "marker"] }
+    result["ownerContentReads"] = ownerReads; result["verifiedContentReads"] = verifiedReads; result["verifiedShapeReads"] = verifiedShapeReads
     result["probe"] = redactedAttributes(["AXTitle", "AXDescription", "AXURL", "AXValue"], profileAttribute: "AXDescription")
     func refusal(_ body: () throws -> Void) -> String {
         do { try body(); return "NOT_REFUSED" } catch { return (error as? Refusal)?.message ?? "UNKNOWN" }

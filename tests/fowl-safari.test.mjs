@@ -264,6 +264,58 @@ test('a task that opened a second tab still observes: the marker tab keeps its k
   await browser.stop();
 });
 
+const unproven = (id, subrole) => ({ id, profileEvidence: null, role: 'AXWindow', ...(subrole ? { subrole } : {}),
+  frame: { x: 1060, y: 40, width: 400, height: 300 }, minimized: false, focused: false, childRoles: ['AXButton', 'AXGroup'] });
+
+test('an unproven non-standard window during a task is recorded as auxiliary and the profile window still observes', async t => {
+  const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
+  const profileTabs = Object.keys(await observeRealBrowser(browser).then(row => row.tabs));
+  f.windows().push(unproven('aux', 'AXFloatingWindow'));
+  const observed = await observeRealBrowser(browser);
+  assert.equal(observed.observed, true);
+  assert.equal(observed.auxiliaryWindows.length, 1);
+  assert.equal(observed.auxiliaryWindows[0].subrole, 'AXFloatingWindow');
+  assert.deepEqual(observed.auxiliaryWindows[0].frame, { x: 1060, y: 40, width: 400, height: 300 });
+  assert.ok(!('title' in observed.auxiliaryWindows[0]) && !('tabs' in observed.auxiliaryWindows[0]));
+  assert.deepEqual(Object.keys(observed.tabs), profileTabs);
+  await browser.stop();
+});
+
+test('an unproven standard window (or one with no subrole) is an extra window and its shape is reported', async t => {
+  for (const subrole of ['AXStandardWindow', undefined]) {
+    const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
+    f.windows().push(unproven('second', subrole));
+    const observed = await observeRealBrowser(browser);
+    assert.equal(observed.observed, false);
+    assert.equal(observed.reason, 'BENCH_SAFARI_EXTRA_WINDOWS');
+    assert.equal(observed.extraWindows.length, 1);
+    assert.equal(observed.extraWindows[0].subrole, subrole);
+    assert.equal(observed.extraWindows[0].profileEvidence, false);
+    assert.deepEqual(observed.extraWindows[0].childRoles, ['AXButton', 'AXGroup']);
+    assert.equal(observed.extraWindows[0].minimized, false);
+    assert.ok(!('title' in observed.extraWindows[0]));
+    await browser.stop();
+  }
+});
+
+test('a second window with profile evidence stays an extra window whatever its subrole', async t => {
+  const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
+  f.windows().push({ ...window('size-guide', 'Size guide'), subrole: 'AXFloatingWindow' });
+  const observed = await observeRealBrowser(browser);
+  assert.equal(observed.observed, false);
+  assert.equal(observed.reason, 'BENCH_SAFARI_EXTRA_WINDOWS');
+  assert.equal(observed.extraWindows.length, 1);
+  assert.equal(observed.extraWindows[0].profileEvidence, true);
+  assert.ok(!('title' in observed.extraWindows[0]) && !('tabs' in observed.extraWindows[0]));
+  await browser.stop();
+});
+
+test('an unproven non-Start-Page window at launch still stops the round even with a non-standard subrole', async t => {
+  const f = fixture(t); f.windows([startPage('launch-start'), unproven('owner', 'AXFloatingWindow')]);
+  await assert.rejects(launchRealBrowser(f.plan, f.options), /BENCH_SAFARI_RESTORED_WINDOWS/);
+  assert.ok(!f.calls.some(([op]) => ['close-launch-window', 'close-window', 'new-profile', 'navigate'].includes(op)));
+});
+
 test('profile changes during a task and owner arrivals invalidate observation', async t => {
   const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options);
   f.windows()[0].toolbar = [];
@@ -430,6 +482,7 @@ test('native Safari helper compiles and rejects unowned requests before any app 
   assert.equal(safety.status, 0, safety.stderr);
   assert.deepEqual(JSON.parse(safety.stdout), {
     ownerSnapshot: { id: 'owner', profileEvidence: null }, ownerContentReads: 0, verifiedContentReads: 1,
+    ownerShape: { id: 'owner', profileEvidence: null, subrole: 'AXFloatingWindow' }, verifiedShapeReads: 0,
     probe: { AXTitle: '[redacted]', AXDescription: profile, AXURL: '[redacted]', AXValue: '[redacted]' },
     wrongKey: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED', missingKey: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED',
     missingProfile: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED', verifiedKey: true,
