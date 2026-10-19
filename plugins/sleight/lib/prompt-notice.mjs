@@ -182,5 +182,7 @@ export function promptNotice(text, prompt) {
     .replace('SLEIGHT_CONFIRM_PAYMENTS=always asks every time', 'SLEIGHT_CONFIRM_PAYMENTS=always')
     .replace('a payment already went through for this request', 'one payment already made')
     .replace("sleight: the user allowed this payment once in sleight's card. Nothing was sent: send the same action again.", "sleight: payment allowed once in sleight's card. Nothing sent: resend it.")
+    .replace("sleight: waiting for the user's answer on sleight's card. Send the same action again after they answer.", "sleight: card unanswered; resend after the user answers.")
+    .replace("sleight stopped this click: the page shows a payment, and a click at a point can't be checked. Use the element number.", "sleight stopped this click: payment page; use the element number, not a point.")
     .replace("the user's message named ", 'message named ');
 }

@@ -13,7 +13,8 @@ import { escapeLabel } from './direct-browser/consent-ui.mjs';
 export function createPaymentCard({ open = openConsentHost, now = Date.now, timeoutMs = 120000 } = {}) {
   let channel;
   // A host that exits or never starts leaves no channel, and the next payment opens one again.
-  const forget = () => { channel = undefined; };
+  // A lost host is also closed, so a late answer doesn't leave one running beside the next (review F15).
+  const forget = () => { const old = channel; channel = undefined; old?.then(ui => ui?.close?.(), () => {}); };
   const connect = async () => channel ??= Promise.resolve().then(() => open({ onLoss: forget })).then(value => value ?? forget(), forget);
   return {
     async ask({ session, site, shown, control }) {

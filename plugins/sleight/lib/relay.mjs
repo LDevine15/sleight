@@ -67,7 +67,7 @@ import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './b
 import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
-import { createPaymentMessages, PAYMENT_ALLOWED } from './payment-gate.mjs';
+import { createPaymentMessages, PAYMENT_ALLOWED, PAYMENT_WAITING } from './payment-gate.mjs';
 import { rewriteBrowserInstructions, isNativeGetState, WINDOWS_LINE } from './engine-app-docs.mjs';
 import { rewriteTabError, isTabBinding } from './tab-errors.mjs';
 import { isLeaseRead, isFilteredRead } from './input-lease.mjs';
@@ -750,6 +750,9 @@ export function createRelay({
   // sleight's own payment card for the engine-path payment gate (payment-card.mjs); the launcher supplies it. Without it a
   // payment stop reaches Claude as it is.
   paymentCard,
+  // How long Claude's result waits for the card. Codex ends an MCP call after its tool_timeout_sec (60 s by default), so
+  // the hold stays under it; after it Claude gets the stop and a note, and a later Allow once still counts.
+  paymentCardHoldMs = 45000,
   prompt = process.env.SLEIGHT_PROMPT,
   diagnoseRead,
   staleHelperCheck,
@@ -2470,8 +2473,8 @@ export function createRelay({
         reply({ isError: false, content: [{ type: 'text', text: JSON.stringify({ sleightTurbo: directHost.bootstrapEnvelope() }) }] }); return;
       }
       if (!installedBootstrapped || frame?.event !== 'begin') { refuse(); return; }
-      paymentMessages.begin();
-      // bind refuses a frame without this session's envelope before it resolves, so only the user's own message is kept.
+      // bind refuses a frame without this session's envelope before it resolves, so only the user's own message is kept, and
+      // a frame it refuses leaves the payment state as it was.
       directHost.bind(frame, turboApps()).then(available => {
         paymentMessages.set(frame.text);
         if (available) { resumeRequested = true; resumeAfterStop(); }
@@ -2818,7 +2821,8 @@ export function createRelay({
     // The private mark proves the guard wrote these: payments it let through count for the request, and a payment stop is
     // answered by the next user message (SLEIGHT_CONFIRM_PAYMENTS=always) or by sleight's own card below.
     for (const record of taken.paid ?? []) paymentMessages.paid(record);
-    const paymentStop = typeof taken.receipt?.error === 'string' && taken.receipt.error.startsWith('sleight stopped this payment:') ? taken.receipt.payment : undefined;
+    const paymentStop = typeof taken.receipt?.error === 'string' && taken.receipt.error.startsWith('sleight stopped this payment:') &&
+      taken.receipt.payment?.why !== 'point' ? taken.receipt.payment : undefined;
     if (paymentStop) paymentMessages.asked();
     // A tab this call opened in its window: the stop tree passes tabRefusal's checks, which tie it to that window.
     const tabStop = !msg.error && msg.result.isError && taken.receipt?.windowStop === true &&
@@ -2842,20 +2846,26 @@ export function createRelay({
     // that one action; Cancel, a closed card or no card leaves the stop as it is.
     if (paymentCard && paymentStop && !msg.error && msg.result.isError) {
       const generation = stopGeneration, live = () => generation === stopGeneration && !closing && !disposed && !stopCollected;
+      let replied = false;
+      const reply = (note, content = msg.result.content, isError = true) => {
+        if (replied) return;
+        replied = true; clearTimeout(timer);
+        msg.result = { ...msg.result, isError, content: [{ type: 'text', text: promptNotice(note, prompt) }, ...content] };
+        observeServerMessage(msg);
+      };
+      const timer = setTimeout(() => reply(PAYMENT_WAITING), paymentCardHoldMs);
       Promise.resolve().then(() => paymentCard.ask({ session: clientName ?? 'the agent', site: paymentStop.site, shown: paymentStop.shown, control: paymentStop.control }))
         .catch(() => undefined).then(choice => {
           if (choice === 'once' && live()) {
             paymentMessages.allowed(paymentStop);
-            const content = msg.result.content.flatMap(item => {
+            // Nothing failed that Claude should report: the call ends with the note and the tree it stopped on.
+            if (action) action.failure = undefined;
+            reply(PAYMENT_ALLOWED, msg.result.content.flatMap(item => {
               if (item?.type !== 'text' || typeof item.text !== 'string') return [item];
               const text = item.text.split('\n').filter(line => !line.includes('sleight stopped this payment:')).join('\n');
               return text.trim() ? [{ ...item, text }] : [];
-            });
-            // Nothing failed that Claude should report: the call ends with the note and the tree it stopped on.
-            msg.result = { ...msg.result, isError: false, content: [{ type: 'text', text: promptNotice(PAYMENT_ALLOWED, prompt) }, ...content] };
-            if (action) action.failure = undefined;
-          }
-          observeServerMessage(msg);
+            }), false);
+          } else if (!replied) { replied = true; clearTimeout(timer); observeServerMessage(msg); }
         });
       return true;
     }

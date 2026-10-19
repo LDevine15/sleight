@@ -702,8 +702,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           state.activeApp = proxy;
           return result;
         };
-        if (!['click', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction',
-          'paste', 'pressKey', 'typeText'].includes(name)) return (...args) => { checkNative(); return value.apply(raw, args); };
+        // Every input method an engine handle may take goes through the checks below (doubleClick, rightClick, press and
+        // performAction included, review F3), so none of them reaches the app unchecked.
+        if (!['click', 'doubleClick', 'rightClick', 'drag', 'scroll', 'selectText', 'setValue', 'performSecondaryAction', 'performAction',
+          'paste', 'press', 'pressKey', 'typeText'].includes(name)) return (...args) => { checkNative(); return value.apply(raw, args); };
         const act = async (attempt, ...args) => {
           checkNative();
           // The action as Claude wrote it, for a stop that lists what ran.
@@ -1053,8 +1055,11 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
             if (paid?.allowed) {
               const spent = state.payment.spent;
               state.payment = { ...state.payment, allow: paid.allowed === 'card' ? null : state.payment.allow,
-                spent: spent && paid.modal && !spent.modal ? { ...spent, dialog: true } : { site: paid.site, shown: paid.shown, control: paid.control, modal: paid.modal } };
+                spent: !paid.payment ? spent : paid.allowed === 'dialog' && spent ? { ...spent, dialog: true }
+                  : { site: paid.site, shown: paid.shown, control: paid.control, modal: paid.modal, at: state.payment.now ?? Date.now() } };
               if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ paid }) + '\\n');
+            } else if (paid?.why === 'point') {
+              throw stop(${quoted(/* lean notice */ "sleight stopped this click: the page shows a payment, and a click at a point can't be checked. Use the element number.")});
             } else if (paid) {
               attempt.payment = { why: paid.why, site: paid.site, shown: paid.shown, control: paid.control };
               const head = /* notice */ 'sleight stopped this payment: the page shows ' + (paid.shown ?? ${quoted(/* lean notice */ 'no amount')});
