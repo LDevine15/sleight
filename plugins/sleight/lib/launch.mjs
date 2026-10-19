@@ -45,7 +45,8 @@ import { serverFromChatGPTApp, setup } from './setup.mjs';
 import { handPid } from './hand/pid.mjs';
 import { ActionLog, actionLogPath } from './action-outcomes.mjs';
 import { codexDoctorLines, codexStatus } from './codex-host.mjs';
-import { hostLabel } from './host-label.mjs';
+import { cursorDoctorLines, cursorStatus } from './cursor-host.mjs';
+import { hostLabel, hostName } from './host-label.mjs';
 import { createPaymentCard } from './payment-card.mjs';
 import { codexTurnClient } from './codex-turn.mjs';
 
@@ -161,6 +162,11 @@ function codexDoctor(env) {
   try { return codexDoctorLines(codexStatus({ env })); }
   catch (err) { return ['Codex', `PROBLEM   could not read Codex's config (${err.message})`]; }
 }
+// Read-only too: is sleight set up in Cursor, and by which route.
+function cursorDoctor() {
+  try { return cursorDoctorLines(cursorStatus()); }
+  catch (err) { return ['Cursor', `PROBLEM   could not read Cursor's config (${err.message})`]; }
+}
 
 // Read-only. The doctor prints it first so it shows even when the engine checks below stop early.
 async function turboDoctorLines() {
@@ -181,7 +187,7 @@ async function permissionsDoctorSection() {
   catch (err) { return ['permissions', `PROBLEM   could not read the permissions (${err.message})`]; }
 }
 
-export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, hand = handDoctorSection, permissions = permissionsDoctorSection, codex = codexDoctor } = {}) {
+export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, hand = handDoctorSection, permissions = permissionsDoctorSection, codex = codexDoctor, cursor = cursorDoctor } = {}) {
   if (app !== undefined && (typeof app !== 'string' || !app.trim() || app.startsWith('-'))) {
     log('usage: sleight-mcp --doctor [running app name or bundle ID]'); return 1;
   }
@@ -189,6 +195,7 @@ export async function doctor({ env = process.env, log = console.log, app = proce
   for (const line of await hand()) log(line);
   for (const line of await permissions()) log(line);
   for (const line of codex(env)) log(line);
+  for (const line of cursor()) log(line);
   const s = resolveServer(env);
   if (s.error) { log(`sleight: ${s.error}`); return 1; }
   await probeSurfaces(s, env);
@@ -363,9 +370,9 @@ export function hostWording(info, env = process.env) {
   const name = typeof info?.name === 'string' && info.name.trim() ? info.name.trim() : undefined;
   const claudeCode = name ? name === 'claude-code' : !!env.CLAUDE_CODE_ENTRYPOINT;
   if (claudeCode) return { claudeCode: true, host: 'Claude', panel: 'claude-code' };
-  const raw = [info?.title, info?.name].map(value => typeof value === 'string' ? value.trim() : '').find(Boolean);
-  if (!raw) return { claudeCode: false, host: undefined, panel: 'generic' };
-  const host = /[A-Z\s]/.test(raw) ? raw : raw.split(/[-_]+/).filter(Boolean).map(part => part[0].toUpperCase() + part.slice(1)).join(' ');
+  // The same name the menu bar shows ("Cursor" for Cursor's cursor-vscode). An odd name gets the generic wording.
+  const host = hostName(info);
+  if (!host) return { claudeCode: false, host: undefined, panel: 'generic' };
   return { claudeCode: false, host, panel: host };
 }
 
