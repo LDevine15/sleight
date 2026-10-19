@@ -295,6 +295,15 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   ("Continue", "Next") isn't checked, so a page that charges from such a control gets past the gate (review PG2, 2026-10-19).
   A promo code's Apply, the only button beside the card fields, goes ahead only when an enabled button named for paying
   follows it in the same page, outside any dialog.
+- On a payment page, a plain Enter or Return that picks an address suggestion goes ahead (PG3, 2026-10-19): a combo box, or a
+  field marked expanded, in the page with no sheet or dialog open, its list beside it, and one selected option without pay words
+  that contains the field's value. We tested it on Safari and Firefox tree fixtures only. The gate can't see the page's
+  script, so a combo box built this way whose script doesn't cancel Enter submits the form. A button the page gives
+  `role=option` and `aria-selected` prints as an option, so Enter on it goes ahead unless its words pay. Card fields are known
+  by name, so a card field named "Number" can pass as the combo box. Enter in an address picker inside a dialog is still stopped.
+- A click on an element number the tree doesn't print goes ahead on a payment page (review PG3).
+- If the engine printed a row's text with a raw line break, the rest of that text would parse as rows with numbers the page
+  chose. We haven't checked whether it escapes them.
 - Tabs driven through the ChatGPT browser extension (`cua.getBrowser`, `createBrowserTab`), Codex's main browser path, aren't
   checked: the guard doesn't wrap their DOM actions. This is open work, not covered.
 - A stopped payment opens sleight's payment card (the consent host turbo uses). Allow once doesn't send the action. Claude sends it
