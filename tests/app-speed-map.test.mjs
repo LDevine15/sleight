@@ -404,3 +404,28 @@ test('classified attention reaches each row, the summary and the table; a stop k
   assert.equal(row.sessionFailure, 'HOLD');
   assert.equal(row.attention[0].class, 'focus-change');
 });
+
+// AM1 qualification 2 (2026-10-19 08:45Z): Word's warm read had 120 nodes and no unique scroll area.
+const wordTree = 'Window: "AM1-fixture.docx", App: Microsoft Word.\n0 standard window AM1-fixture.docx\n\t1 scroll area Ribbon\n\t\t2 tab group\n' +
+  '\t3 scroll area\n\t\t4 layout area\n\t\t\t5 text entry area (settable) Description: Page 1 content, Value: AM1-fixture PENDING\n\t6 scroll area Navigation';
+test('a document fixture picks the scroll area around its own text among several', async () => {
+  const app = closed({ getAXState: async () => wordTree });
+  const found = await readMetrics(app, { marker: 'AM1-fixture', scrollMarker: 'AM1-fixture' });
+  assert.equal(found.scrollTarget, 3);
+  assert.deepEqual(found.shape, { scrollAreas: 3, fallbackTargets: 0, markerRows: 2, markerScrollAreas: 1, scrollDepths: [1, 1, 1] });
+  const blind = await readMetrics(app, { marker: 'AM1-fixture' });
+  assert.equal(blind.scrollTarget, null);
+  assert.equal(blind.shape.scrollAreas, 3);
+  assert.doesNotMatch(JSON.stringify(found.shape) + JSON.stringify(blind.shape), /AM1|Ribbon|Page/);
+});
+
+test('each sequential row keeps the warm read shape and the cleanup window codes', async () => {
+  const r = runtime();
+  r.closeFixture = async () => ({ confirmed: false, focusChanged: false, reasons: ['WINDOW_NOT_RETAINED'],
+    windows: [{ retained: false, present: true, matched: false, documentStatus: -25204, sheetStatus: -25204, reasons: ['WINDOW_NOT_RETAINED'] }] });
+  let published; r.publish = async report => { published = structuredClone(report); };
+  await assert.rejects(runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r), /CLEANUP_UNCONFIRMED/);
+  const row = published.rows[0];
+  assert.deepEqual(row.treeShape, { scrollAreas: 1, fallbackTargets: 0, markerRows: 0, markerScrollAreas: 0, scrollDepths: [1] });
+  assert.deepEqual(row.cleanupWindows, [{ retained: false, present: true, matched: false, documentStatus: -25204, sheetStatus: -25204, reasons: ['WINDOW_NOT_RETAINED'] }]);
+});

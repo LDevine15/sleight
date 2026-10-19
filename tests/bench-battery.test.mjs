@@ -296,11 +296,12 @@ function cleanupHost(options = {}) {
         const foreign = !foreignGone && ((options.restoredWindow && opened) || (options.restoredOnRead && windowReads >= options.restoredOnRead) ||
           (options.extraWindowAfterPress && presses.length) || (options.transientWindow && now >= 400 && now < 5000));
         out[0] = list([...((opened || options.baselineWindow) && present ? options.multipleWindows ? [window, secondWindow] : [window] : []), ...(foreign ? [foreignWindow] : []),
-          ...(opened && options.pendingExtra ? [extraWindow] : [])]); return 0;
+          ...(opened && options.pendingExtra ? [extraWindow] : []),
+          ...(opened && present && options.lateSecondAt !== undefined && now >= options.lateSecondAt ? [secondWindow] : [])]); return 0;
       }
       if (element === foreignWindow && options.invalidForeign && now >= (options.invalidForeignAfter ?? 0) && ['AXDocument', 'AXSheets'].includes(name)) {
         if (!options.foreignStaysPresent) foreignGone = true;
-        return -25201;
+        return options.invalidStatus ?? -25201;
       }
       if (element === foreignWindow && name === 'AXDocument') { out[0] = 'file:///private/tmp/another.txt'; return 0; }
       if (element === secondWindow && !present) return -25202;
@@ -309,6 +310,8 @@ function cleanupHost(options = {}) {
         if (options.documentReadError) throw new Error(options.documentReadError);
         if (options.documentMissing) return -25205;
         if (options.documentStatus && now < (options.documentStatusUntil ?? Infinity)) return options.documentStatus;
+        if (element === secondWindow && now < (options.secondBusyUntil ?? -1)) return -25204;
+        if (options.busyFrom !== undefined && now >= options.busyFrom && now < options.busyFrom + 600) return -25204;
         if (options.changedDocumentCloses && now >= 10000) present = false;
         out[0] = options.changedDocument && now >= 10000 ? options.changedDocument : options.document ?? expected; return 0;
       }
@@ -1160,4 +1163,26 @@ test('every host sample names the host stage it was taken in', () => {
   const stages = [...new Set(result.events.filter(e => e.stage === 'sample').map(e => e.sample.stage))];
   assert.deepEqual(stages, ['baseline', 'retain', 'ready', 'cleanup']);
   assert.ok(result.events.filter(e => e.stage === 'sample').every(e => 'front' in e.sample && Number.isFinite(e.sample.atMs)));
+});
+
+// AM1 qualification 2 (2026-10-19 08:45Z): cleanup left an unretained Word window with DOCUMENT_NOT_MATCHED and SHEETS_READ_FAILED.
+test('an unretained window whose element reads -25202 (invalid) and is gone at finish does not fail cleanup', () => {
+  const result = cleanupHost({ axCloses: true, extraWindowAfterPress: true, invalidForeign: true, invalidStatus: -25202 });
+  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.details.windows[1].gone, true);
+  assert.equal(result.terminations, 1);
+});
+
+test('a busy fixture window is read again in cleanup instead of failing as not matched', () => {
+  const result = cleanupHost({ axCloses: true, busyFrom: 200 });
+  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.terminations, 1);
+});
+
+test('cleanup adopts a fixture window that appeared after readiness while its reads were busy', () => {
+  const result = cleanupHost({ lateSecondAt: 200, secondBusyUntil: 700 });
+  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.details.windows.filter(row => row.retained).length, 2);
+  assert.equal(result.terminations, 1);
 });

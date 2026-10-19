@@ -154,8 +154,9 @@ export async function liveSpeedRuntime(plan, options, {
         const name = 'AM1-' + randomUUID();
         if (['txt', 'docx', 'xlsx'].includes(task.fixture)) {
           fixture.path = fixture.target = join(dir, name + '.' + task.fixture);
-          // The unique name without its extension: some apps title a document window without it.
-          fixture.marker = fixture.windowMarker = name;
+          // The unique name without its extension: some apps title a document window without it. The document's own text
+          // starts with it too, so the scroll target is the scroll area around that text (Word also has a Ribbon one).
+          fixture.marker = fixture.windowMarker = fixture.scrollMarker = name;
           writeDocument(fixture.path, task.fixture, name);
         } else if (task.fixture === 'workspace' || task.fixture === 'folder') {
           fixture.target = join(dir, name); mkdirSync(fixture.target);
@@ -257,7 +258,12 @@ export async function liveSpeedRuntime(plan, options, {
       try { await fixture.closeServer?.(); } catch { cleanup.confirmed = false; reasons.push('SERVER_CLEANUP_FAILED'); }
       const confirmed = cleanup.confirmed === true;
       if (confirmed) resources.delete(fixture); else cleanupFault = true;
-      return { confirmed, reasons, focusChanged: fixture.attention?.stopped === true, attention: fixture.attention?.events ?? [] };
+      // Per-window cleanup codes for the report: booleans and AX codes only, never a document path or title.
+      const windows = (cleanup.details?.windows ?? []).slice(0, 10).map(row => Object.fromEntries([
+        ...['retained', 'present', 'matched', 'gone', 'stillPresentAfter10s'].filter(key => typeof row[key] === 'boolean').map(key => [key, row[key]]),
+        ...['documentStatus', 'sheetStatus', 'axPressStatus', 'scriptingStatus'].filter(key => Number.isInteger(row[key])).map(key => [key, row[key]]),
+        ['reasons', (row.reasons ?? []).filter(reason => cleanupCodes.has(reason))]]));
+      return { confirmed, reasons, windows, focusChanged: fixture.attention?.stopped === true, attention: fixture.attention?.events ?? [] };
     },
     async publish(report) {
       report.approvalStopped = approvalStopped;

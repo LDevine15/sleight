@@ -695,7 +695,12 @@ native reference, and oversized first results defer the browser reference while 
   Cursor, Word or Excel take to show an identifiable window here. Cursor, Excel and the concurrent cohort have never run. The
   first qualification (2026-10-19, 04:41 UTC) stopped Word's first cell on FOCUS_CHANGED between the end of setup (1517 ms)
   and the first engine call, with cleanup confirmed. Its samples kept only booleans, so we don't know whether Word activated
-  itself or its window covered the owner's. VS Code didn't run.
+  itself or its window covered the owner's. VS Code didn't run. The second (08:45 UTC) passed setup in 1476 ms. Word covered
+  the owner's Terminal at 1774 ms (launch-cover) and read in 199 ms first and 110 ms warm, but its scroll step failed with
+  NO_UNIQUE_SCROLL_AREA, because Word also has a Ribbon scroll area. Cleanup left Word running behind a window the host never
+  retained, with unreadable document and sheet attributes. Only reason codes were kept, so we don't know which window it was.
+  Document fixtures now scroll the area around their own text, and rows keep the tree's scroll-area counts and each cleanup
+  window's AX codes.
 
 ## Turbo in unattended runs
 

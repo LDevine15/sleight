@@ -20,6 +20,14 @@ function run(argv) {
     return { code: code, value: code === 0 ? value[0] : null };
   }
   function attribute(element, name) { return readAttribute(element, name).value; }
+  // Cleanup can't wait for the next poll: a busy element (-25204) gets up to a second before its answer counts.
+  function patientRead(element, name) {
+    var read = readAttribute(element, name);
+    for (var tries = 0; read.code === -25204 && tries < 5; tries++) { active(); sample(); wait(); read = readAttribute(element, name); }
+    return read;
+  }
+  // An element that answers illegal-argument (-25201) or invalid-element (-25202) no longer exists.
+  function invalidCode(code) { return code === -25201 || code === -25202; }
   function readWindows() {
     return readAttribute(ObjC.castRefToObject($.AXUIElementCreateApplication(pid)), 'AXWindows');
   }
@@ -89,8 +97,8 @@ function run(argv) {
     return url === own || url.indexOf(own + '/') === 0;
   }
   // match: the fixture window. foreign: a readable different document. pending: identity not readable yet.
-  function identify(w) {
-    var doc = readAttribute(w, 'AXDocument');
+  function identify(w, patient) {
+    var doc = (patient ? patientRead : readAttribute)(w, 'AXDocument');
     var document = doc.value ? String(ObjC.unwrap(ObjC.castRefToObject(doc.value))) : null;
     if (doc.code === 0 && ownDocument(document) || markerMatches(w, doc)) return { kind: 'match' };
     if (doc.code === 0 && document) return { kind: 'foreign', document: document, documentStatus: doc.code };
@@ -181,8 +189,8 @@ function run(argv) {
     return error;
   }
   // After a failed setup, take only windows that prove they are the fixture.
-  function adopt(current) {
-    var found = current.filter(function(w) { return !known(w) && (launched && !expected || identify(w).kind === 'match'); });
+  function adopt(current, matchesOnly) {
+    var found = current.filter(function(w) { return !known(w) && (launched && !expected && !matchesOnly || identify(w, true).kind === 'match'); });
     if (request.windowMarker && found.length > 1) return;
     found.forEach(function(w) { retained.push(w); });
   }
@@ -252,16 +260,16 @@ function run(argv) {
     function reason(row, code) { if (row.reasons.indexOf(code) < 0) row.reasons.push(code); }
     function present(w, current) { return current.some(function(now) { return same(w, now); }); }
     function inspect(w, row) {
-      var doc = readAttribute(w, 'AXDocument');
+      var doc = patientRead(w, 'AXDocument');
       row.document = doc.value ? String(ObjC.unwrap(ObjC.castRefToObject(doc.value))) : null;
       row.documentStatus = doc.code;
       row.documentReads.push({ document: row.document, status: doc.code });
       row.matched = doc.code === 0 && ownDocument(row.document) || !!markerMatches(w, doc);
-      var sheets = readAttribute(w, 'AXSheets');
+      var sheets = patientRead(w, 'AXSheets');
       var sheetsReadable = [0, -25205, -25212].indexOf(sheets.code) >= 0;
       row.sheetStatus = sheets.code;
       row.sheet = !!sheets.value && ObjC.castRefToObject(sheets.value).count > 0;
-      if (row.documentReads.length === 1 && doc.code === -25201 && sheets.code === -25201) invalidWindows.push(row);
+      if (row.documentReads.length === 1 && invalidCode(doc.code) && invalidCode(sheets.code)) invalidWindows.push(row);
       if (expected && !row.matched) reason(row, 'DOCUMENT_NOT_MATCHED');
       if (row.sheet) reason(row, 'SHEET_PRESENT');
       if (!sheetsReadable) reason(row, 'SHEETS_READ_FAILED');
@@ -302,7 +310,9 @@ function run(argv) {
       if (recover) windowsWaitUntil = Date.now() + 10000;
       var current = windows();
       windowsWaitUntil = null;
-      if (recover) adopt(current);
+      // A fixture window can appear, or be re-created by the app, after the last observation retained it. Take it now
+      // if it proves to be the fixture by the same rule as setup; anything unproven stays a failure, untouched.
+      adopt(current, !recover);
       if (expected && !retained.length) reason(details, 'FIXTURE_WINDOW_NOT_RETAINED');
       var entries = retained.map(function(w) { return { window: w, retained: true }; });
       current.forEach(function(w) {
@@ -359,9 +369,9 @@ function run(argv) {
       entries.forEach(function(entry) {
         var row = entry.row; row.present = present(entry.window, current);
         // An unretained AX element can expire between the window list and its attribute reads.
-        // Only the invalid-element pair plus final absence excuses it; readable foreign windows latch the stop.
-        if (!entry.retained && !row.present && invalidWindows.indexOf(row) >= 0 && row.sheetStatus === -25201 &&
-          row.documentReads.every(function(read) { return read.status === -25201; })) row.gone = true;
+        // Only an invalid pair (-25201 or -25202) plus final absence excuses it; readable foreign windows latch the stop.
+        if (!entry.retained && !row.present && invalidWindows.indexOf(row) >= 0 && invalidCode(row.sheetStatus) &&
+          row.documentReads.every(function(read) { return invalidCode(read.status); })) row.gone = true;
         if (row.present) { failedWindows.push(row); if (row.scriptingPath) reason(row, 'WINDOW_STILL_PRESENT_AFTER_SCRIPTING'); }
         if (row.reasons.indexOf('SCRIPTING_FAILED') >= 0) failedWindows.push(row);
       });

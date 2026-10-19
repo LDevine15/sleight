@@ -300,3 +300,16 @@ test('a fixture app activating itself before the first engine call is classified
   await h.runtime.close();
   assert.equal(h.unlocks, 1);
 });
+
+test('a document fixture scrolls the area around its own text, and cleanup window rows keep codes only', async t => {
+  const h = await setup(t, { id: 'word', confirmed: false, details: { reasons: [], windows: [
+    { retained: false, present: true, matched: false, document: 'file:///private/x.docx', expectedURL: 'file:///private/y.docx', documentStatus: -25204,
+      sheetStatus: -25204, documentReads: [{ document: 'file:///private/x.docx', status: 0 }], reasons: ['WINDOW_NOT_RETAINED', 'PRIVATE'], scriptingPath: '/private/y' }] } });
+  const fixture = await h.runtime.prepare(speedPlan({ ids: ['word'], runs: 1 }).apps[0]);
+  assert.equal(fixture.scrollMarker, fixture.marker);
+  assert.equal(fixture.requiredText, undefined);
+  const cleanup = await h.runtime.closeFixture(fixture);
+  assert.deepEqual(cleanup.windows, [{ retained: false, present: true, matched: false, documentStatus: -25204, sheetStatus: -25204, reasons: ['WINDOW_NOT_RETAINED'] }]);
+  assert.doesNotMatch(JSON.stringify(cleanup.windows), /private/);
+  await assert.rejects(h.runtime.close(), /CLEANUP_UNCONFIRMED/);
+});
