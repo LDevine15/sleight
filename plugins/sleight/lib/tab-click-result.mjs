@@ -25,26 +25,38 @@ function installClickResults(cua, agent, snapshots, isDiffTree) {
   const read = tab => Promise.all([bounded(() => tab.url()), bounded(() => tab.playwright.domSnapshot())])
     .then(([url, tree]) => typeof url === 'string' && typeof tree === 'string' && tree.trim() ? { url, tree } : undefined);
   const clickCover = el => {
-    const rect = el.getBoundingClientRect(), doc = el.ownerDocument;
+    const rect = el.getBoundingClientRect(), doc = el.ownerDocument, view = doc.defaultView;
     const width = doc.documentElement.clientWidth, height = doc.documentElement.clientHeight;
     // The engine scrolls clipped targets before choosing the click point.
     if (!rect.width || !rect.height || rect.left < 0 || rect.top < 0 || rect.right > width || rect.bottom > height) return;
-    // An ancestor can clip a viewport-contained target. Its current center is
-    // not evidence of a cover after the engine scrolls that ancestor. Unknown
-    // geometry defers too; the engine remains responsible for the hit test.
-    let depth = 0;
-    for (let node = el.parentElement ?? el.getRootNode?.().host; node;
-      node = node.parentElement ?? node.getRootNode?.().host) {
-      if (++depth > 64) return;
-      const box = node.getBoundingClientRect();
-      if (![box.left, box.top, box.right, box.bottom].every(Number.isFinite) ||
-          box.right <= box.left || box.bottom <= box.top ||
-          rect.left < box.left || rect.top < box.top || rect.right > box.right || rect.bottom > box.bottom) return;
+    // An ancestor that clips its overflow can hide part of a viewport-contained target, and the engine
+    // scrolls it before clicking, so the current center is no evidence there. Ancestors that clip nothing
+    // don't count (checkout's fixed Pay bar lies outside its form's box), html and body clip through the
+    // viewport, and above a fixed element only a containing block (transform, filter, contain) clips it.
+    // Unknown style or geometry defers; the engine remains responsible for the hit test.
+    let depth = 0, fixed = false;
+    for (let node = el; node; node = node.parentElement ?? node.getRootNode?.().host) {
+      if (++depth > 65) return;
+      const style = view?.getComputedStyle?.(node);
+      if (!style) return;
+      const block = [style.transform, style.filter, style.perspective, style.contain, style.backdropFilter]
+        .some(value => value && value !== 'none') || (style.willChange || 'auto') !== 'auto' ||
+        (style.containerType || 'normal') !== 'normal';
+      if (node !== el && node !== doc.body && node !== doc.documentElement && (!fixed || block) &&
+          (style.overflowX !== 'visible' || style.overflowY !== 'visible')) {
+        const box = node.getBoundingClientRect();
+        if (![box.left, box.top, box.right, box.bottom].every(Number.isFinite) ||
+            box.right <= box.left || box.bottom <= box.top ||
+            rect.left < box.left || rect.top < box.top || rect.right > box.right || rect.bottom > box.bottom) return;
+      }
+      fixed = style.position === 'fixed' || (fixed && !block);
     }
     const x = (rect.left + rect.right) / 2;
     const y = (rect.top + rect.bottom) / 2;
     const hit = doc.elementFromPoint(x, y);
     if (!hit || hit === el || el.contains(hit) || hit.contains?.(el)) return;
+    // A click inside the target's own label activates the target.
+    if (Array.from(el.labels ?? []).some(label => label.contains(hit))) return;
     for (let node = el; node;) {
       if (node === hit) return;
       node = node.parentElement ?? node.getRootNode?.().host;

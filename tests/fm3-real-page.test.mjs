@@ -31,6 +31,16 @@ test('FM3 real fixture isolated-world switch and checkout cover (owner only)', {
       res.end('<style>body{margin:0;height:800px}#panel{position:absolute;top:100px;left:10px;width:400px;height:100px;overflow:auto}#content{position:relative;height:800px}header{position:fixed;top:100px;left:10px;width:400px;height:40px;z-index:2;background:white}button{position:absolute;top:50px;left:10px;width:100px;height:40px}</style><div id="panel"><div id="content"><button id="nestedDetails" type="button">Details</button></div></div><header role="banner">Navigation</header>');
       return;
     }
+    if (req.url === '/wrapped.html') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<style>body{margin:0}#wrap{overflow-x:hidden;height:200px}.bar{position:fixed;bottom:0;left:0;right:0;height:60px}.notice{position:fixed;bottom:0;left:0;right:0;height:120px;z-index:3;background:#111}</style><div id="wrap"><div class="bar"><button id="wrappedPay" type="button">Pay</button></div></div><div class="notice" role="dialog" aria-label="Offer">Offer</div>');
+      return;
+    }
+    if (req.url === '/label.html') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<style>label{position:relative;display:inline-block;padding:20px}#agree{position:absolute;left:20px;top:20px;width:20px;height:20px;margin:0;opacity:0}.box{position:absolute;left:20px;top:20px;width:20px;height:20px;border:1px solid #333}</style><label><input type="checkbox" id="agree"><span class="box"></span> Agree</label>');
+      return;
+    }
     if (req.url === '/partial.html') {
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end('<style>body{margin:0;height:1600px}header{position:fixed;top:0;left:0;width:100%;height:40px;z-index:2;background:white}button{position:absolute;top:100px;left:10px;width:100px;height:40px}</style><header role="banner">Navigation</header><button id="details" type="button">Details</button>');
@@ -73,7 +83,14 @@ test('FM3 real fixture isolated-world switch and checkout cover (owner only)', {
         }, set() { throw Error('fixture reads are read-only'); } }) : element;
         return (0, eval)('(' + source + ')')(readonly, arg);
       }, { selector, source: fn.toString(), arg }),
-      click: options => { clicks++; return target.click({ timeout: options?.timeoutMs ?? 1000 }); },
+      // Like the engine's resolvePointerActionTarget: scroll to the center, then input at the box center
+      // with no in-page hit test.
+      click: async () => {
+        clicks++;
+        await target.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }));
+        const box = await target.boundingBox();
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      },
       setChecked: (value, options) => target.setChecked(value, { timeout: options.timeoutMs }),
     };
     return new Proxy(api, { get(target, key) {
@@ -117,4 +134,18 @@ test('FM3 real fixture isolated-world switch and checkout cover (owner only)', {
   assert.equal(clicks, 3);
   assert.deepEqual(notes, []);
   assert.ok(await page.locator('#nestedDetails').evaluate(el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; }) >= 140);
+
+  // A fixed bar inside an overflow-x wrapper isn't clipped by it, so the cover over it is still named.
+  await navigate('/wrapped.html');
+  notes.length = 0;
+  await assert.rejects(runInContext('(async()=>{' + clickResultCode('var tab = await cua.getTab("fixture"); await tab.playwright.locator("#wrappedPay").click();') + '})()', context), /covered by dialog Offer/);
+  assert.equal(clicks, 3);
+
+  // A styled box over a hidden checkbox in its own label activates the checkbox, so it is no cover.
+  await navigate('/label.html');
+  notes.length = 0;
+  await runInContext('(async()=>{' + clickResultCode('var tab = await cua.getTab("fixture"); await tab.playwright.locator("#agree").click();') + '})()', context);
+  assert.equal(clicks, 4);
+  assert.deepEqual(notes, []);
+  assert.equal(await page.locator('#agree').isChecked(), true);
 });

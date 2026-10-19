@@ -257,22 +257,32 @@ test('a full reply with no buttons clears the previous submit classification', a
   assert.deepEqual(f.reads, []);
 });
 
-function coveredFixture({ cover = true, descendant = false, shadowHost = false, unread = false, hang = false, rect, ancestors = [] } = {}) {
+// ancestors: boxes (an ancestor that clips its overflow) or { box, style } with computed style overrides.
+function coveredFixture({ cover = true, descendant = false, shadowHost = false, unread = false, hang = false, rect, ancestors = [],
+  style = {}, noStyle = false, labelled = false } = {}) {
   const f = fixture();
   let clicks = 0;
   const coverElement = { tagName: 'DIV', textContent: 'Fixture notice',
     getAttribute: name => ({ role: 'region', 'aria-label': 'Fixture notice' })[name] ?? null,
     closest: () => coverElement };
+  const computed = extra => ({ position: 'static', overflowX: 'visible', overflowY: 'visible', transform: 'none', filter: 'none',
+    perspective: 'none', contain: 'none', willChange: 'auto', backdropFilter: 'none', containerType: 'normal', ...extra });
   let parent;
-  for (const box of [...ancestors].reverse()) parent = { parentElement: parent, getRootNode: () => ({}),
-    getBoundingClientRect: () => { if (box === null) throw Error('ancestor bounds unavailable'); return box; } };
+  for (const spec of [...ancestors].reverse()) {
+    const box = spec && 'box' in spec ? spec.box : spec;
+    parent = { parentElement: parent, getRootNode: () => ({}),
+      style: computed(spec && 'box' in spec ? spec.style : { overflowX: 'auto', overflowY: 'auto' }),
+      getBoundingClientRect: () => { if (box === null) throw Error('ancestor bounds unavailable'); return box; } };
+  }
   const element = { tagName: 'BUTTON', type: 'submit',
-    parentElement: parent,
+    parentElement: parent, style: computed(style),
+    labels: labelled ? [{ contains: hit => hit === coverElement }] : undefined,
     getAttribute: () => null, closest: name => name === 'form' ? {} : null,
     getBoundingClientRect: () => rect ?? ({ left: 10, top: 20, right: 110, bottom: 60, width: 100, height: 40 }),
     contains: hit => hit === element || descendant,
     getRootNode: () => ({ host: shadowHost ? coverElement : undefined }),
     ownerDocument: { documentElement: { clientWidth: 800, clientHeight: 600 },
+      defaultView: noStyle ? {} : { getComputedStyle: node => node.style },
       elementFromPoint: (x, y) => {
         assert.equal(x, rect ? (Math.max(0, rect.left) + Math.min(800, rect.right)) / 2 : 60);
         assert.equal(y, rect ? (Math.max(0, rect.top) + Math.min(600, rect.bottom)) / 2 : 40);
@@ -350,7 +360,29 @@ for (const bounds of [null, {}, { left: 0, top: NaN, right: 800, bottom: 600 }])
   });
 }
 
-for (const spec of [{ cover: false }, { descendant: true }, { shadowHost: true }, { unread: true }]) {
+// FowlBrowser checkout: Pay sits in a fixed bar whose page boxes don't contain it, under a fixed Cookie notice.
+test('a target outside ancestors that clip nothing keeps the confirmed cover report', async () => {
+  const f = coveredFixture({ ancestors: [{ box: { left: 0, top: 0, right: 800, bottom: 50 }, style: {} },
+    { box: { left: 0, top: 0, right: 800, bottom: 50 }, style: { position: 'fixed' } }] });
+  await assert.rejects(f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();'), /covered by region Fixture notice/);
+  assert.equal(f.clicks(), 0);
+});
+test('a fixed target is not clipped by an overflow wrapper above it, so its cover is reported', async () => {
+  const f = coveredFixture({ style: { position: 'fixed' },
+    ancestors: [{ box: { left: 0, top: 0, right: 800, bottom: 50 }, style: { overflowX: 'hidden', overflowY: 'auto' } }] });
+  await assert.rejects(f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();'), /covered by region Fixture notice/);
+  assert.equal(f.clicks(), 0);
+});
+for (const block of [{ transform: 'matrix(1, 0, 0, 1, 0, 0)' }, { contain: 'paint' }, { filter: 'blur(1px)' }, { willChange: 'transform' }]) {
+  test('a fixed target inside a clipping containing block defers: ' + JSON.stringify(block), async () => {
+    const f = coveredFixture({ style: { position: 'fixed' },
+      ancestors: [{ box: { left: 0, top: 0, right: 800, bottom: 50 }, style: { overflowX: 'hidden', overflowY: 'hidden', ...block } }] });
+    await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").click();');
+    assert.equal(f.clicks(), 1); assert.deepEqual(f.notes, []);
+  });
+}
+
+for (const spec of [{ cover: false }, { descendant: true }, { shadowHost: true }, { unread: true }, { labelled: true }, { noStyle: true }]) {
   test(`an unobstructed or unreadable hit test preserves one locator click: ${JSON.stringify(spec)}`, async () => {
     const f = coveredFixture(spec);
     await f.run('var tab = await cua.getTab("1"); await tab.playwright.locator("#details").first().click();');
