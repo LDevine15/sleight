@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { pathToFileURL } from 'node:url';
+import { getEventListeners } from 'node:events';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { packageSkip } from './requirements.mjs';
 
@@ -237,37 +238,65 @@ const fixturePath = '/private/tmp/sleight-battery-unit/pair/fixture.txt';
 // Execute the real host against native API doubles. No app, engine or live lock is used.
 function cleanupHost(options = {}) {
   const events = [], presses = [], scripts = [];
-  let command = '', now = 0, opened = false, present = true, terminations = 0, windowReads = 0, foreignGone = false;
+  let command = '', now = 0, opened = false, present = true, terminations = 0, windowReads = 0, foreignGone = false, earlyWindowReads = 0;
+  let nextTerminations = 0;
   const path = options.path ?? fixturePath, expected = pathToFileURL(path).href;
-  const window = {}, secondWindow = {}, foreignWindow = {}, close = {}, appElement = {};
+  const window = {}, secondWindow = {}, foreignWindow = {}, close = {}, appElement = {}, nextElement = {}, extraWindow = {};
   const list = values => ({ count: values.length, objectAtIndex: n => values[n] });
-  const app = { processIdentifier: 42, bundleIdentifier: 'org.example.fixture', isFinishedLaunching: true, terminated: false,
+  const app = { processIdentifier: 42, bundleIdentifier: 'org.example.fixture', terminated: false,
+    launchDate: { timeIntervalSince1970: (options.wasRunning ? -60 : 0) },
+    get isFinishedLaunching() { return options.finishLaunchingAt === undefined || now >= options.finishLaunchingAt; },
     get terminate() { terminations++; if (!options.stuckApp) this.terminated = true; return !options.stuckApp; } };
+  // A second instance of the same bundle: the launched process relaunched itself (relaunchAt).
+  const next = { processIdentifier: 43, bundleIdentifier: 'org.example.fixture', terminated: false,
+    get launchDate() { return { timeIntervalSince1970: (options.nextLaunchedAt ?? options.relaunchAt ?? options.nextAt ?? 0) / 1000 }; },
+    get isFinishedLaunching() { return !options.nextNeverFinishes; },
+    get terminate() { nextTerminations++; this.terminated = true; return true; } };
+  const ended = () => options.exitAt !== undefined && now >= options.exitAt || options.relaunchAt !== undefined && now >= options.relaunchAt;
+  function instances() {
+    if (!(opened || options.wasRunning)) return [];
+    if (ended()) app.terminated = true;
+    const live = [...(!app.terminated || options.listsTerminated ? [app] : []),
+      ...((options.relaunchAt !== undefined && now >= options.relaunchAt || options.nextAt !== undefined && now >= options.nextAt) && !next.terminated ? [next] : [])];
+    return options.secondInstance ? [...live, next] : live;
+  }
   const dollar = value => typeof value === 'string' ? { value, toString: () => value, dataUsingEncoding: () => value } : value;
   Object.assign(dollar, {
-    NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list(opened || options.wasRunning ? [app] : []),
-      runningApplicationWithProcessIdentifier: () => app },
-    NSWorkspace: { sharedWorkspace: { frontmostApplication: { bundleIdentifier: 'org.example.owner' } } },
+    NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list(instances()),
+      runningApplicationWithProcessIdentifier: pid => pid === 43 ? next : app },
+    NSWorkspace: { sharedWorkspace: { frontmostApplication: { bundleIdentifier: 'org.example.owner' },
+      URLForApplicationWithBundleIdentifier: () => ({ path: '/Applications/Fixture.app' }) } },
+    NSFileManager: { defaultManager: {
+      contentsOfDirectoryAtPathError: dir => String(dir) === '/Applications/Fixture.app/Contents/Frameworks' ? list(options.frameworks ?? []) : null,
+      fileExistsAtPath: file => (options.frameworkFiles ?? []).includes(String(file)) } },
     CGWindowListCopyWindowInfo: () => list([]),
     NSRunLoop: { currentRunLoop: { runUntilDate() { now += 200; if (options.ownCloseAt && now >= options.ownCloseAt) present = false; } } },
     NSDate: { dateWithTimeIntervalSinceNow: seconds => seconds },
     NSString: { stringWithContentsOfFileEncodingError: () => JSON.stringify({ command }) },
     NSFileHandle: { fileHandleWithStandardOutput: { writeData(data) {
       const event = JSON.parse(data); events.push(event);
-      if (event.stage === 'armed') { opened = true; command = 'launched'; }
-      if (event.stage === 'ready') command = 'finish';
+      if (event.stage === 'armed') { opened = true; command = options.finishFirst ? 'finish' : 'launched'; }
+      if (event.stage === 'ready' || event.stage === 'error') command = 'finish';
     } } },
     NSURL: { fileURLWithPath: value => ({ absoluteString: pathToFileURL(String(value)).href }) },
-    AXUIElementCreateApplication: () => options.strictApplicationRef ? { rawApplication: appElement } : appElement,
+    AXUIElementCreateApplication: pid => pid === 43 ? nextElement : options.strictApplicationRef ? { rawApplication: appElement } : appElement,
     AXUIElementCopyAttributeValue(element, name, out) {
       name = String(name);
       if (element?.rawApplication) throw new Error('Ref has incompatible type');
+      if (element === nextElement && name === 'AXWindows') { windowReads++; out[0] = list(present ? [window] : []); return 0; }
       if (element === appElement && name === 'AXWindows') {
         windowReads++;
+        // An application element whose process has exited answers -25204 (cannot complete).
+        if (ended()) return -25204;
+        if (opened && !app.isFinishedLaunching) earlyWindowReads++;
+        if (options.baselineStatus && !opened && windowReads <= (options.baselineFailures ?? Infinity)) return options.baselineStatus;
         if (options.windowReadFailure && now >= 10000) return -25204;
+        if (opened && options.startupStatus && now < (options.recoverAt ?? Infinity)) return options.startupStatus;
+        if (opened && options.startupFailures && windowReads <= options.startupFailures) return -25204;
         const foreign = !foreignGone && ((options.restoredWindow && opened) || (options.restoredOnRead && windowReads >= options.restoredOnRead) ||
           (options.extraWindowAfterPress && presses.length) || (options.transientWindow && now >= 400 && now < 5000));
-        out[0] = list([...(opened && present ? options.multipleWindows ? [window, secondWindow] : [window] : []), ...(foreign ? [foreignWindow] : [])]); return 0;
+        out[0] = list([...((opened || options.baselineWindow) && present ? options.multipleWindows ? [window, secondWindow] : [window] : []), ...(foreign ? [foreignWindow] : []),
+          ...(opened && options.pendingExtra ? [extraWindow] : [])]); return 0;
       }
       if (element === foreignWindow && options.invalidForeign && now >= (options.invalidForeignAfter ?? 0) && ['AXDocument', 'AXSheets'].includes(name)) {
         if (!options.foreignStaysPresent) foreignGone = true;
@@ -279,10 +308,11 @@ function cleanupHost(options = {}) {
       if (name === 'AXDocument') {
         if (options.documentReadError) throw new Error(options.documentReadError);
         if (options.documentMissing) return -25205;
+        if (options.documentStatus && now < (options.documentStatusUntil ?? Infinity)) return options.documentStatus;
         if (options.changedDocumentCloses && now >= 10000) present = false;
         out[0] = options.changedDocument && now >= 10000 ? options.changedDocument : options.document ?? expected; return 0;
       }
-      if (name === 'AXTitle') { out[0] = options.windowTitle ?? ''; return 0; }
+      if (name === 'AXTitle') { if (options.titleStatus) return options.titleStatus; out[0] = options.windowTitle ?? ''; return 0; }
       if (name === 'AXCloseButton' && !options.closeMissing) { out[0] = close; return 0; }
       if (name === 'AXSheets') { if (options.sheetStatus) return options.sheetStatus;
         out[0] = list(options.sheet || (options.lateSheet && now >= 10000) ? [{}] : []); return 0; }
@@ -306,11 +336,12 @@ function cleanupHost(options = {}) {
   });
   const ObjC = { import() {}, unwrap: value => value?.value ?? value, deepUnwrap: value => value,
     castRefToObject: value => value?.rawApplication ?? (options.strictRefs && value === close ? { cast: close } : value) };
-  const request = { bundle: 'org.example.fixture', targetURL: expected, control: 'ignored', fixturePath: path,
+  const request = { bundle: 'org.example.fixture', targetURL: options.noTarget ? undefined : expected, control: 'ignored', fixturePath: path,
     fixtureRoot: '/private/tmp/sleight-battery-unit/pair', ...(options.windowMarker && { windowMarker: options.windowMarker }) };
   const source = readFileSync(new URL('../bench/battery/host.js', import.meta.url), 'utf8');
   runInNewContext(`${source}\nrun([request]);`, { $: dollar, ObjC, Ref: () => [], Date: { now: () => now }, request: JSON.stringify(request) });
-  return { ...events.findLast(e => e.stage === 'cleanup'), events, presses, scripts, terminations, present };
+  return { ...events.findLast(e => e.stage === 'cleanup'), events, presses, scripts, terminations, present, now, windowReads,
+    earlyWindowReads, nextTerminations };
 }
 
 test('the application Ref is cast before reading its AXWindows', () => {
@@ -344,7 +375,9 @@ test('a restored foreign document stops startup without retaining or closing its
 });
 
 test('a foreign document appearing in the readiness snapshot prevents readiness', () => {
-  const result = cleanupHost({ restoredOnRead: 2, axCloses: true });
+  // Readiness and window classification share one AXWindows snapshot, so the first launched read is the readiness snapshot.
+  assert.equal(cleanupHost({ axCloses: true }).events.find(e => e.stage === 'ready').windowCount, 1);
+  const result = cleanupHost({ restoredOnRead: 1, axCloses: true });
   assert.equal(result.events.some(e => e.stage === 'ready'), false);
   assert.equal(result.confirmed, false);
   assert.equal(result.details.windows[0].retained, false);
@@ -633,7 +666,9 @@ test('a restored-window startup receipt reaches the published row before any dri
   const row = published[0][0];
   assert.equal(row.checkCode, 'RUN_FAILED');
   assert.deepEqual(row.cleanupDetails.reasons, ['FOREIGN_WINDOW_ON_START']);
-  assert.deepEqual(row.cleanupDetails.startError, { message: 'FOREIGN_WINDOW_ON_START', stage: 'retain', windowCount: 2 });
+  const { startWait, ...startError } = row.cleanupDetails.startError;
+  assert.deepEqual(startError, { message: 'FOREIGN_WINDOW_ON_START', stage: 'retain', windowCount: 2 });
+  assert.equal(startWait.windowCount, 2);
   assert.equal(row.cleanupDetails.windows[0].retained, false);
   assert.equal(row.cleanupDetails.windows[0].document, 'file:///private/tmp/another.txt');
   assert.equal(row.cleanupConfirmed, false);
@@ -652,7 +687,7 @@ test('owned workspace marker can retain a fresh window without AXDocument, but n
 test('a folder window with an empty document CFString and no sheets closes without quitting its running app', () => {
   const result = cleanupHost({ document: { value: '' }, windowMarker: 'AM1-unique', windowTitle: 'AM1-unique',
     sheetStatus: -25212, wasRunning: true, axCloses: true });
-  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.confirmed, true, JSON.stringify(result.details ?? {}));
   assert.equal(result.presses.length, 1);
   assert.equal(result.present, false);
   assert.equal(result.terminations, 0);
@@ -686,4 +721,435 @@ test('workspace and prepared-container prerequisites refuse before open', async 
     });
     assert.equal(opened, false);
   }
+});
+
+
+test('startup retries late AXWindows until the owned readiness deadline with an injected clock', () => {
+  const result = cleanupHost({ startupFailures: 3, axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'error'), false);
+  assert.equal(result.events.some(e => e.stage === 'ready'), true);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.present, false);
+  assert.equal(result.terminations, 1);
+  assert.ok(result.now >= 400 && result.now < 30000);
+});
+
+test('a persistent late tree fails with its AX status at the readiness deadline and leaves cleanup unconfirmed', () => {
+  const result = cleanupHost({ startupStatus: -25204, axCloses: true });
+  const error = result.events.find(e => e.stage === 'error').error;
+  assert.equal(error.message, 'WINDOWS_READ_FAILED');
+  assert.equal(error.axStatus, -25204);
+  assert.equal(error.stage, 'retain');
+  assert.equal(result.events.some(e => e.stage === 'ready'), false);
+  assert.equal(result.confirmed, false);
+  assert.ok(result.now >= 60000 && result.now < 100000);
+  assert.equal(result.terminations, 0);
+  assert.equal(error.startWait.budgetMs, 60000);
+  assert.equal(error.startWait.lastWindowsStatus, -25204);
+  assert.ok(error.startWait.windowsStatus['-25204'] > 1);
+});
+
+for (const wasRunning of [false, true]) test(`startup failure cleans the exact fixture and ${wasRunning ? 'preserves' : 'quits'} the app`, () => {
+  const result = cleanupHost({ startupStatus: -25204, recoverAt: 60200, wasRunning, axCloses: true });
+  assert.equal(result.events.find(e => e.stage === 'error').error.axStatus, -25204);
+  assert.equal(result.events.some(e => e.stage === 'ready'), false);
+  assert.equal(result.confirmed, true, JSON.stringify(result.details ?? {}));
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.present, false);
+  assert.equal(result.terminations, wasRunning ? 0 : 1);
+});
+
+for (const status of [-25202, -25205, -25212]) test(`AXWindows status ${status} fails immediately without retrying startup`, () => {
+  const result = cleanupHost({ startupStatus: status, axCloses: true });
+  const error = result.events.find(e => e.stage === 'error').error;
+  assert.equal(error.axStatus, status);
+  assert.equal(result.now, 0);
+  assert.equal(result.confirmed, false);
+  assert.equal(result.terminations, 0);
+});
+
+test('runtime waits for the startup-error cleanup receipt before collecting the host', async t => {
+  const { startHost } = await load('runtime'), dir = bank(t);
+  const response = Promise.withResolvers(); let receive, aborted = false;
+  const runProcess = (executable, args, options) => {
+    if (executable === '/usr/bin/osascript') {
+      receive = options.onStdout;
+      receive('{"stage":"armed","wasRunning":false}\n');
+      options.signal.addEventListener('abort', () => {
+        aborted = true; response.resolve({ exit: { code: 0 }, groupClean: true });
+      });
+      return response.promise;
+    }
+    assert.equal(executable, '/usr/bin/open');
+    receive('{"stage":"error","error":{"message":"WINDOWS_READ_FAILED","stage":"retain","axStatus":-25204,"windowCount":null}}\n');
+    setImmediate(() => {
+      receive('{"stage":"cleanup","confirmed":true,"details":{"reasons":[],"windows":[],"app":{"terminated":true}}}\n');
+      response.resolve({ exit: { code: 0 }, groupClean: true });
+    });
+    return Promise.resolve({ exit: { code: 0 }, groupClean: true });
+  };
+  await assert.rejects(startHost({ bundle: 'org.example.fixture' }, { dir, target: fixturePath },
+    new AbortController().signal, runProcess), error => {
+    assert.equal(error.hostCleanup.confirmed, true);
+    assert.equal(error.hostCleanup.details.app.terminated, true);
+    return error.message === 'WINDOWS_READ_FAILED';
+  });
+  assert.equal(aborted, false);
+});
+
+
+test('a failed baseline snapshot never closes an existing app or adopts its windows', () => {
+  const result = cleanupHost({ baselineStatus: -25204, baselineFailures: 1, baselineWindow: true, wasRunning: true, axCloses: true });
+  assert.equal(result.events.find(e => e.stage === 'error').error.stage, 'baseline');
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.terminations, 0);
+  assert.equal(result.confirmed, false);
+  assert.equal(result.now, 0);
+});
+
+for (const lateConfirmed of [false, true]) test(`a safety abort during startup-error recovery stays unconfirmed with cleanup receipt ${lateConfirmed}`, async t => {
+  const { startHost } = await load('runtime'), dir = bank(t), safety = new AbortController();
+  const response = Promise.withResolvers(); let receive, hostSignal, afterAbort;
+  const runProcess = (executable, args, options) => {
+    if (executable === '/usr/bin/osascript') {
+      receive = options.onStdout; hostSignal = options.signal;
+      receive('{"stage":"armed","wasRunning":false}\n');
+      return response.promise;
+    }
+    assert.equal(executable, '/usr/bin/open');
+    receive('{"stage":"error","error":{"message":"WINDOWS_READ_FAILED","stage":"retain","axStatus":-25204,"windowCount":null}}\n');
+    setImmediate(() => {
+      safety.abort();
+      afterAbort = { command: JSON.parse(readFileSync(join(dir, 'host-control.json'), 'utf8')).command,
+        hostAborted: hostSignal.aborted };
+      receive(JSON.stringify({ stage: 'cleanup', confirmed: lateConfirmed, details: { reasons: [], windows: [] } }) + '\n');
+      response.resolve({ exit: { code: 0 }, groupClean: true });
+    });
+    return Promise.resolve({ exit: { code: 0 }, groupClean: true });
+  };
+  await assert.rejects(startHost({ bundle: 'org.example.fixture' }, { dir, target: fixturePath }, safety.signal, runProcess), error => {
+    assert.equal(error.message, 'WINDOWS_READ_FAILED');
+    assert.equal(error.hostCleanup.details.startError.axStatus, -25204);
+    assert.equal(error.hostCleanup.confirmed, false);
+    return true;
+  });
+  assert.deepEqual(afterAbort, { command: 'abort', hostAborted: true });
+  assert.equal(getEventListeners(safety.signal, 'abort').length, 0);
+});
+
+// AM1 late accessibility tree (1.4.0). Live evidence: ledger claims/_evidence-AM1-live (am1-vs, am1e-vs, am1e-office).
+test('a launch whose AXWindows answers -25204 for 45 s still becomes ready inside the 60 s startup budget', () => {
+  const result = cleanupHost({ startupStatus: -25204, recoverAt: 45000, axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'error'), false, JSON.stringify(result.events.find(e => e.stage === 'error')));
+  assert.equal(result.events.some(e => e.stage === 'ready'), true);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.terminations, 1);
+});
+
+test('the host reads no AXWindows from a launched app before it finishes launching', () => {
+  const result = cleanupHost({ finishLaunchingAt: 5000, axCloses: true });
+  assert.equal(result.earlyWindowReads, 0);
+  assert.equal(result.events.some(e => e.stage === 'ready'), true);
+  assert.equal(result.confirmed, true);
+});
+
+for (const status of [-25204, -25205, -25212]) test(`a new window whose document answers ${status} at first is waited for, then retained`, () => {
+  const result = cleanupHost({ documentStatus: status, documentStatusUntil: 8000, axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'error'), false, JSON.stringify(result.events.find(e => e.stage === 'error')));
+  const ready = result.events.find(e => e.stage === 'ready');
+  assert.ok(ready, 'ready');
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.terminations, 1);
+});
+
+test('a window that never shows its identity stops at the startup deadline untouched, with counts and no text', () => {
+  const result = cleanupHost({ documentStatus: -25205, windowTitle: 'Private title', axCloses: true });
+  const error = result.events.find(e => e.stage === 'error').error;
+  assert.equal(error.message, 'FIXTURE_WINDOW_UNIDENTIFIED');
+  assert.equal(error.stage, 'retain');
+  assert.equal(error.startWait.pending, 1);
+  assert.equal(error.startWait.pendingDocumentStatus, -25205);
+  assert.equal(error.startWait.finishedLaunching, true);
+  assert.ok(error.startWait.elapsedMs >= 60000);
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.scripts.length, 0);
+  assert.equal(result.terminations, 0);
+  assert.equal(result.confirmed, false);
+  assert.doesNotMatch(JSON.stringify(result.events), /Private title/);
+});
+
+test('a readable different document is still foreign at once, without waiting', () => {
+  const result = cleanupHost({ restoredWindow: true, axCloses: true });
+  assert.equal(result.events.find(e => e.stage === 'error').error.message, 'FOREIGN_WINDOW_ON_START');
+  assert.ok(result.now < 1000);
+  assert.equal(result.presses.length, 0);
+});
+
+test('a window titled with the fixture marker and no document is the fixture', () => {
+  const result = cleanupHost({ documentMissing: true, windowMarker: 'AM1-unique', windowTitle: 'AM1-unique.docx', axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'ready'), true);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.terminations, 1);
+});
+
+test('a launched process that relaunches itself is followed to its new pid and quit there', () => {
+  const result = cleanupHost({ relaunchAt: 2000, finishLaunchingAt: 4000, axCloses: true });
+  const ready = result.events.find(e => e.stage === 'ready');
+  assert.ok(ready, JSON.stringify(result.events.find(e => e.stage === 'error')));
+  assert.equal(ready.pid, 43);
+  assert.equal(ready.relaunches, 1);
+  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.nextTerminations, 1);
+  assert.equal(result.terminations, 0);
+});
+
+test('a terminated instance still listed for the bundle is skipped', () => {
+  const result = cleanupHost({ relaunchAt: 1000, finishLaunchingAt: 3000, listsTerminated: true, axCloses: true });
+  assert.equal(result.events.find(e => e.stage === 'ready')?.pid, 43);
+  assert.equal(result.confirmed, true);
+});
+
+test('two live instances of a launched bundle wait, then stop as ambiguous without acting', () => {
+  const result = cleanupHost({ secondInstance: true, axCloses: true });
+  const error = result.events.find(e => e.stage === 'error').error;
+  assert.equal(error.message, 'APP_INSTANCE_AMBIGUOUS');
+  assert.equal(error.startWait.instances, 2);
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.terminations + result.nextTerminations, 0);
+  assert.equal(result.confirmed, false);
+});
+
+test('a launched app that exits during startup reports APP_EXITED, and cleanup confirms nothing it launched is running', () => {
+  const result = cleanupHost({ exitAt: 600, axCloses: true, finishLaunchingAt: 2000 });
+  const error = result.events.find(e => e.stage === 'error').error;
+  assert.equal(error.message, 'APP_EXITED');
+  assert.equal(error.startWait.exited, true);
+  assert.equal(error.startWait.instances, 0);
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.terminations, 0);
+  assert.equal(result.confirmed, true, JSON.stringify(result.details));
+  assert.equal(result.details.app.exited, true);
+  assert.ok(result.now < 70000);
+});
+
+test('the armed receipt says whether the app bundle carries its own argv parser', () => {
+  const plain = cleanupHost({ axCloses: true });
+  assert.equal(plain.events.find(e => e.stage === 'armed').ownArgv, false);
+  for (const options of [{ frameworks: ['Electron Framework.framework'] }, { frameworks: ['Chromium Embedded Framework.framework'] },
+    { frameworks: ['Example Framework.framework'], frameworkFiles: ['/Applications/Fixture.app/Contents/Frameworks/Example Framework.framework/Versions/Current/Helpers'] }]) {
+    assert.equal(cleanupHost({ ...options, axCloses: true }).events.find(e => e.stage === 'armed').ownArgv, true, JSON.stringify(options));
+  }
+  assert.equal(cleanupHost({ frameworks: ['Sparkle.framework'], axCloses: true }).events.find(e => e.stage === 'armed').ownArgv, false);
+});
+
+function launchRecorder({ ownArgv, wasRunning = false } = {}) {
+  const launches = [], response = Promise.withResolvers();
+  let request;
+  const runProcess = (executable, args, options) => {
+    if (executable === '/usr/bin/open') { launches.push(args); return Promise.resolve({ exit: { code: 0 }, groupClean: true }); }
+    request = JSON.parse(args.at(-1));
+    options.onStdout(JSON.stringify({ stage: 'armed', wasRunning, ownArgv }) + '\n{"stage":"ready"}\n');
+    return response.promise;
+  };
+  return { launches, runProcess, get request() { return request; }, done: () => response.resolve({ exit: { code: 0 }, groupClean: true }) };
+}
+
+test('apps with their own argv parser never receive the AppKit persistence switch', async t => {
+  // VS Code 1.141 parses "-ApplePersistenceIgnoreState" with minimist 1.2.8 as clustered short flags, and "s" is --status,
+  // which quits a first instance ("can only be used if Code is already running"). Its pid then answers -25204 (am1e-vs).
+  const { startHost } = await load('runtime'), dir = bank(t);
+  for (const ownArgv of [true, false]) {
+    const recorder = launchRecorder({ ownArgv });
+    const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture' }, new AbortController().signal, recorder.runProcess);
+    assert.deepEqual(recorder.launches, [['-g', '-b', 'org.example.fixture', '/private/tmp/fixture',
+      ...(ownArgv ? [] : ['--args', '-ApplePersistenceIgnoreState', 'YES'])]]);
+    recorder.done(); await host.finish();
+  }
+});
+
+test('fixture launch arguments replace the persistence switch, and only for a fresh launch', async t => {
+  const { startHost } = await load('runtime'), dir = bank(t);
+  for (const wasRunning of [false, true]) {
+    const recorder = launchRecorder({ ownArgv: true, wasRunning });
+    const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture', launchArgs: ['--user-data-dir=/private/tmp/p'] },
+      new AbortController().signal, recorder.runProcess);
+    assert.deepEqual(recorder.launches, [['-g', '-b', 'org.example.fixture', '/private/tmp/fixture', ...(wasRunning ? [] : ['--args', '--user-data-dir=/private/tmp/p'])]]);
+    recorder.done(); await host.finish();
+  }
+});
+
+test('the runtime gives the host its startup budget and waits past it before HOST_DEADLINE', async t => {
+  const { startHost } = await load('runtime'), dir = bank(t);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const response = Promise.withResolvers(); let receive, request;
+  const runProcess = (executable, args, options) => {
+    if (executable === '/usr/bin/open') return Promise.resolve({ exit: { code: 0 }, groupClean: true });
+    request = JSON.parse(args.at(-1)); receive = options.onStdout;
+    receive('{"stage":"armed","wasRunning":false,"ownArgv":false}\n');
+    return response.promise;
+  };
+  let settled = false;
+  const started = startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture' }, new AbortController().signal, runProcess)
+    .then(host => { settled = true; return host; });
+  for (let n = 0; n < 5; n++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(request.startupMs, 60000);
+  t.mock.timers.tick(65000);
+  for (let n = 0; n < 5; n++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false, 'readiness must outlast the host budget');
+  receive('{"stage":"ready","pid":42}\n');
+  const host = await started;
+  response.resolve({ exit: { code: 0 }, groupClean: true });
+  await host.finish();
+});
+
+test('a document fixture may name its window by the file stem, and scripting can be withheld', async t => {
+  const { startHost } = await load('runtime');
+  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'AM1-unique.docx'); writeFileSync(path, 'x');
+  for (const [ctx, task, marker, scripted] of [
+    [{ windowMarker: 'AM1-unique' }, {}, 'AM1-unique', true],
+    [{ windowMarker: 'AM1-unique.docx' }, {}, 'AM1-unique.docx', true],
+    [{ windowMarker: 'AM1-other' }, {}, undefined, true],
+    [{ windowMarker: 'AM1' }, {}, undefined, true],
+    [{ windowMarker: 'AM1-unique' }, { noScripting: true }, 'AM1-unique', false],
+  ]) {
+    const recorder = launchRecorder({ ownArgv: false });
+    const host = await startHost({ bundle: 'org.example.fixture', fixtureKind: 'doc-file', ...task }, { dir, path, target: path, ...ctx },
+      new AbortController().signal, recorder.runProcess);
+    assert.equal(recorder.request.windowMarker, marker, JSON.stringify(ctx));
+    assert.equal(recorder.request.fixturePath, scripted ? path : undefined);
+    recorder.done(); await host.finish();
+  }
+});
+
+test('the started host reports how long readiness took and whether the process relaunched', async t => {
+  const { startHost } = await load('runtime'), dir = bank(t);
+  const response = Promise.withResolvers();
+  const runProcess = (executable, args, options) => {
+    if (executable === '/usr/bin/open') return Promise.resolve({ exit: { code: 0 }, groupClean: true });
+    options.onStdout('{"stage":"armed","wasRunning":false,"ownArgv":false}\n{"stage":"ready","pid":43,"waitMs":12400,"relaunches":1,"windowCount":1}\n');
+    return response.promise;
+  };
+  const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture' }, new AbortController().signal, runProcess);
+  assert.deepEqual(host.startup, { waitMs: 12400, relaunches: 1 });
+  response.resolve({ exit: { code: 0 }, groupClean: true }); await host.finish();
+});
+
+test('a relaunched instance that never finishes launching is reported as such, not by the old pid\'s read status', () => {
+  const result = cleanupHost({ startupStatus: -25204, relaunchAt: 3000, nextNeverFinishes: true, axCloses: true });
+  const error = result.events.find(e => e.stage === 'error').error;
+  assert.equal(error.message, 'APP_NOT_FINISHED_LAUNCHING');
+  assert.equal(error.startWait.relaunches, 1);
+  // Recovery still closes the proven fixture window and quits the instance this run launched, never the exited one.
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.nextTerminations, 1);
+  assert.equal(result.terminations, 0);
+  assert.equal(result.confirmed, true);
+});
+
+// Review findings on the late-tree host (2026-10-19).
+test('an instance launched before the host armed is never followed or quit', () => {
+  const result = cleanupHost({ relaunchAt: 2000, nextLaunchedAt: -5000, finishLaunchingAt: 4000, axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'ready'), false);
+  assert.equal(result.events.find(e => e.stage === 'error').error.message, 'APP_EXITED');
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.nextTerminations, 0);
+  assert.equal(result.confirmed, false);
+});
+
+test('without a fixture target a launched process that hands over is not followed', () => {
+  const result = cleanupHost({ noTarget: true, relaunchAt: 2000, finishLaunchingAt: 4000, axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'ready'), false);
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.nextTerminations, 0);
+  assert.equal(result.confirmed, false);
+});
+
+test('recovery never switches to another instance, and an instance appearing after an exit stays untouched', () => {
+  const result = cleanupHost({ exitAt: 600, finishLaunchingAt: 2000, nextAt: 60300, axCloses: true });
+  assert.equal(result.events.find(e => e.stage === 'error').error.message, 'APP_EXITED');
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.nextTerminations, 0);
+  assert.equal(result.confirmed, false);
+});
+
+test('finish before any launch command confirms nothing and touches nothing', () => {
+  const result = cleanupHost({ finishFirst: true, axCloses: true });
+  assert.equal(result.confirmed, false);
+  assert.ok(result.details.reasons.includes('LAUNCH_UNCONFIRMED'));
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.terminations, 0);
+});
+
+for (const [name, document] of [['a localhost URL', 'file://localhost/private/tmp/sleight-battery-unit/pair/fixture.txt'],
+  ['a trailing slash', 'file:///private/tmp/sleight-battery-unit/pair/fixture.txt/']]) {
+  test(`a window admitted through ${name} also closes in cleanup`, () => {
+    const result = cleanupHost({ document, axCloses: true });
+    assert.equal(result.events.some(e => e.stage === 'ready'), true);
+    assert.equal(result.confirmed, true, JSON.stringify(result.details));
+    assert.equal(result.presses.length, 1);
+  });
+}
+
+test('a sibling path sharing the fixture prefix is a different document', () => {
+  const result = cleanupHost({ document: 'file:///private/tmp/sleight-battery-unit/pair/fixture.txt2', axCloses: true });
+  assert.equal(result.events.find(e => e.stage === 'error').error.message, 'FOREIGN_WINDOW_ON_START');
+  assert.equal(result.presses.length, 0);
+});
+
+test('an app that was already running is ready on its existing windows, as before', () => {
+  const result = cleanupHost({ wasRunning: true, baselineWindow: true, document: 'file:///private/tmp/owner.txt', axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'ready'), true);
+  assert.equal(result.presses.length, 0);
+  assert.equal(result.terminations, 0);
+});
+
+test('a host that gets finish before readiness after an open failure is aborted, not asked to clean', async t => {
+  const { startHost } = await load('runtime'), dir = bank(t);
+  const response = Promise.withResolvers(); let commands = [];
+  const runProcess = (executable, args, options) => {
+    if (executable === '/usr/bin/open') return Promise.resolve({ exit: { code: 1 }, groupClean: true, stderr: 'open failed' });
+    options.onStdout('{"stage":"armed","wasRunning":false,"ownArgv":false}\n');
+    options.signal.addEventListener('abort', () => response.resolve({ exit: { code: 0 }, groupClean: true }));
+    return response.promise;
+  };
+  await assert.rejects(startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture' }, new AbortController().signal, runProcess), error => {
+    commands.push(JSON.parse(readFileSync(join(dir, 'host-control.json'), 'utf8')).command);
+    assert.equal(error.hostCleanup.confirmed, false);
+    return true;
+  });
+  assert.deepEqual(commands, ['abort']);
+});
+
+test('a generic file stem is not accepted as a window marker', async t => {
+  const { startHost } = await load('runtime');
+  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'fixture.txt'); writeFileSync(path, 'x');
+  const recorder = launchRecorder({ ownArgv: false });
+  const host = await startHost({ bundle: 'org.example.fixture', fixtureKind: 'doc-file' }, { dir, path, target: path, windowMarker: 'fixture' },
+    new AbortController().signal, recorder.runProcess);
+  assert.equal(recorder.request.windowMarker, undefined);
+  recorder.done(); await host.finish();
+});
+
+test('the fixture match makes a launch ready while another new window stays unidentified and untouched', () => {
+  const result = cleanupHost({ pendingExtra: true, axCloses: true });
+  assert.equal(result.events.some(e => e.stage === 'ready'), true, JSON.stringify(result.events.find(e => e.stage === 'error')));
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.terminations, 0);
+  assert.equal(result.confirmed, false);
+  assert.ok(result.details.windows.some(row => !row.retained && row.reasons.includes('WINDOW_NOT_RETAINED')));
+});
+
+test('a second instance appearing after the launched pid is known stops as ambiguous, and recovery stays with the launched pid', () => {
+  const result = cleanupHost({ nextAt: 1000, finishLaunchingAt: 3000, axCloses: true });
+  const error = result.events.find(e => e.stage === 'error').error;
+  assert.equal(error.message, 'APP_INSTANCE_AMBIGUOUS');
+  assert.equal(error.startWait.instances, 2);
+  assert.equal(result.nextTerminations, 0);
+  assert.equal(result.presses.length, 1);
+  assert.equal(result.terminations, 1);
 });

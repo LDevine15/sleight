@@ -22,6 +22,10 @@ const hostScript = fileURLToPath(new URL('./host.js', import.meta.url));
 const tools = ['js', 'js_reset', 'open_file', 'select_window'].map(t => `mcp__plugin_sleight_computer__${t}`).join(',');
 const outside = ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Glob', 'Grep', 'Read', 'Skill'];
 const sessionKey = /^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_AGENT_SDK_|CLAUDE_PID$|CLAUDE_EFFORT$|CLAUDE_PREVIEW_)/;
+// The host's startup budget: launch, a busy accessibility tree and a window whose identity reads late. Readiness waits
+// a margin past it, because one poll can block for the 6 s accessibility messaging timeout on more than one read.
+export const STARTUP_MS = 60000;
+const READY_MARGIN_MS = 20000;
 
 function codexTurns(threadId) {
   if (!threadId || !/^[a-f0-9-]+$/.test(threadId)) return null;
@@ -37,18 +41,20 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
   const command = value => writeFileSync(control, JSON.stringify({ command: value }), { mode: 0o600 });
   command('observe');
   const samples = [], stages = new Map(); let confirmed = false, buffer = '', details = { reasons: ['HOST_RECEIPT_MISSING'], windows: [] };
-  let startStage = 'armed', windowCount = null, preflightRefused = false;
+  let startStage = 'armed', windowCount = null, preflightRefused = false, launchSent = false;
   const stage = name => { if (!stages.has(name)) stages.set(name, Promise.withResolvers()); return stages.get(name); };
   const hostController = new AbortController();
   // setupFixture created this exact file in the run's private bank. Never grant a URL or another file.
-  const fixturePath = task.fixtureKind === 'doc-file' && ctx.path === ctx.target &&
+  const fixturePath = task.fixtureKind === 'doc-file' && !task.noScripting && ctx.path === ctx.target &&
     ctx.dir.startsWith('/private/tmp/sleight-battery-') && dirname(ctx.path) === ctx.dir &&
     realpathSync(ctx.path) === ctx.path && realpathSync(ctx.dir) === ctx.dir ? ctx.path : undefined;
+  // A window title names the fixture by its private temp name, with or without the file extension.
+  const name = ctx.target ? basename(ctx.target) : '', stem = name.replace(/\.[^.]+$/, '');
   const response = runProcess('/usr/bin/osascript', ['-l', 'JavaScript', hostScript, JSON.stringify({
-    bundle: task.bundle, targetURL: targetURL(ctx.target), control, fixturePath, fixtureRoot: fixturePath ? ctx.dir : undefined,
+    bundle: task.bundle, targetURL: targetURL(ctx.target), control, fixturePath, fixtureRoot: fixturePath ? ctx.dir : undefined, startupMs: STARTUP_MS,
     ...(ctx.windowMarker && ctx.target && ctx.dir.startsWith('/private/tmp/sleight-battery-') &&
       dirname(ctx.target) === ctx.dir && realpathSync(ctx.target) === ctx.target && realpathSync(ctx.dir) === ctx.dir &&
-      ctx.windowMarker === basename(ctx.target) ? { windowMarker: ctx.windowMarker } : {}) })], { timeoutMs: 650000, signal: hostController.signal,
+      ctx.windowMarker.length >= 10 && (ctx.windowMarker === name || ctx.windowMarker === stem) ? { windowMarker: ctx.windowMarker } : {}) })], { timeoutMs: 650000, signal: hostController.signal,
     onStdout: receive });
   function receive(data) {
     buffer += String(data);
@@ -67,12 +73,12 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, scrub(item)]));
     return value;
   }
-  async function wait(name) {
+  async function wait(name, timeoutMs = 35000) {
     let timer;
     try { return await Promise.race([stage('error').promise.then(event => {
       const error = new Error(event.error.message); error.hostStart = scrub(event.error); throw error;
     }), stage(name).promise, response.then(result => { throw new Error(result.spawnError || result.stderr?.trim() || 'HOST_EXITED'); }),
-      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('HOST_DEADLINE')), 35000); })]); }
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('HOST_DEADLINE')), timeoutMs); })]); }
     finally { clearTimeout(timer); }
   }
   const finish = async ({ abort = false } = {}) => {
@@ -89,21 +95,39 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
     }
     if (ctx.target || !armed.wasRunning) {
       startStage = 'open';
+      // AppKit's persistence switch keeps a fresh launch from restoring windows, but an app that parses argv itself can
+      // misread it: VS Code 1.141 reads its letters as short flags, and -s (--status) quits a first instance (2026-10-19).
+      const launchArgs = armed.wasRunning ? [] : ctx.launchArgs ?? (armed.ownArgv === true ? [] : ['-ApplePersistenceIgnoreState', 'YES']);
       const opened = await runProcess('/usr/bin/open', ['-g', '-b', task.bundle, ...(ctx.target ? [ctx.target] : []),
-        ...(!armed.wasRunning ? ['--args', '-ApplePersistenceIgnoreState', 'YES'] : [])], { signal, timeoutMs: 30000 });
+        ...(launchArgs.length ? ['--args', ...launchArgs] : [])], { signal, timeoutMs: 30000 });
       if (opened.exit.code !== 0 || !opened.groupClean) throw new Error(opened.spawnError || opened.stderr?.trim() || 'FIXTURE_OPEN_FAILED');
     }
-    command('launched');
+    command('launched'); launchSent = true;
     startStage = 'ready';
-    await wait('ready');
-    return { finish, abort: () => command('abort') };
+    const ready = await wait('ready', STARTUP_MS + READY_MARGIN_MS);
+    const count = value => Number.isInteger(value) ? value : null;
+    return { finish, abort: () => command('abort'), startup: { waitMs: count(ready?.waitMs), relaunches: count(ready?.relaunches) } };
   } catch (error) {
-    command('abort'); hostController.abort();
-    const result = await response.catch(() => null);
+    let cleanupTimer, recoveryAborted = signal.aborted;
+    const abortRecovery = () => { recoveryAborted = true; command('abort'); hostController.abort(); };
+    // Recovery cleanup only after the launch was announced: a failed or unfinished open proves nothing about the app.
+    if (preflightRefused || signal.aborted || !launchSent) { command('abort'); hostController.abort(); }
+    else {
+      signal.addEventListener('abort', abortRecovery, { once: true });
+      if (signal.aborted) abortRecovery();
+      else {
+        command('finish');
+        // Let the native host close the fixture before collecting it, even after readiness failed.
+        cleanupTimer = setTimeout(() => hostController.abort(), 65000);
+      }
+    }
+    let result;
+    try { result = await response.catch(() => null); }
+    finally { clearTimeout(cleanupTimer); signal.removeEventListener('abort', abortRecovery); }
     if (!stages.has('cleanup')) details = { reasons: ['HOST_NOT_STARTED'], windows: [] };
     details.startError = scrub(error.hostStart ?? { message: String(error.message || error).slice(0, 500), stage: startStage, windowCount });
     if (!result?.groupClean || result.exit.code !== 0) details.reasons.push('HOST_PROCESS_UNCONFIRMED');
-    error.hostCleanup = { confirmed: preflightRefused && result?.groupClean === true, details, samples };
+    error.hostCleanup = { confirmed: !recoveryAborted && (confirmed || preflightRefused) && result?.groupClean === true && result.exit.code === 0, details, samples };
     throw error;
   }
 }

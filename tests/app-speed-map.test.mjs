@@ -2,14 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext, constants } from 'node:vm';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
-import { speedPlan, readMetrics, runSpeedMap, summarizeSpeedMap, speedMarkdown } from '../bench/app-speed-map.mjs';
+import { speedPlan, readMetrics, runSpeedMap, summarizeSpeedMap, speedMarkdown, simulateSpeedMap } from '../bench/app-speed-map.mjs';
 
 function closed(values) {
   return new Proxy(values, { get(t, key) {
@@ -319,4 +319,63 @@ test('owner-present local-container reads have an explicit unbound scope and can
   assert.equal(r.calls.filter(call => call[0] === 'scroll').length, 0);
   assert.match(speedMarkdown(report), /Owner-present reads/);
   assert.match(speedMarkdown(report), /owner-present-read-only/);
+});
+
+test('a refused setup row carries its diagnosis into the report and the failure column', async () => {
+  const r = runtime();
+  r.prepare = async () => { throw Object.assign(Error('FIXTURE_SETUP_FAILED'), { cleanupConfirmed: true, cleanupReasons: ['FIXTURE_WINDOW_NOT_RETAINED'],
+    setup: { message: 'APP_EXITED', stage: 'retain', windowCount: null, startWait: { exited: true, instances: 0 } } }); };
+  const report = await runSpeedMap(speedPlan({ ids: ['vscode'], runs: 1 }), r);
+  const row = report.rows[0];
+  assert.equal(row.status, 'refused');
+  assert.equal(row.failure, 'FIXTURE_SETUP_FAILED');
+  assert.deepEqual(row.setup, { message: 'APP_EXITED', stage: 'retain', windowCount: null, startWait: { exited: true, instances: 0 } });
+  assert.deepEqual(row.cleanupReasons, ['FIXTURE_WINDOW_NOT_RETAINED']);
+  assert.deepEqual(summarizeSpeedMap(report)[0].failures, ['FIXTURE_SETUP_FAILED:APP_EXITED']);
+  assert.match(speedMarkdown(report), /FIXTURE_SETUP_FAILED:APP_EXITED/);
+});
+
+test('the offline simulation runs every planned cell through the real scheduler with no app', async () => {
+  const plan = speedPlan({ ids: ['vscode', 'word', 'notes'], runs: 2, concurrentApp: 'word' });
+  const sim = await simulateSpeedMap(plan);
+  assert.equal(sim.cells.length, 3 * 2 + 2);
+  const vscode = sim.cells.filter(c => c.app === 'vscode');
+  assert.deepEqual(vscode.map(c => [c.mode, c.trial, c.status]), [['sequential', 1, 'complete'], ['sequential', 2, 'complete']]);
+  assert.deepEqual(vscode[0].steps, ['acquire', 'read', 'read', 'scroll', 'read']);
+  const cohort = sim.cells.filter(c => c.mode === 'concurrent');
+  assert.deepEqual(cohort.map(c => [c.app, c.sessions]), [['word', 4], ['word', 4]]);
+  assert.deepEqual(cohort[0].steps, ['acquire', 'read', 'read']);
+  assert.ok(sim.cells.filter(c => c.app === 'notes').every(c => c.status === 'refused' && c.failure === 'LOCAL_CONTAINER_UNQUALIFIED'));
+  assert.equal(sim.totals.fixtures, 2 * 2 + 2);
+  assert.equal(sim.totals.scrolls, 4);
+  assert.equal(sim.totals.engineCalls, 4 * 8 + 2 * 4 * 5);
+  assert.ok(sim.estimate.typicalSeconds > 0 && sim.estimate.boundSeconds > sim.estimate.typicalSeconds);
+  assert.equal(sim.liveCommand, 'node bench/app-speed-map.mjs --owner-away --apps vscode,word,notes --runs 2 --concurrent-app word');
+  assert.deepEqual(sim.receiptsRequired, []);
+  assert.deepEqual((await simulateSpeedMap(speedPlan({ ids: ['helium', 'textedit'], runs: 1 }))).receiptsRequired, ['helium']);
+});
+
+test('the CLI dry run includes the simulation and never spawns a child or writes a file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sleight-am1-dry-')), guard = join(dir, 'guard.cjs');
+  try {
+    writeFileSync(guard, `const cp = require('node:child_process'), fs = require('node:fs');
+      for (const name of ['spawn','spawnSync','exec','execSync','execFile','execFileSync','fork']) cp[name] = () => { throw Error('child forbidden'); };
+      for (const name of ['mkdirSync','writeFileSync','appendFileSync','rmdirSync','rmSync','unlinkSync','mkdtempSync']) fs[name] = () => { throw Error('write forbidden'); };
+      require('node:module').syncBuiltinESMExports();`);
+    const r = spawnSync(process.execPath, ['--require', guard, 'bench/app-speed-map.mjs', '--dry-run', '--apps', 'vscode,word', '--runs', '1'],
+      { encoding: 'utf8', cwd: new URL('..', import.meta.url) });
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.runs, 1);
+    assert.equal(out.simulation.cells.length, 3);
+    assert.equal(out.simulation.liveCommand, 'node bench/app-speed-map.mjs --owner-away --apps vscode,word --runs 1');
+  } finally { removeTemp(dir); }
+});
+
+test('each measured row records the fixture setup wait, and the summary reports it', async () => {
+  const r = runtime(), prepare = r.prepare;
+  r.prepare = async (...args) => ({ ...(await prepare(...args)), setupWaitMs: 4200 });
+  const report = await runSpeedMap(speedPlan({ ids: ['textedit'], runs: 1 }), r);
+  assert.ok(report.rows.length && report.rows.every(row => row.setupWaitMs === 4200));
+  assert.deepEqual(report.summary.find(row => row.mode === 'sequential').setupWaitMs, { n: 1, median: 4200, p90: 4200 });
 });

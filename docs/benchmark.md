@@ -86,6 +86,32 @@ IDs and the `local: true` declaration come from the owner; the runner cannot ind
 that a supplied container is outside an account. CPU parity with Codex is unverified after the
 guard setup and native app-probe changes.
 
+## App-class speed map
+
+`bench/app-speed-map.mjs` times the engine without a model. A trial times five steps on one app (acquisition, a first
+and a warm full read, one scroll and a readback), and a separate cohort runs four concurrent read-only sessions on one
+app. Apps are grouped by class (Electron/CEF, Office, Apple native, Chromium). Fixtures are private temp files and
+folders, and the run needs the owner away. Live, TextEdit completed 3/3 trials on 2026-10-14, with medians of 1247 ms to
+acquire, 52 ms for the first read and 918 ms for the scroll.
+
+```bash
+node bench/app-speed-map.mjs --dry-run --apps word,vscode --runs 1
+node bench/app-speed-map.mjs --owner-away --apps word,vscode --runs 1
+```
+
+The dry run sends every planned cell through the real scheduler with an in-memory runtime. It prints each cell's engine
+calls, the receipts the run needs and a time estimate. It doesn't start an app or a child process, and it doesn't write
+a file.
+
+Setup has a 60 s budget for each fixture, and within it the host doesn't read the window list until the launched process
+finishes launching. It waits while the accessibility tree answers -25204 (cannot complete) or a new window's document or
+title can't be read yet, and it follows a process that hands over to a new instance of itself started after the run's
+own open. A readable different document still stops setup at once. The report row records a setup failure as a code with
+counts, such as `FIXTURE_SETUP_FAILED:APP_EXITED`. Editors run on a throwaway profile inside the fixture folder, like
+the claim suite's editor tasks. Apps that embed Electron, CEF or a Chromium framework don't get AppKit's
+`-ApplePersistenceIgnoreState` switch, because VS Code 1.141 reads its letters as short flags and `-s` (`--status`)
+quits a first instance.
+
 ## Browser head-to-head
 
 sleight against Codex on the 12 web tasks (grid, editor, dense, spa, nested and infinite pages in
