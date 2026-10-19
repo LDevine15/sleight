@@ -107,6 +107,20 @@ test('a site block covers its bare host, www., a trailing dot, subdomains, any p
   assert.match(siteRefusal({ ...blocks, sites: ['https://www.bestbuy.com'] }, 'https://bestbuy.com/'), /^You blocked sleight on https:\/\/www\.bestbuy\.com/);
 });
 
+test('www. comes off only when a dot remains, so a block on www.com never covers every .com site', () => {
+  const blocks = { state: 'ok', apps: [], sites: ['https://www.com'] };
+  assert.equal(siteRefusal(blocks, 'https://example.com/'), undefined);
+  assert.equal(pageRefusal(blocks, { host: 'example.com' }), undefined);
+  assert.match(siteRefusal(blocks, 'https://www.com/'), /^You blocked sleight on https:\/\/www\.com /);
+  assert.match(siteRefusal(blocks, 'https://shop.www.com/'), /^You blocked sleight on https:\/\/www\.com /);
+});
+
+test('a block by bundle id with no names found says that getApp by name won\'t match it', t => {
+  const w = world(t);
+  assert.equal(w.command(['block', 'com.example.unknown']), 0);
+  assert.equal(w.output(), "sleight won't act in com.example.unknown from its next action, in every session. macOS gave no name for it, so a getApp by the app's name won't match this block, though the read and actions after it still stop.\n");
+});
+
 test('allow-only treats www. and the bare host as one site and ignores a default port, but keeps the scheme, a port and subdomains apart', () => {
   const only = { state: 'ok', apps: [], sites: [], only: ['https://www.a.example'] };
   for (const url of ['https://a.example/x', 'https://a.example.:443/', 'https://WWW.A.EXAMPLE/']) assert.equal(siteRefusal(only, url), undefined, url);
@@ -510,6 +524,12 @@ test('the site proof comes only from the window\'s URL field and the web areas\'
   assert.deepEqual(site('Window: "x", App: B.\nURL: https://a.example/p\n0 standard window x\n\t5 HTML content URL: www.a.example/p'), { host: 'a.example', scheme: 'https' });
   assert.deepEqual(site('Window: "x", App: B.\nURL: https://a.example/p\n0 standard window x\n\t5 HTML content URL: b.example/p'), { unproven: true });
   assert.deepEqual(site('Window: "x", App: B.\n0 standard window x, URL: https://a.example/, ID: W\n\t1 button Go'), { host: 'a.example', scheme: 'https' });
+});
+
+test('a read without the window\'s root line (a find or a diff) proves no site, so a page-written "HTML content" line can\'t stand in', () => {
+  assert.equal(pageSite('\t\t\t9 HTML content Description: x, URL: allowed.example/x\n\t\t\t\t10 button Buy'), undefined);
+  assert.equal(pageSite('Window: "x", App: B.\n+ \t\t9 HTML content URL: allowed.example/x'), undefined);
+  assert.deepEqual(pageSite('Window: "x", App: B.\n0 standard window x\n\t2 HTML content URL: a.example/x'), { host: 'a.example' });
 });
 
 test('engine-path site lines: a blocked host whatever its scheme, an unlisted host in allow-only mode, and an unprovable page', () => {

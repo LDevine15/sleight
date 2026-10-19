@@ -255,7 +255,8 @@ export function permissionsCommand(args, options) {
       if (op === 'block') {
         const changed = chosen.app ? blockApp(o, chosen.app) : blockSite(o, chosen.site);
         const shown = chosen.app && readPermissions(o.path, o.uid).apps.find(app => app.id === chosen.app)?.name;
-        o.out(changed ? `sleight won't act ${chosen.app ? 'in' : 'on'} ${shown ? `${shown} (${name})` : name} from its next action, in every session.\n` : `${name} is already blocked.\n`); return 0;
+        const nameless = changed && chosen.app && !shown ? " macOS gave no name for it, so a getApp by the app's name won't match this block, though the read and actions after it still stop." : '';
+        o.out(changed ? `sleight won't act ${chosen.app ? 'in' : 'on'} ${shown ? `${shown} (${name})` : name} from its next action, in every session.${nameless}\n` : `${name} is already blocked.\n`); return 0;
       }
       const changed = update(o, p => chosen.app
         ? p.apps.some(app => app.id.toLowerCase() === chosen.app.toLowerCase()) && { ...p, apps: p.apps.filter(app => app.id.toLowerCase() !== chosen.app.toLowerCase()) }

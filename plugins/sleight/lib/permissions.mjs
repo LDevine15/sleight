@@ -69,7 +69,8 @@ export function appRefusal(perms, { bundleId, name } = {}) {
 // Sites are compared by host: lowercased, one trailing dot and a leading www. removed, so www.example.com, example.com and
 // example.com. are one site. A block covers that host's subdomains too, on any scheme and port. An allow-only entry matches
 // its own scheme and port (a default port is no port) and no subdomain, since a looser match there would widen access.
-const siteHost = host => String(host ?? '').toLowerCase().replace(/\.$/, '').replace(/^www\./, '');
+// www. comes off only when a dot remains after it, so www.com stays www.com and never becomes a block on all of .com.
+const siteHost = host => String(host ?? '').toLowerCase().replace(/\.$/, '').replace(/^www\.(?=[^.]+\.)/, '');
 // host[:port] as a URL writes it, split without parsing so a bracketed IPv6 address keeps its colons.
 const hostPort = value => { const [, host, port = ''] = /^(.*?)(?::(\d+))?$/.exec(String(value ?? '')); return { host: siteHost(host), port }; };
 const covers = (origin, host) => { const blocked = siteHost(new URL(origin).hostname), seen = hostPort(host).host; return !!blocked && (seen === blocked || seen.endsWith('.' + blocked)); };
@@ -118,6 +119,9 @@ function webSite(value) {
  *  An address bar's text proves nothing: it may be typed and not loaded. */
 export function pageSite(text, window) {
   const source = String(text ?? ''), tokens = line => line.match(/URL: /g)?.length ?? 0;
+  // Only a read with the window's root line shows the outermost web area. A find or a diff without it proves nothing, since
+  // the page can label its own element "HTML content", and the window keeps the site an earlier full read proved.
+  if (!/^0 /m.test(source)) return undefined;
   const fields = [...source.matchAll(/^URL: .*$/gm)].length + [...source.matchAll(/^0 .*$/gm)].reduce((n, line) => n + tokens(line[0]), 0);
   const web = /^https?:\/\//i.test(window?.url ?? '');
   // A window field the page may have written is left out, and then only the web areas can prove the site.
