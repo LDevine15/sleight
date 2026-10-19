@@ -541,6 +541,18 @@ native reference, and oversized first results defer the browser reference while 
   hosts and Claude under Claude Code. It is unit-tested only: no live approval in another host has been
   checked. Unanswered relay forms expire after five minutes.
 - A name lookup can still launch an app that exited between the native check and `getApp`.
+- In Codex, nobody has yet seen sleight's approval card as a Codex form in an interactive session.
+  Codex 0.160.0 advertises form support, so sleight sends the card there. If Codex can't show the
+  Always allow choice, only Allow and Decline are left.
+- In Codex, turbo is off and browsers use the engine path. Turbo needs the Claude Code mod to tie a
+  turn to your message, and a Codex hook has no way to hold the private envelope that does it.
+- Codex runs sleight's turn-end hooks only after you trust them. Untrusted, a used turn ends after
+  30 idle seconds.
+- We don't know whether turning off Codex's `computer-use@openai-bundled` plugin also removes the
+  computer surface from `unified-computer-use`, which Codex's Browser plugin shares. The `computer_use`
+  feature flag left that plugin's skill in place in a throwaway home.
+- Whether Codex asks before each sleight tool call depends on Codex's own approval settings. We
+  haven't checked it in a live session.
 
 ## Desktop replay
 

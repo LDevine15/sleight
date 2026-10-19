@@ -246,6 +246,18 @@ TODO: full release pass result.
 - The mod refuses Claude's file edits and common shell writes to the preapproved-apps file. Reads
   stay allowed. A path built at run time still gets past it.
 
+### Codex
+
+- sleight installs as a Codex plugin from the same repo: `codex plugin marketplace add Land-o-Clusters/sleight`,
+  then `codex plugin add sleight@sleight`. Codex gets the same server, skill and tool names, and two hooks
+  that end the engine's turn when a Codex turn stops or is interrupted. Turbo, the pane and `/sleight` stay
+  Claude Code only. `--doctor` reports whether sleight is on in Codex and whether Codex's own Computer
+  Use is on beside it. Installed and checked in a throwaway Codex home with CLI 0.160.0, without a live session.
+- Outside Claude Code, the model doesn't see `turn_ended` or turbo's tools. Only the Claude Code mod can
+  bind a turbo turn to your message.
+- The turbo menu shows the host each session runs in and its version, as the client introduced itself
+  ("Claude Code 2.1.289"). It doesn't show a model, because no host reports one to sleight.
+
 ### Pane, replay and receipts
 
 - Recording from the pane goes through a file instead of the mod's 4 MiB output limit. After a
