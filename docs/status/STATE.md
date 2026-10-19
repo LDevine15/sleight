@@ -3,19 +3,18 @@
 What is true now. One banner, replaced in place as work happens. Always-true rules live in
 [LAWS.md](LAWS.md). Cap 32 KB.
 
-## Banner (2026-10-19 08:05 UTC)
+## Banner (2026-10-19 08:45 UTC)
 
-**Since the clear (08:05Z).** Release line `pane/auto-mode` e43ef016 is the 1.3.0 candidate (plugin 1.3.0, full check 8340
-tests 0 fail, lint 0). The release pass and claim runs are in. Chrome turbo on the release build is "fastest", 10 of 13
-(258.9 s against FowlBrowser's 447.8 s, 5 runs where within 20%), Safari and Firefox are "fastest", 11 of 12 (592.1 s and
-557.1 s), and the release pass went 13 of 13 on Haiku (257.8 s) and on Opus (249.9 s). README, CHANGELOG (dated 2026-10-19)
-and the hub carry engine versions and dates. Helium's top-ups are owed, since Helium is the owner's browser. Blocking the public
-push: public CI runs on Linux, and 67 of 8340 tests fail there (macOS assumptions), so `claude/ci-linux` is being fixed and
-checked on ci-box. Then the public push, CI, tag and GitHub release, on the owner's go given before sleep. OWNER ASLEEP since
-2026-10-19T05:09:45Z (/goodnight), back about 12:00Z. 1.3.1 `claude/p131-integration` 0bd109fa (full check 8911 tests 0 fail)
-runs the FS A/B now (block-fs, race-131), which also covers SW1's live demoid check. TU1 (turbo startup retry) builds on
-`claude/p131-tu1`. 1.4.0 `claude/p140` a96092aa holds analytics, Cursor and AM1. Items below marked as in flight at the clear
-are superseded by this paragraph.
+**Since the clear (08:45Z).** 1.3.0 is released as tag `v1.3.0` on `ca2188b4` (public `main`) with a GitHub release from the
+CHANGELOG. Public CI passed on Node 24, the Node ChatGPT bundles, after 18 fork tests were cancelled on Node 22. The private
+`sleight-dev` refuses `ca2188b4` (org ruleset against workflow edits, the owner's), so private `pane/auto-mode` is at
+`808ced5f` until the owner pushes it with the ruleset off. Claim: native "fastest" 8 of 9 (251.2 s), app 3 of 3, Chrome turbo
+"fastest" 10 of 13 on the release build (258.9 s against 447.8 s), Safari and Firefox "fastest" 11 of 12 (592.1 s, 557.1 s),
+sleight in Codex ahead of Codex on 9 and 8 of 12, release pass 13 of 13 on Haiku and Opus. Helium's top-ups are owed. The
+owner's installed copy is still 1.2.5. OWNER ASLEEP since 2026-10-19T05:09:45Z (/goodnight), back about 12:00Z. 1.3.1
+`claude/p131-integration` e71676cb (TU1 merged; 0bd109fa had 8911 tests 0 fail) runs the FS A/B now (block-fs on race-131),
+which also covers SW1's live demoid check. 1.4.0 `claude/p140` a96092aa holds analytics, Cursor and AM1. Items below marked as
+in flight at the clear are superseded by this paragraph.
 
 **Release line** `pane/auto-mode` = main checkout. It holds the race fixes ft1, fs1 and md1, plus sec130, es1, ff1, rg1r2, fl3,
 form-2fa, the Safari harness fixes, mdn-note, OH1, the FM3 port (engine Chromium tab path only), list-pick, the native
