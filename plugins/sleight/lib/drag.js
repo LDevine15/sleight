@@ -63,6 +63,7 @@ const inside = (b, p) => p.x >= b.X && p.x < b.X + b.Width && p.y >= b.Y && p.y 
 // Windows that are never cover: the engine's own overlay, and the ghost hand's panel (any layer), whose
 // host pid the launcher sends as handPid. The panel ignores mouse events, so a drop passes through it.
 let handPid = 0;
+let dp7 = true, dp2 = true;
 const overlay = w => /Computer Use$/.test(w.owner) || (handPid > 0 && w.pid === handPid);
 const attempt = (fn, fallback) => { try { return fn(); } catch (e) { if (e?.axCode === -25204) throw e; return fallback; } };
 const axFailure = (name, code) => Object.assign(new Error(`AX ${name} failed (${code})`), { axCode: Number(code) });
@@ -552,6 +553,7 @@ function axTextArea(pid, point, reference) {
   return {
     value: () => ObjC.unwrap(ObjC.castRefToObject(get(el, 'AXValue'))),
     selection: () => rangeOf(get(el, 'AXSelectedTextRange')),
+    lineForIndex: index => Number(ObjC.unwrap(ObjC.castRefToObject(ask(el, 'AXLineForIndex', $(index))))),
     lineRange: line => rangeOf(ask(el, 'AXRangeForLine', $.NSNumber.numberWithInteger(line))),
     hasAttributes: (location, length, baseline) => attributedTextHasAttributes(
       ObjC.castRefToObject(ask(el, 'AXAttributedStringForRange', range(baseline, location + length - baseline))),
@@ -581,6 +583,32 @@ function dropIndex(area, p, text) {
     if (onRow(q) && x >= q.X && x < q.X + q.Width) {
       const end = area.lineEnd(i);
       return end > 0 && text[end - 1] === '\n' ? end - 1 : end;
+    }
+  }
+  if (dp7 && area.lineForIndex && area.lineRange) {
+    // Find a glyph above the empty row, then ask AX for the next visual line.
+    // Only geometry and line ranges locate the endpoint. A caret at (0, 0),
+    // a gap between rows, and space below the final row do not prove a drop.
+    const started = Date.now();
+    for (let y = p.y - 4; y >= p.y - 600; y -= 4) {
+      if (Date.now() - started > 1000) break;
+      for (let x = p.x; x >= p.x - 600; x -= 4) {
+        if (Date.now() - started > 1000) break;
+        const i = area.indexAt({ x, y }), q = area.rect(i);
+        if (!q || y < q.Y || y >= q.Y + q.Height || x < q.X || x >= q.X + q.Width) continue;
+        const line = area.lineForIndex(i), current = area.lineRange(line);
+        const next = attempt(() => area.lineRange(line + 1), null);
+        for (const range of [next, current]) {
+          if (!range || !Number.isSafeInteger(range.location) || !Number.isSafeInteger(range.length) ||
+              range.location < 0 || range.length < 0 || range.location + range.length > text.length) continue;
+          const end = range.location + range.length;
+          const caret = area.rect(range.location, range.length);
+          if (onRow(caret) && caret.Height > 0 && (caret.X !== 0 || caret.Y !== 0)) {
+            return end > range.location && text[end - 1] === '\n' ? end - 1 : end;
+          }
+        }
+        throw new Error('cannot find where the drop point falls in the text; nothing was changed');
+      }
     }
   }
   throw new Error('cannot find where the drop point falls in the text; nothing was changed');
@@ -1027,7 +1055,7 @@ function runCrossWindow(request) {
       }
     };
     previous = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-    raiseWindow(aw); delay(settleMs / 1000);
+    if (!dp2) { raiseWindow(aw); delay(settleMs / 1000); }
     const checkBoth = () => { checkWindow(a, pid, aw); return checkWindow(b, pid, bw); };
     checkBoth(); verifySemantic();
     const points = { start: at(a.bounds, startState.from), end: at(b.bounds, endState.to) };
@@ -1039,7 +1067,12 @@ function runCrossWindow(request) {
         throw new Error(`${error.message}; tile the windows with Window > Move & Resize, then read again`);
       }
     };
-    exposed(checkBoth(), true);
+    try { exposed(checkBoth(), true); }
+    catch (error) {
+      if (!dp2 || error.systemOverlay) throw error;
+      raiseWindow(aw); // Same-app overlap still needs a raise and a fresh proof.
+      checkBoth(); verifySemantic(); exposed(checkBoth(), true);
+    }
     const sourceInfo = dragContent(pid, aw, a.bounds, startState.from, startState.from);
     const sourcePoints = validatePoints(sourceInfo, a.bounds, startState.from, startState.from, app);
     if (!sourcePoints.text) throw new Error('cross-window drag requires selected text in the source window');
@@ -1063,12 +1096,19 @@ function runCrossWindow(request) {
         withinBudget(); validate();
         const outcome = accessibilityCrossWindowMove(axTextArea(pid, points.start, source.el.reference),
           axTextArea(pid, points.end, destination.el.reference), source, destination, end, a, b, progress);
-        return JSON.stringify({ ok: !outcome.error, app, windowId: a.id, toWindowId: b.id, from, to, path: 'accessibility', ...outcome });
+        return JSON.stringify({ ok: !outcome.error, app, windowId: a.id, toWindowId: b.id, from, to, path: 'accessibility',
+          ...(dp7 ? { fallbackReason: outcome.error ? `accessibility move failed: ${outcome.error}` : null } : {}), ...outcome });
       } catch (error) {
         if (error?.axCode === -25204 && progress.wrote) { path = 'accessibility'; throw error; }
         unchanged(); fallbackReason = `accessibility move unavailable: ${error.message || error}`;
       }
     }
+    if (dp7) {
+      fallbackReason ||= 'accessibility move unavailable: Accessibility text moves are disabled';
+      return JSON.stringify({ ok: false, app, windowId: a.id, toWindowId: b.id, from, to, path: 'none',
+        fallbackReason, deliveryVerified: false, error: `${fallbackReason}; cross-window posting can copy text, so nothing was pressed` });
+    }
+    if (dp2) { raiseWindow(aw); delay(settleMs / 1000); validate(); }
     let sequence;
     if (!cover) try {
       const build = backgroundBuilder(), event = (type, p) => build(type, p, a);
@@ -1143,6 +1183,7 @@ function run(argv) {
   };
   try {
     const request = JSON.parse(argv[0]);
+    dp7 = request.dp7 !== false; dp2 = request.dp2 !== false;
     handPid = Number.isSafeInteger(request.handPid) && request.handPid > 0 ? request.handPid : 0;
     const { app, from, to, holdMs = 500, steps = 25, settleMs = 1500 } = request;
     if (!(coordinate(from) || elementEndpoint(from) || selectionEndpoint(from)) ||
@@ -1203,8 +1244,7 @@ function run(argv) {
     catch (e) { fallbackReason = `background unavailable: ${e.message || e}`; }
     if (build || globalThis.SLEIGHT_ACCESSIBILITY_MOVE !== false) {
       previous = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-      raiseWindow(chosenWindow);
-      delay(settleMs / 1000);
+      if (!dp2) { raiseWindow(chosenWindow); delay(settleMs / 1000); }
       checkWindow(main, pid, chosenWindow);
       verifySemantic();
       scanned = { info: dragContent(pid, chosenWindow, main.bounds, pointFrom, pointTo), bounds: main.bounds };
@@ -1213,8 +1253,15 @@ function run(argv) {
       if (points.text) points.text.pid = pid;
       // Another document of this app must not receive the press: check fresh
       // own-app order at both ends, then other apps' coverage below.
-      const ordered = checkWindow(main, pid, chosenWindow);
-      exposedEndpoints(ordered, main, points, true);
+      let ordered = checkWindow(main, pid, chosenWindow);
+      try { exposedEndpoints(ordered, main, points, true); }
+      catch (error) {
+        if (!dp2 || error.systemOverlay) throw error;
+        raiseWindow(chosenWindow);
+        verifySemantic();
+        ordered = checkWindow(main, pid, chosenWindow);
+        exposedEndpoints(ordered, main, points, true);
+      }
       // The window server picks the drop target from what is on screen at the
       // drop point, so a window another app covers never receives a background
       // drop (0/3 covered, 3/3 uncovered, 2026-10-05). Chess ignored our covered
@@ -1249,6 +1296,21 @@ function run(argv) {
       if (points.text) {
         const moved = byAccessibility();
         if (moved) return moved;
+      }
+      if (dp2 && !cover && build) {
+        raiseWindow(chosenWindow); delay(settleMs / 1000);
+        const fresh = checkWindow(main, pid, chosenWindow);
+        verifySemantic();
+        const rechecked = validatePoints(dragContent(pid, chosenWindow, main.bounds, pointFrom, pointTo), main.bounds, pointFrom, pointTo, app);
+        if (!!rechecked.text !== !!points.text || points.text && !$.CFEqual(rechecked.text.el.reference, points.text.el.reference)) {
+          throw new Error('drag content changed before input; read the window again');
+        }
+        if (points.text && (points.text.el.value() !== points.text.text ||
+            points.text.el.attributes.byName('AXSelectedText').value() !== points.text.selected)) {
+          throw new Error('text or selection changed before input; read the window again');
+        }
+        exposedEndpoints(fresh, main, points, true);
+        if (coveringApp(fresh, main, points)) throw new Error('another app now covers a drag endpoint; nothing was pressed');
       }
       let sequence;
       if (!cover && build) try {

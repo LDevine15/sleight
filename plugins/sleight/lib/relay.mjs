@@ -2472,6 +2472,47 @@ export function createRelay({
     return answer;
   }
 
+  // DP4: one engine read while the local drag still owns its app lease.
+  async function dragChangedLines(msg, outcome, current) {
+    if (process.env.SLEIGHT_DP4 === '0' || outcome.textChanged !== true || !inputLease || !leaseCalls.get(msg.id)?.key) return [];
+    current();
+    const args = msg.params.arguments, number = outcome.toWindowId ?? outcome.windowId;
+    const known = [...dragWindows.values()].filter(window => window.windowNumber === number &&
+      [window.app, window.appId].includes(args.app));
+    const target = known.length === 1 ? known[0] : !outcome.toWindowId &&
+      leaseWindow && [leaseWindow.app, leaseWindow.appId].includes(args.app) ? leaseWindow : undefined;
+    if (!target || target.identityError || (target.identityRequired && !target.nativeIdentity) || webBrowser(target.appId) ||
+        [...dragWindows.values()].some(other => other.appId === target.appId && other.title === target.title && other.windowNumber !== number)) return [];
+    // Implicit app acquisitions have no window number. Prove the helper's returned
+    // number against that engine header before reading through its existing handle.
+    if (!known.length) {
+      if (!windowIdentity) return [];
+      verifyWindowIdentity({ ...target, windowNumber: number }, await windowIdentity({ ...target, windowNumber: number }));
+      current();
+    }
+    const handle = [...handleBundles].find(([name, window]) => {
+      const selected = handleSelectors.get(name)?.match(/^\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}$/)?.[1];
+      const bound = window.windowNumber ?? window.nativeIdentity?.windowNumber ?? (selected ? Number(selected) : undefined);
+      return !unconfirmedHandles.has(name) && window.appId === target.appId && sameWindow(window, target) &&
+        (bound === number || bound === undefined && window.nativeCandidates === 1);
+    })?.[0];
+    if (!handle) return [];
+    const reply = await new Promise(resolve => {
+      const id = `sleight-drag-read-${nextInternalId++}`;
+      const timer = setTimeout(() => { internalRequests.delete(id); lateHelperReplies.add(id); resolve(undefined); }, 5000);
+      internalRequests.set(id, response => { clearTimeout(timer); resolve(response); });
+      toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
+        arguments: { code: `await ${handle}.getAXState({ disableDiffing: true })` }, _meta: engineMeta() } });
+    });
+    current();
+    if (!reply?.result || reply.error || reply.result.isError) return [];
+    const content = reply.result.content ?? [], raw = content.filter(item => item?.type === 'text').map(item => item.text).join('\n');
+    const shown = windowFromText(raw), surface = reply.result._meta?.['codex/toolSurface'];
+    if (!hasFullTree(raw) || !shown || !sameWindow(target, shown) || surface?.kind === 'browserUse' ||
+        (surface?.app?.appId && surface.app.appId !== target.appId)) return [];
+    return compactor.process(content.filter(item => item?.type === 'text').map(item => ({ ...item, text: GUARD_MARK + item.text })));
+  }
+
   async function callLocal(msg, plan) {
     const generation = stopGeneration;
     const current = () => {
@@ -2583,7 +2624,7 @@ export function createRelay({
         return allowed;
       // The fourth argument stays runLocal for callLocalTool; the resolved
       // lease target rides fifth.
-      }, undefined, resolved, prepared);
+      }, undefined, resolved, prepared, { afterDrag: outcome => dragChangedLines(msg, outcome, current) });
       current();
       if (msg.params.name === 'select_window' && !result.isError) {
         const value = JSON.parse(result.content.find(c => c.type === 'text')?.text ?? '{}');

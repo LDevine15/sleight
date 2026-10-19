@@ -8,7 +8,7 @@ const test = (name, fn) => nodeTest(`${defaultAppId}: ${name}`, fn);
 
 // Only the native AX/CG boundary is replaced. run() does the real selection,
 // validation, coordinate conversion, mouse sequence and post-drop check.
-function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', setterFails = false, readFails = false, postFails = false, failBeforePress = false, releaseFails = false, changeOnActivate = false, second = true, before = 'alpha beta gamma\n', after = 'beta gamma alpha\n', selection = 'alpha', areaRole = 'AXTextArea', repairDeletesText = false, movedOnActivate = false, coveredEnd = false, coveredPid = 7, splitAreas = false, missingContent = false, extraElements = 0, stacked = false, raiseWorks = true, raiseActivates = false, offSpace = false, noWindows = false, appId = defaultAppId, busyChecks = 0, typesAt = null, ax = null, coverTitle = 'cover.txt', slowDelays = false, nativeFailure = null, rows = 0, coverBounds = null, rowRole = 'AXRow', rowChild = null, shiftRowsOnRaise = 0, extraWindows = [] } = {}) {
+function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', setterFails = false, readFails = false, postFails = false, failBeforePress = false, releaseFails = false, changeOnActivate = false, second = true, before = 'alpha beta gamma\n', after = 'beta gamma alpha\n', selection = 'alpha', areaRole = 'AXTextArea', repairDeletesText = false, movedOnActivate = false, coveredEnd = false, coveredPid = 7, splitAreas = false, missingContent = false, extraElements = 0, stacked = false, raiseWorks = true, raiseActivates = false, offSpace = false, noWindows = false, appId = defaultAppId, busyChecks = 0, typesAt = null, ax = null, coverTitle = 'cover.txt', slowDelays = false, nativeFailure = null, rows = 0, coverBounds = null, rowRole = 'AXRow', rowChild = null, shiftRowsOnRaise = 0, extraWindows = [], onDelay } = {}) {
   const events = [], restored = [], activations = [], pidEvents = [], mainWrites = [], textWrites = [];
   let visited = 0, inputChecks = 0, readbacks = 0;
   let mainId = 22, rowShift = 0;
@@ -148,7 +148,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     AXUIElementSetAttributeValue: (el, name, value) => { el.attributes.byName(name).value = value; return 0; },
     AXUIElementPerformAction: (el, name) => { el.actions.byName(name).perform(); return 0; },
   });
-  const context = vm.createContext({ SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $: native, Ref: () => [], ObjC: { import() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); if (slowDelays) clock += 30000; },
+  const context = vm.createContext({ SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $: native, Ref: () => [], ObjC: { import() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); onDelay?.({ values, selected }); if (slowDelays) clock += 30000; },
     Date: { now: () => clock },
     Application: () => ({ processes: { whose: () => [proc] } }) });
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8'), context);
@@ -192,7 +192,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     ...(coveredEnd ? [{ id: 33, pid: coveredPid, owner: coveredPid === 7 ? 'TextEdit' : 'Other app', title: coverTitle, layer: 0, bounds: coverBounds ? { ...coverBounds } : { X: 180, Y: 130, Width: 80, Height: 40 } }] : []),
     ...order.filter(id => second || id === 11).map(id => ({ id, pid: 7, owner: 'TextEdit', title: `${id}.txt`, layer: 0, bounds: { ...frames.get(id) } })),
   ];
-  const run = changes => JSON.parse(context.run([JSON.stringify({ app: defaultAppId, from: [26.6, 38.5], to: [119, 38.5], ...changes })]));
+  const run = changes => JSON.parse(context.run([JSON.stringify({ app: defaultAppId, from: [26.6, 38.5], to: [119, 38.5], dp2: false, ...changes })]));
   return { run, events, restored, activations, pidEvents, values, mainWrites, delays, axWrites, textWrites, visits: () => visited };
 }
 // Window 11's text area starts at x 105, so [150, 38.5] is past the line's end.
@@ -325,6 +325,34 @@ test('every selected-text drag tries Accessibility before posted events', () => 
     assert.equal(h.pidEvents.length, 0); assert.equal(h.events.length, 0);
     assert.equal(h.axWrites.at(-1), 'settle');
     }
+  }
+});
+test('DP2 moves text without a raise or pre-move settle, with a same-app overlap exception', () => {
+  for (const stacked of [false, true]) {
+    const h = harness({ background: true, stacked, ax: {} });
+    const r = h.run({ ...pastEnd, dp2: true });
+    assert.equal(r.ok, true, r.error); assert.equal(r.path, 'accessibility');
+    assert.deepEqual(h.mainWrites, stacked ? [11] : []);
+    assert.deepEqual(h.delays, []); assert.equal(h.axWrites.at(-1), 'settle');
+    assert.equal(h.pidEvents.length + h.events.length, 0);
+  }
+});
+test('DP2 keeps raise and settle for posted presses and refuses a failed overlap raise', () => {
+  const h = harness({ background: true });
+  assert.equal(h.run({ ...pastEnd, dp2: true }).path, 'background');
+  assert.deepEqual(h.mainWrites, [11]); assert.equal(h.delays[0], 1.5);
+  const blocked = harness({ background: true, stacked: true, raiseWorks: false, ax: {} });
+  assert.equal(blocked.run({ ...pastEnd, dp2: true }).ok, false);
+  assert.equal(blocked.axWrites.length + blocked.pidEvents.length + blocked.events.length, 0);
+});
+test('DP2 posted fallback rechecks owner text and selection after its settle', () => {
+  for (const change of ['text', 'selection']) {
+    const h = harness({ background: true, ax: { failArea: true }, onDelay: ({ values, selected }) => {
+      if (change === 'text') values.set(11, 'owner edit\n'); else selected.set(11, 'beta');
+    } });
+    const r = h.run({ ...pastEnd, dp2: true });
+    assert.equal(r.ok, false); assert.match(r.error, /changed before input/);
+    assert.equal(h.pidEvents.length + h.events.length, 0);
   }
 });
 test('every covered window without a focused selection refuses before raising', () => {

@@ -89,10 +89,12 @@ function fixture(options = {}) {
     return {
       value: () => el.AXValue,
       selection: () => ({ ...el.range }),
-      lineRange: n => n === 0 ? { location: 0, length: el.AXValue.length } : null,
+      lineForIndex: () => 0,
+      lineRange: n => n === 0 ? { location: 0, length: el.AXValue.length } : options.emptyFinal && n === 1 ? { location: el.AXValue.length, length: 0 } : null,
       hasAttributes: () => !!options.formatted,
-      rect: i => ({ X: x + i * 8, Y: 130, Width: 8, Height: 14 }),
-      indexAt: p => Math.min(Math.floor((p.x - x) / 8), el.AXValue.length - 1), lineEnd: () => el.AXValue.length,
+      rect: (i, length = 1) => options.emptyFinal && i === el.AXValue.length && length === 0
+        ? { X: x, Y: 150, Width: 0, Height: 14 } : { X: x + i * 8, Y: 130, Width: 8, Height: 14 },
+      indexAt: p => options.emptyFinal && (p.y < 130 || p.y >= 144) ? 0 : Math.min(Math.floor((p.x - x) / 8), el.AXValue.length - 1), lineEnd: () => el.AXValue.length,
       replace: (at, length, text) => {
         if (options.rangeSideEffects) { el.range = { location: at, length }; el.AXSelectedText = el.AXValue.slice(at, at + length); }
         if (options.failWrite === ++attempts) throw new Error('write unavailable');
@@ -104,7 +106,7 @@ function fixture(options = {}) {
     };
   };
   const run = (change = {}) => JSON.parse(context.run([JSON.stringify({ app: 'Editor', windowId: 11, toWindowId: 12,
-    from: 'the current text selection', to: 'end of line 1', holdMs: 0, settleMs: 0, steps: 2, ...change })]));
+    dp7: options.dp7 ?? false, dp2: options.dp2 ?? false, from: 'the current text selection', to: 'end of line 1', holdMs: 0, settleMs: 0, steps: 2, ...change })]));
   return { run, context, a, b, frames, wins, events, writes, activations, settles, restored };
 }
 
@@ -328,4 +330,30 @@ test('a banner over the point is a system overlay: wait and retry once, no tilin
   assert.equal(r.ok, false); assert.equal(h.events.filter(e => e.type === 1).length, 0);
   assert.match(r.error, /^from is covered by Notification Center \(windowId 40\), a system window such as a notification banner or a system prompt; nothing was pressed\. If it is a security, permission, password or sign-in prompt, don't interact with it: tell the user now\. Otherwise it usually goes away within seconds: wait about 5 s, read the window again and retry the drag once/);
   assert.doesNotMatch(r.error, /tile the windows|nothing was pressed.*nothing was pressed/);
+});
+
+for (const options of [{ formatted: true }, { ignoreWrites: true }, { ax: false }, { noPosting: true, formatted: true }]) {
+  test(`DP7 refuses cross-window posting with its AX reason: ${JSON.stringify(options)}`, () => {
+    const h = fixture({ ...options, dp7: true, dp2: true }), r = h.run();
+    assert.equal(r.ok, false); assert.equal(r.path, 'none'); assert.equal(r.deliveryVerified, false);
+    assert.match(r.fallbackReason, /accessibility move unavailable/); assert.match(r.error, /cross-window posting can copy/);
+    assert.equal(h.events.length + h.activations.length, 0); assert.equal(h.a.AXValue, 'alpha beta\n');
+    assert.equal(h.b.AXValue, 'gamma delta\n');
+  });
+}
+test('DP2 cross-window AX move skips the raise and settle', () => {
+  const h = fixture({ dp7: true, dp2: true });
+  h.context.raiseWindow = () => assert.fail('AX move did not need a raise');
+  h.context.delay = () => assert.fail('AX move did not need a settle delay');
+  assert.equal(h.run().path, 'accessibility'); assert.equal(h.writes.length, 2);
+});
+
+test('DP7 and DP2 default on: a cross-window drop uses the empty final line without raising', () => {
+  const h = fixture({ emptyFinal: true });
+  h.context.raiseWindow = () => assert.fail('default AX path raised');
+  h.context.delay = () => assert.fail('default AX path waited');
+  const r = h.run({ dp7: undefined, dp2: undefined, to: [20, 57], screenshotsByWindow: { 12: [500, 400] } });
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
+  assert.equal(h.a.AXValue, 'beta\n'); assert.equal(h.b.AXValue, 'gamma delta\nalpha');
+  assert.equal(h.events.length, 0);
 });
