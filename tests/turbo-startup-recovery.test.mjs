@@ -141,13 +141,16 @@ test('the worker names the failed startup stage and a code, never the message of
 
 // A forked worker stand-in: it either fails its startup with the given frame (or exit) or serves turns.
 // exitFirst: the exit event comes before the worker's own frame, as IPC ordering allows.
-function fork({ fail, exit, begin, exitFirst } = {}) {
+function fork({ fail, exit, begin, exitFirst, disconnectOnCall } = {}) {
   const forks = [];
   const forkWorker = (_path, _args, options) => {
     const child = new EventEmitter(), endpoint = new EventEmitter();
     forks.push(options);
     child.connected = endpoint.connected = true;
-    child.send = frame => queueMicrotask(() => endpoint.emit('message', structuredClone(frame)));
+    child.send = frame => queueMicrotask(() => {
+      if (disconnectOnCall && frame.method === 'call') child.disconnect();
+      else endpoint.emit('message', structuredClone(frame));
+    });
     endpoint.send = frame => queueMicrotask(() => child.emit('message', structuredClone(frame)));
     child.disconnect = () => { child.connected = endpoint.connected = false; endpoint.emit('disconnect'); child.emit('disconnect'); };
     child.unref = () => {};
@@ -165,6 +168,27 @@ function fork({ fail, exit, begin, exitFirst } = {}) {
 }
 const bridgeDependencies = forkWorker => ({ readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
   shareConsent: async () => undefined, tracePhase: () => {}, forkWorker });
+
+test('a worker lost on the first call returns the Helium failure pair without entering TU1 startup retry', async () => {
+  const worker = fork({ disconnectOnCall: true });
+  let starts = 0;
+  const f = protocolFixture(async () => {
+    starts++;
+    const bridge = await createV3Bridge({}, bridgeDependencies(worker.forkWorker));
+    assert.equal(await bridge.bind({ ...bridge.bootstrapEnvelope(), event: 'begin', turn: 'fixture', text: 'Read the fixture.' }), true);
+    return { call: bridge.call, delivered: bridge.delivered, close: bridge.close };
+  });
+  await f.protocol.message({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
+    name: 'browser_open', arguments: { url: 'https://fixture.invalid', browser: 'bbench' } } });
+  await f.protocol.message({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: {
+    name: 'browser_tabs', arguments: { do: 'list' } } });
+  assert.equal(f.text(0), 'Input outcome is unconfirmed. Read state before retrying; use the engine browser path if needed.');
+  assert.equal(f.messages[0].result.isError, false);
+  assert.equal(f.text(1), 'Turbo is unavailable for this turn. Use the engine browser path.');
+  assert.equal(f.messages[1].result.isError, true);
+  assert.equal(starts, 1); assert.equal(worker.forks.length, 1); assert.deepEqual(f.failures, []);
+  await f.protocol.close();
+});
 
 test('the bridge keeps the worker\'s stage and code, and an older three-field frame still works', async () => {
   const frame = { version: 3, status: 'unavailable', code: 'V3_RUNTIME_UNAVAILABLE', stage: 'connection-select', reason: 'STALE_INSTANCE' };

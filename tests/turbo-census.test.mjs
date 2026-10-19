@@ -46,7 +46,8 @@ test('census keeps other paths separate and does not invent ratios or zero cover
   result('engine', 'engine')]);
   assert.equal(row.actionCalls, 0); assert.equal(row.readsPerAction, null); assert.equal(row.otherCalls, 1);
   assert.deepEqual(observations(), { focusEvents: null, observedFocusEvents: null, turboTabsLeft: null,
-    tabsAfterBrowserClose: null, tabsLeft: null, cleanupProved: false, startupFailures: 0, startupUnrecovered: false });
+    tabsAfterBrowserClose: null, tabsLeft: null, cleanupProved: false, startupFailures: 0, startupUnrecovered: false,
+    startupFailureClasses: [] });
   const recovered = observations(undefined, [{ version: 3, phase: 'startup-failed', attempt: 1, retrying: true }]);
   assert.deepEqual([recovered.startupFailures, recovered.startupUnrecovered], [1, false]);
   const final = observations(undefined, [{ version: 3, phase: 'startup-failed', attempt: 1, retrying: true },
@@ -60,6 +61,65 @@ test('census keeps other paths separate and does not invent ratios or zero cover
   assert.equal(measured.focusEvents, 0); assert.equal(measured.turboTabsLeft, 2);
   assert.equal(measured.tabsLeft, null, 'combined engine tabs are not covered by turbo closure');
   assert.equal(measured.cleanupProved, true);
+});
+
+const inputUnknown = 'Input outcome is unconfirmed. Read state before retrying; use the engine browser path if needed.';
+const turnUnavailable = 'Turbo is unavailable for this turn. Use the engine browser path.';
+const workerLoss = () => [use('open', 'browser_open'), result('open', inputUnknown),
+  use('tabs', 'browser_tabs'), result('tabs', turnUnavailable, true)];
+
+test('first-call worker loss counts once beside startup attempt metrics and keeps diagnostic codes', async t => {
+  const { censusRound, renderCensus } = await load();
+  const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-turbo-census-')));
+  mkdirSync(join(dir, 'demoid'));
+  writeFileSync(join(dir, 'demoid/events.jsonl'), [...workerLoss(), result('tabs', turnUnavailable, true),
+    use('again', 'browser_read'), result('again', turnUnavailable, true)].map(JSON.stringify).join('\n'));
+  const metricFile = join(dir, 'demoid/turbo-metrics.jsonl');
+  const cleanup = { version: 3, phase: 'cleanup', browserClosed: false };
+  writeFileSync(metricFile, JSON.stringify(cleanup) + '\n');
+  let row = censusRound(dir).tasks.demoid;
+  assert.equal(row.firstCallWorkerLosses, 1);
+  assert.equal(row.startupFailures, 1); assert.equal(row.startupUnrecovered, true);
+  assert.deepEqual(row.startupFailureClasses, [{ class: 'first-call-worker-loss', stage: 'first-call',
+    code: 'UNKNOWN', reason: 'UNKNOWN', source: 'transcript', count: 1 }]);
+  assert.equal(row.softFailures, 1); assert.equal(row.errors, 2);
+  const start = { version: 3, phase: 'startup-failed', stage: 'connection-select', code: 'V3_RUNTIME_UNAVAILABLE',
+    reason: 'STALE_INSTANCE', retrying: true };
+  writeFileSync(metricFile, [start, start, cleanup].map(JSON.stringify).join('\n'));
+  row = censusRound(dir).tasks.demoid;
+  assert.equal(row.startupFailures, 3, 'two rejected starts, then one lost first call');
+  assert.deepEqual(row.startupFailureClasses[0], { class: 'session-start', stage: 'connection-select',
+    code: 'V3_RUNTIME_UNAVAILABLE', reason: 'STALE_INSTANCE', source: 'metrics', count: 2 });
+  const table = renderCensus([censusRound(dir)]);
+  assert.match(table, /first-call-worker-loss \| first-call \| UNKNOWN \| UNKNOWN \| transcript \| 1/);
+  assert.match(table, /session-start \| connection-select \| V3_RUNTIME_UNAVAILABLE \| STALE_INSTANCE \| metrics \| 2/);
+  assert.match(table, /First-call worker losses/);
+  writeFileSync(metricFile, JSON.stringify({ ...start, stage: '/private/path', code: 'secret text', reason: 'https://private.invalid' }));
+  assert.doesNotMatch(JSON.stringify(censusRound(dir)), /private|secret/);
+});
+
+test('worker loss requires the exact first two matched turbo outcomes, never page text or a later call', async () => {
+  const { censusEvents, observations, renderCensus } = await load();
+  for (const events of [
+    workerLoss(),
+    [use('search', 'ToolSearch'), result('search', 'tools'), ...workerLoss(), result('orphan', inputUnknown)],
+  ]) assert.equal(censusEvents(events).firstCallWorkerLosses, 1);
+  for (const events of [
+    [use('good', 'browser_open'), result('good', 'opened'), ...workerLoss()],
+    [use('open', 'browser_open'), result('open', 'snapshot: 1\n' + inputUnknown), ...workerLoss().slice(2)],
+    [use('open', 'browser_open'), result('open', inputUnknown + '\nsnapshot: 1'), ...workerLoss().slice(2)],
+    [use('open', 'browser_read'), result('open', inputUnknown), ...workerLoss().slice(2)],
+    [use('open', 'browser_open'), result('open', inputUnknown, true), ...workerLoss().slice(2)],
+    [...workerLoss().slice(0, 2), use('tabs', 'browser_tabs'), result('tabs', turnUnavailable)],
+    [result('orphan', inputUnknown), ...workerLoss().slice(2)],
+    workerLoss().slice(0, 2),
+  ]) {
+    const row = censusEvents(events);
+    assert.equal(row.firstCallWorkerLosses, 0);
+    assert.equal(observations(undefined, [], row).startupFailures, 0);
+  }
+  const row = { ...censusEvents([]), ...observations() };
+  assert.match(renderCensus([{ round: 'zero', tasks: { demoid: row } }]), /demoid \| 0 \| 0 \| no/);
 });
 
 test('round census and CLI emit aggregate task data, retain missing coverage and reject malformed or linked inputs', async t => {
@@ -93,6 +153,7 @@ test('a results-only task remains visible with unavailable transcript counts, in
   assert.equal(Object.hasOwn(round.tasks, '__proto__'), true);
   assert.equal(round.tasks.__proto__.transcriptAvailable, false);
   assert.equal(round.tasks.__proto__.reads, null); assert.equal(round.tasks.__proto__.characters, null);
+  assert.equal(round.tasks.__proto__.firstCallWorkerLosses, null);
   assert.equal(round.tasks.__proto__.focusEvents, 0);
   assert.match(renderCensus([round]), /__proto__ \| unavailable/);
 });
