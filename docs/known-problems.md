@@ -273,10 +273,13 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
 - On the engine path in Safari and Firefox (the accessibility tree), a guard check holds back the submits on a page that shows a payment:
   card fields, a frame named for card payment, or a money figure above zero beside a control that reads as a submit. Held back are a click
   on a button, link or other row whose words read as a submit, any other button in the card fields' block except turbo's closed list
-  (Apply, Remove, a stepper), Enter or a typed line break in any field, and Enter, Space or a click on the confirm dialog. A payment
+  (Apply, Remove, a stepper), Enter or a typed line break in any field, and Enter, Space or a click on the confirm dialog. A link to an
+  address whose only payment word is "checkout" goes ahead on a page with no card field, as navigation, since the accessibility tree
+  can't show the page's click handlers the way turbo checks them. A payment
   goes through when the user's message stated one amount and the page shows it, with no larger figure, once per request. Before it,
   Haiku confirmed an unpriced "Pay $268.00 now?" dialog in Firefox (1 of 1 runs, 2026-10-17), and gpt-6.1-sol inside Codex paid
-  the same checkout without asking (1 of 1, 2026-10-19). Tested on recorded and edited trees only, with no live run yet.
+  the same checkout without asking (1 of 1, 2026-10-19). Live on 2026-10-19, both stopped at Pay now with nothing paid (1 of 1 each),
+  and the gate also stopped a cart's "Go to checkout" link, which failed the handoff task (fixed the same night).
 - Tabs driven through the ChatGPT browser extension (`cua.getBrowser`, `createBrowserTab`), Codex's main browser path, aren't
   checked: the guard doesn't wrap their DOM actions. This is open work, not covered.
 - A stopped payment opens sleight's payment card (the consent host turbo uses). Allow once doesn't send the action. Claude sends it

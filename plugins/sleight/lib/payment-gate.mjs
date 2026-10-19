@@ -105,7 +105,14 @@ export function enginePayment(name, args, text, payment, probe = false) {
   while (block && !buttons(block).some(row => !exemptName(row))) block = block.ancestors[0];
   block ??= near;
   const inBlock = row => !!block && under(block, row);
-  const gatedClick = row => !!row && !exempt(row) && (row.modal && modalPayment && (BUTTON.test(row.body) || submits(row)) ||
+  // A link to an address whose only payment word is "checkout", on a page with no card field or card frame, is navigation to
+  // the checkout page, which gets its own check (turbo's checkout-link rule; the handoff task's "Go to checkout" on its cart,
+  // race b9, 2026-10-19). Not one: any other payment or submit word, a money figure in its words, or no address.
+  const checkoutLink = row => LINK.test(row.body) && !cards.length && !cardFrame && /(?:^|, )Value: (?:https?:\/\/)?[a-z0-9.-]+(?::\d+)?\//i.test(row.body) &&
+    [row.label.match(/\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/gi) ?? []]
+      .every(words => words.length > 0 && words.every(word => word.toLowerCase() === 'checkout')) && !SUBMIT.test(row.label) && !PAYS.test(row.label) &&
+    !money(moneyFigures([row.label]).figures).length;
+  const gatedClick = row => !!row && !exempt(row) && !(checkoutLink(row) && !row.modal) && (row.modal && modalPayment && (BUTTON.test(row.body) || submits(row)) ||
     paymentPage && (reads(row, submits) || BUTTON.test(row.body) && inBlock(row) || LINK.test(row.body) && reads(row, r => paymentWords(r.label))));
   const key = (name === 'pressKey' || name === 'press') && typeof args[0] === 'string' ? args[0].toLowerCase().split('+').pop() : undefined;
   const typed = ['typeText', 'paste'].includes(name) ? args.find(arg => typeof arg === 'string') : undefined;
