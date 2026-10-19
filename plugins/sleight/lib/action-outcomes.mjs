@@ -268,6 +268,7 @@ export class ActionLog {
     if (!call || !Array.isArray(record?.outcomes)) return;
     call.outcomes.push(...record.outcomes);
     call.planned = record.planned; call.app = typeof record.app === 'string' ? record.app : call.app;
+    if (Number.isSafeInteger(record.dropped) && record.dropped > 0) call.dropped = (call.dropped ?? 0) + record.dropped;
   }
   reply(msg) {
     const call = msg?.method === undefined && this.calls.get(msg?.id);
@@ -293,9 +294,12 @@ export class ActionLog {
           ...(rec.x === 'refused' ? { result: 'refused', reason: REASONS.has(rec.r) ? rec.r : 'stopped by sleight' } : rec.x === 'failed' ? { result: 'failed', reason: 'engine error' }
             : { result: 'ok', outcome: facts.length ? facts.join('; ') : rec.g && call.outcomes[i + 1] ? 'checked with the next action' : 'unverified' }) });
       });
+      // Actions past the guard's 30-record cap ran but have no record: one row says how many.
+      const dropped = call.dropped ?? 0;
+      if (dropped) rows.push({ ...base, ...app, kind: 'rest', count: dropped, result: 'not logged', reason: 'record cap' });
       const stopped = call.outcomes.findIndex(rec => rec.x);
-      if (stopped >= 0 && Number.isSafeInteger(call.planned) && call.planned > call.outcomes.length) {
-        rows.push({ ...base, ...app, kind: 'rest', count: call.planned - call.outcomes.length, result: 'not run', reason: `stopped after ${stopped}` });
+      if (stopped >= 0 && Number.isSafeInteger(call.planned) && call.planned > call.outcomes.length + dropped) {
+        rows.push({ ...base, ...app, kind: 'rest', count: call.planned - call.outcomes.length - dropped, result: 'not run', reason: `stopped after ${stopped}` });
       }
       if (!rows.length && error) rows.push(refused({ ...base, ...app, kind: 'call' }));
     } else if (/^browser_/.test(call.name)) {

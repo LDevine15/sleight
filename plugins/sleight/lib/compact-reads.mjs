@@ -1496,8 +1496,16 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         const text = item.text.replace(markPattern, (_, json) => {
           try {
             const record = JSON.parse(json);
-            if (Object.hasOwn(record, 'outcomes')) outcomeRecord = record;
-            else if (Object.hasOwn(record, 'typed')) typed = record.typed;
+            // The guard sends each action record as it changes, then the whole list at the end. In order, the last
+            // word on each record wins, so a call Claude's own code broke off still has its records.
+            if (Object.hasOwn(record, 'outcomes')) outcomeRecord = { ...record, outcomes: Array.isArray(record.outcomes) ? [...record.outcomes] : [] };
+            else if (Object.hasOwn(record, 'part')) {
+              if (Number.isSafeInteger(record.part) && record.part >= 0 && record.part < 30 && record.rec && typeof record.rec === 'object') {
+                const { part, rec, ...extra } = record;
+                outcomeRecord = { ...outcomeRecord, ...extra, outcomes: [...(outcomeRecord?.outcomes ?? [])] };
+                outcomeRecord.outcomes[part] = rec;
+              }
+            } else if (Object.hasOwn(record, 'typed')) typed = record.typed;
             else filtered = record;
           } catch { filtered = { full: true }; }
           return '';
@@ -1603,6 +1611,7 @@ export function createReadCompactor({ resultTrim = process.env.SLEIGHT_RESULT_TR
         }
         return !out && item.text.includes(GUARD_OMIT_MARK) ? [] : { ...item, text: out };
       });
+      if (outcomeRecord) outcomeRecord.outcomes = outcomeRecord.outcomes.filter(Boolean);
       lastOutcomes = outcomeRecord;
       // A stop note that lists what wasn't sent covers the rest.
       const outcomeLines = outcomes && outcomeRecord && renderOutcomes(outcomeRecord, { start: outcomeStart, continuing: outcomeContinuing,

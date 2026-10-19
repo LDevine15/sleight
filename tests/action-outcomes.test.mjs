@@ -5,6 +5,7 @@ import { runInNewContext, createContext, runInContext, constants } from 'node:vm
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, statSync, symlinkSync, linkSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 import { actionOutcome, renderOutcomes, ActionLog, actionLogPath } from '../plugins/sleight/lib/action-outcomes.mjs';
 import { guardedCode, readCode } from '../plugins/sleight/lib/document-scope.mjs';
@@ -461,6 +462,55 @@ test('an action that completed keeps its outcome when a later guard check throws
   const [rec] = f.records(MARK).at(-1).outcomes;
   assert.equal(rec.x, undefined);
   assert.deepEqual(rec.f, [{ o: 'state', d: 'checked' }]);
+});
+
+test('an action stays recorded when Claude\'s own code throws after it', async t => {
+  const f = engine([form(), form('', '1')]);
+  await assert.rejects(f.run('await app.click(2); null.x;', { outcomeMark: MARK, actions: ['click'] }), { name: 'TypeError' });
+  // The compactor rebuilds the record from what the guard wrote before the throw.
+  const compactor = createReadCompactor({ outcomes: true });
+  compactor.process([{ type: 'text', text: f.output.join('') + "\nTypeError: Cannot read properties of null (reading 'x')" }], { filterMark: MARK, failed: true });
+  assert.deepEqual(compactor.takeOutcomes()?.outcomes?.map(rec => rec.a), ['click']);
+  // And the relay logs it.
+  const path = join(dir, 'thrown.jsonl');
+  const h = relayHarness(t, { actionLog: new ActionLog({ path, root: dir }) });
+  await h.call(1, 'let app = await cua.getApp("TextEdit")');
+  await h.reply(1, form());
+  await h.call(2, 'await app.click(2); null.x;');
+  const mark = /"outcomeMark":"(\[sleight:filtered-read:[0-9a-f]{16}\])"/.exec(h.sentCode(2))[1];
+  const g = engine([form(), form('', '1')]);
+  await g.run('await app.click(2); null.x;', { outcomeMark: mark, actions: ['click'] }).catch(() => {});
+  await h.reply(2, g.output.join('') + "\nTypeError: Cannot read properties of null (reading 'x')", true);
+  const rows = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(rows.map(row => [row.kind, row.result]), [['click', 'ok']]);
+});
+
+test('past the 30-record cap the guard counts what it dropped, and the log says how many', async () => {
+  const f = engine([form()]);
+  await f.run('for (let i = 0; i < 33; i++) await app.click(3);', { outcomeMark: MARK, actions: ['click'] });
+  const record = f.records(MARK).at(-1);
+  assert.equal(record.outcomes.length, 30);
+  assert.equal(record.dropped, 3);
+  const root = mkdtempSync(join(dir, 'cap-')), path = join(root, 'cap.jsonl');
+  const log = new ActionLog({ path, root });
+  log.request({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: '' } } });
+  log.outcomes(1, record);
+  log.reply({ id: 1, result: { content: [{ type: 'text', text: 'ok' }] } });
+  const rows = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(rows.length, 31);
+  assert.deepEqual([rows[30].kind, rows[30].count, rows[30].result, rows[30].reason], ['rest', 3, 'not logged', 'record cap']);
+});
+
+test('with both switches off the guard code is the base build\'s, byte for byte', () => {
+  const hash = code => createHash('sha256').update(code).digest('hex').slice(0, 16);
+  // sha256 prefixes of the same calls at base d82a462a, before outcomes existed.
+  assert.deepEqual({
+    guarded: hash(guardedCode('await app.click(1);', window)),
+    guardedLean: hash(guardedCode('await app.click(1);', window, undefined, undefined, { prompt: 'lean' })),
+    reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
+    read: hash(readCode('void 0;', { acknowledge: true })),
+    repl: hash(replSetupCode()),
+  }, { guarded: '52aea439a64cc3f4', guardedLean: '0cf8749e97d98973', reuse: 'ca953cc424ea8156', read: '89aaf84085c45c3b', repl: '89aaf84085c45c3b' });
 });
 
 test('with both switches off the guard carries none of the outcome code', () => {

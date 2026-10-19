@@ -455,7 +455,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
     // after a run of its actions settles them, and the records go out under the relay's mark for this call.
     const actionOutcome = ${actionOutcome.toString()};
     state.outcomeMark = update?.outcomeMark;
-    state.outcomes = []; state.outcomePending = new WeakMap();
+    state.outcomes = []; state.outcomeDropped = 0; state.outcomePending = new WeakMap();
     // settled: the engine waited for the UI before this read. A read that didn't can't show "no visible change".
     state.noteRead = (raw, text, settled = true) => {
       const pending = state.outcomeMark ? state.outcomePending.get(raw) : undefined;
@@ -464,6 +464,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
       const last = pending.recs[pending.recs.length - 1], facts = actionOutcome(pending.recs, pending.before, text).facts;
       last.f = !settled && facts?.length === 1 && facts[0].o === 'none' ? undefined : facts;
       for (const rec of pending.recs) if (rec !== last) rec.g = true;
+      for (const rec of pending.recs) state.outcomePart(rec);
     };
     // Typed and set text shows only as its length, and a single printable key not at all.
     state.outcomeRec = (name, asked, args, text, before) => {
@@ -487,7 +488,14 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
       if (!state.outcomeMark || !rec) return;
       const pending = state.outcomePending.get(raw);
       if (pending) pending.recs.push(rec); else state.outcomePending.set(raw, { before: text, recs: [rec] });
-      if (state.outcomes.length < 30) state.outcomes.push(rec);
+      state.outcomeAdd(rec);
+      // A dropped record sends the last kept one again, with the new count.
+      state.outcomePart(state.outcomes.includes(rec) ? rec : state.outcomes[state.outcomes.length - 1]);
+    };
+    // At most 30 records a call; the rest are counted, so the log can say how many it lacks.
+    state.outcomeAdd = rec => {
+      if (state.outcomes.includes(rec)) return;
+      if (state.outcomes.length < 30) state.outcomes.push(rec); else state.outcomeDropped++;
     };
     // A guard stop's message names elements and titles, so the record carries only its kind.
     state.refusalOf = message => /: app changed\\./.test(message) ? 'app changed'
@@ -496,16 +504,24 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
       : /changed since|changed what element/.test(message) ? 'element changed' : /no element with|elements with/.test(message) ? 'element not found'
       : /names no element/.test(message) ? 'bad locator' : /opens a submenu/.test(message) ? 'submenu' : /its menu takes the keys/.test(message) ? 'menu open'
       : /focus/.test(message) ? 'no focus target' : /close button/.test(message) ? 'close button' : /^Native access/.test(message) ? 'native access' : 'stopped';
+    // A record as it leaves the engine: no set value, element line or focus number.
+    const outcomeOut = ({ want, body, focus, ...rec }) => {
+      const t = body === undefined ? undefined : actionOutcome([{ body }]).targets[0];
+      // A length only for a known plain text field: a password's length is private too.
+      if (!t || t.s || !/^(?:text field|search text field|search field|combo box|text area|text entry area)$/.test(t.r)) delete rec.c;
+      return t ? { ...rec, t } : rec;
+    };
+    const outcomeExtra = () => ({ ...(state.actions ? { planned: state.actions.length } : {}), ...(state.expected?.app ? { app: state.expected.app } : {}),
+      ...(state.outcomeDropped ? { dropped: state.outcomeDropped } : {}) });
+    // Each record goes out as it changes, so a throw in Claude's own code after an action can't lose it. The call's
+    // code is spliced in as text whose declarations must stay top level, so a try/finally around it isn't possible.
+    state.outcomePart = rec => {
+      const part = state.outcomeMark ? state.outcomes.indexOf(rec) : -1;
+      if (part >= 0) nodeRepl.write(state.outcomeMark + JSON.stringify({ part, rec: outcomeOut(rec), ...outcomeExtra() }) + '\\n');
+    };
     state.flushOutcomes = () => {
       if (!state.outcomeMark || !state.outcomes.length) return;
-      const outcomes = state.outcomes.map(({ want, body, focus, ...rec }) => {
-        const t = body === undefined ? undefined : actionOutcome([{ body }]).targets[0];
-        // A length only for a known plain text field: a password's length is private too.
-        if (!t || t.s || !/^(?:text field|search text field|search field|combo box|text area|text entry area)$/.test(t.r)) delete rec.c;
-        return t ? { ...rec, t } : rec;
-      });
-      nodeRepl.write(state.outcomeMark + JSON.stringify({ outcomes, ...(state.actions ? { planned: state.actions.length } : {}),
-        ...(state.expected?.app ? { app: state.expected.app } : {}) }) + '\\n');
+      nodeRepl.write(state.outcomeMark + JSON.stringify({ outcomes: state.outcomes.map(outcomeOut), ...outcomeExtra() }) + '\\n');
     };
 ` : ''}    // Windows (app and URL or title) whose focus was on an element inside them in a read this session: window-root
     // focus right after opening a file is normal, but after the document had focus it means keys reach nothing.
@@ -1140,7 +1156,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
                 rec.x = attempt.sent ? 'failed' : 'refused';
                 if (!attempt.sent) rec.r = state.refusalOf(String(error?.message ?? error));
               }
-              if (!state.outcomes.includes(rec) && state.outcomes.length < 30) state.outcomes.push(rec);
+              state.outcomeAdd(rec);
               state.flushOutcomes();
             }` : ''}
             if (state.guardStopMark) nodeRepl.write(state.guardStopMark + JSON.stringify({ index: attempt.index,
