@@ -275,10 +275,21 @@ function ordinaryParents(path) {
 
 // The runner owns this exact child and profile. A failed collection retains the
 // profile and live lock so the next round cannot hide an orphaned window.
-export async function launchRealBrowser(plan, { spawnBrowser = spawn, openBrowser, listArguments, signalProcess, listProcesses, timeoutMs = 15000, stopMs = 5000, quitMs = 25000, quitBrowser, profileMetadata, safariBridge, restoreWait, readVersion = browserVersion, copy } = {}) {
+export function initialBrowserPage(plan, page) {
+  if (page === undefined) return plan;
+  const url = new URL(page.url);
+  if (!['firefox', 'safari'].includes(plan.browser) || url.protocol !== 'http:' || url.hostname !== '127.0.0.1' ||
+      !url.port || url.username || url.password || typeof page.title !== 'string' || !page.title || page.title.length > 200) throw Error('BENCH_INITIAL_PAGE_UNSAFE');
+  // Keep the race's profile, launch, ownership and cleanup checks. Only the initial page changes.
+  if (plan.browser === 'safari') return { ...plan, marker: page.title, markerUrl: url.href };
+  return { ...plan, marker: page.title, args: [...plan.args.slice(0, -1), url.href], launchArgs: [...plan.launchArgs.slice(0, -1), url.href] };
+}
+
+export async function launchRealBrowser(plan, { spawnBrowser = spawn, openBrowser, listArguments, signalProcess, listProcesses, timeoutMs = 15000, stopMs = 5000, quitMs = 25000, quitBrowser, profileMetadata, safariBridge, restoreWait, readVersion = browserVersion, copy, initialPage } = {}) {
   const expected = realBrowserPlan({ browser: plan.browser, round: plan.marker?.slice('Sleight Gate '.length),
     profile: plan.profileMode === 'benchmark-copy' ? 'benchmark' : 'fresh', surface: plan.surface });
   if (JSON.stringify(plan) !== JSON.stringify(expected)) throw Error('BENCH_PROFILE_UNSAFE');
+  plan = initialBrowserPage(plan, initialPage);
   const ownerCheck = await checkBrowserOwner(plan, { listProcesses });
   const version = readVersion(plan.executable);
   // Firefox and Safari update their returned object in place on reset, so the version goes onto that same object.

@@ -57,7 +57,7 @@ import { prepareGenericArm, acceptGenericCatalog, genericSettings } from './plug
 import { genericTask } from './generic-task.mjs';
 import { guardGenericOperation } from './generic-approval.mjs';
 import { assertCalculatorReady } from './plugin-live.mjs';
-import { WORLD_APPS } from './world/tasks.mjs';
+import { worldPassApps } from './world/tasks.mjs';
 import { engineSpan, readEngine } from './engine-version.mjs';
 import { ensureCuaDaemon, isNativeArm, nativeArmPlan, prepareNativeArm } from './world/native-arms.mjs';
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from './world/native-world.mjs';
@@ -243,6 +243,9 @@ const codexEffort = option('codex-effort', effort);
 const wanted = option('tasks', undefined)?.split(',');
 const claudeBin = world ? worldCLI(ARM_HOME) : process.env.CLAUDE_BIN || 'claude';
 const selected = selectSuiteTasks(suiteTasks.filter(task => task.surface !== 'extension' || realSurfaces === 'browser,computer' || wanted?.includes(task.id)), wanted);
+if (!isDryRun && selected.some(task => task.requiredProfile && task.requiredProfile !== option('real-profile', undefined))) {
+  throw new Error('CC_ISOLATED_PROFILE_REQUIRED: select --real-profile fresh');
+}
 if (selected.some(task => task.surface === 'extension') && realSurfaces !== 'browser,computer') {
   throw new Error('extension tasks require --surfaces browser,computer');
 }
@@ -287,6 +290,7 @@ const armEnv = (arm, extra = {}) => {
   // pass) or an arm's own env turns it on.
   const env = { ...hostFree, BENCH_ROOT: ROOT, SLEIGHT_APPROVAL_PROMPT: 'client', SLEIGHT_HAND: ghostHand,
     ...arm.env, ...extra, BENCH_SUITE: suite, ENABLE_CLAUDEAI_MCP_SERVERS: 'false', ...auth.env,
+    ...(world ? { BENCH_WORLD_TASKS: JSON.stringify(selected.map(task => task.id)) } : {}),
     ...(ownerPresent ? { BENCH_OWNER_PRESENT: '1' } : {}),
     ...(['real', 'world'].includes(suite) ? { SLEIGHT_SURFACES: realSurfaces } : {}) };
   for (const key of auth.unset) delete env[key];
@@ -453,6 +457,7 @@ async function runClaude(prompt, arm, env = {}, { signal, evidenceDir, onPermiss
 // (a copy goes in the run's folder), with the env the Claude-hosted sleight arm's server gets for the same pass. The home is
 // read back before Codex starts: a server the run didn't plan stops the pass.
 const sleightHostConfig = (arm, dir, evidenceDir) => codexSleightRunConfig({ model: arm.codexModel, effort: codexEffort, dir, suite, ownerPresent,
+  worldTasks: world ? selected.map(task => task.id) : undefined,
   surfaces: ['real', 'world'].includes(suite) ? realSurfaces : undefined, trace: evidenceDir, repo: ROOT, home: arm.codexHome });
 function codexHomeFor(arm, { dir, evidenceDir }) {
   if (!arm.sleightHost) return {};
@@ -634,8 +639,8 @@ if (!controller.signal.aborted && !isDryRun && armNames.some(name => !ARMS[name]
   if (setsEngineList) {
     const backup = join(homedir(), 'Library', 'Logs', 'sleight', `ComputerUseAppApprovals.before-${stamp}.json`);
     mkdirSync(dirname(backup), { recursive: true });
-    const apps = suite === 'world' ? WORLD_APPS : [...BENCH_APPS, ...(suite === 'real' ? REAL_APPS : [])];
-    const restore = approveOnly(apps.filter(a => /^(com\.|net\.)/.test(a)), backup);
+    const apps = suite === 'world' ? worldPassApps(selected) : [...BENCH_APPS, ...(suite === 'real' ? REAL_APPS : [])];
+    const restore = approveOnly(apps.filter(a => /^(com|net|org)\./.test(a)), backup);
     process.once('exit', () => { try { restore(); } catch (err) { console.error(`Restore the app approvals from ${backup}: ${err.message}`); } });
     console.error(`App approvals set to the benchmark apps; saved the previous list to ${backup}.`);
   }
@@ -675,7 +680,7 @@ pass: for (let run = 1; run <= runs; run++) {
       const nonce = randomBytes(4).toString('hex');
       const dir = join(suite === 'real' ? realpathSync(tmpdir()) : tmpdir(), 'sleight-bench', stamp, `${armName}-${task.id}-${run}`);
       mkdirSync(dir, { recursive: true });
-      const ctx = { dir, nonce, ownerAway, ownerPresent, ...(guardedPass && { stopOnAppDialog: true }) };
+      const ctx = { dir, nonce, ownerAway, ownerPresent, realProfile: option('real-profile', undefined), ...(guardedPass && { stopOnAppDialog: true }) };
       fixtureContexts.push(ctx);
       for (const app of [task.app, ...task.allowedApps ?? []].filter(Boolean)) touchedApps.add(app);
       if (suite === 'real' || task.fixtureLifecycle || guardedPass) {

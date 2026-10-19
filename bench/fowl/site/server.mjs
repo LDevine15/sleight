@@ -2,6 +2,7 @@
 // and clicks land in GET /t/<name>/api/log, the same shape FowlBrowser's demo shop uses.
 import { createServer } from 'node:http';
 import { INVOICE_ID, INVOICE_TOTAL, NOTE, ROSTER, SITE_PORT } from '../data.mjs';
+import { ccBase, ccHandler, ccKinds, createCCFixture } from './cc-held-out.mjs';
 
 export { INVOICE_TOTAL, NOTE, ROSTER, SITE_PORT };
 
@@ -70,7 +71,7 @@ export function logLines(events) {
     .filter((x) => x !== undefined && x !== '').join(' '));
 }
 
-export function createHandler({ downloadName = 'invoice.pdf' } = {}) {
+export function createHandler({ downloadName = 'invoice.pdf', ccFixtures } = {}) {
   if (!/^invoice(?:-[a-zA-Z0-9-]+)?\.pdf$/.test(downloadName)) throw new Error('invalid download name');
   const tags = new Map();
   const stateOf = (tag) => {
@@ -78,8 +79,14 @@ export function createHandler({ downloadName = 'invoice.pdf' } = {}) {
     return tags.get(tag);
   };
   const pdf = invoicePdf();
+  const heldOut = ccFixtures ?? ccKinds.map(kind => createCCFixture(kind, { nonce: 'held-out' }));
   async function handle(req, res) {
     const url = new URL(req.url, 'http://127.0.0.1');
+    if (url.pathname.startsWith('/held-out/')) {
+      const fixture = heldOut.find(row => url.pathname.startsWith(ccBase(row)));
+      if (!fixture || !/^127\.0\.0\.1:\d{1,5}$/.test(req.headers.host ?? '')) return res.writeHead(404).end();
+      return ccHandler(fixture, `http://${req.headers.host}`)(req, res);
+    }
     const send = (code, type, body) => res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store' }).end(body);
     const html = (body) => send(body ? 200 : 404, 'text/html; charset=utf-8', body || 'not found');
     const json = (body) => send(200, 'application/json', JSON.stringify(body));
@@ -118,8 +125,8 @@ export function createHandler({ downloadName = 'invoice.pdf' } = {}) {
   return handle;
 }
 
-export function startServer({ port = SITE_PORT, downloadName } = {}) {
-  const handle = createHandler({ downloadName });
+export function startServer({ port = SITE_PORT, downloadName, ccFixtures } = {}) {
+  const handle = createHandler({ downloadName, ccFixtures });
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => handle(req, res).catch(() => res.writeHead(500).end()));
     server.listen(port, '127.0.0.1', () => {

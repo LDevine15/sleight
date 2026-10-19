@@ -11,7 +11,7 @@ import { guardGenericOperation } from '../bench/generic-approval.mjs';
 import { genericSettings } from '../bench/plugin-arm.mjs';
 import { cpuSplit } from '../bench/footprint.mjs';
 import { webBrowsers } from '../bench/tasks-web.mjs';
-import { WORLD_APPS } from '../bench/world/tasks.mjs';
+import { WORLD_APPS, worldPassApps } from '../bench/world/tasks.mjs';
 import { isNativeArm, nativeArmPlan } from '../bench/world/native-arms.mjs';
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from '../bench/world/native-world.mjs';
 import { LOGIN_ARMS, loginTarget } from '../bench/world/login-readiness.mjs';
@@ -38,6 +38,38 @@ test('the full world dry run prints one complete JSON document for every arm', a
   assert.equal(result.commands.length, 0);
   assert.equal(result.directories.length, 0);
   assert.equal(result.saved.length, 0);
+});
+
+test('world engine approvals include selected org bundles and omit unselected browsers', async () => {
+  for (const allowedApps of [['Firefox', 'org.mozilla.firefox'], ['Calculator', 'com.apple.calculator']]) {
+    const tasks = [{ id: 'selected-fixture', app: allowedApps[0], allowedApps }];
+    const result = await runner({ suite: 'world', arm: 'codex', tasks, extraArgs: ['--owner-away', '--real-profile', 'fresh'] });
+    assert.equal(result.error, undefined);
+    assert.deepEqual(result.calls.find(call => Array.isArray(call) && call[0] === 'approve'), ['approve', allowedApps[1]]);
+  }
+});
+
+test('profile selection refuses a held-out browser pass before engine approvals or fixtures', async () => {
+  const tasks = [{ id: 'cc-list-firefox', app: 'Firefox', allowedApps: ['Firefox', 'org.mozilla.firefox'], requiredProfile: 'fresh' }];
+  for (const profile of [[], ['--real-profile', 'default']]) {
+    const result = await runner({ suite: 'world', arm: 'codex', tasks, extraArgs: ['--owner-away', ...profile] });
+    assert.match(result.error?.message ?? '', /CC_ISOLATED_PROFILE_REQUIRED/);
+    assert.ok(!result.calls.includes('lock'));
+    assert.ok(!result.calls.includes('real run'));
+    assert.ok(!result.calls.some(call => Array.isArray(call) && call[0] === 'approve'));
+  }
+});
+
+test('world selection reaches Claude hooks and the Codex sleight proxy', async () => {
+  const tasks = [{ id: 'cc-calendar-safari', app: 'Safari', allowedApps: ['Safari', 'com.apple.Safari'] }];
+  const claude = await runner({ suite: 'world', arm: 'sleight', tasks, drive: true, extraArgs: ['--owner-away'] });
+  assert.equal(claude.error, undefined);
+  assert.ok(claude.envs.length > 0);
+  assert.ok(claude.envs.every(env => env.BENCH_WORLD_TASKS === '["cc-calendar-safari"]'));
+  const codex = await runner({ suite: 'world', arm: 'codex-sleight', tasks, extraArgs: ['--owner-away'] });
+  assert.equal(codex.error, undefined);
+  assert.ok(codex.codexConfigs.length > 0);
+  assert.ok(codex.codexConfigs.every(toml => toml.includes('BENCH_WORLD_TASKS = "[\\"cc-calendar-safari\\"]"')));
 });
 
 test('a refused dry run prints one JSON document with its configuration errors', async () => {
@@ -123,7 +155,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
       if (command === 'id') return privateMail ? 'Owner Example' : ownerName;
       calls.push('tap check'); return JSON.stringify(taps);
     },
-    getTasks: () => tasks ?? [task], BENCH_APPS, REAL_APPS, WORLD_APPS,
+    getTasks: () => tasks ?? [task], BENCH_APPS, REAL_APPS, WORLD_APPS, worldPassApps,
     selectSuiteTasks, assertShopSmokeRuns,
     closeBenchTextEdit: options => { calls.push('TextEdit tail'); tailScopes.push(options); },
     quitChess: options => { calls.push('Chess tail'); tailScopes.push(options); },
@@ -352,7 +384,7 @@ test('claude-cu provides executed drag receipts to the retained method grader', 
 test('world suite uses retained fixtures, world approvals and each task deadline', async () => {
   const result = await runner({ suite: 'world', arm: 'sleight,codex', drive: true, outcome: { passed: true },
     extraArgs: ['--owner-away'],
-    tasks: [{ id: 'world-fixture', app: 'Preview', prompt: () => 'fixture', timeoutMs: 17000 }] });
+    tasks: [{ id: 'world-fixture', app: 'Preview', allowedApps: ['Preview', 'com.apple.Preview'], prompt: () => 'fixture', timeoutMs: 17000 }] });
   assert.equal(result.error, undefined);
   assert.equal(result.calls.filter(call => call === 'real run').length, 6);
   const approved = result.calls.find(call => Array.isArray(call) && call[0] === 'approve');

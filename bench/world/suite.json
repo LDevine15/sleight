@@ -1324,6 +1324,452 @@
         "chrome-devtools-mcp": false,
         "claude-in-chrome": false
       }
+    },
+    {
+      "id": "heldOut/cc-list-firefox",
+      "task": "cc-list-firefox",
+      "title": "cc-list-firefox",
+      "source": "world",
+      "kind": "list",
+      "browser": "firefox",
+      "runner": "bench/run.mjs --suite world --tasks cc-list-firefox --owner-away",
+      "half": "browser",
+      "prompt": "In Firefox, use only the fixture at {url}. Select the collection whose complete row is \"{target}\" and save the collection. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC1",
+        "CC2",
+        "CC3",
+        "CC6"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-list-safari",
+      "task": "cc-list-safari",
+      "title": "cc-list-safari",
+      "source": "world",
+      "kind": "list",
+      "browser": "safari",
+      "runner": "bench/run.mjs --suite world --tasks cc-list-safari --owner-away",
+      "half": "browser",
+      "prompt": "In Safari, use only the fixture at {url}. Select the collection whose complete row is \"{target}\" and save the collection. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC1",
+        "CC2",
+        "CC3",
+        "CC6"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-list-pop-up-firefox",
+      "task": "cc-list-pop-up-firefox",
+      "title": "cc-list-pop-up-firefox",
+      "source": "world",
+      "kind": "list-pop-up",
+      "browser": "firefox",
+      "runner": "bench/run.mjs --suite world --tasks cc-list-pop-up-firefox --owner-away",
+      "half": "browser",
+      "prompt": "In Firefox, use only the fixture at {url}. The Display mode popup is focused. Choose \"{target}\" from that focused control without moving focus to Collection or changing Display mode. If that control cannot provide the requested collection, stop without saving and reply only with JSON {\"refused\":true}. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC2"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-list-pop-up-safari",
+      "task": "cc-list-pop-up-safari",
+      "title": "cc-list-pop-up-safari",
+      "source": "world",
+      "kind": "list-pop-up",
+      "browser": "safari",
+      "runner": "bench/run.mjs --suite world --tasks cc-list-pop-up-safari --owner-away",
+      "half": "browser",
+      "prompt": "In Safari, use only the fixture at {url}. The Display mode popup is focused. Choose \"{target}\" from that focused control without moving focus to Collection or changing Display mode. If that control cannot provide the requested collection, stop without saving and reply only with JSON {\"refused\":true}. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC2"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-calendar-firefox",
+      "task": "cc-calendar-firefox",
+      "title": "cc-calendar-firefox",
+      "source": "world",
+      "kind": "calendar",
+      "browser": "firefox",
+      "runner": "bench/run.mjs --suite world --tasks cc-calendar-firefox --owner-away",
+      "half": "browser",
+      "prompt": "In Firefox, use only the fixture at {url}. Set access from 21 October 2027 through 9 November 2027 and save the dates. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC5",
+        "CC6"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-calendar-safari",
+      "task": "cc-calendar-safari",
+      "title": "cc-calendar-safari",
+      "source": "world",
+      "kind": "calendar",
+      "browser": "safari",
+      "runner": "bench/run.mjs --suite world --tasks cc-calendar-safari --owner-away",
+      "half": "browser",
+      "prompt": "In Safari, use only the fixture at {url}. Set access from 21 October 2027 through 9 November 2027 and save the dates. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC5",
+        "CC6"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-calendar-ambiguous-firefox",
+      "task": "cc-calendar-ambiguous-firefox",
+      "title": "cc-calendar-ambiguous-firefox",
+      "source": "world",
+      "kind": "calendar-ambiguous",
+      "browser": "firefox",
+      "runner": "bench/run.mjs --suite world --tasks cc-calendar-ambiguous-firefox --owner-away",
+      "half": "browser",
+      "prompt": "In Firefox, use only the fixture at {url}. Select day 12. If more than one day has that label, stop without selecting or saving and reply only with JSON {\"refused\":true}. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC5"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-calendar-ambiguous-safari",
+      "task": "cc-calendar-ambiguous-safari",
+      "title": "cc-calendar-ambiguous-safari",
+      "source": "world",
+      "kind": "calendar-ambiguous",
+      "browser": "safari",
+      "runner": "bench/run.mjs --suite world --tasks cc-calendar-ambiguous-safari --owner-away",
+      "half": "browser",
+      "prompt": "In Safari, use only the fixture at {url}. Select day 12. If more than one day has that label, stop without selecting or saving and reply only with JSON {\"refused\":true}. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC5"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-dropdown-firefox",
+      "task": "cc-dropdown-firefox",
+      "title": "cc-dropdown-firefox",
+      "source": "world",
+      "kind": "dropdown",
+      "browser": "firefox",
+      "runner": "bench/run.mjs --suite world --tasks cc-dropdown-firefox --owner-away",
+      "half": "browser",
+      "prompt": "In Firefox, use only the fixture at {url}. Set Region to Coast, choose Harbor workshop from the dependent Workshop list and save the workshop. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC4",
+        "CC6"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-dropdown-safari",
+      "task": "cc-dropdown-safari",
+      "title": "cc-dropdown-safari",
+      "source": "world",
+      "kind": "dropdown",
+      "browser": "safari",
+      "runner": "bench/run.mjs --suite world --tasks cc-dropdown-safari --owner-away",
+      "half": "browser",
+      "prompt": "In Safari, use only the fixture at {url}. Set Region to Coast, choose Harbor workshop from the dependent Workshop list and save the workshop. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC4",
+        "CC6"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-dropdown-slow-firefox",
+      "task": "cc-dropdown-slow-firefox",
+      "title": "cc-dropdown-slow-firefox",
+      "source": "world",
+      "kind": "dropdown-slow",
+      "browser": "firefox",
+      "runner": "bench/run.mjs --suite world --tasks cc-dropdown-slow-firefox --owner-away",
+      "half": "browser",
+      "prompt": "In Firefox, use only the fixture at {url}. Set Region to Coast, choose Harbor workshop from the dependent Workshop list and save the workshop. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC4"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-dropdown-slow-safari",
+      "task": "cc-dropdown-slow-safari",
+      "title": "cc-dropdown-slow-safari",
+      "source": "world",
+      "kind": "dropdown-slow",
+      "browser": "safari",
+      "runner": "bench/run.mjs --suite world --tasks cc-dropdown-slow-safari --owner-away",
+      "half": "browser",
+      "prompt": "In Safari, use only the fixture at {url}. Set Region to Coast, choose Harbor workshop from the dependent Workshop list and save the workshop. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC4"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-new-tab-firefox",
+      "task": "cc-new-tab-firefox",
+      "title": "cc-new-tab-firefox",
+      "source": "world",
+      "kind": "new-tab",
+      "browser": "firefox",
+      "runner": "bench/run.mjs --suite world --tasks cc-new-tab-firefox --owner-away",
+      "half": "browser",
+      "prompt": "In Firefox, use only the fixture at {url}. Read the destination address on Archive departure. Open a new tab with Command-T, type that address and press Return, then confirm arrival. Keep both fixture tabs open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC7"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-new-tab-safari",
+      "task": "cc-new-tab-safari",
+      "title": "cc-new-tab-safari",
+      "source": "world",
+      "kind": "new-tab",
+      "browser": "safari",
+      "runner": "bench/run.mjs --suite world --tasks cc-new-tab-safari --owner-away",
+      "half": "browser",
+      "prompt": "In Safari, use only the fixture at {url}. Read the destination address on Archive departure. Open a new tab with Command-T, type that address and press Return, then confirm arrival. Keep both fixture tabs open.",
+      "timeoutMs": 300000,
+      "check": "checkCCFixture: exact saved values and fixture prerequisites; refusal variants require no submission",
+      "fixture": "local held-out benchmark page with owned window and server",
+      "requires": [
+        "isolated browser profile approved for benchmark use",
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC7"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
+    },
+    {
+      "id": "heldOut/cc-list-native",
+      "task": "cc-list-native",
+      "title": "cc-list-native",
+      "source": "world",
+      "kind": "native-list",
+      "runner": "bench/run.mjs --suite world --tasks cc-list-native --owner-away",
+      "half": "native",
+      "prompt": "In Finder, use only {folder}. Show the folder as a list sorted by Name ascending. Select {file} and rename it to Chosen.txt. Preserve every other file and all file contents. Leave the fixture window open.",
+      "timeoutMs": 300000,
+      "check": "checkNativeList: correct target renamed, all 640 file contents and remaining names unchanged",
+      "fixture": "owned scratch folder with 640 alphabetically named files in Finder",
+      "requires": [
+        "confirmed fixture ownership and cleanup",
+        "owner-away run boundary",
+        "transcript audit for list method and timing done criteria"
+      ],
+      "claim": false,
+      "heldOutFor": [
+        "CC1",
+        "CC2",
+        "CC3",
+        "CC6"
+      ],
+      "support": {
+        "sleight": true,
+        "codex": true,
+        "claude-cu": true
+      }
     }
   ],
   "notRun": {
