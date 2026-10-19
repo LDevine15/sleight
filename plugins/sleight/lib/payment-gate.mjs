@@ -37,7 +37,7 @@ export function enginePayment(name, args, text, payment, probe = false) {
   const PAYS = /\b(?:place (?:your )?order|confirm (?:order|purchase|payment|and pay)|submit (?:order|payment)|reserve)\b/i;
   const LEAVE = /^(?:cancel|close|dismiss|no|no thanks|not now|back)$/i;
   const rows = new Map(), stack = [];
-  let focus;
+  let focus, roots = 0;
   for (const raw of text.split('\n')) {
     const focused = /^The focused UI element is (\d+) /.exec(raw);
     if (focused) { focus = Number(focused[1]); continue; }
@@ -56,48 +56,66 @@ export function enginePayment(name, args, text, payment, probe = false) {
       // The control's own name: its Description, else its label after the role and flags.
       name: description ?? parts[0].replace(/^[a-z][a-z ]*?(?: \([^)]*\))*(?: |$)/, ''),
       names: parts.filter(part => !part.startsWith('Value: ')).join(' '),
-      web: !!parent?.web || /^HTML content\b/i.test(body),
-      // The browser's own confirm(): Firefox draws it as its own web area; Safari as a sheet or alert outside the page.
-      native: !!parent?.native || /^HTML content\b.*, URL: chrome:\/\/global\/content\/commonDialog\b/i.test(body) || !parent?.web && /^(?:sheet|alert)\b/.test(body),
-      modal: !!parent?.modal || /^(?:sheet|dialog|alert)\b/.test(body) || /^HTML content\b.*, URL: chrome:\/\/global\/content\/commonDialog\b/i.test(body) };
+      web: !!parent?.web || /^HTML content\b/i.test(body) };
+    // The page is the window's first web area outside any other. What the browser draws itself is decided by structure, never
+    // by a title or URL the page sets (review N1): a sheet, dialog or alert outside every web area, or a later top-level web area
+    // (Firefox draws its confirm() that way), which no page can create.
+    const root = !parent?.web && /^HTML content\b/i.test(body);
+    if (root) row.root = ++roots;
+    row.native = !!parent?.native || !parent?.web && /^(?:sheet|dialog|alert)\b/.test(body) || root && roots > 1;
+    // A dialog only adds checks: the browser's own, or a page's role=dialog.
+    row.modal = !!parent?.modal || row.native || /^(?:sheet|dialog|alert)\b/.test(body);
     rows.set(Number(m[2]), row); stack.push(row);
   }
   const page = [...rows.values()].filter(row => row.web || row.modal);
-  const KEYED = ['pressKey', 'press', 'typeText', 'paste'], keyed = KEYED.includes(name);
+  // press takes a key name or, like click, an element; text that is only spaces presses Space on a focused control.
+  const keyed = ['pressKey', 'typeText', 'paste'].includes(name) || name === 'press' && typeof args[0] === 'string';
   const target = keyed ? rows.get(focus) : Array.isArray(args[0]) ? undefined : rows.get(args[0]);
-  const point = (name === 'click' || name === 'doubleClick' || name === 'performSecondaryAction' || name === 'performAction') && Array.isArray(args[0]);
+  const point = !keyed && Array.isArray(args[0]);
   if (target && !(target.web || target.modal)) return;
   if (target && !point && !keyed && (target.field || CHOICE.test(target.body))) return;
   const lines = page.map(row => /^(?:radio button|check ?box|switch|toggle button)\b/.test(row.body) && /(?:^|, )Value: (?:1|on)(?:,|$)/.test(row.body)
-    ? '' + row.words + '' : row.words);
+    ? '\uE000' + row.words + '\uE001' : row.words);
   const { figures, parse } = moneyFigures(lines);
   const money = list => list.filter(f => f.cur || f.value === Infinity);
   const priced = money(figures).some(f => f.value > 0.005);
   const submits = row => paymentWords(row.label) || SUBMIT.test(row.label);
   const reads = (row, test) => test(row) || row.ancestors.slice(0, 2).some(at => HOLDER.test(at.body) && at.label && test(at));
+  const payWords = row => paymentWords(row.words) || SUBMIT.test(row.words) || PAYS.test(row.words);
   const cards = page.filter(row => row.web && row.field && /\bcc-|card|cvv|cvc/i.test(row.names));
   const cardFrame = page.some(row => row.web && /\b(?:card payment|payment card)\b/i.test(row.label));
-  const paymentPage = cards.length > 0 || cardFrame || priced && page.some(row => row.web && !row.field && !CHOICE.test(row.body) && submits(row));
+  // A submit control is a button, link or labelled holder; a heading or prose that says "Checkout" isn't one.
+  const paymentPage = cards.length > 0 || cardFrame || priced && page.some(row => row.web && HOLDER.test(row.body) && submits(row));
   const modalRows = page.filter(row => row.modal), modalWords = modalRows.map(row => row.label).join(' ');
   const modalShown = money(moneyFigures(modalRows.map(row => row.words)).figures).sort((a, b) => b.value - a.value)[0]?.text;
   // A dialog shows a payment when its words name one and it, or the page under it, shows a figure or card words.
   const modalPayment = modalRows.length > 0 && (paymentWords(modalWords) || PAYS.test(modalWords)) &&
     (modalShown !== undefined || priced || cards.length > 0 || /\bcard\b/i.test(modalWords));
-  // The card fields' block: their nearest common ancestor that holds a button not on the closed list.
-  let block = cards.length ? cards[0].ancestors.find(at => cards.every(row => row.ancestors.includes(at))) : undefined;
-  while (block && !page.some(row => row.ancestors.includes(block) && BUTTON.test(row.body) && !refundableName(row.name) && !LEAVE.test(row.name))) block = block.ancestors[0];
-  const inBlock = row => !!block && row.ancestors.includes(block);
-  const leaves = row => LEAVE.test(row.name.trim());
-  const gatedClick = row => !!row && !leaves(row) && (row.modal ? modalPayment && BUTTON.test(row.body) :
-    paymentPage && (reads(row, submits) || BUTTON.test(row.body) && inBlock(row) && !refundableName(row.name) || LINK.test(row.body) && reads(row, r => paymentWords(r.label))));
+  const under = (at, row) => row.ancestors.includes(at);
+  const buttons = at => page.filter(row => under(at, row) && BUTTON.test(row.body));
+  // Near the card fields: their nearest common ancestor that holds a button.
+  let near = cards.length ? cards[0].ancestors.find(at => cards.every(row => under(at, row))) : undefined;
+  while (near && !buttons(near).length) near = near.ancestors[0];
+  // A name the page sets can exempt only a button (never a div or group) with no pay or submit word, and not the only button
+  // near the card fields (review N5): turbo's closed list (Apply, Remove, a stepper) and Cancel-like names.
+  const exemptName = row => BUTTON.test(row.body) && (refundableName(row.name) || LEAVE.test(row.name.trim())) && !payWords(row);
+  const exempt = row => exemptName(row) && !(near && buttons(near).length === 1 && under(near, row));
+  // The card fields' block: climbed until it holds a button without an exempt name; with none, the buttons near the fields.
+  let block = near;
+  while (block && !buttons(block).some(row => !exemptName(row))) block = block.ancestors[0];
+  block ??= near;
+  const inBlock = row => !!block && under(block, row);
+  const gatedClick = row => !!row && !exempt(row) && (row.modal && modalPayment && (BUTTON.test(row.body) || submits(row)) ||
+    paymentPage && (reads(row, submits) || BUTTON.test(row.body) && inBlock(row) || LINK.test(row.body) && reads(row, r => paymentWords(r.label))));
   const key = (name === 'pressKey' || name === 'press') && typeof args[0] === 'string' ? args[0].toLowerCase().split('+').pop() : undefined;
   const typed = ['typeText', 'paste'].includes(name) ? args.find(arg => typeof arg === 'string') : undefined;
-  const enter = ['return', 'enter', 'kp_enter', 'keypadenter'].includes(key) || /[\r\n]/.test(typed ?? ''), space = key === 'space' || key === ' ';
+  const enter = ['return', 'enter', 'kp_enter', 'keypadenter'].includes(key) || /[\r\n]/.test(typed ?? '');
+  const space = key === 'space' || key === ' ' || !enter && /^[ \t]+$/.test(typed ?? '');
   let gated = false, pays = false;
   if (point) gated = paymentPage || modalPayment;
   else if (enter || space) {
-    // Enter in any field submits its form. Enter or Space on the confirm dialog answers it. Focus outside the page submits nothing on it.
-    gated = !target ? enter && (paymentPage || modalPayment) : target.modal ? modalPayment && !leaves(target)
+    // Enter in any field submits its form. Enter or Space on a dialog answers it. Focus outside the page submits nothing on it.
+    gated = !target ? enter && (paymentPage || modalPayment) : target.modal && modalPayment && !exempt(target) && !target.field ? true
       : target.field ? enter && paymentPage : (enter || BUTTON.test(target.body)) && gatedClick(target);
     pays = gated && (!target || target.modal || target.field && cards.length > 0 || !target.link && reads(target, row => paymentWords(row.label) || PAYS.test(row.label)));
   } else if (!keyed) {
@@ -106,11 +124,12 @@ export function enginePayment(name, args, text, payment, probe = false) {
   }
   if (!gated || probe) return gated || undefined;
   // What the card names and an allowance binds to: the page's host, the largest figure, and the control or key.
-  const address = page.find(row => row.web && !row.modal && /^HTML content\b.*, URL: /i.test(row.body))?.body.match(/, URL: ([^,]*)/)?.[1] ?? '';
+  // The page root's own URL attribute, which the engine writes last on the row; a title can't follow it (review N2).
+  const address = page.find(row => row.root === 1)?.body.match(/, URL: ([^,]*)$/)?.[1] ?? '';
   // The host alone: no scheme, path or user info (paypal.com@evil.test is evil.test). Parsed by hand, as the REPL may lack URL.
   const site = address.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/?#]/)[0].split('@').pop().toLowerCase();
   const control = point ? 'point ' + JSON.stringify(args[0]) : keyed ? (enter ? 'Enter' : 'Space') + ' in ' + (target?.body ?? 'the page') : target.body;
-  const largest = list => { const top = money(list).sort((a, b) => b.value - a.value)[0]?.text; return top === '￼' ? 'an unreadable figure' : top; };
+  const largest = list => { const top = money(list).sort((a, b) => b.value - a.value)[0]?.text; return top === '\uFFFC' ? 'an unreadable figure' : top; };
   const shown = largest(figures), modal = !!target?.modal, now = payment.now ?? Date.now();
   const details = { site, shown, control, modal, payment: pays };
   const stop = (why, extra = {}) => ({ why, shown, ...extra, site, control, modal, payment: pays });
@@ -144,11 +163,11 @@ export const PAYMENT_WAITING = /* lean notice */ "sleight: waiting for the user'
 // What Claude reads after the user chose Allow once in sleight's card: the stopped action wasn't sent, and one retry of it may go.
 export const PAYMENT_ALLOWED = /* lean notice */ "sleight: the user allowed this payment once in sleight's card. Nothing was sent: send the same action again.";
 
-// Whether an action can submit: a click, double click or press action, Enter or Space, or text with a line break. Closure-free, like enginePayment.
+// Whether an action can submit: a click, double click or press action, Enter or Space, text with a line break, or only spaces. Closure-free, like enginePayment.
 export function paymentAction(name, args) {
-  return ['click', 'doubleClick', 'performSecondaryAction', 'performAction'].includes(name) ||
+  return ['click', 'doubleClick', 'performSecondaryAction', 'performAction'].includes(name) || name === 'press' && typeof args[0] !== 'string' ||
     (name === 'pressKey' || name === 'press') && typeof args[0] === 'string' && /(?:^|\+)(?:return|enter|kp_enter|keypadenter|space| )$/i.test(args[0]) ||
-    ['typeText', 'paste'].includes(name) && args.some(arg => typeof arg === 'string' && /[\r\n]/.test(arg));
+    ['typeText', 'paste'].includes(name) && args.some(arg => typeof arg === 'string' && (/[\r\n]/.test(arg) || /^[ \t]+$/.test(arg)));
 }
 
 // The amount the user's own message names: one money figure with its currency. Several different figures, or none, name no

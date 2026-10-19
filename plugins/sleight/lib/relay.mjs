@@ -790,8 +790,9 @@ export function createRelay({
   let installedBootstrapped = false;
   // The user's own message for the engine-path payment gate (payment-gate.mjs): only an authenticated turbo begin sets it.
   const paymentMessages = createPaymentMessages();
-  // The client's name, for the card's "sleight request for ..." line.
+  // The client's name, for the card's "sleight request for ..." line, and the cards that already granted their allowance.
   let clientName;
+  const grantedCards = new WeakSet();
   let turboNoticeShown = false;
   const directNames = new Set(directBrowser?.tools().map(tool => tool.name) ??
     (turboUnavailable ? ['browser_open','browser_read','browser_act','browser_fill','browser_tabs'] : []));
@@ -2854,10 +2855,13 @@ export function createRelay({
         observeServerMessage(msg);
       };
       const timer = setTimeout(() => reply(PAYMENT_WAITING), paymentCardHoldMs);
-      Promise.resolve().then(() => paymentCard.ask({ session: clientName ?? 'the agent', site: paymentStop.site, shown: paymentStop.shown, control: paymentStop.control }))
-        .catch(() => undefined).then(choice => {
+      // A resend while the card is open gets the same card (payment-card.mjs), and one card grants one allowance.
+      let answer;
+      try { answer = paymentCard.ask({ session: clientName ?? 'the agent', site: paymentStop.site, shown: paymentStop.shown, control: paymentStop.control }); }
+      catch { answer = undefined; }
+      Promise.resolve(answer).catch(() => undefined).then(choice => {
           if (choice === 'once' && live()) {
-            paymentMessages.allowed(paymentStop);
+            if (answer && typeof answer === 'object' && !grantedCards.has(answer)) { grantedCards.add(answer); paymentMessages.allowed(paymentStop); }
             // Nothing failed that Claude should report: the call ends with the note and the tree it stopped on.
             if (action) action.failure = undefined;
             reply(PAYMENT_ALLOWED, msg.result.content.flatMap(item => {
@@ -3385,7 +3389,7 @@ export function createRelay({
               inputLease && leaseCalls.get(msg.id)?.key ? inputLease.grant(leaseCalls.get(msg.id).key) : undefined,
               { ...setup, timing: guardTiming, careful, fileOnly: changeReview, browserCandidate: true,
                 skipAppWrap: browserHandles.has('app') || browser.handles.includes('app'),
-                nativeDenied: nativeDenied ?? promptNotice(NATIVE_DENIED, prompt), payment: paymentMessages.guard(confirmPayments) });
+                nativeDenied: nativeDenied ?? promptNotice(NATIVE_DENIED, prompt) });
           } else if (read) {
             let code = originalCode;
             if (healthPlan && !helperProbes.has(msg.id) && helperFullReads.has(healthPlan.key)) {

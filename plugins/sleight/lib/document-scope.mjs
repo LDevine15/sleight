@@ -1046,7 +1046,11 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt } 
           // when the newest tree it has shows a payment page (focus in it may be stale), or when there is none.
           if (state.payment) {
             const newest = text ?? priorText ?? state.callTrees.get(proxy) ?? lastTree;
-            if (text === undefined && paymentAction(name, args) && (newest === undefined || enginePayment(name, args, newest.replace(/^The focused UI element is .*$/m, ''), state.payment, true))) {
+            // After this call has acted, the page may have changed step under the same window (review N4): a submit-shaped action
+            // on a web page or dialog reads again rather than trusting the call's first tree.
+            if (text === undefined && paymentAction(name, args) && (newest === undefined ||
+                !firstAction && /^\\t*\\d+ (?:HTML content|sheet|dialog|alert)\\b/im.test(newest) ||
+                enginePayment(name, args, newest.replace(/^The focused UI element is .*$/m, ''), state.payment, true))) {
               text = await timedRead(raw, 'payment');
             }
             const paid = enginePayment(name, args, text, state.payment);

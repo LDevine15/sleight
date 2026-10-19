@@ -16,25 +16,32 @@ export function createPaymentCard({ open = openConsentHost, now = Date.now, time
   // A lost host is also closed, so a late answer doesn't leave one running beside the next (review F15).
   const forget = () => { const old = channel; channel = undefined; old?.then(ui => ui?.close?.(), () => {}); };
   const connect = async () => channel ??= Promise.resolve().then(() => open({ onLoss: forget })).then(value => value ?? forget(), forget);
+  // One open card per payment: asking again for the same site, figure and control while it is open waits on that card (review N7).
+  const asking = new Map();
   return {
-    async ask({ session, site, shown, control }) {
-      const ui = await connect();
-      if (!ui) return;
-      return new Promise(resolve => {
-        const timer = setTimeout(() => resolve('cancel'), timeoutMs);
-        timer.unref?.();
-        const done = choice => { clearTimeout(timer); resolve(choice); };
-        try {
-          ui.present('payment-' + randomUUID(),
-            { view: { clientSession: escapeLabel(session), origin: escapeLabel(site || 'this page') },
-              operation: { site: site || 'this page', amount: shown ?? 'no amount shown', button: control } },
-            ['once', 'cancel'], event => { if (ui.authenticate(event) === true) done(event.choice === 'once' ? 'once' : 'cancel'); },
-            { deadline: now() + timeoutMs });
-        } catch { clearTimeout(timer); resolve(undefined); }
-      });
+    ask(card) {
+      const key = JSON.stringify([card.site, card.shown, card.control]);
+      if (!asking.has(key)) asking.set(key, show(card).finally(() => asking.delete(key)));
+      return asking.get(key);
     },
     async close() { const ui = await channel?.catch(() => undefined); channel = undefined; ui?.close?.(); },
   };
+  async function show({ session, site, shown, control }) {
+    const ui = await connect();
+    if (!ui) return;
+    return new Promise(resolve => {
+      const timer = setTimeout(() => resolve('cancel'), timeoutMs);
+      timer.unref?.();
+      const done = choice => { clearTimeout(timer); resolve(choice); };
+      try {
+        ui.present('payment-' + randomUUID(),
+          { view: { clientSession: escapeLabel(session), origin: escapeLabel(site || 'this page') },
+            operation: { site: site || 'this page', amount: shown ?? 'no amount shown', button: control } },
+          ['once', 'cancel'], event => { if (ui.authenticate(event) === true) done(event.choice === 'once' ? 'once' : 'cancel'); },
+          { deadline: now() + timeoutMs });
+      } catch { clearTimeout(timer); resolve(undefined); }
+    });
+  }
 }
 
 // The consent host, built from this plugin's own helper sources (the same build turbo uses, cached by their hashes). A build
