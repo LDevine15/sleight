@@ -56,7 +56,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
   }
   const calls = [], saved = [], envs = [], tailScopes = [], directories = [];
   const logs = [], driverOptions = [], codexRuns = [], files = new Map(), commands = [], codexConfigs = [];
-  let preflightDone = false, calculatorObservations = 0;
+  let preflightDone = false, calculatorObservations = 0, engineReadCount = 0;
   const source = readFileSync(new URL('../bench/run.mjs', import.meta.url), 'utf8')
     .replace(/^#!.*\n/, '').replace(/^import .*;\n/gm, '').replaceAll('import.meta.url', '"file:///fixture/bench/run.mjs"');
   const task = { id: 'fixture', app: 'Safari', setup() {}, prompt: () => 'task', check: () => true, cleanup: () => calls.push('task cleanup') };
@@ -71,7 +71,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     existsSync: path => path === '/tmp/sleight-hold' ? holdAfterPreflight && preflightDone : true, realpathSync: path => path, mkdirSync: path => directories.push(path), rmdirSync() {}, statSync: () => ({ dev: 1, ino: 1 }),
     writeFileSync: (path, value) => { files.set(path, JSON.parse(value)); saved.push(JSON.parse(value)); }, randomBytes: () => ({ toString: () => 'nonce' }),
     privateMailResult, publicPrivateMailRow, publicPrivateMailRows,
-    readEngine: () => ({ version: engineReads.length > 1 ? engineReads.shift() : engineReads[0], at: 'fixture' }), engineSpan,
+    readEngine: () => { engineReadCount++; return { version: engineReads.length > 1 ? engineReads.shift() : engineReads[0], at: 'fixture' }; }, engineSpan,
     privateDriverEnvironment, assertPrivateClaudePolicy: () => calls.push('policy audit'),
     DEFAULT_CAP_USD: 200, runCost: out => out?.total_cost_usd, archiveOldRuns: () => [], benchAuth: options => { calls.push(['auth mode', options.mode]); return auth; }, addSpend: usd => { calls.push(['spend', usd]); return spend(usd); },
     CONFIG_DIR: '/isolated/claude',
@@ -167,7 +167,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
   let error;
   try { await runInNewContext(`(async () => { ${source}\n})()`, sandbox); } catch (caught) { error = caught; }
   const plan = logs.filter(text => typeof text === 'string' && text.startsWith('{')).map(text => JSON.parse(text)).at(-1);
-  return { calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, codexConfigs, files, commands, exitCode: sandbox.process.exitCode };
+  return { calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, codexConfigs, files, commands, exitCode: sandbox.process.exitCode, engineReadCount };
 }
 
 test('pass snapshots under the lock before discovery; temp and image cleanup run before tasks', async () => {
@@ -184,7 +184,9 @@ test('a pass names the engine it ran on and the UTC time per row, and flags a ch
   assert.deepEqual([pass.engine.version, pass.engine.changed], ['26.1013.40934', false]);
   assert.ok(pass.results.length && pass.results.every(row => row.engineVersion === '26.1013.40934' && !Number.isNaN(Date.parse(row.finishedAt))));
   assert.equal(pass.engine.startedAt, 'fixture');
-  const moved = (await runner({ suite: 'default', drive: true, engineReads: ['26.1007.71326', '26.1007.71326', '26.1013.40934'] })).saved.at(-1);
+  // The pass reads the engine at load, again once it holds the live lock, then per row and at its last save.
+  assert.equal(same.engineReadCount, 2 + pass.results.length + 1);
+  const moved = (await runner({ suite: 'default', drive: true, engineReads: ['26.1007.71326', '26.1007.71326', '26.1007.71326', '26.1013.40934'] })).saved.at(-1);
   assert.deepEqual([moved.engine.version, moved.engine.changed, moved.engine.start.version, moved.engine.end.version], [null, true, '26.1007.71326', '26.1013.40934']);
   assert.deepEqual(moved.results.map(row => row.engineVersion), ['26.1007.71326', '26.1013.40934', '26.1013.40934']);
   const dry = await runner({ dryRun: true });

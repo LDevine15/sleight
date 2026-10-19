@@ -7,7 +7,8 @@
 //            release-passes.html, and explore.html with the data inlined (fetch from file:// fails in browsers).
 // Scores come from the scorers themselves: bench/claim-score.mjs for the claims and every per-task table, and
 // bench/fowl/race-score.mjs for the browser race rounds. Nothing in the output depends on the clock. Every arm's numbers name the
-// ChatGPT engine versions they ran on with their UTC dates, read from the results or inferred (bench/engine-version.mjs).
+// ChatGPT engine versions they ran on with their UTC dates, read from the results or inferred from the checked-in timeline
+// (bench/engine-versions.json; run `node bench/engine-version.mjs refresh` on the benchmark Mac before collecting).
 //   node bench/results-hub.mjs [--wt ~/Projects/sleight-wt] [--out docs/results] [--render-only] [--check]
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -16,7 +17,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { claim, excluded, regradeFor, score, warnings } from './claim-score.mjs';
 import { loadRound, scoreRounds } from './fowl/race-score.mjs';
-import { currentTimeline, engineMix, engineText, loadTimeline, mixText, passRowEngine, summarizeEngines } from './engine-version.mjs';
+import { engineMix, engineNote, engineText, loadTimeline, passRowEngine, summarizeEngines } from './engine-version.mjs';
 import { buildPage, loadResults, perArm, renderHtml as renderReleaseHtml, renderMarkdown as renderReleaseMarkdown, summarize } from './results-page.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -546,7 +547,7 @@ function armTable(study, { builds = false, scriptEffort = null } = {}) {
     effortOf(arm).join(', ') || 'not recorded', study.versions?.[arm]?.join(', ') || 'not recorded',
     ...(engines ? [engineText(study.engines[arm], arm)] : []),
     ...(builds ? [study.builds?.[arm]?.map(code).join(', ') || 'not recorded'] : [])]));
-  return engines ? `${table}\n\n${study.engineMix ? mixText(study.engineMix) : 'The arms that drive the engine ran on one engine version.'} ${ENGINE_NOTE}` : table;
+  return engines ? `${table}\n\n${engineNote(study.engines, study.engineMix)} ${ENGINE_NOTE}` : table;
 }
 const ENGINE_NOTE = 'A version is "recorded" when the runner read it and "inferred" from the timeline in `bench/engine-versions.json` otherwise, and ' +
   'a date is inferred when it comes from a file\'s stamp or modification time. LCU, Cua, Peekaboo, FowlBrowser, Claude in Chrome and Claude\'s computer use don\'t use the engine.';
@@ -882,7 +883,7 @@ export function collect({ wt, out }) {
   const dataDir = join(out, 'data');
   const keep = id => { const file = join(dataDir, `${id}.json`); return existsSync(file) ? readJson(file) : undefined; };
   const claimDir = join(wt, 'app-claim');
-  const timeline = currentTimeline();
+  const timeline = loadTimeline();
   const raceDir = join(wt, 'race-1017');
   const all = {};
   const notes = [];

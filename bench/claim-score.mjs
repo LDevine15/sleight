@@ -123,7 +123,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         ...(!passed && { reason: (g && g.reason) || (row.reason ?? 'no reason recorded'), ...(g && { recorded: row.reason, regraded: g.why }) }) });
     }
   }
-  const { engineMix, engineText, mixText, summarizeEngines } = await import('./engine-version.mjs');
+  const { engineMix, engineNote, engineText, summarizeEngines } = await import('./engine-version.mjs');
   const engines = summarizeEngines(rows), mix = engineMix(engines);
   const table = score(rows), verdict = claim(table, rules), gpt = sameModel(table, rules), warned = warnings(rows, rules, since), failures = rows.filter(r => !r.passed);
   if (process.argv.includes('--json')) {
@@ -140,7 +140,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log('completed'.padEnd(20) + arms.map(a => `${rules.tasks.filter(t => table[a]?.[t]?.passes.length).length}/${rules.tasks.length}`.padStart(22)).join(''));
   console.log('Excluded rows:', JSON.stringify(dropped));
   for (const a of arms) console.log(`${a.padEnd(20)}${engineText(engines[a], a)}`);
-  if (mix) console.log(mixText(mix));
+  console.log(engineNote(engines, mix));
 
   console.log(`\nClaim rules (docs/status/LAWS.md). Expected time = mean seconds per attempt / pass rate; none without a pass.`);
   console.log(`Within 20% of ${ME}'s expected time, by |a-b|/min and |a-b|/max. The 5-run rule uses /${STRICT}, the denominator that marks more pairs within 20%.`);

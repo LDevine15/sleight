@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { currentTimeline, dayRange, engineForRun, engineMix, engineSpan, engineText, inferEngine, loadTimeline, passRowEngine, readEngine,
+import { currentTimeline, dayRange, engineForRun, engineNote, refreshTimeline, engineMix, engineSpan, engineText, inferEngine, loadTimeline, passRowEngine, readEngine,
   stampMs, summarizeEngines, usesEngine } from '../bench/engine-version.mjs';
 import { loadRound } from '../bench/fowl/race-score.mjs';
 
@@ -155,17 +155,26 @@ test('the CLI records a span into a round folder from a fixture engine folder', 
   const folder = join(dir, 'codex/plugins/cache/openai-bundled/unified-computer-use/26.1013.40934');
   mkdirSync(folder, { recursive: true });
   writeFileSync(join(folder, '.mcp.json'), JSON.stringify({ mcpServers: { cua_repl: { command: '/bin/true', args: [] } } }));
-  mkdirSync(join(dir, 'out'));
   const env = { ...process.env, CODEX_HOME: join(dir, 'codex'), SLEIGHT_CHATGPT_APP: join(dir, 'no-app') };
   const cli = (...args) => spawnSync(process.execPath, [join(repo, 'bench/engine-version.mjs'), ...args], { env, encoding: 'utf8' });
-  const start = JSON.parse(cli().stdout);
-  assert.equal(start.version, '26.1013.40934');
-  assert.equal(start.chatgptApp, null);
-  assert.equal(cli('record', join(dir, 'out'), '--start', JSON.stringify({ ...start, version: '26.1007.71326' })).status, 0);
+  const read = JSON.parse(cli().stdout);
+  assert.deepEqual([read.version, read.chatgptApp], ['26.1013.40934', null]);
+  // The start read creates the folder; the end read completes the span from the saved start.
+  assert.equal(cli('record', join(dir, 'out')).status, 0);
+  const started = JSON.parse(readFileSync(join(dir, 'out/engine.json'), 'utf8'));
+  assert.deepEqual([started.version, started.changed, 'end' in started], ['26.1013.40934', null, false]);
+  writeFileSync(join(dir, 'out/engine.json'), JSON.stringify({ ...started, start: { ...started.start, version: '26.1007.71326' } }));
+  assert.equal(cli('record', join(dir, 'out'), '--end').status, 0);
   const span = JSON.parse(readFileSync(join(dir, 'out/engine.json'), 'utf8'));
   assert.equal(span.changed, true);
-  assert.deepEqual([span.start.version, span.end.version], ['26.1007.71326', '26.1013.40934']);
-  assert.equal(cli('record', join(dir, 'missing')).status, 2);
+  assert.deepEqual([span.start.version, span.end.version, span.startedAt], ['26.1007.71326', '26.1013.40934', started.startedAt]);
+  // An end read with no start read never claims the version held for the whole run.
+  mkdirSync(join(dir, 'late'));
+  assert.equal(cli('record', join(dir, 'late'), '--end').status, 0);
+  const late = JSON.parse(readFileSync(join(dir, 'late/engine.json'), 'utf8'));
+  assert.deepEqual([late.version, late.startedAt, late.startMissing, late.end.version], [null, null, true, '26.1013.40934']);
+  assert.equal(engineForRun({ recorded: late, startMs: Date.parse('2026-10-15T00:00:00Z') }, timeline).provenance, 'inferred');
+  assert.equal(cli('record', join(dir, 'missing'), '--end').status, 2);
   assert.equal(JSON.parse(cli('at', '2026-10-18T21:42:06Z', '2026-10-18T21:53:01Z').stdout).provenance, 'ambiguous');
 });
 
@@ -192,10 +201,39 @@ test('rounds.sh records the engine into --out around a FowlBrowser runner round 
   mkdirSync(join(dir, 'tools'));
   writeFileSync(join(dir, 'tools/rounds.mjs'), "import { mkdirSync } from 'node:fs'; mkdirSync(process.argv[process.argv.indexOf('--out') + 1], { recursive: true }); process.exit(3);\n");
   const script = readFileSync(join(repo, 'bench/fowl/rounds.sh'), 'utf8');
-  const tail = script.slice(script.indexOf('ENGINE_START=""'));
+  const tail = script.slice(script.indexOf('[ -z "$OUT" ] || node "$REPO/bench/engine-version.mjs" record'));
   const run = spawnSync('/bin/sh', ['-eu', '-c', `cd "${dir}"\n${tail}`, 'rounds-fixture', '--out', 'out', '--model', 'x'], { encoding: 'utf8',
     env: { PATH: process.env.PATH, HOME: dir, USER: 'fixture', REPO: repo, OUT: 'out', MODEL: 'x', CODEX_HOME: join(dir, 'codex'), SLEIGHT_CHATGPT_APP: join(dir, 'no-app') } });
   assert.equal(run.status, 3, run.stderr);
   const span = JSON.parse(readFileSync(join(dir, 'out/engine.json'), 'utf8'));
   assert.deepEqual([span.version, span.changed, span.start.version, span.end.version], ['26.1013.40934', false, '26.1013.40934', '26.1013.40934']);
+  assert.ok(span.startedAt <= span.endedAt);
+});
+
+test('the note under a table counts engine runs with no settled version, and never claims one version for them', () => {
+  const run = (version, provenance = 'inferred') => ({ version, provenance, startedAt: '2026-10-18T10:00:00.000Z', endedAt: '2026-10-18T10:01:00.000Z', dated: 'recorded' });
+  const one = summarizeEngines([{ arm: 'sleight', engine: run('26.1013.40934') }, { arm: 'codex', engine: run('26.1013.40934') }, { arm: 'lcu', engine: run('26.1007.71326') }]);
+  assert.equal(engineNote(one), 'The arms that drive the engine ran on one engine version, 26.1013.40934.');
+  const open = summarizeEngines([{ arm: 'sleight', engine: run('26.1013.40934') }, { arm: 'codex', engine: run(null, 'ambiguous') }]);
+  assert.equal(engineNote(open), 'The arms that drive the engine ran on one engine version, 26.1013.40934. 1 of their runs have no settled version (ambiguous or unknown).');
+  assert.equal(engineNote(summarizeEngines([{ arm: 'lcu', engine: run('x') }])), 'No arm here drives the engine with a known version.');
+});
+
+test('a copied file\'s mtime is ignored, an end before the start is clamped, and refresh extends or grows the timeline', () => {
+  const raw = { stamp: '2026-10-14T20-00-00-000Z', results: [{ seconds: 600 }] };
+  // Copied four days later: the mtime would span the 2026-10-18 switch, so the pass ends at its start plus its seconds.
+  assert.deepEqual(passRowEngine(raw, raw.results[0], { timeline, mtimeMs: Date.parse('2026-10-18T23:00:00Z') }).endedAt, '2026-10-14T20:10:00.000Z');
+  assert.equal(passRowEngine(raw, raw.results[0], { timeline, mtimeMs: Date.parse('2026-10-14T20:25:00Z') }).endedAt, '2026-10-14T20:25:00.000Z');
+  assert.deepEqual(passRowEngine({ results: [{}] }, {}, { file: '2026-10-15-release-1.2.6.json', timeline }),
+    { version: '26.1007.71326', provenance: 'inferred', startedAt: '2026-10-15T00:00:00.000Z', endedAt: '2026-10-15T23:59:59.999Z', dated: 'inferred' });
+  assert.deepEqual(inferEngine('2026-10-12T00:00:00Z', '2026-10-10T00:00:00Z', timeline), { version: '26.1007.30912', provenance: 'inferred' });
+  const read = version => ({ version, chatgptApp: version, at: '2026-10-20T00:00:00.000Z' });
+  const same = refreshTimeline(timeline, { read: read('26.1013.40934') });
+  assert.deepEqual([same.changed, same.timeline.checkedUTC, same.timeline.versions.length], [true, '2026-10-20T00:00:00.000Z', timeline.versions.length]);
+  const grown = refreshTimeline(timeline, { read: read('26.1020.1'), folderBirth: '2026-10-19T12:00:00.000Z' }).timeline;
+  assert.deepEqual(grown.versions.at(-1).switchedAfterUTC, timeline.checkedUTC);
+  assert.equal(inferEngine('2026-10-19T13:00:00Z', undefined, grown).version, '26.1020.1');
+  assert.equal(inferEngine('2026-10-19T11:00:00Z', undefined, grown).provenance, 'ambiguous');
+  assert.equal(refreshTimeline(timeline, { read: read('26.1020.1') }).changed, false);
+  assert.equal(refreshTimeline(timeline, { read: { version: null, error: 'none' } }).changed, false);
 });

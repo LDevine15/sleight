@@ -17,7 +17,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claim, score } from '../claim-score.mjs';
 import { browserEvidence, harnessFailure, raceProblems, runErrorClass } from './real-gate-grade.mjs';
-import { currentTimeline, dayRange, engineForRun, engineMix, engineText, loadTimeline, mixText, summarizeEngines } from '../engine-version.mjs';
+import { currentTimeline, dayRange, engineForRun, engineMix, engineNote, engineText, loadTimeline, summarizeEngines } from '../engine-version.mjs';
 
 const DEFAULT = join(homedir(), 'Projects/sleight-wt/race-1017/*');
 const readJson = file => { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return undefined; } };
@@ -116,7 +116,7 @@ function print(rounds, scored) {
     console.log('fastest on'.padEnd(22) + s.arms.map(a => col(`${s.fastest[a].length} of ${s.tasks.length}`)).join(''));
     console.log('total expected s'.padEnd(22) + s.arms.map(a => col(s.totals[a] == null ? 'none (a task has no pass)' : n(s.totals[a]))).join(''));
     console.log(`Engine and UTC dates per arm (runs): ${s.arms.map(a => `${a} ${s.engines[a] ? engineText(s.engines[a], a) : 'no runs'}`).join(' | ')}.`);
-    if (s.engineMix) console.log(mixText(s.engineMix));
+    console.log(engineNote(s.engines, s.engineMix));
     console.log(s.topUps.length ? `Within 20% of ${s.me}, need 5 runs: ${s.topUps.map(p => `${p.task}/${p.arm} (${p.short.join(', ')})`).join('; ')}` : `No pair within 20% of ${s.me} is short of 5 runs.`);
   }
   const flips = flipped(rounds);

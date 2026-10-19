@@ -16,17 +16,21 @@ Runners record the version with `bench/engine-version.mjs`. It reads the newest 
 `sleight-mcp --doctor` does, and the ChatGPT app's version and build from its `Info.plist`. It only reads files, so a run doesn't
 start the engine or an app to learn the version. `bench/run.mjs` saves a read at the start and the last save of a pass, and each row gets the version and the UTC time it
 finished. A real-browser round writes `engine.json` beside `commits.json`, and `bench/fowl/rounds.sh` does the same for a runner
-round with `--out`. When the start and end reads differ, the record says `changed`.
+round with `--out`, writing the start before the round so an interrupted round keeps it. When the start and end reads differ, the
+record says `changed`.
 
 Results saved before 2026-10-19 get an inferred version from `bench/engine-versions.json`, a timeline built from the watch log, the
 saved engine docs, folder birth times and the versions earlier benchmark files recorded. It lists 7 versions from 26.930.31730
 (2026-10-03) to 26.1013.40934 (2026-10-18 21:47Z), each with its evidence. A run that starts inside a switch window, or spans a
 switch, is ambiguous. Older results take their dates from their own timestamps, and a date from a file's stamp or modification
-time is marked inferred.
+time is marked inferred. A modification time counts only when it fits the pass's own run time, since copying a folder resets it
+to the copy's time. Before regenerating the hub, `node bench/engine-version.mjs refresh` moves the timeline's last check to now, or adds
+a new version dated by its engine folder's birth time.
 
 `bench/fowl/race-score.mjs`, `bench/claim-score.mjs` and the results hub print each arm's versions with their dates, and they flag a
 table whose sleight or Codex arms ran on different versions (allowed, but visible). LCU, Cua, Peekaboo, FowlBrowser, Claude in
-Chrome and Claude's computer use show "not used" with their dates. The latest Safari and Firefox tables compare sleight on 26.1013.40934 with Codex on 26.1007.71326.
+Chrome and Claude's computer use show "not used" with their dates. On 2026-10-19 the newest Safari and Firefox tables compared
+sleight on 26.1013.40934 with Codex on 26.1007.71326.
 
 ## Parity battery
 

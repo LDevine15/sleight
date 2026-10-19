@@ -9,13 +9,16 @@
 // version from bench/engine-versions.json, a timeline built from evidence on disk. A run that starts inside a switch window,
 // or spans a switch, is ambiguous.
 //
-//   node bench/engine-version.mjs                              the current read, as JSON
-//   node bench/engine-version.mjs record <dir> [--start <json>] writes <dir>/engine.json: the span from <json> to now
-//   node bench/engine-version.mjs at <ISO start> [<ISO end>]    what the timeline says about a run at that time
+//   node bench/engine-version.mjs                          the current read, as JSON
+//   node bench/engine-version.mjs record <dir>             writes <dir>/engine.json with the start read (creating <dir>)
+//   node bench/engine-version.mjs record <dir> --end       adds the end read to that span (startMissing when there was none)
+//   node bench/engine-version.mjs at <ISO start> [<ISO end>]  what the timeline says about a run at that time
+//   node bench/engine-version.mjs refresh                  updates the timeline file from this Mac: checkedUTC moves to now while
+//                                                          the version is unchanged, and a new version is added from its folder's birth
 import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveServer } from '../plugins/sleight/lib/launch.mjs';
 
@@ -78,7 +81,8 @@ function placeAt(t, timeline) {
 // A run from start to end (end defaults to start): inferred when both ends sit in one version's settled span, ambiguous when
 // either end sits in a switch window or the run spans a switch, unknown outside the timeline.
 export function inferEngine(start, end = start, timeline = loadTimeline()) {
-  const a = placeAt(ms(start), timeline), b = placeAt(ms(end), timeline), v = timeline.versions;
+  const from0 = ms(start), to0 = Math.max(from0, ms(end));
+  const a = placeAt(from0, timeline), b = placeAt(Number.isNaN(to0) ? from0 : to0, timeline), v = timeline.versions;
   if (a.outside || b.outside) {
     const which = a.outside ?? b.outside;
     return { version: null, provenance: 'unknown', reason: which === 'before' ? `before the first version in the timeline (${v[0].firstSeenUTC})`
@@ -129,7 +133,12 @@ export function passRowEngine(raw, row, { file, mtimeMs, timeline = loadTimeline
   if (Number.isFinite(finished)) return engineForRun({ recorded, startMs: finished - (Number(row.seconds) || 0) * 1000, endMs: finished }, timeline);
   let startMs = stampMs(raw.stamp ?? file), endMs;
   if (!Number.isFinite(startMs)) startMs = Date.parse([raw.started, raw.date].find(v => /T\d\d:/.test(v ?? '')) ?? '');
-  if (Number.isFinite(startMs)) endMs = Number.isFinite(mtimeMs) ? mtimeMs : startMs + (raw.results ?? []).reduce((sum, r) => sum + (Number(r.seconds) || 0), 0) * 1000;
+  if (Number.isFinite(startMs)) {
+    // A copied folder's mtime is the copy's time, so the mtime counts only when it is plausible for the pass: no earlier than its
+    // runs' seconds and no later than three times them plus 30 minutes of setup.
+    const busy = (raw.results ?? []).reduce((sum, r) => sum + (Number(r.seconds) || 0), 0) * 1000;
+    endMs = Number.isFinite(mtimeMs) && mtimeMs >= startMs + busy && mtimeMs <= startMs + 3 * busy + 1800000 ? mtimeMs : startMs + busy;
+  }
   else {
     // Only the day in the file's name: the whole UTC day stands for the run, so a version is inferred only for a day it covered alone.
     const day = /^(\d{4}-\d\d-\d\d)/.exec(file ?? '')?.[1];
@@ -189,7 +198,7 @@ export function engineText(summary, arm) {
 }
 
 // Arms compared in one table may run on different versions (allowed), and the table must say so. Only arms that drive the
-// engine count. Null when they all ran one version.
+// engine count. Null when the resolved runs all ran one version.
 export function engineMix(byArm) {
   const arms = Object.entries(byArm).filter(([arm]) => usesEngine(arm));
   const all = [...new Set(arms.flatMap(([, s]) => Object.keys(s.versions)))].sort();
@@ -198,16 +207,47 @@ export function engineMix(byArm) {
 }
 export const mixText = mix => `The arms that drive the engine ran on different engine versions: ${Object.entries(mix.arms).map(([arm, versions]) => `${arm} on ${versions.join(' and ') || 'no known version'}`).join(', ')}.`;
 
+// The sentence under a table: the mix, or one version, and how many engine-arm runs have no settled version.
+export function engineNote(byArm, mix = engineMix(byArm)) {
+  const unresolved = Object.entries(byArm).filter(([arm]) => usesEngine(arm)).reduce((n, [, s]) => n + s.ambiguous.runs + s.unknown.runs, 0);
+  const versions = [...new Set(Object.entries(byArm).filter(([arm]) => usesEngine(arm)).flatMap(([, s]) => Object.keys(s.versions)))];
+  const head = mix ? mixText(mix) : versions.length ? `The arms that drive the engine ran on one engine version, ${versions[0]}.` : 'No arm here drives the engine with a known version.';
+  return unresolved ? `${head} ${unresolved} of their runs have no settled version (ambiguous or unknown).` : head;
+}
+
+// The refresh step for the timeline file: run it before collecting results on the benchmark Mac.
+export function refreshTimeline(timeline, { read = readEngine(), folderBirth } = {}) {
+  const last = timeline.versions.at(-1);
+  if (!read.version) return { timeline, changed: false, reason: read.error ?? 'no engine read' };
+  if (read.version === last.version) return { timeline: { ...timeline, checkedUTC: read.at, checkedEvidence: `the engine folder was still ${read.version} (refresh)` }, changed: true };
+  if (!folderBirth) return { timeline, changed: false, reason: 'no birth time for the new engine folder' };
+  const entry = { version: read.version, switchedAfterUTC: timeline.checkedUTC, firstSeenUTC: folderBirth,
+    evidence: [`the timeline's last check of ${last.version} (${timeline.checkedUTC})`, `the engine folder ${read.version} was born ${folderBirth} (refresh at ${read.at})`] };
+  return { timeline: { ...timeline, checkedUTC: read.at, checkedEvidence: `the engine folder was ${read.version} (refresh)`, versions: [...timeline.versions, entry] }, changed: true };
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [command, ...rest] = process.argv.slice(2);
   if (command === 'record') {
-    const dir = rest[0], i = rest.indexOf('--start');
-    let start;
-    try { start = i >= 0 && rest[i + 1] ? JSON.parse(rest[i + 1]) : undefined; } catch { start = undefined; }
-    if (!dir || !statSync(dir, { throwIfNoEntry: false })?.isDirectory()) { console.error('usage: engine-version.mjs record <existing dir> [--start <json>]'); process.exit(2); }
+    const dir = rest[0], file = join(dir ?? '', 'engine.json');
+    if (!dir) { console.error('usage: engine-version.mjs record <dir> [--end]'); process.exit(2); }
     const now = readEngine();
-    writeFileSync(join(dir, 'engine.json'), JSON.stringify(start?.at ? engineSpan(start, now) : engineSpan(now), null, 2) + '\n');
+    let span;
+    if (rest.includes('--end')) {
+      let before; try { before = JSON.parse(readFileSync(file, 'utf8')); } catch { before = undefined; }
+      if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) { console.error(`engine-version.mjs: no folder ${dir}`); process.exit(2); }
+      // Without a start read the span keeps only the end, so it never claims the version held for the whole run.
+      span = before?.start ? engineSpan(before.start, now) : { version: null, startedAt: null, endedAt: now.at, start: null, end: now, changed: null, startMissing: true };
+    } else { mkdirSync(dir, { recursive: true }); span = engineSpan(now); }
+    writeFileSync(file, JSON.stringify(span, null, 2) + '\n');
   } else if (command === 'at') {
     console.log(JSON.stringify(inferEngine(rest[0], rest[1] ?? rest[0], currentTimeline()), null, 2));
+  } else if (command === 'refresh') {
+    const server = resolveServer(), read = readEngine();
+    let folderBirth;
+    try { folderBirth = server.configPath && !server.fromChatGPTApp ? statSync(dirname(server.configPath)).birthtime.toISOString() : undefined; } catch { folderBirth = undefined; }
+    const result = refreshTimeline(loadTimeline(), { read, folderBirth });
+    if (result.changed) writeFileSync(TIMELINE_FILE, JSON.stringify(result.timeline, null, 2) + '\n');
+    console.log(result.changed ? `timeline checked through ${result.timeline.checkedUTC}, last version ${result.timeline.versions.at(-1).version}` : `timeline unchanged: ${result.reason}`);
   } else console.log(JSON.stringify(readEngine()));
 }
