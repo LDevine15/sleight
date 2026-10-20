@@ -54,6 +54,16 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
     for (let i = at; i >= 0; i = parent(rows, i)) if (LIST_ROLE.test(rows[i].body)) return i;
     return -1;
   };
+  // A list and its direct row keep the original key rule. Deeper focus must pass only through plain display
+  // elements below that row. Unknown roles, settable elements and advertised actions get the wheel only.
+  const keyFocus = (rows, at, list) => {
+    for (let i = at; i !== list && parent(rows, i) !== list; i = parent(rows, i)) {
+      const body = rows[i].body, role = /^[a-z]+(?: [a-z]+)*/.exec(body)?.[0];
+      if (!['text', 'static text', 'image', 'group', 'cell'].includes(role) ||
+          /\([^()]*\bsettable\b[^()]*\)/.test(body) || /(?:^|, )(?:Secondary Actions|Actions):/.test(body)) return false;
+    }
+    return true;
+  };
   // CC2: the list the call names (an element number, its label, or { label }, { id } or { line }); a row's number names its
   // list. A stale number may follow its unique named list, as scroll does; an absent or ambiguous identity stops.
   const locate = (text, ref, seenLine) => {
@@ -110,12 +120,13 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
   const view = (text, trusted) => {
     const { rows, selected } = parseRows(text);
     let focus = /^The focused UI element is (\d+) (.+?)\r?$/m.exec(text);
+    const hasFocus = !!focus;
     let anchors = focus ? [{ number: Number(focus[1]), body: focus[2] }] : selected;
     if (!anchors.length) return { problem: 'The window names no focused element or selected row, so the list cannot be verified.' };
     // Firefox can keep the outer container focused after selecting the clicked row (PL1 B-r1/r2/r3).
     // That proves a list for the wheel, never for keys. Only an ancestor container qualifies, and the first read must
     // show our exact clicked descendant selected. Later reads may retain that list while the selected row scrolls out.
-    if (focus) {
+    if (ownFocusClick && focus) {
       const at = rows.findIndex(row => row.number === Number(focus[1]) && sameElement(row.body, focus[2]));
       if (at >= 0 && /^container(?: |$)/.test(rows[at].body)) {
         const clickedRows = lastClick ? rows.map((row, i) => i).filter(i => rows[i].number === lastClick.number &&
@@ -133,7 +144,7 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
       const at = rows.findIndex(row => row.number === anchor.number);
       if (at < 0 || !sameElement(anchor.body, rows[at].body)) return { problem: 'The ' + (focus ? 'focused' : 'selected') + ' element is missing from the tree.' };
       const list = listOf(rows, at);
-      return list >= 0 ? { at: list } : { not: rows[at] };
+      return list >= 0 ? { at: list, keySafe: keyFocus(rows, at, list) } : { not: rows[at] };
     };
     const found = anchors.map(anchoredList);
     const problem = found.find(item => item.problem)?.problem;
@@ -149,14 +160,16 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
       return { problem: 'The read names a selected row in ' + JSON.stringify(list.body.slice(0, 60)) + ' but no focused element, and the action just before was not a click on that list or one of its rows.' };
     }
     const { labeled } = labelRows(kids);
-    return { list: list.body, rows: labeled, labels: labeled.map(row => row.label), focused: !!focus };
+    return { list: list.body, rows: labeled, labels: labeled.map(row => row.label), hasFocus,
+      focused: !!focus && found.every(item => item.keySafe) };
   };
-  let lastClick;
+  let lastClick, ownFocusClick;
   return async (...args) => {
     // pickFromList(list, "<row>", options): with the list named first the helper makes the focusing click itself (CC2).
     const listRef = typeof args[1] === 'string' ? args.shift() : undefined;
     const [label, options = {}] = args;
     lastClick = clicked;
+    ownFocusClick = false;
     if (listRef !== undefined && !(Number.isInteger(listRef) && listRef >= 0) && !(typeof listRef === 'string' && listRef.trim()) &&
         !(listRef && typeof listRef === 'object' && ['label', 'id', 'line'].some(key => typeof listRef[key] === 'string' && listRef[key].trim()))) {
       throw new Error('pickFromList takes the list as an element number, its label, or { label }, { id } or { line }, then the row text.');
@@ -387,7 +400,7 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
             if (i + 1 < tries.length) continue;
             return stop('not-a-list', 'Neither a row of the list nor the list itself had a frame to click (' + String(error?.message ?? error).split('\n')[0] + '). No key was sent.');
           }
-          lastClick = { number: tries[i].number, line: tries[i].body }; focusRow = tries[i].body;
+          lastClick = { number: tries[i].number, line: tries[i].body }; focusRow = tries[i].body; ownFocusClick = true;
           break;
         }
         v = await look();
@@ -404,6 +417,9 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
       if (v.problem) return stop(listLine ? 'focus-lost' : 'not-a-list', v.problem + (listLine ? (keys ? ' Keys may have reached another control.' : ' No key was sent.') : listRef === undefined ? ' Name the list first: `app.pickFromList(<list number>, "<whole row text>")`.' : ' The click on the list did not focus it.'));
       if (listLine && !sameElement(listLine, v.list)) {
         return stop('focus-lost', 'Focus moved from ' + JSON.stringify(listLine.slice(0, 60)) + ' to ' + JSON.stringify(v.list.slice(0, 60)) + '. Keys may have reached another control.');
+      }
+      if (listLine && keys && v.hasFocus && !v.focused) {
+        return stop('focus-lost', 'Focus is no longer on the list or a plain row descendant. Keys may have reached another control.');
       }
       listLine ??= v.list;
       if (v.labels.length < 3) return stop('not-a-list', 'The list shows fewer than three labeled rows, so its order cannot be checked.');

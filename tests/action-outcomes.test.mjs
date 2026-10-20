@@ -574,13 +574,14 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
   // X21: DP1 (17de62ab, 1e6b75a7, 14998535, a1cdf614, merged by 772b0a9e) adds the close observer to read/REPL setup by default.
   // Guarded calls opt in explicitly. Their off path keeps the X19b pins; the DP1-off test below keeps all five.
   // PL1 changes the serialized list picker and its guard callbacks; the compact reuse payload stays the same.
+  // PL1b restricts nested keyboard focus and click provenance. Substituting the original picker reproduces the PL1 pins.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
     guardedLean: hash(guardedCode('await app.click(1);', window, undefined, undefined, { prompt: 'lean' })),
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: 'b9886d829af5c2f9', guardedLean: '440620a36b8ca76c', reuse: 'b824edb3aa6dc2c4', read: 'a4848d5018a59562', repl: 'a4848d5018a59562' });
+  }, { guarded: '66b2e33b91b804a0', guardedLean: '69f670f5c7e72105', reuse: 'b824edb3aa6dc2c4', read: 'a2533d4c86cd8ef9', repl: 'a2533d4c86cd8ef9' });
 });
 
 test('DP1 off preserves the pre-DP1 guard, read and REPL bytes', () => {
@@ -596,8 +597,8 @@ test('DP1 off preserves the pre-DP1 guard, read and REPL bytes', () => {
       repl: replSetupCode(),
     };
     assert.deepEqual(Object.fromEntries(Object.entries(codes).map(([key, code]) => [key, hash(code)])), {
-      guarded: 'b9886d829af5c2f9', guardedLean: '440620a36b8ca76c', reuse: 'b824edb3aa6dc2c4',
-      read: 'dd22851aff959db4', repl: 'dd22851aff959db4',
+      guarded: '66b2e33b91b804a0', guardedLean: '69f670f5c7e72105', reuse: 'b824edb3aa6dc2c4',
+      read: 'e9e0f41ce7267428', repl: 'e9e0f41ce7267428',
     });
     for (const code of Object.values(codes)) assert.doesNotMatch(code, /closedLast|beforeRead|state\.dp1|state\.closeRead|\[sleight:dp1\]/);
   } finally {

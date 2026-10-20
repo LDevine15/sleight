@@ -12,7 +12,7 @@ const row = 'text (selectable) Alder Depot COL-0005';
 const picked = 'text (selected) Alder Depot COL-0005';
 
 function fixture(recording, { focus = 'container', nested = false, duplicate = false, missing = false, selected = true,
-  focusAfterScroll = focus } = {}) {
+  focusAfterScroll = focus, nestedBody = 'text Detail', wrapperBody = 'group Row detail' } = {}) {
   let clicked, advanced = false, started = false;
   const clicks = [], keys = [], scrolls = [], notes = [];
   const tree = () => {
@@ -31,11 +31,12 @@ function fixture(recording, { focus = 'container', nested = false, duplicate = f
         return indent + (33 + index) + ' text (' + (clicked === label ? 'selected' : 'selectable') + ') ' + label;
       });
     }
-    if (nested) text = text.replace(/^(\t{6})(37 text \([^\n]+)/m, '$1$2\n$1\t101 container Row detail\n$1\t\t102 text Detail');
-    if (clicked && focus === 'row') text = text.replace(/The focused UI element is .*/, 'The focused UI element is 37 ' +
+    if (nested) text = text.replace(/^(\t{6})(37 text \([^\n]+)/m, '$1$2\n$1\t101 ' + wrapperBody + '\n$1\t\t102 ' + nestedBody);
+    const currentFocus = advanced ? focusAfterScroll : focus;
+    if (clicked && currentFocus === 'row') text = text.replace(/The focused UI element is .*/, 'The focused UI element is 37 ' +
       (advanced ? 'text (' + (clicked === recording.target ? 'selected' : 'selectable') + ') ' + recording.target : picked));
-    if (clicked && focus === 'nested') text = text.replace(/The focused UI element is .*/, 'The focused UI element is 102 text Detail');
-    if (clicked && (advanced ? focusAfterScroll : focus) === 'outside') text = text.replace(/The focused UI element is .*/, 'The focused UI element is 43 button Save collection');
+    if (clicked && currentFocus === 'nested') text = text.replace(/The focused UI element is .*/, 'The focused UI element is 102 ' + nestedBody);
+    if (clicked && currentFocus === 'outside') text = text.replace(/The focused UI element is .*/, 'The focused UI element is 43 button Save collection');
     return text;
   };
   const handle = {
@@ -81,13 +82,63 @@ for (const recording of recordings) {
   });
 }
 
-test('PL1: focused row descendants, including nested descendants, may receive page keys', async () => {
+test('PL1: focused rows and nested plain text may receive page keys', async () => {
   for (const focus of ['row', 'nested']) {
     const h = fixture(recordings[0], { focus, nested: focus === 'nested' });
     await h.start();
     assert.equal((await h.pick(32)).clicked, true);
     assert.ok(h.keys.length > 0);
   }
+});
+
+for (const nestedBody of ['text field (settable) Detail', 'combo box (settable) Detail', 'slider (settable) Detail',
+  'pop up button Detail', 'check box Detail', 'button Detail', 'link Detail', 'text (settable) Detail',
+  'group Detail, Secondary Actions: Press', 'cell Detail, Actions: Press']) {
+  test('PL1b: nested ' + nestedBody + ' blocks keys while the wheel can search the list', async () => {
+    const h = fixture(recordings[0], { focus: 'nested', nested: true, nestedBody });
+    await h.start();
+    assert.equal((await h.pick(32)).clicked, true);
+    assert.deepEqual(h.keys, []);
+    assert.ok(h.scrolls.length > 0);
+  });
+}
+
+for (const wrapperBody of ['text field (settable) Row detail', 'combo box Row detail', 'slider Row detail',
+  'group (settable) Row detail', 'cell Row detail, Secondary Actions: Press']) {
+  test('PL1b: static text inside ' + wrapperBody + ' blocks keys', async () => {
+    const h = fixture(recordings[0], { focus: 'nested', nested: true, wrapperBody });
+    await h.start();
+    assert.equal((await h.pick(32)).clicked, true);
+    assert.deepEqual(h.keys, []);
+    assert.ok(h.scrolls.length > 0);
+  });
+}
+
+test('PL1b: nested static text, image, group and cell without actions allow keys', async () => {
+  for (const nestedBody of ['static text Detail', 'image Detail', 'group Detail', 'cell Detail']) {
+    const h = fixture(recordings[0], { focus: 'nested', nested: true, nestedBody, wrapperBody: 'cell Row detail' });
+    await h.start();
+    assert.equal((await h.pick(32)).clicked, true);
+    assert.ok(h.keys.length > 0);
+  }
+});
+
+test('PL1b: the guard previous click cannot authorize the container fallback', async () => {
+  const text = recordings[0].current.replace(row, picked);
+  const keys = [], scrolls = [], clicks = [];
+  const result = await listPicker({ read: async () => text, observe() {}, press: async key => keys.push(key),
+    scroll: async (...args) => scrolls.push(args), click: async line => clicks.push(line), parse: windowFromText, sameElement,
+    clicked: { number: 37, line: row }, sleep: async () => {} })(recordings[0].target);
+  assert.equal(result.reason, 'not-a-list');
+  assert.deepEqual(keys, []); assert.deepEqual(scrolls, []); assert.deepEqual(clicks, []);
+});
+
+test('PL1b: moving focus to the ancestor after keys reports possible input to another control', async () => {
+  const h = fixture(recordings[0], { focus: 'row', focusAfterScroll: 'container' });
+  await h.start();
+  await assert.rejects(h.pick(32), /focus-lost.*Keys may have reached another control\./);
+  assert.deepEqual(h.keys, ['Page_Down']);
+  assert.deepEqual(h.scrolls, []); assert.deepEqual(h.clicks, [37]);
 });
 
 test('PL1: ambiguous, missing and nonunique prior list identities stop before any input', async () => {
