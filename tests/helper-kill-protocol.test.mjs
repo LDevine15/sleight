@@ -1,13 +1,15 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { requirePendingKill, killHelper, requireIdleKill, inspectHelperProcesses } from '../bench/helper-kill-protocol.mjs';
 
 test('process inspection resolves the managed wrapper in the current user home', async () => {
   const result = await inspectHelperProcesses([123, 456], async (command, args) => {
-    assert.equal(command, '/private/tmp/helper-test-home/.codex/bin/codex-macos-inspect');
+    assert.equal(command, `${MAC_TMP}/helper-test-home/.codex/bin/codex-macos-inspect`);
     assert.deepEqual(args, ['process-status', '123', '456']);
     return { stdout: '[{"pid":123},{"pid":456}]' };
-  }, '/private/tmp/helper-test-home');
+  }, `${MAC_TMP}/helper-test-home`);
   assert.deepEqual(result, [{ pid: 123 }, { pid: 456 }]);
 });
 

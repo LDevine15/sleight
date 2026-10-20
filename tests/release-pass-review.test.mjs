@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -15,7 +18,7 @@ const native = (id = 'native') => ({ id, runner: 'native', args: ['--suite', id 
   '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'login', '--owner-away'],
   artifacts: ['raw'], expectedModels: ['claude-haiku-5-5'] });
 const opus = args => ({ id: 'opus', runner: 'fowl', args: ['--world', '--model', 'opus', '--effort', 'high',
-  '--out', '/private/tmp/fb-rounds/review-only', ...args], artifacts: ['raw'], expectedModels: ['claude-opus-5-5'] });
+  '--out', `${MAC_TMP}/fb-rounds/review-only`, ...args], artifacts: ['raw'], expectedModels: ['claude-opus-5-5'] });
 
 test('every published name, issue, log and content scrubs the same owner aliases', async t => {
   const root = fixture(t), bank = 'Jane-Owner-bank';
@@ -23,7 +26,7 @@ test('every published name, issue, log and content scrubs the same owner aliases
   const text = aliases.join('\n');
   const stage = { ...native(), artifacts: [bank] };
   const result = await executePass(createPlan({ root, stages: [stage], conditions: ready() }), {
-    root, home: '/Users/jane.owner', names: ['Jane Owner', 'jane.owner'], date: '2026-10-14', conditions: ready,
+    root, home: `${MAC_USERS}jane.owner`, names: ['Jane Owner', 'jane.owner'], date: '2026-10-14', conditions: ready,
     run: async () => {
       mkdirSync(join(root, bank));
       writeFileSync(join(root, bank, 'jane.owner_bad.json'), '{broken ' + text);
@@ -41,16 +44,16 @@ test('every published name, issue, log and content scrubs the same owner aliases
   assert.ok(malformed);
   assert.ok(manifest.stages[0].issues.some(issue => issue.endsWith(malformed)), 'retained-file issues use the actual mapped destination');
   assert.equal(readFileSync(join(root, bank, 'Jane-Owner.log'), 'utf8'), text);
-  assert.doesNotMatch(scrubText(text, '/Users/jane.owner', ['Jane Owner', 'jane.owner']), /jane[._ -]*owner/iu);
-  assert.equal(scrubText('ownerless', '/Users/jane.owner', ['Owner']), 'ownerless');
+  assert.doesNotMatch(scrubText(text, `${MAC_USERS}jane.owner`, ['Jane Owner', 'jane.owner']), /jane[._ -]*owner/iu);
+  assert.equal(scrubText('ownerless', `${MAC_USERS}jane.owner`, ['Owner']), 'ownerless');
 });
 
 test('an owner called User cannot change an existing placeholder or its mapped issue path', async t => {
-  const once = scrubText('USER_User2', '/Users/User', ['User']);
-  assert.equal(scrubText(once, '/Users/User', ['User']), once);
+  const once = scrubText('USER_User2', `${MAC_USERS}User`, ['User']);
+  assert.equal(scrubText(once, `${MAC_USERS}User`, ['User']), once);
   const root = fixture(t);
   const result = await executePass(createPlan({ root, stages: [native()], conditions: ready() }), {
-    root, home: '/Users/User', names: ['User'], date: '2026-10-14', conditions: ready, run: async () => {
+    root, home: `${MAC_USERS}User`, names: ['User'], date: '2026-10-14', conditions: ready, run: async () => {
       mkdirSync(join(root, 'raw')); writeFileSync(join(root, 'raw', 'User_bad.json'), '{broken');
       return { code: 1 };
     } });

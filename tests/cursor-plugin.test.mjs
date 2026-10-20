@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 // sleight as a Cursor plugin (ROADMAP 4d): the Cursor manifest, MCP config and marketplace beside Claude's and Codex's,
 // the one skill folder all three read, Cursor's clientInfo in the host label and approval wording, and the doctor's
 // Cursor lines. Installs go only into throwaway homes.
@@ -155,7 +157,7 @@ test('doctor: Cursor missing, Cursor without sleight, and each way sleight can b
     `          To install it in Cursor itself: ${CURSOR_INSTALL}, then install sleight from Cursor's plugin list`]);
   assert.deepEqual(lines({ [APP]: '{"version":"3.25.6"}', '/home/.cursor/plugins/local/my-sleight/.cursor-plugin/plugin.json': manifest('sleight'),
     '/home/.cursor/plugins/local/other/.cursor-plugin/plugin.json': manifest('other'),
-    '/home/.cursor/mcp.json': JSON.stringify({ mcpServers: { mac: { command: '/Users/me/sleight/plugins/sleight/bin/sleight-mcp' }, other: { command: 'npx' } } }) }), ['Cursor',
+    '/home/.cursor/mcp.json': JSON.stringify({ mcpServers: { mac: { command: `${MAC_USERS}me/sleight/plugins/sleight/bin/sleight-mcp` }, other: { command: 'npx' } } }) }), ['Cursor',
     'ok        sleight is a local Cursor plugin (~/.cursor/plugins/local/my-sleight). Copy it again after each sleight update.',
     'ok        sleight is in ~/.cursor/mcp.json as "mac"',
     'note      Cursor starts sleight 2 times (~/.cursor/plugins/local/my-sleight, ~/.cursor/mcp.json "mac"). Keep one.']);

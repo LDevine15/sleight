@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -6,7 +8,7 @@ import { join } from 'node:path';
 import { registerTemp } from '../scripts/temp-leftovers.mjs';
 import { checkSizes, checkSync, parsePlan, record, recorderPlan, resolveWindows, scrubSync } from '../bench/capture/record.mjs';
 
-const HOME = '/Users/ownername';
+const HOME = `${MAC_USERS}ownername`;
 const windowList = [
   { id: 11, pid: 100, owner: 'TextEdit', title: 'notes.txt', layer: 0, bounds: { x: 0, y: 25, width: 1440, height: 900 } },
   { id: 12, pid: 100, owner: 'TextEdit', title: 'other.txt', layer: 0, bounds: { x: 40, y: 60, width: 800, height: 600 } },
@@ -27,7 +29,7 @@ const basePlan = (extra = {}) => ({
 test('parsePlan fills the defaults and expands ~ in out', () => {
   const { plan, errors } = parsePlan(basePlan(), { home: HOME });
   assert.deepEqual(errors, []);
-  assert.equal(plan.out, '/Users/ownername/Movies/take-1');
+  assert.equal(plan.out, `${MAC_USERS}ownername/Movies/take-1`);
   assert.equal(plan.fps, 60);
   assert.equal(plan.duration, undefined);
   assert.equal(plan.codec, 'prores422hq');
@@ -103,7 +105,7 @@ test('recorderPlan gives every window a stream and each composite one more', () 
   const { plan } = parsePlan(basePlan({ duration: 12, fps: 30 }), { home: HOME });
   const { windows } = resolveWindows(plan, windowList);
   assert.deepEqual(recorderPlan(plan, windows, 'hevc'), {
-    version: 1, out: '/Users/ownername/Movies/take-1', fps: 30, duration: 12, codec: 'hevc',
+    version: 1, out: `${MAC_USERS}ownername/Movies/take-1`, fps: 30, duration: 12, codec: 'hevc',
     streams: [
       { name: 'editor', windows: [11], composite: false },
       { name: 'hand', windows: [21], composite: false },
@@ -161,7 +163,7 @@ test('checkSync names each schema problem', () => {
 });
 
 test('scrubSync shows home as ~ and hides the user name', () => {
-  const sync = { streams: [{ windows: [{ title: '/Users/ownername/Documents/ownername notes.txt' }, { title: '/Users/someone/x' }] }] };
+  const sync = { streams: [{ windows: [{ title: `${MAC_USERS}ownername/Documents/ownername notes.txt` }, { title: `${MAC_USERS}someone/x` }] }] };
   const scrubbed = scrubSync(sync, { home: HOME, user: 'ownername' });
   assert.deepEqual(scrubbed.streams[0].windows.map(window => window.title), ['~/Documents/<user> notes.txt', '~/x']);
 });

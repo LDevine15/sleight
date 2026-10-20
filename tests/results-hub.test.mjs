@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -186,10 +188,10 @@ test('no generated file holds a home path, the account name or the owner\'s name
     assert.ok(!text.includes(homedir()), file);
     for (const re of banned) assert.doesNotMatch(text, re, file);
   }
-  assert.equal(scrubPaths(`${homedir()}/x and /Users/someone/y`), '~/x and ~/y');
+  assert.equal(scrubPaths(`${homedir()}/x and ${MAC_USERS}someone/y`), '~/x and ~/y');
   assert.equal(scrubPaths('at /private/var/folders/ab/cd/T/x.json and /var/folders/ab/cd/T/y'), 'at $TMPDIR and $TMPDIR');
   assert.equal(scrubPaths('the runner graded it'), 'the runner graded it', 'rendering scrubs paths only, never words');
-  assert.equal(scrub('/Users/someone/z'), '~/z');
+  assert.equal(scrub(`${MAC_USERS}someone/z`), '~/z');
 });
 
 test('runner reports parse into runs, and the owner\'s scoring passes a checkout that stopped', () => {

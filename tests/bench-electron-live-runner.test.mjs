@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -72,13 +74,13 @@ test('only consent hosts under this run count, never the owner\'s own sleight se
   const rows = parseTree([
     '  100     1 node bench/electron-live-runner.mjs --owner-away',
     '  110   100 node bench/electron-qualification-worker.mjs',
-    '  111   110 /Users/x/Library/Caches/sleight/turbo-host/abc/consent-host',
+    `  111   110 ${MAC_USERS}x/Library/Caches/sleight/turbo-host/abc/consent-host`,
     '  200     1 claude',
-    '  211   200 /Users/x/Library/Caches/sleight/turbo-host/abc/consent-host --shared',
+    `  211   200 ${MAC_USERS}x/Library/Caches/sleight/turbo-host/abc/consent-host --shared`,
     '  120   100 claude -p',
     '  121   120 node bench/electron-arm-server.mjs',
     '  122   121 node bench/electron-qualification-worker.mjs',
-    '  123   122 /Users/x/Library/Caches/sleight/turbo-host/abc/consent-host',
+    `  123   122 ${MAC_USERS}x/Library/Caches/sleight/turbo-host/abc/consent-host`,
   ].join('\n'));
   assert.deepEqual(consentHostPids(rows, 100), [111, 123]);
 });

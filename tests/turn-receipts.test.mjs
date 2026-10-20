@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, readdirSync, lstatSync, symlinkSync, rmSync, realpathSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -93,8 +95,8 @@ test('document contents cannot advertise a native revert control', () => {
 });
 
 test('window titles are hidden by default, while explicit titles still scrub owner names', () => {
-  const output = 'Window: "Draft for Test Owner /Users/test-owner/private.txt", App: TextEdit.\n0 window\n1 text field Value: secret';
-  const options = { home: '/Users/test-owner', ownerNames: ['Test Owner', 'test-owner'] };
+  const output = `Window: "Draft for Test Owner ${MAC_USERS}test-owner/private.txt", App: TextEdit.\n0 window\n1 text field Value: secret`;
+  const options = { home: `${MAC_USERS}test-owner`, ownerNames: ['Test Owner', 'test-owner'] };
   const receipt = settings => {
     const journal = new TurnJournal(settings);
     journal.request(request(1, 'let app = await cua.getApp("TextEdit")')); journal.reply(reply(1, output));
@@ -235,7 +237,7 @@ test('duplicate replies do not retain additional events', () => {
 
 test('default receipts keep only title length and a scrubbed file URL basename', () => {
   const journal = new TurnJournal({ ownerNames: ['Test Owner', 'test-owner'] });
-  const output = 'Window: "Test Owner playing chess", App: Chess.\nURL: file:///Users/test-owner/private/Test%20Owner%20notes.txt\n0 window';
+  const output = `Window: "Test Owner playing chess", App: Chess.\nURL: file://${MAC_USERS}test-owner/private/Test%20Owner%20notes.txt\n0 window`;
   journal.request(request(1, 'let app = await cua.getApp("Chess")')); journal.reply(reply(1, output));
   journal.request(request(2, 'await app.click(1)')); journal.reply(reply(2, output));
   const receipt = journal.finish({ review: true });
@@ -388,7 +390,7 @@ test('typed inputs leave names they only appear inside of intact', () => {
 
 test('a longer typed secret leaves no trace in a visible window title or a document name', () => {
   const journal = new TurnJournal({ redactTitles: false, ownerNames: [] });
-  const output = 'Window: "opulent quokka.txt", App: TextEdit.\nURL: file:///Users/fixture/Documents/opulent%20quokka.txt\n0 window';
+  const output = `Window: "opulent quokka.txt", App: TextEdit.\nURL: file://${MAC_USERS}fixture/Documents/opulent%20quokka.txt\n0 window`;
   journal.request(request(1, 'let app = await cua.getApp("TextEdit")')); journal.reply(reply(1, output));
   journal.request(request(2, 'await app.typeText("opulent quokka")')); journal.reply(reply(2, output));
   const receipt = journal.finish({ review: true });

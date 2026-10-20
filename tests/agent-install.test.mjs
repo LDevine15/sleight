@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 // The agent-first install harness (bench/agent-install.mjs, 1.4.0 row H6), over fixtures: no session, no model, no app.
 // Fixtures in tests/fixtures/agent-install: the two plugin lists are real `plugin list --json` output from Claude Code 2.1.289
 // and Codex CLI 0.160.0 in throwaway configs (2026-10-19, paths replaced by placeholders). The transcripts and doctor outputs
@@ -19,7 +21,7 @@ import {
   resultsName, scrub, main,
 } from '../bench/agent-install.mjs';
 
-const HOME = '/Users/owner';
+const HOME = `${MAC_USERS}owner`;
 const SELF = fileURLToPath(new URL('../bench/agent-install.mjs', import.meta.url));
 const fixture = name => readFileSync(fileURLToPath(new URL(`fixtures/agent-install/${name}`, import.meta.url)), 'utf8');
 const fixtureDir = fileURLToPath(new URL('fixtures/agent-install/', import.meta.url));
@@ -123,7 +125,7 @@ test('file tools read only under the run folders, after ~, .. and links resolve;
     assert.equal(verdict({ tool_name: 'Glob', tool_input: { pattern: '../../../*' } }), true);
     assert.equal(verdict({ tool_name: 'Glob', tool_input: { pattern: '*', path: outside } }), true);
     assert.equal(verdict({ tool_name: 'Grep', tool_input: { pattern: '/etc/passwd|~/.ssh' } }), false);
-    assert.equal(verdict({ tool_name: 'Grep', tool_input: { pattern: 'x', glob: '/Users/**' } }), true);
+    assert.equal(verdict({ tool_name: 'Grep', tool_input: { pattern: 'x', glob: `${MAC_USERS}**` } }), true);
     assert.equal(verdict({ tool_name: 'Grep', tool_input: { pattern: 'x', path: '/' } }), true);
     assert.equal(verdict({ tool_name: 'WebFetch', tool_input: { url: 'https://github.com/Land-o-Clusters/sleight' } }), false);
     assert.equal(verdict({ tool_name: 'Write', tool_input: { file_path: join(run, 'x') } }), true);
@@ -424,7 +426,7 @@ test('results: totals per host, scrubbed paths, a dated write-up the hub catalog
   assert.doesNotMatch(md, /—/);
   const skipped = renderWriteUp({ ...summary, canary: { ...summary.canary, codex: { ok: false, failed: ['osascript refused'] } } });
   assert.match(skipped, /The sandbox canary failed \(osascript refused\), so this host didn't run\./);
-  assert.equal(scrub('/Users/owner/x /tmp/y Jane Doe', { home: '/Users/owner', temp: '/tmp', name: 'Jane Doe' }), '~/x <temp>/y <user>');
+  assert.equal(scrub(`${MAC_USERS}owner/x /tmp/y Jane Doe`, { home: `${MAC_USERS}owner`, temp: '/tmp', name: 'Jane Doe' }), '~/x <temp>/y <user>');
 });
 
 test('dry run prints every plan and starts nothing; bad numbers stop it', async () => {

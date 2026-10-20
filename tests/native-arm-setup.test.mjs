@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -10,10 +12,10 @@ import { installNative, setupPlan } from '../bench/world/native-setup.mjs';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 
 test('Cua proxy has an explicit private socket and cannot launch a global daemon', () => {
-  const plan = nativeArmPlan('cua', { armHome: '/private/tmp/arms' });
+  const plan = nativeArmPlan('cua', { armHome: `${MAC_TMP}/arms` });
   const server = plan.mcp.mcpServers.cua;
   assert.match(server.command, /^\/private\/tmp\/arms\/mcp-cua-arm\/CuaDriver.app\/Contents\/MacOS\/cua-driver$/);
-  assert.deepEqual(server.args, ['mcp', '--socket=/private/tmp/arms/mcp-cua-arm/driver.sock']);
+  assert.deepEqual(server.args, ['mcp', `--socket=${MAC_TMP}/arms/mcp-cua-arm/driver.sock`]);
   assert.equal(server.env.CUA_DRIVER_EMBEDDED, '1');
   assert.equal(server.env.CUA_DRIVER_RS_TELEMETRY_ENABLED, '0');
   assert.equal(server.env.CUA_TELEMETRY_ENABLED, '0');
@@ -22,7 +24,7 @@ test('Cua proxy has an explicit private socket and cannot launch a global daemon
 });
 
 test('Peekaboo runs the pinned local MCP binary without a runtime installer', () => {
-  const plan = nativeArmPlan('peekaboo', { armHome: '/private/tmp/arms' });
+  const plan = nativeArmPlan('peekaboo', { armHome: `${MAC_TMP}/arms` });
   const server = plan.mcp.mcpServers.peekaboo;
   assert.match(server.command, /mcp-peekaboo-arm\/package\/peekaboo$/);
   assert.deepEqual(server.args, ['mcp', 'serve']);

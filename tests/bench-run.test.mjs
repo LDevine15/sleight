@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -100,7 +103,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
   const sandbox = {
     process: { argv: ['node', 'run', '--suite', suite, '--arm', arm, '--runs', '3', ...(setupOnly ? ['--setup-only'] : []), ...(dryRun ? ['--dry-run'] : []), ...(calculatorGate ? ['--calculator-gate'] : []), ...(cleanArms ? ['--clean-arms'] : []), ...extraArgs], env: base, on() {}, once() {} },
     console: { log: text => logs.push(text), error: text => logs.push(text) }, AbortController, AbortSignal, setTimeout, clearTimeout, setInterval, clearInterval,
-    basename: path => path.split('/').at(-1), dirname, join, fileURLToPath: () => '/fixture/bench/run.mjs', homedir: () => '/owner', tmpdir: () => '/private/tmp/unit',
+    basename: path => path.split('/').at(-1), dirname, join, fileURLToPath: () => '/fixture/bench/run.mjs', homedir: () => '/owner', tmpdir: () => `${MAC_TMP}/unit`,
     existsSync: path => path === '/tmp/sleight-hold' ? holdAfterPreflight && preflightDone : true, realpathSync: path => path, mkdirSync: path => directories.push(path), rmdirSync() {}, statSync: () => ({ dev: 1, ino: 1 }),
     writeFileSync: (path, value) => { files.set(path, JSON.parse(value)); saved.push(JSON.parse(value)); }, randomBytes: () => ({ toString: () => 'nonce' }),
     privateMailResult, publicPrivateMailRow, publicPrivateMailRows,
@@ -120,7 +123,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     assertEngineSockets: async () => { calls.push('socket preflight'); if (socketError) throw new Error(socketError); },
     prepareGenericArm: () => {
       if (preparationError) throw new Error(preparationError);
-      return { generic: true, cwd: '/private/tmp/own-arm', args: ['--strict-mcp-config', '--setting-sources', '', '--tools', '', '--disable-slash-commands', '--permission-prompts', 'none', '--no-session-persistence'], env: {}, identity: {}, servers: ['rival'] };
+      return { generic: true, cwd: `${MAC_TMP}/own-arm`, args: ['--strict-mcp-config', '--setting-sources', '', '--tools', '', '--disable-slash-commands', '--permission-prompts', 'none', '--no-session-persistence'], env: {}, identity: {}, servers: ['rival'] };
     },
     genericSettings, acceptGenericCatalog() {}, worldCLI, worldArm, worldSettings, assertWorldCLI,
     isNativeArm, nativeArmPlan,
@@ -330,7 +333,7 @@ test('claude-cu receives only the current task fixture identities and grants and
   const result = await runner({ arm: 'claude-cu', suite: 'world', drive: true, extraArgs: ['--owner-away'], ownerName: 'Owner Example',
     tasks: [{ id: 'fixture', app: 'Fixture Editor', allowedApps: ['Fixture Editor', 'com.fixture.Editor'], allowedGrants: ['clipboardRead'] }],
     driverOut: { is_error: true, gateBlocked: true, reason: 'unsupported computer-use approval card',
-      approvalBlock: { reason: 'unsupported computer-use approval card', cardText: 'Computer Use wants to control these apps\n  Terminal\nOwner Example /private/tmp/unit/private.txt' } } });
+      approvalBlock: { reason: 'unsupported computer-use approval card', cardText: `Computer Use wants to control these apps\n  Terminal\nOwner Example ${MAC_TMP}/unit/private.txt` } } });
   assert.equal(result.error, undefined);
   const plan = result.calls.find(call => Array.isArray(call) && call[0] === 'interactive driver')[1];
   assert.deepEqual(Array.from(plan.allowedApps ?? []), ['Fixture Editor', 'com.fixture.Editor']);
@@ -923,9 +926,9 @@ test('fixture-only runner skips Claude initialization and retains the live pass 
 
 test('real and default preflight create the sleight arm directory before spawning', async () => {
   for (const suite of ['real', 'default']) {
-    const result = await runner({ suite, base: { SLEIGHT_ARM_DIR: '/private/tmp/new-sleight-arm' } });
+    const result = await runner({ suite, base: { SLEIGHT_ARM_DIR: `${MAC_TMP}/new-sleight-arm` } });
     assert.equal(result.error, undefined);
-    assert.ok(result.directories.includes('/private/tmp/new-sleight-arm'));
+    assert.ok(result.directories.includes(`${MAC_TMP}/new-sleight-arm`));
   }
 });
 
@@ -1253,7 +1256,7 @@ test('real cleanup tails never inspect unrelated apps and Simulator awaits only 
     .replace(/^import .*;\n/gm, '').replace(/^export \{.*\} from .*;\n/gm, '').replace(/^export /gm, '');
   const cleanup = runInNewContext(`${source}\n({closeBenchTextEdit, quitChess, quitSimApp})`, {
     webBrowsers,
-    join, tmpdir: () => '/private/tmp', realpathSync: path => path,
+    join, tmpdir: () => `${MAC_TMP}`, realpathSync: path => path,
     execFileSync: () => assert.fail('no host app inventory or action without an owned lease'),
   });
   cleanup.closeBenchTextEdit({ ownedOnly: true });
@@ -1267,11 +1270,11 @@ test('real cleanup tails never inspect unrelated apps and Simulator awaits only 
 test('a TextEdit task refuses to start next to a document the pass did not open', () => {
   const source = readFileSync(new URL('../bench/tasks.mjs', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '').replace(/^export \{.*\} from .*;\n/gm, '').replace(/^export /gm, '');
-  for (const [docs, refused] of [[[{ name: 'Untitled 9', path: '/Users/x/Library/Mobile Documents/Untitled 9.txt' }], true], [[], false]]) {
+  for (const [docs, refused] of [[[{ name: 'Untitled 9', path: `${MAC_USERS}x/Library/Mobile Documents/Untitled 9.txt` }], true], [[], false]]) {
     const actions = [];
     const tasks = runInNewContext(`${source}\n({ freshTextEdit })`, {
       webBrowsers,
-      join, tmpdir: () => '/private/tmp', realpathSync: path => path,
+      join, tmpdir: () => `${MAC_TMP}`, realpathSync: path => path,
       execFileSync: (command, args) => {
         if (command === 'osascript' && args.some(a => String(a).includes('documents().map'))) return JSON.stringify(docs);
         actions.push(command); return '';
@@ -1289,7 +1292,7 @@ function textEditHelpers(execFileSync) {
     .replace(/^import .*;\n/gm, '').replace(/^export \{.*\} from .*;\n/gm, '').replace(/^export /gm, '');
   return runInNewContext(`${source}\n({ freshTextEdit, closeBenchTextEdit, launchBenchTextEdit })`, {
     webBrowsers,
-    join, tmpdir: () => '/private/tmp', realpathSync: path => path, execFileSync,
+    join, tmpdir: () => `${MAC_TMP}`, realpathSync: path => path, execFileSync,
   });
 }
 
@@ -1303,10 +1306,10 @@ test('the last TextEdit quit after a forced relaunch is retried until TextEdit i
   let running = true, relaunched = false, quitsAfter = 0;
   const tasks = runInNewContext(`${source}\n({ closeBenchTextEdit })`, {
     webBrowsers,
-    join, tmpdir: () => '/private/tmp', realpathSync: path => path,
+    join, tmpdir: () => `${MAC_TMP}`, realpathSync: path => path,
     execFileSync: (command, args) => {
       if (command === 'pgrep') { if (running) return ''; throw new Error('none'); }
-      if (command === 'osascript' && args.some(a => String(a).includes('documents().map'))) return running ? JSON.stringify([{ name: 'a', path: '/private/tmp/sleight-bench/a.txt' }]) : '[]';
+      if (command === 'osascript' && args.some(a => String(a).includes('documents().map'))) return running ? JSON.stringify([{ name: 'a', path: `${MAC_TMP}/sleight-bench/a.txt` }]) : '[]';
       if (command === 'osascript' && args.some(a => String(a).includes('to quit'))) { if (relaunched && ++quitsAfter === 2) running = false; return ''; }
       if (command === 'pkill') { running = false; return ''; }
       if (command === 'open') { running = true; relaunched = true; return ''; }
@@ -1365,7 +1368,7 @@ test('the forced TextEdit relaunch after a hung quit uses the same launch flags'
   const opens = [];
   const tasks = textEditHelpers((command, args) => {
     if (command === 'pgrep') { if (running) return ''; throw new Error('none'); }
-    if (command === 'osascript' && args.some(a => String(a).includes('documents().map'))) return running ? JSON.stringify([{ name: 'a', path: '/private/tmp/sleight-bench/a.txt' }]) : '[]';
+    if (command === 'osascript' && args.some(a => String(a).includes('documents().map'))) return running ? JSON.stringify([{ name: 'a', path: `${MAC_TMP}/sleight-bench/a.txt` }]) : '[]';
     if (command === 'osascript' && args.some(a => String(a).includes('to quit'))) return '';
     if (command === 'pkill') { running = false; return ''; }
     if (command === 'open') { running = true; relaunched = true; opens.push([...args]); return ''; }

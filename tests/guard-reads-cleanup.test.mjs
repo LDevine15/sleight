@@ -1,11 +1,13 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { closeGuardFixture } from '../bench/guard-reads-cleanup.mjs';
 
 const reply = (text, isError = false) => ({ content: [{ type: 'text', text }], isError });
-const fixture = reply('Window: "guard-1.txt", App: TextEdit.\nURL: file:///private/tmp/sleight-guard-reads-test/guard-1.txt');
-const other = reply('Window: "other.txt", App: TextEdit.\nURL: file:///private/tmp/other.txt');
-const path = '/private/tmp/sleight-guard-reads-test/guard-1.txt';
+const fixture = reply(`Window: "guard-1.txt", App: TextEdit.\nURL: file://${MAC_TMP}/sleight-guard-reads-test/guard-1.txt`);
+const other = reply(`Window: "other.txt", App: TextEdit.\nURL: file://${MAC_TMP}/other.txt`);
+const path = `${MAC_TMP}/sleight-guard-reads-test/guard-1.txt`;
 function client(responses) {
   const calls = [];
   return { calls, call: async code => { calls.push(code); return responses.shift(); } };

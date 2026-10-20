@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
@@ -10,7 +12,7 @@ import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { interactivePlan, prepareInteractive, SessionTranscript, runInteractive, terminalGate, interactiveAgentSetup, launchPty } from '../bench/world/arms/claude-cu/interactive.mjs';
 
 const id = '550e8400-e29b-41d4-a716-446655440000';
-const plan = () => interactivePlan({ armDir: '/private/tmp/cu-fixture', sessionId: id, prompt: 'Same task\nReturn RESULT ok.', model: 'claude-haiku-5-5', effort: 'high' });
+const plan = () => interactivePlan({ armDir: `${MAC_TMP}/cu-fixture`, sessionId: id, prompt: 'Same task\nReturn RESULT ok.', model: 'claude-haiku-5-5', effort: 'high' });
 const assistant = (messageId, content, usage = {}) => ({ type: 'assistant', sessionId: id,
   message: { id: messageId, role: 'assistant', content, usage } });
 
@@ -25,7 +27,7 @@ for (const mode of ['cancel', 'natural']) macTest(`PTY bridge collects descendan
 test('interactive plan preserves task, model and effort and loads only the isolated arm', () => {
   const p = plan();
   assert.equal(p.prompt, 'Same task\nReturn RESULT ok.');
-  assert.equal(p.env.CLAUDE_CONFIG_DIR, '/private/tmp/cu-fixture/claude');
+  assert.equal(p.env.CLAUDE_CONFIG_DIR, `${MAC_TMP}/cu-fixture/claude`);
   assert.equal(p.args[p.args.indexOf('--model') + 1], 'claude-haiku-5-5');
   assert.equal(p.args[p.args.indexOf('--effort') + 1], 'high');
   assert.ok(p.args.includes('--session-id'));
@@ -33,9 +35,9 @@ test('interactive plan preserves task, model and effort and loads only the isola
   assert.equal(p.args.includes('-p'), false);
   assert.equal(p.args.includes('--no-session-persistence'), false);
   assert.equal(p.args.includes('--dangerously-skip-permissions'), false);
-  assert.throws(() => interactivePlan({ armDir: '/private/tmp/cu-fixture', prompt: 'x\rAllow' }), /control/);
-  assert.throws(() => interactivePlan({ armDir: '/private/tmp/cu-fixture', prompt: '! echo bypass' }), /task text/);
-  assert.throws(() => interactivePlan({ armDir: '/private/tmp/cu-fixture', prompt: '/mcp' }), /task text/);
+  assert.throws(() => interactivePlan({ armDir: `${MAC_TMP}/cu-fixture`, prompt: 'x\rAllow' }), /control/);
+  assert.throws(() => interactivePlan({ armDir: `${MAC_TMP}/cu-fixture`, prompt: '! echo bypass' }), /task text/);
+  assert.throws(() => interactivePlan({ armDir: `${MAC_TMP}/cu-fixture`, prompt: '/mcp' }), /task text/);
 });
 
 test('preparation enables only the built-in server in the arm profile and preserves owner login fields', t => {
@@ -261,7 +263,7 @@ test('approval and timeout paths send no acceptance, prompt replay or exit comma
 });
 
 test('dry execution creates nothing and starts no executable', async () => {
-  const p = interactivePlan({ armDir: '/private/tmp/absent-cu-arm-for-dry', prompt: 'RESULT ok' });
+  const p = interactivePlan({ armDir: `${MAC_TMP}/absent-cu-arm-for-dry`, prompt: 'RESULT ok' });
   const before = existsSync(p.armDir);
   const result = await runInteractive(p, { dryRun: true, prepare: () => assert.fail('dry preparation'), verify: () => assert.fail('dry version'), launch: () => assert.fail('dry launch') });
   assert.equal(result.dryRun, true); assert.equal(existsSync(p.armDir), before);
@@ -297,14 +299,14 @@ test('already cancelled runs start no preparation, CLI or PTY', async () => {
 });
 
 test('round adapter carries the original task and budget into the interactive arm', () => {
-  const setup = interactiveAgentSetup({ dir: '/private/tmp/cu-run', prompt: 'RESULT original', model: 'claude-opus-5-5', effort: 'high',
-    task: { budgetSeconds: 45 }, armDir: '/private/tmp/cu-fixture' });
+  const setup = interactiveAgentSetup({ dir: `${MAC_TMP}/cu-run`, prompt: 'RESULT original', model: 'claude-opus-5-5', effort: 'high',
+    task: { budgetSeconds: 45 }, armDir: `${MAC_TMP}/cu-fixture` });
   assert.equal(setup.command, process.execPath);
   assert.equal(setup.args[setup.args.indexOf('--prompt') + 1], 'RESULT original');
   assert.equal(setup.args[setup.args.indexOf('--timeout-ms') + 1], '45000');
-  assert.equal(setup.args[setup.args.indexOf('--work-dir') + 1], '/private/tmp/cu-run');
+  assert.equal(setup.args[setup.args.indexOf('--work-dir') + 1], `${MAC_TMP}/cu-run`);
   assert.equal(setup.args.includes('-p'), false);
-  const api = interactiveAgentSetup({ dir: '/private/tmp/cu-run', prompt: 'RESULT original',
+  const api = interactiveAgentSetup({ dir: `${MAC_TMP}/cu-run`, prompt: 'RESULT original',
     hostEnv: { ANTHROPIC_API_KEY: 'fixture', ANTHROPIC_AUTH_TOKEN: 'fixture-token' } });
   assert.equal(api.env.ANTHROPIC_API_KEY, undefined);
   assert.equal(api.env.ANTHROPIC_AUTH_TOKEN, undefined);

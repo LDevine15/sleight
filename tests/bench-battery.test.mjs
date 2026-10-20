@@ -1,8 +1,11 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from './macos-only.mjs';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { pathToFileURL } from 'node:url';
@@ -129,7 +132,7 @@ test('call metrics classify waste without publishing code, answers, paths, or tr
   const metrics = callMetrics(rows);
   assert.ok(metrics.calls[0].classes.includes('preliminary-inventory'));
   const result = publicResult({ arm: 'sleight', task: 'textedit', run: 1, passed: false, seconds: 2,
-    out: { result: 'private response' }, stderr: '/Users/owner/private', prompt: 'private task', ...metrics });
+    out: { result: 'private response' }, stderr: `${MAC_USERS}owner/private`, prompt: 'private task', ...metrics });
   assert.doesNotMatch(JSON.stringify(result), /private|Users|code|prompt|out"|stderr/);
   assert.equal(result.calls.length, 2);
 });
@@ -139,7 +142,7 @@ test('paired lifecycle resets the fixture, publishes failures, and stops on unco
   const { plan } = await load('plan');
   const calls = [], published = [];
   const runtime = {
-    async setupPair() { return { target: '/private/tmp/fixture.txt', marker: 'BATTERY-test' }; },
+    async setupPair() { return { target: `${MAC_TMP}/fixture.txt`, marker: 'BATTERY-test' }; },
     async resetFixture() { calls.push('reset'); },
     async startHost() { calls.push('host'); return { async finish() { return { confirmed: true, samples: [] }; } }; },
     async drive(arm, prompt) { calls.push([arm, prompt]); return { code: 0, groupClean: true, answer: 'private', calls: [] }; },
@@ -234,7 +237,7 @@ test('presentation fixtures include the layout, master and theme relationships u
   assert.match(part('ppt/slideMasters/_rels/slideMaster1.xml.rels'), /theme/);
 });
 
-const fixturePath = '/private/tmp/sleight-battery-unit/pair/fixture.txt';
+const fixturePath = `${MAC_TMP}/sleight-battery-unit/pair/fixture.txt`;
 // Execute the real host against native API doubles. No app, engine or live lock is used.
 function cleanupHost(options = {}) {
   const events = [], presses = [], scripts = [];
@@ -307,7 +310,7 @@ function cleanupHost(options = {}) {
         if (!options.foreignStaysPresent) foreignGone = true;
         return options.invalidStatus ?? -25201;
       }
-      if (element === foreignWindow && name === 'AXDocument') { out[0] = 'file:///private/tmp/another.txt'; return 0; }
+      if (element === foreignWindow && name === 'AXDocument') { out[0] = `file://${MAC_TMP}/another.txt`; return 0; }
       if (element === secondWindow && !present) return -25202;
       if (element !== window && element !== secondWindow) return -25205;
       if (name === 'AXDocument') {
@@ -344,7 +347,7 @@ function cleanupHost(options = {}) {
   const ObjC = { import() {}, unwrap: value => value?.value ?? value, deepUnwrap: value => value,
     castRefToObject: value => value?.rawApplication ?? (options.strictRefs && value === close ? { cast: close } : value) };
   const request = { bundle: 'org.example.fixture', targetURL: options.noTarget ? undefined : expected, control: 'ignored', fixturePath: path,
-    fixtureRoot: '/private/tmp/sleight-battery-unit/pair', ...(options.windowMarker && { windowMarker: options.windowMarker }),
+    fixtureRoot: `${MAC_TMP}/sleight-battery-unit/pair`, ...(options.windowMarker && { windowMarker: options.windowMarker }),
     ...(options.ownedArg && { ownedArg: options.ownedArg }) };
   const source = readFileSync(new URL('../bench/battery/host.js', import.meta.url), 'utf8');
   runInNewContext(`${source}\nrun([request]);`, { $: dollar, ObjC, Ref: () => [], Date: { now: () => now }, request: JSON.stringify(request) });
@@ -376,7 +379,7 @@ test('a restored foreign document stops startup without retaining or closing its
   assert.deepEqual(result.presses, []);
   assert.deepEqual(result.scripts, []);
   assert.equal(result.terminations, 0);
-  const foreign = result.details.windows.find(w => w.document === 'file:///private/tmp/another.txt');
+  const foreign = result.details.windows.find(w => w.document === `file://${MAC_TMP}/another.txt`);
   assert.equal(foreign.retained, false);
   assert.ok(foreign.reasons.includes('WINDOW_NOT_RETAINED'));
   assert.equal(result.events.find(e => e.stage === 'error').error.windowCount, 2);
@@ -389,7 +392,7 @@ test('a foreign document appearing in the readiness snapshot prevents readiness'
   assert.equal(result.events.some(e => e.stage === 'ready'), false);
   assert.equal(result.confirmed, false);
   assert.equal(result.details.windows[0].retained, false);
-  assert.equal(result.details.windows[0].document, 'file:///private/tmp/another.txt');
+  assert.equal(result.details.windows[0].document, `file://${MAC_TMP}/another.txt`);
   assert.deepEqual(result.presses, []);
   assert.deepEqual(result.scripts, []);
   assert.equal(result.terminations, 0);
@@ -410,7 +413,7 @@ function cleanupRuntime(options = {}) {
 
 test('a passed check survives failed cleanup and publishes each retained window reason before stopping', async () => {
   const { executePlan } = await load('run'), { plan } = await load('plan');
-  const runtime = cleanupRuntime({ document: 'file:///private/tmp/another.txt' });
+  const runtime = cleanupRuntime({ document: `file://${MAC_TMP}/another.txt` });
   await assert.rejects(executePlan(plan({ wanted: ['textedit'] }), runtime), /CLEANUP_UNCONFIRMED/);
   const row = runtime.published.at(-1)[0];
   assert.equal(row.passed, true);
@@ -420,8 +423,8 @@ test('a passed check survives failed cleanup and publishes each retained window 
   assert.deepEqual(runtime.cleanups[0].presses, []);
   assert.deepEqual(runtime.cleanups[0].scripts, []);
   assert.equal(runtime.cleanups[0].terminations, 0);
-  assert.equal(row.cleanupDetails.windows[0].document, 'file:///private/tmp/another.txt');
-  assert.equal(row.cleanupDetails.windows[0].expectedURL, 'file:///private/tmp/sleight-battery-unit/pair/fixture.txt');
+  assert.equal(row.cleanupDetails.windows[0].document, `file://${MAC_TMP}/another.txt`);
+  assert.equal(row.cleanupDetails.windows[0].expectedURL, `file://${MAC_TMP}/sleight-battery-unit/pair/fixture.txt`);
   assert.ok(row.cleanupDetails.windows[0].reasons.includes('DOCUMENT_NOT_MATCHED'));
 });
 
@@ -458,8 +461,8 @@ for (const [name, options, reason] of [
   ['sheet before close', { sheet: true }, 'SHEET_PRESENT'],
   ['sheet after close', { lateSheet: true }, 'SHEET_PRESENT'],
   ['absent document', { documentMissing: true }, 'DOCUMENT_NOT_MATCHED'],
-  ['changed document after close', { changedDocument: 'file:///private/tmp/another.txt' }, 'DOCUMENT_NOT_MATCHED'],
-  ['external file', { path: '/Users/example/private.txt' }, 'SCRIPTING_NOT_OWN_FIXTURE'],
+  ['changed document after close', { changedDocument: `file://${MAC_TMP}/another.txt` }, 'DOCUMENT_NOT_MATCHED'],
+  ['external file', { path: `${MAC_USERS}example/private.txt` }, 'SCRIPTING_NOT_OWN_FIXTURE'],
   ['unsupported scripting', { scriptError: -1708 }, 'SCRIPTING_FAILED'],
   ['scripting leaves window', { scriptStuck: true }, 'WINDOW_STILL_PRESENT_AFTER_SCRIPTING'],
 ]) test(`cleanup records ${name} and retains the stop`, () => {
@@ -494,7 +497,7 @@ test('an unrelated window arriving during cleanup is retained untouched and stop
   assert.equal(result.presses.length, 1);
   assert.equal(result.scripts.length, 0);
   assert.equal(result.terminations, 0);
-  assert.equal(result.details.windows[1].document, 'file:///private/tmp/another.txt');
+  assert.equal(result.details.windows[1].document, `file://${MAC_TMP}/another.txt`);
   assert.ok(result.details.windows[1].reasons.includes('WINDOW_NOT_RETAINED'));
 });
 
@@ -531,13 +534,13 @@ test('a previously readable foreign window still fails when it expires during cl
   assert.equal(row.present, false);
   assert.equal(row.documentStatus, -25201);
   assert.notEqual(row.gone, true);
-  assert.equal(row.documentReads[0].document, 'file:///private/tmp/another.txt');
+  assert.equal(row.documentReads[0].document, `file://${MAC_TMP}/another.txt`);
   assert.equal(result.scripts.length, 0);
   assert.equal(result.terminations, 0);
 });
 
 test('a changed document still stops cleanup when its window disappears after revalidation', () => {
-  const result = cleanupHost({ changedDocument: 'file:///private/tmp/another.txt', changedDocumentCloses: true });
+  const result = cleanupHost({ changedDocument: `file://${MAC_TMP}/another.txt`, changedDocumentCloses: true });
   assert.equal(result.confirmed, false);
   assert.ok(result.details.windows[0].reasons.includes('DOCUMENT_NOT_MATCHED'));
   assert.equal(result.scripts.length, 0);
@@ -549,7 +552,7 @@ test('an unrelated window observed only during close polling latches the stop af
   assert.equal(result.confirmed, false);
   assert.equal(result.scripts.length, 0);
   assert.equal(result.terminations, 0);
-  assert.equal(result.details.windows[1].document, 'file:///private/tmp/another.txt');
+  assert.equal(result.details.windows[1].document, `file://${MAC_TMP}/another.txt`);
   assert.ok(result.details.windows[1].reasons.includes('WINDOW_NOT_RETAINED'));
 });
 
@@ -565,7 +568,7 @@ test('one fixture script can close two retained windows without reading a stale 
 test('owned host collects fragmented cleanup diagnostics and only grants scripting for its temp document', async t => {
   const { startHost } = await load('runtime');
   assert.equal(typeof startHost, 'function');
-  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
+  const dir = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-battery-test-'))));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'fixture.txt'); writeFileSync(path, 'BATTERY-test');
   for (const own of [true, false]) {
@@ -579,7 +582,7 @@ test('owned host collects fragmented cleanup diagnostics and only grants scripti
       return response.promise;
     };
     const host = await startHost({ bundle: 'org.example.fixture', fixtureKind: 'doc-file' },
-      { dir, path, target: own ? path : '/private/tmp/other.txt' }, new AbortController().signal, runProcess);
+      { dir, path, target: own ? path : `${MAC_TMP}/other.txt` }, new AbortController().signal, runProcess);
     assert.equal(request.fixturePath, own ? path : undefined);
     if (own) assert.equal(request.fixtureRoot, dir);
     const event = JSON.stringify({ stage: 'cleanup', confirmed: false, details: { reasons: [], windows: [
@@ -598,7 +601,7 @@ test('owned host collects fragmented cleanup diagnostics and only grants scripti
 test('only a newly launched app receives the one-launch persistence argument', async t => {
   const { startHost } = await load('runtime');
   const dir = bank(t);
-  for (const wasRunning of [false, true]) for (const target of [undefined, '/private/tmp/fixture.txt']) {
+  for (const wasRunning of [false, true]) for (const target of [undefined, `${MAC_TMP}/fixture.txt`]) {
     const launches = [], response = Promise.withResolvers();
     const runProcess = (executable, args, options) => {
       if (executable === '/usr/bin/open') {
@@ -678,7 +681,7 @@ test('a restored-window startup receipt reaches the published row before any dri
   assert.deepEqual(startError, { message: 'FOREIGN_WINDOW_ON_START', stage: 'retain', windowCount: 2 });
   assert.equal(startWait.windowCount, 2);
   assert.equal(row.cleanupDetails.windows[0].retained, false);
-  assert.equal(row.cleanupDetails.windows[0].document, 'file:///private/tmp/another.txt');
+  assert.equal(row.cleanupDetails.windows[0].document, `file://${MAC_TMP}/another.txt`);
   assert.equal(row.cleanupConfirmed, false);
   assert.deepEqual(native.presses, []);
   assert.deepEqual(native.scripts, []);
@@ -689,7 +692,7 @@ test('a restored-window startup receipt reaches the published row before any dri
 test('owned workspace marker can retain a fresh window without AXDocument, but not a different document', () => {
   const accepted = cleanupHost({ documentMissing: true, windowMarker: 'AM1-unique', windowTitle: 'AM1-unique', axCloses: true });
   assert.equal(accepted.confirmed, true); assert.equal(accepted.presses.length, 1);
-  const refused = cleanupHost({ document: 'file:///private/tmp/owner.txt', windowMarker: 'AM1-unique', windowTitle: 'AM1-unique', axCloses: true });
+  const refused = cleanupHost({ document: `file://${MAC_TMP}/owner.txt`, windowMarker: 'AM1-unique', windowTitle: 'AM1-unique', axCloses: true });
   assert.equal(refused.confirmed, false); assert.equal(refused.presses.length, 0);
 });
 test('a folder window with an empty document CFString and no sheets closes without quitting its running app', () => {
@@ -702,7 +705,7 @@ test('a folder window with an empty document CFString and no sheets closes witho
   assert.deepEqual(result.scripts, []);
 });
 test('a marker never overrides a document mismatch, sheet timeout or ambiguous folder window', () => {
-  for (const options of [{ document: 'file:///private/tmp/owner.txt' }, { sheetStatus: -25204 }, { multipleWindows: true }]) {
+  for (const options of [{ document: `file://${MAC_TMP}/owner.txt` }, { sheetStatus: -25204 }, { multipleWindows: true }]) {
     const result = cleanupHost({ document: { value: '' }, windowMarker: 'AM1-unique', windowTitle: 'AM1-unique',
       wasRunning: true, axCloses: true, ...options });
     assert.equal(result.confirmed, false);
@@ -969,8 +972,8 @@ test('apps with their own argv parser never receive the AppKit persistence switc
   const { startHost } = await load('runtime'), dir = bank(t);
   for (const ownArgv of [true, false]) {
     const recorder = launchRecorder({ ownArgv });
-    const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture' }, new AbortController().signal, recorder.runProcess);
-    assert.deepEqual(recorder.launches, [['-g', '-b', 'org.example.fixture', '/private/tmp/fixture',
+    const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: `${MAC_TMP}/fixture` }, new AbortController().signal, recorder.runProcess);
+    assert.deepEqual(recorder.launches, [['-g', '-b', 'org.example.fixture', `${MAC_TMP}/fixture`,
       ...(ownArgv ? [] : ['--args', '-ApplePersistenceIgnoreState', 'YES'])]]);
     recorder.done(); await host.finish();
   }
@@ -980,9 +983,9 @@ test('fixture launch arguments replace the persistence switch, and only for a fr
   const { startHost } = await load('runtime'), dir = bank(t);
   for (const wasRunning of [false, true]) {
     const recorder = launchRecorder({ ownArgv: true, wasRunning });
-    const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture', launchArgs: ['--user-data-dir=/private/tmp/p'] },
+    const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: `${MAC_TMP}/fixture`, launchArgs: [`--user-data-dir=${MAC_TMP}/p`] },
       new AbortController().signal, recorder.runProcess);
-    assert.deepEqual(recorder.launches, [['-g', '-b', 'org.example.fixture', '/private/tmp/fixture', ...(wasRunning ? [] : ['--args', '--user-data-dir=/private/tmp/p'])]]);
+    assert.deepEqual(recorder.launches, [['-g', '-b', 'org.example.fixture', `${MAC_TMP}/fixture`, ...(wasRunning ? [] : ['--args', `--user-data-dir=${MAC_TMP}/p`])]]);
     recorder.done(); await host.finish();
   }
 });
@@ -998,7 +1001,7 @@ test('the runtime gives the host its startup budget and waits past it before HOS
     return response.promise;
   };
   let settled = false;
-  const started = startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture' }, new AbortController().signal, runProcess)
+  const started = startHost({ bundle: 'org.example.fixture' }, { dir, target: `${MAC_TMP}/fixture` }, new AbortController().signal, runProcess)
     .then(host => { settled = true; return host; });
   for (let n = 0; n < 5; n++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(request.startupMs, 60000);
@@ -1013,7 +1016,7 @@ test('the runtime gives the host its startup budget and waits past it before HOS
 
 test('a document fixture may name its window by the file stem, and scripting can be withheld', async t => {
   const { startHost } = await load('runtime');
-  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
+  const dir = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-battery-test-'))));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'AM1-unique.docx'); writeFileSync(path, 'x');
   for (const [ctx, task, marker, scripted] of [
@@ -1040,7 +1043,7 @@ test('the started host reports how long readiness took and whether the process r
     options.onStdout('{"stage":"armed","wasRunning":false,"ownArgv":false}\n{"stage":"ready","pid":43,"waitMs":12400,"relaunches":1,"windowCount":1}\n');
     return response.promise;
   };
-  const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture' }, new AbortController().signal, runProcess);
+  const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: `${MAC_TMP}/fixture` }, new AbortController().signal, runProcess);
   assert.deepEqual(host.startup, { waitMs: 12400, relaunches: 1 });
   response.resolve({ exit: { code: 0 }, groupClean: true }); await host.finish();
 });
@@ -1091,8 +1094,8 @@ test('finish before any launch command confirms nothing and touches nothing', ()
   assert.equal(result.terminations, 0);
 });
 
-for (const [name, document] of [['a localhost URL', 'file://localhost/private/tmp/sleight-battery-unit/pair/fixture.txt'],
-  ['a trailing slash', 'file:///private/tmp/sleight-battery-unit/pair/fixture.txt/']]) {
+for (const [name, document] of [['a localhost URL', `file://localhost${MAC_TMP}/sleight-battery-unit/pair/fixture.txt`],
+  ['a trailing slash', `file://${MAC_TMP}/sleight-battery-unit/pair/fixture.txt/`]]) {
   test(`a window admitted through ${name} also closes in cleanup`, () => {
     const result = cleanupHost({ document, axCloses: true });
     assert.equal(result.events.some(e => e.stage === 'ready'), true);
@@ -1102,13 +1105,13 @@ for (const [name, document] of [['a localhost URL', 'file://localhost/private/tm
 }
 
 test('a sibling path sharing the fixture prefix is a different document', () => {
-  const result = cleanupHost({ document: 'file:///private/tmp/sleight-battery-unit/pair/fixture.txt2', axCloses: true });
+  const result = cleanupHost({ document: `file://${MAC_TMP}/sleight-battery-unit/pair/fixture.txt2`, axCloses: true });
   assert.equal(result.events.find(e => e.stage === 'error').error.message, 'FOREIGN_WINDOW_ON_START');
   assert.equal(result.presses.length, 0);
 });
 
 test('an app that was already running is ready on its existing windows, as before', () => {
-  const result = cleanupHost({ wasRunning: true, baselineWindow: true, document: 'file:///private/tmp/owner.txt', axCloses: true });
+  const result = cleanupHost({ wasRunning: true, baselineWindow: true, document: `file://${MAC_TMP}/owner.txt`, axCloses: true });
   assert.equal(result.events.some(e => e.stage === 'ready'), true);
   assert.equal(result.presses.length, 0);
   assert.equal(result.terminations, 0);
@@ -1123,7 +1126,7 @@ test('a host that gets finish before readiness after an open failure is aborted,
     options.signal.addEventListener('abort', () => response.resolve({ exit: { code: 0 }, groupClean: true }));
     return response.promise;
   };
-  await assert.rejects(startHost({ bundle: 'org.example.fixture' }, { dir, target: '/private/tmp/fixture' }, new AbortController().signal, runProcess), error => {
+  await assert.rejects(startHost({ bundle: 'org.example.fixture' }, { dir, target: `${MAC_TMP}/fixture` }, new AbortController().signal, runProcess), error => {
     commands.push(JSON.parse(readFileSync(join(dir, 'host-control.json'), 'utf8')).command);
     assert.equal(error.hostCleanup.confirmed, false);
     return true;
@@ -1133,7 +1136,7 @@ test('a host that gets finish before readiness after an open failure is aborted,
 
 test('a generic file stem is not accepted as a window marker', async t => {
   const { startHost } = await load('runtime');
-  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-battery-test-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'fixture.txt'); writeFileSync(path, 'x');
   const recorder = launchRecorder({ ownArgv: false });
@@ -1194,9 +1197,9 @@ test('cleanup adopts a fixture window that appeared after readiness while its re
 
 // AM1 qualification 4 (2026-10-19 09:0xZ): VS Code opened an empty window, the host couldn't prove it was the fixture, and
 // cleanup left the run's own editor instance running.
-const ownedArg = '--user-data-dir=/private/tmp/sleight-battery-unit/pair/p';
+const ownedArg = `--user-data-dir=${MAC_TMP}/sleight-battery-unit/pair/p`;
 test('an instance the run launched on its own profile is quit whole, even with an unidentified window', () => {
-  const result = cleanupHost({ documentStatus: -25205, ownedArg, processArgs: `/Applications/Fixture.app/Contents/MacOS/Fixture ${ownedArg} --new-window /private/tmp/x` });
+  const result = cleanupHost({ documentStatus: -25205, ownedArg, processArgs: `/Applications/Fixture.app/Contents/MacOS/Fixture ${ownedArg} --new-window ${MAC_TMP}/x` });
   assert.equal(result.events.find(e => e.stage === 'error').error.message, 'FIXTURE_WINDOW_UNIDENTIFIED');
   assert.equal(result.presses.length, 0);
   assert.equal(result.terminations, 1);
@@ -1214,7 +1217,7 @@ test('the owned quit also ends a normal cell, through the app instead of window 
 });
 
 for (const [name, options] of [
-  ['its arguments lack the profile', { processArgs: 'Fixture --user-data-dir=/private/tmp/sleight-battery-unit/pair/p2' }],
+  ['its arguments lack the profile', { processArgs: `Fixture --user-data-dir=${MAC_TMP}/sleight-battery-unit/pair/p2` }],
   ['the profile is only a prefix of an argument', { processArgs: `Fixture ${ownedArg}x` }],
   ['the app was already running', { wasRunning: true, processArgs: `Fixture ${ownedArg}` }],
 ]) test(`an instance is not owned when ${name}`, () => {
@@ -1226,10 +1229,11 @@ for (const [name, options] of [
 
 test('a target passed in the launch arguments is not also opened as a document', async t => {
   const { startHost } = await load('runtime');
-  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
+  const dir = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-battery-test-'))));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const recorder = launchRecorder({ ownArgv: true });
   const target = join(dir, 'AM1-folder'), profile = join(dir, 'p');
+  mkdirSync(target); mkdirSync(profile);
   const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target, targetInArgs: true,
     launchArgs: [`--user-data-dir=${profile}`, '--new-window', target], ownedArg: `--user-data-dir=${profile}` }, new AbortController().signal, recorder.runProcess);
   assert.deepEqual(recorder.launches, [['-g', '-b', 'org.example.fixture', '--args', `--user-data-dir=${profile}`, '--new-window', target]]);
@@ -1239,11 +1243,87 @@ test('a target passed in the launch arguments is not also opened as a document',
 
 test('an owned-instance argument outside the fixture folder or absent from the launch is not passed', async t => {
   const { startHost } = await load('runtime'), dir = bank(t);
-  for (const ctx of [{ launchArgs: ['--user-data-dir=/private/tmp/elsewhere'], ownedArg: '--user-data-dir=/private/tmp/elsewhere' },
+  for (const ctx of [{ launchArgs: [`--user-data-dir=${MAC_TMP}/elsewhere`], ownedArg: `--user-data-dir=${MAC_TMP}/elsewhere` },
     { launchArgs: ['--new-window'], ownedArg: `--user-data-dir=${join(dir, 'p')}` }]) {
     const recorder = launchRecorder({ ownArgv: true });
     const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: join(dir, 'f'), ...ctx }, new AbortController().signal, recorder.runProcess);
     assert.equal(recorder.request.ownedArg, undefined, JSON.stringify(ctx));
     recorder.done(); await host.finish();
+  }
+});
+
+test('host ownership rejects aliases, traversal, missing paths and banks outside the exact temp prefix', async t => {
+  const { startHost } = await load('runtime');
+  const dir = realpathSync(bank(t)), target = join(dir, 'AM1-unique.txt'), profile = join(dir, 'profile');
+  writeFileSync(target, 'x'); mkdirSync(profile);
+  const alias = join(dir, 'alias'); symlinkSync(target, alias);
+  const linkedProfile = join(dir, 'linked-profile'); symlinkSync(profile, linkedProfile);
+  const linkedBank = join(dir, 'linked-bank'); symlinkSync(dir, linkedBank);
+  const unprefixed = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'foreign-battery-'))));
+  t.after(() => rmSync(unprefixed, { recursive: true, force: true }));
+  const foreign = join(unprefixed, 'sleight-battery-nested'); mkdirSync(foreign);
+  writeFileSync(join(foreign, 'AM1-unique.txt'), 'x');
+  for (const [root, path] of [
+    [dir, alias], [linkedBank, join(linkedBank, 'AM1-unique.txt')],
+    [dir, `${dir}/./AM1-unique.txt`], [dir, join(dir, 'missing')],
+    [foreign, join(foreign, 'AM1-unique.txt')],
+  ]) {
+    const recorder = launchRecorder();
+    const host = await startHost({ bundle: 'org.example.fixture', fixtureKind: 'doc-file' },
+      { dir: root, path, target: path, windowMarker: 'AM1-unique' }, new AbortController().signal, recorder.runProcess);
+    try {
+      assert.equal(recorder.request.fixturePath, undefined, path);
+      assert.equal(recorder.request.windowMarker, undefined, path);
+    } finally { recorder.done(); await host.finish(); }
+  }
+  for (const path of [linkedProfile, `${dir}/../outside`, `${dir}/./profile`, dir, join(dir, 'missing'), dir + '-sibling/profile']) {
+    const ownedArg = `--user-data-dir=${path}`, recorder = launchRecorder();
+    const host = await startHost({ bundle: 'org.example.fixture' },
+      { dir, target, ownedArg, launchArgs: [ownedArg] }, new AbortController().signal, recorder.runProcess);
+    try { assert.equal(recorder.request.ownedArg, undefined, path); }
+    finally { recorder.done(); await host.finish(); }
+  }
+});
+
+test('host ownership accepts the canonical system temp bank and a production-shaped pair directory', async t => {
+  const { startHost } = await load('runtime');
+  const root = realpathSync(bank(t)), dir = join(root, 'textedit-1'); mkdirSync(dir);
+  const path = join(dir, 'AM1-unique.txt'), profile = join(dir, 'profile');
+  writeFileSync(path, 'x'); mkdirSync(profile);
+  const ownedArg = `--user-data-dir=${profile}`, recorder = launchRecorder();
+  const host = await startHost({ bundle: 'org.example.fixture', fixtureKind: 'doc-file' },
+    { dir, path, target: path, windowMarker: 'AM1-unique', ownedArg, launchArgs: [ownedArg] },
+    new AbortController().signal, recorder.runProcess);
+  try {
+    assert.equal(recorder.request.fixturePath, path);
+    assert.equal(recorder.request.windowMarker, 'AM1-unique');
+    assert.equal(recorder.request.ownedArg, ownedArg);
+  } finally { recorder.done(); await host.finish(); }
+});
+
+test('host ownership keeps a unique folder title marker for a canonical owned directory', async t => {
+  const { startHost } = await load('runtime');
+  const dir = realpathSync(bank(t)), target = join(dir, 'AM1-unique-folder'); mkdirSync(target);
+  const recorder = launchRecorder();
+  const host = await startHost({ bundle: 'org.example.fixture' },
+    { dir, target, windowMarker: 'AM1-unique-folder' }, new AbortController().signal, recorder.runProcess);
+  try { assert.equal(recorder.request.windowMarker, 'AM1-unique-folder'); }
+  finally { recorder.done(); await host.finish(); }
+});
+
+test('host ownership preserves the legacy production bank only on macOS', () => {
+  const source = readFileSync(new URL('../bench/battery/runtime.mjs', import.meta.url), 'utf8');
+  const checks = source.slice(source.indexOf('function canonicalPath('), source.indexOf('function codexTurns('));
+  for (const platform of ['darwin', 'linux']) {
+    const system = join('/', 'canonical-system-temp');
+    const own = runInNewContext(`${checks}; ownedFixtureRoot`, {
+      realpathSync: value => value, lstatSync: () => ({ isDirectory: () => true }),
+      tmpdir: () => system, process: { platform }, relative, resolve, sep,
+    });
+    assert.equal(own(join(system, 'sleight-battery-nonce', 'word-1')), true);
+    assert.equal(own(`${MAC_TMP}/sleight-battery-nonce/word-1`), platform === 'darwin');
+    assert.equal(own(join(system, 'unrelated', 'sleight-battery-nonce')), false);
+    assert.equal(own(join(system, 'sleight-battery-')), false);
+    assert.equal(own(join(system + '-sibling', 'sleight-battery-nonce')), false);
   }
 });

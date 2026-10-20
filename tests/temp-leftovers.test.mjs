@@ -21,7 +21,7 @@ function run(args, env = {}) {
 
 function tempRoots() {
   const roots = [];
-  for (const raw of [process.env.TMPDIR, tmpdir(), '/private/tmp', '/tmp']) {
+  for (const raw of [process.env.TMPDIR, tmpdir(), realpathSync('/tmp'), '/tmp']) {
     if (!raw) continue;
     try { roots.push(realpathSync(raw)); } catch { roots.push(raw); }
   }

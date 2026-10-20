@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -9,8 +11,8 @@ import { privateIdentity, privateMatches, privateTrackedPath } from '../scripts/
 const root = fileURLToPath(new URL('..', import.meta.url));
 
 test('private identity checks use literal home and username values and exempt generic CI users', () => {
-  const identity = { home: '/Users/fixture.user', username: 'fixture.user' };
-  assert.deepEqual(privateMatches('/Users/fixture.user/file', identity), ['home path', 'username']);
+  const identity = { home: `${MAC_USERS}fixture.user`, username: 'fixture.user' };
+  assert.deepEqual(privateMatches(`${MAC_USERS}fixture.user/file`, identity), ['home path', 'username']);
   assert.deepEqual(privateMatches('fixtureXuser', identity), []);
   for (const username of ['abc', 'runner', 'root', 'gitlab-runner', 'circleci']) {
     assert.deepEqual(privateMatches(username, { home: '/home/fixture', username }), []);

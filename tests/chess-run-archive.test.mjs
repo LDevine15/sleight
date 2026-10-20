@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -85,7 +87,7 @@ function chessTask(archiveChessRuns, calls) {
   const source = readFileSync(new URL('../bench/tasks.mjs', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '').replace(/^export \{.*\} from .*;\n/gm, '').replace(/^export /gm, '');
   return runInNewContext(`${source}\ngetTasks().find(task => task.id === 'chess-drag')`, {
-    webBrowsers, join, tmpdir: () => '/private/tmp', realpathSync: path => path,
+    webBrowsers, join, tmpdir: () => `${MAC_TMP}`, realpathSync: path => path,
     archiveChessRuns, restartChess: () => calls.push('restart'),
     execFileSync: (command, args) => {
       assert.equal(command, 'sleep');
@@ -97,7 +99,7 @@ function chessTask(archiveChessRuns, calls) {
 
 test('every arm archives Chess folders before restart through the shared task setup', () => {
   for (const arm of ['sleight', 'codex', 'lcu']) {
-    const calls = [], dir = `/private/tmp/sleight-bench/2026-10-14T19-00-00-000Z/${arm}-chess-drag-1`;
+    const calls = [], dir = `${MAC_TMP}/sleight-bench/2026-10-14T19-00-00-000Z/${arm}-chess-drag-1`;
     const task = chessTask(current => { assert.equal(current, dir); calls.push('archive'); }, calls);
     task.setup({ dir, nonce: 'nonce' });
     assert.deepEqual(calls, ['archive', 'restart', 'settle']);

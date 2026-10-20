@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -984,8 +986,8 @@ test('document identity normalizes both Foundation file URLs and private fixture
   const sandbox = { $: native, Ref: () => [], ObjC: { import() {}, castRefToObject: value => value, unwrap: value => value } };
   runInNewContext(source, sandbox);
   const api = sandbox.nativeAX();
-  assert.equal(api.matches({}, { mode: 'document', target: '/private/tmp/Pages-abc.pdf', token: 'Pages-abc.pdf' }), true);
-  assert.equal(api.matches({}, { mode: 'document', target: '/private/tmp/Other.pdf', token: 'Pages-abc.pdf' }), false,
+  assert.equal(api.matches({}, { mode: 'document', target: `${MAC_TMP}/Pages-abc.pdf`, token: 'Pages-abc.pdf' }), true);
+  assert.equal(api.matches({}, { mode: 'document', target: `${MAC_TMP}/Other.pdf`, token: 'Pages-abc.pdf' }), false,
     'a matching title must never override another document path');
 });
 

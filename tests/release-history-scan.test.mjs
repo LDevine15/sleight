@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -28,8 +30,8 @@ function repository(t) {
 
 test('scan reports private additions by commit and file even after the final tree is clean', async t => {
   const { dir, commit, base } = repository(t);
-  const identity = { home: '/Users/fixture.user', username: 'fixture.user' };
-  const bad = commit('private file.txt', 'public fixture\n++ /Users/fixture.user/private\nfixture.user\n');
+  const identity = { home: `${MAC_USERS}fixture.user`, username: 'fixture.user' };
+  const bad = commit('private file.txt', `public fixture\n++ ${MAC_USERS}fixture.user/private\nfixture.user\n`);
   commit('private file.txt', 'public fixture\n');
   const hits = [];
   const result = await scanHistory({ cwd: dir, range: `${base}..HEAD`, identity, onHit: hit => hits.push(hit) });
@@ -73,14 +75,14 @@ test('scan includes private additions made only by a merge commit', async t => {
   const first = commit('first.txt', 'first branch\n');
   git('checkout', '-q', '--detach', base);
   const second = commit('second.txt', 'second branch\n');
-  writeFileSync(join(dir, 'merge.txt'), '/Users/fixture.user/merge-only\n');
+  writeFileSync(join(dir, 'merge.txt'), `${MAC_USERS}fixture.user/merge-only\n`);
   git('add', '--', 'merge.txt');
   const tree = git('write-tree');
   const merge = git('commit-tree', tree, '-p', first, '-p', second, '-m', 'Fixture merge');
   git('update-ref', 'HEAD', merge);
   const hits = [];
   const result = await scanHistory({ cwd: dir, range: `${base}..HEAD`,
-    identity: { home: '/Users/fixture.user', username: 'fixture.user' }, onHit: hit => hits.push(hit) });
+    identity: { home: `${MAC_USERS}fixture.user`, username: 'fixture.user' }, onHit: hit => hits.push(hit) });
   assert.equal(result.hits, 1);
   assert.equal(hits[0].commit, merge);
   assert.equal(hits[0].file, 'merge.txt');

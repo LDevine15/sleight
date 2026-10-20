@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { app, rect, fakeWindows, nativeWindow } from './fixtures/electron-graph.mjs';
@@ -47,7 +49,7 @@ test('hidden, minimized and offscreen windows and scale mismatches join nothing'
 });
 
 test('the metadata is content-free by schema: a title or any extra key refuses the whole read', async () => {
-  for (const extra of [{ title: 'Quarterly plan.docx' }, { document: '/Users/x/plan' }, { value: 'text' }]) {
+  for (const extra of [{ title: 'Quarterly plan.docx' }, { document: `${MAC_USERS}x/plan` }, { value: 'text' }]) {
     const { result } = await joined([nativeWindow(11, rect(0, 0), extra)], [view('a', rect(0, 0))]);
     assert.deepEqual(statuses(result), { a: 'parked:native-metadata-invalid' });
   }

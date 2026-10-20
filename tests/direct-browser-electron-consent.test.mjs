@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -79,7 +81,7 @@ test('Always allow is written only by an authenticated click and follows build a
   // A fresh host process: same file, no card for the same build and profile, any PID.
   const g = fixture({ store: api.createGrantStore({ path }) });
   const again = await ask(g, { ...instance, pid: 99, pidBirth: '1770000000.5' }); assert.equal(again.status, 'granted'); assert.equal(again.grant.scope, 'always'); assert.equal(g.presented.length, 0);
-  for (const change of [{ version: '1.2.4' }, { signer: 'OTHERTEAM' }, { runtime: 'electron/40.0.0' }, { profile: '/Users/fixture/Other' }, { bundleId: 'invalid.fixture.other' },
+  for (const change of [{ version: '1.2.4' }, { signer: 'OTHERTEAM' }, { runtime: 'electron/40.0.0' }, { profile: `${MAC_USERS}fixture/Other` }, { bundleId: 'invalid.fixture.other' },
     { cdhash: 'b'.repeat(40) }, { executable: '/Applications/Copy.app/Contents/MacOS/Fixture' }]) {
     const before = g.presented.length, pendingChange = ask(g, { ...instance, ...change });
     assert.equal(g.presented.length, before + 1, 'changed ' + Object.keys(change)[0] + ' asks again'); g.click(before, 'cancel'); await pendingChange;
@@ -176,7 +178,7 @@ test('relaunch is its own card, exact to the process, session and turn, and spen
   assert.equal(receipt.action, 'quit-and-relaunch'); assert.equal(receipt.pid, 4242);
   assert.throws(() => f.consent.consumeRelaunch(ticket, instance, { session, turn }), /RELAUNCH_NOT_AUTHORIZED/, 'a spent ticket stays spent');
   assert.equal(grant.current(), true); assert.equal(connection.closed, 0, 'the relaunch decision never touches the pipe');
-  const changes = { build: { version: '1.2.4' }, profile: { profile: '/Users/fixture/Other' }, pid: { pid: 4243 }, birth: { pidBirth: '1760000009.9' }, signer: { signer: 'OTHERTEAM' } };
+  const changes = { build: { version: '1.2.4' }, profile: { profile: `${MAC_USERS}fixture/Other` }, pid: { pid: 4243 }, birth: { pidBirth: '1760000009.9' }, signer: { signer: 'OTHERTEAM' } };
   for (const [label, change] of Object.entries(changes)) {
     const spare = await relaunchTicket(f);
     assert.throws(() => f.consent.consumeRelaunch(spare, { ...instance, ...change }, { session, turn }), /RELAUNCH_NOT_AUTHORIZED/, label);

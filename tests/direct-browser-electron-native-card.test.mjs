@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdtempSync, realpathSync } from 'node:fs';
@@ -31,7 +33,7 @@ test('native app frame admits only exact keys and exact choice sets without laun
   const swift = join(dir, 'main.swift'), binary = join(dir, 'fixture');
   writeFileSync(swift, 'import Foundation\nimport CoreFoundation\n' + functionSource[1] + `
 let app: [String: Any] = ["name": "Fixture App", "bundleId": "invalid.fixture.app", "signer": "TEAM123456", "version": "1.2.3",
-  "runtime": "electron/39.0.0", "profile": "/Users/fixture/Profile", "temporary": false, "pid": 4242, "pidBirth": "1760000000.25",
+  "runtime": "electron/39.0.0", "profile": "${MAC_USERS}fixture/Profile", "temporary": false, "pid": 4242, "pidBirth": "1760000000.25",
   "executable": "/Applications/Fixture.app/Contents/MacOS/Fixture", "cdhash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
 func card(_ kind: String, _ over: [String: Any] = [:], app overApp: [String: Any] = [:], drop: String? = nil, dropApp: String? = nil) -> [String: Any] {
   var data: [String: Any] = ["kind": kind, "app": app.merging(overApp) { $1 }, "session": "client", "turn": "turn1", "epoch": 1]

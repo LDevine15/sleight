@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from './macos-only.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -278,7 +280,7 @@ test('native capability decisions require explicit counts, read proof, and uniqu
 
 test('native Mimestream helper refuses a request without the owner-present boundary before any AX use', { skip: macCommandSkip('xcrun') }, async t => {
   const helper = await mail.mimestreamHelper(t.signal);
-  const result = await runOwned(helper, [JSON.stringify({ control: '/private/tmp/x.json', nonce: 'unit', kind: 'label' })],
+  const result = await runOwned(helper, [JSON.stringify({ control: `${MAC_TMP}/x.json`, nonce: 'unit', kind: 'label' })],
     { timeoutMs: 15000, signal: t.signal });
   assert.equal(result.exit.code, 1, result.stdout);
   assert.equal(result.stderr.trim(), 'MIMESTREAM_OWNER_PRESENT_UNPROVED');

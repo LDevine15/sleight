@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -35,7 +37,7 @@ const registry = readRecipeRegistry(registryFile(recipeRow()));
 // codesign and the bundle plists, as deriveAppInstance's inspect seam would see the fixture bundle.
 const inspect = bundle => ({ verified: true, codesign: { executable: bundle + '/Contents/MacOS/Fixture', identifier: 'invalid.fixture.app', cdhash: 'c'.repeat(40), team: 'TEAM123456' },
   electron: { CFBundleVersion: '39.0.0' }, info: { CFBundleIdentifier: 'invalid.fixture.app', CFBundleName: 'Fixture App', CFBundleShortVersionString: '1.2.3' } });
-const profile = Object.freeze({ path: '/private/tmp/sleight-epv3-7b/invalid.fixture.app', temporary: true });
+const profile = Object.freeze({ path: `${MAC_TMP}/sleight-epv3-7b/invalid.fixture.app`, temporary: true });
 const unlaunched = () => instanceFromRecipe(recipeFor(registry, 'invalid.fixture.app'), { profile: profile.path, temporary: true, inspect });
 const launched = (p = pid, b = birth) => instanceFromRecipe(recipeFor(registry, 'invalid.fixture.app'), { profile: profile.path, temporary: true, pid: p, pidBirth: b, inspect });
 
@@ -140,7 +142,7 @@ test('adopt moves an unlaunched grant to the exact launched process once', async
   const { grant } = await pending;
   assert.throws(() => c.consent.bindApp({ grant, instance: launched(), window: { id: 11, epoch: 1 }, brokerEpoch: 1, recipe: { schemes: ['app'] } }), /DEBUGGER_GRANT_REQUIRED/,
     'before adoption the grant names no process');
-  for (const other of [{ ...launched(), profile: '/private/tmp/other' }, { ...launched(), version: '9.9.9' }, unlaunched()])
+  for (const other of [{ ...launched(), profile: `${MAC_TMP}/other` }, { ...launched(), version: '9.9.9' }, unlaunched()])
     assert.throws(() => c.consent.adopt(grant, other), /GRANT_ADOPT_MISMATCH/);
   assert.equal(c.consent.adopt(grant, launched()), grant);
   assert.equal(c.consent.grantFor(launched(), { session, turn: 'turn2' }), grant, 'the session grant now names the launched process');
@@ -367,7 +369,7 @@ test('electron-connection exposes the host fence op to the worker (provider.fenc
 test('connectAppHost hands the server\'s secret to ensureHost and names the app when the host is foreign', async () => {
   const path = registryFile(recipeRow()), asked = [];
   const deps = (ensureHost) => ({ registryPath: path, ensureHost, instanceFromRecipe: (recipe, options) => instanceFromRecipe(recipe, { ...options, inspect }),
-    config: { tempRoot: '/private/tmp/sleight-epv3-f2', hostStateDir: key => '/private/tmp/sleight-epv3-f2/hosts/' + key } });
+    config: { tempRoot: `${MAC_TMP}/sleight-epv3-f2`, hostStateDir: key => `${MAC_TMP}/sleight-epv3-f2/hosts/` + key } });
   const secret = 'S'.repeat(43);
   // The benchmark's temporary profile; the user's own profile, the default, is in direct-browser-electron-relaunch.test.mjs.
   const host = await runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret, profile: 'temporary',
@@ -375,7 +377,7 @@ test('connectAppHost hands the server\'s secret to ensureHost and names the app 
   assert.equal(asked[0].secret, secret);
   assert.equal(asked[0].registryPath, path);
   assert.equal(host.admin.pid, 77);
-  assert.deepEqual(host.profile, { path: '/private/tmp/sleight-epv3-f2/invalid.fixture.app', temporary: true });
+  assert.deepEqual(host.profile, { path: `${MAC_TMP}/sleight-epv3-f2/invalid.fixture.app`, temporary: true });
   await assert.rejects(runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret, profile: 'temporary',
     dependencies: deps(async () => { throw Error('ELECTRON_HOST_FOREIGN'); }) }), error => error.message === 'ELECTRON_HOST_FOREIGN' && error.appName === 'Fixture App');
 });

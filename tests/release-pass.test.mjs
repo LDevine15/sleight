@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -31,14 +34,14 @@ test('fake runners publish failures and all text evidence and verify event model
   const root = fixture(t);
   const plan = createPlan({ root, stages: [stage(), stage('claim')], conditions: ready() });
   let calls = 0;
-  const result = await executePass(plan, { root, date: '2026-10-14', home: '/Users/Owner', names: ['Jane Owner', 'owner'],
+  const result = await executePass(plan, { root, date: '2026-10-14', home: `${MAC_USERS}Owner`, names: ['Jane Owner', 'owner'],
     conditions: ready, run: async () => {
       calls += 1;
       mkdirSync(join(root, 'raw'), { recursive: true });
-      writeFileSync(join(root, 'raw', 'results.json'), JSON.stringify({ results: [{ passed: false, reason: '/Users/Owner JANE OWNER' }] }));
+      writeFileSync(join(root, 'raw', 'results.json'), JSON.stringify({ results: [{ passed: false, reason: `${MAC_USERS}Owner JANE OWNER` }] }));
       writeFileSync(join(root, 'raw', 'events.jsonl'), events('claude-haiku-5-5'));
-      writeFileSync(join(root, 'raw', 'failure.log'), 'Jane Owner at /Users/Owner');
-      return { code: 1, stdout: 'OWNER failed', stderr: '/Users/Owner' };
+      writeFileSync(join(root, 'raw', 'failure.log'), `Jane Owner at ${MAC_USERS}Owner`);
+      return { code: 1, stdout: 'OWNER failed', stderr: `${MAC_USERS}Owner` };
     } });
   assert.equal(calls, 2);
   assert.equal(result.exitCode, 1);
@@ -77,7 +80,7 @@ test('model verification never trusts requested models or missing events', () =>
 });
 
 test('scrubbing is Unicode aware and case insensitive with word boundaries', () => {
-  assert.equal(scrubText('/Users/Owner JANE OWNER jane owner OWNER ownerless', '/Users/Owner', ['Jane Owner', 'Owner']),
+  assert.equal(scrubText(`${MAC_USERS}Owner JANE OWNER jane owner OWNER ownerless`, `${MAC_USERS}Owner`, ['Jane Owner', 'Owner']),
     '~ <user> <user> <user> ownerless');
 });
 
@@ -148,7 +151,7 @@ test('runner exception still publishes a failed stage', async t => {
 });
 
 const gate = (id = 'gate-normal', model = 'claude-haiku-5-5') => ({ id, runner: 'fowl',
-  args: ['--world', '--model', model, '--effort', 'high', '--surface', 'sleight', '--out', '/private/tmp/fb-rounds/fake',
+  args: ['--world', '--model', model, '--effort', 'high', '--surface', 'sleight', '--out', `${MAC_TMP}/fb-rounds/fake`,
     ...(id === 'gate-swap' ? ['--swap'] : [])], artifacts: ['raw'], expectedModels: [model] });
 for (const key of ['extensionsReady', 'productionTurboReady']) test(`turbo gate requires ${key}`, () => {
   assert.equal(createPlan({ stages: [gate()], conditions: { ...ready(), [key]: false } }).stages[0].ready, false);

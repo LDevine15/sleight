@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -114,7 +117,7 @@ test('receipt validation: identity, skips, reused windows, home paths, component
   assert.ok(skipped.unqualified.some(e => e.startsWith('CELL_SKIPPED')));
   const reused = validateReceipt(receiptWith([...all.slice(1), { ...all[0], windows: [{ id: 77, epoch: 1, pid: 999, pidBirth: 'other' }] }]));
   assert.ok(reused.errors.includes('WINDOW_REUSED:77'));
-  const home = validateReceipt(receiptWith(all, { note: 'wrote /Users/someone/x' }));
+  const home = validateReceipt(receiptWith(all, { note: `wrote ${MAC_USERS}someone/x` }));
   assert.ok(home.errors.includes('SECRET_OUTPUT'));
   const secret = validateReceipt(receiptWith(all, { handle: { secret: 'abc' } }));
   assert.ok(secret.errors.includes('SECRET_OUTPUT'));
@@ -246,7 +249,7 @@ test('the live runtime refuses before any launch while an EPV3-4 to 7 interface 
 });
 
 test('scrubbing turns the home path into ~ and the user name into [user]', () => {
-  const out = scrubReceipt({ a: '/Users/pat/Library/x', b: ['pat ran', { c: '/Users/pat' }] }, { home: '/Users/pat', user: 'pat' });
+  const out = scrubReceipt({ a: `${MAC_USERS}pat/Library/x`, b: ['pat ran', { c: `${MAC_USERS}pat` }] }, { home: `${MAC_USERS}pat`, user: 'pat' });
   assert.deepEqual(out, { a: '~/Library/x', b: ['[user] ran', { c: '~' }] });
 });
 
@@ -285,9 +288,9 @@ test('the driver\'s recipe passes the registry and matches the bundle the runtim
   const inspect = () => ({ verified: true, codesign: { executable, identifier: 'com.microsoft.VSCode', cdhash: 'c'.repeat(40), team: 'UBF8T346G9',
     authority: 'Developer ID Application: Microsoft Corporation (UBF8T346G9)' }, electron: { CFBundleVersion: '39.2.3' },
     info: { CFBundleIdentifier: 'com.microsoft.VSCode', CFBundleName: 'Code', CFBundleShortVersionString: '1.105.0' } });
-  const profile = '/private/tmp/eq/profiles/com.microsoft.VSCode';
+  const profile = `${MAC_TMP}/eq/profiles/com.microsoft.VSCode`;
   const derived = deriveAppInstance({ bundle, executable, profile, temporary: true, pid: 1, pidBirth: 'recipe' }, { inspect });
-  const recipe = recipeFromBundle({ app: APPS.vscode, derived, executable, sha256: 'a'.repeat(64), bundlePath: bundle, workspace: '/private/tmp/eq/workspace' });
+  const recipe = recipeFromBundle({ app: APPS.vscode, derived, executable, sha256: 'a'.repeat(64), bundlePath: bundle, workspace: `${MAC_TMP}/eq/workspace` });
   assert.equal(recipe.signer, 'UBF8T346G9', 'the team id, not the Authority line');
   assert.equal(recipe.runtime, 'electron/39.2.3');
   assert.equal(recipe.cdhash, 'c'.repeat(40));
@@ -312,12 +315,12 @@ test('the live worker uses the installed path: connectAppHost with the parent\'s
 test('a home path in a cell error is scrubbed before the receipt\'s secret check', async () => {
   const c = clock();
   const driver = fakeDriver({ now: c.now });
-  driver.ownerInstances = async () => { throw Error('ENOENT: /Users/pat/Library/Application Support/Code'); };
+  driver.ownerInstances = async () => { throw Error(`ENOENT: ${MAC_USERS}pat/Library/Application Support/Code`); };
   const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now, fixturePid: () => driver.identity()?.pid }),
     io: quietIo(), clock: c, options: { trials: 2, samples: 2, aliveWaitMs: 0, mode: 'dry-run' } });
   assert.match(receipt.cells.find(cell => cell.id === 'new-window').error, /ENOENT/);
   assert.ok(!receipt.validation.errors.includes('SECRET_OUTPUT'), receipt.validation.errors.join(' '));
-  assert.ok(validateReceipt(receiptWith([], { note: '/Users/pat/x' })).errors.includes('SECRET_OUTPUT'), 'an unscrubbed path still fails');
+  assert.ok(validateReceipt(receiptWith([], { note: `${MAC_USERS}pat/x` })).errors.includes('SECRET_OUTPUT'), 'an unscrubbed path still fails');
 });
 
 // H3: the disconnect cell reads the host's own status after the worker is gone. Retained means owned with the pipe

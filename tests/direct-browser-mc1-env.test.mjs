@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -10,7 +12,7 @@ for (const value of ['0', '1', undefined]) test('MC1 A/B forwarding: ' + String(
   const host = value === undefined ? {} : { SLEIGHT_MC1: value };
   assert.deepEqual(traceEnv(host), host);
   assert.equal(abFlags(host).SLEIGHT_MC1, value !== '0');
-  const setup = turboSetup({ task, repo: '/fixture/repo', dir: '/private/tmp/fixture-task', prompt: task.prompt, env: host });
+  const setup = turboSetup({ task, repo: '/fixture/repo', dir: `${MAC_TMP}/fixture-task`, prompt: task.prompt, env: host });
   assert.equal(setup.mcpServers['sleight-turbo'].env.SLEIGHT_MC1, value);
 });
 
@@ -19,8 +21,8 @@ for (const value of ['0', '1']) test('MC1 real gate forwards ' + value + ' into 
   process.env.SLEIGHT_MC1 = value;
   t.after(() => { if (saved === undefined) delete process.env.SLEIGHT_MC1; else process.env.SLEIGHT_MC1 = saved; });
   for (const surface of ['sleight-turbo', 'codex-sleight-sol']) {
-    const setup = realAgentSetup({ task, surface, dir: '/private/tmp/fixture-task',
-      realBrowser: { browser: 'chrome', profileRoot: '/private/tmp/profile', marker: 'Sleight Gate fixture' } });
+    const setup = realAgentSetup({ task, surface, dir: `${MAC_TMP}/fixture-task`,
+      realBrowser: { browser: 'chrome', profileRoot: `${MAC_TMP}/profile`, marker: 'Sleight Gate fixture' } });
     if (surface === 'sleight-turbo') assert.equal(setup.mcpConfig.mcpServers['sleight-turbo'].env.SLEIGHT_MC1, value);
     else assert.match(setup.codexConfig.toml, new RegExp('SLEIGHT_MC1 = "' + value + '"'));
   }

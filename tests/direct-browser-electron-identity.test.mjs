@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { existsSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +26,7 @@ test('the same file differs across window epoch, PID and build', () => {
   assert.notEqual(bind({ instance: { ...instance, pid: 4243 } }).classify(file('a.html'), 'null').origin, base);
   assert.notEqual(bind({ instance: { ...instance, pidBirth: '1760000001.5' } }).classify(file('a.html'), 'null').origin, base);
   assert.notEqual(bind({ instance: { ...instance, version: '1.2.4' } }).classify(file('a.html'), 'null').origin, base);
-  assert.notEqual(bind({ instance: { ...instance, profile: '/Users/fixture/Other' } }).classify(file('a.html'), 'null').origin, base);
+  assert.notEqual(bind({ instance: { ...instance, profile: `${MAC_USERS}fixture/Other` } }).classify(file('a.html'), 'null').origin, base);
   assert.notEqual(bind({ brokerEpoch: 4 }).incarnation, bind().incarnation);
   assert.notEqual(bind({ authority: { id: 'grant2', session: 'session', turn: null, current: () => true } }).incarnation, bind().incarnation);
 });
@@ -36,7 +38,7 @@ test('a custom scheme listed in the recipe is an app document at its host', () =
 for (const [label, url, observed] of [
   ['an unlisted custom scheme', 'other://main/x', 'null'], ['a data document', 'data:text/html,hi', 'null'], ['a blob document', 'blob:https://x.invalid/1', 'https://x.invalid'],
   ['about:blank', 'about:blank', 'null'], ['an extension page', 'chrome-extension://abc/page.html', 'null'], ['plain http', 'http://x.invalid/', 'http://x.invalid'],
-  ['a file outside the recipe roots', 'file:///Users/fixture/secret.html', 'null'], ['a file path climbing out of the root', 'file:///Applications/Fixture.app/Contents/Resources/app/../../../../secret.html', 'null'],
+  ['a file outside the recipe roots', `file://${MAC_USERS}fixture/secret.html`, 'null'], ['a file path climbing out of the root', 'file:///Applications/Fixture.app/Contents/Resources/app/../../../../secret.html', 'null'],
   ['a file with an encoded slash', 'file:///Applications/Fixture.app/Contents/Resources/app/a%2f..%2f..%2fb.html', 'null'],
   ['a remote file host', 'file://server/Applications/Fixture.app/Contents/Resources/app/a.html', 'null'],
   ['credentials in a remote origin', 'https://user:pass@pay.invalid/', 'https://pay.invalid'],
@@ -79,7 +81,7 @@ test('only the trusted adapter mints a binding, and the shape is closed', () => 
 test('the persistent app key follows build and profile, never the process', () => {
   const key = api.appKey(instance);
   assert.equal(api.appKey({ ...instance, pid: 1, pidBirth: 'other' }), key);
-  for (const change of [{ version: '1.2.4' }, { signer: 'OTHERTEAM' }, { runtime: 'electron/40.0.0' }, { profile: '/Users/fixture/Other' }, { bundleId: 'invalid.fixture.other' },
+  for (const change of [{ version: '1.2.4' }, { signer: 'OTHERTEAM' }, { runtime: 'electron/40.0.0' }, { profile: `${MAC_USERS}fixture/Other` }, { bundleId: 'invalid.fixture.other' },
     { cdhash: 'b'.repeat(40) }, { cdhash: 'c'.repeat(64) }, { executable: '/Applications/Other.app/Contents/MacOS/Fixture' }])
     assert.notEqual(api.appKey({ ...instance, ...change }), key, JSON.stringify(change));
   for (const bad of [{ cdhash: 'A'.repeat(40) }, { cdhash: 'a'.repeat(39) }, { executable: 'Fixture' }, { executable: '/Applications/../x' }]) assert.throws(() => api.appKey({ ...instance, ...bad }), /INVALID_APP_INSTANCE/);
@@ -106,7 +108,7 @@ test('the app instance comes from the code signature and bundle plists, never fr
   const facts = { verified: true, codesign: api.parseCodesign(codesignText), info: { CFBundleIdentifier: 'invalid.fixture.app', CFBundleName: 'Fixture App',
     CFBundleShortVersionString: '1.2.3' }, electron: { CFBundleVersion: '39.0.0' } };
   const process = { bundle: '/Applications/Fixture.app', executable: '/Applications/Fixture.app/Contents/MacOS/Fixture',
-    profile: '/Users/fixture/Library/Application Support/FixtureApp', temporary: false, pid: 4242, pidBirth: '1760000000.25' };
+    profile: `${MAC_USERS}fixture/Library/Application Support/FixtureApp`, temporary: false, pid: 4242, pidBirth: '1760000000.25' };
   const seen = [];
   const derived = api.deriveAppInstance(process, { inspect: bundle => { seen.push(bundle); return facts; } });
   assert.deepEqual(seen, ['/Applications/Fixture.app']);

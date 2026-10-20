@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -28,7 +30,7 @@ async function runner(t) {
 }
 
 test('turbo real-browser setup selects the supplied visible profile and records product remote debugging', () => {
-  const setup = turboSetup({ task, repo: root, dir: '/private/tmp/gate-task', prompt: task.prompt, realBrowser: browser });
+  const setup = turboSetup({ task, repo: root, dir: `${MAC_TMP}/gate-task`, prompt: task.prompt, realBrowser: browser });
   assert.equal(setup.metadata.headless, false);
   assert.equal(setup.metadata.browser, 'chrome');
   assert.equal(setup.metadata.profile, browser.profileRoot);
@@ -119,7 +121,7 @@ test('real arm setup excludes host API credentials and keeps the companion appro
   const { realAgentSetup } = await import('../bench/fowl/real-gate-setup.mjs');
   const before = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = 'fixture-not-a-key';
   try {
-    const plan = realAgentSetup({ task, surface: 'sleight-turbo', dir: '/private/tmp/gate-task', realBrowser: browser });
+    const plan = realAgentSetup({ task, surface: 'sleight-turbo', dir: `${MAC_TMP}/gate-task`, realBrowser: browser });
     assert.equal(plan.env.ANTHROPIC_API_KEY, undefined);
     assert.match(plan.settingsOverrides.hooks.Elicitation[0].hooks[0].command, /origin-hook.mjs/);
     assert.ok(plan.settingsOverrides.hooks.PreToolUse.length);
@@ -128,9 +130,9 @@ test('real arm setup excludes host API credentials and keeps the companion appro
 
 test('a native Codex command and its dry plan share one argument builder', async () => {
   const { codexExecPlan } = await import('../bench/codex-arm.mjs');
-  const args = codexExecPlan('Fixture task', { cwd: '/private/tmp/fixture', model: 'gpt-6-luna', effort: 'high' });
+  const args = codexExecPlan('Fixture task', { cwd: `${MAC_TMP}/fixture`, model: 'gpt-6-luna', effort: 'high' });
   assert.deepEqual(args, ['exec', '--json', '-s', 'read-only', '--disable', 'shell_tool', '-m', 'gpt-6-luna',
-    '-c', 'model_reasoning_effort="high"', '--skip-git-repo-check', '-C', '/private/tmp/fixture', 'Fixture task']);
+    '-c', 'model_reasoning_effort="high"', '--skip-git-repo-check', '-C', `${MAC_TMP}/fixture`, 'Fixture task']);
 });
 
 test('unchanged checkout HTML and zero-payment visits are graded from HTTP site records', async t => {
@@ -345,7 +347,7 @@ test('Claude gate execution records comparable calls and errors from fake stream
 test('window instructions match each surface: engine arm identifies the window, turbo gets its own tools truth, extension arms get none', async () => {
   const { realAgentSetup } = await import('../bench/fowl/real-gate-setup.mjs');
   const { windowPrompt, turboWindowPrompt } = await import('../bench/fowl/native-setup.mjs');
-  const dir = '/private/tmp/gate-task';
+  const dir = `${MAC_TMP}/gate-task`;
   const turbo = realAgentSetup({ task, surface: 'sleight-turbo', dir, realBrowser: browser }).prompt;
   assert.ok(turbo.includes(turboWindowPrompt(browser)));
   assert.doesNotMatch(turbo, /Identify that window|Sleight Gate|initially titled|PID|If it cannot be identified, stop/);

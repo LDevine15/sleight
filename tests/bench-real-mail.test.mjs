@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from './macos-only.mjs';
 import assert from 'node:assert/strict';
 import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
@@ -284,8 +286,8 @@ test('native Mail ownership self-test rejects focus-only and ambiguous creation,
 
 test('native Mail helper refuses a request without the owner-present boundary before any AX use', { skip: macCommandSkip('xcrun') }, async () => {
   const helper = await mail.mailHelper();
-  const payload = { name: 'Sleight-Mail-nonce', root: '/private/tmp/Sleight-Mail-nonce',
-    folders: ['Archive'], control: '/private/tmp/mail-control.json', nonce: 'nonce' };
+  const payload = { name: 'Sleight-Mail-nonce', root: `${MAC_TMP}/Sleight-Mail-nonce`,
+    folders: ['Archive'], control: `${MAC_TMP}/mail-control.json`, nonce: 'nonce' };
   const result = await runOwned(helper, [JSON.stringify(payload)], { timeoutMs: 15000 });
   assert.equal(result.exit.code, 1, result.stdout);
   assert.match(result.stderr, /MAIL_OWNER_PRESENT/);

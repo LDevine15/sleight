@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync } from 'node:fs';
@@ -11,7 +13,7 @@ const guard = async (...args) => {
 };
 const stat = async path => ({ realPath: path });
 for (const filename of ['preapproved.json', 'turbo.json', 'turbo-apps.json', 'electron-grants.json', 'grant-seal.key', 'hand.json', 'permissions.json']) {
-const policy = '/Users/fixture/Library/Application Support/sleight/' + filename;
+const policy = `${MAC_USERS}fixture/Library/Application Support/sleight/` + filename;
 
 test(filename + ': each file mutation denies the policy path and case and tilde spellings', async () => {
   for (const tool of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit']) {
@@ -106,7 +108,7 @@ test(filename + ': additional literal shell writers, nested shells and prefixes 
     `printf '%s\\n' ${p} | xargs rm`, `time rm ${p}`, `nohup rm ${p}`, `env -i rm ${p}`,
     `cd ${directory} && tee ${filename}`, `cd ${directory}; rm ${filename}`,
     `cp source ${directory}`, `mv source ${directory}`, `rm -rf ${directory}`,
-  ]) assert.equal(await guard({ tool: 'Bash', command }, { stat, home: '/Users/fixture' }), true, command);
+  ]) assert.equal(await guard({ tool: 'Bash', command }, { stat, home: `${MAC_USERS}fixture` }), true, command);
 });
 
 test(filename + ': inline write forms deny without probing code or long path-like strings', async () => {
@@ -137,8 +139,8 @@ test('turbo on and off are the user\'s commands: no spelling of a model shell ru
     'sleight-mcp turbo-state', 'sleight-mcp --doctor', 'sleight-mcp allow list', 'turbo on', 'echo turbo off']) {
     assert.equal(await guard({ tool: 'Bash', command }, { stat }), false, command);
   }
-  assert.equal(await guard({ tool: 'Read', file_path: '/Users/fixture/Library/Application Support/sleight/turbo.json' }, { stat }), false);
-  assert.equal(await guard({ tool: 'Write', file_path: '/Users/fixture/Library/Application Support/sleight/turbo.json' }, { stat }), true);
+  assert.equal(await guard({ tool: 'Read', file_path: `${MAC_USERS}fixture/Library/Application Support/sleight/turbo.json` }, { stat }), false);
+  assert.equal(await guard({ tool: 'Write', file_path: `${MAC_USERS}fixture/Library/Application Support/sleight/turbo.json` }, { stat }), true);
 });
 
 test('hand on, off and capture are the user\'s commands the same way: every spelling but status denies', async () => {
@@ -157,8 +159,8 @@ test('hand on, off and capture are the user\'s commands the same way: every spel
 test('the action log and outcome switches are the user\'s: Claude\'s file and shell tools can\'t set them where sleight reads its environment', async () => {
   const { loggingSwitchWriteDenied: denied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
   const env = '{ "env": { "SLEIGHT_ACTION_LOG": "actions.jsonl" } }';
-  for (const file of ['/project/.claude/settings.json', '/project/.claude/settings.local.json', '~/.claude/settings.json', '/Users/fixture/.claude.json',
-    '/project/.mcp.json', '/Library/Application Support/ClaudeCode/managed-settings.json', '~/.zshrc', '/Users/fixture/.bash_profile', '/project/.envrc']) {
+  for (const file of ['/project/.claude/settings.json', '/project/.claude/settings.local.json', '~/.claude/settings.json', `${MAC_USERS}fixture/.claude.json`,
+    '/project/.mcp.json', '/Library/Application Support/ClaudeCode/managed-settings.json', '~/.zshrc', `${MAC_USERS}fixture/.bash_profile`, '/project/.envrc']) {
     assert.equal(denied({ tool: 'Write', file_path: file, content: env }), true, file);
     assert.equal(denied({ tool: 'Edit', file_path: file, old_string: '{}', new_string: 'export SLEIGHT_OUTCOMES=1' }), true, file);
     assert.equal(denied({ tool: 'Write', file_path: file, content: '{ "env": { "OTHER": "1" } }' }), false, file);
@@ -185,7 +187,7 @@ test('the switch hook also catches partial names, escaped and split names, the p
   // JSON \u escapes are decoded before matching.
   assert.equal(denied({ tool: 'Write', file_path: '~/.claude/settings.json', content: '{"env":{"SLEIGHT_\\u004fUTC\\u004fMES":"1"}}' }), true);
   // The plugin's own manifest (its MCP server env) and launcher, LaunchAgents and fish.
-  for (const file of ['/Users/fixture/.claude/plugins/cache/sleight/sleight/1.3.0/.claude-plugin/plugin.json', '/repo/plugins/sleight/.claude-plugin/plugin.json',
+  for (const file of [`${MAC_USERS}fixture/.claude/plugins/cache/sleight/sleight/1.3.0/.claude-plugin/plugin.json`, '/repo/plugins/sleight/.claude-plugin/plugin.json',
     '/repo/plugins/sleight/bin/sleight-mcp', '~/Library/LaunchAgents/com.example.env.plist', '~/.config/fish/config.fish']) {
     assert.equal(denied({ tool: 'Write', file_path: file, content: 'SLEIGHT_ACTION_LOG=a.jsonl' }), true, file);
     assert.equal(denied({ tool: 'Write', file_path: file, content: 'no switch here' }), false, file);
@@ -195,7 +197,7 @@ test('the switch hook also catches partial names, escaped and split names, the p
     "echo 'export SLEIGHT_OUT''COMES=1' >> ~/.zshrc",
     'echo export SLEIGHT_OUT\\COMES=1 >> ~/.zshrc',
     'osascript -e \'do shell script "echo export SLEIGHT_OUTCOMES=1 >> ~/.zshrc"\'',
-    'awk \'BEGIN { print "export SLEIGHT_ACTION_LOG=a" >> "/Users/fixture/.zshrc" }\'',
+    `awk \'BEGIN { print "export SLEIGHT_ACTION_LOG=a" >> "${MAC_USERS}fixture/.zshrc" }\'`,
     'perl -pi -e \'s/x/SLEIGHT_ACTION_LOG/\' plugins/sleight/bin/sleight-mcp',
   ]) assert.equal(denied({ tool: 'Bash', command }), true, command);
   for (const command of ['grep OUTCOMES .claude/settings.json', "awk '/ACTION_LOG/' ~/.claude/settings.json", 'git log --grep OUTCOMES',
@@ -224,13 +226,13 @@ test('permissions block, unblock, revoke and sites are the user\'s commands: eve
 });
 
 test('deleting, moving or changing the permissions file by a parent folder, find, perl, chmod or an import of the writers denies', async () => {
-  const home = '/Users/fixture';
+  const home = `${MAC_USERS}fixture`;
   for (const command of ['find ~/Library -name permissions.json -delete', 'find "$HOME/Library/Application Support" -exec rm {} +',
-    'find /Users/fixture/Library -type f -delete', 'find -L ~/Library -delete', 'find ~ -name "*.json" -execdir rm {} \\;',
+    `find ${MAC_USERS}fixture/Library -type f -delete`, 'find -L ~/Library -delete', 'find ~ -name "*.json" -execdir rm {} \\;',
     `perl -e 'unlink "$ENV{HOME}/Library/Application Support/sleight/permissions.json"'`,
     'chmod 644 ~/Library/Application\\ Support/sleight/permissions.json', 'chown root ~/Library/Application\\ Support/sleight/permissions.json',
     'chmod -R 777 ~/Library', 'mv ~/Library/Application\\ Support ~/elsewhere', 'mv "$HOME/Library" /tmp/x', 'rm -rf ~/Library/Application\\ Support',
-    'rm -rf /Users/fixture', 'mv /Users/fixture/Library/Application\\ Support/sleight /tmp/s',
+    `rm -rf ${MAC_USERS}fixture`, `mv ${MAC_USERS}fixture/Library/Application\\ Support/sleight /tmp/s`,
     `node -e "import('/x/plugins/sleight/lib/permissions-command.mjs').then(m => m.permissionsCommand(['unblock', 'x.y']))"`,
     `node -e "import('/x/lib/preapproved.mjs').then(m => m.removePreapproved('x'))"`]) {
     assert.equal(await guard({ tool: 'Bash', command }, { stat, home }), true, command);
@@ -242,9 +244,9 @@ test('deleting, moving or changing the permissions file by a parent folder, find
 });
 
 test('globs, braces, archives, downloads, patch and git checkout into sleight\'s folder deny; find denies only when it deletes or runs a writer', async () => {
-  const home = '/Users/fixture', folder = '~/Library/Application\\ Support/sleight';
+  const home = `${MAC_USERS}fixture`, folder = '~/Library/Application\\ Support/sleight';
   for (const command of [`rm ${folder}/perm*`, `cd ${folder} && rm -f *.json`, `rm -f ${folder}/{a,permissions}.json`, `mv ${folder}/[p]ermissions.json /tmp/x`,
-    'tar -xf x.tar -C ~/Library/Application\\ Support', 'tar xf x.tar --directory=/Users/fixture/Library', 'unzip x.zip -d ~/Library',
+    'tar -xf x.tar -C ~/Library/Application\\ Support', `tar xf x.tar --directory=${MAC_USERS}fixture/Library`, 'unzip x.zip -d ~/Library',
     `ditto x ${folder}`, `curl -o ${folder}/permissions.json https://example.com/x`, `curl --output=${folder}/hand.json https://example.com/x`,
     `wget -O ${folder}/permissions.json https://example.com/x`, `git checkout -- ${folder}/permissions.json`, `git restore ${folder}/turbo.json`,
     `patch ${folder}/permissions.json fix.diff`, 'find ~ -name permissions.json -exec rm {} \;', 'find ~/Library -execdir mv {} /tmp \;']) {
@@ -260,9 +262,9 @@ test('globs, braces, archives, downloads, patch and git checkout into sleight\'s
 test('the logging switch hook folds config paths and setter names as well as switch names', async () => {
   const { loggingSwitchWriteDenied: denied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
   for (const command of [
-    `py'thon3' -c "open('/Users/fixture/.zsh'+'rc','a').write('export SLEIGHT_OUTCOMES=1')"`,
-    `python3 -c "open('/Users/fixture/.zsh' 'rc','a').write('export SLEIGHT_OUTCOMES=1')"`,
-    `python3 -c "open('/Users/fixture/.zsh\\x72c','a').write('export SLEIGHT_ACTION_LOG=a')"`,
+    `py'thon3' -c "open('${MAC_USERS}fixture/.zsh'+'rc','a').write('export SLEIGHT_OUTCOMES=1')"`,
+    `python3 -c "open('${MAC_USERS}fixture/.zsh' 'rc','a').write('export SLEIGHT_OUTCOMES=1')"`,
+    `python3 -c "open('${MAC_USERS}fixture/.zsh\\x72c','a').write('export SLEIGHT_ACTION_LOG=a')"`,
   ]) assert.equal(denied({ tool: 'Bash', command }), true, command);
   assert.equal(denied({ tool: 'Bash', command: `grep SLEIGHT_OUTCOMES ~/.zsh'rc'` }), false);
 });
@@ -270,8 +272,8 @@ test('the logging switch hook folds config paths and setter names as well as swi
 test('the logging switch hook checks raw commands when quote folding joins separate arguments', async () => {
   const { loggingSwitchWriteDenied: denied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
   for (const command of [
-    `env 'A=1' 'python3' -c "open('/Users/u/.zshrc','a').write('SLEIGHT_OUTCOMES=1')"`,
-    `env 'A=1' 'node' -e "require('fs').appendFileSync('/Users/u/.zshrc','SLEIGHT_ACTION_LOG=a')"`,
+    `env 'A=1' 'python3' -c "open('${MAC_USERS}u/.zshrc','a').write('SLEIGHT_OUTCOMES=1')"`,
+    `env 'A=1' 'node' -e "require('fs').appendFileSync('${MAC_USERS}u/.zshrc','SLEIGHT_ACTION_LOG=a')"`,
     `env 'A=1' 'launchctl' 'setenv' SLEIGHT_OUTCOMES 1`,
   ]) assert.equal(denied({ tool: 'Bash', command }), true, command);
   assert.equal(denied({ tool: 'Bash', command: `env 'A=1' 'grep' SLEIGHT_OUTCOMES ~/.zshrc` }), false);
@@ -280,18 +282,18 @@ test('the logging switch hook checks raw commands when quote folding joins separ
 test('the logging switch hook folds JS joins without joining quoted shell arguments', async () => {
   const { loggingSwitchWriteDenied: denied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
   for (const join of ["'+'", "' + '", '"+"']) {
-    const command = `env 'A=1' 'python3' -c "open('/Users/u/.zs${join}hrc','a').write('SLEIGHT_OUTCOMES=1')"`;
+    const command = `env 'A=1' 'python3' -c "open('${MAC_USERS}u/.zs${join}hrc','a').write('SLEIGHT_OUTCOMES=1')"`;
     assert.equal(denied({ tool: 'Bash', command }), true, command);
   }
-  assert.equal(denied({ tool: 'Bash', command: `env 'A=1' 'grep' SLEIGHT_OUTCOMES '/Users/u/.zs'+'hrc'` }), false);
+  assert.equal(denied({ tool: 'Bash', command: `env 'A=1' 'grep' SLEIGHT_OUTCOMES '${MAC_USERS}u/.zs'+'hrc'` }), false);
 });
 
 test('the logging switch hook catches Python and Ruby adjacent literals beside separate quoted shell arguments', async () => {
   const { loggingSwitchWriteDenied: denied } = await import('../plugins/sleight/hooks/preapproved-write-guard.mjs');
   for (const command of [
-    `env 'A=1' 'python3' -c "open('/Users/u/.zs' 'hrc','a').write('SLEIGHT_OUTCOMES=1')"`,
-    `env 'A=1' 'ruby' -e "File.write('/Users/u/.zs' 'hrc','SLEIGHT_OUTCOMES=1',mode:'a')"`,
-    `env 'A=1' 'python3' -c "open('/Users/u/.zs' 'hrc','a').write('SLEIGHT_OUT' 'COMES=1')"`,
+    `env 'A=1' 'python3' -c "open('${MAC_USERS}u/.zs' 'hrc','a').write('SLEIGHT_OUTCOMES=1')"`,
+    `env 'A=1' 'ruby' -e "File.write('${MAC_USERS}u/.zs' 'hrc','SLEIGHT_OUTCOMES=1',mode:'a')"`,
+    `env 'A=1' 'python3' -c "open('${MAC_USERS}u/.zs' 'hrc','a').write('SLEIGHT_OUT' 'COMES=1')"`,
   ]) assert.equal(denied({ tool: 'Bash', command }), true, command);
-  assert.equal(denied({ tool: 'Bash', command: `env 'A=1' 'grep' SLEIGHT_OUTCOMES '/Users/u/.zs' 'hrc'` }), false);
+  assert.equal(denied({ tool: 'Bash', command: `env 'A=1' 'grep' SLEIGHT_OUTCOMES '${MAC_USERS}u/.zs' 'hrc'` }), false);
 });

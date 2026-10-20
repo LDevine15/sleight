@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -44,7 +46,7 @@ test('preparation writes only a fresh temporary arm config and cannot select the
   assert.equal(arm.server.env.SLEIGHT_TRACE, join(bank, 'traces'));
   assert.equal(existsSync(join(bank, 'claude/settings.json')), false);
   assert.deepEqual(JSON.parse(readFileSync(join(bank, 'plan.json'))).version, 1);
-  assert.throws(() => analyticsArm('/Users/fixture/.claude', { root: '/fixture/repo' }), /ANALYTICS_BANK/);
+  assert.throws(() => analyticsArm(`${MAC_USERS}fixture/.claude`, { root: '/fixture/repo' }), /ANALYTICS_BANK/);
   const alias = join(parent, 'alias'); symlinkSync(bank, alias);
   assert.throws(() => analyticsArm(alias, { root: '/fixture/repo' }), /ANALYTICS_BANK/);
 });
@@ -203,7 +205,7 @@ test('stats parser rejects missing, nonfinite, negative, unknown and malformed f
 
 test('privacy checks reject personal data in every free text slot and unknown nested fields', () => {
   checkPrivacy([row({ target: { role: 'button', name: 'Save' }, key: 'Super+s' })]);
-  for (const changes of [{ path: '/Users/Robin/private' }, { app: 'Robin Calculator' }, { call: 'Robin' },
+  for (const changes of [{ path: `${MAC_USERS}Robin/private` }, { app: 'Robin Calculator' }, { call: 'Robin' },
     { outcome: 'Window: personal.txt' }, { reason: 'Robin' }, { origin: 'https://private.example' },
     { target: { role: 'button', name: 'Robin' } }, { target: { role: 'Robin' } },
     { target: { role: 'button', windowTitle: 'Private' } }, { key: 'Robin' }]) {

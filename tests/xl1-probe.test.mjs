@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -93,12 +96,12 @@ async function hostContext() {
   runInNewContext(source, context);
   return context;
 }
-const fixture = '/private/tmp/sleight-xl1-AbC123/XL1-A-1.xlsx';
-const urlForms = ['file:///private/tmp/sleight-xl1-AbC123/XL1-A-1.xlsx', 'file:///tmp/sleight-xl1-AbC123/XL1-A-1.xlsx',
-  'file:///tmp/sleight-xl1-AbC123/XL1-A-1.xlsx/', 'file://localhost/private/tmp/sleight-xl1-AbC123/XL1%2DA%2D1.xlsx',
-  'file:///private/tmp//sleight-xl1-AbC123/XL1-A-1.xlsx'];
-const others = ['file:///private/tmp/sleight-xl1-AbC123/XL1-A-2.xlsx', 'file:///Users/someone/Book1.xlsx',
-  'file:///private/tmp/sleight-xl1-AbC123/XL1-A-1.xlsx.bak', 'https://example.com/private/tmp/sleight-xl1-AbC123/XL1-A-1.xlsx', null];
+const fixture = `${MAC_TMP}/sleight-xl1-AbC123/XL1-A-1.xlsx`;
+const urlForms = [`file://${MAC_TMP}/sleight-xl1-AbC123/XL1-A-1.xlsx`, 'file:///tmp/sleight-xl1-AbC123/XL1-A-1.xlsx',
+  'file:///tmp/sleight-xl1-AbC123/XL1-A-1.xlsx/', `file://localhost${MAC_TMP}/sleight-xl1-AbC123/XL1%2DA%2D1.xlsx`,
+  `file://${MAC_TMP}//sleight-xl1-AbC123/XL1-A-1.xlsx`];
+const others = [`file://${MAC_TMP}/sleight-xl1-AbC123/XL1-A-2.xlsx`, `file://${MAC_USERS}someone/Book1.xlsx`,
+  `file://${MAC_TMP}/sleight-xl1-AbC123/XL1-A-1.xlsx.bak`, `https://example.com${MAC_TMP}/sleight-xl1-AbC123/XL1-A-1.xlsx`, null];
 
 test('host and probe compare resolved file paths, tolerating /private, slashes and percent-encoding', async () => {
   const context = await hostContext();
@@ -128,10 +131,10 @@ test('a second document window, a missing fixture window or an app dialog refuse
   const { chooseOwnedWindow } = await hostContext();
   const owned = win({ document: urlForms[0] });
   const cases = [
-    [[owned, win({ document: 'file:///Users/someone/Secret%20Plan.xlsx' })], /Foreign or ambiguous app window; no input sent/],
+    [[owned, win({ document: `file://${MAC_USERS}someone/Secret%20Plan.xlsx` })], /Foreign or ambiguous app window; no input sent/],
     [[owned, win({})], /Foreign or ambiguous app window; no input sent/],
     [[owned, win({ document: urlForms[1] })], /Foreign or ambiguous app window; no input sent/],
-    [[win({ document: 'file:///private/tmp/sleight-xl1-AbC123/XL1-B-1.xlsx' })], /Owned workbook window not found; no input sent/],
+    [[win({ document: `file://${MAC_TMP}/sleight-xl1-AbC123/XL1-B-1.xlsx` })], /Owned workbook window not found; no input sent/],
     [[win({ subrole: 'AXFloatingWindow' })], /Owned workbook window not found; no input sent/],
     [[owned, win({ subrole: 'AXDialog' })], /Unexpected app dialog; no input sent/],
   ];

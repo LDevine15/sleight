@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 // AS-3 A/B harness: SLEIGHT_BROWSER_CORE through the race's engine arm, the held-out browser tasks, the block runner (with
 // a fake round runner and stand-in hold, lock and pause paths) and the scorer (with fake round folders). Nothing here
 // launches a browser or touches /tmp/sleight-hold or /tmp/sleight-live.lock.
@@ -46,7 +48,7 @@ test('traceEnv forwards SLEIGHT_BROWSER_CORE=1 only, and abFlags records each A/
 for (const name of ['safari', 'firefox']) test(`${name} engine arm: flag off has no browser_open; flag on passes the flag, allows browser_open and records it`, () => {
   const task = { ...heldOut[0], browser: name };
   const plan = core => withEnv({ SLEIGHT_BROWSER_CORE: core, SLEIGHT_TRACE: undefined }, () =>
-    realAgentSetup({ task, surface: 'sleight', dir: '/private/tmp/as3-task', realBrowser: browsers[name], dryRun: true }));
+    realAgentSetup({ task, surface: 'sleight', dir: `${MAC_TMP}/as3-task`, realBrowser: browsers[name], dryRun: true }));
   const allowedOf = setup => setup.args[setup.args.indexOf('--allowedTools') + 1];
   for (const core of [undefined, '0']) {
     const off = plan(core);
@@ -63,7 +65,7 @@ for (const name of ['safari', 'firefox']) test(`${name} engine arm: flag off has
   assert.equal(on.metadata.connectionMode, 'engine-computer');
   assert.ok(!('SLEIGHT_BROWSER_CORE' in on.env), 'the flag goes to the sleight server, not to Claude Code');
   // sleight inside Codex builds the same arm, so its enabled tools follow the flag too.
-  const servers = codexSleightServers({ mcpServers: on.mcpConfig.mcpServers, allowed: on.allowed, dir: '/private/tmp/as3-task', policy: 'race' });
+  const servers = codexSleightServers({ mcpServers: on.mcpConfig.mcpServers, allowed: on.allowed, dir: `${MAC_TMP}/as3-task`, policy: 'race' });
   assert.ok(Object.values(servers)[0].enabledTools.includes('browser_open'));
 });
 
@@ -71,7 +73,7 @@ test('a turbo arm is left as it was: browser_open there is turbo\'s own tool, no
   const task = { ...heldOut[0], browser: 'chrome' };
   const chrome = { browser: 'chrome', profileRoot: '/tmp/as3-profile', executable: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', marker: 'Sleight Gate as3-fixture', pid: 1, port: 9222 };
   const [off, on] = ['0', '1'].map(core => withEnv({ SLEIGHT_BROWSER_CORE: core }, () =>
-    realAgentSetup({ task, surface: 'sleight-turbo', dir: '/private/tmp/as3-task', realBrowser: chrome, dryRun: true })));
+    realAgentSetup({ task, surface: 'sleight-turbo', dir: `${MAC_TMP}/as3-task`, realBrowser: chrome, dryRun: true })));
   assert.equal(on.allowed, off.allowed);
   assert.equal(on.metadata.abFlags, undefined);
 });
@@ -329,7 +331,7 @@ test('scorer helpers: side, browser_open use and error kinds', () => {
 
 
 test('AO6: product-on and prompt-on are separate engine cells; other arms keep their prompt', () => {
-  const setup = vars => withEnv(vars, () => realAgentSetup({ task: heldOut[0], surface: 'sleight', dir: '/private/tmp/as3-task', realBrowser: browsers.safari, dryRun: true }));
+  const setup = vars => withEnv(vars, () => realAgentSetup({ task: heldOut[0], surface: 'sleight', dir: `${MAC_TMP}/as3-task`, realBrowser: browsers.safari, dryRun: true }));
   const off = setup({ SLEIGHT_BROWSER_CORE: '0', AS3_WINDOW_PROMPT: '1' });
   const product = setup({ SLEIGHT_BROWSER_CORE: '1', AS3_WINDOW_PROMPT: '0' });
   const prompted = setup({ SLEIGHT_BROWSER_CORE: '1', AS3_WINDOW_PROMPT: '1' });

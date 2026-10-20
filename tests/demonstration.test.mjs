@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { test } from './macos-only.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
@@ -91,7 +92,7 @@ test('secure, ambiguous, drag, web, window-switch and unsupported input observat
 });
 
 test('watch checks trust before starting observation and never replaces a file', async t => {
-  const home = trackTemp(mkdtempSync('/private/tmp/sleight-demo-test-'));
+  const home = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-demo-test-')));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const output = join(home, 'task.json');
   let observed = 0;
@@ -107,7 +108,7 @@ test('watch checks trust before starting observation and never replaces a file',
 });
 
 test('watch refuses missing listen permission and incomplete event streams without saving', async t => {
-  const home = trackTemp(mkdtempSync('/private/tmp/sleight-demo-test-'));
+  const home = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-demo-test-')));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const output = join(home, 'task.json');
   await assert.rejects(recordWatch({ app: 'com.apple.calculator', output, input: { isTTY: true }, notify: async () => {}, helper: { check: async () => ({ trusted: true, listening: false }) } }), /Input Monitoring/);
@@ -134,7 +135,7 @@ test('menu opening records a step and AX/mouse duplicates reconcile in either ca
 
 test('HID idle time is nanoseconds from ioreg, and the observer compiles once per source hash', async t => {
   assert.equal(await sessionIdleSeconds({ execFile: async () => ({ stdout: '| | |   "HIDIdleTime" = 10865666\n' }) }), 10865666 / 1e9);
-  const home = trackTemp(mkdtempSync('/private/tmp/sleight-observer-cache-'));
+  const home = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-observer-cache-')));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const source = join(home, 'demonstration.swift');
   writeFileSync(source, 'source-a');
