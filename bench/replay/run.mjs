@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,6 +12,7 @@ import { requireReplayLauncher } from './launcher-contract.mjs';
 import { windowReceipts, isNativeSelection } from './frames.mjs';
 import { prepareReplay } from './fixtures.mjs';
 import { campaignEvidence } from './checks.mjs';
+import { createReplayRecorder } from './evidence.mjs';
 
 const repo = fileURLToPath(new URL('../..', import.meta.url));
 export function options(argv) {
@@ -69,7 +70,7 @@ export function replayServers(servers, worktree = repo) {
   return specs;
 }
 
-async function clientsFor({ servers, policy, env, turbo, gateWindow }, switches, dir, record, worktree) {
+export async function clientsFor({ servers, policy, env, turbo, gateWindow }, switches, dir, record, worktree) {
   const { probeClient } = await import('../double-keys-client.mjs');
   const { answerElicitation, guardReason } = await import('../codex-sleight-proxy.mjs');
   const host = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'TERM'].flatMap(k => process.env[k] ? [[k, process.env[k]]] : []));
@@ -81,11 +82,17 @@ async function clientsFor({ servers, policy, env, turbo, gateWindow }, switches,
   let declined = false;
   const close = async () => {
     const errors = [];
+    let unconfirmed = false;
     for (const [name, client] of [...clients].reverse()) {
-      try { await client.close(); if (exits.get(name)?.code !== 0) throw Error(`Owned ${name} server did not exit cleanly`); }
-      catch (error) { errors.push(error.message); }
+      // A nonzero exit is a run failure, but the close event still proves collection.
+      try {
+        await client.close();
+        if (!exits.has(name)) throw Error(`Owned ${name} server exit unconfirmed`);
+        const exit = exits.get(name);
+        if (exit.code !== 0) errors.push(`Owned ${name} server exited (${exit.signal ?? exit.code})`);
+      } catch (error) { unconfirmed = true; errors.push(error.message); }
     }
-    if (errors.length) throw Object.assign(Error(errors.join('; ')), { cleanupUnconfirmed: true });
+    if (errors.length) throw Object.assign(Error(errors.join('; ')), { cleanupConfirmed: !unconfirmed, cleanupUnconfirmed: unconfirmed });
   };
   try {
     for (const [name, spec] of Object.entries(specs)) {
@@ -219,7 +226,7 @@ export async function main(argv = process.argv.slice(2)) {
     for (const step of order) {
       await beforeCall();
       const dir = join(out, `${runs.length + 1}-${step.variant}`); mkdirSync(dir, { mode: 0o700 });
-      const record = event => appendFileSync(join(dir, 'trace.jsonl'), JSON.stringify({ t: new Date().toISOString(), ...event }) + '\n', { mode: 0o600 });
+      const record = createReplayRecorder(dir);
       if (step.build) {
         const current = buildIdentity(step.build.worktree, step.build.label);
         if (current.commit !== step.build.commit || current.trackedDirty !== step.build.trackedDirty || current.trackedDiffSHA256 !== step.build.trackedDiffSHA256)

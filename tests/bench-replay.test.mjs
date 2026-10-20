@@ -356,10 +356,10 @@ test('native replay shim loads the selected build with empty approvals and no pa
     mkdirSync(join(dir, 'plugins/sleight/lib'), { recursive: true });
     writeFileSync(join(dir, 'plugins/sleight/lib/launch.mjs'), `export async function run({ approvalStorage, paymentCardFactory, directBrowser } = {}) {
       console.log(JSON.stringify({ build: 'old fixture', grants: approvalStorage.load().list(),
-        cardSuppressed: paymentCardFactory() === undefined, directBrowser }));
+        cardSuppressed: paymentCardFactory() === undefined, directBrowser, turbo: process.env.SLEIGHT_TURBO }));
     }`);
     const output = execFileSync(process.execPath, ['bench/replay/server.mjs', '--worktree', dir], { encoding: 'utf8' });
-    assert.deepEqual(JSON.parse(output), { build: 'old fixture', grants: [], cardSuppressed: true, directBrowser: false });
+    assert.deepEqual(JSON.parse(output), { build: 'old fixture', grants: [], cardSuppressed: true, turbo: '0' });
     writeFileSync(join(dir, 'plugins/sleight/lib/launch.mjs'), 'export async function run() { console.log("unsafe launcher ran"); }');
     assert.throws(() => execFileSync(process.execPath, ['bench/replay/server.mjs', '--worktree', dir], { encoding: 'utf8', stdio: 'pipe' }), error => {
       assert.equal(error.stdout, ''); assert.match(error.stderr, /requires SR2 launcher injection/); return true;

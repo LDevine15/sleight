@@ -53,6 +53,8 @@ The turbo arm uses the benchmark's v3 server and privately binds the original ta
 
 If server collection, fixture cleanup or permission observation leaves ownership uncertain, replay keeps the lock and artifacts. It writes the reason into the result. The harness owns and collects the processes it launches.
 
+A server that exits before answering initialize still fails the iteration. Once its close event confirms collection, native cleanup closes the retained fixture windows and quits only apps the iteration launched. The fixture helper checks PID, bundle and launch time. An independent PID exit check must agree before cleanup permits lock release. An uncollected server or an app still running keeps the lock.
+
 ## Mapping and divergence
 
 - Native element numbers match a unique role, label and full ancestor path in the recorded and current trees. Trees are keyed by receiver, app and window title. Numeric input must use the last-observed receiver. Selecting another window expires that tree until a new observation. Rebinding a handle or reacquiring another app refuses old numbers. A unique label in another ancestor path cannot supply a mapping. Values are excluded from identity matching but retained in result comparison. Compact diffs update existing numbers. New numbers remain uncertain until a full recorded tree establishes their path. A second Save in a diff cannot inherit the first Save's path. Literal numeric element arguments, including both drag endpoints, go through a JavaScript parser and mapper. Unsupported methods with numeric or computed arguments refuse before input. Typed text, timing options and key sequences keep their values.
@@ -68,6 +70,16 @@ Replay serializes requests even if the original host overlapped them. It cannot 
 ## Evidence and checks
 
 Pass a new directory to `--out`. Otherwise replay creates a private temporary output folder. Each iteration writes `trace.jsonl` with MCP traffic, approvals, mapping reads, recorded and submitted arguments, results and per-call milliseconds. The launcher also writes its ordinary `trace-<pid>.jsonl`. Turbo writes `turbo-metrics.jsonl`. `result.json`, the campaign's `plan.json` and `summary.json` retain failures as well as passes.
+
+Server stderr goes to `computer.stderr.log` and, when present, `turbo.stderr.log`, capped at 65536 bytes each. The same cap applies to each server's stderr in `trace.jsonl`. A `stderr-truncated` event marks discarded bytes. The engine inherits the launcher's stderr pipe. Its startup errors reach that evidence too.
+
+Check startup without creating a fixture or acquiring an app:
+
+```sh
+CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node bench/replay/startup-probe.mjs --out NEW_DIRECTORY
+```
+
+This sends only `initialize`, its initialized notification and `tools/list`, then closes stdin and collects the owned server. `startup.json` records the launcher Node, resolved engine runtime, handshake results and exit. It uses the replay environment with installed turbo and the ghost hand off. A startup pass does not qualify a live replay.
 
 Each A/B pair includes a per-call result diff, with normalized A and B outputs, changed JSON paths and explicit missing results. Fixture aliases, changing handles and runtime IDs are normalized. Values and errors remain.
 
@@ -88,6 +100,7 @@ CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node --test tests/bench-r
 CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node --test tests/bench-replay-safety.test.mjs
 CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node --test tests/bench-replay-sr2d.test.mjs
 CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node --test tests/bench-replay-audit.test.mjs
+CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node --test tests/bench-replay-sr2e.test.mjs
 ```
 
 The feedback audit returns recorded responses through the mapper without launching fixtures or servers. It refuses an unrecorded mapping read rather than consuming the next action's response. It covers eight check IDs from seven retained recordings when installed. Absent recordings are named as skipped, and synthetic unit coverage runs on every machine. A feedback match establishes agreement with the recorded responses. Feature checks, trace ordering, fixture outcomes and live performance need separate qualification.

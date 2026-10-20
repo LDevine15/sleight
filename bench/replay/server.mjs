@@ -16,6 +16,9 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   const worktree = args.length ? resolve(args[1]) : fileURLToPath(new URL('../..', import.meta.url));
   const entry = pathToFileURL(requireReplayLauncher(worktree));
   const { run } = await import(entry);
+  // The launcher accepts undefined or a branded frontend, never false. Its documented
+  // off switch also prevents installed turbo startup when this file is run directly.
+  process.env.SLEIGHT_TURBO = '0';
   // Keep payment guards active. No payment card is answered or shown by this headless driver.
-  await run({ directBrowser: false, approvalStorage: replayApprovalStorage, paymentCardFactory: () => undefined });
+  await run({ approvalStorage: replayApprovalStorage, paymentCardFactory: () => undefined });
 }

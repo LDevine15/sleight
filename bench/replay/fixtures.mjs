@@ -47,14 +47,14 @@ export function nativePlan(recording, dir) {
   return { definition, ctx: { dir, nonce: nonces[0], ownerAway: true, stopOnAppDialog: true }, oldDir: folders[0], suite };
 }
 
-export async function withNative(recording, { dir, mapper, signal, abort, drive, beforeCall, prepared }) {
+export async function withNative(recording, { dir, mapper, signal, abort, drive, beforeCall, prepared, permissionCheck = observePermission }) {
   const { definition, ctx } = (prepared ?? prepareReplay(recording, dir, mapper)).native;
   let replay;
   const lifecycle = await executeRealTask(definition, ctx, { lockHeld: true, signal,
     stop: () => abort?.(Error('Native fixture stopped')),
     permissionCheck: async () => {
       await beforeCall();
-      const permission = await observePermission();
+      const permission = await permissionCheck();
       if (permission) abort?.(Error('macOS permission prompt; replay stopped'));
       return permission;
     },
@@ -68,7 +68,7 @@ export async function withNative(recording, { dir, mapper, signal, abort, drive,
       ]).map(JSON.stringify).join('\n');
       return { code: replay.verdict === 'pass' ? 0 : 1, groupClean: true, out: { result: '' }, methodAudit: dragMethodAudit(transcript) };
     } });
-  return { replay, lifecycle, cleanupConfirmed: !lifecycle.cleanupError && !lifecycle.cleanupUnconfirmed && !lifecycle.exitDisagreements?.length };
+  return { replay, lifecycle, cleanupConfirmed: lifecycle.groupClean !== false && !lifecycle.cleanupError && !lifecycle.cleanupUnconfirmed && !lifecycle.exitDisagreements?.length };
 }
 
 export async function cleanupRace({ sites, browser, signal, beforeCall, cleanupConfirmed = true, cleanupError }) {
