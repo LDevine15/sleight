@@ -3,7 +3,8 @@ const MAC_TMP = ['', 'private', 'tmp'].join('/');
 const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { BENCH_APPS, REAL_APPS, getTasks } from '../bench/tasks.mjs';
@@ -19,7 +20,7 @@ import { isNativeArm, nativeArmPlan } from '../bench/world/native-arms.mjs';
 import { worldCLI, worldArm, worldSettings, assertWorldCLI } from '../bench/world/native-world.mjs';
 import { LOGIN_ARMS, loginTarget } from '../bench/world/login-readiness.mjs';
 import { packageSkip } from './requirements.mjs';
-import { cleanupContained as realCleanupContained } from '../bench/real-run.mjs';
+import { cleanupContained as realCleanupContained, releaseFixtureLock } from '../bench/real-run.mjs';
 import { mergeArmHooks as realMergeArmHooks } from '../bench/arm-hooks.mjs';
 import { codexSleightRunConfig, assertOnlyServers } from '../bench/codex-sleight.mjs';
 import { codexExecPlan } from '../bench/codex-arm.mjs';
@@ -83,18 +84,23 @@ test('a refused dry run prints one JSON document with its configuration errors',
   assert.equal(JSON.parse(documents[0]).results[0].reason, 'fixture refusal');
 });
 
-// Execute the actual runner body with inert dependencies. No app, CLI, approval
-// file, live lock, compiler or filesystem operation reaches the host.
-async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError, daemonError, daemonStopError, declinedPrompts = [], sleightHomeServers = ['plugin_sleight_computer'], codexResult = {}, engineReads = ['26.1013.40934'] } = {}) {
+// Execute the actual runner body with inert dependencies. Runner filesystem and
+// process operations stay fake; the harness owns only its temporary path bank.
+async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygieneError, hygieneReceiptsOnly = false, hygieneBoundaryError, hygieneTracking, extraArgs = [], suite = 'real', arm = 'sleight', outcome = {}, taps = [], throws = false, base = {}, drive = false, leases = [], fixtureStates = [], unlockError, setupOnly = false, privateMail = false, fixtureLifecycle = false, ownerName = '', auth, keySource = 'none', spend = () => 0, holdAfterPreflight = false, dryRun = false, preparationError, extraServer, driverOut = {}, calculatorGate = false, calculatorFailureAt, cleanArms = false, footprint = { cpuSeconds: 0, group: {}, outside: {} }, codexServers, tasks, worldVersion = '2.1.289', loginError, socketError, daemonError, daemonStopError, declinedPrompts = [], sleightHomeServers = ['plugin_sleight_computer'], codexResult = {}, engineReads = ['26.1013.40934'] } = {}) {
   if (!auth) {
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
   }
   const calls = [], saved = [], envs = [], tailScopes = [], directories = [];
-  const logs = [], driverOptions = [], codexRuns = [], files = new Map(), commands = [], codexConfigs = [];
+  const logs = [], driverOptions = [], codexRuns = [], files = new Map(), commands = [], codexConfigs = [], contexts = [];
+  const temp = mkdtempSync(join(tmpdir(), 'bench-run-test-'));
+  const lockPath = join(temp, 'live.lock'), holdPath = join(temp, 'sleight-hold');
   let preflightDone = false, calculatorObservations = 0, engineReadCount = 0;
   const source = readFileSync(new URL('../bench/run.mjs', import.meta.url), 'utf8')
-    .replace(/^#!.*\n/, '').replace(/^import .*;\n/gm, '').replaceAll('import.meta.url', '"file:///fixture/bench/run.mjs"');
+    .replace(/^#!.*\n/, '').replace(/^import .*;\n/gm, '').replaceAll('import.meta.url', '"file:///fixture/bench/run.mjs"')
+    // Give the pass and each lifecycle context an isolated path before execution.
+    .replaceAll('/tmp/sleight-live.lock', lockPath).replaceAll('/tmp/sleight-hold', holdPath)
+    .replace('const ctx = { dir, nonce,', 'const ctx = { lockPath, dir, nonce,');
   const task = { id: 'fixture', app: 'Safari', setup() {}, prompt: () => 'task', check: () => true, cleanup: () => calls.push('task cleanup') };
   if (fixtureLifecycle) Object.assign(task, { id: 'simulator-form', app: 'Simulator', fixtureLifecycle: true });
   if (calculatorGate) Object.assign(task, { id: 'calculator-click', app: 'Calculator' });
@@ -103,8 +109,9 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
   const sandbox = {
     process: { argv: ['node', 'run', '--suite', suite, '--arm', arm, '--runs', '3', ...(setupOnly ? ['--setup-only'] : []), ...(dryRun ? ['--dry-run'] : []), ...(calculatorGate ? ['--calculator-gate'] : []), ...(cleanArms ? ['--clean-arms'] : []), ...extraArgs], env: base, on() {}, once() {} },
     console: { log: text => logs.push(text), error: text => logs.push(text) }, AbortController, AbortSignal, setTimeout, clearTimeout, setInterval, clearInterval,
+    lockPath,
     basename: path => path.split('/').at(-1), dirname, join, fileURLToPath: () => '/fixture/bench/run.mjs', homedir: () => '/owner', tmpdir: () => `${MAC_TMP}/unit`,
-    existsSync: path => path === '/tmp/sleight-hold' ? holdAfterPreflight && preflightDone : true, realpathSync: path => path, mkdirSync: path => directories.push(path), rmdirSync() {}, statSync: () => ({ dev: 1, ino: 1 }),
+    existsSync: path => path === holdPath ? holdAfterPreflight && preflightDone : true, realpathSync: path => path, mkdirSync: path => directories.push(path), rmdirSync(path) { assert.equal(path, lockPath); }, statSync: path => { assert.equal(path, lockPath); return { dev: 1, ino: 1 }; },
     writeFileSync: (path, value) => { files.set(path, JSON.parse(value)); saved.push(JSON.parse(value)); }, randomBytes: () => ({ toString: () => 'nonce' }),
     privateMailResult, publicPrivateMailRow, publicPrivateMailRows,
     readEngine: () => { engineReadCount++; return { version: engineReads.length > 1 ? engineReads.shift() : engineReads[0], at: 'fixture' }; }, engineSpan,
@@ -171,7 +178,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     cpuSplit, benchHand,
     startFootprint: () => async () => footprint,
     runCodex: async (prompt, options) => { codexRuns.push({ prompt, options }); options.onSpawn?.(4321); return { code: 0, out: {}, forbidden: [], ...codexResult }; }, watchAppWindows: () => async () => [],
-    acquireLiveLock: async () => { calls.push('lock'); return async () => calls.push('unlock'); },
+    acquireLiveLock: async () => { calls.push('lock'); return async () => { calls.push('unlock'); if (unlockError) throw new Error(unlockError); }; },
     runTiming: () => ({}), traceTiming: () => ({}), withStamps: timing => timing, observePermission: () => { if (dryRun) assert.fail('no host permission observation in initialization-only discovery'); return false; },
     assertCalculatorReady: async () => {
       assert.ok(calls.includes('lock'), 'Calculator observation requires the shared lock');
@@ -187,8 +194,12 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     },
     runDriver: async (_command, args, options) => { commands.push(_command); calls.push(['driver', ...args]); envs.push(options.env); driverOptions.push(options); options.onSpawn?.(1234); return { code: 0, out: { total_cost_usd: 0.25, ...driverOut }, groupClean: true }; },
     cleanupContained: realCleanupContained,
+    releaseFixtureLock,
     mergeArmHooks: realMergeArmHooks,
     executeRealTask: async (_task, ctx, options) => {
+      assert.equal(ctx.lockPath, lockPath);
+      Object.assign(ctx, fixtureStates[contexts.length]);
+      contexts.push(ctx);
       ctx.windowLeases = leases;
       if (setupOnly) assert.equal(options.setupOnly, true);
       if (dryRun) assert.equal(options.dryRun, true);
@@ -202,9 +213,52 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
   };
   let error;
   try { await runInNewContext(`(async () => { ${source}\n})()`, sandbox); } catch (caught) { error = caught; }
+  finally { rmSync(temp, { recursive: true, force: true }); }
   const plan = logs.filter(text => typeof text === 'string' && text.startsWith('{')).map(text => JSON.parse(text)).at(-1);
-  return { calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, codexConfigs, files, commands, exitCode: sandbox.process.exitCode, engineReadCount };
+  return { calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, codexConfigs, files, commands, contexts, lockPath, exitCode: sandbox.process.exitCode, engineReadCount };
 }
+
+test('confirmed fixtures release the outer lock exactly once after cleanup tails and daemon stop', async () => {
+  const result = await runner({ arm: 'cua', drive: true, outcome: { passed: true },
+    fixtureStates: [{ fixtureLockUnconfirmed: false, pendingAcquisitions: new Set() }] });
+  assert.equal(result.error, undefined);
+  assert.equal(result.exitCode, undefined);
+  assert.equal(result.contexts.length, 3);
+  assert.ok(result.contexts.every(ctx => ctx.lockPath === result.lockPath));
+  assert.ok(result.saved.at(-1).results.every(row => row.passed === true));
+  assert.equal(result.calls.filter(call => call === 'lock').length, 1);
+  assert.equal(result.calls.filter(call => call === 'unlock').length, 1);
+  assert.deepEqual(result.calls.slice(-5), ['TextEdit tail', 'Chess tail', 'Simulator tail', 'cua daemon stop', 'unlock']);
+  assert.ok(!result.logs.some(line => /Live lock:|live lock kept/.test(line)));
+});
+
+for (const [reason, state] of [
+  ['fixture cleanup', { fixtureLockUnconfirmed: true }],
+  ['pending acquisition', { pendingAcquisitions: new Set(['browser']) }],
+  ['exit disagreement', { exitDisagreements: [{ app: 'Fixture', pid: 123, step: 'window cleanup' }] }],
+]) test(`unconfirmed ${reason} in an earlier fixture retains the outer lock after later fixtures finish`, async () => {
+  const result = await runner({ arm: 'cua', drive: true, outcome: { passed: true }, fixtureStates: [state] });
+  assert.equal(result.error, undefined);
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.contexts.length, 3);
+  assert.equal(result.calls.filter(call => call === 'lock').length, 1);
+  assert.equal(result.calls.includes('unlock'), false);
+  assert.deepEqual(result.calls.slice(-4), ['TextEdit tail', 'Chess tail', 'Simulator tail', 'cua daemon stop']);
+  assert.ok(result.logs.some(line => /STOP: fixture setup, window cleanup or helper collection unconfirmed; live lock kept/.test(line)));
+  assert.ok(!result.logs.some(line => /Live lock:/.test(line)), 'retention must come from fixture evidence, not a missing VM import');
+  if (reason === 'fixture cleanup') {
+    assert.equal(result.calls.find(call => Array.isArray(call) && call[0] === 'window hygiene')[1].blocked, true);
+  }
+});
+
+test('an outer lock release failure remains visible after the daemon and cleanup tails finish', async () => {
+  const result = await runner({ arm: 'cua', outcome: { passed: true }, unlockError: 'fake unlock failed' });
+  assert.equal(result.error, undefined);
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.calls.filter(call => call === 'unlock').length, 1);
+  assert.deepEqual(result.calls.slice(-5), ['TextEdit tail', 'Chess tail', 'Simulator tail', 'cua daemon stop', 'unlock']);
+  assert.ok(result.logs.includes('Live lock: fake unlock failed'));
+});
 
 test('pass snapshots under the lock before discovery; temp and image cleanup run before tasks', async () => {
   const result = await runner({ drive: true });
