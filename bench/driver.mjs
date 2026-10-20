@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runOwned } from './preapproved-process.mjs';
+import { hasPermissionRefusal } from './permission-refusal.mjs';
 
 export const PRIVATE_RUNTIME_KEYS = new Set(['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TMP', 'TEMP', 'LANG',
       'LC_ALL', 'LC_CTYPE', 'LC_MESSAGES', 'TERM', 'NO_COLOR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
@@ -29,18 +30,8 @@ export async function runDriver(command, args, { format = 'json', evidenceDir, p
         try { privatePolicyCheck?.(); }
         catch { refused = true; onPermissionRefusal?.(); return; }
       }
-      if (!Array.isArray(event.message?.content)) continue;
-      for (const item of event.message.content) {
-        if (item.type !== 'tool_result' || item.is_error !== true) continue;
-        const text = typeof item.content === 'string' ? item.content :
-          (Array.isArray(item.content) ? item.content.map(block => block.text ?? '').join('\n') : '');
-        const browserRefusal = text.includes('Browser Use could not complete this action') && /permission request[^\n]*(dismissed|denied)/i.test(text);
-        if (browserRefusal || /Computer Use is not allowed to use the app '[^']+' for safety reasons/.test(text) ||
-          /Computer Use was not approved to use [^\n]+/.test(text) ||
-          /The user (?:didn't allow|did not allow|did not approve)\b/.test(text) ||
-          /^\s*(?:approval declined|permission denied|not approved)\s*$/i.test(text)) {
-          refused = true; onPermissionRefusal?.(); return;
-        }
+      if (hasPermissionRefusal(event)) {
+        refused = true; onPermissionRefusal?.(); return;
       }
     }
   } });

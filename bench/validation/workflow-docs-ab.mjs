@@ -11,7 +11,7 @@ import { readEngine } from '../engine-version.mjs';
 import { ccCatalog } from '../world/cc-held-out.mjs';
 import { roundCommand, safeResult } from './validation-140.mjs';
 import { outsideGit } from '../world/arms/browser.mjs';
-import { runErrorClass } from '../fowl/real-gate-grade.mjs';
+import { hasPermissionRefusal } from '../permission-refusal.mjs';
 
 export const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 export const RESET = '2026-10-21T15:00:00Z';
@@ -139,10 +139,13 @@ export function collectWorkflow(round, plan, log) {
       throw Error('Browser build or harness differs from candidate');
     rows = raw.map(row => {
       // Production records refusals in errorClass and stream-json tool results, not row.run flags.
-      // Check each event so another error class or a later success cannot hide a refusal.
+      // Use the native stop predicate so scoring precedence or a later success cannot hide a refusal.
       const events = readFileSync(join(result, row.task.name, 'events.jsonl'), 'utf8');
       if (row.errorClass?.class === 'approval refused' ||
-          events.split('\n').some(line => runErrorClass({ eventsText: line })?.class === 'approval refused') ||
+          events.split('\n').some(line => {
+            let event; try { event = JSON.parse(line); } catch { return false; }
+            return hasPermissionRefusal(event);
+          }) ||
           stops.some(key => row.run[key])) throw Error('Browser permission or safety stop');
       const config = json(join(result, row.task.name, 'mcp.json')).mcpServers['plugin:sleight:computer'];
       const flag = config?.env?.SLEIGHT_WORKFLOW_DOCS;

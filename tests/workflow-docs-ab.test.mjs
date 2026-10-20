@@ -318,6 +318,16 @@ const refusalEvents = content => JSON.stringify({ type: 'user', message: { role:
   { type: 'tool_result', tool_use_id: 'toolu_offline', is_error: true, content },
 ] } }) + '\n';
 const refusal = 'Computer Use was not approved to use Safari';
+const nativeRefusals = [
+  "Computer Use is not allowed to use the app 'Terminal' for safety reasons.",
+  refusal,
+  "The user didn't allow dragging in Safari. Stop and tell them; don't work around it.",
+  'The user did not allow this action',
+  'The user did not approve this document',
+  'approval declined', 'permission denied', 'not approved',
+  'Browser Use could not complete this action. Reason: The permission request was dismissed before a decision was made.',
+  'Browser Use could not complete this action. Reason: The permission request was denied.',
+];
 
 test('a production refusal beside a success stops even below the batch harness threshold', t => {
   const { p, round, stem, rows } = browserFixture(t);
@@ -337,7 +347,12 @@ test('a production refusal beside a success stops even below the batch harness t
 });
 
 test('production refusal classes and tool-result events stop before another task or side', async t => {
-  for (const kind of ['class', 'string event', 'block event', 'recovered event']) {
+  const cases = [{ kind: 'class', text: refusal, passed: false }];
+  for (const text of nativeRefusals) for (const blocks of [false, true]) for (const passed of [false, true])
+    cases.push({ kind: `${text}, ${blocks ? 'blocks' : 'string'}, ${passed ? 'recovered' : 'failed'}`, text, blocks, passed });
+  // The scorer chooses one class, so a daemon error in the same event must not hide a refusal.
+  cases.push({ kind: 'scorer precedence', text: refusal, passed: true, daemon: true });
+  for (const { kind, text, blocks, passed, daemon } of cases) await t.test(kind, async t => {
     const { p, round, stem, rows } = browserFixture(t);
     // Keep plan output fresh for runWorkflow. The injected child publishes the fixture at its task boundary.
     const artifacts = JSON.parse(readFileSync(join(stem, 'commits.json')));
@@ -348,7 +363,7 @@ test('production refusal classes and tool-result events stop before another task
       run: async current => {
         calls++;
         assert.equal(current.id, round.id);
-        rows[0].outcome.ok = kind === 'recovered event';
+        rows[0].outcome.ok = passed;
         rows[0].errorClass = kind === 'class' ? { class: 'approval refused', example: refusal } : null;
         put(join(stem, 'cleanup.json'), { browserClosed: true });
         put(join(stem, 'engine.json'), { version: engine, changed: false });
@@ -358,8 +373,14 @@ test('production refusal classes and tool-result events stop before another task
           put(join(stem, task, 'mcp.json'), { mcpServers: { 'plugin:sleight:computer': { env: { SLEIGHT_TURBO: '0', SLEIGHT_WORKFLOW_DOCS: '0' } } } });
           writeFileSync(join(stem, task, 'events.jsonl'), '');
         }
-        writeFileSync(join(stem, round.tasks[0], 'events.jsonl'), kind === 'class' ? '' : refusalEvents(
-          kind === 'block event' ? [{ type: 'text', text: refusal }] : refusal));
+        const event = JSON.parse(refusalEvents(blocks ? [{ type: 'text', text }] : text));
+        if (daemon) {
+          event.message.content.unshift({ type: 'tool_result', is_error: true, content: 'daemon is not running' });
+          rows[0].errorClass = runErrorClass({ eventsText: JSON.stringify(event) });
+          assert.equal(rows[0].errorClass.class, 'no daemon');
+          put(join(stem, 'results.json'), rows);
+        }
+        writeFileSync(join(stem, round.tasks[0], 'events.jsonl'), kind === 'class' ? '' : JSON.stringify(event) + '\n');
         return { code: rows[0].outcome.ok ? 0 : 1, signal: null };
       },
     }) }), /permission|safety/i);
@@ -367,6 +388,19 @@ test('production refusal classes and tool-result events stop before another task
     assert.equal(JSON.parse(readFileSync(join(p.out, `${round.id}.receipt.json`))).safe, false);
     assert.equal(JSON.parse(readFileSync(join(p.out, 'failure.json'))).completedTasks, 0);
     assert.equal(existsSync(join(p.out, 'summary.json')), false);
+  });
+});
+
+test('survey collection continues on ordinary AX errors and successful refusal wording', t => {
+  const ordinary = ['AX fixture read failed: -25204', 'Permission denied: enable Accessibility in System Settings',
+    'Authorization required. Open the app to grant access.', 'Approval declined by user'];
+  for (const text of [...ordinary, ...nativeRefusals]) for (const blocks of [false, true]) {
+    const { p, round, stem } = browserFixture(t);
+    const event = JSON.parse(refusalEvents(blocks ? [{ type: 'text', text }] : text));
+    event.message.content[0].is_error = ordinary.includes(text);
+    writeFileSync(join(stem, round.tasks[0], 'events.jsonl'), JSON.stringify(event) + '\n' +
+      JSON.stringify({ type: 'result', result: refusal }) + '\n');
+    assert.equal(collectWorkflow(round, p).safe, true, `${text}, blocks=${blocks}`);
   }
 });
 
