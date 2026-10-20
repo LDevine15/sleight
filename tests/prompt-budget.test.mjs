@@ -5,7 +5,7 @@ import { PassThrough } from 'node:stream';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { skillRules, localToolDefinitions } from '../plugins/sleight/lib/launch.mjs';
-import { batchingDescription, createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { batchingDescription, createRelay, promptNotice } from '../plugins/sleight/lib/relay.mjs';
 import { compactJsDescription } from '../plugins/sleight/lib/tool-description.mjs';
 import { guardedCode } from '../plugins/sleight/lib/document-scope.mjs';
 import { SCROLL_LOOP_NOTE, TEXTLESS_NOTE } from '../plugins/sleight/lib/compact-reads.mjs';
@@ -27,6 +27,15 @@ const skillPath = new URL('../plugins/sleight/skills/drive-mac-apps/SKILL.md', i
 // Measured 15-word sentence: docs/benchmarks/2026-10-19-flag-ab.md, -34.2 s, SE 22.7 s.
 // Only the default skill limit grows, from 1040 to 1055; lean stays at 505 and the ratio at 0.71.
 const leanSkill = () => skillRules(skillPath, { SLEIGHT_PROMPT: 'lean' });
+
+test('opened-handle and engine-exit notices retain recovery details in lean wording', () => {
+  const handle = 'handle src belongs to "file:///fixture/Source.txt"; window unconfirmed. Call select_window with {"app":"Editor","url":"file:///fixture/Source.txt"}.';
+  const ended = 'Engine exited (0). Input outcome is unconfirmed; read the app again.';
+  assert.equal(promptNotice(handle), handle);
+  assert.equal(promptNotice(ended), ended);
+  assert.equal(promptNotice(handle, 'lean'), 'handle src: "file:///fixture/Source.txt" unconfirmed. Call select_window with {"app":"Editor","url":"file:///fixture/Source.txt"}.');
+  assert.equal(promptNotice(ended, 'lean'), 'Engine exited (0). Input unconfirmed; read again.');
+});
 
 test('the self-closed popup outcome has a reviewed prompt budget', () => {
   assert.equal(hash(closedTabOutcome), baseline.browserClosedOutcome);

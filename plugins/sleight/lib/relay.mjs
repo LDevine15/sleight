@@ -1745,7 +1745,7 @@ export function createRelay({
     }
     const target = bindings.get(handles[0]);
     const request = { app: target.appId, url: target.url };
-    const refuse = () => leaseStop(msg, `handle ${handles[0]} belongs to ${JSON.stringify(target.url)}; window unconfirmed. Call select_window with ${JSON.stringify(request)}.`);
+    const refuse = () => leaseStop(msg, promptNotice(`handle ${handles[0]} belongs to ${JSON.stringify(target.url)}; window unconfirmed. Call select_window with ${JSON.stringify(request)}.`, prompt));
     if (!inputLease || !windowIdentity || !localTools?.call || !localNames.has('select_window') || running.size || handles.some(handle => bindings.get(handle) !== target)) {
       refuse(); return true;
     }
@@ -5494,7 +5494,7 @@ export function createRelay({
     elicitations.clear(); approvalRequests.clear(); listRequests.clear(); engineRequests.clear();
     for (const id of [...pendingClients.keys()]) {
       // Suppress late engine, local-tool and direct-browser results after the one failure reply.
-      leaseStop({ id }, `${message} Input outcome is unconfirmed; read the app again.`);
+      leaseStop({ id }, promptNotice(`${message} Input outcome is unconfirmed; read the app again.`, prompt));
       stoppedClients.add(id);
     }
     pendingClients.clear();

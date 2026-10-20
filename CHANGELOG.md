@@ -43,6 +43,23 @@
 
 ### Native actions and engine browsers
 
+- Text drops can use an empty final row when Accessibility geometry proves it. Cross-window moves use Accessibility
+  and refuse when it cannot safely move the text, including formatted selections.
+- Accessibility text moves run before the raise and settle wait. Posted input keeps that wait, and overlapping
+  windows still require a raise and another exposure check. `SLEIGHT_DP2=0` restores the earlier order.
+- A changed-text drag can append changed lines from one bounded engine read while holding its lease.
+  `SLEIGHT_DP4=0` disables the read, and `SLEIGHT_DP7=0` restores the earlier drop and cross-window behavior.
+- Spelling annotations no longer count as formatting differences when checking whether text can move through Accessibility.
+- Empty-line drops use adjacent glyph bounds, including consecutive blank lines. Line geometry rejects points outside
+  the text area and handles mixed line heights without estimating a row from the first line.
+- Accessibility text moves remove extra source spaces, add missing word separators and preserve the final newline
+  when dropping onto an empty final line.
+- Opened app handles retain their document window. Input checks its native identity, selects it in the background
+  when needed and forgets uncertain aliases. A unique nonempty selection can identify a drag's source window.
+- Internal opened-window requests include JSON-RPC framing. Engine exits clear pending call and lease state, and reset
+  clears stale markers while refusing to interrupt live work. Unconfirmed input requires a fresh app read.
+- Native input argument checks reject malformed calls before forwarding them and show the engine signature. They accept
+  future string values, option fields and extra arguments, with the same checks for computed arguments in the app proxy.
 - Keep the engine API documentation when opening a file requires a second window acquisition, and preserve it
   through internal reads, helper retries and acquisition refusals.
 - The first scroll that moves a sorted list points Claude to `pickFromList` with that list's number. The skill gives
@@ -109,6 +126,10 @@
 
 ### Measurements and benchmark rules
 
+- Drag method audits exclude exact Sleight refusals that stopped code before execution while retaining evidence of
+  failed engine calls and replacement typing.
+- Drag audits track opened handles from Sleight's final relay notice, forget shadowed and reset bindings, and allow
+  documented optional reads only after a handle was opened. Competitor calls retain their previous grading.
 - The app speed map publishes sequential and concurrent-session timings, failures and cleanup evidence across native
   and Electron apps. [Measured results](docs/benchmarks/2026-10-19-speed-map.md).
 - Sessions that meet the same helper crash spread their read retries instead of resending together. The speed map

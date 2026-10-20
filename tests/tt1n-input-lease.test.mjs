@@ -1095,7 +1095,7 @@ test('AB1 review: a helper that matches other than one window never continues', 
   }
 });
 
-test('AB1 review: a lease that moved while the helper looked never continues', async t => {
+test('AB1 review: reset refuses while the helper checks an active tab continuation', async t => {
   let h;
   h = await tabFixture(t, { identity: async (expected, native, count) => {
     if (count === 2) {
@@ -1105,11 +1105,15 @@ test('AB1 review: a lease that moved while the helper looked never continues', a
     return { ...expected, ...native, matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1 };
   } });
   const result = await h.call(tabCall);
-  assert.equal(result.isError, true);
-  assert.deepEqual(h.keys, ['super+t']);
-  assert.deepEqual(h.typed, []);
-  assert.equal(h.sent.filter(msg => msg.params?.name === 'js').length, 1, 'the js_reset only, no remainder');
-  assert.deepEqual(h.refusals, ['lease-moved']);
+  const reset = h.received.find(msg => msg.id === 99);
+  assert.equal(reset.result.isError, true);
+  assert.match(JSON.stringify(reset.result), /another call in this session is pending/);
+  assert.equal(h.sent.some(msg => msg.params?.name === 'js_reset'), false);
+  assert.equal(result.isError, false);
+  assert.deepEqual(h.keys, ['super+t', 'Return']);
+  assert.deepEqual(h.typed, ['http://127.0.0.1:5420/shop']);
+  assert.equal(h.sent.filter(msg => msg.params?.name === 'js').length, 2, 'the original call and its checked remainder');
+  assert.deepEqual(h.refusals, []);
 });
 
 // The remainder's numbers come from the tree Claude read before the call; the guard checks them against the new tab's.

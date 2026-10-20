@@ -136,6 +136,8 @@ export function promptNotice(text, prompt) {
     .replace(' A full read includes the omitted lines.', ' A full read shows them.')
     .replace('A missed tap does not establish a scale change.', "A missed tap doesn't mean the scale changed.")
     // Relay stops and notices.
+    .replace(/^handle (.*?) belongs to (.*?); window unconfirmed\. Call select_window with /, 'handle $1: $2 unconfirmed. Call select_window with ')
+    .replace(' Input outcome is unconfirmed; read the app again.', ' Input unconfirmed; read again.')
     .replace('sleight: kept tabs because a call did not finish before the cleanup deadline.', 'sleight: kept tabs; a call outlasted the cleanup deadline.')
     .replace(' in this app window; read it again', ' in this window; read it again')
     .replace('drag element numbers need unique identities from a read of', 'drag numbers need unique identities from a read of')
