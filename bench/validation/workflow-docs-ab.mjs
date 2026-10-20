@@ -2,14 +2,16 @@
 // WF3 runs both flag settings on one candidate. The existing harnesses own fixtures and the live lock.
 // Default mode only prints a plan. Runtime injection is an import-only seam for offline tests.
 import { spawn, execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readEngine } from '../engine-version.mjs';
 import { ccCatalog } from '../world/cc-held-out.mjs';
 import { roundCommand, safeResult } from './validation-140.mjs';
+import { outsideGit } from '../world/arms/browser.mjs';
+import { runErrorClass } from '../fowl/real-gate-grade.mjs';
 
 export const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 export const RESET = '2026-10-21T15:00:00Z';
@@ -47,6 +49,9 @@ export function verifySources(plan) {
 export function makeWorkflowPlan({ build, engine, out, pins }) {
   if (!/^[a-f0-9]{40}$/.test(build ?? '')) throw Error('--build requires a full candidate commit SHA');
   if (!/^\d+(\.\d+)+$/.test(engine ?? '')) throw Error('--engine requires an explicit engine version');
+  out = resolve(out ?? join(realpathSync(tmpdir()), `sleight-wf3-${build.slice(0, 12)}-${randomUUID()}`));
+  outputParents(out);
+  outsideGit(out);
   pins ??= sourcePins(build);
   const catalog = json(join(ROOT, SURVEYS));
   const groups = ['safari', 'firefox'].map(browser => ({ id: `as3-${browser}`, runner: 'browser', browser,
@@ -63,13 +68,13 @@ export function makeWorkflowPlan({ build, engine, out, pins }) {
     return [id, { hash: sha(JSON.stringify(task)), prompt: task.prompt, promptHash: sha(task.prompt) }];
   }));
   const rounds = [];
-  for (let n = 1; n <= 3; n++) for (const group of groups)
+  for (let n = 1; n <= 3; n++) for (const group of groups) for (const task of group.tasks)
     for (const side of n % 2 ? ['docs0', 'default'] : ['default', 'docs0'])
-      rounds.push({ id: `${group.id}-${side}-r${n}`, group: group.id, runner: group.runner, browser: group.browser,
-        tasks: group.tasks, model: MODEL, side, n });
+      rounds.push({ id: `${group.id}${group.runner === 'browser' ? `-${task}` : ''}-${side}-r${n}`,
+        group: group.id, runner: group.runner, browser: group.browser, tasks: [task], model: MODEL, side, n });
   return { schema: 1, study: 'WF3', live: false, root: ROOT, build, pins, engine, model: MODEL, effort: 'high',
     quotaReset: RESET, upstream: UPSTREAM, groups, rounds,
-    out: resolve(out ?? join(ROOT, 'bench/results', `workflow-docs-ab-${build.slice(0, 12)}`)),
+    out,
     treatment: { docs0: { SLEIGHT_WORKFLOW_DOCS: '0' }, default: {} },
     promptEvidence: 'Task definitions and the entire prompt harness are pinned. Native runs do not persist rendered prompts; browser effort is pinned by the invocation, not a result field.',
     note: 'The flag also controls action-number compaction. This measures the whole flag, not only Workflow wording.' };
@@ -133,11 +138,17 @@ export function collectWorkflow(round, plan, log) {
     if (commits.build.dirty || commits.harness?.commit !== plan.build || commits.harness.dirty || commits.fowlbrowser?.commit !== plan.upstream)
       throw Error('Browser build or harness differs from candidate');
     rows = raw.map(row => {
+      // Production records refusals in errorClass and stream-json tool results, not row.run flags.
+      // Check each event so another error class or a later success cannot hide a refusal.
+      const events = readFileSync(join(result, row.task.name, 'events.jsonl'), 'utf8');
+      if (row.errorClass?.class === 'approval refused' ||
+          events.split('\n').some(line => runErrorClass({ eventsText: line })?.class === 'approval refused') ||
+          stops.some(key => row.run[key])) throw Error('Browser permission or safety stop');
       const config = json(join(result, row.task.name, 'mcp.json')).mcpServers['plugin:sleight:computer'];
       const flag = config?.env?.SLEIGHT_WORKFLOW_DOCS;
       if ((round.side === 'docs0' ? flag !== '0' : flag !== undefined) || config?.env?.SLEIGHT_TURBO !== '0' ||
           row.task.browser !== round.browser ||
-          row.task.prompt !== group.taskPins[row.task.name].prompt || stops.some(key => row.run[key]))
+          row.task.prompt !== group.taskPins[row.task.name].prompt)
         throw Error('Browser treatment, prompt, effort or safety evidence mismatch');
       return { task: row.task.name, passed: row.outcome?.ok === true, seconds: row.wallMs / 1000,
         apiMs: row.run.result.duration_api_ms, turns: row.run.result.num_turns, toolCalls: row.toolCalls, toolErrors: row.toolErrors };
@@ -164,9 +175,11 @@ export function collectWorkflow(round, plan, log) {
 export function workflowSummary(plan, rows) {
   const cells = plan.groups.flatMap(group => group.tasks.flatMap(task => ['docs0', 'default'].map(side => {
     const runs = rows.filter(row => row.group === group.id && row.task === task && row.side === side);
-    const values = runs.map(r => r.seconds).sort((a, b) => a - b), passes = runs.filter(r => r.passed).length;
-    return { group: group.id, task, side, runs: runs.length, passes, medianSeconds: values[1],
-      rangeSeconds: [values[0], values.at(-1)], expectedSeconds: passes ? values.reduce((a, b) => a + b, 0) / passes : null };
+    const values = runs.filter(r => r.passed).map(r => r.seconds).sort((a, b) => a - b), passes = values.length;
+    return { group: group.id, task, side, runs: runs.length, passes,
+      medianSeconds: passes ? values[Math.floor((passes - 1) / 2)] : null,
+      rangeSeconds: passes ? [values[0], values.at(-1)] : null,
+      expectedSeconds: passes ? runs.reduce((sum, r) => sum + r.seconds, 0) / passes : null };
   })));
   return { schema: 1, build: plan.build, pins: plan.pins, engine: plan.engine, model: plan.model, effort: plan.effort,
     complete: cells.every(cell => cell.runs === 3), passes: rows.filter(r => r.passed).length,
@@ -189,9 +202,9 @@ export async function runWorkflow(plan, { ownerAway = false, runtime = {} } = {}
     if (rt.readEngine().version !== plan.engine) throw Error('Pinned engine changed or is unavailable');
     rt.gate(plan.out);
   };
-  verify(); outputParents(plan.out);
+  outputParents(plan.out); outsideGit(plan.out); verify();
   if (existsSync(plan.out)) throw Error('Output already exists; choose a fresh --out, never rewrite evidence');
-  mkdirSync(dirname(plan.out), { recursive: true });
+  mkdirSync(dirname(plan.out), { recursive: true, mode: 0o700 });
   mkdirSync(plan.out, { mode: 0o700 });
   save(join(plan.out, 'plan.json'), plan);
   for (const event of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(event, stop);

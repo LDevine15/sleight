@@ -1,10 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { collectWorkflow, makeWorkflowPlan, productionGate, runWorkflow, workflowEnvironment } from '../bench/validation/workflow-docs-ab.mjs';
+import { collectWorkflow, makeWorkflowPlan, productionGate, runWorkflow, workflowEnvironment, workflowSummary } from '../bench/validation/workflow-docs-ab.mjs';
+import { realGatePlan } from '../bench/fowl/real-gate.mjs';
+import { runErrorClass, harnessFailure } from '../bench/fowl/real-gate-grade.mjs';
+import { outsideGit } from '../bench/world/arms/browser.mjs';
+import { roundCommand } from '../bench/validation/validation-140.mjs';
 
 const build = 'a'.repeat(40), engine = '26.1013.40934';
 const pins = { build, pluginTree: 'b'.repeat(40), harnessHash: 'c'.repeat(64) };
@@ -23,15 +27,19 @@ const runtime = (p, overrides = {}) => ({
 });
 
 test('WF3 selects existing identities, 3 rounds per side and 42 task executions', () => {
-  const p = plan(join(tmpdir(), 'workflow-docs-never-written'));
-  assert.equal(p.rounds.length, 30);
+  const p = plan();
+  assert.equal(p.rounds.length, 42);
+  assert.ok(p.rounds.every(r => r.tasks.length === 1));
+  assert.equal(new Set(p.rounds.map(r => r.id)).size, 42);
   assert.equal(p.rounds.reduce((n, r) => n + r.tasks.length, 0), 42);
   assert.deepEqual(p.groups.map(g => g.id), ['as3-safari', 'as3-firefox', 'cc-dropdown-slow-firefox',
     'cc-dropdown-slow-safari', 'cc-calendar-ambiguous-firefox']);
   for (const group of p.groups) {
-    assert.deepEqual(p.rounds.filter(r => r.group === group.id).map(r => r.side),
-      ['docs0', 'default', 'default', 'docs0', 'docs0', 'default']);
-    for (const side of ['docs0', 'default']) assert.equal(p.rounds.filter(r => r.group === group.id && r.side === side).length, 3);
+    for (const task of group.tasks) {
+      const rounds = p.rounds.filter(r => r.group === group.id && r.tasks.includes(task));
+      assert.deepEqual(rounds.map(r => r.side), ['docs0', 'default', 'default', 'docs0', 'docs0', 'default']);
+      for (const side of ['docs0', 'default']) assert.equal(rounds.filter(r => r.side === side).length, 3);
+    }
   }
   assert.equal(p.model, 'claude-haiku-5-5');
   assert.equal(p.effort, 'high');
@@ -81,13 +89,17 @@ test('an injected offline run preserves failed rounds, pins and exact command re
     run: async (round, invocation) => { calls.push({ round, invocation }); return { code: 1, signal: null }; },
     collect: round => ({ safe: true, rows: round.tasks.map(task => ({ task, passed: false, seconds: 7 })) }),
   }) });
-  assert.equal(calls.length, 30); assert.equal(result.rows.length, 42);
+  assert.equal(calls.length, 42); assert.equal(result.rows.length, 42);
+  assert.equal(lstatSync(out).mode & 0o777, 0o700);
   assert.equal(result.complete, true); assert.equal(result.passes, 0);
   const first = JSON.parse(readFileSync(join(out, `${p.rounds[0].id}.receipt.json`)));
   assert.equal(first.code, 1); assert.equal(first.build, build); assert.equal(first.engine, engine);
   assert.ok(first.invocation.args.includes('--only'));
   assert.ok(calls.filter(c => c.round.runner === 'native').every(c => c.invocation.args.includes('--owner-away')));
-  assert.ok(calls.filter(c => c.round.runner === 'browser').every(c => c.invocation.args.includes('sleight')));
+  for (const { round, invocation } of calls.filter(c => c.round.runner === 'browser')) {
+    assert.ok(invocation.args.includes('sleight'));
+    assert.equal(invocation.args[invocation.args.indexOf('--only') + 1], round.tasks[0]);
+  }
   assert.ok(existsSync(join(out, 'summary.json')));
   await assert.rejects(runWorkflow(p, { ownerAway: true, runtime: runtime(p) }), /already exists/);
 });
@@ -142,11 +154,12 @@ function browserFixture(t, side = 'docs0') {
   put(join(stem, 'commits.json'), { build: { commit: build, dirty: 0 }, harness: { commit: build, dirty: 0 }, fowlbrowser: { commit: p.upstream } });
   const rows = round.tasks.map(task => ({ task: { name: task, browser: round.browser, prompt: group.taskPins[task].prompt },
     run: { groupClean: true, result: { modelUsage: { [p.model]: {} }, duration_api_ms: 200, num_turns: 4 } },
-    outcome: { ok: true }, wallMs: 7000 }));
+    outcome: { ok: true }, errorClass: null, wallMs: 7000 }));
   put(join(stem, 'results.json'), rows);
   for (const task of round.tasks) put(join(stem, task, 'mcp.json'), { mcpServers: {
     'plugin:sleight:computer': { env: { SLEIGHT_TURBO: '0', ...(side === 'docs0' ? { SLEIGHT_WORKFLOW_DOCS: '0' } : {}) } },
   } });
+  for (const task of round.tasks) writeFileSync(join(stem, task, 'events.jsonl'), '');
   return { p, round, stem, rows };
 }
 
@@ -154,7 +167,7 @@ test('production collector accepts both browser modes using actual artifact sche
   for (const side of ['docs0', 'default']) {
     const { p, round } = browserFixture(t, side);
     const result = collectWorkflow(round, p);
-    assert.equal(result.safe, true); assert.equal(result.rows.length, 2);
+    assert.equal(result.safe, true); assert.equal(result.rows.length, 1);
     assert.equal(result.rows[0].apiMs, 200);
   }
 });
@@ -168,7 +181,7 @@ test('browser collection rejects missing cleanup, wrong model, engine, build, fl
     if (kind === 'build') put(join(stem, 'commits.json'), { build: { commit: 'd'.repeat(40) } });
     if (kind === 'flag') put(join(stem, round.tasks[0], 'mcp.json'), { mcpServers: {} });
     if (kind === 'prompt') { rows[0].task.prompt += ' changed'; put(join(stem, 'results.json'), rows); }
-    if (kind === 'permission') { rows[0].run.permissionRefusal = true; put(join(stem, 'results.json'), rows); }
+    if (kind === 'permission') { rows[0].errorClass = { class: 'approval refused', example: 'Computer Use was not approved to use Safari' }; put(join(stem, 'results.json'), rows); }
     if (kind === 'harness') put(join(stem, 'harness-failure.json'), { reason: 'stop' });
     assert.throws(() => collectWorkflow(round, p), undefined, kind);
   }
@@ -221,7 +234,7 @@ test('CLI dry plan is offline before reset and does not create output', t => {
   const result = spawnSync(process.execPath, [script.pathname, '--plan', '--build', head, '--engine', engine, '--out', out],
     { encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR } });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).rounds.length, 30);
+  assert.equal(JSON.parse(result.stdout).rounds.length, 42);
   assert.equal(existsSync(out), false);
 });
 
@@ -232,4 +245,143 @@ test('malformed pins and altered study plans refuse', async t => {
   p.rounds[0].tasks = ['invented-task'];
   await assert.rejects(runWorkflow(p, { ownerAway: true, runtime: runtime(p) }), /plan changed/);
   assert.equal(existsSync(out), false);
+});
+
+// Call the production plan and setup, supplying only an inert browser identity.
+// dryRun does not launch, inspect, authenticate or connect to anything.
+function dryBrowser(p, round, out = join(p.out, round.id)) {
+  const invocation = roundCommand(round, p.root, out);
+  const args = Object.fromEntries(['--real-browser', '--surface', '--model', '--effort', '--only', '--out']
+    .map(key => [key.slice(2), invocation.args[invocation.args.indexOf(key) + 1]]));
+  const previous = process.env;
+  try {
+    process.env = workflowEnvironment(round.side, previous);
+    return realGatePlan({ args, repo: p.root, dryRun: true,
+      tasks: JSON.parse(readFileSync(join(p.root, 'bench/world/tasks/browser-open-heldout.json'))),
+      realBrowser: { browser: round.browser, marker: 'Sleight Gate offline-wf3', pid: 4321,
+        profileMode: 'fresh', profileRoot: join(p.out, 'offline-profile') } });
+  } finally { process.env = previous; }
+}
+
+test('fresh default output passes the real dry browser plan and setup without writes', () => {
+  const p = plan(), other = plan();
+  assert.equal(existsSync(p.out), false);
+  outsideGit(p.out);
+  for (const round of p.rounds.filter(r => r.runner === 'browser')) {
+    const dry = dryBrowser(p, round);
+    assert.equal(dry.arms.length, 1);
+    const arm = dry.arms[0];
+    assert.equal(arm.task.name, round.tasks[0]);
+    assert.equal(arm.task.browser, round.browser);
+    assert.equal(arm.dir, join(p.out, round.id, round.tasks[0]));
+    assert.equal(arm.args[arm.args.indexOf('--model') + 1], p.model);
+    assert.equal(arm.args[arm.args.indexOf('--effort') + 1], 'high');
+    assert.equal(arm.mcpConfig.mcpServers['plugin:sleight:computer'].env.SLEIGHT_TURBO, '0');
+    assert.equal(arm.mcpConfig.mcpServers['plugin:sleight:computer'].env.SLEIGHT_WORKFLOW_DOCS,
+      round.side === 'docs0' ? '0' : undefined);
+    outsideGit(arm.env.CLAUDE_CONFIG_DIR);
+    assert.equal(existsSync(arm.dir), false);
+  }
+  assert.notEqual(p.out, other.out);
+  assert.equal(existsSync(p.out), false);
+});
+
+test('in-worktree output is rejected by production dry setup and WF3 before writes', async t => {
+  const p = plan(sandbox(t)), out = join(p.root, 'bench/results/wf3-rejected-offline', 'out');
+  const round = p.rounds[0];
+  assert.throws(() => dryBrowser(p, round, join(out, round.id)), /outside any git repository/);
+  assert.throws(() => plan(out), /outside any git repository/);
+  let calls = 0;
+  await assert.rejects(runWorkflow({ ...p, out }, { ownerAway: true, runtime: runtime(p, {
+    verifyPins: () => calls++, readEngine: () => { calls++; return { version: engine }; },
+    gate: () => calls++, run: () => assert.fail('runner reached'),
+  }) }), /outside any git repository/);
+  assert.equal(calls, 0);
+  assert.equal(existsSync(dirname(out)), false);
+});
+
+test('output preflight rechecks Git ancestors after planning, including linked-worktree files', async t => {
+  for (const marker of ['directory', 'file']) {
+    const out = sandbox(t), p = plan(out), dotgit = join(dirname(out), '.git');
+    if (marker === 'directory') mkdirSync(dotgit);
+    else writeFileSync(dotgit, 'gitdir: /offline/linked-worktree');
+    let calls = 0;
+    await assert.rejects(runWorkflow(p, { ownerAway: true, runtime: runtime(p, {
+      verifyPins: () => calls++, gate: () => calls++, run: () => assert.fail('runner reached'),
+    }) }), /outside any git repository/);
+    assert.equal(calls, 0);
+    assert.equal(existsSync(out), false);
+  }
+});
+
+const refusalEvents = content => JSON.stringify({ type: 'user', message: { role: 'user', content: [
+  { type: 'tool_result', tool_use_id: 'toolu_offline', is_error: true, content },
+] } }) + '\n';
+const refusal = 'Computer Use was not approved to use Safari';
+
+test('a production refusal beside a success stops even below the batch harness threshold', t => {
+  const { p, round, stem, rows } = browserFixture(t);
+  const group = p.groups.find(g => g.id === round.group), task = group.tasks[1];
+  // This old two-task shape proves the review trigger independently of the new task boundary.
+  const batch = { ...round, tasks: [...group.tasks] };
+  rows.splice(1);
+  rows.push({ ...structuredClone(rows[0]), task: { name: task, browser: round.browser, prompt: group.taskPins[task].prompt } });
+  rows[0].outcome.ok = false;
+  rows[0].errorClass = runErrorClass({ eventsText: refusalEvents(refusal) });
+  assert.equal(rows[0].errorClass.class, 'approval refused');
+  assert.equal(harnessFailure(rows.map(row => ({ task: row.task.name, ok: row.outcome.ok, errorClass: row.errorClass }))), null);
+  put(join(stem, task, 'mcp.json'), { mcpServers: { 'plugin:sleight:computer': { env: { SLEIGHT_TURBO: '0', SLEIGHT_WORKFLOW_DOCS: '0' } } } });
+  writeFileSync(join(stem, task, 'events.jsonl'), '');
+  put(join(stem, 'results.json'), rows);
+  assert.throws(() => collectWorkflow(batch, p), /permission|safety/i);
+});
+
+test('production refusal classes and tool-result events stop before another task or side', async t => {
+  for (const kind of ['class', 'string event', 'block event', 'recovered event']) {
+    const { p, round, stem, rows } = browserFixture(t);
+    // Keep plan output fresh for runWorkflow. The injected child publishes the fixture at its task boundary.
+    const artifacts = JSON.parse(readFileSync(join(stem, 'commits.json')));
+    rmSync(p.out, { recursive: true });
+    let calls = 0;
+    await assert.rejects(runWorkflow(p, { ownerAway: true, runtime: runtime(p, {
+      collect: collectWorkflow,
+      run: async current => {
+        calls++;
+        assert.equal(current.id, round.id);
+        rows[0].outcome.ok = kind === 'recovered event';
+        rows[0].errorClass = kind === 'class' ? { class: 'approval refused', example: refusal } : null;
+        put(join(stem, 'cleanup.json'), { browserClosed: true });
+        put(join(stem, 'engine.json'), { version: engine, changed: false });
+        put(join(stem, 'commits.json'), artifacts);
+        put(join(stem, 'results.json'), rows);
+        for (const task of round.tasks) {
+          put(join(stem, task, 'mcp.json'), { mcpServers: { 'plugin:sleight:computer': { env: { SLEIGHT_TURBO: '0', SLEIGHT_WORKFLOW_DOCS: '0' } } } });
+          writeFileSync(join(stem, task, 'events.jsonl'), '');
+        }
+        writeFileSync(join(stem, round.tasks[0], 'events.jsonl'), kind === 'class' ? '' : refusalEvents(
+          kind === 'block event' ? [{ type: 'text', text: refusal }] : refusal));
+        return { code: rows[0].outcome.ok ? 0 : 1, signal: null };
+      },
+    }) }), /permission|safety/i);
+    assert.equal(calls, 1, kind);
+    assert.equal(JSON.parse(readFileSync(join(p.out, `${round.id}.receipt.json`))).safe, false);
+    assert.equal(JSON.parse(readFileSync(join(p.out, 'failure.json'))).completedTasks, 0);
+    assert.equal(existsSync(join(p.out, 'summary.json')), false);
+  }
+});
+
+test('summary uses passing lower median and range while expected time counts failures', () => {
+  const p = plan(), group = p.groups[0], task = group.tasks[0];
+  const rows = [
+    { seconds: 2, passed: true }, { seconds: 100, passed: false }, { seconds: 4, passed: true },
+  ].map(row => ({ ...row, group: group.id, task, side: 'docs0' }));
+  const cell = workflowSummary(p, rows).cells[0];
+  assert.equal(cell.runs, 3); assert.equal(cell.passes, 2);
+  assert.equal(cell.medianSeconds, 2); assert.deepEqual(cell.rangeSeconds, [2, 4]);
+  assert.equal(cell.expectedSeconds, 53);
+  for (const sample of [[], rows.map(row => ({ ...row, passed: false }))]) {
+    const empty = workflowSummary(p, sample).cells[0];
+    assert.equal(empty.medianSeconds, null); assert.equal(empty.rangeSeconds, null);
+    assert.equal(empty.expectedSeconds, null);
+  }
 });
