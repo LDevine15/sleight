@@ -180,14 +180,14 @@ export async function liveRuntime(options, { io, root: parentRoot, qualification
   if (missing.length) throw Error(`ELECTRON_RUNTIME_MISSING: ${missing.join(', ')}. Merge EPV3-4 to 7 first; nothing was launched`);
   if (process.platform !== 'darwin') throw Error('MACOS_REQUIRED');
   if (!io?.permission) throw Error('PERMISSION_OBSERVER_REQUIRED');
-  const pythonPath = await resolveRunPython(python, { exec });
+  python = await resolveRunPython(python, { exec });
   await io.permission(); // throws when codex-macos-inspect is missing, before anything starts
   const root = parentRoot ? mkdtempSync(join(parentRoot, 'seq-')) : createRunRoot();
   const observer = liveObserver({ spawnProcess: deps.spawn, root }), drivers = [];
-  return { observer, driverFor(app, extra = {}) { const driver = liveDriver(app, { root, exec, observer, python, pythonPath, qualificationDiagnosticPath, ...extra }); drivers.push(driver); return driver; },
+  return { observer, driverFor(app, extra = {}) { const driver = liveDriver(app, { root, exec, observer, python, qualificationDiagnosticPath, ...extra }); drivers.push(driver); return driver; },
     async close() {
       if (drivers.some(driver => !driver.cleanupConfirmed())) throw Error('DRIVER_CLEANUP_UNCONFIRMED');
-      const cleanup = await createRunReaper(root, { python, pythonPath, list: () => listProcesses(exec) }).reap();
+      const cleanup = await createRunReaper(root, { python, list: () => listProcesses(exec) }).reap();
       if (!cleanup.confirmed) throw Error('RUN_PROCESS_EXIT_UNCONFIRMED');
       rmSync(root, { recursive: true, force: true });
     } };
@@ -195,7 +195,7 @@ export async function liveRuntime(options, { io, root: parentRoot, qualification
 
 // forkWorker: the seam the unit tests use for a fake worker; the run forks electron-qualification-worker.mjs.
 // cardLog: the live runner's card log (electron-qualification-worker.mjs cardLine), passed to every worker.
-export function liveDriver(app, { root, exec, observer, forkWorker = qualificationWorker, cardLog, python = 'python3', pythonPath = python, qualificationDiagnosticPath, deps = {} }) {
+export function liveDriver(app, { root, exec, observer, forkWorker = qualificationWorker, cardLog, python = 'python3', qualificationDiagnosticPath, deps = {} }) {
   if (!BENCHMARK_ALLOWLIST.includes(app.bundleId)) throw Error('NOT_ON_BENCHMARK_ALLOWLIST');
   const base = mkdtempSync(join(root, app.key + '-'));
   const tempRoot = join(base, 'profiles'), stateDir = join(base, 'state'), registryPath = join(base, 'recipes.json');
@@ -212,7 +212,7 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
   const list = () => (deps.list ?? listProcesses)(exec);
   const sleep = deps.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const liveChild = w => !w.lost && w.child?.exitCode == null && w.child?.signalCode == null;
-  const reaper = createRunReaper(base, { python, pythonPath, list, pids: () => [...workers].filter(liveChild).map(w => workerBirths.get(w)).filter(Boolean), signal: (...args) => (deps.signal ?? process.kill)(...args), sleep });
+  const reaper = createRunReaper(base, { python, list, pids: () => [...workers].filter(liveChild).map(w => workerBirths.get(w)).filter(Boolean), signal: (...args) => (deps.signal ?? process.kill)(...args), sleep });
   const exited = (...args) => (deps.exited ?? processExitConfirmed)(...args);
   const electron = deps.electron ?? (async request => {
     const result = await runOwned('/usr/bin/osascript', ['-l', 'JavaScript', QUIT_HELPER, JSON.stringify({ ...request, bundle: app.bundleId })], { timeoutMs: 45000 });

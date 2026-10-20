@@ -17,6 +17,7 @@ import { EventEmitter } from 'node:events';
 import { createHmac, randomBytes } from 'node:crypto';
 import { lstatSync, unlinkSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
+import { ELECTRON_PROCESS_ENV } from './electron-process-env.mjs';
 import { CHANNEL_VERSION, DEFAULT_MAX_FRAME_BYTES, FrameReader, HANDSHAKE_MAX_BYTES, bare, deriveChannel, macEqual, opener, plainJson,
   randomToken, sealer, validToken } from './electron-channel.mjs';
 import { classify, createJournal, privateDirectory, reconcile } from './electron-ownership.mjs';
@@ -58,7 +59,7 @@ export function createPythonAdapter({ python = 'python3', script, registryPath, 
   const events = new EventEmitter(), pending = new Map();
   const child = spawn(python, ['-I', '-B', script, '--adapter', '--registry', registryPath, '--temp-root', tempRoot], {
     stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'], cwd: '/',
-    env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8', PYTHONDONTWRITEBYTECODE: '1' },
+    env: { ...ELECTRON_PROCESS_ENV, PYTHONDONTWRITEBYTECODE: '1' },
   });
   let sequence = 0, lost = false;
   const reader = new FrameReader(maxReplyBytes);

@@ -262,7 +262,7 @@ export async function runPhases({ options, deps }) {
 }
 
 // ---- live phases
-async function livePhases({ options, root, out, cardLog, exec, python, pythonPath, qualificationDiagnosticPath }) {
+async function livePhases({ options, root, out, cardLog, exec, python, qualificationDiagnosticPath }) {
   const { liveRuntime, liveDriver } = await import('./electron-qualification-live.mjs');
   const { observePermission } = await import('./real-permission.mjs');
   const permission = () => observePermission({ stopOnLiveHold: false });
@@ -285,7 +285,7 @@ async function livePhases({ options, root, out, cardLog, exec, python, pythonPat
       const { runOwned } = await import('./preapproved-process.mjs');
       const base = mkdtempSync(join(root, 'arm-')), armDir = join(base, 'claude');
       mkdirSync(armDir);
-      const driver = liveDriver(app, { root: base, exec, observer: null, cardLog, python, pythonPath, qualificationDiagnosticPath });
+      const driver = liveDriver(app, { root: base, exec, observer: null, cardLog, python, qualificationDiagnosticPath });
       let result, grade, cleanup;
       try {
         await driver.prepare();
@@ -359,7 +359,7 @@ async function runMain(argv, deps, qualificationDiagnosticPath) {
       const { fakeRunnerDeps } = await import('./electron-live-runner-fakes.mjs');
       result = await runPhases({ options, deps: { ...fakeRunnerDeps({ cardLog, out }), log } });
     } else {
-      const python = 'python3', pythonPath = await resolveRunPython(python, { exec });
+      const python = await resolveRunPython('python3', { exec });
       const io = { ...await liveIo(exec), ...deps.io };
       const watcher = createCardWatcher({ cardLog, outDir: out, log, locate: async () => {
         const { helper } = await import('./electron-qualification-live.mjs');
@@ -370,7 +370,7 @@ async function runMain(argv, deps, qualificationDiagnosticPath) {
       const commit = await exec('/usr/bin/git', ['-C', fileURLToPath(new URL('..', import.meta.url)), 'rev-parse', 'HEAD'], { timeout: 5000 }).then(r => r.stdout.trim(), () => null);
       result = await runPhases({ options, deps: { log, now: Date.now, sleep: ms => delay(ms), io, watcher, preflight, build: () => ({ commit }),
         lock: () => acquireLiveLock(LOCK, { wait: true, interval: 15000 }),
-        cleanup: () => createRunReaper(root, { python, pythonPath, list: () => listProcesses(exec) }).reap(), ...await livePhases({ options, root, out, cardLog, exec, python, pythonPath, qualificationDiagnosticPath }), ...deps.phases } });
+        cleanup: () => createRunReaper(root, { python, list: () => listProcesses(exec) }).reap(), ...await livePhases({ options, root, out, cardLog, exec, python, qualificationDiagnosticPath }), ...deps.phases } });
     }
     const path = join(out, `live-run-${result.summary.at.replace(/[:.]/g, '-')}.json`);
     writeFileSync(path, JSON.stringify(scrubReceipt(result.summary), null, 2) + '\n');

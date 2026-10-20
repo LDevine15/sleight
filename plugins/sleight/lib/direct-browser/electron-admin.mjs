@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ELECTRON_PROCESS_ENV } from './electron-process-env.mjs';
 import { CHANNEL_VERSION, DEFAULT_MAX_FRAME_BYTES, FrameReader, HANDSHAKE_MAX_BYTES, bare, deriveChannel, macEqual, opener, plainJson, randomToken,
   sealer, validToken } from './electron-channel.mjs';
 
@@ -122,7 +123,7 @@ export async function ensureHost({ stateDir, registryPath, tempRoot, build, buil
   const args = [script, '--state-dir', stateDir, '--registry', registryPath, '--temp-root', tempRoot, '--builds', builds.join(','), '--admin-fd', '3', '--startup-fd', '4',
     ...(python ? ['--python', python] : [])];
   const diagnostic = env.SLEIGHT_TURBO_UNQUALIFIED === '1' && typeof qualificationDiagnosticPath === 'string' ? qualificationDiagnosticPath : undefined;
-  const child = spawn(node, args, { detached: true, cwd: '/', stdio: ['ignore', 'pipe', 'ignore', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8',
+  const child = spawn(node, args, { detached: true, cwd: '/', stdio: ['ignore', 'pipe', 'ignore', 'pipe', 'pipe'], env: { ...ELECTRON_PROCESS_ENV,
     ...(diagnostic ? { SLEIGHT_TURBO_UNQUALIFIED: '1' } : {}) } });
   child.stdio[3].on('error', () => {});
   child.stdio[3].end(fresh.toString('base64url') + '\n');

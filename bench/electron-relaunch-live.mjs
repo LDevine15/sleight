@@ -59,7 +59,8 @@ async function sha256(path) {
 }
 function forkedWorker() {
   return import('node:child_process').then(({ fork }) => {
-    const child = fork(WORKER, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json' });
+    const child = fork(WORKER, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json',
+      env: { ...process.env, SLEIGHT_TURBO_UNQUALIFIED: '1' } });
     const pending = new Map();
     let sequence = 0, lost;
     child.on('message', msg => { const entry = pending.get(msg.id); if (entry) { pending.delete(msg.id); entry(msg); } });

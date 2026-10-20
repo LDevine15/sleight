@@ -5,7 +5,10 @@ import { join } from 'node:path';
 import { readArmConfig } from '../bench/electron-arm-server.mjs';
 import { APPS } from '../bench/electron-qualification.mjs';
 import { CONTRACT, createRunRoot, listProcesses, liveDriver, liveRuntime } from '../bench/electron-qualification-live.mjs';
-import { createRunReaper } from '../bench/electron-run-cleanup.mjs';
+import { createRunReaper, resolveRunPython } from '../bench/electron-run-cleanup.mjs';
+import { createPythonAdapter } from '../plugins/sleight/lib/direct-browser/electron-host.mjs';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 function world(t, { stuckWorker = false, stuckApp = false, reused = false, throws = false, host = false, stuckHost = false, observeLaunch = false, missingWindow = false, connectedBirth } = {}) {
   const root = createRunRoot('eqcl-');
@@ -268,7 +271,7 @@ test('recorded descendants remain owned after their parent exits and a stubborn 
   let rows = [{ pid: 701, ppid: 1, uid: process.getuid(), startedAtMs: 1, args: `${process.execPath} --state-dir /private/tmp/run/state` },
     { pid: 702, ppid: 701, uid: process.getuid(), startedAtMs: 2, args: 'adapter' }];
   const signals = [];
-  const reaper = createRunReaper('/private/tmp/run', { list: async () => rows, sleep: async () => {},
+  const reaper = createRunReaper('/private/tmp/run', { python: '/run/python3', list: async () => rows, sleep: async () => {},
     signal(pid, kind) { signals.push([pid, kind]); if (kind === 'SIGKILL') rows = []; } });
   await reaper.scan();
   rows = [{ ...rows[1], ppid: 1 }];
@@ -278,7 +281,7 @@ test('recorded descendants remain owned after their parent exits and a stubborn 
 
 test('a recycled recorded PID is never signalled', async () => {
   let row = { pid: 701, ppid: 1, uid: process.getuid(), startedAtMs: 1, args: `${process.execPath} --state-dir /private/tmp/run/state` };
-  const reaper = createRunReaper('/private/tmp/run', { list: async () => [row], sleep: async () => {}, signal: () => assert.fail('recycled PID') });
+  const reaper = createRunReaper('/private/tmp/run', { python: '/run/python3', list: async () => [row], sleep: async () => {}, signal: () => assert.fail('recycled PID') });
   await reaper.scan();
   row = { ...row, startedAtMs: 2, args: 'owner process' };
   assert.equal((await reaper.reap()).confirmed, true);
@@ -300,7 +303,7 @@ test('the process census preserves parent identity and refuses malformed output'
 
 test('a worker PID recycled before the first scan is never adopted or signalled', async () => {
   const row = { pid: 123, ppid: 1, uid: process.getuid(), startedAtMs: 2000, args: 'owner-process' };
-  const reaper = createRunReaper('/private/tmp/run', { list: async () => [row], pids: () => [{ pid: 123, startedAtMs: 1000 }],
+  const reaper = createRunReaper('/private/tmp/run', { python: '/run/python3', list: async () => [row], pids: () => [{ pid: 123, startedAtMs: 1000 }],
     sleep: async () => {}, signal: () => assert.fail('recycled worker PID') });
   assert.deepEqual(await reaper.scan(), []);
   assert.equal((await reaper.reap()).confirmed, true);
@@ -308,7 +311,7 @@ test('a worker PID recycled before the first scan is never adopted or signalled'
 
 test('a live recorded worker is adopted only with its spawn-time birth', async () => {
   const row = { pid: 123, ppid: process.pid, uid: process.getuid(), startedAtMs: 1000, args: 'worker-without-root' };
-  const reaper = createRunReaper('/private/tmp/run', { list: async () => [row], pids: () => [{ pid: 123, startedAtMs: 1000 }] });
+  const reaper = createRunReaper('/private/tmp/run', { python: '/run/python3', list: async () => [row], pids: () => [{ pid: 123, startedAtMs: 1000 }] });
   assert.deepEqual((await reaper.scan()).map(row => row.pid), [123]);
 });
 
@@ -358,7 +361,7 @@ test('root text adopts only the run UID and a known binary in argv zero', async 
     { pid: 707, ppid: 1, uid, startedAtMs: 1000, args: `${process.execPath} --state-dir /x${root}/state` },
     { pid: 708, ppid: 1, uid, startedAtMs: 1000, args: `${process.execPath} --data=${root}/state` },
   ];
-  const reaper = createRunReaper(root, { list: async () => rows });
+  const reaper = createRunReaper(root, { python: '/run/python3', list: async () => rows });
   assert.deepEqual((await reaper.scan()).map(row => row.pid), [701]);
 });
 
@@ -376,16 +379,25 @@ test('an orphan adapter uses the run-selected Python binary, including a path wi
   assert.equal(rows[0].pid, 702);
 });
 
-test('run startup resolves Python offline and the reaper recognizes its expanded interpreter path', async t => {
+test('run startup resolves under the host PATH and launches and reaps the expanded executable', async t => {
   const root = createRunRoot('eqpy-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const actual = join(root, 'Python interpreter'), alias = join(root, 'python3');
   writeFileSync(actual, 'not executed'); symlinkSync(actual, alias);
-  const commands = [];
-  const exec = async (file, args) => {
+  const commands = [], parentPath = process.env.PATH;
+  process.env.PATH = '/runner/homebrew/bin:/usr/bin:/bin';
+  t.after(() => { process.env.PATH = parentPath; });
+  const exec = async (file, args, options) => {
     commands.push([file, args]);
-    assert.equal(file, '/usr/bin/which'); assert.deepEqual(args, ['python3']);
-    return { stdout: alias + '\n' };
+    assert.equal(options.env.PATH, '/usr/bin:/bin', 'lookup and expansion use the host environment');
+    if (file === '/usr/bin/which') {
+      assert.deepEqual(args, ['python3']);
+      return { stdout: '/usr/bin/python3\n' };
+    }
+    assert.equal(file, '/usr/bin/python3');
+    assert.deepEqual(args.slice(0, 3), ['-I', '-B', '-c']);
+    assert.match(args[3], /sys.executable/);
+    return { stdout: alias + '\n' }; // The supported system launcher expands to a different executable.
   };
   const runtime = await liveRuntime({}, { root, io: { permission: async () => false } }, {
     exec, load: async file => Object.fromEntries(CONTRACT.find(([name]) => name === file)[1].map(name => [name, () => {}])),
@@ -395,10 +407,42 @@ test('run startup resolves Python offline and the reaper recognizes its expanded
   const driver = runtime.driverFor(APPS.vscode, { deps: { list: async () => rows, sleep: async () => {},
     signal: pid => { signalled.push(pid); rows = rows.filter(row => row.pid !== pid); } } });
   const config = driver.armConfig();
-  assert.equal(config.python, 'python3', 'resolution does not change the launch option');
-  assert.equal(commands.length, 1);
-  rows = [actual, 'python3'].map((python, index) => ({ pid: 701 + index, ppid: 1, uid: process.getuid(), startedAtMs: 1,
+  assert.equal(config.python, actual, 'launch gets the same absolute executable as cleanup');
+  assert.equal(commands.length, 2);
+  assert.equal(process.env.PATH, '/runner/homebrew/bin:/usr/bin:/bin');
+  let spawned;
+  const child = new EventEmitter();
+  child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+  child.stdio = [child.stdin, child.stdout, child.stderr, new PassThrough(), new PassThrough()];
+  createPythonAdapter({ python: config.python, script: '/fixture/launch.py', registryPath: config.registryPath, tempRoot: config.tempRoot,
+    spawn(file, _args, options) { spawned = file; assert.equal(options.env.PATH, '/usr/bin:/bin'); return child; } });
+  assert.equal(spawned, actual);
+  rows = [actual, '/runner/homebrew/python3', '/usr/bin/python3'].map((python, index) => ({ pid: 701 + index, ppid: 1, uid: process.getuid(), startedAtMs: 1,
     args: `${python} launch.py --temp-root ${config.stateDir}/adapter` }));
   assert.equal((await driver.cleanup()).confirmed, true);
-  assert.deepEqual(signalled, [701, 702]);
+  assert.deepEqual(signalled, [701], 'only the exact expanded executable is adopted without a parent');
+});
+
+for (const python of [undefined, 'python3', '', '/run/python3\n', '/run/../python3']) test(`unresolved interpreter refuses empty cleanup proof (${JSON.stringify(python)})`, async () => {
+  const reaper = createRunReaper('/private/tmp/run', { python, list: async () => [], signal: () => assert.fail('no signal') });
+  const result = await reaper.reap();
+  assert.equal(result.confirmed, false);
+  assert.ok(result.errors.includes('RUN_PYTHON_UNRESOLVED'));
+});
+
+for (const stdout of ['', 'python3\n', '/one\n/two\n']) test(`interpreter expansion fails closed for ${JSON.stringify(stdout)}`, async () => {
+  let count = 0;
+  await assert.rejects(resolveRunPython('python3', { realpath: p => p, exec: async () => ({ stdout: ++count === 1 ? '/usr/bin/python3\n' : stdout }) }), /RUN_PYTHON_UNAVAILABLE/);
+});
+
+
+test('the immediate signal check refuses a changed incarnation or UID', async () => {
+  for (const replacement of [{ startedAtMs: 2 }, { uid: process.getuid() + 1 }]) {
+    const root = '/private/tmp/run', uid = process.getuid();
+    let reads = 0;
+    const row = { pid: 701, ppid: 1, uid, startedAtMs: 1, args: `/run/python3 launch.py --temp-root ${root}/profiles` };
+    const reaper = createRunReaper(root, { python: '/run/python3', sleep: async () => {},
+      list: async () => [{ ...row, ...(reads++ ? replacement : {}) }], signal: () => assert.fail('replacement is not owned') });
+    assert.equal((await reaper.reap()).confirmed, true);
+  }
 });

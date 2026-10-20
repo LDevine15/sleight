@@ -1,21 +1,31 @@
 // Run-owned infrastructure only, after the fixture app's own Quit and absence have been proved.
 // Remember descendants before ending a parent, so reparenting to launchd cannot hide an adapter or helper.
 import { realpathSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, normalize } from 'node:path';
+import { ELECTRON_PROCESS_ENV } from '../plugins/sleight/lib/direct-browser/electron-process-env.mjs';
 
-// Resolve without running the interpreter or an adapter. ps can show the symlink's expanded executable path.
+const absoluteExecutable = value => typeof value === 'string' && isAbsolute(value) && normalize(value) === value && !/[\0\r\n]/.test(value);
+
+// Apple's system Python launcher can exec a developer-toolchain interpreter that realpath alone cannot find.
+// Probe only that interpreter, without loading an adapter. Launch and cleanup both use the expanded result.
 export async function resolveRunPython(python, { exec, realpath = realpathSync }) {
   try {
     if (typeof python !== 'string' || !python || python.startsWith('-') || /[\0\r\n]/.test(python)) throw Error();
-    const { stdout } = await exec('/usr/bin/which', [python], { timeout: 5000 });
-    const path = String(stdout).trim();
-    if (!isAbsolute(path) || /[\0\r\n]/.test(path)) throw Error();
-    return realpath(path);
+    const options = { timeout: 5000, cwd: '/', env: { ...ELECTRON_PROCESS_ENV }, maxBuffer: 16384 };
+    const { stdout } = await exec('/usr/bin/which', [python], options);
+    const selected = String(stdout).trim();
+    if (!absoluteExecutable(selected)) throw Error();
+    const expanded = await exec(selected, ['-I', '-B', '-c', 'import os, sys; print(os.path.realpath(sys.executable))'], options);
+    const path = String(expanded.stdout).trim();
+    if (!absoluteExecutable(path)) throw Error();
+    const resolved = realpath(path);
+    if (!absoluteExecutable(resolved)) throw Error();
+    return resolved;
   } catch { throw Error('RUN_PYTHON_UNAVAILABLE'); }
 }
 
-export function createRunReaper(root, { list, pids = () => [], uid = process.getuid(), python = 'python3', pythonPath = python,
-  binaries = [process.execPath, '/usr/bin/osascript', python, pythonPath],
+export function createRunReaper(root, { list, pids = () => [], uid = process.getuid(), python,
+  binaries = [process.execPath, '/usr/bin/osascript', python].filter(Boolean),
   signal = process.kill, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   const owned = new Map();
   const namesRoot = row => row.uid === uid && binaries.some(binary => row.args === binary || row.args.startsWith(binary + ' ')) &&
@@ -37,6 +47,8 @@ export function createRunReaper(root, { list, pids = () => [], uid = process.get
     return rows.filter(row => row.uid === uid && owned.has(row.pid) && owned.get(row.pid) === row.startedAtMs);
   }
   return { scan, async reap() {
+    // Without the launch executable an orphan adapter could be omitted from an apparently empty census.
+    if (!absoluteExecutable(python)) return { confirmed: false, left: [], errors: ['RUN_PYTHON_UNRESOLVED'] };
     const errors = [], signalled = new Set();
     let left = await scan();
     for (const kind of ['SIGTERM', 'SIGKILL']) {

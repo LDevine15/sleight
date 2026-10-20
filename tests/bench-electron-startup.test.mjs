@@ -171,3 +171,60 @@ test('the qualification worker uses its message sink and ignores the ambient pat
   await assert.rejects(worker.prepareWorker({ stateDir: root, allowlist: [] }, { loadModule: async name => modules[name] }), /ELECTRON_HOST_START_FAILED/);
   assert.deepEqual(JSON.parse(startup), {}, 'an ambient path cannot enable capture without a message path');
 });
+
+
+test('the default relaunch fork enables its explicit host sink without changing the parent environment', async t => {
+  const childProcess = (await import('node:child_process')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { liveRelaunchDriver } = await import('../bench/electron-relaunch-live.mjs');
+  const { APPS } = await import('../bench/electron-qualification.mjs');
+  const { readQualificationDiagnostic } = await import('../plugins/sleight/lib/direct-browser/electron-host-run.mjs');
+  const root = live.createRunRoot('eqrf-'), sink = join(root, 'relaunch.jsonl');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(sink, '', { mode: 0o600 });
+  const originalFlag = process.env.SLEIGHT_TURBO_UNQUALIFIED;
+  delete process.env.SLEIGHT_TURBO_UNQUALIFIED;
+  t.after(() => { if (originalFlag === undefined) delete process.env.SLEIGHT_TURBO_UNQUALIFIED; else process.env.SLEIGHT_TURBO_UNQUALIFIED = originalFlag; });
+  const before = { ...process.env };
+  let forkEnv, startup = '', hostEnv, hostArgs;
+  const modules = {
+    'installed-config.mjs': { readInstalledConfig: () => ({ receipt: {} }), acceptedInstalledPackage: () => ({ current: () => true }) },
+    'host.mjs': { prepareNativeHelpers: async () => ({ status: 'ready', receipt: {} }), createNativeUi: () => ({ close() {} }) },
+    'electron-consent.mjs': { createGrantStore: () => ({}), createElectronConsent: () => ({ requestDebugger() {}, requestRelaunch() {}, grantFor() {} }) },
+    'electron-runtime.mjs': { connectAppHost: async ({ dependencies }) => dependencies.ensureHost({
+      stateDir: join(root, 'state'), tempRoot: join(root, 'profiles'), registryPath: join(root, 'r.json'), build: 'fake-build', timeoutMs: 1,
+      env: forkEnv, connect() { const socket = new EventEmitter(); queueMicrotask(() => socket.emit('error')); return socket; },
+      spawn(_node, args, options) {
+        hostEnv = options.env; hostArgs = args;
+        const child = new EventEmitter();
+        child.stdout = new PassThrough(); child.stdio = [null, child.stdout, null, new PassThrough(), new PassThrough()];
+        child.stdio[4].on('data', bytes => { startup += bytes; }); child.kill = () => {};
+        return child;
+      } }) },
+    'worlds.mjs': { loadPlaywrightCore: () => ({ inprocess: { playwright: {} } }) }, 'worker.mjs': {}, 'v3-context.mjs': {},
+  };
+  const forkMock = t.mock.method(childProcess, 'fork', (_file, _args, options) => {
+    forkEnv = options.env ?? { ...process.env };
+    const child = new EventEmitter();
+    child.kill = () => { child.emit('exit', null, 'SIGKILL'); };
+    child.send = msg => { void worker.prepareWorker(msg, { loadModule: async name => modules[name] })
+      .then(() => assert.fail('fake host never becomes ready'), error => child.emit('message', { id: msg.id, ok: false, error: error.message })); };
+    return child;
+  });
+  syncBuiltinESMExports();
+  t.after(() => { forkMock.mock.restore(); syncBuiltinESMExports(); });
+  const driver = liveRelaunchDriver(APPS.vscode, { root, python: '/run/expanded/python3', qualificationDiagnosticPath: sink });
+  await assert.rejects(driver.nextTurn(), /ELECTRON_HOST_START_FAILED/);
+  assert.ok(Object.keys(process.env).length === Object.keys(before).length && Object.entries(before).every(([key, value]) => process.env[key] === value),
+    'fork and startup leave the parent environment unchanged');
+  assert.equal(forkEnv.SLEIGHT_TURBO_UNQUALIFIED, '1');
+  assert.equal(hostEnv.SLEIGHT_TURBO_UNQUALIFIED, '1');
+  assert.equal(hostEnv.SLEIGHT_ELECTRON_DIAG, undefined);
+  assert.equal(hostArgs[hostArgs.indexOf('--python') + 1], '/run/expanded/python3');
+  assert.deepEqual(JSON.parse(startup), { diagnostic: sink });
+  const record = readQualificationDiagnostic({ fd: 4, unqualified: hostEnv.SLEIGHT_TURBO_UNQUALIFIED,
+    stat: () => ({ isSocket: () => true }), read: () => startup, close() {} });
+  assert.equal(typeof record, 'function');
+  record({ method: 'park', message: 'relaunch upstream cause' });
+  assert.match(readFileSync(sink, 'utf8'), /relaunch upstream cause/);
+});
