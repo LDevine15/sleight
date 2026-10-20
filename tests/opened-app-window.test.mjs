@@ -5,6 +5,7 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import vm from 'node:vm';
 import { FlowRules } from '../plugins/sleight/lib/flow-rules.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
+import { InputLease, leaseKey } from '../plugins/sleight/lib/input-lease.mjs';
 
 const appId = 'com.apple.TextEdit', app = 'TextEdit';
 const window = name => ({ appId, app, title: `${name}.txt`, url: `file:///tmp/${name}.txt` });
@@ -16,7 +17,7 @@ function fixture(t, options = {}) {
   const window = name => ({ appId, app, title: `${name}.txt`, url: `file://${root}/${name}.txt` });
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
-  const sent = [], received = [], selections = [], leases = [], drags = [];
+  const sent = [], received = [], selections = [], leases = [], drags = [], invalidRequests = [];
   let current, broken = false, epoch = 1, focusOverride;
   const observations = [], released = [], active = new Set();
   const windows = ['Source', 'Target'].map((name, i) => ({ AXTitle: `${name}.txt`, AXDocument: `file://${root}/${name}.txt`, AXWindowNumber: 11 + i }));
@@ -37,12 +38,13 @@ function fixture(t, options = {}) {
   };
   resetIdentity();
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: options.changeReview ?? false, flowRules: options.flowRules,
+    restartEngine: async () => ({ serverIn, serverOut }),
     ask: options.ask ?? (async () => 'accept'),
-    inputLease: { acquire: (target, scope = 'window') => {
+    inputLease: options.inputLease ?? { acquire: (target, scope = 'window') => {
       if (options.busy && scope === 'app' && target.title === 'Source.txt' && current?.title === 'Target.txt') throw Error('Input lease: held by another session, retry after 20 seconds');
       if (options.busyWindow && scope === 'window') throw Error('Input lease: window action refused');
       leases.push(target); const key = `${scope}:${target.title}`; active.add(key); return key;
-    }, grant: () => ({}), renew() {}, release: keys => { for (const key of keys) { released.push(key); active.delete(key); } }, close() {} },
+    }, grant: () => ({}), renew() {}, release: keys => { for (const key of keys) { released.push(key); active.delete(key); } }, close: () => active.clear() },
     windowIdentity: async target => {
       observations.push(structuredClone(target));
       return broken ? { status: 'unknown' } : JSON.parse(context.run([JSON.stringify(target)]));
@@ -69,13 +71,20 @@ function fixture(t, options = {}) {
     for (const msg of bytes.toString().trim().split('\n').map(JSON.parse)) {
       sent.push(msg);
       if (msg.method !== 'tools/call') continue;
+      options.onEngineCall?.(msg);
+      if (options.strictProtocol && msg.jsonrpc !== '2.0') {
+        invalidRequests.push(msg);
+        queueMicrotask(() => relay.engineEnded('Engine exited (0).'));
+        continue;
+      }
+      if (options.holdOpenedRead && String(msg.id).startsWith('sleight-opened-window-')) continue;
       serverOut.write(JSON.stringify({ id: msg.id, result: { content: [{ type: 'text',
         text: `Window: "${current.title}", App: ${app}.\nURL: ${current.url}\n0 standard window ${current.title}\n\t1 text area Value: sample\n\t2 text area Value: alpha move-62f9a451 omega` }],
       _meta: { 'codex/toolSurface': { app: { appId } } } } }) + '\n');
     }
   });
   const call = async (id, name, args) => {
-    clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name, arguments: args } }) + '\n');
+    clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n');
     for (let i = 0; i < 50 && !received.some(msg => msg.id === id); i++) await tick();
     const reply = received.find(msg => msg.id === id);
     assert.ok(reply, `no reply for ${id}`);
@@ -85,8 +94,60 @@ function fixture(t, options = {}) {
     const result = await call(name, 'open_file', { app, path: `${root}/${name}.txt` });
     return /Window handle: `([^`]+)`/.exec(result.content.map(c => c.text ?? '').join('\n'))[1];
   };
-  return { call, open, sent, selections, leases, drags, relay, send: (id, name, args) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name, arguments: args } }) + '\n'), released, active, observations, resetIdentity, focusDuplicate: () => { Object.assign(windows[1], { AXTitle: 'Source.txt', AXDocument: window('Source').url }); focusOverride = 1; }, breakIdentity: () => { broken = true; } };
+  return { call, open, sent, selections, leases, drags, relay, received, invalidRequests, send: (id, name, args) => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n'), released, active, observations, resetIdentity, focusDuplicate: () => { Object.assign(windows[1], { AXTitle: 'Source.txt', AXDocument: window('Source').url }); focusOverride = 1; }, breakIdentity: () => { broken = true; } };
 }
+
+test('WD456 calls 5 to 7: refusal, select_window and handle retry send valid JSON-RPC', async t => {
+  const options = { strictProtocol: true, decline: true };
+  const h = fixture(t, options), source = await h.open('Source');
+  await h.open('Target');
+  const refused = await h.call('call5', 'js', { code: `let src = ${source}; await src.selectText(2, "move-62f9a451"); src` });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content[0].text, /window unconfirmed.*select_window/);
+  options.decline = false;
+  assert.ok(!(await h.call('call6', 'select_window', { app: appId, url: window('Source').url })).isError);
+  const retry = await h.call('call7', 'js', { code: `await ${source}.selectText(2, "move-62f9a451")` });
+  assert.equal(h.invalidRequests.length, 0);
+  assert.ok(!retry.isError, JSON.stringify(retry));
+  assert.equal(h.active.has('app:Source.txt'), false);
+});
+
+test('the app reservation survives prepareLease through the internal read and final handle action', async t => {
+  const directory = mkdtempSync('/tmp/wd6c-leases-');
+  const inputLease = new InputLease({ directory, holder: 'WD6c' });
+  t.after(() => { inputLease.close(); rmSync(directory, { recursive: true, force: true }); });
+  const h = fixture(t, { inputLease, onEngineCall: msg => {
+    if (msg.id !== 'action' && !String(msg.id).startsWith('sleight-opened-window-')) return;
+    assert.equal(inputLease.inspect(leaseKey(window('Source'), 'app'))?.active, true);
+  } });
+  const source = await h.open('Source'); await h.open('Target');
+  const result = await h.call('action', 'js', { code: `await ${source}.selectText(2, "move-62f9a451")` });
+  assert.ok(!result.isError);
+  assert.equal(inputLease.owned.has(leaseKey(window('Source'), 'app')), false);
+});
+
+for (const reset of [false, true]) test(`engine exit during an internal opened-window read recovers${reset ? ' through js_reset' : ''}`, async t => {
+  const options = { holdOpenedRead: true };
+  const h = fixture(t, options), source = await h.open('Source');
+  await h.open('Target');
+  h.send('interrupted', 'js', { code: `await ${source}.selectText(2, "move-62f9a451")` });
+  for (let i = 0; i < 50 && !h.sent.some(msg => String(msg.id).startsWith('sleight-opened-window-')); i++) await tick();
+  assert.ok(h.sent.some(msg => String(msg.id).startsWith('sleight-opened-window-')));
+  assert.equal(h.active.has('app:Source.txt'), true);
+  h.relay.engineEnded('Engine exited (0).');
+  await tick();
+  assert.equal(h.received.filter(msg => msg.id === 'interrupted').length, 1);
+  assert.match(h.received.find(msg => msg.id === 'interrupted').result.content[0].text, /Engine exited/);
+  assert.equal(h.active.size, 0, 'a dead engine retains no lease or heartbeat');
+  if (reset) assert.ok(!(await h.call('reset', 'js_reset', {})).isError);
+  const unsafe = await h.call('unsafe', 'js', { code: `await ${source}.typeText("never replay")` });
+  assert.equal(unsafe.isError, true, 'a new app read is required after engine death');
+  assert.equal(h.sent.some(msg => msg.id === 'unsafe'), false);
+  assert.ok(!(await h.call('state', 'js', { code: 'await cua.getState()' })).isError);
+  assert.ok(!(await h.call('fresh', 'js', { code: 'let fresh = await cua.getApp("TextEdit")' })).isError);
+  assert.ok(!(await h.call('action', 'js', { code: 'await fresh.typeText("recovered")' })).isError);
+  assert.ok(!(await h.call('select', 'select_window', { app: appId, url: window('Source').url })).isError);
+});
 
 test('WD3 calls 4 to 8: the first opened handle selects its Source URL before selectText', async t => {
   const h = fixture(t), source = await h.open('Source');

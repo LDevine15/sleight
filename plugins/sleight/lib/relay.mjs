@@ -1088,6 +1088,7 @@ export function createRelay({
     ? createTabProbe({ directory: inputLease.directory, observe: windowIdentity, trace }) : undefined;
   const promptFailures = new Map(); // call id -> native panel failure, distinct from a user decline
   const running = new Set(); // ids of engine calls waiting for a result
+  const engineCalls = new Set(); // calls actually sent to the current engine, including private reads
   const nativeChecked = new Set();
   const focusedChecked = new Set();
   const callDetails = new Map();
@@ -1137,6 +1138,7 @@ export function createRelay({
       detachServer();
       serverIn = engine.serverIn; serverOut = engine.serverOut;
       engineEpoch++;
+      engineCalls.clear();
       bindServer();
       stopCollected = false;
       if (initialization) {
@@ -1790,7 +1792,7 @@ export function createRelay({
             resume(checked);
           } catch { stop(); }
         });
-        handleClient({ id, method: 'tools/call', params: { name: 'js', arguments: { code: `var __sleightWindowCheck${nextInternalId++} = await cua.getApp(${JSON.stringify(target.appId)})` } } });
+        handleClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code: `var __sleightWindowCheck${nextInternalId++} = await cua.getApp(${JSON.stringify(target.appId)})` } } });
       } else {
         const checked = verifyWindowIdentity({ ...target, nativeIdentity: identity }, await windowIdentity(target));
         current(); resume(checked);
@@ -2195,6 +2197,7 @@ export function createRelay({
     if (closing && msg.result?.action === 'accept') msg = { ...msg, result: { action: 'cancel' } };
     if (serverIn.writableEnded || serverIn.destroyed) { trace('server-input-closed', { id: msg.id }); return; }
     trace('to-server', msg);
+    if (msg.method === 'tools/call' && msg.id !== undefined) engineCalls.add(msg.id);
     if (msg.method === 'tools/call' && msg.id !== undefined && msg.params.name !== TURN_END_TOOL) {
       callDetails.set(msg.id, msg.params.name + (msg.params.arguments?.title ? ': ' + msg.params.arguments.title : ''));
     }
@@ -3750,6 +3753,13 @@ export function createRelay({
       }
     }
     const browser = msg.method === 'tools/call' && msg.params?.name === 'js' && browserPlan(originalCode ?? '');
+    if (msg.method === 'tools/call' && msg.params?.name === 'js_reset') {
+      // A reset can repair orphaned bookkeeping, but cannot release a call still on the pipe or in native admission.
+      if (inputLease && (engineCalls.size || localRunning.size || [...pendingClients.keys()].some(id => id !== msg.id))) {
+        leaseStop(msg, 'another call in this session is pending.'); return;
+      }
+      clearStaleCalls(msg.id);
+    }
     if (msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name) && browserCalls.size) {
       leaseStop(msg, 'a browser candidate is pending; wait for its guarded result.'); return;
     }
@@ -4270,6 +4280,7 @@ export function createRelay({
       clientOut.write(line + '\n');
       return;
     }
+    if (msg.method === undefined) engineCalls.delete(msg.id);
     // Only the id: with to-server and to-client it splits engine time from the relay's own.
     if (msg.method !== undefined && msg.id !== undefined) {
       const id = engineEpoch ? `sleight-engine-${engineEpoch}-${nextEngineRequest++}` : msg.id;
@@ -5368,6 +5379,7 @@ export function createRelay({
         for (const state of helperStates.values()) clearTimeout(state.timer);
         helperStates.clear(); helperHandles.clear(); helperAliases.clear();
         leaseCalls.clear(); changeCalls.clear(); documentCalls.clear(); jsCalls.clear(); syntaxOrigins.clear(); browserCalls.clear();
+        engineCalls.clear();
         spaceChecks.clear(); preHealth.clear(); nativeChecked.clear(); focusedChecked.clear(); restartRetries.clear(); debuggerDocs.clear();
         // The stopped turn's receipt keeps its unanswered calls as unknown; nothing carries into the next engine.
         resultCalls.clear(); guardCalls.clear(); finishReceipt();
@@ -5424,26 +5436,74 @@ export function createRelay({
     changes.dispose();
     trace('change-snapshots-deleted', { directory: changes.directory });
   }
+  function clearStaleCalls(resetId) {
+    // Keep live work and app-health faults. Only bookkeeping with no caller, native operation or engine RPC is stale.
+    const ids = new Set([...running, ...leaseCalls.keys(), ...openedWindowLeases.keys(), ...browserCalls.keys()]);
+    for (const id of ids) {
+      if (id === resetId || engineCalls.has(id) || localRunning.has(id) || pendingClients.has(id)) continue;
+      splitCalls.delete(id); browserCalls.delete(id);
+      nativeChecked.delete(id); focusedChecked.delete(id); restartRetries.delete(id);
+      finishedCall(id); stoppedClients.add(id);
+    }
+  }
+  function clearPendingCalls(message) {
+    // Split reads have no pendingClients entry. Invalidate their continuations before settling either parent or child.
+    stopGeneration++;
+    clearTimeout(idleTimer);
+    // Failure replies also call finishedCall. Remove renewal keys before any reply or callback can finish a call.
+    stopHeartbeat(); leaseCalls.clear(); openedWindowLeases.clear();
+    cancelFrontCalls();
+    splitCalls.clear();
+    cancelInternalRequests(message);
+    for (const pending of clipboardReplies.values()) pending.reject(new Error(message));
+    clipboardReplies.clear(); clipboardResets.clear();
+    for (const resolve of elicitations.values()) resolve({ result: { action: 'cancel' } });
+    elicitations.clear(); approvalRequests.clear(); listRequests.clear(); engineRequests.clear();
+    for (const id of [...pendingClients.keys()]) {
+      // Suppress late engine, local-tool and direct-browser results after the one failure reply.
+      leaseStop({ id }, `${message} Input outcome is unconfirmed; read the app again.`);
+      stoppedClients.add(id);
+    }
+    pendingClients.clear();
+    // The caller releases reservations after removing all call markers.
+    for (const id of [...running]) { stoppedClients.add(id); finishedCall(id); }
+    localRunning.clear();
+    callDetails.clear();
+    openedWindowCalls.clear(); openedFlowPlans.clear(); openedWindowReads.clear(); openedAliases.clear();
+    menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear(); menuForwards.clear(); continuedLeads.clear(); splitInputs.clear();
+    engineOpenPrints.clear(); engineOpenAcquisitions.clear(); engineOpenAllowed.clear();
+    filterMarks.clear(); splitHeads.clear(); splitCodes.clear(); rawHeads.clear(); openShots.clear(); openReads.clear(); textlessOpens.clear();
+    invalidateDiagnostics();
+    for (const probe of helperProbes.values()) { clearTimeout(probe.timer); probe.receive?.({ error: { message } }); }
+    for (const state of helperStates.values()) clearTimeout(state.timer);
+    helperProbes.clear(); helperStates.clear(); helperReads.clear(); helperControls.clear(); helperFullReads.clear(); helperDiagnosticReplies.clear(); lateDiagnosticControls.clear();
+    helperHandles.clear(); helperAliases.clear(); helperActive = undefined;
+    changeCalls.clear(); documentCalls.clear(); jsCalls.clear(); syntaxOrigins.clear(); browserCalls.clear();
+    spaceChecks.clear(); preHealth.clear(); nativeChecked.clear(); focusedChecked.clear(); restartRetries.clear(); debuggerDocs.clear();
+    flowCalls.clear(); flowPending = undefined; flowPermit = undefined;
+    resultCalls.clear(); guardCalls.clear(); promptFailures.clear();
+    stopHeartbeat();
+    engineCalls.clear();
+    callGenerations.clear();
+  }
   function engineEnded(message) {
-    if (disposed || closing) return;
+    if (disposed) return;
+    const leaseFailed = !!leaseFault;
     stopCollected = true; updatePending = true;
     // An engine that died unplanned leaves direct browser work with no owner; revoke it as a Stop does.
     directBrowser?.end();
-    rememberEngineBindings();
     startup?.close(); startup = undefined;
-    cancelInternalRequests(message);
-    // browser_open's acquisition is sleight's own call, so Claude's call waits on it: answer it through the acquisition.
-    for (const id of [...engineOpenAcquisitions]) {
-      const next = splitCalls.get(id);
-      splitCalls.delete(id); finishedCall(id);
-      next?.({ jsonrpc: '2.0', id, error: { code: -32000, message } });
-    }
-    for (const id of [...pendingClients.keys()]) {
-      if (!running.has(id)) continue;
-      finishedCall(id); restartRetries.delete(id);
-      leaseStop({ id }, message);
-      stoppedClients.add(id); // a direct browser call still running must not answer a second time
-    }
+    replWarmup.cancel();
+    privateWarmRequests.clear(); nativeWarmRequests.clear(); dropHeldWarmPrompts();
+    browserWarmConfirmed = false;
+    clearPendingCalls(message);
+    forgetHandles(); browserRecovery.reset();
+    lastConfirmedWindow = undefined; recoveryKnown = false; recoveryTarget = undefined;
+    priorRead = undefined; lastTree = undefined;
+    turnEndCalls.clear(); failedTurnEnds.clear(); turnEndAttempts.clear();
+    releaseLeases();
+    // A stream or renewal fault stopped the engine. Its confirmed exit permits a fresh read on a replacement.
+    if (leaseFailed) closing = false;
   }
   function close() {
     closing = true;
