@@ -5,7 +5,7 @@
 Rebuild the results pages from the committed data with `node bench/results-hub.mjs --render-only`.
 Use `node bench/results-hub.mjs --render-only --check` to check for stale pages.
 
-Published at: [sleight benchmarks](https://land-o-clusters.github.io/sleight/results/) and the
+Results are published at [sleight benchmarks](https://land-o-clusters.github.io/sleight/results/) and the
 [interactive explorer](https://land-o-clusters.github.io/sleight/results/explore.html).
 
 ## Claim suite
@@ -126,7 +126,7 @@ guard setup and native app-probe changes.
 `bench/app-speed-map.mjs` times the engine without a model. A trial times five steps on one app (acquisition, a first
 and a warm full read, one scroll and a readback), and a separate cohort runs four concurrent read-only sessions on one
 app. Apps are grouped by class (Electron/CEF, Office, Apple native, Chromium). Fixtures are private temp files and
-folders, and the run needs the owner away. Live, TextEdit completed 3/3 trials on 2026-10-14, with medians of 1247 ms to
+folders, and the run needs the owner away. TextEdit completed 3/3 live trials on 2026-10-14, with medians of 1247 ms to
 acquire, 52 ms for the first read and 918 ms for the scroll.
 
 ```bash
@@ -598,7 +598,7 @@ of model time at 2.12 s per turn and no refused calls.
 Claude never combined the two in these tasks. The pass checks that nothing broke and doesn't measure a
 saving.
 
-0.15.1 halves the skill and adds the fixes a trace of the slow tasks found. Its pass
+0.15.1 halves the skill and adds fixes found by tracing the slow tasks. Its pass
 ([`skill-trim`](benchmarks/2026-10-08-skill-trim.json)) passed 21/21 in 140 turns and 531 s, with 271 s
 of model time at 1.93 s per turn and 7.11M cached tokens read instead of 8.30M.
 
@@ -676,7 +676,7 @@ typing put text in it.
 with the owner away. Two chess-drag runs saved the right game and then ran into the 5-minute limit,
 because Claude checked for the file with Claude Code's Glob, which never returned. simulator-form
 failed once the way it did in 1.0.0: a first tap off the field, then no text from later taps. Relay
-time, measured right now, was 0.4 s for the pass. chess-drag then ran 3 times with a skill hint to
+time measured for the pass was 0.4 s. chess-drag then ran 3 times with a skill hint to
 press a 3D piece at its head, which missed in this small window, where the e-pawn's head sits behind the
 king ([`chess-glob`](benchmarks/2026-10-09-chess-glob.json): 3/3, two of them at the limit). With the
 hint replaced and Glob, Grep and Read disallowed, it passed 3/3 in 52 to 60 s and 10 to 12 turns
@@ -844,7 +844,7 @@ node process took 3.8 (9.3 against 5.4), the host CLIs 5.2 (Claude Code 11.3 plu
 separate), and `osascript` 1.9. The helper and the apps together used 0.6 less for sleight (20.8
 against 21.3). The gap per run was largest on calculator-click (4.7 and 6.6 s against 3.3 and 3.3).
 
-After tonight's cuts (helper lanes, cached extension check, the split read's reuse, first-call
+After the cuts (helper lanes, cached extension check, the split read's reuse, first-call
 batching; `6e21846`, 2026-10-10 02:10 UTC, the owner away, load 22 to 30 from another project's test
 suite), the same six runs a side ([`footprint-2`](benchmarks/2026-10-10-footprint-2.json)) passed 6/6
 each. sleight took 154 s and 35 turns, Codex 239 s and 59. sleight used 45.8 CPU seconds of its own
@@ -929,7 +929,9 @@ average was about 100 from other processes during both.
 | textedit-edit | 9 | 7 |
 | textedit-drag | 11 | 8 |
 | chess-drag | 15.5 | 13 |
-| simulator-form | 7 | 5 | One pass per model can't separate a model from that hour's API latency.
+| simulator-form | 7 | 5 |
+
+One pass per model can't separate a model from that hour's API latency.
 
 From 2026-10-04 to 2026-10-10, runs defaulted to Sonnet 5.5 at medium effort, and since then to Haiku
 5.5 at high (`--model`, `--effort`). Haiku's costs come from its token counts at API prices, since
