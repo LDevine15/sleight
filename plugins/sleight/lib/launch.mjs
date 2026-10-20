@@ -889,8 +889,8 @@ export function approvalOptions(env = process.env, dialog = askWithDialog) {
 export function shellRelayOptions(dialog, card = createPaymentCard()) {
   const wording = hostWording({ name: 'Grok Bot' });
   // Use the native consent host, which sleight's tools refuse to touch. There is no host form or JXA fallback.
-  dialog ??= async (message, scoped) => {
-    const answer = await card.ask({ session: 'Grok Bot', site: 'this Mac', request: message, scoped });
+  dialog ??= async (message, scoped, options) => {
+    const answer = await card.ask({ session: 'Grok Bot', site: 'this Mac', request: message, scoped, app: options?.app });
     if (answer === undefined) throw Object.assign(new Error('sleight consent panel unavailable; no approval was granted. Retry when the panel is available.'),
       { code: 'SLEIGHT_PROMPT_UNAVAILABLE' });
     return answer === 'once' ? 'accept' : 'cancel';
@@ -1097,7 +1097,9 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const openedFiles = new Map();
   process.once('exit', () => appHealth.close());
   const replayClient = replayBridge({ input: process.stdin, output: process.stdout });
-  const paymentCard = paymentCardFactory();
+  const paymentCard = paymentCardFactory(shellRoute ? { onStatus: params => {
+    replayClient.clientOut.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/sleight/approval', params }) + '\n');
+  } } : undefined);
   const approval = shellRoute ? shellRelayOptions(undefined, paymentCard) : approvalOptions();
   const { wording, ...promptOptions } = approval;
   relay = createRelay({
@@ -1139,6 +1141,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     rs: process.env.SLEIGHT_RS,
     // sleight's own card for an engine-path payment the gate stopped (payment-card.mjs); opened on the first such payment.
     paymentCard,
+    // The shell waits for the card's own deadline, unlike hosts with a shorter MCP tool timeout.
+    ...(shellRoute ? { paymentCardHoldMs: 300000 } : {}),
     clientIn: replayClient.clientIn,
     clientOut: replayClient.clientOut,
     serverIn: child.stdin,

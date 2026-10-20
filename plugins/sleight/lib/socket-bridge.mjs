@@ -18,6 +18,9 @@ const TOOLS = new Set(['js', 'js_reset', 'open_file', 'select_window', 'drag']);
 const MAX_REQUEST = 1024 * 1024;
 const MAX_REPLY = 64 * 1024 * 1024;
 const SOCKET_FILE = 'Library/Caches/sleight/shell/session.sock';
+const approvalLabel = value => typeof value === 'string'
+  ? value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').slice(0, 160).trim() || 'this Mac' : 'this Mac';
+const approvalError = app => new Error(`sleight: approval not answered for ${approvalLabel(app)} before the deadline; no approval was granted. Tell the user and do not retry.`);
 export const socketDirectory = () => dirname(join(userInfo().homedir, SOCKET_FILE));
 
 // Caller settings must never weaken a persistent session's guards or load caller code.
@@ -115,28 +118,66 @@ export async function createShellRelay({ command = process.execPath, args = [joi
   lines.on('line', line => {
     try {
       const msg = JSON.parse(line);
-      if (msg.method && msg.id !== undefined) send({ id: msg.id, error: { code: -32601, message: 'No host forms on shell route' } });
+      if (msg.method === 'notifications/sleight/approval' && msg.id === undefined) {
+        const status = msg.params;
+        if (typeof status?.id !== 'string' || !Number.isFinite(status.deadline) ||
+            !['waiting', 'answered', 'unanswered', 'unavailable'].includes(status.state)) return;
+        for (const entry of pending.values()) entry.approval(status);
+      }
+      else if (msg.method && msg.id !== undefined) send({ id: msg.id, error: { code: -32601, message: 'No host forms on shell route' } });
       else if (!msg.method && pending.has(msg.id)) {
         const reply = pending.get(msg.id); pending.delete(msg.id);
         msg.error ? reply.reject(new Error(msg.error.message)) : reply.resolve(msg.result);
       }
     } catch (err) { fail(err); }
   });
-  function request(method, params) {
+  function request(method, params, onApproval) {
     let complete;
     const completed = new Promise(resolve => { complete = resolve; });
     const result = new Promise((resolve, reject) => {
       if (ended || closing) { complete(); return reject(new Error('Shell relay is closed')); }
       const id = next++;
       // A timeout ends the caller's wait, but only an engine reply or exit ends its input ownership.
-      let recovery;
-      const timer = requestClock.setTimeout(() => {
-        reject(new Error('Shell relay call timed out; engine still busy until it replies or is collected; read state before retrying input'));
+      let recovery, expired = false;
+      const approvals = new Map(), deadline = Date.now() + timeoutMs;
+      const expire = error => {
+        if (expired) return;
+        expired = true;
+        reject(error);
+        requestClock.clearTimeout(timer);
         recovery = requestClock.setTimeout(() => { void close(); }, recoveryMs);
+      };
+      const timer = requestClock.setTimeout(() => {
+        const waiting = approvals.values().next().value;
+        expire(waiting ? approvalError(waiting.app) : new Error('Shell relay call timed out; engine still busy until it replies or is collected; read state before retrying input'));
+        // End any outstanding card with the call rather than allowing an answer after its deadline.
+        if (waiting) void close();
       }, timeoutMs);
       const clear = () => { requestClock.clearTimeout(timer); requestClock.clearTimeout(recovery); };
-      pending.set(id, { resolve: value => { clear(); complete(); resolve(value); },
-        reject: err => { clear(); complete(); reject(err); } });
+      pending.set(id, { resolve: value => {
+        clear(); complete();
+        const waiting = approvals.values().next().value;
+        if (waiting) { reject(approvalError(waiting.app)); void close(); }
+        else resolve(value);
+      },
+        reject: err => {
+          clear(); complete();
+          const waiting = approvals.values().next().value;
+          reject(waiting ? approvalError(waiting.app) : err);
+          if (waiting) void close();
+        },
+        approval: status => {
+          if (method !== 'tools/call' || expired) return;
+          if (status.state === 'waiting') {
+            if (approvals.has(status.id)) return;
+            approvals.set(status.id, status);
+            onApproval?.({ ...status, app: approvalLabel(status.app), deadline: Math.min(status.deadline, deadline) });
+          } else {
+            if (!approvals.delete(status.id)) return;
+            onApproval?.({ ...status, app: approvalLabel(status.app) });
+            if (status.state === 'unanswered') expire(approvalError(status.app));
+          }
+        } });
       try { send({ id, method, params }); } catch (err) { pending.get(id).reject(err); pending.delete(id); }
     });
     return Object.assign(result, { completed });
@@ -171,7 +212,7 @@ export async function createShellRelay({ command = process.execPath, args = [joi
   try {
     await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'Grok Bot', version: '1' } });
     send({ method: 'notifications/initialized' });
-    return { call: (name, args) => request('tools/call', { name, arguments: args }), close, closed };
+    return { call: (name, args, options) => request('tools/call', { name, arguments: args }, options?.onApproval), close, closed };
   } catch (err) { await close(); throw err; }
 }
 
@@ -320,7 +361,9 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
               if (!relay || busy || closing) throw new Error('Shell session is starting, busy or closing; read state before retrying input');
               busy = true; idleClock.clearTimeout(timer); socket.setTimeout(0);
               try {
-                const call = relay.call(tool, args);
+                const call = relay.call(tool, args, { onApproval: approval => {
+                  if (!socket.destroyed) socket.write(JSON.stringify({ approval }) + '\n');
+                } });
                 try {
                   const result = await call;
                   const content = [];
@@ -391,7 +434,7 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
   } catch (err) { finishStartup(); await close(); throw err; }
 }
 
-export async function callSocket(request, { directory = socketDirectory(), timeoutMs = 310000 } = {}) {
+export async function callSocket(request, { directory = socketDirectory(), timeoutMs = 310000, onApproval } = {}) {
   validate(request);
   const path = join(directory, basename(SOCKET_FILE));
   try { checkDirectory(directory); owned(path, 'socket', 0o600); }
@@ -402,18 +445,26 @@ export async function callSocket(request, { directory = socketDirectory(), timeo
   return new Promise((resolve, reject) => {
     const socket = createConnection(path);
     socket.setEncoding('utf8');
-    let input = '', settled = false;
+    let input = '', settled = false, bytes = 0, waiting;
     const fail = error => { if (!settled) { settled = true; reject(error); } socket.destroy(); };
-    socket.setTimeout(timeoutMs, () => fail(new Error('Shell call timed out; read state before retrying input')));
+    socket.setTimeout(timeoutMs, () => fail(waiting ? approvalError(waiting.app) : new Error('Shell call timed out; read state before retrying input')));
     socket.once('connect', () => socket.write(JSON.stringify(request) + '\n'));
     socket.on('data', chunk => {
       input += chunk;
-      if (Buffer.byteLength(input) > MAX_REPLY) return fail(new Error('Shell reply too large; read state before retrying input'));
-      if (!input.includes('\n')) return;
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > MAX_REPLY) return fail(new Error('Shell reply too large; read state before retrying input'));
       try {
-        const reply = JSON.parse(input);
-        if (reply.error) throw new Error(reply.error);
-        settled = true; resolve(reply.result); socket.end();
+        let newline;
+        while (!settled && (newline = input.indexOf('\n')) >= 0) {
+          const reply = JSON.parse(input.slice(0, newline));
+          input = input.slice(newline + 1);
+          if (reply.approval) {
+            waiting = reply.approval.state === 'waiting' ? reply.approval : undefined;
+            onApproval?.(reply.approval); continue;
+          }
+          if (reply.error) throw new Error(reply.error);
+          settled = true; resolve(reply.result); socket.end();
+        }
       } catch (err) { fail(err); }
     });
     socket.once('error', fail);
@@ -471,7 +522,11 @@ export async function socketCommand([command, ...args], options = {}) {
   else if (['open_file', 'select_window', 'drag'].includes(command) && args.length === 1) toolArgs = JSON.parse(args[0]);
   else throw new Error("usage: sleight-mcp session [--install-agent] | js '<code>' | js_reset | open_file|select_window|drag '<JSON arguments>'");
   await ensureSocketSession({ ...options, notice: options.notice ?? out });
-  return printSocketResult(await callSocket({ tool: command, args: toolArgs }, options), { out });
+  return printSocketResult(await callSocket({ tool: command, args: toolArgs }, { ...options,
+    onApproval: approval => {
+      if (approval.state === 'waiting') out(`sleight: waiting for your approval on the Mac (menu bar glove > Review sleight request) for ${approvalLabel(approval.app)}; the call continues when you answer, or cancels after ${Math.max(0, Math.ceil((approval.deadline - Date.now()) / 1000))} s\n`);
+    },
+  }), { out });
 }
 
 // Child becomes a process-group leader. Its session owns idle shutdown and relay collection.
