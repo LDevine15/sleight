@@ -197,6 +197,18 @@ function run(argv) {
       };
       const windows = attr(app, 'AXWindows');
       let windowCount = count(windows);
+      // A positive count just after Cmd+W may still contain the closing window.
+      // Only the retained AX reference can distinguish it from a remaining one.
+      const baseline = request.nativeIdentity.epoch === windowEpoch
+        ? windowReferences[request.nativeIdentity.window - 1] : undefined;
+      let closedWindowPresent;
+      if (baseline) {
+        closedWindowPresent = false;
+        for (let i = 0; i < windowCount; i++) {
+          expired();
+          if ($.CFEqual(baseline, windows.objectAtIndex(i))) closedWindowPresent = true;
+        }
+      }
       let modalCount = 0, seen = 0;
       if (windowCount === 0) {
         const visit = (children, depth) => {
@@ -247,10 +259,14 @@ function run(argv) {
         const held = spaceWindows(ids, deadline, reason => { unknownReason = reason; });
         if (!Number.isSafeInteger(held) || held < 0) throw new Error('Unknown Space membership');
         windowCount = held;
+        // AX omitted these other-Space windows, so it cannot say whether one
+        // of them is the closing target. Keep positive-count reads blocked.
+        if (held > 0) closedWindowPresent = undefined;
       }
       current();
       expired();
-      return JSON.stringify({ status: 'ok', appId: request.appId, pid, processStart, running: true, windowCount, modalCount });
+      return JSON.stringify({ status: 'ok', appId: request.appId, pid, processStart, running: true, windowCount, modalCount,
+        ...(closedWindowPresent !== undefined ? { closedWindowPresent } : {}) });
     }
     const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(request.appId);
     if (Number(apps.count) !== 1) throw new Error('Expected one running app');

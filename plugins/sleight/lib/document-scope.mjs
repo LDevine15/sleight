@@ -434,15 +434,21 @@ async function closedLastWindow(state, record) {
       ...(skip ? { match: 'native-ax+leased-pid' } : {}) }); } catch {}
     return skip;
   };
-  if (!state.guardStopMark) return decide('no mark');
-  if (typeof setTimeout !== 'function' || typeof clearTimeout !== 'function') return decide('timers unavailable');
-  if (!Number.isSafeInteger(pid) || pid <= 0) return decide('leased pid missing');
-  if (!Number.isFinite(processStart)) return decide('leased process start missing');
-  if (!state.expected?.appId) return decide('leased bundle id missing');
   if (action?.kind !== 'key' || !/^(?:super|cmd|command|meta)\+(?:shift\+w|w|q)$/i.test(action.value)) return decide('not a close shortcut');
   if (!previous?.done || state.failures?.length || previous.key !== action.value) return decide('action not completed');
-  if (state.callHeaders.get(active)?.app !== state.expected.app) return decide('app header mismatch');
-  if (!state.closeRead?.path) return decide('native observer unavailable');
+  let blocked = false;
+  const block = reason => {
+    blocked = true;
+    try { record({ decision: 'blocked-read', reason, ...native }); } catch {}
+    throw new Error('sleight stopped the read after Close: ' + reason + '. Native metadata could not confirm a window. No engine read was sent.');
+  };
+  if (!state.guardStopMark) return block('no mark');
+  if (typeof setTimeout !== 'function' || typeof clearTimeout !== 'function') return block('timers unavailable');
+  if (!Number.isSafeInteger(pid) || pid <= 0) return block('leased pid missing');
+  if (!Number.isFinite(processStart)) return block('leased process start missing');
+  if (!state.expected?.appId) return block('leased bundle id missing');
+  if (state.callHeaders.get(active)?.app !== state.expected.app) return block('app header mismatch');
+  if (!state.closeRead?.path) return block('native observer unavailable');
   let timer, ended = false;
   try {
     const timeout = {}, deadline = Date.now() + 200, path = state.closeRead.path;
@@ -453,25 +459,34 @@ async function closedLastWindow(state, record) {
         if (!Array.isArray(data.observations)) throw Error('Missing native samples');
         // A sample that began before pressKey completed cannot prove its result.
         const newest = data.observations.filter(o => typeof o?.start === 'number' && o.start > previous.done).at(-1);
-        if (newest) return newest;
+        if (newest) {
+          const { status, unknownReason, pid, processStart, running, windowCount, modalCount, closedWindowPresent } = newest;
+          native = { status, pid, processStart, running, windowCount, modalCount, closedWindowPresent,
+            ...(status === 'unknown' ? { unknownReason } : {}), keyDone: previous.done, sampleStart: newest.start, sampleEnd: newest.end };
+        }
+        // pressKey returns before a closing window leaves AXWindows. Reading it
+        // later can reopen the now-windowless app. Wait for zero, or proof that
+        // the closed target is gone and a different window remains. Elapsed time
+        // alone never proves that the close settled.
+        if (newest && (newest.windowCount === 0 || newest.status !== 'ok' || newest.closedWindowPresent === false)) return newest;
         await new Promise(resolve => setTimeout(resolve, 25));
       }
       return timeout;
     };
     const observed = await Promise.race([sample(), new Promise(resolve => { timer = setTimeout(() => resolve(timeout), 200); })]);
-    if (state.activeApp !== active || state.actionVersion !== version || state.lastAction !== action) return decide('action changed');
-    if (observed === timeout || Date.now() >= deadline) return decide('timeout');
-    const { status, unknownReason, appId, pid: actualPid, processStart: actualStart, running, windowCount, modalCount } = observed ?? {};
-    native = { status, pid: actualPid, processStart: actualStart, running, windowCount, modalCount,
+    if (state.activeApp !== active || state.actionVersion !== version || state.lastAction !== action) return block('action changed');
+    if (observed === timeout || Date.now() >= deadline) return block('timeout');
+    const { status, unknownReason, appId, pid: actualPid, processStart: actualStart, running, windowCount, modalCount, closedWindowPresent } = observed ?? {};
+    native = { ...native, status, pid: actualPid, processStart: actualStart, running, windowCount, modalCount, closedWindowPresent,
       ...(status === 'unknown' && typeof unknownReason === 'string' ? { unknownReason } : {}) };
-    if (status !== 'ok') return decide('native unavailable');
-    if (actualPid !== pid || actualStart !== processStart || appId !== state.expected.appId || running !== true) return decide('process mismatch');
-    if (!Number.isFinite(observed.end) || observed.end < observed.start || observed.end > Date.now() || Date.now() - observed.end > 200) return decide('stale native sample');
-    if (!Number.isSafeInteger(windowCount) || windowCount < 0 || !Number.isSafeInteger(modalCount) || modalCount < 0) return decide('native counts missing');
+    if (status !== 'ok') return block('native unavailable');
+    if (actualPid !== pid || actualStart !== processStart || appId !== state.expected.appId || running !== true) return block('process mismatch');
+    if (!Number.isFinite(observed.end) || observed.end < observed.start || observed.end > Date.now() || Date.now() - observed.end > 200) return block('stale native sample');
+    if (!Number.isSafeInteger(windowCount) || windowCount < 0 || !Number.isSafeInteger(modalCount) || modalCount < 0) return block('native counts missing');
     if (windowCount) return decide('windows non-empty');
     if (modalCount) return decide('modal child');
     return decide('no windows', true);
-  } catch { return decide('error'); }
+  } catch (error) { if (blocked) throw error; return block('error'); }
   finally { ended = true; clearTimeout(timer); }
 }
 

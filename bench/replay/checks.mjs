@@ -91,6 +91,15 @@ export function checkEvidence(spec, replay, trace = []) {
     if (spec.alsoResultIncludes && !new RegExp(spec.alsoResultIncludes, 'i').test(text)) failures.push(`call ${row.index}: second result evidence missing`);
     if (spec.resultExcludes && new RegExp(spec.resultExcludes, 'i').test(text)) failures.push(`call ${row.index}: forbidden result`);
     if (spec.traceIncludes && !events.some(e => e.direction && e.direction !== 'to-server' && new RegExp(spec.traceIncludes, 'i').test(JSON.stringify(e)))) failures.push(`call ${row.index}: required trace evidence missing`);
+    if (spec.traceDecision) {
+      const { direction, expected } = spec.traceDecision;
+      const decisions = events.filter(e => e.direction === direction).map(e => e.msg);
+      if (!decisions.some(event => event?.decision === expected)) {
+        const disabled = spec.switch && replay.env?.[spec.switch] === '0';
+        const actual = decisions.map(event => `${event?.decision} (${event?.reason ?? 'no reason'})`).join(', ');
+        failures.push(`call ${row.index}: ${direction}: ${actual || (disabled ? `${spec.switch}=0 disables this event` : 'no decision event in relay trace')}; expected ${expected}`);
+      }
+    }
     if (spec.traceExcludes && responses.some(e => new RegExp(spec.traceExcludes, 'i').test(JSON.stringify(e)))) failures.push(`call ${row.index}: forbidden trace read`);
     if (spec.tabProbeChain) {
       const probes = events.filter(e => e.direction === 'tab-probe').map(e => e.msg);
@@ -109,7 +118,9 @@ export function checkEvidence(spec, replay, trace = []) {
 }
 
 export function assertCheck(spec, replay, dir) {
-  const trace = readdirSync(dir).filter(name => /^trace-\d+\.jsonl$/.test(name)).flatMap(name =>
+  const files = readdirSync(dir).filter(name => /^trace-\d+\.jsonl$/.test(name));
+  if (!files.length) return { id: spec.id, verdict: 'inconclusive', reason: 'Relay trace-<pid>.jsonl is missing; trace.jsonl contains replay transport only' };
+  const trace = files.flatMap(name =>
     readFileSync(join(dir, name), 'utf8').split('\n').filter(Boolean).map(JSON.parse));
   return { id: spec.id, ...checkEvidence(spec, replay, trace) };
 }

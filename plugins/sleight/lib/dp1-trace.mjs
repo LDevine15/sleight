@@ -14,7 +14,7 @@ export function stripDP1Trace(content, record) {
       try {
         if (json.length > 2048) return '';
         const event = JSON.parse(json);
-        if (!['skipped-read', 'kept-read'].includes(event?.decision) || typeof event.reason !== 'string' || event.reason.length > 256) return '';
+        if (!['skipped-read', 'kept-read', 'blocked-read'].includes(event?.decision) || typeof event.reason !== 'string' || event.reason.length > 256) return '';
         const safe = { decision: event.decision, reason: event.reason };
         if (event.status === 'unknown' && CLOSE_COUNT_REASONS.includes(event.unknownReason)) safe.unknownReason = event.unknownReason;
         for (const key of ['source', 'status', 'match']) {
@@ -24,7 +24,11 @@ export function stripDP1Trace(content, record) {
           if (Number.isSafeInteger(event[key]) && event[key] >= 0) safe[key] = event[key];
         }
         if (Number.isFinite(event.processStart)) safe.processStart = event.processStart;
+        for (const key of ['keyDone', 'sampleStart', 'sampleEnd']) {
+          if (Number.isFinite(event[key]) && event[key] >= 0) safe[key] = event[key];
+        }
         if (typeof event.running === 'boolean') safe.running = event.running;
+        if (typeof event.closedWindowPresent === 'boolean') safe.closedWindowPresent = event.closedWindowPresent;
         record(safe);
       } catch { /* A malformed diagnostic must not affect the result. */ }
       return '';

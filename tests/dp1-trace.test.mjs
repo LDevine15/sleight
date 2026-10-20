@@ -15,6 +15,14 @@ test('DPk DP1 traces accept only fixed unknown reasons', () => {
   }
 });
 
+test('DPm traces blocked reads with window presence and native sample timestamps', () => {
+  const events = [];
+  const event = { decision: 'blocked-read', reason: 'timeout', closedWindowPresent: true,
+    keyDone: 1000, sampleStart: 1010, sampleEnd: 1020 };
+  stripDP1Trace([{ type: 'text', text: '[sleight:dp1]' + JSON.stringify(event) }], value => events.push(value));
+  assert.deepEqual(events, [event]);
+});
+
 test('DP1 strips diagnostics from mixed results and removes titles recursively', () => {
   const event = { decision: 'kept-read', reason: 'windows non-empty', inventoryHasPid: false, rowHasPid: false,
     row: { id: 'fixture.app', displayName: 'Fixture', isRunning: true, title: 'private',

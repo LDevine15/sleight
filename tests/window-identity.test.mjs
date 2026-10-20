@@ -94,6 +94,22 @@ test('the light check after Return gets sheets and the focused element only when
 // DPh: the smoke's AppInfo has neither pid nor windows. The native proof must
 // select the leased process and inspect metadata without reading document fields.
 const closeRequest = { appId: target.appId, closeCount: true, nativeIdentity: { pid: 123, processStart: 1 } };
+test('DPm distinguishes the closing AX reference from a remaining window without activating the app', () => {
+  for (const remove of [false, true]) {
+    const events = [];
+    const result = inspect(closeRequest, [11, 12], 0, false, events, (app, windows, list, runtime) => {
+      runtime.seedWindowIdentity = true;
+      runtime.afterBaseline = () => {
+        if (remove) app.AXWindows = list(windows.slice(1));
+        events.length = 0;
+      };
+    });
+    assert.equal(result.status, 'ok');
+    assert.equal(result.windowCount, remove ? 1 : 2);
+    assert.equal(result.closedWindowPresent, !remove);
+    assert.ok(!events.some(name => /Title|Document|Value|Description/.test(String(name))), events.join(','));
+  }
+});
 test('DPh counts AXWindows on the leased running pid without reading titles or documents', () => {
   const events = [];
   const reply = inspect(closeRequest, [], 0, false, events, (app, windows, list, runtime) => {

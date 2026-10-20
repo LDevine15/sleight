@@ -32,7 +32,7 @@ test('DPh observes leased metadata during the call, strips content and cleans up
   const requests = [];
   const observer = observers.createCloseRead({ directory, observe: async request => {
     requests.push(request);
-    return { ...ok, title: 'private title', document: 'private document' };
+    return { ...ok, closedWindowPresent: true, title: 'private title', document: 'private document' };
   } });
   t.after(() => { observer.dispose(); removeTemp(directory); });
   const info = observer.begin(8, window);
@@ -42,6 +42,7 @@ test('DPh observes leased metadata during the call, strips content and cleans up
   assert.equal(sample.windowCount, 0);
   assert.equal(sample.modalCount, 0);
   assert.equal(sample.pid, 123);
+  assert.equal(sample.closedWindowPresent, true);
   assert.ok(sample.start <= sample.end);
   assert.ok(!text.includes('private'));
   assert.ok(requests.every(request => request.closeCount === true && request.nativeIdentity.pid === 123));

@@ -41,7 +41,16 @@ export function inspect(request, numbers, focused = 1, cg = false, events = [], 
     CGWindowListCopyWindowInfo: options => { events.push(['cg', options]); return runtime.cgUnavailable ? null : list(cg ? windows.map((window, i) => ({ kCGWindowOwnerPID: 123, kCGWindowLayer: 0,
       kCGWindowNumber: 11 + i, kCGWindowBounds: { X: window.AXPosition.x, Y: 20, Width: 300, Height: 200 } })) :
       runtime.cgWindows.map(info => ({ info, objectForKey: key => { events.push(key); return info[key]; } }))); } });
-  return JSON.parse(runInNewContext('(function () { ' + healthSource + '; return (function () { ' + source + '; return run; })(); })()([JSON.stringify(request)])', { $, request, Ref: () => [],
+  return JSON.parse(runInNewContext(`(() => {
+    const identity = (function () { ${healthSource}; return (function () { ${source}; return run; })(); })();
+    if (runtime.seedWindowIdentity) {
+      const baseline = JSON.parse(identity([JSON.stringify({ appId: request.appId, title: 'Untitled', url: null, windowNumber: ${numbers[0] ?? 'undefined'} })]));
+      if (baseline.status !== 'ok' || baseline.matches !== 1) throw new Error('Fixture baseline failed: ' + JSON.stringify(baseline));
+      request = { ...request, nativeIdentity: { ...request.nativeIdentity, ...baseline } };
+      runtime.afterBaseline?.();
+    }
+    return identity([JSON.stringify(request)]);
+  })()`, { $, request, runtime, Ref: () => [],
     Date: { now: () => runtime.clockMs ?? Date.now() },
     ObjC: { import() {}, bindFunction(name) {
       if (runtime.bindThrows) throw Error('private missing symbol');

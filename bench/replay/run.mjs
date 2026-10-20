@@ -241,7 +241,7 @@ export async function main(argv = process.argv.slice(2)) {
       try { result = await liveIteration(recording, { env: step.env, dir, signal: iteration.signal, abort: iteration.abort, beforeCall: iteration.beforeCall, record, worktree: step.build?.worktree, prepared, comparison }); }
       finally { iteration.dispose(); }
       cleanupConfirmed = result.cleanupConfirmed;
-      if (check) result.check = assertCheck(check, result, dir);
+      if (check) result.check = assertCheck(check, { ...result, env: step.env }, dir);
       const row = { ...step, ...result }; runs.push(row);
       writeFileSync(join(dir, 'result.json'), JSON.stringify(row, null, 2), { mode: 0o600 });
       console.log(`${step.variant} #${step.iteration}: ${row.verdict}, ${row.calls.length}/${recording.calls.length} calls, ${row.totalToolMs.toFixed(1)} tool ms${row.reason ? ` (${row.reason})` : ''}`);

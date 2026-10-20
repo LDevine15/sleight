@@ -19,7 +19,7 @@ const recording = () => [
   call('js', { code: 'await app.click(2)' }, tree(2)),
   call('js', { code: 'await app.click(2)' }, tree(2)),
   call('js', { code: 'await app.click(2)' }, tree(2)),
-  call('js', { code: 'await app.pressKey("super+w")' }, 'Closed fixture.txt'),
+  call('js', { code: 'await app.pressKey("super+w")' }, 'sleight: the app has no windows left. Nothing more to read.'),
 ];
 const acquired = (handle, id = 2) => `${tree(id)}\nWindow handle: \`${handle}\`, already acquired.`;
 
@@ -54,7 +54,7 @@ test('an acquired handle needs matching window identity and a unique notice', as
 
 async function arm(variant, { opened = 'Opened fixture.txt\nEngine app API: click, getAXState.', value, skipRead = true } = {}) {
   const calls = recording(), sent = [], events = [];
-  const responses = [text(opened), text(tree(22)), text(tree(32)), text(tree(42)), text(tree(52)), text('Closed fixture.txt')];
+  const responses = [text(opened), text(tree(22)), text(tree(32)), text(tree(42)), text(tree(52)), text('sleight: the app has no windows left. Nothing more to read.')];
   if (value) responses[1].content[0].text += value;
   const replay = await replayCalls(calls, { comparison: 'switches', record: event => events.push(event),
     call: async (_server, _name, args) => { sent.push(args); return responses.shift(); } });

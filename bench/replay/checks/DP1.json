@@ -4,7 +4,8 @@
   "task": "textedit-drag", "arm": "sleight", "run": 1,
   "switch": "SLEIGHT_DP1",
   "tool": "js", "argumentPattern": "(?:super|cmd|command|meta)\\+w",
-  "traceIncludes": "\"direction\":\"dp1-decision\"[^\\n]*\"decision\":\"skipped-read\"",
+  "resultIncludes": "the app has no windows left[^\\n]*Nothing more to read",
+  "traceDecision": { "direction": "dp1-decision", "expected": "skipped-read" },
   "traceExcludes": "\"phase\":\"after-call\"",
   "assertion": "Last-window close emits closure proof without an after-call AX read."
 }
