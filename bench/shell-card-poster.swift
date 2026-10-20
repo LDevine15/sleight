@@ -68,7 +68,19 @@ func target() -> AXUIElement {
         guard let origin = point(element), let extent = size(element) else { return false }
         return near(origin.x, rect.minX) && near(origin.y, rect.minY) && near(extent.width, rect.width) && near(extent.height, rect.height)
     }
-    guard matches.count == 1 else { fail("AMBIGUOUS_WINDOW") }
+    guard matches.count == 1 else {
+        // Metadata from this verified fixture PID only. Never read window titles or document text.
+        let geometry: [[String: Any]] = windows.prefix(8).map { element in
+            var values: [String: Any] = [:]
+            if let origin = point(element) { values["x"] = origin.x; values["y"] = origin.y }
+            if let extent = size(element) { values["width"] = extent.width; values["height"] = extent.height }
+            return values
+        }
+        receipt("window-diagnostic", ["axWindows": windows.count, "geometryMatches": matches.count,
+            "expected": ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height],
+            "axGeometry": geometry, "truncated": windows.count > 8])
+        fail("AMBIGUOUS_WINDOW")
+    }
     var visited = 0, buttons: [AXUIElement] = [], truncated = false
     func walk(_ element: AXUIElement, _ depth: Int) {
         visited += 1
