@@ -251,6 +251,15 @@ test('Linux failures preserve actual install/test statuses and counts after conf
   }
 });
 
+test('Linux preserves Docker startup status even when no JSON receipt was produced', async t => {
+  for (const [operation, status] of [['create', 125], ['start', 23]]) {
+    const f = sourceFixture(t), h = dockerBoundary(f, { [operation]: () => ({ status, stdout: '', collected: true }) });
+    const receipt = await runLinuxPreflight({ worktree: f.worktree, commit: f.head, execute: h.execute });
+    assert.equal(receipt.exitCode, status);
+    assert.equal(receipt.cleanupConfirmed, true);
+  }
+});
+
 test('helper timeout cancels the Docker attach and awaits owned cleanup', async t => {
   const f = sourceFixture(t), h = dockerBoundary(f, { start: options => new Promise(resolveResult => {
     options.signal.addEventListener('abort', () => resolveResult({ status: null, collected: true }), { once: true });

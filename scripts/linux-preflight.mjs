@@ -200,14 +200,17 @@ export async function runLinuxPreflight({ worktree = fileURLToPath(new URL('..',
     const plan = linuxPreflightPlan({ checkout, runId, commit });
     attempted = true;
     const created = await run(plan.command, plan.args, { cwd: stage, timeout: 120_000 });
+    if (Number.isInteger(created.status) && created.status > 0) result.exitCode = created.status;
     const id = created.stdout?.trim();
     if (created.status !== 0 || !containerPattern.test(id ?? '')) throw Error('Container creation failed');
     result.containerId = id;
     const image = await run('docker', ['inspect', '--format', '{{.Image}}', id], { cwd: stage });
+    if (Number.isInteger(image.status) && image.status > 0) result.exitCode = image.status;
     if (image.status !== 0 || !imagePattern.test(image.stdout?.trim() ?? '')) throw Error('Container image identity unavailable');
     result.imageId = image.stdout.trim();
     const tested = await run('docker', ['start', '--attach', id], { cwd: stage, timeout,
       log: { stderr: log } });
+    if (Number.isInteger(tested.status) && tested.status > 0) result.exitCode = tested.status;
     const receipt = JSON.parse(tested.stdout);
     if (receipt?.schemaVersion === 1 && receipt.commit === commit && receipt.runId === runId) {
       for (const key of ['executed', 'installExitCode', 'counts', 'trackedFiles']) result[key] = receipt[key];
