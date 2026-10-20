@@ -121,29 +121,44 @@ user turn. Browser and Electron work use the engine path. Used turns end after 3
 Grok Bot uses its local shell daemon to call sleight on your Mac. Its custom STDIO MCP servers run in Grok's hosted
 box, which has neither your Mac's apps nor ChatGPT's engine. Use the shell route below instead of adding a box server.
 
-With ChatGPT and Computer Use set up, start one session in a terminal on this Mac. Replace the path with your clone's
-absolute path. The session needs Apple's clang from Xcode Command Line Tools to build its small peer-check helper.
+With ChatGPT and Computer Use set up, call the clone's executable by its full path:
 
 ```bash
-/absolute/path/to/sleight/plugins/sleight/bin/sleight-mcp session
+/absolute/path/to/sleight/plugins/sleight/bin/sleight-mcp js 'await cua.getState()'
 ```
 
-Leave that process running. It keeps one relay behind `~/Library/Caches/sleight/shell/session.sock` (0600 in a 0700
-folder). Connections require the same uid, and the relay reports its host as Grok Bot. It collects the engine after ten idle
-minutes, on Ctrl-C or on SIGTERM. Start a new session after it exits. A call in progress does not count as idle.
+When no session is listening, `js` starts a detached session in its own process group. It keeps one relay behind
+`~/Library/Caches/sleight/shell/session.sock` (0600 in a 0700 folder). Connections require the same uid. The session
+needs Apple's clang from Xcode Command Line Tools to build its peer-check helper. sleight doesn't install a login job.
+After ten idle minutes it collects the engine, removes its socket and prunes its images. A call in progress does
+not count as idle. The next call starts a session again. A restarted session prints a notice that JavaScript handles
+and session approvals have reset. Read the engine docs in its first reply before continuing.
 
-Replace the path in this instruction with the same absolute path, then paste it into your bot's instructions:
+Startup waits at most 90 seconds. Each relay call keeps its five-minute timeout, and the shell waits at most 310 seconds
+for the reply. Together these limits stay below the bot's reported 13-minute foreground limit. A timed-out call may
+have acted: read current state before retrying input. sleight never replays a dispatched call during startup recovery.
+Images and screenshots become 0600 files in private `images-*` folders under that shell cache. Read the printed path
+through the bot's local file tool before the session exits. Startup also prunes image folders left by a crashed session.
+
+Give the bot [the Grok Bot skill](grokbot-skill.md), replacing its executable placeholder with your clone's full path.
+Set this one-line profile pointer, replacing the skill path with its installed location:
 
 ```text
-For Mac UI work, use sleight through the local shell on my Mac. Call
-/absolute/path/to/sleight/plugins/sleight/bin/sleight-mcp js '<code>'
-with the JavaScript code as one shell argument. Quote it safely. Read the engine API docs printed by the first call
-before continuing, and use only the APIs those docs describe. JavaScript handles survive between calls in this session.
-Use the same executable's js_reset command to reset them. Images are returned as local temporary file paths; read the
-file through the local shell's file tool when you need the image. Use sleight for computer use and keep Grok Bot's own
-computer-use helper off. Approval cards belong to me: wait for my click in sleight's panel. If the session is unavailable,
-tell me to start sleight-mcp session again. After an error, read current state before retrying input.
+For Mac UI tasks, read /absolute/path/to/sleight/docs/grokbot-skill.md and use its sleight shell instructions.
 ```
+
+### Optional owner LaunchAgent step
+
+If you want to start the session through launchd, preview the plist and command:
+
+```bash
+/absolute/path/to/sleight/plugins/sleight/bin/sleight-mcp session --install-agent
+```
+
+This only prints the plist and `launchctl bootstrap` command. Save the plist and run the command yourself if you choose
+this route. sleight never writes or loads it. The session still exits after ten idle minutes. The agent restarts it
+only after an unsuccessful exit. To keep a session in a terminal instead, run `sleight-mcp session` and stop it with Ctrl-C.
+Permissions under launchd may differ from the bot's shell. Run doctor from the caller you plan to use.
 
 The commands `open_file`, `select_window` and `drag` each accept one JSON argument with the same fields as their MCP tool.
 Run the command with `--help` to read its description and argument schema before using it:
@@ -157,6 +172,10 @@ Run the command with `--help` to read its description and argument schema before
 local daemon PID state and local tool permission setting, then prints `route: shell (sleight-mcp js)` even when a
 session isn't running. Missing or unreadable state
 shows as unknown. A running PID does not prove the daemon's identity or health. Doctor doesn't read daemon credentials or browser storage.
+It also starts sleight's native JXA helper from the current process tree and checks `AXIsProcessTrusted`, without a prompt
+or app interaction. If denied, grant Accessibility to that tree's responsible app, Grok Bot for its local shell or your
+terminal for a terminal call, then rerun doctor there. The engine's own grants belong to its helper and do not prove that
+sleight's metadata helper has access. A doctor run from a terminal cannot qualify the bot's process tree.
 
 Grok Bot's own computer use is a second driver when it is on. Its helper and sleight do not share an input lease,
 so both could act on the same app. Grok's `always` local tool permission does not answer sleight's approval panel.
@@ -164,7 +183,8 @@ The shell route has no trusted user-turn binding, so every payment, booking, set
 sleight's panel, including actions you requested. Turbo stays off because the route cannot bind a user turn.
 App Allow lasts for that session without adding an entry to the pre-approved list. Existing user pre-approvals still apply.
 
-Offline tests cover this transport and its guards. A live Grok Bot read and image delivery have not been checked.
+Grok Bot has no Mac-side MCP client placement, so there is no HTTP bridge route. Offline tests cover the shell transport
+and its guards. A live Grok Bot read and image delivery have not been checked.
 
 Screenshots and app text sent through any Grok route go to Grok's hosted model. Grok Bot sends them through its gateway.
 See [privacy](privacy.md#what-leaves-the-mac).

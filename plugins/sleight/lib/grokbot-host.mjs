@@ -3,6 +3,16 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The same JXA helper sleight uses for native AX metadata, under this caller's process tree.
+// AXIsProcessTrusted checks TCC without requesting access or sending Apple events.
+export function readNativeAccessibility({ exec = execFileSync } = {}) {
+  const result = JSON.parse(exec('/usr/bin/osascript', ['-l', 'JavaScript',
+    fileURLToPath(new URL('app-health.js', import.meta.url)), '--accessibility-check'],
+  { encoding: 'utf8', timeout: 3000, maxBuffer: 4096, stdio: ['ignore', 'pipe', 'ignore'] }));
+  return typeof result.trusted === 'boolean' ? result.trusted : undefined;
+}
 
 function pidRunning(pid) {
   // Signal 0 checks existence without sending a signal. This does not prove daemon identity or health.
@@ -10,7 +20,8 @@ function pidRunning(pid) {
   catch (err) { if (err.code === 'ESRCH') return false; throw err; }
 }
 
-export function grokbotStatus({ home = homedir(), read = readFileSync, running = pidRunning } = {}) {
+export function grokbotStatus({ home = homedir(), read = readFileSync, running = pidRunning,
+  accessibility = readNativeAccessibility } = {}) {
   let installed = false, version;
   for (const app of ['/Applications/Grok Bot.app', join(home, 'Applications/Grok Bot.app')]) {
     let contents;
@@ -37,7 +48,9 @@ export function grokbotStatus({ home = homedir(), read = readFileSync, running =
   if (Number.isInteger(daemon?.pid) && daemon.pid > 0 && daemon.pid <= 2147483647) {
     try { const result = running(daemon.pid); if (typeof result === 'boolean') daemonRunning = result; } catch {}
   }
-  return { installed, version, computerUse, daemonRunning, localToolPermission };
+  let nativeAccessibility;
+  try { const value = accessibility(); if (typeof value === 'boolean') nativeAccessibility = value; } catch {}
+  return { installed, version, computerUse, daemonRunning, localToolPermission, nativeAccessibility };
 }
 
 export function grokbotDoctorLines(status) {
@@ -48,6 +61,10 @@ export function grokbotDoctorLines(status) {
   if (status.installed === false) lines.push('note      Grok Bot bundle not found in /Applications or ~/Applications.');
   else if (!status.version) lines.push('note      Grok Bot bundle version unknown.');
   lines.push(`note      local daemon: ${daemon}`, `note      local tool permission: ${status.localToolPermission ?? 'unknown'}`);
+  const trust = status.nativeAccessibility === true ? 'granted' : status.nativeAccessibility === false ? 'denied' : 'unknown';
+  lines.push(`note      native helper Accessibility: ${trust} (current process tree, AXIsProcessTrusted; no prompt)`);
+  if (status.nativeAccessibility === false) lines.push('PROBLEM   grant Accessibility to the responsible app for this process tree, Grok Bot when called through its local shell, or the terminal when called there. Then rerun doctor from that same caller.');
+  if (status.nativeAccessibility === undefined) lines.push('note      native helper trust check unavailable; rerun doctor from Grok Bot\'s local shell to check its grant.');
   if (status.computerUse === true) lines.push('PROBLEM   Grok Bot computer use is a second driver. Its input does not share sleight\'s lease.');
   return lines;
 }

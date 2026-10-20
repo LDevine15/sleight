@@ -124,6 +124,7 @@ function minimizedCount(windows) {
 // With an argument, one probe. Without, a long-lived helper: one JSON line in ({ id, app }), one out,
 // so a session spawns osascript once instead of on every app read (about 150 ms of CPU each).
 function run(argv) {
+  if (argv[0] === '--accessibility-check') return JSON.stringify({ trusted: Boolean($.AXIsProcessTrusted()) });
   if (argv.length && argv[0] !== '--session') return JSON.stringify(probe(JSON.parse(argv[0]), argv[1] ? JSON.parse(argv[1]) : 0.5));
   // Load each operation once, in this helper's JavaScript context.
   const query = name => {

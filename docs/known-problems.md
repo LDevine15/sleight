@@ -743,12 +743,16 @@ native reference, and oversized first results defer the browser reference while 
   on the study Mac). Check the target in `grok inspect --json` and keep one route. The direct MCP entry passed doctor.
   Grok form answers never write Always allow. Only the user's click on sleight's panel can do that.
 - Grok Bot's shell route has offline transport and guard tests, with no live bot read or image delivery check. Its
-  custom STDIO MCP servers run in a hosted box without this Mac's apps or ChatGPT's engine. Use `sleight-mcp session`
-  on the Mac and `sleight-mcp js '<code>'` through the local daemon. Doctor reports `route: shell (sleight-mcp js)`,
-  even when a session isn't running. The HTTP route is pending.
-- A shell session requires Apple's clang and stops after ten idle minutes. Restart it before sending another call.
-  A stale socket after a crash is refused, never removed automatically. Check that its session has stopped before
-  removing it. Images stay in private temporary files until you or the system delete them.
+  custom STDIO MCP servers run in a hosted box without this Mac's apps or ChatGPT's engine. Use `sleight-mcp js '<code>'`
+  through the local daemon, which starts a session on demand. Doctor reports `route: shell (sleight-mcp js)`,
+  even when a session isn't running. There is no Mac-side HTTP client placement.
+- A shell session requires Apple's clang and stops after ten idle minutes. The next call starts it again.
+  Startup reclaims a private stale socket only after its connection is refused and its file identity still matches.
+  An interrupted startup can leave a `starting` directory in the shell cache. Inspect that startup before removing the
+  directory. Session images are private cache files, pruned at exit or the next startup after a crash.
+- Grok Bot's local shell may lack Accessibility for sleight's native metadata helper even when the engine has its own
+  grants. Run doctor through the bot to check that process tree. A terminal's trust result does not prove the bot's.
+  Detached-session survival across bot turns and image upload still need a live bot check.
 - With Grok Bot's own computer use on, its helper is a second driver. It does not share sleight's input lease,
   so both could act on the same app. Turn that helper off before using sleight through Grok Bot.
 - The Grok Bot shell route has no trusted user-turn binding. Every payment, booking, settings change and submit

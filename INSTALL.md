@@ -112,20 +112,19 @@ See [Grok CLI](docs/other-hosts.md#grok-cli) for approval and result limits.
 
 ## Grok Bot
 
-Clone sleight as below and set up ChatGPT's Computer Use on the Mac where Grok Bot's local daemon runs. Start one
-session there with the clone's absolute path:
+Clone sleight as below and set up ChatGPT's Computer Use on the Mac where Grok Bot's local daemon runs. Give the bot the
+[Grok Bot skill](docs/grokbot-skill.md) with the clone's full executable path and add the
+[profile pointer](docs/other-hosts.md#grok-bot). The bot calls `sleight-mcp js '<code>'` through its local shell.
+The first call starts a detached session on demand. Its hosted STDIO MCP box cannot drive your Mac, and there is no
+Mac-side HTTP client placement.
 
-```bash
-/absolute/path/to/sleight/plugins/sleight/bin/sleight-mcp session
-```
-
-The session needs Apple's clang from Xcode Command Line Tools. Leave it running, then paste the
-[Grok Bot instructions](docs/other-hosts.md#grok-bot), with that same full path, into your bot. The bot calls
-`sleight-mcp js '<code>'` through its local shell. Its hosted STDIO MCP box cannot drive your Mac.
+The session needs Apple's clang from Xcode Command Line Tools. It collects its engine and cache images after ten idle
+minutes. The next call starts it again and reports the reset. An optional `sleight-mcp session --install-agent` prints
+a plist and command for the owner to save and run. It doesn't write or load the plist.
 
 Turn Grok Bot's own computer-use helper off. sleight shows its own approval panels, turbo stays off, and payments,
-bookings and submits ask each time. The session collects its engine after ten idle minutes or when stopped with
-Ctrl-C or SIGTERM. This route has offline tests. A live Grok Bot session has not been checked.
+bookings and submits ask each time. Run `sleight-mcp --doctor` from the bot's shell to check its native helper's
+Accessibility grant without a prompt. This route has offline tests. A live Grok Bot session has not been checked.
 
 ## Other MCP clients
 

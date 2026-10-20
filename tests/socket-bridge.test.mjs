@@ -170,13 +170,13 @@ test('local subcommand help exposes the MCP argument schemas without a session',
   }
 });
 
-test('images become private temporary files and error results return failure status', async t => {
+test('images become private cache files and error results return failure status', async t => {
+  const f = fixture(t);
   let output = '';
   const code = await printSocketResult({ isError: true, content: [
     { type: 'text', text: 'stopped' }, { type: 'image', mimeType: 'image/png', data: Buffer.from('image').toString('base64') },
-  ] }, { out: text => { output += text; } });
+  ] }, { directory: f.root, out: text => { output += text; } });
   const path = output.trim().split('\n')[1];
-  t.after(() => rmSync(join(path, '..'), { recursive: true, force: true }));
   assert.equal(code, 1);
   assert.equal(output.split('\n')[0], 'stopped');
   assert.equal(readFileSync(path, 'utf8'), 'image');

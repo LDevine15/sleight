@@ -1,6 +1,8 @@
 // Grok Bot's local shell reaches one relay over a private, same-user Unix socket.
+import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { spawn, execFile } from 'node:child_process';
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { userInfo, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -40,6 +42,7 @@ function checkDirectory(directory, create = false) {
 }
 
 function validate(request) {
+  if (request?.op === 'status' && Object.keys(request).length === 1) return request;
   if (!request || typeof request !== 'object' || Array.isArray(request) ||
       Object.keys(request).some(k => !['tool', 'args'].includes(k)) || !TOOLS.has(request.tool) ||
       !request.args || typeof request.args !== 'object' || Array.isArray(request.args) ||
@@ -116,12 +119,41 @@ export async function createShellRelay({ command = process.execPath, args = [joi
   } catch (err) { await close(); throw err; }
 }
 
-export async function startSocketSession({ directory = socketDirectory(), startRelay = createShellRelay,
+// Serialize startup, including stale socket recovery, without holding a lock during calls.
+export async function startSocketSession(options = {}) {
+  const directory = options.directory ?? socketDirectory();
+  checkDirectory(directory, true);
+  const lock = join(directory, 'starting');
+  try { mkdirSync(lock, { mode: 0o700 }); }
+  catch (err) { if (err.code === 'EEXIST') throw new Error('Shell session is starting; inspect its startup lock if it does not finish'); throw err; }
+  try { return await startSocketSessionLocked({ ...options, directory }); }
+  finally { rmSync(lock, { recursive: true }); }
+}
+
+async function startSocketSessionLocked({ directory = socketDirectory(), startRelay = createShellRelay,
   peerUid, idleMs = 600000, signals = process } = {}) {
   checkDirectory(directory, true);
   const socketPath = join(directory, basename(SOCKET_FILE));
-  try { lstatSync(socketPath); throw new Error('Shell socket path is occupied; stop its session or inspect the stale socket before removing it'); }
-  catch (err) { if (err.code !== 'ENOENT') throw err; }
+  try {
+    const before = owned(socketPath, 'socket', 0o600);
+    try {
+      await callSocket({ op: 'status' }, { directory, timeoutMs: 2000 });
+      throw new Error('Shell socket path is occupied by a live session');
+    } catch (err) {
+      if (err.code !== 'ECONNREFUSED') throw err;
+      const after = owned(socketPath, 'socket', 0o600);
+      if (before.dev !== after.dev || before.ino !== after.ino) throw new Error('Shell socket changed during startup');
+      unlinkSync(socketPath);
+    }
+  } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  // A previous session may have crashed. Prune only its private image folders under this cache.
+  for (const name of readdirSync(directory).filter(name => /^images-[A-Za-z0-9]+$/.test(name))) {
+    const path = join(directory, name);
+    owned(path, 'directory', 0o700);
+    rmSync(path, { recursive: true });
+  }
+  const images = mkdtempSync(join(directory, 'images-'));
+  const sessionId = randomUUID();
   const peers = new Set();
   let relay, peer, timer, closing, socketStat, busy = false;
   let finish, finishStartup;
@@ -148,10 +180,24 @@ export async function startSocketSession({ directory = socketDirectory(), startR
           void (async () => {
             try {
               if (input.slice(newline + 1).trim()) throw new Error('One shell request per connection');
-              const { tool, args } = validate(JSON.parse(input.slice(0, newline)));
+              const request = validate(JSON.parse(input.slice(0, newline)));
+              if (request.op === 'status') {
+                socket.end(JSON.stringify({ result: { ready: !!relay && !closing, sessionId } }) + '\n');
+                return;
+              }
+              const { tool, args } = request;
               if (!relay || busy || closing) throw new Error('Shell session is starting, busy or closing; read state before retrying input');
               busy = true; clearTimeout(timer); socket.setTimeout(0);
-              try { socket.end(JSON.stringify({ result: await relay.call(tool, args) }) + '\n'); }
+              try {
+                const result = await relay.call(tool, args);
+                const content = [];
+                for (const block of result?.content ?? []) {
+                  if (block.type !== 'image') content.push(block);
+                  else await printSocketResult({ content: [block] }, { directory: images,
+                    out: text => content.push({ type: 'text', text: text.trimEnd() }) });
+                }
+                socket.end(JSON.stringify({ result: { ...result, content } }) + '\n');
+              }
               finally { busy = false; armIdle(); }
             } catch (err) { socket.end(JSON.stringify({ error: err.message }) + '\n'); }
           })();
@@ -182,6 +228,7 @@ export async function startSocketSession({ directory = socketDirectory(), startR
           catch (err) { if (err.code !== 'ENOENT') error ||= err; }
         }
         try { peer?.close(); } catch (err) { error ||= err; }
+        try { rmSync(images, { recursive: true, force: true }); } catch (err) { error ||= err; }
         finish({ error });
       }
       return { error };
@@ -231,13 +278,17 @@ export async function callSocket(request, { directory = socketDirectory(), timeo
   });
 }
 
-export async function printSocketResult(result, { out = text => process.stdout.write(text) } = {}) {
-  let directory, count = 0;
+export async function printSocketResult(result, { out = text => process.stdout.write(text), directory } = {}) {
   for (const block of result?.content ?? []) {
     if (block.type === 'image') {
-      directory ||= mkdtempSync(join(tmpdir(), 'sleight-shell-image-'));
+      if (!directory) {
+        const cache = socketDirectory();
+        checkDirectory(cache, true);
+        directory = mkdtempSync(join(cache, 'images-'));
+      }
+      owned(directory, 'directory', 0o700);
       const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[block.mimeType] ?? 'bin';
-      const path = join(directory, `${++count}.${extension}`);
+      const path = join(directory, `${randomUUID()}.${extension}`);
       writeFileSync(path, Buffer.from(block.data, 'base64'), { mode: 0o600, flag: 'wx' });
       out(path + '\n');
     } else if (block.type === 'text') out(block.text + '\n');
@@ -246,7 +297,12 @@ export async function printSocketResult(result, { out = text => process.stdout.w
   return result?.isError ? 1 : 0;
 }
 
-export async function socketCommand([command, ...args], { out = text => process.stdout.write(text) } = {}) {
+export async function socketCommand([command, ...args], options = {}) {
+  const { out = text => process.stdout.write(text) } = options;
+  if (command === 'session' && args.length === 1 && args[0] === '--install-agent') {
+    out(launchAgentInstructions(options));
+    return 0;
+  }
   if (['open_file', 'select_window', 'drag'].includes(command) && args.length === 1 && args[0] === '--help') {
     const { localToolDefinitions } = await import('./launch.mjs');
     out(JSON.stringify(localToolDefinitions({}).find(tool => tool.name === command), null, 2) + '\n');
@@ -263,6 +319,71 @@ export async function socketCommand([command, ...args], { out = text => process.
   if (command === 'js' && args.length === 1) toolArgs = { code: args[0] };
   else if (command === 'js_reset' && !args.length) toolArgs = {};
   else if (['open_file', 'select_window', 'drag'].includes(command) && args.length === 1) toolArgs = JSON.parse(args[0]);
-  else throw new Error("usage: sleight-mcp session | js '<code>' | js_reset | open_file|select_window|drag '<JSON arguments>'");
-  return printSocketResult(await callSocket({ tool: command, args: toolArgs }), { out });
+  else throw new Error("usage: sleight-mcp session [--install-agent] | js '<code>' | js_reset | open_file|select_window|drag '<JSON arguments>'");
+  await ensureSocketSession(options);
+  return printSocketResult(await callSocket({ tool: command, args: toolArgs }, options), { out });
+}
+
+// Child becomes a process-group leader. Its session owns idle shutdown and relay collection.
+export async function spawnDetachedSession({ command = process.execPath,
+  args = [join(LIB, 'launch.mjs'), 'session'], spawnChild = spawn } = {}) {
+  const child = spawnChild(command, args, { detached: true, stdio: ['ignore', 'ignore', 'ignore'] });
+  await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+  child.unref();
+  return child;
+}
+
+function rememberSession(directory, sessionId, notice) {
+  const path = join(directory, 'last-session');
+  let previous, fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o777) !== 0o600 || stat.size > 128) {
+      throw new Error('Shell session marker must be a private owned file');
+    }
+    previous = readFileSync(fd, 'utf8');
+  } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  finally { if (fd !== undefined) closeSync(fd); }
+  if (previous === sessionId) return;
+  const staging = mkdtempSync(join(directory, 'marker-'));
+  try {
+    writeFileSync(join(staging, 'id'), sessionId, { flag: 'wx', mode: 0o600 });
+    renameSync(join(staging, 'id'), path);
+  } finally { rmSync(staging, { recursive: true }); }
+  notice(`sleight: shell session ${previous ? 'restarted' : 'started'}; JavaScript handles and session approvals are reset. Read the first call's engine docs.\n`);
+}
+
+export async function ensureSocketSession({ directory = socketDirectory(), spawnSession = spawnDetachedSession,
+  notice = text => process.stderr.write(text), startupMs = 90000 } = {}) {
+  checkDirectory(directory, true);
+  const deadline = Date.now() + startupMs;
+  let started = false;
+  do {
+    try {
+      const status = await callSocket({ op: 'status' }, { directory, timeoutMs: Math.min(2000, Math.max(1, deadline - Date.now())) });
+      if (status.ready) { rememberSession(directory, status.sessionId, notice); return; }
+    } catch (err) {
+      if (!['ENOENT', 'ECONNREFUSED'].includes(err.code)) throw err;
+      if (!started) { started = true; await spawnSession(); }
+    }
+    await delay(50);
+  } while (Date.now() < deadline);
+  throw new Error('Shell session did not become ready within 90 seconds; inspect sleight-mcp session before retrying input');
+}
+
+export function launchAgentInstructions({ executable = join(LIB, '../bin/sleight-mcp') } = {}) {
+  const xml = value => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
+  return `Owner step: save this plist yourself as ~/Library/LaunchAgents/com.sleight.shell.plist, then run the command below.
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.sleight.shell</string>
+<key>ProgramArguments</key><array><string>${xml(executable)}</string><string>session</string></array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+</dict></plist>
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sleight.shell.plist"
+sleight has not written or loaded this plist. The session still exits after ten idle minutes.
+`;
 }
