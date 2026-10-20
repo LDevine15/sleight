@@ -117,8 +117,8 @@ function fixture(t, options = {}) {
   return { call, open, sent, selections, leases, drags, relay, received, invalidRequests, actions, send: (id, name, args) => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n'), released, active, observations, resetIdentity, focusDuplicate: () => { Object.assign(windows[1], { AXTitle: 'Source.txt', AXDocument: window('Source').url }); focusOverride = 1; }, breakIdentity: () => { broken = true; } };
 }
 
-// B transcript lines 120-184: opened alias, URL-less Edit menu, another item,
-// fresh getApp, advertised Cancel, fresh getApp and Escape. Use a generic editor.
+// B transcript lines 120-184: opened alias, URL-less Edit menu, fresh getApp,
+// advertised Cancel and Escape. Other input needs the document URL again.
 const childTree = (window, root = '0 Edit, Secondary Actions: Cancel, Pick\n\t1 menu Secondary Actions: Cancel') =>
   `Window: "${window.title}", App: ${window.app}.\n${window.url ? `URL: ${window.url}\n` : ''}${root}\n\t\t19 Replace..., ID: replace:`;
 
@@ -142,9 +142,10 @@ test('OH1 B actions execute through the generated runtime guards, including both
     ['continued', 'await app.typeText("continued");'],
   ]) {
     const result = await h.call(id, 'js', { code });
-    assert.ok(!result.isError, `${id}: ${JSON.stringify(result)}`);
+    if (id === 'replace') assert.equal(result.isError, true, JSON.stringify(result));
+    else assert.ok(!result.isError, `${id}: ${JSON.stringify(result)}`);
   }
-  assert.deepEqual(h.actions, [['click', 1], ['click', 19], ['performSecondaryAction', 1, 'Cancel'],
+  assert.deepEqual(h.actions, [['click', 1], ['performSecondaryAction', 1, 'Cancel'],
     ['click', 1], ['pressKey', 'Escape'], ['typeText', 'continued']]);
 });
 
@@ -152,7 +153,7 @@ for (const root of ['0 Edit, Secondary Actions: Cancel, Pick\n\t1 menu Secondary
   '0 menu Secondary Actions: Cancel', '0 sheet\n\t1 button Cancel', '0 dialog\n\t1 button Cancel']) {
   test(`OH1 B sequence keeps the selected document through a URL-less child: ${root.split('\n')[0]}`, async t => {
     let child = false;
-    const options = { onEngineCall: msg => { if (msg.id === 'menu') child = true; },
+    const options = { onEngineCall: msg => { if (msg.id === 'menu') child = true; if (msg.id === 'reacquire') child = false; },
       tree: current => child ? childTree({ ...current, url: undefined }, root) : undefined };
     const h = fixture(t, options), source = await h.open('Source');
     const cancel = root.includes('menu') ? `await app.performSecondaryAction(${root.startsWith('0 menu') ? 0 : 1}, "Cancel");`
@@ -168,6 +169,11 @@ for (const root of ['0 Edit, Secondary Actions: Cancel, Pick\n\t1 menu Secondary
       ['continued', 'await app.typeText("continued");'],
     ]) {
       const result = await h.call(id, 'js', { code });
+      if (id === 'replace') {
+        assert.equal(result.isError, true, JSON.stringify(result));
+        assert.equal(h.sent.some(msg => msg.id === id), false, 'ordinary input must stop before the engine');
+        continue;
+      }
       assert.ok(!result.isError, `${id}: ${JSON.stringify(result)}`);
       assert.ok(h.sent.some(msg => msg.id === id), `${id} must reach the engine`);
       if (id === 'reacquire') assert.doesNotMatch(JSON.stringify(result), /selected window not observed/);
@@ -218,7 +224,7 @@ for (const [label, change] of [
   assert.equal(h.sent.some(msg => msg.id === 'wrong'), false);
 });
 
-for (const nativeMutation of [{ pid: 99 }, { processStart: 99 }, { windowNumber: 99 }, { window: 99 },
+for (const nativeMutation of [{ pid: 99 }, { processStart: 99 }, { epoch: 'different-helper' }, { windowNumber: 99 }, { window: 99 },
   { status: 'unknown' }, { matches: 2 }, { url: 'file:///tmp/Other.txt' }, { appId: 'org.example.Other' }]) {
   test(`OH1 a URL-less menu cannot hide changed native identity: ${JSON.stringify(nativeMutation)}`, async t => {
     let child = false;

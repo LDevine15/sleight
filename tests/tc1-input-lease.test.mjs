@@ -114,23 +114,57 @@ for (const mismatch of ['title', 'url', 'app']) test(`TC1: combined selection ac
   assert.equal(h.sent.length, 1, 'only the acquisition reaches the engine');
 });
 
-test('TC1R: selected menu Escape refuses a header that omits the selected URL', async t => {
+test('TC1R: selected menu Escape admits an omitted URL with native ownership proof', async t => {
   const h = await fixture(t, { confirm: false });
   h.setText(menu);
   await h.call('app = await cua.getApp("Fixture Editor");');
   const result = await h.call('await app.pressKey("Escape");');
-  assert.equal(result.isError, true, JSON.stringify(result));
-  assert.deepEqual(h.inputs, []);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.inputs.map(input => input.value), ['Escape']);
 });
 
-test('TC1R: selected button Cancel refuses a header that omits the selected URL', async t => {
+test('TC1R: selected button Cancel admits an omitted URL with native ownership proof', async t => {
   const h = await fixture(t, { confirm: false });
   h.setText(menu + '\n\t5 button Cancel');
   await h.call('app = await cua.getApp("Fixture Editor");');
   const result = await h.call('await app.click(5);');
-  assert.equal(result.isError, true, JSON.stringify(result));
-  assert.deepEqual(h.inputs, []);
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+  assert.deepEqual(h.inputs.map(input => input.value), [5]);
 });
+
+for (const confirm of [false, true]) for (const cancel of ['await app.pressKey("Escape");', 'await app.click(5);']) {
+  for (const proof of ['no helper', 'unavailable', 'missing epoch', 'missing window', 'missing pid', 'missing processStart', 'same-title different window number']) {
+    test(`OH2: URL-less selected child refuses ${cancel} with ${proof} (confirmed: ${confirm})`, async t => {
+      const observed = { status: 'ok', matches: 1, epoch: 'helper', window: 1, pid: 123, processStart: 1, windowNumber: 22 };
+      if (proof === 'unavailable') observed.status = 'unknown';
+      else if (proof === 'same-title different window number') observed.windowNumber = 23;
+      else delete observed[proof.slice('missing '.length)];
+      const noProof = await fixture(t, { confirm,
+        windowIdentity: proof === 'no helper' ? undefined : async expected => ({ ...expected, ...observed }) });
+      noProof.setText(menu + '\n\t5 button Cancel');
+      await noProof.call('app = await cua.getApp("Fixture Editor");');
+      const result = await noProof.call(cancel);
+      assert.equal(result.isError, true, JSON.stringify(result));
+      assert.deepEqual(noProof.inputs, []);
+    });
+  }
+}
+
+for (const confirm of [false, true]) for (const root of [menu,
+  'Window: "report.txt", App: Fixture Editor.\n0 sheet\n\t4 button Save\n\t5 button Cancel',
+  'Window: "report.txt", App: Fixture Editor.\n0 dialog\n\t4 button Save\n\t5 button Cancel']) {
+  for (const action of ['await app.click(4);', 'await app.typeText("must not run");', 'await app.pressKey("Super+S");',
+    'await app.pressKey("Escape"); await app.click(4);']) {
+    test(`OH2: URL-less child refuses ordinary input (${confirm}, ${root.split('\n')[1]}, ${action})`, async t => {
+      const h = await fixture(t, { confirm });
+      h.setText(root);
+      await h.call('app = await cua.getApp("Fixture Editor");');
+      const result = await h.call(action);
+      assert.equal(result.isError, true, JSON.stringify(result));
+      assert.deepEqual(h.inputs, []);
+    });
+  }
+}
 
 for (const mismatch of ['title', 'app']) test(`TC1: Cancel cannot bypass selected ${mismatch} identity`, async t => {
   const h = await fixture(t, { confirm: false });
@@ -203,13 +237,13 @@ test('TC1: flow rules refuse a combined selected acquisition before input', asyn
 
 for (const cancel of ['await app.pressKey("Escape");', 'await app.click(5);']) {
   for (const url of ['file:///tmp/report.txt', 'file:///tmp/elsewhere/report.txt', null]) {
-    test(`TC1R: selected Cancel requires equal URLs on both sides: ${url}, ${cancel}`, async t => {
+    test(`TC1R: selected Cancel ${url === null ? 'admits an omitted URL with native ownership proof' : 'requires equal URLs on both sides'}: ${url}, ${cancel}`, async t => {
       const h = await fixture(t, { confirm: false });
       h.setText(menu + (url ? `\nURL: ${url}` : '') + '\n\t5 button Cancel');
       await h.call('app = await cua.getApp("Fixture Editor");');
       const result = await h.call(cancel);
-      assert.equal(!!result.isError, url !== target.url, JSON.stringify(result));
-      assert.equal(h.inputs.length, url === target.url ? 1 : 0);
+      assert.equal(!!result.isError, url !== null && url !== target.url, JSON.stringify(result));
+      assert.equal(h.inputs.length, url === null || url === target.url ? 1 : 0);
     });
   }
   for (const windowNumber of [22, undefined]) {

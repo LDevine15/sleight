@@ -1699,7 +1699,7 @@ export function createRelay({
   let selectionVerified = false;
   function clearSelection() { selectedWindow = undefined; selectionVerified = false; }
   const sameHeader = (a, b) => a && b && ['title', 'app', 'url'].every(key => a[key] === b[key]);
-  // Only a natively verified menu/sheet may omit its selected document's URL.
+  // Retain a verified child's parent for recovery, never for ordinary input confirmation.
   const sameWindow = (a, b) => sameHeader(a, b) || a && b && a.title === b.title && a.app === b.app &&
     (!a.url && sameHeader(a.selectedParent, b) || !b.url && sameHeader(b.selectedParent, a));
   function selectionRecovery() {
@@ -1715,7 +1715,9 @@ export function createRelay({
       sameWindow(leaseWindow, selectedWindow) && code.trim().replace(/;$/, '').split(';').every(statement => {
         const action = /^\s*await\s+([A-Za-z_$][\w$]*)\.(pressKey|click|performSecondaryAction)\((.*)\)\s*$/.exec(statement);
         if (!action) return isLeaseRead(statement.trim());
-        if (handleBundles.get(action[1])?.appId !== selectedWindow.appId) return false;
+        const handleWindow = openedWindows.get(action[1]) ?? handleBundles.get(action[1]);
+        if (handleWindow?.appId !== selectedWindow.appId ||
+            openedWindows.has(action[1]) && !sameHeader(handleWindow, selectedWindow)) return false;
         if (isChangeCancel(`await app.${action[2]}(${action[3]})`, lastWindowText)) return true;
         const cancel = action[2] === 'performSecondaryAction' && /^\s*(\d+)\s*,\s*(["'])Cancel\2\s*$/.exec(action[3]);
         return !!cancel && lastWindowText.split('\n').some(line => {
@@ -2071,7 +2073,7 @@ export function createRelay({
       if (name !== 'js') {
         leaseCalls.set(msg.id, { localAction: true }); return true;
       }
-      if (selectedWindow && !selectedCancel(code) && (isChangeCancel(code, lastWindowText) || !selectionVerified || leaseWindow?.appId !== selectedWindow.appId || !sameWindow(leaseWindow, selectedWindow))) {
+      if (selectedWindow && !selectedCancel(code) && (isChangeCancel(code, lastWindowText) || !selectionVerified || leaseWindow?.appId !== selectedWindow.appId || !sameHeader(leaseWindow, selectedWindow))) {
         leaseStop(msg, `selected window is not confirmed. ${confirmRecovery()}`); return false;
       }
       if (!leaseWindow?.appId) {
@@ -4907,9 +4909,11 @@ export function createRelay({
           (lastWindow ? `Observed ${documentLabel(lastWindow)}.` : 'Result missing full window header.');
       }
       // Keep the initial acquisition check, but release a verified selection
-      // when a successful full observation confirms a different window.
+      // when a successful full observation confirms a different window. A same-title
+      // header missing the selected URL is incomplete, even without a native helper.
       if (!confirmedBrowser && selectedWindow && selectionVerified && !automatic && call.observe && !msg.error && !msg.result?.isError &&
-          lastWindow && !sameWindow(lastWindow, selectedWindow)) clearSelection();
+          lastWindow && !sameWindow(lastWindow, selectedWindow) &&
+          (lastWindow.url || !selectedWindow.url || lastWindow.title !== selectedWindow.title || lastWindow.app !== selectedWindow.app)) clearSelection();
       // The Open click and its standalone reread can overlap. Judge safety at
       // the read's completion, after earlier action results have been recorded.
       const actionPending = [...changeCalls.values()].some(pending => !pending.safe);
@@ -5101,8 +5105,8 @@ export function createRelay({
           // A deliberate acquisition of another app ends this selection.
           selectedWindow = undefined; selectionVerified = false;
         } else {
-          selectionVerified = !msg.result?.isError && sameWindow(window, selectedWindow) && known === selectedWindow.appId;
-          if (!selectionVerified) windowNote = `Sleight: selected window not observed. ${selectionRecovery()}`;
+          selectionVerified = !msg.result?.isError && sameHeader(window, selectedWindow) && known === selectedWindow.appId;
+          if (!selectionVerified && !window?.selectedParent) windowNote = `Sleight: selected window not observed. ${selectionRecovery()}`;
         }
       }
     }
