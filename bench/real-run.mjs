@@ -89,6 +89,7 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
     }
   } catch (error) {
     result.passed = false;
+    if (error.browserReceipt?.acquisition?.length) result.browserAcquisition = error.browserReceipt.acquisition;
     if (driverStarted && result.groupClean !== true) result.groupClean = false;
     result.reason = dialogReason() || (result.permissionPrompt ? 'macOS permission prompt: stopped' : result.permissionRefusal ? 'computer-use permission refused: stopped' : error.message);
   } finally {
@@ -157,7 +158,10 @@ export async function acquireFixture(ctx, key, operation) {
   ctx.pendingAcquisitions ??= new Set();
   ctx.pendingAcquisitions.add(key);
   try { ctx[key] = await operation(); }
-  catch (error) { if (error.noMutation === true) ctx.pendingAcquisitions.delete(key); throw error; }
+  catch (error) {
+    if (error.noMutation === true || error.cleanupConfirmed === true) ctx.pendingAcquisitions.delete(key);
+    throw error;
+  }
   ctx.pendingAcquisitions.delete(key);
   return ctx[key];
 }

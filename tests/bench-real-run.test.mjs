@@ -334,6 +334,18 @@ test('fixture acquisition records ownership before resolving and retains uncerta
   }
 });
 
+test('failed acquisition clears only its own pending key after explicit cleanup confirmation', async () => {
+  const { acquireFixture } = await import('../bench/real-run.mjs');
+  for (const cleanupConfirmed of [true, false, undefined, 'true']) {
+    const ctx = { pendingAcquisitions: new Set(['another-fixture']) };
+    const failure = Object.assign(new Error('acquisition failed'), { cleanupConfirmed });
+    await assert.rejects(acquireFixture(ctx, 'browser', async () => { throw failure; }), error => error === failure);
+    assert.equal(ctx.pendingAcquisitions.has('browser'), cleanupConfirmed !== true);
+    assert.ok(ctx.pendingAcquisitions.has('another-fixture'));
+    assert.equal(ctx.browser, undefined);
+  }
+});
+
 for (const dialogStop of [false, true]) test(`an uncollected driver still closes the local server${dialogStop ? ' during a dialog stop' : ''}`, async t => {
   const execute = await runner(), ctx = fixture(t);
   let closed = 0;

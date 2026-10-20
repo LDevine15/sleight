@@ -239,16 +239,18 @@ test('race initial page preserves isolation and rejects external or unsupported 
     const page = { url: 'http://127.0.0.1:5431/held-out/list/test/', title: 'Held-out list test' };
     const start = initialBrowserPage(plan, page);
     assert.equal(start.profileRoot, plan.profileRoot);
-    assert.equal(start.marker, page.title);
     assert.equal(start.executable, plan.executable);
     if (browser === 'firefox') {
+      assert.equal(start.marker, page.title);
       assert.deepEqual(start.args.slice(0, -1), plan.args.slice(0, -1));
       assert.deepEqual(start.launchArgs.slice(0, -1), plan.launchArgs.slice(0, -1));
       assert.equal(start.args.at(-1), page.url);
       assert.equal(start.launchArgs.at(-1), page.url);
     } else {
       assert.equal(start.profileName, 'sleight benchmark');
-      assert.equal(start.markerUrl, page.url);
+      assert.equal(start.marker, plan.marker);
+      assert.equal(start.markerUrl, plan.markerUrl);
+      assert.deepEqual(start.acquisitionPage, page);
     }
     for (const url of ['https://example.com/', 'file:///tmp/test', 'http://127.0.0.1/', 'http://user:pass@127.0.0.1:5431/']) {
       assert.throws(() => initialBrowserPage(plan, { ...page, url }), /BENCH_INITIAL_PAGE_UNSAFE/);

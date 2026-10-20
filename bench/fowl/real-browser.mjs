@@ -281,7 +281,11 @@ export function initialBrowserPage(plan, page) {
   if (!['firefox', 'safari'].includes(plan.browser) || url.protocol !== 'http:' || url.hostname !== '127.0.0.1' ||
       !url.port || url.username || url.password || typeof page.title !== 'string' || !page.title || page.title.length > 200) throw Error('BENCH_INITIAL_PAGE_UNSAFE');
   // Keep the race's profile, launch, ownership and cleanup checks. Only the initial page changes.
-  if (plan.browser === 'safari') return { ...plan, marker: page.title, markerUrl: url.href };
+  if (plan.browser === 'safari') {
+    // Bind the helper to this run's fixture before launch. Data-page redirects to loopback did not acquire Safari.
+    if (url.href !== page.url || !/^http:\/\/127\.0\.0\.1:[1-9]\d{0,4}\/held-out\/[a-z-]+\/[A-Za-z0-9_-]{1,80}\/$/.test(page.url)) throw Error('BENCH_INITIAL_PAGE_UNSAFE');
+    return { ...plan, acquisitionPage: { title: page.title, url: url.href } };
+  }
   return { ...plan, marker: page.title, args: [...plan.args.slice(0, -1), url.href], launchArgs: [...plan.launchArgs.slice(0, -1), url.href] };
 }
 
