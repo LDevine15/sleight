@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Release comparison orchestration. Existing runners own app lifecycles and the live lock.
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
 import { join, resolve, dirname, posix } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -205,6 +205,11 @@ export async function waitGate(out = EVIDENCE) {
 }
 const runGit = (cwd, ...args) => execFileSync('/usr/bin/git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024 });
 
+// Any process running Chrome's own executable, whoever started it; only its exit (never a quit from here) clears it.
+export function chromeRunning(run = spawnSync) {
+  return run('/usr/bin/pgrep', ['-x', 'Google Chrome'], { stdio: 'ignore' }).status === 0;
+}
+
 async function child(command, args, cwd, log, extraEnv = {}) {
   // Every check and runner gets its own throwaway outer Claude config. World arms keep their isolated account logins.
   const config = mkdtempSync('/tmp/lane-claude-');
@@ -306,8 +311,16 @@ async function execute(plan) {
       aPluginTree: runGit(aRoot, 'rev-parse', `${plan.aBuild}:plugins`).trim(), bPluginTree: git('rev-parse', `${plan.bBuild}:plugins`).trim(),
       sharedHelperRoot: join(ROOT, 'plugins'), helperImports, stagedFiles,
       note: 'A uses B harness modules and B helper imports, with A plugin command paths. Native results mark A dirty for the staged harness. Plugin trees and transformed file hashes are separate.' }, null, 2));
-    for (const round of plan.rounds) {
+    // Chrome rounds need Chrome quit, and a Chrome the owner left open is never quit for them (2026-10-20: the owner's
+    // Chrome stopped the first round). They run last and wait for Chrome to be closed; every other round goes first.
+    const chromeLast = [...plan.rounds.filter(r => r.browser !== 'chrome'), ...plan.rounds.filter(r => r.browser === 'chrome')];
+    let waitedForChrome = false;
+    for (const round of chromeLast) {
       await waitGate();
+      while (round.browser === 'chrome' && chromeRunning()) {
+        if (!waitedForChrome) { record('waiting-for-chrome-quit', { round: round.id }); waitedForChrome = true; }
+        await new Promise(resolve => setTimeout(resolve, 60000));
+      }
       const root = round.side === 'A' ? aRoot : ROOT, stem = join(plan.out, round.id), path = `${stem}.log`;
       if (git('rev-parse', 'HEAD').trim() !== plan.bBuild || git('status', '--porcelain', '--untracked-files=no').trim() ||
           runGit(aRoot, 'diff', plan.aBuild, '--', 'plugins').trim()) throw Error('Build changed during the window');

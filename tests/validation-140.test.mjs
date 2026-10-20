@@ -267,3 +267,15 @@ test('scorer loads only qualified historical rounds and refuses edited evidence'
     assert.equal(scoreOutput(dir).complete, false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('Chrome counts as running only while a Google Chrome process exists, and nothing here quits it', async () => {
+  const { chromeRunning } = await import('../bench/validation/validation-140.mjs');
+  const calls = [];
+  assert.equal(chromeRunning((cmd, args) => { calls.push([cmd, ...args]); return { status: 0 }; }), true);
+  assert.equal(chromeRunning(() => ({ status: 1 })), false);
+  assert.deepEqual(calls, [['/usr/bin/pgrep', '-x', 'Google Chrome']]);
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../bench/validation/validation-140.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /pkill|killall|osascript[^\n]*quit|terminate\(\)/);
+  assert.match(source, /\.\.\.plan\.rounds\.filter\(r => r\.browser !== 'chrome'\), \.\.\.plan\.rounds\.filter\(r => r\.browser === 'chrome'\)/);
+});
