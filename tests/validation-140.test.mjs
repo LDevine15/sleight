@@ -145,3 +145,86 @@ test('zsh plan and invalid invocation never create output or run a child benchma
     assert.deepEqual(readdirSync(dir), []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('task-path classifications allow B-only rounds and reject incomplete or stale proof', async () => {
+  const { classifiedReuseProblems } = await import(moduleURL);
+  assert.equal(typeof classifiedReuseProblems, 'function', 'classification validation is missing');
+  const a = { bBuild: 'HEAD', bHarness: { hash: 'bh' } };
+  const round = { name: 'old-r1', fileHash: 'file', harnessCommit: 'old', clean: true, engineChanged: false,
+    engine: 'e', changedHarnessFiles: ['bench/unused.mjs'], tasks: [{ task: 'one', models: ['haiku'], effort: 'high' }] };
+  const proof = { bBuild: 'b', bHarnessHash: 'bh', bPromptSources: {}, profiles: { entry: { files: {
+    'bench/unused.mjs': { classification: 'NOT', trace: ['bench/run.mjs'], reason: 'No edge in the recorded closure.' } } } },
+    rounds: [{ name: 'old-r1', fileHash: 'file', harnessCommit: 'old', profile: 'entry',
+      prompts: [{ task: 'one', aRenderedHash: 'p', bRenderedHash: 'p' }] }] };
+  const check = (r = round, c = proof) => classifiedReuseProblems(r, a, c, { tasks: ['one'], model: 'haiku', engine: 'e' });
+  assert.deepEqual(check(), []);
+  for (const c of [null, { ...proof, bHarnessHash: 'stale' }, { ...proof, bPromptSources: null },
+    { ...proof, bPromptSources: { 'plugins/sleight/skills/drive-mac-apps/SKILL.md': 'stale' } }, { ...proof, rounds: [] },
+    { ...proof, profiles: { entry: { files: {} } } },
+    { ...proof, profiles: { entry: { files: { 'bench/unused.mjs': { classification: 'RUNS-THE-TASK', trace: ['bench/run.mjs'] } } } } },
+    { ...proof, rounds: [{ ...proof.rounds[0], fileHash: 'edited' }] },
+    { ...proof, rounds: [{ ...proof.rounds[0], prompts: [{ task: 'one', aRenderedHash: null, bRenderedHash: 'p' }] }] },
+  ]) assert.ok(check(round, c).length, 'invalid proof allowed A reuse');
+  assert.ok(check({ ...round, clean: false }).length);
+  assert.ok(check({ ...round, engineChanged: true }).length);
+  assert.ok(check({ ...round, tasks: [{ ...round.tasks[0], models: ['opus'] }] }).length);
+});
+
+test('mixed historical eligibility reruns A only for the disqualified round', async () => {
+  const { planGroups } = await import(moduleURL);
+  const plan = planGroups([{ id: 'native', tasks: ['one'], rounds: 3, both: ['one'],
+    freshA: [[], ['one'], []], seconds: 10, runner: 'native', model: 'haiku' }]);
+  assert.deepEqual(plan.rounds.filter(r => r.side === 'A').map(r => r.n), [2]);
+  assert.equal(plan.rounds.filter(r => r.side === 'B').length, 3);
+  assert.equal(plan.measuredEstimateSeconds, 40);
+});
+
+test('CC estimates use recorded task durations including failures and leave missing evidence unknown', async () => {
+  const { estimateCC } = await import(moduleURL);
+  assert.equal(typeof estimateCC, 'function', 'CC measured estimate is missing');
+  const samples = [{ task: 'cc-one', seconds: 10, passed: true, model: 'haiku', effort: 'high' },
+    { task: 'cc-one', seconds: 30, passed: false, model: 'haiku', effort: 'high' },
+    { task: 'cc-one', seconds: 999, model: 'opus', effort: 'high' }];
+  assert.equal(estimateCC(['cc-one'], samples, 'haiku').seconds, 120);
+  assert.equal(estimateCC(['cc-one'], [], 'haiku').seconds, null);
+  assert.deepEqual(estimateCC(['cc-one', 'cc-two'], samples, 'haiku').missing, ['cc-two']);
+});
+
+test('makePlan uses classifications for individual historical rounds', async () => {
+  const { makePlan } = await import(moduleURL);
+  const { readFileSync } = await import('node:fs');
+  const real = JSON.parse(readFileSync(new URL('../race-1017/validation-140-a.json', import.meta.url)));
+  const rounds = [1, 2, 3].map(n => ({ name: `native-${n}`, kind: 'native', flags: { SLEIGHT_FS: '0' }, path: `old-${n}.json`,
+    fileHash: `f${n}`, build: 'a', harnessCommit: 'old', engine: 'e', engineChanged: false, clean: true, durationSeconds: 10,
+    changedHarnessFiles: ['unused'], tasks: [{ task: 'one', seconds: 10, models: ['claude-haiku-5-5'], effort: 'high' }] }));
+  const audit = { ...real, rounds, problems: [], bHarness: { hash: 'bh' } };
+  const classification = { bHarnessHash: 'bh', bPromptSources: {}, profiles: { offline: { files: { unused: { classification: 'NOT', trace: ['entry'], reason: 'closed path' } } } },
+    rounds: rounds.map(r => ({ ...r, profile: 'offline', prompts: [{ task: 'one', aRenderedHash: 'p', bRenderedHash: r.name === 'native-2' ? 'changed' : 'p' }] })) };
+  const plan = makePlan(audit, { engine: 'e', classification });
+  assert.deepEqual(plan.rounds.filter(r => r.group === 'native' && r.side === 'A').map(r => r.n), [2]);
+  assert.deepEqual(plan.groups.find(g => g.id === 'native').reuse.map(r => r.name), ['native-1', 'native-3']);
+  assert.equal(plan.estimate.cc.seconds, null);
+  assert.equal(plan.estimate.totalSeconds, null);
+});
+
+test('scorer loads only qualified historical rounds and refuses edited evidence', async () => {
+  const { scoreOutput } = await import(moduleURL);
+  const { sha } = await import('../race-1017/audit-140.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'vp2-reuse-score-'));
+  try {
+    const raw = build => ({ sleight: { commit: build }, model: 'haiku', effort: 'high', engine: { version: 'e', changed: false },
+      results: [{ task: 'one', arm: 'sleight', seconds: 10, passed: true, models: ['haiku'], groupClean: true }],
+      leftWindows: [], hygiene: { errors: [], trackingErrors: [] } });
+    const historical = join(dir, 'old.json'), result = join(dir, 'B.json');
+    const bytes = JSON.stringify(raw('old-build')); writeFileSync(historical, bytes); writeFileSync(result, JSON.stringify(raw('b')));
+    writeFileSync(join(dir, 'plan.json'), JSON.stringify({ aBuild: 'a', bBuild: 'b', engine: 'e', harnessHash: 'h',
+      groups: [{ id: 'native', runner: 'native', model: 'haiku', tasks: ['one'], both: [], rounds: 1, a: [historical],
+        reuse: [{ path: historical, build: 'old-build', tasks: ['one'], fileHash: sha(bytes) }] }],
+      rounds: [{ id: 'B', side: 'B', group: 'native', runner: 'native', model: 'haiku', tasks: ['one'] }] }));
+    writeFileSync(join(dir, 'B.receipt.json'), JSON.stringify({ safe: true, build: 'b', engine: 'e', harnessHash: 'h', result }));
+    writeFileSync(join(dir, 'full-check.receipt.json'), JSON.stringify({ code: 0, build: 'b' }));
+    assert.equal(scoreOutput(dir).complete, true);
+    writeFileSync(historical, JSON.stringify({ ...raw('old-build'), model: 'opus' }));
+    assert.equal(scoreOutput(dir).complete, false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
