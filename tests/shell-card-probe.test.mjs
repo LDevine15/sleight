@@ -314,7 +314,7 @@ for (const stop of ['SIGINT', 'EOF']) test(`real Node fake child exits with clea
 test('shell poster uses exact protected button, no-prompt preflights and PID-only posting', () => {
   const source = readFileSync(new URL('../bench/shell-card-poster.swift', import.meta.url), 'utf8');
   assert.match(source, /AXIsProcessTrusted\(\)/); assert.match(source, /CGPreflightPostEventAccess\(\)/);
-  assert.match(source, /"Allow Once"/); assert.match(source, /CGWindowListCopyWindowInfo/);
+  assert.match(source, /"Allow Once"/); assert.match(source, /CGWindowListCreateDescriptionFromArray/);
   assert.match(source, /proc_pidpath/);
   assert.match(source, /appendingPathComponent\("shell-card"\)/);
   assert.match(source, /event\.postToPid\(pid\)/);

@@ -52,17 +52,35 @@ func near(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) < 1 }
 func target() -> AXUIElement {
     fixtureIdentity()
     guard !FileManager.default.fileExists(atPath: "/tmp/sleight-hold") else { fail("HOLD") }
-    guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], window) as? [[String: Any]], list.count == 1,
-        let info = list.first, (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
-        (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value == window,
-        let bounds = info[kCGWindowBounds as String] as? NSDictionary,
-        let rect = CGRect(dictionaryRepresentation: bounds), rect.contains(CGPoint(x: x, y: y)),
-        let windows = attribute(app, kAXWindowsAttribute as CFString) as? [AXUIElement] else { fail("WINDOW_IDENTITY") }
+    // Quartz's ID arrays contain raw window IDs, not CFNumber objects. Request only our fixture window.
+    var requestedWindow = UnsafeRawPointer(bitPattern: UInt(window))
+    guard let requestedWindows = CFArrayCreate(kCFAllocatorDefault, &requestedWindow, 1, nil),
+        let list = CGWindowListCreateDescriptionFromArray(requestedWindows) as? [[String: Any]] else { fail("WINDOW_QUERY_UNAVAILABLE") }
+    guard list.count == 1 else { fail("WINDOW_QUERY_COUNT") }
+    guard let info = list.first else { fail("WINDOW_QUERY_EMPTY") }
+    guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid else { fail("WINDOW_OWNER_MISMATCH") }
+    guard (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value == window else { fail("WINDOW_NUMBER_MISMATCH") }
+    guard let bounds = info[kCGWindowBounds as String] as? NSDictionary else { fail("WINDOW_BOUNDS_UNAVAILABLE") }
+    guard let rect = CGRect(dictionaryRepresentation: bounds) else { fail("WINDOW_BOUNDS_MALFORMED") }
+    guard rect.contains(CGPoint(x: x, y: y)) else { fail("WINDOW_POINT_OUTSIDE") }
+    guard let windows = attribute(app, kAXWindowsAttribute as CFString) as? [AXUIElement] else { fail("AX_WINDOWS_UNAVAILABLE") }
     let matches = windows.filter { element in
         guard let origin = point(element), let extent = size(element) else { return false }
         return near(origin.x, rect.minX) && near(origin.y, rect.minY) && near(extent.width, rect.width) && near(extent.height, rect.height)
     }
-    guard matches.count == 1 else { fail("AMBIGUOUS_WINDOW") }
+    guard matches.count == 1 else {
+        // Metadata from this verified fixture PID only. Never read window titles or document text.
+        let geometry: [[String: Any]] = windows.prefix(8).map { element in
+            var values: [String: Any] = [:]
+            if let origin = point(element) { values["x"] = origin.x; values["y"] = origin.y }
+            if let extent = size(element) { values["width"] = extent.width; values["height"] = extent.height }
+            return values
+        }
+        receipt("window-diagnostic", ["axWindows": windows.count, "geometryMatches": matches.count,
+            "expected": ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height],
+            "axGeometry": geometry, "truncated": windows.count > 8])
+        fail("AMBIGUOUS_WINDOW")
+    }
     var visited = 0, buttons: [AXUIElement] = [], truncated = false
     func walk(_ element: AXUIElement, _ depth: Int) {
         visited += 1
