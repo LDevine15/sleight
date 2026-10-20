@@ -16,7 +16,7 @@ function fixture(options = {}) {
   const client = { enabled: true, pid: 4242, sent, hidden: 0, closed: 0,
     send(frame) { sent.push({ ...frame, sentAt: clock }); }, hide() { this.hidden++; }, close() { this.closed++; } };
   let answer = () => GEOMETRY;
-  const hand = createRelayHand({ client, env: { SLEIGHT_HAND: '1' }, now: () => clock, defer: fn => deferred.push(fn),
+  const hand = createRelayHand({ client, env: { SLEIGHT_HAND: '1' }, setting: () => ({ enabled: true }), now: () => clock, defer: fn => deferred.push(fn),
     locate: async request => { requests.push(request); return answer(request); },
     trace: (direction, msg) => traces.push([direction, msg]), ...options });
   return { hand, client, sent, traces, requests, deferred,

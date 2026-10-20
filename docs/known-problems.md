@@ -158,6 +158,10 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 
 ## The pointer, drags and hover
 
+- The ghost hand is off by default. When an app doesn't send per-action approvals, the hand can run ahead of the field
+  being filled. Its frames follow a planned schedule, about 470 ms, then 72 ms per action, instead of the engine's
+  writes. A fix is planned for 1.4.1 (GH8).
+
 - DP1 can skip a close shortcut's final read only when fresh native metadata matches the leased
   bundle ID, PID and process start. Both the window count and modal count must be 0. Missing identity or
   unknown metadata keeps the read. Delayed Save sheets and separate dialogs still need live checks. Before release, sleight-arch must
@@ -260,8 +264,16 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   N divided by that number. Handles select already owned records and don't grant approval. Allocation checks retained records for
   collisions. `SLEIGHT_MT=0` restores UUID handles. These checks are unit-tested. Live model-time A/Bs remain.
 
-- `app.pickFromList` on Safari and Firefox web lists hasn't run live (2026-10-18). If Page Down doesn't move the list's
-  accessibility rows, it stops with "no-progress" and Claude falls back to a scroll loop.
+- In 1.3.1, turbo couldn't add a second item to a multi-select list that needs a Command-click. In its Chrome release pass
+  (2026-10-19, Haiku 5.5) form-settings stopped before submitting in 2 of 5 rounds because Japanese couldn't join
+  Portuguese (Brazil) in its Languages list. Opus passed it. The model stopped and said so, and nothing wrong was submitted.
+- A turbo click whose page re-renders under it comes back "page changed during the click" and the model reads and
+  retries. On 1.3.1's release-pass checkout that loop ran 6 to 7 times in 4 of 5 Haiku rounds (36 to 42 s against 21 to
+  26 s without it), and in 1 of 3 rounds of 1.3.0's pass.
+
+- `app.pickFromList` ran on held-out Safari and Firefox web lists in 1.4.0 validation (2026-10-20), 3 runs a side.
+  If Page Down doesn't move the list's accessibility rows, it stops with "no-progress" and Claude falls back to a
+  scroll loop.
 - The offscreen-row note hasn't run against a live app. It needs the engine's role words to equal the accessibility role
   descriptions and the list's rows to match one for one; otherwise the result reads as before. It covers rows in lists,
   tables, outlines, browsers, collections and grids, not a control below a page's fold.
@@ -492,6 +504,12 @@ native reference, and oversized first results defer the browser reference while 
 - The focusing click of `app.pickFromList(<list number>, …)` selects a row of that list, which stays selected if the
   search then stops. The list number is checked against the line Claude saw, as a click's is.
 - The engine tree may omit actions for a group or cell whose only action is the default press, so the passive-role check is the main protection for nested focus (measured in PL1b review, 2026-10-20).
+
+### Model time in 1.4.0
+
+On four held-out browser tasks (survey-p09 in Safari and Firefox, the ambiguous Firefox calendar and both slow
+dropdowns), 1.4.0's model time per turn ran 1 to 7 s above 1.3.1 with equal tool time. The cause isn't established.
+An A/B of the 1.4.0 workflow text, using `SLEIGHT_WORKFLOW_DOCS=0`, is next (WF3).
 
 ### Turbo (on by default)
 

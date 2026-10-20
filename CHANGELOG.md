@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.0 (TODO: release date)
+## 1.4.0 (2026-10-20)
 
 ### Install and results
 
@@ -34,6 +34,7 @@
   return screenshot paths. The doctor reports the shell route and live helper Accessibility status. Turbo stays off.
   Payments, bookings, settings changes and submits ask on sleight's panel. Transport and guards have offline tests;
   live bot survival and image delivery remain unchecked.
+- The Grok Bot shell route prints that it is waiting for approval on the Mac while a card is pending (GB14f).
 - Protected consent buttons require physical input. VoiceOver, Switch Control, Voice Control and screen-sharing users
   need a physical keyboard or pointer for these cards in 1.4.0. A typed-confirmation alternative is planned afterward.
 - The launcher registers stdin EOF and signal handlers before startup's first await, then waits for its engine and
@@ -51,6 +52,8 @@
 
 ### Native actions and engine browsers
 
+- A standalone `getScreenshot()` from the js tool sets the drag tool's screenshot scale. Drags in screenshot pixels
+  are no longer read as window points. Safari form-settings went from 1 of 3 to 3 of 3 passes (VS1).
 - Text drops can use an empty final row when Accessibility geometry proves it. Cross-window moves use Accessibility
   and refuse when it cannot safely move the text, including formatted selections.
 - Accessibility text moves run before the raise and settle wait. Posted input keeps that wait, and overlapping
@@ -76,6 +79,8 @@
   number and refuses lists whose rows trigger actions before clicking.
 - List picks estimate jumps from the labels around the target, with reads between bounded key bursts and stops for
   lost focus, stalled movement or an ambiguous row.
+- `pickFromList` follows a list renumbered since the last read, as scroll does. Page keys go only to the list, its row
+  or passive text inside it. The Firefox held-out list task took 26.5 s expected, against 34.0 s before the fix (PL1).
 - Action results wait for newly loading controls before returning the latest tree, within a bounded polling budget.
 - Numbered batches can follow renumbered controls only when each remaining observed target and its parent still match
   uniquely. A resent click still passes the payment check.
@@ -150,6 +155,8 @@
   saved and current graders without changing the original verdicts or ignoring site-log evidence of a send.
 - Held-out list, calendar, dependent-dropdown and new-tab fixtures cover Firefox, Safari and native Finder. World
   benchmark approvals cover only selected task apps.
+- Release validation ran the held-out list, calendar, dropdown and new-tab fixtures, 3 runs a side in Firefox and
+  Safari, plus cc-list-native in Finder (2026-10-20).
 - The compatibility check recognizes its own benchmark session's Safari window-selection approval.
 - Browser-open A/B runs keep prompt cells separate from product cells and rotate their run order.
 - The Browser Use benchmark pins AnyIO 4.14.2, pypdf 6.19.0, MCP 2.2.0 and aiohttp 3.14.4 through uv overrides.
@@ -160,12 +167,12 @@
 
 - The new install flow and agent install benchmark, Cursor install and approval labels.
 - Stats, the menu row, action logging and native analytics validation.
-- List hints, picks and jumps, loading-control waits, batch remapping, computer-only action diffs and final reads.
-- Safari tab continuation and landed-page reads, drag labels and title endings.
+- Loading-control waits, batch remapping, computer-only action diffs and final reads.
+- Drag labels and title endings.
 - Turbo settling, popup recovery, dialogs and browser-open timings.
-- Helper retry spreading, revised race instructions, held-out fixtures.
+- Helper retry spreading and revised race instructions.
 
-## 1.3.1 (TODO: release date)
+## 1.3.1 (2026-10-19)
 
 ### Engine updates
 
@@ -229,6 +236,11 @@ Each switch that was off by default ran an A/B, five alternating rounds a side o
   windows no Space holds, such as the one Safari keeps hidden from launch, which stopped the line in all 3 live rounds.
 - When `select_window` doesn't find a match, it lists window titles whole up to 120 characters. It cut them at 60, and a Safari
   profile window's 69-character title couldn't be copied.
+
+### Electron
+
+- Turbo for Electron apps is built but hasn't passed its live qualification yet (the first live run on 2026-10-19
+  stopped in its own harness before any card showed), so Electron apps stay on the native path.
 
 ### Startup
 

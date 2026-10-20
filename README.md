@@ -77,7 +77,7 @@ Safari and Firefox use the engine's accessibility path. The engine refuses termi
 - Protected consent buttons require physical input ([accessibility limits](docs/known-problems.md#protected-consent-input)). Chrome and Helium turbo is on by default after Chrome's debugging consent.
 - The ghost hand is off by default: textedit-drag took 31 to 37 s with it, 23 to 26 s without (3 runs a side, [details](docs/known-problems.md)).
 
-TODO(1.4.0-validation): record the final check, release-pass and A/B results before release.
+Release validation for 1.4.0 (2026-10-20, Haiku 5.5 at high effort, engine 26.1013.40934): the full check passed (11,073 tests), and 1.4.0 ran against 1.3.1 on sleight's own tasks, 3 runs a side and 5 on the Chrome release pass. In Chrome both passed all 13 tasks 5 times, at 242.3 s total expected time against 226.1 s. That still leads FowlBrowser's published 447.8 s and is lowest on 12 of its 13 tasks. Firefox's race tasks were level or faster. In Safari, 1.4.0 passed form-settings once in 3 runs. After the screenshot-frame fix it passed 3 of 3 at an expected 143.5 s against 1.3.1's 152.4 s. Model time per turn rose by 1 to 7 s on four held-out browser tasks, measured but not yet explained ([known problems](docs/known-problems.md#model-time-in-140)). Opus runs follow the next quota reset.
 
 <!-- hub:headline -->
 <picture>
