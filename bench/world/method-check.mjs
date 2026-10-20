@@ -4,6 +4,10 @@ const writers = /^(?:type|typeText|type_text|insert_text|setValue|fill|paste|cut
 const cutOrPaste = text => /(?:command|cmd|super|meta|ctrl|control)[+\s-]+(?:(?:command|cmd|super|meta|ctrl|control|shift|alt|option)[+\s-]+)*(?:key[_-]?)?[xv]\b|shift[+\s-]+(?:key[_-]?)?insert\b/i.test(text.replace(/["'\[\],]/g, ' '));
 const writeAction = /(?:^|[_\s.-])(?:type|paste|cut)(?:$|[_\s.-])|^(?:set|write)[_\s.-]?clipboard$|^clipboard[_\s.-](?:set|write)$/i;
 const indirect = /^(?:eval|Function|apply|call|bind)$/;
+// Optional API discovery may name a read absent from this engine version. Keep write-like
+// names and indirect calls unknown; their arguments and consumers are still visited below.
+const optionalRead = name => /^(?:get|list|find|read|query|has|is)(?:[A-Z_]|$)/.test(name) &&
+  !/(?:type|insert|paste|cut|fill|set|write|eval|function|apply|call|bind)/i.test(name);
 const builtins = new Set(['setTimeout', 'clearTimeout', 'setInterval', 'isNaN', 'isFinite', 'parseInt', 'parseFloat', 'Number', 'String', 'Boolean']);
 const ordinaryTools = new Set(['notifications', 'turn_ended', 'blocked_app', 'hover', 'open_file', 'js_reset', 'ToolSearch']);
 const methods = new Set(['getApp', 'getState', 'listApps', 'listWindows', 'getAXState', 'getScreenshot', 'getAXStateAndScreenshot',
@@ -25,10 +29,16 @@ function literal(node) {
 export function dragMethodAudit(transcript) {
   const audit = { drag: false, replacement: false, complete: true }, pending = new Map(), apps = new Set();
   let calls = 0, engine = true;
-  const inspect = (name, input, success) => {
+  const inspect = (name, input, success, content) => {
     calls++;
     if (!input || typeof input !== 'object' || Array.isArray(input)) { audit.complete = false; return; }
     const tool = name.split('__').at(-1);
+    if (tool === 'open_file' && success) {
+      // Trust the returned handle notice, never a matching name in model code or input.
+      const texts = typeof content === 'string' ? [content] : Array.isArray(content)
+        ? content.filter(c => c?.type === 'text' && typeof c.text === 'string').map(c => c.text) : [];
+      for (const text of texts) for (const match of text.matchAll(/\bWindow handle: `(__sleightOpenedApp\d+)`/g)) apps.add(match[1]);
+    }
     if (tool === 'replay') audit.complete = false;
     if (tool === 'blocked_app' && input.op === 'type') audit.replacement = true;
     if (typeof input.code === 'string') {
@@ -42,7 +52,8 @@ export function dragMethodAudit(transcript) {
         const acquired = call && ts.isCallExpression(call) && ts.isPropertyAccessExpression(call.expression) &&
           ts.isIdentifier(call.expression.expression) && call.expression.expression.text === 'cua' &&
           call.expression.name.text === 'getApp' && !(call.flags & ts.NodeFlags.OptionalChain);
-        if (acquired && engine && !deferred && success) apps.add(name.text);
+        const alias = value && ts.isIdentifier(value) && apps.has(value.text);
+        if ((acquired && engine || alias) && !deferred && success) apps.add(name.text);
         else apps.delete(name.text);
       };
       const visit = (node, deferred = false) => {
@@ -73,7 +84,11 @@ export function dragMethodAudit(transcript) {
         if (ts.isCallExpression(node)) {
           const expr = node.expression, method = ts.isPropertyAccessExpression(expr) ? expr.name.text :
             ts.isElementAccessExpression(expr) && ts.isStringLiteral(expr.argumentExpression) ? expr.argumentExpression.text : '';
-          const known = ts.isPropertyAccessExpression(expr) ? methods.has(method) || writers.test(method) || ['nodeRepl.write', 'nodeRepl.emitImage'].includes(expr.getText(file)) : ts.isIdentifier(expr) && builtins.has(expr.text);
+          const receiver = ts.isPropertyAccessExpression(expr) && ts.isIdentifier(expr.expression) &&
+            (apps.has(expr.expression.text) || engine && expr.expression.text === 'cua');
+          const read = receiver && (node.flags & ts.NodeFlags.OptionalChain) && optionalRead(method) &&
+            node.arguments.every(arg => literal(arg) && !cutOrPaste(arg.getText(file)));
+          const known = ts.isPropertyAccessExpression(expr) ? methods.has(method) || writers.test(method) || read || ['nodeRepl.write', 'nodeRepl.emitImage'].includes(expr.getText(file)) : ts.isIdentifier(expr) && builtins.has(expr.text);
           if (!known || indirect.test(method)) audit.complete = false;
           if (writers.test(method)) audit.replacement = true;
           if (/^(pressKey|press|keypress|keyPress)$/.test(method)) {
@@ -105,7 +120,7 @@ export function dragMethodAudit(transcript) {
       const item = event.item;
       let input = item.arguments === undefined ? {} : item.arguments;
       if (typeof input === 'string') { try { input = JSON.parse(input); } catch {} }
-      inspect(item.tool ?? '', input, item.status !== 'failed' && !!item.result && item.result.isError !== true && !item.error);
+      inspect(item.tool ?? '', input, item.status !== 'failed' && !!item.result && item.result.isError !== true && !item.error, item.result?.content);
     }
     for (const item of event.message?.content ?? []) {
       if (item.type === 'tool_use') pending.set(item.id, item);
@@ -113,7 +128,8 @@ export function dragMethodAudit(transcript) {
         const request = pending.get(item.tool_use_id);
         if (!request) { audit.complete = false; continue; }
         pending.delete(item.tool_use_id);
-        inspect(request.name, request.input, item.is_error !== true && event.tool_use_result?.isError !== true);
+        inspect(request.name, request.input, item.is_error !== true && event.tool_use_result?.isError !== true,
+          item.content ?? event.tool_use_result?.content);
       }
     }
   }
