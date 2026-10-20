@@ -11,7 +11,7 @@ import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 
 // Only the native bridge is replaced. No app lookup, compiler, input or window is used.
 // The bridge retains navigate's data-only contract from the recorded CC failure.
-function fixture(t, { redirect = true, restoredOwner = false } = {}) {
+function fixture(t, { redirect = true, restoredOwner = false, finalState = () => {}, foreignAfterNavigation = false } = {}) {
   const root = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-cc-safari-')));
   t.after(() => removeTemp(root));
   let running = false, windows = [], serial = 0, active;
@@ -41,9 +41,17 @@ function fixture(t, { redirect = true, restoredOwner = false } = {}) {
       for (const [, source] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
         new Script(source).runInNewContext({ location: { replace(url) { target = url; } } });
       }
-      if (active.navigationUrl) assert.equal(target, active.markerUrl);
+      let title = active.marker;
+      if (active.navigationUrl) {
+        assert.equal(target, active.acquisitionPage.url);
+        // Read the served title, independent of the launcher's expected title.
+        const response = await fetch(target), html = await response.text();
+        assert.equal(response.status, 200);
+        title = /<title>([^<]+)<\/title>/.exec(html)[1];
+      }
       windows[0].tabs[0] = { ...windows[0].tabs[0],
-        title: redirect ? active.marker : 'Loading', url: redirect ? target ?? input.url : input.url };
+        title: redirect ? title : active.marker, url: redirect ? target ?? input.url : input.url };
+      finalState(windows, active);
       return {};
     }
     if (op === 'quit') { running = false; windows = []; return { browserClosed: true }; }
@@ -53,7 +61,8 @@ function fixture(t, { redirect = true, restoredOwner = false } = {}) {
     launch: async (plan, { initialPage }) => {
       active = { ...initialBrowserPage(plan, initialPage), executable: process.execPath, profileRoot: join(root, 'harness/profile') };
       return launchSafari(active, { safariBridge: async () => bridge, timeoutMs: 50, restoreWait: async () => {},
-        listProcesses: async () => running ? [{ pid: 4101, ppid: 1, executable: process.execPath }] : [] });
+        listProcesses: async () => running ? [{ pid: 4101, ppid: 1, executable: process.execPath },
+          ...(foreignAfterNavigation && calls.includes('navigate') ? [{ pid: 4102, ppid: 1, executable: process.execPath }] : [])] : [] });
     } };
 }
 
@@ -70,7 +79,9 @@ for (const id of ['cc-list-safari', 'cc-list-pop-up-safari', 'cc-calendar-safari
     assert.equal((await fetch(ctx.url)).status, 200);
     assert.equal(ctx.browser.profileName, 'sleight benchmark');
     const inventory = await ctx.browser.reset();
-    assert.equal(Object.values(inventory)[0].url, ctx.url);
+    assert.deepEqual(Object.values(inventory), [{ title: `Held-out ${ctx.cc.kind} ${ctx.nonce}`, url: ctx.url }]);
+    assert.notEqual(ctx.browser.marker, Object.values(inventory)[0].title);
+    assert.notEqual(ctx.browser.markerUrl, ctx.url);
     assert.equal((await ctx.browser.observe()).observed, true);
     // A second reset must use the same bootstrap after collecting the first process.
     assert.equal(Object.values(await ctx.browser.reset())[0].url, ctx.url);
@@ -90,6 +101,25 @@ test('ordinary Safari race markers still navigate directly and retain their inve
   } finally { await browser.stop(); }
 });
 
+for (const key of ['title', 'url']) {
+  test(`ordinary Safari race markers still require the exact ${key}`, async t => {
+    const f = fixture(t, { finalState: windows => { windows[0].tabs[0][key] += 'different'; } });
+    const plan = realBrowserPlan({ browser: 'safari', round: 'ordinary-refusal' });
+    await assert.rejects(f.launch(plan, {}), /BENCH_SAFARI_MARKER_UNPROVED/);
+    assert.equal(f.calls.filter(op => op === 'quit').length, 1);
+  });
+}
+
+test('Safari requires a clean process census after matching the redirected fixture', async t => {
+  const f = fixture(t, { foreignAfterNavigation: true });
+  const task = ccHeldOutTasks(undefined, { launchBrowser: f.launch }).find(task => task.id === 'cc-list-safari');
+  const ctx = { nonce: 'foreign-process', ownerAway: true, realProfile: 'fresh' };
+  t.after(() => ctx.closeServer?.());
+  await assert.rejects(task.setup(ctx), /PID 4102/);
+  assert.deepEqual([...ctx.pendingAcquisitions], ['browser']);
+  assert.equal(f.calls.filter(op => op === 'quit').length, 1);
+});
+
 test('Safari fixture readiness rejects a bootstrap that never reaches its final URL', async t => {
   const f = fixture(t, { redirect: false });
   const task = ccHeldOutTasks(undefined, { launchBrowser: f.launch }).find(task => task.id === 'cc-list-safari');
@@ -99,6 +129,25 @@ test('Safari fixture readiness rejects a bootstrap that never reaches its final 
   assert.deepEqual([...ctx.pendingAcquisitions], ['browser']);
   assert.equal(f.calls.filter(op => op === 'quit').length, 1);
 });
+
+for (const [name, finalState, reason] of [
+  ['wrong title', windows => { windows[0].tabs[0].title = 'Unexpected fixture'; }, /BENCH_SAFARI_MARKER_UNPROVED/],
+  ['wrong run URL', windows => { windows[0].tabs[0].url += 'other-run/'; }, /BENCH_SAFARI_MARKER_UNPROVED/],
+  ['extra tab', windows => { windows[0].tabs.push({ ...windows[0].tabs[0], id: 'extra-tab' }); }, /BENCH_SAFARI_MARKER_UNPROVED/],
+  ['extra window', windows => { windows.push({ ...windows[0], id: 'extra-window' }); }, /BENCH_SAFARI_MARKER_UNPROVED/],
+  ['replaced window', windows => { windows[0].id = 'replacement'; }, /BENCH_SAFARI_PROFILE_WINDOW_UNPROVED/],
+  ['lost profile', windows => { windows[0].toolbar = []; }, /BENCH_SAFARI_PROFILE_WINDOW_UNPROVED/],
+]) {
+  test(`Safari fixture readiness refuses ${name} after redirect`, async t => {
+    const f = fixture(t, { finalState });
+    const task = ccHeldOutTasks(undefined, { launchBrowser: f.launch }).find(task => task.id === 'cc-list-safari');
+    const ctx = { nonce: 'refused', ownerAway: true, realProfile: 'fresh' };
+    t.after(() => ctx.closeServer?.());
+    await assert.rejects(task.setup(ctx), reason);
+    assert.deepEqual([...ctx.pendingAcquisitions], ['browser']);
+    assert.equal(f.calls.filter(op => op === 'quit').length, 1);
+  });
+}
 
 test('Safari refuses restored owner windows before a fixture can navigate', async t => {
   const f = fixture(t, { restoredOwner: true });

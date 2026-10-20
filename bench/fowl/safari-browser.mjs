@@ -122,6 +122,8 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
   mkdirSync(root, { mode: 0o700 });
   let bridge, running = false, stopped, windowId, fresh = null;
   const browser = { ...plan, ownerCheck, collections: [], launches: [] };
+  // Fixture redirects prove the validated destination; ordinary races prove the data marker itself.
+  const acquisitionPage = plan.acquisitionPage ?? { title: plan.marker, url: plan.markerUrl };
   const census = async (...given) => {
     const ownedPid = given.length ? given[0] : browser.pid;
     try { browser.ownerCheck = await checkBrowserOwner(plan, { listProcesses, ownedPid }); }
@@ -183,7 +185,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     for (;;) {
       const list = await snapshot(), current = ownedWindow(list);
       const inventory = tabs(current), values = Object.values(inventory);
-      if (list.length === 1 && values.length === 1 && values[0].title === plan.marker && values[0].url === plan.markerUrl) {
+      if (list.length === 1 && values.length === 1 && values[0].title === acquisitionPage.title && values[0].url === acquisitionPage.url) {
         await census(); return inventory;
       }
       if (Date.now() >= deadline) throw Error('BENCH_SAFARI_MARKER_UNPROVED');
@@ -235,7 +237,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
       if (counted.length !== 1) {
         throw Object.assign(Error('BENCH_SAFARI_EXTRA_WINDOWS'), { extraWindows: counted.filter(w => w.id !== windowId).map(windowShape) });
       }
-      return { observed: true, source: 'AX-tab-bar', profileEvidence: browser.profileEvidence, tabs: tabs(ownedWindow(counted), { [plan.marker]: plan.markerUrl }),
+      return { observed: true, source: 'AX-tab-bar', profileEvidence: browser.profileEvidence, tabs: tabs(ownedWindow(counted), { [acquisitionPage.title]: acquisitionPage.url }),
         ...(auxiliaryWindows.length ? { auxiliaryWindows } : {}), unavailableGraders: ['completed downloads', 'device viewport'] };
     } catch (error) {
       return { observed: false, tabs: {}, reason: error.message, ...(error.ownerCheck ? { ownerCheck: error.ownerCheck } : {}),

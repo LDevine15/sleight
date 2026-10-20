@@ -285,7 +285,7 @@ export function initialBrowserPage(plan, page) {
     // The native helper only types data markers into a proven profile Start Page. Let that page
     // navigate to the validated fixture, then require the fixture's title and URL before readiness.
     const redirect = `<script>location.replace(${JSON.stringify(url.href).replaceAll('<', '\\u003c')})</script>`;
-    return { ...plan, marker: page.title, markerUrl: url.href,
+    return { ...plan, acquisitionPage: { title: page.title, url: url.href },
       navigationUrl: plan.markerUrl + encodeURIComponent(redirect) };
   }
   return { ...plan, marker: page.title, args: [...plan.args.slice(0, -1), url.href], launchArgs: [...plan.launchArgs.slice(0, -1), url.href] };
