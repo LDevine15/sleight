@@ -15,6 +15,32 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 - Turbo may ask about an honest checkout: on 2026-10-15, 50/98 honest payment fixtures allowed without asking (83/98 in round 12) ([browsers](#browsers)).
 - Safari may stop between opening a tab and typing: 36 of 36 Codex chains and 19 of 19 Claude Code chains stopped. The fix is untested live ([approvals and guards](#approvals-and-guards)).
 
+## 1.4.1 candidate checks
+
+- The changes on the candidate branches still need final integration review. The version and doctor checks need
+  the 1.4.1 manifests and this CHANGELOG heading together. Passing offline tests does not qualify a release.
+  Review found that manifest discovery can skip extra plugins behind symlinked directories. That check needs a
+  repair and regression evidence before integration.
+- Finder's recorded setup smoke failed on 2026-10-20 with `Finder fixture window inventory unconfirmed` before
+  creating a window or opening a folder. Cleanup was confirmed, but the run failed and retained its live lock. New
+  inventory diagnostics preserve the strict ownership checks. No live rerun has established the cause or a fix.
+  The architect must verify current lock ownership. Finder setup, Go to Folder ancestry, respawn and cleanup need
+  qualification, including the `cc-list-native` and `textedit-two-windows` fixture paths.
+  Review found that cancellation can leave setup running and cleanup can close a baseline window. Ordinary task
+  cleanup uncertainty can release the lock. Receipts can retain owner text, and timeout evidence lacks process-start identity.
+  These findings require repairs before live adoption. Exclusive Finder setup and the remaining window-focus race
+  also need an owner decision.
+- The portability guard still reports 58 hardcoded-path lines in 12 test files. Production checks for the macOS
+  private temporary root prevent converting four real allocations. The other 54 lines are in reserved test files. The
+  guard has no exemptions. The Node 24 Docker preflight has offline command tests, with no actual Linux result.
+- The release preflight requires a dated CHANGELOG heading, while 1.4.1 remains unreleased. Its proposed Linux
+  `--run --json` interface and receipt differ from the Docker helper's interface. Integration must reconcile both
+  before qualification. Private terms need an external file and human review; a generic Linux account's history scan
+  does not prove the owner's identity was checked. No integrated candidate or tagged-release preflight has passed.
+- The final-build driver has only offline proof. It rejected the historical `validation-140-final` bank because
+  the task, prompt or harness changed. The architect must select compatible A evidence or collect a fresh A/B,
+  then run three new rounds per selected group on the final integrated commit. Later merges require another run.
+
 ## Flag A/B limits
 
 - Across five alternating rounds with Haiku 5.5 at high effort, open-shot won by about 1.1 SE
@@ -160,7 +186,10 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 
 - The ghost hand is off by default. When an app doesn't send per-action approvals, the hand can run ahead of the field
   being filled. Its frames follow a planned schedule, about 470 ms, then 72 ms per action, instead of the engine's
-  writes. A fix is planned for 1.4.1 (GH8).
+  writes. GH8's partial branch paces frames from accepted action requests, but engine-persisted Always allow can
+  consume those requests without exposing them to the relay. That branch omits frames on this route and remains
+  blocked. Per-action timing, call identity and action order for that route are unproven; Astra's investigation
+  remains open. Visual qualification and the A/B required to change the default have not passed.
 
 - DP1 can skip a close shortcut's final read only when fresh native metadata matches the leased
   bundle ID, PID and process start. Both the window count and modal count must be 0. Missing identity or
@@ -774,10 +803,17 @@ An A/B of the 1.4.0 workflow text, using `SLEIGHT_WORKFLOW_DOCS=0`, is next (WF3
   on the study Mac). Check the target in `grok inspect --json` and keep one route. The direct MCP entry passed doctor.
   Grok form answers never write Always allow. Only the user's click on sleight's panel can do that.
 - Grok Bot's shell route is a preview. One live read passed on 2026-10-20 (Calculator through the shell route); image
-  delivery hasn't been checked live. Its approval requests don't open a card. They wait in the menu bar glove under
+  delivery hasn't been checked live. In 1.4.0 its approval requests don't open a card. They wait in the menu bar glove under
   Review sleight request, which macOS 27 can hide behind the menu bar's overflow chevron. Clicking it shows a plain
-  window. The same request can come back several times (about 7 in that check) before one approval takes. The fix
-  (GB18) is planned for 1.4.1. Its custom STDIO MCP servers run in a hosted box without this Mac's apps or ChatGPT's
+  window. The same request can come back several times (about 7 in that check) before one approval takes. The GB18
+  candidate opens a styled card immediately and joins identical shell retries to one waiting call. Verified app
+  approvals honor preapprovals and session memory. Physical consent checks and Calculator/TextEdit card counts
+  through priya remain pending, along with native compilation, sound, menu overflow, transport and shared-host checks.
+  Review R1 found that distinct payments with identical terms could share one approval. The consent repair separates
+  their decisions and awaits re-review. R2 found that delayed synthetic input could count as the probe's physical
+  answer. Its repair must prove synthetic-fixture cleanup before starting a separate physical-click fixture; that
+  qualification remains open. Protected buttons still require physical input.
+  Grok Bot's custom STDIO MCP servers run in a hosted box without this Mac's apps or ChatGPT's
   engine. Use `sleight-mcp js '<code>'` through the local daemon, which starts a session on demand. Doctor reports
   `route: shell (sleight-mcp js)`, even when a session isn't running. There is no Mac-side HTTP client placement.
 - A shell session requires Apple's clang and stops after ten idle minutes. The next call starts it again.
