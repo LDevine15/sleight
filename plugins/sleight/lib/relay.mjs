@@ -1699,7 +1699,7 @@ export function createRelay({
   let selectionVerified = false;
   function clearSelection() { selectedWindow = undefined; selectionVerified = false; }
   const sameHeader = (a, b) => a && b && ['title', 'app', 'url'].every(key => a[key] === b[key]);
-  // Only a natively verified menu/sheet may omit its selected document's URL.
+  // Retain a verified child's parent for recovery, never for ordinary input confirmation.
   const sameWindow = (a, b) => sameHeader(a, b) || a && b && a.title === b.title && a.app === b.app &&
     (!a.url && sameHeader(a.selectedParent, b) || !b.url && sameHeader(b.selectedParent, a));
   function selectionRecovery() {
@@ -1715,13 +1715,24 @@ export function createRelay({
       sameWindow(leaseWindow, selectedWindow) && code.trim().replace(/;$/, '').split(';').every(statement => {
         const action = /^\s*await\s+([A-Za-z_$][\w$]*)\.(pressKey|click|performSecondaryAction)\((.*)\)\s*$/.exec(statement);
         if (!action) return isLeaseRead(statement.trim());
-        if (handleBundles.get(action[1])?.appId !== selectedWindow.appId) return false;
+        const handleWindow = openedWindows.get(action[1]) ?? handleBundles.get(action[1]);
+        if (handleWindow?.appId !== selectedWindow.appId ||
+            openedWindows.has(action[1]) && !sameHeader(handleWindow, selectedWindow)) return false;
+        const acquiredNumber = handleSelectors.get(action[1])?.match(/^\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}$/)?.[1];
+        const number = acquiredNumber ? Number(acquiredNumber) : handleWindow.windowNumber ?? handleWindow.nativeIdentity?.windowNumber;
+        if (number !== undefined && number !== selectedWindow.windowNumber ||
+            leaseWindow.selectedParent && !openedWindows.has(action[1]) && number === undefined) return false;
         if (isChangeCancel(`await app.${action[2]}(${action[3]})`, lastWindowText)) return true;
         const cancel = action[2] === 'performSecondaryAction' && /^\s*(\d+)\s*,\s*(["'])Cancel\2\s*$/.exec(action[3]);
-        return !!cancel && lastWindowText.split('\n').some(line => {
-          const element = /^\s*(\d+) (.*)$/.exec(line);
-          return element && element[1] === cancel[1] && /Secondary Actions: (?:[^,]*, )*Cancel(?:,|$)/.test(element[2]);
-        });
+        if (!cancel) return false;
+        const lines = lastWindowText.split('\n'), root = lines.findIndex(line => /^0 /.test(line));
+        if (root < 0 || !(menuRoot(lastWindowText) || /^0 (?:sheet|dialog)\b/.test(lines[root]))) return false;
+        for (let i = root; i < lines.length; i++) {
+          if (i > root && /^\S/.test(lines[i])) break;
+          const element = /^\s*(\d+) (.*)$/.exec(lines[i]);
+          if (element?.[1] === cancel[1]) return /Secondary Actions: (?:[^,]*, )*Cancel(?:,|$)/.test(element[2]);
+        }
+        return false;
       });
   }
   let constApp = false;
@@ -2071,7 +2082,7 @@ export function createRelay({
       if (name !== 'js') {
         leaseCalls.set(msg.id, { localAction: true }); return true;
       }
-      if (selectedWindow && !selectedCancel(code) && (isChangeCancel(code, lastWindowText) || !selectionVerified || leaseWindow?.appId !== selectedWindow.appId || !sameWindow(leaseWindow, selectedWindow))) {
+      if (selectedWindow && !selectedCancel(code) && (isChangeCancel(code, lastWindowText) || !selectionVerified || leaseWindow?.appId !== selectedWindow.appId || !sameHeader(leaseWindow, selectedWindow))) {
         leaseStop(msg, `selected window is not confirmed. ${confirmRecovery()}`); return false;
       }
       if (!leaseWindow?.appId) {
@@ -2849,9 +2860,16 @@ export function createRelay({
         const value = JSON.parse(result.content.find(c => c.type === 'text')?.text ?? '{}');
         if (!value.ok || !value.target?.appId || typeof value.target?.title !== 'string' ||
             (resolved && value.target.appId !== resolved.appId)) throw new Error(/* notice */ 'Window selection returned no matching target');
-        selectedWindow = { ...value.target, ...(Number.isSafeInteger(value.identity?.windowNumber) && value.identity.windowNumber > 0
+        const selected = { ...value.target, ...(Number.isSafeInteger(value.identity?.windowNumber) && value.identity.windowNumber > 0
           ? { windowNumber: value.identity.windowNumber } : {}) };
+        selectedWindow = selected;
         leaseWindow = undefined;
+        if (windowIdentity && selected.windowNumber !== undefined) {
+          const observed = await windowIdentity(selected);
+          current();
+          selected.nativeIdentity = nativeIdentity(selected, observed);
+          noteProcess(selected.nativeIdentity);
+        }
       }
     } catch (err) {
       // A failed lookup or lease leaves the early open_file approval unanswered; decline it here.
@@ -4591,12 +4609,25 @@ export function createRelay({
       const text = (msg.result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
       const window = lastWindowFromText(text), appId = observedAppId(identityCall, window, msg.result);
       if (window && !window.url && selectedWindow.url && window.title === selectedWindow.title && window.app === selectedWindow.app &&
-          appId === selectedWindow.appId && (menuRoot(text) || /^0 (?:sheet|dialog)\b/m.test(text))) {
+          (menuRoot(text) || /^0 (?:sheet|dialog)\b/m.test(text))) {
         const expected = selectedWindow, generation = stopGeneration;
         identityCall.selectedChildChecked = true;
-        Promise.resolve().then(() => windowIdentity(expected)).then(observed => {
+        Promise.resolve().then(() => {
+          const selector = identityCall.selector ?? handleSelectors.get(identityCall.handle);
+          const acquiredNumber = selector?.match(/^\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}$/)?.[1];
+          const bound = identityCall.handle ? handleBundles.get(identityCall.handle) : leaseWindow;
+          // A named app acquisition reads its main window, which the native check must find focused.
+          // Numbered acquisitions and existing handles must also prove where this tree came from.
+          const number = acquiredNumber ? Number(acquiredNumber) : identityCall.acquisition ? expected.windowNumber
+            : bound?.windowNumber ?? bound?.nativeIdentity?.windowNumber;
+          if (expected.windowNumber === undefined || !expected.nativeIdentity || number !== expected.windowNumber || appId !== expected.appId) {
+            throw new Error('Input lease: selected child has no matching native window binding. Read the selected document again.');
+          }
+          return windowIdentity(expected);
+        }).then(observed => {
           const identity = verifyWindowIdentity(expected, observed);
-          if (generation !== stopGeneration || selectedWindow !== expected) return;
+          if (generation !== stopGeneration) return;
+          if (selectedWindow !== expected) throw new Error('Input lease: selection changed during the child identity check. Read the selected document again.');
           identityCall.selectedParent = expected;
           identityCall.nativeIdentity = identity; identityCall.identityRequired = true;
           expected.nativeIdentity = identity;
@@ -4604,7 +4635,7 @@ export function createRelay({
         }).catch(error => {
           msg.result = { ...msg.result, isError: true, content: [...(msg.result.content ?? []), { type: 'text', text: error.message }] };
         }).finally(() => {
-          if (generation === stopGeneration) observeServerMessage(msg);
+          observeServerMessage(msg);
         });
         return;
       }
@@ -4907,9 +4938,11 @@ export function createRelay({
           (lastWindow ? `Observed ${documentLabel(lastWindow)}.` : 'Result missing full window header.');
       }
       // Keep the initial acquisition check, but release a verified selection
-      // when a successful full observation confirms a different window.
+      // when a successful full observation confirms a different window. A same-title
+      // header missing the selected URL is incomplete, even without a native helper.
       if (!confirmedBrowser && selectedWindow && selectionVerified && !automatic && call.observe && !msg.error && !msg.result?.isError &&
-          lastWindow && !sameWindow(lastWindow, selectedWindow)) clearSelection();
+          lastWindow && !sameWindow(lastWindow, selectedWindow) &&
+          (lastWindow.url || !selectedWindow.url || lastWindow.title !== selectedWindow.title || lastWindow.app !== selectedWindow.app)) clearSelection();
       // The Open click and its standalone reread can overlap. Judge safety at
       // the read's completion, after earlier action results have been recorded.
       const actionPending = [...changeCalls.values()].some(pending => !pending.safe);
@@ -5052,9 +5085,11 @@ export function createRelay({
         : /^Window: .*\r?\n0 (sheet|dialog|window|floating window|system dialog)\b/m).exec(text)?.[1];
       if (over && leaseWindow?.appId && previous?.appId === leaseWindow.appId && window.app === previous.app) {
         const key = documentKey({ title: previous.title, app: previous.app, url: previous.url });
-        if (sameWindow(previous, window)) { if (previous.parent) leaseWindow.parent = previous.parent; }
+        if (sameWindow(previous, window)) {
+          if (previous.parent) { const { selectedParent: _, ...parent } = previous.parent; leaseWindow.parent = parent; }
+        }
         else if ((previous.title || previous.url) && standardWindows.has(key)) {
-          const { parent: _, ...covered } = previous;
+          const { parent: _, selectedParent: __, ...covered } = previous;
           const seen = standardWindows.get(key);
           leaseWindow.parent = { ...covered, at: clock(), seenAt: seen.at, seen, over };
         }
@@ -5077,7 +5112,8 @@ export function createRelay({
       if (call.handle) {
         if (known) {
           const rebound = handleBundles.get(call.handle)?.appId !== known;
-          handleBundles.set(call.handle, leaseWindow); unconfirmedHandles.delete(call.handle);
+          const { selectedParent: _, ...boundWindow } = leaseWindow;
+          handleBundles.set(call.handle, boundWindow); unconfirmedHandles.delete(call.handle);
           // A read that rebinds the handle to another app makes its acquisition argument stale.
           if (call.acquisition) handleOrigins.set(call.handle, call.selector); else if (rebound) handleOrigins.delete(call.handle);
         }
@@ -5101,8 +5137,8 @@ export function createRelay({
           // A deliberate acquisition of another app ends this selection.
           selectedWindow = undefined; selectionVerified = false;
         } else {
-          selectionVerified = !msg.result?.isError && sameWindow(window, selectedWindow) && known === selectedWindow.appId;
-          if (!selectionVerified) windowNote = `Sleight: selected window not observed. ${selectionRecovery()}`;
+          selectionVerified = !msg.result?.isError && sameHeader(window, selectedWindow) && known === selectedWindow.appId;
+          if (!selectionVerified && !window?.selectedParent) windowNote = `Sleight: selected window not observed. ${selectionRecovery()}`;
         }
       }
     }
