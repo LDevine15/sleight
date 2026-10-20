@@ -5,9 +5,10 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 test('a piped handshake followed immediately by EOF collects the launcher and engine', { timeout: 15000 }, async t => {
-  const bank = await mkdtemp(join(tmpdir(), 'sleight-handshake-eof-'));
+  const bank = trackTemp(await mkdtemp(join(tmpdir(), 'sleight-handshake-eof-')));
   const codexHome = join(bank, 'codex');
   const config = join(codexHome, 'plugins/cache/openai-bundled/unified-computer-use/1.0');
   await mkdir(config, { recursive: true });
