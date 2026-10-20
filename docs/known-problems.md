@@ -731,6 +731,14 @@ native reference, and oversized first results defer the browser reference while 
   in 1.3.0. The panel shows the client's name (Cursor) in other
   hosts and Claude under Claude Code. It is unit-tested only: no live approval in another host has been
   checked. Unanswered relay forms expire after five minutes.
+- Grok CLI support in sleight 1.4.0 has a headless handshake and focused unit tests, with no model session or image delivery check.
+  Turbo is off because Grok has no trusted user-turn binding. Its 20,000-byte result cap can return a delivery error for
+  output that cannot fit after tree trimming, including large screenshots. Read current state before retrying input.
+- In Grok 1.0.13, marketplace add and plugin install with `--trust` succeeded in a throwaway home, but inspect still
+  loaded the Claude marketplace checkout. That can differ from Claude Code's cached sleight version (1.3.1 versus 1.3.0
+  on the study Mac). Check the target in `grok inspect --json` and keep one route. The direct MCP entry passed doctor.
+  Grok form answers never write Always allow. Only the user's click on sleight's panel can do that.
+- Grok Bot.app's local MCP support is unknown. The Grok CLI checks do not cover that app.
 - The Cursor plugin (1.4.0) hasn't been installed in Cursor yet. We don't know whether
   `cursor-agent plugin marketplace add` works on a personal account, whether Cursor accepts the
   manifest's empty `hooks` object without a warning, or whether it hides `turn_ended` from the model.

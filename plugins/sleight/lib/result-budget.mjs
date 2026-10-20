@@ -7,6 +7,23 @@
 import { trimBrowserResults } from './browser-read-cap.mjs';
 
 export const RESULT_LIMIT = 45000;
+export const GROK_RESULT_LIMIT = 20000;
+
+// The final serialized result includes content wrappers, metadata and base64 images. Keep safety
+// prose whole. An output that can't fit after tree trimming becomes an explicit delivery failure.
+export function grokResult(result) {
+  const fits = value => Buffer.byteLength(JSON.stringify(value)) <= GROK_RESULT_LIMIT;
+  if (fits(result)) return result;
+  let out = { ...result };
+  if (Array.isArray(out.content)) {
+    for (let limit = 16000; limit >= 0; limit -= 2000) {
+      out.content = trimResultTrees(out.content, limit, true);
+      if (fits(out)) return out;
+    }
+  }
+  return { isError: true, content: [{ type: 'text', text:
+    'sleight: the result exceeds Grok\'s 20000-byte limit and could not be delivered whole. Execution may have completed. Do not replay input automatically. Read current state with a smaller filtered read; image delivery needs a smaller capture.' }] };
+}
 
 const GENERAL_DOCS = /^## Computer Use\n/;
 const BROWSER_DOCS = /^# Other Browser APIs\n/;

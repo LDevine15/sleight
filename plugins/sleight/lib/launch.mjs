@@ -49,6 +49,7 @@ import { handPid } from './hand/pid.mjs';
 import { ActionLog, actionLogPath } from './action-outcomes.mjs';
 import { codexDoctorLines, codexStatus } from './codex-host.mjs';
 import { cursorDoctorLines, cursorStatus } from './cursor-host.mjs';
+import { grokDoctorLines, grokStatus } from './grok-host.mjs';
 import { hostLabel, hostName } from './host-label.mjs';
 import { createPaymentCard } from './payment-card.mjs';
 import { codexTurnClient } from './codex-turn.mjs';
@@ -170,6 +171,10 @@ function cursorDoctor() {
   try { return cursorDoctorLines(cursorStatus()); }
   catch (err) { return ['Cursor', `PROBLEM   could not read Cursor's config (${err.message})`]; }
 }
+function grokDoctor(env) {
+  try { return grokDoctorLines(grokStatus({ env })); }
+  catch (err) { return ['Grok CLI', `PROBLEM   could not read Grok's config (${err.message})`]; }
+}
 
 // Read-only. The doctor prints it first so it shows even when the engine checks below stop early.
 async function turboDoctorLines() {
@@ -190,7 +195,7 @@ async function permissionsDoctorSection() {
   catch (err) { return ['permissions', `PROBLEM   could not read the permissions (${err.message})`]; }
 }
 
-export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, hand = handDoctorSection, permissions = permissionsDoctorSection, codex = codexDoctor, cursor = cursorDoctor } = {}) {
+export async function doctor({ env = process.env, log = console.log, app = process.argv.includes('--doctor') ? process.argv[process.argv.indexOf('--doctor') + 1] : undefined, timeoutMs = 5000, startupTimeoutMs = 10000, launchctlList = listLaunchdJobs, forbiddenTargets = readForbiddenTargets, preapprovedIO, auditDirectory, turbo = turboDoctorLines, hand = handDoctorSection, permissions = permissionsDoctorSection, codex = codexDoctor, cursor = cursorDoctor, grok = grokDoctor } = {}) {
   if (app !== undefined && (typeof app !== 'string' || !app.trim() || app.startsWith('-'))) {
     log('usage: sleight-mcp --doctor [running app name or bundle ID]'); return 1;
   }
@@ -199,6 +204,7 @@ export async function doctor({ env = process.env, log = console.log, app = proce
   for (const line of await permissions()) log(line);
   for (const line of codex(env)) log(line);
   for (const line of cursor()) log(line);
+  for (const line of grok(env)) log(line);
   const s = resolveServer(env);
   if (s.error) { log(`sleight: ${s.error}`); return 1; }
   await probeSurfaces(s, env);

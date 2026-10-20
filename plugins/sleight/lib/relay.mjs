@@ -91,11 +91,11 @@ import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode
 import { promptNotice } from './prompt-notice.mjs';
 export { promptNotice };
 import { dropRepeatedText } from './repeated-text.mjs';
-import { ruleDelivery } from './rule-delivery.mjs';
+import { ruleDelivery, guidanceForHost } from './rule-delivery.mjs';
 import { typedTextReceipt, typingReceiptCall, typingReceiptCode, withoutTypingReceipt, typingReceiptTarget } from './typed-text-receipt.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
 import { literalElements } from './literal-elements.mjs';
-import { createResultBudget, requestsFullDocumentation } from './result-budget.mjs';
+import { createResultBudget, requestsFullDocumentation, grokResult } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
 import { OWN_HOST_LINE, isOwnHost, mentionsOwnHost, namesOwnHost as appNamesOwnHost, getAppTargets, ownHostPid as isOwnHostPid } from './own-host.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
@@ -123,7 +123,7 @@ import { syntaxErrorHint, syntaxOrigin } from './syntax-errors.mjs';
 import { compactJsDescription, engineJsVariant } from './tool-description.mjs';
 import { createLightReturn, lightReturnCode } from './light-return.mjs';
 import { createTabProbe, nativeTabPlan } from './tab-probe.mjs';
-import { hostLabel } from './host-label.mjs';
+import { hostLabel, isGrokClient } from './host-label.mjs';
 import { TURN_START, TURN_START_TOOL, codexCallTurn, codexTurnClient, codexTurnFrame } from './codex-turn.mjs';
 import { rootWindowId, popupWindows } from './popup-window.mjs';
 
@@ -883,6 +883,9 @@ export function createRelay({
   if (directHost !== undefined && !(isV3Bridge(directHost) && isV3Frontend(directBrowser))) throw Error('TRUSTED_ROUTE_REQUIRED');
   let installedBootstrapped = false;
   let clientHost; // the menu bar's host line, from initialize's clientInfo (host-label.mjs)
+  let grokClient = false;
+  const originalModHost = modHost;
+  modHost = () => !grokClient && originalModHost();
   // Codex sends its sandbox state on each tool call (codex/sandbox-state, because the engine advertises it), and the engine
   // runs a call in a kernel for that state. The relay's own calls carry the client's latest state so they reach the same
   // kernel, and a change in it means a fresh kernel: no guard setup and no handles (the first getApp in Codex failed on
@@ -940,7 +943,7 @@ export function createRelay({
   const outcomeSetup = outcomes || actionLog ? { outcomes: true } : {};
   let compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, routeSteering, undoReceipts, outcomes, actionNumbers: workflowDocs });
   const browserStale = createBrowserStaleGuard();
-  const resultBudget = createResultBudget();
+  let resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
   // Whether the engine's js description is its computer-only one, from the last tool list.
   let computerSurface = false;
@@ -1362,13 +1365,13 @@ export function createRelay({
     if (!rulesShown) {
       rulesShown = true;
       if (browser) browserRulesShown = true;
-      return requestedSubmitRules(browser ? firstCallRules : nativeRules, {
+      return guidanceForHost(requestedSubmitRules(browser ? firstCallRules : nativeRules, {
         SLEIGHT_RS: policyRewritten ? rs : '0', SLEIGHT_CONFIRM_PAYMENTS: confirmPayments, SLEIGHT_PROMPT: prompt,
-      });
+      }), grokClient);
     }
     if (browser && !browserRulesShown && browserRules) {
       browserRulesShown = true;
-      return browserRules;
+      return guidanceForHost(browserRules, grokClient);
     }
   }
   const helperAliases = new Map();
@@ -2309,6 +2312,7 @@ export function createRelay({
       saveReceipted ||= msg.result.content.some(c => c.type === 'text' && /\bsaved: observed [^\n]*; on disk: /.test(c.text ?? ''));
     }
     if (msg.method === undefined) resultBudget.finish(msg.id);
+    if (grokClient && Array.isArray(msg.result?.content)) msg.result = grokResult(msg.result);
     journal?.reply(msg);
     // The log is a side record: its failure never costs Claude a reply.
     try { actionLog?.reply(msg); } catch {}
@@ -3442,6 +3446,8 @@ export function createRelay({
     if (msg.method === 'initialize') {
       onInitialize(msg.params?.clientInfo);
       clientHost = hostLabel(msg.params?.clientInfo);
+      grokClient = isGrokClient(msg.params?.clientInfo);
+      if (grokClient) resultBudget = createResultBudget({ limit: 16000 });
       if (typeof msg.params?.clientInfo?.name === 'string') clientName = msg.params.clientInfo.name.slice(0, 64);
       const capabilities = msg.params?.capabilities ?? {};
       const elicitation = capabilities.elicitation;
@@ -3772,13 +3778,13 @@ export function createRelay({
       alwaysOffered.delete(msg.id);
       // The engine didn't ask for this field: answer it here and pass the engine an empty form.
       if (msg.result?.content && 'remember' in msg.result.content) {
-        if (always && msg.result.action === 'accept' && msg.result.content.remember === 'Always' && !reviewerAnswer(msg.result)) rememberAlways(always);
+        if (!grokClient && always && msg.result.action === 'accept' && msg.result.content.remember === 'Always' && !reviewerAnswer(msg.result)) rememberAlways(always);
         const { remember: _remember, ...content } = msg.result.content;
         msg.result = { ...msg.result, content };
       }
       if (msg.result?.action === 'accept') {
         approved.add(key);
-        if (msg.result._meta?.persist === undefined) {
+        if (grokClient || msg.result._meta?.persist === undefined) {
           msg.result._meta = { ...msg.result._meta, persist: 'session' };
         }
       }
@@ -4880,7 +4886,7 @@ export function createRelay({
         return;
       }
       approvalRequests.set(msg.id, { key, generation: stopGeneration });
-      const always = alwaysChoice(msg);
+      const always = grokClient ? undefined : alwaysChoice(msg);
       if (always) {
         alwaysOffered.set(msg.id, always);
         const schema = msg.params.requestedSchema ?? { type: 'object', properties: {} };

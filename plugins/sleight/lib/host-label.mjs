@@ -12,6 +12,9 @@ const FIXED = new Map([['cursor-vscode', { name: 'Cursor', version: '1.0.0' }], 
 
 const clean = (value, pattern) => typeof value === 'string' && pattern.test(value.trim()) ? value.trim() : undefined;
 
+// GL1 on Grok CLI 1.0.13 recorded grok-shell-computer and grok-shell-sleight: the suffix is the server key.
+export const isGrokClient = info => typeof info?.name === 'string' && /^grok-shell-[A-Za-z0-9_-]{1,64}$/.test(info.name);
+
 // The client's display name without a version: its title ("Codex", "Claude Code"), a fixed client's own name, or the
 // name in title case ("codex-mcp-client" is "Codex Mcp Client").
 export function hostName(info) {
@@ -20,6 +23,7 @@ export function hostName(info) {
   if (title) return title;
   const raw = clean(info.name, NAME);
   if (!raw) return undefined;
+  if (isGrokClient(info)) return 'Grok';
   if (FIXED.has(raw)) return FIXED.get(raw).name;
   return /[A-Z\s]/.test(raw) ? raw : raw.split(/[-_]+/).filter(Boolean).map(part => part[0].toUpperCase() + part.slice(1)).join(' ');
 }

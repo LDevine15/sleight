@@ -92,6 +92,32 @@ reply. Approvals use Cursor's form prompts and name Cursor. Cursor's hooks run s
 call an MCP tool. The relay ends a used turn after 30 idle seconds and on disconnect. Cursor doesn't
 get the pane, the status line, `/sleight` or turbo.
 
+## Grok CLI
+
+Grok CLI is supported in 1.4.0 through the [direct MCP entry](../INSTALL.md#grok-cli). Grok 1.0.13's headless
+`mcp doctor computer` completed the handshake and listed 10 tools. It identified itself as
+`grok-shell-computer`, version `1.0.13`. The direct entry's handshake sent `grok-shell-sleight` at that same version.
+Both listed 10 tools. The dropdown and approval panel call it Grok.
+No model session, image delivery or app task has been checked.
+
+Grok can import sleight from Claude Code's `known_marketplaces.json` checkout. On the study Mac that copy was
+1.3.1, while Claude Code used its 1.3.0 cache. The doctor's Grok section reports that mismatch and the
+`[compat.claude]` import switch, on by default. Marketplace add and plugin install with `--trust` succeeded
+in a throwaway home, but inspect still selected the imported copy. Keep one server and check `grok inspect --json`
+for its target. No warning about sleight's mod-only `hooks.json` appeared. Those hooks have not run in Grok.
+
+The injected guidance names `computer__js` for the import, or `sleight__js` for the direct entry, through Grok's
+`use_tool`. Results stay within 20,000 serialized bytes, including images and metadata. Trees shrink first.
+An output that still cannot fit returns a delivery error; execution may have completed, so read current state before retrying.
+The first documentation reply's size is unit-tested, with the full confirmation policy. A model session has not checked spilling.
+
+Grok's form answers grant Allow for this server session. Even an Always answer cannot write a pre-approval.
+Only the user's click on Always allow in sleight's own panel writes one. Set `SLEIGHT_APPROVAL_PROMPT=dialog`
+if you want that panel. Turbo stays off in Grok for 1.4.0: its command hooks cannot bind each MCP call to a trusted
+user turn. Browser and Electron work use the engine path. Used turns end after 30 idle seconds or on disconnect.
+
+Grok Bot.app is a separate product with different MCP settings. Local stdio support there is unknown.
+
 ## Generic clients
 
 [INSTALL.md](../INSTALL.md#other-mcp-clients) has the clone and the `mcpServers` entry. The launcher runs on the Node
