@@ -18,26 +18,35 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 ## 1.4.1 candidate checks
 
 - Release qualification applies to the final integrated commit. The 1.4.1 manifests, doctor output and unreleased
-  CHANGELOG heading must agree there. After all merges, the architect must reconcile the documented scope and run
-  the full check, release pass and final-build A/B. Passing offline tests does not qualify a release.
-- Finder's recorded setup smoke failed on 2026-10-20 with `Finder fixture window inventory unconfirmed` before
+  CHANGELOG heading agree in the integrated tree. The full check, release pass and final-build A/B remain required
+  on that final commit. Passing offline tests does not qualify a release.
+- Finder's recorded setup smoke failed at 21:16Z on 2026-10-20 with `Finder fixture window inventory unconfirmed` before
   creating a window or opening a folder. Cleanup was confirmed, but the failed run retained its live lock until
   the operator removed it at 21:26Z. No new live evidence establishes the cause or a fix. Finder setup, Go to Folder
   ancestry, respawn and cleanup need qualification, including the `cc-list-native` and `textedit-two-windows` fixture
   paths. Cancellation must stop owned setup work; cleanup must preserve baseline windows and retain the lock when
   ownership or cleanup is uncertain. Receipts must exclude owner text, and timeout evidence must bind the same
-  process instance. These requirements need review before live adoption. Exclusive Finder setup and the remaining
-  window-focus race still need an owner decision.
+  process instance. The offline recovery, ownership and app-absent cleanup changes passed tests and review.
+  Exclusive Finder setup and the remaining window-focus race still need an
+  owner decision. The old smoke and lock removal establish no current lock state or successful live repair.
 - Offline portability checks do not establish Linux compatibility. The path guard must pass without exemptions on
-  the integrated tree. Actual Linux testing through the Node 24 Docker preflight remains unrun.
-- Candidate and tagged-release preflights must run after the reset against the final commit. Release mode must
-  also verify the intended tag points to that commit. Every check and Linux receipt must identify that same clean
-  tree through completion. The unreleased heading, Linux helper interface, receipt and caller must agree. Private terms need an external
-  file and human review. A generic Linux account's history scan does not prove the owner's identity was checked.
-  Candidate mode keeps `releaseReady: false`. Publication remains a separate owner decision.
+  the final tree. Actual Node 24 Linux testing remains unrun.
+  The helper prepares the exact commit with usable Git metadata, mounts that snapshot read-only and tests a writable
+  container copy with isolated dependencies. Offline tests cover its shared receipt contract and asynchronous cleanup;
+  actual Docker cancellation, child collection and container cleanup still need qualification.
+- Candidate and tagged-release preflights must verify the same clean final commit through completion, including
+  the Linux receipt. These model-free checks do not require a quota reset. Candidate mode accepts an unreleased
+  heading and keeps `releaseReady: false`. Release mode requires a dated heading and the intended tag at that exact
+  commit. Private terms need an external file and human review. A generic Linux account's history scan does not
+  prove the owner's identity was checked. Publication remains a separate owner decision.
 - The final-build driver has only offline proof. It rejected the historical `validation-140-final` bank because
   the task, prompt or harness changed. The architect must select compatible A evidence or collect a fresh A/B,
   then run three new rounds per selected group on the final integrated commit. Later merges require another run.
+- Workflow-documentation A/B and Electron qualification preparation have passed offline review and tests, with no
+  new live results or performance claim. Model-backed release passes, final-build A/B, workflow A/B and the Electron
+  arm wait for the planned quota reset and an owner-approved away window. Electron still needs a fresh owner turbo
+  receipt matching the final plugin and Node runtime, an approved second-window setup and a decision on host-kill
+  focus. Interrupted Electron runs need separate exit and lock-ownership evidence.
 - Shortening the first native API reference is blocked because the available result does not authenticate which
   text items came from the engine's documentation emitter. The existing reference is unchanged.
 
@@ -538,7 +547,8 @@ native reference, and oversized first results defer the browser reference while 
 
 On four held-out browser tasks (survey-p09 in Safari and Firefox, the ambiguous Firefox calendar and both slow
 dropdowns), 1.4.0's model time per turn ran 1 to 7 s above 1.3.1 with equal tool time. The cause isn't established.
-An A/B of the 1.4.0 workflow text, using `SLEIGHT_WORKFLOW_DOCS=0`, is next (WF3).
+The prepared WF3 A/B compares `SLEIGHT_WORKFLOW_DOCS=0` with the default. The flag also changes action-number
+compaction, so it cannot isolate wording alone. That A/B has not run live.
 
 ### Turbo (on by default)
 
@@ -805,9 +815,9 @@ An A/B of the 1.4.0 workflow text, using `SLEIGHT_WORKFLOW_DOCS=0`, is next (WF3
 - Grok Bot's shell route is a preview. One live read passed on 2026-10-20 (Calculator through the shell route); image
   delivery hasn't been checked live. In 1.4.0 its approval requests don't open a card. They wait in the menu bar glove under
   Review sleight request, which macOS 27 can hide behind the menu bar's overflow chevron. Clicking it shows a plain
-  window. The same request can come back several times (about 7 in that check) before one approval takes. The intended
+  window. The same request can come back several times (about 7 in that check) before one approval takes. The
   1.4.1 candidate behavior is described in the [CHANGELOG](../CHANGELOG.md#141-unreleased). Native compilation passed
-  without UI. Physical consent checks and real GL9 through Grok Bot's priya remain unqualified. Qualification must
+  without UI. Physical GB18 consent checks and real GL9 through Grok Bot's priya remain unqualified. Qualification must
   record Calculator/TextEdit card counts with the owner's current preapprovals, one physical Allow where needed,
   repeated same-session requests and identical retries while a decision waits. Appearance, sound, glove review under
   menu overflow, cancellation, channel reset, fd transport and shared-host operation also need live checks. The guard
