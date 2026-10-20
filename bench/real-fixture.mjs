@@ -124,18 +124,24 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
       const collected = await lease.dispose();
       diagnostics.helperCollectionConfirmed = collected;
       if (!collected && !final) throw new Error('Fixture helper collection unconfirmed; app quit refused');
-      // Final native termination cannot answer a permission dialog or perform AX
-      // actions. It still requires the exact PID and bundle this run launched.
+      // Office may answer only the exact owned file's Don't Save sheet, after
+      // checking the launched PID, bundle and start time again.
       if (!final) { await ctx.beforeFixtureCleanup?.(); ctx.cleanupSignal?.throwIfAborted(); }
       if (!lease.pid) throw new Error('Launched app identity unconfirmed; quit refused');
       const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', script,
         JSON.stringify({ bundle: lease.bundle || request.bundle, mode: 'quit', pid: Number(lease.pid),
           ...(lease.processStartedAtMs > 0 && { processStartedAtMs: lease.processStartedAtMs }),
+          ...(/^com\.microsoft\.(Word|Excel)$/.test(request.bundle) && request.mode === 'document' && {
+            fixture: { mode: request.mode, target: request.target, token: request.token, runToken: request.runToken } }),
           ...(request.fixtureKind && { fixtureKind: request.fixtureKind, target: request.target }), ...(request.stopOnLiveHold && { stopOnLiveHold: true }) })], {
         signal: final ? undefined : ctx.cleanupSignal, timeoutMs: 35000,
       });
       for (const line of result.stdout?.split('\n') ?? []) {
-        try { const event = JSON.parse(line); if (event.stage === 'quit' && event.quitWait) diagnostics.quitWait = event.quitWait; } catch {}
+        try {
+          const event = JSON.parse(line);
+          if (event.stage === 'quit' && event.quitWait) diagnostics.quitWait = event.quitWait;
+          if (event.fixtureSheet) (diagnostics.fixtureSheets ??= []).push(event.fixtureSheet);
+        } catch {}
       }
       if (!result.groupClean || result.exit?.code !== 0) throw new Error(`Launched ${request.app} quit unconfirmed${result.stderr?.trim() ? ': ' + result.stderr.trim() : ''}`);
       await confirmExit([{ pid: Number(lease.pid), processStartedAtMs: lease.processStartedAtMs }], 'quit');
