@@ -30,8 +30,9 @@ func personInput(_ event: CGEvent?) -> Bool {
     guard pid > 0, pid <= Int64(Int32.max) else { return false }
     var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
     guard proc_pidpath(Int32(pid), &path, UInt32(path.count)) > 0 else { return false }
-    let systemServer = URL(fileURLWithPath: "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer").resolvingSymlinksInPath().path
-    return URL(fileURLWithPath: String(cString: path)).resolvingSymlinksInPath().path == systemServer
+    // Canonicalize process paths through filesystem metadata only, without loading a file or resource.
+    let systemServer = ("/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer" as NSString).resolvingSymlinksInPath
+    return (String(cString: path) as NSString).resolvingSymlinksInPath == systemServer
 }
 func personChoice(_ kind: String, _ choice: String) -> Bool {
     if ["cancel", "decline", "session"].contains(choice) { return false }

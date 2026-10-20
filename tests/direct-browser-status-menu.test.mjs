@@ -26,7 +26,14 @@ test('the Ghost Hand row is a checkmark item that answers with its own choice, w
 });
 
 test('Turn Turbo Off asks first, and Settings & Help opens only the fixed docs address', () => {
-  assert.match(source, /@objc func confirmOff[\s\S]*?let answer = modal\.run\(abort: \{ NSApp\.abortModal\(\) \}\) \{ alert\.runModal\(\) \}\n\s*if answer == \.alertFirstButtonReturn \{ respond\(id, choice\) \}/);
+  const confirmOff = source.match(/@objc func confirmOff\(_ sender: NSMenuItem\) \{([\s\S]*?)\n    \}/)?.[1];
+  assert.ok(confirmOff, 'Turn Turbo Off confirmation absent');
+  assert.match(confirmOff, /let alert = NSAlert\(\)\n\s*alert\.messageText = "Turn turbo off\?"/);
+  assert.match(confirmOff, /alert\.addButton\(withTitle: "Turn Off"\)\n\s*alert\.addButton\(withTitle: "Cancel"\)\n\s*let answer = personModal\(alert, choices: \["turbo-off", "cancel"\], kind: "turbo-off"\)\n\s*if answer == \.alertFirstButtonReturn \{ respond\(id, choice\) \}/);
+  assert.equal(confirmOff.match(/respond\(/g)?.length, 1, 'only the confirmed first button responds');
+  // This alert must install GB12's guarded actions and retain them throughout the abortable modal.
+  assert.match(source, /func personModal\([^\n]+\{\n\s*let actions = consentInputActions\(alert, choices: choices, kind: kind\)\n\s*return withExtendedLifetime\(actions\) \{ modal\.run\(abort: \{ NSApp\.abortModal\(\) \}\) \{ alert\.runModal\(\) \} \}/);
+  assert.match(source, /return choice == "always" \|\| \[[^\n]*"turbo-off"\]\.contains\(kind\)/);
   assert.match(source, /URL\(string: "https:\/\/github\.com\/Land-o-Clusters\/sleight\/blob\/main\/docs\/settings\.md#" \+ \(status == nil \? "ghost-hand" : "turbo"\)\)/);
   assert.equal(source.match(/NSWorkspace\.shared\.open/g)?.length, 1);
 });
