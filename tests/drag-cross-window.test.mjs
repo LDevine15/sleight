@@ -393,9 +393,21 @@ test('DP7 and DP2 default on: a cross-window drop uses the empty final line with
   h.context.delay = () => assert.fail('default AX path waited');
   const r = h.run({ dp7: undefined, dp2: undefined, to: [20, 57], screenshotsByWindow: { 12: [500, 400] } });
   assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
-  assert.equal(h.a.AXValue, 'beta\n'); assert.equal(h.b.AXValue, 'gamma delta\nalpha');
+  assert.equal(h.a.AXValue, 'beta\n'); assert.equal(h.b.AXValue, 'gamma delta\nalpha\n');
   assert.equal(h.events.length, 0);
 });
+
+for (const failure of [{ failWrite: 2 }, { ignoreWriteNumbers: [2] }]) {
+  test(`WD5 rolls back the inserted final newline when the source cut fails: ${JSON.stringify(failure)}`, () => {
+    const h = fixture({ emptyFinal: true, ...failure });
+    const r = h.run({ dp7: true, dp2: true, to: [20, 57], screenshotsByWindow: { 12: [500, 400] } });
+    assert.equal(r.ok, false); assert.equal(r.rolledBack, true); assert.equal(r.deliveryVerified, false);
+    assert.equal(h.a.AXValue, 'alpha beta\n'); assert.equal(h.b.AXValue, 'gamma delta\n');
+    assert.deepEqual(h.writes[0], [12, 12, 0, 'alpha\n']);
+    assert.deepEqual(h.writes.at(-1), [12, 12, 6, '']);
+    assert.equal(h.events.length + h.activations.length, 0);
+  });
+}
 
 test('DPd smoke endpoints move onto the second empty target row without a placeholder', () => {
   for (const to of [[24, 128], [20, 132]]) {
@@ -420,8 +432,8 @@ test('DPd smoke endpoints move onto the second empty target row without a placeh
     const r = h.run({ dp7: undefined, dp2: undefined, to, screenshotsByWindow: { 12: [1440, 1120] }, trace: true });
     assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
     assert.equal(r.fallbackReason, null); assert.equal(r.deliveryVerified, true);
-    assert.equal(h.a.AXValue, 'alpha omega\n'); assert.equal(h.b.AXValue, 'destination\n\nmove-a7933cf2');
-    assert.deepEqual(h.writes, [[12, 13, 0, 'move-a7933cf2'], [11, 6, 14, '']]);
+    assert.equal(h.a.AXValue, 'alpha omega\n'); assert.equal(h.b.AXValue, 'destination\n\nmove-a7933cf2\n');
+    assert.deepEqual(h.writes, [[12, 13, 0, 'move-a7933cf2\n'], [11, 6, 14, '']]);
     assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), ['ax-move:start', 'settle:start', 'settle:end', 'ax-move:end']);
     assert.equal(h.events.length + h.activations.length, 0);
   }
@@ -477,8 +489,8 @@ for (const to of [[24, 104], [20, 100], 'end of line 2']) {
       ...(Array.isArray(to) ? { screenshotsByWindow: { 323041: [1440, 1120] } } : {}), trace: true });
     assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
     assert.equal(r.toWindowId, 323041); assert.equal(r.fallbackReason, null); assert.equal(r.deliveryVerified, true);
-    assert.equal(h.a.AXValue, 'alpha omega\n'); assert.equal(h.b.AXValue, 'destination\nmove-c656f03d');
-    assert.deepEqual(h.writes, [[323041, 12, 0, 'move-c656f03d'], [323040, 6, 14, '']]);
+    assert.equal(h.a.AXValue, 'alpha omega\n'); assert.equal(h.b.AXValue, 'destination\nmove-c656f03d\n');
+    assert.deepEqual(h.writes, [[323041, 12, 0, 'move-c656f03d\n'], [323040, 6, 14, '']]);
     assert.equal(h.events.length + h.activations.length, 0);
   });
 }

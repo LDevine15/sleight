@@ -706,10 +706,29 @@ function dropIndex(area, p, text) {
   throw new Error('cannot find where the drop point falls in the text; nothing was changed');
 }
 
-// Moves selected text to the drop point, preserving word boundaries:
-// one space comes out with a word at the source, and one goes in at the drop
-// when the word would touch another. Checks the whole result, and on a mismatch
-// says to undo.
+// Owner ruling, 2026-10-20 (WD5): compare only the one character on each side
+// of the source and drop ranges, using text this path already holds. Edge
+// characters stay local to these comparisons and never enter the tool result.
+const textLineEnd = c => c === '\n' || c === '\r';
+function smartDeleteRange(text, location, length) {
+  let from = location, to = location + length;
+  const left = text[from - 1], right = text[to];
+  if (right === ' ' && (left === undefined || left === ' ' || textLineEnd(left))) to++;
+  else if (left === ' ' && (right === undefined || textLineEnd(right))) from--;
+  return { from, to };
+}
+function smartInsert(text, dest, moved) {
+  const left = text[dest - 1], right = text[dest];
+  const touchesWord = c => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+  const prefix = touchesWord(left) && !/^\s/u.test(moved) ? ' ' : '';
+  let suffix = touchesWord(right) && !/\s$/u.test(moved) ? ' ' : '';
+  // An empty final line remains a line after insertion. Existing blank lines
+  // and a line ending carried by the selection keep their original positions.
+  if (dest === text.length && textLineEnd(left) && !/[\r\n]$/.test(moved)) suffix = left === '\r' ? '\r' : '\n';
+  return { text: prefix + moved + suffix, offset: prefix.length, spaceInserted: prefix === ' ' || suffix === ' ' };
+}
+
+// Move plain text, verify the whole result and say to undo on a mismatch.
 function accessibilityMove(area, snapshot, end, window) {
   let before, sel, formatted = false;
   try {
@@ -728,17 +747,8 @@ function accessibilityMove(area, snapshot, end, window) {
   const dest = dropIndex(area, end, before);
   if (!Number.isSafeInteger(dest) || dest < 0 || dest > before.length) throw new Error('drop index is outside destination text');
   if (dest >= src && dest <= srcEnd) throw new Error('the drop point is inside the selection; nothing was changed');
-  const isWord = /^[\p{L}\p{N}]/u.test(word) && /[\p{L}\p{N}]$/u.test(word);
-  // Source span, with one space when the word leaves two side by side or one at a line edge.
-  let cutFrom = src, cutTo = srcEnd;
-  if (isWord) {
-    const left = before[src - 1], right = before[srcEnd];
-    if (right === ' ' && (left === undefined || left === '\n' || left === ' ')) cutTo++;
-    else if (left === ' ' && (right === undefined || right === '\n' || right === ' ')) cutFrom--;
-  }
-  const leftOfDrop = before[dest - 1], rightOfDrop = before[dest];
-  const touches = c => c !== undefined && /[\p{L}\p{N}]/u.test(c);
-  const insert = (isWord && touches(leftOfDrop) ? ' ' : '') + word + (isWord && touches(rightOfDrop) ? ' ' : '');
+  const { from: cutFrom, to: cutTo } = smartDeleteRange(before, src, sel.length);
+  const insertion = smartInsert(before, dest, word), insert = insertion.text;
   const expected = dest > srcEnd
     ? before.slice(0, cutFrom) + before.slice(cutTo, dest) + insert + before.slice(dest)
     : before.slice(0, dest) + insert + before.slice(dest, cutFrom) + before.slice(cutTo);
@@ -763,9 +773,9 @@ function accessibilityMove(area, snapshot, end, window) {
     return { lostText: typeof after !== 'string' || after.replace(/\s/gu, '').length < before.replace(/\s/gu, '').length,
       error: `The text in ${snapshot.app} window ${window.id} (${window.title}) isn't what the move should have made. Press Cmd+Z twice in that window, then read it again before continuing.` };
   }
-  const movedAt = after.indexOf(word, dest > srcEnd ? dest - (cutTo - cutFrom) : dest);
+  const movedAt = (dest > srcEnd ? dest - (cutTo - cutFrom) : dest) + insertion.offset;
   attempt(() => area.select(movedAt, word.length));
-  return { textChanged: true, spaceInserted: insert !== word };
+  return { textChanged: true, spaceInserted: insertion.spaceInserted };
 }
 
 function findApp(name) {
@@ -1041,15 +1051,8 @@ function accessibilityCrossWindowMove(sourceArea, destinationArea, source, desti
   if (sourceArea.hasAttributes(sel.location, sel.length, baseline)) throw new Error('selected text carries formatting; use the guarded posted or foreground drag');
   const dest = dropIndex(destinationArea, end, other), word = source.selected;
   if (!Number.isSafeInteger(dest) || dest < 0 || dest > other.length) throw new Error('drop index is outside destination text');
-  let cutFrom = sel.location, cutTo = cutFrom + sel.length;
-  const isWord = /^[\p{L}\p{N}]/u.test(word) && /[\p{L}\p{N}]$/u.test(word);
-  const touches = c => c !== undefined && /[\p{L}\p{N}]/u.test(c);
-  if (isWord) {
-    const left = before[cutFrom - 1], right = before[cutTo];
-    if (right === ' ' && (left === undefined || left === '\n' || left === ' ')) cutTo++;
-    else if (left === ' ' && (right === undefined || right === '\n' || right === ' ')) cutFrom--;
-  }
-  const insert = (isWord && touches(other[dest - 1]) ? ' ' : '') + word + (isWord && touches(other[dest]) ? ' ' : '');
+  const { from: cutFrom, to: cutTo } = smartDeleteRange(before, sel.location, sel.length);
+  const insertion = smartInsert(other, dest, word), insert = insertion.text;
   const expected = other.slice(0, dest) + insert + other.slice(dest);
   const names = `${source.app} window ${a.id} (${a.title}) and window ${b.id} (${b.title})`;
   // B holds a verified insertion that A can't match: remove exactly that range, and report only once B reads as before.
@@ -1104,7 +1107,7 @@ function accessibilityCrossWindowMove(sourceArea, destinationArea, source, desti
     return outcome;
   }
   // As the single-window move does, leave the moved text selected in its new place.
-  attempt(() => destinationArea.select(dest + (insert.startsWith(word) ? 0 : 1), word.length));
+  attempt(() => destinationArea.select(dest + insertion.offset, word.length));
   return outcome;
 }
 
