@@ -76,9 +76,9 @@ test('Turbo explains consent, dated results, the existing chart and user control
   assert.match(turbo, /Helium.*11 of 13.*241\.8 s.*338\.3 s.*2026-10-18/);
   assert.match(turbo, /docs\/results\/browser-turbo\.md/);
   assert.match(turbo, /docs\/results\/img\/family-browser-turbo-chrome-light\.svg/);
-  assert.match(turbo, /`sleight-mcp turbo on`/);
-  assert.match(turbo, /`sleight-mcp turbo on --browser helium`/);
-  assert.match(turbo, /`sleight-mcp turbo off`/);
+  assert.match(turbo, /`\.\/bin\/sleight-mcp turbo on`/);
+  assert.match(turbo, /`\.\/bin\/sleight-mcp turbo on --browser helium`/);
+  assert.match(turbo, /`\.\/bin\/sleight-mcp turbo off`/);
   assert.match(turbo, /From the installed plugin folder, you run/);
 });
 

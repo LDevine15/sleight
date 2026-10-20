@@ -62,7 +62,7 @@ In the [turbo race](docs/results/browser-turbo.md), Chrome had the lowest expect
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/results/img/family-browser-turbo-chrome-dark.svg"><img src="docs/results/img/family-browser-turbo-chrome-light.svg" width="900" alt="Chrome turbo against FowlBrowser, 2026-10-18 to 2026-10-19: expected seconds per task, with sleight lowest on 10 of 13."></picture>
 
-From the installed plugin folder, you run `sleight-mcp turbo on` (Chrome first, then Helium), `sleight-mcp turbo on --browser helium` to choose Helium, or `sleight-mcp turbo off` to opt out until you turn it on again ([settings](docs/settings.md#turbo)).
+From the installed plugin folder, you run `./bin/sleight-mcp turbo on` (Chrome first, then Helium), `./bin/sleight-mcp turbo on --browser helium` to choose Helium, or `./bin/sleight-mcp turbo off` to opt out until you turn it on again ([settings](docs/settings.md#turbo)).
 
 ## New in 1.4.0
 
