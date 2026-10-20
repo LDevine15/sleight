@@ -38,7 +38,7 @@
   then waits at most 30 seconds for readiness. Folder setup retains exactly one proven new window and uses its
   Go to Folder sheet. Uncertain window ownership stops setup and keeps cleanup unconfirmed.
 - Finder smoke receipts record setup, foreground samples and cleanup. Inventory refusals include diagnostic
-  details when available. The final cleanup repair still needs review and integration. The recorded live inventory
+  details when available. The cleanup repair passed offline tests and review. The recorded live inventory
   failure remains unresolved. Setup, cancellation, cleanup ownership, lock retention, receipt privacy and process
   identity still need live qualification. Exclusive setup and the focus race need an owner decision before adoption.
 - GH8 remains blocked on supported action events for engine-persisted Always allow grants and correct retry/paste

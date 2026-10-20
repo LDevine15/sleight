@@ -26,11 +26,11 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   ancestry, respawn and cleanup need qualification, including the `cc-list-native` and `textedit-two-windows` fixture
   paths. Cancellation must stop owned setup work; cleanup must preserve baseline windows and retain the lock when
   ownership or cleanup is uncertain. Receipts must exclude owner text, and timeout evidence must bind the same
-  process instance. The offline recovery and ownership changes have been reviewed, with the final app-absent cleanup
-  repair awaiting review and integration. Exclusive Finder setup and the remaining window-focus race still need an
+  process instance. The offline recovery, ownership and app-absent cleanup changes passed tests and review.
+  Exclusive Finder setup and the remaining window-focus race still need an
   owner decision. The old smoke and lock removal establish no current lock state or successful live repair.
 - Offline portability checks do not establish Linux compatibility. The path guard must pass without exemptions on
-  the final tree. Docker is unavailable on the validation host, and actual Node 24 Linux testing remains unrun.
+  the final tree. Actual Node 24 Linux testing remains unrun.
   The helper prepares the exact commit with usable Git metadata, mounts that snapshot read-only and tests a writable
   container copy with isolated dependencies. Offline tests cover its shared receipt contract and asynchronous cleanup;
   actual Docker cancellation, child collection and container cleanup still need qualification.
