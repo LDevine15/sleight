@@ -149,3 +149,89 @@ test('fresh fixture window IDs cannot bypass the wait cap with claimed closes', 
     wait: async () => { assert.ok(++waits <= 3); } });
   assert.equal(waits, 3);
 });
+
+test('each round spends at most three waits on the same owner window across tasks', async () => {
+  for (const round of ['A', 'B']) {
+    const coverWaits = new Map(), events = [];
+    let waits = 0;
+    const options = { coverWaits, held: () => false,
+      snapshot: async () => snapshot([{ ...finder, bundle: 'owner.app' }, browser]),
+      act: async () => assert.fail('owner close'), log: event => events.push(event), warn() {},
+      wait: async ms => { assert.equal(ms, 60000); waits++; } };
+    await module.waitForBrowserUncovered(50, options);
+    assert.equal(waits, 3, round);
+    events.length = 0;
+    await module.waitForBrowserUncovered(50, options);
+    assert.equal(waits, 3, 'later task in ' + round);
+    assert.equal(events[0].covering[0].id, finder.id, 'spent covers still recorded');
+  }
+});
+
+test('partial waits accumulate across tasks and new owner windows get a fresh budget', async () => {
+  const coverWaits = new Map();
+  let waits = 0, reads = 0, window = { ...finder, bundle: 'owner.app' };
+  const options = { coverWaits, held: () => false,
+    snapshot: async () => snapshot(++reads === 2 ? [browser] : [window, browser]),
+    act: async () => assert.fail('owner close'), log() {}, warn() {}, wait: async () => { waits++; } };
+  await module.waitForBrowserUncovered(50, options);
+  assert.equal(waits, 1);
+  await module.waitForBrowserUncovered(50, options);
+  assert.equal(waits, 3, 'only two waits remain');
+  window = { ...window, id: 10 };
+  await module.waitForBrowserUncovered(50, options);
+  assert.equal(waits, 6, 'new window');
+  window = { ...window, bundle: 'another.app' };
+  await module.waitForBrowserUncovered(50, options);
+  assert.equal(waits, 9, 'new owner with the same window ID');
+  window = { ...window, start: 2 };
+  await module.waitForBrowserUncovered(50, options);
+  assert.equal(waits, 12, 'reused process identity');
+});
+
+test('a new cover beside a spent cover still gets three waits', async () => {
+  const coverWaits = new Map();
+  let waits = 0, windows = [{ ...finder, bundle: 'owner.app' }, browser];
+  const options = { coverWaits, held: () => false, snapshot: async () => snapshot(windows),
+    act: async () => assert.fail('owner close'), log() {}, warn() {}, wait: async () => { waits++; } };
+  await module.waitForBrowserUncovered(50, options);
+  windows.unshift({ ...finder, bundle: 'second.app', id: 10 });
+  await module.waitForBrowserUncovered(50, options);
+  assert.equal(waits, 6);
+  await module.waitForBrowserUncovered(50, options);
+  assert.equal(waits, 6);
+});
+
+test('real gate shares the cover budget between tasks and resets it between A and B rounds', async () => {
+  const { runRealGate } = await import('../bench/fowl/real-gate.mjs');
+  const budgets = [];
+  for (const round of ['A', 'B']) {
+    let waits = 0, agents = 0;
+    const out = join(dir, 'round-' + round);
+    const rows = await runRealGate({ args: { surface: 'codex', 'real-browser': 'chrome', out },
+      tasks: ['one', 'two'].map(name => ({ name, browser: 'chrome', prompt: 'Fixture in {browser}', result: 'done' })),
+      runner: { gradeOutcome: () => ({ problems: [] }), gradeSite: () => ({ problems: [] }) },
+      runtime: { lockPath: join(dir, 'lock-' + round), admit: async () => {}, commits: () => ({}), readEngine: () => ({}),
+        startSites: async () => ({ close: async () => {} }), checkOwner: async () => ({ ok: true }),
+        launchBrowser: async plan => ({ ...plan, pid: 50, stop: async () => ({ browserClosed: true, profileDeleted: true }) }),
+        resetBrowser: async () => ({}), observeBrowser: async () => ({}),
+        windowCover: async () => ({ covering: [{ owner: 'Owner', layer: 0, fraction: 0.25 }] }),
+        guardBrowserGroup: async (pid, { coverWaits, log, signal }) => {
+          budgets.push(coverWaits);
+          await module.waitForBrowserUncovered(pid, { coverWaits, log, signal, held: () => false,
+            snapshot: async () => snapshot([{ ...finder, bundle: 'owner.app' }, browser]),
+            act: async () => assert.fail('owner close'), warn() {}, wait: async () => { waits++; } });
+        },
+        runAgent: async arm => {
+          mkdirSync(arm.dir);
+          assert.equal(waits, 3, `${round} task ${++agents}`);
+          return { groupClean: true, exitCode: 0, result: { result: 'RESULT: done' }, started: 1, finished: 2 };
+        },
+      } });
+    assert.equal(rows.length, 2);
+    assert.equal(rows[1].cover.covering[0].owner, 'Owner');
+  }
+  assert.ok(budgets[0] instanceof Map);
+  assert.equal(budgets[0], budgets[1]);
+  assert.equal(budgets[2], budgets[3]);
+  assert.notEqual(budgets[0], budgets[2]);
+});

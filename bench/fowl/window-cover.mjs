@@ -3,8 +3,9 @@
 // fewest other windows overlap (`place`), and records what still covers it beside the task's outcome. The race's own
 // Terminal windows and the owner's windows covered Safari on 2026-10-18. Neither step ever fails a round: an error is recorded.
 import { execFile } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -14,17 +15,24 @@ import { countedCover } from './real-gate-grade.mjs';
 const execFileAsync = promisify(execFile);
 let built = null;
 
-async function helper() {
-  built ??= (async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'sleight-window-cover-'));
-    process.once('exit', () => rmSync(dir, { recursive: true, force: true }));
-    const binary = join(dir, 'window-cover');
-    await execFileAsync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(),
-      fileURLToPath(new URL('./window-cover.swift', import.meta.url)), '-o', binary], { timeout: 120000 });
-    return binary;
-  })();
-  return built;
+export async function compileWindowCover({ home = homedir(), cacheDir = join(home, 'Library', 'Caches', 'sleight-bench', 'window-cover'),
+  run = execFileAsync } = {}) {
+  const source = fileURLToPath(new URL('./window-cover.swift', import.meta.url));
+  const { stdout: version } = await run('/usr/bin/xcrun', ['swiftc', '--version'], { timeout: 10000, encoding: 'utf8' });
+  const hash = createHash('sha256').update(readFileSync(source)).update('\0').update(version).digest('hex').slice(0, 16);
+  mkdirSync(cacheDir, { recursive: true });
+  const binary = join(cacheDir, `window-cover-${hash}`);
+  if (!existsSync(binary)) {
+    const bank = mkdtempSync(join(cacheDir, 'window-cover-build-')), output = join(bank, 'helper');
+    try {
+      await run('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(home), source, '-o', output], { timeout: 120000 });
+      renameSync(output, binary);
+    } finally { rmSync(bank, { recursive: true, force: true }); }
+  }
+  return binary;
 }
+
+const helper = () => (built ??= compileWindowCover());
 
 // { frame, covering: [{ owner, layer, fraction }] }, covering front to back, plus { moved, from, screens, bestOverlap } with place;
 // or { error }. bestOverlap is the other windows' area over the best spot found, as a share of the window (stacked windows add).

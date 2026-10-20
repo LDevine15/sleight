@@ -9,6 +9,7 @@ import { countedCover, COVER_MIN, OVERLAY_OWNER } from './real-gate-grade.mjs';
 
 export const benchmarkFixtureRoots = () => [...new Set([tmpdir(), realpathSync(tmpdir())])].map(base => join(base, 'sleight-bench'));
 const frameOK = f => f && ['x', 'y', 'width', 'height'].every(k => Number.isFinite(f[k])) && f.width > 1 && f.height > 1;
+const coverKey = w => JSON.stringify([w.bundle ?? w.name ?? w.owner, w.pid, w.start, w.id]);
 
 // CGWindowList order is front to back. Same-app windows and windows behind the browser cannot cover it.
 export function browserCovers(state, pid) {
@@ -38,7 +39,7 @@ function fixtureCover(window, roots) {
 }
 
 export async function waitForBrowserUncovered(pid, { roots = benchmarkFixtureRoots(), snapshot, act, log = console.log,
-  signal, warn = console.error, held = () => existsSync('/tmp/sleight-hold'), wait = ms => delay(ms, undefined, { signal }) } = {}) {
+  coverWaits = new Map(), signal, warn = console.error, held = () => existsSync('/tmp/sleight-hold'), wait = ms => delay(ms, undefined, { signal }) } = {}) {
   const closed = new Set();
   const check = () => {
     signal?.throwIfAborted();
@@ -53,9 +54,9 @@ export async function waitForBrowserUncovered(pid, { roots = benchmarkFixtureRoo
   };
   for (let waits = 0;; waits++) {
     check();
-    let mustWait = false;
+    let mustWait = false, pending = [];
     try {
-      const cover = await read();
+      let cover = await read();
       if (!cover.covering.length) return;
       for (const window of cover.covering) {
         check();
@@ -68,19 +69,23 @@ export async function waitForBrowserUncovered(pid, { roots = benchmarkFixtureRoo
         else closed.add(key);
       }
       // Verify claimed closes immediately, but new fixture IDs cannot bypass the retry budget.
-      if (!mustWait && !(await read()).covering.length) return;
+      if (!mustWait) cover = await read();
+      if (!cover.covering.length) return;
+      pending = [...new Set(cover.covering.map(coverKey))];
     } catch (error) { check(); log({ event: 'browser-group-cover-error', error: error.message }); }
     check();
-    if (waits === 3) {
-      log({ event: 'browser-group-cover-cap', waits });
+    // The map belongs to the round, so a persistent owner window cannot cost three minutes per task.
+    if (waits === 3 || (pending.length && pending.every(key => (coverWaits.get(key) ?? 0) >= 3))) {
+      log({ event: 'browser-group-cover-cap', waits, ...(waits < 3 && { reason: 'round-cover-budget' }) });
       warn('Browser group cover check reached 3 waits of 60 s; starting task with cover recorded.');
       return;
     }
     await wait(60000);
+    for (const key of pending) coverWaits.set(key, Math.min(3, (coverWaits.get(key) ?? 0) + 1));
   }
 }
 
-export async function guardBrowserGroup(pid, { cacheDir, log, signal } = {}) {
+export async function guardBrowserGroup(pid, { cacheDir, coverWaits, log, signal } = {}) {
   const control = await beginWindowControl({ cacheDir, signal, includeFloating: true });
-  await waitForBrowserUncovered(pid, { ...control, log, signal });
+  await waitForBrowserUncovered(pid, { ...control, coverWaits, log, signal });
 }

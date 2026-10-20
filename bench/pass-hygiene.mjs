@@ -146,9 +146,6 @@ export async function quitLaunched({ snapshot, act, launched = [], dryRun = fals
 export async function beginWindowControl({ home = homedir(), cacheDir = join(home, 'Library', 'Caches', 'sleight-bench', 'window-control'),
   run = runOwned, signal, includeFloating = false } = {}) {
   const source = fileURLToPath(new URL('./pass-hygiene.swift', import.meta.url));
-  const hash = createHash('sha256').update(readFileSync(source)).digest('hex').slice(0, 16);
-  mkdirSync(cacheDir, { recursive: true });
-  const binary = join(cacheDir, `pass-hygiene-${hash}`);
   const checked = async (command, args, options) => {
     const result = await run(command, args, options);
     if (result.groupClean !== true) throw Object.assign(new Error('Pass hygiene process group cleanup unconfirmed'), { uncollected: true });
@@ -157,6 +154,10 @@ export async function beginWindowControl({ home = homedir(), cacheDir = join(hom
     }
     return result.stdout;
   };
+  const version = await checked('/usr/bin/xcrun', ['swiftc', '--version'], { timeoutMs: 10000, signal });
+  const hash = createHash('sha256').update(readFileSync(source)).update('\0').update(version).digest('hex').slice(0, 16);
+  mkdirSync(cacheDir, { recursive: true });
+  const binary = join(cacheDir, `pass-hygiene-${hash}`);
   if (!existsSync(binary)) {
     const bank = mkdtempSync(join(cacheDir, 'pass-hygiene-build-')), output = join(bank, 'helper');
     const modules = swiftModuleCache(home);

@@ -338,6 +338,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     // connected 20:17:59). Starting sooner costs the first task a failed select_browser that other arms never pay.
     if (plan.surface === 'claude-in-chrome') await (runtime.settle || (ms => new Promise(resolve => setTimeout(resolve, ms))))(10000);
     let coverLogged = 0;
+    const coverWaits = new Map();
     for (let arm of plan.arms) {
       if (controller.signal.aborted) throw Error('Gate interrupted');
       const census = async () => {
@@ -370,9 +371,10 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       const readCover = runtime.windowCover || (runtime.launchBrowser ? async () => null : windowCover);
       await readCover(browser.pid, { place: true });
       // Check the actual owned browser frame before any agent starts. Safari and Firefox relaunch on reset,
-      // so every task checks again. Only proven Finder fixture covers may close; owner covers wait up to three minutes.
+      // so every task checks again. Only proven Finder fixture covers may close; each owner cover gets three minutes per round.
       await (runtime.guardBrowserGroup || (runtime.launchBrowser ? async () => {} : guardBrowserGroup))(browser.pid, {
         signal: controller.signal,
+        coverWaits,
         log: event => appendFileSync(join(plan.out, 'group-cover.jsonl'), JSON.stringify(event) + '\n'),
       });
       const cover = await readCover(browser.pid, {});
