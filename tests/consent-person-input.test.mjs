@@ -1,0 +1,62 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { macCommandSkip } from './requirements.mjs';
+import { createElectronConsent, createGrantStore } from '../plugins/sleight/lib/direct-browser/electron-consent.mjs';
+import { instance } from './fixtures/electron-app.mjs';
+
+const sourcePath = new URL('../plugins/sleight/lib/direct-browser/native/consent-host.swift', import.meta.url);
+const source = readFileSync(sourcePath, 'utf8');
+
+test('protected consent buttons use the input guard on every native card', () => {
+  assert.match(source, /BEGIN PERSON INPUT/);
+  assert.equal((source.match(/personModal\(alert, choices:/g) ?? []).length, 4);
+  assert.doesNotMatch(source, /\.post\(|CGEventPost|AXUIElementPerformAction|activate\(ignoringOtherApps/);
+});
+
+test('Swift consent input fixture refuses AX and posted input but admits a HID event seam', { skip: macCommandSkip('xcrun') }, async t => {
+  const block = source.match(/\/\/ BEGIN PERSON INPUT\n([\s\S]*?)\/\/ END PERSON INPUT/);
+  assert.ok(block, 'person input guard absent');
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-person-input-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const binary = join(dir, 'fixture'), swift = join(dir, 'main.swift');
+  writeFileSync(swift, 'import AppKit\nimport ObjectiveC\nimport Darwin\nimport os.log\n' + block[1] + readFileSync(new URL('./fixtures/consent-person-input.swift', import.meta.url), 'utf8'));
+  const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', join(dir, 'cache'), swift, '-o', binary], { encoding: 'utf8', timeout: 120000 });
+  assert.equal(built.status, 0, built.stderr);
+  const run = spawnSync(binary, [], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(run.status, 0, run.stderr + run.stdout);
+  const receipts = JSON.parse(run.stdout);
+  assert.deepEqual(receipts, { refused: [], accepted: ['Always allow', 'Always allow', 'Allow this session', 'Decline'] });
+  assert.ok(run.stderr.trim().split('\n').every(line => line === 'sleight consent refused: PERSON_INPUT_REQUIRED'));
+  // Send only receipts that crossed the native action to the actual grant pipeline. A refused input emits none.
+  const path = join(dir, 'grants.json'), store = createGrantStore({ path }), presented = [];
+  const authenticated = new WeakSet();
+  const ui = { authenticate: event => authenticated.delete(event), present(id, data, choices, deliver) { presented.push({ id, deliver }); } };
+  const consent = createElectronConsent({ ui, store, engineApproval: () => 'approved' });
+  const pending = consent.requestDebugger(instance, { session: 's1', turn: 't1' });
+  const deliver = (index, choice) => {
+    const card = presented[index], event = { id: card.id, choice };
+    authenticated.add(event); card.deliver(event);
+  };
+  for (const choice of receipts.refused) deliver(0, choice);
+  assert.equal(consent.pending(), 1);
+  assert.deepEqual(store.list(), []);
+  assert.equal(existsSync(path), false, 'AX and posted input write no pre-approval');
+  deliver(0, receipts.accepted[2] === 'Allow this session' ? 'session' : 'invalid');
+  assert.equal((await pending).grant.scope, 'session');
+  assert.equal(existsSync(path), false, 'session AX never persists');
+  const hid = consent.requestDebugger(instance, { session: 's2', turn: 't2' });
+  deliver(1, receipts.accepted[0] === 'Always allow' ? 'always' : 'invalid');
+  assert.equal((await hid).persisted, true);
+  assert.equal(store.list().length, 1, 'HID seam reaches the persistent grant path');
+});
+
+test('the complete Swift consent helper compiles without launching it', { skip: macCommandSkip('xcrun') }, t => {
+  const dir = mkdtempSync(join(tmpdir(), 'sleight-consent-build-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', join(dir, 'cache'), sourcePath.pathname, '-o', join(dir, 'consent-host')], { encoding: 'utf8', timeout: 120000 });
+  assert.equal(built.status, 0, built.stderr);
+});
