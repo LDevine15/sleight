@@ -3,11 +3,15 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TargetMapper, elementMapping, comparisonResult } from '../bench/replay/mapping.mjs';
-import { replayCalls } from '../bench/replay/engine.mjs';
-import * as runner from '../bench/replay/run.mjs';
-import * as checks from '../bench/replay/checks.mjs';
-import * as fixtures from '../bench/replay/fixtures.mjs';
+import { describe } from 'node:test';
+import { packageSkip } from './requirements.mjs';
+
+describe('offline replay with the source parser', { skip: packageSkip('typescript') }, async () => {
+const { TargetMapper, elementMapping, comparisonResult } = await import('../bench/replay/mapping.mjs');
+const { replayCalls } = await import('../bench/replay/engine.mjs');
+const runner = await import('../bench/replay/run.mjs');
+const checks = await import('../bench/replay/checks.mjs');
+const fixtures = await import('../bench/replay/fixtures.mjs');
 
 const text = value => ({ content: [{ type: 'text', text: value }] });
 const source = { server: 'plugin:sleight:computer', name: 'js' };
@@ -173,4 +177,5 @@ test('unlisted bundle IDs and URLs refuse before transport, including nested JS 
   const rec = nativeRecording();
   rec.calls[0].arguments.app = 'com.apple.Terminal';
   assert.throws(() => fixtures.prepareReplay(rec, '/private/tmp/sr2d-fixture'), /allowlist/i);
+});
 });

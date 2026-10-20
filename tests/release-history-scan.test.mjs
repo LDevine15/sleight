@@ -62,10 +62,10 @@ test('CLI defaults to origin/main..HEAD, exits 1 on hits, and never echoes priva
 
 test('history scan skips generic and short usernames while still detecting their home paths', async t => {
   const { dir, commit, base } = repository(t);
-  commit('ci.txt', 'runner abc\n/home/runner/private\n');
+  commit('ci.txt', 'runner abc\n/home/ci-fixture/private\n');
   assert.deepEqual(await scanHistory({ cwd: dir, range: `${base}..HEAD`, identity: { home: '/fixture', username: 'runner' } }), { hits: 0 });
   assert.deepEqual(await scanHistory({ cwd: dir, range: `${base}..HEAD`, identity: { home: '/fixture', username: 'abc' } }), { hits: 0 });
-  assert.deepEqual(await scanHistory({ cwd: dir, range: `${base}..HEAD`, identity: { home: '/home/runner', username: 'runner' } }), { hits: 1 });
+  assert.deepEqual(await scanHistory({ cwd: dir, range: `${base}..HEAD`, identity: { home: '/home/ci-fixture', username: 'runner' } }), { hits: 1 });
 });
 
 test('scan includes private additions made only by a merge commit', async t => {

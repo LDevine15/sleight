@@ -11,8 +11,10 @@ import { join } from 'node:path';
 import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement, samePlace, refusedPlace } from '../plugins/sleight/lib/document-scope.mjs';
 import { createReadCompactor } from '../plugins/sleight/lib/compact-reads.mjs';
 import { inspect } from './helpers/window-identity-fixture.mjs';
-import { loadCheck } from '../bench/replay/run.mjs';
-import { checkEvidence } from '../bench/replay/checks.mjs';
+import { packageSkip } from './requirements.mjs';
+const parserSkip = packageSkip('typescript');
+const { loadCheck } = parserSkip ? {} : await import('../bench/replay/run.mjs');
+const { checkEvidence } = parserSkip ? {} : await import('../bench/replay/checks.mjs');
 import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 
@@ -569,7 +571,7 @@ test('DPn keeps reads when samples predate the key, files fail or input overtake
   assert.ok(missing.output.some(text => text.includes('"decision":"kept-read"') && text.includes('"reason":"error"')));
 });
 
-test('DP1 recorded close runs through relay wrapping, emits its call id and returns the close notice', async () => {
+test('DP1 recorded close runs through relay wrapping, emits its call id and returns the close notice', { skip: parserSkip }, async () => {
   for (const [remaining, enabled, exited] of [[false, true, false], [false, true, true], [true, true, false], [true, false, false]]) {
     let closed = false, nativeReads = 0;
     const f = fixture({ action: () => { closed = true; }, current: () => {

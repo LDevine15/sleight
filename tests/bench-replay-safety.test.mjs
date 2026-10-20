@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TargetMapper, divergence } from '../bench/replay/mapping.mjs';
-import { replayCalls, parseEnv } from '../bench/replay/engine.mjs';
+import { describe } from 'node:test';
+import { packageSkip } from './requirements.mjs';
+
+describe('offline replay with the source parser', { skip: packageSkip('typescript') }, async () => {
+const { TargetMapper, divergence } = await import('../bench/replay/mapping.mjs');
+const { replayCalls, parseEnv } = await import('../bench/replay/engine.mjs');
 
 const nativeHeader = 'Window: "Fixture", App: TextEdit.\n';
 const observeNative = (mapper, before, after) => mapper.observe(nativeHeader + before, nativeHeader + after, { code: 'await app.getAXState()' }, { server: 'plugin:sleight:computer', name: 'js' });
@@ -134,4 +138,5 @@ test('only documented replay switches reach either server', () => {
   for (const name of ['PARENT_LEASE', 'STUCK_ESCAPE', 'SELECT_WINDOW', 'EXAMPLE', 'FUTURE_FEATURE'])
     assert.throws(() => parseEnv(`SLEIGHT_${name}=0`), /switch/);
   assert.deepEqual(parseEnv('SLEIGHT_DP7=1,SLEIGHT_LB12=0'), { SLEIGHT_DP7: '1', SLEIGHT_LB12: '0' });
+});
 });

@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { replayCalls } from '../bench/replay/engine.mjs';
-import { TargetMapper, divergence } from '../bench/replay/mapping.mjs';
-import { campaignEvidence, checkEvidence } from '../bench/replay/checks.mjs';
-import { loadCheck, main } from '../bench/replay/run.mjs';
-import { loadRecording } from '../bench/replay/recording.mjs';
-import { prepareReplay } from '../bench/replay/fixtures.mjs';
+import { describe } from 'node:test';
+import { packageSkip } from './requirements.mjs';
+
+describe('offline replay with the source parser', { skip: packageSkip('typescript') }, async () => {
+const { replayCalls } = await import('../bench/replay/engine.mjs');
+const { TargetMapper, divergence } = await import('../bench/replay/mapping.mjs');
+const { campaignEvidence, checkEvidence } = await import('../bench/replay/checks.mjs');
+const { loadCheck, main } = await import('../bench/replay/run.mjs');
+const { loadRecording } = await import('../bench/replay/recording.mjs');
+const { prepareReplay } = await import('../bench/replay/fixtures.mjs');
 
 const text = value => ({ content: [{ type: 'text', text: value }] });
 const tree = id => `Window: "fixture.txt", App: TextEdit.\n0 window fixture.txt\n  ${id} button Save`;
@@ -236,4 +240,5 @@ test('the retained six-call DP1 stream uses the fresh acquired handle after chan
   } });
   assert.equal(replay.verdict, 'pass', replay.reason);
   assert.equal(fed, 6);
+});
 });

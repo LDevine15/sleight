@@ -1,6 +1,6 @@
 // Offline preparation and readback for one short native benchmark pass. Never starts a live run.
 import { constants, closeSync, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ import { actionLogPath, logRoot, REASONS } from '../plugins/sleight/lib/action-o
 import { intervalUnion } from './timing.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
+const TEMP_ROOT = process.platform === 'darwin' ? '/tmp' : tmpdir();
 const fail = code => { throw new Error(code); };
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const exact = (value, keys) => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -59,7 +60,7 @@ function checkReservation(bank, config, log) {
 }
 
 /** Each pass owns its settings, traces and log name. An existing isolated arm login may be reused. */
-export function prepareAnalytics({ tempRoot = '/private/tmp', claudeConfig } = {}) {
+export function prepareAnalytics({ tempRoot = TEMP_ROOT, claudeConfig } = {}) {
   if (claudeConfig !== undefined) isolatedConfig(claudeConfig);
   const bank = realpathSync(mkdtempSync(join(realpathSync(tempRoot), 'lane-claude-analytics-')));
   try {
@@ -91,7 +92,7 @@ export function checkLocalFile(path, root) {
 
 export function analyticsArm(bank, { root = ROOT } = {}) {
   try {
-    if (realpathSync(bank) !== bank || !bank.startsWith(realpathSync('/private/tmp') + '/') || !/\/lane-claude-analytics-[\w-]+$/.test(bank)) fail('ANALYTICS_BANK');
+    if (realpathSync(bank) !== bank || !bank.startsWith(realpathSync(TEMP_ROOT) + '/') || !/\/lane-claude-analytics-[\w-]+$/.test(bank)) fail('ANALYTICS_BANK');
     for (const folder of [bank, ...['arm', 'claude', 'traces'].map(name => join(bank, name))]) {
       const info = lstatSync(folder);
       if (!info.isDirectory() || info.uid !== process.getuid() || (info.mode & 0o777) !== 0o700 || realpathSync(folder) !== folder) fail('ANALYTICS_BANK');

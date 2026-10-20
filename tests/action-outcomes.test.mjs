@@ -803,12 +803,12 @@ test('typed lengths leave the engine only for plain text areas, never ambiguous 
 test('scrubbing owner names happens after shell characters are stripped from call ids and app names', () => {
   const path = join(dir, 'scrub-order.jsonl');
   const log = new ActionLog({ path, root: dir, home: '/Users/owner', names: ['owner'] });
-  for (const id of ['ch$ris', 'ch`ris', 'ch\\ris', '/Users/ch$ris']) {
+  for (const id of ['ow$ner', 'ow`ner', 'ow\\ner', '/Users/ow$ner']) {
     log.request({ id, method: 'tools/call', params: { name: 'drag', arguments: { app: id } } });
     log.reply({ id, result: { content: [] } });
   }
   const text = readFileSync(path, 'utf8');
-  assert.doesNotMatch(text, /owner/i);
+  assert.doesNotMatch(text.replaceAll('[owner]', ''), /owner/i);
   assert.match(text, /\[owner\]/);
   assert.doesNotMatch(text, /\/Users\//);
 });

@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
@@ -20,7 +22,7 @@ const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resol
 function fixture(t, simFocusNote = true) {
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
-  const directory = mkdtempSync('/private/tmp/sleight-drag-frame-');
+  const directory = mkdtempSync(join(tmpdir(), 'sleight-drag-frame-'));
   const calls = [], replies = [];
   clientOut.on('data', bytes => replies.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, simFocusNote,

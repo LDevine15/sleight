@@ -1,11 +1,21 @@
-import { test } from 'node:test';
+import { test, beforeEach } from 'node:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, existsSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, readFileSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { liveSpeedRuntime, speedOutput, setupDiagnosis, editorProfileArgs, attentionTracker, helperCrashReports } from '../bench/app-speed-map-live.mjs';
 import { speedPlan } from '../bench/app-speed-map.mjs';
+
+// These runtimes use fake hosts and locks; the operator's live hold is outside the fixture.
+const realExists = fs.existsSync;
+beforeEach(t => {
+  t.mock.method(fs, 'existsSync', path => path === '/tmp/sleight-hold' ? false : realExists(path));
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+});
 
 async function setup(t, { confirmed = true, focusChanged = false, startupFailure = false, details, id = 'textedit', hostError, hosts, base = tmpdir(), samples, crashReports } = {}) {
   const root = mkdtempSync(join(base, 'sleight-am1-test-'));
@@ -162,7 +172,7 @@ test('a document fixture names its window by the file stem and withholds AppleSc
 
 test('a workspace fixture launches the editor on a throwaway profile inside the private fixture folder', async t => {
   // A live bank is /private/tmp/sleight-battery-am1-XXXXXX; the default macOS tmpdir is too long for the editor's socket.
-  const hosts = [], h = await setup(t, { id: 'vscode', hosts, base: '/private/tmp' });
+  const hosts = [], h = await setup(t, { id: 'vscode', hosts, base: realpathSync(process.platform === 'darwin' ? '/tmp' : tmpdir()) });
   const fixture = await h.runtime.prepare(speedPlan({ ids: ['vscode'], runs: 1 }).apps[0]);
   assert.equal(fixture.requireStopped, true);
   assert.equal(fixture.windowMarker, fixture.marker);
@@ -332,7 +342,7 @@ test('a cover by the fixture app during its own cleanup is recorded as cleanup-c
 
 test('a workspace fixture passes its folder as a launch argument and names the profile that proves ownership', async t => {
   // VS Code 1.141 with --new-window and no path in argv opens an empty window and ignores the folder sent as a document.
-  const h = await setup(t, { id: 'vscode', base: '/private/tmp' });
+  const h = await setup(t, { id: 'vscode', base: realpathSync(process.platform === 'darwin' ? '/tmp' : tmpdir()) });
   const fixture = await h.runtime.prepare(speedPlan({ ids: ['vscode'], runs: 1 }).apps[0]);
   assert.equal(fixture.launchArgs.at(-1), fixture.target);
   assert.equal(fixture.targetInArgs, true);
@@ -342,7 +352,7 @@ test('a workspace fixture passes its folder as a launch argument and names the p
 });
 
 test('only a fixture proven to be the run\'s own instance asks for the any-region scroll fallback', async t => {
-  const h = await setup(t, { id: 'vscode', base: '/private/tmp' });
+  const h = await setup(t, { id: 'vscode', base: realpathSync(process.platform === 'darwin' ? '/tmp' : tmpdir()) });
   const fixture = await h.runtime.prepare(speedPlan({ ids: ['vscode'], runs: 1 }).apps[0]);
   assert.equal(fixture.anyRegion, true);
   await h.runtime.closeFixture(fixture); await h.runtime.close();

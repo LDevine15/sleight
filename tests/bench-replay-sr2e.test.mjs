@@ -4,8 +4,10 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { probeClient } from '../bench/double-keys-client.mjs';
-import { clientsFor } from '../bench/replay/run.mjs';
-import { withNative } from '../bench/replay/fixtures.mjs';
+import { packageSkip } from './requirements.mjs';
+const parserSkip = packageSkip('typescript');
+const { clientsFor } = parserSkip ? {} : await import('../bench/replay/run.mjs');
+const { withNative } = parserSkip ? {} : await import('../bench/replay/fixtures.mjs');
 import { createReplayRecorder, STDERR_LIMIT } from '../bench/replay/evidence.mjs';
 import { openFixture, closeFixtures } from '../bench/real-fixture.mjs';
 
@@ -22,7 +24,7 @@ function launcher(t, body) {
   return dir;
 }
 
-test('replay startup disables turbo without passing a false trusted frontend', async t => {
+test('replay startup disables turbo without passing a false trusted frontend', { skip: parserSkip }, async t => {
   const dir = launcher(t, `
     if (directBrowser !== undefined) throw Error('TRUSTED_ROUTE_REQUIRED');
     if (process.env.SLEIGHT_TURBO !== '0') throw Error('turbo must stay off');
@@ -57,7 +59,7 @@ test('stderr evidence is capped per server, including the trace, and records tru
   assert.ok(rows.some(row => row.event === 'engine-close' && row.code === 1));
 });
 
-test('initialize failure retains stderr and confirms the exited nonzero server', async t => {
+test('initialize failure retains stderr and confirms the exited nonzero server', { skip: parserSkip }, async t => {
   const worktree = launcher(t, "process.stderr.write('injected startup failure\\n'); process.exitCode = 1;");
   const dir = bank(t), record = createReplayRecorder(dir);
   await assert.rejects(clientsFor({ policy: 'bench' }, {}, dir, record, worktree), error => {
@@ -79,7 +81,7 @@ test('the stderr cap does not expand a partial UTF-8 character in the trace', t 
   assert.ok(!text.includes('\uFFFD'));
 });
 
-test('a nonzero exit after initialize still fails the run with collection confirmed', async t => {
+test('a nonzero exit after initialize still fails the run with collection confirmed', { skip: parserSkip }, async t => {
   const worktree = launcher(t, `
     const { createInterface } = await import('node:readline');
     createInterface({ input: process.stdin }).on('line', line => {
@@ -97,7 +99,7 @@ test('a nonzero exit after initialize still fails the run with collection confir
   });
 });
 
-for (const exited of [true, false]) test(`early collected engine exit cleans the fixture and ${exited ? 'confirms' : 'refuses'} its exact PID exit`, async t => {
+for (const exited of [true, false]) test(`early collected engine exit cleans the fixture and ${exited ? 'confirms' : 'refuses'} its exact PID exit`, { skip: parserSkip }, async t => {
   const dir = bank(t), quits = [], checks = [];
   const worktree = launcher(t, "process.stderr.write('fixture startup failure\\n'); process.exitCode = 1;");
   const ctx = { dir: join(dir, 'fixture'), nonce: 'nonce' };
@@ -139,7 +141,7 @@ for (const exited of [true, false]) test(`early collected engine exit cleans the
   if (!exited) assert.equal(result.lifecycle.exitDisagreements[0].pid, 42);
 });
 
-test('uncollected engine failure leaves fixture cleanup blocked', async t => {
+test('uncollected engine failure leaves fixture cleanup blocked', { skip: parserSkip }, async t => {
   const dir = bank(t), ctx = { dir };
   const result = await withNative({ metadata: {}, task: { id: 'textedit-drag' } }, {
     dir, prepared: { native: { ctx, definition: { setup() {}, prompt: () => 'fixture', check: () => false,

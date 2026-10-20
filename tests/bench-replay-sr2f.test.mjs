@@ -4,8 +4,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { TargetMapper, divergence, comparisonResult } from '../bench/replay/mapping.mjs';
-import { replayCalls } from '../bench/replay/engine.mjs';
+import { describe } from 'node:test';
+import { packageSkip } from './requirements.mjs';
+
+describe('offline replay with the source parser', { skip: packageSkip('typescript') }, async () => {
+const { TargetMapper, divergence, comparisonResult } = await import('../bench/replay/mapping.mjs');
+const { replayCalls } = await import('../bench/replay/engine.mjs');
 
 // Complete PNGs with different pixels, without a host decoder or app.
 function png(width = 2, height = 1, color = 0) {
@@ -127,4 +131,5 @@ test('retained DP1 first-call images match structurally while changed notices st
     const actualImage = row.result.content.find(b => b.type === 'image');
     assert.equal(divergence(shot(expectedImage), shot(actualImage)), null, `${iteration}-${variant} image`);
   }
+});
 });

@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { getTasks } from '../bench/tasks.mjs';
-import { dragMethodAudit } from '../bench/world/method-check.mjs';
+import { packageSkip } from './requirements.mjs';
+const parserSkip = packageSkip('typescript');
+const { dragMethodAudit } = parserSkip ? {} : await import('../bench/world/method-check.mjs');
 import { getWorldTasks } from '../bench/world/tasks.mjs';
 
 test('Calculator claim checks read the current display and reject the right answer on a wrong display', async () => {
@@ -81,7 +83,7 @@ test('the new native tasks prepare private files and grade exact artifacts witho
   } finally { removeTemp(temp); }
 });
 
-test('DPg recorded method audit reaches exact text grading and rejects missing moves or wrong text', async () => {
+test('DPg recorded method audit reaches exact text grading and rejects missing moves or wrong text', { skip: parserSkip }, async () => {
   const task = getTasks('world').find(t => t.id === 'textedit-window-drag');
   const temp = mkdtempSync(join(tmpdir(), 'sleight-world-dpg-'));
   try {

@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertCheck } from '../bench/replay/checks.mjs';
-import { loadCheck } from '../bench/replay/run.mjs';
 import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
+import { describe } from 'node:test';
+import { packageSkip } from './requirements.mjs';
+
+describe('offline replay with the source parser', { skip: packageSkip('typescript') }, async () => {
+const { assertCheck } = await import('../bench/replay/checks.mjs');
+const { loadCheck } = await import('../bench/replay/run.mjs');
 
 const spec = loadCheck('DP1');
 const start = '2026-10-20T02:07:31.990Z', end = '2026-10-20T02:07:32.988Z';
@@ -61,4 +65,5 @@ test('DPm explains all ten retained DP1d failures without claiming the old campa
     assert.equal(check.verdict, 'fail');
     assert.match(check.failures.join('; '), variant === 'A' ? /kept-read \(windows non-empty\)/ : /SLEIGHT_DP1=0 disables this event/);
   }
+});
 });

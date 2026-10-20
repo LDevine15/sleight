@@ -1,7 +1,9 @@
+import { macCommandSkip } from './requirements.mjs';
+import { tmpdir } from 'node:os';
 import { idleClock } from './fixtures/socket-clock.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, closeSync, mkdirSync, openSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, mkdirSync, openSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
@@ -11,8 +13,9 @@ import { createConnection, createServer, Server } from 'node:net';
 import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 import { callSocket, ensureSocketSession, createShellRelay, preparePeerCheck, printSocketResult, socketCommand, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
 
+// Keep Unix socket paths below the macOS sockaddr_un limit.
 function fixture(t) {
-  const root = trackTemp(mkdtempSync(join('/private/tmp', 'sleight-socket-test-')));
+  const root = trackTemp(mkdtempSync(join(realpathSync(process.platform === 'darwin' ? '/tmp' : tmpdir()), 'sleight-socket-test-')));
   const cleanup = [];
   t.after(async () => {
     const results = await Promise.allSettled(cleanup.map(collect => collect()));
@@ -69,7 +72,7 @@ test('another uid and unavailable peer credentials are refused before dispatch',
   }
 });
 
-test('the native peer check authenticates an actual Unix connection', async t => {
+test('the native peer check authenticates an actual Unix connection', { skip: macCommandSkip('clang') }, async t => {
   const f = fixture(t);
   delete f.peerUid;
   const session = await startSocketSession(f);
@@ -228,7 +231,7 @@ function rawRequest(path, request) {
   });
 }
 
-test('the native peer helper refuses a regular file at fd 3 without output', async t => {
+test('the native peer helper refuses a regular file at fd 3 without output', { skip: macCommandSkip('clang') }, async t => {
   const f = fixture(t), binary = join(f.root, 'peer');
   const built = spawnSync('/usr/bin/clang', ['-Wall', '-Werror',
     fileURLToPath(new URL('../plugins/sleight/lib/socket-peer.c', import.meta.url)), '-o', binary],
@@ -243,7 +246,7 @@ test('the native peer helper refuses a regular file at fd 3 without output', asy
   assert.equal(result.stdout, '');
 });
 
-test('peer compilation ignores inherited compiler search paths', async t => {
+test('peer compilation ignores inherited compiler search paths', { skip: macCommandSkip('clang') }, async t => {
   const f = fixture(t);
   mkdirSync(join(f.root, 'sys'));
   writeFileSync(join(f.root, 'sys/socket.h'), '#error inherited CPATH reached the compiler\n');

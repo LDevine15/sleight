@@ -1,17 +1,19 @@
+import { tmpdir } from 'node:os';
 import { idleClock } from './fixtures/socket-clock.mjs';
 import { test } from 'node:test';
 import { spawnDemand } from './fixtures/socket-demand-owner.mjs';
 import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { callSocket, ensureSocketSession, socketCommand, spawnDetachedSession, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
 
+// Keep Unix socket paths below the macOS sockaddr_un limit.
 function fixture(t) {
-  const root = trackTemp(mkdtempSync(join('/private/tmp', 'sleight-demand-')));
+  const root = trackTemp(mkdtempSync(join(realpathSync(process.platform === 'darwin' ? '/tmp' : tmpdir()), 'sleight-demand-')));
   const cleanup = [];
   t.after(async () => {
     const results = await Promise.allSettled(cleanup.map(collect => collect()));

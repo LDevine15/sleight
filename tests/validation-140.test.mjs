@@ -1,3 +1,4 @@
+import { commandSkip } from './requirements.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync, readFileSync, symlinkSync } from 'node:fs';
@@ -284,7 +285,7 @@ test('offline scorer checks actual model evidence, not just the driver receipt',
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('zsh plan and invalid invocation never create output or run a child benchmark', () => {
+test('zsh plan and invalid invocation never create output or run a child benchmark', { skip: commandSkip('zsh', '/bin') }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'vp1-plan-'));
   try {
     const command = new URL('../bench/validation/validate-140.command', import.meta.url).pathname;

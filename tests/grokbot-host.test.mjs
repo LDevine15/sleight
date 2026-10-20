@@ -1,3 +1,4 @@
+import { macCommandSkip } from './requirements.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -31,7 +32,7 @@ function fixture(files = installed, running = () => true) {
   };
 }
 
-test('reports the bundle version and separate computer-use, daemon and permission states', () => {
+test('reports the bundle version and separate computer-use, daemon and permission states', { skip: macCommandSkip('plutil') }, () => {
   const io = fixture();
   const status = grokbotStatus(io);
   assert.equal(status.version, '0.71.2');
@@ -55,7 +56,7 @@ test('warns about a second driver only when Grok computer use is on', () => {
   assert.match(on, /second driver/);
 });
 
-test('finds a user-installed bundle when the system bundle is absent', () => {
+test('finds a user-installed bundle when the system bundle is absent', { skip: macCommandSkip('plutil') }, () => {
   const files = { ...installed, [userPlist]: plist('0.72.0') };
   delete files[systemPlist];
   const io = fixture(files);
@@ -63,7 +64,7 @@ test('finds a user-installed bundle when the system bundle is absent', () => {
   assert.deepEqual(io.reads, [systemPlist, userPlist, gate, settings, daemon]);
 });
 
-test('reads the release from a binary bundle plist', () => {
+test('reads the release from a binary bundle plist', { skip: macCommandSkip('plutil') }, () => {
   const binary = execFileSync('/usr/bin/plutil', ['-convert', 'binary1', '-o', '-', '--', '-'], { input: plist('0.71.2') });
   assert.equal(grokbotStatus(fixture({ ...installed, [systemPlist]: binary })).version, '0.71.2');
 });
@@ -139,7 +140,7 @@ test('keeps raw bundle values and unknown permission values out of doctor output
   assert.doesNotMatch(grokbotDoctorLines(status).join('\n'), /PRIVATE/);
 });
 
-test('launcher prints Grok Bot metadata before unavailable engine discovery stops doctor', async () => {
+test('launcher prints Grok Bot metadata before unavailable engine discovery stops doctor', { skip: macCommandSkip('plutil') }, async () => {
   const lines = [], io = fixture();
   const code = await doctor({ env: { CODEX_HOME: '/no-such-sleight-home', SLEIGHT_CHATGPT_APP: '/no-such-ChatGPT.app' },
     turbo: async () => [], hand: async () => [], permissions: async () => [], codex: () => [], cursor: () => [], grok: () => [],

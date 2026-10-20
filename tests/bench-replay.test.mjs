@@ -4,18 +4,22 @@ import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync, realpathSy
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseRecording, loadRecording } from '../bench/replay/recording.mjs';
-import { TargetMapper, elementMapping, divergence, refreshCode, resultText } from '../bench/replay/mapping.mjs';
-import { replayCalls, parseEnv, schedule, summarize } from '../bench/replay/engine.mjs';
-import { options, loadCheck, main } from '../bench/replay/run.mjs';
-import * as runner from '../bench/replay/run.mjs';
-import { checkEvidence } from '../bench/replay/checks.mjs';
-import { replayApprovalStorage } from '../bench/replay/server.mjs';
-import { nativePlan } from '../bench/replay/fixtures.mjs';
 import { EventEmitter } from 'node:events';
 import { createSession } from '../bench/turbo/v3-session.mjs';
 import { serveV3Worker } from '../plugins/sleight/lib/direct-browser/worker.mjs';
-import { workerSwitches } from '../bench/replay/switches.mjs';
+import { describe } from 'node:test';
+import { packageSkip } from './requirements.mjs';
+
+describe('offline replay with the source parser', { skip: packageSkip('typescript') }, async () => {
+const { parseRecording, loadRecording } = await import('../bench/replay/recording.mjs');
+const { TargetMapper, elementMapping, divergence, refreshCode, resultText } = await import('../bench/replay/mapping.mjs');
+const { replayCalls, parseEnv, schedule, summarize } = await import('../bench/replay/engine.mjs');
+const { options, loadCheck, main } = await import('../bench/replay/run.mjs');
+const runner = await import('../bench/replay/run.mjs');
+const { checkEvidence } = await import('../bench/replay/checks.mjs');
+const { replayApprovalStorage } = await import('../bench/replay/server.mjs');
+const { nativePlan } = await import('../bench/replay/fixtures.mjs');
+const { workerSwitches } = await import('../bench/replay/switches.mjs');
 
 const fixture = name => readFileSync(new URL(`./fixtures/replay/${name}.jsonl`, import.meta.url), 'utf8');
 const nativeHeader = 'Window: "Fixture", App: TextEdit.\n';
@@ -396,4 +400,5 @@ test('comparison routes the native companion and turbo worker entry to the selec
   assert.equal(specs['sleight-turbo'].args[0], '/build/old/bench/turbo/v3-server.mjs');
   assert.equal(specs['sleight-turbo'].env.SLEIGHT_TURBO_TASK, 'fixed task');
   assert.deepEqual(specs['plugin:sleight:computer'].args.slice(-2), ['--worktree', '/build/old']);
+});
 });

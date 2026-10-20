@@ -2,9 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { loadCheck } from '../bench/replay/run.mjs';
-import { loadRecording } from '../bench/replay/recording.mjs';
-import { auditRecording } from '../bench/replay/audit.mjs';
+import { describe } from 'node:test';
+import { packageSkip } from './requirements.mjs';
+
+describe('offline replay with the source parser', { skip: packageSkip('typescript') }, async () => {
+const { loadCheck } = await import('../bench/replay/run.mjs');
+const { loadRecording } = await import('../bench/replay/recording.mjs');
+const { auditRecording } = await import('../bench/replay/audit.mjs');
 
 const text = value => ({ content: [{ type: 'text', text: value }] });
 const tab = 't' + 'a'.repeat(31);
@@ -41,3 +45,4 @@ for (const id of ['DP1', 'DP2', 'DP7', 'CK2', 'CK3', 'MC1', 'MS1', 'LB1']) {
     assert.deepEqual([result.planned, result.fed, result.verdict, result.reason], expected[id]);
   });
 }
+});
