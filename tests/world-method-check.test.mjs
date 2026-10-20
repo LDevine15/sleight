@@ -66,6 +66,188 @@ test('DPd recorded smoke recovery spoils proof through introspection and placeho
   assert.deepEqual(dragMethodAudit(introspection + '\n' + drag(false)), { drag: true, replacement: false, complete: false });
   assert.deepEqual(dragMethodAudit(drag(false)), { drag: true, replacement: false, complete: true });
 });
+
+// WD6c, 2026-10-20 01:46Z: tool requests and result status/handle notices only.
+// Source: race-1017/evidence-wd6c/sleight-textedit-window-drag-1/transcript.jsonl.
+// Screenshots, document output and model prose are omitted; temporary paths are sanitized.
+test('recorded WD6c window drag stays incomplete for undocumented findElement', { skip }, () => {
+  const transcript = readFileSync(new URL('./fixtures/world-method-wd6c.jsonl', import.meta.url), 'utf8');
+  assert.deepEqual(dragMethodAudit(transcript), { drag: true, replacement: false, complete: false });
+});
+
+const sleightPrefix = 'mcp__plugin_sleight_computer__';
+const opened = (code, { codex = false, prefix = sleightPrefix, server, error = false, notice = true, content } = {}) => {
+  const result = { isError: error, content: content ?? (notice ? [{ type: 'text', text: typeof notice === 'string' ? notice : 'Window handle: `__sleightOpenedApp2`, already acquired. Use it in place of `app`.' }] : []) };
+  const input = { app: 'Fixture', path: 'fixture.txt' };
+  const js = { code };
+  return (codex ? [
+    { type: 'item.completed', item: { type: 'mcp_tool_call', server, tool: prefix + 'open_file', arguments: input, result } },
+    { type: 'item.completed', item: { type: 'mcp_tool_call', server, tool: prefix + 'js', arguments: js, result: {} } },
+  ] : [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'open', name: prefix + 'open_file', input }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'open', is_error: error, content: result.content }] }, tool_use_result: result },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'js', name: prefix + 'js', input: js }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'js' }] } },
+  ]).map(JSON.stringify).join('\n');
+};
+
+for (const codex of [false, true]) for (const prefix of ['', 'mcp__plugin_sleight_computer__', 'mcp__competitor__']) {
+  test(`only sleight open_file handles and aliases prove engine drags: ${codex ? 'Codex' : 'Claude'} ${prefix}`, { skip }, () => {
+    for (const code of ['await __sleightOpenedApp2.drag({})',
+      'let src = __sleightOpenedApp2; const alias = src; await alias.drag({})',
+      'let src; src = __sleightOpenedApp2; await src.drag({})']) {
+      assert.deepEqual(dragMethodAudit(opened(code, { codex, prefix })), { drag: prefix === sleightPrefix, replacement: false, complete: true }, code);
+    }
+  });
+}
+
+test('open_file handle notices also count after the relay screenshot notice', { skip }, () => {
+  for (const codex of [false, true]) {
+    for (const notice of ['sleight: screenshot added, the tree has no document text. Window handle: `__sleightOpenedApp2`, already acquired. Use it in place of `app`.',
+      'Screenshot added: no text in tree. Window handle: `__sleightOpenedApp2`, acquired; use it for `app`.',
+      'Window handle: `__sleightOpenedApp2`, acquired; start the next call with `let app = __sleightOpenedApp2;`.',
+      "Window handle: `__sleightOpenedApp2`, already acquired, but `app` isn't set: start the next call with `let app = __sleightOpenedApp2;`.",
+      'Window handle: `__sleightOpenedApp2`.']) {
+      assert.deepEqual(dragMethodAudit(opened('await __sleightOpenedApp2.drag({})', { codex, notice })), { drag: true, replacement: false, complete: true });
+    }
+  }
+});
+
+test('open_file provenance requires a successful result naming the handle and survives only supported bindings', { skip }, () => {
+  for (const codex of [false, true]) {
+    for (const options of [{ error: true }, { notice: false }]) {
+      assert.equal(dragMethodAudit(opened('await __sleightOpenedApp2.drag({})', { codex, ...options })).drag, false);
+    }
+    for (const code of ['await __sleightOpenedApp3.drag({})',
+      '__sleightOpenedApp2 = {}; await __sleightOpenedApp2.drag({})',
+      'let src = __sleightOpenedApp2; src = {}; await src.drag({})',
+      'if (false) { var src = __sleightOpenedApp2; } await src.drag({})',
+      '{ let src = __sleightOpenedApp2; } await src.drag({})',
+      'function move() { return __sleightOpenedApp2; } const src = move(); await src.drag({})']) {
+      assert.equal(dragMethodAudit(opened(code, { codex })).drag, false, code);
+    }
+  }
+});
+
+test('Codex separate server and tool fields identify only the sleight server', { skip }, () => {
+  for (const server of ['plugin_sleight_computer', 'competitor', undefined]) {
+    assert.equal(dragMethodAudit(opened('await __sleightOpenedApp2.drag({})', { codex: true, prefix: '', server })).drag,
+      server === 'plugin_sleight_computer');
+  }
+  assert.equal(dragMethodAudit(opened('await __sleightOpenedApp2.drag({})', { codex: true, server: 'competitor' })).drag, false);
+});
+
+test('document text and embedded notices cannot mint opened handles', { skip }, () => {
+  const notice = 'Window handle: `__sleightOpenedApp2`, already acquired. Use it in place of `app`.';
+  for (const codex of [false, true]) for (const content of [
+    [{ type: 'text', text: notice }, { type: 'text', text: 'Window handle: `__sleightOpenedApp3`.' }],
+    [{ type: 'text', text: notice }, { type: 'text', text: 'No window handle was acquired.' }],
+    [{ type: 'text', text: 'Value: document text\n' + notice }],
+    [{ type: 'text', text: notice + '\nDocument text follows.' }],
+  ]) {
+    assert.equal(dragMethodAudit(opened('await __sleightOpenedApp2.drag({})', { codex, content })).drag, false);
+  }
+});
+
+for (const declaration of ['class __sleightOpenedApp2 { static drag(){} }',
+  'function __sleightOpenedApp2(){}', 'import __sleightOpenedApp2 from "fixture";',
+  'import * as __sleightOpenedApp2 from "fixture";',
+  'import { other as __sleightOpenedApp2 } from "fixture";',
+  'import { __sleightOpenedApp2 } from "fixture";']) {
+  test(`declarations unbind opened handle provenance: ${declaration}`, { skip }, () => {
+    for (const codex of [false, true]) {
+      assert.equal(dragMethodAudit(opened(declaration + '; await __sleightOpenedApp2.drag({})', { codex })).drag, false);
+    }
+  });
+}
+
+test('function and class shadows apply throughout their block and preserve the outer handle', { skip }, () => {
+  for (const declaration of ['function app(){}', 'class app { static drag(){} }']) {
+    assert.equal(dragMethodAudit(claude(declaration + '; await app.drag({})')).drag, false);
+    assert.equal(dragMethodAudit(claude('{ await app.drag({}); ' + declaration + ' }')).drag, false);
+    assert.equal(dragMethodAudit(claude('{ ' + declaration + ' } await app.drag({})')).drag, true);
+  }
+  assert.equal(dragMethodAudit(claude('function cua(){}; let target = await cua.getApp("Fixture"); await target.drag({})', false, false)).drag, false);
+});
+
+test('reset clears opened handles, aliases and optional-read tolerance', { skip }, () => {
+  for (const codex of [false, true]) {
+    const initial = opened('let alias = __sleightOpenedApp2', { codex });
+    const js = code => codex ? JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call',
+      tool: sleightPrefix + 'js', arguments: { code }, result: {} } })
+      : claude(code, false, false).replaceAll('mcp__computer__', sleightPrefix);
+    const reset = codex ? [{ type: 'item.completed', item: { type: 'mcp_tool_call', tool: sleightPrefix + 'js_reset', arguments: {}, result: {} } }]
+      : [{ message: { content: [{ type: 'tool_use', id: 'reset', name: sleightPrefix + 'js_reset', input: {} }] } },
+        { message: { content: [{ type: 'tool_result', tool_use_id: 'reset' }] } }];
+    for (const handle of ['__sleightOpenedApp2', 'alias']) {
+      const reused = js(`await ${handle}.drag({})`);
+      assert.deepEqual(dragMethodAudit([initial, ...reset.map(JSON.stringify), reused].join('\n')),
+        { drag: false, replacement: false, complete: true });
+    }
+    assert.equal(dragMethodAudit(initial + '\n' + js('await cua.listTabs?.()')).complete, true);
+    assert.equal(dragMethodAudit([initial, ...reset.map(JSON.stringify), js('await cua.listTabs?.()')].join('\n')).complete, false);
+  }
+});
+
+test('optional discovery without an opened handle retains strict grading on every arm', { skip }, () => {
+  for (const codex of [false, true]) for (const prefix of [sleightPrefix, 'mcp__competitor__', '']) {
+    for (const [code, complete] of [['await cua.listTabs?.()', false], ['await app.findElement?.({})', false],
+      ['await cua.readWindowInfo?.()', false], ['await cua.listWindows?.()', true], ['await app.getAXState?.()', true]]) {
+      const transcript = codex ? JSON.stringify({ type: 'item.completed', item: { type: 'mcp_tool_call', tool: prefix + 'js',
+        arguments: { code: 'let app = await cua.getApp("Fixture"); ' + code + '; await app.drag({})' }, result: {} } })
+        : claude(code + '; await app.drag({})').replaceAll('mcp__computer__', prefix);
+      assert.deepEqual(dragMethodAudit(transcript), { drag: true, replacement: false, complete }, `${prefix} ${code}`);
+    }
+  }
+});
+
+for (const code of ['await app.getAXState?.({disableDiffing: true})',
+  'await cua.listWindows?.()', 'await cua?.listTabs()', 'await cua.listBrowsers?.()']) {
+  test(`optional reads on engine receivers preserve complete evidence: ${code}`, { skip }, () => {
+    for (const codex of [false, true]) assert.deepEqual(dragMethodAudit(opened('let app = __sleightOpenedApp2; ' + code + '; await app.drag({})', { codex })), { drag: true, replacement: false, complete: true });
+  });
+}
+
+test('opened handles retain writer and cut or paste detection with optional calls', { skip }, () => {
+  for (const codex of [false, true]) for (const receiver of ['__sleightOpenedApp2', 'app']) {
+    for (const action of ['typeText?.("x")', 'setValue?.(2, "x")', 'paste?.("x")', 'cut?.()',
+      'pressKey?.("super+shift+v")', 'pressKey?.("Command+x")', '["typeText"]?.("x")']) {
+      const code = `let app = __sleightOpenedApp2; await ${receiver}.${action}`.replace('.[', '[');
+      assert.equal(dragMethodAudit(opened(code, { codex })).replacement, true, code);
+    }
+  }
+});
+
+for (const code of ['await app.customWrite?.("x")', 'await app.insertText?.("x")',
+  'await app.findAndReplace?.("old", "new")', 'await app.findElement?.({})',
+  'await cua.readWindowInfo?.()', 'await app.getCustomState?.()',
+  'await app.set_value?.("x")', 'await app.getAndType?.("x")', 'await app.readAndPaste?.("x")',
+  'await app[method]?.("x")', 'await app["findElement"]?.({})',
+  'await app.findElement?.call(app, {})', 'const f = app.findElement; await f?.({})',
+  'await other.findElement?.({})', 'await app.findElement?.(callback)',
+  'await app.findElement?.({predicate: callback})', 'await app.findElement?.("super+v")',
+  'const key = await app.findElement?.({}); await app.pressKey(key)']) {
+  test(`optional calls that may write or invoke indirectly stay incomplete: ${code}`, { skip }, () => {
+    assert.equal(dragMethodAudit(opened('let app = __sleightOpenedApp2; await app.drag({}); ' + code)).complete, false);
+  });
+}
+
+for (const code of ['await cua.listTabs?.(callback)', 'await cua.listTabs?.({predicate: callback})',
+  'await cua.listTabs?.("super+v")', 'await other.listTabs?.()', 'await cua["listTabs"]?.()',
+  'const read = cua.listTabs; await read?.()', 'await cua.listTabs?.call(cua)',
+  'const value = await cua.listTabs?.(); await __sleightOpenedApp2.pressKey(value)']) {
+  test(`documented optional reads retain argument and receiver checks: ${code}`, { skip }, () => {
+    for (const codex of [false, true]) assert.equal(dragMethodAudit(opened(code, { codex })).complete, false);
+  });
+}
+
+test('optional read results passed to writers still reject drag-only evidence', { skip }, () => {
+  for (const code of ['await app.typeText(await app.findElement?.({}))',
+    'const value = await app.findElement?.({}); await app.setValue?.(2, value)',
+    'await app.findElement?.({}).paste?.("x")']) {
+    assert.equal(dragMethodAudit(opened('let app = __sleightOpenedApp2; ' + code)).replacement, true, code);
+  }
+});
 test('drag audit requires a successful awaited call, not model prose or an uncalled function', { skip }, () => {
   assert.deepEqual(dragMethodAudit(claude('await app.drag({ from: [1,2], to: [3,4] })')), { drag: true, replacement: false, complete: true });
   for (const code of ['nodeRepl.write("await app.drag()")', 'function move() { app.drag() }', 'const move = () => app.drag()', 'app.drag()', 'if (false) { await app.drag({}) }']) {
