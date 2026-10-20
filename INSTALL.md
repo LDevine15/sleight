@@ -28,11 +28,16 @@ If you're installing for someone else, follow the host's commands below and stop
 At each step, tell the user what to do and wait. Don't run `sudo` or `sleight-mcp setup`, and don't script System Settings
 or work around a prompt or approval card. Run each command below on its own. You may inspect setup with `--dry-run`.
 
+Always allow, payment and sleight consent buttons accept only a person's click or key press. VoiceOver, Switch Control, <!-- GB12 -->
+Voice Control and screen-sharing users must answer these cards with a physical keyboard or pointer in 1.4.0. A <!-- GB12 -->
+typed-confirmation alternative is planned after 1.4.0. Session-only app approvals can still use the host's prompts. <!-- GB12 -->
+
 ## Requirements
 
 - macOS on Apple Silicon. We've tested on macOS 27 and haven't measured a minimum version. Intel builds are untested.
 - The [ChatGPT desktop app](https://chatgpt.com/download/) in `/Applications`. It holds the engine.
-- A host, such as Claude Code 2.1.288 or later, Codex CLI (tested on 0.160.0), or any MCP client that starts a stdio server.
+- Claude Code 2.1.288 or later, Codex CLI (tested on 0.160.0), Cursor, Grok CLI or another stdio MCP client.
+- Grok Bot uses its local shell on this Mac, through the route below. <!-- GB14 -->
 
 sleight runs on the Node runtime inside ChatGPT, so there's nothing to install with npm.
 
@@ -78,8 +83,7 @@ differs in Codex is in [other hosts](docs/other-hosts.md#codex).
 
 ## Cursor
 
-Cursor is not listed as a supported host in the README until its first live install passes. This route is
-unverified. It needs a signed-in cursor-agent 2026.09.10 or later:
+The 1.4.0 Cursor plugin needs a signed-in cursor-agent 2026.09.10 or later. Its marketplace install has not run live:
 
 ```bash
 cursor-agent plugin marketplace add https://github.com/Land-o-Clusters/sleight
@@ -93,9 +97,19 @@ lists each route it finds and warns when Cursor would start sleight twice ([Curs
 ~/.cursor/plugins/cache/sleight/sleight/<commit>/bin/sleight-mcp --doctor
 ```
 
+Cursor can also import Claude Code's installed plugin. Keep one route. Cursor has no action pane, status line,
+`/sleight` or turbo. The relay ends a used turn after 30 idle seconds or on disconnect.
+
 ## Grok CLI
 
-Grok CLI is supported in 1.4.0 through a stdio MCP entry. After cloning sleight as below, run:
+Grok CLI uses a stdio MCP entry in 1.4.0. If you don't already have a clone, get one:
+
+```bash
+git clone https://github.com/Land-o-Clusters/sleight.git ~/sleight
+~/sleight/plugins/sleight/bin/sleight-mcp --doctor
+```
+
+Replace `/absolute/path/to/sleight` with that clone's full path, then run:
 
 ```bash
 grok mcp add sleight -- /absolute/path/to/sleight/plugins/sleight/bin/sleight-mcp
@@ -108,7 +122,29 @@ marketplace add and `plugin install sleight --trust` succeeded, but `grok inspec
 import. Check its `mcpServers` target before relying on the marketplace install.
 
 Turbo is off in Grok for 1.4.0 because its calls have no trusted binding to the user's message. Use the engine path.
-Grok Bot.app support is unknown. See [Grok CLI](docs/other-hosts.md#grok-cli) for approval and result limits.
+Grok's form answers allow this server session only. Always allow needs your click on sleight's own panel, selected
+with `SLEIGHT_APPROVAL_PROMPT=dialog` in the server environment. Grok 1.0.13 passed the handshake. Model tasks and image
+delivery remain unchecked. Results have a 20,000-byte cap. After a delivery error, read current state before retrying
+input, since the action may have run. [Grok CLI details](docs/other-hosts.md#grok-cli).
+
+## Grok Bot <!-- GB14 -->
+
+Use Grok Bot's local shell on this Mac. Its custom STDIO MCP servers run in a hosted box without Mac apps. <!-- GB14 -->
+Clone sleight with the commands under [Grok CLI](#grok-cli), then run the doctor through the bot's local shell too. <!-- GB14 -->
+Its Grok Bot section reports the shell route and Accessibility status for that launch context. A local app task <!-- GB14 -->
+through this route has not yet been verified. <!-- GB14 -->
+
+Give the bot this standing instruction, replacing the path with the clone's full path: <!-- GB14 -->
+
+> For Mac UI work, use sleight through the local shell: `/absolute/path/to/sleight/plugins/sleight/bin/sleight-mcp js '<JavaScript>'`. Read the engine API docs printed by the first call before sending actions. Read screenshot files at the printed paths. Never edit sleight's approval files or answer its consent cards. <!-- GB14 -->
+
+`js` starts the session on demand, and it exits after about ten idle minutes. Images go to private files under sleight's <!-- GB14 -->
+cache, and the bot reads their printed paths with your file approval. You choose whether to install an optional LaunchAgent. <!-- GB14 -->
+Keep Grok Bot's own computer use off while using sleight: the two drivers do not share an input lease. <!-- GB14 -->
+
+App approvals use sleight's own panel. Every payment, booking, settings change and submit asks there, even when <!-- GB14 -->
+you requested it, because this route cannot bind calls to your message. Turbo stays off. Grok's local-tool approvals <!-- GB14 -->
+and auto-review do not answer sleight's cards. Screenshots and app text go to Grok's hosted model through its gateway. <!-- GB14 -->
 
 ## Other MCP clients
 
@@ -144,8 +180,10 @@ Setup runs OpenAI's helper installer, which asks for an administrator's Touch ID
 Accessibility and Screen Recording panes, where the user allows Codex Computer Use, and runs the doctor again. To preview
 what it will do, add `--dry-run`. See the [install validation limits](README.md#install-validation).
 
-For turbo in Chrome, the user turns on remote debugging once at `chrome://inspect/#remote-debugging`. Chrome then asks
+For turbo in Claude Code or Codex, the user turns on remote debugging once at `chrome://inspect/#remote-debugging`. Chrome then asks
 them to allow each connection. The doctor's first lines say whether turbo is ready ([settings](docs/settings.md#turbo)).
+Cursor, Grok CLI and generic MCP clients use the engine path. Codex turbo also needs its three trusted hooks.
+Grok Bot uses the engine path too. <!-- GB14 -->
 
 ## Check it works
 
@@ -164,7 +202,27 @@ user was working in stays in front. In Codex on 2026-10-19 this took 22.5 s.
 | --- | --- | --- |
 | Claude Code | `claude plugin marketplace update sleight && claude plugin update sleight@sleight`, then a new session | `claude plugin uninstall sleight@sleight && claude plugin marketplace remove sleight` |
 | Codex | `codex plugin marketplace upgrade sleight && codex plugin add sleight@sleight`, then a new session | `codex plugin remove sleight@sleight && codex plugin marketplace remove sleight` |
+| Cursor | Update sleight in `/plugins` or Customize, then start a new chat | Remove sleight there and check for an imported Claude Code copy |
+| Grok CLI | `git pull --ff-only` in the clone, then reconnect | Remove the direct MCP entry and check imports with `grok inspect --json` |
+| Grok Bot | Update the clone after its idle session exits | Remove the bot's sleight instructions after its idle session exits | <!-- GB14 -->
 | Other MCP clients | `git pull --ff-only` in the clone, then reconnect | Remove the `mcpServers` entry and the clone |
 
 We've checked the Codex update against a local marketplace only. [Privacy](docs/privacy.md#deleting-everything) lists
 the files sleight keeps on the Mac and how to delete them.
+
+## Changes in 1.4.0
+
+The release adds Cursor's plugin and Grok CLI integration. Native text drags move between two windows, repair spacing
+and preserve empty final lines. Formatted cross-window moves refuse. Opened-file handles retain their document window.
+Native argument checks show the correct signature before malformed input is sent. Startup now handles EOF and signals
+while the engine loads and waits for the engine and relay before collecting them.
+
+Turbo adds multi-select fills and modifier clicks, with shorter replies and clearer batch and viewport guidance.
+A requested sign-up counts as confirmed when your message names the username or email and password. A page's request
+still asks. [Settings](docs/settings.md#requested-sign-ups) lists the policy limits. Opt-in
+[`sleight-mcp stats`](docs/settings.md#stats) reports local action times and reads saved without typed values or page text.
+The [benchmark hub](docs/results/README.md) links the Pages explorer, charts and individual runs.
+
+Grok Bot adds the local shell route described above. <!-- GB14 -->
+Protected consent buttons require your physical input, with the accessibility limits under [Agent notes](#agent-notes). <!-- GB12 -->
+<!-- 1.4.0 validation: sleight-arch supplies final check, release-pass and A/B numbers before release. -->
