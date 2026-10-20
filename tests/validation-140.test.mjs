@@ -3,12 +3,167 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync, readFileSync, symlinkSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
 const fixtureData = new URL('./fixtures/validation-140/', import.meta.url).pathname;
 const moduleURL = new URL('../bench/validation/validation-140.mjs', import.meta.url);
+
+// Removing the driver-only admission or dropping a recorded build must break these cases.
+async function driverFixture() {
+  const dir = mkdtempSync(join(tmpdir(), 'vp6-driver-'));
+  const git = (...args) => execFileSync('/usr/bin/git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid');
+  for (const path of ['plugins/sleight', 'bench/validation', 'tests']) mkdirSync(join(dir, path), { recursive: true });
+  for (const path of ['plugins/sleight/product.mjs', 'bench/task.mjs', 'bench/validation/driver.mjs', 'tests/validation-140.test.mjs'])
+    writeFileSync(join(dir, path), 'original');
+  git('add', '.'); git('commit', '-qm', 'Product');
+  const aBuild = git('rev-parse', 'HEAD');
+  writeFileSync(join(dir, 'plugins/sleight/product.mjs'), 'B product');
+  git('commit', '-qam', 'B product');
+  const product = git('rev-parse', 'HEAD');
+  writeFileSync(join(dir, 'bench/validation/driver.mjs'), 'new driver');
+  git('commit', '-qam', 'Driver');
+  const driver = git('rev-parse', 'HEAD');
+  return { dir, git, aBuild, product, driver };
+}
+
+test('driver-only commits resume legacy evidence while rounds retain both product builds', async () => {
+  const m = await import(moduleURL);
+  assert.equal(typeof m.driverCompatibility, 'function');
+  const f = await driverFixture(), out = join(f.dir, 'output'); mkdirSync(out);
+  try {
+    const compatibility = m.driverCompatibility(f.product, f.driver, f.dir);
+    assert.deepEqual(compatibility.changed, ['bench/validation/driver.mjs']);
+    const plan = { root: f.dir, out, aBuild: f.aBuild, bBuild: f.product, engine: 'e',
+      harnessHash: m.buildHarnessEvidence({ root: f.dir, aBuild: f.aBuild, bBuild: f.product }, f.dir).hash,
+      blockers: [], groups: [{ id: 'native' }], deferredGroups: [],
+      rounds: ['A', 'B'].map(side => ({ id: `native-${side}-r1`, group: 'native', side, runner: 'native', tasks: ['one'], model: 'haiku' })) };
+    writeFileSync(join(out, 'plan.json'), JSON.stringify(plan));
+    writeFileSync(join(out, 'harness.json'), JSON.stringify(m.buildHarnessEvidence(plan, f.dir)));
+    writeFileSync(join(out, 'full-check.receipt.json'), JSON.stringify({ code: 0, signal: null, build: f.product }));
+    writeFileSync(join(out, 'full-check.log'), 'completed original check');
+    writeFileSync(join(out, 'validate-140.log'), `2026-10-20T12:11:00Z full-check-start ${JSON.stringify({ build: f.product })}\n2026-10-20T12:19:00Z full-check-exit {"code":0,"signal":null}\n`);
+    const candidate = { ...plan, root: join(f.dir, 'driver-checkout'), bBuild: f.driver,
+      harnessHash: m.buildHarnessEvidence({ ...plan, bBuild: f.driver }, f.dir).hash };
+    const select = () => m.selectRun(candidate, undefined, { resume: true, repository: f.dir, driverBuild: f.driver });
+    for (const file of ['harness.json', 'full-check.receipt.json', 'validate-140.log']) {
+      const original = readFileSync(join(out, file));
+      const changed = file === 'harness.json' ? JSON.stringify({ ...JSON.parse(original), bPluginTree: 'changed' })
+        : file === 'full-check.receipt.json' ? JSON.stringify({ ...JSON.parse(original), signal: 'changed' })
+          : original.toString().replace('"code":0', '"code":1');
+      writeFileSync(join(out, file), changed);
+      assert.throws(select, /changed|identity|receipt/i);
+      assert.equal(existsSync(join(out, 'run-identity.json')), false);
+      writeFileSync(join(out, file), original);
+    }
+    const selection = select();
+    assert.equal(selection.plan.bBuild, f.product);
+    assert.equal(selection.driverBuild, f.driver);
+    assert.equal(existsSync(join(out, 'run-identity.json')), false, 'selection is read only');
+    const roots = { A: join(f.dir, 'A'), B: join(f.dir, 'B') };
+    f.git('worktree', 'add', '--detach', roots.A, f.aBuild);
+    f.git('worktree', 'add', '--detach', roots.B, f.product);
+    for (const round of selection.rounds) {
+      const invocation = m.roundInvocation(round, selection.plan, roots, '/output/round');
+      assert.equal(invocation.build, round.side === 'A' ? f.aBuild : f.product);
+      assert.equal(invocation.cwd, roots[round.side]);
+    }
+    assert.throws(() => m.roundInvocation(plan.rounds[1], plan, { ...roots, B: f.dir }, '/output/round'), /recorded build/);
+    m.archiveAborted(selection);
+    assert.equal(existsSync(join(out, 'run-identity.json')), true);
+    const log = readFileSync(join(out, 'validate-140.log'), 'utf8');
+    assert.match(log, /resume-start/); assert.ok(log.includes(f.driver)); assert.match(log, /legacy-identity/);
+    assert.equal(select().rounds.length, 2);
+    for (const file of ['full-check.receipt.json', 'full-check.log', 'harness.json', 'plan.json']) {
+      const original = readFileSync(join(out, file));
+      writeFileSync(join(out, file), file.endsWith('.log') ? 'changed' : JSON.stringify({ changed: true }));
+      assert.throws(select, /changed|differs|full check|missing/i);
+      writeFileSync(join(out, file), original);
+    }
+    assert.throws(() => m.selectRun({ ...candidate, engine: 'other' }, undefined,
+      { resume: true, repository: f.dir, driverBuild: f.driver }), /engine/);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test('driver compatibility refuses product, task harness, unrelated tests and dirty product paths', async () => {
+  const m = await import(moduleURL);
+  assert.equal(typeof m.driverCompatibility, 'function');
+  const f = await driverFixture();
+  try {
+    m.verifyProductWindow(f.product, f.dir);
+    writeFileSync(join(f.dir, 'bench/validation/driver.mjs'), 'driver edit');
+    m.verifyProductWindow(f.product, f.dir);
+    writeFileSync(join(f.dir, 'plugins/sleight/product.mjs'), 'changed');
+    assert.throws(() => m.verifyProductWindow(f.product, f.dir), /Build changed/);
+    f.git('restore', '.');
+    for (const path of ['plugins/sleight/product.mjs', 'bench/task.mjs', 'tests/other.test.mjs']) {
+      writeFileSync(join(f.dir, path), 'changed'); f.git('add', path); f.git('commit', '-qm', 'Disallowed');
+      assert.throws(() => m.driverCompatibility(f.product, f.git('rev-parse', 'HEAD'), f.dir), /driver.only|product|harness/i);
+      f.git('reset', '--hard', f.driver);
+    }
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test('full check retries only the named heap file and then finishes the remaining check phases', async () => {
+  const m = await import(moduleURL);
+  assert.equal(typeof m.fullCheck, 'function');
+  const dir = mkdtempSync(join(tmpdir(), 'vp6-check-'));
+  const name = '400 actions on a 3,000-line tree retain less than 12 MiB of extra heap';
+  try {
+    for (const recovery of [1, 2, 3]) {
+      const calls = [], records = []; let retries = 0;
+      const result = await m.fullCheck(dir, dir, (id, data) => records.push([id, data]), async (cmd, args, cwd, log) => {
+        calls.push([cmd, args]);
+        if (args.join(' ') === 'run check') {
+          writeFileSync(log, `> test\n✖ ${name} (123ms)\nℹ fail 1\nℹ cancelled 0\n\n✖ failing tests:\n\ntest at tests/verified-results-lifetime.test.mjs:14:1\n✖ ${name} (123ms)\n  AssertionError: heap limit\n`);
+          return { code: 1, signal: null };
+        }
+        if (cmd === 'node') { retries++; return { code: retries >= recovery ? 0 : 1, signal: null }; }
+        return { code: 0, signal: null };
+      });
+      assert.equal(retries, Math.min(recovery, 2));
+      assert.equal(result.code, recovery <= 2 ? 0 : 1);
+      assert.deepEqual(calls.filter(([cmd]) => cmd === 'node').map(([, args]) => args),
+        Array.from({ length: Math.min(recovery, 2) }, () => ['--test', 'tests/verified-results-lifetime.test.mjs']));
+      assert.deepEqual(calls.filter(([, args]) => ['validate', 'test:mod'].includes(args[1])).map(([, args]) => args[1]), recovery <= 2 ? ['validate', 'test:mod'] : []);
+      assert.equal(records.filter(([id]) => id === 'full-check-retry-exit').length, Math.min(recovery, 2));
+      assert.equal(result.initial.code, 1);
+    }
+    for (const failure of [`✖ unrelated (1ms)\nℹ fail 1`, `✖ ${name} (1ms)\n✖ unrelated (1ms)\nℹ fail 2`, `✖ ${name} (1ms)`, `✖ ${name} extra (1ms)\nℹ fail 1`, `✖ ${name} (1ms)\nℹ fail 1\nℹ cancelled 1`]) {
+      let count = 0;
+      const result = await m.fullCheck(dir, dir, () => {}, async (cmd, args, cwd, log) => {
+        count++; writeFileSync(log, `> test\n${failure}\n${failure.includes('cancelled') ? '' : 'ℹ cancelled 0\n'}`); return { code: 1, signal: null };
+      });
+      assert.equal(result.code, 1); assert.equal(count, 1);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('heap retry accepts TAP but retains interruptions and failures in later check phases', async () => {
+  const { fullCheck } = await import(moduleURL);
+  const dir = mkdtempSync(join(tmpdir(), 'vp6-check-tail-'));
+  const name = '400 actions on a 3,000-line tree retain less than 12 MiB of extra heap';
+  try {
+    let calls = 0;
+    const passed = await fullCheck(dir, dir, () => assert.fail('passing check has no retry'), async () => {
+      calls++; return { code: 0, signal: null };
+    });
+    assert.equal(passed.code, 0); assert.equal(calls, 1);
+    for (const phase of ['validate', 'test:mod', 'signal']) {
+      const phases = [];
+      const result = await fullCheck(dir, dir, () => {}, async (cmd, args, cwd, log) => {
+        if (args[1] === 'check') { writeFileSync(log, `> test\nnot ok 1 - ${name}\n# fail 1\n# cancelled 0\n`); return { code: 1, signal: null }; }
+        if (cmd === 'node') return phase === 'signal' ? { code: null, signal: 'SIGINT' } : { code: 0, signal: null };
+        phases.push(args[1]); return { code: args[1] === phase ? 2 : 0, signal: null };
+      });
+      assert.deepEqual(phases, phase === 'signal' ? [] : phase === 'validate' ? ['validate'] : ['validate', 'test:mod']);
+      assert.equal(result.code, phase === 'signal' ? null : 2);
+      assert.equal(result.retries.length, 1);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('missing or changed provenance schedules both sides', async () => {
   assert.ok(existsSync(moduleURL), 'validation planner is missing');

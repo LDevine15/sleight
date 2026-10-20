@@ -178,7 +178,7 @@ function readReceipt(out, plan, round) {
 }
 
 // Read-only selection is shared with offline tests. Completion always uses the first plan's round inventory.
-export function selectRun(candidate, onlyGroups, { resume = false } = {}) {
+export function selectRun(candidate, onlyGroups, { resume = false, repository = ROOT, driverBuild = runGit(repository, 'rev-parse', 'HEAD').trim() } = {}) {
   const out = candidate.out;
   if (!onlyGroups && !resume) {
     if (existsSync(out)) throw Error('Output already exists; choose a new --out, --resume, or complete deferred groups with --only-groups.');
@@ -186,8 +186,13 @@ export function selectRun(candidate, onlyGroups, { resume = false } = {}) {
   }
   if (!existsSync(join(out, 'plan.json'))) throw Error('Continuation requires existing output with plan.json');
   const plan = JSON.parse(readFileSync(join(out, 'plan.json')));
-  for (const key of ['aBuild', 'bBuild', 'engine', 'harnessHash'])
+  for (const key of ['aBuild', 'engine', ...(resume ? [] : ['bBuild', 'harnessHash'])])
     if (!plan[key] || candidate[key] !== plan[key]) throw Error(`${key} differs from the first run's plan`);
+  if (resume && candidate.bBuild !== plan.bBuild) {
+    driverCompatibility(plan.bBuild, candidate.bBuild, repository);
+    if (candidate.harnessHash !== harnessAt(candidate.bBuild, repository).hash) throw Error('Candidate harnessHash changed');
+  } else if (candidate.harnessHash !== plan.harnessHash) throw Error('harnessHash differs from the first run\'s plan');
+  if (resume && /^[a-f0-9]{40}$/.test(plan.bBuild ?? '')) driverCompatibility(plan.bBuild, driverBuild, repository);
   if (resolve(plan.out) !== resolve(out)) throw Error('Output differs from the first run\'s plan');
   if (onlyGroups) {
     checkGroups(onlyGroups, plan.groups);
@@ -195,7 +200,7 @@ export function selectRun(candidate, onlyGroups, { resume = false } = {}) {
   }
   const check = JSON.parse(readFileSync(join(out, 'full-check.receipt.json')));
   if (check.code !== 0 || check.build !== plan.bBuild) throw Error('Original full check failed or build differs');
-  if (resume) verifyRunPins(candidate, plan);
+  if (resume) verifyRunPins(candidate, plan, repository);
   const files = readdirSync(out), pending = [];
   const aborted = [];
   for (const round of plan.rounds) {
@@ -229,7 +234,7 @@ export function selectRun(candidate, onlyGroups, { resume = false } = {}) {
     }
   }
   if (!pending.length) throw Error('Selected groups are already complete');
-  return { plan, rounds: pending, completion: true, resume, aborted };
+  return { plan, rounds: pending, completion: true, resume, aborted, repository, driverBuild };
 }
 
 const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v)
@@ -242,25 +247,47 @@ export function pinRun(plan) {
   if (check.code !== 0 || check.build !== plan.bBuild) throw Error('Original full check failed or build differs');
   writeFileSync(join(plan.out, 'run-identity.json'), JSON.stringify({ schema: 1,
     planHash: fileHash(plan.out, 'plan.json'), fullCheckHash: fileHash(plan.out, 'full-check.receipt.json'),
-    harnessEvidenceHash: fileHash(plan.out, 'harness.json') }, null, 2), { flag: 'wx', mode: 0o600 });
+    harnessEvidenceHash: fileHash(plan.out, 'harness.json'),
+    ...(existsSync(join(plan.out, 'full-check.log')) ? { fullCheckLogHash: fileHash(plan.out, 'full-check.log') } : {}) }, null, 2), { flag: 'wx', mode: 0o600 });
 }
 
-function verifyRunPins(candidate, plan) {
+function comparablePlan(candidate, plan) {
+  const normalized = { ...candidate, root: plan.root, bBuild: plan.bBuild, harnessHash: plan.harnessHash };
+  if (candidate.scoring) {
+    if (canonical(candidate.scoring) !== canonical(['node', join(candidate.root, 'bench/validation/validation-140.mjs'), '--score', '--out', candidate.out]))
+      throw Error('Candidate scoring command changed');
+    normalized.scoring = ['node', join(plan.root, 'bench/validation/validation-140.mjs'), '--score', '--out', candidate.out];
+  }
+  if (candidate.classification) {
+    if (candidate.classification.bBuild !== candidate.bBuild || candidate.classification.bHarnessHash !== candidate.harnessHash)
+      throw Error('Candidate classification changed');
+    normalized.classification = { ...candidate.classification, bBuild: plan.bBuild, bHarnessHash: plan.harnessHash };
+  }
+  return normalized;
+}
+
+function verifyRunPins(candidate, plan, repository = ROOT) {
+  if (canonical(comparablePlan(candidate, plan)) !== canonical(plan)) throw Error('Original plan changed or differs from the candidate plan');
   const file = join(plan.out, 'run-identity.json');
-  if (!existsSync(file)) throw Error('Original run integrity identity missing; cannot prove unchanged plan and full-check receipt');
+  if (!existsSync(file)) { verifyLegacyIdentity(plan, repository); return; }
   const pins = JSON.parse(readFileSync(file));
-  if (pins.schema !== 1 || pins.planHash !== fileHash(plan.out, 'plan.json') || canonical(candidate) !== canonical(plan))
+  if (pins.schema !== 1 || pins.planHash !== fileHash(plan.out, 'plan.json'))
     throw Error('Original plan changed or differs from the candidate plan');
   if (pins.fullCheckHash !== fileHash(plan.out, 'full-check.receipt.json')) throw Error('Original full-check receipt changed');
   if (pins.harnessEvidenceHash !== fileHash(plan.out, 'harness.json')) throw Error('Original staged harness evidence changed');
+  if (pins.fullCheckLogHash && pins.fullCheckLogHash !== fileHash(plan.out, 'full-check.log')) throw Error('Original full-check log changed');
 }
 
 // Called only while execute owns .active-run and after all pins have been checked. Rename preserves every partial byte.
 export function archiveAborted(selection) {
   const { plan, rounds, aborted = [] } = selection, archived = [];
   const record = (id, data) => appendFileSync(join(plan.out, 'validate-140.log'), `${new Date().toISOString()} ${id} ${JSON.stringify(data)}\n`);
-  verifyRunPins(plan, plan);
-  record('resume-start', { groups: [...new Set(rounds.map(r => r.group))], rounds: rounds.map(r => r.id), retained: plan.rounds.filter(r => !rounds.some(p => p.id === r.id) && existsSync(join(plan.out, `${r.id}.receipt.json`))).map(r => r.id) });
+  verifyRunPins(plan, plan, selection.repository);
+  if (!existsSync(join(plan.out, 'run-identity.json'))) {
+    pinRun(plan);
+    record('legacy-identity', { ...JSON.parse(readFileSync(join(plan.out, 'run-identity.json'))), driverBuild: selection.driverBuild });
+  }
+  record('resume-start', { driverBuild: selection.driverBuild, productBuild: plan.bBuild, groups: [...new Set(rounds.map(r => r.group))], rounds: rounds.map(r => r.id), retained: plan.rounds.filter(r => !rounds.some(p => p.id === r.id) && existsSync(join(plan.out, `${r.id}.receipt.json`))).map(r => r.id) });
   for (const partial of aborted) {
     const bank = join(plan.out, 'aborted');
     if (!existsSync(bank)) mkdirSync(bank, { mode: 0o700 });
@@ -348,6 +375,69 @@ export async function waitGate(out = EVIDENCE, signal) {
   while (['/tmp/sleight-hold', '/tmp/sleight-live.lock', join(out, 'pause')].some(existsSync)) await delay(20000, signal);
 }
 const runGit = (cwd, ...args) => execFileSync('/usr/bin/git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024 });
+const driverPath = path => path.startsWith('bench/validation/') || path === 'tests/validation-140.test.mjs';
+const lines = text => text.trim().split('\n').filter(Boolean);
+
+function harnessAt(build, repository) {
+  const files = Object.fromEntries(lines(runGit(repository, 'ls-tree', '-r', build, '--', ...HARNESS_PATHS))
+    .filter(line => !line.includes('\tbench/results/')).map(line => {
+      const [meta, path] = line.split('\t'); return [path, meta];
+    }));
+  return { hash: sha(JSON.stringify(files)), files };
+}
+
+// Driver commits may change orchestration, never the measured plugin or task harness.
+export function driverCompatibility(productBuild, driverBuild, repository = ROOT) {
+  if (![productBuild, driverBuild].every(build => /^[a-f0-9]{40}$/.test(build ?? '')))
+    throw Error('B build changed or missing; driver-only compatibility requires full commit pins');
+  const changed = lines(runGit(repository, 'diff', '--name-only', '--no-renames', productBuild, driverBuild));
+  if (changed.some(path => !driverPath(path))) throw Error(`B build changed outside driver-only paths: ${changed.filter(path => !driverPath(path)).join(', ')}`);
+  const tree = build => runGit(repository, 'rev-parse', `${build}:plugins`).trim();
+  if (tree(productBuild) !== tree(driverBuild)) throw Error('Product plugin tree changed');
+  const taskHash = build => sha(JSON.stringify(Object.fromEntries(Object.entries(harnessAt(build, repository).files).filter(([path]) => !driverPath(path)))));
+  const taskHarnessHash = taskHash(productBuild);
+  if (taskHarnessHash !== taskHash(driverBuild)) throw Error('Task harness changed');
+  return { changed, productBuild, driverBuild, productTree: tree(productBuild), taskHarnessHash };
+}
+
+export function verifyProductWindow(build, repository = ROOT) {
+  const changed = lines(runGit(repository, 'diff', '--name-only', '--no-renames', build, '--', '.',
+    ':(exclude)bench/validation/**', ':(exclude)tests/validation-140.test.mjs'));
+  if (changed.length) throw Error(`Build changed during the window: ${changed.join(', ')}`);
+}
+
+// Reconstruct the old staging proof from recorded Git objects, including its original import URLs.
+export function buildHarnessEvidence(plan, repository = ROOT, helperRoot = join(plan.root, 'plugins')) {
+  const inventory = harnessAt(plan.bBuild, repository), stagedFiles = {}, helperImports = {};
+  for (const [path, meta] of Object.entries(inventory.files)) {
+    if (!meta.startsWith('100')) throw Error(`Harness contains a non-file: ${path}`);
+    const original = execFileSync('/usr/bin/git', ['-C', repository, 'show', `${plan.bBuild}:${path}`], { maxBuffer: 32 * 1024 * 1024 });
+    const shared = /\.(?:mjs|js)$/.test(path) ? sharedHarnessSource(original.toString('utf8'), path, dirname(helperRoot)) : null;
+    if (shared?.imports.length) helperImports[path] = shared.imports;
+    stagedFiles[path] = sha(shared?.source ?? original);
+  }
+  return { hash: inventory.hash, aBuild: plan.aBuild, bBuild: plan.bBuild,
+    aPluginTree: runGit(repository, 'rev-parse', `${plan.aBuild}:plugins`).trim(), bPluginTree: runGit(repository, 'rev-parse', `${plan.bBuild}:plugins`).trim(),
+    sharedHelperRoot: helperRoot, helperImports, stagedFiles,
+    note: 'A uses B harness modules and B helper imports, with A plugin command paths. Native results mark A dirty for the staged harness. Plugin trees and transformed file hashes are separate.' };
+}
+
+function verifyLegacyIdentity(plan, repository) {
+  if (![plan.aBuild, plan.bBuild].every(build => /^[a-f0-9]{40}$/.test(build ?? '')))
+    throw Error('Original run integrity identity missing; recorded Git pins required');
+  const evidence = JSON.parse(readFileSync(join(plan.out, 'harness.json')));
+  if (plan.harnessHash !== harnessAt(plan.bBuild, repository).hash || canonical(evidence) !== canonical(buildHarnessEvidence(plan, repository)))
+    throw Error('Original staged harness or product identity changed');
+  const check = JSON.parse(readFileSync(join(plan.out, 'full-check.receipt.json')));
+  const events = lines(readFileSync(join(plan.out, 'validate-140.log'), 'utf8')).flatMap(line => {
+    const match = /^\S+ (full-check-start|full-check-exit) (\{.*\})$/.exec(line);
+    return match ? [{ id: match[1], data: JSON.parse(match[2]) }] : [];
+  });
+  if (check.code !== 0 || check.signal !== null || check.build !== plan.bBuild || events.length !== 2 ||
+      events[0].id !== 'full-check-start' || events[0].data.build !== plan.bBuild || events[1].id !== 'full-check-exit' ||
+      canonical(check) !== canonical({ ...events[1].data, build: plan.bBuild }) || !readFileSync(join(plan.out, 'full-check.log')).length)
+    throw Error('Original full-check receipt differs from logged check');
+}
 
 // Any process running Chrome's own executable, whoever started it; only its exit (never a quit from here) clears it.
 export function chromeRunning(run = spawnSync) {
@@ -426,6 +516,49 @@ async function child(command, args, cwd, log, extraEnv = {}) {
   } finally { rmSync(config, { recursive: true, force: true }); }
 }
 
+const loadSensitive = new Map([
+  ['400 actions on a 3,000-line tree retain less than 12 MiB of extra heap', 'tests/verified-results-lifetime.test.mjs'],
+]);
+
+function retryFiles(log) {
+  const text = readFileSync(log, 'utf8').replace(/\x1b\[[0-9;]*m/g, '');
+  // npm check stops at npm test. Accept only a complete Node summary with exclusively named failures.
+  if (!/^> test\s*$/m.test(text) || /^> (validate|test:mod)\s*$/m.test(text)) return [];
+  const names = [...new Set([...text.matchAll(/^(?:✖[ \t]+|not ok \d+ - )(.+?)(?: \([\d.]+m?s\))?[ \t]*$/gm)].map(m => m[1]).filter(name => name !== 'failing tests:'))];
+  const count = /^(?:ℹ fail|# fail) (\d+)\s*$/m.exec(text);
+  const cancelled = /^(?:ℹ cancelled|# cancelled) (\d+)\s*$/m.exec(text);
+  if (!names.length || !count || !cancelled || Number(cancelled[1]) !== 0 || Number(count[1]) !== names.length || names.some(name => !loadSensitive.has(name))) return [];
+  return [...new Set(names.map(name => loadSensitive.get(name)))];
+}
+
+export async function fullCheck(root, out, record, run = child) {
+  const log = join(out, 'full-check.log'), extraEnv = { SLEIGHT_ALLOW_RELEASE_TODO: '1' };
+  const initial = await run('npm', ['run', 'check'], root, log, extraEnv);
+  const result = { ...initial, initial, retries: [], remaining: [] };
+  if (initial.code !== 1 || initial.signal) return result;
+  const files = retryFiles(log);
+  if (!files.length) return result;
+  for (const file of files) {
+    let exit;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const retryLog = join(out, `full-check-retry-${attempt}.log`);
+      record('full-check-retry-start', { file, attempt, log: retryLog });
+      exit = await run('node', ['--test', file], root, retryLog, extraEnv);
+      const receipt = { file, attempt, ...exit, log: retryLog };
+      result.retries.push(receipt); record('full-check-retry-exit', receipt);
+      if (exit.code === 0 || exit.signal) break;
+    }
+    if (exit.code !== 0) return { ...result, ...exit };
+  }
+  // npm check's && chain did not reach these phases after npm test failed.
+  for (const phase of ['validate', 'test:mod']) {
+    const exit = await run('npm', ['run', phase], root, join(out, `full-check-${phase.replace(':', '-')}.log`), extraEnv);
+    result.remaining.push({ phase, ...exit }); record('full-check-remaining-exit', { phase, ...exit });
+    if (exit.code !== 0) return { ...result, ...exit };
+  }
+  return { ...result, code: 0, signal: null };
+}
+
 export function safeResult(result, runner, tasks, engine, model, build) {
   if (runner === 'browser') {
     const cleanup = JSON.parse(readFileSync(join(result, 'cleanup.json')));
@@ -455,6 +588,12 @@ export function roundCommand(round, root, stem) {
   return { command: round.runner === 'native' ? 'node' : '/bin/sh', args };
 }
 
+export function roundInvocation(round, plan, roots, stem) {
+  const cwd = roots[round.side], build = round.side === 'A' ? plan.aBuild : plan.bBuild;
+  if (runGit(cwd, 'rev-parse', 'HEAD').trim() !== build) throw Error(`${round.id}: round checkout is not the recorded build`);
+  return { ...roundCommand(round, cwd, stem), cwd, build };
+}
+
 export function sharedHarnessSource(text, path, helperRoot) {
   const imports = [];
   // Only module specifiers change. Command paths and the plugin server launched by A stay relative to A.
@@ -471,12 +610,15 @@ export function sharedHarnessSource(text, path, helperRoot) {
 async function execute(plan, onlyGroups, { resume = false } = {}) {
   if (plan.blockers.length) throw Error(plan.blockers.join('\n'));
   if (!/^[a-f0-9]{40}$/.test(plan.aBuild ?? '') || !/^[a-f0-9]{40}$/.test(plan.bBuild)) throw Error('Build pin missing');
-  if (git('rev-parse', 'HEAD').trim() !== plan.bBuild || git('status', '--porcelain', '--untracked-files=no').trim()) throw Error('Run from the clean, pinned B build');
+  const driverBuild = git('rev-parse', 'HEAD').trim();
+  if (git('status', '--porcelain', '--untracked-files=no').trim()) throw Error('Run from the clean, pinned B build or compatible driver');
+  if (resume) driverCompatibility(plan.bBuild, driverBuild);
+  else if (driverBuild !== plan.bBuild) throw Error('Run from the clean, pinned B build');
   if (harness(plan.bBuild).hash !== plan.harnessHash) throw Error('Current harness hash differs from the plan');
   // No inherited tuning switches: validate exactly the product defaults on both builds.
   const inherited = Object.keys(process.env).filter(k => k !== 'SLEIGHT_VALIDATION_DATA' && /^(SLEIGHT_|AS3_|BENCH_ARM_HOME$)/.test(k));
   if (inherited.length) throw Error(`Unset benchmark overrides first: ${inherited.join(', ')}`);
-  let selection = selectRun(plan, onlyGroups, { resume });
+  let selection = selectRun(plan, onlyGroups, { resume, driverBuild });
   if (!selection.completion) {
     mkdirSync(dirname(plan.out), { recursive: true, mode: 0o700 });
     mkdirSync(plan.out, { mode: 0o700 });
@@ -488,10 +630,11 @@ async function execute(plan, onlyGroups, { resume = false } = {}) {
   const log = join(plan.out, 'validate-140.log');
   const record = (id, result) => appendFileSync(log, `${new Date().toISOString()} ${id} ${JSON.stringify(result)}\n`);
   const stop = stopGuard();
-  let staging, aRoot, registered = false, unsafe = false;
+  let staging, aRoot, bRoot = ROOT, registered = false, bRegistered = false, unsafe = false;
   try {
-    if (selection.completion) selection = selectRun(plan, onlyGroups, { resume });
+    if (selection.completion) selection = selectRun(plan, onlyGroups, { resume, driverBuild });
     plan = selection.plan;
+    if (resume) driverCompatibility(plan.bBuild, driverBuild);
     const selectedIds = new Set(selection.rounds.map(r => r.id));
     if (!resume) record(selection.completion ? 'completion-start' : 'run-start', { groups: [...new Set(selection.rounds.map(r => r.group))] });
     for (const id of plan.deferredGroups ?? []) {
@@ -505,11 +648,16 @@ async function execute(plan, onlyGroups, { resume = false } = {}) {
       record('full-check-start', { build: plan.bBuild });
       // Validation runs before the release numbers exist, so the README validation token and the CHANGELOG date are still
       // placeholders; only the release check (after scoring) runs without this override.
-      const check = await child('npm', ['run', 'check'], ROOT, join(plan.out, 'full-check.log'), { SLEIGHT_ALLOW_RELEASE_TODO: '1' });
+      const check = await fullCheck(ROOT, plan.out, record);
       record('full-check-exit', check);
       writeFileSync(join(plan.out, 'full-check.receipt.json'), JSON.stringify({ ...check, build: plan.bBuild }), { flag: 'wx' });
       if (check.code !== 0) throw Error('Full check failed; stopped before live rounds');
       stop.check();
+    }
+    if (driverBuild !== plan.bBuild) {
+      bRoot = join(staging, 'B');
+      runGit(ROOT, 'worktree', 'add', '--detach', bRoot, plan.bBuild); bRegistered = true;
+      symlinkSync(join(ROOT, 'node_modules'), join(bRoot, 'node_modules'));
     }
     runGit(ROOT, 'worktree', 'add', '--detach', aRoot, plan.aBuild); registered = true;
     // The A plugin is unchanged. Both arms use B's identical tracked harness and fixtures, including the new CC tasks.
@@ -521,7 +669,7 @@ async function execute(plan, onlyGroups, { resume = false } = {}) {
       if (!meta.startsWith('100')) throw Error(`Harness contains a non-file: ${path}`);
       mkdirSync(dirname(target), { recursive: true });
       const original = execFileSync('/usr/bin/git', ['-C', ROOT, 'show', `${plan.bBuild}:${path}`], { maxBuffer: 32 * 1024 * 1024 });
-      const shared = /\.(?:mjs|js)$/.test(path) ? sharedHarnessSource(original.toString('utf8'), path, ROOT) : null;
+      const shared = /\.(?:mjs|js)$/.test(path) ? sharedHarnessSource(original.toString('utf8'), path, bRoot) : null;
       const bytes = shared?.source ?? original;
       if (shared?.imports.length) helperImports[path] = shared.imports;
       writeFileSync(target, bytes);
@@ -530,17 +678,18 @@ async function execute(plan, onlyGroups, { resume = false } = {}) {
     }
     symlinkSync(join(ROOT, 'node_modules'), join(aRoot, 'node_modules'));
     if (runGit(aRoot, 'diff', plan.aBuild, '--', 'plugins').trim()) throw Error('A plugin changed during harness staging');
-    const harnessEvidence = JSON.stringify({ hash: plan.harnessHash, aBuild: plan.aBuild, bBuild: plan.bBuild,
-      aPluginTree: runGit(aRoot, 'rev-parse', `${plan.aBuild}:plugins`).trim(), bPluginTree: git('rev-parse', `${plan.bBuild}:plugins`).trim(),
-      sharedHelperRoot: join(ROOT, 'plugins'), helperImports, stagedFiles,
-      note: 'A uses B harness modules and B helper imports, with A plugin command paths. Native results mark A dirty for the staged harness. Plugin trees and transformed file hashes are separate.' }, null, 2);
+    const stagedEvidence = buildHarnessEvidence(plan, ROOT, join(bRoot, 'plugins'));
+    if (canonical(stagedFiles) !== canonical(stagedEvidence.stagedFiles) || canonical(helperImports) !== canonical(stagedEvidence.helperImports))
+      throw Error('Staged task harness changed');
     const harnessFile = join(plan.out, 'harness.json');
     if (selection.completion) {
-      if (readFileSync(harnessFile, 'utf8') !== harnessEvidence) throw Error('Staged harness differs from the first run');
-    } else writeFileSync(harnessFile, harnessEvidence, { flag: 'wx' });
+      if (canonical(JSON.parse(readFileSync(harnessFile))) !== canonical(buildHarnessEvidence(plan))) throw Error('Staged harness differs from the first run');
+    } else writeFileSync(harnessFile, JSON.stringify(stagedEvidence, null, 2), { flag: 'wx' });
     verifyEngine(plan);
     if (!selection.completion) pinRun(plan);
     if (resume) archiveAborted(selection);
+    record('driver-staging', { driverBuild, productBuild: plan.bBuild, aRoot, bRoot, taskHarnessHash: driverCompatibility(plan.bBuild, driverBuild).taskHarnessHash,
+      sharedHelperRoot: stagedEvidence.sharedHelperRoot, stagedFiles });
     // Chrome rounds need Chrome quit, and a Chrome the owner left open is never quit for them (2026-10-20: the owner's
     // Chrome stopped the first round). They run last and wait for Chrome to be closed; every other round goes first.
     const chromeLast = [...plan.rounds.filter(r => r.browser !== 'chrome'), ...plan.rounds.filter(r => r.browser === 'chrome')];
@@ -550,14 +699,15 @@ async function execute(plan, onlyGroups, { resume = false } = {}) {
       await waitForRoundApps(round, record, { signal: stop.signal });
       await waitGate(EVIDENCE, stop.signal);
       verifyEngine(plan);
-      const root = round.side === 'A' ? aRoot : ROOT, stem = join(plan.out, round.id), path = `${stem}.log`;
-      if (git('rev-parse', 'HEAD').trim() !== plan.bBuild || git('status', '--porcelain', '--untracked-files=no').trim() ||
-          runGit(aRoot, 'diff', plan.aBuild, '--', 'plugins').trim()) throw Error('Build changed during the window');
+      const stem = join(plan.out, round.id), path = `${stem}.log`;
+      verifyProductWindow(plan.bBuild);
+      verifyProductWindow(plan.bBuild, bRoot);
+      if (runGit(aRoot, 'diff', plan.aBuild, '--', 'plugins').trim()) throw Error('Build changed during the window');
       if (Object.entries(stagedFiles).some(([path, hash]) => sha(readFileSync(join(aRoot, path))) !== hash)) throw Error('Staged A harness changed during the window');
-      const { command, args } = roundCommand(round, root, stem);
-      record(`${round.id}-start`, { build: round.side === 'A' ? plan.aBuild : plan.bBuild, command: args });
+      const { command, args, cwd, build } = roundInvocation(round, plan, { A: aRoot, B: bRoot }, stem);
+      record(`${round.id}-start`, { build, driverBuild, command: args });
       unsafe = true;
-      const exit = await child(command, args, root, path);
+      const exit = await child(command, args, cwd, path);
       record(`${round.id}-exit`, exit);
       let result, safe = false;
       try {
@@ -586,6 +736,7 @@ async function execute(plan, onlyGroups, { resume = false } = {}) {
     try {
       if (!unsafe) {
         if (registered) runGit(ROOT, 'worktree', 'remove', '--force', aRoot);
+        if (bRegistered) runGit(ROOT, 'worktree', 'remove', '--force', bRoot);
         if (staging) rmSync(staging, { recursive: true, force: true });
       }
     } finally {
