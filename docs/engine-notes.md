@@ -32,7 +32,7 @@ engine does, so recheck them after an engine update.
 ## Checking an engine update
 
 ChatGPT updates several times a week, so benchmarks rerun periodically, and each published result states the engine
-version it ran on. What runs after every update is a compatibility check in two halves. Each writes the UTC date and the
+version it ran on. A compatibility check runs after every update, in two halves. Each writes the UTC date and the
 ChatGPT and engine versions to [the compatibility record](results/engine-compat.md).
 
 - `bench/compat-static.mjs --feed` reads ChatGPT's update feed and, when the version changes, downloads the release,

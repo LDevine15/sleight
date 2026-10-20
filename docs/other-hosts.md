@@ -80,8 +80,8 @@ the 1.4.0 release on the public repo.
 If sleight is installed in Claude Code, Cursor may run it already. Cursor 3.25.6 loads Claude Code's
 plugins while "Include Third-Party Plugins, Skills, and Other Configs" is on in its settings, which is
 the default. On our Mac, Cursor's logs show sleight's server connected in 10 sessions from 2026-10-08
-to 2026-10-14. cursor-agent's plugin loader keeps one plugin per marketplace and name, so there a
-sleight plugin from the marketplace above replaces that copy. We haven't checked the Cursor app's own
+to 2026-10-14. cursor-agent's plugin loader keeps one plugin per marketplace and name, so installing
+sleight from the marketplace above replaces that copy in cursor-agent. We haven't checked the Cursor app's own
 loader. `sleight-mcp --doctor` has a Cursor section that lists each route it
 finds, and gives the command when there's none.
 

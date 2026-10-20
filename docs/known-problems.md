@@ -92,8 +92,8 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 - `sleight-mcp stats` (1.4.0) splits a call's time evenly over its actions, so one slow action in a batch raises
   the others' times. Approval prompts come off a call's time, but turbo's own confirmation cards don't. On the
   engine's browser path sleight counts the input calls written in the code. A loop counts once and an untaken
-  branch counts. That path stays out of the menu row. Reads saved decides which reads Claude asked for from where
-  the code's last read and last action sit. Turbo counts one read saved per diff it returns. Unit-tested only: no
+  branch counts. That path stays out of the menu row. Reads saved uses the positions of the code's last read and last action
+  to decide which reads Claude asked for. Turbo counts one read saved per diff it returns. Unit-tested only: no
   live run has checked these numbers.
 - `claude -p` can't answer approval prompts. List apps in the user's [preapproval file](settings.md#preapproved-apps) before starting.
 - `sleight-mcp setup` hasn't had a full live run: macOS permissions always need the user's click.
@@ -442,7 +442,7 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
 - If the engine printed a row's text with a raw line break, the rest of that text would parse as rows with numbers the page
   chose. We haven't checked whether it escapes them.
 - Tabs driven through the ChatGPT browser extension (`cua.getBrowser`, `createBrowserTab`), Codex's main browser path, aren't
-  checked: the guard doesn't wrap their DOM actions. This is open work, not covered.
+  checked: the guard doesn't wrap their DOM actions. Covering them remains open work.
 - A stopped payment opens sleight's payment card (the consent host turbo uses). Allow once doesn't send the action. Claude sends it
   again, and the allowance covers the one action that matches it (same site, largest figure and control) until a new user message,
   the turn's end or two minutes. A page with no URL row has no site, and no allowance matches it. The relay builds the card's helper
@@ -468,7 +468,7 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   mention a payment and that shows a figure or card words is checked). setValue, typing without a line break and drags aren't gated,
   so a page that submits on an input event isn't caught. A page with no money figure above zero and no card field (a free booking or
   subscription) isn't a payment page.
-- False stops that remain. On a priced page, Enter in a search or promo field and a multi-line text in a text area stop. Enter in
+- On a priced page, Enter in a search or promo field and multi-line text in a text area cause false stops. Enter in
   a field beside card fields counts as the payment, and a later Pay then asks again. A field named "Gift card" or "Business card"
   makes a page a card page. Apply is checked when it is the only button beside the card fields, as on the race checkout. A point
   click anywhere in a window with a payment page stops too.
@@ -490,15 +490,15 @@ in 972 s ([results](benchmarks/2026-10-12-fowlbrowser-h2h.md)). Still open from 
   in another currency at any size, an image or canvas of 24x8 or more that could show a figure, a number spelled out in words,
   digits with a letter glued on ("$5OO.00"), and a bare number right after a pay word ("Total 500"). Figures in chosen
   controls (a checked box or radio, an aria-checked, aria-pressed or aria-selected element, a selected option) ask when
-  together, the amount itself aside, they exceed the amount, because the user pays them on top of the pay figure. The label of an unchecked radio or ARIA option is skipped unless it
+  their sum, excluding the amount itself, exceeds the amount, because the user pays them on top of the pay figure. The label of an unchecked radio or ARIA option is skipped unless it
   names a total, an amount due or a payment.
 - Figures equal to or below the amount never ask, so the read cannot catch a page that hides its total or states a smaller total
   than it charges. Examples that allow now and asked in round 12: "Payment $5.00" beside "Total due $18.00", three fee-type parts
   of $15.00 beside an $18.00 total, "Price: $9.00" with "Qty: 2". 13 earlier fixtures that expected an ask changed to allow for
   this reason. A page can also split a charge into figures that are each at most the amount.
 - Honest pages measured 2026-10-15: 50/98 allow (83/98 in round 12), 52/98 with the two hold pages counted as correct asks. Of the
-  36 realistic pages 19 allow, of the round 8 reviewer's 20 pages 9, of the 12 pages 7, of the 10 industry pages 6, of the round
-  11 pages 5 and of the round 12 pages 4. Every honest page with a figure above the amount asks: a subtotal beside a discount line, a
+  36 realistic pages, 19 allow; of the round 8 reviewer's 20 pages, 9; of the 12 pages, 7; of the 10 industry pages, 6; of the round
+  11 pages, 5; and of the round 12 pages, 4. Every honest page with a figure above the amount asks: a subtotal beside a discount line, a
   was price, an invoice total beside payments received, a coverage limit, a list price, a euro estimate, a free-delivery banner
   with a threshold above the amount, a recommended product. 436 fixture and inline cases that allowed on a label now ask.
 - The same read doesn't see a total drawn as a CSS background image, held in a closed shadow root with no text,
@@ -849,8 +849,8 @@ compaction, so it cannot isolate wording alone. That A/B has not run live.
   manifest's empty `hooks` object without a warning, or whether it hides `turn_ended` from the model.
   A local plugin copy and the Claude Code import would both start a server named `plugin-sleight-computer`,
   and we haven't seen what Cursor does then.
-- That a Cursor plugin replaces Cursor's import of the Claude Code plugin with the same marketplace and
-  name comes from cursor-agent's plugin loader. We haven't read or tested the Cursor app's own loader.
+- cursor-agent's plugin loader shows that a Cursor plugin replaces the imported Claude Code plugin with the same marketplace and
+  name. We haven't read or tested the Cursor app's own loader.
 - A name lookup can still launch an app that exited between the native check and `getApp`.
 - In Codex, a card without fields can be accepted without you. Codex's full-access mode and its
   auto-review answer such cards themselves (openai/codex source at 89461ea6). sleight's app card always
