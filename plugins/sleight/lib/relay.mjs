@@ -1698,7 +1698,10 @@ export function createRelay({
   let selectedWindow; // Explicit select_window only, including its opened-handle recovery.
   let openedWindow; // Advisory document hint, used only for drag defaults.
   let selectionVerified = false;
-  function clearSelection() { selectedWindow = undefined; selectionVerified = false; }
+  function clearSelection() {
+    selectedWindow = undefined; selectionVerified = false;
+    if (leaseWindow) delete leaseWindow.selectedParent;
+  }
   const sameHeader = (a, b) => a && b && ['title', 'app', 'url'].every(key => a[key] === b[key]);
   // Retain a verified child's parent for recovery, never for ordinary input confirmation.
   const sameWindow = (a, b) => sameHeader(a, b) || a && b && a.title === b.title && a.app === b.app &&
@@ -1791,6 +1794,9 @@ export function createRelay({
     }
     const request = { app: target.appId, url: target.url };
     const refuse = () => leaseStop(msg, promptNotice(`handle ${handles[0]} belongs to ${JSON.stringify(target.url)}; window unconfirmed. Call select_window with ${JSON.stringify(request)}.`, prompt));
+    if (selectedWindow.appId !== target.appId || !sameHeader(selectedWindow, target)) {
+      refuse(); return true;
+    }
     if (!inputLease || !windowIdentity || !localTools?.call || !localNames.has('select_window') || running.size || handles.some(handle => bindings.get(handle) !== target)) {
       refuse(); return true;
     }
@@ -2791,20 +2797,25 @@ export function createRelay({
       let callArgs = name === 'select_window' && resolved
         ? { ...args, expectedAppId: resolved.appId } : args;
       if (name === 'drag') {
-        if (args.windowId === undefined && args.from !== 'the current text selection' &&
-            !selectedWindow && openedWindow?.appId === resolved?.appId && windowIdentity) {
+        if (args.windowId === undefined && args.toWindowId === undefined && args.from !== 'the current text selection' &&
+            !selectedWindow && openedWindow?.appId === resolved?.appId && windowIdentity &&
+            (!leaseWindow || sameWindow(leaseWindow, openedWindow)) &&
+            ([args.from, args.to].every(Array.isArray) || leaseWindow?.windowNumber !== undefined)) {
           // Only a fresh native match turns the advisory file URL into a drag source number.
           try {
-            const identity = verifyWindowIdentity(openedWindow, await windowIdentity({ ...openedWindow, allowUnfocused: true }));
+            const hint = openedWindow;
+            const identity = verifyWindowIdentity(hint, await windowIdentity({ ...hint, allowUnfocused: true }));
             current();
-            if (identity.pid === resolved.pid && Number.isSafeInteger(identity.windowNumber) && identity.windowNumber > 0) {
+            if (openedWindow === hint && (!leaseWindow || sameWindow(leaseWindow, hint)) &&
+                identity.pid === resolved.pid && Number.isSafeInteger(identity.windowNumber) && identity.windowNumber > 0 &&
+                ([args.from, args.to].every(Array.isArray) || leaseWindow?.windowNumber === identity.windowNumber)) {
               callArgs = { ...callArgs, windowId: identity.windowNumber };
               args = callArgs;
             }
           } catch { current(); trace('drag-opened-window-unconfirmed', { id: msg.id }); }
         }
-        if (args.windowId === undefined && args.from === 'the current text selection' && resolved?.appId && localTools.selectionWindow && windowIdentity &&
-            [...handleBundles.values()].some(window => window?.appId === resolved.appId)) {
+        if (args.windowId === undefined && args.toWindowId === undefined && args.from === 'the current text selection' && resolved?.appId && localTools.selectionWindow && windowIdentity &&
+            [...openedWindows.values()].some(window => window?.appId === resolved.appId)) {
           // Read selection ranges, never document text. An incomplete census keeps drag's ordinary ambiguity refusal.
           try {
             const selected = await localTools.selectionWindow(resolved);
@@ -5042,6 +5053,8 @@ export function createRelay({
       const previous = leaseWindow;
       if (guardStop && window && selectedWindow && window.app !== selectedWindow.app) clearSelection();
       leaseWindow = window ? { ...window, ...(known ? { appId: known } : {}), ...(shownId ? { rootId: shownId } : {}) } : undefined;
+      if ((call.read || call.acquisition) && leaseWindow?.appId === openedWindow?.appId &&
+          !sameWindow(leaseWindow, openedWindow)) openedWindow = undefined;
       if (ownWindow(leaseWindow)) withheld.set(msg.id, OWN_HOST_LINE);
       else if (leaseWindow) {
         // The site this read shows. A read without web-area lines (a diff) keeps what the same window showed before.
@@ -5156,7 +5169,7 @@ export function createRelay({
       if (selectedWindow && call.acquisition) {
         if (known && known !== selectedWindow.appId) {
           // A deliberate acquisition of another app ends this selection.
-          selectedWindow = undefined; selectionVerified = false;
+          clearSelection();
         } else {
           selectionVerified = !msg.result?.isError && sameHeader(window, selectedWindow) && known === selectedWindow.appId;
           if (!selectionVerified && !window?.selectedParent) windowNote = `Sleight: selected window not observed. ${selectionRecovery()}`;

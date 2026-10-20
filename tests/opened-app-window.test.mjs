@@ -17,7 +17,7 @@ function fixture(t, options = {}) {
   const window = name => ({ appId, app, title: `${name}.txt`, url: `file://${root}/${name}.txt`, ...options.document });
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
-  const sent = [], received = [], selections = [], leases = [], drags = [], invalidRequests = [], actions = [];
+  const sent = [], received = [], selections = [], leases = [], drags = [], invalidRequests = [], actions = [], censuses = [];
   let current, broken = false, epoch = 1, focusOverride;
   const observations = [], released = [], active = new Set();
   const windows = ['Source', 'Target'].map((name, i) => ({ AXTitle: `${name}.txt`, AXDocument: `file://${root}/${name}.txt`, AXWindowNumber: 11 + i }));
@@ -53,6 +53,7 @@ function fixture(t, options = {}) {
     confirmPayments: options.confirmPayments,
     ask: options.ask ?? (async () => 'accept'),
     inputLease: options.inputLease ?? { acquire: (target, scope = 'window') => {
+      options.beforeAcquire?.(target, scope);
       if (options.busy && scope === 'app' && target.title === 'Source.txt' && current?.title === 'Target.txt') throw Error('Input lease: held by another session, retry after 20 seconds');
       if (options.busyWindow && scope === 'window') throw Error('Input lease: window action refused');
       leases.push(target); const key = `${scope}:${target.title}`; active.add(key); return key;
@@ -64,8 +65,8 @@ function fixture(t, options = {}) {
       return { ...observed, ...options.nativeMutation };
     },
     localTools: { tools: [{ name: 'open_file' }, { name: 'select_window' }, { name: 'drag' }],
-      target: async () => ({ appId, app, pid: 7 }),
-      selectionWindow: async () => options.selection ?? { ok: true, target: { ...window('Source'), windowNumber: 11 }, pid: 7 },
+      target: async () => options.resolved ?? { appId, app, pid: 7 },
+      selectionWindow: async target => { censuses.push(target); return options.selection ?? { ok: true, target: { ...window('Source'), windowNumber: 11 }, pid: 7 }; },
       call: async (name, args, approve) => {
         if (name === 'drag') { drags.push(args); return { content: [] }; }
         if (name === 'select_window') {
@@ -73,7 +74,7 @@ function fixture(t, options = {}) {
           if (options.decline || !await approve(['select_window', appId], 'Select?')) return { isError: true, content: [] };
           current = options.wrongRead ? window('Target') : window('Source');
           if (options.unfocusedSelection) focusOverride = 1;
-          return { content: [{ type: 'text', text: JSON.stringify({ ok: true, target: window('Source'), identity: { pid: 7, windowNumber: options.noNumber ? null : options.wrongNumber ? 12 : 11 } }) }] };
+          return { content: [{ type: 'text', text: JSON.stringify({ ok: true, target: options.selectionTarget ?? window('Source'), identity: { pid: 7, windowNumber: options.noNumber ? null : options.wrongNumber ? 12 : 11 } }) }] };
         }
         current = window(args.path.includes('Source') ? 'Source' : 'Target');
         return { content: [], _meta: { 'sleight/openedApp': appId,
@@ -121,7 +122,7 @@ function fixture(t, options = {}) {
     const result = await call(name, 'open_file', { app, path: `${root}/${name}.txt` });
     return /Window handle: `([^`]+)`/.exec(result.content.map(c => c.text ?? '').join('\n'))[1];
   };
-  return { call, open, sent, selections, leases, drags, relay, received, invalidRequests, actions, send: (id, name, args) => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n'), released, active, observations, resetIdentity, focusDuplicate: () => { Object.assign(windows[1], { AXTitle: 'Source.txt', AXDocument: window('Source').url }); focusOverride = 1; }, breakIdentity: () => { broken = true; } };
+  return { call, open, sent, selections, leases, drags, censuses, relay, received, invalidRequests, actions, setCurrent: name => { current = window(name); }, send: (id, name, args) => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n'), released, active, observations, resetIdentity, focusDuplicate: () => { Object.assign(windows[1], { AXTitle: 'Source.txt', AXDocument: window('Source').url }); focusOverride = 1; }, breakIdentity: () => { broken = true; } };
 }
 
 // Refused call shapes from wordmemo-study.md, B 09-50 runs 1 and 2.
@@ -576,16 +577,16 @@ for (const reset of [false, true]) test(`explicit selection: engine exit during 
   assert.ok(!(await h.call('select', 'select_window', { app: appId, url: window('Source').url })).isError);
 });
 
-test('WD6 opened handle retains its Source URL as the drag default after Target opens', async t => {
+test('WD6 an opened handle acting on Target cannot supply Source as the drag default', async t => {
   const h = fixture(t), source = await h.open('Source');
   await h.open('Target');
   const action = await h.call('source', 'js', { code: `await ${source}.selectText(2, "move-62f9a451");` });
   assert.ok(!action.isError, JSON.stringify(action));
   assert.equal(h.selections.length, 0);
   assert.ok(!(await h.call('drag', 'drag', { app, from: [10, 20], to: [20, 98] })).isError);
-  assert.equal(h.drags[0].windowId, 11);
+  assert.equal(h.drags[0].windowId, undefined);
   assert.equal(h.drags[0].toWindowId, undefined);
-  assert.ok(h.observations.some(target => target.url === window('Source').url && target.allowUnfocused));
+  assert.equal(h.observations.length, 0);
 });
 
 for (const options of [{ decline: true }, { wrongRead: true }, { wrongNumber: true }, { unfocusedSelection: true },
@@ -601,14 +602,14 @@ for (const options of [{ decline: true }, { wrongRead: true }, { wrongNumber: tr
   });
 }
 
-for (const aliasOnly of [false, true]) test(`WD6 opened alias supplies a later drag default (${aliasOnly})`, async t => {
+for (const aliasOnly of [false, true]) test(`WD6 opened alias cannot override the later Target lease (${aliasOnly})`, async t => {
   const h = fixture(t), source = await h.open('Source');
   await h.call('alias', 'js', { code: `let doc = ${source};${aliasOnly ? '' : ' await doc.selectText(1, "sample");'}` });
   await h.open('Target');
   const result = await h.call('act', 'js', { code: 'await doc.typeText("text");' });
   assert.ok(!result.isError, JSON.stringify(result));
   await h.call('drag', 'drag', { app, from: [10, 20], to: [30, 40] });
-  assert.equal(h.drags[0].windowId, 11);
+  assert.equal(h.drags[0].windowId, undefined);
   assert.equal(h.selections.length, 0);
 });
 
@@ -653,6 +654,123 @@ test('OH4 reset clears the advisory opened drag hint', async t => {
   await h.call('drag', 'drag', { app, from: [10, 20], to: [30, 40] });
   assert.equal(h.drags[0].windowId, undefined);
   assert.equal(h.observations.length, 0);
+});
+
+for (const read of ['acquisition', 'opened handle']) test(`OH5 a later ${read} of Target clears the opened Source hint`, async t => {
+  const h = fixture(t), source = await h.open('Source');
+  h.setCurrent('Target');
+  const code = read === 'acquisition' ? 'let fresh = await cua.getApp({ windowId: 12 });' : `await ${source}.getAXState();`;
+  assert.ok(!(await h.call('target-read', 'js', { code })).isError);
+  h.setCurrent('Source');
+  assert.ok(!(await h.call('source-read', 'js', { code: 'let fresh = await cua.getApp("TextEdit");' })).isError);
+  const before = h.observations.length;
+  assert.ok(!(await h.call('drag', 'drag', { app, from: [10, 20], to: [30, 40] })).isError);
+  assert.equal(h.drags[0].windowId, undefined, 'returning to Source must not restore the cleared hint');
+  assert.equal(h.observations.length, before);
+});
+
+test('OH5 a read that moves the lease during native hint lookup prevents injection', async t => {
+  const options = {};
+  const h = fixture(t, options);
+  await h.open('Source');
+  let moved = false;
+  options.beforeIdentity = async target => {
+    if (!target.allowUnfocused || moved) return;
+    moved = true; h.setCurrent('Target');
+    assert.ok(!(await h.call('target-read', 'js', { code: 'let fresh = await cua.getApp({ windowId: 12 });' })).isError);
+  };
+  const result = await h.call('drag', 'drag', { app, from: [10, 20], to: [30, 40] });
+  assert.ok(!result.isError, JSON.stringify(result));
+  assert.equal(moved, true);
+  assert.equal(h.drags[0].windowId, undefined);
+});
+
+for (const from of [[10, 20], 'the current text selection']) test(`OH5 an explicit destination never gains an inferred source: ${JSON.stringify(from)}`, async t => {
+  const h = fixture(t);
+  await h.open('Source');
+  const before = h.observations.length;
+  await h.call('drag', 'drag', { app, toWindowId: 12, from, to: [30, 40] });
+  assert.equal(h.drags[0]?.windowId, undefined);
+  assert.equal(h.drags[0]?.toWindowId, 12);
+  assert.equal(h.observations.length, before);
+  assert.equal(h.censuses.length, 0);
+});
+
+for (const numbered of [false, true]) for (const [from, to] of [
+  [1, 2], [{ line: 'button Source, ID: source' }, 2], [1, [30, 40]],
+  [[10, 20], 2], [[10, 20], { line: 'button Target, ID: target' }],
+]) {
+  test(`OH5 opened drag preserves observed element identities (${numbered}, ${JSON.stringify([from, to])})`, async t => {
+    const h = fixture(t, { tree: current => `Window: "${current.title}", App: ${app}.\nURL: ${current.url}\n0 standard window ${current.title}\n\t1 button Source, ID: source\n\t2 button Target, ID: target` });
+    await h.open('Source');
+    if (numbered) await h.call('numbered', 'js', { code: 'let app = await cua.getApp({ windowId: 11 });' });
+    const before = h.observations.length;
+    const result = await h.call('drag', 'drag', { app, from, to });
+    assert.ok(!result.isError, JSON.stringify(result));
+    assert.deepEqual(h.drags[0].from, Array.isArray(from) ? from : 1);
+    assert.deepEqual(h.drags[0].to, Array.isArray(to) ? to : 2);
+    // A numbered acquisition alone does not attach a certified number to the lease.
+    assert.equal(h.drags[0].windowId, undefined);
+    assert.equal(h.observations.length, before, 'unbound elements need no native hint lookup');
+    if (!Array.isArray(from)) assert.equal(h.drags[0].elementLines[1], 'button Source, ID: source');
+    if (!Array.isArray(to)) assert.equal(h.drags[0].elementLines[2], 'button Target, ID: target');
+  });
+}
+
+for (const otherApp of [false, true]) test(`OH5 explicit selection refuses a different opened target (${otherApp})`, async t => {
+  const options = {};
+  const h = fixture(t, options), target = await h.open('Target');
+  await h.open('Source');
+  if (otherApp) {
+    options.noNumber = true;
+    options.resolved = { appId: 'org.test.Other', app: 'Other', pid: 8 };
+    options.selectionTarget = { ...options.resolved, title: 'Other', url: 'file:///tmp/Other.txt' };
+  }
+  assert.ok(!(await h.call('explicit', 'select_window', { app: options.resolved?.appId ?? appId, url: window('Source').url })).isError);
+  const before = h.observations.length, selections = h.selections.length;
+  const result = await h.call('conflict', 'js', { code: `await ${target}.typeText("never");` });
+  assert.equal(result.isError, true);
+  assert.match(JSON.stringify(result), /Call select_window/);
+  assert.equal(h.selections.length, selections, 'no internal reselect');
+  assert.equal(h.observations.length, before, 'refuse before native admission');
+  assert.equal(h.sent.some(msg => msg.id === 'conflict'), false);
+});
+
+test('OH5 clearSelection removes selectedParent even when the next selection fails', async t => {
+  let child = false, held;
+  const options = { tree: current => child ? childTree({ ...current, url: undefined }) : undefined,
+    beforeAcquire: (target, scope) => { if (scope === 'window') held = target; } };
+  const h = fixture(t, options);
+  await h.open('Source');
+  await selectSource(h);
+  child = true;
+  assert.ok(!(await h.call('child', 'js', { code: 'let app = await cua.getApp("TextEdit");' })).isError);
+  options.busyWindow = true;
+  assert.equal((await h.call('blocked', 'js', { code: 'await app.pressKey("Escape");' })).isError, true);
+  assert.equal(held.selectedParent.url, window('Source').url);
+  options.decline = true;
+  assert.equal((await h.call('failed-select', 'select_window', { app, url: window('Target').url })).isError, true);
+  assert.equal(held.selectedParent, undefined);
+});
+
+test('OH5 an ordinary acquired handle cannot trigger the text-selection census', async t => {
+  const h = fixture(t);
+  h.setCurrent('Source');
+  assert.ok(!(await h.call('acquire', 'js', { code: 'let app = await cua.getApp("TextEdit");' })).isError);
+  await h.call('drag', 'drag', { app, from: 'the current text selection', to: [30, 40] });
+  assert.equal(h.censuses.length, 0);
+  assert.equal(h.drags[0].windowId, undefined);
+});
+
+test('OH5 textedit-window-drag keeps open_file then coordinate drag in that document', async t => {
+  const h = fixture(t);
+  await h.open('Source');
+  const result = await h.call('drag', 'drag', { app, from: [10, 20], to: [30, 40] });
+  assert.ok(!result.isError, JSON.stringify(result));
+  assert.equal(h.drags[0].windowId, 11);
+  assert.equal(h.drags[0].toWindowId, undefined);
+  assert.equal(h.selections.length, 0);
+  assert.ok(h.observations.some(target => target.url === window('Source').url && target.allowUnfocused));
 });
 
 for (const selection of [{ ok: false }, { ok: true, target: window('Source'), pid: 99 }]) test(`unproven selection retains drag ambiguity: ${JSON.stringify(selection)}`, async t => {
