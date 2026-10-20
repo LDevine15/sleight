@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { constants, openSync, closeSync, readdirSync, statSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { constants, openSync, closeSync, fstatSync, readdirSync, statSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { tabFocusRefusal } from './menu-continuation.mjs';
@@ -77,8 +77,11 @@ export function createTabProbe({ directory, observe, intervalMs = 10, timeoutMs 
     let requested = false;
     if (call.samples < call.requests.length) try {
       // ENXIO means no reader yet. NONBLOCK keeps both processes cancellable.
-      const fd = openSync(call.requests[call.samples], constants.O_WRONLY | constants.O_NONBLOCK);
-      closeSync(fd); requested = true;
+      const fd = openSync(call.requests[call.samples], constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+      try {
+        if (!fstatSync(fd).isFIFO()) throw Object.assign(Error('tab request is not a FIFO'), { code: 'EINVAL', syscall: 'fstat' });
+        requested = true;
+      } finally { closeSync(fd); }
     } catch (error) {
       if (error.code !== 'ENXIO') {
         call.failed = true;
@@ -114,11 +117,12 @@ export function createTabProbe({ directory, observe, intervalMs = 10, timeoutMs 
       const requests = Array.from({ length: 8 }, (_, i) => stem + '.req-' + i);
       const call = { id, path: stem + '.obs', requests, target, mode, samples: 0, until: now() + 10000 };
       calls.set(id, call);
+      const started = performance.now();
       try { execFileSync('/usr/bin/mkfifo', ['-m', '600', ...requests], { stdio: 'pipe', timeout: 1000 }); }
       catch (error) {
         call.failed = true;
         return { target, mode, channel: 'read-fifo', failure: failure('request-create', error) };
-      }
+      } finally { trace('tab-probe-create', { id, channel: 'read-fifo', ms: performance.now() - started, ok: !call.failed }); }
       void poll(call);
       return { path: call.path, request: stem + '.req', target, since, deadlineMs, freshMs, mode, channel: 'read-fifo' };
     },

@@ -462,12 +462,20 @@ The checkout guard switches are on by default. Each `0` setting restores its ear
   targets keep their stops on this path, as do sheets, duplicate parents and new settable fields.
 - `SLEIGHT_CK3=0` keeps the earlier reads around Cmd+T and inside tab continuations. With CK3 on, an awaited Cmd+T,
   literal HTTP(S) URL and Return chain can use native tab-strip certificates. Each certificate checks the retained window
-  and process, tab membership, selected tab, editable address-field focus and absence of chrome transients. Unknown
-  address identifiers, partial metadata, a changed field or a failed probe take the full engine read. The final read and
-  page-landing reads remain. Careful mode, document scope and change review keep their earlier paths.
+  and process, tab membership, selected tab, editable address-field focus and absence of chrome transients. The address
+  field must have a recognized `AXIdentifier`, or `AXDOMIdentifier` when `AXIdentifier` is empty, and sit in a browser
+  toolbar outside page content. Firefox address fields and Safari tab strips use this same proof. Unknown identifiers,
+  partial metadata, a changed field or a failed probe take the full engine read. The final read and page-landing reads
+  remain. Careful mode, document scope and change review keep their earlier paths.
 
-These changes have offline tests only. CK3's native browser coverage and post-input timing need live A/B qualification
-and security review. CK1 read elimination needs an engine-owned element mapping.
+CK3 requests each native sample by opening a relay-owned FIFO for reading. The engine doesn't write files or use sockets
+for this channel. Each call has eight private, single-use FIFOs; both ends reject symlinks and check that the
+opened descriptor is a FIFO. The relay publishes observations and removes the channel at call end. A missing or failed
+sample keeps the full-read fallback. Traces record FIFO creation time and failed operations with their errno codes;
+an observation file that has not arrived is ordinary polling, so a plain timeout has no failure step.
+
+The supplied live Firefox smoke passed. Broader native browser coverage and post-input timing still need live A/B
+qualification. CK1 read elimination needs an engine-owned element mapping.
 
 `SLEIGHT_POPOVER_CONTINUATION=0` (A/B baseline) restores the earlier behavior. When the call closes a dialog, sheet, palette,
 gallery or floating window, the rest of the call still goes to the window under it. A popover stops it, and an untitled

@@ -566,6 +566,7 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
   // CK2b shares payment exclusions and adds request-driven certificates to the shared installation.
   // CK2c replaces sandboxed request writes with read-only FIFOs and adds failure diagnostics.
   // CK2d names baseline/current chrome checks in the shared installation's diagnostics.
+  // X15 merges hand binding observations and hardens FIFO descriptors and timeout diagnostics.
   // The warm-call pin is unchanged: default-on CK switches occupy no per-call bytes.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
@@ -573,7 +574,7 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: '1538c85fa72bb469', guardedLean: '061732aa499db23d', reuse: 'b824edb3aa6dc2c4', read: 'a6e1d576c1d80354', repl: 'a6e1d576c1d80354' });
+  }, { guarded: 'f0c9b0641c5a826b', guardedLean: 'b41830078533b8be', reuse: 'b824edb3aa6dc2c4', read: '5cd3feb33f08674f', repl: '5cd3feb33f08674f' });
 });
 
 test('with both switches off the guard carries none of the outcome code', () => {

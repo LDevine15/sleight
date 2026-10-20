@@ -33,6 +33,66 @@ test('CK3 admits only a literal awaited new-tab URL and Return chain', () => {
 const requestPaths = info => Array.from({ length: 8 }, (_, i) => info.request + '-' + i);
 const requestSample = (info, index = 0) => openSync(requestPaths(info)[index], constants.O_RDONLY | constants.O_NONBLOCK);
 
+test('CK3 measures FIFO creation on the relay event loop', t => {
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-create-time-'))));
+  const probe = createTabProbe({ directory, observe: async () => identity });
+  t.after(() => probe.dispose());
+  const elapsed = [];
+  for (let id = 0; id < 25; id++) {
+    const start = performance.now();
+    probe.begin(id, target);
+    elapsed.push(performance.now() - start);
+    probe.end(id);
+  }
+  elapsed.sort((a, b) => a - b);
+  t.diagnostic(JSON.stringify({ beginMs: { min: elapsed[0], median: elapsed[12], p95: elapsed[23], max: elapsed[24] } }));
+});
+
+test('CK3 a plain observation timeout leaves the failure step and errno empty', async t => {
+  const f = await fixture(t, { sandboxFS: { constants, promises: { ...engineFS.promises,
+    readFile: async () => { throw Object.assign(Error('not published yet'), { code: 'ENOENT', syscall: 'open' }); } } } });
+  await f.run();
+  const { tabProbe: decision } = JSON.parse(f.output[0].slice(4));
+  assert.equal(decision.reason, 'probe-timeout');
+  assert.equal(decision.failureStep, null);
+  assert.equal(decision.errno, null);
+  assert.deepEqual(f.calls, ['read', 'typeText', 'read', 'pressKey', 'read']);
+});
+
+for (const replacement of ['file', 'symlink']) {
+  test(`CK3 the guard refuses a request replaced by a ${replacement}`, async t => {
+    const f = await fixture(t, { setupProbe: info => {
+      const path = requestPaths(info)[0];
+      engineFS.unlinkSync(path);
+      const file = path + '.file';
+      if (replacement === 'symlink') { writeFileSync(file, ''); engineFS.symlinkSync(file, path); }
+      else writeFileSync(path, '');
+    } });
+    await f.run();
+    const { tabProbe: decision } = JSON.parse(f.output[0].slice(4));
+    assert.equal(decision.reason, 'probe-failed');
+    assert.equal(decision.failureStep, replacement === 'file' ? 'request-stat' : 'request-open');
+    assert.deepEqual(f.calls, ['read', 'typeText', 'read', 'pressKey', 'read']);
+  });
+
+  test(`CK3 the relay refuses a request replaced by a ${replacement}`, async t => {
+    const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-swap-'))));
+    const traces = [];
+    let walks = 0;
+    const probe = createTabProbe({ directory, intervalMs: 2, observe: async () => { walks++; return identity; },
+      trace: (direction, record) => { if (direction === 'tab-probe-channel') traces.push({ direction, ...record }); } });
+    t.after(() => probe.dispose());
+    const info = probe.begin(1, target), path = requestPaths(info)[0];
+    engineFS.unlinkSync(path);
+    if (replacement === 'symlink') { writeFileSync(path + '.file', ''); engineFS.symlinkSync(path + '.file', path); }
+    else writeFileSync(path, '');
+    for (let i = 0; i < 100 && !traces.length; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(walks, 0);
+    assert.equal(traces[0]?.failureStep, 'request-accept');
+    assert.equal(traces[0]?.errno, replacement === 'file' ? 'EINVAL' : 'ELOOP');
+  });
+}
+
 async function fixture(t, { observe = async () => identity, current = () => tree, onType = () => {}, onOutput = () => {}, guardDate = Date,
   sandboxFS = engineFS, setupProbe = () => {} } = {}) {
   const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-'))));
@@ -68,7 +128,7 @@ test('CK3 requests reach the relay when the engine sandbox refuses every file wr
     writeFile: async () => { writes++; throw Object.assign(Error('sandbox denied write'), { code: 'EPERM', syscall: 'open' }); },
     open: async (path, flags) => {
       opens++;
-      assert.equal(flags, constants.O_RDONLY | constants.O_NONBLOCK);
+      assert.equal(flags, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
       assert.equal(lstatSync(path).isFIFO(), true);
       assert.equal(lstatSync(path).mode & 0o777, 0o600);
       return engineFS.promises.open(path, flags);
@@ -120,7 +180,7 @@ test('CK3 an unreadable observation traces its errno and closes its request read
   const f = await fixture(t, { sandboxFS: { constants, promises: { ...engineFS.promises,
     open: async (...args) => {
       const handle = await engineFS.promises.open(...args);
-      return { close: async () => { closes++; await handle.close(); } };
+      return { stat: () => handle.stat(), close: async () => { closes++; await handle.close(); } };
     },
     readFile: async () => { throw Object.assign(Error('sandbox denied read'), { code: 'EACCES', syscall: 'open' }); } } } });
   await f.run();
@@ -364,7 +424,7 @@ test('CK3 relay publication failures include the step and errno in the channel t
   let info;
   const probe = createTabProbe({ directory, intervalMs: 2,
     observe: async () => { engineFS.mkdirSync(info.path + '.tmp'); return identity; },
-    trace: (direction, record) => traces.push({ direction, ...record }) });
+    trace: (direction, record) => { if (direction === 'tab-probe-channel') traces.push({ direction, ...record }); } });
   t.after(() => probe.dispose());
   info = probe.begin(1, target);
   const fd = requestSample(info); t.after(() => closeSync(fd));

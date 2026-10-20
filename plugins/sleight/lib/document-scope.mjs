@@ -715,13 +715,17 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             step = 'request-open';
             pending = ++state.tabSerial;
             if (pending > 8) throw Object.assign(Error('tab sample limit'), { code: 'EOVERFLOW' });
-            requestHandle = await fs.promises.open(probe.request + '-' + (pending - 1), fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+            requestHandle = await fs.promises.open(probe.request + '-' + (pending - 1), fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
+            step = 'request-stat';
+            if (!(await requestHandle.stat()).isFIFO()) throw Object.assign(Error('tab request is not a FIFO'), { code: 'EINVAL', syscall: 'fstat' });
           }
           let readStep = 'observation-read';
           try {
             const text = await fs.promises.readFile(probe.path, 'utf8');
             readStep = 'observation-parse'; sample = JSON.parse(text); failed = undefined;
-          } catch (error) { failed = { failureStep: readStep, errno: error?.code ?? null, syscall: error?.syscall ?? null }; }
+          } catch (error) {
+            if (error?.code !== 'ENOENT') failed = { failureStep: readStep, errno: error?.code ?? null, syscall: error?.syscall ?? null };
+          }
           if (now < entered || now < probe.since) { reason = 'clock-reversed'; break; }
           if (pending && sample?.request === pending && Number.isFinite(sample?.start) && sample.start >= entered && sample.start >= ready && Number.isFinite(sample.end) &&
               sample.end >= sample.start && sample.end <= now && now - sample.end <= probe.freshMs) {

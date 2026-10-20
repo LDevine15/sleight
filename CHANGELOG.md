@@ -45,12 +45,18 @@
 - Action results wait for newly loading controls before returning the latest tree, within a bounded polling budget.
 - Numbered batches can follow renumbered controls only when each remaining observed target and its parent still match
   uniquely. A resent click still passes the payment check.
+- After `setValue`, a moved plain text field can be remapped when a fresh read proves a unique match, unchanged
+  ancestors and the same settable fields. Payment and credential fields keep their stops. Traces explain binding
+  decisions; another `setValue` still reads because native metadata cannot identify the engine's element number.
 - Computer-only instructions explain that action results already show changed lines. Those results include current
   element numbers, and the final read waits for actions and list picks still running.
 - A call's own Cmd+T in Safari can continue with the address and Return in that call, including from a window with no
   visible tab strip. Window, focus, idle and payment checks still apply.
 - After that Return, a result that still shows the new tab under the page title reads again for the landed page.
   `SLEIGHT_TABC=0` disables the tab changes.
+- Eligible Cmd+T, URL and Return sequences can check the native tab strip and address focus through read-only FIFOs.
+  The bounded checks recognize Firefox address identifiers and Safari tab strips, accept closed menu children and
+  request samples only when needed. Partial evidence takes a full read. Traces name failed checks and operations.
 - Drag endpoints can match a short, exact static-text label exposed only as its accessibility value. Document text,
   other windows and ambiguous labels still refuse.
 - `select_window` accepts a unique title ending that starts after whitespace when no exact title matches. It returns
@@ -76,6 +82,15 @@
   clicks use the background-click guards, including card-frame focus and target sealing.
 - Click steps accept Command or Control on targets without links, controls or window-opening handlers. On macOS,
   Control uses a trusted left click with the requested modifier flags. All 20 headless multi-select cases passed.
+
+### Optional ghost hand
+
+- The hand reuses a session host and cached window geometry. Geometry expires within 500 ms, and turning the hand off
+  stops worker reads. Bound actions contribute to hand timing. Tree hashing reads only requested lines.
+- Hover waits for the hand's drawing-pause acknowledgement before capture or pointer movement. Consent cards keep
+  normal process priority and clear when their worker exits. Turbo remains available if the hand host fails to start.
+- The hand starts after its first local build finishes. Traces report compiler failures, cancellation and the host
+  pid. Expired frames are dropped, and the compiler holds the build lock until it exits.
 
 ### Measurements and benchmark rules
 

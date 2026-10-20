@@ -240,5 +240,6 @@ test('explicit hide removes the panel before capture acknowledgement, without it
   assert.match(hide, /fading\?\.cancel\(\); release\(\)/);
   assert.doesNotMatch(hide, /fade\(after:/);
   assert.match(source, /DispatchQueue\.global\(qos: \.utility\)/);
-  assert.match(source, /pthread_set_qos_class_self_np\(QOS_CLASS_UTILITY, 0\)/);
+  // The shared host also serves consent cards. Its frame reader alone uses utility QoS.
+  assert.doesNotMatch(source, /pthread_set_qos_class_self_np\(QOS_CLASS_UTILITY, 0\)/);
 });
