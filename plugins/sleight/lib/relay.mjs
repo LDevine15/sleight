@@ -58,7 +58,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isV3Frontend, isV3Bridge, failure as turboFailure } from './direct-browser/worker.mjs';
 import { browserBundleId } from './direct-browser/browsers.mjs';
 import { engineBrowserOpen as engineBrowserOpenSetting, engineOpenTool, widenTurboOpen, turboRoute, parseEngineOpen, siteOf, acquisitionCode, openCode,
@@ -1700,11 +1700,97 @@ export function createRelay({
     openedReads.clear();
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
-    clearSelection(); browserHandles.clear(); leaseWindow = undefined; lastShown = new Set(); for (const id of [...parentPins.keys()]) releasePin(id); dragWindows.clear(); handleBundles.clear(); unconfirmedHandles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
+    clearSelection(); browserHandles.clear(); leaseWindow = undefined; lastShown = new Set(); for (const id of [...parentPins.keys()]) releasePin(id); dragWindows.clear(); handleBundles.clear(); openedWindows.clear(); openedWindowCalls.clear(); openedAliases.clear(); unconfirmedHandles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
     standardWindows.clear(); appProcesses.clear(); processProbes.clear();
   }
   const dragWindows = new Map(); // successful numbered window reads, for cross-window endpoints
   const handleBundles = new Map();
+  // Engine app handles share the app's main window. Keep open_file's document binding separately from reads.
+  const openedWindows = new Map(), openedWindowCalls = new Set(), openedAliases = new Map();
+  function openedWindowCall(msg) {
+    if (msg.method !== 'tools/call' || msg.params?.name !== 'js' || openedWindowCalls.has(msg.id)) return false;
+    const code = msg.params.arguments?.code;
+    if (typeof code !== 'string' || !openedWindows.size) return false;
+    const bare = codeOnly(code), bindings = new Map(openedWindows);
+    // The advertised `let app = __sleightOpenedAppN` form, and direct renames of it. Other assignments forget a binding.
+    for (const match of bare.matchAll(/\b([A-Za-z_$][\w$]*)\s*=(?!=|>)\s*([A-Za-z_$][\w$]*)?/g)) {
+      const target = bindings.get(match[2]);
+      if (target && /^\s*(?:;|$)/.test(bare.slice(match.index + match[0].length))) bindings.set(match[1], target);
+      else bindings.delete(match[1]);
+    }
+    const handles = [...new Set([...bare.matchAll(HANDLE_CALL)].map(match => match[1]).filter(handle => bindings.has(handle)))];
+    if (!handles.length) {
+      // A standalone alias is a local REPL assignment; it needs no window selection.
+      if (/^\s*(?:(?:let|const|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*[A-Za-z_$][\w$]*\s*;?\s*$/.test(bare)) {
+        openedAliases.set(msg.id, bindings);
+      }
+      for (const key of openedWindows.keys()) if (!bindings.has(key)) openedWindows.delete(key);
+      return false;
+    }
+    const target = bindings.get(handles[0]);
+    const request = { app: target.appId, url: target.url };
+    const refuse = () => leaseStop(msg, `handle ${handles[0]} belongs to ${JSON.stringify(target.url)}; window unconfirmed. Call select_window with ${JSON.stringify(request)}.`);
+    if (!inputLease || !windowIdentity || !localTools?.call || !localNames.has('select_window') || running.size || handles.some(handle => bindings.get(handle) !== target)) {
+      refuse(); return true;
+    }
+    const blocked = callBlock('js', msg.params.arguments) ?? appLine(target.appId, target.app);
+    if (blocked) { blockStop(msg, blocked); return true; }
+    // A sheet belongs to its document. The existing parent lease checks keep that dialog attached to this window.
+    if (leaseWindow?.appId === target.appId && sameWindow(leaseWindow.parent, target)) {
+      openedAliases.set(msg.id, bindings); return false;
+    }
+    if (documentMode && (!documentAllowed() || !sameWindow(observedDocument, target))) { refuse(); return true; }
+    const generation = stopGeneration;
+    const current = () => {
+      if (generation !== stopGeneration || closing || disposed) throw Error('opened window call stopped');
+    };
+    running.add(msg.id); localRunning.add(msg.id);
+    callDetails.set(msg.id, 'opened handle window');
+    Promise.resolve().then(async () => {
+      current();
+      const key = inputLease.acquire(target, 'app');
+      leaseCalls.set(msg.id, { key }); refreshHeartbeat();
+      const identity = verifyWindowIdentity(target, await windowIdentity(target));
+      current();
+      const matched = leaseWindow?.appId === target.appId && sameWindow(leaseWindow, target);
+      if (!matched) {
+        const result = await localTools.call('select_window', { ...request, expectedAppId: target.appId,
+          ...(Number.isSafeInteger(identity.windowNumber) && identity.windowNumber > 0 ? { windowNumber: identity.windowNumber } : {}) }, async (parts, message, options) => {
+          const allowed = await approve(parts, message, msg.id, options); current();
+          if (allowed) inputLease.renew([key]);
+          return allowed;
+        }, undefined, target);
+        current();
+        const value = !result.isError && JSON.parse(result.content?.find(c => c.type === 'text')?.text ?? '{}');
+        if (!value?.ok || value.target?.appId !== target.appId || !sameWindow(value.target, target) ||
+            value.identity?.pid !== identity.pid || value.identity?.windowNumber !== identity.windowNumber) throw Error('selection unconfirmed');
+        selectedWindow = { ...value.target, windowNumber: identity.windowNumber };
+        selectionVerified = false;
+        const id = `sleight-opened-window-${nextInternalId++}`;
+        callGenerations.set(id, generation);
+        splitCalls.set(id, async reply => {
+          try {
+            current();
+            if (reply.error || reply.result?.isError || leaseWindow?.appId !== target.appId || !sameWindow(leaseWindow, target)) throw Error('read unconfirmed');
+            const checked = verifyWindowIdentity({ ...target, nativeIdentity: identity }, await windowIdentity(target));
+            current();
+            resume(checked);
+          } catch { stop(); }
+        });
+        handleClient({ id, method: 'tools/call', params: { name: 'js', arguments: { code: `var __sleightWindowCheck${nextInternalId++} = await cua.getApp(${JSON.stringify(target.appId)})` } } });
+      } else resume(identity);
+    }).catch(() => stop());
+    const stop = () => { localRunning.delete(msg.id); finishedCall(msg.id); if (generation === stopGeneration && !closing && !disposed) refuse(); };
+    const resume = identity => {
+      target.nativeIdentity = identity;
+      leaseWindow.nativeIdentity = identity; leaseWindow.identityRequired = true;
+      openedAliases.set(msg.id, bindings);
+      selectedWindow = { ...target, windowNumber: identity.windowNumber }; selectionVerified = true;
+      localRunning.delete(msg.id); running.delete(msg.id);
+      openedWindowCalls.add(msg.id); handleClient(msg);
+    };
+    return true;
+  }
   const unconfirmedHandles = new Set(); // handles an acquisition bound without a confirmed bundle ID
   // Windows seen with a standard-window root, by documentKey, with when, for which bundle and in which process: only
   // these can be covered by a dialog the lease moves to. A process note forgets the bundle's windows from any other
@@ -1846,6 +1932,8 @@ export function createRelay({
     leaseTimer.unref?.();
   }
   function finishedCall(id) {
+    openedWindowCalls.delete(id);
+    openedAliases.delete(id);
     // A call that ends without an engine result (a refusal, a retry, a stop) shows no more hand.
     hand?.result(id, true);
     handBindingMarks.delete(id);
@@ -2550,7 +2638,7 @@ export function createRelay({
     localRunning.add(msg.id);
     let result;
     const name = msg.params.name;
-    const args = msg.params.arguments ?? {};
+    let args = msg.params.arguments ?? {};
     let resolved, prepared, preparedAsk, preparedFailed = false;
     if (name === 'select_window') clearSelection();
     try {
@@ -2598,6 +2686,22 @@ export function createRelay({
       let callArgs = name === 'select_window' && resolved
         ? { ...args, expectedAppId: resolved.appId } : args;
       if (name === 'drag') {
+        if (args.windowId === undefined && args.from === 'the current text selection' && resolved?.appId && localTools.selectionWindow && windowIdentity &&
+            [...handleBundles.values()].some(window => window?.appId === resolved.appId)) {
+          // Read selection ranges, never document text. An incomplete census keeps drag's ordinary ambiguity refusal.
+          try {
+            const selected = await localTools.selectionWindow(resolved);
+            current();
+            if (selected?.ok && selected.target?.appId === resolved.appId && selected.pid === resolved.pid) {
+              const identity = verifyWindowIdentity(selected.target, await windowIdentity(selected.target));
+              current();
+              if (identity.pid === resolved.pid && Number.isSafeInteger(identity.windowNumber) && identity.windowNumber > 0) {
+                callArgs = { ...callArgs, windowId: identity.windowNumber };
+                args = callArgs;
+              }
+            }
+          } catch (error) { current(); trace('drag-selection-window-unconfirmed', { id: msg.id }); }
+        }
         // drag converts Claude's screenshot pixels to window points with this size (2026-10-08).
         const shot = [args.app, resolved?.app].map(a => typeof a === 'string' && screenshots.get(a.toLowerCase())).find(Boolean);
         // Per window too: a second, untitled Chess window left 3 of 13 drags unconverted (2026-10-09).
@@ -2639,7 +2743,7 @@ export function createRelay({
           evidence[prefix ? 'toElementWindow' : 'elementWindow'] = window ? { title: window.title,
             windowId: window.windowNumber ?? window.nativeIdentity?.windowNumber } : undefined;
         }
-        callArgs = { ...args, ...endpoints, screenshot: shot ? [shot.latest.width, shot.latest.height] : undefined, screenshots: shot?.byTitle,
+        callArgs = { ...callArgs, ...endpoints, screenshot: shot ? [shot.latest.width, shot.latest.height] : undefined, screenshots: shot?.byTitle,
           screenshotsByWindow: shot?.byWindow, toElementLines: undefined, toElementWindow: undefined, ...evidence };
       }
       result = await localTools.call(name, callArgs, async (parts, message, options) => {
@@ -2710,6 +2814,12 @@ export function createRelay({
           // read the window again and took a screenshot, two model turns, before its first edit. Only a window
           // whose URL is the opened file gets one: with no URL, the read may show another window.
           const matched = typeof shownPath === 'string' && [openedFile.path, openedFile.real].includes(shownPath);
+          if (typeof openedFile?.path === 'string') {
+            const target = { ...(matched ? shown : {}), appId: openedApp,
+              app: shown?.app ?? args.app, title: matched ? shown.title : openedFile.path.split('/').at(-1),
+              url: matched ? shown.url : pathToFileURL(openedFile.real ?? openedFile.path).href };
+            openedWindows.set(handle, target);
+          }
           let pictured = false;
           if (textless && matched && !state.isError) {
             const started = Date.now(), image = await openScreenshot(handle);
@@ -3589,6 +3699,7 @@ export function createRelay({
     if (msg.method === 'tools/call' && (serverIn.writableEnded || serverIn.destroyed)) {
       leaseStop(msg, promptNotice('the engine connection ended during stop. Reconnect sleight for a fresh engine and app read.', prompt)); return;
     }
+    if (openedWindowCall(msg)) return;
     if (windowIdentity && inputLease && !running.size && !documentMode && !changeReview && leaseWindow?.appId &&
         msg.method === 'tools/call' && msg.params?.name === 'js' && !browserPlan(msg.params.arguments?.code ?? '') &&
         !menuContinued.has(msg.id) && !menuAdmissions.has(msg.id) && !splitCalls.has(msg.id)) {
@@ -4863,7 +4974,14 @@ export function createRelay({
           promptNotice(refusalNotice(refused), prompt) }] };
       }
     }
-    if (msg.method === undefined) { hand?.result(msg.id, !!(msg.error || msg.result?.isError)); reportPreapprovals(msg); finishedCall(msg.id); }
+    if (msg.method === undefined) {
+      const aliases = openedAliases.get(msg.id);
+      if (aliases) for (const [handle, target] of aliases) {
+        if (!msg.error && !msg.result?.isError) openedWindows.set(handle, target);
+        else if (openedWindows.get(handle) !== target) openedWindows.delete(handle);
+      }
+      hand?.result(msg.id, !!(msg.error || msg.result?.isError)); reportPreapprovals(msg); finishedCall(msg.id);
+    }
     if (engineForbiddenTargets && isAppApproval(msg)) {
       const warning = forbiddenTargetWarning(msg.params?._meta?.tool_params?.app);
       if (warning && msg.params) msg.params.message = `${msg.params.message ?? 'Allow Computer Use?'} ${warning}`;

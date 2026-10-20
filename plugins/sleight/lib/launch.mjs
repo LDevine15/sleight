@@ -1131,6 +1131,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       prepareOpen: (args, approve) => prepareOpenFile(args, (parts, message, options) =>
         approve(parts, wordForHost(message, wording()), options), { openedFiles, blocked: appBlocked }),
       reopen: (bundleId, path) => reopenDocument(bundleId, path, { openedFiles }),
+      selectionWindow: target => runScript('handle-selection-window.js', target),
       call: (name, args, approve, runLocal, resolved, prepared, options) => callLocalTool(name, args, (parts, message, options) =>
         approve(parts, wordForHost(message, wording()), options), runLocal, resolved, prepared,
         { ...options, blocked: appBlocked }),
