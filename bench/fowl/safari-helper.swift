@@ -195,11 +195,26 @@ func validatedFixtureURL(_ value: String?) throws -> String {
 func verifyNavigationStart(startPage: Bool, sheetCount: Int) throws {
     guard startPage && sheetCount == 0 else { throw refuse("BENCH_SAFARI_START_PAGE_UNPROVED") }
 }
+func retryIdentity<T>(read: () throws -> T, wait: () -> Void = { pump(0.05) }) throws -> T {
+    var retries = 0
+    while true {
+        do { return try read() }
+        catch {
+            guard retries < 20 else { throw error }
+            retries += 1; wait()
+        }
+    }
+}
 func ownedApplication() throws -> NSRunningApplication {
-    guard let app = owned, !app.isTerminated, let date = birth,
-          let current = NSRunningApplication(processIdentifier: app.processIdentifier), !current.isTerminated,
-          current.launchDate == date, current.executableURL?.resolvingSymlinksInPath().path == executable else { throw refuse("BENCH_SAFARI_IDENTITY_UNPROVED") }
-    return current
+    guard let app = owned, !app.isTerminated, let date = birth else { throw refuse("BENCH_SAFARI_IDENTITY_UNPROVED:nil") }
+    // NSRunningApplication can briefly omit identity metadata. Each retry must prove the same pid, birth and executable.
+    return try retryIdentity(read: {
+        guard !app.isTerminated, let current = NSRunningApplication(processIdentifier: app.processIdentifier),
+              !current.isTerminated else { throw refuse("BENCH_SAFARI_IDENTITY_UNPROVED:nil") }
+        guard current.launchDate == date else { throw refuse("BENCH_SAFARI_IDENTITY_UNPROVED:date") }
+        guard current.executableURL?.resolvingSymlinksInPath().path == executable else { throw refuse("BENCH_SAFARI_IDENTITY_UNPROVED:exe") }
+        return current
+    })
 }
 func ownedAX() throws -> AXUIElement {
     let app = AXUIElementCreateApplication(try ownedApplication().processIdentifier)
@@ -445,6 +460,22 @@ func emit(_ value: [String: Any]) throws {
     print(String(decoding: data, as: UTF8.self)); fflush(stdout)
 }
 
+if CommandLine.arguments.dropFirst() == ["--self-test-identity-retry"] {
+    // The retry policy uses synthetic reads and waits, without app lookup or AX access.
+    var result: [String: Any] = [:]
+    for (name, failures) in [("immediate", 0), ("transient", 3), ("lastRetry", 20), ("nil", 21), ("date", 21), ("exe", 21)] {
+        var attempts = 0, waits = 0
+        do {
+            let verified = try retryIdentity(read: {
+                attempts += 1
+                if attempts <= failures { throw refuse("BENCH_SAFARI_IDENTITY_UNPROVED:" + (["nil", "date", "exe"].contains(name) ? name : ["nil", "date", "exe"][(attempts - 1) % 3])) }
+                return true
+            }, wait: { waits += 1 })
+            result[name] = ["attempts": attempts, "waits": waits, "verified": verified]
+        } catch { result[name] = ["attempts": attempts, "waits": waits, "error": (error as? Refusal)?.message ?? "UNKNOWN"] }
+    }
+    try emit(result); exit(0)
+}
 if CommandLine.arguments.dropFirst() == ["--self-test-owner-safety"] {
     // Pure policy fixtures: no application lookup, AX messaging or event posting.
     var ownerReads = 0, verifiedReads = 0, result: [String: Any] = [:]

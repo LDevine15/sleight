@@ -99,11 +99,14 @@ function windowShape(window) {
 }
 // known: titles of pages this harness loaded itself. Safari exposes only the selected tab's URL (through the address field), so an
 // unselected tab still showing the harness's marker page gets the marker URL; any other unselected tab leaves the inventory unobserved.
-function tabs(window, known = {}) {
+function tabs(window, known = {}, acquisitionPage) {
   if (!Array.isArray(window.tabs) || !window.tabs.length) throw Error('BENCH_SAFARI_TABS_UNOBSERVED');
   const result = {};
   for (const tab of window.tabs) {
-    const url = tab.url === '' && Object.hasOwn(known, tab.title) ? known[tab.title] : tab.url;
+    // Safari omits http:// in the address field. Only the planned fixture and its exact title may use that form.
+    const expected = acquisitionPage?.title === tab.title ? acquisitionPage.url : undefined;
+    const url = tab.url === '' && Object.hasOwn(known, tab.title) ? known[tab.title] :
+      expected?.startsWith('http://') && tab.url === expected.slice(7) ? expected : tab.url;
     if (typeof tab.id !== 'string' || !tab.id || typeof tab.title !== 'string' ||
         typeof url !== 'string' || !url || result[`safari:${tab.id}`]) throw Error('BENCH_SAFARI_TABS_UNOBSERVED');
     result[`safari:${tab.id}`] = { title: tab.title, url };
@@ -211,14 +214,15 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     stage(navigation);
     await bridge.request(navigation, { window: windowId, url: acquisitionPage.url });
     const navigating = Date.now() + timeoutMs;
+    if (plan.acquisitionPage) stage('await-fixture');
     for (;;) {
       const list = await snapshot(), current = ownedWindow(list);
-      const inventory = tabs(current), values = Object.values(inventory);
+      const inventory = tabs(current, {}, plan.acquisitionPage), values = Object.values(inventory);
       if (list.length === 1 && values.length === 1 && values[0].title === acquisitionPage.title && values[0].url === acquisitionPage.url) {
         await census(); return inventory;
       }
       if (Date.now() >= navigating) throw Error('BENCH_SAFARI_MARKER_UNPROVED');
-      await pause(25);
+      await pause(250);
     }
   };
   // Quits the Safari launched here (the helper checks pid, executable and launch date, answers its own unsubmitted-form
@@ -276,7 +280,8 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
       if (counted.length !== 1) {
         throw Object.assign(Error('BENCH_SAFARI_EXTRA_WINDOWS'), { extraWindows: counted.filter(w => w.id !== windowId).map(windowShape) });
       }
-      return { observed: true, source: 'AX-tab-bar', profileEvidence: browser.profileEvidence, tabs: tabs(ownedWindow(counted), { [acquisitionPage.title]: acquisitionPage.url }),
+      return { observed: true, source: 'AX-tab-bar', profileEvidence: browser.profileEvidence,
+        tabs: tabs(ownedWindow(counted), { [acquisitionPage.title]: acquisitionPage.url }, plan.acquisitionPage),
         ...(auxiliaryWindows.length ? { auxiliaryWindows } : {}), unavailableGraders: ['completed downloads', 'device viewport'] };
     } catch (error) {
       return { observed: false, tabs: {}, reason: error.message, ...(error.ownerCheck ? { ownerCheck: error.ownerCheck } : {}),
@@ -304,7 +309,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     return browser;
   } catch (error) {
     if (acquiring) browser.acquisition.push({ ...acquiring, reason: normalize(error.message) });
-    try { await browser.stop(); } catch (cleanup) { error = cleanup; }
+    try { await browser.stop(); error.cleanupConfirmed = true; } catch (cleanup) { error = cleanup; }
     const { stop, reset, observe, ...receipt } = browser;
     error.browserReceipt = receipt;
     throw error;

@@ -12,12 +12,13 @@ import { executeRealTask } from '../bench/real-run.mjs';
 // Only the native bridge is replaced. No app lookup, compiler, input or window is used.
 // Safari's native calls are doubled, including its data-only ordinary marker operation.
 function fixture(t, { navigates = true, restoredOwner = false, finalState = () => {}, foreignAfterNavigation = false,
-  stuckAt, helperTimeout = false, timeoutAt } = {}) {
+  stuckAt, helperTimeout = false, timeoutAt, schemeLess = false, cleanupAt } = {}) {
   const root = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-cc-safari-')));
-  t.after(() => removeTemp(root));
+  let launchedBrowser;
+  t.after(async () => { try { await launchedBrowser?.stop(); } finally { removeTemp(root); } });
   let running = false, windows = [], serial = 0, active, planned;
-  const calls = [];
-  const bridge = { close: async () => {}, request: async (op, input = {}) => {
+  const calls = [], pollTimes = [];
+  const bridge = { close: async () => { if (cleanupAt === 'close') throw Error('helper collection failed'); }, request: async (op, input = {}) => {
     calls.push(op);
     if (op === timeoutAt) throw Error('BENCH_SAFARI_HELPER_TIMEOUT');
     if (op === 'fixture-plan') { planned = input.url; return {}; }
@@ -26,7 +27,10 @@ function fixture(t, { navigates = true, restoredOwner = false, finalState = () =
       windows = restoredOwner ? [{ id: 'owner', startPage: false }] : [{ id: 'launch', startPage: true }];
       return { pid: 4101, executable: process.execPath, launchDate: Date.now() / 1000 };
     }
-    if (op === 'snapshot') return { windows: structuredClone(windows) };
+    if (op === 'snapshot') {
+      if (calls.includes('navigate-fixture')) pollTimes.push(Date.now());
+      return { windows: structuredClone(windows) };
+    }
     if (op === 'close-launch-window') {
       assert.equal(input.window, 'launch'); if (stuckAt !== 'close-launch-window') windows = []; return {};
     }
@@ -54,18 +58,22 @@ function fixture(t, { navigates = true, restoredOwner = false, finalState = () =
         title = /<title>([^<]+)<\/title>/.exec(html)[1];
       }
       windows[0].tabs[0] = { ...windows[0].tabs[0],
-        title: navigates ? title : active.marker, url: navigates ? input.url : active.markerUrl };
+        title: navigates ? title : active.marker,
+        url: navigates ? schemeLess ? input.url.replace(/^http:\/\//, '') : input.url : active.markerUrl };
       finalState(windows, active);
       if (helperTimeout) throw Error('BENCH_SAFARI_HELPER_TIMEOUT');
       return {};
     }
-    if (op === 'quit') { running = false; windows = []; return { browserClosed: true }; }
+    if (op === 'quit') {
+      if (cleanupAt === 'quit') throw Error('quit failed');
+      running = false; windows = []; return { browserClosed: true };
+    }
     assert.fail(`unexpected bridge operation ${op}`);
   } };
-  return { calls, root,
+  return { calls, pollTimes, root, windows: () => windows,
     launch: async (plan, { initialPage }) => {
       active = { ...initialBrowserPage(plan, initialPage), executable: process.execPath, profileRoot: join(root, 'harness/profile') };
-      return launchSafari(active, { safariBridge: async () => {
+      return launchedBrowser = await launchSafari(active, { safariBridge: async () => {
         if (timeoutAt === 'prepare-helper') throw Error('BENCH_SAFARI_HELPER_TIMEOUT');
         return bridge;
       }, timeoutMs: 50, restoreWait: async () => {},
@@ -76,8 +84,8 @@ function fixture(t, { navigates = true, restoredOwner = false, finalState = () =
 
 for (const id of ['cc-list-safari', 'cc-list-pop-up-safari', 'cc-calendar-safari',
   'cc-calendar-ambiguous-safari', 'cc-dropdown-safari', 'cc-dropdown-slow-safari', 'cc-new-tab-safari']) {
-  test(`${id} reaches its fixture with the recorded Safari profile shape and no data redirect`, async t => {
-    const f = fixture(t);
+  for (const schemeLess of [false, true]) test(`${id} reaches its fixture with ${schemeLess ? 'a scheme-less' : 'an exact'} URL`, async t => {
+    const f = fixture(t, { schemeLess });
     const task = ccHeldOutTasks(undefined, { launchBrowser: f.launch }).find(task => task.id === id);
     const ctx = { nonce: 'recorded-failure', seed: 'fixed', ownerAway: true, realProfile: 'fresh' };
     t.after(async () => { await ctx.browser?.stop(); await ctx.closeServer?.(); });
@@ -90,7 +98,9 @@ for (const id of ['cc-list-safari', 'cc-list-pop-up-safari', 'cc-calendar-safari
     assert.deepEqual(Object.values(inventory), [{ title: `Held-out ${ctx.cc.kind} ${ctx.nonce}`, url: ctx.url }]);
     assert.notEqual(ctx.browser.marker, Object.values(inventory)[0].title);
     assert.notEqual(ctx.browser.markerUrl, ctx.url);
-    assert.equal((await ctx.browser.observe()).observed, true);
+    const observation = await ctx.browser.observe();
+    assert.equal(observation.observed, true);
+    assert.equal(Object.values(observation.tabs)[0].url, ctx.url);
     // A second reset must use the same planned fixture after collecting the first process.
     assert.equal(Object.values(await ctx.browser.reset())[0].url, ctx.url);
     assert.equal(f.calls.filter(op => op === 'navigate-fixture').length, 2);
@@ -135,7 +145,7 @@ test('Safari requires a clean process census after matching the fixture', async 
   const ctx = { nonce: 'foreign-process', ownerAway: true, realProfile: 'fresh' };
   t.after(() => ctx.closeServer?.());
   await assert.rejects(task.setup(ctx), /PID 4102/);
-  assert.deepEqual([...ctx.pendingAcquisitions], ['browser']);
+  assert.equal(ctx.pendingAcquisitions.size, 0);
   assert.equal(f.calls.filter(op => op === 'quit').length, 1);
 });
 
@@ -145,13 +155,51 @@ test('Safari fixture readiness rejects navigation that never reaches its final U
   const ctx = { nonce: 'stalled', ownerAway: true, realProfile: 'fresh' };
   t.after(() => ctx.closeServer?.());
   await assert.rejects(task.setup(ctx), /BENCH_SAFARI_MARKER_UNPROVED/);
-  assert.deepEqual([...ctx.pendingAcquisitions], ['browser']);
+  assert.equal(ctx.pendingAcquisitions.size, 0);
   assert.equal(f.calls.filter(op => op === 'quit').length, 1);
+  assert.equal(f.pollTimes.length, 2);
+  assert.ok(f.pollTimes[1] - f.pollTimes[0] >= 200, 'fixture poll must pause about 250 ms');
+});
+
+test('Safari observation canonicalizes only the planned fixture with its exact title', async t => {
+  const f = fixture(t, { schemeLess: true });
+  const task = ccHeldOutTasks(undefined, { launchBrowser: f.launch }).find(task => task.id === 'cc-list-safari');
+  const ctx = { nonce: 'observe', ownerAway: true, realProfile: 'fresh' };
+  t.after(async () => { await ctx.browser?.stop(); await ctx.closeServer?.(); });
+  await task.setup(ctx);
+  const tab = f.windows()[0].tabs[0], title = tab.title, shortUrl = ctx.url.slice(7);
+  for (const [observedTitle, observedUrl, expectedUrl] of [
+    [title, shortUrl, ctx.url], [title, ctx.url, ctx.url], [title, '', ctx.url],
+    [title + 'different', shortUrl, shortUrl], [title, shortUrl + 'different', shortUrl + 'different'],
+    ['Other page', 'example.test/path', 'example.test/path'],
+  ]) {
+    Object.assign(tab, { title: observedTitle, url: observedUrl });
+    const observation = await ctx.browser.observe();
+    assert.equal(observation.observed, true);
+    assert.deepEqual(Object.values(observation.tabs), [{ title: observedTitle, url: expectedUrl }]);
+  }
+});
+
+for (const cleanupAt of ['quit', 'close']) test(`Safari retains a failed acquisition when ${cleanupAt} cleanup fails`, async t => {
+  const f = fixture(t, { navigates: false, cleanupAt });
+  const task = ccHeldOutTasks(undefined, { launchBrowser: f.launch }).find(task => task.id === 'cc-list-safari');
+  const ctx = { nonce: 'cleanup-failure', ownerAway: true, realProfile: 'fresh' };
+  t.after(() => ctx.closeServer?.());
+  await assert.rejects(task.setup(ctx), error => {
+    assert.equal(error.message, 'BENCH_BROWSER_CLEANUP_UNPROVED');
+    assert.notEqual(error.cleanupConfirmed, true);
+    return true;
+  });
+  assert.deepEqual([...ctx.pendingAcquisitions], ['browser']);
 });
 
 for (const [name, finalState, reason] of [
   ['wrong title', windows => { windows[0].tabs[0].title = 'Unexpected fixture'; }, /BENCH_SAFARI_MARKER_UNPROVED/],
   ['wrong run URL', windows => { windows[0].tabs[0].url += 'other-run/'; }, /BENCH_SAFARI_MARKER_UNPROVED/],
+  ['scheme-less wrong run URL', windows => { windows[0].tabs[0].url = windows[0].tabs[0].url.slice(7) + 'other-run/'; }, /BENCH_SAFARI_MARKER_UNPROVED/],
+  ['scheme-less wrong title', windows => { windows[0].tabs[0].url = windows[0].tabs[0].url.slice(7); windows[0].tabs[0].title += 'different'; }, /BENCH_SAFARI_MARKER_UNPROVED/],
+  ['wrong scheme', windows => { windows[0].tabs[0].url = windows[0].tabs[0].url.replace('http:', 'https:'); }, /BENCH_SAFARI_MARKER_UNPROVED/],
+  ['missing URL', windows => { windows[0].tabs[0].url = ''; }, /BENCH_SAFARI_TABS_UNOBSERVED/],
   ['extra tab', windows => { windows[0].tabs.push({ ...windows[0].tabs[0], id: 'extra-tab' }); }, /BENCH_SAFARI_MARKER_UNPROVED/],
   ['extra window', windows => { windows.push({ ...windows[0], id: 'extra-window' }); }, /BENCH_SAFARI_MARKER_UNPROVED/],
   ['replaced window', windows => { windows[0].id = 'replacement'; }, /BENCH_SAFARI_PROFILE_WINDOW_UNPROVED/],
@@ -163,7 +211,7 @@ for (const [name, finalState, reason] of [
     const ctx = { nonce: 'refused', ownerAway: true, realProfile: 'fresh' };
     t.after(() => ctx.closeServer?.());
     await assert.rejects(task.setup(ctx), reason);
-    assert.deepEqual([...ctx.pendingAcquisitions], ['browser']);
+    assert.equal(ctx.pendingAcquisitions.size, 0);
     assert.equal(f.calls.filter(op => op === 'quit').length, 1);
   });
 }
@@ -192,7 +240,7 @@ test('Safari fixture plans admit only held-out fixture bases and retain the orig
 for (const [stuckAt, stage, reason, windowCount, tabCount] of [
   ['close-launch-window', 'close-launch-window', 'BENCH_SAFARI_LAUNCH_WINDOW_UNCLOSED', 1, null],
   ['new-profile', 'new-profile', 'BENCH_SAFARI_PROFILE_WINDOW_UNPROVED', 0, null],
-  [undefined, 'navigate-fixture', 'BENCH_SAFARI_MARKER_UNPROVED', 1, 1],
+  [undefined, 'await-fixture', 'BENCH_SAFARI_MARKER_UNPROVED', 1, 1],
 ]) {
   test(`Safari ${stage} timeout preserves its last observation in the run receipt`, async t => {
     const f = fixture(t, { stuckAt, finalState: windows => {
@@ -208,13 +256,15 @@ for (const [stuckAt, stage, reason, windowCount, tabCount] of [
     assert.equal(result.reason, reason);
     const diagnostic = result.browserAcquisition.at(-1);
     assert.equal(diagnostic.stage, stage);
-    assert.equal(diagnostic.lastObserved.windowCount, stage === 'navigate-fixture' ? 2 : windowCount);
+    assert.equal(diagnostic.lastObserved.windowCount, stage === 'await-fixture' ? 2 : windowCount);
     assert.equal(diagnostic.lastObserved.tabCount, tabCount);
-    if (stage === 'navigate-fixture') {
+    if (stage === 'await-fixture') {
       assert.deepEqual(diagnostic.lastObserved.ownedTabs, [{ title: 'Held-out list <nonce> still loading',
         url: 'http://127.0.0.1:<port>/held-out/list/<nonce>/?waiting=<nonce>' }]);
     }
     assert.doesNotMatch(JSON.stringify(result.browserAcquisition), /diagnostic-nonce|private-title|private-tab|private\.test/);
+    assert.equal(result.cleanupError, undefined);
+    assert.equal(ctx.pendingAcquisitions.size, 0);
   });
 }
 

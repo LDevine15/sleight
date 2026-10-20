@@ -478,7 +478,7 @@ test('native Safari helper compiles and rejects unowned requests before any app 
     input: '{"op":"snapshot"}\n{"op":"navigate","window":"fake","url":"https://wrong.test"}\n{"op":"close-window","window":"fake"}\n' });
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(run.stdout.trim().split('\n').map(line => JSON.parse(line).error),
-    ['BENCH_SAFARI_IDENTITY_UNPROVED', 'BENCH_SAFARI_MARKER_INVALID', 'BENCH_SAFARI_IDENTITY_UNPROVED']);
+    ['BENCH_SAFARI_IDENTITY_UNPROVED:nil', 'BENCH_SAFARI_MARKER_INVALID', 'BENCH_SAFARI_IDENTITY_UNPROVED:nil']);
   const fixtureUrl = 'http://127.0.0.1:5431/held-out/list/recorded-failure/';
   const unsafe = ['https://127.0.0.1:5431/held-out/list/run/', 'http://localhost:5431/held-out/list/run/',
     'http://127.0.0.1/held-out/list/run/', 'http://127.0.0.1:0/held-out/list/run/',
@@ -501,11 +501,21 @@ test('native Safari helper compiles and rejects unowned requests before any app 
     ...unsafe.map(() => ({ error: 'BENCH_SAFARI_FIXTURE_INVALID' })),
     { error: 'BENCH_SAFARI_FIXTURE_INVALID' }, {}, { error: 'BENCH_SAFARI_FIXTURE_PLAN_LOCKED' },
     ...Array.from({ length: unsafe.length + 2 }, () => ({ error: 'BENCH_SAFARI_FIXTURE_INVALID' })),
-    { error: 'BENCH_SAFARI_IDENTITY_UNPROVED' },
+    { error: 'BENCH_SAFARI_IDENTITY_UNPROVED:nil' },
   ]);
   const uncertain = spawnSync(executable, ['--self-test-unreceipted-launch'], { encoding: 'utf8', timeout: 1000 });
   assert.equal(uncertain.status, 0, uncertain.stderr);
   assert.deepEqual(JSON.parse(uncertain.stdout), { error: 'BENCH_SAFARI_LAUNCH_UNRECEIPTED' });
+  const identity = spawnSync(executable, ['--self-test-identity-retry'], { encoding: 'utf8', timeout: 1000 });
+  assert.equal(identity.status, 0, identity.stderr);
+  assert.deepEqual(JSON.parse(identity.stdout), {
+    immediate: { attempts: 1, waits: 0, verified: true },
+    transient: { attempts: 4, waits: 3, verified: true },
+    lastRetry: { attempts: 21, waits: 20, verified: true },
+    nil: { attempts: 21, waits: 20, error: 'BENCH_SAFARI_IDENTITY_UNPROVED:nil' },
+    date: { attempts: 21, waits: 20, error: 'BENCH_SAFARI_IDENTITY_UNPROVED:date' },
+    exe: { attempts: 21, waits: 20, error: 'BENCH_SAFARI_IDENTITY_UNPROVED:exe' },
+  });
   const safety = spawnSync(executable, ['--self-test-owner-safety'], { encoding: 'utf8', timeout: 1000 });
   assert.equal(safety.status, 0, safety.stderr);
   assert.deepEqual(JSON.parse(safety.stdout), {

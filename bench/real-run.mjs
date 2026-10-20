@@ -158,7 +158,10 @@ export async function acquireFixture(ctx, key, operation) {
   ctx.pendingAcquisitions ??= new Set();
   ctx.pendingAcquisitions.add(key);
   try { ctx[key] = await operation(); }
-  catch (error) { if (error.noMutation === true) ctx.pendingAcquisitions.delete(key); throw error; }
+  catch (error) {
+    if (error.noMutation === true || error.cleanupConfirmed === true) ctx.pendingAcquisitions.delete(key);
+    throw error;
+  }
   ctx.pendingAcquisitions.delete(key);
   return ctx[key];
 }
