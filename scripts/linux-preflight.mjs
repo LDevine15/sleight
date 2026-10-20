@@ -1,60 +1,273 @@
 #!/usr/bin/env node
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { cpSync, existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
-// This function also runs inside the container, with only Node built-ins in scope.
-export function runContainerChecks({ spawn = spawnSync, env = process.env,
+const shaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const imagePattern = /^sha256:[a-f0-9]{64}$/;
+const containerPattern = /^[a-f0-9]{64}$/;
+
+// Own the ChildProcess until close, including cancellation. Never infer collection from kill().
+export function runOwnedCommand(command, args, { signal, timeout = 120_000, log, ...options } = {}) {
+  return new Promise(resolveResult => {
+    let child, stdout = '', stderr = '', stopped = false, settled = false, escalation, collection;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer); clearTimeout(escalation); clearTimeout(collection);
+      signal?.removeEventListener('abort', stop);
+      resolveResult({ stdout, stderr, ...result });
+    };
+    const stop = () => {
+      if (stopped || settled) return;
+      stopped = true;
+      child?.kill('SIGTERM');
+      escalation = setTimeout(() => child?.kill('SIGKILL'), 2_000);
+      collection = setTimeout(() => finish({ status: null, collected: false, cancelled: true }), 7_000);
+    };
+    const timer = setTimeout(stop, timeout);
+    if (signal?.aborted) { finish({ status: null, collected: true, cancelled: true }); return; }
+    try {
+      child = spawn(command, args, { ...options, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+      child.stdout.on('data', data => {
+        stdout = (stdout + data.toString()).slice(-1024 * 1024);
+        if (log?.stdout) log.stdout(data.toString());
+      });
+      child.stderr.on('data', data => {
+        stderr = (stderr + data.toString()).slice(-64 * 1024);
+        if (log?.stderr) log.stderr(data.toString());
+      });
+      child.once('error', () => {
+        if (!child.pid) finish({ status: null, collected: true });
+        else stop();
+      });
+      child.once('close', (status, childSignal) => finish({ status: stopped ? null : status,
+        signal: childSignal, cancelled: stopped, collected: true }));
+      signal?.addEventListener('abort', stop, { once: true });
+      if (signal?.aborted) stop();
+    } catch { finish({ status: null, collected: true }); }
+  });
+}
+
+export function testCounts(output) {
+  const counts = {};
+  for (const match of output.matchAll(/^(?:# |ℹ )(tests|suites|pass|fail|cancelled|skipped|todo) (\d+)\s*$/gm)) {
+    if (Object.hasOwn(counts, match[1])) return null;
+    counts[match[1]] = Number(match[2]);
+  }
+  if (!['tests', 'suites', 'pass', 'fail', 'cancelled', 'skipped', 'todo'].every(key => Number.isSafeInteger(counts[key]))) return null;
+  if (counts.tests < 1 || counts.pass < 1 || counts.tests !== counts.pass + counts.fail + counts.cancelled + counts.skipped + counts.todo) return null;
+  return counts;
+}
+
+function validExecution(receipt, { commit, runId } = {}) {
+  return receipt?.schemaVersion === 1 && receipt.platform === 'linux' && receipt.executed === true
+    && receipt.commit === commit && (!runId || receipt.runId === runId)
+    && receipt.command?.length === 2 && receipt.command[0] === 'npm' && receipt.command[1] === 'test'
+    && receipt.exitCode === 0 && receipt.installExitCode === 0 && Number.isSafeInteger(receipt.trackedFiles)
+    && receipt.trackedFiles > 0 && receipt.counts?.tests > 0 && receipt.counts?.pass > 0
+    && ['tests', 'suites', 'pass', 'fail', 'cancelled', 'skipped', 'todo'].every(key => Number.isSafeInteger(receipt.counts?.[key]) && receipt.counts[key] >= 0)
+    && receipt.counts.tests === receipt.counts.pass + receipt.counts.skipped
+    && receipt.counts.fail === 0 && receipt.counts.cancelled === 0 && receipt.counts.todo === 0;
+}
+
+// Shared consumer: both A6 and the CLI require the real producer's complete success contract.
+export function parseLinuxReceipt(text, { commit, worktree } = {}) {
+  const receipt = JSON.parse(text);
+  if (!shaPattern.test(commit ?? '') || !validExecution(receipt, { commit }) || receipt.worktree !== worktree
+    || receipt.cleanupConfirmed !== true || receipt.childCollected !== true
+    || !/^sleight-linux-[a-f0-9-]{36}$/.test(receipt.runId ?? '')
+    || !containerPattern.test(receipt.containerId ?? '') || !imagePattern.test(receipt.imageId ?? '')) {
+    throw Error('Invalid Linux execution receipt');
+  }
+  return receipt;
+}
+
+// Serialized below and executed inside Linux. Every command uses the copied exact-commit checkout.
+export async function runContainerChecks({ execute = runOwnedCommand, platform = process.platform,
+  env = process.env, commit, runId, source = '/source', root = '/w',
+  prepare = () => cpSync(source, root, { recursive: true, dereference: false, verbatimSymlinks: true, errorOnExist: true, force: false }),
   makeConfig = () => mkdtempSync(join(tmpdir(), 'lane-claude-')),
   removeConfig = directory => rmSync(directory, { recursive: true, force: true }),
+  log = text => process.stderr.write(text),
 } = {}) {
-  const config = makeConfig();
+  const receipt = { schemaVersion: 1, platform, command: ['npm', 'test'], commit, runId,
+    executed: false, exitCode: 1, installExitCode: null, counts: null, trackedFiles: 0 };
+  if (platform !== 'linux' || !shaPattern.test(commit ?? '')) return receipt;
+  let config;
   try {
-    for (const args of [['ci', '--ignore-scripts'], ['test']]) {
-      const result = spawn('npm', args, { stdio: 'inherit', shell: false,
-        env: { ...env, CLAUDE_CONFIG_DIR: config } });
-      if (result.error || result.signal || !Number.isInteger(result.status)) return 1;
-      if (result.status !== 0) return result.status;
+    prepare();
+    config = makeConfig();
+    const options = { cwd: root, env: { ...env, CLAUDE_CONFIG_DIR: config, GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' } };
+    const head = await execute('/usr/bin/git', ['rev-parse', '--verify', 'HEAD^{commit}'], options);
+    if (head.status !== 0 || head.stdout.trim() !== commit) return receipt;
+    const tracked = await execute('/usr/bin/git', ['ls-files', '-z'], options);
+    if (tracked.status !== 0 || !tracked.stdout.endsWith('\0')) return receipt;
+    receipt.trackedFiles = tracked.stdout.split('\0').filter(Boolean).length;
+    if (!receipt.trackedFiles) return receipt;
+    const npmOptions = { ...options, timeout: 1_200_000, log: { stdout: log, stderr: log } };
+    const install = await execute('npm', ['ci', '--ignore-scripts'], npmOptions);
+    receipt.installExitCode = Number.isInteger(install.status) ? install.status : 1;
+    if (install.status !== 0) { receipt.exitCode = receipt.installExitCode || 1; return receipt; }
+    const result = await execute('npm', ['test'], npmOptions);
+    receipt.executed = true;
+    receipt.exitCode = Number.isInteger(result.status) ? result.status : 1;
+    receipt.counts = testCounts(result.stdout ?? '');
+    if (!receipt.counts || receipt.counts.fail || receipt.counts.cancelled || receipt.counts.todo) receipt.exitCode ||= 1;
+  } catch { receipt.exitCode = 1; }
+  finally {
+    if (config) {
+      try { removeConfig(config); }
+      catch { receipt.exitCode = 1; }
     }
-    return 0;
-  } finally { removeConfig(config); }
+  }
+  return receipt;
 }
 
 export const containerProgram = `
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { cpSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+const shaPattern = ${shaPattern};
+const runOwnedCommand = ${runOwnedCommand.toString()};
+const testCounts = ${testCounts.toString()};
 const runContainerChecks = ${runContainerChecks.toString()};
-process.exitCode = runContainerChecks();
+const receipt = await runContainerChecks({ commit: process.argv[1], runId: process.argv[2] });
+process.stdout.write(JSON.stringify(receipt) + '\\n');
+process.exitCode = receipt.exitCode;
 `;
 
-export function linuxPreflightPlan(worktree = fileURLToPath(new URL('..', import.meta.url))) {
-  const root = resolve(worktree);
-  // Docker's volume syntax cannot represent a colon inside a host path.
-  if (/[:\r\n\0]/.test(root)) throw new Error('worktree path contains a Docker volume separator or control character');
-  return { command: 'docker', args: ['run', '--rm', '-v', `${root}:/w`, '-v', '/w/node_modules',
-    '-w', '/w', 'node:24', 'node', '--input-type=module', '-e', containerProgram], cwd: root };
-}
-
-export function runLinuxPreflight({ worktree, spawn = spawnSync, log = message => console.error(message) } = {}) {
-  const { command, args, cwd } = linuxPreflightPlan(worktree);
-  const result = spawn(command, args, { cwd, stdio: 'inherit', shell: false });
-  if (result.error) log(`Linux preflight could not start: ${result.error.message}`);
-  else if (result.signal) log(`Linux preflight stopped by ${result.signal}`);
-  if (result.error || result.signal || !Number.isInteger(result.status)) return 1;
-  return result.status;
-}
-
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  const args = process.argv.slice(2);
-  if (args.length && (args.length !== 2 || args[0] !== '--worktree')) {
-    console.error('Usage: node scripts/linux-preflight.mjs [--worktree PATH]');
-    process.exitCode = 2;
-  } else {
-    try { process.exitCode = runLinuxPreflight({ worktree: args[1] }); }
-    catch (error) { console.error(error.message); process.exitCode = 1; }
+export function linuxPreflightPlan({ checkout, runId, commit } = {}) {
+  const root = resolve(checkout);
+  if (/[:,\r\n\0]/.test(root) || !/^sleight-linux-[a-f0-9-]{36}$/.test(runId ?? '') || !shaPattern.test(commit ?? '')) {
+    throw Error('Invalid container plan input');
   }
+  return { command: 'docker', args: ['create', '--name', runId, '--label', `sleight.preflight=${runId}`,
+    '--mount', `type=bind,source=${root},target=/source,readonly`, '--workdir', '/w',
+    'node:24', 'node', '--input-type=module', '-e', containerProgram, commit, runId] };
 }
+
+// Local Git only. Never copy the host .git, config, hooks, dependency symlink or credentials.
+export async function prepareCheckout({ worktree, commit, stage, execute, signal }) {
+  const checkout = join(stage, 'checkout');
+  const env = { PATH: process.env.PATH, HOME: stage, GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' };
+  const git = async (cwd, args) => {
+    const result = await execute('/usr/bin/git', args, { cwd, env, signal });
+    if (result.status !== 0 || result.collected === false) throw Error('Exact checkout failed');
+    return result.stdout;
+  };
+  const top = (await git(worktree, ['rev-parse', '--show-toplevel'])).trim();
+  if (realpathSync(top) !== worktree || (await git(worktree, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim() !== commit) throw Error('Source identity changed');
+  await git(stage, ['init', '--quiet', checkout]);
+  await git(checkout, ['-c', 'protocol.file.allow=always', 'fetch', '--quiet', '--no-tags', '--depth=1', '--', worktree, commit]);
+  await git(checkout, ['checkout', '--quiet', '--detach', commit]);
+  rmSync(join(checkout, '.git', 'FETCH_HEAD'), { force: true });
+  if ((await git(checkout, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim() !== commit
+    || !(await git(checkout, ['ls-files', '-z'])).endsWith('\0') || existsSync(join(checkout, 'node_modules'))) throw Error('Invalid prepared checkout');
+  return checkout;
+}
+
+export async function runLinuxPreflight({ worktree = fileURLToPath(new URL('..', import.meta.url)), commit,
+  execute = runOwnedCommand, signal, timeout = 1_200_000, log = text => process.stderr.write(text),
+} = {}) {
+  const result = { schemaVersion: 1, platform: 'linux', command: ['npm', 'test'], commit,
+    executed: false, exitCode: 1, cleanupConfirmed: false, childCollected: true };
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
+  const timer = setTimeout(abort, timeout);
+  let stage, attempted = false;
+  const runId = `sleight-linux-${randomUUID()}`;
+  result.runId = runId;
+  const run = async (command, args, options = {}) => {
+    const response = await execute(command, args, { ...options, signal: controller.signal });
+    if (response.collected === false) result.childCollected = false;
+    if (controller.signal.aborted || response.collected === false) throw Error('Cancelled or uncollected child');
+    return response;
+  };
+  try {
+    if (!shaPattern.test(commit ?? '')) throw Error('An exact commit is required');
+    result.worktree = realpathSync(worktree);
+    stage = mkdtempSync(join(tmpdir(), 'sleight-linux-'));
+    const checkout = await prepareCheckout({ worktree: result.worktree, commit, stage, execute: run, signal: controller.signal });
+    const plan = linuxPreflightPlan({ checkout, runId, commit });
+    attempted = true;
+    const created = await run(plan.command, plan.args, { cwd: stage, timeout: 120_000 });
+    if (Number.isInteger(created.status) && created.status > 0) result.exitCode = created.status;
+    const id = created.stdout?.trim();
+    if (created.status !== 0 || !containerPattern.test(id ?? '')) throw Error('Container creation failed');
+    result.containerId = id;
+    const image = await run('docker', ['inspect', '--format', '{{.Image}}', id], { cwd: stage });
+    if (Number.isInteger(image.status) && image.status > 0) result.exitCode = image.status;
+    if (image.status !== 0 || !imagePattern.test(image.stdout?.trim() ?? '')) throw Error('Container image identity unavailable');
+    result.imageId = image.stdout.trim();
+    const tested = await run('docker', ['start', '--attach', id], { cwd: stage, timeout,
+      log: { stderr: log } });
+    if (Number.isInteger(tested.status) && tested.status > 0) result.exitCode = tested.status;
+    const receipt = JSON.parse(tested.stdout);
+    if (receipt?.schemaVersion === 1 && receipt.commit === commit && receipt.runId === runId) {
+      for (const key of ['executed', 'installExitCode', 'counts', 'trackedFiles']) result[key] = receipt[key];
+    }
+    if (!validExecution(receipt, { commit, runId }) || tested.status !== 0) {
+      result.exitCode = Number.isInteger(tested.status) && tested.status > 0 ? tested.status
+        : Number.isInteger(receipt?.exitCode) && receipt.exitCode > 0 ? receipt.exitCode : 1;
+      throw Error('Linux tests failed');
+    }
+    Object.assign(result, receipt);
+  } catch { result.exitCode ||= 1; }
+  finally {
+    if (attempted) {
+      try {
+        // Wait for the attach/create client before addressing only this unique owned name.
+        const removed = await execute('docker', ['rm', '--force', '--volumes', runId], { timeout: 30_000 });
+        const remaining = await execute('docker', ['container', 'ls', '-aq', '--no-trunc', '--filter', `name=^/${runId}$`], { timeout: 30_000 });
+        result.cleanupConfirmed = result.childCollected && removed.collected !== false && remaining.collected !== false
+          && remaining.status === 0 && remaining.stdout.trim() === '';
+      } catch { result.cleanupConfirmed = false; }
+    } else result.cleanupConfirmed = result.childCollected;
+    if (!result.cleanupConfirmed || controller.signal.aborted) result.exitCode ||= 1;
+    if (stage && result.cleanupConfirmed) {
+      try { rmSync(stage, { recursive: true, force: true }); }
+      catch { result.cleanupConfirmed = false; result.exitCode ||= 1; }
+    } else if (stage) { result.stagingRetained = true; log(`Linux cleanup unconfirmed; private staging retained: ${stage}\n`); }
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
+    if (controller.signal.aborted) result.exitCode ||= 1;
+  }
+  return result;
+}
+
+export async function main(args = process.argv.slice(2), { log = text => process.stdout.write(text + '\n'),
+  error = text => process.stderr.write(text + '\n'), signals = process, ...dependencies } = {}) {
+  const options = {}, seen = new Set();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!['--run', '--json', '--worktree', '--commit'].includes(arg) || seen.has(arg)) return 2;
+    seen.add(arg);
+    if (arg === '--worktree' || arg === '--commit') {
+      if (!args[i + 1] || args[i + 1].startsWith('--')) return 2;
+      options[arg.slice(2)] = args[++i];
+    }
+  }
+  if (!seen.has('--run') || !shaPattern.test(options.commit ?? '')) {
+    error('Usage: node scripts/linux-preflight.mjs --run --json --commit SHA [--worktree PATH]');
+    return 2;
+  }
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  signals.on('SIGINT', cancel); signals.on('SIGTERM', cancel);
+  try {
+    const receipt = await runLinuxPreflight({ ...dependencies, ...options, signal: controller.signal });
+    log(JSON.stringify(receipt));
+    return receipt.exitCode;
+  } finally { signals.removeListener('SIGINT', cancel); signals.removeListener('SIGTERM', cancel); }
+}
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) process.exitCode = await main();
