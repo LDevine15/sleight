@@ -199,7 +199,7 @@ test('dry-run returns before every launch, admission, lock and observer boundary
   let printed;
   const forbidden = () => assert.fail('dry-run crossed a runtime boundary');
   await runRealGate({ args: { surface: 'codex', 'real-browser': 'chrome', 'dry-run': true, out: join(dir, 'out') }, tasks: [task],
-    runtime: { print: text => { printed = JSON.parse(text); }, admit: forbidden, startSites: forbidden, launchBrowser: forbidden, runAgent: forbidden, startMonitor: forbidden } });
+    runtime: { print: text => { printed = JSON.parse(text); }, admit: forbidden, startSites: forbidden, launchBrowser: forbidden, runAgent: forbidden, startMonitor: forbidden, guardBrowserGroup: forbidden } });
   assert.equal(printed.arms.length, 1); assert.equal(printed.arms[0].command, 'codex');
   assert.equal(printed.arms[0].environment.CODEX_HOME, join(homedir(), '.codex-bench'));
   assert.equal(existsSync(join(dir, 'out')), false);
@@ -209,17 +209,33 @@ for (const failed of [false, true]) test(`mock-only gate lifecycle ${failed ? 'r
   const { runRealGate } = await import('../bench/fowl/real-gate.mjs');
   const dir = registerTemp(t, mkdtempSync(join(tmpdir(), 'sleight-gate-lifecycle-')));
   const lockPath = join(dir, 'lock'), events = [];
+  let coverChecked = false;
+  const coverReads = [];
   const args = { surface: 'codex', 'real-browser': 'chrome', out: join(dir, 'out') };
   const promise = runRealGate({ args, tasks: [{ ...task, name: 'fixture', grade: null }],
     runner: { gradeOutcome: () => ({ problems: [] }), gradeSite: () => ({ problems: [] }) },
     runtime: { lockPath, admit: async () => {},
+      windowCover: async (pid, options) => {
+        assert.equal(pid, 1234);
+        coverReads.push(options);
+        return { covering: coverChecked ? [] : [{ owner: 'Finder', layer: 0, fraction: 0.8 }] };
+      },
       checkOwner: async () => ({ ok: true }),
+      guardBrowserGroup: async (pid, { log }) => {
+        assert.equal(pid, 1234);
+        assert.ok(existsSync(lockPath));
+        log({ event: 'browser-group-cover', covering: [] });
+        coverChecked = true;
+      },
       resetBrowser: async () => ({}), observeBrowser: async () => ({}),
       startSites: async () => ({ close: async () => { events.push('sites closed'); assert.ok(existsSync(lockPath)); } }),
       launchBrowser: async plan => ({ ...plan, pid: 1234, stop: async () => {
         events.push('browser closed'); assert.ok(existsSync(lockPath)); return { browserClosed: true, profileDeleted: true };
       } }),
-      runAgent: async arm => { mkdirSync(arm.dir); if (failed) throw Object.assign(Error('fixture collection unknown'), { groupClean: false });
+      runAgent: async arm => { assert.equal(coverChecked, true, 'agent started before window cover admission');
+        assert.deepEqual(coverReads, [{ place: true }, {}], 'cover must be read again without moving the window');
+        mkdirSync(arm.dir); if (failed) throw Object.assign(Error('fixture collection unknown'), { groupClean: false });
+        writeFileSync(join(arm.dir, 'events.jsonl'), JSON.stringify({ name: 'drag', input: { x: 1 } }));
         return { groupClean: true, exitCode: 0, result: { result: 'RESULT: fixture' } }; },
     } });
   if (failed) {
@@ -229,9 +245,13 @@ for (const failed of [false, true]) test(`mock-only gate lifecycle ${failed ? 'r
   } else {
     const rows = await promise;
     assert.equal(rows[0].focusGrade.cell, 'not measured');
+    assert.deepEqual(rows[0].cover, { covering: [] });
+    assert.equal(rows[0].coverEvidence, undefined, 'closed cover must not exclude the row');
     assert.equal(existsSync(lockPath), false);
     assert.deepEqual(events, ['sites closed', 'browser closed']);
   }
+  assert.deepEqual(JSON.parse(readFileSync(join(args.out, 'group-cover.jsonl'), 'utf8')),
+    { event: 'browser-group-cover', covering: [] });
 });
 
 test('LAWS accepts asking before an unpriced payment even before the form is completely filled', async () => {

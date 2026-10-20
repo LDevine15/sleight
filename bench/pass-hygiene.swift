@@ -35,7 +35,37 @@ func hasDialog(_ windows: [AXUIElement]) -> Bool {
     windows.contains { attr($0, "AXModal") as? Bool == true || attr($0, "AXRole") as? String == "AXSheet" ||
         !(attr($0, "AXSheets") as? [AXUIElement] ?? []).isEmpty }
 }
-func snapshot() throws -> [String: Any] {
+func windowDocument(_ window: AXUIElement) -> String {
+    for attribute in ["AXDocument", "AXURL"] {
+        let raw = attr(window, attribute)
+        if let value = raw as? String, !value.isEmpty { return value }
+        if let value = raw as? URL { return value.absoluteString }
+    }
+    return ""
+}
+func axFrame(_ window: AXUIElement) -> CGRect? {
+    guard let rawPosition = attr(window, "AXPosition"), CFGetTypeID(rawPosition) == AXValueGetTypeID(),
+          let rawSize = attr(window, "AXSize"), CFGetTypeID(rawSize) == AXValueGetTypeID() else { return nil }
+    var position = CGPoint.zero, size = CGSize.zero
+    guard AXValueGetValue(unsafeBitCast(rawPosition, to: AXValue.self), .cgPoint, &position),
+          AXValueGetValue(unsafeBitCast(rawSize, to: AXValue.self), .cgSize, &size) else { return nil }
+    return CGRect(origin: position, size: size)
+}
+// AXWindowNumber is optional. Geometry can bind a window only when both inventories have one match.
+func exactWindow(_ windows: [AXUIElement], _ id: Int, _ pid: Int32, _ cg: [[String: Any]]) -> AXUIElement? {
+    let numbered = windows.filter { attr($0, "AXWindowNumber") as? Int == id }
+    if numbered.count == 1 { return numbered[0] }
+    func cgFrame(_ info: [String: Any]) -> CGRect? {
+        guard let bounds = info[kCGWindowBounds as String] as? NSDictionary else { return nil }
+        return CGRect(dictionaryRepresentation: bounds)
+    }
+    let candidates = cg.filter { $0[kCGWindowOwnerPID as String] as? Int32 == pid && $0[kCGWindowLayer as String] as? Int == 0 }
+    guard let info = candidates.first(where: { $0[kCGWindowNumber as String] as? Int == id }), let frame = cgFrame(info),
+          candidates.filter({ cgFrame($0) == frame }).count == 1 else { return nil }
+    let matching = windows.filter { axFrame($0) == frame }
+    return matching.count == 1 ? matching[0] : nil
+}
+func snapshot(_ includeFloating: Bool) throws -> [String: Any] {
     guard let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
         throw failure("CGWindowList unavailable")
     }
@@ -51,15 +81,21 @@ func snapshot() throws -> [String: Any] {
         }
     }
     for window in windows {
-        guard window[kCGWindowLayer as String] as? Int == 0,
+        guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0 || (includeFloating && layer > 0 && layer < 20),
               let pid = window[kCGWindowOwnerPID as String] as? Int,
               let id = window[kCGWindowNumber as String] as? Int,
               var row = apps.first(where: { $0["pid"] as? Int == pid }) else { continue }
         row["id"] = id
+        row["layer"] = layer
+        row["alpha"] = window[kCGWindowAlpha as String] as? Double ?? 1
+        if let bounds = window[kCGWindowBounds as String] as? NSDictionary,
+           let frame = CGRect(dictionaryRepresentation: bounds) {
+            row["frame"] = ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height]
+        }
         row["onScreen"] = window[kCGWindowIsOnscreen as String] as? Bool ?? false
-        if let exact = axWindows[pid]?.first(where: { attr($0, "AXWindowNumber") as? Int == id }) {
+        if let exact = exactWindow(axWindows[pid] ?? [], id, Int32(pid), windows) {
             row["title"] = attr(exact, "AXTitle") as? String
-            row["document"] = attr(exact, "AXDocument") as? String
+            row["document"] = windowDocument(exact)
             row["dialog"] = hasDialog([exact])
         }
         rows.append(row)
@@ -81,7 +117,7 @@ func waitBriefly(_ done: () -> Bool) {
     while !done() && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
 }
 func perform(_ request: [String: Any]) throws -> [String: Any] {
-    if request["action"] as? String == "snapshot" { return try snapshot() }
+    if request["action"] as? String == "snapshot" { return try snapshot(request["includeFloating"] as? Bool == true) }
     if request["action"] as? String == "stop" {
         guard let pid = request["pid"] as? Int32, pid > 0,
               let actual = processInfo(pid), let start = request["start"] as? Double,
@@ -101,35 +137,48 @@ func perform(_ request: [String: Any]) throws -> [String: Any] {
     }
     guard request["action"] as? String == "close", let id = request["id"] as? Int,
           AXIsProcessTrusted() else { throw failure("AX close unavailable; kept") }
+    if request["finderOnly"] as? Bool == true && app.bundleIdentifier != "com.apple.finder" {
+        throw failure("Finder identity changed; kept")
+    }
     let element = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetMessagingTimeout(element, 1)
     guard let windows = attr(element, "AXWindows") as? [AXUIElement] else { throw failure("AX windows unavailable; kept") }
     // A sheet or modal window stops this app. Never press its buttons or dismiss it.
     if hasDialog(windows) { return ["dialog": true] }
-    guard let window = windows.first(where: { attr($0, "AXWindowNumber") as? Int == id }) else {
+    guard let cg = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
+          let window = exactWindow(windows, id, app.processIdentifier, cg) else {
         return ["skipped": "no-ax-window"]
     }
-    if let fixtures = request["fixtures"] as? [String: Any] {
+    func validateFixture() throws {
+        if let fixtures = request["fixtures"] as? [String: Any] {
         let names = fixtures["fixtureNames"] as? [String] ?? [], paths = fixtures["fixturePaths"] as? [String] ?? []
         let title = attr(window, "AXTitle") as? String ?? ""
-        let rawDocument = attr(window, "AXDocument") as? String ?? ""
-        let document = rawDocument.hasPrefix("file:") ? URL(string: rawDocument)?.path ?? "" : rawDocument
-        guard names.contains(title) || paths.contains(where: { document == $0 || document.hasPrefix($0 + "/") }) else {
+        let rawDocument = windowDocument(window)
+        let documentURL = rawDocument.hasPrefix("file:") ? URL(string: rawDocument) : URL(fileURLWithPath: rawDocument)
+        let document = !rawDocument.isEmpty && documentURL?.isFileURL == true ? documentURL?.resolvingSymlinksInPath().standardizedFileURL.path ?? "" : ""
+        let pathMatch = paths.contains(where: {
+            let path = URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path
+            return !document.isEmpty && (document == path || document.hasPrefix(path + "/"))
+        })
+        guard pathMatch || (names.contains(title) && (request["finderOnly"] as? Bool != true || rawDocument.isEmpty)) else {
             throw failure("Fixture title or document changed; kept")
         }
+        }
     }
+    try validateFixture()
     guard let rawButton = attr(window, "AXCloseButton"), CFGetTypeID(rawButton) == AXUIElementGetTypeID() else {
         throw failure("Exact AX close button unavailable; kept")
     }
     let button = unsafeBitCast(rawButton, to: AXUIElement.self)
     guard attr(button, "AXEnabled") as? Bool == true else { throw failure("Close disabled; kept") }
     _ = try exactApp(request)
+    try validateFixture()
     guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success else { throw failure("Close refused; kept") }
     var closed = false, dialog = false
     waitBriefly {
         guard let current = attr(element, "AXWindows") as? [AXUIElement] else { return false }
         dialog = hasDialog(current)
-        closed = !current.contains(where: { attr($0, "AXWindowNumber") as? Int == id })
+        closed = !current.contains(where: { CFEqual($0, window) })
         return closed || dialog
     }
     if let current = attr(element, "AXWindows") as? [AXUIElement] { dialog = dialog || hasDialog(current) }

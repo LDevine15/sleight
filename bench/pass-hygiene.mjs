@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { join, sep } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { runOwned } from './preapproved-process.mjs';
+import { swiftModuleCache } from './swift-cache.mjs';
 
 const processKey = item => `${item.pid}:${Math.round(item.start * 1000)}:${item.bundle}`;
 const windowKey = item => `${processKey(item)}:${item.id}`;
@@ -141,11 +143,9 @@ export async function quitLaunched({ snapshot, act, launched = [], dryRun = fals
 }
 
 // Compile and invoke only inside the runner's live lock, never on import or a planning dry run.
-export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}) {
+export async function beginWindowControl({ home = homedir(), cacheDir = join(home, 'Library', 'Caches', 'sleight-bench', 'window-control'),
+  run = runOwned, signal, includeFloating = false } = {}) {
   const source = fileURLToPath(new URL('./pass-hygiene.swift', import.meta.url));
-  const hash = createHash('sha256').update(readFileSync(source)).digest('hex').slice(0, 16);
-  mkdirSync(cacheDir, { recursive: true });
-  const binary = join(cacheDir, `pass-hygiene-${hash}`);
   const checked = async (command, args, options) => {
     const result = await run(command, args, options);
     if (result.groupClean !== true) throw Object.assign(new Error('Pass hygiene process group cleanup unconfirmed'), { uncollected: true });
@@ -154,9 +154,13 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     }
     return result.stdout;
   };
+  const version = await checked('/usr/bin/xcrun', ['swiftc', '--version'], { timeoutMs: 10000, signal });
+  const hash = createHash('sha256').update(readFileSync(source)).update('\0').update(version).digest('hex').slice(0, 16);
+  mkdirSync(cacheDir, { recursive: true });
+  const binary = join(cacheDir, `pass-hygiene-${hash}`);
   if (!existsSync(binary)) {
     const bank = mkdtempSync(join(cacheDir, 'pass-hygiene-build-')), output = join(bank, 'helper');
-    const modules = join(cacheDir, 'swift-module-cache'); mkdirSync(modules, { recursive: true });
+    const modules = swiftModuleCache(home);
     let uncollected = false;
     try {
       await checked('/usr/bin/xcrun', ['swiftc', '-module-cache-path', modules, source, '-o', output], { timeoutMs: 180000, signal });
@@ -165,9 +169,8 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     finally { if (!uncollected) rmSync(bank, { recursive: true, force: true }); }
   }
   const call = async request => JSON.parse(await checked(binary, [JSON.stringify(request)], { timeoutMs: 10000 }));
-  let baselineError;
   const snapshot = async () => {
-    const value = await call({ action: 'snapshot' });
+    const value = await call({ action: 'snapshot', ...(includeFloating && { includeFloating: true }) });
     if (!value || !Array.isArray(value.apps) || !Array.isArray(value.windows) || !value.apps.every(valid) ||
       !value.windows.every(window => valid(window) && Number.isSafeInteger(window.id) && window.id > 0 &&
         value.apps.some(app => processKey(app) === processKey(window)))) {
@@ -175,6 +178,12 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     }
     return value;
   };
+  return { snapshot, act: call };
+}
+
+export async function beginPassHygiene(options = {}) {
+  const { snapshot, act: call } = await beginWindowControl(options);
+  let baselineError;
   // A failed baseline still returns a receipts-only handle on the error: boundary snapshots can
   // prove later launches, and finish quits only those and the leases' receipts. An uncollected
   // helper gets no handle, so no further helper runs.

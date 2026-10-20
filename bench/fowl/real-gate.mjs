@@ -18,6 +18,7 @@ import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
 import { startRoundAllow, allowPlan } from './chrome-allow.mjs';
 import { watchCover, windowCover } from './window-cover.mjs';
+import { guardBrowserGroup } from './group-cover.mjs';
 import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure, coverEvidence, coverText, withAnswerGraders, currentAnswerGraders } from './real-gate-grade.mjs';
 import { taskSupport, raceBundles, isCodexSurface, isCodexSleightSurface, runsCodexExec, sleightKind, codexModelFor } from './support.mjs';
 import { CODEX_SLEIGHT_HOME, ensureCodexSleightHome, writeCodexSleightConfig, approvalSummary, PROXY, SLEIGHT_MCP } from '../codex-sleight.mjs';
@@ -337,6 +338,7 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
     // connected 20:17:59). Starting sooner costs the first task a failed select_browser that other arms never pay.
     if (plan.surface === 'claude-in-chrome') await (runtime.settle || (ms => new Promise(resolve => setTimeout(resolve, ms))))(10000);
     let coverLogged = 0;
+    const coverWaits = new Map();
     for (let arm of plan.arms) {
       if (controller.signal.aborted) throw Error('Gate interrupted');
       const census = async () => {
@@ -366,7 +368,16 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       if (controller.signal.aborted) throw Error('Gate interrupted');
       // The browser's own window goes where the fewest other windows overlap it, and what still covers it is recorded beside the
       // task's outcome. An offline test that injects the browser never reads or moves the Mac's windows.
-      const cover = await (runtime.windowCover || (runtime.launchBrowser ? async () => null : windowCover))(browser.pid, { place: true });
+      const readCover = runtime.windowCover || (runtime.launchBrowser ? async () => null : windowCover);
+      await readCover(browser.pid, { place: true });
+      // Check the actual owned browser frame before any agent starts. Safari and Firefox relaunch on reset,
+      // so every task checks again. Only proven Finder fixture covers may close; each owner cover gets three minutes per round.
+      await (runtime.guardBrowserGroup || (runtime.launchBrowser ? async () => {} : guardBrowserGroup))(browser.pid, {
+        signal: controller.signal,
+        coverWaits,
+        log: event => appendFileSync(join(plan.out, 'group-cover.jsonl'), JSON.stringify(event) + '\n'),
+      });
+      const cover = await readCover(browser.pid, {});
       // Windows can come over it while the agent runs, so the cover is read again every 5 s and at the end (read only).
       const coverWatch = (runtime.watchCover || (runtime.launchBrowser ? null : watchCover))?.(browser.pid) ?? null;
       // Chrome and Helium report every page URL while the agent runs; the lookup graders need that visit.

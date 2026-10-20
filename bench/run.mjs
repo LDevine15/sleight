@@ -697,7 +697,7 @@ pass: for (let run = 1; run <= runs; run++) {
       const nonce = randomBytes(4).toString('hex');
       const dir = join(suite === 'real' ? realpathSync(tmpdir()) : tmpdir(), 'sleight-bench', stamp, `${armName}-${task.id}-${run}`);
       mkdirSync(dir, { recursive: true });
-      const ctx = { dir, nonce, ownerAway, ownerPresent, realProfile: option('real-profile', undefined), ...(guardedPass && { stopOnAppDialog: true }) };
+      const ctx = { dir, nonce, fixtureRoot: join(tmpdir(), 'sleight-bench'), ownerAway, ownerPresent, realProfile: option('real-profile', undefined), ...(guardedPass && { stopOnAppDialog: true }) };
       fixtureContexts.push(ctx);
       for (const app of [task.app, ...task.allowedApps ?? []].filter(Boolean)) touchedApps.add(app);
       if (suite === 'real' || task.fixtureLifecycle || guardedPass) {

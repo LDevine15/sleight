@@ -60,6 +60,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
     throw Object.assign(new Error('Browser blank-window setup requires an explicit owner-away boundary'), { noMutation: true });
   }
   request = { ...request, runToken: ctx.nonce || request.runToken, fixtureLaunch,
+    ...(request.bundle === 'com.apple.finder' && request.mode === 'folder' && { fixtureRoot: ctx.fixtureRoot || ctx.dir }),
     stopOnAppDialog: ctx.stopOnAppDialog || request.stopOnAppDialog, ownerAway: ctx.ownerAway === true };
   ctx.signal?.throwIfAborted();
   ctx.cleanupSignal?.throwIfAborted();

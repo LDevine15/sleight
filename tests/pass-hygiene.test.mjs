@@ -80,6 +80,7 @@ test('native adapter refuses an uncollected compiler or helper before claiming a
   const cacheDir = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-compile-')));
   await assert.rejects(hygiene.beginPassHygiene({ cacheDir, run: async () => ({ stdout: '{}', groupClean: false, exit: { code: 0 } }) }), /group cleanup unconfirmed/);
   const helperOnly = async (command, args) => {
+    if (command === '/usr/bin/xcrun' && args[1] === '--version') return { stdout: 'Swift test version', groupClean: true, exit: { code: 0 } };
     if (command === '/usr/bin/xcrun') { writeFileSync(args.at(-1), 'fake'); return { stdout: '{}', groupClean: true, exit: { code: 0 } }; }
     return { stdout: '{}', groupClean: false, exit: { code: 0 } };
   };
@@ -92,6 +93,7 @@ test('native adapter checks its baseline and routes every helper through owned p
   let malformed = true;
   const run = async (command, args, options) => {
     calls.push({ command, args, options });
+    if (command === '/usr/bin/xcrun' && args[1] === '--version') return { stdout: 'Swift test version', groupClean: true, exit: { code: 0 } };
     if (command === '/usr/bin/xcrun') writeFileSync(args.at(-1), 'fake compiled helper');
     const request = command === '/usr/bin/xcrun' ? {} : JSON.parse(args[0]);
     return { stdout: JSON.stringify(request.action === 'snapshot' ? malformed ? {} : baseline : {}), groupClean: true, exit: { code: 0 } };
@@ -101,8 +103,50 @@ test('native adapter checks its baseline and routes every helper through owned p
   const pass = await hygiene.beginPassHygiene({ cacheDir, run });
   const result = await pass.finish({ dryRun: true, log() {} });
   assert.deepEqual(result.planned, []);
-  assert.equal(calls.filter(call => call.command === '/usr/bin/xcrun').length, 1, 'compiled source hash is cached');
+  assert.equal(calls.filter(call => call.command === '/usr/bin/xcrun' && call.args[1] !== '--version').length, 1, 'compiled source hash is cached');
   assert.ok(calls.every(call => call.options.timeoutMs > 0));
+});
+
+test('window control reuses the shared source-hash binary and module cache across rounds', async t => {
+  const home = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-shared-cache-'))), compiles = [], helpers = [];
+  const run = async (command, args) => {
+    if (command === '/usr/bin/xcrun' && args[1] === '--version') return { stdout: 'Swift test version', groupClean: true, exit: { code: 0 } };
+    if (command === '/usr/bin/xcrun') {
+      compiles.push(args);
+      writeFileSync(args.at(-1), 'fake compiled helper');
+    } else helpers.push(command);
+    return { stdout: JSON.stringify(baseline), groupClean: true, exit: { code: 0 } };
+  };
+  for (let round = 0; round < 2; round++) {
+    const control = await hygiene.beginWindowControl({ home, run, includeFloating: true });
+    await control.snapshot();
+  }
+  assert.equal(compiles.length, 1);
+  assert.deepEqual(compiles[0].slice(0, 3), ['swiftc', '-module-cache-path', join(home, 'Library/Caches/sleight-bench/swift-module-cache')]);
+  assert.equal(helpers[0], helpers[1]);
+  assert.equal(helpers[0].startsWith(join(home, 'Library/Caches/sleight-bench/window-control/pass-hygiene-')), true);
+});
+
+test('window control rebuilds on a swiftc version change and reuses each toolchain cache', async t => {
+  const home = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-toolchain-'))), binaries = [];
+  let version = 'Apple Swift version 6.2\nTarget: arm64-apple-macosx26.0\n', compiles = 0;
+  const run = async (command, args) => {
+    if (command === '/usr/bin/xcrun' && args[1] === '--version') {
+      return { stdout: version, groupClean: true, exit: { code: 0 } };
+    }
+    if (command === '/usr/bin/xcrun') { compiles++; writeFileSync(args.at(-1), 'compiled'); }
+    else binaries.push(command);
+    return { stdout: JSON.stringify(baseline), groupClean: true, exit: { code: 0 } };
+  };
+  const read = async () => (await hygiene.beginWindowControl({ home, run })).snapshot();
+  await read(); await read();
+  assert.equal(compiles, 1);
+  version = 'Apple Swift version 6.3\nTarget: arm64-apple-macosx26.0\n';
+  await read(); await read();
+  assert.equal(compiles, 2);
+  assert.equal(binaries[0], binaries[1]);
+  assert.notEqual(binaries[1], binaries[2]);
+  assert.equal(binaries[2], binaries[3]);
 });
 
 test('unrelated new windows are listed but only touched fixture apps are closed', async () => {
@@ -156,6 +200,7 @@ test('native adapter registers default fixture launches and leaves pre-existing 
   const cacheDir = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-launch-')));
   let state = baseline;
   const run = async (command, args) => {
+    if (command === '/usr/bin/xcrun' && args[1] === '--version') return { stdout: 'Swift test version', groupClean: true, exit: { code: 0 } };
     if (command === '/usr/bin/xcrun') writeFileSync(args.at(-1), 'fake');
     return { stdout: JSON.stringify(state), groupClean: true, exit: { code: 0 } };
   };
@@ -182,6 +227,7 @@ test('arm sampling retains descendant identity after reparenting and rejects a r
   const cacheDir = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-arm-'))), actions = [];
   let state = { ...baseline, processes: [], at: 100 };
   const run = async (command, args) => {
+    if (command === '/usr/bin/xcrun' && args[1] === '--version') return { stdout: 'Swift test version', groupClean: true, exit: { code: 0 } };
     if (command === '/usr/bin/xcrun') writeFileSync(args.at(-1), 'fake');
     else if (JSON.parse(args[0]).action !== 'snapshot') { actions.push(JSON.parse(args[0])); return { stdout: '{}', groupClean: true, exit: { code: 0 } }; }
     return { stdout: JSON.stringify(state), groupClean: true, exit: { code: 0 } };
@@ -243,6 +289,7 @@ test('pre-existing touched apps retain owner windows and close only exact fixtur
 async function nativeFixture(t, snapshot) {
   const cacheDir = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-boundary-')));
   return hygiene.beginPassHygiene({ cacheDir, run: async (command, args) => {
+    if (command === '/usr/bin/xcrun' && args[1] === '--version') return { stdout: 'Swift test version', groupClean: true, exit: { code: 0 } };
     if (command === '/usr/bin/xcrun') { writeFileSync(args.at(-1), 'fake'); return { stdout: '{}', groupClean: true, exit: { code: 0 } }; }
     const request = JSON.parse(args[0]);
     return { stdout: JSON.stringify(request.action === 'snapshot' ? await snapshot() : {}), groupClean: true, exit: { code: 0 } };
@@ -338,6 +385,7 @@ test('without a baseline, exact launch receipts still get one gentle Quit and no
   const cacheDir = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-no-baseline-'))), actions = [];
   let fail = true, state = baseline;
   const run = async (command, args) => {
+    if (command === '/usr/bin/xcrun' && args[1] === '--version') return { stdout: 'Swift test version', groupClean: true, exit: { code: 0 } };
     if (command === '/usr/bin/xcrun') { writeFileSync(args.at(-1), 'fake'); return { stdout: '{}', groupClean: true, exit: { code: 0 } }; }
     const request = JSON.parse(args[0]);
     if (request.action !== 'snapshot') {

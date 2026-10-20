@@ -1,9 +1,81 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { registerTemp } from '../scripts/temp-leftovers.mjs';
+import * as coverModule from '../bench/fowl/window-cover.mjs';
 import { summarizeCover, watchCover, windowCover } from '../bench/fowl/window-cover.mjs';
 import { coverCell } from '../bench/fowl/real-gate.mjs';
 
 const binary = async () => '/fake/window-cover';
+
+test('window-cover caches across callers and rebuilds for a changed swiftc version', async t => {
+  assert.equal(typeof coverModule.compileWindowCover, 'function');
+  const home = registerTemp(t, mkdtempSync(join(tmpdir(), 'window-cover-cache-'))), compiles = [];
+  let version = 'Apple Swift version 6.2\nTarget: arm64-apple-macosx26.0\n';
+  const run = async (command, args) => {
+    assert.equal(command, '/usr/bin/xcrun');
+    if (args[1] === '--version') return { stdout: version };
+    compiles.push(args);
+    const output = args.at(-1);
+    assert.equal(existsSync(output), false);
+    assert.equal(readdirSync(join(home, 'Library/Caches/sleight-bench/window-cover')).some(name => /^window-cover-[a-f0-9]+$/.test(name)), compiles.length > 1);
+    writeFileSync(output, 'complete helper');
+    return { stdout: '' };
+  };
+  const first = await coverModule.compileWindowCover({ home, run });
+  assert.equal(existsSync(first), true);
+  assert.equal(await coverModule.compileWindowCover({ home, run }), first);
+  assert.equal(compiles.length, 1);
+  assert.deepEqual(compiles[0].slice(0, 3), ['swiftc', '-module-cache-path', join(home, 'Library/Caches/sleight-bench/swift-module-cache')]);
+  assert.notEqual(compiles[0].at(-1), first, 'publish only by rename after compile');
+  version = 'Apple Swift version 6.3\nTarget: arm64-apple-macosx26.0\n';
+  const second = await coverModule.compileWindowCover({ home, run });
+  assert.notEqual(second, first);
+  assert.equal(await coverModule.compileWindowCover({ home, run }), second);
+  assert.equal(compiles.length, 2);
+  assert.equal(readdirSync(join(home, 'Library/Caches/sleight-bench/window-cover')).length, 2, 'build banks removed');
+});
+
+test('failed window-cover compiles publish nothing and can retry', async t => {
+  assert.equal(typeof coverModule.compileWindowCover, 'function');
+  const home = registerTemp(t, mkdtempSync(join(tmpdir(), 'window-cover-failed-')));
+  let fail = true;
+  const run = async (command, args) => {
+    if (args[1] === '--version') return { stdout: 'Swift test version' };
+    writeFileSync(args.at(-1), fail ? 'partial' : 'complete');
+    if (fail) throw Error('fake compile failure');
+    return { stdout: '' };
+  };
+  await assert.rejects(coverModule.compileWindowCover({ home, run }), /fake compile failure/);
+  assert.deepEqual(readdirSync(join(home, 'Library/Caches/sleight-bench/window-cover')), []);
+  fail = false;
+  assert.equal(existsSync(await coverModule.compileWindowCover({ home, run })), true);
+});
+
+test('concurrent window-cover builds publish complete helpers and remove their private banks', async t => {
+  const home = registerTemp(t, mkdtempSync(join(tmpdir(), 'window-cover-concurrent-')));
+  let arrived = 0, release;
+  const ready = new Promise(resolve => { release = resolve; });
+  const run = async (command, args) => {
+    if (args[1] === '--version') return { stdout: 'Swift test version' };
+    writeFileSync(args.at(-1), 'partial');
+    if (++arrived === 2) release();
+    await ready;
+    const cache = join(home, 'Library/Caches/sleight-bench/window-cover');
+    for (const file of readdirSync(cache).filter(name => /^window-cover-[a-f0-9]+$/.test(name))) {
+      assert.equal(readFileSync(join(cache, file), 'utf8'), 'complete');
+    }
+    writeFileSync(args.at(-1), 'complete');
+    return { stdout: '' };
+  };
+  const binaries = await Promise.all([coverModule.compileWindowCover({ home, run }), coverModule.compileWindowCover({ home, run })]);
+  assert.equal(arrived, 2);
+  assert.equal(binaries[0], binaries[1]);
+  assert.equal(readFileSync(binaries[0], 'utf8'), 'complete');
+  assert.equal(readdirSync(join(home, 'Library/Caches/sleight-bench/window-cover')).length, 1);
+});
 
 test('windowCover returns the helper\'s frame and covering list', async () => {
   const reply = { ok: true, frame: { x: 0, y: 0, width: 800, height: 600 }, covering: [{ owner: 'Terminal', layer: 0, fraction: 0.237 }] };
