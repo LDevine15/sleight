@@ -156,13 +156,15 @@ test('selection passes its window number into duplicate-title identity checks', 
     epoch: 'helper', window: 2, windowNumber: 22, pid: 123, processStart: 1 }; } });
   h.send(rpc('select', 'select_window', { app: 'TextEdit', title: 'Untitled', windowNumber: 22 }));
   await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, 1, 'selection seeds the native baseline before acquisition');
+  assert.equal(requests[0].windowNumber, 22);
   h.send(rpc('read', 'js', { code: 'let app = await cua.getApp("TextEdit")' })); h.reply(result('read', duplicateTree));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(requests[0].windowNumber, 22);
   h.send(rpc('action', 'js', { code: 'await app.typeText("x")' }));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(h.forwarded.at(-1).id, 'action');
-  assert.equal(requests[1].nativeIdentity.windowNumber, 22);
+  assert.equal(requests.at(-1).nativeIdentity.windowNumber, 22);
   h.reply(result('action', duplicateTree));
 });
 test('multiple candidates hold admission while their native check is pending', async t => {
