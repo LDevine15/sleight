@@ -115,14 +115,20 @@ if mode == "inspect" {
     guard !FileManager.default.fileExists(atPath: "/tmp/sleight-hold") else { fail("HOLD") }
     var requestedWindow = UnsafeRawPointer(bitPattern: UInt(window))
     guard let requestedWindows = CFArrayCreate(kCFAllocatorDefault, &requestedWindow, 1, nil),
-        let list = CGWindowListCreateDescriptionFromArray(requestedWindows) as? [[String: Any]],
-        list.count == 1, let info = list.first,
-        (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
-        (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value == window,
-        let onscreen = info[kCGWindowIsOnscreen as String] as? Bool else { fail("INSPECTION_WINDOW_IDENTITY") }
+        let list = CGWindowListCreateDescriptionFromArray(requestedWindows) as? [[String: Any]] else { fail("INSPECTION_WINDOW_QUERY_UNAVAILABLE") }
+    guard list.count == 1 else { fail("INSPECTION_WINDOW_QUERY_COUNT") }
+    guard let info = list.first else { fail("INSPECTION_WINDOW_QUERY_EMPTY") }
+    guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid else { fail("INSPECTION_WINDOW_OWNER_MISMATCH") }
+    guard (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value == window else { fail("INSPECTION_WINDOW_NUMBER_MISMATCH") }
+    // CGWindow.h defines an absent optional key as not ordered on screen.
+    // Visibility is an observation, separate from the required identity fields above.
+    let onscreenValue = info[kCGWindowIsOnscreen as String]
+    if let onscreenValue, !(onscreenValue is Bool) { fail("INSPECTION_WINDOW_ONSCREEN_MALFORMED") }
+    let onscreen = onscreenValue as? Bool ?? false
     var value: CFTypeRef?
     let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
     receipt("inspection", ["mode": mode, "pid": pid, "window": window, "cgOnscreen": onscreen,
+        "cgOnscreenKeyPresent": onscreenValue != nil,
         "axStatus": status.rawValue, "axWindows": (value as? [AXUIElement])?.count ?? -1])
     exit(0)
 } else if mode == "ax" {
