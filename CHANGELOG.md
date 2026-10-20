@@ -24,6 +24,13 @@
   duplicate routes.
 - Cursor's approval cards and menu bar label say "Cursor" for both editor and CLI clients.
 
+### Grok CLI and launcher shutdown
+
+- Grok CLI can use sleight through its Claude marketplace import or a direct MCP entry. Approval labels name Grok,
+  and the doctor reports its install route. Turbo stays off in Grok. Grok Bot.app is not yet supported.
+- The launcher registers stdin EOF and signal handlers before startup's first await, then waits for its engine and
+  relay to be ready before collecting them on shutdown. A piped-handshake test checks clean launcher and engine exit.
+
 ### Local stats
 
 - `sleight-mcp stats` reports median and p90 action times, reads saved and failures from the opt-in local log, with
