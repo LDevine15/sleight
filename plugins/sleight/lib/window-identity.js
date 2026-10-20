@@ -169,12 +169,19 @@ function run(argv) {
       const current = () => {
         unknownReason = 'process-changed';
         const running = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
-        if (!running || running.isNil() || running.terminated !== false || Number(running.processIdentifier) !== pid ||
-            ObjC.unwrap(running.bundleIdentifier) !== request.appId || Number(running.launchDate.timeIntervalSince1970) !== processStart) {
-          throw new Error('Leased process changed');
+        if (!running || running.isNil()) return { status: 'ok', appId: request.appId, pid, processStart, running: false };
+        const actual = { appId: ObjC.unwrap(running.bundleIdentifier), pid: Number(running.processIdentifier),
+          processStart: Number(running.launchDate.timeIntervalSince1970), running: running.terminated === false };
+        // Preserve concrete conflicts even on a terminated replacement. Absence
+        // of the leased pid is distinct from reusing it for another launch.
+        if (actual.pid !== pid || actual.appId !== request.appId || actual.processStart !== processStart) {
+          return { status: 'unknown', unknownReason, ...actual };
         }
+        if (running.terminated === true) return { status: 'ok', ...actual };
+        if (running.terminated !== false) throw new Error('Unknown process state');
       };
-      current();
+      const before = current();
+      if (before) return JSON.stringify(before);
       unknownReason = 'ax-error';
       const app = $.AXUIElementCreateApplication(pid), deadline = Date.now() + 150;
       const expired = () => {
@@ -263,7 +270,8 @@ function run(argv) {
         // of them is the closing target. Keep positive-count reads blocked.
         if (held > 0) closedWindowPresent = undefined;
       }
-      current();
+      const after = current();
+      if (after) return JSON.stringify(after);
       expired();
       return JSON.stringify({ status: 'ok', appId: request.appId, pid, processStart, running: true, windowCount, modalCount,
         ...(closedWindowPresent !== undefined ? { closedWindowPresent } : {}) });

@@ -63,24 +63,44 @@ test('DPh ending a call during a native sample cannot recreate its observation f
   assert.equal(existsSync(info.path), false);
 });
 
-test('DPi stops close polling after two consecutive failures, with success resetting the count', async t => {
+test('DPo keeps sampling through consecutive failures until usable metadata returns', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-close-fail-')));
-  const replies = [{ status: 'unknown' }, ok, undefined, { status: 'denied' }, ok];
+  const replies = [{ status: 'unknown' }, undefined, { status: 'denied' }, ok];
   let requests = 0;
   const observer = observers.createCloseRead({ directory, observe: async () => {
-    const reply = replies[requests++];
+    const reply = replies[Math.min(requests++, replies.length - 1)];
     if (reply === undefined) throw Error('failed metadata');
     return reply;
   } });
   t.after(() => { observer.dispose(); removeTemp(directory); });
   const info = observer.begin(1, window);
-  for (let i = 0; i < 10; i++) { t.mock.timers.tick(100); await new Promise(resolve => setImmediate(resolve)); }
-  assert.equal(requests, 4);
-  assert.equal(JSON.parse(readFileSync(info.path, 'utf8')).observations.at(-1).status, 'denied');
+  for (let i = 0; i < 5; i++) { t.mock.timers.tick(25); await new Promise(resolve => setImmediate(resolve)); }
+  assert.ok(requests >= 4);
+  assert.equal(JSON.parse(readFileSync(info.path, 'utf8')).observations.at(-1).status, 'ok');
+});
+
+test('DPo a decided call stops sampling and discards an in-flight reply until end removes the file', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-close-pause-')));
+  let requests = 0, finish;
+  const observer = observers.createCloseRead({ directory, observe: () => {
+    requests++;
+    return new Promise(resolve => { finish = resolve; });
+  } });
+  t.after(() => { observer.dispose(); removeTemp(directory); });
+  const info = observer.begin(1, window);
+  t.mock.timers.tick(0); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests, 1);
+  observer.pause(1);
+  finish(ok);
+  await new Promise(resolve => setImmediate(resolve));
   observer.keyPressed(window.appId);
-  t.mock.timers.tick(1000); await new Promise(resolve => setImmediate(resolve));
-  assert.equal(requests, 4, 'input cannot restart a failed poller in the same call');
+  t.mock.timers.tick(2000); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests, 1);
+  assert.equal(JSON.parse(readFileSync(info.path, 'utf8')).observations.length, 0);
+  observer.end(1);
+  assert.equal(existsSync(info.path), false);
 });
 
 test('DPn close samples refresh every 25 ms and report offline observer CPU per call', async t => {

@@ -94,6 +94,26 @@ test('the light check after Return gets sheets and the focused element only when
 // DPh: the smoke's AppInfo has neither pid nor windows. The native proof must
 // select the leased process and inspect metadata without reading document fields.
 const closeRequest = { appId: target.appId, closeCount: true, nativeIdentity: { pid: 123, processStart: 1 } };
+test('DPo distinguishes a dead leased pid from a reused pid before and after the AX query', () => {
+  for (const afterAX of [false, true]) for (const kind of ['absent', 'terminated', 'reused']) {
+    const events = [];
+    const result = inspect(closeRequest, [], 0, false, events, (app, windows, list, runtime) => {
+      const change = () => {
+        if (kind === 'absent') runtime.apps = [];
+        if (kind === 'terminated') runtime.running.terminated = true;
+        if (kind === 'reused') runtime.running.launchDate.timeIntervalSince1970 = 2;
+      };
+      if (afterAX) runtime.onRead = change;
+      else change();
+    });
+    assert.equal(result.status, kind === 'reused' ? 'unknown' : 'ok', `${kind} afterAX=${afterAX}`);
+    assert.equal(result.pid, 123);
+    assert.equal(result.processStart, kind === 'reused' ? 2 : 1);
+    if (kind === 'reused') assert.equal(result.unknownReason, 'process-changed');
+    else assert.equal(result.running, false);
+    if (!afterAX) assert.ok(!events.includes('AXWindows'));
+  }
+});
 test('DPm distinguishes the closing AX reference from a remaining window without activating the app', () => {
   for (const remove of [false, true]) {
     const events = [];
@@ -208,10 +228,8 @@ test('DPh reports remaining windows and sheet or dialog descendants', () => {
 });
 test('DPh keeps native uncertainty for missing windows, restarted processes and incomplete children', () => {
   const cases = [
-    (app, windows, list, runtime) => { runtime.running.terminated = true; },
     (app, windows, list, runtime) => { runtime.trusted = false; },
     (app, windows, list, runtime) => { runtime.timeoutError = -25205; },
-    (app, windows, list, runtime) => { runtime.onRead = () => { runtime.running.terminated = true; }; },
     (app, windows, list) => { app.AXChildren = list([{ AXRole: 'AXWindow', AXSubrole: 'AXStandardWindow' }]); },
     (app, windows, list) => {
       let node = { AXRole: 'AXGroup' };
@@ -220,7 +238,6 @@ test('DPh keeps native uncertainty for missing windows, restarted processes and 
     },
     (app, windows, list, runtime) => { runtime.running.launchDate.timeIntervalSince1970 = 2; },
     (app, windows, list, runtime) => { runtime.running.bundleIdentifier = 'other.app'; },
-    (app, windows, list, runtime) => { runtime.apps = []; },
     app => { app.missing = ['AXWindows']; },
     app => { app.AXWindows = null; },
     app => { app.missing = ['AXChildren']; },

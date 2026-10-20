@@ -46,7 +46,7 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
         const start = now();
         let observed;
         try { observed = await observe({ ...call.window, focus: true }); } catch { observed = undefined; }
-        if (call.ended) break;
+        if (call.ended || call.stopped) break;
         const sample = project(observed);
         call.failures = sample.status === 'ok' ? 0 : (call.failures ?? 0) + 1;
         call.observations.push({ start, end: now(), ...sample });
@@ -76,6 +76,13 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
         if (!call.running && !call.timer) call.timer = setTimer(() => run(call), delayMs);
       }
     },
+    pause(id) {
+      const call = calls.get(id);
+      if (!call) return;
+      call.stopped = true;
+      if (call.timer) clearTimer(call.timer);
+      call.timer = undefined;
+    },
     end(id) {
       const call = calls.get(id);
       if (!call) return;
@@ -88,10 +95,11 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
 }
 
 // DP1 uses the same read-only file channel for fresh metadata after a close.
-// Sampling stops with the call; a late native reply cannot recreate its file.
+// Sampling stops when the relay receives its decision or the call ends. The
+// engine can only read this channel, so an in-engine decision arrives in the result.
 export function createCloseRead({ directory, observe } = {}) {
   return createLightReturn({ directory, observe: window => observe({ ...window, closeCount: true }),
-    continuous: true, intervalMs: 25, minGapMs: 25, maxFailures: 2, timing: {}, project: observed => {
+    continuous: true, intervalMs: 25, minGapMs: 25, timing: {}, project: observed => {
       const { status = 'unknown', unknownReason, appId, pid, processStart, running, windowCount, modalCount, closedWindowPresent } = observed ?? {};
       return { status, appId, pid, processStart, running, windowCount, modalCount, closedWindowPresent,
         ...(status === 'unknown' ? { unknownReason: CLOSE_COUNT_REASONS.includes(unknownReason) ? unknownReason : 'helper-error' } : {}) };

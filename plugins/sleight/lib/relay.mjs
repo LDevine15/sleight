@@ -4112,7 +4112,10 @@ export function createRelay({
     }
     trace('from-server', { id: msg.id, method: msg.method });
     if (msg.method === undefined && jsCalls.has(msg.id) && Array.isArray(msg.result?.content)) {
-      msg.result.content = stripDP1Trace(msg.result.content, event => trace('dp1-decision', { id: msg.id, ...event }));
+      msg.result.content = stripDP1Trace(msg.result.content, event => {
+        closeRead?.pause(msg.id);
+        trace('dp1-decision', { id: msg.id, ...event });
+      });
     }
     if (msg.method === undefined && tabCleanupNotes.has(msg.id)) {
       const text = tabCleanupNotes.get(msg.id); tabCleanupNotes.delete(msg.id);

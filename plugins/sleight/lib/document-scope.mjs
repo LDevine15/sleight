@@ -447,57 +447,68 @@ async function closedLastWindow(state, record) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return decide('leased pid missing');
   if (!Number.isFinite(processStart)) return decide('leased process start missing');
   if (!state.expected?.appId) return decide('leased bundle id missing');
-  const headerApp = state.callHeaders.get(active)?.app;
-  if (!headerApp) return decide('app header missing');
-  if (headerApp !== state.expected.app) return block('app header mismatch');
+  const header = state.callHeaders.get(active);
+  if (!header?.app) return decide('app header missing');
+  if (typeof header.appId === 'string' && header.appId) {
+    if (header.appId !== state.expected.appId) return block('app header mismatch');
+  } else if (header.app !== state.expected.app) return decide('app header name differs');
   if (!state.closeRead?.path) return decide('native observer unavailable');
-  let timer, ended = false;
+  let timer, ended = false, pendingReason = 'timeout';
   try {
     const timeout = {}, deadline = Date.now() + 1500, path = state.closeRead.path;
+    const changed = () => state.activeApp !== active || state.actionVersion !== version || state.lastAction !== action;
     const sample = async () => {
       const fs = await import('node:fs/promises');
       while (!ended && Date.now() < deadline) {
-        const data = JSON.parse(await fs.readFile(path, 'utf8'));
-        if (!Array.isArray(data.observations)) throw Error('Missing native samples');
+        if (changed()) return { reason: 'action changed' };
+        let data;
+        try {
+          data = JSON.parse(await fs.readFile(path, 'utf8'));
+          if (!Array.isArray(data.observations)) throw Error('Missing native samples');
+        } catch {
+          pendingReason = 'error';
+          await new Promise(resolve => setTimeout(resolve, 25));
+          continue;
+        }
+        if (ended || Date.now() >= deadline) break;
+        if (changed()) return { reason: 'action changed' };
         // A sample that began before pressKey completed cannot prove its result.
         const newest = data.observations.filter(o => typeof o?.start === 'number' && o.start > previous.done).at(-1);
         if (newest) {
-          const { status, unknownReason, pid, processStart, running, windowCount, modalCount, closedWindowPresent } = newest;
-          native = { status, pid, processStart, running, windowCount, modalCount, closedWindowPresent,
+          const { status, unknownReason, appId, pid: actualPid, processStart: actualStart, running, windowCount, modalCount, closedWindowPresent } = newest;
+          native = { status, pid: actualPid, processStart: actualStart, running, windowCount, modalCount, closedWindowPresent,
             ...(status === 'unknown' ? { unknownReason } : {}), keyDone: previous.done, sampleStart: newest.start, sampleEnd: newest.end };
+          // A dead leased process is a completed close. A replacement process or
+          // bundle is a conflict, including when the helper found it during AX.
+          if ((Number.isSafeInteger(actualPid) && actualPid > 0 && actualPid !== pid) ||
+              (Number.isFinite(actualStart) && actualStart !== processStart) ||
+              (typeof appId === 'string' && appId && appId !== state.expected.appId)) return { blocked: true, reason: 'process mismatch' };
+          const identityMatches = actualPid === pid && actualStart === processStart && appId === state.expected.appId;
+          const fresh = () => Number.isFinite(newest.end) && newest.end >= newest.start && newest.end <= Date.now() && Date.now() - newest.end <= 200;
+          if (status !== 'ok') pendingReason = 'native unavailable';
+          else if (!identityMatches || typeof running !== 'boolean') pendingReason = 'native identity missing';
+          else if (running === false) {
+            if (fresh()) return { reason: 'process exited', skip: true };
+            pendingReason = 'stale native sample';
+          } else if (!Number.isSafeInteger(windowCount) || windowCount < 0 || !Number.isSafeInteger(modalCount) || modalCount < 0) pendingReason = 'native counts missing';
+          else if (windowCount > 0 && closedWindowPresent === false) return { reason: 'windows non-empty' };
+          else if (modalCount > 0) pendingReason = 'modal child';
+          else if (windowCount === 0) {
+            // Check age at the skip itself. Stale or incomplete observations keep
+            // polling so a transient helper failure cannot reopen a closing app.
+            if (fresh()) return { reason: 'no windows', skip: true };
+            pendingReason = 'stale native sample';
+          } else pendingReason = 'timeout';
         }
-        // pressKey returns before a closing window leaves AXWindows. Reading it
-        // later can reopen the now-windowless app. Wait for zero while metadata
-        // still confirms the leased process. Uncertainty keeps the engine read.
-        if (newest && (newest.windowCount === 0 || newest.status !== 'ok' ||
-            newest.pid !== pid || newest.processStart !== processStart || newest.appId !== state.expected.appId || newest.running !== true ||
-            !Number.isSafeInteger(newest.windowCount) || newest.windowCount < 0 ||
-            !Number.isSafeInteger(newest.modalCount) || newest.modalCount < 0 ||
-            !Number.isFinite(newest.end) || newest.end < newest.start || newest.end > Date.now() || Date.now() - newest.end > 200)) return newest;
         await new Promise(resolve => setTimeout(resolve, 25));
       }
       return timeout;
     };
     const observed = await Promise.race([sample(), new Promise(resolve => { timer = setTimeout(() => resolve(timeout), 1500); })]);
-    if (state.activeApp !== active || state.actionVersion !== version || state.lastAction !== action) return decide('action changed');
-    if (observed === timeout || Date.now() >= deadline) return decide('timeout');
-    const { status, unknownReason, appId, pid: actualPid, processStart: actualStart, running, windowCount, modalCount, closedWindowPresent } = observed ?? {};
-    native = { ...native, status, pid: actualPid, processStart: actualStart, running, windowCount, modalCount, closedWindowPresent,
-      ...(status === 'unknown' && typeof unknownReason === 'string' ? { unknownReason } : {}) };
-    if (!Number.isFinite(observed.end) || observed.end < observed.start || observed.end > Date.now() || Date.now() - observed.end > 200) return decide('stale native sample');
-    // The helper uses this fixed code only when the leased process disappeared,
-    // terminated or changed bundle or launch time, before or after its AX query.
-    if (status === 'unknown' && unknownReason === 'process-changed') return block('process mismatch');
-    if (status !== 'ok') return decide('native unavailable');
-    // Missing identity is uncertainty. Only concrete conflicting metadata blocks.
-    if ((Number.isSafeInteger(actualPid) && actualPid > 0 && actualPid !== pid) ||
-        (Number.isFinite(actualStart) && actualStart !== processStart) ||
-        (typeof appId === 'string' && appId && appId !== state.expected.appId) || running === false) return block('process mismatch');
-    if (!Number.isSafeInteger(actualPid) || actualPid <= 0 || !Number.isFinite(actualStart) || typeof appId !== 'string' || !appId || running !== true) return decide('native identity missing');
-    if (!Number.isSafeInteger(windowCount) || windowCount < 0 || !Number.isSafeInteger(modalCount) || modalCount < 0) return decide('native counts missing');
-    if (windowCount) return decide('windows non-empty');
-    if (modalCount) return decide('modal child');
-    return decide('no windows', true);
+    if (changed()) return decide('action changed');
+    if (observed === timeout || Date.now() >= deadline) return decide(pendingReason);
+    if (observed.blocked) return block(observed.reason);
+    return decide(observed.reason, observed.skip);
   } catch (error) { if (blocked) throw error; return decide('error'); }
   finally { ended = true; clearTimeout(timer); }
 }
@@ -642,7 +653,10 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     };
     ${dp1 ? `const closedLast = ${closedLastWindow.toString()}, withoutTitles = ${withoutTitles.toString()};
     const recordDP1 = event => nodeRepl.write('[sleight:dp1]' + JSON.stringify(withoutTitles(event)) + '\\n');
-    state.readAfter = async (proxy, tail) => tail && await closedLast(state, recordDP1)
+    const closeDecision = record => state.lastAction
+      ? state.lastAction.closeReadDecision ??= closedLast(state, record)
+      : closedLast(state, record);
+    state.readAfter = async (proxy, tail) => tail && await closeDecision(recordDP1)
       ? state.guardStopMark + ':closed'
       : timedRead(state.raws.get(proxy), 'after-call');
     // A caller's final observation can satisfy the tail or throw before it runs.
@@ -650,7 +664,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     state.beforeRead = async proxy => {
       if (!state.dp1 || proxy !== state.activeApp || state.lastAction?.kind !== 'key' ||
           !/^(?:super|cmd|command|meta)\\+(?:shift\\+w|w|q)$/i.test(state.lastAction.value)) return;
-      if (await closedLast(state, event => recordDP1({ ...event, source: 'caller-read' }))) {
+      if (await closeDecision(event => recordDP1({ ...event, source: 'caller-read' }))) {
         nodeRepl.write(state.guardStopMark + ':closed-read\\n');
         throw new Error('[sleight:closed-read]');
       }
