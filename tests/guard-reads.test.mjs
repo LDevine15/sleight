@@ -144,6 +144,20 @@ test('DP1 retains reads for native uncertainty, remaining windows and modal chil
   }
 });
 
+test('DPk caller-read retains the engine read and carries the native failure code', async () => {
+  for (const unknownReason of ['cgs-unbound', 'cgs-error', 'predicate-error', 'deadline']) {
+    const f = closeFixture({ sample: { status: 'unknown', unknownReason } });
+    await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("fixture.app");', closeOptions, closeTarget);
+    f.calls.length = 0; f.output.length = 0;
+    await f.run(recordedClose);
+    const decision = JSON.parse(f.output.find(text => text.startsWith('[sleight:dp1]')).slice(13));
+    assert.equal(decision.decision, 'kept-read');
+    assert.equal(decision.reason, 'native unavailable');
+    assert.equal(decision.unknownReason, unknownReason);
+    assert.equal(f.calls.filter(call => call[0] === 'both').length, 1);
+  }
+});
+
 test('DP1 preserves action, private mark and opt-in checks in fresh and cached guards', async () => {
   for (const cached of [false, true]) for (const c of [
     { options: { dp1: false } }, { options: { guardStopMark: undefined } },

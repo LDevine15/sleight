@@ -112,6 +112,25 @@ test('DPh counts AXWindows on the leased running pid without reading titles or d
 
 const orderedOut = Array.from({ length: 6 }, (_, i) => ({ kCGWindowOwnerPID: 123, kCGWindowLayer: 0, kCGWindowNumber: 100 + i }));
 const noSpaces = Object.fromEntries(orderedOut.map(row => [row.kCGWindowNumber, []]));
+test('DPk reports a fixed reason when native close counts fail instead of losing the exception', () => {
+  for (const [reason, change] of [
+    ['cgs-unbound', runtime => { runtime.bindThrows = true; }],
+    ['cgs-error', runtime => { runtime.onSpace = () => { throw Error('private query error'); }; }],
+    ['cgs-invalid', runtime => { runtime.spaces = { 100: null }; }],
+    ['cgs-invalid', runtime => { runtime.connection = 0; }],
+    ['predicate-error', runtime => { runtime.predicateThrows = true; }],
+    ['cg-invalid', runtime => { runtime.cgWindows = [{ kCGWindowOwnerPID: 123 }]; }],
+    ['deadline', runtime => { runtime.clockMs = 0; runtime.onSpace = () => { runtime.clockMs = 150; }; }],
+    ['deadline', runtime => { runtime.clockMs = 0; runtime.onRead = () => { runtime.clockMs = 150; }; }],
+  ]) {
+    const reply = inspect(closeRequest, [], 0, false, [], (app, windows, list, runtime) => {
+      runtime.cgWindows = [...orderedOut]; runtime.spaces = noSpaces; change(runtime);
+    });
+    assert.equal(reply.status, 'unknown');
+    assert.equal(reply.unknownReason, reason);
+    assert.ok(!JSON.stringify(reply).includes('private'));
+  }
+});
 test('DPj ignores six ordered-out CG windows after the last AX window closes', () => {
   const events = [];
   const reply = inspect(closeRequest, [], 0, false, events, (app, windows, list, runtime) => {

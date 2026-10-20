@@ -9,6 +9,19 @@ import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 const window = { appId: 'fixture.app', nativeIdentity: { pid: 123, processStart: 1 } };
 const ok = { status: 'ok', ...window, pid: 123, processStart: 1, running: true, windowCount: 0, modalCount: 0 };
 const pause = () => new Promise(resolve => setTimeout(resolve, 5));
+test('DPk close observations keep fixed failure codes and discard arbitrary exception text', async t => {
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-close-reason-')));
+  t.after(() => removeTemp(directory));
+  for (const unknownReason of ['cgs-unbound', 'cgs-error', 'predicate-error', 'deadline', 'private error']) {
+    const observer = observers.createCloseRead({ directory, observe: async () => ({ status: 'unknown', unknownReason, error: 'private' }) });
+    const info = observer.begin(1, window);
+    await until(() => JSON.parse(readFileSync(info.path, 'utf8')).observations.length > 0);
+    const sample = JSON.parse(readFileSync(info.path, 'utf8')).observations[0];
+    observer.dispose();
+    assert.equal(sample.unknownReason, unknownReason === 'private error' ? 'helper-error' : unknownReason);
+    assert.ok(!JSON.stringify(sample).includes('private'));
+  }
+});
 async function until(predicate) {
   for (let i = 0; i < 100; i++) { if (predicate()) return; await pause(); }
   assert.fail('observer did not settle');

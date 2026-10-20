@@ -421,8 +421,9 @@ async function closedLastWindow(state, record) {
     const observed = await Promise.race([sample(), new Promise(resolve => { timer = setTimeout(() => resolve(timeout), 200); })]);
     if (state.activeApp !== active || state.actionVersion !== version || state.lastAction !== action) return decide('action changed');
     if (observed === timeout || Date.now() >= deadline) return decide('timeout');
-    const { status, appId, pid: actualPid, processStart: actualStart, running, windowCount, modalCount } = observed ?? {};
-    native = { status, pid: actualPid, processStart: actualStart, running, windowCount, modalCount };
+    const { status, unknownReason, appId, pid: actualPid, processStart: actualStart, running, windowCount, modalCount } = observed ?? {};
+    native = { status, pid: actualPid, processStart: actualStart, running, windowCount, modalCount,
+      ...(status === 'unknown' && typeof unknownReason === 'string' ? { unknownReason } : {}) };
     if (status !== 'ok') return decide('native unavailable');
     if (actualPid !== pid || actualStart !== processStart || appId !== state.expected.appId || running !== true) return decide('process mismatch');
     if (!Number.isFinite(observed.end) || observed.end < observed.start || observed.end > Date.now() || Date.now() - observed.end > 200) return decide('stale native sample');

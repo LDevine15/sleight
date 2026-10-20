@@ -14,15 +14,18 @@ function axPair(value, type) {
   return type === 1 ? [s.x, s.y] : [s.width, s.height];
 }
 function run(argv) {
+  let closeCount = false, unknownReason = 'helper-error';
   try {
     if (!$.AXIsProcessTrusted()) return JSON.stringify({ status: 'denied' });
     const request = JSON.parse(argv[0]);
     // DP1 asks only for metadata on the already approved leased process. Never
     // resolve a different instance by bundle, or read title/document attributes.
     if (request.closeCount) {
+      closeCount = true; unknownReason = 'lease-invalid';
       const { pid, processStart } = request.nativeIdentity ?? {};
       if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isFinite(processStart)) throw new Error('Missing leased process');
       const current = () => {
+        unknownReason = 'process-changed';
         const running = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
         if (!running || running.isNil() || running.terminated !== false || Number(running.processIdentifier) !== pid ||
             ObjC.unwrap(running.bundleIdentifier) !== request.appId || Number(running.launchDate.timeIntervalSince1970) !== processStart) {
@@ -30,16 +33,21 @@ function run(argv) {
         }
       };
       current();
+      unknownReason = 'ax-error';
       const app = $.AXUIElementCreateApplication(pid), deadline = Date.now() + 150;
+      const expired = () => {
+        if (Date.now() >= deadline) { unknownReason = 'deadline'; throw new Error('Metadata deadline'); }
+      };
       if (Number($.AXUIElementSetMessagingTimeout(app, 0.05)) !== 0) throw new Error('AX deadline unavailable');
       const attr = (element, name, optional = false) => {
-        if (Date.now() >= deadline) throw new Error('AX deadline');
+        expired(); unknownReason = 'ax-error';
         const value = Ref(), error = Number($.AXUIElementCopyAttributeValue(element, $(name), value));
         if (optional && [-25205, -25212].includes(error)) return null;
         if (error) throw new Error('AX metadata unavailable');
         return ObjC.castRefToObject(value[0]);
       };
       const count = list => {
+        unknownReason = 'ax-invalid';
         if (list === null || list === undefined) throw new Error('Missing AX list');
         const n = Number(list.count);
         if (!Number.isSafeInteger(n) || n < 0 || n > 64) throw new Error('AX list bound');
@@ -69,19 +77,23 @@ function run(argv) {
         visit(attr(app, 'AXChildren'), 0);
         // AXWindows can omit windows on other Spaces. Filter the leased PID's
         // document, panel and alert layers inside Foundation, without copying content.
+        expired(); unknownReason = 'cg-error';
         const cg = ObjC.castRefToObject($.CGWindowListCopyWindowInfo(
           $.kCGWindowListOptionAll | $.kCGWindowListExcludeDesktopElements, 0));
+        unknownReason = 'cg-invalid';
         if (!cg || cg.isNil?.()) throw new Error('Missing CG list');
         const total = Number(cg.count);
         if (!Number.isSafeInteger(total) || total < 0 || total > 10000) throw new Error('CG list bound');
         // Missing owners do not match. An owned row with a missing layer stays
         // in the candidates so it makes the proof unknown instead of disappearing.
+        unknownReason = 'predicate-error';
         const own = cg.filteredArrayUsingPredicate($.NSPredicate.predicateWithFormatArgumentArray(
           'kCGWindowOwnerPID == %@ AND (kCGWindowLayer == nil OR (kCGWindowLayer >= 0 AND kCGWindowLayer <= 23))', [pid]));
+        unknownReason = 'cg-invalid';
         const n = Number(own.count), ids = [];
         if (!Number.isSafeInteger(n) || n < 0 || n > total) throw new Error('CG candidate bound');
         for (let i = 0; i < n; i++) {
-          if (Date.now() >= deadline) throw new Error('CG deadline');
+          expired();
           const row = own.objectAtIndex(i);
           const layer = ObjC.unwrap(row.objectForKey('kCGWindowLayer'));
           if (!Number.isSafeInteger(layer) || layer < 0 || layer > 23) throw new Error('Missing CG layer');
@@ -89,12 +101,13 @@ function run(argv) {
         }
         // Reuse SW1b's Space membership check from the enclosing app-health
         // helper. Ordered-out CG rows with no Space do not count as windows.
-        const held = spaceWindows(ids, deadline);
+        unknownReason = 'cgs-unbound';
+        const held = spaceWindows(ids, deadline, reason => { unknownReason = reason; });
         if (!Number.isSafeInteger(held) || held < 0) throw new Error('Unknown Space membership');
         windowCount = held;
       }
       current();
-      if (Date.now() >= deadline) throw new Error('AX deadline');
+      expired();
       return JSON.stringify({ status: 'ok', appId: request.appId, pid, processStart, running: true, windowCount, modalCount });
     }
     const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(request.appId);
@@ -203,5 +216,6 @@ function run(argv) {
       // The parent lease takes only a standard window (SLEIGHT_PARENT_LEASE), read before HID idle is sampled.
       windowSubrole: scalar(attr(window, 'AXSubrole', true)) ?? null,
       processStart: Number(running.launchDate.timeIntervalSince1970), hidIdleSeconds: hidIdleSeconds(), ...(focus ? { focus } : {}) });
-  } catch (error) { return JSON.stringify({ status: 'unknown', error: String(error.message || error) }); }
+  } catch (error) { return JSON.stringify(closeCount ? { status: 'unknown', unknownReason }
+    : { status: 'unknown', error: String(error.message || error) }); }
 }

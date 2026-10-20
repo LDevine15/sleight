@@ -4,6 +4,17 @@ import { PassThrough } from 'node:stream';
 import { stripDP1Trace, withoutTitles } from '../plugins/sleight/lib/dp1-trace.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 
+test('DPk DP1 traces accept only fixed unknown reasons', () => {
+  for (const unknownReason of ['cgs-unbound', 'cgs-error', 'predicate-error', 'deadline', 'private text', 'x'.repeat(300), { error: 'private' }]) {
+    const events = [];
+    stripDP1Trace([{ type: 'text', text: '[sleight:dp1]' + JSON.stringify({
+      decision: 'kept-read', reason: 'native unavailable', status: 'unknown', unknownReason,
+    }) }], event => events.push(event));
+    assert.equal(events[0].unknownReason, ['cgs-unbound', 'cgs-error', 'predicate-error', 'deadline'].includes(unknownReason) ? unknownReason : undefined);
+    assert.ok(!JSON.stringify(events).includes('private'));
+  }
+});
+
 test('DP1 strips diagnostics from mixed results and removes titles recursively', () => {
   const event = { decision: 'kept-read', reason: 'windows non-empty', inventoryHasPid: false, rowHasPid: false,
     row: { id: 'fixture.app', displayName: 'Fixture', isRunning: true, title: 'private',

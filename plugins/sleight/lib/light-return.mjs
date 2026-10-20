@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CLOSE_COUNT_REASONS } from './close-count-reasons.mjs';
 
 // After Return, Enter, Tab, Escape or Space, the guard read the whole tree before the next typeText or
 // paste, and a read after input waits for the UI to settle: 26 to 31 reads at about 470 ms each in
@@ -91,7 +92,8 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
 export function createCloseRead({ directory, observe } = {}) {
   return createLightReturn({ directory, observe: window => observe({ ...window, closeCount: true }),
     continuous: true, intervalMs: 50, minGapMs: 25, maxFailures: 2, timing: {}, project: observed => {
-      const { status = 'unknown', appId, pid, processStart, running, windowCount, modalCount } = observed ?? {};
-      return { status, appId, pid, processStart, running, windowCount, modalCount };
+      const { status = 'unknown', unknownReason, appId, pid, processStart, running, windowCount, modalCount } = observed ?? {};
+      return { status, appId, pid, processStart, running, windowCount, modalCount,
+        ...(status === 'unknown' ? { unknownReason: CLOSE_COUNT_REASONS.includes(unknownReason) ? unknownReason : 'helper-error' } : {}) };
     } });
 }

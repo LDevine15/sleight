@@ -8,6 +8,7 @@ export function inspect(request, numbers, focused = 1, cg = false, events = [], 
   const list = values => ({ count: values.length, objectAtIndex: i => values[i],
     filteredArrayUsingPredicate: ({ format, args }) => {
       events.push(['predicate', format, ...args]);
+      if (runtime.predicateThrows) throw Error('private predicate error');
       return list(values.filter(row => row.info.kCGWindowOwnerPID === args[0] &&
         (row.info.kCGWindowLayer == null || (row.info.kCGWindowLayer >= 0 && row.info.kCGWindowLayer <= 23))));
     } });
@@ -19,12 +20,14 @@ export function inspect(request, numbers, focused = 1, cg = false, events = [], 
   const runtime = { running, apps: [running], trusted: true, timeoutError: 0, cgWindows: [], spaces: {}, connection: 7 };
   setup(app, windows, list, runtime);
   const $ = value => value;
-  Object.assign($, { NSPredicate: { predicateWithFormatArgumentArray: (format, args) => ({ format, args }) },
+  const nativeSymbols = {
     CGSMainConnectionID: () => runtime.connection,
     CGSCopySpacesForWindows: (cid, mask, ids) => {
       events.push(['spaces', cid, mask, ...ids]); runtime.onSpace?.();
       return runtime.spaces[ids[0]];
     },
+  };
+  Object.assign($, { NSPredicate: { predicateWithFormatArgumentArray: (format, args) => ({ format, args }) },
     NSUUID: { UUID: { UUIDString: 'epoch' } }, AXIsProcessTrusted: () => runtime.trusted,
     NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list(runtime.apps),
       runningApplicationWithProcessIdentifier: pid => runtime.apps.find(item => item.processIdentifier === pid) },
@@ -40,5 +43,8 @@ export function inspect(request, numbers, focused = 1, cg = false, events = [], 
       runtime.cgWindows.map(info => ({ info, objectForKey: key => { events.push(key); return info[key]; } }))); } });
   return JSON.parse(runInNewContext('(function () { ' + healthSource + '; return (function () { ' + source + '; return run; })(); })()([JSON.stringify(request)])', { $, request, Ref: () => [],
     Date: { now: () => runtime.clockMs ?? Date.now() },
-    ObjC: { import() {}, bindFunction() { if (runtime.bindThrows) throw Error('no symbol'); }, unwrap: value => value, deepUnwrap: value => value, castRefToObject: value => value } }));
+    ObjC: { import() {}, bindFunction(name) {
+      if (runtime.bindThrows) throw Error('private missing symbol');
+      $[name] = nativeSymbols[name];
+    }, unwrap: value => value, deepUnwrap: value => value, castRefToObject: value => value } }));
 }

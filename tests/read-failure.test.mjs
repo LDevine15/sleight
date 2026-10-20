@@ -150,7 +150,7 @@ test('DPi gives close-count requests 400 ms without shortening ordinary identity
     t.mock.timers.tick(399); await Promise.resolve();
     assert.equal(resolved, false);
     t.mock.timers.tick(1);
-    assert.deepEqual(await count, { status: 'unknown' });
+    assert.deepEqual(await count, { status: 'unknown', unknownReason: 'deadline' });
     resolved = false;
     const identity = helper.windowIdentity({ appId: 'fixture.app' }).then(result => { resolved = true; return result; });
     await new Promise(resolve => setImmediate(resolve));
