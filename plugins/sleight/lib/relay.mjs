@@ -2600,8 +2600,11 @@ export function createRelay({
     const generation = stopGeneration;
     const appApproval = plainCard(msg);
     const key = approvalScope === 'session' && (!panelOnly || appApproval) ? approvalKey(msg) : undefined;
-    // Join only identical, still-pending shell confirmations. Settled action consent is never remembered.
-    const pendingKey = panelOnly ? JSON.stringify([generation, ignoreMemory, appApproval, msg.params]) : undefined;
+    // Only a repeated pending RPC ID in this engine epoch proves a retry. Equal text or metadata can describe
+    // independent effects. Keep ID types and terms in the key; settled action consent is never remembered.
+    const identified = typeof msg.id === 'string' || (typeof msg.id === 'number' && Number.isFinite(msg.id));
+    const pendingKey = panelOnly && identified
+      ? JSON.stringify([engineEpoch, generation, msg.id, ignoreMemory, appApproval, msg.params]) : undefined;
     let decision = pendingKey && pendingShellAsks.get(pendingKey);
     if (!decision) {
       decision = asking.then(async () => {
@@ -3555,7 +3558,7 @@ export function createRelay({
         observeServerMessage(msg);
       };
       const timer = setTimeout(() => reply(PAYMENT_WAITING), paymentCardHoldMs);
-      // A resend while the card is open gets the same card (payment-card.mjs), and one card grants one allowance.
+      // Each stopped call needs its own decision. Equal payment terms do not prove a retry of the same request.
       let answer;
       try { answer = paymentCard.ask({ session: clientName ?? 'the agent', site: paymentStop.site, shown: paymentStop.shown, control: paymentStop.control }); }
       catch { answer = undefined; }

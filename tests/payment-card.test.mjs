@@ -5,27 +5,50 @@ import { idleClock } from './fixtures/socket-clock.mjs';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-test('shell cards carry the shared ask presentation and join one pending card', async () => {
+test('shell cards carry the shared ask presentation and keep identical requests separate', async () => {
   const shown = [], events = [];
-  let answer;
+  const answers = [];
   const card = createPaymentCard({ onStatus: s => events.push(s), open: async () => ({
-    present: (id, data, choices, deliver) => { shown.push({ id, data, choices }); answer = deliver; },
+    present: (id, data, choices, deliver) => { shown.push({ id, data, choices }); answers.push(deliver); },
     authenticate: e => e.person === true,
   }) });
   const request = { session: 'Grok Bot', app: 'Calculator', request: 'Allow Calculator?', scoped: true,
     presentation: { style: 'ask', question: 'Allow Grok Bot to use Calculator?', detail: 'Allow lasts until this Grok Bot session ends.',
       host: 'Grok Bot', icon: '/plugin/assets/icon.png', kind: 'app' } };
   const first = card.ask(request), second = card.ask({ ...request });
-  assert.equal(first, second);
+  assert.notEqual(first, second);
   await flush();
-  assert.equal(shown.length, 1);
+  assert.equal(shown.length, 2);
   assert.deepEqual(shown[0].data.presentation, request.presentation);
-  answer({ choice: 'once' }); await flush();
-  assert.equal(events.length, 1);
-  answer({ choice: 'once', person: true });
+  answers[0]({ choice: 'once' }); await flush();
+  assert.equal(events.length, 2);
+  answers[0]({ choice: 'once', person: true });
   assert.equal(await first, 'once');
-  assert.equal(await second, 'once');
-  assert.deepEqual(events.map(e => e.state), ['waiting', 'answered']);
+  assert.deepEqual(events.map(e => e.state), ['waiting', 'waiting', 'answered']);
+  answers[1]({ choice: 'cancel', person: true });
+  assert.equal(await second, 'cancel');
+  assert.deepEqual(events.map(e => e.state), ['waiting', 'waiting', 'answered', 'answered']);
+  await card.close();
+});
+
+test('equal payment terms and distinct IDs never share an authenticated acceptance', async () => {
+  const shown = [];
+  const card = createPaymentCard({ open: async () => ({
+    present: (id, _data, _choices, answer) => shown.push({ id, answer }), authenticate: event => event.person === true,
+  }) });
+  const terms = { session: 'same-session', app: 'Firefox', site: 'example.test', shown: '$364', control: 'Pay' };
+  const first = card.ask({ ...terms, id: 'payment-A' }), second = card.ask({ ...terms, id: 'payment-B' });
+  await flush();
+  assert.equal(shown.length, 2);
+  assert.notEqual(shown[0].id, shown[1].id);
+  shown[0].answer({ choice: 'once', person: true });
+  assert.equal(await first, 'once');
+  let settled = false;
+  second.then(() => { settled = true; });
+  await flush();
+  assert.equal(settled, false);
+  shown[1].answer({ choice: 'cancel', person: true });
+  assert.equal(await second, 'cancel');
   await card.close();
 });
 

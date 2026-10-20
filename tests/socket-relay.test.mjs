@@ -86,20 +86,96 @@ test('a late app resolution cannot answer after disposal', async t => {
   assert.equal(f.sent.some(m => m.id === 'late'), false);
 });
 
-for (const choice of ['accept', 'decline', 'cancel']) test(`repeated engine confirmations join one pending ${choice} decision`, async t => {
+for (const choice of ['accept', 'decline', 'cancel']) test(`retries of one engine request join one pending ${choice} decision`, async t => {
   const shown = [];
   let answer;
   const f = fixture(t, { ask: (...args) => { shown.push(args); return new Promise(resolve => { answer = resolve; }); } });
   const meta = { connector_id: 'computer-use', riskLevel: 'high', tool_params: { app: 'Calculator' } };
-  for (let n = 0; n < 7; n++) f.engine(card(`repeat-${n}`, 'Confirm this action?', meta));
+  for (let n = 0; n < 7; n++) f.engine(card('repeat-request', 'Confirm this action?', meta));
   await tick(0);
   assert.equal(shown.length, 1);
   answer(choice); await tick(0);
   assert.equal(f.sent.filter(m => /^repeat-/.test(m.id)).length, 7);
   assert.ok(f.sent.filter(m => /^repeat-/.test(m.id)).every(m => m.result.action === choice && m.result._meta === undefined));
-  f.engine(card('later', 'Confirm this action?', meta)); await tick(0);
+  f.engine(card('repeat-request', 'Confirm this action?', meta)); await tick(0);
   assert.equal(shown.length, 2, 'a later action needs its own decision');
   answer('cancel'); await tick(0);
+});
+
+for (const message of ['Pay $364?', 'Confirm this action?']) {
+  for (const ids of [['independent-A', 'independent-B'], [7, '7']]) {
+    test(`identical terms need separate decisions for ${JSON.stringify(ids)}: ${message}`, async t => {
+      const answers = [];
+      const f = fixture(t, { ask: () => new Promise(resolve => answers.push(resolve)) });
+      const meta = { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: { app: 'Calculator' } };
+      for (const id of ids) f.engine(card(id, message, meta));
+      await tick(0);
+      assert.equal(answers.length, 1);
+      answers[0]('accept'); await tick(0);
+      assert.equal(f.sent.find(m => m.id === ids[0]).result.action, 'accept');
+      assert.equal(f.sent.some(m => m.id === ids[1]), false, 'one Allow cannot answer a distinct request');
+      assert.equal(answers.length, 2);
+      answers[1]('cancel'); await tick(0);
+      assert.equal(f.sent.find(m => m.id === ids[1]).result.action, 'cancel');
+      assert.ok(f.sent.filter(m => ids.includes(m.id)).every(m => m.result._meta === undefined));
+      assert.deepEqual(f.writes, []);
+    });
+  }
+}
+
+test('concurrent verified app requests share session memory after one Allow', async t => {
+  const answers = [];
+  const f = fixture(t, { resolveApprovalApp: async () => 'com.apple.calculator',
+    ask: () => new Promise(resolve => answers.push(resolve)) });
+  const meta = { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: { app: 'com.apple.calculator' } };
+  for (const id of ['app-A', 'app-B']) f.engine(card(id, 'Allow Computer Use to use "Calculator"?', meta));
+  await tick(0);
+  assert.equal(answers.length, 1);
+  answers[0]('accept'); await tick(0);
+  assert.equal(answers.length, 1);
+  for (const id of ['app-A', 'app-B']) assert.deepEqual(f.sent.find(m => m.id === id).result,
+    { action: 'accept', content: {}, _meta: { persist: 'session' } });
+});
+
+test('same request ID with changed terms cannot reuse a waiting decision', async t => {
+  const answers = [];
+  const f = fixture(t, { ask: () => new Promise(resolve => answers.push(resolve)) });
+  f.engine(card('reused', 'Pay $364?'));
+  f.engine(card('reused', 'Pay $365?'));
+  await tick(0);
+  answers[0]('accept'); await tick(0);
+  assert.equal(answers.length, 2);
+  assert.equal(f.sent.filter(m => m.id === 'reused').length, 1);
+  answers[1]('cancel'); await tick(0);
+  assert.deepEqual(f.sent.filter(m => m.id === 'reused').map(m => m.result.action), ['accept', 'cancel']);
+});
+
+test('one unavailable card does not fail a distinct request with identical terms', async t => {
+  const decisions = [];
+  const f = fixture(t, { ask: () => new Promise((resolve, reject) => decisions.push({ resolve, reject })) });
+  for (const id of ['failed-panel', 'other-panel']) f.engine(card(id, 'Pay $364?'));
+  await tick(0);
+  decisions[0].reject(Object.assign(new Error('panel unavailable'), { code: 'SLEIGHT_PROMPT_UNAVAILABLE' }));
+  await tick(0);
+  assert.equal(f.sent.find(m => m.id === 'failed-panel').error.code, -32603);
+  assert.equal(f.sent.some(m => m.id === 'other-panel'), false);
+  assert.equal(decisions.length, 2);
+  decisions[1].resolve('accept'); await tick(0);
+  assert.deepEqual(f.sent.find(m => m.id === 'other-panel').result, { action: 'accept', content: {} });
+  assert.equal(f.received.some(m => m.error), false, 'the engine retains attribution to the parent call');
+});
+
+test('engine loss invalidates the active and queued decisions before a late Allow', async t => {
+  const answers = [];
+  const f = fixture(t, { ask: () => new Promise(resolve => answers.push(resolve)) });
+  for (const id of ['active', 'queued']) f.engine(card(id, 'Pay $364?'));
+  await tick(0);
+  assert.equal(answers.length, 1);
+  f.relay.engineEnded('offline engine ended');
+  answers[0]('accept'); await tick(0);
+  assert.equal(answers.length, 1, 'the queued card is never opened after engine loss');
+  assert.equal(f.sent.some(m => ['active', 'queued'].includes(m.id) && m.result?.action === 'accept'), false);
+  assert.deepEqual(f.writes, []);
 });
 
 test('different pending engine confirmations keep separate decisions', async t => {

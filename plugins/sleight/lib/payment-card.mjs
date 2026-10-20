@@ -24,14 +24,10 @@ export function createPaymentCard({ open = openConsentHost, now = Date.now, time
   // A lost host is also closed, so a late answer doesn't leave one running beside the next (review F15).
   const forget = () => { const old = channel; channel = undefined; old?.then(ui => ui?.close?.(), () => {}); };
   const connect = async () => channel ??= Promise.resolve().then(() => open({ onLoss: forget })).then(value => value ?? forget(), forget);
-  // One open card per payment: asking again for the same site, figure and control while it is open waits on that card (review N7).
-  const asking = new Map();
+  // This layer has no trusted logical request identity. Every ask gets a separate decision, even with equal terms.
+  // The relay joins repeated pending engine request IDs; the socket bridge joins retries of its active call.
   return {
-    ask(card) {
-      const key = JSON.stringify([card.session, card.app, card.site, card.shown, card.control, card.request, card.scoped, card.presentation]);
-      if (!asking.has(key)) asking.set(key, show(card).finally(() => asking.delete(key)));
-      return asking.get(key);
-    },
+    ask: show,
     async close() { const ui = await channel?.catch(() => undefined); channel = undefined; ui?.close?.(); },
   };
   async function show({ session, site, shown, control, request, scoped, app, presentation: cardPresentation }) {
