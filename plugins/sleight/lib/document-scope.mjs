@@ -10,6 +10,7 @@ import { paymentWords, refundableName } from './direct-browser/rules.mjs';
 import { tabChromeRefusal, tabProbeRefusal } from './tab-probe.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { tabFocusRefusal } from './menu-continuation.mjs';
+import { nativeArgumentError } from './native-arguments.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -467,6 +468,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
   const install = reuseSetup ? '' : /* generated code */ `globalThis.__sleightDocumentGuardSetup = update => {
     const parse = ${windowFromText.toString()};
     const isCancel = ${isCancelAction.toString()};
+    const argumentError = ${nativeArgumentError.toString()};
     ${kernel === undefined ? `const state = globalThis.__sleightDocumentGuard ||= {
       getApp: typeof cua.getApp === 'function' ? cua.getApp.bind(cua) : undefined, proxies: new WeakSet(), wrapped: new WeakMap()
     };` : /* A host whose calls reach more than one kernel (Codex's sandbox states): state from another epoch is stale, so
@@ -1009,6 +1011,11 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             const number = Object.values(locator).find(value => Number.isInteger(value));
             throw new Error('sleight stopped before ' + shown + ': that object names no element. Pass an element number' +
               (number === undefined ? '' : ', as in ' + name + '(' + number + ')') + ${quoted(/* lean notice */ ', an [x, y] point, a label or ID string, or { id: "<ID>" }, { label: "<label>" }, both together, or { line: "<whole line after the number>" }.')});
+          }
+          const problem = argumentError(name, args);
+          if (problem) {
+            attempt.refused = true;
+            throw new Error(problem + ' for this action' + (state.completedActions || state.unknown.length ? '; earlier actions in this call may have run.' : '.'));
           }
           const firstAction = !state.acted;
           state.acted = true;
