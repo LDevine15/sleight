@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { approvalLogging, runScript } from '../plugins/sleight/lib/launch.mjs';
+import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const prefix = 'sleight-drag-phase ';
 const phase = { phase: 'ax-move', edge: 'start', monoMs: 1234.5 };
@@ -47,7 +48,7 @@ function runner(stderr, stdout = '{"ok":true}', error = null, inspect = () => {}
 }
 
 test('drag phases reach the existing trace file without content or changes to the tool result', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-drag-trace-'));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-drag-trace-')));
   const saved = process.env.SLEIGHT_TRACE;
   try {
     process.env.SLEIGHT_TRACE = dir;
@@ -65,7 +66,7 @@ test('drag phases reach the existing trace file without content or changes to th
     assert.equal(JSON.stringify(records).includes('PRIVATE TEXT'), false);
   } finally {
     if (saved === undefined) delete process.env.SLEIGHT_TRACE; else process.env.SLEIGHT_TRACE = saved;
-    rmSync(dir, { recursive: true, force: true });
+    removeTemp(dir);
   }
 });
 

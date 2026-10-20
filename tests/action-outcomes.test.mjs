@@ -567,6 +567,9 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
   // CK2c replaces sandboxed request writes with read-only FIFOs and adds failure diagnostics.
   // CK2d names baseline/current chrome checks in the shared installation's diagnostics.
   // X15 merges hand binding observations and hardens FIFO descriptors and timeout diagnostics.
+  // X19b: PK1/PK1b (2afc400d, a759e814) add native argument validation to the shared installation, independent of outcomes.
+  // Removing only that validator and its call site reproduces all four old setup pins exactly, so guarded, guardedLean,
+  // read and repl now pin that new default. No outcome code entered the off path.
   // The warm-call pin is unchanged: default-on CK switches occupy no per-call bytes.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
@@ -574,7 +577,7 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: 'f0c9b0641c5a826b', guardedLean: 'b41830078533b8be', reuse: 'b824edb3aa6dc2c4', read: '5cd3feb33f08674f', repl: '5cd3feb33f08674f' });
+  }, { guarded: '1c0b1d03a56277ef', guardedLean: '561825a7bf7829f2', reuse: 'b824edb3aa6dc2c4', read: '7564127a1e1c6c44', repl: '7564127a1e1c6c44' });
 });
 
 test('with both switches off the guard carries none of the outcome code', () => {
