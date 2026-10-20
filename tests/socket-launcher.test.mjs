@@ -1,18 +1,19 @@
 import { idleClock } from './fixtures/socket-clock.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
+import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 import { callSocket, createShellRelay, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
 
 for (const stop of ['idle', 'SIGTERM', 'turbo']) test(stop === 'turbo'
   ? 'the shell launcher discards directBrowser even with turbo enabled and a supplied frontend'
   : `${stop} collects the production launcher's offline engine before session exit`, { timeout: 15000 }, async t => {
-  const bank = mkdtempSync(join('/private/tmp', 'sleight-shell-launch-'));
+  const bank = trackTemp(mkdtempSync(join('/private/tmp', 'sleight-shell-launch-')));
   let session, relay;
-  t.after(async () => { await session?.close(); rmSync(bank, { recursive: true, force: true }); });
+  t.after(async () => { try { await session?.close(); } finally { removeTemp(bank); } });
   const codexHome = join(bank, 'codex'), config = join(codexHome, 'plugins/cache/openai-bundled/unified-computer-use/1.0');
   mkdirSync(config, { recursive: true });
   writeFileSync(join(config, '.mcp.json'), JSON.stringify({ mcpServers: { cua_repl: {

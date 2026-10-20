@@ -8,15 +8,16 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as tick } from 'node:timers/promises';
 import { createConnection, Server } from 'node:net';
+import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 import { callSocket, ensureSocketSession, createShellRelay, preparePeerCheck, printSocketResult, socketCommand, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
 
 function fixture(t) {
-  const root = mkdtempSync(join('/private/tmp', 'sleight-socket-test-'));
+  const root = trackTemp(mkdtempSync(join('/private/tmp', 'sleight-socket-test-')));
   const cleanup = [];
   t.after(async () => {
     const results = await Promise.allSettled(cleanup.map(collect => collect()));
+    removeTemp(root);
     for (const result of results) if (result.status === 'rejected') throw result.reason;
-    rmSync(root, { recursive: true, force: true });
   });
   const calls = [], signals = new EventEmitter();
   let collected = 0;

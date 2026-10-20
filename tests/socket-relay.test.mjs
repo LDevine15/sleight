@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 import { setTimeout as tick } from 'node:timers/promises';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { shellRelayOptions } from '../plugins/sleight/lib/launch.mjs';
@@ -217,8 +218,8 @@ test('app Allow has no lasting grant across shell sessions', async t => {
 test('the native payment guard still opens a payment card without a bound user message', async t => {
   const asked = [];
   let answer;
-  const directory = mkdtempSync(join(tmpdir(), 'sleight-shell-payment-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-shell-payment-')));
+  t.after(() => removeTemp(directory));
   const f = fixture(t, { inputLease: new InputLease({ directory, holder: 'shell-payment-test' }),
     paymentCard: { ask: value => { asked.push(value); return new Promise(resolve => { answer = resolve; }); }, close() {} } });
   const before = readFileSync(new URL('fixtures/payment-gate/firefox-checkout-sol.txt', import.meta.url), 'utf8')

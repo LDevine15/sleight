@@ -545,11 +545,13 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   // last statement may be, so the call's read can't run beside it and return the window from before it (CC6 review).
   // An empty literal order is left out (the guard reads it as []), which keeps the per-call setup under 2,500 bytes.
   const literalOrder = checks.literalOrder ?? literalElements(code);
+  // Keep the pre-DP1 tail comment only on the off path for byte parity. The DP1
+  // tail omits it to keep compact calls within the existing byte budget.
   return guardSetup({ window, reason, lease, ...checks, ...(dp1 ? { dp1: true } : {}), literalOrder: literalOrder.length ? literalOrder : undefined }, { reuseSetup, acknowledge, prompt, outcomes, kernel, dp1 }) +
     (options.browserCandidate ? '\nglobalThis.__sleightDocumentGuard.activeApp = undefined;' : '') + /* generated code */ `\n${code}
 {
   const guard = globalThis.__sleightDocumentGuard, last = await guard.settle?.() ?? (guard.activeApp && guard.reads.get(guard.activeApp));
-  if (guard.failures?.length) nodeRepl.write('sleight: an action in this call failed' + ${quoted(/* lean notice */ ', and the call went on without it: ')} + guard.failures.join('; ') + '. Read the window, then redo it with await.\\n');
+${dp1 ? '' : "  // The call finished, so any failed action was one it didn't await or caught itself.\n"}  if (guard.failures?.length) nodeRepl.write('sleight: an action in this call failed' + ${quoted(/* lean notice */ ', and the call went on without it: ')} + guard.failures.join('; ') + '. Read the window, then redo it with await.\\n');
   // A caught getApp failure sent no input, so it isn't a failed action; a later getApp that worked cleared it.
   if (guard.getAppFailures?.length) {
     const caught = guard.getAppFailures.join('; ');
@@ -618,8 +620,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     state.acted = false; state.startApp = state.activeApp;
     state.actionVersion ??= 0;
     state.actionIndex = 0; state.completedActions = 0; state.ran = []; state.unknown = []; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
-    state.dp1 = !!update?.dp1; state.closeRead = update?.closeRead;
-    state.inputSent = false;
+    ${dp1 ? 'state.dp1 = !!update?.dp1; state.closeRead = update?.closeRead;\n    ' : ''}state.inputSent = false;
     // This call's actions and picks still running, for the read that ends the call.
     state.inflight = new Set();
     const track = promise => { const done = () => state.inflight.delete(promise); state.inflight.add(promise); promise.then(done, done); return promise; };

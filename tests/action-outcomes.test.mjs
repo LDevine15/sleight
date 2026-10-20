@@ -571,13 +571,38 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
   // Removing only that validator and its call site reproduces all four old setup pins exactly, so guarded, guardedLean,
   // read and repl now pin that new default. No outcome code entered the off path.
   // The warm-call pin is unchanged: default-on CK switches occupy no per-call bytes.
+  // X21: DP1 (17de62ab, 1e6b75a7, 14998535, a1cdf614, merged by 772b0a9e) adds the close observer to read/REPL setup by default.
+  // Guarded calls opt in explicitly. Their off path keeps the X19b pins; the DP1-off test below keeps all five.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
     guardedLean: hash(guardedCode('await app.click(1);', window, undefined, undefined, { prompt: 'lean' })),
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: '1c0b1d03a56277ef', guardedLean: '561825a7bf7829f2', reuse: 'b824edb3aa6dc2c4', read: '7564127a1e1c6c44', repl: '7564127a1e1c6c44' });
+  }, { guarded: '1c0b1d03a56277ef', guardedLean: '561825a7bf7829f2', reuse: 'b824edb3aa6dc2c4', read: 'e3ed0b80a06832ee', repl: 'e3ed0b80a06832ee' });
+});
+
+test('DP1 off preserves the pre-DP1 guard, read and REPL bytes', () => {
+  const prior = process.env.SLEIGHT_DP1;
+  process.env.SLEIGHT_DP1 = '0';
+  try {
+    const hash = code => createHash('sha256').update(code).digest('hex').slice(0, 16);
+    const codes = {
+      guarded: guardedCode('await app.click(1);', window, undefined, undefined, { dp1: false }),
+      guardedLean: guardedCode('await app.click(1);', window, undefined, undefined, { dp1: false, prompt: 'lean' }),
+      reuse: guardedCode('await app.click(1);', window, undefined, undefined, { dp1: false, reuseSetup: true, acknowledge: true }),
+      read: readCode('void 0;', { acknowledge: true, dp1: false }),
+      repl: replSetupCode(),
+    };
+    assert.deepEqual(Object.fromEntries(Object.entries(codes).map(([key, code]) => [key, hash(code)])), {
+      guarded: '1c0b1d03a56277ef', guardedLean: '561825a7bf7829f2', reuse: 'b824edb3aa6dc2c4',
+      read: '7564127a1e1c6c44', repl: '7564127a1e1c6c44',
+    });
+    for (const code of Object.values(codes)) assert.doesNotMatch(code, /closedLast|beforeRead|state\.dp1|state\.closeRead|\[sleight:dp1\]/);
+  } finally {
+    if (prior === undefined) delete process.env.SLEIGHT_DP1;
+    else process.env.SLEIGHT_DP1 = prior;
+  }
 });
 
 test('with both switches off the guard carries none of the outcome code', () => {

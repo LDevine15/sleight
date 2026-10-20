@@ -5,6 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assertCheck } from '../bench/replay/checks.mjs';
 import { loadCheck } from '../bench/replay/run.mjs';
+import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 
 const spec = loadCheck('DP1');
 const start = '2026-10-20T02:07:31.990Z', end = '2026-10-20T02:07:32.988Z';
@@ -12,8 +13,8 @@ const replay = { calls: [{ index: 5, name: 'js', recordedArguments: { code: 'awa
   startedAt: start, finishedAt: end, result: { content: [{ type: 'text', text: 'sleight: the app has no windows left. Nothing more to read.' }] } }] };
 const event = (decision, reason = 'no windows') => ({ t: end, direction: 'dp1-decision', msg: { id: 6, decision, reason } });
 function fixture(t, events = []) {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-dpm-check-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-dpm-check-')));
+  t.after(() => removeTemp(dir));
   // Transport text can contain a decision-looking string. It is not relay evidence.
   writeFileSync(join(dir, 'trace.jsonl'), JSON.stringify({ t: end, event: 'mcp', direction: 'received', msg: event('skipped-read') }) + '\n');
   writeFileSync(join(dir, 'trace-123.jsonl'), events.map(e => JSON.stringify(e)).join('\n'));

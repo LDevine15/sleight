@@ -1,21 +1,22 @@
 import { idleClock } from './fixtures/socket-clock.mjs';
 import { test } from 'node:test';
 import { spawnDemand } from './fixtures/socket-demand-owner.mjs';
+import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, symlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { callSocket, ensureSocketSession, socketCommand, spawnDetachedSession, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
 
 function fixture(t) {
-  const root = mkdtempSync(join('/private/tmp', 'sleight-demand-'));
+  const root = trackTemp(mkdtempSync(join('/private/tmp', 'sleight-demand-')));
   const cleanup = [];
   t.after(async () => {
     const results = await Promise.allSettled(cleanup.map(collect => collect()));
+    removeTemp(root);
     for (const result of results) if (result.status === 'rejected') throw result.reason;
-    rmSync(root, { recursive: true, force: true });
   });
   return { cleanup, directory: join(root, 'shell'), signals: new EventEmitter(), idleClock: idleClock(), accessibility: () => false, peerUid: async () => process.getuid(),
     startRelay: async () => ({ call: async () => ({ content: [{ type: 'text', text: 'ok' }] }), close: async () => {} }) };
