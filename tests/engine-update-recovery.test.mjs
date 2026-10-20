@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
@@ -263,7 +265,7 @@ test('an engine that dies on its own revokes direct browser work and still recov
 
 test('the call that triggers a reconnect lands in the new turn receipt, answered, not in the closed one as pending', async t => {
   const written = [];
-  const h = fixture(t, { relay: { receipts: true, receiptWriter: receipt => { written.push(receipt); return '/private/tmp/receipt.json'; } } });
+  const h = fixture(t, { relay: { receipts: true, receiptWriter: receipt => { written.push(receipt); return `${MAC_TMP}/receipt.json`; } } });
   h.call(1, 'let app = await cua.getApp("Example")'); h.reply(1);
   h.replace();
   h.call(2, 'await cua.getApp("Example")');

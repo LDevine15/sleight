@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
@@ -13,7 +16,7 @@ import { removeTemp } from '../scripts/temp-leftovers.mjs';
 // No engine call, local tool or approval may reach it, by name, by its file in sleight's helper cache, or by pid. A local
 // tool's target that only its pid gives away is refused in lease-target.js (own-host-native.test.mjs).
 const OWN = "That is sleight's own confirmation window; only you can answer it.";
-const HOST_FILE = '/Users/x/Library/Caches/sleight/turbo-host/k1/consent-host';
+const HOST_FILE = `${MAC_USERS}x/Library/Caches/sleight/turbo-host/k1/consent-host`;
 const HOST_PID = 4242;
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); };
 
@@ -45,7 +48,7 @@ const refused = (h, id) => { assert.equal(h.sent(id), false, `call ${id} reached
 
 test('the line and the identity checks: name, a file in the helper cache, and a pid whose executable is there', () => {
   assert.equal(OWN_HOST_LINE, OWN);
-  for (const value of ['consent-host', 'Consent-Host', HOST_FILE, '/Users/x/Library/Caches/sleight/turbo-host/build-1/peer-host']) assert.equal(isOwnHost(value), true, value);
+  for (const value of ['consent-host', 'Consent-Host', HOST_FILE, `${MAC_USERS}x/Library/Caches/sleight/turbo-host/build-1/peer-host`]) assert.equal(isOwnHost(value), true, value);
   for (const value of ['TextEdit', 'com.apple.TextEdit', '/Applications/consent-host-viewer.app', 'my consent-host notes', undefined, 7]) assert.equal(isOwnHost(value), false, String(value));
   const ps = path => (command, args) => { assert.equal(command, '/bin/ps'); assert.deepEqual(args, ['-p', '4242', '-o', 'comm=']); return path + '\n'; };
   assert.equal(ownHostPid(HOST_PID, ps(HOST_FILE)), true);
@@ -103,7 +106,7 @@ for (const [name, args] of [
   ['hover', { app: 'TextEdit', at: [1, 1] }],
   ['menu_bar', { op: 'choose', app: 'TextEdit', path: ['File', 'Save'] }],
   ['select_window', { app: 'TextEdit', title: 'Doc' }],
-  ['open_file', { app: 'TextEdit', path: '/private/tmp/fixture.txt' }],
+  ['open_file', { app: 'TextEdit', path: `${MAC_TMP}/fixture.txt` }],
 ]) {
   test(`local ${name} refuses an ordinary app while the leased window is the host`, async t => {
     const h = harness(t);

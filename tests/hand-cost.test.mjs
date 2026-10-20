@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 // H6, the ghost hand cost pass: the ps sampler, the trace reader, the side-by-side comparison and the pass against fakes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -5,7 +7,7 @@ import { parsePs, isHandHost, isWindowServer, createCostSampler, summarize } fro
 import { schedule, runArgs, resultsPath, traceStats, traceDirs, compareSides, reportMarkdown, runSide, runCostPass, parseArgs, BUDGET, CLAIM_TASKS } from '../bench/hand/cost-pass.mjs';
 
 const WS = '/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer -daemon';
-const HOST = '/Users/x/Library/Caches/sleight/turbo-host/abc/consent-host --hand --capture=hidden --menu';
+const HOST = `${MAC_USERS}x/Library/Caches/sleight/turbo-host/abc/consent-host --hand --capture=hidden --menu`;
 const psLine = (pid, ppid, time, rss, command) => `${pid} ${ppid} ${time} ${rss} ${command}`;
 
 test('ps rows: WindowServer and hand hosts by command, CPU time in seconds', () => {

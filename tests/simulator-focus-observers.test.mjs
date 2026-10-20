@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import test from './macos-only.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -21,7 +23,7 @@ test('probe options pass the exact opt-in value and guard every permission obser
   assert.equal(reads, 4);
 });
 test('permission observation rechecks hold between each host command', async t => {
-  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-permission-hold-')), inspector = `${dir}/inspector`;
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-permission-hold-'))), inspector = `${dir}/inspector`;
   t.after(() => rmSync(dir, { recursive: true, force: true })); writeFileSync(inspector, 'fixture');
   let held = false; const calls = [];
   await assert.rejects(observePermission({ inspector,
@@ -31,7 +33,7 @@ test('permission observation rechecks hold between each host command', async t =
   assert.deepEqual(calls, ['/usr/bin/pgrep']);
 });
 test('permission observation passes the hold boundary into its native title reader', async t => {
-  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-permission-hold-')), inspector = `${dir}/inspector`;
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-permission-hold-'))), inspector = `${dir}/inspector`;
   t.after(() => rmSync(dir, { recursive: true, force: true })); writeFileSync(inspector, 'fixture');
   let nativeCalled = false;
   assert.equal(await observePermission({ inspector, stopOnLiveHold: true, run: async (command, args) => {

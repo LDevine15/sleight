@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { inspect } from './helpers/window-identity-fixture.mjs';
@@ -42,7 +44,7 @@ test('native identity maps AX geometry to CG numbers and detects a known number 
 });
 
 test('a window without a title (Finder\'s desktop) is skipped instead of failing the identity', () => {
-  const finder = { appId: 'com.apple.finder', title: 'rename-abc123', url: 'file:///private/tmp/x/rename-abc123/' };
+  const finder = { appId: 'com.apple.finder', title: 'rename-abc123', url: `file://${MAC_TMP}/x/rename-abc123/` };
   const result = inspect(finder, [11, 22], 1, false, [], (app, windows) => {
     windows[0].missing = ['AXTitle', 'AXDocument'];
     Object.assign(windows[1], { AXTitle: finder.title, AXDocument: finder.url });

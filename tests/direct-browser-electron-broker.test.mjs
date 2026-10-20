@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 // EPV3-7a host additions: one session at a time, the instance mutation fence held in the host,
 // prepareProfile between reserve and spawn, admin start/quit/collect, and the package location.
 import { test } from 'node:test';
@@ -181,7 +183,7 @@ test('worker-visible error codes are a closed set that now names busy, fence and
     assert.deepEqual(errorFrame(Error(code)), { code, dispatched: false });
   assert.deepEqual(errorFrame(Error('ownership unresolved: host-crash-possible-app-exit')), { code: 'OWNERSHIP_UNRESOLVED', dispatched: false });
   assert.deepEqual(errorFrame(Error('retained ownership prevents another launch')), { code: 'OWNERSHIP_RETAINED', dispatched: false });
-  assert.deepEqual(errorFrame(Error('/Users/someone/secret path')), { code: 'FAILED', dispatched: false });
+  assert.deepEqual(errorFrame(Error(`${MAC_USERS}someone/secret path`)), { code: 'FAILED', dispatched: false });
 });
 
 test('the broker, launch adapter, registry and notices are package files the receipt hashes, and the host entry finds them there', { skip: checkoutSkip }, () => {

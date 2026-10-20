@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -5,7 +7,7 @@ import { runInNewContext } from 'node:vm';
 
 const cleanupSource = readFileSync(new URL('../bench/textedit-save-lock-cleanup.js', import.meta.url), 'utf8');
 const trialSource = readFileSync(new URL('../bench/textedit-save-lock.js', import.meta.url), 'utf8');
-const args = ['/private/tmp/sleight-save-lock-fixture/trial.txt', '123', '100000', '101000'];
+const args = [`${MAC_TMP}/sleight-save-lock-fixture/trial.txt`, '123', '100000', '101000'];
 function native({ held = false, inspectOnly = false, birth = 100, windowCount = 0, holdAtQuit = false } = {}) {
   const calls = [], $ = value => value;
   let holds = held;

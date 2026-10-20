@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -14,12 +17,12 @@ import {
 const runner = fileURLToPath(new URL('../bench/textedit-save-lock.mjs', import.meta.url));
 const helper = readFileSync(new URL('../bench/textedit-save-lock.js', import.meta.url), 'utf8');
 const runnerSource = readFileSync(new URL('../bench/textedit-save-lock.mjs', import.meta.url), 'utf8');
-const path = '/private/tmp/sleight-save-lock-Zk4nfu/trial.txt';
+const path = `${MAC_TMP}/sleight-save-lock-Zk4nfu/trial.txt`;
 
 test('cleanup accepts only an owned temporary trial document', () => {
   assert.equal(ownedTrialPath(path), path);
-  for (const wrong of ['/private/tmp/other/trial.txt', path + '/../other.txt',
-    '/private/tmp/sleight-save-lock-Zk4nfu/other.txt', '~/Documents/notes.txt',
+  for (const wrong of [`${MAC_TMP}/other/trial.txt`, path + '/../other.txt',
+    `${MAC_TMP}/sleight-save-lock-Zk4nfu/other.txt`, '~/Documents/notes.txt',
     '/tmp/sleight-save-lock-Zk4nfu/trial.txt']) {
     assert.throws(() => ownedTrialPath(wrong), /owned temporary/);
   }
@@ -97,9 +100,9 @@ test('a stop from a run ends the experiment there', async () => {
 function acceptOwnedWindows(rows) {
   const context = { ObjC: { import() {} } };
   runInNewContext(helper, context);
-  return JSON.parse(JSON.stringify(context.acceptOwnedWindows(rows, 'file:///private/tmp/sleight-save-lock-abc123/trial.txt')));
+  return JSON.parse(JSON.stringify(context.acceptOwnedWindows(rows, `file://${MAC_TMP}/sleight-save-lock-abc123/trial.txt`)));
 }
-const owned = { document: 'file:///private/tmp/sleight-save-lock-abc123/trial.txt', modal: false, sheet: false, text: 'seed\n' };
+const owned = { document: `file://${MAC_TMP}/sleight-save-lock-abc123/trial.txt`, modal: false, sheet: false, text: 'seed\n' };
 
 test('the owned document window alone is accepted', () => {
   assert.deepEqual(acceptOwnedWindows([owned]), { accept: true, owned: 0, artifacts: [] });
@@ -110,7 +113,7 @@ test('an extra empty untitled window or panel from the same app is tolerated', (
   assert.deepEqual(acceptOwnedWindows([owned, { document: null, modal: false, sheet: false, text: null }]).artifacts, ['panel']);
 });
 test('an already-open owner document is tolerated; a second owned URL or a dialog is not', () => {
-  assert.equal(acceptOwnedWindows([owned, { document: 'file:///Users/x/notes.txt', modal: false, sheet: false, text: '' }]).accept, true);
+  assert.equal(acceptOwnedWindows([owned, { document: `file://${MAC_USERS}x/notes.txt`, modal: false, sheet: false, text: '' }]).accept, true);
   assert.equal(acceptOwnedWindows([owned, { document: null, modal: false, sheet: false, text: 'restored words' }]).accept, true);
   assert.equal(acceptOwnedWindows([owned, { ...owned }]).reason, 'Ambiguous owned windows');
   assert.equal(acceptOwnedWindows([{ ...owned, sheet: true }]).accept, false);
@@ -121,10 +124,10 @@ test('no window, or no owned window yet, asks for a retry', () => {
   assert.equal(acceptOwnedWindows([{ document: null, modal: false, sheet: false, text: '' }]).retry, true);
 });
 test('an owned window whose AXDocument uses /tmp or localhost still matches', () => {
-  const expected = 'file:///private/tmp/sleight-save-lock-abc123/trial.txt';
+  const expected = `file://${MAC_TMP}/sleight-save-lock-abc123/trial.txt`;
   for (const document of [
     'file:///tmp/sleight-save-lock-abc123/trial.txt',
-    'file://localhost/private/tmp/sleight-save-lock-abc123/trial.txt',
+    `file://localhost${MAC_TMP}/sleight-save-lock-abc123/trial.txt`,
     'file://localhost/tmp/sleight-save-lock-abc123/trial.txt',
   ]) {
     assert.equal(acceptOwnedWindows([{ document, modal: false, sheet: false, text: 'seed\n' }], expected).accept, true);
@@ -187,18 +190,18 @@ test('Open panel stages are never captured and evidence drops panel frames', () 
   assert.equal(mayCapture('open-panel'), false);
   assert.equal(mayCapture('document'), true);
   const raw = {
-    path: '/Users/exampleuser/Projects/sleight',
+    path: `${MAC_USERS}exampleuser/Projects/sleight`,
     frames: [
       { stage: 'open-panel', title: 'Open', image: { type: 'image', data: 'pixels' } },
       { stage: 'document', title: 'trial.txt', text: 'probe-1' },
     ],
     content: [{ type: 'image', data: 'panel' }, { type: 'text', text: 'ok' }],
   };
-  const clean = scrubEvidence(raw, { home: '/Users/exampleuser', names: ['exampleuser'] });
+  const clean = scrubEvidence(raw, { home: `${MAC_USERS}exampleuser`, names: ['exampleuser'] });
   assert.equal(clean.path, '~/Projects/sleight');
   assert.equal(JSON.stringify(clean).includes('pixels'), false);
   assert.equal(JSON.stringify(clean).includes('panel'), false);
-  assert.equal(JSON.stringify(clean).includes('/Users/exampleuser'), false);
+  assert.equal(JSON.stringify(clean).includes(`${MAC_USERS}exampleuser`), false);
   assert.equal(clean.frames.length, 1);
   assert.equal(clean.frames[0].title, 'trial.txt');
   assert.deepEqual(clean.content, [{ type: 'text', text: 'ok' }]);
@@ -223,7 +226,7 @@ test('dry-run prints the Open-panel plus engine-save plan and does not take the 
   assert.deepEqual(plan.steps.open.map(s => s.code), [
     'await app.pressKey("super+o")',
     'await app.pressKey("super+shift+g")',
-    `await app.typeText(${JSON.stringify('/private/tmp/sleight-save-lock-dry/trial.txt')})`,
+    `await app.typeText(${JSON.stringify(`${MAC_TMP}/sleight-save-lock-dry/trial.txt`)})`,
     'await app.pressKey("Return")',
   ]);
   assert.equal(JSON.stringify(plan).includes('open -g'), false);

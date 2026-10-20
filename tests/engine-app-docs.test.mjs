@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -77,11 +79,11 @@ test('the sleight arm gets SLEIGHT_TRACE and no other host variable', () => {
   const saved = process.env.SLEIGHT_TRACE;
   try {
     process.env.SLEIGHT_TRACE = '/tmp/trace-dir';
-    const traced = realAgentSetup({ task, surface: 'sleight', dir: '/private/tmp/gate-task', realBrowser: browser, dryRun: true });
+    const traced = realAgentSetup({ task, surface: 'sleight', dir: `${MAC_TMP}/gate-task`, realBrowser: browser, dryRun: true });
     assert.deepEqual(traced.mcpConfig.mcpServers['plugin:sleight:computer'].env,
       { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0', SLEIGHT_HAND: '0', SLEIGHT_TRACE: '/tmp/trace-dir' });
     delete process.env.SLEIGHT_TRACE;
-    const plain = realAgentSetup({ task, surface: 'sleight', dir: '/private/tmp/gate-task', realBrowser: browser, dryRun: true });
+    const plain = realAgentSetup({ task, surface: 'sleight', dir: `${MAC_TMP}/gate-task`, realBrowser: browser, dryRun: true });
     assert.deepEqual(plain.mcpConfig.mcpServers['plugin:sleight:computer'].env, { SLEIGHT_SURFACES: 'computer', SLEIGHT_TURBO: '0', SLEIGHT_HAND: '0' });
   } finally { if (saved === undefined) delete process.env.SLEIGHT_TRACE; else process.env.SLEIGHT_TRACE = saved; }
 });

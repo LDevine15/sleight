@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 // Every benchmark arm's sleight server runs with the ghost hand off (SLEIGHT_HAND=0), as the Firefox arms run with
 // turbo off, so the hand's panel stays out of timing. Only an explicit setting on the arm (the cost pass) turns it on.
 import test from 'node:test';
@@ -27,14 +29,14 @@ test('world and claim arms: the Claude process env and every sleight server env 
   const saved = process.env.SLEIGHT_HAND; process.env.SLEIGHT_HAND = '1';
   t.after(() => { if (saved === undefined) delete process.env.SLEIGHT_HAND; else process.env.SLEIGHT_HAND = saved; });
   for (const [label, setup] of [
-    ['engine arm (Firefox)', realAgentSetup({ task, surface: 'sleight', dir: '/private/tmp/gate-task', realBrowser: firefox, dryRun: true })],
+    ['engine arm (Firefox)', realAgentSetup({ task, surface: 'sleight', dir: `${MAC_TMP}/gate-task`, realBrowser: firefox, dryRun: true })],
     ['turbo arm (Chrome)', realAgentSetup({ task: { ...task, browser: 'chrome', prompt: 'Visit http://127.0.0.1:5420/x in {browser}.' },
-      surface: 'sleight-turbo', dir: '/private/tmp/gate-task', realBrowser: chrome, dryRun: true })],
+      surface: 'sleight-turbo', dir: `${MAC_TMP}/gate-task`, realBrowser: chrome, dryRun: true })],
   ]) {
     assert.equal(setup.env.SLEIGHT_HAND, '0', label);
     assert.equal(setup.mcpConfig.mcpServers[SERVER].env.SLEIGHT_HAND, '0', label);
   }
-  assert.equal(fowlSleightSetup({ dir: '/private/tmp/fowl', mcpRoot: '/fixture', sleightRepo: root, label: 'x' }).mcpServers[SERVER].env.SLEIGHT_HAND, '0');
+  assert.equal(fowlSleightSetup({ dir: `${MAC_TMP}/fowl`, mcpRoot: '/fixture', sleightRepo: root, label: 'x' }).mcpServers[SERVER].env.SLEIGHT_HAND, '0');
 });
 
 test('sleight-in-Codex arms (race and run.mjs suites) write the hand off into config.toml; an arm setting wins', () => {

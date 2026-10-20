@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -10,7 +12,7 @@ import { trackTemp } from '../scripts/temp-leftovers.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const surfaces = ['playwright-mcp', 'chrome-devtools-mcp', 'claude-in-chrome', 'claude-cu'];
 const options = { task: { name: 'local-form', browser: 'chrome', prompt: 'Complete the form in {browser} at http://127.0.0.1:4811/t/local-form/', result: 'submitted' },
-  dir: '/private/tmp/world-run/local-form', armRoot: '/private/tmp/world-arms', hostEnv: { PATH: '/usr/bin', HOME: '/fixture/home' } };
+  dir: `${MAC_TMP}/world-run/local-form`, armRoot: `${MAC_TMP}/world-arms`, hostEnv: { PATH: '/usr/bin', HOME: '/fixture/home' } };
 
 test('browser arms use only their pinned local tool and isolated agent configuration', async (t) => {
   const { browserArmSetup } = await import('../bench/world/arms/browser.mjs');

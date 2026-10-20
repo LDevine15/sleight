@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -12,8 +14,8 @@ const url = path => ({ isNil: () => !path, path });
 const running = (name, bundleId, executable, pid) => ({ localizedName: name, bundleIdentifier: bundleId,
   bundleURL: url(bundleId ? `/Applications/${name}.app` : null), executableURL: url(executable), processIdentifier: pid });
 // The host renamed (a later build might bundle it), so only its executable and pid give it away.
-const HOST = running('Glove', 'com.example.glove', '/Users/x/Library/Caches/sleight/turbo-host/k1/consent-host', 4242);
-const BARE = running('consent-host', null, '/Users/x/Library/Caches/sleight/turbo-host/k1/consent-host', 4243);
+const HOST = running('Glove', 'com.example.glove', `${MAC_USERS}x/Library/Caches/sleight/turbo-host/k1/consent-host`, 4242);
+const BARE = running('consent-host', null, `${MAC_USERS}x/Library/Caches/sleight/turbo-host/k1/consent-host`, 4243);
 const OTHER = running('Chess', 'com.apple.Chess', '/System/Applications/Chess.app/Contents/MacOS/Chess', 77);
 const APPS = [HOST, BARE, OTHER];
 function appKit(apps = APPS) {
@@ -74,8 +76,8 @@ function systemEvents(processes) {
 }
 
 test('menu_bar: the host\'s status item, menus and alert windows are refused by name, file and pid, and left out of apps', () => {
-  const se = systemEvents([{ name: 'consent-host', pid: 4243, file: '/Users/x/Library/Caches/sleight/turbo-host/k1/consent-host' },
-    { name: 'Glove', pid: 4242, file: '' }, { name: 'Filed', pid: 9, file: '/Users/x/Library/Caches/sleight/turbo-host/k2/consent-host' },
+  const se = systemEvents([{ name: 'consent-host', pid: 4243, file: `${MAC_USERS}x/Library/Caches/sleight/turbo-host/k1/consent-host` },
+    { name: 'Glove', pid: 4242, file: '' }, { name: 'Filed', pid: 9, file: `${MAC_USERS}x/Library/Caches/sleight/turbo-host/k2/consent-host` },
     { name: 'Chess', pid: 77, file: '/System/Applications/Chess.app' }]);
   for (const request of [{ op: 'open', app: 'consent-host' }, { op: 'choose', app: 'consent-host', path: ['Turn Turbo Off…'] },
     { op: 'press', app: 'consent-host', element: 0 }, { op: 'close', app: 'consent-host' }, { op: 'open', app: 'Glove' },

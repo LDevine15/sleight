@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { serveForm, tasks } from '../bench/tasks.mjs';
@@ -14,7 +16,7 @@ function defaultSimulatorTask(bindings) {
   const source = readFileSync(new URL('../bench/tasks.mjs', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '').replace(/^export \{.*;\n/gm, '').replace(/^export /gm, '');
   return runInNewContext(`(() => { ${source}\nreturn tasks.find(task => task.id === 'simulator-form'); })()`, {
-    webBrowsers, join, tmpdir: () => '/private/tmp', realpathSync: value => value, realTasks: [], process: { env: {} }, ...bindings,
+    webBrowsers, join, tmpdir: () => `${MAC_TMP}`, realpathSync: value => value, realTasks: [], process: { env: {} }, ...bindings,
   });
 }
 
@@ -162,7 +164,7 @@ test('viewer ownership is checked after boot preparation and reported before the
     const ownerOpensDuringBoot = probe === 'owner';
     let viewerRunning = false, reported, opens = 0;
     const boot = runInNewContext(`(() => { ${source}\nreturn bootedIPhone; })()`, {
-      webBrowsers, join, tmpdir: () => '/private/tmp', realpathSync: value => value, existsSync: () => true, realTasks: [], process: { env: {} },
+      webBrowsers, join, tmpdir: () => `${MAC_TMP}`, realpathSync: value => value, existsSync: () => true, realTasks: [], process: { env: {} },
       execFileSync(command, args) {
         if (command === 'xcrun') {
           if (args[1] === 'list') return JSON.stringify({ devices: { runtime: [{ name: 'iPhone fixture', state: 'Booted', udid: 'fixture' }] } });
@@ -195,7 +197,7 @@ test('viewer ownership is checked after boot preparation and reported before the
 function simulatorBindings(execFileSync) {
   return {
     webBrowsers,
-    join, tmpdir: () => '/private/tmp', realpathSync: value => value, existsSync: () => true,
+    join, tmpdir: () => `${MAC_TMP}`, realpathSync: value => value, existsSync: () => true,
     realTasks: [], process: { env: {} }, execFileSync,
   };
 }

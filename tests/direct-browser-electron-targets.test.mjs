@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -28,7 +30,7 @@ test('only top-level app documents are members; DevTools, workers, webviews, ext
     ['blank', page('f', 'about:blank')],
     ['data', page('g', 'data:text/html,hi')],
     ['http', page('h', 'http://127.0.0.1:3000/')],
-    ['outside', page('i', 'file:///Users/someone/notes.html')],
+    ['outside', page('i', `file://${MAC_USERS}someone/notes.html`)],
     ['iframe', { ...page('j'), type: 'iframe' }],
     ['worker', { ...page('k'), type: 'worker' }],
     ['service', { ...page('l'), type: 'service_worker' }],

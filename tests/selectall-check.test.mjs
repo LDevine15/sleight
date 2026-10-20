@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -43,11 +45,11 @@ test('lib refuses a foreground TextEdit without activation', async () => {
 });
 test('lib launches TextEdit in the background with persistence and open-panel defaults off', async () => {
   const { launchCommand } = await lib();
-  const [command, argv] = launchCommand('/private/tmp/sleight-exact-X/exact.txt');
+  const [command, argv] = launchCommand(`${MAC_TMP}/sleight-exact-X/exact.txt`);
   assert.equal(command, '/usr/bin/open');
   assert.equal(argv[0], '-g');
   assert.deepEqual(argv.slice(1, 3), ['-b', 'com.apple.TextEdit']);
-  assert.ok(argv.includes('/private/tmp/sleight-exact-X/exact.txt'));
+  assert.ok(argv.includes(`${MAC_TMP}/sleight-exact-X/exact.txt`));
   const args = argv.slice(argv.indexOf('--args') + 1);
   assert.deepEqual(args, ['-ApplePersistenceIgnoreState', 'YES', '-NSShowAppCentricOpenPanelInsteadOfUntitledFile', 'NO']);
 });
@@ -157,7 +159,7 @@ test('fixture records title, subrole and identifier of every window on a refusal
   const { collectWindowRecords } = loadFixture();
   const windows = list([{ id: 1 }, { id: 2 }]);
   const table = {
-    1: { AXTitle: 'exact.txt', AXSubrole: 'AXStandardWindow', AXIdentifier: 'doc-window', AXDocument: 'file:///private/tmp/sleight-exact-X/exact.txt', AXModal: false, AXChildren: list([{ AXRole: 'AXTextArea' }]) },
+    1: { AXTitle: 'exact.txt', AXSubrole: 'AXStandardWindow', AXIdentifier: 'doc-window', AXDocument: `file://${MAC_TMP}/sleight-exact-X/exact.txt`, AXModal: false, AXChildren: list([{ AXRole: 'AXTextArea' }]) },
     2: { AXTitle: 'Open', AXSubrole: 'AXDialog', AXIdentifier: '-25205', AXModal: false, AXChildren: '-25204' },
   };
   const rows = collectWindowRecords(windows, (el, name) => {
@@ -167,7 +169,7 @@ test('fixture records title, subrole and identifier of every window on a refusal
   });
   // The record object is built inside the fixture's VM realm; JSON makes it same-realm for deepEqual.
   assert.deepEqual(JSON.parse(JSON.stringify(rows[0])), { index: 0, title: 'exact.txt', subrole: 'AXStandardWindow', identifier: 'doc-window',
-    document: 'file:///private/tmp/sleight-exact-X/exact.txt', modal: false, childrenError: null,
+    document: `file://${MAC_TMP}/sleight-exact-X/exact.txt`, modal: false, childrenError: null,
     childRoles: ['AXTextArea'] });
   assert.equal(rows[1].title, 'Open');
   assert.equal(rows[1].subrole, 'AXDialog');

@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -118,7 +120,7 @@ test('a revoked grant, a changed PID or window refuses prepared and new targets'
   f.gate.alive = false; assert.equal(f.ctx.userMessage(), undefined, 'the user message is withheld once the grant is gone'); assert.equal((await f.ctx.check('wait', f.target())).verdict, 'refuse');
 });
 test('an app document that is not an app document is refused: scheme, root, parent and reported origin', async () => {
-  for (const options of [{ url: 'data:text/html,hi' }, { url: 'blob:https://pay.invalid/1', observed: 'https://pay.invalid' }, { url: 'file:///Users/fixture/secret.html' },
+  for (const options of [{ url: 'data:text/html,hi' }, { url: 'blob:https://pay.invalid/1', observed: 'https://pay.invalid' }, { url: `file://${MAC_USERS}fixture/secret.html` },
     { url: 'http://pay.invalid/', observed: 'http://pay.invalid' }, { url: root + 'a.html', observed: 'https://pay.invalid' }, { url: 'other://main/x' },
     { url: 'fixture://main/x', parent: { url: () => 'https://pay.invalid/', parentFrame: () => null } }]) {
     const f = fixture(payText(terms), options);

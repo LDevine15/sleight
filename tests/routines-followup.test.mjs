@@ -1,6 +1,7 @@
+import { tmpdir } from 'node:os';
 import { test } from './macos-only.mjs';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, statSync, readFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, existsSync, statSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DemoRecording, recordWatch, watchOptions } from '../plugins/sleight/lib/demonstration.mjs';
 import { terminalConfirm } from '../plugins/sleight/lib/terminal-confirm.mjs';
@@ -11,7 +12,7 @@ import { trackTemp } from '../scripts/temp-leftovers.mjs';
 const field = { label: 'Text', labelCount: 1, role: 'AXTextArea', editable: true };
 const button = { id: 'Seven', idCount: 1, role: 'AXButton' };
 test('recording refuses non-terminal input and missing files before observing', async t => {
-  const home = trackTemp(mkdtempSync('/private/tmp/sleight-followup-'));
+  const home = trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-followup-'))));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   let accessed = false;
   const helper = { check: async () => { accessed = true; return { trusted: true, listening: true }; } };
@@ -22,7 +23,7 @@ test('recording refuses non-terminal input and missing files before observing', 
 });
 
 test('recording announces start and stop, saves privately and never replaces a file', async t => {
-  const home = trackTemp(mkdtempSync('/private/tmp/sleight-followup-'));
+  const home = trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-followup-'))));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const output = join(home, 'out.json'), events = [];
   const helper = { check: async () => ({ trusted: true, listening: true }),
@@ -64,7 +65,7 @@ test('terminal confirmation refuses pipes and requires the exact typed word', as
 });
 
 test('routine add and remove refuse non-terminal confirmation and reject the removed yes flag', async t => {
-  const home = trackTemp(mkdtempSync('/private/tmp/sleight-confirm-test-'));
+  const home = trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-confirm-test-'))));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const script = { sleightReplay: 1, steps: [{ tool: 'js', args: { code: 'let app = await cua.getApp("Calculator");' } }] };
   const store = new RoutineStore({ home, preapproved: () => ({ allows: () => true }),
@@ -78,7 +79,7 @@ test('routine add and remove refuse non-terminal confirmation and reject the rem
 });
 
 test('active runs log a skip, stay unpaused, and retry on the next idle interval; busy runs notify', async t => {
-  const home = trackTemp(mkdtempSync('/private/tmp/sleight-idle-test-'));
+  const home = trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-idle-test-'))));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   let idleSeconds = 119, replays = 0, finish;
   const notices = [], script = { sleightReplay: 1, steps: [{ tool: 'js', args: { code: 'let app = await cua.getApp("Calculator");' } }] };
@@ -97,7 +98,7 @@ test('active runs log a skip, stay unpaused, and retry on the next idle interval
 });
 
 test('an active skip never compiles the observer', async t => {
-  const home = trackTemp(mkdtempSync('/private/tmp/sleight-idle-first-'));
+  const home = trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-idle-first-'))));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   let hosts = 0;
   const script = { sleightReplay: 1, steps: [{ tool: 'js', args: { code: 'let app = await cua.getApp("Calculator");' } }] };

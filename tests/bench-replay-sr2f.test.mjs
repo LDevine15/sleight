@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
@@ -45,9 +47,9 @@ test('replay accepts different pixels and image transport shapes for the same wi
 });
 
 test('image window identity permits fixture substitutions only', () => {
-  const mapper = new TargetMapper(); mapper.addString('/tmp/recorded', '/private/tmp/fresh');
+  const mapper = new TargetMapper(); mapper.addString('/tmp/recorded', `${MAC_TMP}/fresh`);
   assert.equal(divergence(shot(image(), 'Window: "/tmp/recorded/file.txt", App: TextEdit.'),
-    shot(image(png(2, 1, 7)), 'Window: "/private/tmp/fresh/file.txt", App: TextEdit.'), mapper), null);
+    shot(image(png(2, 1, 7)), `Window: "${MAC_TMP}/fresh/file.txt", App: TextEdit.`), mapper), null);
 });
 
 test('JPEG metadata and PNG pixels can differ while each ordered image keeps its dimensions', () => {

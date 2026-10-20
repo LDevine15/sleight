@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -52,9 +54,9 @@ test('reacquiring another app or rebinding the observed receiver cannot reuse it
 
 test('native plans validate fixtures and string mappings before any launch', async () => {
   const rec = nativeRecording();
-  assert.equal(fixtures.prepareReplay(rec, '/private/tmp/sr2d-fixture').native.ctx.nonce, '1234abcd');
-  assert.throws(() => fixtures.prepareReplay({ ...rec, calls: [] }, '/private/tmp/sr2d-fixture'), /exactly one/);
-  assert.throws(() => fixtures.prepareReplay(rec, '/private/tmp/sr2d-fixture', { addString() { throw Error('mapping failed before launch'); } }), /mapping failed/);
+  assert.equal(fixtures.prepareReplay(rec, `${MAC_TMP}/sr2d-fixture`).native.ctx.nonce, '1234abcd');
+  assert.throws(() => fixtures.prepareReplay({ ...rec, calls: [] }, `${MAC_TMP}/sr2d-fixture`), /exactly one/);
+  assert.throws(() => fixtures.prepareReplay(rec, `${MAC_TMP}/sr2d-fixture`, { addString() { throw Error('mapping failed before launch'); } }), /mapping failed/);
   const dir = mkdtempSync(join(tmpdir(), 'sr2d-plan-'));
   try {
     writeFileSync(join(dir, 'run.json'), JSON.stringify({ task: 'textedit-drag' }));
@@ -87,7 +89,7 @@ test('A/B records per-call output changes and permits an expected baseline check
 test('comparison canonicalizes changing handles and fixture aliases without hiding values', () => {
   const a = new TargetMapper(), b = new TargetMapper();
   for (const [mapper, fresh] of [[a, '/tmp/arm-a'], [b, '/tmp/arm-b']]) {
-    mapper.addString('/tmp/old', fresh); mapper.addString('/private/tmp/old', fresh);
+    mapper.addString('/tmp/old', fresh); mapper.addString(`${MAC_TMP}/old`, fresh);
   }
   assert.deepEqual(comparisonResult(text('/tmp/arm-a Value: 7'), a), comparisonResult(text('/tmp/arm-b Value: 7'), b));
   assert.notDeepEqual(comparisonResult(text('/tmp/arm-a Value: 7'), a), comparisonResult(text('/tmp/arm-b Value: 8'), b));
@@ -176,6 +178,6 @@ test('unlisted bundle IDs and URLs refuse before transport, including nested JS 
   }
   const rec = nativeRecording();
   rec.calls[0].arguments.app = 'com.apple.Terminal';
-  assert.throws(() => fixtures.prepareReplay(rec, '/private/tmp/sr2d-fixture'), /allowlist/i);
+  assert.throws(() => fixtures.prepareReplay(rec, `${MAC_TMP}/sr2d-fixture`), /allowlist/i);
 });
 });

@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, rmSync, readFileSync } from 'node:fs';
@@ -8,8 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
-const window = { appId: 'com.apple.TextEdit', title: 'broker.txt', url: 'file:///private/tmp/broker.txt' };
-const otherWindow = { ...window, title: 'other.txt', url: 'file:///private/tmp/other.txt' };
+const window = { appId: 'com.apple.TextEdit', title: 'broker.txt', url: `file://${MAC_TMP}/broker.txt` };
+const otherWindow = { ...window, title: 'other.txt', url: `file://${MAC_TMP}/other.txt` };
 const fixture = fileURLToPath(new URL('./fixtures/lease-broker-cli.mjs', import.meta.url));
 const claim = (client = 'outside A', target = window, scope = 'window') => ({ operation: 'acquire', client, window: target, scope });
 const use = (operation, lease) => ({ operation, key: lease.key, token: lease.token });

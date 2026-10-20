@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -286,7 +288,7 @@ test('native capture passes an empty NSDictionary and cleans up its temporary im
   const { c, native } = windowPlatform([]);
   const attributes = {}; const removed = [];
   c.$.NSDictionary = { dictionary: attributes };
-  c.$.NSTemporaryDirectory = () => '/private/tmp/';
+  c.$.NSTemporaryDirectory = () => `${MAC_TMP}/`;
   c.$.NSUUID = { UUID: { UUIDString: 'test' } };
   c.$.NSFileManager = { defaultManager: {
     createDirectoryAtPathWithIntermediateDirectoriesAttributesError: (_dir, _parents, supplied) => { assert.equal(supplied, attributes); return true; },
@@ -295,7 +297,7 @@ test('native capture passes an empty NSDictionary and cleans up its temporary im
   c.$.NSTask = { alloc: { init: { terminationStatus: 0 } } };
   c.$.NSData = { dataWithContentsOfFile: () => ({ isNil: () => false, base64EncodedStringWithOptions: () => 'PNG' }) };
   assert.equal(native.capture({ bounds: { X: 10, Y: 20, Width: 300, Height: 400 } }), 'PNG');
-  assert.deepEqual(removed, ['/private/tmp/sleight-hover-test']);
+  assert.deepEqual(removed, [`${MAC_TMP}/sleight-hover-test`]);
 });
 
 

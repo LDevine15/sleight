@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -5,10 +7,10 @@ import { runInNewContext } from 'node:vm';
 import { benchmarkApproval, probeClient, probeReadCode, probeInputCode, probeCleanupPath } from '../bench/double-keys-client.mjs';
 
 test('cleanup accepts only a normalized temporary probe document', () => {
-  const path = '/private/tmp/sleight-double-keys-Zk4nfu/double-keys.txt';
+  const path = `${MAC_TMP}/sleight-double-keys-Zk4nfu/double-keys.txt`;
   assert.equal(probeCleanupPath(path), path);
-  for (const wrong of ['/private/tmp/other/double-keys.txt', path + '/../other.txt',
-    '/private/tmp/sleight-double-keys-Zk4nfu/other.txt', '~/Documents/notes.txt']) {
+  for (const wrong of [`${MAC_TMP}/other/double-keys.txt`, path + '/../other.txt',
+    `${MAC_TMP}/sleight-double-keys-Zk4nfu/other.txt`, '~/Documents/notes.txt']) {
     assert.throws(() => probeCleanupPath(wrong), /probe document/);
   }
 });

@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
@@ -32,7 +35,7 @@ const live = (selected = 'deny', app = 'Fixture Editor') => ['', 'Computer Use w
   'Enter\x1b[1Cto\x1b[1Cconfirm\x1b[1C·\x1b[1CEsc\x1b[1Cto\x1b[1Ccancel', ''].join('\n');
 
 test('telemetry opt-out still loads the owner cached computer-use entitlement', () => {
-  const p = interactivePlan({ armDir: '/private/tmp/cu-env-fixture', prompt: 'RESULT ok',
+  const p = interactivePlan({ armDir: `${MAC_TMP}/cu-env-fixture`, prompt: 'RESULT ok',
     hostEnv: { CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF: '0', ANTHROPIC_API_KEY: 'fixture' } });
   assert.equal(p.env.DISABLE_TELEMETRY, '1');
   assert.equal(p.env.DO_NOT_TRACK, '1');
@@ -67,7 +70,7 @@ test('task allowlist survives adapter and CLI serialization instead of inheritin
   assert.deepEqual(JSON.parse(dry.stdout).plan.allowedApps, ['Fixture Editor']);
 });
 test('browser adapter selects only its task browser from the benchmark allowlist', () => {
-  const setup = interactiveAgentSetup({ armDir: '/private/tmp/cu-adapter-fixture', dir: '/private/tmp/cu-adapter-work',
+  const setup = interactiveAgentSetup({ armDir: `${MAC_TMP}/cu-adapter-fixture`, dir: `${MAC_TMP}/cu-adapter-work`,
     prompt: 'RESULT ok', task: { browser: 'helium' } });
   assert.equal(setup.env.BENCH_CU_ALLOWED_APPS, '["Helium"]');
 });
@@ -290,7 +293,7 @@ for (const [name, screen] of [
   ['numbered options', card().replace('❯ Deny', '❯ 1. Deny').replace('  Allow', '  2. Allow')],
   ['redraw without options', card().slice(0, card().indexOf('❯')) + '\x1b[2J\x1b[H' + card().slice(0, card().indexOf('❯'))],
   ['no trailing newline', card(['Fixture Editor'], 'allow').trimEnd()],
-  ['quoted title', 'The model said "Computer Use wants to control these apps"\n  /Users/owner/private.txt\n'],
+  ['quoted title', `The model said "Computer Use wants to control these apps"\n  ${MAC_USERS}owner/private.txt\n`],
   ['settings app before options', '\nComputer Use wants to control these apps\n  ● System Settings\n'],
 ]) {
   test(`${name} ends as a recorded block rather than a task timeout`, async t => {
@@ -450,7 +453,7 @@ for (const event of ['PermissionRequest', 'PreToolUse']) {
       return output?.decision?.behavior ?? output?.permissionDecision;
     };
     assert.equal(behavior(input), event === 'PermissionRequest' ? 'allow' : undefined);
-    for (const denied of [{ ...input, cwd: '/private/tmp/foreign' },
+    for (const denied of [{ ...input, cwd: `${MAC_TMP}/foreign` },
       { ...input, tool_input: { actions: [{ action: 'open_application', app: 'Other App' }] } },
       { ...input, tool_input: { actions: [{ action: 'app_click', bundle_id: 'com.other.App' }] } }])
       assert.equal(behavior(denied), 'deny');

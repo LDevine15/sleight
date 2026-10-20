@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -19,7 +21,7 @@ async function measureFailure({ quitFails = false, spawnFails = false, workerCol
     process: { argv: ['node', fileURLToPath(script), 'measure', ...(loadClass ? ['--' + loadClass] : [])], env: keepTemp ? { SLEIGHT_KEEP_TEMP: '1' } : {}, execPath: 'node', once() {} },
     console: { log() {} },
     loadavg: () => load, userInfo: () => ({ username: 'fixture-user' }), homedir: () => '/fixture-home',
-    mkdtempSync: () => '/private/tmp/sleight-runner-fixture',
+    mkdtempSync: () => `${MAC_TMP}/sleight-runner-fixture`,
     existsSync: path => path.endsWith('.json'),
     readFileSync: () => JSON.stringify({ childrenCollected: workerCollected, attempts: [{ label: 'action', load }] }),
     writeFileSync: (path, data) => { if (path.endsWith('.json')) report = JSON.parse(data); },

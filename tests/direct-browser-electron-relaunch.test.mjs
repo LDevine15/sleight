@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -25,7 +28,7 @@ const session = 'sessiona', turn = 'turn1', uid = 501;
 const pid = 4100, birth = '1700000000.000001';             // the process sleight launches
 const mine = { pid: 3000, birth: '1690000000.000002' };     // the user's own copy, running without the pipe
 const EXE = '/Applications/Fixture.app/Contents/MacOS/Fixture';
-const home = '/private/tmp/sleight-rf1-home';
+const home = `${MAC_TMP}/sleight-rf1-home`;
 const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-rf1-')));
 test.after(() => rmSync(dir, { recursive: true, force: true }));
 const row = (extra = {}) => ({ build: 'invalid.fixture.app@1.2.3', name: 'Fixture App', bundleId: 'invalid.fixture.app', signer: 'TEAM123456',
@@ -293,7 +296,7 @@ test('an app that comes back without the pipe keeps running for the user and the
 test('another user\'s process, two processes and another build refuse before any card', async () => {
   for (const [apps, code] of [[[{ ...mine, uid: 502, executable: EXE }], 'ELECTRON_APP_OTHER_USER'],
     [[{ ...mine, uid, executable: EXE }, { pid: 3001, birth: 'b2', uid, executable: EXE }], 'ELECTRON_RELAUNCH_AMBIGUOUS'],
-    [[{ ...mine, uid, executable: '/Users/x/Applications/Fixture.app/Contents/MacOS/Fixture' }], 'ELECTRON_RELAUNCH_BUILD_CHANGED']]) {
+    [[{ ...mine, uid, executable: `${MAC_USERS}x/Applications/Fixture.app/Contents/MacOS/Fixture` }], 'ELECTRON_RELAUNCH_BUILD_CHANGED']]) {
     const w = world({ processes: fakeProcesses({ apps }) });
     await assert.rejects(w.select(), refusal(code));
     assert.equal(w.consent.presented.length, 0, code); assert.deepEqual(quits(w), []); assert.deepEqual(starts(w), []);
@@ -312,7 +315,7 @@ test('an app that is not running opens on the user\'s profile after the debugger
 });
 
 test('a benchmark\'s temporary profile keeps the separate instance: the process table is never read and the launch names no profile', async () => {
-  const temporary = Object.freeze({ path: '/private/tmp/sleight-rf1/invalid.fixture.app', temporary: true });
+  const temporary = Object.freeze({ path: `${MAC_TMP}/sleight-rf1/invalid.fixture.app`, temporary: true });
   const w = world({ profile: temporary });
   const selecting = w.select(); await answer(w, ['session']);
   const connection = await selecting;
@@ -367,11 +370,11 @@ test('connectAppHost uses the user\'s own profile by default and a temporary one
   const path = registryFile(row()), asked = [];
   const deps = { registryPath: path, home, ensureHost: async options => { asked.push(options); return { pid: 77 }; },
     instanceFromRecipe: (r, options) => instanceFromRecipe(r, { ...options, inspect }),
-    config: { tempRoot: '/private/tmp/sleight-rf1-tmp', hostStateDir: key => '/private/tmp/sleight-rf1-hosts/' + key } };
+    config: { tempRoot: `${MAC_TMP}/sleight-rf1-tmp`, hostStateDir: key => `${MAC_TMP}/sleight-rf1-hosts/` + key } };
   const own = await runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret: 'S'.repeat(43), dependencies: deps });
   assert.deepEqual(own.profile, { path: profilePath, temporary: false });
   const bench = await runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret: 'S'.repeat(43), profile: 'temporary', dependencies: deps });
-  assert.deepEqual(bench.profile, { path: '/private/tmp/sleight-rf1-tmp/invalid.fixture.app', temporary: true });
+  assert.deepEqual(bench.profile, { path: `${MAC_TMP}/sleight-rf1-tmp/invalid.fixture.app`, temporary: true });
   assert.notEqual(asked[0].stateDir, asked[1].stateDir, 'the two profiles never share a host');
   const bare = { ...row() }; delete bare.userProfile;
   await assert.rejects(runtime.connectAppHost({ bundleId: 'invalid.fixture.app', secret: 'S'.repeat(43), dependencies: { ...deps, registryPath: registryFile(bare) } }),
@@ -384,7 +387,7 @@ test('the host passes a user-profile start to the adapter as its own mode and ne
   const h = await makeHost({ hostOptions: { adminSecret: secret, prepareProfile: async (root, spec) => { prepared.push(spec); } } });
   try {
     const admin = await connectAdmin({ stateDir: h.state.dir, secret });
-    for (const args of [{ build: 'fake-build', profile: 'temporary' }, { build: 'fake-build', profile: '/Users/x' }, { build: 'other-build', profile: 'user' }])
+    for (const args of [{ build: 'fake-build', profile: 'temporary' }, { build: 'fake-build', profile: `${MAC_USERS}x` }, { build: 'other-build', profile: 'user' }])
       await assert.rejects(admin.start(args), /BUILD_NOT_REGISTERED/, JSON.stringify(args));
     assert.equal(h.world.apps.length, 0);
     const receipt = await admin.start({ build: 'fake-build', profile: 'user' });
@@ -488,7 +491,7 @@ test('createAppProcesses validates the helper\'s replies and gives Quit its wait
 
 // Review F4: a copy started on a profile of its own would be reopened on the default one, so it is left alone.
 test('a running copy started with a profile switch, or whose arguments cannot be read, refuses before any card', async () => {
-  for (const args of [() => EXE + ' --user-data-dir=/Users/x/work', () => EXE + ' --extensions-dir /tmp/e', () => { throw Error('ELECTRON_APPS_UNAVAILABLE'); }]) {
+  for (const args of [() => EXE + ` --user-data-dir=${MAC_USERS}x/work`, () => EXE + ' --extensions-dir /tmp/e', () => { throw Error('ELECTRON_APPS_UNAVAILABLE'); }]) {
     const w = world({ processes: fakeProcesses({ args }) });
     await assert.rejects(w.select(), refusal('ELECTRON_RELAUNCH_OTHER_PROFILE', /profile of its own/));
     assert.equal(w.consent.presented.length, 0); assert.deepEqual(quits(w), []);

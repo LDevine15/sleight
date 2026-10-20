@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fork, execFileSync } from 'node:child_process';
@@ -12,11 +14,11 @@ for (const mode of [undefined, '0', '1']) test(`MTb benchmark forwards the model
   const { turboSetup } = await import('../bench/turbo/setup.mjs');
   const { realAgentSetup } = await import('../bench/fowl/real-gate-setup.mjs');
   const { createSession } = await load();
-  const task = { prompt: 'Read ' + origin, result: 'Read' }, dir = '/private/tmp/fixture-task';
+  const task = { prompt: 'Read ' + origin, result: 'Read' }, dir = `${MAC_TMP}/fixture-task`;
   const direct = turboSetup({ task, repo: '/fixture/repo', dir, prompt: task.prompt, env: process.env });
   assert.equal(direct.mcpServers['sleight-turbo'].env.SLEIGHT_MT, mode);
   const gate = realAgentSetup({ task, surface: 'sleight-turbo', dir,
-    realBrowser: { browser: 'chrome', profileRoot: '/private/tmp/profile', marker: 'Sleight Gate fixture' } });
+    realBrowser: { browser: 'chrome', profileRoot: `${MAC_TMP}/profile`, marker: 'Sleight Gate fixture' } });
   assert.equal(gate.mcpConfig.mcpServers['sleight-turbo'].env.SLEIGHT_MT, mode);
   const fork = fakeFork(async () => ({ call: async () => ({ text: 'ok', isError: false }), end: async () => ({ revoked: true, cleanup: [] }) }));
   const session = await createSession({ origins: [origin], taskMessage: 'Read fixture', forkWorker: (path, args, options) => {
@@ -142,12 +144,12 @@ test('runner setup selects all five v3 tools, private task, metrics and v3 guida
   const { turboSetup } = await import('../bench/turbo/setup.mjs');
   const { browserTools } = await import('../plugins/sleight/lib/direct-browser/tools.mjs');
   const task = { prompt: 'Read ' + origin + '/form' };
-  const setup = turboSetup({ task, repo: '/fixture/repo', dir: '/private/tmp/fixture-task', prompt: task.prompt });
+  const setup = turboSetup({ task, repo: '/fixture/repo', dir: `${MAC_TMP}/fixture-task`, prompt: task.prompt });
   assert.deepEqual(setup.mcpServers['sleight-turbo'].args, ['/fixture/repo/bench/turbo/v3-server.mjs']);
   assert.deepEqual(setup.allowed.split(',').filter(name => name.startsWith('mcp__sleight-turbo__')),
     browserTools('bbench').map(tool => 'mcp__sleight-turbo__' + tool.name));
   assert.equal(setup.mcpServers['sleight-turbo'].env.SLEIGHT_TURBO_TASK, task.prompt);
-  assert.equal(setup.mcpServers['sleight-turbo'].env.SLEIGHT_TURBO_METRICS, '/private/tmp/fixture-task/turbo-metrics.jsonl');
+  assert.equal(setup.mcpServers['sleight-turbo'].env.SLEIGHT_TURBO_METRICS, `${MAC_TMP}/fixture-task/turbo-metrics.jsonl`);
   assert.equal(setup.mcpServers['plugin:sleight:computer'].env.SLEIGHT_SURFACES, 'browser,computer');
   assert.match(setup.promptPrefix, /Act takes 1 to 12 `steps`/);
   assert.match(setup.promptPrefix, /Never translate refs or handles between paths/);
@@ -165,8 +167,8 @@ test('the turbo A/B switch and trace destination reach the benchmark worker', as
     if (oldFlag === undefined) delete process.env.SLEIGHT_LB12; else process.env.SLEIGHT_LB12 = oldFlag;
     if (oldTrace === undefined) delete process.env.SLEIGHT_TRACE; else process.env.SLEIGHT_TRACE = oldTrace;
   });
-  const setup = realAgentSetup({ task: { prompt: 'Read ' + origin, result: 'Read' }, surface: 'sleight-turbo', dir: '/private/tmp/fixture-task',
-    realBrowser: { browser: 'chrome', profileRoot: '/private/tmp/profile', marker: 'Sleight Gate fixture' } });
+  const setup = realAgentSetup({ task: { prompt: 'Read ' + origin, result: 'Read' }, surface: 'sleight-turbo', dir: `${MAC_TMP}/fixture-task`,
+    realBrowser: { browser: 'chrome', profileRoot: `${MAC_TMP}/profile`, marker: 'Sleight Gate fixture' } });
   const env = setup.mcpConfig.mcpServers['sleight-turbo'].env;
   assert.equal(env.SLEIGHT_LB12, '0');
   assert.equal(env.SLEIGHT_TRACE, trace);

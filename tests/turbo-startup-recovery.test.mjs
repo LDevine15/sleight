@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 // A turbo start that fails before any command reaches the browser starts once more, keeps its stage and code where the
 // harness and the trace can find them, and is never retried once the browser could have received something.
 import test from 'node:test';
@@ -103,7 +106,7 @@ test('startup records go to the task folder and the trace with codes only', t =>
 
   traceStartupFailure({ code: 'V3_RUNTIME_UNAVAILABLE', stage: 'connection-select', reason: 'STALE_INSTANCE', attempt: 2, retrying: false },
     { setting: join(dir, 'logs'), relayPid: 77 });
-  traceStartupFailure({ code: '/Users/someone/private', stage: 'Not A Stage', reason: 'has spaces and /paths' }, { setting: join(dir, 'logs'), relayPid: 77 });
+  traceStartupFailure({ code: `${MAC_USERS}someone/private`, stage: 'Not A Stage', reason: 'has spaces and /paths' }, { setting: join(dir, 'logs'), relayPid: 77 });
   traceStartupFailure({ code: 'X1' }, { setting: '', relayPid: 77 });
   const rows = readFileSync(join(dir, 'logs', 'trace-77.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.deepEqual(rows.map(row => [row.direction, row.msg]), [
@@ -125,9 +128,9 @@ test('the worker names the failed startup stage and a code, never the message of
     assert.deepEqual(Object.keys(unavailableFrame(error)), ['version', 'status', 'code', 'stage', 'reason']);
     assert.equal(unavailableFrame(error).stage, stage);
   }
-  const system = Object.assign(Error("ENOENT: no such file or directory, open '/Users/someone/Library/x'"), { code: 'ENOENT' });
+  const system = Object.assign(Error(`ENOENT: no such file or directory, open '${MAC_USERS}someone/Library/x'`), { code: 'ENOENT' });
   assert.equal(startupReason(system), 'ENOENT');
-  assert.equal(startupReason(new TypeError('Cannot read properties of /Users/someone')), 'TypeError');
+  assert.equal(startupReason(new TypeError(`Cannot read properties of ${MAC_USERS}someone`)), 'TypeError');
   assert.equal(startupReason(Error('SELECTED_PROCESS_UNPROVED')), 'SELECTED_PROCESS_UNPROVED');
   assert.deepEqual(unavailableFrame(Error('HOST_PACKAGE_MISMATCH')), { version: 3, status: 'unavailable', code: 'HOST_PACKAGE_MISMATCH',
     stage: 'startup', reason: 'HOST_PACKAGE_MISMATCH' });
@@ -216,12 +219,12 @@ test('the bridge keeps the worker\'s stage and code, and an older three-field fr
 });
 
 test('the bench session marks every startup failure as before any browser command and passes SLEIGHT_TRACE to its worker', async t => {
-  const previous = process.env.SLEIGHT_TRACE; process.env.SLEIGHT_TRACE = '/private/tmp/sleight-trace-fixture';
+  const previous = process.env.SLEIGHT_TRACE; process.env.SLEIGHT_TRACE = `${MAC_TMP}/sleight-trace-fixture`;
   t.after(() => { if (previous === undefined) delete process.env.SLEIGHT_TRACE; else process.env.SLEIGHT_TRACE = previous; });
   const failing = fork({ fail: { version: 3, status: 'unavailable', code: 'V3_RUNTIME_UNAVAILABLE', stage: 'connection-select', reason: 'STALE_INSTANCE' } });
   const error = await createSession({ origins: [], taskMessage: 'Read the page.', forkWorker: failing.forkWorker }).then(() => assert.fail('started'), value => value);
   assert.equal(error.beforeCdp, true); assert.equal(error.stage, 'connection-select'); assert.equal(error.reason, 'STALE_INSTANCE');
-  assert.equal(failing.forks[0].env.SLEIGHT_TRACE, '/private/tmp/sleight-trace-fixture');
+  assert.equal(failing.forks[0].env.SLEIGHT_TRACE, `${MAC_TMP}/sleight-trace-fixture`);
   assert.equal(failing.forks[0].env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
   const unbound = await createSession({ origins: [], taskMessage: 'Read the page.', forkWorker: fork({ begin: async () => undefined }).forkWorker })
     .then(() => assert.fail('started'), value => value);

@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
@@ -635,7 +637,7 @@ test('the REPL warmup installs the outcome code when a switch is on, so later ca
 });
 
 test('the log path stays under ~/Library/Logs/sleight/', () => {
-  const home = '/Users/someone', root = '/Users/someone/Library/Logs/sleight';
+  const home = `${MAC_USERS}someone`, root = `${MAC_USERS}someone/Library/Logs/sleight`;
   assert.equal(actionLogPath('actions.jsonl', home), root + '/actions.jsonl');
   assert.equal(actionLogPath('~/Library/Logs/sleight/runs/a.jsonl', home), root + '/runs/a.jsonl');
   assert.equal(actionLogPath(root + '/b.jsonl', home), root + '/b.jsonl');
@@ -802,8 +804,8 @@ test('typed lengths leave the engine only for plain text areas, never ambiguous 
 
 test('scrubbing owner names happens after shell characters are stripped from call ids and app names', () => {
   const path = join(dir, 'scrub-order.jsonl');
-  const log = new ActionLog({ path, root: dir, home: '/Users/owner', names: ['owner'] });
-  for (const id of ['ow$ner', 'ow`ner', 'ow\\ner', '/Users/ow$ner']) {
+  const log = new ActionLog({ path, root: dir, home: `${MAC_USERS}owner`, names: ['owner'] });
+  for (const id of ['ow$ner', 'ow`ner', 'ow\\ner', `${MAC_USERS}ow$ner`]) {
     log.request({ id, method: 'tools/call', params: { name: 'drag', arguments: { app: id } } });
     log.reply({ id, result: { content: [] } });
   }

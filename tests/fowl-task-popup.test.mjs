@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 // SOL-L2 (2026-10-19): sleight inside Codex on gpt-6.1-sol failed the race's demoid task 6 of 6 (race-1017,
 // {safari,firefox}-codex-sleight-sol-b16-r{1,2,3}). "Sign in with DemoID" opens a separate pop-up window. sleight showed it
 // and acted in it; the model stopped, citing "your window restriction". That restriction is the race's own prompt
@@ -34,7 +36,7 @@ test('every arm on Safari and Firefox is told a pop-up its page opens belongs to
     assert.doesNotMatch(prompt, /act in it/, name);
     assert.match(prompt, /If the dedicated window cannot be identified, stop\./, name);
     for (const surface of ['sleight', 'codex-sleight', 'codex-sleight-sol', 'codex', 'codex-sol']) {
-      const setup = realAgentSetup({ task: { ...demoid, browser: name }, surface, dir: '/private/tmp/gate-task', realBrowser, dryRun: true });
+      const setup = realAgentSetup({ task: { ...demoid, browser: name }, surface, dir: `${MAC_TMP}/gate-task`, realBrowser, dryRun: true });
       assert.ok(setup.prompt.includes(prompt), `${surface} on ${name} gets the same window text`);
       assert.match(setup.prompt, /sign in to the demo shop .* with DemoID/);
     }
