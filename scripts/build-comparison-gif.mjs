@@ -132,14 +132,15 @@ function filter(plan, profile) {
   const chains = plan.recordings.map((r, i) => {
     const c = r.redaction.crop;
     const masks = r.redaction.masks.map(m => `drawbox=x=${m.x}:y=${m.y}:w=${m.width}:h=${m.height}:color=black:t=fill`);
-    // Frame bounds avoid trim's exclusive end rounding back to the completion frame.
-    const first = Math.ceil(clean(r.timing.startSeconds * FPS));
-    const last = Math.floor(clean(r.timing.finishSeconds * FPS)) + 1;
-    return `[${i}:v]fps=${FPS},trim=start_frame=${first}:end_frame=${last},setpts=PTS-STARTPTS,` +
+    // Preserve native frames through the inclusive measured finish before resampling. The clone therefore
+    // uses the last frame at or before completion, even between output ticks. Retain the pre-start frame
+    // covering time zero, subtract the measured start, and round output ticks up so no future frame appears early.
+    return `[${i}:v]trim=end=${r.timing.finishSeconds + 1},settb=AVTB,select='lte(pts,${Math.floor(r.timing.finishSeconds * 1_000_000)})',` +
       [`crop=${c.width}:${c.height}:${c.x}:${c.y}:exact=1`, ...masks,
         `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos`,
         `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black`, 'setsar=1',
-        `tpad=stop_mode=clone:stop_duration=${plan.duration}`, `trim=duration=${plan.duration}`].join(',') + `[v${i}]`;
+        `tpad=stop_mode=clone:stop_duration=${plan.duration}`, 'settb=AVTB', `setpts=PTS-${r.timing.startSeconds}/TB`,
+        `fps=fps=${FPS}:start_time=0:round=up`, `trim=duration=${plan.duration}`].join(',') + `[v${i}]`;
   });
   return [...chains, '[v0][v1]hstack=inputs=2[windows]',
     '[2:v][windows]vstack=inputs=2:shortest=1,split[a][b]',

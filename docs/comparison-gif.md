@@ -127,8 +127,10 @@ remain required.
 ## Timing and size
 
 Both clocks use `min(output elapsed, recorded finish minus recorded start)`, rounded to tenths of a second.
-Frames are sampled at 10 fps, so alignment has up to one frame of precision. The frame at a sampled completion
-timestamp is included in the hold. Preview must confirm completion is visible in the frozen frame. The
+Frames are sampled at 10 fps, so displayed motion can lag the source by up to a tenth of a second. Sampling follows
+the measured start without showing a source frame early. The hold preserves the last source frame at or before the
+measured finish, including a completion between output ticks. Frames after the finish are excluded. Preview must
+confirm completion is visible in the frozen frame. The
 output lasts through the slower completion plus the final hold, rounded up to a tenth of a second. There are
 no speed changes or cuts inside an attempt.
 
