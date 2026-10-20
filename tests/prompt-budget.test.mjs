@@ -9,7 +9,7 @@ import { batchingDescription, createRelay } from '../plugins/sleight/lib/relay.m
 import { compactJsDescription } from '../plugins/sleight/lib/tool-description.mjs';
 import { guardedCode } from '../plugins/sleight/lib/document-scope.mjs';
 import { SCROLL_LOOP_NOTE, TEXTLESS_NOTE } from '../plugins/sleight/lib/compact-reads.mjs';
-import { closedTabOutcome } from '../plugins/sleight/lib/direct-browser/tools.mjs';
+import { browserTools, closedTabOutcome } from '../plugins/sleight/lib/direct-browser/tools.mjs';
 import { closedSubmitWarning, shortStepOutcomes } from '../plugins/sleight/lib/direct-browser/act.mjs';
 // The budget script parses relay.mjs with the typescript dev dependency, which CI doesn't install.
 const budget = await import('../bench/prompt-budget.mjs').catch(error => {
@@ -376,3 +376,11 @@ test('AO prompt inventory counts browser_open and first-call guidance only under
   }
   assert.ok(on.total.lean.characters <= on.total.default.characters * 0.71, JSON.stringify(on.total));
 });
+
+import { withMT } from './fixtures/mt-env.mjs';
+for (const mode of [undefined, '0']) test(`MT browser descriptions stay pinned inside existing budgets, switch=${mode}`, async () => withMT(mode, async () => {
+  const tools = browserTools('bfixture');
+  assert.equal(hash(JSON.stringify(tools)), mode === '0' ? baseline.browserToolsLegacy : baseline.browserToolsMT);
+  assert.ok(JSON.stringify(tools).length < 8000);
+  for (const tool of tools) assert.ok(tool.description.length <= 2048, tool.name);
+}));

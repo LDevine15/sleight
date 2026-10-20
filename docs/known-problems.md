@@ -239,6 +239,11 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 
 ## Browsers
 
+- Turbo's short browser and Electron tab handles have 45 random bits, less guessing resistance than UUID v4's 122.
+  An independent guess hits one registered handle with probability 1 in 35,184,372,088,832; with N records the probability is
+  N divided by that number. Handles select already owned records and don't grant approval. Allocation checks retained records for
+  collisions. `SLEIGHT_MT=0` restores UUID handles. These checks are unit-tested. Live model-time A/Bs remain.
+
 - `app.pickFromList` on Safari and Firefox web lists hasn't run live (2026-10-18). If Page Down doesn't move the list's
   accessibility rows, it stops with "no-progress" and Claude falls back to a scroll loop.
 - The offscreen-row note hasn't run against a live app. It needs the engine's role words to equal the accessibility role

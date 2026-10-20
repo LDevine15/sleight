@@ -42,7 +42,7 @@ async function harness(taskMessage) {
     async open(path = '/') {
       const result = await call('browser_open', { url: origin + path });
       assert.equal(result.isError, false, result.text);
-      const tab = /\bt[0-9a-f]{32}\b/.exec(result.text)?.[0];
+      const tab = /\bt(?:[a-z2-7]{9}|[0-9a-f]{32})\b/.exec(result.text)?.[0];
       assert.ok(tab, result.text);
       return { tab, text: result.text };
     },

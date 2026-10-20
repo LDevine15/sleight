@@ -281,7 +281,7 @@ test('the app turn lists labeled windows, reads with the trusted header, and rou
   const dispatcher = createToolDispatcher({ browser: 'bapp', pages: surface.pages, snapshot: surface.snapshot, runSteps: surface.runSteps, fillFields: surface.fillFields,
     ctx: surface.context, endpoint: undefined, deliverSnapshot: (state, capture) => surface.acknowledgeSnapshot(capture.page, capture.number) && !!(state.snapshotNo = capture.number) });
   const list = await dispatcher.call({ name: 'browser_tabs', arguments: { do: 'list' } });
-  assert.match(list.text, /^t[0-9a-f]{32} Fixture App window 11$/, 'the label replaces the opaque app origin');
+  assert.match(list.text, (process.env.SLEIGHT_MT === '0' ? /^t[0-9a-f]{32} Fixture App window 11$/ : /^t[a-z2-7]{9} Fixture App window 11$/), 'the label replaces the opaque app origin');
   const tab = list.text.split(' ')[0];
   const read = await dispatcher.call({ name: 'browser_read', arguments: { tab } });
   assert.equal(read.isError, false);

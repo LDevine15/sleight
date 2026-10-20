@@ -58,6 +58,7 @@ export function turboSetup({ task, repo, dir, prompt, env = process.env, realBro
       env: { ...(realBrowser ? { SLEIGHT_TURBO_REAL_BROWSER: JSON.stringify(realBrowser) } : {}),
         ...(env.SLEIGHT_LB12 === '0' || env.SLEIGHT_LB12 === '1' ? { SLEIGHT_LB12: env.SLEIGHT_LB12 } : {}),
         ...(env.SLEIGHT_MC1 === '0' || env.SLEIGHT_MC1 === '1' ? { SLEIGHT_MC1: env.SLEIGHT_MC1 } : {}),
+        ...(env.SLEIGHT_MT === '0' || env.SLEIGHT_MT === '1' ? { SLEIGHT_MT: env.SLEIGHT_MT } : {}),
         SLEIGHT_TURBO_ORIGINS: JSON.stringify(origins), SLEIGHT_TURBO_TASK: prompt, SLEIGHT_TURBO_METRICS: join(dir, 'turbo-metrics.jsonl'),
         SLEIGHT_HAND: hand, ...(env.SLEIGHT_TRACE ? { SLEIGHT_TRACE: env.SLEIGHT_TRACE }
           : typeof process.env.SLEIGHT_TRACE === 'string' && process.env.SLEIGHT_TRACE ? { SLEIGHT_TRACE: process.env.SLEIGHT_TRACE } : {}) } } },

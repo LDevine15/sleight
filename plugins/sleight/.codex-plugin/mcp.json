@@ -35,6 +35,7 @@
         "SLEIGHT_LAUNCH_REREAD",
         "SLEIGHT_MC1",
         "SLEIGHT_MENU_BAR",
+        "SLEIGHT_MT",
         "SLEIGHT_OPEN_AUTO_SHOT",
         "SLEIGHT_OPEN_FILE",
         "SLEIGHT_OPEN_RULES",

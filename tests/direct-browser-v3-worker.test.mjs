@@ -5,6 +5,13 @@ import { createV3Bridge, createV3Frontend, serveV3Worker, applicationName, serve
 import { prepareInstalledStartup, directBrowserRules, skillRules } from '../plugins/sleight/lib/launch.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { PassThrough } from 'node:stream';
+import { failure } from '../plugins/sleight/lib/direct-browser/worker.mjs';
+import { withMT } from './fixtures/mt-env.mjs';
+
+for (const mode of [undefined, '0']) test(`MTb worker distinguishes uncertain input from capability loss, switch=${mode}`, async () => withMT(mode, async () => {
+  assert.equal(failure(true).text, 'Input outcome is unconfirmed. Read state before retrying' + (mode === '0' ? '; use the engine browser path if needed.' : '.'));
+  assert.match(failure(false).text, /Use the engine browser path/);
+}));
 
 async function fixture(config = {}, tracePhase) {
   const child = new EventEmitter(), endpoint = new EventEmitter(), events = [];

@@ -134,7 +134,8 @@ export function realAgentSetup({ task, surface, dir, realBrowser, armHome, dryRu
     allowed: engineAllowed(),
     metadata: { ...common.metadata, surface, connectionMode: 'engine-computer', abFlags: abFlags(), as3WindowPrompt } }
     : kind === 'sleight-turbo' ? turboSetup({ task: { ...task, browser: realBrowser.browser }, repo, dir, prompt, realBrowser,
-      env: { ...env, ...traceEnv(), ...(process.env.SLEIGHT_LB12 === '0' || process.env.SLEIGHT_LB12 === '1' ? { SLEIGHT_LB12: process.env.SLEIGHT_LB12 } : {}) } })
+      env: { ...env, ...traceEnv(), ...(process.env.SLEIGHT_LB12 === '0' || process.env.SLEIGHT_LB12 === '1' ? { SLEIGHT_LB12: process.env.SLEIGHT_LB12 } : {}),
+        ...(process.env.SLEIGHT_MT === '0' || process.env.SLEIGHT_MT === '1' ? { SLEIGHT_MT: process.env.SLEIGHT_MT } : {}) } })
     : nativeBrowserSetup({ surface, repo, dir, realBrowser, armHome, dryRun, env });
   // The engine arm identifies the window natively. The turbo arm cannot (its tools show tabs, not windows), so it gets its own tools' truth.
   const fullPrompt = arm.promptPrefix + (engine ? windowPrompt(realBrowser, { browserCore: as3WindowPrompt }) : kind === 'sleight-turbo' ? turboWindowPrompt(realBrowser) : '') + prompt;

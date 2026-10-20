@@ -178,10 +178,10 @@ test('real v3 viewport step resizes the page, reports the old size, and gives th
   assert.deepEqual(await size(), [1000, 800]);
   const set = await f.run(f.tab, [{ do: 'viewport', width: 390, height: 844 }], {});
   assert.equal(set.stoppedAt, null, set.lines.join('\n'));
-  assert.match(set.lines[0], /viewport 390x844 \(was 1000x800\); a viewport step with no size restores 1000x800/);
+  assert.match(set.lines[0], process.env.SLEIGHT_MT === '0' ? /viewport 390x844 \(was 1000x800\); a viewport step with no size restores 1000x800/ : /viewport 390x844 \(was 1000x800; a viewport step with no size restores it\)\. Below, refs without \[offscreen\] are inside this viewport\./);
   assert.deepEqual(await size(), [390, 844]);
   const second = await f.run(f.tab, [{ do: 'viewport', width: 768, height: 1024 }], {});
-  assert.match(second.lines[0], /viewport 768x1024 \(was 390x844\)/);
+  assert.match(second.lines[0], /viewport 768x1024 \(was 390x844[;)]/);
   const restored = await f.run(f.tab, [{ do: 'viewport' }], {});
   assert.match(restored.lines[0], /viewport restored to 1000x800/);
   assert.deepEqual(await size(), [1000, 800]);

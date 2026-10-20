@@ -38,7 +38,7 @@ async function harness(taskMessage) {
     async open(path) {
       const result = await call('browser_open', { url: origin + path });
       assert.equal(result.isError, false, result.text);
-      const tab = /\bt[0-9a-f]{32}\b/.exec(result.text)?.[0];
+      const tab = /\bt(?:[a-z2-7]{9}|[0-9a-f]{32})\b/.exec(result.text)?.[0];
       assert.ok(tab, result.text);
       return tab;
     },
@@ -98,7 +98,7 @@ test('a closed-root link that turns into a new-tab link in its click handler is 
     lines[name] = result.text.split('\n')[0].replace(/ref=\w+/, '');
     assert.equal(await children(), index + 1, name + ': ' + result.text);
   }
-  const shape = line => line.replace(/^\d+ click \w+: /, '').replace(/\bt[0-9a-f]{32}\b/g, 'TAB').replace(/https?:\/\/\S+/g, 'URL');
+  const shape = line => line.replace(/^\d+ click \w+: /, '').replace(/\bt(?:[a-z2-7]{9}|[0-9a-f]{32})\b/g, 'TAB').replace(/https?:\/\/\S+/g, 'URL');
   assert.equal(shape(lines['Open flipped closed']), shape(lines['Open flipped light']), JSON.stringify(lines));
   // The opener stays where it was: the flipped link did not navigate it.
   assert.match((await w.call('browser_read', { tab })).text, /Open flipped closed/);
@@ -111,7 +111,7 @@ test('a closed-root form that turns into a new-tab form in its button\'s click h
     const tab = await w.open('/flip');
     w.clear();
     const result = await w.act(tab, [{ do: 'click', ref: await w.ref(tab, name, 'button') }]);
-    outcomes[name] = result.text.split('\n')[0].replace(/^\d+ click \w+: /, '').replace(/\bt[0-9a-f]{32}\b/g, 'TAB');
+    outcomes[name] = result.text.split('\n')[0].replace(/^\d+ click \w+: /, '').replace(/\bt(?:[a-z2-7]{9}|[0-9a-f]{32})\b/g, 'TAB');
     assert.deepEqual(charged(w), [], name + ': ' + outcomes[name]);
   }
   assert.equal(outcomes['Send flipped closed form'], outcomes['Send flipped light form'], JSON.stringify(outcomes));

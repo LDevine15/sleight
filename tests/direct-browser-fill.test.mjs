@@ -4,6 +4,29 @@ import assert from 'node:assert/strict';
 import { createFillFields } from '../plugins/sleight/lib/direct-browser/fill.mjs';
 import { readOptions, moveList, pickElement, findPopup } from '../plugins/sleight/lib/direct-browser/pick-option.mjs';
 import { AIRPORTS, label, virtualList } from './fixtures/virtual-list.mjs';
+import { withMT } from './fixtures/mt-env.mjs';
+
+for (const mode of [undefined, '0']) for (const verdict of ['confirm', 'refuse'])
+  test(`MTb fill ${verdict} stops every field and submit, switch=${mode}`, async () => withMT(mode, async () => {
+    const h = harness({ e1: element(), e2: element() }, { check: () => ({ verdict }) });
+    const result = await h.fill([{ ref: 'e1', value: 'first' }, { ref: 'e2', value: 'second' }], { submit: 'e3' });
+    assert.deepEqual(result.rows.map(row => row.status), ['failed', 'not reached']);
+    assert.equal(result.rows[0].reason, (verdict === 'confirm' ? 'confirmation required' : 'rules refused input')
+      + (mode === '0' ? '; use the engine browser path' : ''));
+    assert.equal(result.submitted.status, 'not reached');
+    assert.deepEqual(h.input, []);
+  }));
+
+test('MTb missing guarded-submit result reports capability loss and uncertain input', async () => {
+  const node = element('BUTTON', { role: 'checkbox', type: 'submit' }); node.closest = () => ({});
+  const loc = utilityLocator({ evaluate: async (fn, arg) => fn(node, arg) });
+  let delegated = 0;
+  const fill = createFillFields({ check: () => 'allow', inspectElement: () => ({ tag: 'button', kind: 'button', submit: true }),
+    runSteps: async () => { delegated++; } });
+  const result = await fill({ page: { on() {}, off() {}, getByRef: () => loc }, state: { snapshotNo: 1 } }, [{ ref: 'e1', value: true }]);
+  assert.equal(result.rows[0].status, 'failed'); assert.equal(delegated, 1);
+  assert.match(result.rows[0].reason, /guarded submit result unavailable.*may have changed.*use the engine browser path/);
+});
 
 function element(tag = 'INPUT', attrs = {}, value = '') {
   return { tagName: tag, type: attrs.type ?? 'text', value, checked: false, isConnected: true,

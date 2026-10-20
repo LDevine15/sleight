@@ -168,6 +168,23 @@ function clickFixture(probe) {
   return { calls, entry, locator };
 }
 
+test('MTb missing popup hooks keep capability routing advice', () => {
+  for (const call of [() => hookSource({}), () => hookProof({}, 'prepare')])
+    assert.throws(call, /background popup hook unavailable; use the engine browser path/);
+});
+test('MTb unavailable click guard keeps capability routing and sends nothing', async () => {
+  const f = clickFixture(true), evaluate = f.locator.evaluate;
+  f.locator.evaluate = (fn, arg) => arg?.guard ? hookAnswer(f.entry.hook, fn, arg, { guard: false }) : evaluate(fn, arg);
+  await assert.rejects(backgroundClick(f.entry, f.locator, async () => f.calls.push(['click'])), /click guard unavailable; use the engine browser path/);
+  assert.equal(f.calls.filter(row => row[0] === 'click').length, 0);
+});
+test('MTb missing owned registry keeps capability routing without replaying a link', async () => {
+  const f = clickFixture({ kind: 'link' });
+  f.entry.page.evaluate = async (fn, arg) => hookAnswer(f.entry.hook, fn, arg, { request: { url: 'https://fixture.invalid/' } });
+  await assert.rejects(backgroundClick(f.entry, f.locator, async () => f.calls.push(['click'])), /owned page registry; use the engine browser path/);
+  assert.equal(f.calls.filter(row => row[0] === 'click').length, 1);
+});
+
 test('same-tab links receive an ordinary Playwright click', async () => {
   const f = clickFixture(false);
   const value = await backgroundClick(f.entry, f.locator, async options => { f.calls.push(['click', options]); return 'landed'; });
@@ -2154,3 +2171,35 @@ test('frameShield: a frame whose hook cannot arm (scripts off) is skipped only w
     assert.equal(shield.unarmable, !expected, String(sandbox));
   }
 });
+
+
+import crypto from 'node:crypto';
+import { syncBuiltinESMExports } from 'node:module';
+import { withMT } from './fixtures/mt-env.mjs';
+for (const mode of [undefined, '0']) test(`MT4 tab handles stay private to the owning registry, switch=${mode}`, async () => withMT(mode, async () => {
+  const f = fixture(), other = fixture();
+  try {
+    const handles = await Promise.all(Array.from({ length: 20 }, () => f.registry.openTab({ url: 'https://fixture.invalid/' })));
+    assert.equal(new Set(handles.map(row => row.tab)).size, 20);
+    for (const { tab } of handles) {
+      assert.match(tab, mode === '0' ? /^t[0-9a-f]{32}$/ : /^t[a-z2-7]{9}$/);
+      assert.throws(() => other.registry.tab(tab), /unknown|owned/i);
+    }
+    assert.throws(() => f.registry.tab('tforged123'), /unknown|owned/i);
+  } finally { await f.registry.endTurn(); await other.registry.endTurn(); }
+}));
+test('MT4 retries a random collision without replacing the live tab', async t => withMT(undefined, async () => {
+  const original = crypto.randomBytes; let draws = 0;
+  const mocked = t.mock.method(crypto, 'randomBytes', size => size === 9 ? Buffer.alloc(9, draws++ < 2 ? 0 : 1) : original(size));
+  syncBuiltinESMExports();
+  const f = fixture();
+  try {
+    const first = await f.registry.openTab({ url: 'https://fixture.invalid/first' });
+    const firstPage = f.registry.tab(first.tab).page;
+    const second = await f.registry.openTab({ url: 'https://fixture.invalid/second' });
+    assert.equal(draws, 3); assert.notEqual(second.tab, first.tab);
+    assert.equal(f.registry.tab(first.tab).page, firstPage);
+    assert.notEqual(f.registry.tab(second.tab).page, firstPage);
+    assert.equal((await f.registry.list()).length, 2);
+  } finally { mocked.mock.restore(); syncBuiltinESMExports(); await f.registry.endTurn(); }
+}));

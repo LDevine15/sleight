@@ -27,7 +27,9 @@ test('text Enter submits a payment form, while textarea Enter and typing card da
 for (const key of ['Shift+Enter', 'Meta+Enter', 'Control+Enter', 'Cmd+Enter', 'Alt+Space', 'Alt+Enter', 'Control+Shift+Enter', 'Shift+Space', 'Control+ '])
   test(`foreground activation chord ${key} is refused before input on a button`, () => {
     const f = fixture(), result = rules.check(f.ctx, 'press', f.target({ key, element: input({ kind: 'button', tag: 'button' }) }));
-    assert.equal(result.verdict, 'refuse'); assert.match(result.message, /engine browser path/);
+    assert.equal(result.verdict, 'refuse');
+    assert.equal(result.message, 'This activation chord may open a foreground window. Only Shift+Enter and Control+Enter in a text field are allowed.'
+      + (process.env.SLEIGHT_MT === '0' ? ' Use the engine browser path if needed.' : ''));
   });
 for (const key of ['Meta+Enter', 'Cmd+Enter', 'Alt+Enter', 'Control+Shift+Enter', 'Shift+Space', 'Control+ ', 'Alt+Space'])
   test(`activation chord ${key} is refused even in a text field`, () => {
