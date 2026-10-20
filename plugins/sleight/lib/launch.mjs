@@ -54,6 +54,7 @@ import { grokbotDoctorLines, grokbotSessionStatus } from './grokbot-host.mjs';
 import { hostLabel, hostName } from './host-label.mjs';
 import { createPaymentCard } from './payment-card.mjs';
 import { codexTurnClient } from './codex-turn.mjs';
+import { doctorVersionLine } from './version.mjs';
 
 const PLUGIN_DIR = ['plugins', 'cache', 'openai-bundled', 'unified-computer-use'];
 const SERVER_KEY = 'cua_repl';
@@ -203,6 +204,7 @@ export async function doctor({ env = process.env, log = console.log, app = proce
   if (app !== undefined && (typeof app !== 'string' || !app.trim() || app.startsWith('-'))) {
     log('usage: sleight-mcp --doctor [running app name or bundle ID]'); return 1;
   }
+  log(doctorVersionLine());
   for (const line of await turbo()) log(line);
   for (const line of await hand()) log(line);
   for (const line of await permissions()) log(line);
