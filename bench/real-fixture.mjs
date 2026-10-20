@@ -46,13 +46,14 @@ async function fixtureHelper(request, signal) {
 }
 
 // The child retains its AX window reference through cleanup. It never needs a
-// window inventory or an Apple Event. Only a retained reference permits closing
+// window inventory for cleanup or an Apple Event. Only a retained reference permits closing
 // a window; a missing reference leaves cleanup unconfirmed.
 // A document app launched without these restores the owner's windows and iCloud "Untitled" documents (TextEdit did, 2026-10-16),
 // and then can't quit cleanly. The other bench launchers pass the same flags (bench/tasks.mjs).
 const DOCUMENT_LAUNCH = ['--args', '-ApplePersistenceIgnoreState', 'YES', '-NSShowAppCentricOpenPanelInsteadOfUntitledFile', 'NO',
   '-NSDocumentSaveNewDocumentsToCloud', 'NO'];
-export async function openFixture(ctx, request, { run = runOwned, open = execute, launch, helper = fixtureHelper, exited = processExitConfirmed } = {}) {
+export async function openFixture(ctx, request, { run = runOwned, open = execute, launch, helper = fixtureHelper, exited = processExitConfirmed, log = console.error } = {}) {
+  const finderFolder = request.bundle === 'com.apple.finder' && request.mode === 'folder';
   const fixtureLaunch = webBrowsers.find(browser => browser.bundle === request.bundle)?.fixtureLaunch;
   const createdWindow = ['retained-url', 'new-instance'].includes(fixtureLaunch);
   const blankWindow = fixtureLaunch === 'retained-url' || (request.fixtureKind === 'web-page' && fixtureLaunch !== 'new-instance');
@@ -77,6 +78,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
   const helperSignal = AbortSignal.any([controller.signal, ctx.cleanupSignal].filter(Boolean));
   const stages = new Map();
   const diagnostics = { app: request.app, bundle: request.bundle, retries: [], totalWaitMs: 0, actionTaken: false };
+  if (finderFolder) diagnostics.launched = false;
   (ctx.fixtureDiagnostics ??= []).push(diagnostics);
   const stage = name => {
     if (!stages.has(name)) stages.set(name, Promise.withResolvers());
@@ -101,7 +103,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
       const event = JSON.parse(line);
       return event.stage === 'untouched' || (event.stage === 'setup-failure' &&
         ['nothing created', 'closed retained fixture', 'unconfirmed'].includes(event.cleanup) &&
-        (!createdWindow || event.cleanup !== 'unconfirmed') && !event.cleanupError);
+        (!(createdWindow || finderFolder) || event.cleanup !== 'unconfirmed') && !event.cleanupError);
     } catch { return false; }
   });
   const lease = {
@@ -252,6 +254,8 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
           if (event.appDialog.stop !== false) diagnostics.appDialog = event.appDialog;
           ctx.onAppDialog?.(event.appDialog);
         }
+        if (event.stage === 'finder-relaunch' && event.finderRelaunch)
+          log(`FINDER_RELAUNCH: ${event.finderRelaunch.reason} (pid ${event.finderRelaunch.pid})`);
         if (event.stage === 'retry') {
           const retry = { code: event.code, waitMs: event.waitMs, totalWaitMs: event.totalWaitMs, setupCase: event.setupCase };
           if (['cleanup', 'observation'].includes(event.phase)) {
@@ -259,7 +263,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
             diagnostics[event.phase + 'TotalWaitMs'] = event.totalWaitMs;
           } else diagnostics.retries.push(retry);
         }
-        for (const key of ['fixtureWindow', 'menuCleanup', 'menuCleanupError', 'menuCleared', 'menuEscapePid', 'windows', 'fresh', 'totalWaitMs', 'actionTaken', 'cleanup', 'cleanupError', 'menuCancelled', 'menuCancelMethod', 'menuItems', 'menuCommands', 'readiness', 'navigation', 'creation', 'foregroundFallback', 'launchWait', 'readWait', 'cleanupReadWait', 'observationReadWait', 'setupCase', 'inheritReady', 'placement']) {
+        for (const key of ['finderRelaunch', 'finderAXError', 'fixtureWindow', 'menuCleanup', 'menuCleanupError', 'menuCleared', 'menuEscapePid', 'windows', 'fresh', 'totalWaitMs', 'actionTaken', 'cleanup', 'cleanupError', 'menuCancelled', 'menuCancelMethod', 'menuItems', 'menuCommands', 'readiness', 'navigation', 'creation', 'foregroundFallback', 'launchWait', 'readWait', 'cleanupReadWait', 'observationReadWait', 'setupCase', 'inheritReady', 'placement']) {
           if (event[key] !== undefined) diagnostics[key] = event[key];
         }
         ctx.onFixtureDiagnostics?.(diagnostics);
@@ -273,7 +277,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
       return await Promise.race([stage(name).promise, response.then(result => {
         throw Object.assign(new Error(`Fixture setup failed: ${result.stderr?.trim() || result.error || 'helper exited before readiness'}`),
           { noMutation: untouched(result) });
-      }), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Fixture setup readiness timed out')), 40000); })]);
+      }), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Fixture setup readiness timed out')), finderFolder ? 75000 : 40000); })]);
     } finally { clearTimeout(timer); }
   };
   try {
@@ -284,7 +288,8 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
   }
   await waitStage('armed');
   signal?.throwIfAborted();
-  if (launch) await launch(beginLaunch);
+  if (finderFolder) beginLaunch(false); // The AX helper creates the window, with no open-document Apple Event.
+  else if (launch) await launch(beginLaunch);
   else if (request.fixtureKind === 'web-page' && fixtureLaunch !== 'retained-url' && fixtureLaunch !== 'new-instance') {
     await open('/usr/bin/open', ['-g', '-b', request.bundle, request.target], { signal, timeout: 15000 });
   } else if (fixtureLaunch !== 'retained-url') {
@@ -301,6 +306,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
     // LaunchServices errors and readiness deadlines can precede the helper's
     // recovery receipt. Await that receipt before deciding acquisition status.
     try { await ctx.beforeFixtureCleanup?.(); await lease.close(); error.noMutation = true; } catch {}
+    if (finderFolder && diagnostics.finderAXError) error.fixtureSetupFailure = 'finder-ax';
     error.fixtureDiagnostics = diagnostics;
     throw error;
   }

@@ -89,6 +89,7 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
     }
   } catch (error) {
     result.passed = false;
+    if (!driverStarted && error.fixtureSetupFailure === 'finder-ax') result.fixtureSetupFailure = 'finder-ax';
     if (error.browserReceipt?.acquisition?.length) result.browserAcquisition = error.browserReceipt.acquisition;
     if (driverStarted && result.groupClean !== true) {
       // A failed MCP initialize can still collect its owned child. Keep the failure
@@ -135,7 +136,9 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
     }
     for (const helper of ctx.windowLeases ?? []) {
       try {
-        if (!await helper.dispose()) throw new Error('Fixture helper process group cleanup unconfirmed');
+        const collected = await helper.dispose();
+        if (helper.diagnostics) helper.diagnostics.helperCollectionConfirmed = collected;
+        if (!collected) throw new Error('Fixture helper process group cleanup unconfirmed');
       } catch (error) { result.passed = false; result.cleanupError = error.message; cleanupConfirmed = false; }
     }
     clearInterval(monitor);
@@ -145,6 +148,9 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
     if (ctx.fixtureDiagnostics?.some(item => item.cleanup === 'unconfirmed')) result.cleanupUnconfirmed = true;
     if (result.permissionPrompt) { result.passed = false; result.reason = 'macOS permission prompt: stopped'; }
     if (result.observerError) { result.passed = false; result.reason = `macOS permission observer failed: ${result.observerError}`; }
+    if (!driverStarted && result.fixtureSetupFailure === 'finder-ax' && cleanupConfirmed && !signal?.aborted) {
+      result.groupClean = true; // No driver was started, and every fixture helper was collected above.
+    }
     if (cleanupConfirmed && !result.cleanupUnconfirmed) {
       rmSync(ctx.dir, { recursive: true, force: true });
     } else result.fixtureDir = ctx.dir;
@@ -155,6 +161,7 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
       result.exitDisagreements = ctx.exitDisagreements;
       if (release) result.liveLockKept = ctx.lockPath ?? '/tmp/sleight-live.lock';
     } else await release?.();
+    if (!signal?.aborted && finderSetupRetryable(result)) result.retryableInfrastructure = 'finder-ax';
   }
   return result;
 }
@@ -180,6 +187,17 @@ export function cleanupContained(result) {
     result.observerError || result.appDialog || result.approvalStop || result.groupClean === false) return false;
   const leases = result.fixtureDiagnostics ?? [];
   return leases.length > 0 && leases.every(item => item.launched === true && item.appQuit === true && item.helperCollectionConfirmed === true);
+}
+
+export function finderSetupRetryable(result) {
+  if (result.passed !== false || result.fixtureSetupFailure !== 'finder-ax' || result.groupClean !== true ||
+      typeof result.taskPassed === 'boolean' || result.cleanupError || result.cleanupUnconfirmed || result.permissionPrompt ||
+      result.permissionRefusal || result.observerError || result.appDialog || result.approvalStop || result.cancelled ||
+      result.liveLockKept || result.exitDisagreements?.length) return false;
+  const leases = result.fixtureDiagnostics ?? [];
+  return leases.length > 0 && leases.some(item => item.bundle === 'com.apple.finder' && [-25204, -25205].includes(item.finderAXError?.code)) &&
+    leases.every(item => item.helperCollectionConfirmed === true && item.windowCleanupConfirmed === true &&
+      item.cleanup !== 'unconfirmed' && (item.launched === true ? item.appQuit === true : item.launched === false));
 }
 
 function releaseHeldMouse() {
