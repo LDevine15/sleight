@@ -573,13 +573,14 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
   // The warm-call pin is unchanged: default-on CK switches occupy no per-call bytes.
   // X21: DP1 (17de62ab, 1e6b75a7, 14998535, a1cdf614, merged by 772b0a9e) adds the close observer to read/REPL setup by default.
   // Guarded calls opt in explicitly. Their off path keeps the X19b pins; the DP1-off test below keeps all five.
+  // PL1 changes the serialized list picker and its guard callbacks; the compact reuse payload stays the same.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
     guardedLean: hash(guardedCode('await app.click(1);', window, undefined, undefined, { prompt: 'lean' })),
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: '1c0b1d03a56277ef', guardedLean: '561825a7bf7829f2', reuse: 'b824edb3aa6dc2c4', read: 'e3ed0b80a06832ee', repl: 'e3ed0b80a06832ee' });
+  }, { guarded: 'b9886d829af5c2f9', guardedLean: '440620a36b8ca76c', reuse: 'b824edb3aa6dc2c4', read: 'a4848d5018a59562', repl: 'a4848d5018a59562' });
 });
 
 test('DP1 off preserves the pre-DP1 guard, read and REPL bytes', () => {
@@ -595,8 +596,8 @@ test('DP1 off preserves the pre-DP1 guard, read and REPL bytes', () => {
       repl: replSetupCode(),
     };
     assert.deepEqual(Object.fromEntries(Object.entries(codes).map(([key, code]) => [key, hash(code)])), {
-      guarded: '1c0b1d03a56277ef', guardedLean: '561825a7bf7829f2', reuse: 'b824edb3aa6dc2c4',
-      read: '7564127a1e1c6c44', repl: '7564127a1e1c6c44',
+      guarded: 'b9886d829af5c2f9', guardedLean: '440620a36b8ca76c', reuse: 'b824edb3aa6dc2c4',
+      read: 'dd22851aff959db4', repl: 'dd22851aff959db4',
     });
     for (const code of Object.values(codes)) assert.doesNotMatch(code, /closedLast|beforeRead|state\.dp1|state\.closeRead|\[sleight:dp1\]/);
   } finally {
