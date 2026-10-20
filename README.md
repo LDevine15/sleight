@@ -2,17 +2,14 @@
 <p align="center"><strong>Your coding agent clicks, types and drags in Mac apps while you keep working.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/Land-o-Clusters/sleight/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/Land-o-Clusters/sleight?label=release&color=E8622C"></a>
-  <img alt="license MIT" src="https://img.shields.io/badge/license-MIT-E8622C">
-  <img alt="platform macOS Apple Silicon" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-3E4A56">
-  <img alt="status unofficial" src="https://img.shields.io/badge/status-unofficial-3E4A56">
+  <a href="https://github.com/Land-o-Clusters/sleight/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/Land-o-Clusters/sleight?label=release&color=E8622C"></a> <img alt="license MIT" src="https://img.shields.io/badge/license-MIT-E8622C">
+  <img alt="platform macOS Apple Silicon" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-3E4A56"> <img alt="status unofficial" src="https://img.shields.io/badge/status-unofficial-3E4A56">
 </p>
 
 sleight is an MIT-licensed plugin for Claude Code, Codex, Grok CLI and Cursor (install not yet run). Grok Bot uses its local shell. Ask it to work out a sum in Calculator or edit a document, and it operates that app in the background.
 
-You need an Apple Silicon Mac and the [ChatGPT desktop app](https://chatgpt.com/download/) in `/Applications` for its
-computer-use software. sleight uses your coding agent's account or API access and doesn't need a ChatGPT account or separate
-Codex sign-in.
+You need an Apple Silicon Mac. The [ChatGPT desktop app](https://chatgpt.com/download/) is required in `/Applications` because sleight runs its computer-use engine.
+You don't need a ChatGPT account or sign-in. sleight uses your coding agent's account or API access, without a separate Codex sign-in.
 
 <a id="install-validation"></a>
 
@@ -27,15 +24,8 @@ Codex sign-in.
 LCU, Cua, Peekaboo and FowlBrowser are competing computer-use tools. An arm means one agent setup.
 
 <!-- hub:claim -->
-In sleight's own native Mac benchmark, its total expected time over 9 tasks was 251.2 s. Claude computer use, the only other arm that passed every task, took 453.9 s.
-Expected time is the mean time per attempt divided by the pass rate. It estimates the time to a correct result when failed attempts are retried.
-The claim is "fastest": the lowest expected time on 8 of 9 tasks and the lowest total, with 5 runs wherever sleight and another arm were within 20%.
-This was measured over 197 runs dated 2026-10-17 to 2026-10-18 on `claude-haiku-5-5` at high effort (engine 26.1007.71326, 2026-10-17 to 2026-10-18). The skill was tuned on some of these tasks. Competitors ran their defaults. Codex ran `gpt-6-luna`.
-Haiku 5.5 drove this native claim. Earlier Opus 5.5 runs include the [2026-10-03 native comparison against LCU](docs/benchmark.md#earlier-benchmarks) and the [2026-10-08 sleight-only pass at medium effort](docs/benchmark.md#time-per-run).
-Opus browser runs include the [2026-10-12 engine comparison against FowlBrowser](docs/benchmarks/2026-10-12-fowlbrowser-h2h.md), its [later rounds](docs/benchmarks/2026-10-12-fowlbrowser-h2h-2.md), the [2026-10-12 lean-skill A/B](docs/benchmarks/2026-10-12-lean-skill-ab.md) and the [2026-10-16 turbo comparison against FowlBrowser](docs/benchmarks/2026-10-16-opus.md).
-The [compatibility record](docs/results/engine-compat.md) lists a newer ChatGPT release, 26.1013.40934, than these runs. Compatibility checks do not remeasure speed.
-The hub lists each run, failures included, with the method and the model each arm ran.
-
+sleight's own 9-task native Mac benchmark: 251.2 s total expected time. Claude computer use: 453.9 s.<br>
+Expected time is mean time per attempt divided by the pass rate, estimating time to a correct result when failed attempts are retried.<br>
 [Benchmark hub](docs/results/README.md) · [Interactive page](https://land-o-clusters.github.io/sleight/results/explore.html)
 <!-- /hub:claim -->
 
@@ -60,11 +50,19 @@ Paste that into your coding agent. It follows [INSTALL.md](INSTALL.md), stopping
 
 The action pane, status line and `/sleight` are Claude Code only ([host details](docs/other-hosts.md)).
 
-To install by hand, follow [INSTALL.md](INSTALL.md). If Computer Use is already on in ChatGPT or Codex, installing the plugin is enough.
-Otherwise run `./bin/sleight-mcp setup` from the installed plugin folder ([Computer Use](INSTALL.md#computer-use)). It uses ChatGPT's Node runtime. npm isn't needed.
+To install by hand, follow [INSTALL.md](INSTALL.md). If Computer Use is already on in ChatGPT or Codex, installing the plugin is enough. Otherwise run `./bin/sleight-mcp setup` from the installed plugin folder ([Computer Use](INSTALL.md#computer-use)). It uses ChatGPT's Node runtime. npm isn't needed.
 
-sleight drives native apps, including Electron apps such as VS Code, Slack and Spotify, through the engine. Chrome and Helium use turbo, which reads and operates web pages directly (on by default after a one-time switch in Chrome).
-Safari and Firefox use the engine's accessibility path. The engine refuses terminals and OpenAI's own apps ([how it works](docs/how-it-works.md)).
+sleight drives native apps, including Electron apps such as VS Code, Slack and Spotify, through the engine. Safari and Firefox use the engine's accessibility path. The engine refuses terminals and OpenAI's own apps ([how it works](docs/how-it-works.md)).
+
+## Turbo
+
+Turbo drives Chrome and Helium directly. It is on by default after you enable Chrome's one-time debugging switch. The browser asks you to allow each connection ([setup](INSTALL.md#computer-use)).
+
+In the [turbo race](docs/results/browser-turbo.md), Chrome had the lowest expected time on 10 of 13 tasks, 258.9 s total against FowlBrowser's 447.8 s (2026-10-18 to 2026-10-19). Helium had the lowest expected time on 11 of 13, 241.8 s total against 338.3 s (2026-10-18).
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/results/img/family-browser-turbo-chrome-dark.svg"><img src="docs/results/img/family-browser-turbo-chrome-light.svg" width="900" alt="Chrome turbo against FowlBrowser, 2026-10-18 to 2026-10-19: expected seconds per task, with sleight lowest on 10 of 13."></picture>
+
+From the installed plugin folder, you run `sleight-mcp turbo on` (Chrome first, then Helium), `sleight-mcp turbo on --browser helium` to choose Helium, or `sleight-mcp turbo off` to opt out until you turn it on again ([settings](docs/settings.md#turbo)).
 
 ## New in 1.4.0
 
@@ -108,10 +106,7 @@ Release validation for 1.4.0 (2026-10-20, Haiku 5.5 at high effort, engine 26.10
 
 ## How it works
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
-  <img src="docs/assets/architecture-light.svg" width="900" alt="Your coding agent talks to sleight's launcher, relay and mod, which drive the ChatGPT app's computer-use engine, which clicks, types and drags in your apps in the background. A second lane runs from sleight through turbo to Chrome and Helium.">
-</picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg"><img src="docs/assets/architecture-light.svg" width="900" alt="Your coding agent talks to sleight's launcher, relay and mod, which drive the ChatGPT app's computer-use engine, which clicks, types and drags in your apps in the background. A second lane runs from sleight through turbo to Chrome and Helium."></picture>
 
 The engine is the computer-use software bundled with ChatGPT. sleight's launcher starts it on ChatGPT's own Node runtime. The relay connects it to your agent and shows approval cards. In Claude Code, a UI extension (the mod) draws the action pane and ends the engine's turn after each of yours ([how it works](docs/how-it-works.md)).
 
@@ -139,6 +134,4 @@ These are the intended checks. [Known problems](docs/known-problems.md#approvals
 
 ## License
 
-[MIT](LICENSE). The ChatGPT app and its computer-use runtime belong to OpenAI, under OpenAI's terms, and sleight doesn't include or redistribute either. ChatGPT, Codex, Claude, Cursor, Chrome, Safari, Firefox, Helium, Microsoft Word, Excel,
-VS Code, Slack, Spotify and other app names are trademarks of their owners, who don't endorse or sponsor sleight, and
-appear here to describe compatibility and benchmark results.
+[MIT](LICENSE). The ChatGPT app and its computer-use runtime belong to OpenAI, under OpenAI's terms, and sleight doesn't include or redistribute either. ChatGPT, Codex, Claude, Cursor, Chrome, Safari, Firefox, Helium, Microsoft Word, Excel, VS Code, Slack, Spotify and other app names are trademarks of their owners, who don't endorse or sponsor sleight, and appear here to describe compatibility and benchmark results.

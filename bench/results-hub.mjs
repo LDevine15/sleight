@@ -700,6 +700,7 @@ function renderClaimPage(all, id, { intro }) {
   out.push(details('Spread of passing runs', 'Passing runs, median [fastest to slowest], with p90 at 5 or more runs:\n\n' + spreadTable(study)));
   const failures = failureRows(study);
   out.push(details(`Failed runs (${failures.length})`, failures.length ? mdTable(['Task', 'Arm', 'File', 's', 'Reason'], failures) : 'None.'));
+  if (id === 'native-claim') out.push(details('Claim context and earlier comparisons', nativeClaimContext(all)));
   out.push(pageFooter(fam.page, { data: id, studies: [study] }));
   return out.join('\n');
 }
@@ -1052,8 +1053,8 @@ export function spliceReadme(text, blocks) {
   return out;
 }
 
-// The three blocks, from the same data and text as the hub landing.
-export function readmeBlocks(all) {
+// The longer claim context lives with the native results, beside the methods and run tables.
+function nativeClaimContext(all) {
   const study = all['native-claim'].studies[0], v = study.verdict;
   const others = study.arms.filter(arm => arm !== study.me && v.totals[arm] != null).sort((a, b) => v.totals[a] - v.totals[b]);
   const next = others[0];
@@ -1066,17 +1067,27 @@ export function readmeBlocks(all) {
   const engines = Object.values(study.engines ?? {}).flatMap(e => Object.keys(e.versions ?? {}));
   const newer = version && engines.length && engines.every(v => version.localeCompare(v, 'en', { numeric: true }) > 0);
   const comparison = next ? ` ${armName(next)}, ${others.length === 1 ? 'the only other arm' : `the fastest of ${others.length} other arms`} that passed every task, took ${f1(v.totals[next])} s.` : '';
-  const claim = [
+  return [
     `In sleight's own native Mac benchmark, its total expected time over ${study.tasks.length} tasks was ${f1(v.totals[study.me])} s.` + comparison,
     `Expected time is the mean time per attempt divided by the pass rate. It estimates the time to a correct result when failed attempts are retried.`,
     `The claim is "${v.wording}": the lowest expected time on ${v.lowest.length} of ${study.tasks.length} tasks and the lowest total, with 5 runs wherever sleight and another arm were within 20%.`,
     `This was measured over ${study.runs.length} runs dated ${study.date} on ${models} at ${effort} effort (${engineBrief([study])}).` +
       ` The skill was tuned on some of these tasks. Competitors ran their defaults.${codexModels ? ` Codex ran ${codexModels}.` : ''}`,
-    `Haiku 5.5 drove this native claim. Earlier Opus 5.5 runs include the [2026-10-03 native comparison against LCU](docs/benchmark.md#earlier-benchmarks) and the [2026-10-08 sleight-only pass at medium effort](docs/benchmark.md#time-per-run).`,
-    `Opus browser runs include the [2026-10-12 engine comparison against FowlBrowser](docs/benchmarks/2026-10-12-fowlbrowser-h2h.md), its [later rounds](docs/benchmarks/2026-10-12-fowlbrowser-h2h-2.md), the [2026-10-12 lean-skill A/B](docs/benchmarks/2026-10-12-lean-skill-ab.md) and the [2026-10-16 turbo comparison against FowlBrowser](docs/benchmarks/2026-10-16-opus.md).`,
-    ...(newer ? [`The [compatibility record](${README_BASE}engine-compat.md) lists a newer ChatGPT release, ${version}, than these runs. Compatibility checks do not remeasure speed.`] : []),
-    `The hub lists each run, failures included, with the method and the model each arm ran.`,
-    '',
+    `Haiku 5.5 drove this native claim. Earlier Opus 5.5 runs include the [2026-10-03 native comparison against LCU](../benchmark.md#earlier-benchmarks) and the [2026-10-08 sleight-only pass at medium effort](../benchmark.md#time-per-run).`,
+    `Opus browser runs include the [2026-10-12 engine comparison against FowlBrowser](../benchmarks/2026-10-12-fowlbrowser-h2h.md), its [later rounds](../benchmarks/2026-10-12-fowlbrowser-h2h-2.md), the [2026-10-12 lean-skill A/B](../benchmarks/2026-10-12-lean-skill-ab.md) and the [2026-10-16 turbo comparison against FowlBrowser](../benchmarks/2026-10-16-opus.md).`,
+    ...(newer ? [`The [compatibility record](engine-compat.md) lists a newer ChatGPT release, ${version}, than these runs. Compatibility checks do not remeasure speed.`] : []),
+    `The [benchmark hub](README.md) lists each run, failures included, with the method and the model each arm ran.`,
+  ].join('\n\n');
+}
+
+// The three blocks, from the same data as the hub landing.
+export function readmeBlocks(all) {
+  const study = all['native-claim'].studies[0], v = study.verdict;
+  const next = study.arms.filter(arm => arm !== study.me && v.totals[arm] != null).sort((a, b) => v.totals[a] - v.totals[b])[0];
+  const comparison = next ? ` ${armName(next)}: ${f1(v.totals[next])} s.` : '';
+  const claim = [
+    `sleight's own ${study.tasks.length}-task native Mac benchmark: ${f1(v.totals[study.me])} s total expected time.${comparison}<br>`,
+    `Expected time is mean time per attempt divided by the pass rate, estimating time to a correct result when failed attempts are retried.<br>`,
     `[Benchmark hub](${README_BASE}README.md) · [Interactive page](${PAGES_URL}explore.html)`,
   ].join('\n');
   const block = id => charts.chartBlock(id, all, { base: README_BASE }).trim();
