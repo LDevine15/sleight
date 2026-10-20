@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,26 +22,44 @@ for (const [app, bundle, opens, initialStage] of [
   const { openFixture } = runInNewContext(`${source}\n({ openFixture })`, {
     execFile() {}, promisify: () => () => assert.fail('no real process'),
     runOwned: () => assert.fail('no real helper'), heliumHelper: async () => '/fixture/retained-browser-helper',
-    writeFileSync, join, fileURLToPath, URL, AbortController, AbortSignal, setTimeout, clearTimeout,
+    renameSync, writeFileSync, join, fileURLToPath, URL, AbortController, AbortSignal, setTimeout, clearTimeout,
   });
   const target = 'http://127.0.0.1:1234/abc123/';
   for (const fixtureKind of [undefined, 'web-page']) {
     const actions = [];
-    let finish;
-    const lease = await openFixture({ dir, ownerAway: true }, { app, bundle, target, token: 'abc123', mode: 'window', ...(fixtureKind && { fixtureKind }) }, {
+    let finish, control;
+    const lease = await openFixture({ dir, lockPath: join(dir, 'live.lock'), ownerAway: true }, { app, bundle, target, token: 'abc123', mode: 'window', ...(fixtureKind && { fixtureKind }) }, {
       run: async (command, args, options) => {
         assert.equal(command, '/fixture/retained-browser-helper', 'use the helper that passed the older web tasks');
-        assert.equal(JSON.parse(args.at(-1)).target, target);
+        const request = JSON.parse(args.at(-1));
+        assert.equal(request.target, target);
+        assert.equal(request.app, app);
+        assert.equal(request.bundle, bundle);
+        assert.equal(request.mode, 'window');
+        assert.equal(request.fixtureKind, fixtureKind);
+        assert.equal(request.control, join(dir, 'window-0-control.json'));
+        control = request.control;
+        assert.equal(JSON.parse(readFileSync(control, 'utf8')).command, 'waiting');
+        assert.equal(existsSync(control + '.next'), false);
         options.onStdout(JSON.stringify({ stage: initialStage, running: true, pid: 123 }) + '\n');
         setTimeout(() => options.onStdout('{"stage":"armed"}\n{"stage":"ready"}\n'), 0);
         return new Promise(resolve => { finish = resolve; });
       },
-      open: async (command, args) => { assert.equal(command, '/usr/bin/open'); actions.push([...args]); },
+      open: async (command, args) => {
+        assert.equal(command, '/usr/bin/open');
+        assert.equal(JSON.parse(readFileSync(control, 'utf8')).command, 'launching');
+        actions.push([...args]);
+      },
     });
     assert.deepEqual(actions, opens);
+    assert.equal(JSON.parse(readFileSync(control, 'utf8')).command, 'opened');
     const closed = lease.close();
+    assert.equal(JSON.parse(readFileSync(control, 'utf8')).command, 'close');
     finish({ exit: { code: 0 }, stdout: '{"stage":"closed"}\n', groupClean: true });
     await closed;
+    assert.equal(lease.diagnostics.windowCleanupConfirmed, true);
+    assert.equal(await lease.dispose(), true);
+    assert.equal(existsSync(control + '.next'), false);
   }
 });
 
