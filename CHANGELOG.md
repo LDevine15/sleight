@@ -2,7 +2,8 @@
 
 ## 1.4.1 (unreleased)
 
-These changes are on candidate branches. Final integration review and release validation remain pending.
+The entries below describe the intended 1.4.1 candidate if the corresponding changes are included in the final
+integrated commit. Final scope reconciliation, integration review and release validation remain required.
 
 ### Version and release checks
 
@@ -11,24 +12,26 @@ These changes are on candidate branches. Final integration review and release va
   newest numeric CHANGELOG heading.
 - A test-path guard rejects hardcoded macOS temporary and home paths. Offline fixtures use the platform temporary
   directory where their ownership checks permit it. A Node 24 Docker preflight installs locked Linux dependencies
-  and runs the test suite. The guard still fails on 58 lines in 12 files, and the Linux run has not happened.
+  and runs the test suite. Actual Linux testing remains unrun.
 - The preflight script checks versions, CHANGELOG and tag agreement, placeholders, private release-note data,
-  history findings and Linux test evidence. Candidate mode keeps `releaseReady: false`. Its dated-heading rule
-  and Linux helper interface still need reconciliation with this unreleased section and the Linux runner.
+  history findings and Linux test evidence. Candidate mode keeps `releaseReady: false`. Both modes must verify
+  the final commit after the reset, with a reconciled Linux helper contract. Release mode must also verify the
+  intended tag points to that commit.
 - A validation driver reruns named tasks' original groups three times on the final integrated build. It compares
   the selected tasks with compatible recorded A rounds and fails on a higher expected time or lower pass rate.
-  The historical validation bank failed the harness check. Final-build measurements need compatible evidence.
+  It rejects native evidence with hygiene failures and output banks that overlap reused A evidence.
+  Final-build measurements need compatible evidence.
 
 ### Grok Bot approvals
 
 - Shell approvals open a styled sleight card with its icon and sound. The glove reopens that card. Identical shell
   retries join a call waiting for approval and execute once. Verified app approvals honor preapprovals and session
   grants. Action and payment confirmations still ask.
-- The consent repair gives distinct action and payment requests separate decisions even when their terms match.
-  It awaits re-review. The guard probe also needs a separate physical-click fixture after synthetic-input cleanup,
-  so a delayed synthetic acceptance cannot count as the person's answer. The probe repair and its review remain pending.
-- Physical consent checks and Calculator/TextEdit card counts through Grok Bot's priya remain pending. Native
-  compilation, appearance, sound, transport and shared-host operation have not been qualified by these offline tests.
+- Distinct action and payment requests get separate decisions even when their terms match. The guard probe
+  collects the synthetic fixture before starting a separate physical-click fixture, so delayed synthetic
+  acceptance cannot count as the person's answer.
+- Native compilation passed without UI. Physical consent, appearance, sound, menu overflow, transport and
+  shared-host operation remain unqualified, including GL9 and Calculator/TextEdit card counts through Grok Bot's priya.
 
 ### Finder fixtures and ghost hand
 
@@ -36,11 +39,10 @@ These changes are on candidate branches. Final integration review and release va
   then waits at most 30 seconds for readiness. Folder setup retains exactly one proven new window and uses its
   Go to Folder sheet. Uncertain window ownership stops setup and keeps cleanup unconfirmed.
 - Finder smoke receipts record setup, foreground samples and cleanup. Inventory refusals include diagnostic
-  details when available. The recorded live inventory failure remains unresolved. The new diagnostics need a live run.
-  Review also requires repairs to cancellation, cleanup ownership, lock retention, receipt privacy and process
-  identity before live adoption.
-- GH8 remains blocked for engine-persisted Always allow grants, whose per-action timing has not been established.
-  The partial pacing branch does not complete the fix. The ghost hand stays off by default.
+  details when available. The recorded live inventory failure remains unresolved. Setup, cancellation, cleanup
+  ownership, lock retention, receipt privacy and process identity must pass review and live qualification before adoption.
+- GH8 remains blocked on supported action events for engine-persisted Always allow grants and correct retry/paste
+  correlation. The partial pacing change stays unmerged. Existing visible-hand behavior and its off default remain unchanged.
 
 ## 1.4.0 (2026-10-20)
 
