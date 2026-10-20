@@ -79,8 +79,8 @@ codex plugin list --json
 "${CODEX_HOME:-$HOME/.codex}/plugins/cache/sleight/sleight/<version>/bin/sleight-mcp" --doctor
 ```
 
-Start a new Codex session from a project folder and trust sleight's three hooks when Codex asks. What
-differs in Codex is in [other hosts](docs/other-hosts.md#codex).
+Start a new Codex session from a project folder and trust sleight's three hooks when Codex asks.
+See [other hosts](docs/other-hosts.md#codex) for the differences in Codex.
 
 ## Cursor
 

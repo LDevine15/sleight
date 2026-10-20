@@ -1,8 +1,8 @@
 # What works in the background
 
-Each row is one kind of action. "Background" means the app can be behind your other windows while you
-keep the pointer and keyboard. Every count comes from a linked result file or doc, as of
-2026-10-09. Where nothing measured a cell, it says "not measured".
+"Background" means the app can be behind your other windows while you keep the pointer and keyboard.
+Each action's counts come from a linked result file or doc, as of 2026-10-09. Cells without a
+measurement say "not measured".
 
 | Action | Background (your pointer and keyboard untouched) | Takes the pointer or focus | Evidence |
 |---|---|---|---|
