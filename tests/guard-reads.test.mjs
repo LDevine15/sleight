@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement, samePlace, refusedPlace } from '../plugins/sleight/lib/document-scope.mjs';
 import { createReadCompactor } from '../plugins/sleight/lib/compact-reads.mjs';
+import { inspect } from './helpers/window-identity-fixture.mjs';
 
 const expected = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
 const tree = (window = expected, rows = '\t1 button Save, ID: Save') =>
@@ -88,6 +89,31 @@ function closeFixture({ sample = nativeClosed, action = () => {}, ...options } =
 }
 const recordedClose = 'let app = __sleightOpenedApp2;\nawait app.pressKey("super+w");\n' +
   'const s = await app.getAXStateAndScreenshot();\nnodeRepl.write(s.state.split("\\n").slice(0, 6).join("\\n"));';
+
+for (const [name, layer] of [['six unheld CG rows', undefined], ['another-Space document', 0], ['another-Space alert', 8]]) {
+  test(`DPj caller-read decision with AX windows empty and ${name}`, async () => {
+    const target = { ...closeTarget, appId: 'com.apple.TextEdit' };
+    const sample = inspect({ ...target, closeCount: true }, [], 0, false, [], (app, windows, list, runtime) => {
+      runtime.cgWindows = Array.from({ length: 6 }, (_, i) => ({ kCGWindowOwnerPID: 123, kCGWindowLayer: 0, kCGWindowNumber: 100 + i }));
+      runtime.spaces = Object.fromEntries(runtime.cgWindows.map(row => [row.kCGWindowNumber, []]));
+      if (layer !== undefined) {
+        runtime.cgWindows.push({ kCGWindowOwnerPID: 123, kCGWindowLayer: layer, kCGWindowNumber: 200 });
+        runtime.spaces[200] = [5];
+      }
+    });
+    const f = closeFixture({ sample });
+    await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("com.apple.TextEdit");', closeOptions, target);
+    f.calls.length = 0; f.output.length = 0;
+    const run = f.run(recordedClose, closeOptions, target);
+    if (layer === undefined) await assert.rejects(run, /\[sleight:closed-read\]/);
+    else await run;
+    const decision = JSON.parse(f.output.find(text => text.startsWith('[sleight:dp1]')).slice(13));
+    assert.equal(decision.source, 'caller-read');
+    assert.equal(decision.decision, layer === undefined ? 'skipped-read' : 'kept-read');
+    assert.equal(decision.windowCount, layer === undefined ? 0 : 1);
+    assert.equal(f.calls.filter(call => call[0] === 'both').length, layer === undefined ? 0 : 1);
+  });
+}
 
 test('DP1 uses native zero counts despite the recorded inventory lacking pid and windows', async () => {
   for (const key of ['super+w', 'cmd+shift+w', 'command+q']) {

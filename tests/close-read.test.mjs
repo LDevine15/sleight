@@ -86,3 +86,22 @@ test('DPi close samples use a 50 ms cadence and report offline observer CPU per 
     observerUserCpuMs: cost.user / 1000, observerSystemCpuMs: cost.system / 1000,
     nativeHelperCpu: 'not measured, fake metadata only' }));
 });
+
+test('DPj leaves at least 25 ms after slow close samples before the next sample', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-close-gap-')));
+  const starts = [], ends = [];
+  const observer = observers.createCloseRead({ directory, observe: async () => {
+    starts.push(Date.now());
+    await new Promise(resolve => setTimeout(resolve, 80));
+    ends.push(Date.now());
+    return ok;
+  } });
+  t.after(() => { observer.dispose(); removeTemp(directory); });
+  observer.begin(1, window);
+  t.mock.timers.tick(0); await new Promise(resolve => setImmediate(resolve));
+  for (let i = 0; i < 30; i++) { t.mock.timers.tick(10); await new Promise(resolve => setImmediate(resolve)); }
+  observer.end(1);
+  assert.ok(starts.length >= 2);
+  assert.ok(starts.slice(1).every((start, i) => start - ends[i] >= 25), JSON.stringify({ starts, ends }));
+});

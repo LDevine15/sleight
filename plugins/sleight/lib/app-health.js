@@ -73,7 +73,7 @@ function frontFullScreen() {
 // minimized window is held is unmeasured (AXWindows counts this Space's minimized windows anyway).
 // Undefined when the call is missing or answers oddly.
 let spacesOf, spacesBroken = false;
-function spaceWindows(ids) {
+function spaceWindows(ids, deadline = Infinity) {
   if (spacesBroken) return undefined;
   try {
     if (!ids.every(id => Number.isInteger(id) && id > 0)) return undefined;
@@ -89,10 +89,12 @@ function spaceWindows(ids) {
     }
     let count = 0;
     for (const id of ids) {
+      if (Date.now() >= deadline) return undefined;
       const held = spacesOf(id);
       if (!Array.isArray(held)) return undefined;
       if (held.length) count++;
     }
+    if (Date.now() >= deadline) return undefined;
     return count;
   } catch { return undefined; }
 }
@@ -128,6 +130,7 @@ function run(argv) {
   // Load each operation once, in this helper's JavaScript context.
   const query = name => {
     const source = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(`${argv[1]}/${name}.js`, $.NSUTF8StringEncoding, null));
+    // Operations share this helper's metadata functions, including SW1b's spaceWindows.
     return eval(`(function () { ${source}; return run; })()`);
   };
   let taps, target, windowIdentity, frontRestore, elementVisibility;

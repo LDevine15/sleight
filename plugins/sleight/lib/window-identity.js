@@ -67,22 +67,31 @@ function run(argv) {
           }
         };
         visit(attr(app, 'AXChildren'), 0);
-        // AXWindows can omit windows on other Spaces. Count only the leased
-        // process's layer-0 CG windows, without reading names or document data.
+        // AXWindows can omit windows on other Spaces. Filter the leased PID's
+        // document, panel and alert layers inside Foundation, without copying content.
         const cg = ObjC.castRefToObject($.CGWindowListCopyWindowInfo(
           $.kCGWindowListOptionAll | $.kCGWindowListExcludeDesktopElements, 0));
         if (!cg || cg.isNil?.()) throw new Error('Missing CG list');
-        const n = Number(cg.count);
-        if (!Number.isSafeInteger(n) || n < 0 || n > 10000) throw new Error('CG list bound');
+        const total = Number(cg.count);
+        if (!Number.isSafeInteger(total) || total < 0 || total > 10000) throw new Error('CG list bound');
+        // Missing owners do not match. An owned row with a missing layer stays
+        // in the candidates so it makes the proof unknown instead of disappearing.
+        const own = cg.filteredArrayUsingPredicate($.NSPredicate.predicateWithFormatArgumentArray(
+          'kCGWindowOwnerPID == %@ AND (kCGWindowLayer == nil OR (kCGWindowLayer >= 0 AND kCGWindowLayer <= 23))', [pid]));
+        const n = Number(own.count), ids = [];
+        if (!Number.isSafeInteger(n) || n < 0 || n > total) throw new Error('CG candidate bound');
         for (let i = 0; i < n; i++) {
           if (Date.now() >= deadline) throw new Error('CG deadline');
-          const row = cg.objectAtIndex(i), owner = ObjC.unwrap(row.objectForKey('kCGWindowOwnerPID'));
-          if (!Number.isSafeInteger(owner) || owner <= 0) throw new Error('Missing CG owner');
-          if (owner !== pid) continue;
+          const row = own.objectAtIndex(i);
           const layer = ObjC.unwrap(row.objectForKey('kCGWindowLayer'));
-          if (!Number.isSafeInteger(layer)) throw new Error('Missing CG layer');
-          if (layer === 0) windowCount++;
+          if (!Number.isSafeInteger(layer) || layer < 0 || layer > 23) throw new Error('Missing CG layer');
+          ids.push(ObjC.unwrap(row.objectForKey('kCGWindowNumber')));
         }
+        // Reuse SW1b's Space membership check from the enclosing app-health
+        // helper. Ordered-out CG rows with no Space do not count as windows.
+        const held = spaceWindows(ids, deadline);
+        if (!Number.isSafeInteger(held) || held < 0) throw new Error('Unknown Space membership');
+        windowCount = held;
       }
       current();
       if (Date.now() >= deadline) throw new Error('AX deadline');
