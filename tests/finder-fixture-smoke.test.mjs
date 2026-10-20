@@ -8,6 +8,8 @@ import { homedir, tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
 import { runFinderSmoke, sampleForeground, smokeMain } from '../bench/finder-fixture-smoke.mjs';
 
+// The installed gateway path is an exact assertion, never a test allocation root.
+
 async function fake(t, changes = {}) {
   const parent = await mkdtemp(join(tmpdir(), 'fh1q-test-'));
   t.after(() => rm(parent, { recursive: true, force: true }));
