@@ -156,7 +156,8 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   foreground counts too. Background sessions share the helper, with leases coordinating sleight's actions.
 - Accessibility moves write plain text: on 2026-10-11, 3/3 background moves of a bold red word in a
   covered TextEdit window came out plain black Helvetica. Text whose formatting differs from its
-  paragraph's now takes the posted or foreground drag instead (unit-tested, 2026-10-12). A paragraph
+  paragraph's takes the posted or foreground drag within one window (unit-tested, 2026-10-12). With DP7 on,
+  cross-window moves of formatted text refuse instead. A paragraph
   formatted the same throughout still goes through the plain write, and whether the posted drag keeps
   formatting is unmeasured.
 - With the Claude app's window over the board (2026-10-09), the engine's `app.drag` moved a pawn
@@ -184,8 +185,11 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 - Posted events repair the verified space after a text move. Posting only works when no other app's window covers the drag
   points, because macOS picks the drop target from what's on screen there: 3/3 TextEdit moves with
   the window uncovered, 0/3 with this Claude window over it (2026-10-05).
-- Safari's web text areas ignored Accessibility text writes (1/1 on 2026-10-09), so the mouse
-  paths remain necessary when an app ignores the edits.
+- Safari's web text areas ignored Accessibility text writes (1/1 on 2026-10-09). With DP7 on,
+  cross-window moves in apps that ignore those writes refuse instead of falling back to a posted
+  or foreground drag. Within one window, the mouse paths remain available.
+- DP4's changed-lines read can add up to 5 s to a text-drag result. It appends nothing without
+  a prior full tree for that window, or if the read fails or times out. Live timing is unmeasured.
 - `CGEventSetWindowLocation` is a private macOS API. Missing symbols, invalid events or coordinates that fail the
   round trip skip background posting and select foreground. Future macOS updates may break this path.
 - The foreground drag is the last resort. On 2026-10-08 it took the owner's focus mid-sentence

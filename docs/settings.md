@@ -664,3 +664,18 @@ folder (default `~/Library/Caches/sleight-bench/sleight-arm`). `SLEIGHT_STUB_OSA
 `osascript` and `open` in the startup-cost measurement scripts. A measurement then doesn't run a
 real app. `SLEIGHT_CHATGPT_APP` points `bin/sleight-mcp` and `sleight-mcp setup` at another ChatGPT copy
 (default `/Applications/ChatGPT.app`).
+
+### Drag A/B switches
+
+`SLEIGHT_DP7=0` restores the previous drop-index and cross-window posting behavior. By default,
+text drops can use an empty final line when AX geometry proves its row. A failed cross-window
+Accessibility move refuses with its reason, since posted drags between documents can copy text.
+
+`SLEIGHT_DP2=0` restores the raise and settle wait before an Accessibility move, which otherwise
+runs first. Same-app overlap still requires a raise and another exposure check, and
+posted presses keep the raise and settle wait.
+
+`SLEIGHT_DP4=0` leaves the drag result alone. By default, a changed-text result gets one engine
+read of its leased native window and appends the compactor's changed lines when a prior tree exists.
+The read waits up to 5 s. A failed read leaves the drag result alone. These switches are on by default
+and have not had live A/B qualification.

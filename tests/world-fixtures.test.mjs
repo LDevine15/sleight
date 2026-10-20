@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { removeTemp } from '../scripts/temp-leftovers.mjs';
 import { getTasks } from '../bench/tasks.mjs';
+import { dragMethodAudit } from '../bench/world/method-check.mjs';
 import { getWorldTasks } from '../bench/world/tasks.mjs';
 
 test('Calculator claim checks read the current display and reject the right answer on a wrong display', async () => {
@@ -77,6 +78,28 @@ test('the new native tasks prepare private files and grade exact artifacts witho
         assert.notEqual(await task.check({ ...ctx, answer: 'done' }), true, id);
       }
     }
+  } finally { removeTemp(temp); }
+});
+
+test('DPg recorded method audit reaches exact text grading and rejects missing moves or wrong text', async () => {
+  const task = getTasks('world').find(t => t.id === 'textedit-window-drag');
+  const temp = mkdtempSync(join(tmpdir(), 'sleight-world-dpg-'));
+  try {
+    const ctx = { dir: temp, nonce: '7a278a09' }; task.prepare(ctx);
+    const events = readFileSync(new URL('./fixtures/dpg-drag-method.jsonl', import.meta.url), 'utf8');
+    for (const [i, value] of ctx.expectedText.entries()) writeFileSync(ctx.documents[i], value);
+    task.capture(ctx, { methodAudit: { drag: true, replacement: false, complete: false } });
+    assert.equal(task.check(ctx), 'WORLD_DRAG_METHOD_UNPROVEN');
+    task.capture(ctx, { methodAudit: dragMethodAudit(events) });
+    assert.equal(task.check(ctx), true);
+    writeFileSync(ctx.documents[1], 'destination\n\n move-7a278a09');
+    assert.equal(task.check(ctx), 'WORLD_TEXT_MISMATCH');
+    const failedMoves = events.trim().split('\n').map(JSON.parse).map(event => {
+      for (const item of event.message.content) if (item.type === 'tool_result' && item.tool_use_id === 'toolu_01RgCCdPw72TtXggZk1mR4k8') item.is_error = true;
+      return JSON.stringify(event);
+    }).join('\n');
+    task.capture(ctx, { methodAudit: dragMethodAudit(failedMoves) });
+    assert.equal(task.check(ctx), 'WORLD_DRAG_METHOD_UNPROVEN');
   } finally { removeTemp(temp); }
 });
 

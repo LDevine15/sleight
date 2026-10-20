@@ -343,6 +343,7 @@ const ASK_SECONDS = 300;
 const ownedHelpers = new Set();
 const pendingDrags = new Set();
 let helpersClosing = false;
+let helperTrace;
 function ownHelper(child) {
   ownedHelpers.add(child);
   child.once('close', () => ownedHelpers.delete(child));
@@ -710,14 +711,15 @@ export const HOVER_TOOL = {
 
 export function runScript(script, request, options = {}) {
   // Tests pass a stand-in for execFile directly; the drag cleanup path passes { cleanup: true }.
-  const { cleanup = false, run = execFile } = typeof options === 'function' ? { run: options } : options;
+  const { cleanup = false, run = execFile, trace = helperTrace } = typeof options === 'function' ? { run: options } : options;
   if (helpersClosing && !cleanup) return Promise.resolve({ ok: false, error: 'sleight session is closing' });
   // Base64 PNGs from ordinary app windows can exceed execFile's 1 MiB default.
   // The ghost hand stops waiting for locate.js after 2 s; a stalled AX app must not leave osascripts running.
   const execOptions = { timeout: script === 'open-file-window.js' ? 1000 : script === 'hand/locate.js' ? 2500 : cleanup ? 3000 :
     script === 'stuck-escape.js' ? 5000 : 30000,
     ...(script === 'hover.js' ? { maxBuffer: 16 * 1024 * 1024 } : {}) };
-  if (script === 'drag.js') request = { ...request, deadline: Date.now() + execOptions.timeout };
+  if (script === 'drag.js') request = { ...request, deadline: Date.now() + execOptions.timeout,
+    dp7: process.env.SLEIGHT_DP7 !== '0', dp2: process.env.SLEIGHT_DP2 !== '0', trace: !!process.env.SLEIGHT_TRACE };
   // Their cover checks skip the ghost hand's panel by this pid, which only the launcher sets: a pid
   // in the call could exempt a window that really covers the point.
   if (script === 'drag.js' || script === 'hover.js') {
@@ -725,8 +727,17 @@ export function runScript(script, request, options = {}) {
     request = handPid() ? { ...rest, handPid: handPid() } : rest;
   }
   return new Promise(resolve => {
-    ownHelper(run('osascript', ['-l', 'JavaScript', join(LIB, script), JSON.stringify(request)], execOptions, (err, stdout, stderr) => {
-      const diagnostic = String(stderr ?? '').trim();
+    let child;
+    child = ownHelper(run('osascript', ['-l', 'JavaScript', join(LIB, script), JSON.stringify(request)], execOptions, (err, stdout, stderr) => {
+      const diagnostic = String(stderr ?? '').split('\n').filter(line => {
+        if (script !== 'drag.js' || !line.startsWith('sleight-drag-phase ')) return true;
+        if (request.trace) try {
+          const { phase, edge, monoMs } = JSON.parse(line.slice('sleight-drag-phase '.length));
+          if (['ax-move', 'raise', 'settle', 'posted-press'].includes(phase) && ['start', 'end'].includes(edge) &&
+              Number.isFinite(monoMs) && monoMs >= 0) trace?.('drag-phase', { phase, edge, monoMs, helperPid: child?.pid });
+        } catch {}
+        return false;
+      }).join('\n').trim();
       try {
         resolve(JSON.parse(stdout));
       } catch {
@@ -743,7 +754,7 @@ export function runScript(script, request, options = {}) {
 
 const text = (value, isError) => ({ content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1) }], ...(isError ? { isError: true } : {}) });
 
-async function performDrag(args, runLocal) {
+async function performDrag(args, runLocal, afterDrag) {
   const focus = await runLocal('drag-focus.js', { op: 'capture', app: args.app });
   if (!focus.ok) return text(focus.error, true);
   let result, dragTimedOut = false;
@@ -776,10 +787,15 @@ async function performDrag(args, runLocal) {
     result = { ...result, error: `${result.error}; for files, use Copy and then the app's Move command; for list items, Cut and Paste` };
   }
   const { ok, ...rest } = result;
-  return text(rest, !ok);
+  const reply = text(rest, !ok);
+  if (process.env.SLEIGHT_DP4 !== '0' && result.textChanged === true && afterDrag) {
+    try { reply.content.push(...await afterDrag(result)); }
+    catch { /* The drag result stands when its optional read fails. Never repeat input. */ }
+  }
+  return reply;
 }
 
-export async function callLocalTool(name, args, approve, runLocal = runScript, resolved, prepared, { blocked, resolve = resolveAppId } = {}) {
+export async function callLocalTool(name, args, approve, runLocal = runScript, resolved, prepared, { blocked, resolve = resolveAppId, afterDrag } = {}) {
   if (name === 'hover') {
     if (!await approve(['hover', args.app], `Allow Claude to hover in ${args.app}? It moves your pointer briefly.`)) {
       return text(`The user didn't allow hovering in ${args.app}. Stop and tell them; don't work around it.`, true);
@@ -807,7 +823,7 @@ export async function callLocalTool(name, args, approve, runLocal = runScript, r
     if (!await approve(['drag', args.app], `Allow Claude to drag in ${args.app}? Background comes first; foreground fallback can move your pointer for a few seconds.`)) {
       return text(`The user didn't allow dragging in ${args.app}. Stop and tell them; don't work around it.`, true);
     }
-    const operation = performDrag(args, runLocal);
+    const operation = performDrag(args, runLocal, afterDrag);
     pendingDrags.add(operation);
     try { return await operation; }
     finally { pendingDrags.delete(operation); }
@@ -961,6 +977,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   if (permissionCheck.sitesLimited()) webBrowser.ask();
   const appBlocked = (bundleId, app) => permissionCheck.app({ bundleId, name: app });
   const { trace, grantAudit } = approvalLogging(preapproved);
+  helperTrace = trace;
   handTrace = trace;
   for (const event of earlyHandTrace.splice(0)) trace?.(...event);
   let s = directBrowserServer(resolveServer(), directBrowser);
@@ -1114,9 +1131,9 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       prepareOpen: (args, approve) => prepareOpenFile(args, (parts, message, options) =>
         approve(parts, wordForHost(message, wording()), options), { openedFiles, blocked: appBlocked }),
       reopen: (bundleId, path) => reopenDocument(bundleId, path, { openedFiles }),
-      call: (name, args, approve, runLocal, resolved, prepared) => callLocalTool(name, args, (parts, message, options) =>
+      call: (name, args, approve, runLocal, resolved, prepared, options) => callLocalTool(name, args, (parts, message, options) =>
         approve(parts, wordForHost(message, wording()), options), runLocal, resolved, prepared,
-        { blocked: appBlocked }),
+        { ...options, blocked: appBlocked }),
       target: async args => {
         const result = await appHealth.target(args);
         // sleight's own consent host answers with its one line, which Claude passes on.
