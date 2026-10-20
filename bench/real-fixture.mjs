@@ -132,7 +132,8 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
         JSON.stringify({ bundle: lease.bundle || request.bundle, mode: 'quit', pid: Number(lease.pid),
           ...(lease.processStartedAtMs > 0 && { processStartedAtMs: lease.processStartedAtMs }),
           ...(/^com\.microsoft\.(Word|Excel)$/.test(request.bundle) && request.mode === 'document' && {
-            fixture: { mode: request.mode, target: request.target, token: request.token, runToken: request.runToken } }),
+            fixture: { mode: request.mode, target: request.target, token: request.token, runToken: request.runToken,
+              ...(diagnostics.fixtureWindow && { fixtureWindow: diagnostics.fixtureWindow }) } }),
           ...(request.fixtureKind && { fixtureKind: request.fixtureKind, target: request.target }), ...(request.stopOnLiveHold && { stopOnLiveHold: true }) })], {
         signal: final ? undefined : ctx.cleanupSignal, timeoutMs: 35000,
       });
@@ -192,6 +193,9 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
       const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', script, JSON.stringify({
         ...request, mode: 'recover', fixtureMode: request.mode, running: lease.running, launched: lease.launched,
         fixtureDir: ctx.dir, runToken: ctx.nonce || request.token, startedAtMs,
+        fixtureWindows: ctx.windowLeases.filter(other => other.pid === lease.pid &&
+          other.processStartedAtMs === lease.processStartedAtMs && other.bundle === lease.bundle)
+          .map(other => other.diagnostics.fixtureWindow).filter(Boolean),
         pids: [...new Set([...lease.pids, lease.pid].filter(pid => Number.isInteger(pid) && pid > 0))],
       })], { signal: ctx.cleanupSignal, timeoutMs: 90000 });
       const receipt = result.stdout?.split('\n').map(line => { try { return JSON.parse(line); } catch { return undefined; } }).find(event => event?.stage === 'recovered');
