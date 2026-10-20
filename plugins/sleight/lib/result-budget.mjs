@@ -7,6 +7,26 @@
 import { trimBrowserResults } from './browser-read-cap.mjs';
 
 export const RESULT_LIMIT = 45000;
+export const GROK_RESULT_LIMIT = 20000;
+
+// The final serialized result includes content wrappers, metadata and base64 images. Keep safety
+// prose whole. An output that can't fit after tree trimming becomes an explicit delivery failure.
+export function grokResult(result, onUndelivered) {
+  const fits = value => Buffer.byteLength(JSON.stringify(value)) <= GROK_RESULT_LIMIT;
+  if (fits(result)) return result;
+  let out = { ...result };
+  if (Array.isArray(out.content)) {
+    for (let limit = 16000; limit >= 0; limit -= 2000) {
+      out.content = trimResultTrees(out.content, limit, true);
+      if (fits(out)) return out;
+    }
+  }
+  const guidance = onUndelivered?.() ?? [];
+  const failure = { isError: true, content: [{ type: 'text', text:
+    'sleight: the result exceeds Grok\'s 20000-byte limit and could not be delivered whole. Execution may have completed. Do not replay input automatically. Read current state with a smaller filtered read; image delivery needs a smaller capture.' }] };
+  const withGuidance = { ...failure, content: [...failure.content, ...guidance] };
+  return fits(withGuidance) ? withGuidance : failure;
+}
 
 const GENERAL_DOCS = /^## Computer Use\n/;
 const BROWSER_DOCS = /^# Other Browser APIs\n/;
@@ -80,11 +100,9 @@ const wire = (text) => Buffer.byteLength(JSON.stringify(text)) - 2;
 const wireSize = (content) => content.reduce((n, c) => n + (c.type === 'text' ? wire(c.text) : 0), 0);
 const WIRE_MARGIN = 2500;
 
-// A tree block runs from its header to the next `Window:` header or focus line. Firefox's tab strip puts bare `Close tab`
-// lines among the numbered rows, so continuation lines can't be required to start with tabs and a number. A blank line
-// inside the tree ends nothing when an indented row follows: MDN's tree has one after its answer (2026-10-18), which cut the
-// match to a quarter of the page.
-const TREE = /^(?:Window: |Browser tab: )[^\n]+\n(?:[+~-] )?\d+ [^\n]*(?:\n(?!Window: |Browser tab: |The focused UI element)[^\n]+|\n(?=\n+(?:[+~-] )?\t+\d+ ))*/gm;
+// Stop at prose, including a refusal immediately below a tree. Firefox also emits bare `Close tab` rows,
+// and MDN has blank lines before indented rows. Include our own omission note for repeated byte-cap passes.
+const TREE = /^(?:Window: |Browser tab: )[^\n]+\n(?:[+~-] )?\d+ [^\n]*(?:\n(?:(?:[+~-] )?\t*\d+ [^\n]*|Close tab|sleight: \d+ (?:browser )?tree lines omitted[^\n]*)|\n(?=\n+(?:[+~-] )?\t+\d+ ))*/gm;
 
 // A one-line item is a tree row that arrived as its own content item (a continued call's head, 381 items), which no
 // regex over one item can see as a tree. Runs of them behind a one-line header are joined so they trim like any tree.

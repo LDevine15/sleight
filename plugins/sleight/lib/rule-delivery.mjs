@@ -4,10 +4,17 @@
 const TRUSTED = Symbol('sleight rules');
 const REFERENCE = 'sleight: rules already sent in this session still apply.';
 
+// Keep the shared skill pinned. Only the injected copy names the host's tool surface.
+export function guidanceForHost(text, grok = false) {
+  return grok ? text.replaceAll('`mcp__plugin_sleight_computer__js`',
+    '`computer__js` (`sleight__js` for a direct MCP entry) through Grok\'s `use_tool`') : text;
+}
+
 export function ruleDelivery() {
   const delivered = new Set();
   return {
     item: text => ({ type: 'text', text, [TRUSTED]: text }),
+    trusted: item => item?.type === 'text' && !!item[TRUSTED] && item.text === item[TRUSTED],
     apply(content) {
       return content.map(item => {
         if (item.type !== 'text' || typeof item.text !== 'string') return item;

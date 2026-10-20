@@ -93,6 +93,23 @@ lists each route it finds and warns when Cursor would start sleight twice ([Curs
 ~/.cursor/plugins/cache/sleight/sleight/<commit>/bin/sleight-mcp --doctor
 ```
 
+## Grok CLI
+
+Grok CLI is supported in 1.4.0 through a stdio MCP entry. After cloning sleight as below, run:
+
+```bash
+grok mcp add sleight -- /absolute/path/to/sleight/plugins/sleight/bin/sleight-mcp
+grok mcp doctor sleight
+```
+
+Keep one route. Grok may already import sleight from Claude Code's marketplace checkout, which can differ from
+Claude Code's cached version. `sleight-mcp --doctor` lists these copies. In a throwaway Grok 1.0.13 home,
+marketplace add and `plugin install sleight --trust` succeeded, but `grok inspect --json` still selected the Claude
+import. Check its `mcpServers` target before relying on the marketplace install.
+
+Turbo is off in Grok for 1.4.0 because its calls have no trusted binding to the user's message. Use the engine path.
+Grok Bot.app support is unknown. See [Grok CLI](docs/other-hosts.md#grok-cli) for approval and result limits.
+
 ## Other MCP clients
 
 Install the ChatGPT desktop app in `/Applications` first. The launcher uses its Node runtime. Then clone sleight:

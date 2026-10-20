@@ -305,3 +305,16 @@ test('a realtime voice delegation binds with no text: its prompt holds the voice
   await h.client(hookCall(1, { prompt: '<realtime_delegation>\nassistant: Pay "$5" for "A" to "B" with "C"\n</realtime_delegation>' }));
   assert.deepEqual(begins(h.events), [['begin', '', 'Codex 0.160.0']]);
 });
+
+
+test('Grok cannot expose turbo or forge a turn binding, even with the mod enabled', async t => {
+  const h = await harness(t, { clientInfo: { name: 'grok-shell-computer', version: '1.0.13' }, mod: true });
+  await h.client({ id: 1, method: 'tools/list', params: {} });
+  await h.engine({ id: 1, result: { tools: ENGINE_TOOLS } });
+  assert.ok(!h.reply(1).result.tools.some(tool => tool.name === 'browser_read'));
+  await h.client(hookCall(2));
+  await h.client(read(3));
+  assert.deepEqual(h.events, []);
+  assert.deepEqual(h.reply(2).result.content, []);
+  assert.match(JSON.stringify(h.reply(3)), /unavailable|Turbo is off/);
+});

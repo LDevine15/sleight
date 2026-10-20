@@ -39,6 +39,11 @@ sleight runs inside Claude Code, and what Claude Code sends is handled under
 [Anthropic's privacy policy](https://www.anthropic.com/legal/privacy). This page can't speak for
 either.
 
+Screenshots and app text sent through any Grok route go to Grok's hosted model. Grok Bot sends them through its gateway.
+Its custom STDIO MCP servers run in Grok's hosted box, off this Mac. sleight has no local Grok Bot route yet.
+Its doctor section only reads local non-credential metadata and checks whether the recorded daemon PID exists
+(`plugins/sleight/lib/grokbot-host.mjs`).
+
 The results site doesn't load resources from third parties or use analytics.
 GitHub hosts the site and keeps its normal server logs.
 

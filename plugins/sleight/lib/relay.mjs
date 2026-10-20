@@ -91,11 +91,11 @@ import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode
 import { promptNotice } from './prompt-notice.mjs';
 export { promptNotice };
 import { dropRepeatedText } from './repeated-text.mjs';
-import { ruleDelivery } from './rule-delivery.mjs';
+import { ruleDelivery, guidanceForHost } from './rule-delivery.mjs';
 import { typedTextReceipt, typingReceiptCall, typingReceiptCode, withoutTypingReceipt, typingReceiptTarget } from './typed-text-receipt.mjs';
 import { createBrowserStaleGuard } from './browser-stale.mjs';
 import { literalElements } from './literal-elements.mjs';
-import { createResultBudget, requestsFullDocumentation } from './result-budget.mjs';
+import { createResultBudget, requestsFullDocumentation, grokResult } from './result-budget.mjs';
 import { forbiddenTargetWarning, isForbiddenSettingsWindow, refusalNotice, refusedApp } from './blocked-apps.mjs';
 import { OWN_HOST_LINE, isOwnHost, mentionsOwnHost, namesOwnHost as appNamesOwnHost, getAppTargets, ownHostPid as isOwnHostPid } from './own-host.mjs';
 import { clipboardCode, clipboardPlan, clipboardActions, createClipboardSession, createNativeClipboardIO } from './clipboard.mjs';
@@ -123,7 +123,7 @@ import { syntaxErrorHint, syntaxOrigin } from './syntax-errors.mjs';
 import { compactJsDescription, engineJsVariant } from './tool-description.mjs';
 import { createLightReturn, lightReturnCode } from './light-return.mjs';
 import { createTabProbe, nativeTabPlan } from './tab-probe.mjs';
-import { hostLabel } from './host-label.mjs';
+import { hostLabel, isGrokClient } from './host-label.mjs';
 import { TURN_START, TURN_START_TOOL, codexCallTurn, codexTurnClient, codexTurnFrame } from './codex-turn.mjs';
 import { rootWindowId, popupWindows } from './popup-window.mjs';
 
@@ -883,6 +883,9 @@ export function createRelay({
   if (directHost !== undefined && !(isV3Bridge(directHost) && isV3Frontend(directBrowser))) throw Error('TRUSTED_ROUTE_REQUIRED');
   let installedBootstrapped = false;
   let clientHost; // the menu bar's host line, from initialize's clientInfo (host-label.mjs)
+  let grokClient = false;
+  const originalModHost = modHost;
+  modHost = () => !grokClient && originalModHost();
   // Codex sends its sandbox state on each tool call (codex/sandbox-state, because the engine advertises it), and the engine
   // runs a call in a kernel for that state. The relay's own calls carry the client's latest state so they reach the same
   // kernel, and a change in it means a fresh kernel: no guard setup and no handles (the first getApp in Codex failed on
@@ -940,7 +943,7 @@ export function createRelay({
   const outcomeSetup = outcomes || actionLog ? { outcomes: true } : {};
   let compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, routeSteering, undoReceipts, outcomes, actionNumbers: workflowDocs });
   const browserStale = createBrowserStaleGuard();
-  const resultBudget = createResultBudget();
+  let resultBudget = createResultBudget();
   const aliasNotices = createBrowserAliasNotices();
   // Whether the engine's js description is its computer-only one, from the last tool list.
   let computerSurface = false;
@@ -1039,6 +1042,7 @@ export function createRelay({
     turnEndAttempts.set(args.turn_id, (turnEndAttempts.get(args.turn_id) ?? 0) + 1);
   }
   const approvalRequests = new Map(); // server request id -> approval key and stop generation
+  const grokElicitations = new Set(); // all forms forwarded to Grok, including unkeyed and non-session forms
   const alwaysOffered = new Map(); // server request id -> { app, riskLevel } offered "Always allow"
   // "Always allow" is offered only for a session-scoped engine app approval, terminals and OpenAI's
   // apps included (owner, 2026-10-11), and only the user's answer to sleight's prompt or Claude Code's
@@ -1338,6 +1342,7 @@ export function createRelay({
   const callSeqs = new Map();
   let docsShown = false;
   let deferredEngineDocs = [], clientJsDelivered = false, deferredRules;
+  let undeliveredGrokGuidance = [];
   const engineDocs = (content = [], embedded = false) => content.flatMap(item => {
     if (item.type !== 'text') return [];
     const start = item.text.search(/^(?:## Computer Use|# Other Browser APIs|# Computer Use Confirmations Policy|# Browser Safety|# API Reference)\n/m);
@@ -1351,8 +1356,8 @@ export function createRelay({
   let clientJsSeen = false;
   const nativeAcquisitions = new Set();
   // Once per session: Claude keeps them in context across engine restarts.
-  const ruleBlocks = dedupeRules ? ruleDelivery() : undefined;
-  const ruleItem = text => ruleBlocks ? ruleBlocks.item(text) : ({ type: 'text', text });
+  const ruleBlocks = ruleDelivery();
+  const ruleItem = text => ruleBlocks.item(text);
   let rulesShown = false;
   let browserRulesShown = false;
   const browserRules = firstCallRules?.match(/## Browsers\n[\s\S]*?(?=\n## |$)/)?.[0];
@@ -1362,13 +1367,13 @@ export function createRelay({
     if (!rulesShown) {
       rulesShown = true;
       if (browser) browserRulesShown = true;
-      return requestedSubmitRules(browser ? firstCallRules : nativeRules, {
+      return guidanceForHost(requestedSubmitRules(browser ? firstCallRules : nativeRules, {
         SLEIGHT_RS: policyRewritten ? rs : '0', SLEIGHT_CONFIRM_PAYMENTS: confirmPayments, SLEIGHT_PROMPT: prompt,
-      });
+      }), grokClient);
     }
     if (browser && !browserRulesShown && browserRules) {
       browserRulesShown = true;
-      return browserRules;
+      return guidanceForHost(browserRules, grokClient);
     }
   }
   const helperAliases = new Map();
@@ -2304,11 +2309,25 @@ export function createRelay({
     if (modelVisible && Array.isArray(msg.result?.content)) {
       msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(aliasNotices(dropRepeatedText(msg.result.content)),
         { id: msg.id, native: !!msg.result._meta?.['codex/toolSurface']?.app?.appId }) } };
-      if (ruleBlocks) msg.result.content = ruleBlocks.apply(msg.result.content);
+      if (dedupeRules) msg.result.content = ruleBlocks.apply(msg.result.content);
       browserStale.observe(msg.result.content);
       saveReceipted ||= msg.result.content.some(c => c.type === 'text' && /\bsaved: observed [^\n]*; on disk: /.test(c.text ?? ''));
     }
     if (msg.method === undefined) resultBudget.finish(msg.id);
+    if (grokClient && Array.isArray(msg.result?.content)) {
+      // Replay only guidance, never an image or action output. It already passed the docs and rule
+      // transforms, whose once-per-session state advanced before the final serialized cap.
+      if (modelVisible && undeliveredGrokGuidance.length) {
+        msg.result.content = [...undeliveredGrokGuidance, ...msg.result.content];
+        undeliveredGrokGuidance = [];
+      }
+      msg.result = grokResult(msg.result, () => {
+        const guidance = msg.result.content.filter(item => ruleBlocks.trusted(item) || engineDocs([item], true).length);
+        for (const item of guidance) if (!undeliveredGrokGuidance.some(c => c.text === item.text)) undeliveredGrokGuidance.push(item);
+        return guidance;
+      });
+    }
+    if (grokClient && msg.method === 'elicitation/create' && msg.id !== undefined) grokElicitations.add(msg.id);
     journal?.reply(msg);
     // The log is a side record: its failure never costs Claude a reply.
     try { actionLog?.reply(msg); } catch {}
@@ -3396,6 +3415,9 @@ export function createRelay({
     return true;
   }
   function handleClient(msg) {
+    if (msg.method === undefined && grokElicitations.delete(msg.id) && msg.result?.action === 'accept') {
+      msg.result = { ...msg.result, _meta: { ...msg.result._meta, persist: 'session' } };
+    }
     if (directNames.has(msg.params?.name) && msg.method === 'tools/call') {
       if (msg.id === undefined) return;
       if (!directBrowser) {
@@ -3442,6 +3464,8 @@ export function createRelay({
     if (msg.method === 'initialize') {
       onInitialize(msg.params?.clientInfo);
       clientHost = hostLabel(msg.params?.clientInfo);
+      grokClient = isGrokClient(msg.params?.clientInfo);
+      if (grokClient) resultBudget = createResultBudget({ limit: 16000 });
       if (typeof msg.params?.clientInfo?.name === 'string') clientName = msg.params.clientInfo.name.slice(0, 64);
       const capabilities = msg.params?.capabilities ?? {};
       const elicitation = capabilities.elicitation;
@@ -3772,13 +3796,13 @@ export function createRelay({
       alwaysOffered.delete(msg.id);
       // The engine didn't ask for this field: answer it here and pass the engine an empty form.
       if (msg.result?.content && 'remember' in msg.result.content) {
-        if (always && msg.result.action === 'accept' && msg.result.content.remember === 'Always' && !reviewerAnswer(msg.result)) rememberAlways(always);
+        if (!grokClient && always && msg.result.action === 'accept' && msg.result.content.remember === 'Always' && !reviewerAnswer(msg.result)) rememberAlways(always);
         const { remember: _remember, ...content } = msg.result.content;
         msg.result = { ...msg.result, content };
       }
       if (msg.result?.action === 'accept') {
         approved.add(key);
-        if (msg.result._meta?.persist === undefined) {
+        if (grokClient || msg.result._meta?.persist === undefined) {
           msg.result._meta = { ...msg.result._meta, persist: 'session' };
         }
       }
@@ -4513,7 +4537,7 @@ export function createRelay({
       }
       if (rules) {
         const item = { type: 'text', text: rules + (docs ? promptNotice('\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.', prompt) : '') };
-        if (ruleBlocks) Object.assign(item, ruleBlocks.item(item.text));
+        Object.assign(item, ruleBlocks.item(item.text));
         msg.result.content = rulesFirst ? beforeFirstTree(msg.result.content, item) : [...msg.result.content, item];
       }
       if (docs) docsShown = true;
@@ -4880,7 +4904,7 @@ export function createRelay({
         return;
       }
       approvalRequests.set(msg.id, { key, generation: stopGeneration });
-      const always = alwaysChoice(msg);
+      const always = grokClient ? undefined : alwaysChoice(msg);
       if (always) {
         alwaysOffered.set(msg.id, always);
         const schema = msg.params.requestedSchema ?? { type: 'object', properties: {} };

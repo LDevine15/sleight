@@ -92,6 +92,48 @@ reply. Approvals use Cursor's form prompts and name Cursor. Cursor's hooks run s
 call an MCP tool. The relay ends a used turn after 30 idle seconds and on disconnect. Cursor doesn't
 get the pane, the status line, `/sleight` or turbo.
 
+## Grok CLI
+
+Grok CLI is supported in 1.4.0 through the [direct MCP entry](../INSTALL.md#grok-cli). Grok 1.0.13's headless
+`mcp doctor computer` completed the handshake and listed 10 tools. It identified itself as
+`grok-shell-computer`, version `1.0.13`. The direct entry's handshake sent `grok-shell-sleight` at that same version.
+Both listed 10 tools. The dropdown and approval panel call it Grok.
+No model session, image delivery or app task has been checked.
+
+Grok can import sleight from Claude Code's `known_marketplaces.json` checkout. On the study Mac that copy was
+1.3.1, while Claude Code used its 1.3.0 cache. The doctor's Grok section reports that mismatch and the
+`[compat.claude]` import switch, on by default. Marketplace add and plugin install with `--trust` succeeded
+in a throwaway home, but inspect still selected the imported copy. Keep one server and check `grok inspect --json`
+for its target. No warning about sleight's mod-only `hooks.json` appeared. Those hooks have not run in Grok.
+
+The injected guidance names `computer__js` for the import, or `sleight__js` for the direct entry, through Grok's
+`use_tool`. Results stay within 20,000 serialized bytes, including images and metadata. Trees shrink first.
+An output that still cannot fit returns a delivery error; execution may have completed, so read current state before retrying.
+The first documentation reply's size is unit-tested, with the full confirmation policy. A model session has not checked spilling.
+
+Grok's form answers grant Allow for this server session. Even an Always answer cannot write a pre-approval.
+Only the user's click on Always allow in sleight's own panel writes one. Set `SLEIGHT_APPROVAL_PROMPT=dialog`
+if you want that panel. Turbo stays off in Grok for 1.4.0: its command hooks cannot bind each MCP call to a trusted
+user turn. Browser and Electron work use the engine path. Used turns end after 30 idle seconds or on disconnect.
+
+## Grok Bot
+
+Grok Bot.app has no local sleight route yet. Its custom STDIO MCP servers run in Grok's hosted box, off this Mac.
+That box has neither this Mac's apps nor ChatGPT's computer-use engine. Adding `sleight-mcp` there cannot drive this Mac.
+The local shell and HTTP routes are still pending.
+
+`sleight-mcp --doctor` has a separate Grok Bot section. It reads the app bundle version, the computer-use gate,
+local daemon PID state and local tool permission setting, then prints `route: none yet`. Missing or unreadable state
+shows as unknown. A running PID does not prove the daemon's identity or health. Doctor doesn't read daemon credentials or browser storage.
+
+Grok Bot's own computer use is a second driver when it is on. Its helper and sleight do not share an input lease,
+so both could act on the same app. Grok's `always` local tool permission does not answer sleight's approval panel.
+The proposed local routes have no trusted user-turn binding, so every payment, booking, settings change and submit
+must ask on sleight's panel, and turbo stays off. Those routes are not available yet.
+
+Screenshots and app text sent through any Grok route go to Grok's hosted model. Grok Bot sends them through its gateway.
+See [privacy](privacy.md#what-leaves-the-mac).
+
 ## Generic clients
 
 [INSTALL.md](../INSTALL.md#other-mcp-clients) has the clone and the `mcpServers` entry. The launcher runs on the Node
