@@ -2,21 +2,19 @@
 
 ## 1.4.1 (unreleased)
 
-The entries below describe the intended 1.4.1 candidate if the corresponding changes are included in the final
-integrated commit. Final scope reconciliation, integration review and release validation remain required.
-
 ### Version and release checks
 
 - Plugin manifests and the Claude and Cursor marketplace entries report 1.4.1. Codex's marketplace reads the
   plugin manifest. Doctor prints the installed version, and offline checks compare it with the manifests and
   newest numeric CHANGELOG heading.
 - A test-path guard rejects hardcoded macOS temporary and home paths. Offline fixtures use the platform temporary
-  directory where their ownership checks permit it. A Node 24 Docker preflight installs locked Linux dependencies
-  and runs the test suite. Actual Linux testing remains unrun.
+  directory where their ownership checks permit it. A Node 24 Docker preflight prepares an exact-commit Git snapshot,
+  mounts it read-only and installs locked Linux dependencies in a writable container copy before running the suite.
+  It awaits child collection and confirms container cleanup after cancellation. Actual Linux testing remains unrun.
 - The preflight script checks versions, CHANGELOG and tag agreement, placeholders, private release-note data,
-  history findings and Linux test evidence. Candidate mode keeps `releaseReady: false`. Both modes must verify
-  the final commit after the reset, with a reconciled Linux helper contract. Release mode must also verify the
-  intended tag points to that commit.
+  history findings and Linux test evidence through the shared helper and receipt contract. Candidate mode accepts
+  an unreleased heading and keeps `releaseReady: false`. Both modes verify the same clean commit through completion.
+  Release mode requires a dated heading and the intended tag at that exact commit. These checks run without a model.
 - A validation driver reruns named tasks' original groups three times on the final integrated build. It compares
   the selected tasks with compatible recorded A rounds and fails on a higher expected time or lower pass rate.
   It rejects native evidence with hygiene failures and output banks that overlap reused A evidence.
@@ -31,18 +29,28 @@ integrated commit. Final scope reconciliation, integration review and release va
   collects the synthetic fixture before starting a separate physical-click fixture, so delayed synthetic
   acceptance cannot count as the person's answer.
 - Native compilation passed without UI. Physical consent, appearance, sound, menu overflow, transport and
-  shared-host operation remain unqualified, including GL9 and Calculator/TextEdit card counts through Grok Bot's priya.
+  shared-host operation remain unqualified, including physical GB18 checks, GL9 and Calculator/TextEdit card counts
+  through Grok Bot's priya.
 
 ### Finder fixtures and ghost hand
 
-- Finder fixture recovery requires three bounded AXWindows timeouts on the same process before one relaunch,
+- The Finder recovery candidate requires three bounded AXWindows timeouts on the same process before one relaunch,
   then waits at most 30 seconds for readiness. Folder setup retains exactly one proven new window and uses its
   Go to Folder sheet. Uncertain window ownership stops setup and keeps cleanup unconfirmed.
 - Finder smoke receipts record setup, foreground samples and cleanup. Inventory refusals include diagnostic
-  details when available. The recorded live inventory failure remains unresolved. Setup, cancellation, cleanup
-  ownership, lock retention, receipt privacy and process identity must pass review and live qualification before adoption.
+  details when available. The final cleanup repair still needs review and integration. The recorded live inventory
+  failure remains unresolved. Setup, cancellation, cleanup ownership, lock retention, receipt privacy and process
+  identity still need live qualification. Exclusive setup and the focus race need an owner decision before adoption.
 - GH8 remains blocked on supported action events for engine-persisted Always allow grants and correct retry/paste
   correlation. The partial pacing change stays unmerged. Existing visible-hand behavior and its off default remain unchanged.
+
+### Benchmark preparation
+
+- A workflow-documentation A/B driver pins both sides to the same build, alternates the flag and stops on native
+  permission refusals, including refusals followed by a passing outcome. It has only offline test and review evidence.
+- Electron qualification preparation uses one resolved Python executable for launch and cleanup, and private
+  diagnostics in relaunch workers. Electron remains unqualified. Model-backed runs wait for the planned quota reset
+  and an owner-approved away window. No performance improvement is claimed for either preparation.
 
 ## 1.4.0 (2026-10-20)
 
