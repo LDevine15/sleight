@@ -742,13 +742,19 @@ native reference, and oversized first results defer the browser reference while 
   loaded the Claude marketplace checkout. That can differ from Claude Code's cached sleight version (1.3.1 versus 1.3.0
   on the study Mac). Check the target in `grok inspect --json` and keep one route. The direct MCP entry passed doctor.
   Grok form answers never write Always allow. Only the user's click on sleight's panel can do that.
-- Grok Bot.app has no local sleight route yet. Its custom STDIO MCP servers run in a hosted box without this Mac's
-  apps or ChatGPT's engine. The shell and HTTP routes are pending. Doctor reports `route: none yet`.
+- Grok Bot's shell route has offline transport and guard tests, with no live bot read or image delivery check. Its
+  custom STDIO MCP servers run in a hosted box without this Mac's apps or ChatGPT's engine. Use `sleight-mcp session`
+  on the Mac and `sleight-mcp js '<code>'` through the local daemon. Doctor reports `route: shell (sleight-mcp js)`,
+  even when a session isn't running. The HTTP route is pending.
+- A shell session requires Apple's clang and stops after ten idle minutes. Restart it before sending another call.
+  A stale socket after a crash is refused, never removed automatically. Check that its session has stopped before
+  removing it. Images stay in private temporary files until you or the system delete them.
 - With Grok Bot's own computer use on, its helper is a second driver. It does not share sleight's input lease,
-  so both could act on the same app. Turn that helper off before using sleight through a future Grok Bot route.
-- The proposed Grok Bot routes have no trusted user-turn binding. Every payment, booking, settings change and submit
+  so both could act on the same app. Turn that helper off before using sleight through Grok Bot.
+- The Grok Bot shell route has no trusted user-turn binding. Every payment, booking, settings change and submit
   must ask on sleight's panel, including actions the user requested. Grok's `always` setting and auto-review cannot
-  answer that panel, and `SLEIGHT_CONFIRM_PAYMENTS=never` cannot skip these confirmations. Turbo stays off.
+  answer that panel, and `SLEIGHT_CONFIRM_PAYMENTS=never` cannot skip these confirmations. Turbo stays off. The route
+  offers session-only app Allow without adding entries to the pre-approved list.
 - The Cursor plugin (1.4.0) hasn't been installed in Cursor yet. We don't know whether
   `cursor-agent plugin marketplace add` works on a personal account, whether Cursor accepts the
   manifest's empty `hooks` object without a warning, or whether it hides `turn_ended` from the model.

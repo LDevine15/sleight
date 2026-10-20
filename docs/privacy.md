@@ -24,13 +24,13 @@ cannot drift from the code.
 | Demonstration recordings | The JSON file you name, written once (0600). `record --watch` also compiles an observation helper, cached under `~/Library/Caches/sleight/observer/`, staged through the system temporary directory. | Until you delete it | `plugins/sleight/lib/demonstration.mjs` |
 | Window screenshots | A hover capture per call (`sleight-hover-` folders) and one file per blocked-app read (`sleight-blocked-<pid>-<time>.png`), written to the system temporary directory. Captures take the frame of the chosen window, never the whole screen. The pane's picture is passed to the pane in memory and written nowhere. | Life of the call | `plugins/sleight/lib/hover.js`, `plugins/sleight/lib/launch.mjs`, `plugins/sleight/hooks/snapshot.ts` |
 | Browser surface cache | `~/Library/Caches/sleight/extensions.json`: whether the engine's browser inventory connected and when, plus a hash of the engine's launch command. No profiles, tabs or approvals. | Refreshed each session; used for 6 hours after a connect, 24 otherwise | `plugins/sleight/lib/surface-cache.mjs` |
+| Grok Bot shell session | `~/Library/Caches/sleight/shell/session.sock`, a 0600 Unix socket in a user-owned 0700 folder. Calls and results pass through memory. The peer-check helper is compiled in a private system temporary folder. This route never writes pre-approvals. | Socket and helper removed when the session exits normally, on SIGTERM or after ten idle minutes | `plugins/sleight/lib/socket-bridge.mjs` |
+| Shell image results | `sleight-shell-image-` folders in the system temporary directory (0700), with one 0600 file per returned image. The shell prints each path instead of inline image data. | Until you delete them or the system clears temporary files | `plugins/sleight/lib/socket-bridge.mjs` |
 
 ## What leaves the Mac
 
-sleight doesn't make network requests of its own. A grep of `plugins/sleight` for `fetch`, `http`,
-`https`, `net` and `dns` doesn't find network calls. The only matches are an SVG namespace constant
-in the pane (`plugins/sleight/hooks/register.tsx`) and URL parsing for the flow-rules guard
-(`plugins/sleight/lib/flow-rules.mjs`).
+The Grok Bot shell route uses a local Unix socket, with no TCP listener. The bot receives sleight's results through
+Grok Bot's local daemon and gateway. Screenshots and app text sent through that route go to Grok's hosted model.
 
 sleight launches the computer-use engine that comes with the ChatGPT desktop app, on your Mac
 (`plugins/sleight/bin/sleight-mcp`, `plugins/sleight/lib/launch.mjs`). The engine is OpenAI's

@@ -8,7 +8,8 @@ const LABEL = /^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,71}$/;
 // Clients that send a fixed name and version, read from their own code: Cursor 3.25.6's editor sends
 // {name: "cursor-vscode", version: "1.0.0"} and cursor-agent 2026.09.10 sends {name: "Cursor", version: "1.0.0"}.
 // That version names no Cursor release, so it is left out.
-const FIXED = new Map([['cursor-vscode', { name: 'Cursor', version: '1.0.0' }], ['Cursor', { name: 'Cursor', version: '1.0.0' }]]);
+const FIXED = new Map([['cursor-vscode', { name: 'Cursor', version: '1.0.0' }], ['Cursor', { name: 'Cursor', version: '1.0.0' }],
+  ['Grok Bot', { name: 'Grok Bot', version: '1' }]]); // shell protocol version, not the Grok Bot release
 
 const clean = (value, pattern) => typeof value === 'string' && pattern.test(value.trim()) ? value.trim() : undefined;
 

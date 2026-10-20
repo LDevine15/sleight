@@ -39,7 +39,7 @@ test('reports the bundle version and separate computer-use, daemon and permissio
   assert.deepEqual(io.pids, [4029]);
   assert.deepEqual(io.reads, [systemPlist, gate, settings, daemon]);
   const text = grokbotDoctorLines(status).join('\n');
-  assert.match(text, /Grok Bot 0\.71\.2, computer use off, route: none yet/);
+  assert.match(text, /Grok Bot 0\.71\.2, computer use off, route: shell \(sleight-mcp js\)/);
   assert.match(text, /local daemon.*running.*PID/);
   assert.match(text, /local tool permission: always/);
   assert.doesNotMatch(JSON.stringify(status) + text, /PRIVATE|mcpBoxServers|filesKeyId/);
@@ -85,7 +85,7 @@ test('missing metadata stays unknown and never probes a PID', () => {
   assert.deepEqual(io.pids, []);
   const text = grokbotDoctorLines(status).join('\n');
   assert.match(text, /bundle not found/);
-  assert.match(text, /computer use unknown, route: none yet/);
+  assert.match(text, /computer use unknown, route: shell \(sleight-mcp js\)/);
   assert.match(text, /local daemon: unknown/);
   assert.match(text, /local tool permission: unknown/);
 });
@@ -144,6 +144,6 @@ test('launcher prints Grok Bot metadata before unavailable engine discovery stop
     grokbot: () => grokbotDoctorLines(grokbotStatus(io)), log: line => lines.push(line),
   });
   assert.equal(code, 1);
-  assert.match(lines[0], /Grok Bot 0\.71\.2, computer use off, route: none yet/);
+  assert.match(lines[0], /Grok Bot 0\.71\.2, computer use off, route: shell \(sleight-mcp js\)/);
   assert.match(lines.join('\n'), /local tool permission: always/);
 });

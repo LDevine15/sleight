@@ -108,7 +108,24 @@ marketplace add and `plugin install sleight --trust` succeeded, but `grok inspec
 import. Check its `mcpServers` target before relying on the marketplace install.
 
 Turbo is off in Grok for 1.4.0 because its calls have no trusted binding to the user's message. Use the engine path.
-Grok Bot.app support is unknown. See [Grok CLI](docs/other-hosts.md#grok-cli) for approval and result limits.
+See [Grok CLI](docs/other-hosts.md#grok-cli) for approval and result limits.
+
+## Grok Bot
+
+Clone sleight as below and set up ChatGPT's Computer Use on the Mac where Grok Bot's local daemon runs. Start one
+session there with the clone's absolute path:
+
+```bash
+/absolute/path/to/sleight/plugins/sleight/bin/sleight-mcp session
+```
+
+The session needs Apple's clang from Xcode Command Line Tools. Leave it running, then paste the
+[Grok Bot instructions](docs/other-hosts.md#grok-bot), with that same full path, into your bot. The bot calls
+`sleight-mcp js '<code>'` through its local shell. Its hosted STDIO MCP box cannot drive your Mac.
+
+Turn Grok Bot's own computer-use helper off. sleight shows its own approval panels, turbo stays off, and payments,
+bookings and submits ask each time. The session collects its engine after ten idle minutes or when stopped with
+Ctrl-C or SIGTERM. This route has offline tests. A live Grok Bot session has not been checked.
 
 ## Other MCP clients
 

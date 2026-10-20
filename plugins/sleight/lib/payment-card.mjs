@@ -20,13 +20,13 @@ export function createPaymentCard({ open = openConsentHost, now = Date.now, time
   const asking = new Map();
   return {
     ask(card) {
-      const key = JSON.stringify([card.site, card.shown, card.control]);
+      const key = JSON.stringify([card.site, card.shown, card.control, card.request, card.scoped]);
       if (!asking.has(key)) asking.set(key, show(card).finally(() => asking.delete(key)));
       return asking.get(key);
     },
     async close() { const ui = await channel?.catch(() => undefined); channel = undefined; ui?.close?.(); },
   };
-  async function show({ session, site, shown, control }) {
+  async function show({ session, site, shown, control, request, scoped }) {
     const ui = await connect();
     if (!ui) return;
     return new Promise(resolve => {
@@ -36,7 +36,8 @@ export function createPaymentCard({ open = openConsentHost, now = Date.now, time
       try {
         ui.present('payment-' + randomUUID(),
           { view: { clientSession: escapeLabel(session), origin: escapeLabel(site || 'this page') },
-            operation: { site: site || 'this page', amount: shown ?? 'no amount shown', button: control } },
+            operation: request === undefined ? { site: site || 'this page', amount: shown ?? 'no amount shown', button: control }
+              : { request, scope: scoped ? 'Allow for this Grok Bot session only' : 'Allow this action once' } },
           ['once', 'cancel'], event => { if (ui.authenticate(event) === true) done(event.choice === 'once' ? 'once' : 'cancel'); },
           { deadline: now() + timeoutMs });
       } catch { clearTimeout(timer); resolve(undefined); }

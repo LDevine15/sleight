@@ -44,7 +44,7 @@ export function grokbotDoctorLines(status) {
   const computerUse = status.computerUse === true ? 'on' : status.computerUse === false ? 'off' : 'unknown';
   const daemon = status.daemonRunning === true ? 'running (recorded PID exists, identity and health unchecked)'
     : status.daemonRunning === false ? 'not running (recorded PID exited)' : 'unknown';
-  const lines = [`Grok Bot${status.version ? ` ${status.version}` : ''}, computer use ${computerUse}, route: none yet`];
+  const lines = [`Grok Bot${status.version ? ` ${status.version}` : ''}, computer use ${computerUse}, route: shell (sleight-mcp js)`];
   if (status.installed === false) lines.push('note      Grok Bot bundle not found in /Applications or ~/Applications.');
   else if (!status.version) lines.push('note      Grok Bot bundle version unknown.');
   lines.push(`note      local daemon: ${daemon}`, `note      local tool permission: ${status.localToolPermission ?? 'unknown'}`);

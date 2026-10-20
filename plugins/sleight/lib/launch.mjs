@@ -885,6 +885,25 @@ export function approvalOptions(env = process.env, dialog = askWithDialog) {
   return { fallbackAsk: setting === 'client' ? undefined : prompt, ...extras };
 }
 
+// No shell argument or environment setting supplies the user's message or a lasting consent answer.
+export function shellRelayOptions(dialog, card = createPaymentCard()) {
+  const wording = hostWording({ name: 'Grok Bot' });
+  // Use the native consent host, which sleight's tools refuse to touch. There is no host form or JXA fallback.
+  dialog ??= async (message, scoped) => await card.ask({ session: 'Grok Bot', site: 'this Mac', request: message, scoped }) === 'once'
+    ? 'accept' : 'cancel';
+  return {
+    ask: async (message, scoped, options) => {
+      const answer = await dialog(message, scoped, { ...options, ...wording, always: false });
+      return answer === 'always' ? 'cancel' : answer;
+    },
+    wording: () => wording,
+    modHost: () => false,
+    alwaysAllow: undefined,
+    confirmPayments: 'always', rs: '0', prompt: null, panelOnly: true,
+    turboUnavailable: 'Grok Bot shell has no trusted user-turn binding',
+  };
+}
+
 // The fixed trusted host authenticates opt-in and package before binding a
 // branded frontend. Environment and project settings cannot supply one.
 export function directBrowserServer(server, frontend) {
@@ -966,7 +985,7 @@ export function turboState(readConfig, env = process.env) {
 }
 
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
-  directBrowser, ensureTurbo = false } = {}) {
+  directBrowser, ensureTurbo = false, shellRoute = false } = {}) {
   let finishStartup;
   const startupReady = new Promise(resolve => { finishStartup = resolve; });
   process.stdin.on('end', () => stop());
@@ -981,7 +1000,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const earlyHandTrace = [];
   const hand = (await import('./hand/client.mjs')).sessionHandClient({ trace: (direction, msg) => { if (handTrace) handTrace(direction, msg); else if (earlyHandTrace.length < 64) earlyHandTrace.push([direction, msg]); } });
   process.once('exit', () => hand?.close());
-  const prepared = directBrowser === undefined ? await prepareInstalledStartup(undefined, undefined, { ensure: ensureTurbo ? ensureInstalledTurbo : undefined }) : { directBrowser };
+  const prepared = shellRoute ? { turboUnavailable: shellRelayOptions().turboUnavailable }
+    : directBrowser === undefined ? await prepareInstalledStartup(undefined, undefined, { ensure: ensureTurbo ? ensureInstalledTurbo : undefined }) : { directBrowser };
   directBrowser = prepared.directBrowser;
   const turnHook = prepared.turnHook;
   process.once('exit', () => { turnHook?.close(); });
@@ -1071,7 +1091,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const openedFiles = new Map();
   process.once('exit', () => appHealth.close());
   const replayClient = replayBridge({ input: process.stdin, output: process.stdout });
-  const approval = approvalOptions();
+  const paymentCard = createPaymentCard();
+  const approval = shellRoute ? shellRelayOptions(undefined, paymentCard) : approvalOptions();
   const { wording, ...promptOptions } = approval;
   relay = createRelay({
     directBrowser, turboUnavailable: prepared.turboUnavailable,
@@ -1111,7 +1132,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     confirmPayments: paymentConfirmationSetting(),
     rs: process.env.SLEIGHT_RS,
     // sleight's own card for an engine-path payment the gate stopped (payment-card.mjs); opened on the first such payment.
-    paymentCard: createPaymentCard(),
+    paymentCard,
     clientIn: replayClient.clientIn,
     clientOut: replayClient.clientOut,
     serverIn: child.stdin,
@@ -1167,7 +1188,10 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     traceCode: process.env.SLEIGHT_TRACE_CODE === '1',
     // SLEIGHT_SKILL=none leaves the skill out, for A/Bs. The app-agnostic skill replaced the old one after
     // matching or beating it: 14.5 s against 15.6 s a run, and 38.9 s against 44.7 s on textedit-save (2026-10-11).
-    firstCallRules: process.env.SLEIGHT_SKILL === 'none' ? undefined : directBrowserRules(skillRules(), directBrowser),
+    firstCallRules: process.env.SLEIGHT_SKILL === 'none' ? undefined : shellRoute
+      ? skillRules(undefined, { ...process.env, SLEIGHT_CONFIRM_PAYMENTS: 'always', SLEIGHT_RS: '0' })
+        .replaceAll('`mcp__plugin_sleight_computer__js`', "`sleight-mcp js '<code>'` through the local shell")
+      : directBrowserRules(skillRules(), directBrowser),
     keyboardTaps: () => appHealth.keyboardTaps(),
     windowIdentity: window => appHealth.windowIdentity(window),
     // SLEIGHT_OFFSCREEN_CLICK=0 is the A/B arm without the offscreen-row note.
@@ -1203,6 +1227,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     onStopReported: report => {
       if (report.engine === 'unconfirmed') stoppingForReceipt = false;
     },
+    // These fixed values follow all environment-derived options, including alwaysAllow and modHost.
+    ...(shellRoute ? promptOptions : {}),
   });
   // Stamps for the harness tail (stop entry to exit); they only write when SLEIGHT_TRACE is set.
   process.once('exit', () => trace?.('process-exit', { code: process.exitCode ?? 0 }));
@@ -1285,7 +1311,11 @@ export function allowCommand(args, { list = listPreapproved, remove = removePrea
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  if (process.argv[2] === 'turbo') {
+  if (['session', 'js', 'js_reset', 'open_file', 'select_window', 'drag'].includes(process.argv[2])) {
+    try { process.exitCode = await (await import('./socket-bridge.mjs')).socketCommand(process.argv.slice(2)); }
+    catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }
+  } else if (process.argv[2] === '--socket-relay') run({ shellRoute: true }).catch(err => fail(err.message));
+  else if (process.argv[2] === 'turbo') {
     try { process.exitCode = (await import('./direct-browser/turbo-setup.mjs')).turboCommand(process.argv.slice(3)); }
     catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }
   } else if (process.argv[2] === 'hand') {

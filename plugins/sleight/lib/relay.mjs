@@ -829,6 +829,8 @@ export function createRelay({
   // SLEIGHT_TEXTLESS_HINT=0 leaves it out, including the open_file textless fallback.
   textlessHint = process.env.SLEIGHT_TEXTLESS_HINT !== '0',
   confirmPayments = 'requested',
+  // Shell hosts have no form surface. Every engine card goes to sleight's panel.
+  panelOnly = false,
   rs,
   // sleight's own payment card for the engine-path payment gate (payment-card.mjs); the launcher supplies it. Without it a
   // payment stop reaches Claude as it is.
@@ -5068,7 +5070,8 @@ export function createRelay({
       const warning = forbiddenTargetWarning(msg.params?._meta?.tool_params?.app);
       if (warning && msg.params) msg.params.message = `${msg.params.message ?? 'Allow Computer Use?'} ${warning}`;
     }
-    if (isAppApproval(msg)) {
+    // A shell action confirmation must reach the panel even when its app is pre-approved.
+    if (isAppApproval(msg) && (!panelOnly || approvalKey(msg) !== undefined)) {
       hand?.approval(msg.id, msg.params?._meta);
       // Observation only: the answer below is unchanged. The light check needs the key's time.
       if (msg.params?._meta?.tool_name === 'press_key') lightReturn?.keyPressed(msg.params._meta.tool_params?.app);
@@ -5106,7 +5109,7 @@ export function createRelay({
         return;
       }
     }
-    if (ask && (isAppApproval(msg) || (msg.method === 'elicitation/create' && msg.params?._meta?.connector_id === 'browser-use'))) {
+    if (ask && (isAppApproval(msg) || (msg.method === 'elicitation/create' && (panelOnly || msg.params?._meta?.connector_id === 'browser-use')))) {
       askUser(msg);
       return;
     }
