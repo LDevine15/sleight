@@ -9,7 +9,19 @@ import { join } from 'node:path';
 import net from 'node:net';
 import { ElectronBroker } from '../plugins/sleight/lib/direct-browser/electron/broker.mjs';
 import { createElectronHost } from '../plugins/sleight/lib/direct-browser/electron-host.mjs';
-import { createElectronConnection } from '../plugins/sleight/lib/direct-browser/electron-connection.mjs';
+import { createElectronConnection, createFilterTransport } from '../plugins/sleight/lib/direct-browser/electron-connection.mjs';
+
+// A fake Playwright adoption call over the real worker transport and authenticated host.
+export async function describeForPreflight(connection, sessionId) {
+  const transport = createFilterTransport({ session: connection.session });
+  try {
+    const reply = new Promise(resolve => { transport.onmessage = resolve; });
+    transport.send({ id: 1, method: 'DOM.describeNode', params: { objectId: 'fixture-object' }, sessionId });
+    const frame = await reply;
+    if (frame.error) throw Error('Protocol error (DOM.describeNode): ' + frame.error.message);
+    return frame.result;
+  } finally { transport.close(); }
+}
 
 export const tick = (ms = 0) => new Promise(resolve => ms ? setTimeout(resolve, ms) : setImmediate(resolve));
 export async function until(check, label = 'condition', ms = 2000) {

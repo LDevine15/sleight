@@ -5,7 +5,9 @@
 // admin's request and decide only what the host itself can check: the build is a reviewed registry build this host
 // was started for, an attached target is a page of that recipe, and quit goes through the app's own Quit.
 import { execFile } from 'node:child_process';
+import { closeSync, fstatSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { qualificationDiagnostic } from './electron-diagnostics.mjs';
 import { classifyTarget } from './electron-targets.mjs';
 import { readRecipeRegistry } from './electron-recipes.mjs';
 import { parseHostArguments, runHostEntry } from './electron-host-entry.mjs';
@@ -86,11 +88,24 @@ export function createExitRule({ status, close, exit, collect, reconcile, now = 
   });
 }
 
+export function readQualificationDiagnostic({ fd, stat = fstatSync, read = readFileSync, close = closeSync, unqualified = process.env.SLEIGHT_TURBO_UNQUALIFIED } = {}) {
+  if (fd !== 4) return;
+  try {
+    const info = stat(fd);
+    if (!info.isSocket() && !info.isFIFO() && !info.isFile()) return;
+    const startup = JSON.parse(String(read(fd, 'utf8')));
+    if (unqualified === '1') return qualificationDiagnostic(startup?.diagnostic);
+  } catch { /* No explicit startup sink, no diagnostics. Environment paths are ignored. */ }
+  finally { try { close(fd); } catch { /* Already closed or invalid. */ } }
+}
+
 async function main(argv) {
   const config = parseHostArguments(argv);
   if (config.adminFd === undefined) fail('ADMIN_FD_REQUIRED');
+  const diagnostic = readQualificationDiagnostic({ fd: config.startupFd });
   const registry = readRecipeRegistry(config.registryPath);
-  const host = await runHostEntry({ argv, deps: hostDependencies({ registry, builds: config.builds }) });
+  const host = await runHostEntry({ argv, deps: { ...hostDependencies({ registry, builds: config.builds }),
+    brokerOptions: { diagnostic } } });
   const rule = createExitRule({ status: () => host.status(), close: () => host.close(), collect: () => host.collect(), reconcile: () => host.reconcile(),
     exit: code => process.exit(code) });
   setInterval(() => { rule.check().catch(() => {}); }, 30000);

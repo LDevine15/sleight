@@ -115,7 +115,7 @@ export async function releaseAppConnection(parts) {
  * relaunch flow (electron-relaunch.mjs) after the debugger grant; a benchmark's temporary profile never looks for one.
  * memory: this worker's { declined } Set of bundle ids whose relaunch card the user cancelled this session. */
 export async function selectAppConnection({ bundleId, session, turn, apps, ui, consent, registry, admin, playwright, windows, profile, receipts, memory,
-  quitWaitMs = 60000, restoreWaitMs = 15000, dependencies = {} } = {}) {
+  quitWaitMs = 60000, restoreWaitMs = 15000, dependencies = {}, env = process.env } = {}) {
   if (!validBundleId(bundleId) || !SESSION.test(session ?? '') || typeof turn !== 'string' || !turn || !Array.isArray(apps) || !consent || !admin ||
       typeof windows !== 'function' || !plain(profile) || typeof profile.path !== 'string' || typeof profile.temporary !== 'boolean') fail('ELECTRON_CONNECTION_REQUIRED');
   void ui; // the debugger card goes through consent's own native channel
@@ -200,7 +200,8 @@ export async function selectAppConnection({ bundleId, session, turn, apps, ui, c
   // Revoking the grant stops this session's commands at the host. The pipe stays open.
   if (!hooked.has(grant)) {
     hooked.add(grant);
-    grant.onRevoke(() => { Promise.resolve().then(() => admin.revoke({ session })).catch(() => {}); });
+    grant.onRevoke(info => { Promise.resolve().then(() => admin.revoke({ session,
+      ...(info?.reason === 'turn-ended' ? { expected: true } : {}) })).catch(() => {}); });
   }
   const parts = { session };
   try {
@@ -244,7 +245,8 @@ export async function selectAppConnection({ bundleId, session, turn, apps, ui, c
       receipt = await d.qualify({ provider: parts.provider, targets: parts.targets, join: parts.join, pages: parts.pages, read: d.read, windows: parts.reader, recipe });
       receipts?.set(bundleId, receipt);
     }
-    if (receipt?.qualified !== true) fail('ELECTRON_UNQUALIFIED');
+    // Qualification must exercise the real path before it can produce a passing receipt. Only its own worker sets this.
+    if (receipt?.qualified !== true && env.SLEIGHT_TURBO_UNQUALIFIED !== '1') fail('ELECTRON_UNQUALIFIED');
     return Object.freeze({ ...parts, grant, instance, recipe, receipt, turn, ...(relaunched ? { relaunch: Object.freeze(relaunched) } : {}) });
   } catch (error) {
     await releaseAppConnection(parts);

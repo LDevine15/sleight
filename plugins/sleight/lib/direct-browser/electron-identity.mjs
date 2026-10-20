@@ -147,7 +147,9 @@ export const documentKind = (href, rules) => scheme(parts(href), rules).kind;
 export function createAppBinding({ instance, window, brokerEpoch, recipe, authority } = {}) {
   const app = validateAppInstance(instance);
   // A binding names a running process and its window; the unlaunched form has neither.
-  if (app.pid === 0 || !exactly(window, ['id', 'epoch']) || !natural(window.id) || !natural(window.epoch) || !natural(brokerEpoch) ||
+  // ElectronBroker starts at epoch 0. Window epochs start at 1; the broker counter has its own domain.
+  if (app.pid === 0 || !exactly(window, ['id', 'epoch']) || !natural(window.id) || !natural(window.epoch) ||
+      !Number.isSafeInteger(brokerEpoch) || brokerEpoch < 0 ||
       !plain(recipe) || !plain(authority) || !printable(authority.id, 128) || !SESSION.test(authority.session ?? '') ||
       authority.turn !== null && !printable(authority.turn, 4096) || typeof authority.current !== 'function') fail('INVALID_APP_BINDING');
   const schemes = recipeSchemes(recipe.schemes ?? []), fileRoots = recipeRoots(recipe.fileRoots ?? []), rules = { schemes, fileRoots };

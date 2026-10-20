@@ -2,7 +2,7 @@
 // answers them, and a 50 ms frontmost/pointer sampler. Nothing here launches, reads or touches anything outside memory.
 import { APPS } from './electron-qualification.mjs';
 
-const REFUSED_KEYS = new Set(['Meta+Q', 'Meta+W', 'Meta+H', 'Meta+M', 'Meta+Shift+W', 'Meta+Alt+H', 'Control+Meta+F']);
+const REFUSED_KEYS = new Set(['Meta+N', 'Meta+Shift+N', 'Meta+Q', 'Meta+W', 'Meta+H', 'Meta+M', 'Meta+Shift+W', 'Meta+Alt+H', 'Control+Meta+F']);
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const error = text => ({ text, isError: true, ms: 1 });
 
@@ -31,7 +31,10 @@ export function fakeDriver({ now = Date.now, app = APPS.vscode, overlay = { pres
     const lines = [`# ${app.name} 1.141.0 (pid ${current.pid}) window ${row.w.id} epoch ${row.w.epoch}, join ${joinNo} ${row.parked ? 'parked: ' + row.parked : 'joined'}`,
       '# Document: vscode-file://vscode-app (app document)',
       '- treeitem "a-notes.md" [ref=e1]', '- treeitem "a-scratch.txt" [ref=e2]'];
-    if (ui.scratch) lines.push('- tab "a-scratch.txt" [ref=e8]', '- textbox "a-scratch.txt, Editor content" [ref=e3]', `- text: ${editorText.replaceAll('\n', ' ')}`);
+    if (ui.scratch) lines.push(`- tab "a-scratch.txt"${ui.active === 'scratch' ? ' [selected]' : ''} [ref=e8]`);
+    if (ui.notes) lines.push(`- tab "a-notes.md"${ui.active === 'notes' ? ' [selected]' : ''} [ref=e9]`);
+    if (ui.active === 'scratch') lines.push('- textbox "a-scratch.txt, Editor content" [ref=e3]', `- text: ${editorText.replaceAll('\n', ' ')}`);
+    if (ui.active === 'notes') lines.push('- textbox "a-notes.md, Editor content" [ref=e10]');
     if (ui.quick) lines.push('- combobox "Search files by name" [ref=e4]');
     if (ui.terminal) lines.push('- textbox "Terminal 1, zsh" [ref=e5]');
     if (ui.preview) lines.push('- link "Item one" [ref=f1e6]');
@@ -47,7 +50,10 @@ export function fakeDriver({ now = Date.now, app = APPS.vscode, overlay = { pres
       if (['reload', 'back', 'forward', 'navigate'].includes(step.do)) return error('ELECTRON_NATIVE_HANDOFF: reload, back, forward and navigate would reload the app window; nothing was sent');
       if (step.do === 'press' && REFUSED_KEYS.has(step.key)) return error('ELECTRON_APP_KEY_REFUSED: this key quits, closes, hides or resizes the app window; use the app itself');
       if (step.do === 'type' && step.ref === 'e5') return error('ELECTRON_TERMINAL_REFUSED: input to a terminal is refused on turbo, as the engine refuses it');
-      if (step.do === 'click') { if (step.ref === 'e2') ui.scratch = true; if (step.ref === 'e1') ui.notes = true; }
+      if (step.do === 'click') {
+        if (['e2', 'e8'].includes(step.ref)) { ui.scratch = true; ui.active = 'scratch'; }
+        if (['e1', 'e9'].includes(step.ref)) { ui.notes = true; ui.active = 'notes'; }
+      }
       if (step.do === 'type' && step.ref === 'e3') editorText += step.text;
       if (step.do === 'press') {
         const key = step.key;
@@ -56,7 +62,6 @@ export function fakeDriver({ now = Date.now, app = APPS.vscode, overlay = { pres
         if (key === 'Meta+S') files['a-scratch.txt'] = editorText;
         if (key === 'Meta+Shift+V' && ui.notes) ui.preview = true;
         if (key === 'Control+`') ui.terminal = !ui.terminal;
-        if (key === 'Meta+Shift+N') windows.push({ id: windows.at(-1).id + 1, epoch: windows.length + 1 });
         if (key === 'Meta+Shift+S') { parked = 'native-modal'; lines.push(`${i + 1} press: sent. The app window then parked: native-modal. Read before continuing.`); break; }
       }
       lines.push(`${i + 1} ${step.do}: ok`);

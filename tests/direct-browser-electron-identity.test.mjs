@@ -72,9 +72,16 @@ test('only the trusted adapter mints a binding, and the shape is closed', () => 
   assert.equal(api.isAppBinding(bind()), true);
   for (const forged of [{}, { kind: 'app-document' }, { ...bind() }, JSON.parse(JSON.stringify(bind())), null, 'app']) assert.equal(api.isAppBinding(forged), false);
   for (const bad of [{ instance: { ...instance, approved: true } }, { instance: { ...instance, profile: 'relative' } }, { instance: { ...instance, pid: 0 } },
-    { instance: { ...instance, bundleId: 'x y' } }, { instance: { ...instance, temporary: 'no' } }, { window: { id: 1 } }, { brokerEpoch: 0 },
+    { instance: { ...instance, bundleId: 'x y' } }, { instance: { ...instance, temporary: 'no' } }, { window: { id: 1 } }, { brokerEpoch: -1 },
     { authority: { id: 'g', session: 'bad session', turn: null, current: () => true } }, { authority: { id: 'g', session: 'session', current: () => true } }])
     assert.throws(() => bind(bad), /INVALID_APP_(?:INSTANCE|BINDING)/, JSON.stringify(Object.keys(bad)));
+});
+test('the initial broker epoch zero binds a running app and stays distinct from later epochs', () => {
+  const initial = bind({ brokerEpoch: 0 });
+  assert.equal(initial.classify(file('a.html'), 'null').principal.kind, 'app-document');
+  assert.notEqual(initial.incarnation, bind({ brokerEpoch: 1 }).incarnation);
+  for (const brokerEpoch of [undefined, NaN, 0.5, '0', Number.MAX_SAFE_INTEGER + 1])
+    assert.throws(() => bind({ brokerEpoch }), /INVALID_APP_BINDING/);
 });
 test('the persistent app key follows build and profile, never the process', () => {
   const key = api.appKey(instance);

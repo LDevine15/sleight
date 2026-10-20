@@ -166,7 +166,7 @@ test('editor profile is a short temporary folder with update and telemetry off',
 });
 
 function editorHelper() {
-  const sandbox = { ObjC: { import() {} } };
+  const sandbox = { ObjC: { import() {}, bindFunction() {} } };
   runInNewContext(readFileSync(new URL('../bench/real-electron.js', import.meta.url), 'utf8'), sandbox);
   return sandbox;
 }
@@ -286,6 +286,53 @@ test('editor helper answers its own Don\'t Save sheet, forces only after the wai
   assert.equal(waitReady(QUIT, { running: () => app, windowCount: () => windows++ }, clock).windows, 1);
   assert.throws(() => waitReady(QUIT, { running: () => app, windowCount: () => 0 }, helperClock().clock), /did not open/);
   assert.throws(() => waitReady(QUIT, { running: () => null, windowCount: () => 0 }, helperClock().clock), /exited before/);
+});
+
+test('direct-launch quit checks kernel birth without requiring an AppKit launch date', () => {
+  const { quitElectron } = editorHelper(), actions = [];
+  const app = { pid: 900, bundle: QUIT.bundle, path: QUIT.appPath, launchedAtMs: null, pidBirth: '1234.000123',
+    terminate: () => { actions.push('terminate'); return true; }, forceTerminate: () => { actions.push('force'); return true; } };
+  const request = { ...QUIT, pidBirth: '1234.000123' };
+  let reads = 0;
+  const api = { running: () => ++reads === 1 ? app : { ...app, pidBirth: '1234.000456' }, dontSave: () => [], press: () => assert.fail('no sheet') };
+  assert.throws(() => quitElectron(request, api, helperClock().clock), /identity changed/);
+  assert.deepEqual(actions, ['terminate']);
+  actions.length = 0;
+  assert.throws(() => quitElectron({ ...request, pidBirth: '1234.000456' }, { ...api, running: () => app }, helperClock().clock), /identity changed/);
+  assert.deepEqual(actions, []);
+  reads = 0;
+  const closed = { ...api, running: () => ++reads === 1 ? app : null };
+  assert.equal(quitElectron(request, closed, helperClock().clock).reason, 'exited');
+  assert.deepEqual(actions, ['terminate']);
+});
+
+test('native editor birth decodes kernel microseconds and refuses short, zombie or wrong-pid replies', () => {
+  const helper = editorHelper();
+  helper.ObjC.unwrap = value => value;
+  let length = 136, pid = 900, status = 2;
+  helper.$ = {
+    NSMutableData: { dataWithLength: size => {
+      const bytes = Buffer.alloc(size);
+      return { mutableBytes: bytes, base64EncodedStringWithOptions: () => bytes.toString('base64') };
+    } },
+    proc_pidinfo: (askedPid, flavor, arg, bytes, size) => {
+      assert.deepEqual([askedPid, flavor, arg, size], [900, 3, 0, 136]);
+      bytes.writeUInt32LE(status, 4); bytes.writeUInt32LE(pid, 12);
+      bytes.writeBigUInt64LE(1792453448n, 120); bytes.writeBigUInt64LE(42n, 128);
+      return length;
+    },
+  };
+  assert.equal(helper.processBirth(900), '1792453448.000042');
+  const app = { processIdentifier: 900, bundleIdentifier: QUIT.bundle, launchDate: null, isNil: () => false, isTerminated: false,
+    bundleURL: { isNil: () => false, URLByResolvingSymlinksInPath: { path: QUIT.appPath } } };
+  helper.$.NSWorkspace = { sharedWorkspace: { runningApplications: { count: 1, objectAtIndex: () => app } } };
+  helper.$.NSRunningApplication = { runningApplicationWithProcessIdentifier: askedPid => { assert.equal(askedPid, 900); return app; } };
+  const rows = helper.nativeElectron().table(QUIT.bundle);
+  assert.equal(rows[0].pidBirth, '1792453448.000042');
+  assert.equal(rows[0].launchedAtMs, null);
+  length = 0; assert.equal(helper.processBirth(900), null);
+  length = 136; status = 5; assert.equal(helper.processBirth(900), null);
+  status = 2; pid = 901; assert.equal(helper.processBirth(900), null);
 });
 
 test('editor tasks give every arm the same isolated fixture and a tool-neutral prompt', async t => {

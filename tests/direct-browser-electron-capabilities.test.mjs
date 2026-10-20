@@ -59,7 +59,7 @@ test('a passing dry run: handshake, targets, one list, one 8000-character read, 
   assert.deepEqual(receipt.cells.delta, { width: 0, height: 0 });
   assert.deepEqual(receipt.cells.overlay, { before: false, after: false });
   assert.equal(receipt.cells.escape.sent, true);
-  assert.deepEqual(w.log, ['verify', 'list', 'read', 'geometry T1', 'windows', 'evaluate', 'guard', 'press Escape']);
+  assert.deepEqual(w.log, ['verify', 'list', 'geometry T1', 'windows', 'read', 'evaluate', 'guard', 'press Escape']);
   assert.ok(Object.isFrozen(receipt) && Object.isFrozen(receipt.cells));
   assert.deepEqual([w.entry.state.readJoinNo, w.entry.state.readEpoch], [undefined, undefined], 'the dry-run read does not stand in for the model\'s read');
 });
@@ -124,6 +124,8 @@ test('handshake, targets, read and recipe failures each end in a receipt with a 
   assert.equal((await api.qualify(world({ members: [] }).args)).failed, 'ELECTRON_QUALIFY_NO_TARGETS');
   const broken = await api.qualify(world({ read: async () => { throw Error('ELECTRON_PAGE_UNKNOWN'); } }).args);
   assert.equal(broken.failed, 'ELECTRON_PAGE_UNKNOWN'); assert.equal(broken.qualified, false);
+  assert.ok(broken.cells.delta, 'native geometry remains measured when the first snapshot fails');
+  assert.equal(broken.failedStage, 'read');
   assert.equal((await api.qualify(world({ read: async () => { throw Error('something odd'); } }).args)).failed, 'ELECTRON_QUALIFY_FAILED');
   assert.equal((await api.qualify({ ...world().args, recipe: { ...recipe, sha256: null } })).failed, 'RECIPE_UNFILLED');
   await assert.rejects(api.qualify({ ...world().args, pages: undefined }), /^Error: ELECTRON_QUALIFY_REQUIRED$/);

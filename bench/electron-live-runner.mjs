@@ -9,13 +9,15 @@
 // and in <out>/CARD.json (what to click, where, and by when), and every card's latency lands in summary.json.
 // Cleanup ends only what this run launched. A cleanup it cannot confirm keeps the live lock and stops the run.
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { APPS, HOLD, LOCK, RELAUNCH_CELLS, relaunchCellsFor, runQualification, scrubReceipt, waitForHold } from './electron-qualification.mjs';
+import { createRunReaper, resolveRunPython } from './electron-run-cleanup.mjs';
+import { withQualificationDiagnostics } from './electron-diagnostics.mjs';
+import { createRunRoot, listProcesses, turboAcceptance } from './electron-qualification-live.mjs';
 
 const execute = promisify(execFile);
 const ARM_SERVER = fileURLToPath(new URL('./electron-arm-server.mjs', import.meta.url));
@@ -69,7 +71,9 @@ export async function preflight({ phases, io }) {
   const problems = [], skips = {}, app = APPS.vscode;
   if (io.platform !== 'darwin') problems.push('MACOS_REQUIRED');
   if (!io.exists(app.path)) problems.push(`APP_MISSING: ${app.path}`);
-  if (!await io.turboInstalled()) problems.push('TURBO_NOT_INSTALLED: sleight-mcp turbo on first (the worker builds its native helpers from it)');
+  try {
+    if (!await io.turboInstalled()) problems.push('TURBO_NOT_INSTALLED: sleight-mcp turbo on first (the worker builds its native helpers from it)');
+  } catch (error) { problems.push(`TURBO_PREFLIGHT: ${error.message}`); }
   if (!io.exists(io.inspector)) problems.push('PERMISSION_OBSERVER_MISSING: codex-macos-inspect');
   if (phases.includes('arm') && !io.exists(io.armClaude)) problems.push(`ARM_MISSING: ${io.armClaude}`);
   if (phases.includes('relaunch')) {
@@ -220,7 +224,7 @@ export async function runPhases({ options, deps }) {
   if (!check.ok) return { code: 2, summary: { version: 1, kind: 'electron-live-run', mode: options.mode, at: iso(started), preflight: check, phases: [], cards: [] } };
   const expected = options.phases.filter(id => !check.skips[id]).flatMap(id => EXPECTED_CARDS[id].map(card => `${id}: ${card}`));
   log(`cards to click, in order (each within 120 s of its CARD line): ${expected.join('; ')}`);
-  let held = await waitForHold(io, { now, sleep }), release, keep = false;
+  let held = await waitForHold(io, { now, sleep }), release, keep = false, cleanup;
   release = await deps.lock();
   try {
     for (const id of options.phases) {
@@ -234,16 +238,23 @@ export async function runPhases({ options, deps }) {
         record = phaseRecord(id, t, now, r);
       } catch (error) { record = phaseRecord(id, t, now, { status: 'fail', error: String(error?.message ?? error).slice(0, 300), cleanup: { confirmed: false } }); }
       phases.push(record);
+      record.error ??= record.failed?.[0];
       log(`${id}: ${record.status} in ${(record.ms / 60000).toFixed(1)} min${record.error ? `, ${record.error}` : ''}${record.receipt ? ` (${record.receipt})` : ''}`);
       if (record.cleanup?.confirmed !== true) { keep = true; log(`${id}: cleanup unconfirmed; the run stops and keeps ${LOCK}`); break; }
+      if (record.status === 'fail') { log(`${id}: failed; later phases do not run`); break; }
       if (record.stopped) { log(`${id}: stopped (${record.stopped}); later phases do not run`); break; }
     }
   } finally {
+    if (!keep && deps.cleanup) {
+      try { cleanup = await deps.cleanup(); }
+      catch { cleanup = { confirmed: false, errors: ['RUN_PROCESS_CENSUS_FAILED'] }; }
+      if (cleanup.confirmed !== true) keep = true;
+    }
     if (!keep) await release();
   }
   const cards = watcher.summary();
   const summary = { version: 1, kind: 'electron-live-run', mode: options.mode, at: iso(started), ms: now() - started, heldMs: held, build: deps.build?.() ?? null,
-    model: { id: options.model, effort: options.effort }, preflight: check, phases, cards,
+    model: { id: options.model, effort: options.effort }, preflight: check, phases, cards, ...(cleanup ? { cleanup } : {}),
     clicks: { total: cards.length, delegated: cards.filter(c => c.delegated).length, late: cards.filter(c => c.status !== 'pending' && !c.inTime).length,
       unanswered: cards.filter(c => c.status === 'pending' || c.status === 'timeout').length } };
   const pass = phases.length > 0 && phases.every(p => p.status === 'pass' || p.status === 'skipped') && !keep;
@@ -251,7 +262,7 @@ export async function runPhases({ options, deps }) {
 }
 
 // ---- live phases
-async function livePhases({ options, root, out, cardLog, exec }) {
+async function livePhases({ options, root, out, cardLog, exec, python, pythonPath, qualificationDiagnosticPath }) {
   const { liveRuntime, liveDriver } = await import('./electron-qualification-live.mjs');
   const { observePermission } = await import('./real-permission.mjs');
   const permission = () => observePermission({ stopOnLiveHold: false });
@@ -260,21 +271,21 @@ async function livePhases({ options, root, out, cardLog, exec }) {
   const runOptions = { trials: options.trials, samples: options.samples, aliveWaitMs: options.aliveWaitMs, consentWaitMs: options.consentWaitMs, mode: 'live' };
   return {
     async qualify({ app }) {
-      const runtime = await liveRuntime(options, { io, clock });
+      const runtime = await liveRuntime(options, { io, clock, root, python });
       try {
-        const driver = runtime.driverFor(app, { cardLog });
+        const driver = runtime.driverFor(app, { cardLog, qualificationDiagnosticPath });
         const receipt = await runQualification({ app, driver, observer: runtime.observer, io, clock, options: runOptions });
         return { status: receipt.qualified ? 'pass' : 'fail', receipt: writeReceipt(out, receipt, app.key), qualified: receipt.qualified,
           cells: `${receipt.cells.filter(c => c.status === 'pass').length}/${receipt.cells.length}`, failed: receipt.cells.filter(c => c.status === 'fail').map(c => `${c.id}: ${c.error}`),
           cleanup: receipt.cleanup, ...(receipt.stopped ? { stopped: receipt.stopped.reason } : {}) };
-      } finally { await runtime.close().catch(() => {}); }
+      } finally { await runtime.close(); }
     },
     async arm({ app }) {
       const { worldAgentSetup } = await import('./world/arms/browser.mjs');
       const { runOwned } = await import('./preapproved-process.mjs');
       const base = mkdtempSync(join(root, 'arm-')), armDir = join(base, 'claude');
       mkdirSync(armDir);
-      const driver = liveDriver(app, { root: base, exec, observer: null, cardLog });
+      const driver = liveDriver(app, { root: base, exec, observer: null, cardLog, python, pythonPath, qualificationDiagnosticPath });
       let result, grade, cleanup;
       try {
         await driver.prepare();
@@ -296,6 +307,8 @@ async function livePhases({ options, root, out, cardLog, exec }) {
         const run = await runOwned(setup.command, args, { cwd: armDir, env: { ...setup.env, ANTHROPIC_SMALL_FAST_MODEL: options.model, MCP_TOOL_TIMEOUT: '600000' },
           timeoutMs: options.armTimeoutMs });
         result = { ...parseStream(run.stdout), wallMs: Date.now() - t, exit: run.exit, timedOut: run.timedOut };
+        const startupPath = join(config.stateDir, 'startup.jsonl');
+        if (existsSync(startupPath)) result.startup = readFileSync(startupPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
         writeFileSync(join(out, `arm-${iso(t).replace(/[:.]/g, '-')}.jsonl`), String(scrubReceipt(run.stdout)));
         grade = gradeArm({ text: result.text, scratch: driver.readFile('a-scratch.txt'), marker });
       } finally {
@@ -304,20 +317,20 @@ async function livePhases({ options, root, out, cardLog, exec }) {
         if (cleanup.confirmed) rmSync(base, { recursive: true, force: true });
       }
       return { status: grade?.pass && !result?.isError ? 'pass' : 'fail', model: options.model, effort: options.effort, result: scrubReceipt({ ...result, text: result?.text?.slice(-600) }),
-        grade, cleanup: scrubReceipt(cleanup) };
+        ...(result?.startup?.length ? { error: `arm startup (${result.startup[0].stage}): ${result.startup[0].code}` } : {}), grade, cleanup: scrubReceipt(cleanup) };
     },
     async relaunch({ app }) {
       const { liveRelaunchDriver } = await import('./electron-relaunch-live.mjs');
-      const observerRuntime = await liveRuntime(options, { io, clock });
+      const observerRuntime = await liveRuntime(options, { io, clock, root, python });
       try {
-        const driver = liveRelaunchDriver(app, { root, io, cardLog });
+        const driver = liveRelaunchDriver(app, { root, io, cardLog, python, qualificationDiagnosticPath });
         const receipt = await runQualification({ app, driver, observer: observerRuntime.observer, io, clock, cells: liveRelaunchCells(app), options: { ...runOptions, relaunch: true } });
         // Honest labels: the relaunch ran on the runner's clone with its own portable profile, never the owner's app or profile.
         receipt.profile = { ...receipt.profile, copy: 'benchmark clone with its own portable profile', owners: false };
         return { status: receipt.qualified ? 'pass' : 'fail', receipt: writeReceipt(out, receipt, app.key), qualified: receipt.qualified,
           cells: `${receipt.cells.filter(c => c.status === 'pass').length}/${receipt.cells.length}`, failed: receipt.cells.filter(c => c.status === 'fail').map(c => `${c.id}: ${c.error}`),
           cleanup: receipt.cleanup, ...(receipt.stopped ? { stopped: receipt.stopped.reason } : {}) };
-      } finally { await observerRuntime.close().catch(() => {}); }
+      } finally { await observerRuntime.close(); }
     },
   };
 }
@@ -327,18 +340,18 @@ async function liveIo(exec) {
   return {
     platform: process.platform, exists: existsSync, inspector: join(homedir(), '.codex/bin/codex-macos-inspect'),
     armClaude: join(homedir(), '.config/sleight-bench/world/arms/sleight/node_modules/.bin/claude'),
-    async turboInstalled() { try { return !!(await import('../plugins/sleight/lib/direct-browser/installed-config.mjs')).readInstalledConfig(); } catch { return false; } },
+    turboInstalled: () => turboAcceptance(),
     async ownerCopies(bundle) { const { helper } = await import('./electron-qualification-live.mjs'); return (await helper({ mode: 'pids', bundle }, exec)).pids; },
     quarantined: path => exec('/usr/bin/xattr', ['-p', 'com.apple.quarantine', path], { timeout: 5000 }).then(() => true, () => false),
     permission: async () => (await import('./real-permission.mjs')).observePermission({ stopOnLiveHold: false }),
   };
 }
 
-export async function main(argv = process.argv.slice(2), deps = {}) {
+async function runMain(argv, deps, qualificationDiagnosticPath) {
   const options = parseRunnerArgs(argv), log = deps.log ?? console.log, exec = deps.exec ?? execute;
   const out = resolve(options.out ?? fileURLToPath(new URL(`./results/electron/${new Date().toISOString().slice(0, 10)}/`, import.meta.url)));
   mkdirSync(out, { recursive: true });
-  const root = mkdtempSync(join(realpathSync(tmpdir()), 'sleight-elr-')), cardLog = join(root, 'cards.jsonl');
+  const root = createRunRoot('elr-'), cardLog = join(root, 'cards.jsonl');
   writeFileSync(cardLog, '', { mode: 0o600 });
   let result;
   try {
@@ -346,6 +359,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
       const { fakeRunnerDeps } = await import('./electron-live-runner-fakes.mjs');
       result = await runPhases({ options, deps: { ...fakeRunnerDeps({ cardLog, out }), log } });
     } else {
+      const python = 'python3', pythonPath = await resolveRunPython(python, { exec });
       const io = { ...await liveIo(exec), ...deps.io };
       const watcher = createCardWatcher({ cardLog, outDir: out, log, locate: async () => {
         const { helper } = await import('./electron-qualification-live.mjs');
@@ -355,7 +369,8 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
       const { acquireLiveLock } = await import('./live-lock.mjs');
       const commit = await exec('/usr/bin/git', ['-C', fileURLToPath(new URL('..', import.meta.url)), 'rev-parse', 'HEAD'], { timeout: 5000 }).then(r => r.stdout.trim(), () => null);
       result = await runPhases({ options, deps: { log, now: Date.now, sleep: ms => delay(ms), io, watcher, preflight, build: () => ({ commit }),
-        lock: () => acquireLiveLock(LOCK, { wait: true, interval: 15000 }), ...await livePhases({ options, root, out, cardLog, exec }), ...deps.phases } });
+        lock: () => acquireLiveLock(LOCK, { wait: true, interval: 15000 }),
+        cleanup: () => createRunReaper(root, { python, pythonPath, list: () => listProcesses(exec) }).reap(), ...await livePhases({ options, root, out, cardLog, exec, python, pythonPath, qualificationDiagnosticPath }), ...deps.phases } });
     }
     const path = join(out, `live-run-${result.summary.at.replace(/[:.]/g, '-')}.json`);
     writeFileSync(path, JSON.stringify(scrubReceipt(result.summary), null, 2) + '\n');
@@ -367,7 +382,14 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     if (!result?.keep) rmSync(root, { recursive: true, force: true });
     else log(`run folder kept for the leftovers: ${root}`);
   }
-  return result.code;
+  return result;
+}
+
+export async function main(argv = process.argv.slice(2), deps = {}) {
+  const options = parseRunnerArgs(argv);
+  if (options.mode === 'dry-run') return (await runMain(argv, deps)).code;
+  const out = resolve(options.out ?? fileURLToPath(new URL(`./results/electron/${new Date().toISOString().slice(0, 10)}/`, import.meta.url)));
+  return (await withQualificationDiagnostics(out, path => runMain(argv, deps, path))).code;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

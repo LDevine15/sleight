@@ -3,6 +3,24 @@
 ObjC.import('AppKit');
 ObjC.import('ApplicationServices');
 ObjC.import('CoreGraphics');
+ObjC.bindFunction('proc_pidinfo', ['int', ['int', 'int', 'unsigned long long', 'void *', 'int']]);
+
+// Same PROC_PIDTBSDINFO birth format as electron-windows.js and the pipe launcher.
+// AppKit launchDate is unavailable for direct posix_spawn launches.
+function processBirth(pid) {
+  var data = $.NSMutableData.dataWithLength(136);
+  if (Number($.proc_pidinfo(pid, 3, 0, data.mutableBytes, 136)) !== 136) return null;
+  var encoded = String(ObjC.unwrap(data.base64EncodedStringWithOptions(0))).replace(/=+$/, '');
+  var alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', bytes = [], bits = 0, value = 0;
+  for (var i = 0; i < encoded.length; i++) {
+    value = value << 6 | alphabet.indexOf(encoded[i]); bits += 6;
+    if (bits >= 8) { bits -= 8; bytes.push(value >> bits & 255); }
+  }
+  function u32(at) { return bytes[at] + bytes[at + 1] * Math.pow(2, 8) + bytes[at + 2] * Math.pow(2, 16) + bytes[at + 3] * Math.pow(2, 24); }
+  function u64(at) { return u32(at) + u32(at + 4) * Math.pow(2, 32); }
+  if (u32(12) !== pid || u32(4) === 5) return null;
+  return u64(120) + '.' + String(u64(128)).padStart(6, '0');
+}
 
 var DONT_SAVE = ["Don't Save", 'Don’t Save'];
 
@@ -16,7 +34,8 @@ function quitElectron(request, api, clock) {
     var actual = target.pid === -1 ? pid : target.pid;
     // A reused pid belongs to some other program, and the owner's own instance has a different pid: never quit either.
     if (actual !== pid || target.bundle !== request.bundle || target.path !== request.appPath ||
-        request.launchedAtMs !== undefined && target.launchedAtMs !== request.launchedAtMs) {
+        request.launchedAtMs !== undefined && target.launchedAtMs !== request.launchedAtMs ||
+        request.pidBirth !== undefined && target.pidBirth !== request.pidBirth) {
       throw new Error('Launched editor identity changed; quit refused (pid ' + actual + ', bundle ' + target.bundle + ')');
     }
   }
@@ -93,6 +112,7 @@ function nativeElectron() {
     return { pid: Number(app.processIdentifier), bundle: unwrap(app.bundleIdentifier),
       path: url && !url.isNil() ? unwrap(url.URLByResolvingSymlinksInPath.path) : '',
       launchedAtMs: app.launchDate && !app.launchDate.isNil() ? Number(app.launchDate.timeIntervalSince1970) * 1000 : null,
+      pidBirth: processBirth(Number(app.processIdentifier)),
       terminate: function () { return !!app.terminate; }, forceTerminate: function () { return !!app.forceTerminate; } };
   }
   return {
@@ -119,7 +139,7 @@ function nativeElectron() {
         var app = apps.objectAtIndex(i);
         if (unwrap(app.bundleIdentifier) !== bundle) continue;
         var target = this.running(Number(app.processIdentifier));
-        if (target) found.push({ pid: target.pid, bundle: target.bundle, path: target.path, launchedAtMs: target.launchedAtMs });
+        if (target) found.push({ pid: target.pid, bundle: target.bundle, path: target.path, launchedAtMs: target.launchedAtMs, pidBirth: target.pidBirth });
       }
       return found;
     },

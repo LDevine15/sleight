@@ -11,6 +11,7 @@
 import net from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
 import { createCDPFilter } from './cdp-filter.mjs';
+import { cdpReason, protocolCode } from './electron-cdp-errors.mjs';
 import { CHANNEL_VERSION, DEFAULT_MAX_FRAME_BYTES, FrameReader, HANDSHAKE_MAX_BYTES, bare, deriveChannel, macEqual, opener, plainJson,
   randomToken, sealer, validToken } from './electron-channel.mjs';
 
@@ -40,7 +41,8 @@ export function createFilterTransport(filter) {
       const route = message.sessionId;
       filter.session.send(message.method, message.params ?? {}, route).then(
         result => write({ id: message.id, result, ...(route === undefined ? {} : { sessionId: route }) }),
-        error => write({ id: message.id, error: { code: -32000, message: /^CDP_/.test(error.message) ? error.message : 'CDP_COMMAND_FAILED' },
+        error => write({ id: message.id, error: { code: error.cdp === true ? protocolCode(error.code) ?? -32000 : -32000,
+          message: error.cdp === true ? cdpReason(error.message) : /^CDP_/.test(error.message) ? error.message : 'CDP_COMMAND_FAILED' },
           ...(route === undefined ? {} : { sessionId: route }) }));
     },
     close() {
@@ -70,9 +72,9 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
     for (const callback of losses) try { callback(); } catch { /* a loss callback cannot stop the others */ }
   }
   function rejectAll(code) { for (const entry of pending.values()) entry.reject(Object.assign(Error(code), { dispatched: entry.sent })); pending.clear(); }
-  function fence() {
+  function fence(code = 'ELECTRON_CONNECTION_CLOSED') {
     fenced = true; opened = false; notifyLoss();
-    rejectAll('ELECTRON_CONNECTION_CLOSED');
+    rejectAll(code);
     if (socket && !socket.destroyed) socket.destroy();
   }
 
@@ -83,7 +85,9 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
       pending.delete(message.id);
       if (Object.hasOwn(message, 'error')) {
         const code = ordinaryObject(message.error) && typeof message.error.code === 'string' ? message.error.code : 'FAILED';
-        entry.reject(Object.assign(Error(code === 'CDP_ERROR' ? 'CDP_COMMAND_FAILED' : code), { hostCode: code, dispatched: message.error.dispatched === true }));
+        entry.reject(Object.assign(Error(code === 'CDP_ERROR' ? cdpReason(message.error.reason ?? message.error.message) : code),
+          { hostCode: code, dispatched: message.error.dispatched === true },
+          code === 'CDP_ERROR' ? { cdp: true, code: protocolCode(message.error.protocolCode) } : {}));
       } else entry.resolve(message.result);
     } else if (message.op === 'event') {
       const frame = message.frame;
@@ -94,7 +98,7 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
       }
     } else if (message.op === 'parked') {
       // Revoked, or the app connection parked: stop at once. The host keeps the app's pipe.
-      fence();
+      fence('CDP_HOST_PARKED');
     } else fail('ELECTRON_PROTOCOL');
   }
 

@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import {
   APPS, CELLS, RELAUNCH_CELLS, backgroundEvidence, cellsFor, main, parseArgs, percentile, prepareWorkspace, relaunchCellsFor, requiredCells, runQualification,
   scrubReceipt, timingSummary, validateReceipt,
@@ -15,12 +17,285 @@ const clock = () => { let t = 1000; return { now: () => t, advance: ms => { t +=
 const temp = t => { const dir = mkdtempSync(join(tmpdir(), 'eq-')); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir; };
 const quietIo = (over = {}) => ({ exists: () => false, permission: async () => false, ...over });
 
+test('fixture controls beyond the first snapshot page remain usable without earlier cells', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now }), tool = driver.tool;
+  driver.tool = async (name, args) => {
+    const result = await tool(name, args);
+    if (name !== 'browser_read' || result.isError) return result;
+    const lines = result.text.split('\n');
+    const head = lines.filter(line => line.startsWith('#'));
+    const body = lines.filter(line => !line.startsWith('#'));
+    // VS Code's explorer and workbench precede the editor, quick input and panel.
+    if (!args.find) return { ...result, text: [...head, '- treeitem "a-scratch.txt" [ref=e2]',
+      ...Array.from({ length: 160 }, (_, i) => `- button "workbench control ${i}" [ref=e${100 + i}]`)].join('\n') + '\n# Cut: more rows omitted. Continue with ref="more1_0".' };
+    const terms = args.find.toLowerCase().split('|');
+    return { ...result, text: [...head, ...body.filter(line => terms.some(term => line.toLowerCase().includes(term)))].join('\n') };
+  };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'key', 'background-type', 'webview', 'terminal-refusal', 'sheet-parking', 'revoke', 'timings'].includes(cell.id)),
+    options: { trials: 1, samples: 1, coldSamples: 1 } });
+  assert.deepEqual(receipt.cells.filter(cell => cell.status !== 'pass').map(cell => [cell.id, cell.error]), []);
+  assert.ok(receipt.cells.find(cell => cell.id === 'key').reads.some(read => read.find?.includes('Search files by name') && read.text.includes('combobox')));
+  assert.equal(receipt.cells[0].startMs, 1000);
+  assert.equal(receipt.cells[0].endMs, 1000);
+});
+
+test('a missing terminal ref cannot leave subsequent cells typing into the terminal', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now }), tool = driver.tool;
+  let terminalFocused = false;
+  driver.tool = async (name, args) => {
+    if (name === 'browser_act') for (const step of args.steps) {
+      if (step.do === 'click' && ['e2', 'e3', 'e8'].includes(step.ref)) terminalFocused = false;
+      if (step.do === 'press' && terminalFocused) return { text: 'ELECTRON_TERMINAL_REFUSED', isError: true };
+      if (step.key === 'Control+`') terminalFocused = true;
+    }
+    const r = await tool(name, args);
+    return name === 'browser_read' ? { ...r, text: r.text.replace(/^- textbox "Terminal[^\n]*\n?/gm, '') } : r;
+  };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'click', 'terminal-refusal', 'sheet-parking', 'revoke', 'timings'].includes(cell.id)),
+    options: { samples: 1, coldSamples: 1 } });
+  assert.equal(receipt.cells.find(cell => cell.id === 'terminal-refusal').error, 'TERMINAL_NOT_FOUND');
+  assert.deepEqual(receipt.cells.filter(cell => cell.status !== 'pass').map(cell => cell.id), ['terminal-refusal']);
+  assert.equal(terminalFocused, false);
+});
+
+test('window creation must refuse without input focus, and one window cannot qualify multi-window joins', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'new-window'].includes(cell.id)) });
+  const row = receipt.cells.at(-1);
+  assert.equal(row.status, 'pass', row.error);
+  assert.equal(row.detail.windowCreationRefused, true);
+  assert.equal(row.detail.joined, 1);
+  assert.ok(receipt.validation.unqualified.includes('MULTI_WINDOW_UNMEASURED'));
+  for (const detail of [{ windowCreationRefused: true }, { joined: 1 }, { joined: 2, falseJoins: 1 }, { joined: 2, falseJoins: 0 }]) {
+    const verdict = validateReceipt(receiptWith([passed('new-window', { detail,
+      windows: [{ id: 77, epoch: 1, pid: 501, pidBirth: 'b1' }] })]), { required: ['new-window'] });
+    assert.ok(verdict.unqualified.includes('MULTI_WINDOW_UNMEASURED'), JSON.stringify(detail));
+  }
+});
+
+test('cold act timing restores the editor before reconnecting, so Escape is the first action of the new turn', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now }), tool = driver.tool, reconnect = driver.reconnect;
+  let fresh = false;
+  const firstActions = [];
+  driver.reconnect = async options => { fresh = true; return reconnect(options); };
+  driver.tool = async (name, args) => {
+    if (name === 'browser_act' && fresh) {
+      fresh = false;
+      firstActions.push(args.steps[0]);
+    }
+    return tool(name, args);
+  };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'timings'].includes(cell.id)), options: { samples: 1, coldSamples: 1 } });
+  assert.equal(receipt.cells.at(-1).status, 'pass', receipt.cells.at(-1).error);
+  assert.deepEqual(firstActions.at(-1), { do: 'press', key: 'Escape' });
+  assert.equal(receipt.timings.act.cold.n, 1);
+});
+
+for (const target of ['key', 'webview']) test(`${target} waits for the intended selected document instead of using a previous editor`, async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now }), tool = driver.tool;
+  let switching = false, reads = 0;
+  driver.tool = async (name, args) => {
+    if (name === 'browser_act') for (const step of args.steps) {
+      if (step.ref === 'e99' || step.key === 'Meta+Shift+V' && switching)
+        return { isError: true, text: 'WRONG_DOCUMENT_INPUT' };
+      if (step.do === 'click' && ['e1', 'e2', 'e8', 'e9'].includes(step.ref)) { switching = true; reads = 0; }
+    }
+    const r = await tool(name, args);
+    if (name === 'browser_read' && args.find?.includes('Editor content') && switching) {
+      if (++reads < 3) return { ...r, text: r.text.replace(/\[selected\]/g, '')
+        .replace(/^- textbox[^\n]*/gm, '- textbox "previous.txt, Editor content" [ref=e99]') };
+      switching = false;
+    }
+    return r;
+  };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', target].includes(cell.id)) });
+  assert.equal(receipt.cells.at(-1).status, 'pass', receipt.cells.at(-1).error);
+  assert.ok(reads >= 3);
+});
+
+test('each failed cell records host park status and receipt scrubbing refuses arbitrary reasons', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.status = async () => ({ broker: 'parked', parked: { reason: 'pipe queue full', resumable: true } });
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: [{ id: 'click', run() { throw Error('click refused'); } }, { id: 'key', run() { throw Error('unavailable'); } }] });
+  for (const cell of receipt.cells) assert.deepEqual(cell.broker.parked, { reason: 'pipe queue full', resumable: true });
+  assert.deepEqual(scrubReceipt({ parked: { reason: 'page supplied private text', resumable: true, secretText: 'private' } }),
+    { parked: { reason: 'host failure', resumable: true } });
+});
+
+test('a failed first connection keeps the host refusal, skips dependent cells and still cleans up', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  let calls = 0;
+  driver.connect = async () => ({ error: 'STATE_DIR_TOO_LONG', stage: 'app-host', card: { shown: false, status: 'refused', error: 'STATE_DIR_TOO_LONG' }, launch: {}, connect: {} });
+  driver.tool = async () => { calls++; throw Error('dependent call'); };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c });
+  assert.equal(receipt.cells[0].error, 'STATE_DIR_TOO_LONG');
+  assert.ok(receipt.cells.slice(1).every(cell => cell.status === 'skipped' && cell.reason === 'STARTUP_FAILED'));
+  assert.equal(receipt.stopped.reason, 'startup-failed');
+  assert.equal(receipt.stopped.stage, 'app-host');
+  assert.equal(calls, 0);
+  assert.equal(receipt.cleanup.confirmed, true);
+});
+
+test('startup focus theft fails the consent cell even after an early selection error', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.identity = () => null;
+  driver.fixturePids = () => [501];
+  driver.connect = async () => { c.advance(200); return { error: 'ELECTRON_UNQUALIFIED', stage: 'app-select', card: { shown: true, status: 'granted' } }; };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now, fixturePid: () => 501, front: () => 501 }), io: quietIo(), clock: c });
+  const cell = receipt.cells[0];
+  assert.equal(cell.status, 'fail');
+  assert.match(cell.error, /BACKGROUND_FOCUS_TAKEN/);
+  assert.equal(cell.detail.startupError, 'ELECTRON_UNQUALIFIED');
+  assert.ok(cell.background.fixtureFront > 0);
+  assert.equal(cell.background.frontmostSamples[0].t, 1000);
+  assert.equal(cell.background.frontmostSamples[0].front, 501);
+  assert.equal(cell.background.frontmostSamples.at(-1).t, 1200);
+  assert.equal(receipt.cleanup.confirmed, true);
+  assert.ok(receipt.cells.slice(1).every(row => row.status === 'skipped'));
+});
+
+test('VS Code direct launch focus is a finding only through first window plus two seconds', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  const connect = driver.connect;
+  driver.connect = async () => { const result = await connect(); c.advance(2300); return result; };
+  driver.launchWindows = () => [{ pid: 501, execMs: 1050, firstWindowMs: 1200, endMs: 3200 }];
+  const observer = fakeObserver({ now: c.now, fixturePid: () => 501, front: t => t >= 1050 && t <= 3200 ? 501 : 90 });
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer, io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'connect'].includes(cell.id)) });
+  assert.deepEqual(receipt.cells.map(cell => cell.status), ['pass', 'pass']);
+  assert.equal(receipt.cells[0].background.fixtureFront, 44);
+  assert.equal(receipt.cells[0].background.unexpectedFixtureFront, 0);
+  assert.equal(receipt.launchFindings.length, 1);
+  const finding = receipt.launchFindings[0];
+  assert.equal(finding.kind, 'benchmark-direct-launch');
+  assert.equal(finding.execMs, 1050);
+  assert.equal(finding.firstWindowMs, 1200);
+  assert.equal(finding.endMs, 3200);
+  assert.equal(finding.background.fixtureFront, 44);
+  assert.equal(finding.frontmostSamples[0].t, 1050);
+  assert.equal(finding.frontmostSamples.at(-1).t, 3200);
+});
+
+for (const scenario of ['before-exec', 'after-cutoff', 'no-first-window', 'wrong-cutoff', 'cursor', 'later-cell', 'input-cell', 'relaunch']) {
+  test(`launch exception refuses ${scenario}`, async () => {
+    const c = clock(), driver = fakeDriver({ now: c.now });
+    driver.launchWindows = () => [{ pid: 501, execMs: 1050, firstWindowMs: scenario === 'no-first-window' ? null : 1100,
+      endMs: scenario === 'wrong-cutoff' ? 9999 : 3100 }];
+    const at = scenario === 'before-exec' ? 1000 : scenario === 'after-cutoff' ? 3150 : 1200;
+    const observer = fakeObserver({ now: c.now, fixturePid: () => 501, front: t => t === at ? 501 : 90 });
+    const receipt = await runQualification({ app: scenario === 'cursor' ? APPS.cursor : APPS.vscode, driver, observer, io: quietIo(), clock: c,
+      cells: [{ id: scenario === 'later-cell' ? 'connect' : 'consent-card', input: scenario === 'input-cell',
+        run: async () => { c.advance(2200); return {}; } }], options: { relaunch: scenario === 'relaunch' } });
+    if (scenario === 'relaunch') assert.equal(receipt.launchFindings.length, 0);
+    else { assert.equal(receipt.cells[0].status, 'fail'); assert.match(receipt.cells[0].error, /BACKGROUND_FOCUS_TAKEN/); }
+  });
+}
+
+test('a launch finding preserves the original selection failure', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.fixturePids = () => [501];
+  driver.identity = () => null;
+  driver.launchWindows = () => [{ pid: 501, execMs: 1000, firstWindowMs: 1050, endMs: 3050 }];
+  driver.connect = async () => { c.advance(2100); return { error: 'ELECTRON_UNQUALIFIED', stage: 'app-select', card: { shown: true, status: 'granted' } }; };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now, front: t => t <= 3050 ? 501 : 90 }), io: quietIo(), clock: c });
+  assert.equal(receipt.cells[0].error, 'ELECTRON_UNQUALIFIED');
+  assert.equal(receipt.launchFindings[0].background.fixtureFront, 42);
+  assert.ok(receipt.cells.slice(1).every(row => row.status === 'skipped'));
+});
+
+test('a sampler gap cannot stretch the launch allowance to a late first-window observation', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.launchWindows = () => [{ pid: 501, execMs: 1000, firstWindowMs: 5000, endMs: 7000 }];
+  const observer = { samples: async () => [1000, 5000, 7000].map(t => ({ t, front: 501, x: 1, y: 2 })) };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer, io: quietIo(), clock: c,
+    cells: [{ id: 'consent-card', run: async () => { c.advance(6000); } }] });
+  assert.equal(receipt.cells[0].status, 'fail');
+  assert.match(receipt.cells[0].error, /BACKGROUND_FOCUS_TAKEN/);
+  assert.equal(receipt.launchFindings.length, 0);
+});
+
+test('background typing requires Terminal and sends no input with a different front app', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.frontApp = async () => ({ pid: 90, bundle: 'fixture.other' });
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'background-type'].includes(cell.id)) });
+  assert.equal(receipt.cells.at(-1).error, 'BACKGROUND_TERMINAL_REQUIRED');
+  assert.ok(!driver.calls.some(call => call.name === 'browser_act'));
+});
+
+test('background typing arranges Terminal before its measured input window', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now }), frontCalls = [];
+  let ready = false;
+  driver.frontApp = async options => {
+    frontCalls.push(options ?? null);
+    if (options?.bundle === 'com.apple.Terminal') { c.advance(500); ready = true; }
+    return { pid: 90, bundle: ready ? 'com.apple.Terminal' : 'fixture.other' };
+  };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'click', 'background-type'].includes(cell.id)), options: { trials: 1 } });
+  assert.equal(receipt.cells.at(-1).status, 'pass', receipt.cells.at(-1).error);
+  assert.equal(frontCalls[0]?.bundle, 'com.apple.Terminal');
+  assert.equal(receipt.cells.at(-1).setup.ms, 500);
+  assert.equal(receipt.cells.at(-1).ms, 0);
+});
+
+test('host loss with a confirmed app exit never probes a second launch or asks for its card', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.killHost = async () => { await driver.quitByPid(); return { appAlive: false, appExited: true }; };
+  driver.secondLaunch = async () => assert.fail('a dead temporary app has no unresolved live owner');
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'quit', 'host-kill'].includes(cell.id)) });
+  assert.equal(receipt.cells.at(-1).status, 'pass', receipt.cells.at(-1).error);
+  assert.equal(receipt.cells.at(-1).detail.appSurvived, false);
+  assert.equal(receipt.cells.at(-1).detail.secondLaunchProbed, false);
+});
+
+test('an unconfirmed Quit stops host-kill before it launches another fixture', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now }), connect = driver.connect;
+  let launches = 0;
+  driver.connect = async () => { launches++; return connect(); };
+  driver.quit = async () => { throw Error('QUIT_REFUSED'); };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'quit', 'host-kill'].includes(cell.id)) });
+  assert.equal(receipt.cells.at(-1).error, 'PREVIOUS_QUIT_UNCONFIRMED');
+  assert.equal(launches, 1);
+});
+
+test('failed reads preserve the listed app tab and sanitized snapshot diagnostics', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now }), tool = driver.tool;
+  const failure = { stage: 'dom', reason: 'budget' };
+  driver.tool = async (name, args) => name === 'browser_read' ? { text: 'Snapshot unavailable', isError: true, snapshotFailure: failure } : tool(name, args);
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'read'].includes(cell.id)) });
+  const tab = receipt.cells.find(cell => cell.id === 'list').detail.tabs[0].tab;
+  assert.match(tab, /^t[0-9a-f]{32}$/);
+  assert.deepEqual(receipt.cells.at(-1).detail, { tab, snapshotFailure: failure });
+});
+
+test('a clone launch refusal stops relaunch dependents and keeps launch diagnostics', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.relaunch = async () => { throw Object.assign(Error('COPY_LAUNCH_IDENTITY_MISMATCH'), { detail: { stage: 'copy-launch', pid: 42, expected: '/fixture/Copy.app', actual: '/Applications/Code.app' } }); };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c, options: { relaunch: true } });
+  assert.equal(receipt.cells[0].error, 'COPY_LAUNCH_IDENTITY_MISMATCH');
+  assert.equal(receipt.cells[0].detail.actual, '/Applications/Code.app');
+  assert.ok(receipt.cells.slice(1).every(cell => cell.status === 'skipped'));
+  assert.equal(receipt.cleanup.confirmed, true);
+});
+
 function receiptWith(cells, over = {}) {
   return { version: 1, kind: 'electron-qualification', mode: 'live', app: { bundleId: APPS.vscode.bundleId },
     profile: { temporary: true }, cleanup: { confirmed: true, appExited: true, profileRemoved: true, left: [] },
     timings: {}, cells, qualified: false, ...over };
 }
-const passed = (id, extra = {}) => ({ id, status: 'pass', ms: 5, identity, windows: [{ id: 77, epoch: 1, pid: 501, pidBirth: 'b1' }], ...extra });
+const passed = (id, extra = {}) => ({ id, status: 'pass', ms: 5, identity,
+  ...(id === 'new-window' ? { detail: { joined: 2, falseJoins: 0 } } : {}),
+  windows: [{ id: 77, epoch: 1, pid: 501, pidBirth: 'b1' }, ...(id === 'new-window' ? [{ id: 78, epoch: 1, pid: 501, pidBirth: 'b1' }] : [])], ...extra });
 
 test('live runs need --owner-away; dry runs need nothing; both together and unknown options refuse', () => {
   assert.throws(() => parseArgs([]), /OWNER_AWAY_REQUIRED/);
@@ -217,19 +492,27 @@ test('dry-run main writes a scrubbed receipt and never takes the live lock or la
   assert.ok(!touched.includes('/tmp/sleight-live.lock'));
 });
 
-test('a live run keeps the lock when cleanup is unconfirmed, and releases it once cleanup is confirmed', async () => {
+test('a live run keeps the lock when cleanup is unconfirmed, and releases it once cleanup is confirmed', async t => {
   for (const confirmed of [true, false]) {
     const c = clock();
     let released = 0;
     const driver = fakeDriver({ now: c.now });
     driver.cleanup = async () => ({ confirmed, appExited: confirmed, profileRemoved: confirmed, left: confirmed ? [] : [4242] });
-    const code = await main(['--owner-away', '--out', '/nonexistent-never-written', '--samples', '2', '--trials', '2'], {
-      io: quietIo({ acquireLock: async () => async () => { released++; } }), clock: c, log: () => {},
-      liveRuntime: async () => ({ driverFor: () => driver, observer: fakeObserver({ now: c.now, fixturePid: () => driver.identity()?.pid }), close: async () => {} }),
+    const out = temp(t), logs = [];
+    const code = await main(['--owner-away', '--out', out, '--samples', '2', '--trials', '2'], {
+      io: quietIo({ acquireLock: async () => async () => { released++; } }), clock: c, log: line => logs.push(line),
+      liveRuntime: async (_options, { qualificationDiagnosticPath: path }) => {
+        assert.equal(statSync(path).mode & 0o777, 0o600);
+        appendFileSync(path, JSON.stringify({ method: 'DOM.describeNode', code: -32000, message: 'upstream test cause' }) + '\n');
+        return { driverFor: () => driver, observer: fakeObserver({ now: c.now, fixturePid: () => driver.identity()?.pid }), close: async () => {} };
+      },
       write: () => {},
     });
     assert.equal(released, confirmed ? 1 : 0);
     assert.equal(code, 1, 'a live fake run is unqualified either way');
+    assert.deepEqual(JSON.parse(readFileSync(join(out, 'summary.json'), 'utf8')).firstCDPFailure,
+      { method: 'DOM.describeNode', code: -32000, message: 'upstream test cause' });
+    assert.ok(logs.every(line => !line.includes('upstream test cause')));
   }
 });
 
@@ -270,10 +553,27 @@ test('the native helper samples frontmost and pointer without activating anythin
   const sandbox = {};
   runInNewContext(source + '\nthis.sampleLoop = sampleLoop;', sandbox);
   sandbox.sampleLoop({ intervalMs: 50, durationMs: 200 }, {
-    front: () => 90, pointer: () => ({ x: 1, y: 2 }), stopped: () => false,
+    front: () => 90, pointer: () => ({ x: 1, y: 2 }), stopped: () => false, windowPids: () => t >= 50 ? [501] : [],
   }, { now: () => t, wait: ms => { t += ms; }, emit: value => emitted.push(value) });
   assert.equal(emitted.length, 4);
-  assert.deepEqual(JSON.parse(JSON.stringify(emitted[0])), { t: 0, front: 90, x: 1, y: 2 });
+  assert.deepEqual(JSON.parse(JSON.stringify(emitted[0])), { t: 0, front: 90, x: 1, y: 2, windowPids: [] });
+  assert.deepEqual(JSON.parse(JSON.stringify(emitted[1].windowPids)), [501]);
+});
+
+test('the live observer finds the first window only for the launched PID after its exec time', async t => {
+  const { liveObserver } = await import('../bench/electron-qualification-live.mjs');
+  const child = new EventEmitter(); child.stdout = new PassThrough();
+  const observer = liveObserver({ root: temp(t), spawnProcess: () => child });
+  await observer.start();
+  for (const sample of [
+    { t: 900, windowPids: [501] }, { t: 1000, windowPids: [777] },
+    { t: 1050, windowPids: [501, 777] }, { t: 1100, windowPids: [501] },
+  ]) child.stdout.write(JSON.stringify({ front: 90, x: 1, y: 2, ...sample }) + '\n');
+  assert.equal(observer.firstWindowMs(501, 1000), 1050);
+  assert.equal(observer.firstWindowMs(777, 1000), 1000);
+  assert.equal(observer.firstWindowMs(888, 1000), null);
+  child.emit('exit', 0);
+  await observer.stop();
 });
 
 // H2: the recipe the driver writes is one the registry and instanceFromRecipe accept for the same bundle.
@@ -346,7 +646,7 @@ test('pipeRetained reads the host status after a worker drop: parked and resumab
 test('the live disconnect cell passes only when the disconnect itself refuses the next call through the live worker', async t => {
   const { liveDriver } = await import('../bench/electron-qualification-live.mjs');
   const cell = CELLS.find(row => row.id === 'disconnect');
-  const ps = '  501 Sun Oct 18 16:00:00 2026 /Applications/Fake.app/Contents/MacOS/Fake --user-data-dir=/x\n';
+  const ps = `  501 1 ${process.getuid()} Sun Oct 18 16:00:00 2026 /Applications/Fake.app/Contents/MacOS/Fake --user-data-dir=/x\n`;
   const exec = async file => ({ stdout: file === '/bin/ps' ? ps : '', stderr: '' });
   async function attempt({ revokes = true, left = [] } = {}) {
     const forks = [];
@@ -359,7 +659,7 @@ test('the live disconnect cell passes only when the disconnect itself refuses th
         if (op === 'call') return { ok: true, result: revoked ? { text: 'Turbo is unavailable for this turn.', isError: true } : { text: 'one app tab', isError: false } };
         if (op === 'disconnect') {
           revoked = revokes;
-          return { ok: true, status: { ownership: { state: 'owned' }, broker: { state: 'parked', parked: { resumable: true } }, workers: left } };
+          return { ok: true, status: { ownership: { state: 'owned' }, broker: { state: 'parked', parked: { reason: 'revoked', resumable: true } }, workers: left } };
         }
         return { ok: true };
       } };
@@ -369,11 +669,12 @@ test('the live disconnect cell passes only when the disconnect itself refuses th
     await driver.reconnect({});
     const c = { driver, state: {}, options: { consentWaitMs: 0 }, consent() {}, tool: (name, args) => driver.tool(name, args), list: async () => [{ tab: 't1' }] };
     const result = await cell.run(c).then(out => ({ out }), error => ({ error: error.message }));
-    return { ...result, forks };
+    return { ...result, forks, parked: c.state.disconnectParked };
   }
   const good = await attempt();
   assert.deepEqual(good.out?.detail, { appAlive: true, pipeRetained: true }, good.error);
   assert.equal(good.forks.length, 1, 'one worker: disconnected, refused, then reconnected in place');
+  assert.deepEqual(good.parked, { reason: 'revoked', resumable: true });
   assert.deepEqual(good.forks[0].ops, ['start', 'disconnect', 'call', 'start']);
   assert.match((await attempt({ revokes: false })).error ?? '', /DISCONNECTED_CALL_ANSWERED/, 'a disconnect that leaves calls answered fails the cell');
   assert.match((await attempt({ left: ['v3other'] })).error ?? '', /DISCONNECT_WORKER_CHANNEL_OPEN/, 'a worker channel still open at the host fails it');

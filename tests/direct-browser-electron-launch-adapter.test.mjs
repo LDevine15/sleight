@@ -252,6 +252,10 @@ test('the host entry is inert without a trusted parent and accepts only exact, a
   const ok = ['--state-dir', '/tmp/s', '--registry', '/tmp/r.json', '--temp-root', '/tmp/t', '--builds', 'a,b'];
   assert.equal(parseHostArguments(ok).builds.length, 2);
   assert.equal(parseHostArguments([...ok, '--admin-fd', '3']).adminFd, 3);
+  assert.equal(parseHostArguments([...ok, '--admin-fd', '3', '--startup-fd', '4']).startupFd, 4);
+  assert.equal(parseHostArguments(ok).startupFd, undefined);
+  for (const fd of ['0', '3', '5', '04', 'x']) assert.throws(() => parseHostArguments([...ok, '--startup-fd', fd]), /ARGUMENTS_INVALID/);
+  assert.throws(() => parseHostArguments([...ok, '--admin-fd', '4', '--startup-fd', '4']), /ARGUMENTS_INVALID/);
   for (const fd of ['1', '2', 'x', '-1', '300']) assert.throws(() => parseHostArguments([...ok, '--admin-fd', fd]), /ARGUMENTS_INVALID/, fd);
   const line = Buffer.alloc(32, 7).toString('base64url') + '\n';
   assert.deepEqual(readAdminSecret(3, () => line), Buffer.alloc(32, 7), 'the parent secret arrives on a descriptor, never a file');

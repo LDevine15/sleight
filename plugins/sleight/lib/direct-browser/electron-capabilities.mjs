@@ -33,19 +33,22 @@ export async function qualify({ provider, targets, join, pages, read, windows, r
     return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('ELECTRON_QUALIFY_DEADLINE')), left); })]).finally(() => clearTimeout(timer));
   };
   const delta = (geometry, frame) => ({ width: Math.abs(geometry.width - frame.width), height: Math.abs(geometry.height - frame.height) });
-  let failed;
+  let failed, stage = 'recipe';
   try {
     if (typeof recipe.sha256 !== 'string') fail('RECIPE_UNFILLED');
+    stage = 'handshake';
     const identity = provider.identity;
     if (!plain(identity) || !Number.isSafeInteger(identity.pid) || typeof identity.birth !== 'string' || !Number.isSafeInteger(identity.epoch) ||
         typeof identity.instance !== 'string') fail('ELECTRON_QUALIFY_HANDSHAKE');
     receipt.instance = { pid: identity.pid, pidBirth: identity.birth, epoch: identity.epoch, instance: identity.instance };
     if (await within(provider.verifyConnection(provider.session)) !== true) fail('ELECTRON_QUALIFY_HANDSHAKE');
     cells.handshake = true;
+    stage = 'targets';
     if (join.parked()) fail('ELECTRON_PARKED');
     const members = targets.members();
     cells.targets = members.length;
     if (!members.length) fail('ELECTRON_QUALIFY_NO_TARGETS');
+    stage = 'join';
     const rows = await within(pages.list());
     const joined = rows.filter(row => row.status === 'joined');
     cells.joined = joined.length;
@@ -60,18 +63,26 @@ export async function qualify({ provider, targets, join, pages, read, windows, r
       fail('ELECTRON_QUALIFY_NO_JOIN');
     }
     const entry = pages.tab(joined[0].tab);
-    // The dry-run read is never delivered to the model, so it must not count as the model's read of this join.
-    const { readJoinNo, readEpoch } = entry.state;
-    const started = now();
-    let text;
-    try { ({ text } = await within(read(entry.page, { maxChars: 8000 }))); } finally { Object.assign(entry.state, { readJoinNo, readEpoch }); }
-    cells.read = { ms: now() - started, bytes: Buffer.byteLength(String(text ?? '')) };
+    // Geometry can be measured even when the snapshot is unavailable.
+    stage = 'geometry';
     const geometry = await within(targets.geometry(entry.targetId));
     const frame = (await within(windows.read())).windows.find(row => row.id === entry.window.id && row.epoch === entry.window.epoch)?.frame;
     if (!frame) fail('ELECTRON_QUALIFY_NO_JOIN');
     cells.delta = delta(geometry, frame);
+    stage = 'read';
+    // The dry-run read is never delivered to the model, so it must not count as the model's read of this join.
+    const { readJoinNo, readEpoch } = entry.state;
+    const started = now();
+    let text;
+    try { ({ text } = await within(read(entry.page, { maxChars: 8000 }))); }
+    finally {
+      Object.assign(entry.state, { readJoinNo, readEpoch });
+    }
+    cells.read = { ms: now() - started, bytes: Buffer.byteLength(String(text ?? '')) };
+    stage = 'overlay';
     const overlay = { before: await within(entry.page.evaluate(blockingDialog)) === true, after: false };
     cells.overlay = overlay;
+    stage = 'escape';
     const pressed = now();
     await within(pages.guard(entry, async () => {
       if (now() >= end) fail('ELECTRON_QUALIFY_DEADLINE');
@@ -83,7 +94,7 @@ export async function qualify({ provider, targets, join, pages, read, windows, r
     if (overlay.after) fail('ELECTRON_STARTUP_OVERLAY');
   } catch (error) { failed = codeOf(error); }
   receipt.ms = now() - at;
-  if (failed) receipt.failed = failed;
+  if (failed) { receipt.failed = failed; receipt.failedStage = stage; }
   receipt.qualified = !failed;
   receipts.add(freeze(receipt));
   return receipt;

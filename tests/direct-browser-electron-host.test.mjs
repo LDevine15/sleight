@@ -357,19 +357,19 @@ test('revocation parks the app connection, ends every channel, and a command del
   finish(h);
 });
 
-test('PID reuse parks the connection without sending, and the workers are told', async () => {
+test('PID reuse parks the connection without sending, and the workers are told', async t => {
   const h = await started();
+  t.after(() => finish(h));
   const a = await connectWorker(h.host, 'a');
   let lost = 0; a.connection.onConnectionLoss(() => lost++);
   const route = await pageSession(a.connection);
   const original = h.adapter.rpc.bind(h.adapter);
   h.adapter.rpc = async (cmd, payload) => cmd === 'inspect' ? { parent: { pid: 4100, birth: 'someone-else' }, descendants: [], complete: true } : original(cmd, payload);
-  await assert.rejects(a.connection.session.send('Runtime.evaluate', {}, route), /APP_PARKED|FAILED|CLOSED|identity/);
+  await assert.rejects(a.connection.session.send('Runtime.evaluate', {}, route), /^Error: CDP_HOST_PARKED$/);
   await until(() => lost === 1, 'loss');
   assert.ok(!methods(h).includes('Runtime.evaluate'));
   assert.equal(h.host.status().broker.parked.resumable, false);
   await assert.rejects(h.host.resume(), /not resumable/);
-  finish(h);
 });
 
 test('selectedBrowser is fixed at construction from the host and session, before any connect', async () => {

@@ -11,15 +11,18 @@ import { createActionRunner } from './act.mjs';
 import { createFillFields } from './fill.mjs';
 import { keyClass } from './rules.mjs';
 import { trustedLocatorRead } from './trusted-dom.mjs';
+import { staleDOMReference } from './electron-cdp-errors.mjs';
 
-export const APP_KEY_REFUSED = /^(?:Meta|Cmd|Command)\+(?:Q|W|H|M|Shift\+W|Option\+H|Alt\+H)$|^(?:Control|Ctrl)\+(?:Meta|Cmd|Command)\+F$/i;
+export const APP_KEY_REFUSED = /^(?:Meta|Cmd|Command)\+(?:N|Q|W|H|M|Shift\+(?:N|W)|Option\+H|Alt\+H)$|^(?:Control|Ctrl)\+(?:Meta|Cmd|Command)\+F$/i;
 export const APP_REFUSALS = Object.freeze({
   terminal:   'ELECTRON_TERMINAL_REFUSED: input to a terminal is refused on turbo, as the engine refuses it',
-  appKey:     'ELECTRON_APP_KEY_REFUSED: this key quits, closes, hides or resizes the app window; use the app itself',
+  appKey:     'ELECTRON_APP_KEY_REFUSED: this key opens, quits, closes, hides or resizes an app window; use the app itself',
   navigation: 'ELECTRON_NATIVE_HANDOFF: reload, back, forward and navigate would reload the app window; nothing was sent',
   viewport:   'ELECTRON_NATIVE_HANDOFF: viewport changes are not available in an app window',
   upload:     'ELECTRON_NATIVE_HANDOFF: file choosers in an app are native; use the app tools',
   stale:      'ELECTRON_STALE_READ: the app window changed since your last read (join N); read again before input',
+  staleElement: 'ELECTRON_STALE_READ: the element changed since your last read; read again before input',
+  staleNative: 'ELECTRON_STALE_READ: the element changed since your last read; use the native path for that element',
   parked:     'ELECTRON_PARKED: <reason>. The app window needs native handling or a fresh read; nothing was sent',
 });
 
@@ -82,13 +85,15 @@ async function validated(run) {
 export function createAppRunners({ pages, invalidateRefs, check, snapshot, inspectElement, acknowledgeSnapshot = () => true, now, sleep, hand } = {}) {
   if (typeof pages?.guard !== 'function' || typeof invalidateRefs !== 'function' || typeof check !== 'function' ||
       typeof snapshot !== 'function' || typeof acknowledgeSnapshot !== 'function') throw Error('ELECTRON_HANDOFF_REQUIRED');
-  // captures: page -> capture number -> the join it was taken at. delivered: entry state -> the join of the last read the model got.
-  const captures = new WeakMap(), delivered = new WeakMap();
+  // Captures and deliveries carry the join, target epoch and refusal epoch at read start.
+  // These maps last one turn. Repeated expired refs on one page require native input until the next turn.
+  const captures = new WeakMap(), delivered = new WeakMap(), refusalEpochs = new WeakMap(), staleCounts = new WeakMap();
   const entryOf = page => typeof pages.entryOf === 'function' ? pages.entryOf(page) : undefined;
   async function read(page, options) {
-    const entry = entryOf(page), at = entry && { joinNo: entry.joinNo, epoch: entry.epoch };
+    const entry = entryOf(page), at = entry && { joinNo: entry.joinNo, epoch: entry.epoch,
+      state: entry.state, refusalEpoch: refusalEpochs.get(entry.state) ?? 0 };
     const value = await snapshot(page, options);
-    if (at && Number.isSafeInteger(value?.number)) {
+    if (at && at.refusalEpoch === (refusalEpochs.get(at.state) ?? 0) && Number.isSafeInteger(value?.number)) {
       let bank = captures.get(page);
       if (!bank) { bank = new Map(); captures.set(page, bank); }
       bank.set(value.number, at);
@@ -99,8 +104,8 @@ export function createAppRunners({ pages, invalidateRefs, check, snapshot, inspe
   // The worker calls this once the exact snapshot text reached the client (worker.mjs deliverSnapshot).
   function acknowledge(page, number) {
     const at = captures.get(page)?.get(number), entry = entryOf(page);
+    if (!at || !entry || at.state !== entry.state || at.refusalEpoch !== (refusalEpochs.get(entry.state) ?? 0)) return false;
     if (acknowledgeSnapshot(page, number) !== true) return false;
-    if (!at || !entry) return false;
     captures.get(page).delete(number);
     const last = delivered.get(entry.state);
     if (!last || last.epoch !== at.epoch || last.joinNo <= at.joinNo) delivered.set(entry.state, at);
@@ -115,14 +120,27 @@ export function createAppRunners({ pages, invalidateRefs, check, snapshot, inspe
   // Inside the guard, right before the base runner: a delivered read at this join, and no terminal under the input.
   async function preflight(entry, step) {
     const { state } = entry, last = delivered.get(state);
+    if (staleCounts.get(entry.page) >= 2) throw refused(APP_REFUSALS.staleNative);
     if (!(state.readJoinNo === entry.joinNo && state.readEpoch === entry.epoch && state.snapshotNo > 0 &&
-        last?.joinNo === entry.joinNo && last.epoch === entry.epoch)) throw refused(APP_REFUSALS.stale.replace('join N', 'join ' + entry.joinNo));
+        last?.joinNo === entry.joinNo && last.epoch === entry.epoch && last.refusalEpoch === (refusalEpochs.get(state) ?? 0)))
+      throw refused(refusalEpochs.has(state) ? APP_REFUSALS.staleElement : APP_REFUSALS.stale.replace('join N', 'join ' + entry.joinNo));
     if (!TERMINAL_INPUT.has(step.do)) return;
     const { page } = entry, locators = [];
     if (step.ref) locators.push(page.getByRef(step.ref));
     else if (step.do === 'press') { const focus = page.locator(':focus'); locators.push(await focus.count() ? focus : page.locator('body')); }
     if (step.do === 'drag' && step.to) locators.push(page.getByRef(step.to));
-    for (const locator of locators) if (await isTerminal(locator)) throw refused(APP_REFUSALS.terminal);
+    try {
+      for (const locator of locators) if (await isTerminal(locator)) throw refused(APP_REFUSALS.terminal);
+    } catch (error) {
+      if (!staleDOMReference(error.message)) throw error;
+      // No terminal proof means no input. Retire the read as well as its refs, so a caller
+      // cannot retry against a replacement node until a new snapshot was delivered.
+      refusalEpochs.set(state, (refusalEpochs.get(state) ?? 0) + 1);
+      const count = (staleCounts.get(page) ?? 0) + 1;
+      staleCounts.set(page, count);
+      delivered.delete(state); captures.delete(page); invalidateRefs(page);
+      throw refused(count >= 2 ? APP_REFUSALS.staleNative : APP_REFUSALS.staleElement);
+    }
   }
 
   async function runSteps(entry, steps, ctx, { siteCheck } = {}) {

@@ -2,6 +2,7 @@
 // Trusted host code supplies launch/ownership/authority; model code never gets this object.
 import { EventEmitter } from 'node:events';
 import { randomInt, randomUUID } from 'node:crypto';
+import { hostReason } from '../electron-host-reasons.mjs';
 
 const methodPattern = /^[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*$/;
 const sessionPattern = value => typeof value === 'string' && value.length > 0 && value.length <= 512;
@@ -45,48 +46,96 @@ export function transportMethodAllowed(method) {
 
 export class PipeTransport extends EventEmitter {
   // firstId: the id before the first command's. CDP ids are 32-bit; the pipe keeper's own command uses 2**31 - 2.
-  constructor({ input, output, maxFrameBytes = 1024 * 1024, maxPending = 64, timeoutMs = 5000, firstId = 0 }) {
+  constructor({ input, output, maxFrameBytes = 1024 * 1024, maxPending = 256, maxQueuedBytes = 8 * 1024 * 1024, timeoutMs = 5000, firstId = 0, onCdpFailure, onQueueFailure }) {
     super();
-    for (const value of [maxFrameBytes, maxPending, timeoutMs]) {
+    for (const value of [maxFrameBytes, maxPending, maxQueuedBytes, timeoutMs]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error('invalid pipe bound');
     }
+    if (maxPending > 256) throw new Error('invalid pipe bound');
     if (!Number.isSafeInteger(firstId) || firstId < 0 || firstId > 2 ** 30) throw new Error('invalid pipe bound');
-    Object.assign(this, { input, output, maxFrameBytes, maxPending, timeoutMs });
-    this.pending = new Map(); this.routes = new Map(); this.sequence = firstId; this.buffer = Buffer.alloc(0);
-    this.failed = false; this.blocked = false;
+    Object.assign(this, { input, output, maxFrameBytes, maxPending, maxQueuedBytes, timeoutMs, onCdpFailure, onQueueFailure });
+    this.pending = new Map(); this.routes = new Map(); this.writes = new Map(); this.sequence = firstId; this.buffer = Buffer.alloc(0);
+    this.failed = false; this.blocked = false; this.queuedBytes = 0; this.drainVersion = 0; this.inFlight = new Set();
     output.on('data', chunk => this.receive(chunk));
     output.on('end', () => this.fail(new Error('pipe EOF')));
     output.on('error', error => this.fail(error));
     input.on('error', error => this.fail(error));
-    input.on('drain', () => { this.blocked = false; });
+    input.on('drain', () => { this.drainVersion++; this.blocked = false; this.flush(); });
   }
 
-  request(method, params = {}, { signal, sessionId } = {}) {
-    if (this.failed) return Promise.reject(new Error('pipe unavailable'));
-    if (this.blocked || this.pending.size >= this.maxPending) return Promise.reject(new Error('pipe queue full'));
-    if (signal?.aborted) return Promise.reject(new Error('cancelled before dispatch'));
-    if (typeof method !== 'string' || !method || !plainObject(params)) return Promise.reject(new Error('invalid pipe command'));
-    if (sessionId !== undefined && !sessionPattern(sessionId)) return Promise.reject(new Error('invalid pipe session'));
+  request(method, params = {}, { signal, sessionId, beforeWrite, owner } = {}) {
+    const refused = message => Promise.reject(Object.assign(new Error(message), { dispatched: false }));
+    if (this.failed) return refused('pipe unavailable');
+    if (this.pending.size >= this.maxPending) { this.queueFailure('count bound'); return refused('pipe queue full'); }
+    if (signal?.aborted) return refused('cancelled before dispatch');
+    if (typeof method !== 'string' || !method || !plainObject(params)) return refused('invalid pipe command');
+    if (sessionId !== undefined && !sessionPattern(sessionId)) return refused('invalid pipe session');
     const id = ++this.sequence;
     let bytes;
     try { bytes = Buffer.from(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0'); }
-    catch (error) { return Promise.reject(error); }
-    if (bytes.length - 1 > this.maxFrameBytes) return Promise.reject(new Error('outbound frame too large'));
+    catch { return refused('invalid pipe command'); }
+    if (bytes.length - 1 > this.maxFrameBytes) return refused('outbound frame too large');
+    // Bound retained, unwritten Buffers as well as command count, including the NUL delimiter.
+    if (this.queuedBytes + bytes.length > this.maxQueuedBytes) { this.queueFailure('byte bound'); return refused('pipe queue full'); }
     return new Promise((resolve, reject) => {
+      let dispatched = false;
       const finish = (error, value) => {
         if (!this.pending.delete(id)) return;
-        this.routes.delete(id);
+        this.routes.delete(id); this.inFlight.delete(id); this.removeWrite(id);
         clearTimeout(timer); signal?.removeEventListener('abort', abort);
-        if (error) reject(error); else resolve(value);
+        if (error?.cdp === true) {
+          try { this.onCdpFailure?.({ method, code: error.code, message: error.message, sessionId }); } catch {}
+        }
+        if (error) reject(Object.assign(error, { dispatched })); else resolve(value);
       };
-      const unknown = message => Object.assign(new Error(message), { dispatched: true });
-      const abort = () => finish(unknown('cancelled; effect unknown'));
-      const timer = setTimeout(() => finish(unknown('pipe timeout; effect unknown')), this.timeoutMs);
+      const abort = () => finish(new Error(dispatched ? 'cancelled; effect unknown' : 'cancelled before dispatch'));
+      const timedOut = () => {
+        if (!dispatched) this.queueFailure('queue timeout');
+        finish(new Error(dispatched ? 'pipe timeout; effect unknown' : 'pipe queue timeout'));
+      };
+      let timer = setTimeout(timedOut, this.timeoutMs);
       this.pending.set(id, finish); this.routes.set(id, sessionId);
       signal?.addEventListener('abort', abort, { once: true });
-      try { this.blocked = !this.input.write(bytes); }
-      catch (error) { finish(error); this.fail(error); }
+      this.queuedBytes += bytes.length;
+      this.writes.set(id, { finish, owner, bytes: bytes.length, write: () => {
+        try { beforeWrite?.(); } catch (error) { finish(error); return; }
+        // write(false) accepted this frame. Only later frames wait for drain.
+        dispatched = true;
+        this.inFlight.add(id);
+        clearTimeout(timer); timer = setTimeout(timedOut, this.timeoutMs);
+        const drainVersion = this.drainVersion;
+        try { this.blocked = !this.input.write(bytes) && drainVersion === this.drainVersion; }
+        catch (error) {
+          const reason = hostReason('write ' + error?.code);
+          this.fail(new Error(reason === 'host failure' ? 'pipe write failed' : reason));
+        }
+      } });
+      this.flush();
     });
+  }
+
+  queueFailure(reason) {
+    try { this.onQueueFailure?.(reason); } catch {}
+  }
+
+  flush() {
+    if (this.flushing) return;
+    this.flushing = true;
+    try {
+      while (!this.failed && !this.blocked && this.writes.size) {
+        const [id, entry] = this.writes.entries().next().value;
+        this.removeWrite(id); entry.write();
+      }
+    } finally { this.flushing = false; }
+  }
+
+  removeWrite(id) {
+    const entry = this.writes.get(id);
+    if (entry) { this.queuedBytes -= entry.bytes; this.writes.delete(id); }
+  }
+
+  cancelQueued(reason, matches = () => true) {
+    for (const entry of [...this.writes.values()]) if (matches(entry.owner)) entry.finish(new Error(reason));
   }
 
   receive(chunk) {
@@ -105,7 +154,7 @@ export class PipeTransport extends EventEmitter {
         if (Object.hasOwn(message, 'id')) {
           const finish = this.pending.get(message.id);
           // A reply belongs to exactly the route its request used, and carries a result or an error, never both or neither.
-          if (finish && (message.sessionId !== this.routes.get(message.id) ||
+          if (finish && (!this.inFlight.has(message.id) || message.sessionId !== this.routes.get(message.id) ||
               Object.hasOwn(message, 'result') === Object.hasOwn(message, 'error'))) throw new Error('invalid pipe reply');
           finish?.(message.error ? Object.assign(new Error(message.error.message || 'CDP error'), { dispatched: true, cdp: true, code: message.error.code }) : null, message.result);
         } else {
@@ -125,7 +174,7 @@ export class PipeTransport extends EventEmitter {
   fail(error) {
     if (this.failed) return;
     this.failed = true; this.buffer = Buffer.alloc(0);
-    for (const finish of [...this.pending.values()]) finish(Object.assign(new Error(error.message), { dispatched: true }));
+    for (const finish of [...this.pending.values()]) finish(new Error(error.message));
     // Never destroy/end the last writer on revoke, timeout or malformed input.
     this.emit('fault', error);
   }
@@ -138,7 +187,7 @@ export class ElectronBroker extends EventEmitter {
   // admitTarget(targetInfo) is the trusted parent's answer to "does this target belong to the opted-in app?"
   // (electron-targets.mjs's classification). Without it no target can be attached.
   constructor({ ownership, launch, authorizeLaunch, authorize, admitTarget, transport = {}, identityMaxAgeMs = 1000, now = () => performance.now(),
-    maxRoutes = 4096, maxTransportQueue = 256 }) {
+    maxRoutes = 4096, maxTransportQueue = 256, diagnostic }) {
     super();
     for (const value of [identityMaxAgeMs, maxRoutes, maxTransportQueue]) {
       if (!Number.isSafeInteger(value) || value < 0) throw new Error('invalid broker bound');
@@ -150,6 +199,17 @@ export class ElectronBroker extends EventEmitter {
     // sessionId -> { client, top }. Flat CDP session ids are capabilities, so a client may only
     // send on sessions its own attach created (or that an owned session auto-attached).
     this.routes = new Map();
+    this.diagnostic = diagnostic;
+    if (diagnostic) this.transportOptions = { ...transport, onQueueFailure: reason => this.queueFailure(reason), onCdpFailure: row => {
+      const type = this.routes.get(row.sessionId)?.targetType ?? (row.sessionId === undefined ? 'browser' : 'unknown');
+      const kind = ['page', 'iframe', 'webview'].includes(type) ? type : /worker/.test(type) ? 'worker' : 'unknown';
+      diagnostic({ method: row.method, code: row.code, message: row.message, sessionKind: kind,
+        targetType: type, frameType: type === 'page' ? 'top' : type === 'iframe' || type === 'webview' ? type : 'none' });
+    } };
+  }
+
+  queueFailure(reason) {
+    try { this.diagnostic?.({ method: 'queue', message: reason, code: 'CDP_HOST_QUEUE_FULL', sessionKind: 'host' }); } catch {}
   }
 
   receipt(fields) {
@@ -181,9 +241,9 @@ export class ElectronBroker extends EventEmitter {
       this.identity = Object.freeze({ ...this.child.identity });
       await this.ownership.record(this.owned, this.identity);
       this.pipe = new PipeTransport({ ...this.transportOptions, input: this.child.input, output: this.child.output });
-      this.pipe.on('fault', error => this.park(error.message));
+      this.pipe.on('fault', error => this.park(error.message, { expected: this.expectedExit === true && ['pipe EOF', 'owned app collected'].includes(error.message) }));
       this.pipe.on('event', frame => this.routeEvent(frame));
-      this.child.events.on('exit', code => { this.exitCode = code; this.park('child exited'); });
+      this.child.events.on('exit', code => { this.exitCode = code; this.park('child exited', { expected: this.expectedExit === true }); });
       const observed = await this.inspect();
       if (!same(observed.parent, this.identity)) throw new Error('launch PID changed or single-instance forwarding');
       if (this.state !== 'launching') throw new Error('launch interrupted before handshake');
@@ -206,9 +266,9 @@ export class ElectronBroker extends EventEmitter {
     if (!identityValid(child?.identity)) throw new Error('launch PID incarnation missing');
     this.owned = owned; this.child = child; this.identity = Object.freeze({ ...child.identity });
     this.pipe = new PipeTransport({ ...this.transportOptions, input: child.input, output: child.output, firstId: randomInt(1 << 20, 1 << 30) });
-    this.pipe.on('fault', error => this.park(error.message));
+    this.pipe.on('fault', error => this.park(error.message, { expected: this.expectedExit === true && ['pipe EOF', 'owned app collected'].includes(error.message) }));
     this.pipe.on('event', frame => this.routeEvent(frame));
-    child.events.on('exit', code => { this.exitCode = code; this.park('child exited'); });
+    child.events.on('exit', code => { this.exitCode = code; this.park('child exited', { expected: this.expectedExit === true }); });
     this.state = 'parked'; this.epoch++; this.parkedBy = { reason: 'host restarted', resumable: true };
     return this.receipt({ phase: 'unknown', event: 'adopted', identity: this.identity });
   }
@@ -218,7 +278,7 @@ export class ElectronBroker extends EventEmitter {
   // authenticates a worker, and it is never serialized.
   connect(session) {
     if (this.state !== 'ready' || typeof session !== 'string' || !session) throw new Error('broker not ready');
-    if (this.clients.size >= 64) throw new Error('client queue full');
+    if (this.clients.size >= 64) { this.queueFailure('count bound'); throw new Error('client queue full'); }
     const client = Object.freeze({ session, nonce: randomUUID(), epoch: this.epoch });
     this.clients.add(client); return client;
   }
@@ -227,6 +287,7 @@ export class ElectronBroker extends EventEmitter {
   // afterwards (best effort), so a lost worker cannot leave a page paused behind its attachment.
   detach(client) {
     if (!this.clients.delete(client)) return;
+    this.pipe?.cancelQueued('client detached during preparation', owner => owner === client);
     const owned = [...this.routes].filter(([, route]) => route.client === client);
     for (const [name] of owned) this.routes.delete(name);
     if (this.state !== 'ready') return;
@@ -240,18 +301,25 @@ export class ElectronBroker extends EventEmitter {
 
   // park() stops every command and keeps the app's pipe open. Unless the cause is resumable,
   // only a deliberate user action (Quit, or reconciliation after the app exits) leaves the state.
-  park(reason, { resumable = false } = {}) {
+  park(reason, { resumable = false, expected = false } = {}) {
     if (this.state === 'collected') return;
     const first = this.state !== 'parked';
     this.state = 'parked'; this.epoch++; this.clients.clear(); this.routes.clear();
     this.parkedBy = { reason, resumable: resumable && (this.parkedBy ? this.parkedBy.resumable : true) };
+    this.pipe?.cancelQueued('broker parked during preparation');
     this.verifiedAt = -Infinity;
     this.receipt({ phase: 'unknown', event: 'parked', reason });
+    try { this.diagnostic?.({ method: 'park', message: hostReason(reason), code: null, sessionKind: 'host', ...(expected === true ? { expected: true } : {}) }); } catch {}
     if (first) this.emit('parked', { reason, resumable: this.parkedBy.resumable, epoch: this.epoch });
   }
 
   // Revocation and disconnect park a healthy connection so a later authorized worker can resume it.
-  revoke(reason) { this.park(reason, { resumable: true }); }
+  revoke(reason, { expected = false } = {}) {
+    // A repeated revoke of the same parked grant adds no authority change. In particular,
+    // a qualification disconnect also triggers the local consent store's revoke hook.
+    if (this.state === 'parked' && this.parkedBy?.reason === reason && this.parkedBy.resumable) return;
+    this.park(reason, { resumable: true, expected });
+  }
 
   // Resume is never automatic: the host calls it after fresh authority. It needs a live pipe with
   // nothing in flight, the same app incarnation, and a new handshake.
@@ -303,7 +371,7 @@ export class ElectronBroker extends EventEmitter {
     if (!route) return; // A session that no client owns has no listener.
     if (frame.method === 'Target.attachedToTarget' && sessionPattern(params.sessionId)) {
       if (this.routes.size >= this.maxRoutes) { this.park('route bank full'); return; }
-      if (!this.routes.has(params.sessionId)) this.routes.set(params.sessionId, { client: route.client, top: false });
+      if (!this.routes.has(params.sessionId)) this.routes.set(params.sessionId, { client: route.client, top: false, targetType: params.targetInfo?.type });
     }
     this.emit('routed', route.client, frame);
     if (frame.method === 'Target.detachedFromTarget' && sessionPattern(params.sessionId)) this.routes.delete(params.sessionId);
@@ -314,13 +382,13 @@ export class ElectronBroker extends EventEmitter {
   // shared rules before any command exists, so this method grants no operation. It checks
   // transport access only: the client, the epoch, the app incarnation, the method class and
   // the session ownership, and it repeats those checks after every await.
-  async transportSend(client, { method, params = {}, sessionId } = {}, { signal } = {}) {
+  async transportSend(client, { method, params = {}, sessionId } = {}, { signal, beforeWrite } = {}) {
     if (this.state !== 'ready') throw new Error('broker parked');
     if (!this.clients.has(client) || client.epoch !== this.epoch) throw new Error('unauthenticated client');
     if (!transportCallAllowed(method, params, sessionId)) throw new Error('CDP_COMMAND_REFUSED');
     if (sessionId !== undefined && (!sessionPattern(sessionId) || this.routes.get(sessionId)?.client !== client)) throw new Error('CDP_SESSION_NOT_OWNED');
     this.ownsParamSessions(client, params);
-    if (this.queued >= this.maxTransportQueue) throw new Error('authorization queue full');
+    if (this.queued >= this.maxTransportQueue) { this.queueFailure('authorization queue'); throw new Error('authorization queue full'); }
     const epoch = this.epoch;
     this.queued++;
     try {
@@ -332,38 +400,45 @@ export class ElectronBroker extends EventEmitter {
     if (!this.clients.has(client)) throw new Error('client detached during preparation');
     if (sessionId !== undefined && this.routes.get(sessionId)?.client !== client) throw new Error('CDP_SESSION_NOT_OWNED');
     this.ownsParamSessions(client, params);
+    let attachedInfo;
     if (method === 'Target.attachToTarget') {
-      await this.admitted(params.targetId);
+      attachedInfo = await this.admitted(params.targetId, client);
       if (epoch !== this.epoch || this.state !== 'ready' || !this.clients.has(client)) throw new Error('broker parked during preparation');
     }
     if (signal?.aborted) throw new Error('cancelled before dispatch');
     try {
-      const result = await this.pipe.request(method, params, { signal, sessionId });
+      const result = await this.pipe.request(method, params, { signal, sessionId, owner: client, beforeWrite: () => {
+        if (epoch !== this.epoch || this.state !== 'ready') throw new Error('broker parked during preparation');
+        if (!this.clients.has(client)) throw new Error('client detached during preparation');
+        if (sessionId !== undefined && this.routes.get(sessionId)?.client !== client) throw new Error('CDP_SESSION_NOT_OWNED');
+        this.ownsParamSessions(client, params);
+        beforeWrite?.();
+      } });
       if (epoch !== this.epoch) throw Object.assign(new Error('authority changed in flight; effect unknown'), { dispatched: true });
       if (method === 'Target.attachToTarget' && sessionPattern(result?.sessionId)) {
         if (this.routes.size >= this.maxRoutes || this.routes.has(result.sessionId)) { this.park('route bank full'); throw new Error('CDP_SESSION_NOT_OWNED'); }
-        this.routes.set(result.sessionId, { client, top: sessionId === undefined, targetId: params.targetId });
+        this.routes.set(result.sessionId, { client, top: sessionId === undefined, targetId: params.targetId, targetType: attachedInfo?.type });
       } else if (method === 'Target.detachFromTarget' && sessionPattern(params.sessionId) && this.routes.get(params.sessionId)?.client === client) {
         this.routes.delete(params.sessionId);
       }
       return result;
     } catch (error) {
-      // A command the app answered with an error is an ordinary failure. Anything else leaves
-      // the effect unknown, so the connection parks (resumable: the pipe itself may be healthy).
-      if (error.cdp !== true && epoch === this.epoch) this.park(error.message, { resumable: !this.pipe.failed });
+      // Only a written command without an app answer has an unknown effect.
+      if (error.dispatched === true && error.cdp !== true && epoch === this.epoch) this.park(error.message, { resumable: !this.pipe.failed });
       throw error;
     }
   }
 
   // The target's own info from the app, judged by the parent's callback, before any attach is written.
-  async admitted(targetId) {
+  async admitted(targetId, client) {
     if (typeof this.admitTarget !== 'function') throw new Error('CDP_TARGET_NOT_OWNED');
     let info;
-    try { info = (await this.pipe.request('Target.getTargetInfo', { targetId })).targetInfo; }
+    try { info = (await this.pipe.request('Target.getTargetInfo', { targetId }, { owner: client })).targetInfo; }
     catch (error) { if (error.cdp === true) throw new Error('CDP_TARGET_NOT_OWNED'); throw error; }
     let admitted = false;
     try { admitted = plainObject(info) && info.targetId === targetId && await this.admitTarget(Object.freeze({ ...info })) === true; } catch { admitted = false; }
     if (!admitted) throw new Error('CDP_TARGET_NOT_OWNED');
+    return info;
   }
 
   // A flat session id inside params (Target.detachFromTarget, sendMessageToTarget, ...) is a capability
@@ -392,7 +467,7 @@ export class ElectronBroker extends EventEmitter {
     if (!this.clients.has(client) || client.epoch !== this.epoch) throw new Error('unauthenticated client');
     const epoch = this.epoch;
     if (!this.authorize) throw new Error('operation authority required');
-    if (this.preparing >= 64) throw new Error('authorization queue full');
+    if (this.preparing >= 64) { this.queueFailure('authorization queue'); throw new Error('authorization queue full'); }
     // The trusted authority binds exact args, session/turn, profile/build,
     // target/frame/document epochs and expiry, then returns the prepared CDP.
     // No raw model CDP or evaluate enters here without that boundary.
@@ -421,11 +496,14 @@ export class ElectronBroker extends EventEmitter {
     this.grants.add(command.grantId);
     const receipt = { grantId: command.grantId, dispatched: true };
     try {
-      const result = await this.pipe.request(command.method, command.params, { signal, sessionId: command.sessionId });
+      const result = await this.pipe.request(command.method, command.params, { signal, sessionId: command.sessionId, owner: client, beforeWrite: () => {
+        if (epoch !== this.epoch || this.state !== 'ready') throw new Error('broker parked during authorization');
+        if (!this.clients.has(client)) throw new Error('client detached during authorization');
+      } });
       if (epoch !== this.epoch) return this.receipt({ ...receipt, phase: 'unknown', reason: 'authority changed in flight' });
       return this.receipt({ ...receipt, phase: 'observed', result });
     } catch (error) {
-      this.park(error.message);
+      if (error.dispatched === true && epoch === this.epoch) this.park(error.message);
       return this.receipt({ ...receipt, dispatched: error.dispatched === true, phase: 'unknown', reason: error.message });
     }
   }
@@ -452,19 +530,20 @@ export class ElectronBroker extends EventEmitter {
     if (typeof consent !== 'function' || await consent({ identity: this.identity, owned: this.owned }) !== true) {
       throw new Error('exact-instance quit consent required');
     }
-    this.park('user quit');
+    this.park('user quit', { expected: true });
     try {
       const observed = await this.inspect();
       if (observed.parent && !same(observed.parent, this.identity)) throw new Error('PID reused');
       // Host callback must use the app's own Quit, never a signal or title-only target.
-      if (observed.parent) await this.child.requestQuit(this.identity);
+      if (observed.parent) { this.expectedExit = true; await this.child.requestQuit(this.identity); }
+      return await this.collect();
     } catch (error) { return this.receipt({ cleanup: 'retained', reason: error.message }); }
-    return this.collect();
+    finally { this.expectedExit = false; }
   }
 
   async collect() {
     if (this.state === 'collected') return this.receipt({ cleanup: 'removed', exitCode: this.exitCode });
-    this.park('collection');
+    this.park('collection', { expected: true });
     try {
       const observed = await this.inspect();
       if (observed.parent || observed.descendants.length) throw new Error('processes remain');
@@ -474,6 +553,7 @@ export class ElectronBroker extends EventEmitter {
         throw new Error('observed descendant absence unproved');
       }
       await this.ownership.remove(this.owned);
+      this.expectedExit = true;
       this.pipe?.fail(new Error('owned app collected'));
       this.child.input.end();
       this.child.output.destroy();

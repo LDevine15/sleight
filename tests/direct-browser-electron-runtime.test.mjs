@@ -73,7 +73,7 @@ function fakeProvider(upstream, { fence = { held: true, holder: session, leaseMs
   const events = [];
   const provider = { events, fenceCalls: [],
     session: upstream.session, identity: undefined,
-    async connect() { events.push('connect'); provider.identity = Object.freeze({ host: 'h', pid, birth, epoch: 1, instance: 'i' }); return upstream.session; },
+    async connect() { events.push('connect'); provider.identity = Object.freeze({ host: 'h', pid, birth, epoch: 0, instance: 'i' }); return upstream.session; },
     async verifyConnection(candidate) { return candidate === upstream.session && verify(); },
     async disconnect(candidate) { events.push('disconnect'); return candidate === upstream.session; },
     async fence(action) { provider.fenceCalls.push(action); return typeof fence === 'function' ? fence(action) : fence; },
@@ -236,17 +236,43 @@ test('an unqualified dry run releases everything it opened and never quits; a cu
   assert.ok(!w.admin.calls.some(row => row[0] === 'quit'));
 });
 
+test('only the qualification worker environment admits an unqualified receipt, preserving consent and the failed receipt', async () => {
+  for (const value of [undefined, '0', 'true', '1']) {
+    const w = world({ qualify: () => ({ qualified: false, failed: 'ELECTRON_QUALIFY_NO_JOIN' }) });
+    const selecting = w.select({ env: value === undefined ? {} : { SLEIGHT_TURBO_UNQUALIFIED: value } });
+    const result = selecting.then(connection => ({ connection }), error => ({ error }));
+    await tick(); await tick();
+    assert.equal(w.consent.presented.length, 1);
+    w.consent.click(0, 'session');
+    const outcome = await result;
+    if (value === '1') {
+      assert.ok(outcome.connection, outcome.error?.message);
+      assert.equal(outcome.connection.receipt.qualified, false);
+      await runtime.releaseAppConnection(outcome.connection);
+    } else assert.equal(outcome.error?.message, 'ELECTRON_UNQUALIFIED');
+  }
+});
+
 test('revoking the grant revokes this session at the host; a missing fence op refuses after releasing the channel', async () => {
   const w = world({ qualify: () => ({ qualified: true }) }), selecting = w.select(); await tick(); await tick(); w.consent.click(0, 'once');
   const connection = await selecting;
   w.consent.consent.endTurn(session, turn); await tick();
-  assert.deepEqual(w.admin.calls.filter(row => row[0] === 'revoke'), [['revoke', { session }]]);
+  assert.deepEqual(w.admin.calls.filter(row => row[0] === 'revoke'), [['revoke', { session, expected: true }]]);
   assert.equal(connection.fence.acquire(session), true, 'the registry still answers; its next mutation fails the grant');
   await runtime.releaseAppConnection(connection);
   const upstream = fakeUpstream([page('a')]), provider = fakeProvider(upstream); delete provider.fence;
   const bare = world({ admin: fakeAdmin({ state: 'ready', ownership: 'owned' }), provider }), asking = bare.select(); await tick(); await tick(); bare.consent.click(0, 'session');
   await assert.rejects(asking, /ELECTRON_FENCE_UNAVAILABLE/);
   assert.deepEqual(provider.events, ['connect', 'disconnect']);
+});
+
+test('an unexpected grant loss keeps its revoke diagnostic untagged', async () => {
+  const w = world({ qualify: () => ({ qualified: true }) }), selecting = w.select();
+  await tick(); await tick(); w.consent.click(0, 'once');
+  const connection = await selecting;
+  w.consent.consent.revokeApp(connection.instance); await tick();
+  assert.deepEqual(w.admin.calls.filter(row => row[0] === 'revoke'), [['revoke', { session }]]);
+  await runtime.releaseAppConnection(connection);
 });
 
 test('one v3 context per native window, bound to the grant, the process and the window, disposed together', async () => {

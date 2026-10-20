@@ -8,6 +8,11 @@ import { check as rulesCheck, captureSnapshot, deliverSnapshot } from '../plugin
 import { app, identity, recipe, page as target, rect, fakeUpstream, fakeWindows, nativeWindow, fakeBrowser } from './fixtures/electron-graph.mjs';
 import { utilityLocator } from './direct-browser-utility-fixture.mjs';
 import { siteRefusal } from '../plugins/sleight/lib/permissions.mjs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { qualificationDiagnostic } from '../plugins/sleight/lib/direct-browser/electron-diagnostics.mjs';
+import { createToolDispatcher } from '../plugins/sleight/lib/direct-browser/tools.mjs';
+import { connectWorker, describeForPreflight, makeHost, pageSession, until } from './direct-browser-electron-host-fixture.mjs';
 
 // EPV3-5: input to an app page runs one step at a time inside the registry's guard, after a delivered read at the
 // current join, with no hook script in the app's renderer. The registry, join, targets and CDP filter are the real
@@ -19,7 +24,7 @@ const shadowRoot = host => ({ nodeType: 11, host, parentNode: null });
 const chain = (depth, top) => { let node = top; for (let i = 0; i < depth; i++) node = element({}, node); return node; };
 const terminalInShadow = () => element({}, element({}, shadowRoot(element({ class: 'xterm xterm-dom-renderer-owner-1' }, element({ class: 'pane-body' })))));
 
-async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, onSleep, wrapPages = pages => pages, acknowledged = () => true } = {}) {
+async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, onSleep, onSnapshot, wrapPages = pages => pages, acknowledged = () => true } = {}) {
   assert.equal(typeof handoff.createAppRunners, 'function', 'EPV3-5 must provide createAppRunners');
   const f = fakeUpstream([target('a')]); f.geometry.set('a', { ...rect(0, 0), scale: 2, visible: true });
   const w = fakeWindows([nativeWindow(11, rect(0, 0))]);
@@ -59,13 +64,17 @@ async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, onSl
   const snapshot = async (p, options) => {
     assert.equal(p, page); reads.push(options);
     entry.state.readJoinNo = entry.joinNo; entry.state.readEpoch = entry.epoch;
+    await onSnapshot?.(options);
     return { text: 'No visible changes.', number: ++number };
   };
   // EPV3-4 adds entryOf to the registry; the test adds the same lookup.
   const pages = wrapPages({ ...registry, entryOf: p => p === page && !entry.released && !entry.revoked ? entry : undefined });
-  const runners = handoff.createAppRunners({ pages, invalidateRefs: p => invalidated.push(p), check, snapshot, acknowledgeSnapshot: (p, n) => acknowledged(p, n),
+  const makeRunners = () => handoff.createAppRunners({ pages, invalidateRefs: p => invalidated.push(p), check, snapshot, acknowledgeSnapshot: (p, n) => acknowledged(p, n),
     now: () => clock, sleep: async ms => { waits.push(ms); clock += ms; await onSleep?.(clock); } });
-  const s = { f, w, join, filter, registry, entry, page, runners, sends, invalidated, reads, waits,
+  let runners = makeRunners();
+  const s = { f, w, join, filter, registry, entry, page, sends, invalidated, reads, waits,
+    get runners() { return runners; },
+    newTurn() { runners = makeRunners(); },
     get elapsed() { return clock; },
     // A read whose text reached the client, at the current join: the worker delivers it and acknowledges its number.
     async deliver() {
@@ -80,6 +89,129 @@ async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, onSl
   return s;
 }
 const notRun = pattern => error => { assert.match(error.message, pattern); assert.equal(error.notRun, true); return true; };
+
+for (const key of ['Meta+N', 'Meta+Shift+N', 'Shift+Cmd+KeyN']) test(`window-opening chord ${key} refuses the whole batch before sending input`, async t => {
+  const s = await world(); t.after(() => s.filter.dispose());
+  await assert.rejects(s.act([{ do: 'click', ref: 'e1' }, { do: 'press', key }]), notRun(/^ELECTRON_APP_KEY_REFUSED/));
+  assert.deepEqual(s.sends, []);
+});
+
+for (const mode of ['queue-full', 'parked']) test('fake-host click preflight reports ' + mode + ' and keeps diagnostic rows', async t => {
+  const dir = realpathSync(mkdtempSync('/tmp/eqclick-')), sink = join(dir, 'sink');
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(sink, '', { mode: 0o600 });
+  const h = await makeHost({ hostOptions: { brokerOptions: { diagnostic: qualificationDiagnostic(sink), transport: { maxPending: 1 } } } });
+  t.after(() => { h.host._crashForTest(); h.state.remove(); });
+  await h.host.start({ build: 'fake-build' });
+  const { connection } = await connectWorker(h.host), route = await pageSession(connection);
+  const s = await world(); t.after(() => s.filter.dispose());
+  let blocker;
+  if (mode === 'queue-full') {
+    h.app.hang.add('Runtime.evaluate');
+    blocker = connection.session.send('Runtime.evaluate', {}, route);
+    blocker.catch(() => {});
+    await until(() => h.host.broker.pipe.pending.size === 1);
+  }
+  else h.host.broker.fresh = async () => { h.host.broker.park('revoked', { resumable: true }); };
+  s.page.getByRef = () => utilityLocator({ elementHandle: () => describeForPreflight(connection, route) });
+  const dispatcher = createToolDispatcher({ pages: s.registry, snapshot: s.runners.read, runSteps: s.runners.runSteps, fillFields: s.runners.fillFields });
+  const result = await dispatcher.call({ name: 'browser_act', arguments: { tab: s.entry.tab, steps: [{ do: 'click', ref: 'e1' }], observe: 'none' } });
+  assert.equal(result.isError, true);
+  assert.equal(result.text, 'Protocol error (DOM.describeNode): ' + (mode === 'queue-full' ? 'CDP_HOST_QUEUE_FULL' : 'CDP_HOST_PARKED') + '. Nothing was sent.');
+  assert.deepEqual(s.sends, []);
+  assert.equal(h.app.frames.some(frame => frame.method === 'DOM.describeNode' || frame.method.startsWith('Input.')), false);
+  const rows = readFileSync(sink, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(rows.map(row => [row.method, row.message]), mode === 'queue-full'
+    ? [['sink-open', 'qualification diagnostics installed'], ['queue', 'count bound']]
+    : [['sink-open', 'qualification diagnostics installed'], ['park', 'revoked']]);
+  assert.equal(h.host.broker.state, mode === 'queue-full' ? 'ready' : 'parked');
+  if (blocker) {
+    const frame = h.app.frames.at(-1);
+    h.app.emit({ id: frame.id, sessionId: route, result: {} });
+    await blocker;
+  }
+});
+
+test('an expired DOM object in terminal preflight requires a fresh delivered read before any input', async t => {
+  const s = await world(); t.after(() => s.filter.dispose());
+  const getByRef = s.page.getByRef;
+  const pending = await s.runners.read(s.page, { maxChars: 8000 });
+  s.page.getByRef = () => utilityLocator({ async evaluate() {
+    throw Error('Protocol error (DOM.describeNode): Could not find object with given id');
+  } });
+  await assert.rejects(s.act([{ do: 'click', ref: 'e1' }, { do: 'press', key: 'Enter' }]),
+    notRun(/^ELECTRON_STALE_READ: the element changed since your last read; read again before input$/));
+  assert.deepEqual(s.sends, []);
+  assert.deepEqual(s.invalidated, [s.page]);
+  assert.equal(s.runners.acknowledgeSnapshot(s.page, pending.number), false, 'a late delivery of an older capture cannot reopen input');
+  s.page.getByRef = getByRef;
+  await assert.rejects(s.act([{ do: 'click', ref: 'e1' }]), notRun(/ELECTRON_STALE_READ/));
+  assert.equal(await s.deliver(), true);
+  await s.act([{ do: 'click', ref: 'e1' }]);
+  assert.deepEqual(s.sends, [['click', 'e1']]);
+});
+
+for (const freshFirst of [false, true]) test('a read started before expiration cannot reopen input or replace a fresh delivery, fresh first: ' + freshFirst, async t => {
+  let finish;
+  const acknowledgments = [];
+  const s = await world({ onSnapshot: options => options?.defer ? new Promise(resolve => { finish = resolve; }) : undefined,
+    acknowledged: (page, number) => { acknowledgments.push(number); return true; } });
+  t.after(() => s.filter.dispose());
+  const getByRef = s.page.getByRef;
+  const pending = s.runners.read(s.page, { defer: true });
+  assert.equal(typeof finish, 'function', 'the read is in flight before expiration');
+  s.page.getByRef = () => utilityLocator({ async evaluate() {
+    throw Error('Protocol error (DOM.resolveNode): No node with given id found');
+  } });
+  await assert.rejects(s.act([{ do: 'click', ref: 'e1' }]), notRun(/ELECTRON_STALE_READ/));
+  if (freshFirst) assert.equal(await s.deliver(), true);
+  finish();
+  const old = await pending;
+  const before = acknowledgments.length;
+  assert.equal(s.runners.acknowledgeSnapshot(s.page, old.number), false);
+  assert.equal(acknowledgments.length, before, 'a rejected read must not publish refs through the underlying acknowledgment');
+  s.page.getByRef = getByRef;
+  if (!freshFirst) await assert.rejects(s.act([{ do: 'click', ref: 'e1' }]), notRun(/ELECTRON_STALE_READ/));
+  assert.deepEqual(s.sends, []);
+  if (!freshFirst) assert.equal(await s.deliver(), true);
+  await s.act([{ do: 'click', ref: 'e1' }]);
+  assert.deepEqual(s.sends, [['click', 'e1']]);
+});
+
+test('two expired-reference cycles on one page require native input for the rest of the turn', async t => {
+  const s = await world(); t.after(() => s.filter.dispose());
+  const getByRef = s.page.getByRef;
+  let preflights = 0;
+  s.page.getByRef = () => utilityLocator({ async evaluate() {
+    preflights++;
+    throw Error('Protocol error (DOM.describeNode): Could not find object with given id');
+  } });
+  await assert.rejects(s.act([{ do: 'click', ref: 'e1' }]), notRun(/ELECTRON_STALE_READ: .*read again before input$/));
+  assert.equal(await s.deliver(), true);
+  const native = /^ELECTRON_STALE_READ: the element changed since your last read; use the native path for that element$/;
+  await assert.rejects(s.act([{ do: 'click', ref: 'e2' }]), notRun(native));
+  assert.equal(preflights, 2);
+  s.page.getByRef = getByRef;
+  assert.equal(await s.deliver(), true);
+  await assert.rejects(s.act([{ do: 'click', ref: 'e3' }]), notRun(native));
+  await assert.rejects(s.act([{ do: 'press', key: 'a' }]), notRun(native));
+  await assert.rejects(s.runners.fillFields(s.entry, [{ ref: 'e3', value: 'private' }]), notRun(native));
+  assert.deepEqual(s.sends, []);
+  assert.deepEqual(s.invalidated, [s.page, s.page]);
+  s.newTurn();
+  await assert.rejects(s.act([{ do: 'click', ref: 'e3' }]), notRun(/ELECTRON_STALE_READ: .*read again before input$/));
+  assert.equal(await s.deliver(), true);
+  await s.act([{ do: 'click', ref: 'e3' }]);
+  assert.deepEqual(s.sends, [['click', 'e3']]);
+});
+
+for (const reason of ['Argument should belong to the same JavaScript world as target object', 'CDP_COMMAND_FAILED', 'CDP_SESSION_NOT_OWNED'])
+  test('terminal preflight preserves refusal for ' + reason, async t => {
+    const s = await world(); t.after(() => s.filter.dispose());
+    s.page.getByRef = () => utilityLocator({ async evaluate() { throw Error('Protocol error (DOM.describeNode): ' + reason); } });
+    await assert.rejects(s.act([{ do: 'click', ref: 'e1' }]), error => error.notRun === true && error.message.endsWith(reason));
+    assert.deepEqual(s.sends, []); assert.deepEqual(s.invalidated, []);
+  });
 
 test('a site block refuses the first Electron action without sending input', async t => {
   const s = await world(); t.after(() => s.filter.dispose());
