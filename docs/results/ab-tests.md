@@ -2,7 +2,7 @@
 
 # Experiments
 
-Each study compares sleight variants on the same tasks under the claim rules, with the first variant as the baseline.
+Each study compares sleight variants on the same tasks using the claims' expected-time scoring, with the first variant as the baseline.
 
 <details><summary>Method</summary>
 

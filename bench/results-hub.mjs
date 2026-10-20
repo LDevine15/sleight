@@ -850,7 +850,7 @@ function renderTurboPage(all, id) {
 function renderAbPage(all, id) {
   const data = all[id], fam = family(id);
   const out = [pageHead(fam.page, fam.title)];
-  out.push('Each study compares sleight variants on the same tasks under the claim rules, with the first variant as the baseline.\n');
+  out.push('Each study compares sleight variants on the same tasks using the claims\' expected-time scoring, with the first variant as the baseline.\n');
   out.push(details('Method', list([
     'Studies saved as JSON (`{ study, rounds }` or `{ study, sides }` in docs/benchmarks) are read run by run, and their model ids come from the runs. Studies saved as FowlBrowser-runner reports are parsed from their tables, and their model and effort come from the write-up.',
     SCORING,
