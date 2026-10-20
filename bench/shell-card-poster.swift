@@ -12,7 +12,7 @@ func receipt(_ outcome: String, _ fields: [String: Any] = [:]) {
 func fail(_ reason: String) -> Never { receipt("poster-failed", ["reason": reason]); exit(1) }
 func permission(_ name: String) -> Never { receipt("permission-absent", ["permission": name]); exit(77) }
 let args = Array(CommandLine.arguments.dropFirst())
-guard args.count == 5, ["ax", "pid", "hid"].contains(args[0]),
+guard args.count == 5, ["ax", "pid", "hid", "inspect"].contains(args[0]),
     let pid = Int32(args[1]), pid > 0, getppid() > 1,
     let window = UInt32(args[2]), window > 0,
     let x = Double(args[3]), let y = Double(args[4]), x.isFinite, y.isFinite else { fail("ARGUMENTS") }
@@ -28,7 +28,7 @@ func fixtureIdentity() {
 }
 fixtureIdentity()
 guard AXIsProcessTrusted() else { permission("Accessibility") }
-if mode != "ax" { guard CGPreflightPostEventAccess() else { permission("Post-event") } }
+if ["pid", "hid"].contains(mode) { guard CGPreflightPostEventAccess() else { permission("Post-event") } }
 let app = AXUIElementCreateApplication(pid)
 AXUIElementSetMessagingTimeout(app, 1)
 func attribute(_ element: AXUIElement, _ key: CFString) -> CFTypeRef? {
@@ -110,7 +110,22 @@ func target() -> AXUIElement {
         near(origin.x + extent.width / 2, CGFloat(x)), near(origin.y + extent.height / 2, CGFloat(y)) else { fail("BUTTON_IDENTITY") }
     return button
 }
-if mode == "ax" {
+if mode == "inspect" {
+    fixtureIdentity()
+    guard !FileManager.default.fileExists(atPath: "/tmp/sleight-hold") else { fail("HOLD") }
+    var requestedWindow = UnsafeRawPointer(bitPattern: UInt(window))
+    guard let requestedWindows = CFArrayCreate(kCFAllocatorDefault, &requestedWindow, 1, nil),
+        let list = CGWindowListCreateDescriptionFromArray(requestedWindows) as? [[String: Any]],
+        list.count == 1, let info = list.first,
+        (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+        (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value == window,
+        let onscreen = info[kCGWindowIsOnscreen as String] as? Bool else { fail("INSPECTION_WINDOW_IDENTITY") }
+    var value: CFTypeRef?
+    let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+    receipt("inspection", ["mode": mode, "pid": pid, "window": window, "cgOnscreen": onscreen,
+        "axStatus": status.rawValue, "axWindows": (value as? [AXUIElement])?.count ?? -1])
+    exit(0)
+} else if mode == "ax" {
     let result = AXUIElementPerformAction(target(), kAXPressAction as CFString)
     receipt("attempted", ["mode": mode, "pid": pid, "window": window, "axResult": result.rawValue])
 } else {

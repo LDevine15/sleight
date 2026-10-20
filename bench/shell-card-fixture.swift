@@ -9,7 +9,7 @@ var shellNonce = String(repeating: "a", count: 64)
 let shellHandNonce = String(repeating: "b", count: 64)
 guard CommandLine.arguments.count == 4, CommandLine.arguments[1].hasPrefix("/"),
     CommandLine.arguments[1].hasSuffix("/assets/icon.png"),
-    ["synthetic", "person"].contains(CommandLine.arguments[2]),
+    ["synthetic", "person", "visibility"].contains(CommandLine.arguments[2]),
     UUID(uuidString: CommandLine.arguments[3]) != nil else { exit(64) }
 let shellIcon = CommandLine.arguments[1]
 let shellPhase = CommandLine.arguments[2], shellFixture = CommandLine.arguments[3]
@@ -117,6 +117,9 @@ func shellAccessibilityState() -> [String: Any] {
         "targetInAXWindows": targetIncluded,
         "targetVisible": panel?.isVisible ?? false,
         "targetAccessibilityElement": panel?.isAccessibilityElement() ?? false,
+        "hidesOnDeactivate": panel?.hidesOnDeactivate ?? false,
+        "targetInAppWindows": app.windows.contains { candidate in panel.map { candidate === $0 } ?? false },
+        "targetOnActiveSpace": panel?.isOnActiveSpace ?? false,
         "appActive": app.isActive, "appHidden": app.isHidden]
 }
 final class ShellFixture: NSObject, NSApplicationDelegate {
@@ -131,7 +134,7 @@ final class ShellFixture: NSObject, NSApplicationDelegate {
                 guard line.utf8.count < 1024, let bytes = line.data(using: .utf8),
                     let command = try? JSONSerialization.jsonObject(with: bytes) as? [String: String],
                     let op = command["op"], let step = command["step"],
-                    (shellPhase == "synthetic" ? ["setup", "ax", "pid", "hid"] : ["setup", "person-click"]).contains(step),
+                    (shellPhase == "synthetic" ? ["setup", "ax", "pid", "hid"] : shellPhase == "visibility" ? ["setup"] : ["setup", "person-click"]).contains(step),
                     (shellPhase == "synthetic" || op != "lifecycle") else {
                     DispatchQueue.main.async { shellStop("invalid-command") }; return
                 }
@@ -141,6 +144,14 @@ final class ShellFixture: NSObject, NSApplicationDelegate {
                     case "show": shellReady()
                     case "lifecycle": shellLifecycle()
                     case "arm": shellReceipt("armed", ["accessibility": shellAccessibilityState()])
+                    case "visibility-hide", "visibility-show":
+                        guard shellPhase == "visibility", let panel = host.activeAsk?.panel.panel else { shellStop("invalid-visibility-command") }
+                        panel.hidesOnDeactivate = op == "visibility-hide"
+                        // Each phase uses the same show operation and settling interval.
+                        panel.makeKeyAndOrderFront(nil)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            shellReceipt("visibility-ready", ["accessibility": shellAccessibilityState()])
+                        }
                     default: shellStop("invalid-command")
                     }
                 }

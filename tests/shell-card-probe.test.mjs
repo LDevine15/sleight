@@ -74,11 +74,13 @@ function fakeRun({ permissionAbsent = false, acceptSynthetic = false, missing = 
   cleanupHang = false, posterFailed = false, holdDuringAttempt = false, personMissing = false, hostExit = 0,
   crossPhaseAcceptance = false, acceptanceOnCleanup = false, staleAnswer = false,
   answerFields = {}, cleanupFields = {}, posterHang = false, protocolOnCleanup = false,
-  acceptanceAfterCleanup = false, holdAfterCleanup = false, personCleanupFields = {}, personCleanupHang = false } = {}) {
+  acceptanceAfterCleanup = false, holdAfterCleanup = false, personCleanupFields = {}, personCleanupHang = false,
+  inspectionFields = {} } = {}) {
   const signal = new EventEmitter(), input = new PassThrough(), receipts = [], children = [];
   let host, emit, firstIdentity, released = false, ended = false;
-  const hosts = [];
+  const hosts = [], launches = [];
   const launch = (file, args, options) => {
+    launches.push({ file, args });
     assert.equal(options.detached, true);
     const child = new EventEmitter();
     child.pid = 12345 + children.length;
@@ -108,6 +110,8 @@ function fakeRun({ permissionAbsent = false, acceptSynthetic = false, missing = 
               visible: true, cards: 1, protected: true, returnDefault: false });
             if (interrupt) setImmediate(() => signal.emit('SIGINT'));
             if (eof) setImmediate(() => input.end());
+          } else if (command.op === 'visibility-hide' || command.op === 'visibility-show') {
+            output({ outcome: 'visibility-ready', accessibility: { hidesOnDeactivate: command.op === 'visibility-hide' } });
           } else if (command.op === 'lifecycle') output({ outcome: 'lifecycle', ok: !lifecycleBad });
           else if (command.op === 'arm') {
             output({ outcome: 'armed' });
@@ -137,6 +141,13 @@ function fakeRun({ permissionAbsent = false, acceptSynthetic = false, missing = 
       const targetEmit = emit;
       setImmediate(() => {
         assert.equal(args[1], '12345'); assert.equal(args[2], '42');
+        if (args[0] === 'inspect') {
+          child.stdout.write(JSON.stringify({ outcome: permissionAbsent ? 'permission-absent' : 'inspection',
+            mode: 'inspect', pid: host.pid, window: 42, axStatus: 0, axWindows: 0, cgOnscreen: false,
+            ...inspectionFields }) + '\n');
+          child.stdout.end(); child.stderr.end(); child.closed = true; child.emit('close', permissionAbsent ? 77 : 0, null);
+          return;
+        }
         if (!permissionAbsent && !missing && !posterFailed) targetEmit({ outcome: acceptSynthetic ? 'accepted' : 'refused' });
         if (lateAcceptance) setTimeout(() => targetEmit({ outcome: 'accepted' }), 2);
         // The old runner dispatches this in its person phase. The repaired runner sees it during EOF collection.
@@ -157,7 +168,7 @@ function fakeRun({ permissionAbsent = false, acceptSynthetic = false, missing = 
     }
     return child;
   };
-  return { receipts, children, hosts, input, signal, get ended() { return ended; }, get released() { return released; },
+  return { receipts, children, hosts, launches, input, signal, get ended() { return ended; }, get released() { return released; },
     options: { directory: '/fake/bank', binaries: { host: 'host', poster: 'poster' }, launch,
       signals: signal, input, say: r => receipts.push(r), prompt: () => {},
       admission: { check: async () => { if (holdDuringAttempt === 'held') throw Error('HOLD'); }, release: async () => { released = true; } },
@@ -166,6 +177,42 @@ function fakeRun({ permissionAbsent = false, acceptSynthetic = false, missing = 
       timing: { ready: 100, attempt: 20, settle: lateAcceptance || crossPhaseAcceptance ? 500 : 5,
         person: crossPhaseAcceptance ? 1000 : 100, cleanup: crossPhaseAcceptance ? 1000 : 100, poll: 1 } } };
 }
+
+test('visibility study compares true false true without action or person phases and never qualifies consent', async () => {
+  const fake = fakeRun();
+  const result = await runShellCard({ ...fake.options, visibilityStudy: true });
+  assert.equal(result.passed, false);
+  assert.equal(result.study?.complete, true);
+  assert.deepEqual(result.study.samples.map(s => s.native.hidesOnDeactivate), [true, false, true]);
+  assert.deepEqual(fake.launches.filter(l => l.file === 'poster').map(l => l.args[0]), ['inspect', 'inspect', 'inspect']);
+  assert.equal(fake.hosts.length, 1);
+  assert.deepEqual(result.steps, []);
+  assert.equal(fake.receipts.some(r => r.outcome === 'waiting-for-person'), false);
+  assert.equal(result.cleanup.confirmed, true);
+  assert.equal(fake.released, true);
+});
+
+for (const options of [{ permissionAbsent: true }, { inspectionFields: { pid: 999 } }, { inspectionFields: { window: 999 } }]) {
+  test(`visibility study stops on missing permission or foreign inspection: ${JSON.stringify(options)}`, async () => {
+    const fake = fakeRun(options);
+    const result = await runShellCard({ ...fake.options, visibilityStudy: true });
+    assert.equal(result.passed, false);
+    assert.equal(result.study?.complete, false);
+    assert.equal(fake.hosts.length, 1);
+    assert.equal(fake.launches.filter(l => l.file === 'poster').length, 1);
+    assert.equal(result.cleanup.confirmed, true);
+    assert.equal(fake.released, true);
+  });
+}
+
+test('visibility study retains the lock and reports incomplete when fixture cleanup is uncertain', async () => {
+  const fake = fakeRun({ cleanupMissing: true });
+  const result = await runShellCard({ ...fake.options, visibilityStudy: true });
+  assert.equal(result.passed, false);
+  assert.equal(result.study?.complete, false);
+  assert.equal(result.cleanup.confirmed, false);
+  assert.equal(fake.released, false);
+});
 
 test('final synthetic acceptance beyond settle cannot substitute for a physical answer', async () => {
   const fake = fakeRun({ crossPhaseAcceptance: true, personMissing: true });
