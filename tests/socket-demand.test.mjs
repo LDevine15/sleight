@@ -1,15 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { callSocket, ensureSocketSession, socketCommand, spawnDetachedSession, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
 
 function fixture(t) {
-  const root = mkdtempSync(join(realpathSync(tmpdir()), 'sleight-demand-'));
+  const root = mkdtempSync(join('/private/tmp', 'sleight-demand-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return { directory: join(root, 'shell'), signals: new EventEmitter(), peerUid: async () => process.getuid(),
     startRelay: async () => ({ call: async () => ({ content: [{ type: 'text', text: 'ok' }] }), close: async () => {} }) };

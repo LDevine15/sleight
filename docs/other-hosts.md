@@ -130,13 +130,17 @@ With ChatGPT and Computer Use set up, call the clone's executable by its full pa
 When no session is listening, `js` starts a detached session in its own process group. It keeps one relay behind
 `~/Library/Caches/sleight/shell/session.sock` (0600 in a 0700 folder). Connections require the same uid. The session
 needs Apple's clang from Xcode Command Line Tools to build its peer-check helper. sleight doesn't install a login job.
+Any process running as your macOS user can drive this session. A bot with shell access can also edit
+`preapproved.json` directly. The socket's permissions do not isolate it from those processes.
+The socket path must fit in 103 UTF-8 bytes, so a long home path can prevent startup.
 After ten idle minutes it collects the engine, removes its socket and prunes its images. A call in progress does
 not count as idle. The next call starts a session again. A restarted session prints a notice that JavaScript handles
 and session approvals have reset. Read the engine docs in its first reply before continuing.
 
 Startup waits at most 90 seconds. Each relay call keeps its five-minute timeout, and the shell waits at most 310 seconds
 for the reply. Together these limits stay below the bot's reported 13-minute foreground limit. A timed-out call may
-have acted: read current state before retrying input. sleight never replays a dispatched call during startup recovery.
+have acted. The session refuses further calls until the engine replies or exits. Read current state before retrying input.
+sleight never replays a dispatched call during startup recovery.
 Images and screenshots become 0600 files in private `images-*` folders under that shell cache. Read the printed path
 through the bot's local file tool before the session exits. Startup also prunes image folders left by a crashed session.
 

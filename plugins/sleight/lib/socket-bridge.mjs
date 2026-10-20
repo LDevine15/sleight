@@ -9,6 +9,7 @@ import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { environment } from './direct-browser/host.mjs';
 
 const LIB = dirname(fileURLToPath(import.meta.url));
 const TOOLS = new Set(['js', 'js_reset', 'open_file', 'select_window', 'drag']);
@@ -58,11 +59,11 @@ export async function preparePeerCheck({ tools = async () => process.platform !=
   const binary = join(directory, 'peer');
   try {
     await promisify(execFile)('/usr/bin/clang', ['-Wall', '-Werror', '-fmodules-cache-path=' + join(directory, 'modules'),
-      join(LIB, 'socket-peer.c'), '-o', binary], { timeout: 60000 });
+      join(LIB, 'socket-peer.c'), '-o', binary], { timeout: 60000, env: environment() });
   } catch (err) { rmSync(directory, { recursive: true, force: true }); throw err; }
   return {
     uid: socket => new Promise((resolve, reject) => {
-      const child = spawn(binary, [], { stdio: ['ignore', 'pipe', 'ignore', socket._handle.fd] });
+      const child = spawn(binary, [], { env: {}, stdio: ['ignore', 'pipe', 'ignore', socket._handle.fd] });
       let output = '';
       child.stdout.on('data', data => { output += data; });
       child.once('error', reject);
@@ -75,11 +76,16 @@ export async function preparePeerCheck({ tools = async () => process.platform !=
 
 // A fixed MCP client. The shell cannot send initialize, elicitation answers, metadata or turn frames.
 export async function createShellRelay({ command = process.execPath, args = [join(LIB, 'launch.mjs'), '--socket-relay'],
-  timeoutMs = 300000, env = process.env } = {}) {
+  timeoutMs = 300000, termMs = 10000, killMs = 5000, env = process.env, signal } = {}) {
   const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'inherit'], env });
   const pending = new Map();
   let next = 0, closing, ended = false;
-  const fail = error => { for (const entry of pending.values()) entry.reject(error); pending.clear(); };
+  const fail = error => {
+    // A broken protocol or pipe cannot prove that the engine stopped input. Close before releasing callers.
+    if (!ended) void close();
+    for (const entry of pending.values()) entry.reject(error);
+    pending.clear();
+  };
   const closed = new Promise(resolve => child.once('close', (code, signal) => {
     ended = true; fail(new Error(`Shell relay exited (${signal ?? code})`)); resolve({ code, signal });
   }));
@@ -98,20 +104,29 @@ export async function createShellRelay({ command = process.execPath, args = [joi
     } catch (err) { fail(err); }
   });
   function request(method, params) {
-    return new Promise((resolve, reject) => {
-      if (ended || closing) return reject(new Error('Shell relay is closed'));
+    let complete;
+    const completed = new Promise(resolve => { complete = resolve; });
+    const result = new Promise((resolve, reject) => {
+      if (ended || closing) { complete(); return reject(new Error('Shell relay is closed')); }
       const id = next++;
-      const timer = setTimeout(() => { pending.delete(id); reject(new Error('Shell relay call timed out; read state before retrying input')); }, timeoutMs);
-      pending.set(id, { resolve: value => { clearTimeout(timer); resolve(value); }, reject: err => { clearTimeout(timer); reject(err); } });
+      // A timeout ends the caller's wait, but only an engine reply or exit ends its input ownership.
+      const timer = setTimeout(() => { reject(new Error('Shell relay call timed out; engine still busy until it replies; read state before retrying input')); }, timeoutMs);
+      pending.set(id, { resolve: value => { clearTimeout(timer); complete(); resolve(value); },
+        reject: err => { clearTimeout(timer); complete(); reject(err); } });
       try { send({ id, method, params }); } catch (err) { pending.get(id).reject(err); pending.delete(id); }
     });
+    return Object.assign(result, { completed });
   }
   const close = () => closing ||= (async () => {
     // EOF enters launch.mjs's shutdown path, which collects the engine before this child exits.
     child.stdin.end();
-    const timer = setTimeout(() => { if (!ended) child.kill('SIGTERM'); }, 10000);
-    try { return await closed; } finally { clearTimeout(timer); lines.close(); }
+    const timer = setTimeout(() => { if (!ended) child.kill('SIGTERM'); }, termMs);
+    const force = setTimeout(() => { if (!ended) child.kill('SIGKILL'); }, termMs + killMs);
+    try { return await closed; } finally { clearTimeout(timer); clearTimeout(force); lines.close(); signal?.removeEventListener('abort', abort); }
   })();
+  const abort = () => { void close(); };
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
   try {
     await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'Grok Bot', version: '1' } });
     send({ method: 'notifications/initialized' });
@@ -131,9 +146,11 @@ export async function startSocketSession(options = {}) {
 }
 
 async function startSocketSessionLocked({ directory = socketDirectory(), startRelay = createShellRelay,
-  peerUid, idleMs = 600000, signals = process } = {}) {
+  peerUid, idleMs = 600000, requestTimeoutMs = 10000, signals = process } = {}) {
   checkDirectory(directory, true);
   const socketPath = join(directory, basename(SOCKET_FILE));
+  // Darwin's sockaddr_un.sun_path has 104 bytes including the terminating NUL.
+  if (Buffer.byteLength(socketPath) >= 104) throw new Error('Shell socket path must fit in 103 UTF-8 bytes (macOS sun_path is 104 bytes); use a shorter home/cache path');
   try {
     const before = owned(socketPath, 'socket', 0o600);
     try {
@@ -155,16 +172,18 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
   const images = mkdtempSync(join(directory, 'images-'));
   const sessionId = randomUUID();
   const peers = new Set();
+  const startupAbort = new AbortController();
   let relay, peer, timer, closing, socketStat, busy = false;
   let finish, finishStartup;
   const closed = new Promise(resolve => { finish = resolve; });
   const startupReady = new Promise(resolve => { finishStartup = resolve; });
   const server = createServer({ pauseOnConnect: true }, socket => {
+    if (closing || peers.size >= 8) { socket.destroy(); return; }
     socket.setEncoding('utf8');
     peers.add(socket);
     socket.on('error', () => {});
-    socket.once('close', () => peers.delete(socket));
-    socket.setTimeout(10000, () => socket.destroy());
+    const deadline = setTimeout(() => socket.destroy(), requestTimeoutMs);
+    socket.once('close', () => { clearTimeout(deadline); peers.delete(socket); });
     void (async () => {
       try {
         if (await peerUid(socket) !== process.getuid()) throw new Error('Unix peer uid refused');
@@ -177,6 +196,7 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
           const newline = input.indexOf('\n');
           if (newline < 0) return;
           handled = true;
+          clearTimeout(deadline);
           void (async () => {
             try {
               if (input.slice(newline + 1).trim()) throw new Error('One shell request per connection');
@@ -189,14 +209,18 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
               if (!relay || busy || closing) throw new Error('Shell session is starting, busy or closing; read state before retrying input');
               busy = true; clearTimeout(timer); socket.setTimeout(0);
               try {
-                const result = await relay.call(tool, args);
-                const content = [];
-                for (const block of result?.content ?? []) {
-                  if (block.type !== 'image') content.push(block);
-                  else await printSocketResult({ content: [block] }, { directory: images,
-                    out: text => content.push({ type: 'text', text: text.trimEnd() }) });
-                }
-                socket.end(JSON.stringify({ result: { ...result, content } }) + '\n');
+                const call = relay.call(tool, args);
+                try {
+                  const result = await call;
+                  const content = [];
+                  for (const block of result?.content ?? []) {
+                    if (block.type !== 'image') content.push(block);
+                    else await printSocketResult({ content: [block] }, { directory: images,
+                      out: text => content.push({ type: 'text', text: text.trimEnd() }) });
+                  }
+                  socket.end(JSON.stringify({ result: { ...result, content } }) + '\n');
+                } catch (err) { socket.end(JSON.stringify({ error: err.message }) + '\n'); }
+                finally { await call.completed; }
               }
               finally { busy = false; armIdle(); }
             } catch (err) { socket.end(JSON.stringify({ error: err.message }) + '\n'); }
@@ -211,7 +235,7 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
   function close() {
     return closing ||= (async () => {
       clearTimeout(timer);
-      for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) signals.removeListener(signal, onSignal);
+      startupAbort.abort();
       for (const socket of peers) socket.destroy();
       let error, stopped = Promise.resolve();
       try {
@@ -229,6 +253,7 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
         }
         try { peer?.close(); } catch (err) { error ||= err; }
         try { rmSync(images, { recursive: true, force: true }); } catch (err) { error ||= err; }
+        for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) signals.removeListener(signal, onSignal);
         finish({ error });
       }
       return { error };
@@ -241,9 +266,10 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
     // Bind before starting a relay so two session commands never start two engines.
     // The private parent protects the socket during the brief listen-to-chmod interval.
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(socketPath, resolve); });
-    chmodSync(socketPath, 0o600); socketStat = owned(socketPath, 'socket', 0o600);
+    socketStat = lstatSync(socketPath);
+    chmodSync(socketPath, 0o600); owned(socketPath, 'socket', 0o600);
     if (closing) throw new Error('Shell session stopped during startup');
-    relay = await startRelay();
+    relay = await startRelay({ signal: startupAbort.signal });
     if (closing) throw new Error('Shell session stopped during startup');
     relay.closed?.then(() => { void close(); });
     finishStartup();
@@ -253,9 +279,13 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
 }
 
 export async function callSocket(request, { directory = socketDirectory(), timeoutMs = 310000 } = {}) {
-  validate(request); checkDirectory(directory);
+  validate(request);
   const path = join(directory, basename(SOCKET_FILE));
-  owned(path, 'socket', 0o600);
+  try { checkDirectory(directory); owned(path, 'socket', 0o600); }
+  catch (err) {
+    if (err.code === 'ENOENT') err.message = 'No shell session is listening; run sleight-mcp session (sleight-mcp js also starts one on demand)';
+    throw err;
+  }
   return new Promise((resolve, reject) => {
     const socket = createConnection(path);
     socket.setEncoding('utf8');

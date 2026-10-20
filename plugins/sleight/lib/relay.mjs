@@ -665,6 +665,11 @@ function isAppApproval(msg) {
   return msg.method === 'elicitation/create' && msg.params?._meta?.connector_id === 'computer-use';
 }
 
+// Persist metadata alone does not establish that a card grants app access.
+function plainAppCard(msg) {
+  return isAppApproval(msg) && /^Allow Computer Use to use "[^"\r\n]+"\?$/.test(msg.params?.message ?? '');
+}
+
 // A window whose title follows its active tab (a browser) is retitled by a new tab. When the tree Claude last saw for the
 // intended window is still there with exactly one selected tab added, it is the same window and gets no window note:
 // "outcome unconfirmed" there read as "my keys went to another window", and Haiku stopped (Firefox mdn b7 r2, 2026-10-19;
@@ -2532,7 +2537,7 @@ export function createRelay({
 
   function askUser(msg, ignoreMemory = false) {
     const generation = stopGeneration;
-    const key = approvalScope === 'session' ? approvalKey(msg) : undefined;
+    const key = approvalScope === 'session' && (!panelOnly || plainAppCard(msg)) ? approvalKey(msg) : undefined;
     asking = asking.then(async () => {
       if (generation !== stopGeneration) return { action: 'cancel' };
       if (!ignoreMemory && key !== undefined && approved.has(key)) {
@@ -5071,7 +5076,7 @@ export function createRelay({
       if (warning && msg.params) msg.params.message = `${msg.params.message ?? 'Allow Computer Use?'} ${warning}`;
     }
     // A shell action confirmation must reach the panel even when its app is pre-approved.
-    if (isAppApproval(msg) && (!panelOnly || approvalKey(msg) !== undefined)) {
+    if (isAppApproval(msg) && (!panelOnly || plainAppCard(msg))) {
       hand?.approval(msg.id, msg.params?._meta);
       // Observation only: the answer below is unchanged. The light check needs the key's time.
       if (msg.params?._meta?.tool_name === 'press_key') lightReturn?.keyPressed(msg.params._meta.tool_params?.app);

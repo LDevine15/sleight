@@ -1,5 +1,13 @@
 // Production shell launch and cleanup, with an offline engine and no host health probes.
 import { run } from '../../plugins/sleight/lib/launch.mjs';
+import { createPaymentCard } from '../../plugins/sleight/lib/payment-card.mjs';
+import { appendFileSync } from 'node:fs';
 await run({ shellRoute: true, leaseDirectory: process.argv[2],
+  paymentCardFactory: () => createPaymentCard({ open: async () => ({
+    present: (id, data, choices, answer) => {
+      appendFileSync(process.env.SLEIGHT_TEST_ENGINE_LOG, JSON.stringify({ event: 'panel', data, choices }) + '\n');
+      answer({ choice: 'cancel' });
+    }, authenticate: () => true, close() {},
+  }) }),
   healthHelperFactory: () => ({ close: async () => {}, keyboardTaps: async () => [] }),
 });

@@ -43,6 +43,7 @@ test('the production shell prompt accepts only the native consent channel answer
   await tick(0);
   assert.deepEqual(shown.choices, ['once', 'cancel']);
   assert.deepEqual(shown.data.operation, { request: 'Allow Grok Bot to use Calculator?', scope: 'Allow for this Grok Bot session only' });
+  assert.equal(shown.data.view.scope, 'Allow for this Grok Bot session only');
   deliver({ choice: 'once', person: false }); await tick(0);
   assert.equal(answered, false);
   deliver({ choice: 'once', person: true });
@@ -88,9 +89,59 @@ test('an app pre-approval never answers a shell action confirmation', async t =>
   assert.equal(f.panels.length, 3);
 });
 
+for (const grant of ['session', 'preapproved']) test(`${grant} app grant cannot answer payment or action cards with persist session`, async t => {
+  const preapproved = grant === 'preapproved'
+    ? new PreapprovedApps({ version: 1, apps: [{ app: 'Firefox', riskLevel: 'high' }] }) : undefined;
+  const f = fixture(t, { preapproved });
+  const meta = { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: { app: 'Firefox' } };
+  f.engine(card('app', 'Allow Computer Use to use "Firefox"?', meta));
+  await tick(0);
+  const initial = f.panels.length;
+  for (const [index, message] of ['Pay $268?', 'Confirm this action?', 'Book this trip?', 'Save these settings?', 'Submit this form?'].entries()) {
+    f.engine(card(`action-${index}`, message, meta));
+    await tick(0);
+    assert.equal(f.panels.length, initial + index + 1);
+    assert.equal(f.panels.at(-1)[1], false);
+    assert.equal(f.sent.at(-1).result._meta, undefined);
+  }
+  f.engine(card('app-again', 'Allow Computer Use to use "Firefox"?', meta));
+  await tick(0);
+  assert.equal(f.panels.length, initial + 5);
+});
+
+test('shell panel bounds the request while keeping the session scope visible', async t => {
+  let shown;
+  const panel = createPaymentCard({ open: async () => ({
+    present: (id, data, choices, answer) => { shown = { data, choices }; answer({ choice: 'once' }); },
+    authenticate: () => true,
+  }) });
+  t.after(() => panel.close());
+  for (const request of ['x'.repeat(65536), '🧾'.repeat(16384)]) {
+    assert.equal(await shellRelayOptions(undefined, panel).ask(request, true), 'accept');
+    assert.ok(Buffer.byteLength(shown.data.operation.request) <= 2048);
+    assert.match(shown.data.operation.request, /\[request truncated\]$/);
+    assert.equal(shown.data.view.scope, 'Allow for this Grok Bot session only');
+  }
+});
+
+test('shell panel distinguishes a declined card from an unavailable host', async () => {
+  const unavailable = shellRelayOptions(undefined, { ask: async () => undefined });
+  await assert.rejects(unavailable.ask('Pay?', false), error => error.code === 'SLEIGHT_PROMPT_UNAVAILABLE' && /unavailable/i.test(error.message));
+  assert.equal(await shellRelayOptions(undefined, { ask: async () => 'cancel' }).ask('Pay?', false), 'cancel');
+});
+
+test('unavailable shell consent returns an explicit error to the engine', async t => {
+  const options = shellRelayOptions(undefined, { ask: async () => undefined });
+  const f = fixture(t, { ask: options.ask });
+  f.engine(card('payment', 'Pay $268?', { connector_id: 'computer-use', persist: ['session'], tool_params: { app: 'Firefox' } }));
+  await tick(0);
+  assert.equal(f.sent.at(-1).error.code, -32603);
+  assert.match(f.sent.at(-1).error.message, /panel unavailable; no approval was granted/);
+});
+
 test('shell consent cannot write pre-approvals even if a panel returns Always', async t => {
   const f = fixture(t, { answer: 'always' });
-  f.engine(card('app', 'Allow Calculator?', { connector_id: 'computer-use', persist: ['session', 'always'],
+  f.engine(card('app', 'Allow Computer Use to use "Calculator"?', { connector_id: 'computer-use', persist: ['session', 'always'],
     riskLevel: 'low', tool_params: { app: 'Calculator' } }));
   await tick(0);
   assert.deepEqual(f.writes, []);
@@ -101,7 +152,7 @@ test('shell consent cannot write pre-approvals even if a panel returns Always', 
 test('app Allow has no lasting grant across shell sessions', async t => {
   for (let n = 0; n < 2; n++) {
     const f = fixture(t);
-    f.engine(card('app', 'Allow Calculator?', { connector_id: 'computer-use', persist: ['session', 'always'],
+    f.engine(card('app', 'Allow Computer Use to use "Calculator"?', { connector_id: 'computer-use', persist: ['session', 'always'],
       riskLevel: 'low', tool_params: { app: 'Calculator' } }));
     await tick(0);
     assert.equal(f.panels.length, 1);

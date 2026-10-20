@@ -747,6 +747,8 @@ native reference, and oversized first results defer the browser reference while 
   through the local daemon, which starts a session on demand. Doctor reports `route: shell (sleight-mcp js)`,
   even when a session isn't running. There is no Mac-side HTTP client placement.
 - A shell session requires Apple's clang and stops after ten idle minutes. The next call starts it again.
+  Any process running as your macOS user can drive the session. A bot with shell access can edit `preapproved.json`
+  directly. Socket permissions do not protect against either. A socket path longer than 103 UTF-8 bytes prevents startup.
   Startup reclaims a private stale socket only after its connection is refused and its file identity still matches.
   An interrupted startup can leave a `starting` directory in the shell cache. Inspect that startup before removing the
   directory. Session images are private cache files, pruned at exit or the next startup after a crash.

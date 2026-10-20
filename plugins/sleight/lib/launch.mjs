@@ -889,8 +889,12 @@ export function approvalOptions(env = process.env, dialog = askWithDialog) {
 export function shellRelayOptions(dialog, card = createPaymentCard()) {
   const wording = hostWording({ name: 'Grok Bot' });
   // Use the native consent host, which sleight's tools refuse to touch. There is no host form or JXA fallback.
-  dialog ??= async (message, scoped) => await card.ask({ session: 'Grok Bot', site: 'this Mac', request: message, scoped }) === 'once'
-    ? 'accept' : 'cancel';
+  dialog ??= async (message, scoped) => {
+    const answer = await card.ask({ session: 'Grok Bot', site: 'this Mac', request: message, scoped });
+    if (answer === undefined) throw Object.assign(new Error('sleight consent panel unavailable; no approval was granted. Retry when the panel is available.'),
+      { code: 'SLEIGHT_PROMPT_UNAVAILABLE' });
+    return answer === 'once' ? 'accept' : 'cancel';
+  };
   return {
     ask: async (message, scoped, options) => {
       const answer = await dialog(message, scoped, { ...options, ...wording, always: false });
@@ -985,7 +989,7 @@ export function turboState(readConfig, env = process.env) {
 }
 
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
-  directBrowser, ensureTurbo = false, shellRoute = false } = {}) {
+  directBrowser, ensureTurbo = false, shellRoute = false, paymentCardFactory = createPaymentCard } = {}) {
   let finishStartup;
   const startupReady = new Promise(resolve => { finishStartup = resolve; });
   process.stdin.on('end', () => stop());
@@ -1091,7 +1095,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const openedFiles = new Map();
   process.once('exit', () => appHealth.close());
   const replayClient = replayBridge({ input: process.stdin, output: process.stdout });
-  const paymentCard = createPaymentCard();
+  const paymentCard = paymentCardFactory();
   const approval = shellRoute ? shellRelayOptions(undefined, paymentCard) : approvalOptions();
   const { wording, ...promptOptions } = approval;
   relay = createRelay({

@@ -34,10 +34,14 @@ export function createPaymentCard({ open = openConsentHost, now = Date.now, time
       timer.unref?.();
       const done = choice => { clearTimeout(timer); resolve(choice); };
       try {
+        const scope = scoped ? 'Allow for this Grok Bot session only' : 'Allow this action once';
+        // Bound untrusted engine text by UTF-8 bytes, with an explicit truncation marker.
+        const bounded = request === undefined ? undefined : Buffer.byteLength(request) <= 2048 ? request
+          : Buffer.from(request).subarray(0, 2020).toString('utf8').replace(/\uFFFD$/, '') + '\n[request truncated]';
         ui.present('payment-' + randomUUID(),
-          { view: { clientSession: escapeLabel(session), origin: escapeLabel(site || 'this page') },
+          { view: { clientSession: escapeLabel(session), origin: escapeLabel(site || 'this page'), ...(request === undefined ? {} : { scope }) },
             operation: request === undefined ? { site: site || 'this page', amount: shown ?? 'no amount shown', button: control }
-              : { request, scope: scoped ? 'Allow for this Grok Bot session only' : 'Allow this action once' } },
+              : { request: bounded, scope } },
           ['once', 'cancel'], event => { if (ui.authenticate(event) === true) done(event.choice === 'once' ? 'once' : 'cancel'); },
           { deadline: now() + timeoutMs });
       } catch { clearTimeout(timer); resolve(undefined); }

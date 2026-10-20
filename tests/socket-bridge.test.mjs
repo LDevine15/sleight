@@ -1,14 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, closeSync, mkdirSync, openSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
-import { createConnection } from 'node:net';
-import { callSocket, preparePeerCheck, printSocketResult, socketCommand, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { setTimeout as tick } from 'node:timers/promises';
+import { createConnection, Server } from 'node:net';
+import { callSocket, createShellRelay, preparePeerCheck, printSocketResult, socketCommand, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
 
 function fixture(t) {
-  const root = mkdtempSync(join(realpathSync(tmpdir()), 'sleight-socket-test-'));
+  const root = mkdtempSync(join('/private/tmp', 'sleight-socket-test-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const calls = [], signals = new EventEmitter();
   let collected = 0;
@@ -182,4 +184,162 @@ test('images become private cache files and error results return failure status'
   assert.equal(readFileSync(path, 'utf8'), 'image');
   assert.equal(lstatSync(path).mode & 0o777, 0o600);
   assert.doesNotMatch(output, /aW1hZ2U=/);
+});
+
+function rawRequest(path, request) {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(path);
+    let output = '';
+    socket.on('error', err => { if (err.code !== 'ECONNRESET' && err.code !== 'EPIPE') reject(err); });
+    socket.on('data', data => { output += data; });
+    socket.once('connect', () => socket.end(request));
+    socket.once('close', () => resolve(output));
+  });
+}
+
+test('the native peer helper refuses a regular file at fd 3 without output', async t => {
+  const f = fixture(t), binary = join(f.root, 'peer');
+  const built = spawnSync('/usr/bin/clang', ['-Wall', '-Werror',
+    fileURLToPath(new URL('../plugins/sleight/lib/socket-peer.c', import.meta.url)), '-o', binary],
+    { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' } });
+  assert.equal(built.status, 0, built.stderr);
+  const path = join(f.root, 'not-a-socket');
+  writeFileSync(path, '');
+  const fd = openSync(path, 'r');
+  t.after(() => closeSync(fd));
+  const result = spawnSync(binary, [], { encoding: 'utf8', env: {}, stdio: ['ignore', 'pipe', 'pipe', fd] });
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.stdout, '');
+});
+
+test('peer compilation ignores inherited compiler search paths', async t => {
+  const f = fixture(t);
+  mkdirSync(join(f.root, 'sys'));
+  writeFileSync(join(f.root, 'sys/socket.h'), '#error inherited CPATH reached the compiler\n');
+  const previous = process.env.CPATH;
+  process.env.CPATH = f.root;
+  t.after(() => { if (previous === undefined) delete process.env.CPATH; else process.env.CPATH = previous; });
+  const peer = await preparePeerCheck();
+  peer.close();
+});
+
+test('the ninth live peer is refused before peer authentication', async t => {
+  const f = fixture(t), sockets = [];
+  let checks = 0;
+  const session = await startSocketSession({ ...f, peerUid: async () => { checks++; return process.getuid(); } });
+  t.after(async () => { sockets.forEach(socket => socket.destroy()); await session.close(); });
+  for (let i = 0; i < 8; i++) {
+    const socket = createConnection(session.socketPath); sockets.push(socket);
+    await new Promise(resolve => socket.once('connect', resolve));
+  }
+  await tick(20);
+  assert.equal(checks, 8);
+  assert.equal(await rawRequest(session.socketPath, '{'), '');
+  assert.equal(checks, 8);
+});
+
+test('an absolute request deadline closes a peer that keeps dripping partial JSON', async t => {
+  const f = fixture(t), session = await startSocketSession({ ...f, requestTimeoutMs: 60 });
+  t.after(() => session.close());
+  const socket = createConnection(session.socketPath);
+  socket.on('error', () => {});
+  await new Promise(resolve => socket.once('connect', resolve));
+  const interval = setInterval(() => socket.write(' '), 10);
+  const closed = new Promise(resolve => socket.once('close', resolve));
+  try { await Promise.race([closed, tick(400).then(() => { throw new Error('dripping peer outlived deadline'); })]); }
+  finally { clearInterval(interval); socket.destroy(); }
+  assert.equal(f.calls.length, 0);
+});
+
+test('oversize frames and a trailing second request never dispatch', async t => {
+  const f = fixture(t), session = await startSocketSession(f);
+  t.after(() => session.close());
+  assert.equal(await rawRequest(session.socketPath, 'x'.repeat(1024 * 1024 + 1)), '');
+  const reply = await rawRequest(session.socketPath, '{"tool":"js_reset","args":{}}\n{"tool":"js_reset","args":{}}\n');
+  assert.match(JSON.parse(reply).error, /One shell request/);
+  assert.equal(f.calls.length, 0);
+});
+
+test('a concurrent call is refused until the active engine reply', async t => {
+  const f = fixture(t);
+  let release, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const session = await startSocketSession({ ...f, startRelay: async () => ({
+    call: () => { entered(); return gate; }, close: async () => {},
+  }) });
+  t.after(() => session.close());
+  const first = callSocket({ tool: 'js', args: { code: '1' } }, f);
+  await started;
+  await assert.rejects(callSocket({ tool: 'js_reset', args: {} }, f), /busy/);
+  release({ content: [] }); await first;
+});
+
+test('a timed-out relay call stays busy until its late engine reply', async t => {
+  const f = fixture(t);
+  const session = await startSocketSession({ ...f, idleMs: 60, startRelay: options => createShellRelay({ ...options,
+    args: [fileURLToPath(new URL('fixtures/socket-stall.mjs', import.meta.url))], timeoutMs: 80,
+  }) });
+  t.after(() => session.close());
+  await assert.rejects(callSocket({ tool: 'js', args: { code: '1', delay: 300 } }, f), /timed out/);
+  await assert.rejects(callSocket({ tool: 'js_reset', args: {} }, f), /busy/);
+  await tick(90);
+  assert.equal(existsSync(session.socketPath), true);
+  await assert.rejects(callSocket({ tool: 'js_reset', args: {} }, f), /busy/);
+  await tick(150);
+  assert.equal((await callSocket({ tool: 'js_reset', args: {} }, f)).content[0].text, 'done');
+});
+
+test('shutdown escalates a relay that ignores EOF and SIGTERM', async () => {
+  const relay = await createShellRelay({ args: [fileURLToPath(new URL('fixtures/socket-stall.mjs', import.meta.url)), 'stubborn'],
+    termMs: 30, killMs: 30 });
+  assert.equal((await relay.close()).signal, 'SIGKILL');
+});
+
+test('a signal cancels initialization and stays handled through relay collection', async t => {
+  const f = fixture(t);
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const starting = startSocketSession({ ...f, startRelay: options => {
+    entered();
+    return createShellRelay({ ...options, args: [fileURLToPath(new URL('fixtures/socket-stall.mjs', import.meta.url)), 'no-init'], timeoutMs: 5000 });
+  } });
+  await started;
+  const stoppedAt = Date.now();
+  f.signals.emit('SIGTERM');
+  assert.equal(f.signals.listenerCount('SIGTERM'), 1);
+  f.signals.emit('SIGTERM');
+  await assert.rejects(starting, /closed|exited|stopped|abort/i);
+  assert.ok(Date.now() - stoppedAt < 1000, 'shutdown waited for the initialization timeout');
+  assert.equal(f.signals.listenerCount('SIGTERM'), 0);
+});
+
+test('image output refuses a directory with broader permissions', async t => {
+  const f = fixture(t);
+  chmodSync(f.root, 0o755);
+  await assert.rejects(printSocketResult({ content: [{ type: 'image', mimeType: 'image/png', data: 'aQ==' }] },
+    { directory: f.root, out() {} }), /private/);
+});
+
+test('a missing session names the session command', async t => {
+  const f = fixture(t);
+  await assert.rejects(callSocket({ tool: 'js_reset', args: {} }, f), err => err.code === 'ENOENT' && /sleight-mcp session/.test(err.message));
+});
+
+test('long socket paths fail with the macOS limit before binding', async t => {
+  const f = fixture(t);
+  await assert.rejects(startSocketSession({ ...f, directory: join(f.root, 'x'.repeat(104)) }), /104.*bytes|103.*bytes/);
+  assert.equal(f.collected, 0);
+});
+
+test('post-listen ownership failure removes the socket bound by this startup', async t => {
+  const f = fixture(t), listen = Server.prototype.listen, uid = process.getuid();
+  t.mock.method(Server.prototype, 'listen', function(path, callback) {
+    return listen.call(this, path, () => {
+      t.mock.method(process, 'getuid', () => uid + 1);
+      callback();
+    });
+  });
+  await assert.rejects(startSocketSession(f), /owned/);
+  assert.equal(existsSync(join(f.directory, 'session.sock')), false);
 });
