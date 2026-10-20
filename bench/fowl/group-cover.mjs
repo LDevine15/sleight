@@ -1,10 +1,11 @@
 // Browser-group admission runs under the group's live lock, after its owned window exists.
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, normalize, isAbsolute } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { beginWindowControl } from '../pass-hygiene.mjs';
+import { countedCover, COVER_MIN, OVERLAY_OWNER } from './real-gate-grade.mjs';
 
 export const benchmarkFixtureRoots = () => [...new Set([tmpdir(), realpathSync(tmpdir())])].map(base => join(base, 'sleight-bench'));
 const frameOK = f => f && ['x', 'y', 'width', 'height'].every(k => Number.isFinite(f[k])) && f.width > 1 && f.height > 1;
@@ -16,13 +17,14 @@ export function browserCovers(state, pid) {
   const target = visible.filter(w => w.pid === pid && w.layer === 0)
     .sort((a, b) => b.frame.width * b.frame.height - a.frame.width * a.frame.height)[0];
   if (!target) throw Error('Browser window unavailable');
-  const covering = visible.slice(0, visible.indexOf(target)).filter(w => w.pid !== pid).flatMap(w => {
+  const covering = visible.slice(0, visible.indexOf(target))
+    .filter(w => w.pid !== pid && !OVERLAY_OWNER.test(w.name ?? w.owner ?? '')).flatMap(w => {
     const a = w.frame, b = target.frame;
     const width = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
     const height = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
-    return width > 0 && height > 0 ? [{ ...w, fraction: width * height / (b.width * b.height) }] : [];
+    return width > 0 && height > 0 ? [{ ...w, owner: w.name ?? w.owner, fraction: width * height / (b.width * b.height) }] : [];
   });
-  return { frame: target.frame, covering };
+  return { frame: target.frame, covering: countedCover(covering).filter(w => w.fraction >= COVER_MIN) };
 }
 
 function fixtureCover(window, roots) {
@@ -31,22 +33,32 @@ function fixtureCover(window, roots) {
   try { path = window.document.startsWith('file:') ? fileURLToPath(window.document) : window.document; } catch { return false; }
   if (!isAbsolute(path)) return false;
   // Never let dot traversal or a symlink turn an apparent scratch path into the owner's folder.
-  try { path = realpathSync(path); } catch { path = normalize(path); }
+  try { path = realpathSync(path); } catch { return false; }
   return roots.some(root => path === root || path.startsWith(root + '/'));
 }
 
 export async function waitForBrowserUncovered(pid, { roots = benchmarkFixtureRoots(), snapshot, act, log = console.log,
-  signal, wait = ms => delay(ms, undefined, { signal }) } = {}) {
+  signal, warn = console.error, held = () => existsSync('/tmp/sleight-hold'), wait = ms => delay(ms, undefined, { signal }) } = {}) {
   const closed = new Set();
-  for (;;) {
+  const check = () => {
     signal?.throwIfAborted();
+    if (held()) throw Error('Benchmark hold is active');
+  };
+  const read = async () => {
+    check();
+    const cover = browserCovers(await snapshot(), pid);
+    check();
+    log({ event: 'browser-group-cover', frame: cover.frame, covering: cover.covering.map(({ document, title, ...window }) => window) });
+    return cover;
+  };
+  for (let waits = 0;; waits++) {
+    check();
     let mustWait = false;
     try {
-      const cover = browserCovers(await snapshot(), pid);
-      log({ event: 'browser-group-cover', frame: cover.frame, covering: cover.covering.map(({ document, title, ...window }) => window) });
+      const cover = await read();
       if (!cover.covering.length) return;
       for (const window of cover.covering) {
-        signal?.throwIfAborted();
+        check();
         const key = `${window.pid}:${window.start}:${window.id}`;
         if (closed.has(key) || !fixtureCover(window, roots)) { mustWait = true; continue; }
         const result = await act({ action: 'close', finderOnly: true, pid: window.pid, start: window.start,
@@ -55,9 +67,16 @@ export async function waitForBrowserUncovered(pid, { roots = benchmarkFixtureRoo
         if (result?.closed !== true || result.dialog) mustWait = true;
         else closed.add(key);
       }
-    } catch (error) { signal?.throwIfAborted(); log({ event: 'browser-group-cover-error', error: error.message }); mustWait = true; }
-    if (mustWait) await wait(60000);
-    // Even a successful AX press needs a fresh inventory before the group can start.
+      // Verify claimed closes immediately, but new fixture IDs cannot bypass the retry budget.
+      if (!mustWait && !(await read()).covering.length) return;
+    } catch (error) { check(); log({ event: 'browser-group-cover-error', error: error.message }); }
+    check();
+    if (waits === 3) {
+      log({ event: 'browser-group-cover-cap', waits });
+      warn('Browser group cover check reached 3 waits of 60 s; starting task with cover recorded.');
+      return;
+    }
+    await wait(60000);
   }
 }
 

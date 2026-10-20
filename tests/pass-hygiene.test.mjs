@@ -105,6 +105,25 @@ test('native adapter checks its baseline and routes every helper through owned p
   assert.ok(calls.every(call => call.options.timeoutMs > 0));
 });
 
+test('window control reuses the shared source-hash binary and module cache across rounds', async t => {
+  const home = registerTemp(t, mkdtempSync(join(tmpdir(), 'hygiene-shared-cache-'))), compiles = [], helpers = [];
+  const run = async (command, args) => {
+    if (command === '/usr/bin/xcrun') {
+      compiles.push(args);
+      writeFileSync(args.at(-1), 'fake compiled helper');
+    } else helpers.push(command);
+    return { stdout: JSON.stringify(baseline), groupClean: true, exit: { code: 0 } };
+  };
+  for (let round = 0; round < 2; round++) {
+    const control = await hygiene.beginWindowControl({ home, run, includeFloating: true });
+    await control.snapshot();
+  }
+  assert.equal(compiles.length, 1);
+  assert.deepEqual(compiles[0].slice(0, 3), ['swiftc', '-module-cache-path', join(home, 'Library/Caches/sleight-bench/swift-module-cache')]);
+  assert.equal(helpers[0], helpers[1]);
+  assert.equal(helpers[0].startsWith(join(home, 'Library/Caches/sleight-bench/window-control/pass-hygiene-')), true);
+});
+
 test('unrelated new windows are listed but only touched fixture apps are closed', async () => {
   const calls = [];
   const result = await hygiene.finishWindows(baseline, { snapshot: async () => current,

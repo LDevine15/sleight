@@ -367,13 +367,15 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       if (controller.signal.aborted) throw Error('Gate interrupted');
       // The browser's own window goes where the fewest other windows overlap it, and what still covers it is recorded beside the
       // task's outcome. An offline test that injects the browser never reads or moves the Mac's windows.
-      const cover = await (runtime.windowCover || (runtime.launchBrowser ? async () => null : windowCover))(browser.pid, { place: true });
+      const readCover = runtime.windowCover || (runtime.launchBrowser ? async () => null : windowCover);
+      await readCover(browser.pid, { place: true });
       // Check the actual owned browser frame before any agent starts. Safari and Firefox relaunch on reset,
-      // so every task checks again. Only proven Finder fixture covers may close; owner covers wait.
+      // so every task checks again. Only proven Finder fixture covers may close; owner covers wait up to three minutes.
       await (runtime.guardBrowserGroup || (runtime.launchBrowser ? async () => {} : guardBrowserGroup))(browser.pid, {
-        cacheDir: join(plan.out, 'window-control'), signal: controller.signal,
+        signal: controller.signal,
         log: event => appendFileSync(join(plan.out, 'group-cover.jsonl'), JSON.stringify(event) + '\n'),
       });
+      const cover = await readCover(browser.pid, {});
       // Windows can come over it while the agent runs, so the cover is read again every 5 s and at the end (read only).
       const coverWatch = (runtime.watchCover || (runtime.launchBrowser ? null : watchCover))?.(browser.pid) ?? null;
       // Chrome and Helium report every page URL while the agent runs; the lookup graders need that visit.

@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { join, sep } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { runOwned } from './preapproved-process.mjs';
+import { swiftModuleCache } from './swift-cache.mjs';
 
 const processKey = item => `${item.pid}:${Math.round(item.start * 1000)}:${item.bundle}`;
 const windowKey = item => `${processKey(item)}:${item.id}`;
@@ -141,7 +143,8 @@ export async function quitLaunched({ snapshot, act, launched = [], dryRun = fals
 }
 
 // Compile and invoke only inside the runner's live lock, never on import or a planning dry run.
-export async function beginWindowControl({ cacheDir, run = runOwned, signal, includeFloating = false } = {}) {
+export async function beginWindowControl({ home = homedir(), cacheDir = join(home, 'Library', 'Caches', 'sleight-bench', 'window-control'),
+  run = runOwned, signal, includeFloating = false } = {}) {
   const source = fileURLToPath(new URL('./pass-hygiene.swift', import.meta.url));
   const hash = createHash('sha256').update(readFileSync(source)).digest('hex').slice(0, 16);
   mkdirSync(cacheDir, { recursive: true });
@@ -156,7 +159,7 @@ export async function beginWindowControl({ cacheDir, run = runOwned, signal, inc
   };
   if (!existsSync(binary)) {
     const bank = mkdtempSync(join(cacheDir, 'pass-hygiene-build-')), output = join(bank, 'helper');
-    const modules = join(cacheDir, 'swift-module-cache'); mkdirSync(modules, { recursive: true });
+    const modules = swiftModuleCache(home);
     let uncollected = false;
     try {
       await checked('/usr/bin/xcrun', ['swiftc', '-module-cache-path', modules, source, '-o', output], { timeoutMs: 180000, signal });
