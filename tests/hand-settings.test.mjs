@@ -145,6 +145,7 @@ test('doctor prints the ghost hand section after turbo, read-only', async t => {
   const code = await doctor({ env: { CODEX_HOME: '/no-such-sleight-home', SLEIGHT_CHATGPT_APP: '/no-such-ChatGPT.app' }, log: x => lines.push(x),
     turbo: async () => ['turbo (direct browser path)'], hand: async () => handDoctorLines(w.setting(), false) });
   assert.equal(code, 1);
-  assert.deepEqual(lines.slice(0, 3), ['turbo (direct browser path)', 'ghost hand', 'ok        hand: off (the default; sleight-mcp hand on turns it on)']);
+  assert.match(lines[0], /^sleight \d+\.\d+\.\d+$/);
+  assert.deepEqual(lines.slice(1, 4), ['turbo (direct browser path)', 'ghost hand', 'ok        hand: off (the default; sleight-mcp hand on turns it on)']);
   assert.throws(() => lstatSync(w.path), /ENOENT/);
 });

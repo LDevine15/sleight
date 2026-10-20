@@ -62,6 +62,7 @@ test('launcher prints the Grok section before an unavailable engine stops doctor
     grok: () => grokDoctorLines(grokStatus(fake(imported))), grokbot: () => [], log: line => lines.push(line),
   });
   assert.equal(code, 1);
-  assert.equal(lines[0], 'Grok CLI 1.0.13');
+  assert.match(lines[0], /^sleight \d+\.\d+\.\d+$/);
+  assert.equal(lines[1], 'Grok CLI 1.0.13');
   assert.ok(lines.some(line => line.includes('different copies')));
 });

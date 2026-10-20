@@ -423,12 +423,13 @@ test('launcher startup logs one line and keeps the engine when setup cannot writ
   assert.equal(existsSync(w.configPath), false);
 });
 
-test('doctor prints the turbo section first, read-only', async t => {
+test('doctor prints the turbo section after its version, read-only', async t => {
   const w = world(t, { helium: true }), lines = [];
   const code = await doctor({ env: { CODEX_HOME: '/no-such-sleight-home', SLEIGHT_CHATGPT_APP: '/no-such-ChatGPT.app' }, log: x => lines.push(x),
     turbo: async () => doctorLines(turboDiagnosis(w.base)) });
   assert.equal(code, 1);
-  assert.equal(lines[0], 'turbo (direct browser path)'); assert.match(lines.join('\n'), /not set up yet/);
+  assert.match(lines[0], /^sleight \d+\.\d+\.\d+$/);
+  assert.equal(lines[1], 'turbo (direct browser path)'); assert.match(lines.join('\n'), /not set up yet/);
   assert.equal(existsSync(w.configPath), false);
 });
 

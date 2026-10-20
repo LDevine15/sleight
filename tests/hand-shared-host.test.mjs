@@ -113,9 +113,10 @@ test('an open card is aborted when its sender\'s channel ends, so no button stay
   const source = readFileSync(sourcePath, 'utf8');
   const block = source.match(/\/\/ BEGIN MODAL GUARD\n([\s\S]*?)\/\/ END MODAL GUARD/);
   assert.ok(block, 'modal guard absent');
-  // Every card and confirmation runs through the guard, and the channel's end closes it.
+  // Modal confirmations run through the guard. Disconnect closes the modeless
+  // approval card and the modal guard before forgetting their pending requests.
   assert.equal((source.match(/\.runModal\(\)/g) ?? []).length, (source.match(/modal\.run\(abort: \{ NSApp\.abortModal\(\) \}\) \{ [a-z]+\.runModal\(\) \}/g) ?? []).length);
-  assert.match(source, /func channelClosed\(\) \{ modal\.close\(\);/);
+  assert.match(source, /func channelClosed\(\) \{ closeAsk\(\); modal\.close\(\); pending\.removeAll\(\);/);
   const dir = trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-modal-guard-'))));
   const swift = join(dir, 'main.swift'), binary = join(dir, 'fixture');
   writeFileSync(swift, 'import Foundation\n' + block[1] + `

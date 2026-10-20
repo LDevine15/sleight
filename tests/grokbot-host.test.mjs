@@ -147,7 +147,8 @@ test('launcher prints Grok Bot metadata before unavailable engine discovery stop
     grokbot: () => grokbotDoctorLines(grokbotStatus(io)), log: line => lines.push(line),
   });
   assert.equal(code, 1);
-  assert.match(lines[0], /Grok Bot 0\.71\.2, computer use off, route: shell \(sleight-mcp js\)/);
+  assert.match(lines[0], /^sleight \d+\.\d+\.\d+$/);
+  assert.match(lines[1], /Grok Bot 0\.71\.2, computer use off, route: shell \(sleight-mcp js\)/);
   assert.match(lines.join('\n'), /local tool permission: always/);
 });
 

@@ -41,7 +41,7 @@ test('hand art: the six delivered states are embedded as vector SVG on one 48 pt
   }
   // The palette: ivory and its shadow side, the navy halo, and the dabs' blues.
   for (const colour of ['#EFE9DC', '#B9BFC9', '#141A26', '#A9C4F5', '#7299EA', '#4E79D9']) assert.ok(art.includes(colour), colour);
-  assert.doesNotMatch(source, /contentsOfFile|Bundle\.main|URL\(fileURLWithPath/);
+  assert.doesNotMatch(art, /contentsOfFile|Bundle\.main|URL\(fileURLWithPath/);
 });
 
 // One compile for the file, removed when the process exits.

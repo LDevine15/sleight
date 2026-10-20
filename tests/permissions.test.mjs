@@ -430,7 +430,8 @@ test('the doctor prints the permissions section after the ghost hand\'s, read-on
   const code = await doctor({ env: { CODEX_HOME: '/no-such-sleight-home', SLEIGHT_CHATGPT_APP: '/no-such-ChatGPT.app' }, log: x => lines.push(x),
     turbo: async () => ['turbo (direct browser path)'], hand: async () => ['ghost hand'], permissions: async () => permissionsDoctorLines({ home: w.home }) });
   assert.equal(code, 1);
-  assert.deepEqual(lines.slice(0, 4), ['turbo (direct browser path)', 'ghost hand', 'permissions', 'ok        blocks: none (sleight-mcp permissions lists what sleight may do)']);
+  assert.match(lines[0], /^sleight \d+\.\d+\.\d+$/);
+  assert.deepEqual(lines.slice(1, 5), ['turbo (direct browser path)', 'ghost hand', 'permissions', 'ok        blocks: none (sleight-mcp permissions lists what sleight may do)']);
   assert.equal(existsSync(w.path), false);
 });
 
