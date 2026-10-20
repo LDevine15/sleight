@@ -10,6 +10,17 @@ const BLOCKS = ['hub:claim', 'hub:headline', 'hub:benchmarks'];
 
 const count = (text, needle) => text.split(needle).length - 1;
 
+test('release docs contain no validation placeholders or pending host markers', {
+  skip: process.env.SLEIGHT_ALLOW_RELEASE_TODO === '1',
+}, () => {
+  const pending = ['README.md', 'INSTALL.md', 'CHANGELOG.md', 'docs/other-hosts.md',
+    'docs/known-problems.md', 'docs/privacy.md', 'docs/settings.md', 'docs/grokbot-skill.md'].filter(file => {
+    const doc = readFileSync(new URL(file, root), 'utf8');
+    return /TODO\(1\.4\.0-validation\)|<!-- GB14|<!-- GB12|^## 1\.4\.0 \(TODO:/m.test(doc);
+  });
+  assert.deepEqual(pending, [], 'these files still need release validation');
+});
+
 test('each generated block appears once, opened before it is closed, in the planned order', () => {
   let last = -1;
   for (const name of BLOCKS) {

@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { grokbotDoctorLines, grokbotStatus } from '../plugins/sleight/lib/grokbot-host.mjs';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import { grokbotDoctorLines, grokbotStatus, grokbotSessionStatus, readNativeAccessibility } from '../plugins/sleight/lib/grokbot-host.mjs';
 import { doctor } from '../plugins/sleight/lib/launch.mjs';
 
 const systemPlist = '/Applications/Grok Bot.app/Contents/Info.plist';
@@ -18,7 +20,7 @@ const installed = {
 };
 function fixture(files = installed, running = () => true) {
   const reads = [], pids = [];
-  return { reads, pids, home: '/home', running: pid => { pids.push(pid); return running(pid); },
+  return { reads, pids, accessibility: () => undefined, home: '/home', running: pid => { pids.push(pid); return running(pid); },
     read: path => {
       reads.push(path);
       assert.ok([systemPlist, userPlist, gate, settings, daemon].includes(path), `forbidden read: ${path}`);
@@ -39,7 +41,7 @@ test('reports the bundle version and separate computer-use, daemon and permissio
   assert.deepEqual(io.pids, [4029]);
   assert.deepEqual(io.reads, [systemPlist, gate, settings, daemon]);
   const text = grokbotDoctorLines(status).join('\n');
-  assert.match(text, /Grok Bot 0\.71\.2, computer use off, route: none yet/);
+  assert.match(text, /Grok Bot 0\.71\.2, computer use off, route: shell \(sleight-mcp js\)/);
   assert.match(text, /local daemon.*running.*PID/);
   assert.match(text, /local tool permission: always/);
   assert.doesNotMatch(JSON.stringify(status) + text, /PRIVATE|mcpBoxServers|filesKeyId/);
@@ -85,7 +87,7 @@ test('missing metadata stays unknown and never probes a PID', () => {
   assert.deepEqual(io.pids, []);
   const text = grokbotDoctorLines(status).join('\n');
   assert.match(text, /bundle not found/);
-  assert.match(text, /computer use unknown, route: none yet/);
+  assert.match(text, /computer use unknown, route: shell \(sleight-mcp js\)/);
   assert.match(text, /local daemon: unknown/);
   assert.match(text, /local tool permission: unknown/);
 });
@@ -144,6 +146,71 @@ test('launcher prints Grok Bot metadata before unavailable engine discovery stop
     grokbot: () => grokbotDoctorLines(grokbotStatus(io)), log: line => lines.push(line),
   });
   assert.equal(code, 1);
-  assert.match(lines[0], /Grok Bot 0\.71\.2, computer use off, route: none yet/);
+  assert.match(lines[0], /Grok Bot 0\.71\.2, computer use off, route: shell \(sleight-mcp js\)/);
   assert.match(lines.join('\n'), /local tool permission: always/);
+});
+
+
+test('doctor reports native helper Accessibility trust for this process tree with injected readers', () => {
+  for (const trust of [true, false, undefined]) {
+    let calls = 0;
+    const status = grokbotStatus({ ...fixture(), accessibility: () => { calls++; return trust; } });
+    assert.equal(calls, 1);
+    const text = grokbotDoctorLines(status).join('\n');
+    assert.match(text, /native helper Accessibility.*current process tree/);
+    if (trust === true) assert.match(text, /Accessibility: granted/);
+    else if (trust === false) assert.match(text, /Tell the owner.*responsible app.*Accessibility/);
+    else assert.match(text, /Accessibility: unknown/);
+    assert.doesNotMatch(text, /PRIVATE/);
+  }
+});
+
+test('failed native trust readers stay unknown without leaking errors', () => {
+  const status = grokbotStatus({ ...fixture(), accessibility: () => { throw new Error('PRIVATE'); } });
+  assert.match(grokbotDoctorLines(status).join('\n'), /Accessibility: unknown/);
+  assert.doesNotMatch(grokbotDoctorLines(status).join('\n'), /PRIVATE/);
+});
+
+
+test('trust reader invokes the existing helper without a prompt flag or an app target', () => {
+  for (const trusted of [true, false]) {
+    assert.equal(readNativeAccessibility({ exec: (command, args, options) => {
+      assert.equal(command, '/usr/bin/osascript');
+      assert.deepEqual(args.slice(0, 2), ['-l', 'JavaScript']);
+      assert.ok(args[2].endsWith('/app-health.js'));
+      assert.equal(args[3], '--accessibility-check');
+      assert.equal(args.length, 4);
+      assert.equal(options.timeout, 3000);
+      return JSON.stringify({ trusted });
+    } }), trusted);
+  }
+  assert.equal(readNativeAccessibility({ exec: () => '{"trusted":"yes"}' }), undefined);
+});
+
+test('native helper trust mode calls only AXIsProcessTrusted with no options', () => {
+  const source = readFileSync(new URL('../plugins/sleight/lib/app-health.js', import.meta.url), 'utf8');
+  for (const trusted of [true, false]) {
+    let calls = 0;
+    const result = runInNewContext(source + '; run(["--accessibility-check"])', {
+      ObjC: { import: () => {} }, $: { AXIsProcessTrusted: (...args) => {
+        assert.deepEqual(args, []); calls++; return trusted;
+      } },
+    });
+    assert.equal(JSON.parse(result).trusted, trusted);
+    assert.equal(calls, 1);
+  }
+});
+
+
+test('doctor uses live session trust instead of the caller and never starts a session', async () => {
+  for (const trust of [true, false, undefined]) {
+    const status = await grokbotSessionStatus({ metadata: () => ({ nativeAccessibility: !trust }),
+      session: async () => ({ ready: true, nativeAccessibility: trust }) });
+    assert.equal(status.nativeAccessibility, trust);
+    assert.match(grokbotDoctorLines(status).join('\n'), /live shell session/);
+  }
+  const status = await grokbotSessionStatus({ metadata: () => ({ nativeAccessibility: true }),
+    session: async () => { throw new Error('PRIVATE'); } });
+  assert.equal(status.nativeAccessibility, undefined);
+  assert.doesNotMatch(grokbotDoctorLines(status).join('\n'), /PRIVATE/);
 });

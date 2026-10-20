@@ -8,18 +8,17 @@
   <img alt="status unofficial" src="https://img.shields.io/badge/status-unofficial-3E4A56">
 </p>
 
-sleight is an MIT-licensed plugin for Claude Code, Codex and other MCP clients. Ask it to work out a sum in Calculator
-or edit a document, and it operates that app in the background.
+sleight is an MIT-licensed plugin for Claude Code, Codex, Grok CLI and Cursor (install not yet run). Grok Bot uses its local shell. Ask it to work out a sum in Calculator or edit a document, and it operates that app in the background.
 
 You need an Apple Silicon Mac and the [ChatGPT desktop app](https://chatgpt.com/download/) in `/Applications` for its
 computer-use software. sleight uses your coding agent's account or API access and doesn't need a ChatGPT account or separate
-Codex sign-in. We haven't measured a typical task's token cost or price.
+Codex sign-in.
 
 <a id="install-validation"></a>
 
 > [!IMPORTANT]
 > sleight is unofficial. OpenAI and Anthropic don't endorse or support it. A ChatGPT update can break it.
-> The new install flow and setup in a fresh macOS user haven't run live.
+> The new install flow and setup in a fresh macOS user haven't run live. Install time and typical task cost are unmeasured.
 > See [requirements](INSTALL.md#requirements) for tested macOS versions. sleight contains no OpenAI code.
 
 <p align="center"><img src="docs/assets/demo.gif" width="900" alt="Claude playing macOS Chess against the computer through sleight, with the sleight pane logging each move"></p>
@@ -46,27 +45,39 @@ The hub lists each run, failures included, with the method and the model each ar
 Install sleight from https://github.com/Land-o-Clusters/sleight and check it with its doctor.
 ```
 
-Paste that into your coding agent. It follows [INSTALL.md](INSTALL.md) and stops at the steps only you can do (an
-admin password, two macOS permission panes, Chrome's debugging switch, each app's first Allow). We haven't timed it end to end.
+Paste that into your coding agent. It follows [INSTALL.md](INSTALL.md), stopping for your admin password, macOS permissions, Chrome's debugging switch and app approvals.
 
 ## Where it runs
 
-| Host | Tested | Missing there |
+| Host | Install route and validation | Limits |
 | --- | --- | --- |
-| Claude Code 2.1.288 or later | The native and app claims ran on 2.1.289. | No host-specific feature gaps known. |
-| Codex CLI | 0.160.0, where Calculator and TextEdit tasks passed live on 2026-10-19, each after a retried first `getApp` (fixed since, not rerun live) ([Codex](docs/other-hosts.md#codex)). | The action pane, the status line and `/sleight`. Turbo hasn't run live there. |
-| Other MCP clients | Our own stdio test client only ([generic clients](docs/other-hosts.md#generic-clients)). | The action pane, the status line, `/sleight` and turbo |
-<!-- cursor-row: hidden until Cursor's first live install passes.
-| Cursor | Installs from this repo's Cursor marketplace ([Cursor](docs/other-hosts.md#cursor)). | The action pane, the status line, `/sleight` and turbo |
--->
+| Claude Code 2.1.288 or later | [Plugin](INSTALL.md#claude-code). Native and app claims on 2.1.289. | No known host-specific gaps. |
+| Codex CLI | [Plugin](INSTALL.md#codex). Calculator and TextEdit passed on 0.160.0 after first-call retries, fixed since but not rerun live. | Turbo needs trusted hooks and awaits a live check. |
+| Grok CLI | [Direct MCP](INSTALL.md#grok-cli). Handshake on 1.0.13. Model and app tasks untested. | Turbo off. Results capped at 20,000 bytes. |
+| Grok Bot | [Local shell](INSTALL.md#grok-bot) via `sleight-mcp js`, awaiting a live app check. | Turbo off. Approvals use sleight's panel. |
+| Other MCP clients | [Stdio config](INSTALL.md#other-mcp-clients), tested with our own client. | Turbo unavailable. |
+| Cursor | [Plugin](INSTALL.md#cursor), with marketplace install unverified. | Turbo unavailable. |
 
-To install by hand, follow [INSTALL.md](INSTALL.md). If Computer Use is already on in ChatGPT or Codex, installing the
-plugin is enough. Otherwise run `"<installPath>/bin/sleight-mcp" setup` from the installed plugin folder, as described
-under [Computer Use](INSTALL.md#computer-use). It uses ChatGPT's Node runtime. npm isn't needed.
+The action pane, status line and `/sleight` are Claude Code only ([host details](docs/other-hosts.md)).
 
-sleight drives native apps through the engine, Electron apps such as VS Code, Slack and Spotify on the same native path, Chrome
-and Helium through turbo, which reads and operates web pages directly (on by default after a one-time switch in Chrome), and
-Safari and Firefox through the engine's accessibility path. The engine refuses terminals and OpenAI's own apps ([how it works](docs/how-it-works.md)).
+To install by hand, follow [INSTALL.md](INSTALL.md). If Computer Use is already on in ChatGPT or Codex, installing the plugin is enough.
+Otherwise run `./bin/sleight-mcp setup` from the installed plugin folder ([Computer Use](INSTALL.md#computer-use)). It uses ChatGPT's Node runtime. npm isn't needed.
+
+sleight drives native apps, including Electron apps such as VS Code, Slack and Spotify, through the engine. Chrome and Helium use turbo, which reads and operates web pages directly (on by default after a one-time switch in Chrome).
+Safari and Firefox use the engine's accessibility path. The engine refuses terminals and OpenAI's own apps ([how it works](docs/how-it-works.md)).
+
+## New in 1.4.0
+
+- Text drags move between windows, repair spacing and keep empty final lines. Opened-file handles keep their document window. Formatted cross-window moves refuse.
+- Malformed native arguments stop before the engine sends that input, with the correct signature. Startup handles shutdown while the engine loads.
+- Turbo fills multi-selects and accepts modifier clicks on safe targets. Shorter replies explain field values, batch boundaries and viewport markers.
+- Requested sign-ups count as confirmed when your message names the username or email and password ([limits](docs/settings.md#requested-sign-ups)).
+- Opt-in [local stats](docs/settings.md#stats) report action times and reads saved.
+- Grok CLI adds direct MCP (10 tools in its 1.0.13 handshake). Cursor adds a plugin, with install not yet run. Grok Bot adds the local shell route, tested offline.
+- Protected consent buttons require physical input ([accessibility limits](docs/known-problems.md#protected-consent-input)). Chrome and Helium turbo is on by default after Chrome's debugging consent.
+- The ghost hand is off by default: textedit-drag took 31 to 37 s with it, 23 to 26 s without (3 runs a side, [details](docs/known-problems.md)).
+
+TODO(1.4.0-validation): record the final check, release-pass and A/B results before release.
 
 <!-- hub:headline -->
 <picture>
@@ -102,29 +113,23 @@ Safari and Firefox through the engine's accessibility path. The engine refuses t
   <img src="docs/assets/architecture-light.svg" width="900" alt="Your coding agent talks to sleight's launcher, relay and mod, which drive the ChatGPT app's computer-use engine, which clicks, types and drags in your apps in the background. A second lane runs from sleight through turbo to Chrome and Helium.">
 </picture>
 
-The engine is the computer-use software bundled with ChatGPT. sleight's launcher starts it on ChatGPT's own Node runtime.
-The relay connects it to your agent and shows approval cards. In Claude Code, a UI extension (the mod) draws the action
-pane and ends the engine's turn after each of yours ([how it works](docs/how-it-works.md)).
+The engine is the computer-use software bundled with ChatGPT. sleight's launcher starts it on ChatGPT's own Node runtime. The relay connects it to your agent and shows approval cards. In Claude Code, a UI extension (the mod) draws the action pane and ends the engine's turn after each of yours ([how it works](docs/how-it-works.md)).
 
 ## Safety
 
-These are the intended checks. Some guards have only unit coverage; see [known problems](docs/known-problems.md#approvals-and-guards)
-for what has run live and what remains untested.
+These are the intended checks. [Known problems](docs/known-problems.md#approvals-and-guards) lists guards with only unit coverage and what has run live.
 
-- Each app gets one approval card with Allow, Always allow and Decline, and only your click writes Always allow.
-- A payment goes ahead without another prompt only when your own message names what to pay, the amount and what to pay
-  with. A payment a page tries to start always asks ([settings](docs/settings.md#payments-you-asked-for)).
-- sleight treats page text as untrusted input when checking actions and approvals. The `js` tool runs JavaScript as you, so Claude Code asks before
-  each call unless you allow `mcp__plugin_sleight_computer__js`.
-- sleight never switches Spaces or takes focus, except for Chrome's own consent prompt. A few fallbacks (foreground drag,
-  `hover`, some menu bar icons) move the pointer briefly, each after you've stopped typing for 2 s.
+- Each app gets one approval card with Allow, Always allow and Decline.
+- Always allow, payment and consent buttons accept only a person's click or key press.
+- VoiceOver, Switch Control, Voice Control and screen-sharing users need a physical keyboard or pointer for these cards in 1.4.0 ([limits and planned alternative](docs/known-problems.md#protected-consent-input)).
+- A payment goes ahead without another prompt only when your own message names what to pay, the amount and what to pay with. When a page tries to pay, sleight always asks ([settings](docs/settings.md#payments-you-asked-for)).
+- sleight treats page text as untrusted input when checking actions and approvals. The `js` tool runs JavaScript as you, so Claude Code asks before each call unless you allow `mcp__plugin_sleight_computer__js`.
+- sleight never switches Spaces or takes focus, except for Chrome's own consent prompt. A few fallbacks (foreground drag, `hover`, some menu bar icons) move the pointer briefly, each after you've stopped typing for 2 s.
 
 ## More
 
-- [INSTALL.md](INSTALL.md) for every host, setup, update and uninstall. [Settings](docs/settings.md) lists every switch
-  with its default, and [privacy](docs/privacy.md) what sleight writes on your Mac (it doesn't call the network itself).
-- [Known problems](docs/known-problems.md) with the runs that showed each one, the [benchmark method](docs/benchmark.md),
-  the [changelog](CHANGELOG.md) and the [roadmap](docs/status/ROADMAP.md).
+- [INSTALL.md](INSTALL.md) for every host, setup, update and uninstall. [Settings](docs/settings.md) lists every switch with its default, and [privacy](docs/privacy.md) what sleight writes on your Mac (it doesn't call the network itself).
+- [Known problems](docs/known-problems.md) with the runs that showed each one, the [benchmark method](docs/benchmark.md), the [changelog](CHANGELOG.md) and the [roadmap](docs/status/ROADMAP.md).
 
 ## Credits
 
@@ -134,7 +139,6 @@ for what has run live and what remains untested.
 
 ## License
 
-[MIT](LICENSE). The ChatGPT app and its computer-use runtime belong to OpenAI, under OpenAI's terms, and sleight doesn't
-include or redistribute either. ChatGPT, Codex, Claude, Cursor, Chrome, Safari, Firefox, Helium, Microsoft Word, Excel,
+[MIT](LICENSE). The ChatGPT app and its computer-use runtime belong to OpenAI, under OpenAI's terms, and sleight doesn't include or redistribute either. ChatGPT, Codex, Claude, Cursor, Chrome, Safari, Firefox, Helium, Microsoft Word, Excel,
 VS Code, Slack, Spotify and other app names are trademarks of their owners, who don't endorse or sponsor sleight, and
 appear here to describe compatibility and benchmark results.

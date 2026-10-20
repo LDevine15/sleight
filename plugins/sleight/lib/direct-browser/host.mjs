@@ -63,7 +63,7 @@ function executable(name, receipt) {
   try { validateBuild(build); return join(build.directory, name); }
   catch { throw Error('HOST_PACKAGE_MISMATCH'); }
 }
-const environment = () => ({ PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' });
+export const environment = () => ({ PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' });
 
 // A cold module cache rebuilds AppKit's modules: over 120 s at load 31 to 38 (2026-10-14), so first use allows 300 s.
 async function compileNative({ name, source, binary, moduleCache, signal }) {
