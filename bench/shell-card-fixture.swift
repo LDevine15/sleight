@@ -106,6 +106,19 @@ func shellStop(_ reason: String) -> Never {
     shellReceipt("cleanup", ["visible": shellCards(), "pending": host.pending.count, "reason": reason])
     exit(0)
 }
+func shellAccessibilityState() -> [String: Any] {
+    let windows = app.accessibilityWindows()
+    let panel = host.activeAsk?.panel.panel
+    let targetIncluded = windows?.contains { value in
+        guard let target = panel, let candidate = value as? NSWindow else { return false }
+        return candidate === target
+    } ?? false
+    return ["appAXWindows": windows?.count ?? -1,
+        "targetInAXWindows": targetIncluded,
+        "targetVisible": panel?.isVisible ?? false,
+        "targetAccessibilityElement": panel?.isAccessibilityElement() ?? false,
+        "appActive": app.isActive, "appHidden": app.isHidden]
+}
 final class ShellFixture: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         host.shared = true; host.input = nil
@@ -127,7 +140,7 @@ final class ShellFixture: NSObject, NSApplicationDelegate {
                     switch op {
                     case "show": shellReady()
                     case "lifecycle": shellLifecycle()
-                    case "arm": shellReceipt("armed")
+                    case "arm": shellReceipt("armed", ["accessibility": shellAccessibilityState()])
                     default: shellStop("invalid-command")
                     }
                 }

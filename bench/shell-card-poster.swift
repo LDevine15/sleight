@@ -79,6 +79,20 @@ func target() -> AXUIElement {
         receipt("window-diagnostic", ["axWindows": windows.count, "geometryMatches": matches.count,
             "expected": ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height],
             "axGeometry": geometry, "truncated": windows.count > 8])
+        if windows.isEmpty {
+            // Observe publication timing only after failure. Even a later window cannot resume input.
+            let started = ProcessInfo.processInfo.systemUptime
+            for delay: useconds_t in [100000, 400000] {
+                usleep(delay)
+                fixtureIdentity()
+                guard !FileManager.default.fileExists(atPath: "/tmp/sleight-hold") else { fail("HOLD") }
+                var value: CFTypeRef?
+                let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+                let count = (value as? [AXUIElement])?.count ?? -1
+                receipt("window-publication-sample", ["afterMs": Int((ProcessInfo.processInfo.systemUptime - started) * 1000),
+                    "axStatus": status.rawValue, "axWindows": count])
+            }
+        }
         fail("AMBIGUOUS_WINDOW")
     }
     var visited = 0, buttons: [AXUIElement] = [], truncated = false
