@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-const moduleURL = new URL('../race-1017/validation-140.mjs', import.meta.url);
+const fixtureData = new URL('./fixtures/validation-140/', import.meta.url).pathname;
+const moduleURL = new URL('../bench/validation/validation-140.mjs', import.meta.url);
 
 test('missing or changed provenance schedules both sides', async () => {
   assert.ok(existsSync(moduleURL), 'validation planner is missing');
@@ -129,9 +130,9 @@ test('offline scorer checks actual model evidence, not just the driver receipt',
 test('zsh plan and invalid invocation never create output or run a child benchmark', () => {
   const dir = mkdtempSync(join(tmpdir(), 'vp1-plan-'));
   try {
-    const command = new URL('../race-1017/validate-140.command', import.meta.url).pathname;
+    const command = new URL('../bench/validation/validate-140.command', import.meta.url).pathname;
     assert.ok(existsSync(command), 'validation command is missing');
-    const got = spawnSync('/bin/zsh', [command, '--plan', '--out', dir], { encoding: 'utf8' });
+    const got = spawnSync('/bin/zsh', [command, '--plan', '--data', fixtureData, '--out', dir], { encoding: 'utf8' });
     assert.equal(got.status, 0, got.stderr);
     const plan = JSON.parse(got.stdout);
     assert.ok(plan.rounds.length >= 30);
@@ -144,6 +145,44 @@ test('zsh plan and invalid invocation never create output or run a child benchma
     assert.notEqual(bad.status, 0);
     assert.deepEqual(readdirSync(dir), []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('validation data precedence is explicit argument, environment, then the external default', async () => {
+  const { validationDataDir } = await import('../bench/validation/data.mjs');
+  assert.equal(validationDataDir('/fixture/explicit', { SLEIGHT_VALIDATION_DATA: '/fixture/env' }), '/fixture/explicit');
+  assert.equal(validationDataDir(undefined, { SLEIGHT_VALIDATION_DATA: '/fixture/env' }), '/fixture/env');
+  assert.equal(validationDataDir(undefined, {}), join(homedir(), 'Projects/sleight-wt/race-1017/validation-140'));
+  assert.equal(validationDataDir('~/fixture', {}), join(homedir(), 'fixture'));
+});
+
+test('planner reads only the selected data directory and refuses missing data or stale build pins', () => {
+  const env = { ...process.env, SLEIGHT_VALIDATION_DATA: fixtureData };
+  let got = spawnSync(process.execPath, [moduleURL.pathname, '--plan'], { encoding: 'utf8', env });
+  assert.equal(got.status, 0, got.stderr);
+  const plan = JSON.parse(got.stdout);
+  assert.equal(plan.groups.find(g => g.id === 'native').a[0], '~/fixture/native-r1.json');
+  assert.equal(plan.out, join(homedir(), 'Projects/sleight-wt/race-1017/validation-140-runs'));
+  got = spawnSync(process.execPath, [moduleURL.pathname, '--plan', '--data', fixtureData], {
+    encoding: 'utf8', env: { ...env, SLEIGHT_VALIDATION_DATA: '/fixture/missing' },
+  });
+  assert.equal(got.status, 0, got.stderr);
+  got = spawnSync(process.execPath, [moduleURL.pathname, '--plan', '--data', '/fixture/missing'], { encoding: 'utf8', env });
+  assert.notEqual(got.status, 0, 'Missing selected data fell back to the private default');
+  got = spawnSync(process.execPath, [moduleURL.pathname, '--plan', '--b-build', 'stale'], { encoding: 'utf8', env });
+  assert.notEqual(got.status, 0);
+  assert.match(got.stderr, /Audit B build differs/);
+  got = spawnSync(process.execPath, [moduleURL.pathname, '--data'], { encoding: 'utf8', env });
+  assert.notEqual(got.status, 0);
+});
+
+test('classification imports without reading private data and its CLI honors the selected directory', async () => {
+  const classifier = new URL('../bench/validation/classify-140.mjs', import.meta.url);
+  assert.equal(typeof (await import(classifier)).classify, 'function');
+  const got = spawnSync(process.execPath, [classifier.pathname, '--data', '/fixture/classification-missing'], {
+    encoding: 'utf8', env: { ...process.env, SLEIGHT_VALIDATION_DATA: fixtureData },
+  });
+  assert.notEqual(got.status, 0);
+  assert.match(got.stderr, /fixture\/classification-missing\/validation-140-a\.json/);
 });
 
 test('task-path classifications allow B-only rounds and reject incomplete or stale proof', async () => {
@@ -193,7 +232,7 @@ test('CC estimates use recorded task durations including failures and leave miss
 test('makePlan uses classifications for individual historical rounds', async () => {
   const { makePlan } = await import(moduleURL);
   const { readFileSync } = await import('node:fs');
-  const real = JSON.parse(readFileSync(new URL('../race-1017/validation-140-a.json', import.meta.url)));
+  const real = JSON.parse(readFileSync(new URL('./fixtures/validation-140/validation-140-a.json', import.meta.url)));
   const rounds = [1, 2, 3].map(n => ({ name: `native-${n}`, kind: 'native', flags: { SLEIGHT_FS: '0' }, path: `old-${n}.json`,
     fileHash: `f${n}`, build: 'a', harnessCommit: 'old', engine: 'e', engineChanged: false, clean: true, durationSeconds: 10,
     changedHarnessFiles: ['unused'], tasks: [{ task: 'one', seconds: 10, models: ['claude-haiku-5-5'], effort: 'high' }] }));
@@ -209,7 +248,7 @@ test('makePlan uses classifications for individual historical rounds', async () 
 
 test('scorer loads only qualified historical rounds and refuses edited evidence', async () => {
   const { scoreOutput } = await import(moduleURL);
-  const { sha } = await import('../race-1017/audit-140.mjs');
+  const { sha } = await import('../bench/validation/audit-140.mjs');
   const dir = mkdtempSync(join(tmpdir(), 'vp2-reuse-score-'));
   try {
     const raw = build => ({ sleight: { commit: build }, model: 'haiku', effort: 'high', engine: { version: 'e', changed: false },

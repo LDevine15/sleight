@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "bBuild": "HEAD",
+  "bHarness": {
+    "hash": "fixture-harness"
+  },
+  "rounds": [
+    {
+      "name": "native-r1",
+      "kind": "native",
+      "path": "~/fixture/native-r1.json",
+      "build": "fixture-a",
+      "flags": {
+        "SLEIGHT_FS": "0"
+      },
+      "durationSeconds": 10,
+      "tasks": [
+        {
+          "task": "one"
+        }
+      ]
+    },
+    {
+      "name": "release-r1",
+      "kind": "release-haiku",
+      "path": "~/fixture/release-r1.json",
+      "build": "fixture-a",
+      "flags": {},
+      "durationSeconds": 10,
+      "tasks": [
+        {
+          "task": "one"
+        }
+      ]
+    },
+    {
+      "name": "release-opus-r1",
+      "kind": "release-opus",
+      "path": "~/fixture/release-opus-r1.json",
+      "build": "fixture-a",
+      "flags": {},
+      "durationSeconds": 10,
+      "tasks": [
+        {
+          "task": "one"
+        }
+      ]
+    },
+    {
+      "name": "safari-r1",
+      "kind": "race",
+      "path": "~/fixture/safari-r1.json",
+      "build": "fixture-a",
+      "flags": {
+        "SLEIGHT_FS": "0"
+      },
+      "durationSeconds": 10,
+      "tasks": [
+        {
+          "task": "demoid"
+        }
+      ]
+    },
+    {
+      "name": "firefox-r1",
+      "kind": "race",
+      "path": "~/fixture/firefox-r1.json",
+      "build": "fixture-a",
+      "flags": {
+        "SLEIGHT_FS": "0"
+      },
+      "durationSeconds": 10,
+      "tasks": [
+        {
+          "task": "demoid"
+        }
+      ]
+    },
+    {
+      "name": "as3-safari-r1",
+      "kind": "as3",
+      "path": "~/fixture/as3-safari-r1.json",
+      "build": "fixture-a",
+      "flags": {
+        "SLEIGHT_BROWSER_CORE": "0"
+      },
+      "durationSeconds": 10,
+      "tasks": [
+        {
+          "task": "old-lookup"
+        }
+      ]
+    },
+    {
+      "name": "as3-firefox-r1",
+      "kind": "as3",
+      "path": "~/fixture/as3-firefox-r1.json",
+      "build": "fixture-a",
+      "flags": {
+        "SLEIGHT_BROWSER_CORE": "0"
+      },
+      "durationSeconds": 10,
+      "tasks": [
+        {
+          "task": "old-lookup"
+        }
+      ]
+    }
+  ],
+  "problems": []
+}
