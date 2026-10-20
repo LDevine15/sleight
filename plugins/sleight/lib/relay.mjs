@@ -845,6 +845,8 @@ export function createRelay({
   confirmPayments = 'requested',
   // Shell hosts have no form surface. Every engine card goes to sleight's panel.
   panelOnly = false,
+  // LaunchServices identity only, without opening or reading the app. Shell display names may differ from bundle IDs.
+  resolveApprovalApp,
   rs,
   // sleight's own payment card for the engine-path payment gate (payment-card.mjs); the launcher supplies it. Without it a
   // payment stop reaches Claude as it is.
@@ -1102,6 +1104,8 @@ export function createRelay({
       !permissions?.app({ bundleId: app })).slice(0, 64);
   }
   let asking = Promise.resolve(); // `ask` prompts, one at a time
+  const shellAppCards = new WeakMap(), pendingShellAsks = new Map();
+  const plainCard = msg => shellAppCards.get(msg) ?? plainAppCard(msg);
   let clientCanElicit; // undefined until initialize (legacy in-process callers)
   const localNames = new Set(localTools?.tools.map(t => t.name) ?? []);
   const elicitations = new Map(); // our elicitation id -> resolve
@@ -2594,31 +2598,46 @@ export function createRelay({
 
   function askUser(msg, ignoreMemory = false) {
     const generation = stopGeneration;
-    const key = approvalScope === 'session' && (!panelOnly || plainAppCard(msg)) ? approvalKey(msg) : undefined;
-    asking = asking.then(async () => {
-      if (generation !== stopGeneration) return { action: 'cancel' };
-      if (!ignoreMemory && key !== undefined && approved.has(key)) {
-        trace('answered-for-session', msg);
-        return { action: 'accept', content: {}, _meta: { persist: 'session' } };
+    const appApproval = plainCard(msg);
+    const key = approvalScope === 'session' && (!panelOnly || appApproval) ? approvalKey(msg) : undefined;
+    // Only a repeated pending RPC ID in this engine epoch proves a retry. Equal text or metadata can describe
+    // independent effects. Keep ID types and terms in the key; settled action consent is never remembered.
+    const identified = typeof msg.id === 'string' || (typeof msg.id === 'number' && Number.isFinite(msg.id));
+    const pendingKey = panelOnly && identified
+      ? JSON.stringify([engineEpoch, generation, msg.id, ignoreMemory, appApproval, msg.params]) : undefined;
+    let decision = pendingKey && pendingShellAsks.get(pendingKey);
+    if (!decision) {
+      decision = asking.then(async () => {
+        if (generation !== stopGeneration) return { action: 'cancel' };
+        if (!ignoreMemory && key !== undefined && approved.has(key)) {
+          trace('answered-for-session', msg);
+          return { action: 'accept', content: {}, _meta: { persist: 'session' } };
+        }
+        let action;
+        const always = alwaysChoice(msg);
+        try {
+          action = await ask(msg.params?.message ?? 'Allow Computer Use?', key !== undefined,
+            panelOnly ? { app: msg.params?._meta?.tool_params?.app, appApproval } : always ? { always: true } : undefined);
+        } catch (error) {
+          // The engine owns the elicitation's parent call. Return its error there rather than
+          // attributing one failed panel to every concurrent call waiting on the engine.
+          if (error?.code === 'SLEIGHT_PROMPT_UNAVAILABLE') return { error: { code: -32603, message: error.message } };
+          action = 'cancel';
+        }
+        if (generation !== stopGeneration) return { action: 'cancel' };
+        if (action === 'always' && always) { rememberAlways(always); action = 'accept'; }
+        if (action !== 'accept') return { action };
+        if (key === undefined) return { action, content: {} };
+        approved.add(key);
+        return { action, content: {}, _meta: { persist: 'session' } };
+      });
+      asking = decision.catch(() => ({ action: 'cancel' }));
+      if (pendingKey) {
+        pendingShellAsks.set(pendingKey, decision);
+        decision.finally(() => pendingShellAsks.delete(pendingKey));
       }
-      let action;
-      const always = alwaysChoice(msg);
-      try {
-        action = await ask(msg.params?.message ?? 'Allow Computer Use?', key !== undefined,
-          panelOnly ? { app: msg.params?._meta?.tool_params?.app } : always ? { always: true } : undefined);
-      } catch (error) {
-        // The engine owns the elicitation's parent call. Return its error there rather than
-        // attributing one failed panel to every concurrent call waiting on the engine.
-        if (error?.code === 'SLEIGHT_PROMPT_UNAVAILABLE') return { error: { code: -32603, message: error.message } };
-        action = 'cancel';
-      }
-      if (generation !== stopGeneration) return { action: 'cancel' };
-      if (action === 'always' && always) { rememberAlways(always); action = 'accept'; }
-      if (action !== 'accept') return { action };
-      if (key === undefined) return { action, content: {} };
-      approved.add(key);
-      return { action, content: {}, _meta: { persist: 'session' } };
-    }).then(result => {
+    }
+    decision.then(result => {
       trace('answered-by-ask', { id: msg.id, result });
       toServer({ jsonrpc: '2.0', id: msg.id, ...(result.error ? result : { result }) });
     });
@@ -3539,7 +3558,7 @@ export function createRelay({
         observeServerMessage(msg);
       };
       const timer = setTimeout(() => reply(PAYMENT_WAITING), paymentCardHoldMs);
-      // A resend while the card is open gets the same card (payment-card.mjs), and one card grants one allowance.
+      // Each stopped call needs its own decision. Equal payment terms do not prove a retry of the same request.
       let answer;
       try { answer = paymentCard.ask({ session: clientName ?? 'the agent', site: paymentStop.site, shown: paymentStop.shown, control: paymentStop.control }); }
       catch { answer = undefined; }
@@ -4928,6 +4947,23 @@ export function createRelay({
     }
     // A blocked app's card is declined before any path answers it, the document path included.
     if (isAppApproval(msg) && declineBlockedApproval(msg)) return;
+    if (panelOnly && isAppApproval(msg) && !shellAppCards.has(msg)) {
+      const match = /^Allow Computer Use to use "([^"\r\n]+)"\?$/.exec(msg.params?.message ?? '');
+      const app = msg.params?._meta?.tool_params?.app;
+      // A display-name mismatch is resolved only against an engine-supplied bundle ID. Unknown names, changed
+      // identities, action wording and lookup failures retain their one-action card and grant no session access.
+      if (match && match[1] !== app && typeof app === 'string' && /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(app) && resolveApprovalApp) {
+        const generation = stopGeneration;
+        shellAppCards.set(msg, false);
+        Promise.resolve().then(() => resolveApprovalApp(match[1])).catch(() => undefined).then(id => {
+          if (generation !== stopGeneration || closing || disposed) return;
+          shellAppCards.set(msg, id === app);
+          observeServerMessage(msg);
+        });
+        return;
+      }
+      shellAppCards.set(msg, plainAppCard(msg));
+    }
     if (documentMode && isAppApproval(msg)) { documentEngineApproval(msg); return; }
     if (msg.method === undefined && changeCalls.has(msg.id)) {
       const call = changeCalls.get(msg.id);
@@ -5235,7 +5271,7 @@ export function createRelay({
       if (warning && msg.params) msg.params.message = `${msg.params.message ?? 'Allow Computer Use?'} ${warning}`;
     }
     // A shell action confirmation must reach the panel even when its app is pre-approved.
-    if (isAppApproval(msg) && (!panelOnly || plainAppCard(msg))) {
+    if (isAppApproval(msg) && (!panelOnly || plainCard(msg))) {
       hand?.approval(msg.id, msg.params?._meta);
       // Observation only: the answer below is unchanged. The light check needs the key's time.
       if (msg.params?._meta?.tool_name === 'press_key') lightReturn?.keyPressed(msg.params._meta.tool_params?.app);

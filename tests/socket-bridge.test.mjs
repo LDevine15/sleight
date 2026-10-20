@@ -309,6 +309,100 @@ test('a concurrent call is refused until the active engine reply', async t => {
   release({ content: [] }); await first;
 });
 
+test('identical js retries join a waiting approval without dispatching input again', async t => {
+  const f = fixture(t), notices = [[], [], []];
+  let approve, release, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  let calls = 0;
+  const session = await startSocketSession({ ...f, startRelay: async () => ({
+    call: (tool, args, { onApproval }) => { calls++; approve = onApproval; entered(); return gate; },
+    close: async () => {},
+  }) });
+  t.after(() => session.close());
+  const request = { tool: 'js', args: { code: 'await app.click(1)' } };
+  const first = callSocket(request, { ...f, onApproval: s => notices[0].push(s) });
+  await started;
+  approve({ id: 'approval-1', state: 'waiting', app: 'Calculator', deadline: Date.now() + 120000 });
+  const second = callSocket(request, { ...f, onApproval: s => notices[1].push(s) });
+  const third = callSocket({ args: { code: request.args.code }, tool: 'js' }, { ...f, onApproval: s => notices[2].push(s) });
+  // Attach rejection observers before checking the pending state on the baseline.
+  const all = Promise.allSettled([first, second, third]);
+  await tick(20);
+  assert.equal(calls, 1);
+  assert.deepEqual(notices.map(items => items.map(s => s.state)), [['waiting'], ['waiting'], ['waiting']]);
+  await assert.rejects(callSocket({ tool: 'js', args: { code: 'await app.click(2)' } }, f), /busy/);
+  approve({ id: 'approval-1', state: 'answered', app: 'Calculator', deadline: Date.now() + 120000 });
+  await assert.rejects(callSocket(request, f), /busy/, 'an answered approval no longer admits a retry');
+  release({ content: [{ type: 'text', text: 'one execution' }] });
+  const results = await all;
+  assert.ok(results.every(r => r.status === 'fulfilled' && r.value.content[0].text === 'one execution'));
+  assert.deepEqual(notices.map(items => items.map(s => s.state)),
+    [['waiting', 'answered'], ['waiting', 'answered'], ['waiting', 'answered']]);
+});
+
+test('a disconnected caller leaves one pending approval for an identical retry', async t => {
+  const f = fixture(t);
+  let release, calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const session = await startSocketSession({ ...f, startRelay: async () => ({
+    call: (_tool, _args, { onApproval }) => {
+      calls++;
+      onApproval({ id: 'approval', state: 'waiting', app: 'Calculator', deadline: Date.now() + 120000 });
+      return gate;
+    }, close: async () => {},
+  }) });
+  t.after(() => session.close());
+  const request = { tool: 'js', args: { code: '1' } };
+  const socket = createConnection(session.socketPath);
+  t.after(() => socket.destroy());
+  socket.on('error', () => {});
+  socket.write(JSON.stringify(request) + '\n');
+  await new Promise(resolve => socket.once('data', resolve));
+  const gone = new Promise(resolve => socket.once('close', resolve));
+  socket.destroy(); await gone;
+  let noticed;
+  const waiting = new Promise(resolve => { noticed = resolve; });
+  const retry = callSocket(request, { ...f, onApproval: noticed });
+  assert.equal((await waiting).id, 'approval');
+  assert.equal(calls, 1);
+  release({ content: [{ type: 'text', text: 'one execution' }] });
+  assert.equal((await retry).content[0].text, 'one execution');
+});
+
+test('shell stdout names the immediate card and its glove fallback while waiting', async t => {
+  const f = fixture(t);
+  let output = '', announce, release, approve;
+  const noticed = new Promise(resolve => { announce = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const session = await startSocketSession({ ...f, startRelay: async () => ({
+    call: (_tool, _args, { onApproval }) => {
+      approve = onApproval;
+      approve({ id: 'approval', state: 'waiting', app: 'TextEdit', deadline: Date.now() + 120000 });
+      return gate;
+    }, close: async () => {},
+  }) });
+  t.after(() => session.close());
+  const result = socketCommand(['js', '1'], { ...f, notice() {}, out: text => { output += text; announce(); } });
+  await noticed;
+  assert.match(output, /waiting for your approval in the sleight card on the Mac \(also menu bar glove > Review sleight request\) for TextEdit; the call continues when you answer, or cancels after \d+ s/);
+  approve({ id: 'approval', state: 'answered', app: 'TextEdit', deadline: Date.now() + 120000 });
+  release({ content: [] });
+  assert.equal(await result, 0);
+});
+
+test('an image conversion failure replies once and releases the session for the next call', async t => {
+  const f = fixture(t);
+  let calls = 0;
+  const session = await startSocketSession({ ...f, startRelay: async () => ({
+    call: async () => ++calls === 1 ? { content: [{ type: 'image', mimeType: 'image/png', data: null }] } : { content: [] },
+    close: async () => {},
+  }) });
+  t.after(() => session.close());
+  await assert.rejects(callSocket({ tool: 'js', args: { code: '1' } }, f), /first argument/);
+  assert.deepEqual(await callSocket({ tool: 'js', args: { code: '2' } }, f), { content: [] });
+});
+
 test('a timed-out relay call stays busy until its late engine reply', async t => {
   const f = fixture(t), requestClock = idleClock(), release = join(f.root, 'release');
   let active, entered;

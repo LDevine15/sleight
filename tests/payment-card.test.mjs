@@ -5,6 +5,84 @@ import { idleClock } from './fixtures/socket-clock.mjs';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
+test('shell cards carry the shared ask presentation and keep identical requests separate', async () => {
+  const shown = [], events = [];
+  const answers = [];
+  const card = createPaymentCard({ onStatus: s => events.push(s), open: async () => ({
+    present: (id, data, choices, deliver) => { shown.push({ id, data, choices }); answers.push(deliver); },
+    authenticate: e => e.person === true,
+  }) });
+  const request = { session: 'Grok Bot', app: 'Calculator', request: 'Allow Calculator?', scoped: true,
+    presentation: { style: 'ask', question: 'Allow Grok Bot to use Calculator?', detail: 'Allow lasts until this Grok Bot session ends.',
+      host: 'Grok Bot', icon: '/plugin/assets/icon.png', kind: 'app' } };
+  const first = card.ask(request), second = card.ask({ ...request });
+  assert.notEqual(first, second);
+  await flush();
+  assert.equal(shown.length, 2);
+  assert.deepEqual(shown[0].data.presentation, request.presentation);
+  answers[0]({ choice: 'once' }); await flush();
+  assert.equal(events.length, 2);
+  answers[0]({ choice: 'once', person: true });
+  assert.equal(await first, 'once');
+  assert.deepEqual(events.map(e => e.state), ['waiting', 'waiting', 'answered']);
+  answers[1]({ choice: 'cancel', person: true });
+  assert.equal(await second, 'cancel');
+  assert.deepEqual(events.map(e => e.state), ['waiting', 'waiting', 'answered', 'answered']);
+  await card.close();
+});
+
+test('equal payment terms and distinct IDs never share an authenticated acceptance', async () => {
+  const shown = [];
+  const card = createPaymentCard({ open: async () => ({
+    present: (id, _data, _choices, answer) => shown.push({ id, answer }), authenticate: event => event.person === true,
+  }) });
+  const terms = { session: 'same-session', app: 'Firefox', site: 'example.test', shown: '$364', control: 'Pay' };
+  const first = card.ask({ ...terms, id: 'payment-A' }), second = card.ask({ ...terms, id: 'payment-B' });
+  await flush();
+  assert.equal(shown.length, 2);
+  assert.notEqual(shown[0].id, shown[1].id);
+  shown[0].answer({ choice: 'once', person: true });
+  assert.equal(await first, 'once');
+  let settled = false;
+  second.then(() => { settled = true; });
+  await flush();
+  assert.equal(settled, false);
+  shown[1].answer({ choice: 'cancel', person: true });
+  assert.equal(await second, 'cancel');
+  await card.close();
+});
+
+test('shell payment stops get a styled protected action with bounded terms', async () => {
+  let shown;
+  const card = createPaymentCard({ presentation: { icon: '/plugin/assets/icon.png' }, open: async () => ({
+    present: (_id, data, choices, answer) => { shown = { data, choices }; answer({ choice: 'once' }); },
+    authenticate: () => true,
+  }) });
+  assert.equal(await card.ask({ session: 'Grok Bot', site: 'example.test', shown: '$364', control: 'Pay\u202e' + 'x'.repeat(4096) }), 'once');
+  assert.equal(shown.data.presentation.kind, 'action');
+  assert.equal(shown.data.presentation.style, 'ask');
+  assert.equal(shown.data.presentation.question, 'Allow this payment at example.test?');
+  assert.match(shown.data.presentation.detail, /Amount: \$364\nControl: Pay\\u202e/);
+  assert.ok(Buffer.byteLength(shown.data.presentation.detail) <= 2048);
+  assert.match(shown.data.presentation.detail, /\[request truncated\]$/);
+  await card.close();
+});
+
+test('different apps or sessions never share a pending payment decision', async () => {
+  const shown = [];
+  const card = createPaymentCard({ open: async () => ({
+    present: (_id, _data, _choices, answer) => { shown.push(answer); }, authenticate: () => true,
+  }) });
+  const first = card.ask({ session: 'one', app: 'Calculator', request: 'Allow?' });
+  const second = card.ask({ session: 'one', app: 'TextEdit', request: 'Allow?' });
+  const third = card.ask({ session: 'two', app: 'Calculator', request: 'Allow?' });
+  await flush();
+  assert.equal(shown.length, 3);
+  for (const answer of shown) answer({ choice: 'cancel' });
+  assert.deepEqual(await Promise.all([first, second, third]), ['cancel', 'cancel', 'cancel']);
+  await card.close();
+});
+
 test('card status names the app and deadline while only authenticated input answers it', async () => {
   const clock = idleClock(), events = [];
   let answer;

@@ -359,12 +359,15 @@ test('the card names the site, the largest figure and the button, and only an au
   lossy.ask({ session: 'Codex', site, shown: '$12.00', control: payNow });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(opened, 2);
-  // N7: the same payment asked again while its card is open waits on that card.
+  // Equal payment terms do not prove that these asks are retries of one request.
   const before = shown.length;
   const first = card.ask({ session: 'Codex', site, shown: '$1.00', control: payNow }), again = card.ask({ session: 'Codex', site, shown: '$1.00', control: payNow });
-  assert.equal(first, again);
+  assert.notEqual(first, again);
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(shown.length, before + 1);
+  assert.equal(shown.length, before + 2);
+  shown[before].deliver({ choice: 'once', real: true });
+  shown[before + 1].deliver({ choice: 'cancel', real: true });
+  assert.deepEqual(await Promise.all([first, again]), ['once', 'cancel']);
   const none = createPaymentCard({ open: async () => undefined });
   assert.equal(await none.ask({ session: 'Codex', site, shown: '$268.00', control: payNow }), undefined, 'no card: the stop stays');
   const broken = createPaymentCard({ open: async () => ({ present() { throw Error('TRUSTED_UI_UNAVAILABLE'); }, authenticate: () => true }) });
@@ -496,7 +499,7 @@ test('N4: a key after a step change inside one call reads again before it goes',
   assert.match(error?.message ?? '', /^sleight stopped this payment/);
 });
 
-test('N7: a resend while the card is open waits on that card, and one card gives one allowance', async t => {
+test('distinct payment calls with equal terms need separate cards and one Allow gives one allowance', async t => {
   const shown = [];
   const channel = { present(id, data, choices, deliver) { shown.push(deliver); }, authenticate: event => event?.real === true };
   const card = createPaymentCard({ open: async () => channel, timeoutMs: 60000 });
@@ -504,14 +507,15 @@ test('N7: a resend while the card is open waits on that card, and one card gives
   f.call('act', 'await app.click(88)'); f.stop('act'); await f.settle(); await f.settle();
   f.call('reread', 'let app = await cua.getApp("Firefox")'); f.reply('reread', beforePay);
   f.call('again', 'await app.click(88)'); f.stop('again'); await f.settle(); await f.settle();
-  assert.equal(shown.length, 1, 'one card for the same site, figure and control');
+  assert.equal(shown.length, 2, 'distinct call IDs do not prove a retry even with equal terms');
   shown[0]({ choice: 'once', real: true }); await f.settle();
+  shown[1]({ choice: 'cancel', real: true }); await f.settle();
   f.call('reread2', 'let app = await cua.getApp("Firefox")'); f.reply('reread2', beforePay);
   f.call('pay', 'await app.click(88)'); await f.settle();
   assert.deepEqual(f.update('pay').payment.allow, { site, shown: '$268.00', control: payNow });
   f.reply('pay', `${beforePay}\n${f.update('pay').guardStopMark}${JSON.stringify({ paid: { allowed: 'card', ...paid } })}`); await f.settle();
   f.call('after', 'await app.click(88)'); await f.settle();
-  assert.equal(f.update('after').payment.allow, null, 'the second waiter on the same card adds no allowance');
+  assert.equal(f.update('after').payment.allow, null, 'the cancelled second card adds no allowance');
 });
 
 test('a checkout-only link on a cart with no card field is navigation, so it goes without a copy of the message', () => {

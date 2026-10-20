@@ -396,8 +396,8 @@ export function wordForHost(message, wording) {
   return message.replace(/^Allow Claude to /, `Allow ${wording.host || 'this agent'} to `);
 }
 
-export function askWithDialog(message, sessionScoped, options = {}, launch = execFile) {
-  if (helpersClosing) return Promise.resolve('cancel');
+// Shared by ask.js and the consent host's guarded shell card.
+export function approvalCardText(message, sessionScoped, options = {}) {
   // The engine asks 'Allow Computer Use to use "App"?'; sleight's own tools ask in plain words.
   const app = /^Allow Computer Use to use "(.+)"\?$/.exec(message)?.[1];
   const claudeCode = options.claudeCode !== false;
@@ -410,7 +410,14 @@ export function askWithDialog(message, sessionScoped, options = {}, launch = exe
   const flow = options?.kind === 'flow';
   const detail = flow ? options.detail : review ? `${options.detail}\n\nUndo restores the saved copy shown above. Reopen it in the app afterward. Later leaves the decision pending.` : (app ? `${actor} can then click and type in ${app} in the background. ` : '') +
     (sessionScoped ? `Allow lasts until ${session} ends.${options?.always ? ' Always Allow adds it to your pre-approved list.' : ''}` : 'It asks again next time.');
-  const args = ['-l', 'JavaScript', join(LIB, 'ask.js'), question, detail, ICON, String(ASK_SECONDS), flow ? 'flow' : review ? 'review' : 'approval', panel, ...(options?.always ? ['always'] : [])];
+  return { question, detail, panel, mode: flow ? 'flow' : review ? 'review' : 'approval' };
+}
+
+export function askWithDialog(message, sessionScoped, options = {}, launch = execFile) {
+  if (helpersClosing) return Promise.resolve('cancel');
+  const { question, detail, panel, mode } = approvalCardText(message, sessionScoped, options);
+  const review = mode === 'review';
+  const args = ['-l', 'JavaScript', join(LIB, 'ask.js'), question, detail, ICON, String(ASK_SECONDS), mode, panel, ...(options?.always ? ['always'] : [])];
   return new Promise((resolve, reject) => {
     ownHelper(launch('osascript', args, (err, stdout, stderr) => {
       const answer = stdout.trim();
@@ -888,9 +895,12 @@ export function approvalOptions(env = process.env, dialog = askWithDialog) {
 // No shell argument or environment setting supplies the user's message or a lasting consent answer.
 export function shellRelayOptions(dialog, card = createPaymentCard()) {
   const wording = hostWording({ name: 'Grok Bot' });
-  // Use the native consent host, which sleight's tools refuse to touch. There is no host form or JXA fallback.
+  // Keep the GB12 input guard and own-host refusal while using ask.js's card text and appearance.
   dialog ??= async (message, scoped, options) => {
-    const answer = await card.ask({ session: 'Grok Bot', site: 'this Mac', request: message, scoped, app: options?.app });
+    const text = approvalCardText(message, scoped, options);
+    const answer = await card.ask({ session: 'Grok Bot', site: 'this Mac', request: message, scoped, app: options?.app,
+      presentation: { style: 'ask', question: text.question, detail: text.detail, host: 'Grok Bot', icon: ICON,
+        kind: options?.appApproval && scoped ? 'app' : 'action' } });
     if (answer === undefined) throw Object.assign(new Error('sleight consent panel unavailable; no approval was granted. Retry when the panel is available.'),
       { code: 'SLEIGHT_PROMPT_UNAVAILABLE' });
     return answer === 'once' ? 'accept' : 'cancel';
@@ -904,6 +914,7 @@ export function shellRelayOptions(dialog, card = createPaymentCard()) {
     modHost: () => false,
     alwaysAllow: undefined,
     confirmPayments: 'always', rs: '0', prompt: null, panelOnly: true,
+    resolveApprovalApp: resolveAppId,
     turboUnavailable: 'Grok Bot shell has no trusted user-turn binding',
   };
 }
@@ -1097,7 +1108,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const openedFiles = new Map();
   process.once('exit', () => appHealth.close());
   const replayClient = replayBridge({ input: process.stdin, output: process.stdout });
-  const paymentCard = paymentCardFactory(shellRoute ? { onStatus: params => {
+  const paymentCard = paymentCardFactory(shellRoute ? { presentation: { icon: ICON }, onStatus: params => {
     replayClient.clientOut.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/sleight/approval', params }) + '\n');
   } } : undefined);
   const approval = shellRoute ? shellRelayOptions(undefined, paymentCard) : approvalOptions();

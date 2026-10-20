@@ -9,7 +9,7 @@ import { userInfo, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 import { environment } from './direct-browser/host.mjs';
 import { readNativeAccessibility } from './grokbot-host.mjs';
 
@@ -317,6 +317,7 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
   const peers = new Set();
   const startupAbort = new AbortController();
   let relay, peer, timer, closing, socketStat, busy = false;
+  let active;
   let finish, finishStartup;
   const closed = new Promise(resolve => { finish = resolve; });
   const startupReady = new Promise(resolve => { finishStartup = resolve; });
@@ -358,25 +359,46 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
                 return;
               }
               const { tool, args } = request;
-              if (!relay || busy || closing) throw new Error('Shell session is starting, busy or closing; read state before retrying input');
-              busy = true; idleClock.clearTimeout(timer); socket.setTimeout(0);
-              try {
-                const call = relay.call(tool, args, { onApproval: approval => {
-                  if (!socket.destroyed) socket.write(JSON.stringify({ approval }) + '\n');
-                } });
-                try {
-                  const result = await call;
+              const observe = approval => { if (!socket.destroyed) socket.write(JSON.stringify({ approval }) + '\n'); };
+              if (!relay || closing || busy && !(tool === 'js' && active?.tool === tool && active.waiting.size &&
+                  isDeepStrictEqual(args, active.args))) throw new Error('Shell session is starting, busy or closing; read state before retrying input');
+              socket.setTimeout(0);
+              if (busy) {
+                for (const approval of active.waiting.values()) observe(approval);
+              } else {
+                busy = true; idleClock.clearTimeout(timer);
+                const current = active = { tool, args, waiting: new Map(), observers: new Set() };
+                // Store the subscriber before call(): fake and in-process relays may emit status synchronously.
+                current.observers.add(observe);
+                const call = Promise.resolve().then(() => {
+                  const pending = relay.call(tool, args, { onApproval: approval => {
+                    if (approval.state === 'waiting') current.waiting.set(approval.id, approval);
+                    else current.waiting.delete(approval.id);
+                    for (const subscriber of current.observers) subscriber(approval);
+                  } });
+                  current.completed = pending.completed;
+                  return pending;
+                });
+                current.result = call.then(async result => {
                   const content = [];
                   for (const block of result?.content ?? []) {
                     if (block.type !== 'image') content.push(block);
                     else await printSocketResult({ content: [block] }, { directory: images,
                       out: text => content.push({ type: 'text', text: text.trimEnd() }) });
                   }
-                  reply({ result: { ...result, content } });
-                } catch (err) { reply({ error: err.message }); }
-                finally { await call.completed; }
+                  return { result: { ...result, content } };
+                }).catch(err => ({ error: err.message }));
+                // Input ownership lasts until the engine replies or is collected, even if every shell caller left.
+                void current.result.finally(async () => {
+                  await current.completed;
+                  if (active === current) { active = undefined; busy = false; armIdle(); }
+                });
               }
-              finally { busy = false; armIdle(); }
+              const current = active;
+              current.observers.add(observe);
+              socket.once('close', () => current.observers.delete(observe));
+              try { reply(await current.result); }
+              finally { current.observers.delete(observe); }
             } catch (err) { reply({ error: err.message }); }
           })();
         });
@@ -524,7 +546,7 @@ export async function socketCommand([command, ...args], options = {}) {
   await ensureSocketSession({ ...options, notice: options.notice ?? out });
   return printSocketResult(await callSocket({ tool: command, args: toolArgs }, { ...options,
     onApproval: approval => {
-      if (approval.state === 'waiting') out(`sleight: waiting for your approval on the Mac (menu bar glove > Review sleight request) for ${approvalLabel(approval.app)}; the call continues when you answer, or cancels after ${Math.max(0, Math.ceil((approval.deadline - Date.now()) / 1000))} s\n`);
+      if (approval.state === 'waiting') out(`sleight: waiting for your approval in the sleight card on the Mac (also menu bar glove > Review sleight request) for ${approvalLabel(approval.app)}; the call continues when you answer, or cancels after ${Math.max(0, Math.ceil((approval.deadline - Date.now()) / 1000))} s\n`);
     },
   }), { out });
 }

@@ -16,6 +16,18 @@ test('protected consent buttons use the input guard on every native card', () =>
   assert.match(source, /BEGIN PERSON INPUT/);
   assert.equal((source.match(/personModal\(alert, choices:/g) ?? []).length, 4);
   assert.doesNotMatch(source, /\.post\(|CGEventPost|AXUIElementPerformAction|activate\(ignoringOtherApps/);
+  const card = source.match(/\/\/ BEGIN ASK CARD\n([\s\S]*?)\/\/ END ASK CARD/)?.[1];
+  assert.ok(card, 'styled shell card absent');
+  assert.match(card, /if personChoice\(card.kind, choices\[index\]\) \{[\s\S]*actions.append\(ConsentInputAction\(button\)\)/);
+  assert.match(card, /if kind == "app" \{[\s\S]*view\["scope"\][\s\S]*operation\["scope"\]/);
+  assert.match(card, /choices == \["once", "cancel"\]/);
+  assert.match(card, /NSGlassEffectView/);
+  assert.match(card, /func show\(\) \{\s*panel.makeKeyAndOrderFront\(nil\)\s*NSSound\(named: "Glass"\)\?\.play\(\)/);
+  assert.match(card, /func review\(\) \{ panel.makeKeyAndOrderFront\(nil\) \}/);
+  assert.doesNotMatch(card, /keyEquivalent = "(?:\\r|\\n)"|\.runModal\(/);
+  assert.match(card, /actions.removeAll\(\)/);
+  assert.match(source, /closeAsk\(\); modal.close\(\); pending.removeAll\(\)/);
+  assert.match(source, /Opening is independent[\s\S]*?showNextAsk\(\)/);
 });
 
 test('Swift consent input fixture refuses AX and posted input but admits a HID event seam', { skip: macCommandSkip('xcrun') }, async t => {

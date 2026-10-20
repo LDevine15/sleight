@@ -86,7 +86,7 @@ for (const kind of ['app', 'action']) for (const mode of ['allow', 'cancel', 'un
   })]);
   assert.ok(Date.now() - start < 2000);
   assert.equal(finished, false, 'notice must reach stdout while the call is pending');
-  assert.match(output, /sleight: waiting for your approval on the Mac \(menu bar glove > Review sleight request\) for TextEdit; the call continues when you answer, or cancels after \d+ s\n/);
+  assert.match(output, /sleight: waiting for your approval in the sleight card on the Mac \(also menu bar glove > Review sleight request\) for TextEdit; the call continues when you answer, or cancels after \d+ s\n/);
   if (mode === 'unanswered') await result;
   else assert.equal(await result, 0);
   // Even after the shell gets its deadline error, collection retains input ownership until the engine replies.

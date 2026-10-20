@@ -3,6 +3,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { escapeLabel } from './direct-browser/consent-ui.mjs';
 
+// AppKit renders plain text. Escape directional controls and bound every untrusted visible field in UTF-8 bytes.
+function cardText(value) {
+  const text = String(value).replace(/[\u202a-\u202e\u2066-\u2069]/g, char => `\\u${char.charCodeAt(0).toString(16)}`);
+  return Buffer.byteLength(text) <= 2048 ? text
+    : Buffer.from(text).subarray(0, 2020).toString('utf8').replace(/\uFFFD$/, '') + '\n[request truncated]';
+}
+
 // sleight's own payment card for the engine-path payment gate (payment-gate.mjs): the consent host's operation sheet, the one
 // turbo's payment confirmations use (direct-browser/consent-ui.mjs and host.mjs). LAWS: trusted confirmations use sleight's own
 // window, outside the page. Only the person's click in that window answers it: the host's reply carries the channel's nonce and
@@ -10,24 +17,20 @@ import { escapeLabel } from './direct-browser/consent-ui.mjs';
 //
 // ask({ session, site, shown, control }) resolves 'once' (Allow once), 'cancel' (Cancel, closed or timed out) or undefined when
 // no card can be shown (no helper build, no window server, the host lost). open() gives the channel or undefined; tests pass one.
-export function createPaymentCard({ open = openConsentHost, now = Date.now, timeoutMs = 120000,
+export function createPaymentCard({ open = openConsentHost, now = Date.now, timeoutMs = 120000, presentation,
   onStatus, clock = { setTimeout, clearTimeout } } = {}) {
   let channel;
   // A host that exits or never starts leaves no channel, and the next payment opens one again.
   // A lost host is also closed, so a late answer doesn't leave one running beside the next (review F15).
   const forget = () => { const old = channel; channel = undefined; old?.then(ui => ui?.close?.(), () => {}); };
   const connect = async () => channel ??= Promise.resolve().then(() => open({ onLoss: forget })).then(value => value ?? forget(), forget);
-  // One open card per payment: asking again for the same site, figure and control while it is open waits on that card (review N7).
-  const asking = new Map();
+  // This layer has no trusted logical request identity. Every ask gets a separate decision, even with equal terms.
+  // The relay joins repeated pending engine request IDs; the socket bridge joins retries of its active call.
   return {
-    ask(card) {
-      const key = JSON.stringify([card.site, card.shown, card.control, card.request, card.scoped]);
-      if (!asking.has(key)) asking.set(key, show(card).finally(() => asking.delete(key)));
-      return asking.get(key);
-    },
+    ask: show,
     async close() { const ui = await channel?.catch(() => undefined); channel = undefined; ui?.close?.(); },
   };
-  async function show({ session, site, shown, control, request, scoped, app }) {
+  async function show({ session, site, shown, control, request, scoped, app, presentation: cardPresentation }) {
     const ui = await connect();
     if (!ui) return;
     return new Promise(resolve => {
@@ -44,10 +47,14 @@ export function createPaymentCard({ open = openConsentHost, now = Date.now, time
       try {
         const scope = scoped ? 'Allow for this Grok Bot session only' : 'Allow this action once';
         // Bound untrusted engine text by UTF-8 bytes, with an explicit truncation marker.
-        const bounded = request === undefined ? undefined : Buffer.byteLength(request) <= 2048 ? request
-          : Buffer.from(request).subarray(0, 2020).toString('utf8').replace(/\uFFFD$/, '') + '\n[request truncated]';
+        const bounded = request === undefined ? undefined : cardText(request);
+        // Shell engine-payment stops use the same styled surface as shell elicitations.
+        const styled = cardPresentation ?? (presentation && { style: 'ask', host: session || 'Grok Bot', kind: 'action',
+          icon: presentation.icon, question: `Allow this payment at ${site || 'this page'}?`,
+          detail: `Amount: ${shown ?? 'no amount shown'}\nControl: ${control ?? 'not named'}\nAllow this payment once.` });
         ui.present(id,
           { view: { clientSession: escapeLabel(session), origin: escapeLabel(site || 'this page'), ...(request === undefined ? {} : { scope }) },
+            ...(styled ? { presentation: { ...styled, question: cardText(styled.question), detail: cardText(styled.detail) } } : {}),
             operation: request === undefined ? { site: site || 'this page', amount: shown ?? 'no amount shown', button: control }
               : { request: bounded, scope } },
           ['once', 'cancel'], event => { if (ui.authenticate(event) === true) done(event.choice === 'once' ? 'once' : 'cancel'); },
