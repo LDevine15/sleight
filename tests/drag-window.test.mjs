@@ -166,6 +166,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
       value: () => { if (ax.failValue) throw new Error('value unavailable'); return ax.changedBeforeMove ? 'owner edit\n' : text(); },
       selection: () => { if (ax.failSelection) throw new Error('selection unavailable'); return { location: text().indexOf(selected.get(11)), length: selected.get(11).length }; },
       lineRange: line => line === 0 ? { location: 0, length: text().length } : null,
+      lineForIndex: () => 0,
       hasAttributes: (location, length, baseline) => {
         if (ax.unreadableAttributes) throw new Error('attributed string unavailable');
         if (!ax.attributes) return !!ax.formatted;
@@ -177,7 +178,12 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
         } }, size, location - baseline);
       },
       indexAt: p => { const i = Math.floor((p.x - x0) / 8); return p.y >= y0 && p.y < y0 + 13 && i >= 0 && i < text().length - 1 ? i : 0; },
-      rect: i => i < text().length - 1 ? { X: x0 + 8 * i, Y: y0, Width: 8, Height: 13 } : null,
+      rect: (i, length = 1) => {
+        const end = text().length - 1;
+        if (i === 0 && length === text().length) return { X: x0, Y: y0, Width: 8 * end, Height: 13 };
+        if (i === text().length && length === 0) return { X: x0, Y: y0 + 20, Width: 0, Height: 13 };
+        return i <= end ? { X: x0 + 8 * i, Y: y0, Width: length === 0 || i === end ? 0 : 8, Height: 13 } : null;
+      },
       lineEnd: () => text().length,
       replace: (location, length, s) => {
         if (ax.failWrite === axWrites.length + 1) throw new Error('AX write failed');

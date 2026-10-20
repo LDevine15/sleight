@@ -603,7 +603,7 @@ function axTextArea(pid, point, reference) {
 }
 
 // Where text dropped at a point lands: before or after the character under it,
-// at the final line's end, or after all text when the point is below the last character.
+// at a line's end, or after all text when the point is below the final line.
 // AXRangeForPosition can answer 0 or no value where there is no character.
 function dropIndex(area, p, text) {
   const onRow = r => r && p.y >= r.Y && p.y < r.Y + r.Height;
@@ -621,20 +621,56 @@ function dropIndex(area, p, text) {
   const { index, r } = hit(p);
   if (onRow(r) && p.x >= r.X && p.x < r.X + r.Width) return p.x < r.X + r.Width / 2 ? index : index + 1;
   const count = dp7 && bounds && area.characterCount ? attempt(() => area.characterCount(), null) : null;
+  const validRange = range => range && Number.isSafeInteger(range.location) && Number.isSafeInteger(range.length) &&
+    range.location >= 0 && range.length >= 0 && Number.isSafeInteger(range.location + range.length) &&
+    (text === undefined || range.location + range.length <= text.length);
+  const lineAt = i => {
+    if (!area.lineForIndex || !area.lineRange) return null;
+    const line = attempt(() => area.lineForIndex(i), null);
+    if (!Number.isSafeInteger(line) || line < 0) return null;
+    const range = attempt(() => area.lineRange(line), null);
+    if (!validRange(range) || i < range.location || i >= range.location + range.length) return null;
+    const rect = attempt(() => area.rect(range.location, range.length), null);
+    return validRect(rect) ? { range, rect } : null;
+  };
   if (dp7 && bounds && area.characterCount) {
-    // A point below the final character, inside this text area, can only append.
-    // FM6: locate it with AXNumberOfCharacters and AXBoundsForRange, without document text or a line scan.
+    // The final logical character may be near the top of a second column.
+    // Require the point to overlap that line's horizontal span, not an earlier column.
+    // FM6: use AX ranges and bounds only; supplied text contributes its length alone.
     const last = Number.isSafeInteger(count) && count > 0 ? attempt(() => area.rect(count - 1, 1), null) : null;
-    if (validRect(last) && !(last.X === 0 && last.Y === 0) && last.X >= bounds.X && last.Y >= bounds.Y &&
+    if ((text === undefined || count === text.length) && validRect(last) && !(last.X === 0 && last.Y === 0) && last.X >= bounds.X && last.Y >= bounds.Y &&
         last.X + last.Width <= bounds.X + bounds.Width && last.Y + last.Height <= bounds.Y + bounds.Height &&
-        p.y >= last.Y + last.Height) return count;
+        p.y >= last.Y + last.Height) {
+      const final = lineAt(count - 1);
+      if (final && final.range.location + final.range.length === count && final.rect.Y === last.Y &&
+          final.rect.Height === last.Height && final.rect.X >= bounds.X &&
+          final.rect.X + final.rect.Width <= bounds.X + bounds.Width &&
+          p.x >= final.rect.X && p.x <= final.rect.X + final.rect.Width) return count;
+    }
   }
   for (let x = p.x - 4; x >= p.x - 600; x -= 4) {
     const { index: i, r: q } = hit({ x, y: p.y });
     if (onRow(q) && x >= q.X && x < q.X + q.Width) {
-      const end = area.lineEnd(i);
-      if (bounds && (!Number.isSafeInteger(count) || count <= 0 || end !== count)) throw new Error(refusal);
-      return end > 0 && text[end - 1] === '\n' ? end - 1 : end;
+      const line = lineAt(i);
+      if (!line || !onRow(line.rect) || line.rect.Y !== q.Y || line.rect.Height !== q.Height ||
+          p.x < line.rect.X + line.rect.Width) throw new Error(refusal);
+      const start = attempt(() => area.rect(line.range.location, 0), null);
+      let end = line.range.location + line.range.length;
+      let caret = attempt(() => area.rect(end, 0), null);
+      // A line break can put the range's end caret on the next row. Its own
+      // zero-width range still locates the preceding line's insertion point.
+      if (!validRect(caret) || !onRow(caret)) {
+        end--;
+        const last = attempt(() => area.rect(end, 1), null);
+        caret = attempt(() => area.rect(end, 0), null);
+        if (!validRect(last) || last.Width !== 0 || !onRow(last)) throw new Error(refusal);
+      }
+      // Distinct logical start and end carets must establish left-to-right
+      // direction. Missing, RTL or ambiguous geometry cannot justify appending.
+      if (!validRect(start) || !validRect(caret) || start.Width !== 0 || caret.Width !== 0 ||
+          !onRow(start) || !onRow(caret) || start.Y !== line.rect.Y || caret.Y !== line.rect.Y ||
+          start.X !== line.rect.X || caret.X !== line.rect.X + line.rect.Width || start.X >= caret.X) throw new Error(refusal);
+      return end;
     }
   }
   if (dp7 && area.lineForIndex && area.lineRange) {
@@ -653,13 +689,11 @@ function dropIndex(area, p, text) {
         let previous = q, nextLocation;
         for (let offset = 1; offset <= 150 && Date.now() - started <= 1000; offset++) {
           const range = attempt(() => area.lineRange(line + offset), null);
-          if (!range || !Number.isSafeInteger(range.location) || !Number.isSafeInteger(range.length) ||
-              range.location < 0 || range.length < 0 || range.location + range.length > text.length ||
+          if (!validRange(range) ||
               (nextLocation !== undefined && range.location !== nextLocation)) break;
           const end = range.location + range.length;
-          if (text.slice(range.location, end).replace(/\r?\n$/, '') !== '') break;
           const caret = area.rect(range.location, range.length);
-          if (!caret || !Object.values(caret).every(Number.isFinite) || caret.Width < 0 || caret.Height <= 0 ||
+          if (!validRect(caret) || caret.Width !== 0 ||
               (caret.X === 0 && caret.Y === 0) || caret.Y < previous.Y + previous.Height) break;
           if (onRow(caret)) return range.location;
           if (caret.Y > p.y || range.length === 0) break;
@@ -692,6 +726,7 @@ function accessibilityMove(area, snapshot, end, window) {
   } finally { if (!formatted) snapshot.preserveFormatting = false; }
   const word = snapshot.selected, src = sel.location, srcEnd = src + sel.length;
   const dest = dropIndex(area, end, before);
+  if (!Number.isSafeInteger(dest) || dest < 0 || dest > before.length) throw new Error('drop index is outside destination text');
   if (dest >= src && dest <= srcEnd) throw new Error('the drop point is inside the selection; nothing was changed');
   const isWord = /^[\p{L}\p{N}]/u.test(word) && /[\p{L}\p{N}]$/u.test(word);
   // Source span, with one space when the word leaves two side by side or one at a line edge.

@@ -94,8 +94,12 @@ function fixture(options = {}) {
       lineForIndex: () => 0,
       lineRange: n => n === 0 ? { location: 0, length: el.AXValue.length } : options.emptyFinal && n === 1 ? { location: el.AXValue.length, length: 0 } : null,
       hasAttributes: () => !!options.formatted,
-      rect: (i, length = 1) => options.emptyFinal && i === el.AXValue.length && length === 0
-        ? { X: x, Y: 150, Width: 0, Height: 14 } : { X: x + i * 8, Y: 130, Width: 8, Height: 14 },
+      rect: (i, length = 1) => {
+        const end = el.AXValue.length - 1;
+        if (i === 0 && length === el.AXValue.length) return { X: x, Y: 130, Width: 8 * end, Height: 14 };
+        if (i === el.AXValue.length && length === 0) return { X: x, Y: 150, Width: 0, Height: 14 };
+        return { X: x + i * 8, Y: 130, Width: length === 0 || i === end ? 0 : 8, Height: 14 };
+      },
       indexAt: p => options.emptyFinal && (p.y < 130 || p.y >= 144) ? 0 : Math.min(Math.floor((p.x - x) / 8), el.AXValue.length - 1), lineEnd: () => el.AXValue.length,
       replace: (at, length, text) => {
         if (options.rangeSideEffects) { el.range = { location: at, length }; el.AXSelectedText = el.AXValue.slice(at, at + length); }
@@ -462,7 +466,8 @@ for (const to of [[24, 104], [20, 100], 'end of line 2']) {
         bounds: () => ({ X: 757, Y: 81, Width: 700, Height: 520 }),
         characterCount: () => 12,
         indexAt: () => 0,
-        rect: (i, n = 1) => i === 12 && n === 0 && typeof to === 'string' ? { X: 762, Y: 94, Width: 0, Height: 13 }
+        rect: (i, n = 1) => i === 0 && n === 12 ? { X: 762, Y: 81, Width: 71.5, Height: 13 }
+          : i === 12 && n === 0 && typeof to === 'string' ? { X: 762, Y: 94, Width: 0, Height: 13 }
           : i < 12 ? { X: 762 + i * 6.5, Y: 81, Width: i === 11 ? 0 : 6.5, Height: 13 } : null,
         lineRange: n => [{ location: 0, length: 12 }, { location: 12, length: 0 }][n] ?? null,
       };

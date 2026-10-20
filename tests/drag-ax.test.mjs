@@ -334,6 +334,7 @@ test('WD3 native adapter resolves below the last range without reading document 
   };
   Object.assign(api, {
     malloc: () => ({}), free() {},
+    NSNumber: { numberWithInteger: value => value },
     NSMakeRange: (location, length) => ({ location, length }), NSMakePoint: (x, y) => ({ x, y }),
     NSValue: { ...api.NSValue,
       valueWithRange: value => ({ getValue: buffer => { buffer.value = value; } }),
@@ -343,9 +344,15 @@ test('WD3 native adapter resolves below the last range without reading document 
     AXUIElementCopyParameterizedAttributeValue: (el, name, arg, out) => {
       assert.equal(el, h.area); parameters.push([name, arg]);
       if (name === 'AXRangeForPosition') return -25212;
+      if (name === 'AXLineForIndex') { assert.equal(arg, 11); out[0] = 0; return 0; }
+      if (name === 'AXRangeForLine') { assert.equal(arg, 0); out[0] = { description: 'location:0 length:12' }; return 0; }
       assert.equal(name, 'AXBoundsForRange');
-      assert.deepEqual(JSON.parse(JSON.stringify(arg)), { location: 11, length: 1 });
-      out[0] = { description: 'x:833.5 y:81 w:0 h:13' }; return 0;
+      if (arg.location === 11 && arg.length === 1) out[0] = { description: 'x:833.5 y:81 w:0 h:13' };
+      else {
+        assert.deepEqual(JSON.parse(JSON.stringify(arg)), { location: 0, length: 12 });
+        out[0] = { description: 'x:762 y:81 w:71.5 h:13' };
+      }
+      return 0;
     },
     AXUIElementSetAttributeValue: () => assert.fail('endpoint resolution must not write'),
   });
@@ -354,7 +361,7 @@ test('WD3 native adapter resolves below the last range without reading document 
   assert.equal(h.context.dropIndex(area, { x: 764, y: 101 }), 12);
   assert.ok(h.reads.includes('AXNumberOfCharacters'));
   assert.ok(h.reads.includes('AXPosition')); assert.ok(h.reads.includes('AXSize'));
-  assert.equal(parameters.length, 2); assert.equal(h.hits.length, 0);
+  assert.equal(parameters.length, 5); assert.equal(h.hits.length, 0);
 });
 
 test('line-end geometry requests the whole last Unicode glyph and skips CRLF', () => {

@@ -79,7 +79,7 @@ for (const shape of ['missing bounds', 'nonempty row', 'overlapping row', 'disco
     h.area.lineRange = n => n === 0 ? { location: 0, length: 4 } : n === 1
       ? { location: 4, length: shape === 'repeated empty range' ? 0 : shape === 'nonempty row' ? 2 : 1 }
       : n === 2 ? { location: shape === 'discontinuous range' ? 4 : text.length, length: 0 } : null;
-    h.area.rect = (i, n) => i === 4 ? { X: 10, Y: shape === 'overlapping row' ? 100 : 120, Width: 0, Height: 14 }
+    h.area.rect = (i, n) => i === 4 ? { X: 10, Y: shape === 'overlapping row' ? 100 : 120, Width: shape === 'nonempty row' ? 8 : 0, Height: 14 }
       : i === text.length ? shape === 'missing bounds' ? null : { X: 10, Y: 140, Width: 0, Height: 14 } : rect(i, n);
     assert.throws(() => h.drop({ x: 20, y: 146 }, text), /cannot find where the drop point falls/);
   });
@@ -118,19 +118,20 @@ test('DP7 rejects missing caret geometry and never swallows an AX timeout', () =
   assert.throws(() => h.drop({ x: 20, y: 126 }), e => e.axCode === -25204);
 });
 
-function finalRangeFixture() {
+function finalRangeFixture(text) {
   const h = fixture(), reads = [];
   h.area.bounds = () => ({ X: 757, Y: 81, Width: 700, Height: 520 });
   h.area.characterCount = () => { reads.push('count'); return 12; };
   h.area.indexAt = () => null;
   h.area.rect = (index, length = 1) => {
     reads.push([index, length]);
-    return index === 11 && length === 1 ? { X: 833.5, Y: 81, Width: 0, Height: 13 } : null;
+    return index === 11 && length === 1 ? { X: 833.5, Y: 81, Width: 0, Height: 13 }
+      : index === 0 && length === 12 ? { X: 762, Y: 81, Width: 71.5, Height: 13 } : null;
   };
   h.area.value = () => assert.fail('drop geometry must never read document text');
-  h.area.lineForIndex = () => assert.fail('end-of-text fallback needs no line lookup');
-  h.area.lineRange = () => assert.fail('end-of-text fallback needs no line range');
-  return { ...h, reads, drop: p => h.context.dropIndex(h.area, p) };
+  h.area.lineForIndex = () => 0;
+  h.area.lineRange = () => ({ location: 0, length: 12 });
+  return { ...h, reads, drop: p => h.context.dropIndex(h.area, p, text) };
 }
 
 for (const [x, y] of [[24, 104], [20, 100]]) {
@@ -177,20 +178,106 @@ for (const [name, change] of [
 }
 
 test('WD3 metadata and hit-test timeouts propagate before any fallback', () => {
-  for (const method of ['indexAt', 'bounds', 'characterCount', 'rect']) {
+  for (const method of ['indexAt', 'bounds', 'characterCount', 'rect', 'lineForIndex', 'lineRange']) {
     const h = finalRangeFixture();
     h.area[method] = () => { throw Object.assign(Error('AX timeout'), { axCode: -25204 }); };
     assert.throws(() => h.drop({ x: 762, y: 99 }), error => error.axCode === -25204);
   }
 });
 
-test('WD3 never appends from a point to the right of a non-final line', () => {
-  const h = finalRangeFixture(), lastRect = h.area.rect;
-  h.area.indexAt = p => p.y >= 81 && p.y < 94 && p.x >= 762 && p.x < 786 ? Math.floor((p.x - 762) / 8) : 0;
-  h.area.rect = (i, n) => i < 3 ? { X: 762 + i * 8, Y: 81, Width: 8, Height: 13 }
-    : i === 11 ? { ...lastRect(i, n), Y: 110 } : null;
-  h.area.lineEnd = () => 4;
-  assert.throws(() => h.context.dropIndex(h.area, { x: 800, y: 87 }, 'abc\ndefghij\n'), /cannot find where the drop point falls/);
+for (const text of ['short', 'destination\nextra']) {
+  test(`WD4 refuses an end-of-text count that disagrees with supplied text: ${text.length}`, () => {
+    assert.throws(() => finalRangeFixture(text).drop({ x: 762, y: 99 }), /cannot find where the drop point falls/);
+  });
+}
+
+test('WD4 accepts a matching supplied text length', () => {
+  assert.equal(finalRangeFixture('destination\n').drop({ x: 762, y: 99 }), 12);
+});
+
+test('WD4 refuses below an earlier column when the final line is in another column', () => {
+  const h = finalRangeFixture(), rect = h.area.rect;
+  h.area.rect = (i, n) => {
+    const r = rect(i, n);
+    return r && { ...r, X: r.X + 300 };
+  };
+  assert.throws(() => h.drop({ x: 762, y: 150 }), /cannot find where the drop point falls/);
+  assert.equal(h.drop({ x: 1070, y: 150 }), 12);
+});
+
+for (const [name, change] of [
+  ['missing line metadata', area => { delete area.lineForIndex; delete area.lineRange; }],
+  ['multirow line bounds', area => {
+    const rect = area.rect;
+    area.rect = (i, n) => i === 0 && n === 12 ? { X: 762, Y: 81, Width: 400, Height: 100 } : rect(i, n);
+  }],
+]) {
+  test(`WD4 refuses an append with ${name}`, () => {
+    const h = finalRangeFixture(); change(h.area);
+    assert.throws(() => h.drop({ x: 762, y: 150 }), /cannot find where the drop point falls/);
+  });
+}
+
+function lineFixture({ final = false, newline = true, direction = 'ltr', bounds = true } = {}) {
+  const h = fixture();
+  if (bounds) h.area.bounds = () => ({ X: 10, Y: 100, Width: 300, Height: 100 });
+  h.area.characterCount = () => final ? (newline ? 4 : 3) : 8;
+  h.area.indexAt = p => p.y >= 100 && p.y < 114 && p.x >= 10 && p.x < 34
+    ? direction === 'rtl' ? 2 - Math.floor((p.x - 10) / 8) : Math.floor((p.x - 10) / 8) : null;
+  h.area.lineForIndex = i => i < 4 ? 0 : 1;
+  h.area.lineRange = n => n === 0 ? { location: 0, length: newline ? 4 : 3 }
+    : n === 1 && !final ? { location: 4, length: 4 } : null;
+  h.area.rect = (i, n = 1) => {
+    if (i === 0 && n === (newline ? 4 : 3)) return { X: 10, Y: 100, Width: 24, Height: 14 };
+    if (i === 4 && n === 4 && !final) return { X: 10, Y: 130, Width: 24, Height: 14 };
+    if (n === 0) {
+      if (direction === 'unknown') return null;
+      if (i === 0) return { X: direction === 'rtl' ? 34 : 10, Y: 100, Width: 0, Height: 14 };
+      if (i === 3) return { X: direction === 'rtl' ? 10 : 34, Y: 100, Width: 0, Height: 14 };
+      if (i === 4) return { X: 10, Y: 130, Width: 0, Height: 14 };
+    }
+    if (i < 3) return { X: 10 + (direction === 'rtl' ? 2 - i : i) * 8, Y: 100, Width: 8, Height: 14 };
+    if (i === 3 && newline) return { X: direction === 'rtl' ? 10 : 34, Y: 100, Width: 0, Height: 14 };
+    if (i === 7 && !final) return { X: 34, Y: 130, Width: 0, Height: 14 };
+    return null;
+  };
+  h.area.value = () => assert.fail('line-end mapping must never read document text');
+  h.area.lineEnd = () => newline ? 4 : 3;
+  return { ...h, drop: (p, text) => h.context.dropIndex(h.area, p, text) };
+}
+
+for (const final of [false, true]) {
+  for (const newline of [false, true]) {
+    test(`WD4 maps right of a ${final ? 'final' : 'non-final'} line with newline=${newline} using geometry only`, () => {
+      assert.equal(lineFixture({ final, newline }).drop({ x: 50, y: 107 }), 3);
+    });
+  }
+  for (const direction of ['rtl', 'unknown']) {
+    for (const bounds of [false, true]) {
+      test(`WD4 refuses right of a ${final ? 'final' : 'non-final'} ${direction} line with bounds=${bounds}`, () => {
+        assert.throws(() => lineFixture({ final, direction, bounds }).drop({ x: 50, y: 107 }, final ? 'abc\n' : 'abc\nxyz\n'),
+          /cannot find where the drop point falls/);
+      });
+    }
+  }
+}
+
+test('WD4 same-window move refuses an index outside the verified text before writing', () => {
+  const h = fixture(), writes = [];
+  Object.assign(h.area, {
+    value: () => 'alpha beta', selection: () => ({ location: 0, length: 5 }), hasAttributes: () => false,
+    indexAt: () => 20, rect: () => ({ X: 10, Y: 100, Width: 8, Height: 14 }),
+    replace: (...args) => writes.push(args),
+  });
+  assert.throws(() => h.context.accessibilityMove(h.area, { text: 'alpha beta', selected: 'alpha' },
+    { x: 11, y: 107 }, { id: 1, title: 'fixture' }), /drop index is outside destination text/);
+  assert.deepEqual(writes, []);
+});
+
+test('WD4 a stale character count cannot block an independently proven line end', () => {
+  const h = lineFixture();
+  h.area.characterCount = () => 99;
+  assert.equal(h.context.dropIndex(h.area, { x: 50, y: 107 }, 'abc\nxyz\n'), 3);
 });
 
 test('WD3 refuses the zero-origin sentinel even within a text-area frame', () => {
