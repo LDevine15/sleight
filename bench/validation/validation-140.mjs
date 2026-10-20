@@ -168,7 +168,7 @@ function options(args) {
   return out;
 }
 
-function readReceipt(out, plan, round) {
+export function readReceipt(out, plan, round) {
   const receipt = JSON.parse(readFileSync(join(out, `${round.id}.receipt.json`)));
   if (receipt.safe !== true || receipt.harnessHash !== plan.harnessHash || receipt.build !== (round.side === 'A' ? plan.aBuild : plan.bBuild) || receipt.engine !== plan.engine)
     throw Error(`${round.id}: receipt identity, cleanup or engine mismatch`);
@@ -266,7 +266,7 @@ function comparablePlan(candidate, plan) {
   return normalized;
 }
 
-function verifyRunPins(candidate, plan, repository = ROOT) {
+export function verifyRunPins(candidate, plan, repository = ROOT) {
   if (canonical(comparablePlan(candidate, plan)) !== canonical(plan)) throw Error('Original plan changed or differs from the candidate plan');
   const file = join(plan.out, 'run-identity.json');
   if (!existsSync(file)) { verifyLegacyIdentity(plan, repository); return; }
@@ -313,7 +313,7 @@ export function saveScore(out, scored) {
   }
 }
 
-function readRows(path, runner, tasks, side, name) {
+export function readRows(path, runner, tasks, side, name) {
   if (runner === 'browser') {
     const r = loadRound(path);
     if (r.excluded) throw Error(`${name}: ${r.excluded}`);
@@ -378,7 +378,7 @@ const runGit = (cwd, ...args) => execFileSync('/usr/bin/git', ['-C', cwd, ...arg
 const driverPath = path => path.startsWith('bench/validation/') || path === 'tests/validation-140.test.mjs';
 const lines = text => text.trim().split('\n').filter(Boolean);
 
-function harnessAt(build, repository) {
+export function harnessAt(build, repository) {
   const files = Object.fromEntries(lines(runGit(repository, 'ls-tree', '-r', build, '--', ...HARNESS_PATHS))
     .filter(line => !line.includes('\tbench/results/')).map(line => {
       const [meta, path] = line.split('\t'); return [path, meta];
@@ -503,7 +503,7 @@ export function verifyEngine(plan, read = readEngine) {
   if (read().version !== plan.engine) throw Error('Current engine changed or is unavailable; pinned engine required');
 }
 
-async function child(command, args, cwd, log, extraEnv = {}) {
+export async function child(command, args, cwd, log, extraEnv = {}) {
   // Every check and runner gets its own throwaway outer Claude config. World arms keep their isolated account logins.
   const config = mkdtempSync('/tmp/lane-claude-');
   try {
