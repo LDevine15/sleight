@@ -107,7 +107,22 @@ function dockerBoundary(fixture, overrides = {}) {
     if (args[0] === 'inspect') return ok(image);
     if (args[0] === 'start') {
       if (overrides.start) return overrides.start(options);
-      const receipt = await runContainerChecks(containerOptions({ commit: fixture.head, runId }));
+      // Exercise the container's real copy, Git reads and config cleanup on the host.
+      // Only the platform observation and Docker/npm boundaries are simulated.
+      const root = join(fixture.bank, 'container-workspace');
+      mkdirSync(root);
+      let config;
+      const receipt = await runContainerChecks({ platform: 'linux', commit: fixture.head, runId,
+        source: checkout, root, log() {}, execute: async (command, args, options) => {
+          config = options.env.CLAUDE_CONFIG_DIR;
+          assert.equal(existsSync(config), true);
+          if (command === '/usr/bin/git') return runOwnedCommand(command, args, options);
+          assert.equal(command, 'npm');
+          return ok(args[0] === 'test' ? tap : '');
+        } });
+      assert.equal(existsSync(config), false);
+      assert.equal(fixture.git(root, ['rev-parse', 'HEAD']), fixture.head);
+      assert.equal(fixture.git(root, ['ls-files']), 'README.md\npackage.json');
       return { ...ok(JSON.stringify(receipt)), status: receipt.exitCode };
     }
     if (args[0] === 'rm') return overrides.remove ? overrides.remove(options) : ok(runId);
