@@ -1707,24 +1707,32 @@ export function createRelay({
   const handleBundles = new Map();
   // Engine app handles share the app's main window. Keep open_file's document binding separately from reads.
   const openedWindows = new Map(), openedWindowCalls = new Set(), openedAliases = new Map();
-  function openedWindowCall(msg) {
+  const openedWindowLeases = new Map(), openedFlowPlans = new Map(), openedWindowReads = new Set();
+  function openedWindowCall(msg, flowPlan) {
     if (msg.method !== 'tools/call' || msg.params?.name !== 'js' || openedWindowCalls.has(msg.id)) return false;
     const code = msg.params.arguments?.code;
     if (typeof code !== 'string' || !openedWindows.size) return false;
     const bare = codeOnly(code), bindings = new Map(openedWindows);
-    // The advertised `let app = __sleightOpenedAppN` form, and direct renames of it. Other assignments forget a binding.
-    for (const match of bare.matchAll(/\b([A-Za-z_$][\w$]*)\s*=(?!=|>)\s*([A-Za-z_$][\w$]*)?/g)) {
-      const target = bindings.get(match[2]);
-      if (target && /^\s*(?:;|$)/.test(bare.slice(match.index + match[0].length))) bindings.set(match[1], target);
-      else bindings.delete(match[1]);
-    }
+    // Retain only simple aliases, member receivers and standalone echoes. Any other use of a
+    // bound name can assign or shadow it (including patterns, loop heads and parameters), so forget it.
+    let rest = bare.replace(/(^|;)\s*(?:(?:let|const|var)\s+)?([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\s*(?=;|$)/g,
+      (match, boundary, name, source) => {
+        const target = bindings.get(source);
+        if (target) bindings.set(name, target); else bindings.delete(name);
+        return boundary + ' '.repeat(match.length - boundary.length);
+      });
+    rest = rest.replace(/\b[A-Za-z_$][\w$]*(?=\s*\.)/g, '')
+      .replace(/(^|;)\s*[A-Za-z_$][\w$]*\s*(?=;|$)/g, '$1');
+    const uncertain = new Set([...rest.matchAll(/[A-Za-z_$][\w$]*/g)].map(match => match[0]));
+    for (const name of bindings.keys()) if (uncertain.has(name) || /`[\s\S]*?\$\{/.test(code)) bindings.delete(name);
+    // Prune on mixed action paths too, before any async selection or successful reply can retain aliases.
+    for (const name of openedWindows.keys()) if (!bindings.has(name)) openedWindows.delete(name);
     const handles = [...new Set([...bare.matchAll(HANDLE_CALL)].map(match => match[1]).filter(handle => bindings.has(handle)))];
     if (!handles.length) {
       // A standalone alias is a local REPL assignment; it needs no window selection.
       if (/^\s*(?:(?:let|const|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*[A-Za-z_$][\w$]*\s*;?\s*$/.test(bare)) {
         openedAliases.set(msg.id, bindings);
       }
-      for (const key of openedWindows.keys()) if (!bindings.has(key)) openedWindows.delete(key);
       return false;
     }
     const target = bindings.get(handles[0]);
@@ -1745,12 +1753,15 @@ export function createRelay({
       if (generation !== stopGeneration || closing || disposed) throw Error('opened window call stopped');
     };
     running.add(msg.id); localRunning.add(msg.id);
+    if (flowPlan) openedFlowPlans.set(msg.id, flowPlan);
     callDetails.set(msg.id, 'opened handle window');
     Promise.resolve().then(async () => {
       current();
-      const key = inputLease.acquire(target, 'app');
-      leaseCalls.set(msg.id, { key }); refreshHeartbeat();
-      const identity = verifyWindowIdentity(target, await windowIdentity(target));
+      let key;
+      try { key = inputLease.acquire(target, 'app'); }
+      catch (error) { stop(error.message); return; }
+      openedWindowLeases.set(msg.id, key); refreshHeartbeat();
+      const identity = verifyWindowIdentity(target, await windowIdentity({ ...target, allowUnfocused: true }));
       current();
       const matched = leaseWindow?.appId === target.appId && sameWindow(leaseWindow, target);
       if (!matched) {
@@ -1768,21 +1779,30 @@ export function createRelay({
         selectionVerified = false;
         const id = `sleight-opened-window-${nextInternalId++}`;
         callGenerations.set(id, generation);
+        openedWindowReads.add(id);
         splitCalls.set(id, async reply => {
           try {
             current();
             if (reply.error || reply.result?.isError || leaseWindow?.appId !== target.appId || !sameWindow(leaseWindow, target)) throw Error('read unconfirmed');
-            const checked = verifyWindowIdentity({ ...target, nativeIdentity: identity }, await windowIdentity(target));
+            const checked = verifyWindowIdentity({ ...target, nativeIdentity: identity, windowNumber: value.identity.windowNumber },
+              await windowIdentity({ ...target, windowNumber: value.identity.windowNumber }));
             current();
             resume(checked);
           } catch { stop(); }
         });
         handleClient({ id, method: 'tools/call', params: { name: 'js', arguments: { code: `var __sleightWindowCheck${nextInternalId++} = await cua.getApp(${JSON.stringify(target.appId)})` } } });
-      } else resume(identity);
+      } else {
+        const checked = verifyWindowIdentity({ ...target, nativeIdentity: identity }, await windowIdentity(target));
+        current(); resume(checked);
+      }
     }).catch(() => stop());
-    const stop = () => { localRunning.delete(msg.id); finishedCall(msg.id); if (generation === stopGeneration && !closing && !disposed) refuse(); };
+    const stop = reason => {
+      localRunning.delete(msg.id); finishedCall(msg.id);
+      if (generation === stopGeneration && !closing && !disposed) {
+        if (reason) leaseStop(msg, reason); else refuse();
+      }
+    };
     const resume = identity => {
-      target.nativeIdentity = identity;
       leaseWindow.nativeIdentity = identity; leaseWindow.identityRequired = true;
       openedAliases.set(msg.id, bindings);
       selectedWindow = { ...target, windowNumber: identity.windowNumber }; selectionVerified = true;
@@ -1916,11 +1936,11 @@ export function createRelay({
   }
   function refreshHeartbeat() {
     if (disposed) { stopHeartbeat(); return; }
-    const keys = [...leaseCalls.values()].map(c => c.key).filter(Boolean);
+    const keys = [...leaseCalls.values()].map(c => c.key).filter(Boolean).concat([...openedWindowLeases.values()]);
     if (!keys.length) { stopHeartbeat(); return; }
     if (leaseTimer) return;
     leaseTimer = setInterval(() => {
-      const active = new Set([...leaseCalls.values()].map(c => c.key).filter(Boolean));
+      const active = new Set([...leaseCalls.values()].map(c => c.key).filter(Boolean).concat([...openedWindowLeases.values()]));
       try { inputLease.renew(active); renewalFailures = 0; }
       catch (err) {
         trace('input-lease-renewal-error', { error: err.message });
@@ -1933,7 +1953,16 @@ export function createRelay({
   }
   function finishedCall(id) {
     openedWindowCalls.delete(id);
+    openedFlowPlans.delete(id);
+    openedWindowReads.delete(id);
     openedAliases.delete(id);
+    const openedKey = openedWindowLeases.get(id);
+    if (openedKey) {
+      openedWindowLeases.delete(id);
+      try { inputLease.release([openedKey]); }
+      catch (error) { trace('input-lease-release-error', { error: error.message }); }
+      refreshHeartbeat();
+    }
     // A call that ends without an engine result (a refusal, a retry, a stop) shows no more hand.
     hand?.result(id, true);
     handBindingMarks.delete(id);
@@ -2334,6 +2363,8 @@ export function createRelay({
       clearTimeout(probe.timer); helperProbes.delete(msg.id); probe.receive?.(msg);
       trace('helper-recovery-result', msg); return;
     }
+    // Admission refusals can finish an opened-window call before it reaches the engine reply path.
+    if (msg.method === undefined && (openedWindowLeases.has(msg.id) || openedFlowPlans.has(msg.id))) finishedCall(msg.id);
     const clientTool = msg.method === undefined ? pendingClients.get(msg.id)?.split(': ')[0] : undefined;
     const nativeAcquisition = msg.method === undefined && nativeAcquisitions.delete(msg.id);
     if (msg.method === undefined) {
@@ -2692,8 +2723,9 @@ export function createRelay({
           try {
             const selected = await localTools.selectionWindow(resolved);
             current();
-            if (selected?.ok && selected.target?.appId === resolved.appId && selected.pid === resolved.pid) {
-              const identity = verifyWindowIdentity(selected.target, await windowIdentity(selected.target));
+            if (selected?.ok && selected.target?.appId === resolved.appId && selected.pid === resolved.pid &&
+                Number.isSafeInteger(selected.target.windowNumber) && selected.target.windowNumber > 0) {
+              const identity = verifyWindowIdentity(selected.target, await windowIdentity({ ...selected.target, allowUnfocused: true }));
               current();
               if (identity.pid === resolved.pid && Number.isSafeInteger(identity.windowNumber) && identity.windowNumber > 0) {
                 callArgs = { ...callArgs, windowId: identity.windowNumber };
@@ -3699,70 +3731,6 @@ export function createRelay({
     if (msg.method === 'tools/call' && (serverIn.writableEnded || serverIn.destroyed)) {
       leaseStop(msg, promptNotice('the engine connection ended during stop. Reconnect sleight for a fresh engine and app read.', prompt)); return;
     }
-    if (openedWindowCall(msg)) return;
-    if (windowIdentity && inputLease && !running.size && !documentMode && !changeReview && leaseWindow?.appId &&
-        msg.method === 'tools/call' && msg.params?.name === 'js' && !browserPlan(msg.params.arguments?.code ?? '') &&
-        !menuContinued.has(msg.id) && !menuAdmissions.has(msg.id) && !splitCalls.has(msg.id)) {
-      // A renamed handle counts only when it is open_file's or bound to the leased app.
-      const plan = splitMenuActions(msg.params.arguments?.code, { alias: name => handleBundles.has(name)
-        ? handleBundles.get(name)?.appId === leaseWindow.appId : /^__sleightOpenedApp\d+$/.test(name) });
-      if (plan && plan.actions.some((action, i) => action.selector && i < plan.actions.length - 1)) {
-        const target = leaseWindow, generation = stopGeneration;
-        // The window's lines as Claude last saw them, for the tab continuation to count its tabs against.
-        const admission = { plan, target, generation, before: compactor.seenLines(target, undefined, true) };
-        menuAdmissions.set(msg.id, admission);
-        running.add(msg.id); callDetails.set(msg.id, 'menu window admission');
-        // The baseline is sampled before the call is sent, so HID idle has to cover the call from this moment.
-        admission.sampledAt = clock();
-        admission.nativeTab = ck3 && tabContinuation && tabFirst && guardMode !== 'careful' && nativeTabPlan(plan);
-        admission.identity = Promise.resolve().then(() => windowIdentity(admission.nativeTab ? { ...target, tabCertificate: true } : target));
-        menuIdentity(() => admission.identity, target, menuContinuationTimeoutMs).then(baseline => {
-          if (generation !== stopGeneration || leaseWindow !== target || closing || disposed || stopCollected) {
-            menuAdmissions.delete(msg.id); finishedCall(msg.id);
-            const error = new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
-            if (!disposed && !stopCollected) leaseStop(msg, error.message);
-            return;
-          }
-          admission.baseline = baseline; noteProcess(baseline);
-          running.delete(msg.id); handleClient(msg);
-        });
-        return;
-      }
-    }
-    if (windowIdentity && inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' &&
-        !isLeaseRead(msg.params.arguments?.code) && !browserPlan(msg.params.arguments?.code ?? '') &&
-        leaseWindow && (leaseWindow.identityRequired || treeFreeFirstAction(msg.params.arguments?.code) || selectedCancel(msg.params.arguments?.code)) && !nativeChecked.has(msg.id)) {
-      if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return; }
-      if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return; }
-      if (leaseWindow.identityRequired && !leaseWindow.nativeIdentity) { leaseStop(msg, 'native window identity has no successful baseline. Read the app again.'); return; }
-      const target = leaseWindow;
-      // A menu header can omit the document URL; Cancel still checks the selected native window.
-      const expected = selectedCancel(msg.params.arguments?.code) && selectedWindow.windowNumber !== undefined
-        ? { ...target, windowNumber: selectedWindow.windowNumber } : target;
-      const generation = stopGeneration;
-      running.add(msg.id);
-      callDetails.set(msg.id, 'native window admission');
-      const started = performance.now();
-      Promise.resolve().then(() => menuAdmissions.get(msg.id)?.identity ?? windowIdentity(expected)).then(observed => {
-        // The parent lease's pin fails closed: an unavailable or ambiguous identity stops instead of dropping the pin. It
-        // holds until the pinned call's reply, so it covers the calls split from it (a text write's head) too.
-        const identity = target.parentPin ? verifyWindowIdentity(expected, observed) : nativeIdentity(expected, observed);
-        noteProcess(identity);
-        if (generation !== stopGeneration || leaseWindow !== target || closing || disposed) throw new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
-        if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
-        else focusedChecked.add(msg.id);
-        trace('native-window-admission', { id: msg.id, ms: performance.now() - started, confirmed: !!identity });
-        running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg);
-      }).catch(error => { if (stopCollected || generation !== stopGeneration) return;
-        // An optional focus probe that is unavailable leaves the full first read in place.
-        // Existing identity requirements and confirmed mismatches still stop admission.
-        if (!expected.identityRequired && !/^Input lease:/.test(error.message)) {
-          running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg); return;
-        }
-        finishedCall(msg.id); leaseStop(msg, error.message);
-      });
-      return;
-    }
     if (msg.method === 'tools/call') {
       if (disposed) { changeStop(msg, 'session has ended'); return; }
       if (flowAsking) { flowStop(msg, 'wait for the user decision'); return; }
@@ -3771,32 +3739,11 @@ export function createRelay({
       if (changeReview && msg.params?.name === REVIEW_TOOL.name) { reviewChanges(msg); return; }
       if (reviewing) { changeStop(msg, 'the user is reviewing changes, wait for their decision'); return; }
     }
-    if (inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' && typeof msg.params.arguments?.code === 'string' && !browserPlan(msg.params.arguments.code)) {
-      if (numberedHandles(msg.params.arguments.code).length > 1) {
-        leaseStop(msg, promptNotice('send numbered actions on one handle per call. Read that window before acting.', prompt)); return;
-      }
-      const ids = compactor.numberIds(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
-      if (ids) {
-        msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: ids.code } } };
-        for (const sent of ids.sent) {
-          const line = sent.line.length > 60 ? sent.line.slice(0, 57) + '...' : sent.line;
-          remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + `sleight: { id: "${sent.id}" } was sent as element ${sent.number}, ${line}.`);
-        }
-        trace('id-numbers', { id: msg.id, numbers: ids.sent.map(s => s.number) });
-      }
-      const stale = compactor.remapStale(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
-      if (stale) {
-        msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: stale.code } } };
-        remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + 'sleight: numbers in this window changed since you saw them, so ' +
-          stale.remapped.map(r => `${r.number} was found by its line ${JSON.stringify(r.line)}`).join(', ') + promptNotice('. Use the numbers in this result from now on.', prompt));
-        trace('stale-remapped', { id: msg.id, numbers: stale.remapped.map(r => r.number) });
-      }
-    }
     if (msg.method === 'tools/call' && msg.params?.name === 'js' && typeof msg.params.arguments?.code === 'string') {
       msg.params.arguments.code = autoPrintCode(msg.params.arguments.code, process.env.SLEIGHT_AUTOPRINT === '1');
     }
-    const retryClient = structuredClone(msg);
-    const originalCode = msg.params?.arguments?.code;
+    let retryClient = structuredClone(msg);
+    let originalCode = msg.params?.arguments?.code;
     if (typeof originalCode === 'string') {
       for (const native of nativeBindings(originalCode, nativeHandles)) {
         browserHandles.delete(native); nativeHandles.add(native);
@@ -3862,7 +3809,8 @@ export function createRelay({
       }
       requireNotes.set(msg.id, requireNote(false, saveReceipted, prompt));
     }
-    if (flowRules && msg.method === 'tools/call' && ['js', 'drag', 'menu_bar'].includes(msg.params?.name)) {
+    if (openedFlowPlans.has(msg.id) || openedWindowCalls.has(msg.id)) flowPlan = openedFlowPlans.get(msg.id);
+    else if (!openedWindowReads.has(msg.id) && flowRules && msg.method === 'tools/call' && ['js', 'drag', 'menu_bar'].includes(msg.params?.name)) {
       if (running.size || localRunning.size || documentAsking || reviewing) { flowStop(msg, 'wait for the pending call or prompt'); return; }
       if (msg.id === undefined || (msg.params.name === 'js' && typeof originalCode !== 'string')) { flowStop(msg, 'a request id and JavaScript code are required'); return; }
       flowPlan = flowRules.analyze(msg.params.name, msg.params.arguments, lastWindow);
@@ -3880,6 +3828,96 @@ export function createRelay({
       }
       flowPending = undefined;
     }
+    if (openedWindowCall(msg, flowPlan)) return;
+    if (windowIdentity && inputLease && !running.size && !documentMode && !changeReview && leaseWindow?.appId &&
+        msg.method === 'tools/call' && msg.params?.name === 'js' && !browserPlan(msg.params.arguments?.code ?? '') &&
+        !menuContinued.has(msg.id) && !menuAdmissions.has(msg.id) && !splitCalls.has(msg.id)) {
+      // A renamed handle counts only when it is open_file's or bound to the leased app.
+      const plan = splitMenuActions(msg.params.arguments?.code, { alias: name => handleBundles.has(name)
+        ? handleBundles.get(name)?.appId === leaseWindow.appId : /^__sleightOpenedApp\d+$/.test(name) });
+      if (plan && plan.actions.some((action, i) => action.selector && i < plan.actions.length - 1)) {
+        if (flowPlan) openedFlowPlans.set(msg.id, flowPlan);
+        const target = leaseWindow, generation = stopGeneration;
+        // The window's lines as Claude last saw them, for the tab continuation to count its tabs against.
+        const admission = { plan, target, generation, before: compactor.seenLines(target, undefined, true) };
+        menuAdmissions.set(msg.id, admission);
+        running.add(msg.id); callDetails.set(msg.id, 'menu window admission');
+        // The baseline is sampled before the call is sent, so HID idle has to cover the call from this moment.
+        admission.sampledAt = clock();
+        admission.nativeTab = ck3 && tabContinuation && tabFirst && guardMode !== 'careful' && nativeTabPlan(plan);
+        admission.identity = Promise.resolve().then(() => windowIdentity(admission.nativeTab ? { ...target, tabCertificate: true } : target));
+        menuIdentity(() => admission.identity, target, menuContinuationTimeoutMs).then(baseline => {
+          if (generation !== stopGeneration || leaseWindow !== target || closing || disposed || stopCollected) {
+            menuAdmissions.delete(msg.id); finishedCall(msg.id);
+            const error = new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
+            if (!disposed && !stopCollected) leaseStop(msg, error.message);
+            return;
+          }
+          admission.baseline = baseline; noteProcess(baseline);
+          running.delete(msg.id); handleClient(msg);
+        });
+        return;
+      }
+    }
+    if (windowIdentity && inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' &&
+        !isLeaseRead(msg.params.arguments?.code) && !browserPlan(msg.params.arguments?.code ?? '') &&
+        leaseWindow && (leaseWindow.identityRequired || treeFreeFirstAction(msg.params.arguments?.code) || selectedCancel(msg.params.arguments?.code)) && !nativeChecked.has(msg.id)) {
+      if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return; }
+      if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return; }
+      if (leaseWindow.identityRequired && !leaseWindow.nativeIdentity) { leaseStop(msg, 'native window identity has no successful baseline. Read the app again.'); return; }
+      if (flowPlan) openedFlowPlans.set(msg.id, flowPlan);
+      const target = leaseWindow;
+      // A menu header can omit the document URL; Cancel still checks the selected native window.
+      const expected = selectedCancel(msg.params.arguments?.code) && selectedWindow.windowNumber !== undefined
+        ? { ...target, windowNumber: selectedWindow.windowNumber } : target;
+      const generation = stopGeneration;
+      running.add(msg.id);
+      callDetails.set(msg.id, 'native window admission');
+      const started = performance.now();
+      Promise.resolve().then(() => menuAdmissions.get(msg.id)?.identity ?? windowIdentity(expected)).then(observed => {
+        // The parent lease's pin fails closed: an unavailable or ambiguous identity stops instead of dropping the pin. It
+        // holds until the pinned call's reply, so it covers the calls split from it (a text write's head) too.
+        const identity = target.parentPin ? verifyWindowIdentity(expected, observed) : nativeIdentity(expected, observed);
+        noteProcess(identity);
+        if (generation !== stopGeneration || leaseWindow !== target || closing || disposed) throw new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
+        if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
+        else focusedChecked.add(msg.id);
+        trace('native-window-admission', { id: msg.id, ms: performance.now() - started, confirmed: !!identity });
+        running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg);
+      }).catch(error => { if (stopCollected || generation !== stopGeneration) return;
+        // An optional focus probe that is unavailable leaves the full first read in place.
+        // Existing identity requirements and confirmed mismatches still stop admission.
+        if (!expected.identityRequired && !/^Input lease:/.test(error.message)) {
+          running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg); return;
+        }
+        finishedCall(msg.id); leaseStop(msg, error.message);
+      });
+      return;
+    }
+    if (inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' && typeof msg.params.arguments?.code === 'string' && !browserPlan(msg.params.arguments.code)) {
+      if (numberedHandles(msg.params.arguments.code).length > 1) {
+        leaseStop(msg, promptNotice('send numbered actions on one handle per call. Read that window before acting.', prompt)); return;
+      }
+      const ids = compactor.numberIds(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
+      if (ids) {
+        msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: ids.code } } };
+        for (const sent of ids.sent) {
+          const line = sent.line.length > 60 ? sent.line.slice(0, 57) + '...' : sent.line;
+          remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + `sleight: { id: "${sent.id}" } was sent as element ${sent.number}, ${line}.`);
+        }
+        trace('id-numbers', { id: msg.id, numbers: ids.sent.map(s => s.number) });
+      }
+      const stale = compactor.remapStale(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
+      if (stale) {
+        msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: stale.code } } };
+        remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + 'sleight: numbers in this window changed since you saw them, so ' +
+          stale.remapped.map(r => `${r.number} was found by its line ${JSON.stringify(r.line)}`).join(', ') + promptNotice('. Use the numbers in this result from now on.', prompt));
+        trace('stale-remapped', { id: msg.id, numbers: stale.remapped.map(r => r.number) });
+      }
+    }
+    originalCode = msg.params?.arguments?.code;
+    retryClient = structuredClone(msg);
+    if (msg.method === 'tools/call' && msg.params?.name === 'js' && msg.id !== undefined) jsCalls.set(msg.id, originalCode ?? '');
     if (documentMode && msg.method === 'tools/call' && !browser) {
       const name = msg.params?.name;
       if (name === DOCUMENT_TOOL.name) { approveDocument(msg); return; }

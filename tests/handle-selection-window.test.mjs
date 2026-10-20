@@ -7,8 +7,10 @@ const script = readFileSync(new URL('../plugins/sleight/lib/handle-selection-win
 function census(lengths, options = {}) {
   const list = values => ({ count: values.length, objectAtIndex: i => values[i] });
   const text = length => ({ AXRole: 'AXTextArea', AXSelectedTextRange: length == null ? undefined : { description: `location:0 length:${length}` } });
-  const windows = lengths.map((length, index) => ({ AXRole: 'AXWindow', AXTitle: `${index}.txt`, AXDocument: `file:///tmp/${index}.txt`,
+  const windows = lengths.map((length, index) => ({ AXRole: 'AXWindow', AXTitle: `${index}.txt`, AXDocument: `file:///tmp/${index}.txt`, AXWindowNumber: 11 + index,
     AXChildren: list(Array.isArray(length) ? length.map(text) : [text(length)]) }));
+  if (options.sameFile) for (const window of windows) { window.AXTitle = 'same.txt'; window.AXDocument = 'file:///tmp/same.txt'; }
+  if (options.missingNumber) delete windows[0].AXWindowNumber;
   const app = { AXWindows: list(windows) };
   const reads = [];
   const $ = Object.assign(value => value, {
@@ -29,7 +31,7 @@ function census(lengths, options = {}) {
 
 test('a single selected Source among two windows is found from range metadata', () => {
   const { result, reads } = census([5, 0]);
-  assert.deepEqual(result, { ok: true, pid: 7, target: { appId: 'org.example.Editor', app: 'Editor', title: '0.txt', url: 'file:///tmp/0.txt' } });
+  assert.deepEqual(result, { ok: true, pid: 7, target: { appId: 'org.example.Editor', app: 'Editor', title: '0.txt', url: 'file:///tmp/0.txt', windowNumber: 11 } });
   assert.ok(reads.includes('AXSelectedTextRange'));
 });
 
@@ -44,4 +46,14 @@ for (const lengths of [[0, 0], [3, 5], [3, null], [null, 0]]) test(`empty, dupli
 test('a changed process or incomplete AX read refuses', () => {
   assert.deepEqual(census([3, 0], { pid: 99 }).result, { ok: false });
   assert.deepEqual(census([3, 0], { timeout: true }).result, { ok: false });
+});
+
+
+test('two windows for one file retain the selected window number', () => {
+  assert.deepEqual(census([5, 0], { sameFile: true }).result.target,
+    { appId: 'org.example.Editor', app: 'Editor', title: 'same.txt', url: 'file:///tmp/same.txt', windowNumber: 11 });
+});
+
+test('a selected window without a native number remains unconfirmed', () => {
+  assert.deepEqual(census([5, 0], { missingNumber: true }).result, { ok: false });
 });

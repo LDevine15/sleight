@@ -217,7 +217,7 @@ function run(argv) {
         return JSON.stringify({ status: 'mismatch', error: 'Known window number disappeared' });
       }
     }
-    else if (matches.length > 1) {
+    else if (matches.length > 1 && !request.allowUnfocused) {
       const focusedNumber = number(focused);
       if (Number.isSafeInteger(focusedNumber) && focusedNumber > 0) matches = matches.filter(window => number(window) === focusedNumber);
     }
@@ -234,9 +234,10 @@ function run(argv) {
         if (scalar(attr(candidate, 'AXTitle', true)) === request.title && scalar(attr(candidate, 'AXDocument', true)) === request.url) headerMatches++;
       }
     }
+    // Only read-only discovery may read an unfocused window. Input admission still requires focus.
     // A unique header must also describe the app's focused window. Otherwise the engine's handle
     // and Accessibility disagree about which window a background input would reach.
-    if (!$.CFEqual(window, focused)) return JSON.stringify({ status: 'mismatch', error: 'Focused window differs' });
+    if (!request.allowUnfocused && !$.CFEqual(window, focused)) return JSON.stringify({ status: 'mismatch', error: 'Focused window differs' });
     let index = windowReferences.findIndex(other => $.CFEqual(other, window));
     if (index < 0) {
       if (windowReferences.length >= 1024) throw new Error('Window identity capacity reached');

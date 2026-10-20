@@ -47,7 +47,9 @@ function run(argv) {
         const title = ObjC.unwrap(read(window, 'AXTitle'));
         const url = ObjC.unwrap(read(window, 'AXDocument', true)) || null;
         if (typeof title !== 'string') throw Error('window title unavailable');
-        selected.push({ appId: request.appId, app: request.app, title, url });
+        const windowNumber = Number(ObjC.unwrap(read(window, 'AXWindowNumber')));
+        if (!Number.isSafeInteger(windowNumber) || windowNumber <= 0) throw Error('window number unavailable');
+        selected.push({ appId: request.appId, app: request.app, title, url, windowNumber });
       }
     }
     if (selected.length !== 1) throw Error('selection is not unique across app windows');

@@ -1,33 +1,63 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import vm from 'node:vm';
+import { FlowRules } from '../plugins/sleight/lib/flow-rules.mjs';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 
 const appId = 'com.apple.TextEdit', app = 'TextEdit';
 const window = name => ({ appId, app, title: `${name}.txt`, url: `file:///tmp/${name}.txt` });
-const identity = target => ({ ...target, status: 'ok', epoch: 'fixture', window: target.title === 'Source.txt' ? 1 : 2,
-  windowNumber: target.title === 'Source.txt' ? 11 : 12, pid: 7, processStart: 1, matches: 1 });
+const identityScript = readFileSync(new URL('../plugins/sleight/lib/window-identity.js', import.meta.url), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 function fixture(t, options = {}) {
+  const root = options.root ?? '/tmp';
+  const window = name => ({ appId, app, title: `${name}.txt`, url: `file://${root}/${name}.txt` });
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
   const sent = [], received = [], selections = [], leases = [], drags = [];
-  let current, broken = false;
-  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
-    ask: async () => 'accept',
-    inputLease: { acquire: target => { leases.push(target); return 'lease'; }, grant: () => ({}), renew() {}, release() {}, close() {} },
-    windowIdentity: async target => broken ? { status: 'unknown' } : identity(target),
+  let current, broken = false, epoch = 1, focusOverride;
+  const observations = [], released = [], active = new Set();
+  const windows = ['Source', 'Target'].map((name, i) => ({ AXTitle: `${name}.txt`, AXDocument: `file://${root}/${name}.txt`, AXWindowNumber: 11 + i }));
+  const list = values => ({ count: values.length, objectAtIndex: i => values[i] });
+  const axApp = { AXWindows: list(windows) };
+  let context;
+  const resetIdentity = () => {
+    const $ = Object.assign(value => value, {
+      NSUUID: { UUID: { UUIDString: `fixture-${epoch++}` } }, AXIsProcessTrusted: () => true,
+      NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list([{ processIdentifier: 7, launchDate: { timeIntervalSince1970: 1 } }]) },
+      AXUIElementCreateApplication: () => { axApp.AXFocusedWindow = windows[focusOverride ?? (current?.title === 'Source.txt' ? 0 : 1)]; return axApp; },
+      AXUIElementSetMessagingTimeout: () => 0,
+      AXUIElementCopyAttributeValue: (el, key, out) => { if (el[key] === undefined) return -25205; out[0] = el[key]; return 0; },
+      CFEqual: (a, b) => a === b, CGEventSourceSecondsSinceLastEventType: () => 20,
+    });
+    context = vm.createContext({ $, Ref: () => [], ObjC: { import() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v } });
+    vm.runInContext(identityScript, context);
+  };
+  resetIdentity();
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: options.changeReview ?? false, flowRules: options.flowRules,
+    ask: options.ask ?? (async () => 'accept'),
+    inputLease: { acquire: (target, scope = 'window') => {
+      if (options.busy && scope === 'app' && target.title === 'Source.txt' && current?.title === 'Target.txt') throw Error('Input lease: held by another session, retry after 20 seconds');
+      if (options.busyWindow && scope === 'window') throw Error('Input lease: window action refused');
+      leases.push(target); const key = `${scope}:${target.title}`; active.add(key); return key;
+    }, grant: () => ({}), renew() {}, release: keys => { for (const key of keys) { released.push(key); active.delete(key); } }, close() {} },
+    windowIdentity: async target => {
+      observations.push(structuredClone(target));
+      return broken ? { status: 'unknown' } : JSON.parse(context.run([JSON.stringify(target)]));
+    },
     localTools: { tools: [{ name: 'open_file' }, { name: 'select_window' }, { name: 'drag' }],
       target: async () => ({ appId, app, pid: 7 }),
-      selectionWindow: async () => options.selection ?? { ok: true, target: window('Source'), pid: 7 },
+      selectionWindow: async () => options.selection ?? { ok: true, target: { ...window('Source'), windowNumber: 11 }, pid: 7 },
       call: async (name, args, approve) => {
         if (name === 'drag') { drags.push(args); return { content: [] }; }
         if (name === 'select_window') {
           selections.push(args);
           if (options.decline || !await approve(['select_window', appId], 'Select?')) return { isError: true, content: [] };
           current = options.wrongRead ? window('Target') : window('Source');
-          return { content: [{ type: 'text', text: JSON.stringify({ ok: true, target: window('Source'), identity: { pid: 7, windowNumber: 11 } }) }] };
+          if (options.unfocusedSelection) focusOverride = 1;
+          return { content: [{ type: 'text', text: JSON.stringify({ ok: true, target: window('Source'), identity: { pid: 7, windowNumber: options.wrongNumber ? 12 : 11 } }) }] };
         }
         current = window(args.path.includes('Source') ? 'Source' : 'Target');
         return { content: [], _meta: { 'sleight/openedApp': appId,
@@ -52,10 +82,10 @@ function fixture(t, options = {}) {
     return reply.result;
   };
   const open = async name => {
-    const result = await call(name, 'open_file', { app, path: `/tmp/${name}.txt` });
+    const result = await call(name, 'open_file', { app, path: `${root}/${name}.txt` });
     return /Window handle: `([^`]+)`/.exec(result.content.map(c => c.text ?? '').join('\n'))[1];
   };
-  return { call, open, sent, selections, leases, drags, breakIdentity: () => { broken = true; } };
+  return { call, open, sent, selections, leases, drags, relay, send: (id, name, args) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name, arguments: args } }) + '\n'), released, active, observations, resetIdentity, focusDuplicate: () => { Object.assign(windows[1], { AXTitle: 'Source.txt', AXDocument: window('Source').url }); focusOverride = 1; }, breakIdentity: () => { broken = true; } };
 }
 
 test('WD3 calls 4 to 8: the first opened handle selects its Source URL before selectText', async t => {
@@ -139,4 +169,150 @@ for (const selection of [{ ok: false }, { ok: true, target: window('Source'), pi
   await h.open('Source');
   await h.call('drag', 'drag', { app, from: 'the current text selection', to: [100, 120] });
   assert.equal(h.drags[0]?.windowId, undefined);
+});
+
+
+test('a successful selection releases its app lease after the action reply', async t => {
+  const h = fixture(t), source = await h.open('Source');
+  await h.open('Target');
+  assert.ok(!(await h.call('act', 'js', { code: `await ${source}.typeText("text")` })).isError);
+  assert.ok(h.released.includes('app:Source.txt'));
+  assert.equal(h.active.has('app:Source.txt'), false);
+});
+
+test('busy opened-window lease reports the holder instead of an unconfirmed window', async t => {
+  const h = fixture(t, { busy: true }), source = await h.open('Source');
+  await h.open('Target');
+  const result = await h.call('busy', 'js', { code: `await ${source}.typeText("text")` });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /held by another session/);
+  assert.doesNotMatch(result.content[0].text, /window unconfirmed/);
+  assert.equal(h.selections.length, 0);
+});
+
+test('a selection returning a different window number never forwards the action', async t => {
+  const h = fixture(t, { wrongNumber: true }), source = await h.open('Source');
+  await h.open('Target');
+  const result = await h.call('wrong-number', 'js', { code: `await ${source}.typeText("text")` });
+  assert.equal(result.isError, true);
+  assert.equal(h.sent.some(msg => msg.id === 'wrong-number'), false);
+});
+
+test('opened bindings survive a helper epoch change after a fresh app read', async t => {
+  const h = fixture(t), source = await h.open('Source');
+  assert.ok(!(await h.call('first', 'js', { code: `await ${source}.typeText("text")` })).isError);
+  h.resetIdentity();
+  await h.call('fresh', 'js', { code: 'let fresh = await cua.getApp("TextEdit")' });
+  const result = await h.call('second', 'js', { code: `await ${source}.typeText("text")` });
+  assert.ok(!result.isError, JSON.stringify(result));
+  assert.ok(h.observations.filter(o => o.allowUnfocused).every(o => o.nativeIdentity === undefined));
+});
+
+for (const rebound of [
+  'doc &&= other', 'doc ||= other', 'doc ??= other', 'doc += 1', 'doc++',
+  'for (doc of items) {}', 'for (let doc of items) {}', 'for (doc in items) {}',
+  '[doc] = items', '({ value: doc } = other)', 'let { value: doc } = other',
+  '((doc) => doc)(other)', '(doc => doc)(other)', '(function(doc) { return doc; })(other)',
+  'let doc = other',
+]) test(`a mixed call forgets a non-trivial opened alias rebinding: ${rebound}`, async t => {
+  const h = fixture(t), source = await h.open('Source');
+  await h.call('alias', 'js', { code: `let doc = ${source};` });
+  await h.call('mixed', 'js', { code: `${rebound}; await ${source}.typeText("text")` });
+  await h.open('Target');
+  const before = h.selections.length;
+  await h.call('later', 'js', { code: 'await doc.typeText("text")' });
+  assert.equal(h.selections.length, before, 'a forgotten alias must not select Source');
+});
+
+test('flow refusal happens before opened-window selection', async t => {
+  const flowRules = new FlowRules({ version: 1, rules: [{ id: 'secret', kind: 'pattern', pattern: 'SECRET', destinations: ['*'] }] });
+  const h = fixture(t, { flowRules }), source = await h.open('Source');
+  await h.open('Target');
+  const result = await h.call('blocked', 'js', { code: `await ${source}.typeText("SECRET")` });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /Flow rules:/);
+  assert.equal(h.selections.length, 0);
+});
+
+test('an opened-window call cannot select while a flow decision is pending', async t => {
+  let decide;
+  const flowRules = new FlowRules({ version: 1, rules: [{ id: 'secret', kind: 'pattern', pattern: 'SECRET', destinations: ['*'] }] });
+  const h = fixture(t, { flowRules, ask: (_message, _scope, options) => options?.kind === 'flow'
+    ? new Promise(resolve => { decide = resolve; }) : Promise.resolve('accept') });
+  const source = await h.open('Source'), target = await h.open('Target');
+  await h.call('blocked', 'js', { code: `await ${target}.typeText("SECRET")` });
+  h.send('exception', 'flow_exception', {});
+  await tick();
+  assert.equal(typeof decide, 'function');
+  const result = await h.call('while-asking', 'js', { code: `await ${source}.typeText("text")` });
+  assert.equal(result.isError, true);
+  assert.equal(h.selections.length, 0);
+  decide('cancel'); await tick();
+});
+
+test('a flow exception permits one identical opened-window retry', async t => {
+  const flowRules = new FlowRules({ version: 1, rules: [{ id: 'secret', kind: 'pattern', pattern: 'SECRET', destinations: ['*'] }] });
+  const h = fixture(t, { flowRules }), source = await h.open('Source');
+  await h.open('Target');
+  const code = `await ${source}.typeText("SECRET")`;
+  assert.equal((await h.call('blocked', 'js', { code })).isError, true);
+  assert.ok(!(await h.call('exception', 'flow_exception', {})).isError);
+  const result = await h.call('permitted', 'js', { code });
+  assert.ok(!result.isError, JSON.stringify(result));
+  assert.equal(h.selections.length, 1);
+});
+
+
+test('selection still requires focused identity after the engine read confirms the header', async t => {
+  const h = fixture(t, { unfocusedSelection: true }), source = await h.open('Source');
+  await h.open('Target');
+  const result = await h.call('unfocused', 'js', { code: `await ${source}.typeText("text")` });
+  assert.equal(result.isError, true);
+  assert.equal(h.selections.length, 1);
+  assert.equal(h.sent.some(msg => msg.id === 'unfocused'), false);
+  assert.equal(h.active.has('app:Source.txt'), false);
+});
+
+test('drag inference uses the census number when a different window of the same file is focused', async t => {
+  const h = fixture(t);
+  await h.open('Source'); h.focusDuplicate();
+  await h.call('drag', 'drag', { app, from: 'the current text selection', to: [20, 98] });
+  assert.equal(h.drags[0].windowId, 11);
+});
+
+test('a selection census without a window number cannot infer the focused duplicate', async t => {
+  const h = fixture(t, { selection: { ok: true, target: window('Source'), pid: 7 } });
+  await h.open('Source'); h.focusDuplicate();
+  await h.call('drag', 'drag', { app, from: 'the current text selection', to: [20, 98] });
+  assert.equal(h.drags[0].windowId, undefined);
+});
+
+test('an opened-window call cannot select while saved changes await a review decision', async t => {
+  const root = mkdtempSync('/tmp/lane-wd6b-review-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const name of ['Source', 'Target']) writeFileSync(`${root}/${name}.txt`, 'before');
+  let decide;
+  const h = fixture(t, { root, changeReview: true, ask: (_message, _scope, options) => options?.kind === 'review'
+    ? new Promise(resolve => { decide = resolve; }) : Promise.resolve('accept') });
+  const source = await h.open('Source');
+  assert.ok(!(await h.call('edit', 'js', { code: `await ${source}.typeText("text")` })).isError);
+  await h.open('Target');
+  h.send('review', 'review_changes', { op: 'review' }); await tick();
+  assert.equal(typeof decide, 'function');
+  const result = await h.call('while-reviewing', 'js', { code: `await ${source}.typeText("text")` });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /reviewing changes/);
+  assert.equal(h.selections.length, 0);
+  decide('cancel'); await tick();
+});
+
+
+test('a refusal after opened-window selection releases its app lease', async t => {
+  const h = fixture(t, { busyWindow: true }), source = await h.open('Source');
+  await h.open('Target');
+  const result = await h.call('late-refusal', 'js', { code: `await ${source}.typeText("text")` });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /window action refused/);
+  assert.equal(h.selections.length, 1);
+  assert.equal(h.active.has('app:Source.txt'), false);
 });
