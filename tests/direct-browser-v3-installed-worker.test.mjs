@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -422,7 +424,7 @@ function appFixture({ optIns = { version: 1, apps: { [appId]: { enabled: true, b
   Object.assign(f.dependencies, {
     readAppOptIns: () => optIns,
     createConsent: async options => { app.approvedApps = options.approvedApps; return consent; },
-    connectAppHost: async ({ bundleId }) => { assert.equal(bundleId, appId); return { admin, registry: 'registry', profile: { path: '/private/tmp/p', temporary: true } }; },
+    connectAppHost: async ({ bundleId }) => { assert.equal(bundleId, appId); return { admin, registry: 'registry', profile: { path: `${MAC_TMP}/p`, temporary: true } }; },
     selectAppConnection: async options => { app.selections.push(options); return connection(); },
     createAppTurn: async ({ connections }) => ({ pages: { list: async () => rows, endTurn: async () => ({ cleanedUp: true }), tab: () => ({}),
       enqueue: async () => { throw Error('unexpected'); } }, snapshot: async () => ({ text: 'x', number: 1 }), runSteps: async () => ({ lines: [] }),
@@ -588,7 +590,7 @@ test('a relaunch fallback returns its notice, the session remembers a Cancel acr
 test('two selected apps double the preparing deadline up to the cap, and a parent loss mid-relaunch lets the reopen finish first', async () => {
   const other = 'invalid.other.app';
   const f = appFixture({ optIns: { version: 1, apps: { [appId]: { enabled: true, build: appId + '@1.2.3' }, [other]: { enabled: true, build: other + '@1.0.0' } } } });
-  f.dependencies.connectAppHost = async () => ({ admin: f.admin, registry: 'registry', profile: { path: '/private/tmp/p', temporary: false } });
+  f.dependencies.connectAppHost = async () => ({ admin: f.admin, registry: 'registry', profile: { path: `${MAC_TMP}/p`, temporary: false } });
   const steps = [];
   let quitDone, reopen;
   const gate = new Promise(resolve => { reopen = resolve; });

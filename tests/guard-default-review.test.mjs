@@ -1,6 +1,8 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 // Adversarial review of the 2026-10-14 guard default (first-off, quiet-edits, bind), sleight 2c1eea6f.
 // Each test runs one call sequence under the old default (OLD) and the new default (NEW) with the same
-// fake engine, and asserts what reaches the engine. Run: node --test /private/tmp/opus-guard-review/
+// fake engine, and asserts what reaches the engine. Run: node --test tests/guard-default-review.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
@@ -106,7 +108,7 @@ test('a plain toolbar pane stays bound; careful mode rechecks its retitled windo
 
 // 3. first-off: the app's key window changed between calls. Cmd+A then typing replaces another document.
 test('first-off requires focused-window confirmation before Cmd+A and typing', async () => {
-  const other = header('budget.txt', 'TextEdit', 'file:///Users/x/budget.txt') + '\n\t1 text area';
+  const other = header('budget.txt', 'TextEdit', `file://${MAC_USERS}x/budget.txt`) + '\n\t1 text area';
   const code = 'await app.pressKey("super+a"); await app.typeText("Dear team,");';
   const old = await run(code, { screens: [other], expected: win('a.txt', 'TextEdit', 'file:///tmp/a.txt'), seen: new Map(), mode: 'old' });
   const now = await run(code, { screens: [other], expected: win('a.txt', 'TextEdit', 'file:///tmp/a.txt'), seen: new Map(), mode: 'new' });

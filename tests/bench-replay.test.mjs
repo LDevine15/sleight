@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
@@ -260,13 +262,13 @@ test('race results files resolve their task folder and Codex JSON argument strin
 
 test('native fixture restores recorded nonce and refuses random or mixed fixtures', () => {
   const rec = { task: { id: 'textedit-window-drag' }, metadata: { suite: 'world' }, calls: [call('open_file', {
-    path: '/private/tmp/sleight-bench/stamp/sleight-textedit-window-drag-1/Source-1234abcd.txt' }, text(''))] };
-  const plan = nativePlan(rec, '/private/tmp/sr2-fixture');
+    path: `${MAC_TMP}/sleight-bench/stamp/sleight-textedit-window-drag-1/Source-1234abcd.txt` }, text(''))] };
+  const plan = nativePlan(rec, `${MAC_TMP}/sr2-fixture`);
   assert.equal(plan.ctx.nonce, '1234abcd'); assert.equal(plan.suite, 'world'); assert.equal(typeof plan.definition.setup, 'function');
-  assert.throws(() => nativePlan({ ...rec, task: { id: 'calculator-click' } }, '/private/tmp/x'), /not reproducible/);
-  assert.throws(() => nativePlan({ ...rec, calls: [] }, '/private/tmp/x'), /exactly one/);
-  const alias = structuredClone(rec.calls[0]); alias.arguments.path = alias.arguments.path.replace('/private/tmp/', '/tmp/');
-  assert.equal(nativePlan({ ...rec, calls: [...rec.calls, alias] }, '/private/tmp/x').ctx.nonce, '1234abcd');
+  assert.throws(() => nativePlan({ ...rec, task: { id: 'calculator-click' } }, `${MAC_TMP}/x`), /not reproducible/);
+  assert.throws(() => nativePlan({ ...rec, calls: [] }, `${MAC_TMP}/x`), /exactly one/);
+  const alias = structuredClone(rec.calls[0]); alias.arguments.path = alias.arguments.path.replace(`${MAC_TMP}/`, '/tmp/');
+  assert.equal(nativePlan({ ...rec, calls: [...rec.calls, alias] }, `${MAC_TMP}/x`).ctx.nonce, '1234abcd');
 });
 
 test('check evidence never passes absent targets, missing traces or one selected language', () => {

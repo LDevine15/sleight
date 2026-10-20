@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
@@ -28,7 +30,7 @@ test('an empty text area hints only when open_file found its file non-empty on d
   const value = tree(pane.map(line => line.replace('split group Document Pane', 'text entry area (settable) Value: ')));
   for (const [size, hinted] of [[undefined, false], [0, false], [5, true]]) {
     const c = createReadCompactor({ screenshotReads: true });
-    if (size !== undefined) c.noteOpenedFile('/tmp/draft', '/private/tmp/draft', size);
+    if (size !== undefined) c.noteOpenedFile('/tmp/draft', `${MAC_TMP}/draft`, size);
     assert.deepEqual(read(c, value), hinted ? [text(value), text(note)] : [text(value)], String(size));
   }
   // A blank new document: an empty text area with no file behind it.

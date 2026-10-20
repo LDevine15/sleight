@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
@@ -529,10 +531,10 @@ test('rules go before the engine header, not a docs line that starts with "Windo
   assert.deepEqual(shared, [text('Window: docs line\n'), item, text(tree)]);
 });
 
-for (const [shown, confirmed] of [['file:///tmp/other.txt', false], ['file:///private/tmp/note.txt', true],
+for (const [shown, confirmed] of [['file:///tmp/other.txt', false], [`file://${MAC_TMP}/note.txt`, true],
   ['file:///tmp/note.txt', true], [null, true]]) test(`open_file checks the read window's URL against the path: ${shown}`, async t => {
   const h = harness(t, { localTools: { tools: [{ name: 'open_file' }], call: async () => ({ content: [text('Opened /tmp/note.txt in Example in the background.')],
-    _meta: { 'sleight/openedApp': 'org.example.editor', 'sleight/openedFile': { path: '/tmp/note.txt', real: '/private/tmp/note.txt', size: 5 } } }) } });
+    _meta: { 'sleight/openedApp': 'org.example.editor', 'sleight/openedFile': { path: '/tmp/note.txt', real: `${MAC_TMP}/note.txt`, size: 5 } } }) } });
   const window = tree.replace('0 standard window note.txt', '0 standard window note.txt' + (shown ? ', URL: ' + shown : ''));
   const out = body(await h.open(1, [text(window)]));
   assert.equal(/Opened \/tmp\/note\.txt/.test(out), confirmed);

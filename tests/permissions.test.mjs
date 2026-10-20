@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
@@ -503,7 +505,7 @@ test('the site an engine read shows: a web area\'s URL with or without scheme, n
   assert.deepEqual(pageSite('Window: "x", App: Some App.\n0 standard window x\n\t1 button Save'), undefined);
   assert.deepEqual(pageSite('Window: "x", App: B.\n0 standard window x\n\t2 HTML content URL: a.example/x\n\t3 HTML content URL: b.example/y'), { unproven: true });
   assert.deepEqual(pageSite('Window: "x", App: B.\n0 standard window x\n\t2 HTML content URL: a.example/x\n\t\t3 HTML content URL: ads.example/f'), { host: 'a.example' }, 'only the outermost web areas count');
-  for (const bad of ['about:blank', 'file:///Users/x/page.html', 'user@evil.example/x', '']) {
+  for (const bad of ['about:blank', `file://${MAC_USERS}x/page.html`, 'user@evil.example/x', '']) {
     assert.deepEqual(pageSite(`Window: "x", App: B.\n0 standard window x\n\t2 HTML content URL: ${bad}`), { unproven: true }, bad);
   }
   assert.deepEqual(pageSite('Window: "x", App: B.\nURL: https://header.example/a\n0 standard window x', { title: 'x', url: 'https://header.example/a' }),

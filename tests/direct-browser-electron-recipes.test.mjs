@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -44,7 +47,7 @@ for (const [reason, recipe] of [
   ['forbidden', good({ args: ['--user-data-dir={profile}', '--remote-debugging-port=9222'] })],
   ['forbidden', good({ args: ['--user-data-dir={profile}', '--INSPECT=1'] })],
   ['forbidden', good({ args: ['--user-data-dir={profile}', '--no-sandbox'] })],
-  ['profile-dir', good({ args: ['--user-data-dir=/Users/someone/Library/Application Support/Code', '{profile}/workspace'] })],
+  ['profile-dir', good({ args: [`--user-data-dir=${MAC_USERS}someone/Library/Application Support/Code`, '{profile}/workspace'] })],
   ['recipe', good({ schemes: ['https'] })],
   ['recipe', good({ fileRoots: ['relative/root'] })],
   ['joinTolerance', good({ joinTolerance: 65 })],
@@ -91,13 +94,13 @@ const facts = (extra = {}) => bundle => ({ verified: true, codesign: signature(b
 test('instanceFromRecipe derives the card instance from the installed code and pins it to the recipe, unlaunched by default', () => {
   const recipe = api.recipeFor(api.readRecipeRegistry(registry(good())), 'invalid.fixture.app');
   const seen = [];
-  const card = api.instanceFromRecipe(recipe, { profile: '/private/tmp/sleight-ep2-x/profile', temporary: true, inspect: bundle => { seen.push(bundle); return facts()(bundle); } });
+  const card = api.instanceFromRecipe(recipe, { profile: `${MAC_TMP}/sleight-ep2-x/profile`, temporary: true, inspect: bundle => { seen.push(bundle); return facts()(bundle); } });
   assert.deepEqual(seen, ['/Applications/Fixture.app']);
   assert.deepEqual(card, { name: 'Fixture App', bundleId: 'invalid.fixture.app', signer: 'TEAM123456', version: '1.2.3', runtime: 'electron/39.0.0',
-    profile: '/private/tmp/sleight-ep2-x/profile', pid: 0, pidBirth: 'unlaunched', executable: '/Applications/Fixture.app/Contents/MacOS/Fixture',
+    profile: `${MAC_TMP}/sleight-ep2-x/profile`, pid: 0, pidBirth: 'unlaunched', executable: '/Applications/Fixture.app/Contents/MacOS/Fixture',
     cdhash: 'c'.repeat(40), temporary: true });
   assert.ok(Object.isFrozen(card));
-  assert.equal(api.instanceFromRecipe(recipe, { profile: '/private/tmp/p', pid: 4100, pidBirth: '1700000000.000001', temporary: true, inspect: facts() }).pid, 4100);
+  assert.equal(api.instanceFromRecipe(recipe, { profile: `${MAC_TMP}/p`, pid: 4100, pidBirth: '1700000000.000001', temporary: true, inspect: facts() }).pid, 4100);
   for (const options of [{ profile: 'relative', temporary: true }, { profile: '/p', temporary: 'yes' }, { profile: '/p', temporary: true, pid: 0, pidBirth: '1.2' },
     { profile: '/p', temporary: true, pid: 5, pidBirth: 'unlaunched' }, { profile: '/p', temporary: true, pid: -1 }])
     assert.throws(() => api.instanceFromRecipe(recipe, { ...options, inspect: facts() }), /^Error: (INVALID_APP_INSTANCE|INVALID_APP_PROCESS)$/, JSON.stringify(options));

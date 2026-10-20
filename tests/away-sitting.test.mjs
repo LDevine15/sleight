@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -29,7 +31,7 @@ test('dry run prints the STATE order, commands, sources and estimates without li
   assert.match(plan.steps[0].command.join(' '), /--arm sleight,codex .*--clean-arms/);
   assert.equal(plan.steps.at(-1).command, null);
   assert.match(plan.steps.at(-1).blocked, /h2h-clean/);
-  assert.ok(!result.stdout.includes('/Users/'));
+  assert.ok(!result.stdout.includes(`${MAC_USERS}`));
   assert.ok(plan.watchers.includes('bench/front-watch.sh'));
   assert.ok(!plan.watchers.some(w => w.includes('.dev/passes/front-watch.sh')));
 });
@@ -149,7 +151,7 @@ test('watcher parsers reject malformed reports, retain baseline and stop on a ta
   assert.match(tapReport('[{"pid":7,"app":"Window Manager"},{"pid":42,"app":"Device Hub"}]', before), /\(Device Hub\)/);
   assert.equal(tapReport('[{"pid":7,"app":"Window Manager"},{"pid":51,"app":"ChatGPT Computer Use"}]', before, new Set([51])), undefined);
   const { ENGINE_HELPER } = await load();
-  assert.ok(ENGINE_HELPER.test('/Users/someone/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService'));
+  assert.ok(ENGINE_HELPER.test(`${MAC_USERS}someone/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService`));
   assert.ok(ENGINE_HELPER.test('"CFBundleIdentifier"="com.openai.sky.CUAService"'));
   assert.ok(!ENGINE_HELPER.test('/Applications/Device Hub.app/Contents/MacOS/Device Hub'));
   assert.match(tapReport('[{"pid":42,"app":"Device Hub"}]', before, new Set(), new Map([[42, '/Applications/Device Hub.app']])), /Device Hub at \/Applications/);

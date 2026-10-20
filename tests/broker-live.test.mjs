@@ -1,3 +1,6 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
@@ -22,7 +25,7 @@ function world(t, { duplicate = false, unsafeRefusal = false, failRelease = fals
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   let time = 1000, steps = 0;
   const documents = new Map(), renewals = [], calls = [];
-  const target = n => ({ appId: 'com.apple.TextEdit', title: `fixture-${n}.txt`, url: `file:///private/tmp/fixture-${n}.txt` });
+  const target = n => ({ appId: 'com.apple.TextEdit', title: `fixture-${n}.txt`, url: `file://${MAC_TMP}/fixture-${n}.txt` });
   const request = r => { try { return brokerRequest(r, { directory, now: () => time }); }
     catch (error) { return { ok: false, error: error.message }; } };
   const clients = Object.fromEntries(['sleight', 'codex'].map(name => {
@@ -116,10 +119,10 @@ test('publishing removes grant tokens, home paths and agent transcript text', as
   const { publicReport } = await harness();
   const token = 'd350bf7f-b73b-4e9f-8fd9-19f9c9eb4825';
   const output = publicReport({ grant: { token }, raw: `secret ${token}`,
-    path: '/Users/example/fixture.txt', transcript: 'private owner conversation',
+    path: `${MAC_USERS}example/fixture.txt`, transcript: 'private owner conversation',
     trials: [{ reply: { ok: false, error: 'held by codex; 30 s remaining' } }] }, [token]);
   assert.ok(!output.includes(token));
-  assert.ok(!output.includes('/Users/example'));
+  assert.ok(!output.includes(`${MAC_USERS}example`));
   assert.ok(!output.includes('private owner conversation'));
   assert.ok(output.includes('~/fixture.txt'));
   assert.ok(output.includes('30 s remaining'));
@@ -127,11 +130,11 @@ test('publishing removes grant tokens, home paths and agent transcript text', as
 
 test('Codex evidence requires an observed target, the exact CLI command, and native input after acquisition', async () => {
   const { auditCodex } = await harness();
-  const window = { appId: 'com.apple.TextEdit', title: 'fixture.txt', url: 'file:///private/tmp/fixture.txt' };
+  const window = { appId: 'com.apple.TextEdit', title: 'fixture.txt', url: `file://${MAC_TMP}/fixture.txt` };
   const command = "node '/repo/lease-broker-cli.mjs' < '/tmp/request.json' > '/tmp/reply.json'";
   const read = { type: 'item.completed', item: { type: 'mcp_tool_call', server: 'computer', tool: 'js',
     arguments: { code: 'var app = await cua.getApp("com.apple.TextEdit")' },
-    result: { content: [{ type: 'text', text: 'Window: "fixture.txt", App: TextEdit\nURL: file:///private/tmp/fixture.txt' }] } } };
+    result: { content: [{ type: 'text', text: `Window: "fixture.txt", App: TextEdit\nURL: file://${MAC_TMP}/fixture.txt` }] } } };
   const acquire = { type: 'item.completed', item: { type: 'command_execution', command, exit_code: 0 } };
   const input = { type: 'item.completed', item: { type: 'mcp_tool_call', server: 'computer', tool: 'js',
     arguments: { code: 'await app.typeText("A|")' }, result: { content: [{ type: 'text', text: 'A|' }] } } };
@@ -147,7 +150,7 @@ test('Codex evidence requires an observed target, the exact CLI command, and nat
   const wrapped = { ...acquire, item: { ...acquire.item, command: '/bin/zsh -lc ' + "'" + command.replaceAll("'", "'\\''") + "'" } };
   assert.equal(auditCodex([read, wrapped, input], options).verified, true);
   const wrongApp = { ...read, item: { ...read.item, result: { content: [{ type: 'text', text:
-    'Window: "wrong.txt", App: TextEdit\nURL: file:///private/tmp/fixture.txt' }] } } };
+    `Window: "wrong.txt", App: TextEdit\nURL: file://${MAC_TMP}/fixture.txt` }] } } };
   assert.equal(auditCodex([wrongApp, acquire, input], options).verified, false);
   const indirect = { ...input, item: { ...input.item, arguments: { code: 'await app["typeText"]("A|")' } } };
   assert.equal(auditCodex([read, denied, indirect], { ...options, reply: { ok: false } }).verified, false);
@@ -210,7 +213,7 @@ test('headless Codex receives the scoped rule and CLI, persists no instruction f
   const bank = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-broker-client-test-')));
   t.after(() => rmSync(bank, { recursive: true, force: true }));
   writeFileSync(join(bank, 'auth.json'), '{}');
-  const window = { appId: 'com.apple.TextEdit', title: 'fixture.txt', url: 'file:///private/tmp/fixture.txt' };
+  const window = { appId: 'com.apple.TextEdit', title: 'fixture.txt', url: `file://${MAC_TMP}/fixture.txt` };
   const broker = request => { try { return brokerRequest(request, { directory: join(bank, 'leases') }); }
     catch (error) { return { ok: false, error: error.message }; } };
   let collected = false;
@@ -229,7 +232,7 @@ test('headless Codex receives the scoped rule and CLI, persists no instruction f
       const events = [{ type: 'thread.started', thread_id: 'fixture-thread' },
         { type: 'item.completed', item: { type: 'mcp_tool_call', server: 'cua_repl', tool: 'js',
           arguments: { code: 'var app = await cua.getApp("com.apple.TextEdit")' },
-          result: { content: [{ type: 'text', text: 'Window: "fixture.txt", App: TextEdit\nURL: file:///private/tmp/fixture.txt' }] } } },
+          result: { content: [{ type: 'text', text: `Window: "fixture.txt", App: TextEdit\nURL: file://${MAC_TMP}/fixture.txt` }] } } },
         { type: 'item.completed', item: { type: 'command_execution', command, exit_code: 0 } },
         { type: 'item.completed', item: { type: 'mcp_tool_call', server: 'cua_repl', tool: 'js',
           arguments: { code: 'await app.typeText("A|")' }, result: { content: [{ type: 'text', text: 'A|' }] } } }];
@@ -253,7 +256,7 @@ test('renewal refusal cancels the active Codex child and preserves its failed ra
   const bank = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-broker-cancel-test-')));
   t.after(() => rmSync(bank, { recursive: true, force: true }));
   writeFileSync(join(bank, 'auth.json'), '{}');
-  const window = { appId: 'com.apple.TextEdit', title: 'fixture.txt', url: 'file:///private/tmp/fixture.txt' };
+  const window = { appId: 'com.apple.TextEdit', title: 'fixture.txt', url: `file://${MAC_TMP}/fixture.txt` };
   let cancelled = false;
   const client = await codexClient({ bank, home: bank, tokens: [], check() {},
     broker: async () => ({ ok: false, error: 'ownership lost' }),

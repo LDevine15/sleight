@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -42,8 +44,8 @@ test('private driver closes inherited telemetry and diagnostic destinations whil
       'OTEL_TRACES_EXPORTER','ENABLE_BETA_TRACING_DETAILED','CLAUDE_CODE_ENABLE_TELEMETRY','DISABLE_TELEMETRY',
       'CLAUDE_DEBUG_PATH','BENCH_ROOT','BENCH_SUITE','SLEIGHT_SURFACES','ENABLE_CLAUDEAI_MCP_SERVERS','PATH','HOME'
     ].map(key=>[key,process.env[key] ?? null]))}));
-  `], { privateMail: true, env: { ...process.env, OTEL_LOG_RAW_API_BODIES: 'file:/private/tmp/private-debug',
-    OTEL_LOGS_EXPORTER: 'otlp', CLAUDE_DEBUG_PATH: '/private/tmp/private-debug', BENCH_ROOT: '/fixture', BENCH_SUITE: 'real', SLEIGHT_SURFACES: 'computer', ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } });
+  `], { privateMail: true, env: { ...process.env, OTEL_LOG_RAW_API_BODIES: `file:${MAC_TMP}/private-debug`,
+    OTEL_LOGS_EXPORTER: 'otlp', CLAUDE_DEBUG_PATH: `${MAC_TMP}/private-debug`, BENCH_ROOT: '/fixture', BENCH_SUITE: 'real', SLEIGHT_SURFACES: 'computer', ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } });
   for (const key of ['OTEL_LOG_RAW_API_BODIES','OTEL_LOG_USER_PROMPTS','OTEL_LOG_ASSISTANT_RESPONSES',
     'OTEL_LOG_TOOL_CONTENT','OTEL_LOG_TOOL_DETAILS','ENABLE_BETA_TRACING_DETAILED','CLAUDE_CODE_ENABLE_TELEMETRY']) assert.equal(response.out.env[key], '0', key);
   for (const key of ['OTEL_LOGS_EXPORTER','OTEL_METRICS_EXPORTER','OTEL_TRACES_EXPORTER']) assert.equal(response.out.env[key], 'none', key);

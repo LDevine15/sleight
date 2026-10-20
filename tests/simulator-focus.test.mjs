@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { test } from './macos-only.mjs';
 import assert from 'node:assert/strict';
 import { simulatorScreenshotNote } from '../plugins/sleight/lib/simulator-focus.mjs';
@@ -67,7 +69,7 @@ test('matching Simulator app identity permits advice without mutating pixels or 
 for (const enabled of [undefined, false, true]) test(`Simulator note is ${enabled === false ? 'absent' : 'present'} with simFocusNote=${enabled === undefined ? 'default' : enabled}`, async t => {
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
-  const bank = mkdtempSync('/private/tmp/sleight-simulator-note-');
+  const bank = mkdtempSync(join(tmpdir(), 'sleight-simulator-note-'));
   const replies = [], forwarded = [];
   clientOut.on('data', data => data.toString().trim().split('\n').forEach(line => replies.push(JSON.parse(line))));
   serverIn.on('data', data => data.toString().trim().split('\n').forEach(line => forwarded.push(JSON.parse(line))));
@@ -105,7 +107,7 @@ for (const enabled of [undefined, false, true]) test(`Simulator note is ${enable
 test('a batched screenshot names the frame once per window and size, and a reassigned handle gets none', async t => {
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
-  const bank = mkdtempSync('/private/tmp/sleight-frame-note-');
+  const bank = mkdtempSync(join(tmpdir(), 'sleight-frame-note-'));
   const replies = [];
   clientOut.on('data', data => data.toString().trim().split('\n').forEach(line => replies.push(JSON.parse(line))));
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease: new InputLease({ directory: bank, holder: 'frame note test' }) });

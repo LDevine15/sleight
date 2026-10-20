@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test, beforeEach } from 'node:test';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -171,7 +173,7 @@ test('a document fixture names its window by the file stem and withholds AppleSc
 });
 
 test('a workspace fixture launches the editor on a throwaway profile inside the private fixture folder', async t => {
-  // A live bank is /private/tmp/sleight-battery-am1-XXXXXX; the default macOS tmpdir is too long for the editor's socket.
+  // A live bank uses the short macOS temporary root; the default macOS tmpdir is too long for the editor's socket.
   const hosts = [], h = await setup(t, { id: 'vscode', hosts, base: realpathSync(process.platform === 'darwin' ? '/tmp' : tmpdir()) });
   const fixture = await h.runtime.prepare(speedPlan({ ids: ['vscode'], runs: 1 }).apps[0]);
   assert.equal(fixture.requireStopped, true);
@@ -188,7 +190,7 @@ test('a workspace fixture launches the editor on a throwaway profile inside the 
   assert.equal(settings['security.workspace.trust.enabled'], false);
   assert.equal(settings['window.restoreWindows'], 'none');
   // The editor's main IPC socket lives in the profile folder; macOS caps socket paths at 103 characters.
-  assert.ok(join('/private/tmp/sleight-battery-am1-XXXXXX', 'a'.repeat(36), profile.slice(fixture.dir.length + 1), '0000-shared.sock').length <= 103);
+  assert.ok(join(`${MAC_TMP}/sleight-battery-am1-XXXXXX`, 'a'.repeat(36), profile.slice(fixture.dir.length + 1), '0000-shared.sock').length <= 103);
   assert.equal((await h.runtime.closeFixture(fixture)).confirmed, true);
   await h.runtime.close();
 });

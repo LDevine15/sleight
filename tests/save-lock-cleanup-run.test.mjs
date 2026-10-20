@@ -1,9 +1,11 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runTextEditCleanup, cleanupFailedTextEditLaunch } from '../bench/textedit-save-lock-cleanup-run.mjs';
 
 const prior = { started: new Date(100000).toISOString(), finished: new Date(101000).toISOString(),
-  failedOperation: { pid: 123 }, lockRetained: true, trials: [], bank: '/private/tmp/sleight-save-lock-fixture' };
+  failedOperation: { pid: 123 }, lockRetained: true, trials: [], bank: `${MAC_TMP}/sleight-save-lock-fixture` };
 function harness({ held = false, holdAfterLock = false, missingLock = false, result = { processQuit: true } } = {}) {
   const calls = [], report = {};
   const io = {

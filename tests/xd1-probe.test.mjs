@@ -6,9 +6,9 @@ import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runProbeTrials, nativeProbe, fixtureDriver, main } from '../bench/xd1-probe.mjs';
 
-// main() accepts a results path only below macOS /private/tmp; the driver tests need any private dir.
-const mainSkip = process.platform !== 'darwin' && 'the probe writes results only below macOS /private/tmp';
-const scratch = process.platform === 'darwin' ? '/private/tmp' : tmpdir();
+// main() requires the macOS private temporary bank; the driver tests need any private dir.
+const mainSkip = process.platform !== 'darwin' && 'the probe requires the macOS private temporary bank';
+const scratch = tmpdir();
 
 function fixture(pass = []) {
   const closed = [], moved = [], snapshots = [];

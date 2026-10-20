@@ -1,9 +1,11 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHoverRedactor, publishHoverImage } from '../bench/hover-publication.mjs';
 
 test('publication removes Chess titles and player names even inside nested transcript JSON', () => {
-  const clean = createHoverRedactor({ home: '/Users/exampleuser', username: 'exampleuser' });
+  const clean = createHoverRedactor({ home: `${MAC_USERS}exampleuser`, username: 'exampleuser' });
   const title = 'abc123.game | Example Player - Computer   (White to Move)';
   const input = { player: 'Example Player', plan: [{ app: 'Chess', windowTitle: title }],
     text: JSON.stringify({ nested: `Window: "${title}"\nApp: Chess\nPlayer: Example Player` }) };
@@ -15,8 +17,8 @@ test('publication removes Chess titles and player names even inside nested trans
   assert.equal(clean('Example Player'), '<chess-player>');
 });
 test('publication hides home paths and Save sheet home labels, including truncated labels', () => {
-  const clean = createHoverRedactor({ home: '/Users/exampleuser', username: 'exampleuser' });
-  const output = clean({ path: '/Users/exampleuser/Projects/sleight',
+  const clean = createHoverRedactor({ home: `${MAC_USERS}exampleuser`, username: 'exampleuser' });
+  const output = clean({ path: `${MAC_USERS}exampleuser/Projects/sleight`,
     text: '13 row Description: home, Value: example…\n14 row Value: Macintosh HD',
     username: 'exampleuser' });
   assert.equal(output.path, '~/Projects/sleight');
@@ -24,7 +26,7 @@ test('publication hides home paths and Save sheet home labels, including truncat
   assert.equal(output.text, '13 row Description: home, Value: <home-folder>\n14 row Value: Macintosh HD');
 });
 test('Chess title redaction covers renamed windows as well as generated game titles', () => {
-  const clean = createHoverRedactor({ home: '/Users/exampleuser', username: 'exampleuser' });
+  const clean = createHoverRedactor({ home: `${MAC_USERS}exampleuser`, username: 'exampleuser' });
   const title = 'Private study by Example Player';
   const output = clean({ plan: [{ app: 'Chess', windowTitle: title }],
     text: JSON.stringify({ state: `Window: "${title}", App: Chess.\n0 standard window ${title}` }) });

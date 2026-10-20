@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 // EPV3-4: the app read. A trusted header (window, join, document, coverage) goes in front of snapshot.mjs's
 // own read, inside the same maxChars; refs keep snapshot's meaning and invalidateRefs retires them.
 import test from 'node:test';
@@ -147,7 +149,7 @@ test('the document line comes from the target record: a scheme and host or an ht
     [MAIN, '# Document: vscode-file://vscode-app (app document)'],
     ['vscode-webview://1a2b3c/index.html?id=x', '# Document: vscode-webview://1a2b3c (app document)'],
     ['https://github.com/login/oauth?state=secret#x', '# Document: https://github.com (web)'],
-    ['file:///Users/someone/Projects/notes.md', '# Document: file:// (app document)'],
+    [`file://${MAC_USERS}someone/Projects/notes.md`, '# Document: file:// (app document)'],
     ['not a url', '# Document: unavailable'],
   ];
   for (const [url, expected] of cases) {

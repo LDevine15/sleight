@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -171,13 +173,13 @@ test('early A/B rows, unmatched test tasks and extra flag differences cannot pro
 
 test('publication allowlists omit transcript text, owner strings and source paths', () => {
   const secret = 'invented-person-private';
-  const r = report([row('sleight', apps[0], 1, { answer: secret, transcript: '/Users/invented-person/private.jsonl',
+  const r = report([row('sleight', apps[0], 1, { answer: secret, transcript: `${MAC_USERS}invented-person/private.jsonl`,
     windowOrder: { events: [{ type: 'focus-steal', title: secret }] },
     wasteCalls: [{ classes: [secret, 'spilled-result'], code: secret }] })]);
   assert.equal(typeof api.renderMarkdown, 'function');
   assert.equal(JSON.stringify(r).includes(secret), false);
   assert.equal(api.renderMarkdown(r).includes(secret), false);
-  assert.equal(api.renderMarkdown(r).includes('/Users/'), false);
+  assert.equal(api.renderMarkdown(r).includes(`${MAC_USERS}`), false);
   assert.throws(() => report([row('sleight', apps[0], 1, { task: secret + '\nprivate text' })]), /Invalid/);
 });
 

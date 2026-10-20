@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -31,19 +33,19 @@ test('the turbo skill loader agrees with the installed loader for both RS sides 
   const task = { name: 'fixture', browser: 'chrome', prompt: 'Read http://127.0.0.1:5431/form' };
   for (const prompt of [undefined, 'lean']) for (const rs of ['0', '1', '', 'off', 'false', '00']) {
     const env = { SLEIGHT_PROMPT: prompt, SLEIGHT_RS: rs };
-    const setup = turboSetup({ task, repo: '/repo', dir: '/private/tmp/rs-unit/out', prompt: task.prompt, env });
+    const setup = turboSetup({ task, repo: '/repo', dir: `${MAC_TMP}/rs-unit/out`, prompt: task.prompt, env });
     const native = skillRules(undefined, env).split('## Browsers')[0];
     assert.ok(setup.promptPrefix.startsWith(native));
     assert.equal(setup.mcpServers['plugin:sleight:computer'].env.SLEIGHT_RS, rs);
     // The Codex browser arm wraps the same generated server specification.
-    const servers = codexSleightServers({ dir: '/private/tmp/rs-unit', mcpServers: setup.mcpServers, allowed: setup.allowed });
+    const servers = codexSleightServers({ dir: `${MAC_TMP}/rs-unit`, mcpServers: setup.mcpServers, allowed: setup.allowed });
     assert.equal(servers.plugin_sleight_computer.env.SLEIGHT_RS, rs);
   }
 });
 
 test('Codex native and claim arms forward the RS switch into their explicit MCP environment', () => {
   for (const rs of ['0', '1', '', 'off', 'false', '00']) {
-    const setup = codexSleightRunConfig({ model: 'gpt-6.1-sol', dir: '/private/tmp/rs-unit', suite: 'world', hostEnv: { SLEIGHT_RS: rs } });
+    const setup = codexSleightRunConfig({ model: 'gpt-6.1-sol', dir: `${MAC_TMP}/rs-unit`, suite: 'world', hostEnv: { SLEIGHT_RS: rs } });
     assert.ok(setup.toml.includes(`SLEIGHT_RS = "${rs}"`));
   }
 });

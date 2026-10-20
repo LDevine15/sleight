@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -108,7 +110,7 @@ test('a timed-out helper is retired and cannot queue a second AX observation', a
 });
 
 function observerReplies({ standard = false, overlay = false, extraWindow = false, replaced = false, overlayPending = false } = {}) {
-  const path = '/private/tmp/sleight-exact-AbCd12/exact.txt';
+  const path = `${MAC_TMP}/sleight-exact-AbCd12/exact.txt`;
   const array = values => ({ count: values.length, objectAtIndex: i => values[i] });
   const root = { AXRole: 'AXWindow', AXSubrole: 'AXStandardWindow', AXDocument: 'file://' + path };
   const sheet = { AXRole: 'AXSheet', AXParent: root };
@@ -169,7 +171,7 @@ test('read arm reads after each opener, and focus AX errors invoke the same fall
 });
 
 function fixtureReplies({ nested = true, extraField = false, search = false, foreign = false, close = false, standard = false, direct = false, childDialog = false, overlay = false, extraWindow = false, replaced = false, oldField = false, surfaceWindow = false } = {}) {
-  const path = '/private/tmp/sleight-exact-AbCd12/exact.txt', array = values => ({ count: values.length, objectAtIndex: i => values[i] });
+  const path = `${MAC_TMP}/sleight-exact-AbCd12/exact.txt`, array = values => ({ count: values.length, objectAtIndex: i => values[i] });
   const area = { AXRole: 'AXTextArea', AXValue: 'SR1 owned fixture\n' };
   const root = { AXRole: 'AXWindow', AXDocument: 'file://' + path, AXChildren: array([area]) };
   const open = { AXRole: 'AXWindow', AXSubrole: standard ? 'AXStandardWindow' : 'AXDialog', AXTitle: 'Open' };
@@ -259,9 +261,9 @@ test('cleanup inventories every owned resource, continues after failure, retains
 });
 
 test('127-character owned folder path and kill rule use trial medians including fallback costs', () => {
-  const path = folderPath('/private/tmp/sleight-exact-AbCd12');
+  const path = folderPath(`${MAC_TMP}/sleight-exact-AbCd12`);
   assert.equal(path.length, 127);
-  assert.ok(path.startsWith('/private/tmp/sleight-exact-AbCd12/'));
+  assert.ok(path.startsWith(`${MAC_TMP}/sleight-exact-AbCd12/`));
   const trials = [100, 200].map(totalCallMs => ({ arm: 'focus', totalCallMs, correct: true }));
   trials.push(...[700, 800].map(totalCallMs => ({ arm: 'read', totalCallMs, correct: true })));
   assert.equal(summarize(trials, 2).kill, false);

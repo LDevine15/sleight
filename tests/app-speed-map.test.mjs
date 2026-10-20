@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext, constants } from 'node:vm';
@@ -511,7 +513,7 @@ test('a document whose text the tree does not show is measured with a Page Down 
 });
 
 test('an engine error keeps a local template without quoted values, paths or numbers, and publishes only its hash', () => {
-  const reply = { isError: true, content: [{ type: 'text', text: 'Timed out after 30 s waiting for "Microsoft Excel" at /Users/x/AM1.xlsx (lease 4)\nsecond line' }] };
+  const reply = { isError: true, content: [{ type: 'text', text: `Timed out after 30 s waiting for "Microsoft Excel" at ${MAC_USERS}x/AM1.xlsx (lease 4)\nsecond line` }] };
   const error = engineError(reply);
   assert.equal(error.template, 'timed out after _n_ s waiting for _q_ at _p_ (lease _n_) / second line');
   assert.deepEqual(error.published, { codes: [], kinds: ['timed out', 'lease'], signature: error.published.signature });

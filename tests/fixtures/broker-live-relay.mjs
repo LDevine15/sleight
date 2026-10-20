@@ -17,5 +17,5 @@ if (process.argv[2] === 'engine') {
   const { relayServer } = await import('../../bench/broker-live.mjs');
   await relayServer('fake sleight', { directory: process.argv[2],
     server: { command: process.execPath, args: [fileURLToPath(import.meta.url), 'engine', process.argv[2], process.argv[3]], env: {} },
-    approve: async () => 'accept', hold: '/private/tmp/nonexistent-broker-test-hold', renewMs: 50 });
+    approve: async () => 'accept', hold: join(process.argv[2], 'nonexistent-hold'), renewMs: 50 });
 }

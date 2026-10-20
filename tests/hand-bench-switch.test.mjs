@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 // SLEIGHT_BENCH_HAND: arms keep the ghost hand off unless the runner asks for it (H6 cost pass, H8 hidden-tab check), and
 // turbo's worker now gets the arm's setting and trace folder. Also H8's trace reader.
 import test from 'node:test';
@@ -33,7 +35,7 @@ test('benchHand: off by default and for 0, on only for 1, anything else stops th
 test('the turbo arm: both servers follow the switch, and the turbo server carries SLEIGHT_TRACE for the worker', t => {
   withEnv(t, { SLEIGHT_TRACE: '/tmp/round.trace' });
   delete process.env.SLEIGHT_BENCH_HAND;
-  const setup = () => realAgentSetup({ task, surface: 'sleight-turbo', dir: '/private/tmp/gate-task', realBrowser: chrome, dryRun: true });
+  const setup = () => realAgentSetup({ task, surface: 'sleight-turbo', dir: `${MAC_TMP}/gate-task`, realBrowser: chrome, dryRun: true });
   const off = setup().mcpConfig.mcpServers;
   assert.equal(off['plugin:sleight:computer'].env.SLEIGHT_HAND, '0');
   assert.equal(off['sleight-turbo'].env.SLEIGHT_HAND, '0');

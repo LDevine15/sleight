@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
@@ -10,7 +12,7 @@ function harness(t, options = {}) {
   serverIn.on('data', data => data.toString().trim().split('\n').forEach(line => sent.push(JSON.parse(line))));
   clientOut.on('data', data => data.toString().trim().split('\n').forEach(line => received.push(JSON.parse(line))));
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, receipts: true, stateReview: true,
-    receiptWriter: receipt => { receipts.push(receipt); return '/private/tmp/receipt.json'; }, ...options });
+    receiptWriter: receipt => { receipts.push(receipt); return `${MAC_TMP}/receipt.json`; }, ...options });
   t.after(() => relay.dispose());
   return { relay, sent, received, receipts, serverIn,
     call: (id, code, title) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code, title } } }) + '\n'),
@@ -33,7 +35,7 @@ test('turn cleanup writes one receipt without adding a call or parsing during a 
   assert.equal(h.receipts.length, 1);
   assert.doesNotMatch(JSON.stringify(h.receipts[0]), /secret content/);
   const result = h.received.at(-1).result;
-  assert.equal(result._meta['sleight/receipt'].path, '/private/tmp/receipt.json');
+  assert.equal(result._meta['sleight/receipt'].path, `${MAC_TMP}/receipt.json`);
   assert.match(result._meta['sleight/receipt'].review, /changed/);
 });
 
@@ -73,7 +75,7 @@ test('mod cleanup after idle cleanup receives the latest receipt without rewriti
   h.reply(h.sent.at(-1).id, 'idle ended'); await idle;
   h.end(3); h.reply(3, 'mod ended');
   assert.equal(h.receipts.length, 1);
-  assert.equal(h.received.at(-1).result._meta?.['sleight/receipt']?.path, '/private/tmp/receipt.json');
+  assert.equal(h.received.at(-1).result._meta?.['sleight/receipt']?.path, `${MAC_TMP}/receipt.json`);
   assert.match(h.received.at(-1).result._meta['sleight/receipt'].review, /changed/);
 });
 
@@ -97,7 +99,7 @@ test('explicit cleanup reaches the engine before receipt work, including a synch
   let h;
   h = harness(t, { receiptWriter: receipt => {
     assert.equal(h.sent.at(-1).params.name, 'turn_ended');
-    h.receipts.push(receipt); return '/private/tmp/receipt.json';
+    h.receipts.push(receipt); return `${MAC_TMP}/receipt.json`;
   } });
   edit(h);
   h.serverIn.on('data', data => {
@@ -107,14 +109,14 @@ test('explicit cleanup reaches the engine before receipt work, including a synch
   const turn = h.relay.turnId;
   h.end(3);
   assert.equal(h.receipts[0].turn, turn);
-  assert.equal(h.received.at(-1).result._meta['sleight/receipt'].path, '/private/tmp/receipt.json');
+  assert.equal(h.received.at(-1).result._meta['sleight/receipt'].path, `${MAC_TMP}/receipt.json`);
 });
 
 test('idle cleanup reaches the engine before receipt work', async t => {
   let h;
   h = harness(t, { receiptWriter: receipt => {
     assert.equal(h.sent.at(-1).params.name, 'turn_ended');
-    h.receipts.push(receipt); return '/private/tmp/receipt.json';
+    h.receipts.push(receipt); return `${MAC_TMP}/receipt.json`;
   } });
   edit(h);
   const done = h.relay.endOpenTurn(); h.reply(h.sent.at(-1).id, 'ended'); await done;

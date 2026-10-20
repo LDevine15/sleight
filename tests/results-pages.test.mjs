@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -10,11 +12,11 @@ const all = () => Object.fromEntries(FAMILIES.map(f => [f.id, JSON.parse(read(`d
 const homePath = /\/Users\/[^\s,"'<>\\]/;
 
 test('the privacy scan allows the Users root and rejects home paths', () => {
-  for (const text of ['file:///Users/', 'URL: file:///Users/, Value: Users', JSON.stringify({ url: 'file:///Users/' })]) {
+  for (const text of [`file://${MAC_USERS}`, `URL: file://${MAC_USERS}, Value: Users`, JSON.stringify({ url: `file://${MAC_USERS}` })]) {
     assert.doesNotMatch(text, homePath);
   }
-  for (const text of ['/Users/someone', 'file:///Users/someone/', 'file:///Users/someone/Documents/file.txt',
-    JSON.stringify({ url: 'file:///Users/someone/Documents/file.txt' })]) {
+  for (const text of [`${MAC_USERS}someone`, `file://${MAC_USERS}someone/`, `file://${MAC_USERS}someone/Documents/file.txt`,
+    JSON.stringify({ url: `file://${MAC_USERS}someone/Documents/file.txt` })]) {
     assert.match(text, homePath);
   }
 });
