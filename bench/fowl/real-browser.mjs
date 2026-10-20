@@ -282,11 +282,9 @@ export function initialBrowserPage(plan, page) {
       !url.port || url.username || url.password || typeof page.title !== 'string' || !page.title || page.title.length > 200) throw Error('BENCH_INITIAL_PAGE_UNSAFE');
   // Keep the race's profile, launch, ownership and cleanup checks. Only the initial page changes.
   if (plan.browser === 'safari') {
-    // The native helper only types data markers into a proven profile Start Page. Let that page
-    // navigate to the validated fixture, then require the fixture's title and URL before readiness.
-    const redirect = `<script>location.replace(${JSON.stringify(url.href).replaceAll('<', '\\u003c')})</script>`;
-    return { ...plan, acquisitionPage: { title: page.title, url: url.href },
-      navigationUrl: plan.markerUrl + encodeURIComponent(redirect) };
+    // Bind the helper to this run's fixture before launch. Data-page redirects to loopback did not acquire Safari.
+    if (url.href !== page.url || !/^http:\/\/127\.0\.0\.1:[1-9]\d{0,4}\/held-out\/[a-z-]+\/[A-Za-z0-9_-]{1,80}\/$/.test(page.url)) throw Error('BENCH_INITIAL_PAGE_UNSAFE');
+    return { ...plan, acquisitionPage: { title: page.title, url: url.href } };
   }
   return { ...plan, marker: page.title, args: [...plan.args.slice(0, -1), url.href], launchArgs: [...plan.launchArgs.slice(0, -1), url.href] };
 }

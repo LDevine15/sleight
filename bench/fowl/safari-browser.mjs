@@ -120,10 +120,27 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
   const root = dirname(plan.profileRoot);
   mkdirSync(dirname(root), { recursive: true, mode: 0o700 });
   mkdirSync(root, { mode: 0o700 });
-  let bridge, running = false, stopped, windowId, fresh = null;
-  const browser = { ...plan, ownerCheck, collections: [], launches: [] };
-  // Fixture redirects prove the validated destination; ordinary races prove the data marker itself.
+  let bridge, running = false, stopped, windowId, fresh = null, acquiring, lastSnapshot;
+  const browser = { ...plan, ownerCheck, collections: [], launches: [], acquisition: [] };
+  // Fixtures navigate directly to the plan's destination; ordinary races prove the data marker itself.
   const acquisitionPage = plan.acquisitionPage ?? { title: plan.marker, url: plan.markerUrl };
+  const fixture = plan.acquisitionPage && new URL(plan.acquisitionPage.url);
+  const nonce = fixture ? fixture.pathname.split('/').at(-2) : plan.marker.slice('Sleight Gate '.length);
+  const normalize = value => {
+    if (typeof value !== 'string') return null;
+    for (const token of new Set([nonce, encodeURIComponent(nonce)])) if (token) value = value.replaceAll(token, '<nonce>');
+    if (fixture) {
+      value = value.replaceAll(`127.0.0.1:${fixture.port}`, '127.0.0.1:<port>')
+        .replaceAll(`127.0.0.1%3A${fixture.port}`, '127.0.0.1%3A<port>');
+    }
+    return value;
+  };
+  const lastObserved = list => {
+    const owned = list?.find(window => window.id === windowId && safariProfileEvidence(window));
+    return { windowCount: list?.length ?? null, tabCount: Array.isArray(owned?.tabs) ? owned.tabs.length : null,
+      ownedTabs: Array.isArray(owned?.tabs) ? owned.tabs.map(tab => ({ title: normalize(tab.title), url: normalize(tab.url) })) : [] };
+  };
+  const stage = name => { acquiring.stage = name; };
   const census = async (...given) => {
     const ownedPid = given.length ? given[0] : browser.pid;
     try { browser.ownerCheck = await checkBrowserOwner(plan, { listProcesses, ownedPid }); }
@@ -138,7 +155,12 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
       catch (error) { if (!error.ownerCheck || !browser.pid || Date.now() >= deadline) throw error; await pause(250); }
     }
   };
-  const snapshot = async () => windows(await bridge.request('snapshot'));
+  const snapshot = async () => {
+    const list = windows(await bridge.request('snapshot'));
+    lastSnapshot = list;
+    if (acquiring) acquiring.lastObserved = lastObserved(list);
+    return list;
+  };
   const ownedWindow = list => {
     const window = list.find(w => w.id === windowId);
     const evidence = window && safariProfileEvidence(window);
@@ -148,6 +170,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
   };
   // Opens the benchmark profile window in a Safari this harness just launched and loads the marker page.
   const openWindow = async () => {
+    stage('restore');
     await census();
     await restoreWait(2000);
     await census();
@@ -157,6 +180,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     if (before.some(window => window.startPage !== true && !safariProfileEvidence(window))) throw Error('BENCH_SAFARI_RESTORED_WINDOWS: Safari restored windows from another profile; close your Safari windows or turn off window restore, then retry');
     if (before.some(window => window.startPage !== true)) throw Error('BENCH_SAFARI_EXTRA_WINDOWS');
     if (before.length) {
+      stage('close-launch-window');
       for (const window of before) await bridge.request('close-launch-window', { window: window.id });
       const closing = Date.now() + timeoutMs;
       for (;;) {
@@ -167,6 +191,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
       }
     }
     const previous = new Set(before.map(w => w.id));
+    stage('new-profile');
     const menu = await bridge.request('new-profile');
     if (menu.menuEscapePosted !== true || menu.menuCleared !== true || ![1, 2].includes(menu.menuEscapes)) throw Error('BENCH_SAFARI_MENU_ESCAPE_UNPROVED');
     const deadline = Date.now() + timeoutMs;
@@ -180,15 +205,19 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     }
     windowId = created.id; browser.profileWindow = windowId;
     browser.profileEvidence = safariProfileEvidence(created);
+    acquiring.lastObserved = lastObserved(lastSnapshot);
     await census();
-    await bridge.request('navigate', { window: windowId, url: plan.navigationUrl ?? plan.markerUrl });
+    const navigation = plan.acquisitionPage ? 'navigate-fixture' : 'navigate';
+    stage(navigation);
+    await bridge.request(navigation, { window: windowId, url: acquisitionPage.url });
+    const navigating = Date.now() + timeoutMs;
     for (;;) {
       const list = await snapshot(), current = ownedWindow(list);
       const inventory = tabs(current), values = Object.values(inventory);
       if (list.length === 1 && values.length === 1 && values[0].title === acquisitionPage.title && values[0].url === acquisitionPage.url) {
         await census(); return inventory;
       }
-      if (Date.now() >= deadline) throw Error('BENCH_SAFARI_MARKER_UNPROVED');
+      if (Date.now() >= navigating) throw Error('BENCH_SAFARI_MARKER_UNPROVED');
       await pause(25);
     }
   };
@@ -205,16 +234,26 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     } catch (error) { receipt.error = error.message; throw Error('BENCH_BROWSER_CLEANUP_UNPROVED', { cause: error }); }
   };
   const startSafari = async () => {
-    await censusClear();
-    // Set before the request: a launch whose reply never arrives still has to be collected.
-    running = true;
-    const requestedAt = Date.now(), launched = await bridge.request('launch');
-    // A process that predates this request is not ours; its windows are never touched.
-    if (!Number.isSafeInteger(launched.pid) || launched.pid <= 0 || !sameExecutable(launched.executable, plan.executable) ||
-        !Number.isFinite(launched.launchDate) || launched.launchDate * 1000 < requestedAt - 1000) throw Error('BENCH_SAFARI_LAUNCH_UNPROVED');
-    Object.assign(browser, launched);
-    browser.launches.push({ pid: launched.pid, launchDate: launched.launchDate, launchMs: Date.now() - requestedAt });
-    return await openWindow();
+    acquiring = { stage: 'census-clear', lastObserved: lastObserved() };
+    try {
+      await censusClear();
+      stage('launch');
+      // Set before the request: a launch whose reply never arrives still has to be collected.
+      running = true;
+      const requestedAt = Date.now(), launched = await bridge.request('launch');
+      // A process that predates this request is not ours; its windows are never touched.
+      if (!Number.isSafeInteger(launched.pid) || launched.pid <= 0 || !sameExecutable(launched.executable, plan.executable) ||
+          !Number.isFinite(launched.launchDate) || launched.launchDate * 1000 < requestedAt - 1000) throw Error('BENCH_SAFARI_LAUNCH_UNPROVED');
+      Object.assign(browser, launched);
+      browser.launches.push({ pid: launched.pid, launchDate: launched.launchDate, launchMs: Date.now() - requestedAt });
+      return await openWindow();
+    } catch (error) {
+      // Capture before cleanup changes the window census. Only this run's owned tab metadata enters its receipt.
+      browser.acquisition.push({ ...acquiring, reason: normalize(error.message) });
+      const { stop, reset, observe, ...receipt } = browser;
+      error.browserReceipt = receipt;
+      throw error;
+    } finally { acquiring = undefined; }
   };
   // The first task uses the Safari launched with the browser; every later task gets a fresh one.
   browser.reset = async () => {
@@ -253,12 +292,18 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     return stopped = { browserClosed: true, profileDeleted: false, harnessDeleted: true };
   };
   try {
+    acquiring = { stage: 'prepare-helper', lastObserved: lastObserved() };
     bridge = await safariBridge(root, { spawnBrowser, timeoutMs });
+    if (plan.acquisitionPage) {
+      stage('fixture-plan');
+      await bridge.request('fixture-plan', { url: plan.acquisitionPage.url });
+    }
     const began = Date.now();
     fresh = await startSafari();
     browser.launches.at(-1).readyMs = Date.now() - began;
     return browser;
   } catch (error) {
+    if (acquiring) browser.acquisition.push({ ...acquiring, reason: normalize(error.message) });
     try { await browser.stop(); } catch (cleanup) { error = cleanup; }
     const { stop, reset, observe, ...receipt } = browser;
     error.browserReceipt = receipt;

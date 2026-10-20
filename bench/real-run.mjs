@@ -89,6 +89,7 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
     }
   } catch (error) {
     result.passed = false;
+    if (error.browserReceipt?.acquisition?.length) result.browserAcquisition = error.browserReceipt.acquisition;
     if (driverStarted && result.groupClean !== true) result.groupClean = false;
     result.reason = dialogReason() || (result.permissionPrompt ? 'macOS permission prompt: stopped' : result.permissionRefusal ? 'computer-use permission refused: stopped' : error.message);
   } finally {

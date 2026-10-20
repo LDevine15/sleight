@@ -479,6 +479,30 @@ test('native Safari helper compiles and rejects unowned requests before any app 
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(run.stdout.trim().split('\n').map(line => JSON.parse(line).error),
     ['BENCH_SAFARI_IDENTITY_UNPROVED', 'BENCH_SAFARI_MARKER_INVALID', 'BENCH_SAFARI_IDENTITY_UNPROVED']);
+  const fixtureUrl = 'http://127.0.0.1:5431/held-out/list/recorded-failure/';
+  const unsafe = ['https://127.0.0.1:5431/held-out/list/run/', 'http://localhost:5431/held-out/list/run/',
+    'http://127.0.0.1/held-out/list/run/', 'http://127.0.0.1:0/held-out/list/run/',
+    'http://127.0.0.1:65536/held-out/list/run/', 'http://user@127.0.0.1:5431/held-out/list/run/',
+    'http://127.0.0.1:5431/other/', fixtureUrl + '?q=x', fixtureUrl + '#tail',
+    'http://127.0.0.1:5431/held-out/list/%2e%2e/', 'http://127.0.0.1:5431/held-out/list/../run/'];
+  const requests = [
+    ...unsafe.map(url => ({ op: 'fixture-plan', url })),
+    { op: 'navigate-fixture', window: 'fake', url: fixtureUrl },
+    { op: 'fixture-plan', url: fixtureUrl },
+    { op: 'fixture-plan', url: fixtureUrl.replace(':5431', ':5432') },
+    ...[...unsafe, fixtureUrl.replace(':5431', ':5432'), fixtureUrl.replace('recorded-failure', 'other-run')]
+      .map(url => ({ op: 'navigate-fixture', window: 'fake', url })),
+    { op: 'navigate-fixture', window: 'fake', url: fixtureUrl },
+  ];
+  const fixtureRun = spawnSync(executable, [], { encoding: 'utf8', timeout: 1000,
+    input: requests.map(input => JSON.stringify(input)).join('\n') + '\n' });
+  assert.equal(fixtureRun.status, 0, fixtureRun.stderr);
+  assert.deepEqual(fixtureRun.stdout.trim().split('\n').map(line => JSON.parse(line)), [
+    ...unsafe.map(() => ({ error: 'BENCH_SAFARI_FIXTURE_INVALID' })),
+    { error: 'BENCH_SAFARI_FIXTURE_INVALID' }, {}, { error: 'BENCH_SAFARI_FIXTURE_PLAN_LOCKED' },
+    ...Array.from({ length: unsafe.length + 2 }, () => ({ error: 'BENCH_SAFARI_FIXTURE_INVALID' })),
+    { error: 'BENCH_SAFARI_IDENTITY_UNPROVED' },
+  ]);
   const uncertain = spawnSync(executable, ['--self-test-unreceipted-launch'], { encoding: 'utf8', timeout: 1000 });
   assert.equal(uncertain.status, 0, uncertain.stderr);
   assert.deepEqual(JSON.parse(uncertain.stdout), { error: 'BENCH_SAFARI_LAUNCH_UNRECEIPTED' });
@@ -497,6 +521,8 @@ test('native Safari helper compiles and rejects unowned requests before any app 
     preferredElement: 'profile', ambiguousProfile: true, visibleMenuClear: false, selectedMenuClear: false,
     clearMenuEscapes: 1,
     unknownSelectedMenuClear: false, unknownRoleMenuClear: false, bridgedSelectedMenuClear: false,
+    fixtureStartPage: true, fixtureNonStartPage: 'BENCH_SAFARI_START_PAGE_UNPROVED',
+    fixtureSheet: 'BENCH_SAFARI_START_PAGE_UNPROVED',
   });
 });
 

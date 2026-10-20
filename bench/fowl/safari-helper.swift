@@ -182,6 +182,19 @@ func probeSnapshot(_ application: AXUIElement) throws -> [String: Any] {
 }
 
 var owned: NSRunningApplication?, birth: Date?, launchPending = false, launchRequested = false, profileRequested = false
+// Set once before launch by the run's validated plan. A navigation request cannot pick a different port or fixture.
+var fixtureURL: String?
+func validatedFixtureURL(_ value: String?) throws -> String {
+    guard let value = value,
+          value.range(of: #"^http://127\.0\.0\.1:[1-9][0-9]{0,4}/held-out/[a-z-]+/[A-Za-z0-9_-]{1,80}/$"#, options: .regularExpression) != nil,
+          let url = URLComponents(string: value), let port = url.port, (1...65535).contains(port),
+          url.scheme == "http", url.host == "127.0.0.1", url.user == nil, url.password == nil,
+          url.query == nil, url.fragment == nil, url.url?.absoluteString == value else { throw refuse("BENCH_SAFARI_FIXTURE_INVALID") }
+    return value
+}
+func verifyNavigationStart(startPage: Bool, sheetCount: Int) throws {
+    guard startPage && sheetCount == 0 else { throw refuse("BENCH_SAFARI_START_PAGE_UNPROVED") }
+}
 func ownedApplication() throws -> NSRunningApplication {
     guard let app = owned, !app.isTerminated, let date = birth,
           let current = NSRunningApplication(processIdentifier: app.processIdentifier), !current.isTerminated,
@@ -220,6 +233,16 @@ func keyProfileWindow() throws -> AXUIElement {
     let app = try ownedAX()
     guard let focused = attribute(app, "AXFocusedWindow"), CFGetTypeID(focused) == AXUIElementGetTypeID() else { throw refuse("BENCH_SAFARI_KEY_WINDOW_UNPROVED") }
     return try windowById(identifier(focused as! AXUIElement))
+}
+func navigate(_ id: String, to url: String) throws -> [String: Any] {
+    let window = try windowById(id)
+    try verifyNavigationStart(startPage: isStartPage(window), sheetCount: sheets(window).count)
+    let field = try address(window)
+    try verifyKeyWindow(hasProfile: try profileEvidence(window) != nil,
+                        matches: attribute(try ownedAX(), "AXFocusedWindow").map { CFEqual($0, window) } ?? false)
+    guard AXUIElementSetAttributeValue(field, "AXValue" as CFString, url as CFString) == .success,
+          AXUIElementSetAttributeValue(field, "AXFocused" as CFString, kCFBooleanTrue) == .success else { throw refuse("BENCH_SAFARI_ADDRESS_SET_REFUSED") }
+    try key(36, window: window); return [:]
 }
 func menuStateClear(_ nodes: [[String: Any]]) -> Bool {
     !nodes.contains { node in
@@ -381,6 +404,10 @@ func quit(_ seconds: Double) throws -> [String: Any] {
 }
 func command(_ input: [String: Any]) throws -> [String: Any] {
     switch input["op"] as? String {
+    case "fixture-plan":
+        guard fixtureURL == nil, !launchRequested, !profileRequested, owned == nil else { throw refuse("BENCH_SAFARI_FIXTURE_PLAN_LOCKED") }
+        fixtureURL = try validatedFixtureURL(input["url"] as? String)
+        return [:]
     case "launch": return try launch()
     case "snapshot": return try snapshot(ownedAX())
     case "new-profile": return try newProfile()
@@ -404,12 +431,11 @@ func command(_ input: [String: Any]) throws -> [String: Any] {
         try press(closeValue as! AXUIElement); return [:]
     case "navigate":
         guard let id = input["window"] as? String, let url = input["url"] as? String, url.hasPrefix("data:text/html,") else { throw refuse("BENCH_SAFARI_MARKER_INVALID") }
-        let window = try windowById(id), field = try address(window)
-        try verifyKeyWindow(hasProfile: try profileEvidence(window) != nil,
-                            matches: attribute(try ownedAX(), "AXFocusedWindow").map { CFEqual($0, window) } ?? false)
-        guard AXUIElementSetAttributeValue(field, "AXValue" as CFString, url as CFString) == .success,
-              AXUIElementSetAttributeValue(field, "AXFocused" as CFString, kCFBooleanTrue) == .success else { throw refuse("BENCH_SAFARI_ADDRESS_SET_REFUSED") }
-        try key(36, window: window); return [:]
+        return try navigate(id, to: url)
+    case "navigate-fixture":
+        let url = try validatedFixtureURL(input["url"] as? String)
+        guard url == fixtureURL, let id = input["window"] as? String else { throw refuse("BENCH_SAFARI_FIXTURE_INVALID") }
+        return try navigate(id, to: url)
     case "quit": return try quit(min(25, max(0.001, (input["quitMs"] as? Double ?? 25000) / 1000)))
     default: throw refuse("BENCH_SAFARI_COMMAND_INVALID")
     }
@@ -437,6 +463,9 @@ if CommandLine.arguments.dropFirst() == ["--self-test-owner-safety"] {
     result["missingKey"] = refusal { try verifyKeyWindow(hasProfile: true, matches: false) }
     result["missingProfile"] = refusal { try verifyKeyWindow(hasProfile: false, matches: true) }
     try verifyKeyWindow(hasProfile: true, matches: true); result["verifiedKey"] = true
+    try verifyNavigationStart(startPage: true, sheetCount: 0); result["fixtureStartPage"] = true
+    result["fixtureNonStartPage"] = refusal { try verifyNavigationStart(startPage: false, sheetCount: 0) }
+    result["fixtureSheet"] = refusal { try verifyNavigationStart(startPage: true, sheetCount: 1) }
     var escapes = 0
     let cleaned = try cleanMenus(escape: { escapes += 1 }, clear: {
         menuStateClear(escapes == 1 ? [["role": "AXMenuBarItem", "selected": true]] : [["role": "AXMenu", "visible": false]])
