@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, realpathSync, readFileSync, rmSync, symlinkSync
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runProbeTrials, nativeProbe, fixtureDriver, main } from '../bench/xd1-probe.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const scratch = tmpdir();
 
@@ -116,7 +117,7 @@ test('a setup failure closes what opened; an unconfirmed close is marked so the 
 
 function liveHarness({ holdChecks = 0, closeFails = false, holdAfterTrial = 0 } = {}) {
   const events = [], f = fakeFixtures({ closeFails });
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-xd1-probe-')));
+  const dir = trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-xd1-probe-'))));
   const results = realpathSync(mkdtempSync(join(tmpdir(), 'xd1r-results-')));
   let checks = 0;
   const deps = { open: f.open, close: f.close, native: passingNative, settleMs: 0, log() {}, makeDir: () => dir,
