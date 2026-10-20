@@ -434,6 +434,125 @@ final class ModalGuard {
 }
 // END MODAL GUARD
 
+// BEGIN ASK CARD
+// The ask.js layout in the nonce-bound host. Protected actions retain GB12's native event guard.
+struct AskCard {
+    let question: String, detail: String, host: String, icon: String, kind: String
+}
+func askCard(_ data: [String: Any], _ choices: [String]) -> AskCard? {
+    guard Set(data.keys) == ["view", "operation", "presentation"],
+        let view = data["view"] as? [String: Any], view["clientSession"] as? String == "Grok Bot",
+        let operation = data["operation"] as? [String: Any],
+        let text = data["presentation"] as? [String: Any],
+        Set(text.keys) == ["style", "question", "detail", "host", "icon", "kind"], text["style"] as? String == "ask",
+        let question = text["question"] as? String, !question.isEmpty, question.utf8.count <= 16384,
+        let detail = text["detail"] as? String, detail.utf8.count <= 16384,
+        let host = text["host"] as? String, host == "Grok Bot",
+        let icon = text["icon"] as? String, icon.hasPrefix("/"), icon.hasSuffix("/assets/icon.png"),
+        let kind = text["kind"] as? String, ["app", "action"].contains(kind),
+        choices == ["once", "cancel"] else { return nil }
+    // Only an app grant for this session may use the host-answerable Allow button.
+    if kind == "app" {
+        guard view["scope"] as? String == "Allow for this Grok Bot session only",
+            operation["scope"] as? String == "Allow for this Grok Bot session only", operation["request"] is String else { return nil }
+    }
+    return AskCard(question: question, detail: detail, host: host, icon: icon, kind: kind)
+}
+
+final class AskCardPanel: NSObject {
+    let panel: NSPanel
+    let answer: (String) -> Void
+    var actions: [ConsentInputAction] = []
+    var timer: Timer?
+    var finished = false
+    init(_ card: AskCard, deadline: Double, answer: @escaping (String) -> Void) {
+        self.answer = answer
+        let width: CGFloat = 400, pad: CGFloat = 20, textX: CGFloat = 92, textWidth: CGFloat = 288
+        func label(_ text: String, _ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor) -> NSTextField {
+            let field = NSTextField(wrappingLabelWithString: text)
+            field.font = .systemFont(ofSize: size, weight: weight); field.textColor = color
+            field.preferredMaxLayoutWidth = textWidth
+            field.frame.size = NSSize(width: textWidth, height: ceil(field.sizeThatFits(NSSize(width: textWidth, height: 10000)).height))
+            return field
+        }
+        let eyebrow = label("sleight · " + card.host + " computer use", 10, .medium, .tertiaryLabelColor)
+        let title = label(card.question, 13, .semibold, .labelColor)
+        let body = label(card.detail, 11, .regular, .secondaryLabelColor)
+        let textHeight = eyebrow.frame.height + 2 + title.frame.height + 4 + body.frame.height
+        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
+        let area = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1024, height: 768)
+        let topHeight = min(max(56, textHeight), max(56, area.height - 180))
+        let height = pad + topHeight + 18 + 28 + 36 + pad
+        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+            styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
+        super.init()
+        panel.title = "sleight"; panel.titlebarAppearsTransparent = true; panel.titleVisibility = .hidden
+        panel.isMovableByWindowBackground = true; panel.isOpaque = false; panel.backgroundColor = .clear
+        panel.level = .modalPanel; panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] { panel.standardWindowButton(button)?.isHidden = true }
+        panel.setFrame(NSRect(x: area.midX - width / 2, y: area.minY + (area.height - height) * 0.62,
+            width: width, height: height), display: false)
+        let bounds = NSRect(x: 0, y: 0, width: width, height: height), content = NSView(frame: bounds)
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: bounds)
+            glass.cornerRadius = 22; glass.contentView = content; panel.contentView = glass
+        } else {
+            let frost = NSVisualEffectView(frame: bounds)
+            frost.material = .hudWindow; frost.blendingMode = .behindWindow; frost.state = .active
+            frost.wantsLayer = true; frost.layer?.cornerRadius = 16; frost.layer?.masksToBounds = true
+            frost.addSubview(content); panel.contentView = frost
+        }
+        let icon = NSImageView(frame: NSRect(x: pad, y: height - pad - 56, width: 56, height: 56))
+        icon.image = NSImage(contentsOfFile: card.icon); icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.wantsLayer = true; icon.layer?.cornerRadius = 12; icon.layer?.masksToBounds = true; content.addSubview(icon)
+        let text = NSView(frame: NSRect(x: 0, y: 0, width: textWidth, height: textHeight))
+        var y = textHeight
+        let fields: [(NSTextField, CGFloat)] = [(eyebrow, 0), (title, 2), (body, 4)]
+        for (field, gap) in fields {
+            y -= gap + field.frame.height; field.frame.origin = NSPoint(x: 0, y: y); text.addSubview(field)
+        }
+        let scroll = NSScrollView(frame: NSRect(x: textX, y: height - pad - topHeight, width: textWidth, height: topHeight))
+        scroll.drawsBackground = false; scroll.hasVerticalScroller = textHeight > topHeight
+        scroll.documentView = text; content.addSubview(scroll)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, textHeight - topHeight)))
+        let feedback = NSTextField(wrappingLabelWithString: "")
+        feedback.frame = NSRect(x: textX, y: pad, width: textWidth, height: 32)
+        feedback.font = .systemFont(ofSize: 10); feedback.textColor = .secondaryLabelColor; content.addSubview(feedback)
+        let labels = ["Don't Allow", card.kind == "app" ? "Allow" : "Allow Once"], choices = ["cancel", "once"]
+        for index in 0..<2 {
+            let button = NSButton(title: labels[index], target: self, action: #selector(press(_:)))
+            button.tag = index
+            button.frame = NSRect(x: textX + CGFloat(index) * 148, y: pad + 36, width: 140, height: 28)
+            button.controlSize = .large
+            if index == 0 { button.keyEquivalent = "\u{1b}" }
+            // Return has no default action, as in ask.js.
+            if index == 1 { if #available(macOS 26.0, *) { button.tintProminence = .primary } else { button.bezelColor = .controlAccentColor } }
+            content.addSubview(button)
+            if personChoice(card.kind, choices[index]) {
+                objc_setAssociatedObject(button, &consentFeedbackKey, feedback, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+                actions.append(ConsentInputAction(button))
+            }
+        }
+        timer = Timer.scheduledTimer(withTimeInterval: max(0.001, deadline / 1000 - Date().timeIntervalSince1970), repeats: false) { [weak self] _ in self?.finish("cancel") }
+    }
+    func show() {
+        panel.makeKeyAndOrderFront(nil)
+        NSSound(named: "Glass")?.play()
+    }
+    func review() { panel.makeKeyAndOrderFront(nil) }
+    @objc func press(_ sender: NSButton) { finish(sender.tag == 1 ? "once" : "cancel") }
+    func finish(_ choice: String) {
+        guard !finished else { return }
+        close(); answer(choice)
+    }
+    func close() {
+        finished = true; timer?.invalidate(); timer = nil; panel.orderOut(nil)
+        // The guarded action retains its original target (this card). Break that cycle after dismissal.
+        actions.removeAll()
+    }
+}
+// END ASK CARD
+
 // One nonce per channel in the shared host: the hand's sender and turbo's worker each bind their own, and neither binds the other's.
 final class NonceBook {
     let lock = NSLock()
@@ -478,10 +597,30 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // hand-only host (--menu) has none. The shared host ends when both its channels have.
     var input: FileHandle? = FileHandle.standardInput, output = FileHandle.standardOutput, shared = false
     var consentOpen = true, handOpen = true
+    var activeAsk: (id: String, panel: AskCardPanel)?
+    func closeAsk() { activeAsk?.panel.close(); activeAsk = nil }
+    func showNextAsk() {
+        guard activeAsk == nil, !modal.active else { return }
+        for id in pending.keys.sorted() {
+            guard let frame = pending[id], let data = frame["data"] as? [String: Any], data["presentation"] != nil,
+                let choices = frame["choices"] as? [String], let card = askCard(data, choices),
+                let deadline = frame["deadline"] as? Double else { continue }
+            if deadline <= Date().timeIntervalSince1970 * 1000 { pending.removeValue(forKey: id); continue }
+            let panel = AskCardPanel(card, deadline: deadline) { [weak self] choice in
+                guard let self = self, self.activeAsk?.id == id else { return }
+                self.activeAsk = nil; self.respond(id, choice); self.showNextAsk()
+            }
+            activeAsk = (id, panel); panel.show(); return
+        }
+        rebuildMenu()
+    }
     let modal = ModalGuard()
     func personModal(_ alert: NSAlert, choices: [String], kind: String) -> NSApplication.ModalResponse {
         let actions = consentInputActions(alert, choices: choices, kind: kind)
-        return withExtendedLifetime(actions) { modal.run(abort: { NSApp.abortModal() }) { alert.runModal() } }
+        let result = withExtendedLifetime(actions) { modal.run(abort: { NSApp.abortModal() }) { alert.runModal() } }
+        // A shell card received during the modal waits until its run loop has ended.
+        DispatchQueue.main.async { self.showNextAsk() }
+        return result
     }
     // The hand channel's state in the shared host: its setting, the version for its block, and when sleight last acted.
     var hand: (enabled: Bool, version: String)?
@@ -533,7 +672,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard Set(frame.keys) == ["hand", "nonce", "token"],
                 let incoming = frame["nonce"] as? String, incoming == nonceBook.nonce("hand"),
                 let token = frame["token"] as? String, token.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else { exit(65) }
-            modal.close(); pending.removeAll(); status = nil; nonce = nil
+            closeAsk(); modal.close(); pending.removeAll(); status = nil; nonce = nil
             nonceBook.resetConsent(); rebuildMenu()
             if let bytes = try? JSONSerialization.data(withJSONObject: ["hand": "consent-ready", "nonce": incoming, "token": token]) {
                 FileHandle.standardOutput.write(bytes + Data([10]))
@@ -550,6 +689,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         nonce = incoming
         guard pending[id] == nil else { exit(65) }
         pending[id] = frame
+        if data["presentation"] != nil { guard askCard(data, choices) != nil else { exit(65) } }
         if let status = data["status"] as? String {
             // Status is broker-owned; page observations belong only in the sheet.
             guard statusRows(data, choices) != nil else { exit(65) }
@@ -570,6 +710,8 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard choices == ["once", "cancel"] else { exit(65) }
         }
         rebuildMenu()
+        // Opening is independent of the status item's visibility, including macOS menu-bar overflow.
+        showNextAsk()
     }
     func add(_ rows: [StatusRow], to menu: NSMenu, id: String) {
         for row in rows {
@@ -631,7 +773,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     // The shared host's consent channel ended (its worker exited): an open card is aborted, its requests and status go, and the
     // hand stays.
-    func channelClosed() { modal.close(); pending.removeAll(); status = nil; consentOpen = false; rebuildMenu(); if !handOpen { NSApp.terminate(nil) } }
+    func channelClosed() { closeAsk(); modal.close(); pending.removeAll(); status = nil; consentOpen = false; rebuildMenu(); if !handOpen { NSApp.terminate(nil) } }
     // The hand channel ended or faulted: its state goes, and turbo's channel, if open, keeps the host.
     func handGone() { handOpen = false; hand = nil; permissions = nil; usage = nil; lastAct = nil; rebuildMenu(); if !consentOpen { NSApp.terminate(nil) } }
     func noteAct() { lastAct = Date(); rebuildMenu() }
@@ -725,6 +867,10 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let id = sender.representedObject as? String, let frame = pending[id],
             let data = frame["data"] as? [String: Any], let choices = frame["choices"] as? [String],
             pending[id] != nil else { return }
+        if data["presentation"] != nil {
+            if activeAsk?.id == id { activeAsk?.panel.review() } else { showNextAsk() }
+            return
+        }
         if let session = sessionFrame(data, choices) {
             let alert = NSAlert()
             alert.messageText = session.kind == "opt-in" ? "Enable sleight turbo for " + session.session : "Resume sleight turbo for " + session.session

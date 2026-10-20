@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 import { setTimeout as tick } from 'node:timers/promises';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
-import { shellRelayOptions } from '../plugins/sleight/lib/launch.mjs';
+import { approvalCardText, shellRelayOptions } from '../plugins/sleight/lib/launch.mjs';
 import { hostLabel } from '../plugins/sleight/lib/host-label.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import { PreapprovedApps } from '../plugins/sleight/lib/preapproved.mjs';
@@ -19,16 +19,103 @@ function fixture(t, { answer = 'accept', ...relayOptions } = {}) {
   for (const [stream, list] of [[serverIn, sent], [clientOut, received]]) stream.on('data', chunk => list.push(...chunk.toString().trim().split('\n').map(JSON.parse)));
   const { wording, ...options } = shellRelayOptions(async (...args) => { panels.push(args); return answer; });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, inputLease: false, changeReview: false,
-    alwaysAllow: (...args) => writes.push(args), ...options, ...relayOptions });
+    alwaysAllow: (...args) => writes.push(args), ...options, resolveApprovalApp: async () => '', ...relayOptions });
   t.after(() => { relay.dispose(); for (const stream of [clientIn, clientOut, serverIn, serverOut]) stream.destroy(); });
   const client = msg => clientIn.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
   const engine = msg => serverOut.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
   client({ id: 0, method: 'initialize', params: { clientInfo: { name: 'Grok Bot', version: '1' }, capabilities: {} } });
-  return { client, engine, sent, received, panels, writes, wording };
+  return { client, engine, sent, received, panels, writes, wording, relay };
 }
 const card = (id, message, meta = {}) => ({ id, method: 'elicitation/create', params: {
   message, requestedSchema: { type: 'object', properties: {} }, _meta: meta,
 } });
+
+test('shell matches the engine display name to its bundle ID before preapproval or session memory', async t => {
+  const audited = [], resolutions = [];
+  const preapproved = new PreapprovedApps({ version: 1, apps: [{ app: 'com.apple.calculator', riskLevel: 'high' }] });
+  const f = fixture(t, { preapproved, grantAudit: grant => audited.push(grant),
+    resolveApprovalApp: async name => { resolutions.push(name); return name === 'Calculator' ? 'com.apple.calculator' : ''; } });
+  const meta = { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: { app: 'com.apple.calculator' } };
+  f.engine(card('listed', 'Allow Computer Use to use "Calculator"?', meta)); await tick(0);
+  assert.equal(f.panels.length, 0);
+  assert.equal(f.sent.find(m => m.id === 'listed').result.action, 'accept');
+  assert.equal(audited[0].app, 'com.apple.calculator');
+  assert.deepEqual(resolutions, ['Calculator']);
+  f.engine(card('payment', 'Pay $364?', meta)); await tick(0);
+  assert.equal(f.panels.length, 1, 'a payment with app metadata still asks');
+  f.engine(card('mismatch', 'Allow Computer Use to use "Mail"?', meta)); await tick(0);
+  assert.equal(f.panels.length, 2, 'unresolved or mismatched names still ask');
+});
+
+test('a resolved app Allow covers later app requests in the same shell session', async t => {
+  const f = fixture(t, { resolveApprovalApp: async () => 'com.apple.calculator' });
+  const meta = { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: { app: 'com.apple.calculator' } };
+  for (const id of ['first', 'second']) {
+    f.engine(card(id, 'Allow Computer Use to use "Calculator"?', meta)); await tick(0);
+    assert.equal(f.sent.find(m => m.id === id).result._meta.persist, 'session');
+  }
+  assert.equal(f.panels.length, 1);
+});
+
+for (const failure of ['missing', 'wrong', 'throws', 'risk', 'audit']) test(`shell resolution fails closed for ${failure}`, async t => {
+  const listed = new PreapprovedApps({ version: 1, apps: [{ app: 'com.apple.calculator', riskLevel: failure === 'risk' ? 'low' : 'high' }] });
+  const f = fixture(t, { preapproved: listed, grantAudit: () => { if (failure === 'audit') throw new Error('audit unavailable'); },
+    resolveApprovalApp: async () => {
+      if (failure === 'throws') throw new Error('lookup unavailable');
+      return failure === 'missing' ? '' : failure === 'wrong' ? 'com.example.other' : 'com.apple.calculator';
+    } });
+  const meta = { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: { app: 'com.apple.calculator' } };
+  f.engine(card('app', 'Allow Computer Use to use "Calculator"?', meta)); await tick(0);
+  assert.equal(f.panels.length, 1);
+  assert.equal(f.sent.find(m => m.id === 'app').result.action, 'accept');
+  if (!['risk', 'audit'].includes(failure)) {
+    assert.equal(f.panels[0][1], false);
+    assert.equal(f.sent.find(m => m.id === 'app').result._meta, undefined);
+  }
+  assert.deepEqual(f.writes, []);
+});
+
+test('a late app resolution cannot answer after disposal', async t => {
+  let resolve;
+  const f = fixture(t, { resolveApprovalApp: () => new Promise(done => { resolve = done; }) });
+  f.engine(card('late', 'Allow Computer Use to use "Calculator"?', { connector_id: 'computer-use', persist: ['session'],
+    tool_params: { app: 'com.apple.calculator' } }));
+  await tick(0); f.relay.dispose();
+  resolve('com.apple.calculator'); await tick(0);
+  assert.equal(f.panels.length, 0);
+  assert.equal(f.sent.some(m => m.id === 'late'), false);
+});
+
+for (const choice of ['accept', 'decline', 'cancel']) test(`repeated engine confirmations join one pending ${choice} decision`, async t => {
+  const shown = [];
+  let answer;
+  const f = fixture(t, { ask: (...args) => { shown.push(args); return new Promise(resolve => { answer = resolve; }); } });
+  const meta = { connector_id: 'computer-use', riskLevel: 'high', tool_params: { app: 'Calculator' } };
+  for (let n = 0; n < 7; n++) f.engine(card(`repeat-${n}`, 'Confirm this action?', meta));
+  await tick(0);
+  assert.equal(shown.length, 1);
+  answer(choice); await tick(0);
+  assert.equal(f.sent.filter(m => /^repeat-/.test(m.id)).length, 7);
+  assert.ok(f.sent.filter(m => /^repeat-/.test(m.id)).every(m => m.result.action === choice && m.result._meta === undefined));
+  f.engine(card('later', 'Confirm this action?', meta)); await tick(0);
+  assert.equal(shown.length, 2, 'a later action needs its own decision');
+  answer('cancel'); await tick(0);
+});
+
+test('different pending engine confirmations keep separate decisions', async t => {
+  const answers = [];
+  const f = fixture(t, { ask: () => new Promise(resolve => answers.push(resolve)) });
+  f.engine(card('first', 'Pay $364?', { connector_id: 'computer-use' }));
+  f.engine(card('second', 'Pay $365?', { connector_id: 'computer-use' }));
+  await tick(0);
+  assert.equal(answers.length, 1);
+  answers[0]('accept'); await tick(0);
+  assert.equal(f.sent.find(m => m.id === 'first').result.action, 'accept');
+  assert.equal(f.sent.some(m => m.id === 'second'), false);
+  assert.equal(answers.length, 2);
+  answers[1]('cancel'); await tick(0);
+  assert.equal(f.sent.find(m => m.id === 'second').result.action, 'cancel');
+});
 
 test('the production shell prompt accepts only the native consent channel answer', async t => {
   let shown, deliver, closed = 0;
@@ -45,12 +132,26 @@ test('the production shell prompt accepts only the native consent channel answer
   assert.deepEqual(shown.choices, ['once', 'cancel']);
   assert.deepEqual(shown.data.operation, { request: 'Allow Grok Bot to use Calculator?', scope: 'Allow for this Grok Bot session only' });
   assert.equal(shown.data.view.scope, 'Allow for this Grok Bot session only');
+  const { question, detail } = approvalCardText('Allow Grok Bot to use Calculator?', true, options.wording());
+  assert.deepEqual(shown.data.presentation, { question, detail,
+    style: 'ask', host: 'Grok Bot', icon: shown.data.presentation.icon, kind: 'action' });
   deliver({ choice: 'once', person: false }); await tick(0);
   assert.equal(answered, false);
   deliver({ choice: 'once', person: true });
   assert.equal(await pending, 'accept');
   await panel.close();
   assert.equal(closed, 1);
+});
+
+test('only a verified session app approval selects the host-answerable card kind', async () => {
+  const shown = [];
+  const options = shellRelayOptions(undefined, { ask: async request => { shown.push(request); return 'cancel'; } });
+  await options.ask('Allow Computer Use to use "Calculator"?', true, { appApproval: true });
+  await options.ask('Allow Computer Use to use "Calculator"?', false, { appApproval: true });
+  await options.ask('Pay $364?', true, { appApproval: false });
+  assert.deepEqual(shown.map(request => request.presentation.kind), ['app', 'action', 'action']);
+  assert.equal(shown[0].presentation.question, 'Allow Grok Bot to use Calculator?');
+  assert.match(shown[0].presentation.detail, /this Grok Bot session ends/);
 });
 
 for (const message of ['Pay $268?', 'Book this trip?', 'Submit this form?', 'Save these settings?']) {
@@ -174,6 +275,9 @@ test('shell panel bounds the request while keeping the session scope visible', a
     assert.equal(await shellRelayOptions(undefined, panel).ask(request, true), 'accept');
     assert.ok(Buffer.byteLength(shown.data.operation.request) <= 2048);
     assert.match(shown.data.operation.request, /\[request truncated\]$/);
+    assert.ok(Buffer.byteLength(shown.data.presentation.question) <= 2048);
+    assert.match(shown.data.presentation.question, /\[request truncated\]$/);
+    assert.ok(Buffer.byteLength(shown.data.presentation.detail) <= 2048);
     assert.equal(shown.data.view.scope, 'Allow for this Grok Bot session only');
   }
 });

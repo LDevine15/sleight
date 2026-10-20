@@ -5,6 +5,61 @@ import { idleClock } from './fixtures/socket-clock.mjs';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
+test('shell cards carry the shared ask presentation and join one pending card', async () => {
+  const shown = [], events = [];
+  let answer;
+  const card = createPaymentCard({ onStatus: s => events.push(s), open: async () => ({
+    present: (id, data, choices, deliver) => { shown.push({ id, data, choices }); answer = deliver; },
+    authenticate: e => e.person === true,
+  }) });
+  const request = { session: 'Grok Bot', app: 'Calculator', request: 'Allow Calculator?', scoped: true,
+    presentation: { style: 'ask', question: 'Allow Grok Bot to use Calculator?', detail: 'Allow lasts until this Grok Bot session ends.',
+      host: 'Grok Bot', icon: '/plugin/assets/icon.png', kind: 'app' } };
+  const first = card.ask(request), second = card.ask({ ...request });
+  assert.equal(first, second);
+  await flush();
+  assert.equal(shown.length, 1);
+  assert.deepEqual(shown[0].data.presentation, request.presentation);
+  answer({ choice: 'once' }); await flush();
+  assert.equal(events.length, 1);
+  answer({ choice: 'once', person: true });
+  assert.equal(await first, 'once');
+  assert.equal(await second, 'once');
+  assert.deepEqual(events.map(e => e.state), ['waiting', 'answered']);
+  await card.close();
+});
+
+test('shell payment stops get a styled protected action with bounded terms', async () => {
+  let shown;
+  const card = createPaymentCard({ presentation: { icon: '/plugin/assets/icon.png' }, open: async () => ({
+    present: (_id, data, choices, answer) => { shown = { data, choices }; answer({ choice: 'once' }); },
+    authenticate: () => true,
+  }) });
+  assert.equal(await card.ask({ session: 'Grok Bot', site: 'example.test', shown: '$364', control: 'Pay\u202e' + 'x'.repeat(4096) }), 'once');
+  assert.equal(shown.data.presentation.kind, 'action');
+  assert.equal(shown.data.presentation.style, 'ask');
+  assert.equal(shown.data.presentation.question, 'Allow this payment at example.test?');
+  assert.match(shown.data.presentation.detail, /Amount: \$364\nControl: Pay\\u202e/);
+  assert.ok(Buffer.byteLength(shown.data.presentation.detail) <= 2048);
+  assert.match(shown.data.presentation.detail, /\[request truncated\]$/);
+  await card.close();
+});
+
+test('different apps or sessions never share a pending payment decision', async () => {
+  const shown = [];
+  const card = createPaymentCard({ open: async () => ({
+    present: (_id, _data, _choices, answer) => { shown.push(answer); }, authenticate: () => true,
+  }) });
+  const first = card.ask({ session: 'one', app: 'Calculator', request: 'Allow?' });
+  const second = card.ask({ session: 'one', app: 'TextEdit', request: 'Allow?' });
+  const third = card.ask({ session: 'two', app: 'Calculator', request: 'Allow?' });
+  await flush();
+  assert.equal(shown.length, 3);
+  for (const answer of shown) answer({ choice: 'cancel' });
+  assert.deepEqual(await Promise.all([first, second, third]), ['cancel', 'cancel', 'cancel']);
+  await card.close();
+});
+
 test('card status names the app and deadline while only authenticated input answers it', async () => {
   const clock = idleClock(), events = [];
   let answer;
