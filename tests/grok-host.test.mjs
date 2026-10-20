@@ -1,12 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { hostLabel, hostName } from '../plugins/sleight/lib/host-label.mjs';
+import { hostLabel, hostName, isGrokClient } from '../plugins/sleight/lib/host-label.mjs';
 import { grokDoctorLines, grokStatus } from '../plugins/sleight/lib/grok-host.mjs';
 import { doctor, hostWording } from '../plugins/sleight/lib/launch.mjs';
 
 const info = JSON.parse(readFileSync(new URL('fixtures/grok/host-client-info.json', import.meta.url)));
 const directInfo = JSON.parse(readFileSync(new URL('fixtures/grok/host-client-info-direct.json', import.meta.url)));
+test('Grok detection fails closed for any grok-shell prefix and labels long server keys', () => {
+  for (const key of ['a'.repeat(30), 'a'.repeat(64), 'a'.repeat(65), 'server.key', 'key/other', '', 'key\nother']) {
+    const client = { name: 'grok-shell-' + key, version: '1.0.13' };
+    assert.equal(isGrokClient(client), true, key);
+    assert.equal(hostName(client), 'Grok', key);
+    assert.equal(hostLabel(client), 'Grok 1.0.13', key);
+  }
+  for (const name of ['grok', 'grok-shell', 'other-grok-shell-key']) assert.equal(isGrokClient({ name }), false);
+});
 test('GL1 clientInfo names Grok in the dropdown and panel', () => {
   for (const client of [info, directInfo]) {
     assert.equal(hostName(client), 'Grok');

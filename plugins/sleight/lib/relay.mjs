@@ -1042,6 +1042,7 @@ export function createRelay({
     turnEndAttempts.set(args.turn_id, (turnEndAttempts.get(args.turn_id) ?? 0) + 1);
   }
   const approvalRequests = new Map(); // server request id -> approval key and stop generation
+  const grokElicitations = new Set(); // all forms forwarded to Grok, including unkeyed and non-session forms
   const alwaysOffered = new Map(); // server request id -> { app, riskLevel } offered "Always allow"
   // "Always allow" is offered only for a session-scoped engine app approval, terminals and OpenAI's
   // apps included (owner, 2026-10-11), and only the user's answer to sleight's prompt or Claude Code's
@@ -1341,6 +1342,7 @@ export function createRelay({
   const callSeqs = new Map();
   let docsShown = false;
   let deferredEngineDocs = [], clientJsDelivered = false, deferredRules;
+  let undeliveredGrokGuidance = [];
   const engineDocs = (content = [], embedded = false) => content.flatMap(item => {
     if (item.type !== 'text') return [];
     const start = item.text.search(/^(?:## Computer Use|# Other Browser APIs|# Computer Use Confirmations Policy|# Browser Safety|# API Reference)\n/m);
@@ -1354,8 +1356,8 @@ export function createRelay({
   let clientJsSeen = false;
   const nativeAcquisitions = new Set();
   // Once per session: Claude keeps them in context across engine restarts.
-  const ruleBlocks = dedupeRules ? ruleDelivery() : undefined;
-  const ruleItem = text => ruleBlocks ? ruleBlocks.item(text) : ({ type: 'text', text });
+  const ruleBlocks = ruleDelivery();
+  const ruleItem = text => ruleBlocks.item(text);
   let rulesShown = false;
   let browserRulesShown = false;
   const browserRules = firstCallRules?.match(/## Browsers\n[\s\S]*?(?=\n## |$)/)?.[0];
@@ -2307,12 +2309,25 @@ export function createRelay({
     if (modelVisible && Array.isArray(msg.result?.content)) {
       msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(aliasNotices(dropRepeatedText(msg.result.content)),
         { id: msg.id, native: !!msg.result._meta?.['codex/toolSurface']?.app?.appId }) } };
-      if (ruleBlocks) msg.result.content = ruleBlocks.apply(msg.result.content);
+      if (dedupeRules) msg.result.content = ruleBlocks.apply(msg.result.content);
       browserStale.observe(msg.result.content);
       saveReceipted ||= msg.result.content.some(c => c.type === 'text' && /\bsaved: observed [^\n]*; on disk: /.test(c.text ?? ''));
     }
     if (msg.method === undefined) resultBudget.finish(msg.id);
-    if (grokClient && Array.isArray(msg.result?.content)) msg.result = grokResult(msg.result);
+    if (grokClient && Array.isArray(msg.result?.content)) {
+      // Replay only guidance, never an image or action output. It already passed the docs and rule
+      // transforms, whose once-per-session state advanced before the final serialized cap.
+      if (modelVisible && undeliveredGrokGuidance.length) {
+        msg.result.content = [...undeliveredGrokGuidance, ...msg.result.content];
+        undeliveredGrokGuidance = [];
+      }
+      msg.result = grokResult(msg.result, () => {
+        const guidance = msg.result.content.filter(item => ruleBlocks.trusted(item) || engineDocs([item], true).length);
+        for (const item of guidance) if (!undeliveredGrokGuidance.some(c => c.text === item.text)) undeliveredGrokGuidance.push(item);
+        return guidance;
+      });
+    }
+    if (grokClient && msg.method === 'elicitation/create' && msg.id !== undefined) grokElicitations.add(msg.id);
     journal?.reply(msg);
     // The log is a side record: its failure never costs Claude a reply.
     try { actionLog?.reply(msg); } catch {}
@@ -3400,6 +3415,9 @@ export function createRelay({
     return true;
   }
   function handleClient(msg) {
+    if (msg.method === undefined && grokElicitations.delete(msg.id) && msg.result?.action === 'accept') {
+      msg.result = { ...msg.result, _meta: { ...msg.result._meta, persist: 'session' } };
+    }
     if (directNames.has(msg.params?.name) && msg.method === 'tools/call') {
       if (msg.id === undefined) return;
       if (!directBrowser) {
@@ -4519,7 +4537,7 @@ export function createRelay({
       }
       if (rules) {
         const item = { type: 'text', text: rules + (docs ? promptNotice('\n\nsleight: Action results include changed lines. Don\'t reread to confirm them. Read again for missing information or required guard checks.', prompt) : '') };
-        if (ruleBlocks) Object.assign(item, ruleBlocks.item(item.text));
+        Object.assign(item, ruleBlocks.item(item.text));
         msg.result.content = rulesFirst ? beforeFirstTree(msg.result.content, item) : [...msg.result.content, item];
       }
       if (docs) docsShown = true;

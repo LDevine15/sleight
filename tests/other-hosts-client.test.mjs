@@ -95,6 +95,81 @@ const grokApproval = id => ({ id, method: 'elicitation/create', params: {
   message: 'Allow Calculator?', requestedSchema: { type: 'object', properties: {} },
   _meta: { connector_id: 'computer-use', persist: ['session', 'always'], riskLevel: 'low', tool_params: { app: 'Calculator' } },
 } });
+for (const native of [false, true]) for (const dedupeRules of [false, true]) test(`Grok retries first-call guidance after oversized image delivery: native=${native}, dedupe=${dedupeRules}`, t => {
+  const h = grokRelay(t, { firstCallRules: skillRules(), dedupeRules });
+  const policy = readFileSync(new URL('fixtures/engine-confirmations-policy.txt', import.meta.url), 'utf8').trimEnd();
+  const docs = '## Computer Use\nNative reference.\n\n' + policy;
+  const call = id => h.client({ id, method: 'tools/call', params: { name: 'js', arguments: { code: id === 1 && native ? 'var app = await cua.getApp("Calculator")' : 'nodeRepl.write(4)' } } });
+  call(1);
+  h.engine({ id: 1, result: { content: [{ type: 'text', text: docs }, { type: 'image', data: 'A'.repeat(30000), mimeType: 'image/png' }] } });
+  assert.equal(h.received.at(-1).result.isError, true);
+  assert.match(h.received.at(-1).result.content[0].text, /Do not replay input automatically/);
+  assert.match(JSON.stringify(h.received.at(-1).result.content), /computer__js/);
+  assert.ok(h.received.at(-1).result.content.some(c => c.text?.includes('# Computer Use Confirmations Policy')), 'delivery error keeps trusted policy when it fits');
+  call(2);
+  h.engine({ id: 2, result: { content: [{ type: 'image', data: 'A'.repeat(30000), mimeType: 'image/png' }] } });
+  assert.equal(h.received.at(-1).result.isError, true, 'a second delivery failure retains the guidance');
+  call(3);
+  h.engine({ id: 3, result: { content: [{ type: 'text', text: '4' }] } });
+  const next = h.received.at(-1).result;
+  assert.equal(next.isError, undefined, JSON.stringify(next));
+  const text = next.content.map(c => c.text ?? '').join('\n');
+  const expected = rewritePaymentPolicy(docs, 'requested');
+  assert.ok(text.includes(native ? expected : expected.slice(expected.indexOf('# Computer Use Confirmations Policy'))), 'undelivered docs and payment policy are retried');
+  if (!native) assert.match(text, /Read the native reference/);
+  assert.match(text, /computer__js/);
+  assert.match(text, /Never create or edit/);
+  assert.ok(Buffer.byteLength(JSON.stringify(next)) <= 20000);
+  call(4);
+  h.engine({ id: 4, result: { content: [{ type: 'text', text: '4' }] } });
+  assert.doesNotMatch(JSON.stringify(h.received.at(-1)), /Native reference|computer__js/);
+});
+
+for (const key of ['server.key', 'a'.repeat(65)]) test(`unusual Grok server keys keep restricted delivery and approvals: ${key}`, t => {
+  const h = grokRelay(t, { clientInfo: { name: 'grok-shell-' + key } });
+  h.engine(grokApproval('card'));
+  assert.equal(h.received.at(-1).params.requestedSchema.properties.remember, undefined);
+  h.client({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'nodeRepl.write(4)' } } });
+  h.engine({ id: 1, result: { content: [{ type: 'image', data: 'A'.repeat(30000), mimeType: 'image/png' }] } });
+  assert.equal(h.received.at(-1).result.isError, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(h.received.at(-1).result)) <= 20000);
+});
+
+test('Grok persistence clamping is limited to accepted replies to forwarded elicitations', t => {
+  const h = grokRelay(t);
+  h.engine(grokApproval('declined'));
+  h.client({ id: 'declined', result: { action: 'decline', _meta: { persist: 'always' } } });
+  assert.equal(h.sent.at(-1).result._meta.persist, 'always');
+  h.client({ id: 'unrelated', result: { action: 'accept', _meta: { persist: 'always' } } });
+  assert.equal(h.sent.at(-1).result._meta.persist, 'always');
+});
+
+for (const approvalScope of ['session', 'once', 'document']) for (const keyed of [false, true]) {
+  test(`all forwarded Grok approvals clamp persistence: scope=${approvalScope}, keyed=${keyed}`, t => {
+    const h = grokRelay(t, { approvalScope });
+    const card = grokApproval('unrestricted');
+    if (approvalScope === 'document') card.params._meta.connector_id = 'browser-use';
+    if (!keyed) delete card.params._meta.persist;
+    h.engine(card);
+    assert.equal(h.received.at(-1).method, 'elicitation/create');
+    h.client({ id: card.id, result: { action: 'accept', content: {}, _meta: { persist: 'always', keep: true } } });
+    assert.equal(h.sent.at(-1).result._meta.persist, 'session');
+    assert.equal(h.sent.at(-1).result._meta.keep, true);
+    h.engine({ ...card, id: 'second' });
+    if (approvalScope !== 'session' || !keyed) assert.equal(h.received.at(-1).id, 'second', 'no session cache for unkeyed or non-session approvals');
+  });
+}
+test('Grok browser and unknown connector elicitation replies also clamp persistence', t => {
+  const h = grokRelay(t);
+  for (const connector of ['browser-use', 'unknown']) {
+    const card = grokApproval(connector);
+    card.params._meta.connector_id = connector;
+    h.engine(card);
+    h.client({ id: card.id, result: { action: 'accept', content: {}, _meta: { persist: 'always' } } });
+    assert.equal(h.sent.at(-1).result._meta.persist, 'session');
+  }
+});
+
 for (const clientInfo of [grokInfo, grokDirect]) test(`Grok form Always answers grant only this session, including forged persistence metadata: ${clientInfo.name}`, t => {
   const writes = [];
   const h = grokRelay(t, { clientInfo, alwaysAllow: (...args) => writes.push(args) });

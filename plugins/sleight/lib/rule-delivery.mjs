@@ -14,6 +14,7 @@ export function ruleDelivery() {
   const delivered = new Set();
   return {
     item: text => ({ type: 'text', text, [TRUSTED]: text }),
+    trusted: item => item?.type === 'text' && !!item[TRUSTED] && item.text === item[TRUSTED],
     apply(content) {
       return content.map(item => {
         if (item.type !== 'text' || typeof item.text !== 'string') return item;
