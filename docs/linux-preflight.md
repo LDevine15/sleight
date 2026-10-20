@@ -1,42 +1,80 @@
 # Linux preflight
 
-Run the Linux test suite on the final integrated commit before any public push. A macOS
-focused test pass does not satisfy this release requirement. Record the commit, command,
-test counts and exit code with the release evidence. A failing preflight stops the push.
-
-From the worktree, with Docker running and network access for the Node image and npm:
+Run this helper on the final integrated commit before a public push. Docker must be running
+on the local host, with network access for `node:24` and npm. macOS and Linux callers use
+the same Docker path. A macOS focused test pass does not qualify the Linux suite.
 
 ```sh
-CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node scripts/linux-preflight.mjs
+CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node scripts/linux-preflight.mjs --run --json --commit FULL_SHA
 ```
 
-The script runs Node 24 in Docker, installs dependencies with `npm ci --ignore-scripts`,
-then runs `npm test`. Both npm commands use argument vectors, without a shell. It returns
-the install or test exit code and returns nonzero if Docker cannot start or gets interrupted.
-It creates a fresh Claude config inside the container and removes it when the checks end.
+Replace `FULL_SHA` with the full commit at HEAD. Use `--worktree PATH` for an explicit
+source worktree. Execution requires `--run` and an exact commit. There is no passing dry
+plan. The command returns the install or test failure status, or another nonzero status
+when preparation, receipt validation or cleanup fails. It prints one JSON receipt to
+stdout. Test output goes to stderr, so stdout can feed the release parser.
 
-An anonymous volume at `/w/node_modules` keeps the Linux install separate from the host's
-dependencies, including a lane's symlink to another worktree. Docker removes the volume
-with the container. The source worktree is mounted at `/w` and may receive test artifacts.
-A6's release preflight should invoke `node scripts/linux-preflight.mjs` and require exit 0.
-Use `--worktree PATH` to check another worktree explicitly.
+## Source and dependencies
 
-The underlying test command, for a worktree with Linux dependencies already installed, is:
+The helper creates a private temporary Git repository and fetches only the requested
+commit's shallow history through the local file transport. It verifies the source HEAD
+and checkout HEAD. The prepared repository has its own objects, index and detached HEAD.
+It has no remote or FETCH_HEAD naming the source. Host Git configuration, credentials,
+hooks, uncommitted edits, untracked files and the host's `node_modules` symlink are absent.
+Git uses an isolated home and disables global and system configuration during preparation.
+The helper only reads the source worktree.
 
-```sh
-docker run --rm -v <wt>:/w -w /w node:24 npm test
-```
+Docker receives a read-only bind mount of the prepared repository at `/source`. Node copies
+it into the container's writable `/w`, including Git metadata. Inside Linux, the helper
+requires `process.platform === "linux"`, the requested Git HEAD and a nonempty
+`/usr/bin/git ls-files -z` result before running npm. Dependencies live in the container's
+writable layer. No host dependency bank, home directory, credential store, Docker socket
+or host environment variables are mounted or forwarded into the container.
 
-Replace `<wt>` with an absolute worktree path and quote the volume argument if it contains
-spaces. A fresh checkout needs `npm ci --ignore-scripts` in Linux first. The reusable script
-handles that prerequisite and Claude config isolation on each run. Prefer it when the host
-uses a dependency symlink.
+The container runs `npm ci --ignore-scripts`, then exactly `npm test`, with argument arrays
+and no shell. Both commands use a fresh disposable Claude configuration inside Linux.
+The helper removes that configuration after the checks. The public-tree privacy test
+continues to run with usable Git metadata.
 
-`tests/test-path-portability.test.mjs` scans all files under `tests/`, including nested
-fixtures and comments, for hardcoded `/private/tmp` and `"/Users/"` paths. It has no file
-exemptions. Use `os.tmpdir()` and a unique temporary directory for real filesystem work.
-Tests of macOS path validation or privacy scrubbing may construct synthetic macOS paths
-from components. Keep those strings separate from real allocation roots.
+## Receipt and cleanup
 
-The path guard and command construction tests run offline. They do not prove that the
-Linux suite passes. The actual Docker run remains required before public push.
+The exported `runLinuxPreflight({ worktree, commit, execute, signal })` is the producer.
+`execute(command, args, options)` is the injectable process boundary. Production uses
+`runOwnedCommand`, which retains its ChildProcess until `close`. A6 calls this producer
+directly and awaits it, including cleanup. It does not put a synchronous subprocess
+wrapper around Docker.
+
+A success receipt has schema version 1 and includes:
+
+- `platform: "linux"`, `command: ["npm", "test"]`, `executed: true`, `exitCode: 0`
+  and `installExitCode: 0`.
+- The exact `commit`, canonical source `worktree`, unique `runId`, Docker `containerId`
+  and actual `imageId`. Keep the full receipt private because `worktree` is a host path.
+- `trackedFiles` and npm's reported `counts`: tests, suites, pass, fail, cancelled,
+  skipped and todo. Missing, inconsistent or empty counts fail. Failed, cancelled
+  or todo tests prevent success. Explicitly skipped tests remain in the counts.
+- `childCollected: true` and `cleanupConfirmed: true`.
+
+`parseLinuxReceipt(text, { commit, worktree })` validates that complete contract. It
+rejects another commit or source tree, a plan, a local Mac result and incomplete cleanup.
+The container program produces its test receipt after npm exits. The outer producer
+adds container identity and cleanup evidence. Failed runs retain available test counts
+and statuses, and always return nonzero.
+
+Each run uses a unique named container. The helper retains its Docker client, forwards
+cancellation to that child and waits for collection. SIGINT, SIGTERM and the 20-minute
+run deadline stop later work. Cleanup addresses only the owned container name with
+`docker rm --force --volumes`, then requires a successful container-list query showing
+that exact name absent. Cleanup has its own bounded commands and continues after an
+abort. An uncollected child or unconfirmed container cleanup fails the run and retains
+private staging, whose path goes to stderr. Review that retained bank before removal.
+
+The source guard in `tests/test-path-portability.test.mjs` scans every file under `tests/`,
+including fixtures and comments, for hardcoded macOS temporary and home roots. It has
+no file exemptions. Use `os.tmpdir()` and register real allocations with the existing
+temporary cleanup helper. Construct platform-specific adversarial data from components.
+
+Offline tests exercise the real checkout and receipt producers with injected Docker/npm
+process boundaries, plus the serialized container program. They do not establish Linux
+execution, actual Docker cancellation or daemon cleanup. Those checks remain required
+on the final integrated commit, with counts, image identity and cleanup evidence retained.

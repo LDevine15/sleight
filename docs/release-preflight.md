@@ -1,78 +1,90 @@
 # Release preflight
 
-Run from the release worktree on Linux after installing its dependencies. The command exits 1 on any failure and
-prints one JSON result. Keep the private terms file outside the repository. Use a nonempty JSON array of strings.
-Include the owner's username and home path. Add their full name, email addresses and other private terms in notes.
-Neither the strings nor matching lines appear in the result.
+Run from the release worktree on macOS or Linux with local Docker available. The command
+prints one JSON result and returns nonzero on any failure. Keep the private terms file
+outside the repository as a nonempty JSON array of strings. Include the owner's username,
+home path, full name, email addresses and other private terms in the notes. Terms and
+matching lines stay out of the result.
 
 ```sh
-node scripts/release-preflight.mjs --tag v1.4.1 --private-terms /run/private/release-terms.json
+CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node scripts/release-preflight.mjs --tag v1.4.1 --private-terms /run/private/release-terms.json
 ```
 
-Release mode requires an existing local tag at `HEAD`. A missing tag fails. The script never creates, moves, fetches
-or pushes a tag. It requires a clean tree, including untracked files, before and after the checks. It checks `HEAD`
-and the tag again after the Linux test. A nonzero command stops further execution.
+Release mode requires an existing local tag at HEAD. The script reads that tag without
+creating, moving, fetching or pushing it. It captures a clean tree and exact HEAD before
+loading any release input, including private terms, documents and manifests. It checks
+the tree and HEAD after document inspection and again after Linux testing, then checks
+the tag again. Untracked files count as dirty. A nonzero command stops later steps.
 
-Before creating a tag, use candidate mode:
+Before tagging, use candidate mode:
 
 ```sh
-node scripts/release-preflight.mjs --candidate 1.4.1 --private-terms /run/private/release-terms.json
+CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node scripts/release-preflight.mjs --candidate 1.4.1 --private-terms /run/private/release-terms.json
 ```
 
-A passing candidate result has `mode: "candidate"` and `releaseReady: false`. It skips tag lookup and still runs
-the history scan and Linux test. Run release mode again after tagging. `releaseReady: true` means these preflight
-checks passed; the architect's full check, release pass, A/B, public CI and owner publication decision still apply.
+Candidate mode skips tag lookup and always returns `releaseReady: false`. It accepts
+`## 1.4.1 (unreleased)` or a dated release heading, with an optional preceding
+`## Unreleased` or `## [Unreleased]` section. Both sections receive privacy and placeholder
+checks. The numbered heading and every manifest must still agree on the candidate
+version. Release mode requires the newest heading to have a real `YYYY-MM-DD` date.
+Both modes reject duplicate headings for the requested version.
+
+Run release mode again after the intended tag exists. `releaseReady: true` means these
+preflight checks passed. The architect's full check, release pass, A/B, public CI and the
+owner's publication decision retain their separate requirements.
 
 ## Checks
 
-- Plugin manifests must each name sleight and declare the requested version. Marketplaces must
-  each list sleight once. Any version fields on a marketplace, its metadata or its sleight entry must agree too.
-  Marketplaces without version fields are valid. The newest CHANGELOG heading must use
-  `## VERSION (YYYY-MM-DD)`, with a real date and no duplicate heading for that version.
-- README and CHANGELOG must contain no TODO, TBD, FIXME, XXX, CHANGEME, template version or insertion markers.
-  Pending GB12, GB14 and Cursor row comments also fail. This check covers both files in full and has no development
-  override.
-- The newest CHANGELOG section is the release notes. Private identity matches, home paths, email addresses,
-  common phone formats and the supplied private terms fail with only `CHANGELOG.md` and a line number.
-  These patterns cannot detect every name, address or phone format. Review the notes and supply those private terms.
-- The history base defaults to the local `origin/main`. Use `--history-base REF` to select another local base.
-  A missing base or one outside HEAD's ancestry fails. The script invokes the existing history scanner over the
-  resolved base-to-HEAD range and requires its zero-findings summary and exit 0. Scanner output and error text stay
-  private. That scanner checks its runtime home and username. It does not consume the notes' private terms file.
-- The Linux helper must be tracked. It must execute `npm test` on Linux and return the receipt below with exit 0.
-  A missing helper, unsupported interface, local Mac result, dry plan, malformed receipt or failed test fails.
+The preflight calls repaired A1's `inspectReleaseVersion({ root, expectedVersion, tag })`
+directly. That inspector discovers production plugin and marketplace manifests, including
+additional ones outside the six required paths. It checks marketplace entry versions,
+local source containment and source manifests, and reads the same plugin version helper
+used by doctor. Claude and Cursor entries require versions; Codex entries use their
+local plugin manifest. The required host catalogs must each list sleight once. Inspector
+errors produce a fixed failure code, without copying manifest values or private paths.
 
-Local document failures appear together. Subprocess failures include their numeric exit code, or `null` when no
-normal exit code was returned. Subprocess stdout, stderr and exception messages never appear in the JSON result.
-Use the result's `check` field and the helper's own private evidence to investigate failures.
+README and CHANGELOG receive full-file placeholder checks for TODO, TBD, FIXME, XXX,
+CHANGEME, template versions, insertion markers and pending GB12, GB14 or Cursor comments.
+There is no development override. The newest release notes receive private identity,
+home path, email, common phone format and supplied-term checks. Findings contain only
+`CHANGELOG.md` and line numbers. Review the notes for private details beyond those patterns.
 
-## A1 and A5 integration
+The history base defaults to the local `origin/main`. Use `--history-base REF` to select
+another local base. A missing base or one outside HEAD's ancestry fails. The existing
+history scanner must return its exact zero-findings summary and exit 0 over the resolved
+base-to-HEAD range. The result omits scanner output. That scanner checks its runtime home and
+username, independently of the supplied notes terms. A generic Linux account does not
+prove the owner's identity is absent from history; retain the owner-identity history
+scan as a separate release requirement.
 
-A6 does not import A1's API. This script reads the six existing manifest paths itself and accepts added marketplace
-version fields. A1's doctor-version check remains separate.
+The Linux step calls the actual A5 `runLinuxPreflight` API with the captured HEAD and
+source worktree. Both helper sources must be tracked. Docker runs a separate exact-commit
+checkout with usable Git metadata, isolated dependencies and a fresh Claude configuration.
+The complete receipt must pass A5's exported parser for that same commit and canonical
+worktree. A failed install or test, absent counts, a plan, a Mac result or unconfirmed
+cleanup fails. See [Linux preflight](linux-preflight.md) for the CLI and receipt fields.
 
-A5 must provide this interface, or the architect must adapt the one `linux` runner case before qualification:
+A6 waits for A5's owned Docker child and container cleanup after cancellation. Its CLI
+passes SIGINT and SIGTERM through an AbortSignal. There is no synchronous helper wrapper
+whose timeout could leave Docker uncollected. A6's successful result includes the tested
+commit, counts and cleanup status while omitting the receipt's private host worktree path.
 
-```sh
-node scripts/linux-preflight.mjs --run --json
-```
+## Offline interfaces and qualification
 
-Run in the caller's worktree. Put logs on stderr and exactly one JSON object on stdout, after the test exits:
+`preflight(options)` accepts an injected `runner(request)` returning `{ status, stdout }`
+and an optional document reader. Its operations are `status`, `head`, `tag`, `base`,
+`ancestor`, `sources`, `history` and `linux`. The Linux request includes `head`.
+Version inspection always uses the actual A1 API against the supplied root.
 
-```json
-{"platform":"linux","command":["npm","test"],"exitCode":0,"executed":true}
-```
+`createReviewedRunner(root, { execute, signal })` owns fixed Git reads, the history
+scanner and the A5 producer. The shared process executor uses argument arrays without
+a shell. Git/history calls use disposable Claude configurations and strip Git and Node
+runtime overrides. Linux preparation uses its own isolated Git environment. Docker image
+and dependency downloads require network access during actual qualification.
 
-Return nonzero on test failure and never mark a plan as executed. The helper owns test-child cancellation and cleanup.
-This branch does not contain A5's helper. Its flags and receipt must be reconciled at integration; an offline fake
-receipt proves the orchestration contract, not Linux test success. This runner refuses the Linux step on macOS and
-does not launch Docker or remote commands. Use A5's reviewed Linux environment to run the whole preflight.
-
-The reviewed runner allows only fixed Git reads, the history scanner and the Linux helper. Commands use argument
-arrays with no shell. Each invocation gets a fresh disposable Claude config, offline npm configuration and bounded
-output and time. The runner removes its own config afterward. It cannot install, push or publish a release.
-
-For offline tests, inject `runner(request)` and `readFile(path)` into `preflight(options)`. The runner returns
-`{status, stdout}`. A nonzero or null status fails. Its operations are `status`, `head`, `tag`, `base`, `ancestor`,
-`sources`, `history` and `linux`. Tests inject the subprocess executor into `createReviewedRunner` as well, so they
-exercise command selection without executing Git, npm, Docker, Claude or an app.
+Offline tests run A6 through A1 and the actual A5 receipt producer/parser, replacing the
+Docker/npm process boundary. Tests reject failed commands and receipts for another tree. Cancellation tests wait for
+cleanup, and input-loading tests change the revision before the next HEAD check. A separate test prepares a real linked Git worktree
+whose dependency symlink and dirty files never enter the snapshot. These results qualify
+the offline interfaces only. Run the real Linux suite and Docker cancellation checks on
+the final integrated commit before treating this preflight as release evidence.

@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { readFile as readText } from 'node:fs/promises';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { inspectReleaseVersion } from './release-version.mjs';
+import { isReleaseVersion } from '../plugins/sleight/lib/version.mjs';
+import { parseLinuxReceipt, runLinuxPreflight, runOwnedCommand } from './linux-preflight.mjs';
 import { fileURLToPath } from 'node:url';
 import { privateIdentity, privateMatches } from './lib/public-privacy.mjs';
 
@@ -12,84 +14,30 @@ export const manifestFiles = Object.freeze([
   'plugins/sleight/.cursor-plugin/plugin.json', '.claude-plugin/marketplace.json',
   '.agents/plugins/marketplace.json', '.cursor-plugin/marketplace.json',
 ]);
-const number = '(?:0|[1-9][0-9]*)';
-const identifier = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)';
-const versionPattern = new RegExp(`^${number}\\.${number}\\.${number}(?:-${identifier}(?:\\.${identifier})*)?$`);
 const shaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
-const validTag = tag => typeof tag === 'string' && tag.startsWith('v') && versionPattern.test(tag.slice(1));
+const validTag = tag => typeof tag === 'string' && tag.startsWith('v') && isReleaseVersion(tag.slice(1));
 const validRef = ref => typeof ref === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref)
   && !ref.includes('..') && !ref.includes('//') && !ref.endsWith('/') && !ref.endsWith('.');
 const placeholder = /\b(?:TODO|TBD|FIXME|XXX|CHANGEME)\b|\bv?X\.Y\.Z\b|\{\{[^}]+\}\}|\[INSERT\b|<!--\s*(?:GB12\b|GB14\b|cursor-row\b|pending\b)/i;
-const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 // No exception text, document text, runner output or private match is copied to the result.
 export async function preflight({ root = process.cwd(), mode = 'release', tag, version, historyBase = 'origin/main',
-  runner, readFile = path => readText(path, 'utf8'), identity = privateIdentity(), privateTerms = [] } = {}) {
+  runner, readFile = path => readText(path, 'utf8'), identity = privateIdentity(), privateTerms = [], privateTermsFile } = {}) {
   const result = { ok: false, mode: mode === 'candidate' ? 'candidate' : 'release', releaseReady: false, failures: [] };
   const fail = (check, code, details = {}) => result.failures.push({ check, code, ...details });
   const requested = mode === 'release' && validTag(tag) ? tag.slice(1) : version;
-  if (!['release', 'candidate'].includes(mode) || typeof requested !== 'string' || !versionPattern.test(requested)
+  if (!['release', 'candidate'].includes(mode) || !isReleaseVersion(requested)
     || (mode === 'release' && (!validTag(tag) || version !== undefined))
     || (mode === 'candidate' && tag !== undefined) || !validRef(historyBase)
-    || typeof runner !== 'function' || !Array.isArray(privateTerms) || !privateTerms.length
-    || privateTerms.some(term => typeof term !== 'string' || !term.trim())) {
+    || typeof runner !== 'function' || (privateTermsFile !== undefined && typeof privateTermsFile !== 'string')
+    || (!privateTermsFile && (!Array.isArray(privateTerms) || !privateTerms.length
+      || privateTerms.some(term => typeof term !== 'string' || !term.trim())))) {
     fail('arguments', 'invalid-options');
     return result;
   }
   result.version = requested;
-  const texts = new Map();
-  for (const file of ['README.md', 'CHANGELOG.md', ...manifestFiles]) {
-    try { texts.set(file, await readFile(join(root, file))); }
-    catch { fail('files', 'unreadable', { file }); }
-  }
-  for (const file of manifestFiles) {
-    if (!texts.has(file)) continue;
-    try {
-      const manifest = JSON.parse(texts.get(file));
-      if (!object(manifest)) throw Error();
-      const versions = [];
-      if (file.endsWith('/plugin.json')) {
-        if (manifest.name !== 'sleight' || !Object.hasOwn(manifest, 'version')) throw Error();
-        versions.push(manifest.version);
-      } else {
-        if (!Array.isArray(manifest.plugins)) throw Error();
-        const entries = manifest.plugins.filter(entry => entry?.name === 'sleight');
-        if (entries.length !== 1) throw Error();
-        for (const entry of [manifest, manifest.metadata, entries[0]]) {
-          if (object(entry) && Object.hasOwn(entry, 'version')) versions.push(entry.version);
-        }
-      }
-      if (versions.some(value => value !== requested)) fail('version', 'manifest-disagreement', { file });
-    } catch { fail('version', 'invalid-manifest', { file }); }
-  }
-  const changelog = texts.get('CHANGELOG.md') ?? '';
-  const headings = [...changelog.matchAll(/^##\s+(.+)$/gm)];
-  const heading = /^(\S+) \((\d{4}-\d{2}-\d{2})\)$/.exec(headings[0]?.[1] ?? '');
-  const date = heading?.[2];
-  if (!heading || heading[1] !== requested || !date || !Number.isFinite(Date.parse(date))
-    || new Date(date).toISOString().slice(0, 10) !== date
-    || headings.slice(1).some(item => item[1].split(' ')[0] === requested)) {
-    fail('version', 'changelog-disagreement', { file: 'CHANGELOG.md' });
-  }
-  for (const file of ['README.md', 'CHANGELOG.md']) {
-    (texts.get(file) ?? '').split('\n').forEach((line, index) => {
-      if (placeholder.test(line)) fail('docs', 'placeholder', { file, line: index + 1 });
-    });
-  }
-  // Inspect only the newest release's notes. The historical addition scan covers the Git range.
-  const noteEnd = headings[1]?.index ?? changelog.length;
-  const noteStart = headings[0]?.index ?? 0;
-  const firstLine = changelog.slice(0, noteStart).split('\n').length;
-  changelog.slice(noteStart, noteEnd).split('\n').forEach((line, index) => {
-    if (privateMatches(line, identity).length || /\/(?:Users|home)\/[^\s/]+/.test(line)
-      || /[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(line)
-      || /(?:\+\d{1,3}[ .-]?)?(?:\(\d{3}\)|\b\d{3})[ .-]\d{3}[ .-]\d{4}\b/.test(line)
-      || privateTerms.some(term => line.toLowerCase().includes(term.toLowerCase()))) {
-      fail('privacy', 'private-notes', { file: 'CHANGELOG.md', line: firstLine + index });
-    }
-  });
-  if (result.failures.length) return result;
-
+  try { root = realpathSync(root); }
+  catch { fail('files', 'invalid-root'); return result; }
   const run = async (step, data = {}) => {
     let response;
     try { response = await runner({ step, ...data }); }
@@ -111,6 +59,70 @@ export async function preflight({ root = process.cwd(), mode = 'release', tag, v
   if (head === null) return result;
   if (!shaPattern.test(head)) { fail('head', 'invalid-commit'); return result; }
   result.head = head;
+  if (privateTermsFile) {
+    try { privateTerms = JSON.parse(await readFile(privateTermsFile)); }
+    catch { fail('arguments', 'invalid-private-terms'); return result; }
+    if (!Array.isArray(privateTerms) || !privateTerms.length || privateTerms.some(term => typeof term !== 'string' || !term.trim())) {
+      fail('arguments', 'invalid-private-terms'); return result;
+    }
+  }
+  try {
+    const inspection = inspectReleaseVersion({ root, expectedVersion: requested, ...(mode === 'release' ? { tag } : {}) });
+    if (!inspection.ok) fail('version', 'release-version-inspection-failed');
+  } catch { fail('version', 'release-version-inspection-failed'); }
+  // Keep the advertised sleight entries unambiguous in the required host catalogs.
+  for (const file of manifestFiles) {
+    try {
+      const manifest = JSON.parse(await readFile(join(root, file)));
+      if (file.endsWith('/plugin.json') ? manifest?.name !== 'sleight'
+        : manifest?.plugins?.filter(entry => entry?.name === 'sleight').length !== 1) {
+        fail('version', 'invalid-manifest', { file });
+      }
+    } catch { fail('version', 'invalid-manifest', { file }); }
+  }
+  const texts = new Map();
+  for (const file of ['README.md', 'CHANGELOG.md']) {
+    try { texts.set(file, await readFile(join(root, file))); }
+    catch { fail('files', 'unreadable', { file }); }
+  }
+  const changelog = texts.get('CHANGELOG.md') ?? '';
+  const headings = [...changelog.matchAll(/^##\s+(.+)$/gm)];
+  const releaseIndex = mode === 'candidate' && /^\[?Unreleased\]?$/i.test(headings[0]?.[1] ?? '') ? 1 : 0;
+  const heading = /^(\S+) \((\d{4}-\d{2}-\d{2}|unreleased)\)$/i.exec(headings[releaseIndex]?.[1] ?? '');
+  const date = heading?.[2];
+  const validDate = date && Number.isFinite(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date;
+  if (!heading || heading[1] !== requested || !(validDate || (mode === 'candidate' && /^unreleased$/i.test(date ?? '')))
+    || headings.slice(releaseIndex + 1).some(item => item[1].split(' ')[0] === requested)) {
+    fail('version', 'changelog-disagreement', { file: 'CHANGELOG.md' });
+  }
+  for (const file of ['README.md', 'CHANGELOG.md']) {
+    (texts.get(file) ?? '').split('\n').forEach((line, index) => {
+      if (placeholder.test(line)) fail('docs', 'placeholder', { file, line: index + 1 });
+    });
+  }
+  // Inspect only the newest release's notes. The historical addition scan covers the Git range.
+  const noteEnd = headings[releaseIndex + 1]?.index ?? changelog.length;
+  // Candidate notes include Unreleased as well as the newest dated release.
+  const noteStart = headings[0]?.index ?? 0;
+  const firstLine = changelog.slice(0, noteStart).split('\n').length;
+  changelog.slice(noteStart, noteEnd).split('\n').forEach((line, index) => {
+    if (privateMatches(line, identity).length || /\/(?:Users|home)\/[^\s/]+/.test(line)
+      || /[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(line)
+      || /(?:\+\d{1,3}[ .-]?)?(?:\(\d{3}\)|\b\d{3})[ .-]\d{3}[ .-]\d{4}\b/.test(line)
+      || privateTerms.some(term => line.toLowerCase().includes(term.toLowerCase()))) {
+      fail('privacy', 'private-notes', { file: 'CHANGELOG.md', line: firstLine + index });
+    }
+  });
+  if (result.failures.length) return result;
+
+  const unchanged = async () => {
+    if (!await clean()) return false;
+    const after = await run('head');
+    if (after === null) return false;
+    if (after !== head) { fail('head', 'changed-during-check'); return false; }
+    return true;
+  };
+  if (!await unchanged()) return result;
   const checkTag = async () => {
     if (mode === 'candidate') return true;
     const commit = await run('tag', { tag });
@@ -128,17 +140,15 @@ export async function preflight({ root = process.cwd(), mode = 'release', tag, v
   if (history !== 'Release history scan: 0 added line(s) contain private identity data.') {
     fail('history', 'findings-or-invalid-summary'); return result;
   }
-  const linux = await run('linux');
+  const linux = await run('linux', { head });
   if (linux === null) return result;
   try {
-    const receipt = JSON.parse(linux);
-    if (!object(receipt) || receipt.platform !== 'linux' || receipt.exitCode !== 0 || receipt.executed !== true
-      || JSON.stringify(receipt.command) !== JSON.stringify(['npm', 'test'])) throw Error();
+    const receipt = parseLinuxReceipt(linux, { commit: head, worktree: root });
+    result.linux = { commit: receipt.commit, platform: receipt.platform, exitCode: receipt.exitCode,
+      counts: Object.fromEntries(['tests', 'suites', 'pass', 'fail', 'cancelled', 'skipped', 'todo'].map(key => [key, receipt.counts[key]])),
+      cleanupConfirmed: receipt.cleanupConfirmed };
   } catch { fail('linux', 'invalid-test-receipt'); return result; }
-  if (!await clean()) return result;
-  const after = await run('head');
-  if (after === null) return result;
-  if (after !== head) { fail('head', 'changed-during-check'); return result; }
+  if (!await unchanged()) return result;
   if (!await checkTag()) return result;
   result.ok = true;
   result.releaseReady = mode === 'release';
@@ -146,8 +156,8 @@ export async function preflight({ root = process.cwd(), mode = 'release', tag, v
 }
 
 // This is the only real subprocess boundary. Tests inject execute; there is no shell or arbitrary command option.
-// The A5 helper must implement --run --json with the receipt described in docs/release-preflight.md.
-export function createReviewedRunner(root, { platform = process.platform, execute = spawnSync } = {}) {
+// Call A5 directly, so this process retains the signal channel and awaits container cleanup.
+export function createReviewedRunner(root, { execute = runOwnedCommand, signal } = {}) {
   return async request => {
     let command = '/usr/bin/git', args, timeout = 30_000;
     switch (request.step) {
@@ -166,9 +176,11 @@ export function createReviewedRunner(root, { platform = process.platform, execut
       case 'history':
         if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})\.\.(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(request.range ?? '')) throw Error('Invalid range');
         command = process.execPath; args = ['scripts/release-history-scan.mjs', request.range]; timeout = 120_000; break;
-      case 'linux':
-        if (platform !== 'linux') return { status: null, stdout: '' };
-        command = process.execPath; args = ['scripts/linux-preflight.mjs', '--run', '--json']; timeout = 1_200_000; break;
+      case 'linux': {
+        if (!shaPattern.test(request.head ?? '')) throw Error('Invalid commit');
+        const receipt = await runLinuxPreflight({ worktree: root, commit: request.head, execute, signal });
+        return { status: receipt.exitCode, stdout: JSON.stringify(receipt) };
+      }
       default: throw Error('Unknown preflight operation');
     }
     const config = mkdtempSync(join(tmpdir(), 'lane-claude-'));
@@ -177,7 +189,7 @@ export function createReviewedRunner(root, { platform = process.platform, execut
       for (const key of Object.keys(env)) {
         if ((key.startsWith('GIT_') && key !== 'GIT_TERMINAL_PROMPT') || ['NODE_OPTIONS', 'NODE_PATH'].includes(key)) delete env[key];
       }
-      return await execute(command, args, { cwd: root, encoding: 'utf8', shell: false, env, timeout,
+      return await execute(command, args, { signal, cwd: root, encoding: 'utf8', shell: false, env, timeout,
         maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
     } finally { rmSync(config, { recursive: true, force: true }); }
   };
@@ -185,6 +197,10 @@ export function createReviewedRunner(root, { platform = process.platform, execut
 
 export async function main(args = process.argv.slice(2), dependencies = {}) {
   const log = dependencies.log ?? console.log;
+  const signals = dependencies.signals ?? process;
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  signals.on('SIGINT', cancel); signals.on('SIGTERM', cancel);
   try {
     const options = {}, seen = new Set();
     for (let index = 0; index < args.length; index += 2) {
@@ -195,18 +211,18 @@ export async function main(args = process.argv.slice(2), dependencies = {}) {
       if (flag === '--tag') { options.mode = 'release'; options.tag = value; }
       if (flag === '--candidate') { options.mode = 'candidate'; options.version = value; }
       if (flag === '--history-base') options.historyBase = value;
-      if (flag === '--private-terms') options.privateTerms = JSON.parse(await (dependencies.readFile ?? (path => readText(path, 'utf8')))(value));
+      if (flag === '--private-terms') options.privateTermsFile = value;
     }
     if (seen.has('--tag') === seen.has('--candidate') || !seen.has('--private-terms')) throw Error();
     const root = dependencies.root ?? process.cwd();
     const result = await preflight({ ...dependencies, root, tag: undefined, version: undefined,
-      runner: dependencies.runner ?? createReviewedRunner(root), ...options });
+      runner: dependencies.runner ?? createReviewedRunner(root, { execute: dependencies.execute, signal: controller.signal }), ...options });
     log(JSON.stringify(result));
     return result.ok ? 0 : 1;
   } catch {
     log(JSON.stringify({ ok: false, releaseReady: false, failures: [{ check: 'arguments', code: 'invalid-options-or-private-terms' }] }));
     return 1;
-  }
+  } finally { signals.removeListener('SIGINT', cancel); signals.removeListener('SIGTERM', cancel); }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) process.exitCode = await main();
