@@ -66,7 +66,7 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
   signals = process, say = r => console.log(JSON.stringify(r)), prompt = text => console.error(text), timing = {} }) {
   const ms = { ready: 10000, attempt: 3000, settle: 500, person: 120000, cleanup: 5000, poll: 20, ...timing };
   const result = { passed: false, steps: [], cleanup: { confirmed: false } }, records = [], children = [];
-  let stopped, fault, child, lines, cardID, step = 'setup';
+  let stopped, fault, child, step = 'setup', syntheticAccepted = false;
   const abort = () => { stopped = 'INTERRUPTED'; }, eof = () => { stopped = 'OPERATOR_EOF'; };
   signals.on('SIGINT', abort); signals.on('SIGTERM', abort);
   input.on('end', eof); input.resume();
@@ -75,7 +75,7 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
     // Separate process groups keep terminal Ctrl-C on the runner. Shutdown remains EOF on our exact child pipe.
     const proc = launch(binary, args, { cwd: directory, detached: true,
       env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8', HOME: directory, TMPDIR: directory }, stdio: ['pipe', 'pipe', 'pipe'] });
-    const owned = { proc, closed: false, code: null, signal: null };
+    const owned = { proc, closed: false, code: null, signal: null, fixture: child };
     children.push(owned);
     proc.on('error', error => { fault = error; });
     proc.once('close', (code, signal) => { owned.closed = true; owned.code = code; owned.signal = signal; });
@@ -103,28 +103,55 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
     }
   };
   const send = command => child.proc.stdin.write(JSON.stringify({ step, ...command }) + '\n');
-  const selected = start => records.slice(start).filter(r => r.step === step);
+  const selected = start => records.slice(start).filter(r => r.fixture === child.token && r.step === step);
   const command = async (op, outcome) => {
     const start = records.length;
     await check(); send({ op });
     if (!await until(() => selected(start).some(r => r.outcome === outcome), ms.ready)) throw Error(`SHELL_CARD_${op.toUpperCase()}_TIMEOUT`);
     return selected(start).find(r => r.outcome === outcome);
   };
-  try {
+  const collect = async owned => {
+    if (owned.cleanup) return owned.cleanup;
+    // Each detached group runs a fixed leaf binary. EOF closes the host, and close waits for
+    // its receipt pipe to drain. All poster groups must also close before another fixture starts.
+    if (!owned.closed) owned.proc.stdin.end();
+    const group = children.filter(c => c === owned || c.fixture === owned);
+    const deadline = Date.now() + ms.cleanup;
+    while (group.some(c => !c.closed) && Date.now() < deadline) await pause();
+    const receipt = owned.records.findLast(r => r.outcome === 'cleanup');
+    const identity = receipt?.pid === owned.proc.pid && receipt?.pgid === owned.proc.pid &&
+      receipt?.fixture === owned.token && receipt?.phase === owned.phase;
+    owned.cleanup = { phase: owned.phase, fixture: owned.token,
+      confirmed: identity && receipt.visible === 0 && receipt.pending === 0 && receipt.reason === 'stdin-eof' &&
+        group.every(c => c.closed && !c.signal && (c === owned ? c.code === 0 : Number.isInteger(c.code))),
+      hostExit: owned.code, hostSignal: owned.signal, receipt: receipt ?? null };
+    say({ fixtureCleanup: owned.cleanup });
+    return owned.cleanup;
+  };
+  const openFixture = async phase => {
     await check();
-    child = start(binaries.host, [icon]);
-    lines = createInterface({ input: child.proc.stdout });
-    lines.on('line', line => {
+    const token = randomUUID();
+    child = start(binaries.host, [icon, phase, token]);
+    const owned = child;
+    owned.fixture = owned; owned.token = token; owned.phase = phase; owned.records = [];
+    step = 'setup'; owned.step = step;
+    owned.lines = createInterface({ input: owned.proc.stdout });
+    owned.lines.on('line', line => {
       try {
         const record = JSON.parse(line);
+        if (owned.phase === 'synthetic' && (record.outcome === 'accepted' || record.choice === 'once')) syntheticAccepted = true;
         if (record.outcome) {
-          if (record.id && step !== 'setup' && record.id !== cardID) throw Error('SHELL_CARD_ANSWER_IDENTITY');
-          records.push(record); say({ card: record });
+          owned.records.push(record); records.push(record); say({ card: record });
+          if (record.pid !== owned.proc.pid || record.pgid !== owned.proc.pid ||
+            record.fixture !== owned.token || record.phase !== owned.phase) throw Error('SHELL_CARD_RECEIPT_IDENTITY');
+          if (record.id && owned.step !== 'setup' && record.id !== owned.cardID) throw Error('SHELL_CARD_ANSWER_IDENTITY');
+          if (['accepted', 'refused'].includes(record.outcome) && (record.id !== owned.cardID ||
+            record.window !== owned.target?.window || record.button !== 'Allow Once')) throw Error('SHELL_CARD_ANSWER_IDENTITY');
         }
         // The unchanged ConsentHost.respond writes only to this runner's pipe, never to a relay.
         else if (record.id && ['once', 'cancel'].includes(record.choice)) {
-          if (step !== 'setup' && record.id !== cardID) throw Error('SHELL_CARD_ANSWER_IDENTITY');
-          say({ protocolAnswer: { step, id: record.id, choice: record.choice } });
+          if (owned.step !== 'setup' && record.id !== owned.cardID) throw Error('SHELL_CARD_ANSWER_IDENTITY');
+          say({ protocolAnswer: { phase: owned.phase, fixture: owned.token, step: owned.step, id: record.id, choice: record.choice } });
         } else if (record.hand !== 'consent-ready') throw Error('UNKNOWN_CARD_RECEIPT');
       } catch (error) { fault = error; }
     });
@@ -133,17 +160,25 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
     if (ready.pid !== child.proc.pid || !Number.isSafeInteger(ready.window) || ready.window <= 0 ||
       ![ready.x, ready.y].every(Number.isFinite) || ready.visible !== true || ready.cards !== 1 ||
       ready.protected !== true || ready.returnDefault !== false) throw Error('SHELL_CARD_TARGET_IDENTITY');
-    const lifecycle = await command('lifecycle', 'lifecycle');
-    result.lifecycle = lifecycle;
-    if (lifecycle.ok !== true) throw Error('SHELL_CARD_LIFECYCLE');
-    // Show a fresh fake action after lifecycle checks, with a new window identity.
-    const target = await command('show', 'ready');
+    let target = ready;
+    if (phase === 'synthetic') {
+      const lifecycle = await command('lifecycle', 'lifecycle');
+      result.lifecycle = lifecycle;
+      if (lifecycle.ok !== true) throw Error('SHELL_CARD_LIFECYCLE');
+      // Show a fresh fake action after lifecycle checks, with a new window identity.
+      target = await command('show', 'ready');
+    }
     if (target.pid !== ready.pid || target.visible !== true || target.cards !== 1 || target.protected !== true ||
       target.returnDefault !== false || !Number.isSafeInteger(target.window) || target.window <= 0 ||
       ![target.x, target.y].every(Number.isFinite) || !/^gb18q-\d+$/.test(target.id)) throw Error('SHELL_CARD_TARGET_IDENTITY');
-    cardID = target.id;
+    owned.cardID = target.id; owned.target = target;
+    return target;
+  };
+  try {
+    const target = await openFixture('synthetic');
+    const synthetic = child;
     for (const mode of ['ax', 'pid', 'hid']) {
-      step = mode;
+      step = mode; child.step = step;
       await command('arm', 'armed');
       const offset = records.length;
       await check();
@@ -158,6 +193,8 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
         if (!await until(() => poster.closed, ms.ready)) throw Error('SHELL_CARD_POSTER_TIMEOUT');
         const posted = attempts.findLast(r => ['attempted', 'permission-absent'].includes(r.outcome));
         const valid = (posted?.outcome === 'attempted' && poster.code === 0) || (posted?.outcome === 'permission-absent' && poster.code === 77);
+        if (posted?.outcome === 'attempted' && (posted.mode !== mode || posted.pid !== target.pid ||
+          posted.window !== target.window)) throw Error('SHELL_CARD_POSTER_IDENTITY');
         if (valid && posted.outcome === 'attempted') {
           await until(() => ['refused', 'accepted', 'cancelled'].includes(attemptVerdict(selected(offset), posted)), ms.attempt);
           // A refusal on mouse-down cannot hide acceptance on mouse-up.
@@ -170,11 +207,19 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
         if (['accepted', 'cancelled', 'poster-failed'].includes(verdict)) throw Error('SHELL_CARD_SYNTHETIC_STEP_FAILED');
       } finally { posterLines.close(); }
     }
-    step = 'person-click';
+    const cleaned = await collect(synthetic);
+    if (!cleaned.confirmed) throw Error('SHELL_CARD_SYNTHETIC_CLEANUP_UNCONFIRMED');
+    if (syntheticAccepted) throw Error('SHELL_CARD_SYNTHETIC_ACCEPTANCE');
+    // The old process and every poster are gone, with all output drained. A new process
+    // receives no synthetic input and uses a separate receipt token and target identity.
+    child = undefined;
+    const person = await openFixture('person');
+    step = 'person-click'; child.step = step;
     const offset = records.length;
     await command('arm', 'armed');
     prompt(`Fake request only. Click the visible Allow Once button yourself within ${ms.person / 1000} seconds. Do not press Return. Ctrl-C or stdin EOF cancels.`);
-    say({ step, outcome: 'waiting-for-person', deadline: new Date(Date.now() + ms.person).toISOString(), pid: target.pid, window: target.window });
+    say({ step, outcome: 'waiting-for-person', deadline: new Date(Date.now() + ms.person).toISOString(),
+      fixture: child.token, pid: person.pid, window: person.window, id: person.id, button: 'Allow Once' });
     const received = await until(() => selected(offset).some(r => ['accepted', 'refused', 'cancelled'].includes(r.outcome)), ms.person);
     const verdict = received ? attemptVerdict(selected(offset), { outcome: 'attempted' }) : 'no-receipt';
     result.steps.push({ step, verdict, ok: verdict === 'accepted' }); say(result.steps.at(-1));
@@ -183,21 +228,20 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
   finally {
     // EOF is the only shutdown command. The fixture closes its production host and receipts before exiting.
     // No process-name lookup, signals, global input or foreign-lock deletion is used for cleanup.
-    if (child && !child.closed) child.proc.stdin.end();
-    const deadline = Date.now() + ms.cleanup;
-    while (children.some(c => !c.closed) && Date.now() < deadline) await pause();
-    const receipt = records.findLast(r => r.outcome === 'cleanup');
-    result.cleanup = { confirmed: !child || (receipt?.visible === 0 && receipt?.pending === 0 &&
-      children.every(c => c.closed && !c.signal && (c === child ? c.code === 0 : Number.isInteger(c.code)))),
-      hostExit: child?.code ?? null, hostSignal: child?.signal ?? null, receipt: receipt ?? null,
+    const fixtures = children.filter(c => c.fixture === c);
+    const cleanups = [];
+    for (const owned of fixtures) cleanups.push(await collect(owned));
+    result.cleanup = { ...cleanups.at(-1), confirmed: cleanups.every(c => c.confirmed), fixtures: cleanups,
       children: children.map(c => ({ pid: c.proc.pid ?? null, closed: c.closed, exit: c.code, signal: c.signal })) };
     say({ cleanup: result.cleanup });
     if (result.cleanup.confirmed) {
       try { await admission.release(); say({ outcome: 'lock-released' }); }
       catch (error) { result.cleanup.confirmed = false; result.error = error.message; say({ outcome: 'lock-retained', reason: error.message }); }
     } else say({ outcome: 'lock-retained', reason: 'CHILD_CLEANUP_UNCONFIRMED', directory });
+    if (fault) { result.error = fault.message; result.passed = false; }
+    if (syntheticAccepted) { result.error = 'SHELL_CARD_SYNTHETIC_ACCEPTANCE'; result.passed = false; }
     result.passed = result.passed && result.cleanup.confirmed;
-    lines?.close();
+    for (const owned of fixtures) owned.lines?.close();
     signals.removeListener('SIGINT', abort); signals.removeListener('SIGTERM', abort);
     input.removeListener('end', eof); input.pause();
     for (const owned of children.filter(c => !c.closed)) {

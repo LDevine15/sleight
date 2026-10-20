@@ -3,16 +3,26 @@
 var shellStep = "setup"
 let app = NSApplication.shared
 let host = ConsentHost()
+var shellTargets: [String: [String: Any]] = [:]
 var shellSequence = 0
 var shellNonce = String(repeating: "a", count: 64)
 let shellHandNonce = String(repeating: "b", count: 64)
-guard CommandLine.arguments.count == 2, CommandLine.arguments[1].hasPrefix("/"),
-    CommandLine.arguments[1].hasSuffix("/assets/icon.png") else { exit(64) }
+guard CommandLine.arguments.count == 4, CommandLine.arguments[1].hasPrefix("/"),
+    CommandLine.arguments[1].hasSuffix("/assets/icon.png"),
+    ["synthetic", "person"].contains(CommandLine.arguments[2]),
+    UUID(uuidString: CommandLine.arguments[3]) != nil else { exit(64) }
 let shellIcon = CommandLine.arguments[1]
+let shellPhase = CommandLine.arguments[2], shellFixture = CommandLine.arguments[3]
 
 func shellReceipt(_ outcome: String, _ fields: [String: Any] = [:]) {
     var record = fields
     record["outcome"] = outcome; record["step"] = shellStep
+    record["pid"] = getpid(); record["pgid"] = getpgrp()
+    record["phase"] = shellPhase; record["fixture"] = shellFixture
+    if ["accepted", "refused"].contains(outcome),
+        let id = fields["id"] as? String ?? host.activeAsk?.id, let target = shellTargets[id] {
+        for (key, value) in target { record[key] = value }
+    }
     if let event = NSApp.currentEvent?.cgEvent {
         record["receivedEvent"] = ["type": event.type.rawValue,
             "sourceState": event.getIntegerValueField(.eventSourceStateID),
@@ -48,6 +58,7 @@ func shellReady() {
         let button = shellButtons(active.panel.panel.contentView).first(where: { $0.title == "Allow Once" }),
         let screen = NSScreen.screens.first else { shellReceipt("target-missing"); return }
     let panel = active.panel.panel
+    shellTargets[active.id] = ["id": active.id, "window": panel.windowNumber, "button": button.title]
     let rect = panel.convertToScreen(button.convert(button.bounds, to: nil))
     let buttons = shellButtons(panel.contentView)
     shellReceipt("ready", ["pid": getpid(), "window": panel.windowNumber, "id": active.id,
@@ -107,7 +118,8 @@ final class ShellFixture: NSObject, NSApplicationDelegate {
                 guard line.utf8.count < 1024, let bytes = line.data(using: .utf8),
                     let command = try? JSONSerialization.jsonObject(with: bytes) as? [String: String],
                     let op = command["op"], let step = command["step"],
-                    ["setup", "ax", "pid", "hid", "person-click"].contains(step) else {
+                    (shellPhase == "synthetic" ? ["setup", "ax", "pid", "hid"] : ["setup", "person-click"]).contains(step),
+                    (shellPhase == "synthetic" || op != "lifecycle") else {
                     DispatchQueue.main.async { shellStop("invalid-command") }; return
                 }
                 DispatchQueue.main.async {
