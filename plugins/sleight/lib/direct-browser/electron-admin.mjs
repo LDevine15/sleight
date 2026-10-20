@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ELECTRON_PROCESS_ENV } from './electron-process-env.mjs';
 import { CHANNEL_VERSION, DEFAULT_MAX_FRAME_BYTES, FrameReader, HANDSHAKE_MAX_BYTES, bare, deriveChannel, macEqual, opener, plainJson, randomToken,
   sealer, validToken } from './electron-channel.mjs';
 
@@ -76,7 +77,7 @@ export async function connectAdmin({ stateDir, secret, hostId, socketPath = join
     // profile: 'user' launches the build on the user's own profile (the relaunch flow); the host refuses any other value.
     start: ({ build, profile } = {}) => request('start', profile === undefined ? { build } : { build, profile }),
     issue: ({ session } = {}) => request('issue', { session }),
-    revoke: ({ session } = {}) => request('revoke', { session }),
+    revoke: ({ session, expected = false } = {}) => request('revoke', { session, ...(expected === true ? { expected: true } : {}) }),
     revokeAll: () => request('revokeAll'),
     resume: () => request('resume'),
     reconcile: ({ acceptDiskEvidence = false } = {}) => request('reconcile', { acceptDiskEvidence }),
@@ -109,7 +110,7 @@ const alive = (socketPath, connect) => new Promise(resolve => {
  * secret (or adminSecret): a parent that serves several workers chooses the secret once (a Buffer, or 64 hex or base64url
  * characters for at least 32 bytes) and passes it to each; a host it spawns then takes that same secret. */
 export async function ensureHost({ stateDir, registryPath, tempRoot, build, builds = [build], secret: given, adminSecret, python, spawn = spawnProcess,
-  connect = path => net.connect(path), node = process.execPath, script = HOST_RUN, timeoutMs = 10000 } = {}) {
+  connect = path => net.connect(path), node = process.execPath, script = HOST_RUN, timeoutMs = 10000, env = process.env, qualificationDiagnosticPath } = {}) {
   const socketPath = join(stateDir, 'host.sock');
   const secret = secretBytes(given ?? adminSecret);
   if (secret !== undefined) {
@@ -119,11 +120,16 @@ export async function ensureHost({ stateDir, registryPath, tempRoot, build, buil
   mkdirSync(dirname(stateDir), { recursive: true, mode: 0o700 });
   mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
   const fresh = secret ?? randomBytes(32);
-  const args = [script, '--state-dir', stateDir, '--registry', registryPath, '--temp-root', tempRoot, '--builds', builds.join(','), '--admin-fd', '3',
+  const args = [script, '--state-dir', stateDir, '--registry', registryPath, '--temp-root', tempRoot, '--builds', builds.join(','), '--admin-fd', '3', '--startup-fd', '4',
     ...(python ? ['--python', python] : [])];
-  const child = spawn(node, args, { detached: true, cwd: '/', stdio: ['ignore', 'pipe', 'ignore', 'pipe'], env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' } });
+  const diagnostic = env.SLEIGHT_TURBO_UNQUALIFIED === '1' && typeof qualificationDiagnosticPath === 'string' ? qualificationDiagnosticPath : undefined;
+  const child = spawn(node, args, { detached: true, cwd: '/', stdio: ['ignore', 'pipe', 'ignore', 'pipe', 'pipe'], env: { ...ELECTRON_PROCESS_ENV,
+    ...(diagnostic ? { SLEIGHT_TURBO_UNQUALIFIED: '1' } : {}) } });
   child.stdio[3].on('error', () => {});
   child.stdio[3].end(fresh.toString('base64url') + '\n');
+  // Startup data belongs to the caller, never the model-controlled environment or host channel.
+  child.stdio[4].on('error', () => {});
+  child.stdio[4].end(JSON.stringify(diagnostic ? { diagnostic } : {}));
   let ready;
   try {
     ready = await new Promise((resolve, reject) => {

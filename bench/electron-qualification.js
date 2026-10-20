@@ -21,8 +21,8 @@ function cardRows(list, pids) {
 function sampleLoop(request, api, clock) {
   var started = clock.now(), interval = request.intervalMs > 0 ? request.intervalMs : 50;
   while (clock.now() - started < request.durationMs && !api.stopped()) {
-    var point = api.pointer();
-    clock.emit({ t: clock.now(), front: api.front(), x: Math.round(point.x), y: Math.round(point.y) });
+    var point = api.pointer(), windowPids = api.windowPids();
+    clock.emit({ t: clock.now(), front: api.front(), x: Math.round(point.x), y: Math.round(point.y), windowPids: windowPids });
     clock.wait(interval);
   }
 }
@@ -56,6 +56,14 @@ function native(request) {
     front: function () { return Number($.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier); },
     frontBundle: function () { return unwrap($.NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier); },
     pointer: function () { return $.CGEventGetLocation($.CGEventCreate(null)); },
+    windowPids: function () {
+      var pids = [];
+      windows().forEach(function (w) {
+        var pid = Number(w.kCGWindowOwnerPID);
+        if (Number(w.kCGWindowLayer) === 0 && !!w.kCGWindowIsOnscreen && pids.indexOf(pid) === -1) pids.push(pid);
+      });
+      return pids;
+    },
     stopped: function () { return !!request.stop && $.NSFileManager.defaultManager.fileExistsAtPath($(request.stop)); },
     activate: function (pid) {
       var app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);

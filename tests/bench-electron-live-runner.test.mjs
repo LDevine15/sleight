@@ -1,9 +1,9 @@
+const MAC_TMP = '/' + 'private/tmp';
 // Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
 const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import {
@@ -16,9 +16,40 @@ import { APPS, RELAUNCH_CELLS, runQualification } from '../bench/electron-qualif
 import { fakeObserver } from '../bench/electron-qualification-fakes.mjs';
 import { SEED_SETTINGS, liveRelaunchDriver, portableName, quitOutcome, restartOutcome } from '../bench/electron-relaunch-live.mjs';
 import { createArmSession, readArmConfig } from '../bench/electron-arm-server.mjs';
+import { createRunReaper } from '../bench/electron-run-cleanup.mjs';
 
-const temp = t => { const dir = realpathSync(mkdtempSync(join(tmpdir(), 'elr-'))); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir; };
+const temp = t => { const dir = realpathSync(mkdtempSync(join('/tmp', 'elr-'))); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir; };
 const tickSleep = () => new Promise(resolve => setImmediate(resolve));
+
+test('the runner reaper actually removes same-uid host and orphan adapter rows', async () => {
+  const root = `${MAC_TMP}/eq1k-run`, uid = process.getuid(), python = '/custom/python3';
+  let rows = [
+    { pid: 450, ppid: 1, uid, startedAtMs: 2, args: `${process.execPath} electron-host-run.mjs --state-dir ${root}/state` },
+    { pid: 451, ppid: 1, uid, startedAtMs: 3, args: `${python} launch.py --temp-root ${root}/profiles` },
+    { pid: 452, ppid: 1, uid: uid + 1, startedAtMs: 4, args: `${python} launch.py --temp-root ${root}/profiles` },
+  ];
+  const signals = [];
+  const reaper = createRunReaper(root, { python, list: async () => rows, sleep: tickSleep,
+    signal(pid, kind) { signals.push([pid, kind]); rows = rows.filter(row => row.pid !== pid); } });
+  assert.deepEqual((await reaper.scan()).map(row => row.pid), [450, 451]);
+  assert.equal((await reaper.reap()).confirmed, true);
+  assert.deepEqual(signals, [[450, 'SIGTERM'], [451, 'SIGTERM']]);
+  assert.deepEqual(rows.map(row => row.pid), [452]);
+});
+
+test('run process cleanup finishes before lock release and a leftover keeps the lock', async () => {
+  for (const confirmed of [true, false]) {
+    const events = [];
+    const deps = phaseDeps({ phases: { qualify: async () => ({ status: 'pass', cleanup: { confirmed: true } }) } });
+    deps.lock = async () => { events.push('lock'); return async () => events.push('release'); };
+    deps.cleanup = async () => { events.push('reap'); return { confirmed, left: confirmed ? [] : [801] }; };
+    const r = await runPhases({ options: { phases: ['qualify'], mode: 'live' }, deps });
+    assert.deepEqual(events, confirmed ? ['lock', 'reap', 'release'] : ['lock', 'reap']);
+    assert.equal(r.keep, !confirmed);
+    assert.equal(r.code, confirmed ? 0 : 1);
+    assert.equal(r.summary.cleanup.confirmed, confirmed);
+  }
+});
 
 test('live runs need --owner-away, the card wait cannot pass the card\'s own 120 s, and phases keep their order', () => {
   assert.throws(() => parseRunnerArgs([]), /OWNER_AWAY_REQUIRED/);
@@ -141,6 +172,24 @@ function phaseDeps({ phases, lock = [], log = [], io = fakeIo(), check } = {}) {
 }
 const ok = { status: 'pass', cleanup: { confirmed: true } };
 
+test('a failed phase logs its first cause, releases a confirmed cleanup and launches no later phase', async () => {
+  const ran = [], log = [], lock = [];
+  const r = await runPhases({ options: { phases: ['qualify', 'arm', 'relaunch'], mode: 'live' }, deps: phaseDeps({ log, lock, phases: {
+    qualify: async () => { ran.push('qualify'); return { status: 'fail', failed: ['consent-card: STATE_DIR_TOO_LONG'], cleanup: { confirmed: true } }; },
+    arm: async () => { ran.push('arm'); return ok; }, relaunch: async () => { ran.push('relaunch'); return ok; },
+  } }) });
+  assert.deepEqual(ran, ['qualify']);
+  assert.ok(log.some(line => line.includes('consent-card: STATE_DIR_TOO_LONG')));
+  assert.deepEqual(lock, ['taken', 'released']);
+  assert.equal(r.code, 1);
+});
+
+test('preflight reports receipt rejection rather than calling it an absent installation', async () => {
+  const r = await preflight({ phases: ['qualify'], io: fakeIo({ turboInstalled: async () => { throw Error('INSTALLED_CONFIG_UNSAFE: Node v26, receipt v24'); } }) });
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some(problem => /INSTALLED_CONFIG_UNSAFE.*Node v26/.test(problem)));
+});
+
 test('phases run in order under one lock; a skipped phase is recorded; a hold waits before each phase', async () => {
   const ran = [], lock = [], held = { n: 0 };
   const io = fakeIo({ ownerCopies: async () => [5], exists: path => path === '/tmp/sleight-hold' ? held.n++ < 2 : true });
@@ -211,7 +260,7 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
   writeFileSync(join(src, 'Contents', 'Resources', 'app', 'product.json'), JSON.stringify({ applicationName: 'code' }));
   const app = { ...APPS.vscode, path: src }, root = join(dir, 'run');
   mkdirSync(root);
-  const w = { cp: [], electron: [], kills: [], quits: [], starts: [], typed: '', procs: [{ pid: 77, ppid: 1, startedAtMs: 1, args: '/Applications/Visual Studio Code.app/Contents/MacOS/Code' }] };
+  const w = { cp: [], electron: [], kills: [], quits: [], starts: [], typed: '', procs: [{ pid: 77, ppid: 1, uid: process.getuid(), startedAtMs: 1, args: '/Applications/Visual Studio Code.app/Contents/MacOS/Code' }] };
   const exec = async (file, args) => {
     if (file === '/usr/bin/plutil') return { stdout: args[1] === 'CFBundleIdentifier' ? 'com.microsoft.VSCode\n' : 'Code\n', stderr: '' };
     if (file === '/usr/bin/xattr') { if (quarantined) return { stdout: '', stderr: '' }; throw Object.assign(Error('no attr'), { code: 1 }); }
@@ -226,10 +275,11 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
     '- textbox "a-scratch.txt, Editor content" [ref=e3]', `- text: ${w.typed}`].join('\n');
   const worker = { async send(op, extra = {}) {
     if (op === 'start') {
-      w.starts.push({ profile: extra.profile, home: extra.home, rehost: !!extra.rehost, cardLog: extra.cardLog });
+      w.starts.push({ profile: extra.profile, home: extra.home, rehost: !!extra.rehost, cardLog: extra.cardLog,
+        python: extra.python, qualificationDiagnosticPath: extra.qualificationDiagnosticPath });
       stateDir = extra.stateDir;
-      if (!w.procs.some(p => p.pid === 450)) w.procs.push({ pid: 450, ppid: 1, startedAtMs: 2, args: `node electron-host-run.mjs --state-dir ${stateDir} --temp-root x` });
-      if (!w.procs.some(p => p.pid === 400)) { w.procs = w.procs.filter(p => p.pid !== 300); w.procs.push({ pid: 400, ppid: 1, startedAtMs: 3, args: `${extra.registryPath.replace('recipes.json', 'apps')}/Visual Studio Code.app/Contents/MacOS/Code` }); }
+      if (!w.procs.some(p => p.pid === 450)) w.procs.push({ pid: 450, ppid: 1, uid: process.getuid(), startedAtMs: 2, args: `${process.execPath} electron-host-run.mjs --state-dir ${stateDir} --temp-root x` });
+      if (!w.procs.some(p => p.pid === 400)) { w.procs = w.procs.filter(p => p.pid !== 300); w.procs.push({ pid: 400, ppid: 1, uid: process.getuid(), startedAtMs: 3, args: `${extra.registryPath.replace('recipes.json', 'apps')}/Visual Studio Code.app/Contents/MacOS/Code` }); }
       const first = w.starts.length === 1;
       return { ok: true, identity: { pid: 400, pidBirth: 'b400', instance: 'i1', epoch: 1 }, hostPid: 450,
         card: first ? { shown: true, status: 'granted', scope: 'always', by: 'user' } : { shown: false, existing: true, status: 'granted', scope: 'always', by: 'existing' },
@@ -254,7 +304,7 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
       w.electron.push(request);
       if (request.mode === 'launch') {
         mkdirSync(join(request.appPath, '..', 'code-portable-data', 'user-data', 'logs'), { recursive: true });
-        w.procs.push({ pid: 300, ppid: 1, startedAtMs: 4, args: request.appPath + '/Contents/MacOS/Code ' + request.target });
+        w.procs.push({ pid: 300, ppid: 1, uid: process.getuid(), startedAtMs: 4, args: request.appPath + '/Contents/MacOS/Code ' + request.target });
         return { stage: 'launch', process: { pid: 300, bundle: request.bundle, path: request.appPath, launchedAtMs: 1000 } };
       }
       if (request.mode === 'quit') { w.quits.push(request.pid); w.procs = w.procs.filter(p => p.pid !== request.pid); return { stage: 'quit', reason: 'exited', presses: 0, forced: false }; }
@@ -270,7 +320,7 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
 test('the live relaunch driver runs every relaunch cell on its own clone, and never touches the owner\'s process', async t => {
   const { app, root, deps, w } = relaunchWorld(t);
   const cardLog = join(root, 'cards.jsonl');
-  const driver = liveRelaunchDriver(app, { root, io: { permission: async () => false }, cardLog, deps });
+  const driver = liveRelaunchDriver(app, { root, io: { permission: async () => false }, cardLog, python: '/run/python3', qualificationDiagnosticPath: '/run/diagnostic', deps });
   let n = 0;
   const clock = { now: () => (n += 5), sleep: async ms => { n += ms; } };
   const receipt = await runQualification({ app, driver, observer: fakeObserver({ now: clock.now, fixturePid: () => 400 }), io: { exists: () => false, permission: async () => false },
@@ -285,6 +335,8 @@ test('the live relaunch driver runs every relaunch cell on its own clone, and ne
   assert.deepEqual(w.kills.filter(([pid]) => pid === 450).map(k => k[1])[0], 'SIGKILL', 'host-loss kills the run\'s own host');
   assert.deepEqual(w.starts.map(s => [s.profile, s.rehost]), [['user', false], ['user', false], ['user', true]]);
   assert.ok(w.starts.every(s => s.home.startsWith(base + '/') && s.cardLog === cardLog), 'the profile identity lives in the run folder');
+  assert.ok(w.starts.every(s => s.python === '/run/python3' && s.qualificationDiagnosticPath === '/run/diagnostic'));
+  assert.ok(!w.procs.some(row => row.pid === 450), 'cleanup removed the fake host');
   assert.equal(receipt.cells.find(c => c.id === 'relaunch-host-loss').detail.unsaved, 'kept');
   assert.equal(receipt.cells.find(c => c.id === 'relaunch-unsaved').detail.outcome, 'none');
   assert.equal(receipt.cleanup.confirmed, true);
@@ -306,6 +358,49 @@ test('with the owner\'s VS Code running or a quarantined source, the relaunch dr
   }
 });
 
+test('clone launch accepts a canonical path alias and rejects a different app with the returned identity in its error', async t => {
+  for (const mismatch of [false, true]) {
+    const { app, root, deps, w } = relaunchWorld(t);
+    const electron = deps.electron;
+    deps.electron = async request => {
+      const result = await electron(request);
+      if (request.mode === 'launch') result.process.path = mismatch ? app.path : result.process.path.replace(/^\/private\//, '/');
+      return result;
+    };
+    const driver = liveRelaunchDriver(app, { root, io: {}, deps });
+    if (mismatch) await assert.rejects(driver.relaunch(), error => error.message.includes('COPY_LAUNCH_IDENTITY_MISMATCH') &&
+      error.detail.pid === 300 && error.detail.actual === app.path && error.detail.expected === driver.paths().copy);
+    else assert.equal((await driver.relaunch()).pipe, true);
+    await driver.cleanup();
+    assert.ok(!w.quits.includes(77), 'no owner process addressed');
+  }
+});
+
+test('an incomplete LaunchServices reply has its own code and preserves the launch stage', async t => {
+  const { app, root, deps } = relaunchWorld(t);
+  deps.electron = async () => ({ stage: 'launch', process: { pid: -1, path: '' } });
+  const driver = liveRelaunchDriver(app, { root, io: {}, deps });
+  await assert.rejects(driver.relaunch(), error => /COPY_LAUNCH_PID_INVALID/.test(error.message) && error.detail.stage === 'copy-launch' && error.detail.pid === -1);
+  await driver.cleanup();
+});
+
+test('a partial LaunchServices reply is resolved from the exact clone census without launching twice', async t => {
+  const { app, root, deps, w } = relaunchWorld(t);
+  const electron = deps.electron;
+  let clone, scans = 0;
+  deps.electron = async request => {
+    if (request.mode === 'table') return { stage: 'table', processes: ++scans > 1 ? [clone] : [] };
+    const result = await electron(request);
+    if (request.mode === 'launch') { clone = result.process; return { stage: 'launch', process: { pid: -1, path: '', bundle: request.bundle } }; }
+    return result;
+  };
+  const driver = liveRelaunchDriver(app, { root, io: {}, deps });
+  assert.equal((await driver.relaunch()).pipe, true);
+  assert.equal(scans, 2);
+  assert.equal(w.electron.filter(r => r.mode === 'launch').length, 1);
+  await driver.cleanup();
+});
+
 test('the arm server reads only a private config, and forwards each tool call to its one worker', async t => {
   const dir = temp(t), path = join(dir, 'arm.json');
   const config = { bundleId: 'com.microsoft.VSCode', session: 'v3' + 'a'.repeat(32), registryPath: '/r', stateDir: '/s', tempRoot: '/t', appSecret: 'x' };
@@ -325,6 +420,8 @@ test('the arm server reads only a private config, and forwards each tool call to
   assert.deepEqual(sent, [['start', 'task'], ['call', 'browser_tabs'], ['end', undefined], ['kill']]);
   const refused = { async send() { return { ok: false, error: 'ELECTRON_DEBUGGER_REQUIRED' }; }, kill() {} };
   await assert.rejects(createArmSession({ config, text: 't', worker: refused }), error => error.message === 'ELECTRON_DEBUGGER_REQUIRED' && error.stage === 'app-start');
+  const hostRefused = { async send() { return { ok: false, error: 'STATE_DIR_TOO_LONG', stage: 'app-host' }; }, kill() {} };
+  await assert.rejects(createArmSession({ config, text: 't', worker: hostRefused }), error => error.message === 'STATE_DIR_TOO_LONG' && error.stage === 'app-host');
 });
 
 test('the worker logs each card it shows and its answer, and the card helper only reads', () => {

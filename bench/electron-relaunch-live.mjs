@@ -10,13 +10,13 @@
 // - Cleanup quits only the copy (pid and bundle path checked) and ends only processes whose arguments name this run's folder.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { BENCHMARK_ALLOWLIST, SELECTORS, prepareWorkspace, refOf, tabsOf } from './electron-qualification.mjs';
-import { helper as qualificationHelper, listProcesses, parseCodesign, recipeFromBundle } from './electron-qualification-live.mjs';
+import { assertHostPath, helper as qualificationHelper, listProcesses, parseCodesign, recipeFromBundle } from './electron-qualification-live.mjs';
 import { editorIdentity } from './real-electron.mjs';
 import { processExitConfirmed } from './real-fixture.mjs';
 import { runOwned } from './preapproved-process.mjs';
@@ -59,7 +59,8 @@ async function sha256(path) {
 }
 function forkedWorker() {
   return import('node:child_process').then(({ fork }) => {
-    const child = fork(WORKER, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json' });
+    const child = fork(WORKER, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json',
+      env: { ...process.env, SLEIGHT_TURBO_UNQUALIFIED: '1' } });
     const pending = new Map();
     let sequence = 0, lost;
     child.on('message', msg => { const entry = pending.get(msg.id); if (entry) { pending.delete(msg.id); entry(msg); } });
@@ -86,7 +87,7 @@ const realDeps = () => ({
   kill: (pid, signal) => process.kill(pid, signal),
 });
 
-export function liveRelaunchDriver(app, { root, io = {}, cardLog, deps: given = {} }) {
+export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'python3', qualificationDiagnosticPath, deps: given = {} }) {
   if (!BENCHMARK_ALLOWLIST.includes(app.bundleId)) throw Error('NOT_ON_BENCHMARK_ALLOWLIST');
   const d = { ...realDeps(), ...given };
   const base = mkdtempSync(join(root, 'relaunch-'));
@@ -99,6 +100,7 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, deps: given = 
   const owners = async () => (await d.helper({ mode: 'pids', bundle: app.bundleId }, d.exec)).pids;
   async function prepare() {
     if (recipe) return;
+    assertHostPath(stateDir);
     const source = await editorIdentity(app.path, { exec: d.exec });
     if (source.bundle !== app.bundleId) throw Error(`${app.path} is ${source.bundle}, not ${app.bundleId}`);
     if ((await owners()).length) throw Error('OWNER_APP_RUNNING: the relaunch cells need the owner\'s own copy closed; the runner never quits it');
@@ -127,7 +129,7 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, deps: given = 
     appSecret = await d.secret();
   }
   const message = (extra = {}) => ({ bundleId: app.bundleId, session, text: `Qualify the relaunch flow in ${app.name}.`, registryPath, stateDir, tempRoot,
-    appSecret, allowlist: [...BENCHMARK_ALLOWLIST], profile: 'user', home, ...(cardLog ? { cardLog } : {}), ...extra });
+    appSecret, python, qualificationDiagnosticPath, allowlist: [...BENCHMARK_ALLOWLIST], profile: 'user', home, ...(cardLog ? { cardLog } : {}), ...extra });
   const seen = reply => { if (reply?.ok && reply.hostPid) hostPid = reply.hostPid; return reply; };
   const alive = async pid => !!pid && (await d.list(d.exec)).some(p => p.pid === pid);
   const engaged = () => existsSync(join(portable, 'user-data', 'logs'));
@@ -139,8 +141,26 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, deps: given = 
   }
   // The copy as a person opens it: LaunchServices, no activation, no pipe, the fixture folder as its one argument.
   async function openCopy() {
-    const opened = (await d.electron({ mode: 'launch', bundle: app.bundleId, appPath: realCopy(), target: files.root }))?.process;
-    if (!opened?.pid || opened.path !== realCopy()) throw Error('COPY_LAUNCH_FAILED');
+    let opened = (await d.electron({ mode: 'launch', bundle: app.bundleId, appPath: realCopy(), target: files.root }))?.process;
+    const detail = { stage: 'copy-launch', pid: opened?.pid ?? null, expected: realCopy(), actual: opened?.path ?? null, bundle: opened?.bundle ?? null };
+    const matches = p => {
+      try { return Number.isSafeInteger(p?.pid) && p.pid > 0 && p.bundle === app.bundleId && realpathSync(p.path) === realCopy(); }
+      catch { return false; }
+    };
+    // If NSWorkspace returns before its process metadata exists, resolve a partial reply by the exact bundle path,
+    // without a second launch or a bundle-id-only adoption. A different, fully identified app is refused below.
+    if (!Number.isSafeInteger(opened?.pid) || opened.pid <= 0 || !opened.path) {
+      for (const started = d.now(); ; await d.sleep(250)) {
+        const table = await d.electron({ mode: 'table', bundle: app.bundleId });
+        const copies = (Array.isArray(table?.processes) ? table.processes : []).filter(matches);
+        if (copies.length > 1) throw Object.assign(Error('COPY_LAUNCH_AMBIGUOUS'), { detail: { ...detail, matches: copies.length } });
+        if (copies.length === 1) { opened = copies[0]; break; }
+        if (d.now() - started >= 5000) break;
+      }
+    }
+    if (!Number.isSafeInteger(opened?.pid) || opened.pid <= 0) throw Object.assign(Error('COPY_LAUNCH_PID_INVALID'), { detail });
+    if (!matches(opened))
+      throw Object.assign(Error(`COPY_LAUNCH_IDENTITY_MISMATCH: pid ${opened.pid}, expected ${realCopy()}, got ${opened.path ?? 'no path'} (${opened.bundle ?? 'no bundle'})`), { detail });
     launched.push({ pid: opened.pid });
     await d.electron({ mode: 'ready', pid: opened.pid, bundle: app.bundleId, appPath: realCopy(), waitMs: 30000 });
     for (const started = d.now(); !engaged(); await d.sleep(250)) {

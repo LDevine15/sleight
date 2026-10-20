@@ -17,9 +17,11 @@ import { EventEmitter } from 'node:events';
 import { createHmac, randomBytes } from 'node:crypto';
 import { lstatSync, unlinkSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
+import { ELECTRON_PROCESS_ENV } from './electron-process-env.mjs';
 import { CHANNEL_VERSION, DEFAULT_MAX_FRAME_BYTES, FrameReader, HANDSHAKE_MAX_BYTES, bare, deriveChannel, macEqual, opener, plainJson,
   randomToken, sealer, validToken } from './electron-channel.mjs';
 import { classify, createJournal, privateDirectory, reconcile } from './electron-ownership.mjs';
+import { cdpReason, protocolCode } from './electron-cdp-errors.mjs';
 
 const refuse = code => { throw Error(code); };
 const SOCKET_NAME = 'host.sock';
@@ -31,12 +33,18 @@ const MAX_SOCKET_PATH = 100;
 // Closed set of error codes a worker can see. Internal messages, paths and pipe text stay in the host.
 export function errorFrame(error) {
   const text = String(error?.message ?? '');
-  if (error?.cdp === true) return { code: 'CDP_ERROR', message: text.slice(0, 500), dispatched: true };
+  if (error?.cdp === true) return { code: 'CDP_ERROR', reason: cdpReason(text),
+    ...(protocolCode(error.code) === undefined ? {} : { protocolCode: error.code }), dispatched: true };
   const known = ['CDP_COMMAND_REFUSED', 'CDP_SESSION_NOT_OWNED', 'CDP_TARGET_NOT_OWNED', 'ELECTRON_BUSY', 'FENCE_REQUIRED', 'GRANT_NOT_CURRENT',
     'BUILD_NOT_REGISTERED', 'SESSION_INVALID', 'TICKET_BANK_FULL', 'TICKET_BOUND_INVALID'].find(code => text === code);
   if (known) return { code: known, dispatched: false };
   if (/^ownership unresolved/.test(text)) return { code: 'OWNERSHIP_UNRESOLVED', dispatched: false };
   if (/^retained ownership/.test(text)) return { code: 'OWNERSHIP_RETAINED', dispatched: false };
+  if (['pipe queue full', 'authorization queue full', 'client queue full', 'pipe queue timeout'].includes(text))
+    return { code: 'CDP_HOST_QUEUE_FULL', dispatched: false };
+  if (['broker parked', 'broker not ready', 'broker parked during preparation', 'broker parked during authorization',
+    'client detached during preparation', 'client detached during authorization'].includes(text))
+    return { code: 'CDP_HOST_PARKED', dispatched: error?.dispatched === true };
   if (/parked|not ready/i.test(text)) return { code: 'APP_PARKED', dispatched: error?.dispatched === true };
   if (/unauthenticated|detached/i.test(text)) return { code: 'UNAUTHENTICATED', dispatched: false };
   if (/queue full/i.test(text)) return { code: 'QUEUE_FULL', dispatched: false };
@@ -51,7 +59,7 @@ export function createPythonAdapter({ python = 'python3', script, registryPath, 
   const events = new EventEmitter(), pending = new Map();
   const child = spawn(python, ['-I', '-B', script, '--adapter', '--registry', registryPath, '--temp-root', tempRoot], {
     stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'], cwd: '/',
-    env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8', PYTHONDONTWRITEBYTECODE: '1' },
+    env: { ...ELECTRON_PROCESS_ENV, PYTHONDONTWRITEBYTECODE: '1' },
   });
   let sequence = 0, lost = false;
   const reader = new FrameReader(maxReplyBytes);
@@ -194,7 +202,8 @@ export function connectKeeper({ socketPath, key, nonce, timeoutMs = 8000, connec
 
 export async function createElectronHost({
   stateDir, Broker, createAdapter, builds = [], authorizeLaunch, requestQuit, resumeAuthority, admitTarget, authorizeIssue, prepareProfile, brokerOptions = {},
-  maxFrameBytes = DEFAULT_MAX_FRAME_BYTES, maxChannels = 64, maxUnauthenticated = 8, handshakeMs = 2000, maxPendingPerChannel = 64,
+  // Match the broker's 256 pending bound so one worker can use its backpressure queue.
+  maxFrameBytes = DEFAULT_MAX_FRAME_BYTES, maxChannels = 64, maxUnauthenticated = 8, handshakeMs = 2000, maxPendingPerChannel = 256,
   maxBufferedBytes = 4 * 1024 * 1024, maxTicketTtlMs = 300000, maxTickets = 256, fenceLeaseMs = 30000, now = Date.now, adminSecret, uid = process.getuid?.(),
 } = {}) {
   if (typeof Broker !== 'function' || typeof createAdapter !== 'function' || prepareProfile !== undefined && typeof prepareProfile !== 'function' ||
@@ -525,7 +534,10 @@ export async function createElectronHost({
       if (message.op === 'bye') { drop(); return; }
       if (message.op === 'cancel') { channel.pending.get(message.id)?.abort(); return; }
       if (!Number.isSafeInteger(message.id) || message.id < 1 || channel.pending.has(message.id)) refuse('CHANNEL_FRAME_INVALID');
-      if (channel.pending.size >= maxPendingPerChannel) { channel.send({ op: 'reply', id: message.id, error: { code: 'QUEUE_FULL', dispatched: false } }); return; }
+      if (channel.pending.size >= maxPendingPerChannel) {
+        broker.queueFailure('count bound');
+        channel.send({ op: 'reply', id: message.id, error: { code: 'CDP_HOST_QUEUE_FULL', dispatched: false } }); return;
+      }
       const controller = new AbortController();
       channel.pending.set(message.id, controller);
       const finish = (error, result) => {
@@ -538,7 +550,13 @@ export async function createElectronHost({
         // another session's worker cannot skip.
         if (typeof message.method === 'string' && message.method.startsWith('Input.') && fenceHolder() !== channel) { finish(Error('FENCE_REQUIRED')); return; }
         touchFence(channel);
-        broker.transportSend(channel.client, { method: message.method, params: message.params ?? {}, sessionId: message.sessionId }, { signal: controller.signal })
+        broker.transportSend(channel.client, { method: message.method, params: message.params ?? {}, sessionId: message.sessionId }, {
+          signal: controller.signal,
+          beforeWrite: () => {
+            if (message.method.startsWith('Input.') && fenceHolder() !== channel) refuse('FENCE_REQUIRED');
+            touchFence(channel);
+          },
+        })
           .then(result => finish(undefined, result ?? {}), error => finish(error));
       } else if (message.op === 'fence') {
         if (Object.keys(message).sort().join() !== 'action,id,op' || !['acquire', 'release'].includes(message.action)) refuse('CHANNEL_FRAME_INVALID');
@@ -576,11 +594,11 @@ export async function createElectronHost({
   // A broker that is ready, resuming or already parked takes the revoke: one that lands during a resume
   // ends that resume (it sees the new epoch) instead of being lost.
   const revocable = () => broker && !['new', 'collected', 'authorizing', 'launching', 'retained'].includes(broker.state);
-  function revokeSession(session, reason = 'revoked') {
+  function revokeSession(session, reason = 'revoked', { expected = false } = {}) {
     for (const [id, item] of tickets) if (item.session === session) tickets.delete(id);
     for (const channel of [...channels]) if (channel.session === session) channel.send({ op: 'parked', reason, resumable: true, epoch: broker?.epoch }, true);
     // Revocation stops every command and parks the connection; it never closes the app's pipe.
-    if (revocable()) broker.revoke(reason);
+    if (revocable()) broker.revoke(reason, { expected });
   }
   function revokeAll(reason = 'revoked') {
     tickets.clear();
@@ -634,7 +652,7 @@ export async function createElectronHost({
     const reply = (value, error) => channel.send({ op: 'reply', id: message.id, ...(error ? { error: errorFrame(error) } : { result: value }) });
     const run = async () => {
       if (message.op === 'issue') return issueTicket(message.args);
-      if (message.op === 'revoke') { revokeSession(String(message.args?.session)); return {}; }
+      if (message.op === 'revoke') { revokeSession(String(message.args?.session), 'revoked', { expected: message.args?.expected === true }); return {}; }
       if (message.op === 'revokeAll') { revokeAll(); return {}; }
       if (message.op === 'status') return JSON.parse(JSON.stringify(status()));
       if (message.op === 'resume') return resume();

@@ -13,7 +13,6 @@
 import { execFile, fork, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -22,13 +21,39 @@ import { performance } from 'node:perf_hooks';
 import { BENCHMARK_ALLOWLIST, prepareWorkspace } from './electron-qualification.mjs';
 import { editorIdentity, parseProcesses, profileProcesses } from './real-electron.mjs';
 import { processExitConfirmed } from './real-fixture.mjs';
+import { createRunReaper, resolveRunPython } from './electron-run-cleanup.mjs';
 import { runOwned } from './preapproved-process.mjs';
+import { parkedReceipt } from '../plugins/sleight/lib/direct-browser/electron-host-reasons.mjs';
 
 const execute = promisify(execFile);
 const HELPER = fileURLToPath(new URL('./electron-qualification.js', import.meta.url));
 const QUIT_HELPER = fileURLToPath(new URL('./real-electron.js', import.meta.url));
 const WORKER = fileURLToPath(new URL('./electron-qualification-worker.mjs', import.meta.url));
 const D = new URL('../plugins/sleight/lib/direct-browser/', import.meta.url);
+
+// macOS's per-user TMPDIR makes even the first host.sock 104 bytes here. The host's bound is 100.
+// Use a private mkdtemp directory under the canonical short temporary root, including for nested arm runs.
+export const createRunRoot = (prefix = 'seq-') => mkdtempSync(join(realpathSync('/tmp'), prefix));
+export function assertHostPath(stateDir) {
+  const bytes = Buffer.byteLength(join(stateDir, 'host.sock'));
+  if (bytes > 100) throw Error(`STATE_DIR_TOO_LONG: host socket is ${bytes} bytes (limit 100); use a short private temporary root`);
+}
+
+export async function turboAcceptance({ readConfig, accept } = {}) {
+  const installed = await import(new URL('installed-config.mjs', D));
+  let config;
+  try { config = (readConfig ?? installed.readInstalledConfig)(); }
+  catch (error) {
+    if (!readConfig && error.message === 'INSTALLED_CONFIG_UNSAFE') {
+      const data = installed.readInstalledConfigFile();
+      if (data?.receipt?.node !== process.version) throw Error(`INSTALLED_CONFIG_UNSAFE: running Node ${process.version}, receipt Node ${data?.receipt?.node ?? 'missing'}`);
+    }
+    throw error;
+  }
+  if (!config) return false;
+  if (!(accept ?? installed.acceptedInstalledPackage)(config).current()) throw Error('HOST_PACKAGE_MISMATCH');
+  return true;
+}
 
 // The installed worker's app path, which the live worker composes the same way. Missing any refuses before a launch.
 export const CONTRACT = Object.freeze([
@@ -75,16 +100,37 @@ async function sha256(path) {
 }
 
 export async function listProcesses(exec = execute) {
-  const { stdout } = await exec('/bin/ps', ['-axww', '-o', 'pid=', '-o', 'lstart=', '-o', 'args='], { env: { ...process.env, LC_ALL: 'C' }, timeout: 10000, maxBuffer: 32 * 1024 * 1024 });
-  return parseProcesses(stdout);
+  const { stdout } = await exec('/bin/ps', ['-axww', '-o', 'pid=', '-o', 'ppid=', '-o', 'uid=', '-o', 'lstart=', '-o', 'args='], { env: { ...process.env, LC_ALL: 'C' }, timeout: 10000, maxBuffer: 32 * 1024 * 1024 });
+  return String(stdout).split('\n').flatMap(line => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    if (!line.trim()) return [];
+    const rows = match ? parseProcesses(match[1] + ' ' + match[4]) : [];
+    if (rows.length !== 1 || !Number.isFinite(rows[0].startedAtMs)) throw Error('PROCESS_CENSUS_INVALID');
+    return rows.map(row => ({ ...row, ppid: Number(match[2]), uid: Number(match[3]) }));
+  });
 }
 export async function helper(request, exec = execute) {
   const { stdout } = await exec('/usr/bin/osascript', ['-l', 'JavaScript', HELPER, JSON.stringify(request)], { timeout: 15000 });
   return JSON.parse(String(stdout).trim().split('\n').at(-1));
 }
 
+// Benchmark setup only: put Terminal in front without sending it input or Apple events.
+export async function arrangeTerminal({ exec = execute, inspect = request => helper(request, exec),
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  const { pids } = await inspect({ mode: 'pids', bundle: 'com.apple.Terminal' });
+  if (pids.length > 1) throw Error('BACKGROUND_TERMINAL_AMBIGUOUS');
+  if (!pids.length) await exec('/usr/bin/open', ['-b', 'com.apple.Terminal'], { timeout: 10000 });
+  else await inspect({ mode: 'activate', pid: pids[0], fixturePid: 0 });
+  for (let i = 0; i < 50; i++) {
+    const front = await inspect({ mode: 'front' });
+    if (front.bundle === 'com.apple.Terminal' && front.front > 0 && (!pids.length || front.front === pids[0])) return front;
+    await sleep(100);
+  }
+  throw Error('BACKGROUND_TERMINAL_REQUIRED');
+}
+
 // The 50 ms frontmost/pointer sampler, one osascript child for the whole run. Read-only.
-function liveObserver({ spawnProcess = spawn, root }) {
+export function liveObserver({ spawnProcess = spawn, root }) {
   const samples = [], stop = join(root, 'sampler.stop');
   let child, exited;
   return {
@@ -95,6 +141,7 @@ function liveObserver({ spawnProcess = spawn, root }) {
       createInterface({ input: child.stdout }).on('line', line => { try { samples.push(JSON.parse(line)); } catch {} });
     },
     async frontPid() { return samples.at(-1)?.front; },
+    firstWindowMs(pid, since) { return samples.find(s => s.t >= since && s.windowPids?.includes(pid))?.t ?? null; },
     async samples(start, end) { await new Promise(resolve => setTimeout(resolve, 120)); return samples.filter(s => s.t >= start - 100 && s.t <= end + 100); },
     async stop() {
       writeFileSync(stop, '');
@@ -104,10 +151,12 @@ function liveObserver({ spawnProcess = spawn, root }) {
   };
 }
 
-function worker() {
-  const child = fork(WORKER, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json' });
+export function qualificationWorker({ forkProcess = fork, env = process.env, exitWaitMs = 3000 } = {}) {
+  const child = forkProcess(WORKER, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json',
+    env: { ...env, SLEIGHT_TURBO_UNQUALIFIED: '1' } });
   const pending = new Map();
   let sequence = 0, lost;
+  const exited = new Promise(resolve => child.once('exit', () => resolve(true)));
   child.on('message', msg => { const entry = pending.get(msg.id); if (entry) { pending.delete(msg.id); entry(msg); } });
   child.on('exit', () => { lost = true; for (const entry of pending.values()) entry({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); pending.clear(); });
   const send = (op, extra = {}) => new Promise(resolve => {
@@ -115,35 +164,68 @@ function worker() {
     const id = ++sequence; pending.set(id, resolve);
     try { child.send({ id, op, ...extra }); } catch { pending.delete(id); resolve({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); }
   });
-  return { child, send, kill: () => { if (!lost) child.kill('SIGKILL'); }, get lost() { return lost; } };
+  let signalled = false;
+  const kill = () => { if (!lost && !signalled) { signalled = true; child.kill('SIGKILL'); } };
+  return { child, send, kill, async stop() {
+    kill();
+    let timer;
+    try { return await Promise.race([exited, new Promise(resolve => { timer = setTimeout(() => resolve(false), exitWaitMs); })]); }
+    finally { clearTimeout(timer); }
+  }, get lost() { return lost; } };
 }
 
-export async function liveRuntime(options, { io } = {}, deps = {}) {
+export async function liveRuntime(options, { io, root: parentRoot, qualificationDiagnosticPath, python = 'python3' } = {}, deps = {}) {
   const exec = deps.exec ?? execute;
   const missing = await missingContract(deps.load);
   if (missing.length) throw Error(`ELECTRON_RUNTIME_MISSING: ${missing.join(', ')}. Merge EPV3-4 to 7 first; nothing was launched`);
   if (process.platform !== 'darwin') throw Error('MACOS_REQUIRED');
   if (!io?.permission) throw Error('PERMISSION_OBSERVER_REQUIRED');
+  python = await resolveRunPython(python, { exec });
   await io.permission(); // throws when codex-macos-inspect is missing, before anything starts
-  const root = mkdtempSync(join(realpathSync(tmpdir()), 'sleight-eq-'));
-  const observer = liveObserver({ spawnProcess: deps.spawn, root });
-  return { observer, driverFor: (app, extra = {}) => liveDriver(app, { root, exec, observer, ...extra }), async close() { rmSync(root, { recursive: true, force: true }); } };
+  const root = parentRoot ? mkdtempSync(join(parentRoot, 'seq-')) : createRunRoot();
+  const observer = liveObserver({ spawnProcess: deps.spawn, root }), drivers = [];
+  return { observer, driverFor(app, extra = {}) { const driver = liveDriver(app, { root, exec, observer, python, qualificationDiagnosticPath, ...extra }); drivers.push(driver); return driver; },
+    async close() {
+      if (drivers.some(driver => !driver.cleanupConfirmed())) throw Error('DRIVER_CLEANUP_UNCONFIRMED');
+      const cleanup = await createRunReaper(root, { python, list: () => listProcesses(exec) }).reap();
+      if (!cleanup.confirmed) throw Error('RUN_PROCESS_EXIT_UNCONFIRMED');
+      rmSync(root, { recursive: true, force: true });
+    } };
 }
 
 // forkWorker: the seam the unit tests use for a fake worker; the run forks electron-qualification-worker.mjs.
 // cardLog: the live runner's card log (electron-qualification-worker.mjs cardLine), passed to every worker.
-export function liveDriver(app, { root, exec, observer, forkWorker = worker, cardLog }) {
+export function liveDriver(app, { root, exec, observer, forkWorker = qualificationWorker, cardLog, python = 'python3', qualificationDiagnosticPath, deps = {} }) {
   if (!BENCHMARK_ALLOWLIST.includes(app.bundleId)) throw Error('NOT_ON_BENCHMARK_ALLOWLIST');
   const base = mkdtempSync(join(root, app.key + '-'));
   const tempRoot = join(base, 'profiles'), stateDir = join(base, 'state'), registryPath = join(base, 'recipes.json');
   mkdirSync(tempRoot); mkdirSync(stateDir, { mode: 0o700 });
   const files = prepareWorkspace(join(base, 'workspace'));
   const session = 'v3' + randomBytes(16).toString('hex');
-  const launched = [], workers = new Set();
+  const launched = [], workers = new Set(), observedMains = new Set(), launchWindows = [], adoptionFailures = [];
+  const observedBirths = new Map();
+  const workerBirths = new Map();
+  const observedLaunches = new Set();
+  let cleanupConfirmed = false;
   let found, build, recipe, active, current, last, otherFront, hostPid, appSecret;
+  let hostIdentity;
+  const list = () => (deps.list ?? listProcesses)(exec);
+  const sleep = deps.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
+  const liveChild = w => !w.lost && w.child?.exitCode == null && w.child?.signalCode == null;
+  const reaper = createRunReaper(base, { python, list, pids: () => [...workers].filter(liveChild).map(w => workerBirths.get(w)).filter(Boolean), signal: (...args) => (deps.signal ?? process.kill)(...args), sleep });
+  const exited = (...args) => (deps.exited ?? processExitConfirmed)(...args);
+  const electron = deps.electron ?? (async request => {
+    const result = await runOwned('/usr/bin/osascript', ['-l', 'JavaScript', QUIT_HELPER, JSON.stringify({ ...request, bundle: app.bundleId })], { timeoutMs: 45000 });
+    if (!result.groupClean || result.exit?.code !== 0) throw Error('FIXTURE_HELPER_UNCONFIRMED');
+    const row = String(result.stdout).split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } }).find(row => row.stage === request.mode);
+    if (!row) throw Error('FIXTURE_HELPER_UNCONFIRMED');
+    return row;
+  });
 
   async function prepare() {
     if (recipe) return;
+    assertHostPath(stateDir);
+    if (deps.inspectBundle) { ({ found, build, recipe, appSecret } = await deps.inspectBundle()); return; }
     found = await editorIdentity(app.path, { exec });
     if (found.bundle !== app.bundleId) throw Error(`${app.path} is ${found.bundle}, not ${app.bundleId}`);
     // codesign and the two plists, read the way the runtime reads them (no launch).
@@ -156,39 +238,115 @@ export function liveDriver(app, { root, exec, observer, forkWorker = worker, car
     appSecret = (await import(new URL('worker.mjs', D))).serverAppSecret();
   }
   const message = (sessionId = session, extra = {}) => ({ bundleId: app.bundleId, session: sessionId, text: `Qualify turbo in ${app.name}.`,
-    registryPath, stateDir, tempRoot, appSecret, allowlist: [...BENCHMARK_ALLOWLIST], ...(cardLog ? { cardLog } : {}), ...extra });
-  const seen = reply => { if (reply.ok && reply.hostPid) hostPid = reply.hostPid; return reply; };
+    registryPath, stateDir, tempRoot, appSecret, python, qualificationDiagnosticPath, allowlist: [...BENCHMARK_ALLOWLIST], ...(cardLog ? { cardLog } : {}), ...extra });
+  const seen = reply => {
+    if (reply.hostPid && reply.hostPid !== hostPid) { hostPid = reply.hostPid; hostIdentity = undefined; }
+    return reply;
+  };
   // A turn in the given worker, or in a new one (a new consent instance, so a new card).
+  async function spawnWorker() {
+    const w = forkWorker(); workers.add(w);
+    if (Number.isSafeInteger(w.child?.pid)) {
+      const row = (await list()).find(row => row.pid === w.child.pid && row.ppid === process.pid && row.uid === process.getuid());
+      if (liveChild(w) && row && Number.isFinite(row.startedAtMs)) workerBirths.set(w, Object.freeze({ pid: row.pid, startedAtMs: row.startedAtMs }));
+      else throw Error('WORKER_BIRTH_UNCONFIRMED');
+    }
+    return w;
+  }
   async function startWorker(consentWaitMs, sessionId = session, w) {
-    if (!w) { w = forkWorker(); workers.add(w); }
+    if (!w) w = await spawnWorker();
     const reply = seen(await w.send('start', message(sessionId, { consentWaitMs })));
     return { w, reply };
   }
   // The driver's own admin connection, once the workers' channels have closed (the host takes one administrator at a time).
   async function driverAdmin() {
-    const { ensureHost } = await import(new URL('electron-admin.mjs', D));
+    if (deps.admin) return deps.admin();
+    const { ensureHost } = deps.ensureHost ? deps : await import(new URL('electron-admin.mjs', D));
     for (let i = 0; ; i++) {
-      try { return await ensureHost({ stateDir, registryPath, tempRoot, build: recipe.build, secret: appSecret }); }
+      try { return await ensureHost({ stateDir, registryPath, tempRoot, build: recipe.build, secret: appSecret, python, qualificationDiagnosticPath,
+        env: { ...process.env, SLEIGHT_TURBO_UNQUALIFIED: '1' } }); }
       catch (error) { if (error.message !== 'ELECTRON_HOST_FOREIGN' || i >= 20) throw error; await new Promise(resolve => setTimeout(resolve, 250)); }
     }
   }
-  const alive = async (pid, birth) => (await listProcesses(exec)).some(p => p.pid === pid && String(p.startedAtMs) === String(birth ?? p.startedAtMs));
-  const census = async () => profileProcesses(await listProcesses(exec), tempRoot);
+  const alive = async (pid, birth) => (await list()).some(p => p.pid === pid && String(p.startedAtMs) === String(birth ?? p.startedAtMs));
+  const census = async () => profileProcesses(await list(), tempRoot);
+
+  async function observeFixtureLaunch() {
+    if (app.key !== 'vscode' || !observer.firstWindowMs || !launched.length) return;
+    const target = launched.at(-1), now = deps.now ?? Date.now;
+    if (observedLaunches.has(target.pid)) return;
+    observedLaunches.add(target.pid);
+    if (!(target.processStartedAtMs > 0)) return;
+    // Kernel birth bounds exec, including direct launches that have no AppKit launchDate.
+    let firstWindowMs;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      firstWindowMs = observer.firstWindowMs(target.pid, target.processStartedAtMs);
+      if (Number.isFinite(firstWindowMs)) break;
+      await sleep(50);
+    }
+    if (Number.isFinite(firstWindowMs)) {
+      const endMs = firstWindowMs + 2000;
+      launchWindows.push({ pid: target.pid, execMs: target.processStartedAtMs, firstWindowMs, endMs });
+      // Restore as soon as the first window is observed, within the allowance when selection returns promptly.
+      await driver.frontApp();
+      const remainingMs = endMs - now();
+      if (remainingMs > 0) await sleep(remainingMs);
+      return;
+    }
+    // Missing first-window evidence grants no exception. Restore the prelaunch app before any later cell starts.
+    await driver.frontApp();
+  }
 
   const driver = {
     build: () => build ?? {},
+    cleanupConfirmed: () => cleanupConfirmed,
+    fixturePids: () => [...observedMains],
+    launchWindows: () => launchWindows.map(row => ({ ...row })),
     prepare,
     // What the live runner's Claude Code arm needs to reach this run's host through its own worker (electron-arm-server.mjs).
     armConfig: () => ({ bundleId: app.bundleId, name: app.name, session: 'v3' + randomBytes(16).toString('hex'), registryPath, stateDir, tempRoot, appSecret,
-      allowlist: [...BENCHMARK_ALLOWLIST], workspace: files.root, ...(cardLog ? { cardLog } : {}) }),
+      allowlist: [...BENCHMARK_ALLOWLIST], python, qualificationDiagnosticPath, workspace: files.root, ...(cardLog ? { cardLog } : {}) }),
     // The arm's worker launched the app, not this driver: the main process naming this run's temporary root joins the
     // launched list, so cleanup quits it like its own. Nothing else is adopted.
     async adoptRunning() {
-      const all = await listProcesses(exec), mains = profileProcesses(all, tempRoot).filter(p => found && p.args.startsWith(found.executable + ' '));
-      for (const p of mains) if (!launched.some(l => l.pid === p.pid)) launched.push({ pid: p.pid, pidBirth: String(p.startedAtMs) });
-      if (mains.length) last = { pid: mains[0].pid };
-      // The arm's host, by its own state folder argument, so cleanup ends it once the app is gone.
+      await reaper.scan();
+      const all = await list(), mains = profileProcesses(all, tempRoot).filter(p => found && p.args.startsWith(found.executable + ' ') &&
+        p.args.includes(`--user-data-dir=${tempRoot}/`));
+      // Keep host ownership even if the app's native identity cannot be joined.
       hostPid ??= all.find(p => ` ${p.args} `.includes(` --state-dir ${stateDir} `))?.pid;
+      const host = all.find(p => p.pid === hostPid && ` ${p.args} `.includes(` --state-dir ${stateDir} `));
+      if (host && !hostIdentity) hostIdentity = { pid: host.pid, startedAtMs: host.startedAtMs };
+      for (const p of mains) {
+        observedMains.add(p.pid);
+        if (!observedBirths.has(p.pid)) observedBirths.set(p.pid, p.startedAtMs);
+      }
+      if (mains.length) {
+        const table = await electron({ mode: 'table', bundle: app.bundleId });
+        const after = await list();
+        for (const p of mains) {
+          const candidates = table.processes?.filter(row => row.pid === p.pid) ?? [];
+          const row = candidates.length === 1 ? candidates[0] : null;
+          const stable = Number.isFinite(p.startedAtMs) && observedBirths.get(p.pid) === p.startedAtMs &&
+            after.some(next => next.pid === p.pid && next.startedAtMs === p.startedAtMs && next.args === p.args);
+          const birthKnown = typeof row?.pidBirth === 'string' && /^[1-9]\d*\.\d{6}$/.test(row.pidBirth) &&
+            Number(row.pidBirth.split('.')[0]) * 1000 === p.startedAtMs;
+          // Bracket the native lookup with the executable/profile census and join kernel birth at ps's second resolution.
+          // launchDate belongs to LaunchServices and can be null for this direct pipe launch.
+          if (!stable || !row || row.bundle !== app.bundleId || row.path !== found.path || !birthKnown) {
+            const adoption = { process: { pid: p.pid, startedAtMs: p.startedAtMs }, stable,
+              native: candidates.map(({ pid, bundle, path, launchedAtMs, pidBirth }) => ({ pid, bundle, path, launchedAtMs, pidBirth })) };
+            adoptionFailures.push(adoption);
+            throw Object.assign(Error('FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED'), { detail: { adoption } });
+          }
+          const known = launched.find(l => l.pid === p.pid);
+          if (known && (known.pidBirth !== row.pidBirth ||
+            known.startedAtMs !== undefined && known.startedAtMs !== p.startedAtMs)) throw Error('FIXTURE_LAUNCH_IDENTITY_CHANGED');
+          const identity = { pid: p.pid, pidBirth: row.pidBirth, processStartedAtMs: Number(row.pidBirth) * 1000, startedAtMs: p.startedAtMs };
+          if (known) Object.assign(known, identity);
+          else launched.push(identity);
+        }
+        last = current ?? launched.find(l => l.pid === mains[0].pid);
+      }
       return mains.length;
     },
     identity: () => current ?? last ?? null,
@@ -196,17 +354,22 @@ export function liveDriver(app, { root, exec, observer, forkWorker = worker, car
       await prepare();
       if (!otherFront) { const front = await helper({ mode: 'front' }, exec); if (!BENCHMARK_ALLOWLIST.includes(front.bundle)) otherFront = front; }
       const started = performance.now();
-      const { w, reply } = await startWorker(consentWaitMs, session, active);
+      let w, reply;
+      try { ({ w, reply } = await startWorker(consentWaitMs, session, active)); }
+      finally { await driver.adoptRunning(); await observeFixtureLaunch(); }
       if (!reply.ok) {
         const card = reply.card ?? { shown: false, status: /DEBUGGER_REQUIRED/.test(reply.error) ? 'timeout' : 'refused', error: reply.error };
-        w.kill(); workers.delete(w); if (active === w) active = undefined;
-        return { card, launch: {}, connect: {} };
+        w.kill(); if (active === w) active = undefined;
+        return { error: reply.error, stage: reply.stage, card, launch: {}, connect: {} };
       }
+      const known = launched.find(row => row.pid === reply.identity.pid);
+      if (known && known.pidBirth !== reply.identity.pidBirth) throw Error('FIXTURE_LAUNCH_IDENTITY_CHANGED');
+      if (!known) launched.push({ pid: reply.identity.pid, pidBirth: reply.identity.pidBirth });
       active = w; current = last = reply.identity;
-      launched.push({ pid: reply.identity.pid, pidBirth: reply.identity.pidBirth });
       const listeners = await exec('/usr/sbin/lsof', ['-nP', '-a', '-p', String(reply.identity.pid), '-iTCP', '-sTCP:LISTEN', '-t'], { timeout: 10000 })
         .then(r => String(r.stdout).trim().split('\n').filter(Boolean).length, error => (error.code === 1 ? 0 : -1));
-      return { card: reply.card, launch: { ...reply.launch, ms: reply.launch.ms ?? Math.round(performance.now() - started) }, connect: { ms: reply.connectMs, tcpListeners: listeners } };
+      return { card: reply.card, qualification: reply.receipt ?? null,
+        launch: { ...reply.launch, ms: reply.launch.ms ?? Math.round(performance.now() - started) }, connect: { ms: reply.connectMs, tcpListeners: listeners } };
     },
     async restart(options) { await driver.quit(); return driver.connect(options); },
     async tool(name, args) {
@@ -214,7 +377,11 @@ export function liveDriver(app, { root, exec, observer, forkWorker = worker, car
       const ms = Math.round(performance.now() - started);
       return reply.ok ? { ...reply.result, ms } : { text: reply.error, isError: true, ms };
     },
-    async frontApp() {
+    async frontApp({ bundle } = {}) {
+      if (bundle !== undefined) {
+        if (bundle !== 'com.apple.Terminal') throw Error('BACKGROUND_APP_UNSUPPORTED');
+        otherFront = await arrangeTerminal({ exec, sleep });
+      }
       if (!otherFront) throw Error('NO_OTHER_APP: the app frontmost before launch was a fixture');
       const front = await helper({ mode: 'front' }, exec);
       if (front.front !== otherFront.front) await helper({ mode: 'activate', pid: otherFront.front, fixturePid: current?.pid ?? 0 }, exec);
@@ -228,7 +395,10 @@ export function liveDriver(app, { root, exec, observer, forkWorker = worker, car
     },
     async nativeSheetCancel() { return helper({ mode: 'press', pid: current.pid, title: 'Cancel' }, exec); },
     readFile: name => { try { return readFileSync(join(files.root, name), 'utf8'); } catch { return ''; } },
-    async appAlive() { return !!current && await alive(current.pid); },
+    async appAlive() {
+      const target = launched.find(row => row.pid === current?.pid);
+      return !!current && await alive(current.pid, target?.startedAtMs);
+    },
     async revoke() { await active.send('revoke'); },
     async resume() { await active.send('resume'); },
     // The indicator's Disconnect in the live worker, which keeps running: the cell's next call goes through that same worker,
@@ -238,47 +408,56 @@ export function liveDriver(app, { root, exec, observer, forkWorker = worker, car
       if (!reply.ok) throw Error(reply.error);
       const open = reply.status?.workers;
       if (!Array.isArray(open) || open.length) throw Error(`DISCONNECT_WORKER_CHANNEL_OPEN: ${Array.isArray(open) ? open.length : 'unknown'}`);
-      return { appAlive: await driver.appAlive(), pipeRetained: pipeRetained(reply.status) };
+      return { appAlive: await driver.appAlive(), pipeRetained: pipeRetained(reply.status), parked: parkedReceipt(reply.status?.broker?.parked) };
     },
+    async status() { return (await active?.send('status'))?.status ?? null; },
     // In the live worker: release and select again (a new turn, the session grant). Without one: a new worker and its card.
     async reconnect({ consentWaitMs } = {}) {
       const { w, reply } = await startWorker(consentWaitMs, session, active);
       if (reply.ok) { active = w; current = last = reply.identity; }
-      else { w.kill(); workers.delete(w); if (active === w) active = undefined; }
+      else { w.kill(); if (active === w) active = undefined; }
       return reply.card ?? { shown: false, status: 'refused', error: reply.error };
     },
-    async killWorker() { active?.kill(); workers.delete(active); active = undefined; return { killed: true }; },
+    async killWorker() { active?.kill(); active = undefined; return { killed: true }; },
     async killHost() {
       const status = (await active.send('status')).status;
       hostPid = status?.hostPid ?? hostPid;
       const host = (await listProcesses(exec)).find(p => p.pid === hostPid);
       if (!host || !host.args.includes(stateDir)) throw Error('HOST_PID_UNKNOWN: the host status gave no pid naming this run');
       process.kill(hostPid, 'SIGKILL'); // the host this run started, matched by its state folder
-      active.kill(); workers.delete(active); active = undefined;
-      return { appAlive: await driver.appAlive() };
+      await active.stop(); active = undefined;
+      // A temporary app has no pipe keeper. Give EOF time to reach it before probing unresolved ownership.
+      await sleep(500);
+      const target = launched.find(row => row.pid === current?.pid);
+      if (!target?.processStartedAtMs) throw Error('FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED');
+      const appExited = await exited(target.pid, target.processStartedAtMs);
+      return { appAlive: !appExited, appExited };
     },
-    // A new worker asks for the app while the dead host's ownership is unresolved: refused before any card or launch.
+    // Read the restarted host's launch gate. A free gate never triggers selection, a debugger card or a replacement app.
     async secondLaunch() {
-      const { w, reply } = await startWorker(0);
-      if (reply.ok) await w.send('end');
-      w.kill(); workers.delete(w);
-      return { code: reply.ok ? null : (/[A-Z_]{6,}/.exec(reply.error)?.[0] ?? reply.error) };
+      const w = await spawnWorker();
+      const reply = seen(await w.send('probe-launch', message()));
+      await w.stop();
+      if (!reply.ok) return { code: /[A-Z_]{6,}/.exec(reply.error)?.[0] ?? reply.error };
+      const target = launched.find(row => row.pid === current?.pid);
+      return { ...reply.probe, appExited: !!target && await exited(target.pid, target.processStartedAtMs) };
     },
     // The host's own ownership recovery once the app is gone; no launch, no card.
     async reconcile() {
-      const w = forkWorker(); workers.add(w);
+      const w = await spawnWorker();
       const reply = await w.send('reconcile', message());
-      w.kill(); workers.delete(w);
+      w.kill();
       return { code: !reply.ok ? (/[A-Z_]{6,}/.exec(reply.error)?.[0] ?? reply.error) : reply.resolved ? null : 'ELECTRON_OWNERSHIP_UNRESOLVED', reason: reply.reason ?? null };
     },
     async quitByPid() {
-      const target = current ?? last;
-      const result = await runOwned('/usr/bin/osascript', ['-l', 'JavaScript', QUIT_HELPER, JSON.stringify({ mode: 'quit', pid: target.pid, bundle: app.bundleId, appPath: found.path })], { timeoutMs: 45000 });
-      return { exited: result.exit?.code === 0 && await processExitConfirmed(target.pid) };
+      const identity = current ?? last, target = launched.find(row => row.pid === identity?.pid) ?? identity;
+      if (!target?.pidBirth || !target.processStartedAtMs) throw Error('FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED');
+      await electron({ mode: 'quit', pid: target.pid, bundle: app.bundleId, appPath: found.path, pidBirth: target.pidBirth });
+      return { exited: await exited(target.pid, target.processStartedAtMs) };
     },
     async collect() {
       const left = await census();
-      if (!left.length) for (const name of readdirSync(tempRoot)) rmSync(join(tempRoot, name), { recursive: true, force: true });
+      // The restarted host must recover these original inodes before its own collect removes them.
       return { absent: left.length === 0 };
     },
     // This session keeps acting; n - 1 other sessions over the same host refuse busy, each before its card.
@@ -292,33 +471,79 @@ export function liveDriver(app, { root, exec, observer, forkWorker = worker, car
       const target = current, started = performance.now();
       const status = active ? (await active.send('status')).status : null;
       hostPid = status?.hostPid ?? hostPid;
-      for (const w of workers) { await w.send('end'); w.kill(); }
-      workers.clear(); active = undefined;
+      for (const w of workers) {
+        await w.send('end');
+        if (!await w.stop()) throw Error('WORKER_EXIT_UNCONFIRMED');
+        workers.delete(w);
+      }
+      active = undefined;
       // Quit through the app (the host's requestQuit: NSRunningApplication terminate after the birth matches).
       const admin = await driverAdmin();
-      await admin.quit();
-      const exited = target ? await processExitConfirmed(target.pid) : true;
-      await admin.collect?.();
-      await admin.close?.();
+      let quit, collected, appExited = !target;
+      try {
+        quit = await admin.quit();
+        const owned = launched.find(row => row.pid === target?.pid);
+        for (let i = 0; target && i <= 50; i++) {
+          appExited = await exited(target.pid, owned?.processStartedAtMs);
+          if (appExited || i === 50) break;
+          await sleep(100);
+        }
+        // Collection needs both the parent's exit and the host's descendant census.
+        if (appExited) {
+          for (let i = 0; i <= 50; i++) {
+            collected = await admin.collect?.();
+            if (collected?.cleanup === 'removed' || i === 50) break;
+            await sleep(100);
+          }
+        }
+      } finally { await admin.close?.(); }
       const left = await census();
       current = undefined;
-      return { exited, ms: Math.round(performance.now() - started), censusLeft: left.length, profileRemoved: readdirSync(tempRoot).length === 0 };
+      return { exited: appExited, quit, collected, ms: Math.round(performance.now() - started), censusLeft: left.length, profileRemoved: readdirSync(tempRoot).length === 0 };
     },
     async cleanup() {
-      for (const w of workers) w.kill();
-      workers.clear(); active = undefined;
+      await reaper.scan();
       const errors = [];
-      for (const { pid } of launched) {
-        if (!(await listProcesses(exec)).some(p => p.pid === pid && p.args.includes(tempRoot))) continue;
-        try { current = { pid }; await driver.quitByPid(); } catch (error) { errors.push(error.message); }
+      const workerExits = [];
+      for (const w of workers) {
+        try {
+          const gone = await w.stop();
+          workerExits.push({ pid: w.child?.pid ?? null, exited: gone === true });
+          if (gone) workers.delete(w);
+          else errors.push('WORKER_EXIT_UNCONFIRMED');
+        } catch (error) { errors.push(error.message); workerExits.push({ pid: w.child?.pid ?? null, exited: false }); }
+      }
+      active = undefined;
+      // A host may have launched the app before selectAppConnection failed or IPC was lost.
+      try { await driver.adoptRunning(); } catch (error) { errors.push(error.message); }
+      for (const target of launched) {
+        const live = (await list()).find(p => p.pid === target.pid);
+        if (!live) continue;
+        if (live.startedAtMs !== target.startedAtMs || !live.args.includes(tempRoot + '/')) { errors.push('FIXTURE_LAUNCH_IDENTITY_CHANGED'); continue; }
+        try { current = target; if (!(await driver.quitByPid()).exited) errors.push('APP_EXIT_UNCONFIRMED'); } catch (error) { errors.push(error.message); }
       }
       let left = await census();
-      for (let i = 0; left.length && i < 40; i++) { await new Promise(resolve => setTimeout(resolve, 250)); left = await census(); }
-      const host = hostPid && (await listProcesses(exec)).find(p => p.pid === hostPid && p.args.includes(stateDir));
-      if (host && !left.length) process.kill(hostPid, 'SIGTERM');
+      for (let i = 0; left.length && i < 40; i++) { await sleep(250); left = await census(); }
+      let host = hostPid && (await list()).find(p => p.pid === hostPid);
+      if (host && !left.length) {
+        if (host.startedAtMs !== hostIdentity?.startedAtMs || !host.args.includes(stateDir)) errors.push('HOST_IDENTITY_CHANGED');
+        else {
+          try { (deps.signal ?? process.kill)(hostPid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') errors.push(error.message); }
+          for (let i = 0; host && i < 40; i++) { await sleep(250); host = (await list()).find(p => p.pid === hostPid); }
+          if (host) errors.push('HOST_EXIT_UNCONFIRMED');
+        }
+      }
+      left = await census();
       const appExited = !left.length;
-      if (appExited) rmSync(base, { recursive: true, force: true });
-      return { confirmed: appExited && !errors.length, appExited, profileRemoved: appExited && !existsSync(base), left: left.map(p => p.pid), errors };
+      const reaped = appExited && !errors.length ? await reaper.reap() : { confirmed: false, left: (await reaper.scan()).map(p => p.pid), errors: [] };
+      errors.push(...reaped.errors);
+      if (!reaped.confirmed) errors.push('RUN_PROCESS_EXIT_UNCONFIRMED');
+      const workersExited = workerExits.every(row => row.exited), confirmed = appExited && workersExited && !host && reaped.confirmed && !errors.length;
+      cleanupConfirmed = confirmed;
+      if (confirmed) rmSync(base, { recursive: true, force: true });
+      return { confirmed, appExited, workersExited, workerExits, hostExited: !host, runProcessesExited: reaped.confirmed, profileRemoved: confirmed && !existsSync(base), left: [...new Set([...left.map(p => p.pid), ...reaped.left])], errors,
+        ...(adoptionFailures.length ? { adoptionFailures } : {}),
+        ...(!confirmed ? { retainedRoot: base } : {}) };
     },
   };
   return driver;

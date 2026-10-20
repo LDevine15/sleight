@@ -7,14 +7,14 @@
 // SLEIGHT_EQ_ARM_CONFIG names a 0600 file in the run's state folder with the registry, folders, session and host secret.
 // The model has no shell or file tools in this arm, so it never reads that file.
 import { fork } from 'node:child_process';
-import { lstatSync, readFileSync } from 'node:fs';
+import { appendFileSync, lstatSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createProtocol } from './turbo/v3-protocol.mjs';
 
 const WORKER = fileURLToPath(new URL('./electron-qualification-worker.mjs', import.meta.url));
-const KEYS = ['allowlist', 'appSecret', 'bundleId', 'cardLog', 'name', 'registryPath', 'session', 'stateDir', 'tempRoot', 'workspace'];
+const KEYS = ['allowlist', 'appSecret', 'bundleId', 'cardLog', 'name', 'python', 'qualificationDiagnosticPath', 'registryPath', 'session', 'stateDir', 'tempRoot', 'workspace'];
 
 export function readArmConfig(path, { stat = lstatSync, read = readFileSync, uid = process.getuid() } = {}) {
   const s = stat(path);
@@ -25,8 +25,9 @@ export function readArmConfig(path, { stat = lstatSync, read = readFileSync, uid
   return config;
 }
 
-function forkWorker() {
-  const child = fork(WORKER, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json' });
+export function forkWorker({ forkProcess = fork, env = process.env } = {}) {
+  const child = forkProcess(WORKER, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json',
+    env: { ...env, SLEIGHT_TURBO_UNQUALIFIED: '1' } });
   const pending = new Map();
   let sequence = 0, lost;
   child.on('message', msg => { const entry = pending.get(msg.id); if (entry) { pending.delete(msg.id); entry(msg); } });
@@ -46,7 +47,7 @@ export async function createArmSession({ config, text, worker = forkWorker() }) 
   const reply = await worker.send('start', { ...config, text });
   if (!reply.ok) {
     worker.kill();
-    throw Object.assign(Error(/[A-Z][A-Z_]{5,}/.exec(String(reply.error))?.[0] ?? 'ARM_START_FAILED'), { stage: 'app-start' });
+    throw Object.assign(Error(/[A-Z][A-Z_]{5,}/.exec(String(reply.error))?.[0] ?? 'ARM_START_FAILED'), { stage: reply.stage ?? 'app-start' });
   }
   return {
     identity: reply.identity,
@@ -61,7 +62,8 @@ export async function createArmSession({ config, text, worker = forkWorker() }) 
 
 async function main() {
   const config = readArmConfig(process.env.SLEIGHT_EQ_ARM_CONFIG ?? '');
-  const protocol = createProtocol({ start: () => createArmSession({ config, text: process.env.SLEIGHT_EQ_ARM_TASK ?? 'Electron arm task.' }) });
+  const protocol = createProtocol({ start: () => createArmSession({ config, text: process.env.SLEIGHT_EQ_ARM_TASK ?? 'Electron arm task.' }),
+    onStartupFailure: row => appendFileSync(join(config.stateDir, 'startup.jsonl'), JSON.stringify(row) + '\n', { mode: 0o600 }) });
   const lines = createInterface({ input: process.stdin });
   let stopping;
   const stop = () => stopping ??= protocol.close().catch(() => {}).finally(() => { lines.close(); process.stdin.destroy(); });

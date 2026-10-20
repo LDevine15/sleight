@@ -10,11 +10,11 @@ import { isAbsolute, normalize } from 'node:path';
 import { createElectronHost, createPythonAdapter } from './electron-host.mjs';
 
 const fail = code => { throw Error(code); };
-const options = new Set(['--state-dir', '--registry', '--temp-root', '--builds', '--python', '--adapter-script', '--broker-module', '--admin-fd']);
+const options = new Set(['--state-dir', '--registry', '--temp-root', '--builds', '--python', '--adapter-script', '--broker-module', '--admin-fd', '--startup-fd']);
 const absolute = value => typeof value === 'string' && isAbsolute(value) && normalize(value) === value && !value.includes('\0');
 
 export function parseHostArguments(argv) {
-  if (!Array.isArray(argv) || argv.length % 2 || argv.length > 16) fail('HOST_ARGUMENTS_INVALID');
+  if (!Array.isArray(argv) || argv.length % 2 || argv.length > options.size * 2) fail('HOST_ARGUMENTS_INVALID');
   const parsed = {};
   for (let i = 0; i < argv.length; i += 2) {
     if (!options.has(argv[i]) || Object.hasOwn(parsed, argv[i]) || typeof argv[i + 1] !== 'string') fail('HOST_ARGUMENTS_INVALID');
@@ -25,10 +25,12 @@ export function parseHostArguments(argv) {
     if (Object.hasOwn(parsed, path) && !absolute(parsed[path])) fail('HOST_ARGUMENTS_INVALID');
   }
   if (Object.hasOwn(parsed, '--admin-fd') && !/^(0|[3-9]|[1-9][0-9])$/.test(parsed['--admin-fd'])) fail('HOST_ARGUMENTS_INVALID');
+  if (Object.hasOwn(parsed, '--startup-fd') && (parsed['--startup-fd'] !== '4' || parsed['--admin-fd'] === '4')) fail('HOST_ARGUMENTS_INVALID');
   const builds = parsed['--builds'].split(',');
   if (!builds.length || builds.length > 16 || builds.some(build => !/^[A-Za-z0-9._@+-]{1,128}$/.test(build))) fail('HOST_ARGUMENTS_INVALID');
   return Object.freeze({ stateDir: parsed['--state-dir'], registryPath: parsed['--registry'], tempRoot: parsed['--temp-root'], builds,
     python: parsed['--python'] ?? 'python3', adminFd: Object.hasOwn(parsed, '--admin-fd') ? Number(parsed['--admin-fd']) : undefined,
+    startupFd: Object.hasOwn(parsed, '--startup-fd') ? 4 : undefined,
     script: parsed['--adapter-script'] ?? fileURLToPath(new URL('./electron/launch.py', import.meta.url)),
     brokerModule: parsed['--broker-module'] ?? fileURLToPath(new URL('./electron/broker.mjs', import.meta.url)) });
 }

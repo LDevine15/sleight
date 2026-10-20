@@ -9,6 +9,7 @@ import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { parkedReceipt } from '../plugins/sleight/lib/direct-browser/electron-host-reasons.mjs';
 
 export const HOLD = '/tmp/sleight-hold', LOCK = '/tmp/sleight-live.lock';
 export const APPS = Object.freeze({
@@ -53,6 +54,16 @@ export function refOf(text, pattern) {
   for (const line of String(text).split('\n')) if (pattern.test(line)) { const m = /\[ref=((?:f\d+)?[es]\d+)\]/.exec(line); if (m) return m[1]; }
   return null;
 }
+const escaped = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function editorRefOf(text, name) {
+  const tab = new RegExp('tab "' + escaped(name) + '(?:"|,)');
+  const lines = String(text).split('\n');
+  if (!lines.some(line => tab.test(line) && /\[selected\]/.test(line))) return null;
+  const editors = lines.filter(line => /textbox/.test(line) && (line.includes(name) || /Editor content/i.test(line)));
+  const named = editors.filter(line => line.includes(name));
+  if (named.length === 1) return refOf(named[0], /textbox/);
+  return editors.length === 1 && /textbox "Editor content(?:"|[,;])/i.test(editors[0]) ? refOf(editors[0], /textbox/) : null;
+}
 const first = text => String(text).split('\n')[0].slice(0, 240);
 const fail = code => { throw new Error(code); };
 
@@ -64,7 +75,7 @@ export function percentile(values, p) {
 export const timingSummary = values => ({ n: values.length, p50: percentile(values, 50), p90: percentile(values, 90) });
 
 // Frontmost-app and pointer samples every 50 ms. A cell is covered when samples reach both ends and no gap passes 150 ms.
-export function backgroundEvidence(samples, { startMs, endMs, fixturePid, intervalMs = SAMPLE_MS }) {
+export function backgroundEvidence(samples, { startMs, endMs, fixturePid, fixturePids = [], intervalMs = SAMPLE_MS }) {
   const near = samples.filter(s => s.t >= startMs - 2 * intervalMs && s.t <= endMs + 2 * intervalMs).sort((a, b) => a.t - b.t);
   const inside = near.filter(s => s.t >= startMs && s.t <= endMs);
   let gap = 0;
@@ -72,7 +83,7 @@ export function backgroundEvidence(samples, { startMs, endMs, fixturePid, interv
   const covered = near.length > 0 && near[0].t <= startMs + 2 * intervalMs && near.at(-1).t >= endMs - 2 * intervalMs && gap <= 3 * intervalMs;
   const origin = inside[0] ?? near[0];
   const moved = Math.max(0, ...inside.map(s => Math.round(Math.hypot(s.x - origin.x, s.y - origin.y))));
-  return { samples: inside.length, covered, maxGapMs: gap, fixtureFront: inside.filter(s => s.front === fixturePid).length,
+  return { samples: inside.length, covered, maxGapMs: gap, fixtureFront: inside.filter(s => s.front === fixturePid || fixturePids.includes(s.front)).length,
     frontPids: [...new Set(inside.map(s => s.front))].sort((a, b) => a - b), pointerMovedPx: moved };
 }
 
@@ -83,10 +94,12 @@ export const CELLS = Object.freeze([
     // The debugger card is sleight's own native window. Only the user's click answers it; the harness waits and records.
     const r = c.state.connected = await c.driver.connect({ consentWaitMs: c.options.consentWaitMs });
     c.consent(r.card, 'consent-card');
+    if (r.error) throw Object.assign(Error(r.error), { stage: r.stage });
+    if (r.card.error && !r.card.shown && !r.card.existing) fail(r.card.error);
     if (!r.card.shown && !r.card.existing) fail('CONSENT_CARD_NOT_SHOWN');
     if (r.card.status !== 'granted') { c.state.noConnection = true; fail(r.card.status === 'timeout' ? 'CONSENT_NEEDS_OWNER: no click on the debugger card within '
       + Math.round(c.options.consentWaitMs / 1000) + ' s; the harness never clicks it' : 'CONSENT_' + String(r.card.status).toUpperCase()); }
-    return { number: r.card.ms, unit: 'ms', detail: { by: r.card.by, scope: r.card.scope } };
+    return { number: r.card.ms, unit: 'ms', detail: { by: r.card.by, scope: r.card.scope, qualification: r.qualification ?? null } };
   } },
   { id: 'connect', async run(c) {
     const r = c.state.connected ?? fail('NOT_CONNECTED'), id = c.driver.identity();
@@ -111,7 +124,8 @@ export const CELLS = Object.freeze([
     const rows = await c.list(), joined = rows.filter(row => !row.parked);
     if (!joined.length) fail('NO_JOINED_APP_TAB');
     c.state.tab = joined[0].tab;
-    return { number: rows.length, unit: 'tabs' };
+    c.state.workspaceWindow = joined[0].window;
+    return { number: rows.length, unit: 'tabs', detail: { tabs: rows } };
   } },
   { id: 'read', editor: true, async run(c) {
     const r = await c.read(c.tab()), h = headerOf(r.text) ?? fail('APP_HEADER_MISSING');
@@ -125,24 +139,31 @@ export const CELLS = Object.freeze([
     return { number: r.ms, unit: 'ms' };
   } },
   { id: 'key', editor: true, input: true, async run(c) {
-    await c.read(c.tab());
-    await c.act(c.tab(), [{ do: 'press', key: 'Meta+P' }]);
-    if (!SELECTORS.quickOpen.test((await c.read(c.tab())).text)) fail('QUICK_OPEN_MISSING');
-    await c.act(c.tab(), [{ do: 'press', key: 'Escape' }]);
-    if (SELECTORS.quickOpen.test((await c.read(c.tab())).text)) fail('ESCAPE_EFFECT_MISSING');
+    await c.openScratch();
+    try {
+      await c.act(c.tab(), [{ do: 'press', key: 'Meta+P' }]);
+      if (!await c.until(async () => SELECTORS.quickOpen.test((await c.read(c.tab(), { find: 'Search files by name|Quick open|type the name' })).text), 5000)) fail('QUICK_OPEN_MISSING');
+    } finally {
+      await c.read(c.tab(), { find: 'Search files by name|Quick open|type the name' });
+      await c.act(c.tab(), [{ do: 'press', key: 'Escape' }]);
+    }
+    if (SELECTORS.quickOpen.test((await c.read(c.tab(), { find: 'Search files by name|Quick open|type the name' })).text)) fail('ESCAPE_EFFECT_MISSING');
     return {};
   } },
-  { id: 'background-type', editor: true, input: true, async run(c) {
+  { id: 'background-type', editor: true, input: true,
+    prepare: c => c.driver.frontApp({ bundle: 'com.apple.Terminal' }), async run(c) {
     // The review's first live cell: typing lands while another app stays frontmost the whole time.
     const front = await c.driver.frontApp(), trials = c.options.trials;
+    if (front.bundle !== 'com.apple.Terminal') fail('BACKGROUND_TERMINAL_REQUIRED');
+    await c.openScratch();
     let present = 0;
     for (let i = 0; i < trials; i++) {
       const marker = `eq${i}k${Math.random().toString(36).slice(2, 8)}`;
       const steps = ref => [{ do: 'type', ref, text: marker + '\n' }, { do: 'press', key: 'Meta+S' }];
-      let ref = refOf((await c.read(c.tab())).text, SELECTORS.editor) ?? fail('EDITOR_NOT_FOUND');
+      let ref = editorRefOf((await c.read(c.tab(), { find: 'Editor content|a-scratch.txt' })).text, 'a-scratch.txt') ?? fail('EDITOR_NOT_FOUND');
       let r = await c.tool('browser_act', { tab: c.tab(), steps: steps(ref), observe: 'none' });
       if (r.isError && /ELECTRON_STALE_READ/.test(r.text)) {
-        ref = refOf((await c.read(c.tab())).text, SELECTORS.editor) ?? fail('EDITOR_NOT_FOUND');
+        ref = editorRefOf((await c.read(c.tab(), { find: 'Editor content|a-scratch.txt' })).text, 'a-scratch.txt') ?? fail('EDITOR_NOT_FOUND');
         r = await c.tool('browser_act', { tab: c.tab(), steps: steps(ref), observe: 'none' });
       }
       if (r.isError) fail(first(r.text));
@@ -152,10 +173,10 @@ export const CELLS = Object.freeze([
     return { number: present, unit: `of ${trials}`, expectFront: front.pid, detail: { frontBundle: front.bundle } };
   } },
   { id: 'webview', apps: ['vscode'], editor: true, input: true, async run(c) {
-    const ref = refOf((await c.read(c.tab())).text, SELECTORS.notes) ?? fail('NOTES_ROW_NOT_FOUND');
-    await c.act(c.tab(), [{ do: 'click', ref }, { do: 'press', key: 'Meta+Shift+V' }]);
+    await c.openFile('a-notes.md');
+    await c.act(c.tab(), [{ do: 'press', key: 'Meta+Shift+V' }]);
     let frame;
-    await c.until(async () => (frame = SELECTORS.frameRef.exec((await c.read(c.tab())).text)?.[1]), 5000);
+    await c.until(async () => (frame = SELECTORS.frameRef.exec((await c.read(c.tab(), { find: 'Item one|Qualification notes' })).text)?.[1]), 5000);
     if (!frame) fail('WEBVIEW_NOT_READ');
     await c.act(c.tab(), [{ do: 'click', ref: frame }]);
     return { detail: { frameRef: true } };
@@ -174,18 +195,19 @@ export const CELLS = Object.freeze([
     return { detail: { openRefused: true, ...refused } };
   } },
   { id: 'new-window', apps: ['vscode'], editor: true, input: 'record', async run(c) {
-    // A second window of this instance, with the owner's own VS Code possibly running beside it (a test input, never read).
-    const owners = await c.driver.ownerInstances();
+    // Creating a native window can activate the app. Turbo must hand that key back to the native path.
+    // Joining multiple already-open fixture windows is a separate requirement, never satisfied by a refusal alone.
+    const owners = await c.driver.ownerInstances(), before = (await c.list()).filter(row => !row.parked);
     await c.read(c.tab());
-    await c.act(c.tab(), [{ do: 'press', key: 'Meta+Shift+N' }]);
-    let rows = [];
-    await c.until(async () => (rows = (await c.list()).filter(row => !row.parked)).length >= 2, 10000);
-    if (rows.length < 2) fail(`SECOND_WINDOW_NOT_JOINED: ${rows.length}`);
+    const result = await c.tool('browser_act', { tab: c.tab(), steps: [{ do: 'press', key: 'Meta+Shift+N' }], observe: 'none' });
+    if (!result.isError || !/ELECTRON_APP_KEY_REFUSED/.test(result.text)) fail('WINDOW_CREATION_NOT_REFUSED');
+    const rows = (await c.list()).filter(row => !row.parked);
+    if (rows.length !== before.length) fail('WINDOW_CHANGED_AFTER_REFUSAL');
     const ids = rows.map(row => row.window), mine = c.driver.identity().pid, map = await c.driver.windowOwners(ids);
     const falseJoins = ids.filter(id => map[id] !== mine).length;
     if (new Set(ids).size !== ids.length) fail('WINDOW_JOINED_TWICE');
     if (falseJoins) fail(`FALSE_JOINS: ${falseJoins}`);
-    return { number: rows.length, unit: 'windows', detail: { joined: rows.length, falseJoins, ownerInstances: owners } };
+    return { number: rows.length, unit: 'windows', detail: { joined: rows.length, falseJoins, ownerInstances: owners, windowCreationRefused: true } };
   } },
   { id: 'title-bar-delta', apps: ['vscode'], editor: true, async run(c) {
     const g = await c.driver.geometry(c.tab());
@@ -199,15 +221,18 @@ export const CELLS = Object.freeze([
     return { detail: { zoomLevel: 0, scaleMatch: true } };
   } },
   { id: 'terminal-refusal', apps: ['vscode'], editor: true, input: true, async run(c) {
-    await c.read(c.tab());
-    await c.act(c.tab(), [{ do: 'press', key: 'Control+`' }]);
-    let ref;
-    await c.until(async () => (ref = refOf((await c.read(c.tab())).text, SELECTORS.terminal)), 5000);
-    if (!ref) fail('TERMINAL_NOT_FOUND');
-    const r = await c.tool('browser_act', { tab: c.tab(), steps: [{ do: 'type', ref, text: 'echo refused' }] });
-    await c.read(c.tab());
-    await c.tool('browser_act', { tab: c.tab(), steps: [{ do: 'press', key: 'Control+`' }] }); // hides the panel; its result is not the cell's
-    if (!r.isError || !/ELECTRON_TERMINAL_REFUSED/.test(r.text)) fail('TERMINAL_INPUT_NOT_REFUSED');
+    await c.openScratch();
+    try {
+      await c.act(c.tab(), [{ do: 'press', key: 'Control+`' }]);
+      let ref;
+      await c.until(async () => (ref = refOf((await c.read(c.tab(), { find: 'Terminal' })).text, SELECTORS.terminal)), 5000);
+      if (!ref) fail('TERMINAL_NOT_FOUND');
+      const r = await c.tool('browser_act', { tab: c.tab(), steps: [{ do: 'type', ref, text: 'echo refused' }] });
+      if (!r.isError || !/ELECTRON_TERMINAL_REFUSED/.test(r.text)) fail('TERMINAL_INPUT_NOT_REFUSED');
+    } finally {
+      // A key in the terminal is correctly refused. Click the editor instead, including on a failed probe.
+      await c.openScratch();
+    }
     return { detail: { refused: true } };
   } },
   { id: 'app-key-refusal', editor: true, input: true, async run(c) {
@@ -222,6 +247,7 @@ export const CELLS = Object.freeze([
     return { number: refused, unit: 'keys' };
   } },
   { id: 'sheet-parking', apps: ['vscode'], editor: true, input: true, async run(c) {
+    await c.openScratch();
     const before = headerOf((await c.read(c.tab())).text) ?? fail('APP_HEADER_MISSING');
     await c.act(c.tab(), [{ do: 'press', key: 'Meta+Shift+S' }], { allowPark: true });
     let row;
@@ -241,14 +267,14 @@ export const CELLS = Object.freeze([
   } },
   { id: 'revoke', apps: ['vscode'], editor: true, input: true, async run(c) {
     // Pause mid-batch: the revocation parks the batch, and no step is sent twice.
-    const ref = refOf((await c.read(c.tab())).text, SELECTORS.editor) ?? fail('EDITOR_NOT_FOUND');
+    const ref = await c.openScratch();
     const tag = Math.random().toString(36).slice(2, 6), markers = Array.from({ length: 6 }, (_, i) => `rv${tag}${i}`);
     const pending = c.tool('browser_act', { tab: c.tab(), steps: markers.flatMap(text => [{ do: 'type', ref, text: text + ' ' }, { do: 'wait', ms: 250 }]), observe: 'none' });
     await c.sleep(300);
     await c.driver.revoke();
     const r = await pending;
     await c.driver.resume();
-    const text = (await c.read(c.tab())).text;
+    const text = (await c.read(c.tab(), { find: 'rv|Editor content' })).text;
     const replays = markers.filter(m => text.split(m).length > 2).length;
     if (!/ELECTRON_PARKED|parked|revoked/i.test(r.text)) fail('REVOKE_NOT_REPORTED');
     if (replays) fail(`REPLAYED: ${replays}`);
@@ -256,6 +282,7 @@ export const CELLS = Object.freeze([
   } },
   { id: 'disconnect', apps: ['vscode'], editor: true, async run(c) {
     const r = await c.driver.disconnect();
+    c.state.disconnectParked = parkedReceipt(r.parked);
     const refused = await c.tool('browser_tabs', { do: 'list' });
     await c.driver.reconnect({ consentWaitMs: c.options.consentWaitMs }).then(card => c.consent(card, 'disconnect'));
     const rows = await c.list();
@@ -282,19 +309,22 @@ export const CELLS = Object.freeze([
     const op = async (kind, tab) => {
       const r = kind === 'list' ? await c.tool('browser_tabs', { do: 'list' }) : kind === 'read' ? await c.tool('browser_read', { tab, max_chars: 8000 })
         : await c.tool('browser_act', { tab, steps: [{ do: 'press', key: 'Escape' }], observe: 'none' });
-      if (r.isError) fail(`${kind.toUpperCase()}_FAILED: ${first(r.text)}`);
+      if (r.isError) throw Object.assign(Error(`${kind.toUpperCase()}_FAILED: ${first(r.text)}`), { detail: { snapshotFailure: r.snapshotFailure ?? null } });
       return r.ms;
     };
     // Each cold sample is a new turn in the live worker: release and select again on the session grant, so no card.
     for (const kind of Object.keys(kinds)) {
       for (let i = 0; i < Math.min(c.options.samples, c.options.coldSamples); i++) {
+        if (kind === 'act') await c.openScratch();
         c.consent(await c.driver.reconnect({ consentWaitMs: c.options.consentWaitMs }), 'timings');
-        const tab = kind === 'list' ? undefined : (await c.list()).find(row => !row.parked)?.tab ?? fail('NO_JOINED_APP_TAB');
-        if (kind === 'act') await c.read(tab);
+        const rows = kind === 'list' ? [] : await c.list();
+        const tab = kind === 'list' ? undefined : (rows.find(row => !row.parked && row.window === c.state.workspaceWindow)
+          ?? rows.find(row => !row.parked))?.tab ?? fail('NO_JOINED_APP_TAB');
+        if (kind === 'act') await c.read(tab, { find: 'Editor content|a-scratch.txt' });
         kinds[kind].cold.push(await op(kind, tab));
       }
-      const tab = (await c.list()).find(row => !row.parked)?.tab;
-      if (kind === 'act') await c.read(tab);
+      if (kind === 'act') await c.openScratch();
+      const tab = kind === 'act' ? c.tab() : (await c.list()).find(row => !row.parked)?.tab;
       for (let i = 0; i < c.options.samples; i++) kinds[kind].warm.push(await op(kind, tab));
       c.state.tab = tab ?? c.state.tab;
     }
@@ -311,26 +341,34 @@ export const CELLS = Object.freeze([
   } },
   { id: 'quit', async run(c) {
     if (c.state.noConnection) fail('NOTHING_LAUNCHED');
+    c.state.quitConfirmed = false;
     const r = await c.driver.quit();
-    if (!r.exited) fail('APP_QUIT_UNCONFIRMED');
+    c.state.quitConfirmed = r.exited && !r.censusLeft && r.profileRemoved;
+    if (!r.exited) throw Object.assign(Error('APP_QUIT_UNCONFIRMED'), { detail: r });
     if (r.censusLeft) fail(`CENSUS_LEFT: ${r.censusLeft}`);
     if (!r.profileRemoved) fail('PROFILE_NOT_REMOVED');
     return { number: r.ms, unit: 'ms', detail: { censusLeft: 0, profileRemoved: true } };
   } },
   { id: 'host-kill', apps: ['vscode'], async run(c) {
     if (c.state.noConnection) fail('NOTHING_LAUNCHED');
+    if (c.state.quitConfirmed === false) fail('PREVIOUS_QUIT_UNCONFIRMED');
     // A second instance, so Quit above ran with a live host. Recorded either way: whether the app survives its host.
     const launched = await c.driver.connect({ consentWaitMs: c.options.consentWaitMs });
     c.consent(launched.card, 'host-kill');
     if (launched.card.status !== 'granted') fail('CONSENT_NEEDS_OWNER');
     const killed = await c.driver.killHost();
-    const refusal = await c.driver.secondLaunch();
-    if (!/OWNERSHIP_UNRESOLVED/.test(refusal.code ?? '')) fail(`SECOND_LAUNCH_NOT_REFUSED: ${refusal.code}`);
-    if (killed.appAlive) await c.driver.quitByPid();
+    let refusal, secondLaunchProbed = false;
+    if (killed.appAlive) {
+      refusal = await c.driver.secondLaunch();
+      secondLaunchProbed = true;
+      if (!/OWNERSHIP_UNRESOLVED/.test(refusal.code ?? '') && !(refusal.code === 'ELECTRON_OWNERSHIP_FREE' && refusal.appExited === true))
+        fail(`SECOND_LAUNCH_NOT_REFUSED: ${refusal.code}`);
+      if (await c.driver.appAlive()) await c.driver.quitByPid();
+    } else if (killed.appExited !== true) fail('HOST_LOSS_APP_EXIT_UNCONFIRMED');
     if (!(await c.driver.collect()).absent) fail('COLLECT_ABSENCE_UNPROVED');
     const after = await c.driver.reconcile();
     if (after.code) fail(`RECONCILE_AFTER_COLLECT: ${after.code}`);
-    return { detail: { appSurvived: killed.appAlive, refusal: refusal.code, coldLaunchMs: launched.launch.ms } };
+    return { detail: { appSurvived: killed.appAlive, secondLaunchProbed, refusal: refusal?.code ?? null, coldLaunchMs: launched.launch.ms } };
   } },
 ].map(cell => Object.freeze(cell)));
 
@@ -341,6 +379,7 @@ export const RELAUNCH_CELLS = Object.freeze([
   { id: 'relaunch-card', measures: 'the debugger card, then the relaunch card naming the running process; only the owner clicks', async run(c) {
     const r = c.state.relaunched = await c.driver.relaunch({ consentWaitMs: c.options.consentWaitMs });
     c.consent(r.card.debugger, 'relaunch-card'); c.consent(r.card.relaunch, 'relaunch-card');
+    if (r.error) fail(r.error);
     if (r.card.relaunch.status !== 'granted') { c.state.noConnection = true; fail(r.card.relaunch.status === 'timeout' ? 'CONSENT_NEEDS_OWNER: no click on the relaunch card' : 'RELAUNCH_' + String(r.card.relaunch.status).toUpperCase()); }
     if (r.before.pid === r.pid) fail('SAME_PROCESS: the app was not reopened');
     return { number: r.ms, unit: 'ms', detail: { before: { windows: r.before.windows } } };
@@ -433,7 +472,30 @@ function context({ app, driver, clock, options, state, timings, consentLog }) {
       if (!c.windows.some(w => w.id === window && w.pid === id?.pid)) c.windows.push({ id: window, epoch, pid: id?.pid, pidBirth: id?.pidBirth });
     },
     async list() { const r = await c.tool('browser_tabs', { do: 'list' }); if (r.isError) fail(first(r.text)); return tabsOf(r.text); },
-    async read(tab, extra = {}) { const r = await c.tool('browser_read', { tab, ...extra }); if (r.isError) fail(first(r.text)); return r; },
+    async read(tab, extra = {}) {
+      const r = await c.tool('browser_read', { tab, ...extra });
+      c.reads ??= [];
+      c.reads.push({ at: clock.now(), tab, ...extra, isError: !!r.isError, chars: r.text.length,
+        cut: /^# Cut:/m.test(r.text), text: r.text.slice(0, 6000) });
+      if (c.reads.length > 12) c.reads.shift();
+      if (r.isError) throw Object.assign(Error(first(r.text)), { detail: { tab, snapshotFailure: r.snapshotFailure ?? null } });
+      return r;
+    },
+    openScratch: () => c.openFile('a-scratch.txt'),
+    async openFile(name) {
+      const rows = await c.list(), row = rows.find(row => row.window === state.workspaceWindow && !row.parked)
+        ?? rows.find(row => row.tab === state.tab && !row.parked) ?? fail('WORKSPACE_WINDOW_NOT_FOUND');
+      state.tab = row.tab;
+      const text = (await c.read(c.tab(), { find: name })).text;
+      const ref = refOf(text, new RegExp('tab "' + escaped(name) + '(?:"|,)'))
+        ?? refOf(text, new RegExp('treeitem "' + escaped(name) + '"')) ?? fail('FILE_ROW_NOT_FOUND: ' + name);
+      await c.act(c.tab(), [{ do: 'click', ref }]);
+      let editor;
+      await c.until(async () => (editor = editorRefOf((await c.read(c.tab(), { find: 'Editor content|' + name })).text, name)), 5000);
+      if (!editor) fail('EDITOR_NOT_FOUND');
+      await c.act(c.tab(), [{ do: 'click', ref: editor }]);
+      return editor;
+    },
     async act(tab, steps, { allowPark = false } = {}) {
       const r = await c.tool('browser_act', { tab, steps, observe: 'none' });
       if (r.isError && !(allowPark && /ELECTRON_PARKED/.test(r.text))) fail(first(r.text));
@@ -448,6 +510,14 @@ function context({ app, driver, clock, options, state, timings, consentLog }) {
 
 async function runCell(cell, c, { driver, observer, clock }) {
   const record = { id: cell.id, status: 'fail' };
+  c.reads = [];
+  let preparationError;
+  if (cell.prepare) {
+    const started = clock.now();
+    try { await cell.prepare(c); }
+    catch (error) { preparationError = error; }
+    record.setup = { ms: clock.now() - started, ...(preparationError ? { error: preparationError.message } : {}) };
+  }
   if (cell.input) {
     const id = driver.identity();
     if (id && await observer.frontPid?.() === id.pid) { await driver.frontApp(); record.refocused = true; } // before the cell's window
@@ -455,18 +525,50 @@ async function runCell(cell, c, { driver, observer, clock }) {
   const start = clock.now();
   let out = {};
   try {
+    if (preparationError) throw preparationError;
     out = await cell.run(c) ?? {};
     record.status = 'pass';
-  } catch (error) { record.error = String(error?.message ?? error).slice(0, 300); }
+  } catch (error) {
+    record.error = String(error?.message ?? error).slice(0, 300);
+    if (error.stage) record.stage = error.stage;
+    if (error.detail) record.detail = error.detail;
+  }
   const end = clock.now();
+  record.startMs = start;
+  record.endMs = end;
+  record.reads = c.reads;
   record.ms = end - start;
   if (out.number !== undefined) { record.number = out.number; record.unit = out.unit; }
   if (out.detail !== undefined) record.detail = out.detail;
   const id = driver.identity();
   if (id) record.identity = { pid: id.pid, pidBirth: id.pidBirth, instance: id.instance, epoch: id.epoch };
   record.windows = c.windows;
-  const evidence = backgroundEvidence(await observer.samples(start, end), { startMs: start, endMs: end, fixturePid: id?.pid });
+  const samples = await observer.samples(start, end);
+  const fixturePids = driver.fixturePids?.() ?? [];
+  const evidence = backgroundEvidence(samples, { startMs: start, endMs: end, fixturePid: id?.pid, fixturePids });
+  // EQ1c permits only the benchmark VS Code's initial direct exec, never input or the product relaunch flow.
+  const launches = !c.options.relaunch && c.app.key === 'vscode' && cell.id === 'consent-card' && !cell.input
+    ? (driver.launchWindows?.() ?? []).filter(w => Number.isFinite(w.execMs) && Number.isFinite(w.firstWindowMs) &&
+      w.execMs >= start && w.firstWindowMs >= w.execMs && w.endMs === w.firstWindowMs + 2000 &&
+      w.endMs <= end && (w.pid === id?.pid || fixturePids.includes(w.pid)) &&
+      backgroundEvidence(samples, { startMs: w.execMs, endMs: w.endMs, fixturePid: w.pid }).covered) : [];
+  const allowed = s => launches.some(w => s.front === w.pid && s.t >= w.execMs && s.t <= w.endMs);
+  evidence.unexpectedFixtureFront = samples.filter(s => s.t >= start && s.t <= end &&
+    (s.front === id?.pid || fixturePids.includes(s.front)) && !allowed(s)).length;
+  for (const w of launches) {
+    const frontmostSamples = samples.filter(s => s.t >= w.execMs && s.t <= Math.min(end, w.endMs));
+    c.state.launchFindings.push({ kind: 'benchmark-direct-launch', ...w, frontmostSamples,
+      background: backgroundEvidence(samples, { startMs: w.execMs, endMs: Math.min(end, w.endMs), fixturePid: w.pid }) });
+  }
   record.background = evidence;
+  // Failed startup used to discard every timestamp unless a launch exemption was accepted.
+  // Keep the whole cell timeline, including consent-host focus, for attribution against card events.
+  if (record.status === 'fail' || evidence.unexpectedFixtureFront > 0)
+    evidence.frontmostSamples = samples.filter(s => s.t >= start && s.t <= end);
+  if (!c.options.relaunch && evidence.unexpectedFixtureFront > 0) {
+    record.detail = { ...record.detail, ...(record.error ? { startupError: record.error } : {}), focusTaken: true };
+    Object.assign(record, { status: 'fail', error: `BACKGROUND_FOCUS_TAKEN: ${evidence.unexpectedFixtureFront} samples` });
+  }
   if (cell.input === 'record') record.detail = { ...record.detail, focusTaken: evidence.fixtureFront > 0 };
   if (cell.input === true && record.status === 'pass') {
     const problem = !evidence.covered ? `BACKGROUND_UNPROVED: sampler gap ${evidence.maxGapMs} ms`
@@ -476,6 +578,11 @@ async function runCell(cell, c, { driver, observer, clock }) {
     if (out.expectFront !== undefined) record.detail = { ...record.detail, otherFront: !problem };
     if (problem) Object.assign(record, { status: 'fail', error: problem });
   }
+  if (record.status === 'fail') {
+    try { record.broker = await driver.status?.() ?? null; }
+    catch { record.broker = null; }
+  }
+  if (cell.id === 'disconnect' && c.state.disconnectParked) record.parked = c.state.disconnectParked;
   return record;
 }
 
@@ -486,19 +593,23 @@ export async function runQualification({ app, driver, observer, io, clock, cells
   const receipt = { version: 1, kind: opts.relaunch ? 'electron-relaunch' : 'electron-qualification', mode: opts.mode, at: new Date(clock.now()).toISOString(),
     app: { name: app.name, bundleId: app.bundleId }, profile: { temporary: !opts.relaunch }, cells: [], timings: {}, heldMs: 0,
     // LAWS: only the user's click answers sleight's debugger card. The harness waits for it and never presses it.
-    consent: { harnessClicks: false, cards: [] }, sampling: { intervalMs: SAMPLE_MS }, options: { trials: opts.trials, samples: opts.samples, coldSamples: opts.coldSamples, aliveWaitMs: opts.aliveWaitMs } };
-  const state = {}, c = context({ app, driver, clock, options: opts, state, timings: receipt.timings, consentLog: receipt.consent.cards });
+    consent: { harnessClicks: false, cards: [] }, launchFindings: [], sampling: { intervalMs: SAMPLE_MS }, options: { trials: opts.trials, samples: opts.samples, coldSamples: opts.coldSamples, aliveWaitMs: opts.aliveWaitMs } };
+  const state = { launchFindings: receipt.launchFindings }, c = context({ app, driver, clock, options: opts, state, timings: receipt.timings, consentLog: receipt.consent.cards });
   let stopped;
   const stop = async before => { const prompt = await io.permission(); if (prompt) stopped = { reason: 'permission-prompt', process: prompt.process, title: prompt.title, before }; return !!prompt; };
   await observer.start?.();
   try {
     for (const cell of cells) {
       if (!stopped) receipt.heldMs += await waitForHold(io, clock);
+      if (stopped?.reason === 'startup-failed') { receipt.cells.push({ id: cell.id, status: 'skipped', reason: 'STARTUP_FAILED' }); continue; }
       if (stopped || await stop(cell.id)) { receipt.cells.push({ id: cell.id, status: 'stopped' }); continue; }
       if (state.noConnection) { receipt.cells.push({ id: cell.id, status: 'skipped', reason: 'NO_CONNECTION' }); continue; }
       if (cell.editor && state.skipEditor) { receipt.cells.push({ id: cell.id, status: 'skipped', reason: 'OVERLAY_NOT_CLEARED' }); continue; }
       c.windows = [];
-      receipt.cells.push(await runCell(cell, c, { driver, observer, clock }));
+      const record = await runCell(cell, c, { driver, observer, clock });
+      receipt.cells.push(record);
+      if (['consent-card', 'connect', 'relaunch-card'].includes(cell.id) && record.status === 'fail')
+        stopped = { reason: 'startup-failed', before: cell.id, error: record.error, ...(record.stage ? { stage: record.stage } : {}) };
     }
     if (!stopped) await stop('cleanup');
   } finally {
@@ -508,6 +619,7 @@ export async function runQualification({ app, driver, observer, io, clock, cells
   }
   if (stopped) receipt.stopped = stopped;
   Object.assign(receipt.app, driver.build?.() ?? {});
+  receipt.fixtureLaunches = driver.launchWindows?.() ?? [];
   receipt.profile.removed = receipt.cleanup?.profileRemoved === true;
   receipt.qualified = false;
   // The check reads what writeReceipt writes: the scrubbed receipt, so a home path in error text is not a leak.
@@ -538,6 +650,9 @@ export function validateReceipt(receipt, { required = requiredCells(appFor(recei
     else if (cell.status === 'stopped') unqualified.push('CELL_STOPPED:' + cell.id);
     else if (cell.status === 'fail') unqualified.push('CELL_FAILED:' + cell.id);
     else if (cell.status !== 'pass') errors.push('CELL_STATUS_INVALID:' + cell.id);
+    if (cell.id === 'new-window' && cell.status === 'pass' &&
+        (!(cell.detail?.joined >= 2) || cell.detail?.falseJoins !== 0 || new Set((cell.windows ?? []).map(w => w.id)).size < 2))
+      unqualified.push('MULTI_WINDOW_UNMEASURED');
     for (const w of cell.windows ?? []) {
       const owner = `${w.pid}/${w.pidBirth}`;
       if (owners.has(w.id) && owners.get(w.id) !== owner && !errors.includes('WINDOW_REUSED:' + w.id)) errors.push('WINDOW_REUSED:' + w.id);
@@ -565,7 +680,8 @@ export function scrubReceipt(value, { home = homedir(), user = userInfo().userna
     return out;
   }
   if (Array.isArray(value)) return value.map(item => scrubReceipt(item, { home, user }));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrubReceipt(v, { home, user })]));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) =>
+    [k, k === 'parked' ? parkedReceipt(v) : scrubReceipt(v, { home, user })]));
   return value;
 }
 
@@ -603,7 +719,7 @@ function writeReceipt(dir, receipt, app) {
 const summaryLine = (app, r) => `${app.key}: ${r.cells.filter(c => c.status === 'pass').length}/${r.cells.length} cells passed, qualified ${r.qualified}` +
   (r.validation.errors.length ? `, receipt errors ${r.validation.errors.join(' ')}` : '') + (r.stopped ? `, stopped: ${r.stopped.reason}` : '');
 
-export async function main(argv = process.argv.slice(2), deps = {}) {
+async function runMain(argv, deps, qualificationDiagnosticPath) {
   const options = parseArgs(argv), log = deps.log ?? console.log, write = deps.write ?? writeReceipt;
   const clock = deps.clock ?? { now: Date.now, sleep: ms => delay(ms) };
   const out = options.out ?? fileURLToPath(new URL(`./results/electron/${new Date(clock.now()).toISOString().slice(0, 10)}/`, import.meta.url));
@@ -635,7 +751,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   let runtime, keep = false, qualified = true;
   try {
     // Preflight inside liveRuntime refuses before any launch when an EPV3 module, the app or the permission observer is missing.
-    runtime = await (deps.liveRuntime ?? (async (...args) => (await import('./electron-qualification-live.mjs')).liveRuntime(...args)))(options, { io, clock });
+    runtime = await (deps.liveRuntime ?? (async (...args) => (await import('./electron-qualification-live.mjs')).liveRuntime(...args)))(options, { io, clock, qualificationDiagnosticPath });
     for (const key of options.apps) {
       const app = APPS[key];
       const receipt = await runQualification({ app, driver: runtime.driverFor(app), observer: runtime.observer, io, clock, options: runOptions });
@@ -650,6 +766,15 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     else await release();
   }
   return qualified && !keep ? 0 : 1;
+}
+
+export async function main(argv = process.argv.slice(2), deps = {}) {
+  const options = parseArgs(argv);
+  if (options.mode === 'dry-run') return runMain(argv, deps);
+  const { withQualificationDiagnostics } = await import('./electron-diagnostics.mjs');
+  const clock = deps.clock ?? { now: Date.now };
+  const out = options.out ?? fileURLToPath(new URL(`./results/electron/${new Date(clock.now()).toISOString().slice(0, 10)}/`, import.meta.url));
+  return withQualificationDiagnostics(out, path => runMain(argv, deps, path));
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
