@@ -137,6 +137,61 @@ test('fixture: discovers additional production manifests and ignores dependency 
   assert.match(result.errors[0], /plugins\/extra\/.*1\.3\.1/);
 });
 
+for (const host of ['claude', 'codex', 'cursor']) {
+  for (const boundary of ['plugin', 'manifest']) {
+    for (const location of ['contained', 'outside']) {
+      test(`fixture: rejects unlisted ${location} symlink at ${host} ${boundary} directory`, t => {
+        const f = fixture(t);
+        const target = location === 'contained' ? join(f.root, 'tests/fixtures/linked-release')
+          : mkdtempSync(join(tmpdir(), 'sleight-release-outside-'));
+        if (location === 'outside') t.after(() => rmSync(target, { recursive: true, force: true }));
+        const manifestDirectory = boundary === 'plugin' ? join(target, `.${host}-plugin`) : target;
+        mkdirSync(manifestDirectory, { recursive: true });
+        writeFileSync(join(manifestDirectory, 'plugin.json'), JSON.stringify({ name: 'extra', version: '1.3.1' }));
+        const path = boundary === 'plugin' ? 'plugins/extra' : `plugins/extra/.${host}-plugin`;
+        mkdirSync(dirname(join(f.root, path)), { recursive: true });
+        symlinkSync(target, join(f.root, path));
+        const result = f.inspect();
+        assert.equal(result.ok, false, 'an unlisted symlink must not bypass discovery');
+        assert.ok(result.errors.some(error => error.includes(`${path}:`) && error.includes('symlink')), result.errors.join('\n'));
+      });
+    }
+  }
+}
+
+for (const path of ['catalog/.agents', 'catalog/.agents/plugins', 'catalog/plugins']) {
+  test(`fixture: rejects a symlink at catalog directory ${path}`, t => {
+    const f = fixture(t);
+    mkdirSync(dirname(join(f.root, path)), { recursive: true });
+    symlinkSync(f.root, join(f.root, path));
+    const result = f.inspect();
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => error.includes(`${path}:`) && error.includes('symlink')), result.errors.join('\n'));
+  });
+}
+
+for (const target of ['missing', '.']) {
+  test(`fixture: rejects a dangling or cyclic plugin directory symlink to ${target}`, t => {
+    const f = fixture(t);
+    symlinkSync(target, join(f.root, 'plugins/extra'));
+    const result = f.inspect();
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join('\n'), /plugins\/extra:.*symlink/);
+  });
+}
+
+test('fixture: excluded symlink directories do not enter production discovery', t => {
+  const f = fixture(t);
+  for (const path of ['tests', 'node_modules', 'vendor', 'bench', '.vale', '.git', 'plugins/sleight/vendor']) {
+    mkdirSync(dirname(join(f.root, path)), { recursive: true });
+    symlinkSync(f.root, join(f.root, path));
+  }
+  symlinkSync(join(f.root, 'CHANGELOG.md'), join(f.root, 'release-notes.md'));
+  const result = f.inspect();
+  assert.equal(result.ok, true, result.errors.join('\n'));
+  assert.deepEqual(result.manifests, manifests);
+});
+
 test('fixture: broken or escaping marketplace sources fail without running a host', t => {
   const f = fixture(t);
   f.edit(market('claude'), value => { value.plugins = []; });

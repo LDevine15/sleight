@@ -15,14 +15,19 @@ const required = [
 ];
 const excluded = new Set(['.git', 'node_modules', 'vendor', 'tests', 'bench', '.vale']);
 const manifestPath = /(?:^|\/)(?:\.(?:claude|codex|cursor)-plugin\/(?:plugin|marketplace)\.json|\.agents\/plugins\/marketplace\.json)$/;
+const productionDirectoryPath = /(?:^|\/)(?:\.(?:claude|codex|cursor)-plugin|\.agents|plugins(?:\/[^/]+)?)$/;
 
-function discover(root) {
+function discover(root, errors) {
   const paths = new Set(required);
   const walk = directory => {
     for (const entry of readdirSync(join(root, directory), { withFileTypes: true })) {
       if (excluded.has(entry.name)) continue;
       const path = directory ? `${directory}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) walk(path);
+      // Refuse production boundaries without following targets, including broken links and cycles.
+      if (entry.isSymbolicLink() && productionDirectoryPath.test(path)) {
+        errors.push(`${path}: symlink at a production manifest directory`);
+      }
+      else if (entry.isDirectory()) walk(path);
       else if ((entry.isFile() || entry.isSymbolicLink()) && manifestPath.test(path)) paths.add(path);
     }
   };
@@ -85,7 +90,7 @@ export function inspectReleaseVersion({ root = repository, expectedVersion, tag 
   if (tag !== undefined && (!isReleaseVersion(version) || tag !== `v${version}`)) errors.push(`tag: expected v${version}`);
 
   let manifests = [];
-  try { manifests = discover(root); }
+  try { manifests = discover(root, errors); }
   catch { errors.push('manifests: cannot discover release manifests'); }
   for (const path of manifests) {
     const manifest = json(path);
