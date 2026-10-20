@@ -18,6 +18,9 @@ import { serveV3Worker } from '../plugins/sleight/lib/direct-browser/worker.mjs'
 import { workerSwitches } from '../bench/replay/switches.mjs';
 
 const fixture = name => readFileSync(new URL(`./fixtures/replay/${name}.jsonl`, import.meta.url), 'utf8');
+const nativeHeader = 'Window: "Fixture", App: TextEdit.\n';
+const observeNative = (mapper, before, after) => mapper.observe(nativeHeader + before, nativeHeader + after, { code: 'await app.getAXState()' }, { server: 'plugin:sleight:computer', name: 'js' });
+
 const text = (value, isError = false) => ({ content: [{ type: 'text', text: value }], isError });
 const call = (name, args, result, id = '1') => ({ id, name, server: 'plugin:sleight:computer', arguments: args, result });
 
@@ -49,25 +52,25 @@ test('serialize overlapping tool uses in emission order', () => {
 
 test('map changed AX numbers by unique ancestor and label, keeping typed values exact', () => {
   const mapper = new TargetMapper();
-  mapper.observe('1 window Checkout\n\t2 text field Name, Value: empty\n\t3 button Save',
+  observeNative(mapper, '1 window Checkout\n\t2 text field Name, Value: empty\n\t3 button Save',
     '20 window Checkout\n\t21 text field Name, Value: filled\n\t22 button Save');
   assert.equal(mapper.code('await app.setValue(2, "2"); await app.click(3);'), 'await app.setValue(21, "2"); await app.click(22);');
   assert.throws(() => mapper.arguments({ code: 'await app.click([2, 3]);', title: 'keep 2' }), /frame/);
-  assert.equal(mapper.arguments({ elementIndex: 2 }).elementIndex, 21);
+  assert.throws(() => mapper.arguments({ elementIndex: 2 }), /receiver/);
   assert.equal(mapper.code('await app.click({ elementIndex: 2 })'), 'await app.click({ elementIndex: 21 })');
   assert.throws(() => mapper.code('await app.click({ id: 2 })'), /Unmapped numeric selector/);
 });
 
 test('refuse duplicate labels even when the old number is still present', () => {
   const mapper = new TargetMapper();
-  mapper.observe('1 window\n  2 button Delete', '1 window\n  2 button Delete\n  3 button Delete');
+  observeNative(mapper, '1 window\n  2 button Delete', '1 window\n  2 button Delete\n  3 button Delete');
   assert.throws(() => mapper.code('await app.click(2)'), /Ambiguous/);
   assert.equal(elementMapping('1 window\n  2 button Delete', '1 window\n  2 button Delete\n  3 button Delete').has(2), false);
 });
 
 test('scope equal labels by ancestor and refuse computed targets', () => {
   const mapper = new TargetMapper();
-  mapper.observe('1 group A\n  2 button Save\n3 group B\n  4 button Save', '10 group B\n  11 button Save\n12 group A\n  13 button Save');
+  observeNative(mapper, '1 group A\n  2 button Save\n3 group B\n  4 button Save', '10 group B\n  11 button Save\n12 group A\n  13 button Save');
   assert.equal(mapper.code('await app.click(2)'), 'await app.click(13)');
   assert.throws(() => mapper.code('await app.click(index)'), /Computed/);
   assert.throws(() => mapper.code('await app.click('), /parsed/);
@@ -98,12 +101,12 @@ test('refuse ambiguous tab identity and map window receipts', () => {
 
 test('native compact diffs preserve unchanged targets and require a full read for new IDs', () => {
   const mapper = new TargetMapper();
-  mapper.observe('0 window\n  1 text field Name\n  2 button Save', '10 window\n  11 text field Name\n  12 button Save');
-  mapper.observe('0 window\nsleight: lines changed since the last full tree\n+   3 text field Name, Value: Sam',
+  observeNative(mapper, '0 window\n  1 text field Name\n  2 button Save', '10 window\n  11 text field Name\n  12 button Save');
+  observeNative(mapper, '0 window\nsleight: lines changed since the last full tree\n+   3 text field Name, Value: Sam',
     '10 window\nsleight: lines changed since the last full tree\n+   13 text field Name, Value: Sam');
   assert.equal(mapper.code('await app.click(2)'), 'await app.click(12)');
   assert.throws(() => mapper.code('await app.setValue(3, "42")'), /refresh required/);
-  mapper.observe('0 window\n  3 text field Name, Value: Sam\n  2 button Save', '10 window\n  13 text field Name, Value: Sam\n  12 button Save');
+  observeNative(mapper, '0 window\n  3 text field Name, Value: Sam\n  2 button Save', '10 window\n  13 text field Name, Value: Sam\n  12 button Save');
   assert.equal(mapper.code('await app.setValue(3, "42"); await app.click(2)'), 'await app.setValue(13, "42"); await app.click(12)');
 });
 
@@ -149,11 +152,11 @@ test('turbo refresh uses its mapped tab and never retries an uncertain action', 
 });
 
 test('replay refreshes unresolved targets before input, then stops at first divergent result', async () => {
-  const mapper = new TargetMapper(); mapper.observe('1 window\n  2 button Save', '1 window');
+  const mapper = new TargetMapper(); observeNative(mapper, '1 window\n  2 button Save', '1 window');
   const submitted = [];
   const rows = [call('js', { code: 'await app.click(2)' }, text('saved')), call('js', { code: 'await app.pressKey("x")' }, text('no'), '2')];
   const out = await replayCalls(rows, { mapper, call: async (server, name, args) => {
-    submitted.push(args.code); return args.code.includes('getAXState') ? text('10 window\n  20 button Save') : text('failed', true);
+    submitted.push(args.code); return args.code.includes('getAXState') ? text(nativeHeader + '10 window\n  20 button Save') : text('failed', true);
   } });
   assert.deepEqual(submitted, ['await app.getAXState({ disableDiffing: true });', 'await app.click(20)']);
   assert.equal(out.verdict, 'diverge'); assert.equal(out.calls.length, 1);
@@ -162,10 +165,10 @@ test('replay refreshes unresolved targets before input, then stops at first dive
 });
 
 test('ambiguous reread never sends input; multiple handles never refresh', async () => {
-  const mapper = new TargetMapper(); mapper.observe('1 window\n  2 button Save', '1 window');
+  const mapper = new TargetMapper(); observeNative(mapper, '1 window\n  2 button Save', '1 window');
   let count = 0;
   const out = await replayCalls([call('js', { code: 'await app.click(2)' }, text('saved'))], { mapper,
-    call: async () => { count++; return text('1 window\n  2 button Save\n  3 button Save'); } });
+    call: async () => { count++; return text(nativeHeader + '1 window\n  2 button Save\n  3 button Save'); } });
   assert.equal(count, 1); assert.match(out.reason, /Ambiguous/);
   assert.throws(() => refreshCode({ code: 'await app.click(2); await other.click(3)' }), /exactly one/);
 });
@@ -298,6 +301,7 @@ test('MS1 requires a worktree comparison instead of an invented switch', async (
 test('read-only plan does not call live setup or create output', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'sr2-plan-'));
   try {
+    writeFileSync(join(dir, 'run.json'), JSON.stringify({ task: { name: 'settings', browser: 'chrome' } }));
     writeFileSync(join(dir, 'events.jsonl'), fixture('turbo'));
     const log = console.log; console.log = () => {};
     try {
@@ -310,7 +314,7 @@ test('read-only plan does not call live setup or create output', async () => {
       assert.deepEqual((await main([dir, '--plan'])).windowFrames, [{ index: 0, ...receipt }]);
     }
     finally { console.log = log; }
-    assert.deepEqual((await import('node:fs')).readdirSync(dir), ['events.jsonl']);
+    assert.deepEqual((await import('node:fs')).readdirSync(dir), ['events.jsonl', 'run.json']);
     await assert.rejects(main([dir]), /requires --owner-away/);
   } finally { rmSync(dir, { recursive: true }); }
 });
@@ -318,6 +322,7 @@ test('read-only plan does not call live setup or create output', async () => {
 test('worktree comparison plans alternate the same recording across two identified builds', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'sr2-build-plan-'));
   try {
+    writeFileSync(join(dir, 'run.json'), JSON.stringify({ task: { name: 'settings', browser: 'chrome' } }));
     writeFileSync(join(dir, 'events.jsonl'), fixture('turbo'));
     const builds = ['old', 'new'].map(label => {
       const path = join(dir, label); mkdirSync(join(path, 'plugins/sleight/lib'), { recursive: true });

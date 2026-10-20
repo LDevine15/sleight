@@ -7,25 +7,29 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { loadRecording } from './recording.mjs';
 import { replayCalls, parseEnv, schedule, summarize } from './engine.mjs';
-import { TargetMapper, resultText } from './mapping.mjs';
+import { resultText } from './mapping.mjs';
 import { requireReplayLauncher } from './launcher-contract.mjs';
 import { windowReceipts, isNativeSelection } from './frames.mjs';
+import { prepareReplay } from './fixtures.mjs';
+import { campaignEvidence } from './checks.mjs';
 
 const repo = fileURLToPath(new URL('../..', import.meta.url));
 export function options(argv) {
-  const out = { repeat: 1 };
-  const values = new Set(['task', 'arm', 'run', 'evidence', 'env', 'compare', 'old-worktree', 'new-worktree', 'repeat', 'out', 'check']);
+  const out = { repeat: 1, 'deadline-ms': 300000 };
+  const values = new Set(['task', 'arm', 'run', 'evidence', 'env', 'compare', 'old-worktree', 'new-worktree', 'repeat', 'out', 'check', 'deadline-ms']);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (['--owner-away', '--plan', '--help'].includes(arg)) out[arg.slice(2)] = true;
     else if (arg.startsWith('--') && values.has(arg.slice(2))) {
       if (!argv[i + 1] || argv[i + 1].startsWith('--')) throw Error(`Missing value for ${arg}`);
-      if (out[arg.slice(2)] !== undefined && arg !== '--repeat') throw Error(`Repeated ${arg}`);
+      if (out[arg.slice(2)] !== undefined && !['--repeat', '--deadline-ms'].includes(arg)) throw Error(`Repeated ${arg}`);
       out[arg.slice(2)] = argv[++i];
     } else if (!arg.startsWith('--') && !out.input) out.input = arg;
     else throw Error(`Unexpected argument: ${arg}`);
   }
   out.repeat = Number(out.repeat);
+  out['deadline-ms'] = Number(out['deadline-ms']);
+  if (!Number.isSafeInteger(out['deadline-ms']) || out['deadline-ms'] < 1 || out['deadline-ms'] > 3600000) throw Error('--deadline-ms must be 1 to 3600000');
   if (out.run !== undefined) { out.run = Number(out.run); if (!Number.isSafeInteger(out.run) || out.run < 1) throw Error('Invalid --run'); }
   if ((out['old-worktree'] !== undefined) !== (out['new-worktree'] !== undefined)) throw Error('Supply both --old-worktree and --new-worktree');
   if (out['old-worktree'] !== undefined && out.compare !== undefined) throw Error('Worktree comparison cannot combine with --compare; --env applies to both builds');
@@ -116,16 +120,17 @@ async function clientsFor({ servers, policy, env, turbo, gateWindow }, switches,
   } catch (error) { await close(); throw error; }
 }
 
-export async function liveIteration(recording, { env, dir, signal, beforeCall, record, worktree = repo }) {
+export async function liveIteration(recording, { env, dir, signal, abort, beforeCall, record, worktree = repo, prepared }) {
   const { withNative, withRace } = await import('./fixtures.mjs');
-  const mapper = new TargetMapper();
+  prepared ??= prepareReplay(recording, join(dir, 'fixture'));
+  const { mapper } = prepared;
   const drive = async config => {
     const clients = await clientsFor(config, env, dir, record, worktree);
-    try { return await replayCalls(recording.calls, { mapper, call: clients.call, beforeCall, record }); }
+    try { return await replayCalls(recording.calls, { mapper, call: clients.call, signal, beforeCall, record }); }
     finally { await clients.close(); }
   };
   const fixture = await (recording.kind === 'race' ? withRace : withNative)(recording,
-    { dir: join(dir, 'fixture'), repo: worktree, mapper, signal, beforeCall, drive, env });
+    { dir: join(dir, 'fixture'), repo: worktree, mapper, signal, abort, beforeCall, drive, env, prepared });
   const result = fixture.replay ?? { verdict: 'diverge', reason: fixture.lifecycle.reason ?? fixture.lifecycle.cleanupError ?? 'fixture failed', calls: [], totalToolMs: 0 };
   if (!fixture.cleanupConfirmed) result.verdict = 'diverge';
   result.cleanupConfirmed = fixture.cleanupConfirmed;
@@ -133,12 +138,33 @@ export async function liveIteration(recording, { env, dir, signal, beforeCall, r
   return result;
 }
 
+export function replayControl({ parent, deadlineMs, hold = () => existsSync('/tmp/sleight-hold') } = {}) {
+  const controller = new AbortController();
+  const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
+  const timer = deadlineMs === undefined ? undefined : setTimeout(() => controller.abort(Error(`Replay iteration deadline after ${deadlineMs} ms`)), deadlineMs);
+  return { signal, abort: reason => controller.abort(reason), dispose: () => clearTimeout(timer), beforeCall: async () => {
+    signal.throwIfAborted();
+    if (hold()) controller.abort(Error('Live replay stopped: /tmp/sleight-hold exists'));
+    signal.throwIfAborted();
+  } };
+}
+
+export function comparisonRoles(variants, check, comparingBuilds) {
+  if (variants.length === 1) return { candidate: 'A' };
+  if (comparingBuilds) return { candidate: 'B', baseline: 'A' };
+  if (!check?.switch) return { candidate: 'A', baseline: 'B' };
+  const candidate = variants.find(v => v.env[check.switch] === '1')?.variant;
+  const baseline = variants.find(v => v.env[check.switch] === '0')?.variant;
+  if (!candidate || !baseline || candidate === baseline) throw Error(`Comparison needs ${check.switch}=1 and ${check.switch}=0`);
+  return { candidate, baseline };
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const opts = options(argv);
   if (opts.help) {
     console.log('node bench/replay/run.mjs TASK_FOLDER | RESULTS.json --task ID [--arm ARM --run N --evidence DIR]\n' +
       '  [--check DP1] [--plan | --owner-away] [--repeat N] [--env SLEIGHT_X=1]\n' +
-      '  [--compare SLEIGHT_X=0 | --old-worktree OLD --new-worktree NEW] [--out DIR]');
+      '  [--compare SLEIGHT_X=0 | --old-worktree OLD --new-worktree NEW] [--deadline-ms N] [--out DIR]');
     return;
   }
   const check = opts.check && loadCheck(opts.check);
@@ -156,9 +182,13 @@ export async function main(argv = process.argv.slice(2)) {
   ] : [{ variant: 'A', env }, ...(opts.compare !== undefined ? [{ variant: 'B', env: parseEnv(opts.compare) }] : [])];
   if (comparingBuilds && variants[0].build.worktree === variants[1].build.worktree) throw Error('Comparison requires distinct worktrees');
   const order = schedule(opts.repeat, variants);
+  // --plan shares the exact no-launch fixture validation used by live iterations.
+  const preview = prepareReplay(recording, join(tmpdir(), 'sleight-replay-plan', 'fixture'));
+  const roles = comparisonRoles(variants, check, comparingBuilds);
   const plan = { source: recording.transcript, transcriptSHA256: recording.transcriptSHA256, kind: recording.kind, task: recording.task, calls: recording.calls.length,
     windowFrames: recording.calls.flatMap((call, index) => isNativeSelection(call) ? windowReceipts(resultText(call.result)).filter(row => row.frame).map(row => ({ index, ...row })) : []),
-    schedule: order, check, model: false, mode: comparingBuilds ? 'worktrees' : 'switches', worktree: repo,
+    nativeFixture: preview.native && { nonce: preview.native.ctx.nonce, suite: preview.native.suite, oldDir: preview.native.oldDir },
+    deadlineMs: opts['deadline-ms'], roles, schedule: order, check, model: false, mode: comparingBuilds ? 'worktrees' : 'switches', worktree: repo,
     commit: execFileSync('/usr/bin/git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     trackedDirty: Boolean(execFileSync('/usr/bin/git', ['-C', repo, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim()),
     recordedCommit: recording.row?.sleightCommit ?? recording.metadata?.sleight?.commit ?? null };
@@ -167,18 +197,15 @@ export async function main(argv = process.argv.slice(2)) {
   const { acquireLiveLock } = await import('../live-lock.mjs');
   const { observePermission } = await import('../real-permission.mjs');
   const { assertCheck } = await import('./checks.mjs');
-  const controller = new AbortController(), abort = () => controller.abort(Error('Replay interrupted'));
-  const beforeCall = async () => {
-    controller.signal.throwIfAborted();
-    if (existsSync('/tmp/sleight-hold')) throw Error('Live replay stopped: /tmp/sleight-hold exists');
-  };
+  const controller = replayControl(), abort = () => controller.abort(Error('Replay interrupted'));
+  const { beforeCall } = controller;
   await beforeCall();
   let out = opts.out ? resolve(opts.out) : mkdtempSync(join(tmpdir(), 'sleight-replay-'));
   if (opts.out) mkdirSync(out, { mode: 0o700 });
   out = realpathSync(out);
   const unlock = await acquireLiveLock();
   let cleanupConfirmed = true, monitor, observing, failure;
-  const runs = [];
+  const runs = []; let assessment;
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, abort);
   try {
     writeFileSync(join(out, 'plan.json'), JSON.stringify(plan, null, 2), { mode: 0o600 });
@@ -198,9 +225,13 @@ export async function main(argv = process.argv.slice(2)) {
         if (current.commit !== step.build.commit || current.trackedDirty !== step.build.trackedDirty || current.trackedDiffSHA256 !== step.build.trackedDiffSHA256)
           throw Error(`Build identity changed: ${step.build.label}`);
       }
+      const prepared = prepareReplay(recording, join(dir, 'fixture'));
+      const iteration = replayControl({ parent: controller.signal, deadlineMs: opts['deadline-ms'] });
       // From setup until cleanup proves otherwise, the lock belongs to this iteration.
       cleanupConfirmed = false;
-      const result = await liveIteration(recording, { env: step.env, dir, signal: controller.signal, beforeCall, record, worktree: step.build?.worktree });
+      let result;
+      try { result = await liveIteration(recording, { env: step.env, dir, signal: iteration.signal, abort: iteration.abort, beforeCall: iteration.beforeCall, record, worktree: step.build?.worktree, prepared }); }
+      finally { iteration.dispose(); }
       cleanupConfirmed = result.cleanupConfirmed;
       if (check) result.check = assertCheck(check, result, dir);
       const row = { ...step, ...result }; runs.push(row);
@@ -216,14 +247,14 @@ export async function main(argv = process.argv.slice(2)) {
     clearInterval(monitor); await observing;
     for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.removeListener(sig, abort);
     const summary = summarize(runs);
-    writeFileSync(join(out, 'summary.json'), JSON.stringify({ runs, summary, cleanupConfirmed, failure,
-      verdict: failure || !runs.length || runs.some(r => r.verdict !== 'pass') ? 'diverge'
-        : runs.some(r => r.check && r.check.verdict !== 'pass') ? 'check-incomplete' : 'pass' }, null, 2), { mode: 0o600 });
-    console.log(JSON.stringify(summary, null, 2)); console.log(`Evidence: ${out}`);
+    assessment = campaignEvidence(runs, check, roles);
+    if (failure || !cleanupConfirmed || runs.length !== order.length) assessment.verdict = 'diverge';
+    writeFileSync(join(out, 'summary.json'), JSON.stringify({ runs, summary, cleanupConfirmed, failure, ...assessment }, null, 2), { mode: 0o600 });
+    console.log(JSON.stringify(summary, null, 2)); console.log(`Campaign: ${assessment.verdict}`); console.log(`Evidence: ${out}`);
     if (cleanupConfirmed) await unlock();
     else console.error('Cleanup unproved. Retained /tmp/sleight-live.lock and fixture evidence.');
   }
-  if (!runs.length || runs.some(r => r.verdict !== 'pass' || (r.check && r.check.verdict !== 'pass'))) process.exitCode = 1;
+  if (assessment.verdict !== 'pass') process.exitCode = 1;
   return runs;
 }
 

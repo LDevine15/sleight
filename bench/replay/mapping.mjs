@@ -27,9 +27,7 @@ function matchRows(old, fresh) {
   for (const row of old) {
     if (old.filter(r => r.id === row.id).length !== 1) continue;
     if ([...old, ...fresh].some(r => r.label === row.label && r.uncertain)) continue;
-    const named = /(?:ID|Description|Placeholder|Help):|(?:button|field|textbox|radio|switch|slider|option|link|listbox)\b.+\S/.test(row.label);
-    const uniqueLabel = new Set(old.filter(r => r.label === row.label).map(r => r.id)).size === 1;
-    const source = old.filter(r => r.key === row.key), targets = fresh.filter(r => r.key === row.key || (named && uniqueLabel && r.label === row.label));
+    const source = old.filter(r => r.key === row.key), targets = fresh.filter(r => r.key === row.key);
     const targetIds = [...new Set(targets.map(r => r.id))];
     if (new Set(source.map(r => r.id)).size === 1 && targetIds.length === 1 && fresh.filter(r => r.id === targetIds[0]).length === 1) map.set(row.id, targetIds[0]);
   }
@@ -79,15 +77,43 @@ const tabHeaders = text => [...text.matchAll(/^(t[a-f0-9]{16,}) (https?:\/\/[^\s
 const elementMethods = new Set(['click', 'doubleClick', 'rightClick', 'hover', 'setValue', 'selectText', 'scroll', 'pickFromList', 'performSecondaryAction', 'drag', 'pressKey', 'typeText', 'paste']);
 const observationMethods = new Set(['getApp', 'getTab', 'getBrowser', 'getState', 'getAXState', 'getScreenshot', 'getAXStateAndScreenshot', 'listApps', 'listWindows', 'listTabs', 'listBrowsers', 'documentation']);
 
+function nativeReceiver(args) {
+  if (!args.code) return args.app ? `app:${args.app}` : undefined;
+  const ast = ts.createSourceFile('scope.js', args.code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS), receivers = new Set();
+  const visit = node => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      let init = node.initializer;
+      if (init && ts.isAwaitExpression(init)) init = init.expression;
+      if (init && ts.isCallExpression(init) && ts.isPropertyAccessExpression(init.expression) && init.expression.name.text === 'getApp') receivers.add(node.name.text);
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+        (elementMethods.has(node.expression.name.text) || ['getAXState', 'getAXStateAndScreenshot', 'getScreenshot'].includes(node.expression.name.text)))
+      receivers.add(node.expression.expression.getText(ast));
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  return receivers.size === 1 ? [...receivers][0] : undefined;
+}
+
+function nativeWindow(text) {
+  const headers = [...text.matchAll(/^Window: "([^"]+)", App: (.+?)\.?$/gm)];
+  if (headers.length === 1) return { window: headers[0][1], app: headers[0][2] };
+}
+
 export class TargetMapper {
-  constructor() { this.before = ''; this.after = ''; this.strings = new Map(); this.identities = new Map(); this.tabs = new Map(); this.frames = new FrameMapper(); this.beforeRows = []; this.afterRows = []; }
+  constructor() { this.strings = new Map(); this.identities = new Map(); this.tabs = new Map(); this.frames = new FrameMapper(); this.nativeTrees = new Map(); this.lastNative = undefined; }
   refMapping(tab) {
     if (!tab || !this.tabs.has(tab) || !this.strings.has(tab)) throw Error(`Unmapped tab or missing tab snapshot: ${tab ?? '(absent)'}`);
     return this.tabs.get(tab).refMap;
   }
   refresh(text, args = {}) {
     this.frames.observe([]);
-    if (elements(text).length) this.afterRows = elements(text);
+    if (elements(text).length) {
+      const receiver = nativeReceiver(args), window = nativeWindow(text), state = this.nativeTrees.get(this.lastNative?.key);
+      if (!state || receiver !== this.lastNative.receiver || !window || this.replaceStrings(this.lastNative.window) !== window.window || window.app !== this.lastNative.app)
+        throw Error('Refresh returned a different native receiver or window');
+      state.afterRows = elements(text);
+    }
     if (refs(text).length || /^# Snapshot \d+/m.test(text)) {
       this.refMapping(args.tab);
       const headers = tabHeaders(text);
@@ -98,9 +124,17 @@ export class TargetMapper {
     }
   }
   observe(before, after, args = {}, source) {
-    if (elements(before).length) {
-      this.before = before; this.after = after;
-      this.beforeRows = mergeElements(this.beforeRows, this.replaceStrings(before)); this.afterRows = mergeElements(this.afterRows, after);
+    if (source?.server === 'plugin:sleight:computer' && source.name === 'js' && !elements(before).length && args.code && this.lastNative &&
+        new RegExp(`\\b${this.lastNative.receiver.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=`).test(args.code)) this.lastNative = undefined;
+    if (isNativeSelection(source)) this.lastNative = undefined;
+    if (elements(before).length && source?.server === 'plugin:sleight:computer') {
+      const receiver = nativeReceiver(args), window = nativeWindow(before), freshWindow = nativeWindow(after);
+      this.lastNative = undefined;
+      if (receiver && window && freshWindow && this.replaceStrings(window.window) === freshWindow.window && window.app === freshWindow.app) {
+        const key = JSON.stringify([receiver, window.app, window.window]), state = this.nativeTrees.get(key) ?? { beforeRows: [], afterRows: [] };
+        state.beforeRows = mergeElements(state.beforeRows, this.replaceStrings(before)); state.afterRows = mergeElements(state.afterRows, after);
+        this.nativeTrees.set(key, state); this.lastNative = { key, receiver, ...window };
+      }
     }
     const a = tabHeaders(before), b = tabHeaders(after);
     let tab = args.tab;
@@ -138,9 +172,11 @@ export class TargetMapper {
     const keys = [...this.strings.keys()].sort((a, b) => b.length - a.length).map(key => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     return value.replace(new RegExp(keys.join('|'), 'g'), key => this.strings.get(key));
   }
-  mapElement(id) {
-    const matches = this.beforeRows.filter(row => row.id === id);
-    const mapped = matchRows(this.beforeRows, this.afterRows).get(id);
+  mapElement(id, receiver) {
+    if (!this.lastNative || receiver !== this.lastNative.receiver) throw Error('Native receiver differs from last-observed tree; read this receiver first');
+    const { beforeRows, afterRows } = this.nativeTrees.get(this.lastNative.key);
+    const matches = beforeRows.filter(row => row.id === id);
+    const mapped = matchRows(beforeRows, afterRows).get(id);
     if (matches.length !== 1 || mapped === undefined) throw Error(`Ambiguous or missing element ${id}; refresh required`);
     return mapped;
   }
@@ -149,6 +185,27 @@ export class TargetMapper {
     const ast = ts.createSourceFile('recorded.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
     if (ast.parseDiagnostics.length) throw Error('Recorded JavaScript cannot be parsed');
     const edits = [];
+    const assertReceiverBinding = receiver => {
+      const visitBinding = node => {
+        let init;
+        if (ts.isVariableDeclaration(node) && node.name.getText(ast) === receiver) init = node.initializer;
+        if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && node.left.getText(ast) === receiver) init = node.right;
+        if (init) {
+          if (ts.isAwaitExpression(init)) init = init.expression;
+          if (!ts.isCallExpression(init) || !ts.isPropertyAccessExpression(init.expression) || init.expression.name.text !== 'getApp')
+            throw Error('Rebound native receiver needs a new observed tree');
+          const selector = init.arguments[0];
+          if (!selector || !ts.isStringLiteral(selector) || selector.text !== this.lastNative?.app)
+            throw Error('Native app or window receiver differs from last-observed tree');
+        }
+        ts.forEachChild(node, visitBinding);
+      };
+      visitBinding(ast);
+    };
+    const receiverFor = node => {
+      for (let current = node.parent; current; current = current.parent) if (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) return current.expression.expression.getText(ast);
+    };
+    const map = (id, receiver) => { assertReceiverBinding(receiver); return this.mapElement(id, receiver); };
     const visit = node => {
       if (ts.isPropertyAssignment(node)) {
         const key = node.name.text;
@@ -159,7 +216,7 @@ export class TargetMapper {
       }
       if (ts.isPropertyAssignment(node) && ts.isNumericLiteral(node.initializer)) {
         const key = ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) ? node.name.text : '';
-        if (['elementIndex', 'targetIndex', 'element', 'from', 'to'].includes(key)) edits.push([node.initializer.getStart(ast), node.initializer.end, String(this.mapElement(Number(node.initializer.text)))]);
+        if (['elementIndex', 'targetIndex', 'element', 'from', 'to'].includes(key)) edits.push([node.initializer.getStart(ast), node.initializer.end, String(map(Number(node.initializer.text), receiverFor(node)))]);
         if (['windowId', 'windowNumber', 'toWindowId'].includes(key)) {
           const id = this.identities.get(`${key}:${node.initializer.text}`);
           if (id === undefined) throw Error(`Unmapped ${key}: ${node.initializer.text}`);
@@ -179,7 +236,7 @@ export class TargetMapper {
           for (const index of targets) {
             const arg = node.arguments[index];
             if (!arg) continue;
-            if (ts.isNumericLiteral(arg)) edits.push([arg.getStart(ast), arg.end, String(this.mapElement(Number(arg.text)))]);
+            if (ts.isNumericLiteral(arg)) edits.push([arg.getStart(ast), arg.end, String(map(Number(arg.text), node.expression.expression.getText(ast)))]);
             else if (ts.isArrayLiteralExpression(arg)) throw Error('Coordinate handle targets have no verified window frame');
             else if (ts.isObjectLiteralExpression(arg)) {
               const names = arg.properties.map(p => p.name?.text);
@@ -228,7 +285,7 @@ export class TargetMapper {
         return refMap.get(value);
       }
       if (key === 'tab' && (!this.strings.has(value) || value !== args.tab)) throw Error(`Unmapped tab or conflicting target tab: ${value}`);
-      if (['elementIndex', 'element', 'targetIndex', 'from', 'to'].includes(key) && typeof value === 'number') return this.mapElement(value);
+      if (['elementIndex', 'element', 'targetIndex', 'from', 'to'].includes(key) && typeof value === 'number') return this.mapElement(value, nativeReceiver(args));
       if (['windowId', 'toWindowId', 'windowNumber', 'tabId', 'tab_id'].includes(key)) {
         if (!this.identities.has(`${key}:${value}`)) throw Error(`Unmapped ${key}: ${value}`);
         return this.identities.get(`${key}:${value}`);
@@ -273,6 +330,16 @@ export function refreshCode(args) {
   visit(ast);
   if (receivers.size !== 1) throw Error('Refresh needs exactly one app handle');
   return `await ${[...receivers][0]}.getAXState({ disableDiffing: true });`;
+}
+
+// Give both arms the recording's handles before comparing their observable results.
+export function comparisonResult(result, mapper) {
+  const reverse = new TargetMapper();
+  for (const [before, after] of mapper.strings) reverse.addString(after, before.replace(/^\/private(?=\/(?:var|tmp)\/)/, ''));
+  for (const [key, id] of mapper.identities) reverse.identities.set(`${key.split(':')[0]}:${id}`, Number(key.split(':')[1]));
+  return { isError: Boolean(result.isError),
+    content: (result.content ?? []).map(block => block.type === 'text' ? { ...block, text: normalized(block.text, reverse, true) } : block),
+    structuredContent: JSON.parse(normalized(JSON.stringify(result.structuredContent ?? result.structured_content ?? null), reverse, true)) };
 }
 
 export function divergence(expected, actual, mapper, args = {}) {

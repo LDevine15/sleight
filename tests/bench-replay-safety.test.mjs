@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { TargetMapper, divergence } from '../bench/replay/mapping.mjs';
 import { replayCalls, parseEnv } from '../bench/replay/engine.mjs';
 
+const nativeHeader = 'Window: "Fixture", App: TextEdit.\n';
+const observeNative = (mapper, before, after) => mapper.observe(nativeHeader + before, nativeHeader + after, { code: 'await app.getAXState()' }, { server: 'plugin:sleight:computer', name: 'js' });
+
 const text = value => ({ content: [{ type: 'text', text: value }] });
 const tabA = 't' + 'a'.repeat(31), tabB = 't' + 'b'.repeat(31);
 const freshA = 't' + 'c'.repeat(31), freshB = 't' + 'd'.repeat(31);
@@ -34,10 +37,10 @@ test('a tab without its own snapshot refuses refs and refresh never borrows anot
 });
 
 test('numeric drag endpoints map, unknown numeric handle methods and computed targets refuse', () => {
-  const mapper = new TargetMapper(); mapper.observe('1 button Start\n2 button End', '11 button Start\n12 button End');
+  const mapper = new TargetMapper(); observeNative(mapper, '1 button Start\n2 button End', '11 button Start\n12 button End');
   assert.equal(mapper.code('await app.drag(1, 2)'), 'await app.drag(11, 12)');
-  assert.deepEqual(mapper.arguments({ from: 1, to: 2 }), { from: 11, to: 12 });
-  assert.equal(mapper.code('await tab.pressKey(1, "ENTER")'), 'await tab.pressKey(11, "ENTER")');
+  assert.throws(() => mapper.arguments({ from: 1, to: 2 }), /receiver/);
+  assert.equal(mapper.code('await app.pressKey(1, "ENTER")'), 'await app.pressKey(11, "ENTER")');
   assert.equal(mapper.code('await app.scroll(1, "down", 3)'), 'await app.scroll(11, "down", 3)');
   for (const source of ['await app.unknownMethod(1)', 'await app["click"](1)', 'await app.drag(1, target)', 'await app.click(-1)',
     'await app.click({elementIndex: target})', 'await app.click({elementIndex})', 'await cua.getApp({windowId: target})',
@@ -65,7 +68,7 @@ test('cross-window coordinates need both fresh frames and exact app identity', (
   assert.deepEqual(mapper.arguments(args), { ...args, windowId: 11, toWindowId: 12 });
   assert.throws(() => mapper.arguments({ ...args, app: 'com.apple.finder' }), /frame/);
   assert.throws(() => mapper.arguments({ tab: tabA, steps: [{ do: 'click', x: 10, y: 20 }] }), /tab|frame/);
-  mapper.refresh('0 window\n  1 button Save');
+  mapper.refresh('no native tree');
   assert.throws(() => mapper.arguments(args), /frame/);
 });
 
@@ -119,11 +122,11 @@ test('coordinate refusal precedes transport, covers destination frames and expir
 
 test('a second Save in a compact diff cannot inherit the first Save identity', () => {
   const mapper = new TargetMapper();
-  mapper.observe('0 window\n  1 group First\n    2 button Save', '10 window\n  11 group First\n    12 button Save');
-  mapper.observe('0 window\nsleight: lines changed since the last full tree\n+     3 button Save', '10 window\nsleight: lines changed since the last full tree\n+     13 button Save');
+  observeNative(mapper, '0 window\n  1 group First\n    2 button Save', '10 window\n  11 group First\n    12 button Save');
+  observeNative(mapper, '0 window\nsleight: lines changed since the last full tree\n+     3 button Save', '10 window\nsleight: lines changed since the last full tree\n+     13 button Save');
   assert.throws(() => mapper.code('await app.click(3)'), /refresh required/);
   assert.throws(() => mapper.code('await app.click(2)'), /refresh required/);
-  mapper.observe('0 window\nsleight: lines changed since the last full tree\n+     3 button Save, Value: changed', '10 window\nsleight: lines changed since the last full tree\n+     13 button Save, Value: changed');
+  observeNative(mapper, '0 window\nsleight: lines changed since the last full tree\n+     3 button Save, Value: changed', '10 window\nsleight: lines changed since the last full tree\n+     13 button Save, Value: changed');
   assert.throws(() => mapper.code('await app.click(3)'), /refresh required/);
 });
 

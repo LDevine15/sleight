@@ -1,15 +1,28 @@
 import { performance } from 'node:perf_hooks';
-import { divergence, refreshCode, resultText, TargetMapper } from './mapping.mjs';
+import { divergence, refreshCode, resultText, TargetMapper, comparisonResult } from './mapping.mjs';
+import { assertReplayArguments } from './allowlist.mjs';
 export { parseEnv } from './switches.mjs';
 
-export async function replayCalls(calls, { call, mapper = new TargetMapper(), beforeCall = () => {}, record = () => {} } = {}) {
+export function untilAbort(signal, operation) {
+  if (!signal) return Promise.resolve().then(operation);
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? Error('Replay aborted'));
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve().then(() => { signal.throwIfAborted(); return operation(); }).then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', abort));
+  });
+}
+
+export async function replayCalls(calls, { call, mapper = new TargetMapper(), signal, beforeCall = () => {}, record = () => {} } = {}) {
   const rows = [];
   let verdict = 'pass', reason;
   for (const [index, original] of calls.entries()) {
     const startedAt = new Date().toISOString();
     let args, result, mappingMs = 0, toolMs = 0;
     try {
-      await beforeCall();
+      await untilAbort(signal, beforeCall);
+      assertReplayArguments(original.arguments);
       try { args = mapper.arguments(original.arguments); }
       catch (error) {
         // Never retry an action. Refresh only before sending it, on an already acquired handle.
@@ -19,7 +32,7 @@ export async function replayCalls(calls, { call, mapper = new TargetMapper(), be
         const refresh = native ? { code: refreshCode(original.arguments), title: 'Replay target refresh' }
           : { tab: mapper.arguments({ tab: original.arguments.tab }).tab, max_chars: 40000 };
         const start = performance.now();
-        const fresh = await call(original.server, native ? 'js' : 'browser_read', refresh);
+        const fresh = await untilAbort(signal, () => call(original.server, native ? 'js' : 'browser_read', refresh));
         mappingMs = performance.now() - start;
         record({ event: 'mapping-read', index, arguments: refresh, result: fresh, ms: mappingMs });
         if (fresh.isError) throw Error('Target refresh failed');
@@ -27,15 +40,16 @@ export async function replayCalls(calls, { call, mapper = new TargetMapper(), be
         mapper.refresh(mapper.after, original.arguments);
         args = mapper.arguments(original.arguments);
       }
-      await beforeCall();
+      await untilAbort(signal, beforeCall);
       const start = performance.now();
-      try { result = await call(original.server, original.name, args); }
+      try { result = await untilAbort(signal, () => call(original.server, original.name, args)); }
       finally { toolMs = performance.now() - start; }
       mapper.observe(resultText(original.result), resultText(result), original.arguments, original);
       reason = divergence(original.result, result, mapper, original.arguments);
     } catch (error) { reason = error.message; }
     const row = { index, id: original.id, server: original.server, name: original.name, arguments: args,
       recordedArguments: original.arguments, expected: original.result, result, toolMs, mappingMs, startedAt, finishedAt: new Date().toISOString(),
+      comparisonResult: result && comparisonResult(result, mapper),
       verdict: reason ? 'diverge' : 'pass', ...(reason ? { reason } : {}) };
     rows.push(row); record({ event: 'call', ...row });
     if (reason) { verdict = 'diverge'; break; }

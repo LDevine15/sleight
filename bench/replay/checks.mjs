@@ -1,6 +1,51 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resultText } from './mapping.mjs';
+import { median } from './engine.mjs';
+
+const selected = (spec, row) => (!spec.tool || row.name === spec.tool) &&
+  (!spec.argumentPattern || new RegExp(spec.argumentPattern, 'i').test(JSON.stringify(row.recordedArguments)));
+
+function resultDiff(A, B, path = '$') {
+  if (JSON.stringify(A) === JSON.stringify(B)) return [];
+  if (A && B && typeof A === 'object' && typeof B === 'object' && Array.isArray(A) === Array.isArray(B))
+    return [...new Set([...Object.keys(A), ...Object.keys(B)])].flatMap(key => resultDiff(A[key], B[key], `${path}.${key}`));
+  return [{ path, A, B }];
+}
+
+export function campaignEvidence(runs, spec, roles = {}) {
+  const comparisons = [...new Set(runs.map(r => r.iteration))].flatMap(iteration => {
+    const a = runs.find(r => r.iteration === iteration && r.variant === 'A'), b = runs.find(r => r.iteration === iteration && r.variant === 'B');
+    if (!roles.baseline) return [];
+    const calls = Array.from({ length: Math.max(a?.calls.length ?? 0, b?.calls.length ?? 0) }, (_, index) => {
+      const A = a?.calls[index]?.comparisonResult, B = b?.calls[index]?.comparisonResult;
+      return { index, A, B, changes: resultDiff(A, B), verdict: A === undefined || B === undefined ? 'missing' : JSON.stringify(A) === JSON.stringify(B) ? 'equal' : 'changed' };
+    });
+    return [{ iteration, calls, complete: Boolean(a && b) }];
+  });
+  const candidate = runs.filter(r => r.variant === (roles.candidate ?? 'A'));
+  const baseline = runs.filter(r => r.variant === roles.baseline);
+  const timing = [];
+  if (spec?.toolRatioBelow !== undefined) {
+    const indexes = [...new Set(candidate.flatMap(r => r.calls.filter(row => selected(spec, row)).map(row => row.index)))];
+    for (const index of indexes) {
+      const times = group => group.flatMap(r => r.calls.filter(row => row.index === index && selected(spec, row) && row.result && row.toolMs > 0).map(row => row.toolMs));
+      const a = times(candidate), b = times(baseline), candidateMs = median(a), baselineMs = median(b);
+      const ratio = candidateMs !== null && baselineMs > 0 ? candidateMs / baselineMs : null;
+      timing.push({ index, candidateMs, baselineMs, candidateSamples: a.length, baselineSamples: b.length, ratio,
+        verdict: ratio === null || a.length !== candidate.length || b.length !== baseline.length || !baseline.length ? 'inconclusive' : ratio < spec.toolRatioBelow ? 'pass' : 'fail' });
+    }
+    if (!indexes.length) timing.push({ verdict: 'inconclusive', reason: 'Relative timing target was not reached' });
+  }
+  const acceptableReplay = r => r.verdict === 'pass' || spec && roles.baseline &&
+    ['observable text changed', 'structured result changed', 'success/error changed'].includes(r.reason) &&
+    r.calls.at(-1)?.result && selected(spec, r.calls.at(-1)) && ['pass', 'fail'].includes(r.check?.verdict);
+  let verdict = !runs.length || runs.some(r => r.cleanupConfirmed !== true || !acceptableReplay(r)) ? 'diverge' : 'pass';
+  if (verdict === 'pass' && (spec && (candidate.some(r => r.check?.verdict !== 'pass') || baseline.some(r => !['pass', 'fail'].includes(r.check?.verdict))) ||
+      timing.some(row => row.verdict !== 'pass') || roles.baseline && (candidate.length !== baseline.length || comparisons.some(pair => !pair.complete)))) verdict = 'check-incomplete';
+  if (!spec && comparisons.some(pair => pair.calls.some(row => row.verdict !== 'equal'))) verdict = 'diverge';
+  return { verdict, roles, comparisons, timing };
+}
 
 function dragOrder(events) {
   const phases = events.filter(e => e.direction === 'drag-phase').map(e => e.msg);
@@ -28,8 +73,7 @@ function dragOrder(events) {
 }
 
 export function checkEvidence(spec, replay, trace = []) {
-  const calls = replay.calls.filter(row => (!spec.tool || row.name === spec.tool) &&
-    (!spec.argumentPattern || new RegExp(spec.argumentPattern, 'i').test(JSON.stringify(row.recordedArguments))));
+  const calls = replay.calls.filter(row => selected(spec, row));
   if (!calls.length) return { verdict: 'inconclusive', reason: 'Replay stopped before the check target, or recording has no such call' };
   const failures = [];
   const skipped = [];
@@ -47,7 +91,6 @@ export function checkEvidence(spec, replay, trace = []) {
     if (spec.resultIncludes && !new RegExp(spec.resultIncludes, 'i').test(text)) failures.push(`call ${row.index}: expected result evidence missing`);
     if (spec.alsoResultIncludes && !new RegExp(spec.alsoResultIncludes, 'i').test(text)) failures.push(`call ${row.index}: second result evidence missing`);
     if (spec.resultExcludes && new RegExp(spec.resultExcludes, 'i').test(text)) failures.push(`call ${row.index}: forbidden result`);
-    if (spec.toolMsBelow !== undefined && row.toolMs >= spec.toolMsBelow) failures.push(`call ${row.index}: ${row.toolMs.toFixed(1)} ms >= ${spec.toolMsBelow} ms`);
     if (spec.traceIncludes && !events.some(e => e.direction && e.direction !== 'to-server' && new RegExp(spec.traceIncludes, 'i').test(JSON.stringify(e)))) failures.push(`call ${row.index}: required trace evidence missing`);
     if (spec.traceExcludes && responses.some(e => new RegExp(spec.traceExcludes, 'i').test(JSON.stringify(e)))) failures.push(`call ${row.index}: forbidden trace read`);
     if (spec.tabProbeChain) {
