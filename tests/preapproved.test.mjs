@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
@@ -14,13 +16,13 @@ test('OS identity is resolved when loading, never while importing', async t => {
   const original = os.userInfo;
   t.after(() => { os.userInfo = original; syncBuiltinESMExports(); });
   let calls = 0;
-  os.userInfo = () => { calls++; return { ...original(), homedir: '/private/tmp/account-' + calls }; };
+  os.userInfo = () => { calls++; return { ...original(), homedir: `${MAC_TMP}/account-` + calls }; };
   syncBuiltinESMExports();
   const fresh = await import('../plugins/sleight/lib/preapproved.mjs?identity-at-load');
   assert.equal(calls, 0);
   for (let n = 1; n <= 2; n++) {
     fresh.loadPreapproved({ lstatSync(path) {
-      assert.equal(path, `/private/tmp/account-${n}/Library/Application Support/sleight/preapproved.json`);
+      assert.equal(path, `${MAC_TMP}/account-${n}/Library/Application Support/sleight/preapproved.json`);
       throw Object.assign(new Error('missing'), { code: 'ENOENT' });
     } });
     assert.equal(calls, n);

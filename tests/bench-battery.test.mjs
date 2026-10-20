@@ -3,9 +3,9 @@ const MAC_TMP = ['', 'private', 'tmp'].join('/');
 const MAC_USERS = ['', 'Users', ''].join('/');
 import test from './macos-only.mjs';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { pathToFileURL } from 'node:url';
@@ -568,7 +568,7 @@ test('one fixture script can close two retained windows without reading a stale 
 test('owned host collects fragmented cleanup diagnostics and only grants scripting for its temp document', async t => {
   const { startHost } = await load('runtime');
   assert.equal(typeof startHost, 'function');
-  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
+  const dir = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-battery-test-'))));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'fixture.txt'); writeFileSync(path, 'BATTERY-test');
   for (const own of [true, false]) {
@@ -1016,7 +1016,7 @@ test('the runtime gives the host its startup budget and waits past it before HOS
 
 test('a document fixture may name its window by the file stem, and scripting can be withheld', async t => {
   const { startHost } = await load('runtime');
-  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
+  const dir = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-battery-test-'))));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'AM1-unique.docx'); writeFileSync(path, 'x');
   for (const [ctx, task, marker, scripted] of [
@@ -1229,10 +1229,11 @@ for (const [name, options] of [
 
 test('a target passed in the launch arguments is not also opened as a document', async t => {
   const { startHost } = await load('runtime');
-  const dir = trackTemp(mkdtempSync('/private/tmp/sleight-battery-test-'));
+  const dir = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'sleight-battery-test-'))));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const recorder = launchRecorder({ ownArgv: true });
   const target = join(dir, 'AM1-folder'), profile = join(dir, 'p');
+  mkdirSync(target); mkdirSync(profile);
   const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target, targetInArgs: true,
     launchArgs: [`--user-data-dir=${profile}`, '--new-window', target], ownedArg: `--user-data-dir=${profile}` }, new AbortController().signal, recorder.runProcess);
   assert.deepEqual(recorder.launches, [['-g', '-b', 'org.example.fixture', '--args', `--user-data-dir=${profile}`, '--new-window', target]]);
@@ -1248,5 +1249,81 @@ test('an owned-instance argument outside the fixture folder or absent from the l
     const host = await startHost({ bundle: 'org.example.fixture' }, { dir, target: join(dir, 'f'), ...ctx }, new AbortController().signal, recorder.runProcess);
     assert.equal(recorder.request.ownedArg, undefined, JSON.stringify(ctx));
     recorder.done(); await host.finish();
+  }
+});
+
+test('host ownership rejects aliases, traversal, missing paths and banks outside the exact temp prefix', async t => {
+  const { startHost } = await load('runtime');
+  const dir = realpathSync(bank(t)), target = join(dir, 'AM1-unique.txt'), profile = join(dir, 'profile');
+  writeFileSync(target, 'x'); mkdirSync(profile);
+  const alias = join(dir, 'alias'); symlinkSync(target, alias);
+  const linkedProfile = join(dir, 'linked-profile'); symlinkSync(profile, linkedProfile);
+  const linkedBank = join(dir, 'linked-bank'); symlinkSync(dir, linkedBank);
+  const unprefixed = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'foreign-battery-'))));
+  t.after(() => rmSync(unprefixed, { recursive: true, force: true }));
+  const foreign = join(unprefixed, 'sleight-battery-nested'); mkdirSync(foreign);
+  writeFileSync(join(foreign, 'AM1-unique.txt'), 'x');
+  for (const [root, path] of [
+    [dir, alias], [linkedBank, join(linkedBank, 'AM1-unique.txt')],
+    [dir, `${dir}/./AM1-unique.txt`], [dir, join(dir, 'missing')],
+    [foreign, join(foreign, 'AM1-unique.txt')],
+  ]) {
+    const recorder = launchRecorder();
+    const host = await startHost({ bundle: 'org.example.fixture', fixtureKind: 'doc-file' },
+      { dir: root, path, target: path, windowMarker: 'AM1-unique' }, new AbortController().signal, recorder.runProcess);
+    try {
+      assert.equal(recorder.request.fixturePath, undefined, path);
+      assert.equal(recorder.request.windowMarker, undefined, path);
+    } finally { recorder.done(); await host.finish(); }
+  }
+  for (const path of [linkedProfile, `${dir}/../outside`, `${dir}/./profile`, dir, join(dir, 'missing'), dir + '-sibling/profile']) {
+    const ownedArg = `--user-data-dir=${path}`, recorder = launchRecorder();
+    const host = await startHost({ bundle: 'org.example.fixture' },
+      { dir, target, ownedArg, launchArgs: [ownedArg] }, new AbortController().signal, recorder.runProcess);
+    try { assert.equal(recorder.request.ownedArg, undefined, path); }
+    finally { recorder.done(); await host.finish(); }
+  }
+});
+
+test('host ownership accepts the canonical system temp bank and a production-shaped pair directory', async t => {
+  const { startHost } = await load('runtime');
+  const root = realpathSync(bank(t)), dir = join(root, 'textedit-1'); mkdirSync(dir);
+  const path = join(dir, 'AM1-unique.txt'), profile = join(dir, 'profile');
+  writeFileSync(path, 'x'); mkdirSync(profile);
+  const ownedArg = `--user-data-dir=${profile}`, recorder = launchRecorder();
+  const host = await startHost({ bundle: 'org.example.fixture', fixtureKind: 'doc-file' },
+    { dir, path, target: path, windowMarker: 'AM1-unique', ownedArg, launchArgs: [ownedArg] },
+    new AbortController().signal, recorder.runProcess);
+  try {
+    assert.equal(recorder.request.fixturePath, path);
+    assert.equal(recorder.request.windowMarker, 'AM1-unique');
+    assert.equal(recorder.request.ownedArg, ownedArg);
+  } finally { recorder.done(); await host.finish(); }
+});
+
+test('host ownership keeps a unique folder title marker for a canonical owned directory', async t => {
+  const { startHost } = await load('runtime');
+  const dir = realpathSync(bank(t)), target = join(dir, 'AM1-unique-folder'); mkdirSync(target);
+  const recorder = launchRecorder();
+  const host = await startHost({ bundle: 'org.example.fixture' },
+    { dir, target, windowMarker: 'AM1-unique-folder' }, new AbortController().signal, recorder.runProcess);
+  try { assert.equal(recorder.request.windowMarker, 'AM1-unique-folder'); }
+  finally { recorder.done(); await host.finish(); }
+});
+
+test('host ownership preserves the legacy production bank only on macOS', () => {
+  const source = readFileSync(new URL('../bench/battery/runtime.mjs', import.meta.url), 'utf8');
+  const checks = source.slice(source.indexOf('function canonicalPath('), source.indexOf('function codexTurns('));
+  for (const platform of ['darwin', 'linux']) {
+    const system = join('/', 'canonical-system-temp');
+    const own = runInNewContext(`${checks}; ownedFixtureRoot`, {
+      realpathSync: value => value, lstatSync: () => ({ isDirectory: () => true }),
+      tmpdir: () => system, process: { platform }, relative, resolve, sep,
+    });
+    assert.equal(own(join(system, 'sleight-battery-nonce', 'word-1')), true);
+    assert.equal(own(`${MAC_TMP}/sleight-battery-nonce/word-1`), platform === 'darwin');
+    assert.equal(own(join(system, 'unrelated', 'sleight-battery-nonce')), false);
+    assert.equal(own(join(system, 'sleight-battery-')), false);
+    assert.equal(own(join(system + '-sibling', 'sleight-battery-nonce')), false);
   }
 });

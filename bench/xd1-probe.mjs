@@ -3,8 +3,9 @@
 // through the live benchmark's own helpers (real-fixture.mjs), with no Apple events and no other window read.
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, lstatSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve, relative, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { acquireLiveLock } from './live-lock.mjs';
@@ -12,6 +13,31 @@ import { openFixture, closeFixtures } from './real-fixture.mjs';
 
 const HOLD = '/tmp/sleight-hold', LOCK = '/tmp/sleight-live.lock';
 const unconfirmed = message => Object.assign(new Error(message), { cleanupUnconfirmed: true });
+
+const tempRoots = () => [realpathSync(tmpdir()), ...(process.platform === 'darwin' ? ['/private/tmp'] : [])];
+const below = (root, path) => {
+  const part = relative(root, path);
+  return part !== '' && part !== '..' && !part.startsWith('../') && !isAbsolute(part);
+};
+function resultsPath(output) {
+  try {
+    if (typeof output !== 'string' || resolve(output) !== output || !tempRoots().some(root => below(root, output)) ||
+        realpathSync(dirname(output)) !== dirname(output) || !lstatSync(dirname(output)).isDirectory()) throw new Error();
+    try {
+      const info = lstatSync(output);
+      if (!info.isFile() || realpathSync(output) !== output) throw new Error();
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    return output;
+  } catch { throw new Error('pass a canonical results path below the system temporary root'); }
+}
+function fixtureBank(dir) {
+  try {
+    if (typeof dir !== 'string' || resolve(dir) !== dir || realpathSync(dir) !== dir ||
+        !lstatSync(dir).isDirectory() || !tempRoots().includes(dirname(dir)) ||
+        !/^sleight-xd1-probe-[A-Za-z0-9_-]+$/.test(basename(dir))) throw new Error();
+    return dir;
+  } catch { throw new Error('probe fixture bank must be canonical with its run prefix below the system temporary root'); }
+}
 
 export async function runProbeTrials(driver, save = () => {}) {
   const rows = [];
@@ -194,14 +220,17 @@ export function fixtureDriver({ dir, nonce, native, cancelled, open = openFixtur
 export async function main(output, {
   exists = existsSync, sleep = ms => new Promise(r => setTimeout(r, ms)), takeLock = acquireLiveLock,
   open = openFixture, close = closeFixtures, native: nativeOverride, log = message => console.error(message),
-  makeDir = () => mkdtempSync('/private/tmp/sleight-xd1-probe-'), settleMs,
+  makeDir = () => realpathSync(mkdtempSync(join(tmpdir(), 'sleight-xd1-probe-'))), settleMs,
 } = {}) {
-  if (!output || !resolve(output).startsWith('/private/tmp/')) throw new Error('pass a results path below /private/tmp');
+  resultsPath(output);
   if (exists(HOLD)) log(`waiting while ${HOLD} exists`);
   while (exists(HOLD)) await sleep(30000);
   const release = await takeLock(LOCK, { wait: true, interval: 15000 });
   let dir;
-  try { dir = makeDir(); } catch (error) { await release(); throw error; }
+  try {
+    dir = fixtureBank(makeDir());
+    if (below(dir, output)) throw new Error('results path must stay outside the disposable fixture bank');
+  } catch (error) { await release(); throw error; }
   const execute = promisify(execFile), children = new Set();
   const cancelFile = join(dir, 'cancel'); let stopping = false, keepLock = false;
   const interrupt = () => { stopping = true; writeFileSync(cancelFile, 'interrupted\n'); };
@@ -219,14 +248,14 @@ export async function main(output, {
     return JSON.parse(stdout);
   });
   const started = new Date().toISOString();
-  const save = rows => writeFileSync(output, JSON.stringify({ started, fixture: dir, rows }, null, 2) + '\n');
+  const save = rows => writeFileSync(resultsPath(output), JSON.stringify({ started, fixture: dir, rows }, null, 2) + '\n');
   // A hold that appears mid-run stops before the next trial, like an interrupt.
   const driver = fixtureDriver({ dir, nonce: randomBytes(6).toString('hex'), native, open, close, settleMs,
     cancelled: () => stopping || exists(HOLD) });
   // Any setup/cleanup uncertainty leaves the private fixture and keeps the live lock.
   try {
     const rows = await runProbeTrials(driver, save);
-    rmSync(dir, { recursive: true });
+    rmSync(fixtureBank(dir), { recursive: true });
     process.exitCode = ['V1', 'V2', 'V3', 'V4'].some(v => rows.filter(r => r.variant === v && r.pass).length === 3) ? 0 : 1;
     return rows;
   } catch (error) {

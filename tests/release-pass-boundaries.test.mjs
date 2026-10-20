@@ -1,3 +1,5 @@
+// Constructed macOS paths are synthetic validation and redaction data, never allocation roots.
+const MAC_USERS = ['', 'Users', ''].join('/');
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync, rmSync } from 'node:fs';
@@ -21,10 +23,10 @@ test('published file paths scrub owner names and match the manifest', async t =>
   const stage = { id: 'native', runner: 'native', args: ['--suite', 'default', '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'login', '--owner-away'], artifacts: ['raw'], expectedModels: ['claude-haiku-5-5'] };
   const conditions = () => ({ liveLock: false, hold: false, ownerAway: true, apiReady: true, loginReady: true, extensionsReady: true, productionTurboReady: true });
   const result = await executePass(createPlan({ root, stages: [stage], conditions: conditions() }), {
-    root, names: ['Jane Owner', 'janeowner'], home: '/Users/janeowner', date: '2026-10-14', conditions,
+    root, names: ['Jane Owner', 'janeowner'], home: `${MAC_USERS}janeowner`, date: '2026-10-14', conditions,
     run: async () => {
       mkdirSync(join(root, 'raw', '-Users-janeowner-Projects-fixture'), { recursive: true });
-      writeFileSync(join(root, 'raw', 'Jane Owner.log'), 'Jane Owner at /Users/janeowner');
+      writeFileSync(join(root, 'raw', 'Jane Owner.log'), `Jane Owner at ${MAC_USERS}janeowner`);
       writeFileSync(join(root, 'raw', '-Users-janeowner-Projects-fixture', 'session.jsonl'), JSON.stringify({ type: 'assistant', message: { model: 'claude-haiku-5-5' } }) + '\n');
       writeFileSync(join(root, 'raw', 'results.json'), JSON.stringify({ results: [{ passed: true }] }));
       return { code: 0 };
@@ -79,7 +81,7 @@ test('scrubbed roots, slug directories and colliding names preserve every artifa
   const stage = { id: 'native', runner: 'native', args: ['--suite', 'default', '--arm', 'sleight', '--model', 'claude-haiku-5-5', '--effort', 'high', '--auth', 'login', '--owner-away'], artifacts: [raw], expectedModels: ['claude-haiku-5-5'] };
   const conditions = () => ({ liveLock: false, hold: false, ownerAway: true, apiReady: true, loginReady: true });
   const result = await executePass(createPlan({ root, stages: [stage], conditions: conditions() }), {
-    root, names: ['Jane Owner', 'janeowner', 'Jóse Núñez'], home: '/Users/janeowner', date: '2026-10-14', conditions,
+    root, names: ['Jane Owner', 'janeowner', 'Jóse Núñez'], home: `${MAC_USERS}janeowner`, date: '2026-10-14', conditions,
     run: async () => {
       for (const [i, path] of paths.entries()) {
         const file = join(raw, path); mkdirSync(join(file, '..'), { recursive: true });

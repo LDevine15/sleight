@@ -1,13 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runProbeTrials, nativeProbe, fixtureDriver, main } from '../bench/xd1-probe.mjs';
 
-// main() requires the macOS private temporary bank; the driver tests need any private dir.
-const mainSkip = process.platform !== 'darwin' && 'the probe requires the macOS private temporary bank';
 const scratch = tmpdir();
 
 function fixture(pass = []) {
@@ -117,7 +115,9 @@ test('a setup failure closes what opened; an unconfirmed close is marked so the 
 });
 
 function liveHarness({ holdChecks = 0, closeFails = false, holdAfterTrial = 0 } = {}) {
-  const events = [], f = fakeFixtures({ closeFails }), dir = mkdtempSync('/private/tmp/xd1r-main-');
+  const events = [], f = fakeFixtures({ closeFails });
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-xd1-probe-')));
+  const results = realpathSync(mkdtempSync(join(tmpdir(), 'xd1r-results-')));
   let checks = 0;
   const deps = { open: f.open, close: f.close, native: passingNative, settleMs: 0, log() {}, makeDir: () => dir,
     exists: path => {
@@ -126,10 +126,13 @@ function liveHarness({ holdChecks = 0, closeFails = false, holdAfterTrial = 0 } 
     },
     sleep: async ms => { events.push(['sleep', ms]); },
     takeLock: async (path, options) => { events.push(['lock', path, options.wait]); return async () => { events.push(['release']); }; } };
-  return { deps, events, f, dir, output: `${dir}/results.json`, done: () => { process.exitCode = undefined; rmSync(dir, { recursive: true, force: true }); } };
+  return { deps, events, f, dir, output: join(results, 'results.json'), done: () => {
+    process.exitCode = undefined;
+    rmSync(dir, { recursive: true, force: true }); rmSync(results, { recursive: true, force: true });
+  } };
 }
 
-test('main waits out the hold, then takes the live lock and releases it after confirmed cleanup', { skip: mainSkip }, async () => {
+test('main waits out the hold, then takes the live lock and releases it after confirmed cleanup', async () => {
   const h = liveHarness({ holdChecks: 3 });
   try {
     const rows = await main(h.output, h.deps);
@@ -137,10 +140,11 @@ test('main waits out the hold, then takes the live lock and releases it after co
     assert.deepEqual(h.events.at(-1), ['release']); assert.equal(h.events.filter(e => e[0] === 'release').length, 1);
     assert.equal(rows.length, 9); assert.equal(rows.some(r => r.variant === 'V4'), false);
     assert.equal(h.f.closed.length, 9);
+    assert.equal(JSON.parse(readFileSync(h.output)).rows.length, 9);
   } finally { h.done(); }
 });
 
-test('main keeps the live lock when fixture cleanup is unconfirmed', { skip: mainSkip }, async () => {
+test('main keeps the live lock when fixture cleanup is unconfirmed', async () => {
   const h = liveHarness({ closeFails: true });
   try {
     await assert.rejects(main(h.output, h.deps), /cleanup unconfirmed/);
@@ -148,11 +152,49 @@ test('main keeps the live lock when fixture cleanup is unconfirmed', { skip: mai
   } finally { h.done(); }
 });
 
-test('a hold that appears mid-run stops before the next trial and still releases after cleanup', { skip: mainSkip }, async () => {
+test('a hold that appears mid-run stops before the next trial and still releases after cleanup', async () => {
   const h = liveHarness({ holdAfterTrial: 1 });
   try {
     await assert.rejects(main(h.output, h.deps), /interrupted/);
     assert.equal(h.f.closed.length, 1); assert.deepEqual(h.events.at(-1), ['release']);
+  } finally { h.done(); }
+});
+
+test('main rejects output aliases, traversal and paths outside the canonical temp root before taking a lock', async () => {
+  const h = liveHarness(), parent = join(h.output, '..');
+  const directory = join(h.dir, 'alias'); symlinkSync(parent, directory);
+  const file = join(h.dir, 'linked.json'); writeFileSync(h.output, 'untouched'); symlinkSync(h.output, file);
+  try {
+    for (const output of [file, join(directory, 'results.json'), `${h.dir}/../result.json`,
+      `${realpathSync(tmpdir())}-sibling/result.json`, join(h.dir, 'missing', 'result.json'), h.dir]) {
+      await assert.rejects(main(output, h.deps), /results path/, output);
+    }
+    assert.equal(h.events.length, 0);
+    assert.equal(h.f.opened.length, 0);
+    assert.equal(readFileSync(h.output, 'utf8'), 'untouched');
+  } finally { h.done(); }
+});
+
+test('main refuses an unowned or symlinked fixture bank and releases the acquired lock', async () => {
+  const h = liveHarness(), foreign = join(h.dir, 'sleight-xd1-probe-nested'); mkdirSync(foreign);
+  const alias = join(h.dir, 'bank-alias'); symlinkSync(h.dir, alias);
+  try {
+    for (const dir of [foreign, alias, `${h.dir}/.`, join(h.dir, 'missing')]) {
+      await assert.rejects(main(h.output, { ...h.deps, makeDir: () => dir }), /fixture bank/);
+    }
+    assert.equal(h.f.opened.length, 0);
+    assert.equal(h.events.filter(e => e[0] === 'release').length, 4);
+  } finally { h.done(); }
+});
+
+test('main allocates its default fixture bank in the canonical system temp root', async () => {
+  const h = liveHarness();
+  try {
+    await main(h.output, { ...h.deps, makeDir: undefined });
+    const saved = JSON.parse(readFileSync(h.output));
+    assert.equal(join(saved.fixture, '..'), realpathSync(tmpdir()));
+    assert.match(basename(saved.fixture), /^sleight-xd1-probe-[A-Za-z0-9_-]+$/);
+    assert.equal(saved.rows.length, 9);
   } finally { h.done(); }
 });
 

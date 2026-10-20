@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, readdirSync, existsSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, dirname, basename } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, readdirSync, existsSync, realpathSync, lstatSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join, dirname, basename, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOwned } from '../preapproved-process.mjs';
 import { runDriver } from '../driver.mjs';
@@ -27,6 +27,24 @@ const sessionKey = /^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_AGENT_SDK_|CLAUDE_PID$|CLAU
 export const STARTUP_MS = 60000;
 const READY_MARGIN_MS = 20000;
 
+function canonicalPath(path, kind) {
+  try {
+    if (typeof path !== 'string' || resolve(path) !== path || realpathSync(path) !== path) return false;
+    const info = lstatSync(path);
+    return kind === 'file' ? info.isFile() : kind === 'directory' ? info.isDirectory() : info.isFile() || info.isDirectory();
+  } catch { return false; }
+}
+
+function ownedFixtureRoot(dir) {
+  if (!canonicalPath(dir, 'directory')) return false;
+  // makeRuntime still creates the legacy macOS bank used by host.js's scripting gate.
+  const roots = [realpathSync(tmpdir()), ...(process.platform === 'darwin' ? ['/private/tmp'] : [])];
+  return roots.some(root => {
+    const bank = relative(root, dir).split(sep)[0];
+    return /^sleight-battery-[A-Za-z0-9_-]+$/.test(bank);
+  });
+}
+
 function codexTurns(threadId) {
   if (!threadId || !/^[a-f0-9-]+$/.test(threadId)) return null;
   const walk = path => readdirSync(path, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(join(path, e.name))
@@ -44,20 +62,21 @@ export async function startHost(task, ctx, signal, runProcess = runOwned) {
   let startStage = 'armed', windowCount = null, preflightRefused = false, launchSent = false;
   const stage = name => { if (!stages.has(name)) stages.set(name, Promise.withResolvers()); return stages.get(name); };
   const hostController = new AbortController();
+  const ownedRoot = ownedFixtureRoot(ctx.dir);
   // setupFixture created this exact file in the run's private bank. Never grant a URL or another file.
-  const fixturePath = task.fixtureKind === 'doc-file' && !task.noScripting && ctx.path === ctx.target &&
-    ctx.dir.startsWith('/private/tmp/sleight-battery-') && dirname(ctx.path) === ctx.dir &&
-    realpathSync(ctx.path) === ctx.path && realpathSync(ctx.dir) === ctx.dir ? ctx.path : undefined;
+  const fixturePath = task.fixtureKind === 'doc-file' && !task.noScripting && typeof ctx.path === 'string' && ctx.path === ctx.target &&
+    ownedRoot && dirname(ctx.path) === ctx.dir && canonicalPath(ctx.path, 'file') ? ctx.path : undefined;
   // A window title names the fixture by its private temp name, with or without the file extension.
   const name = ctx.target ? basename(ctx.target) : '', stem = name.replace(/\.[^.]+$/, '');
   // An argument that marks the whole launched instance as the run's: it must be in the launch and point into the fixture folder.
   const ownedArg = typeof ctx.ownedArg === 'string' && Array.isArray(ctx.launchArgs) && ctx.launchArgs.includes(ctx.ownedArg) &&
-    ctx.dir.startsWith('/private/tmp/sleight-battery-') && /^--[a-z-]+=\/./.test(ctx.ownedArg) &&
-    ctx.ownedArg.slice(ctx.ownedArg.indexOf('=') + 1).startsWith(ctx.dir + '/') ? ctx.ownedArg : undefined;
+    ownedRoot && /^--[a-z-]+=\/./.test(ctx.ownedArg) &&
+    ctx.ownedArg.slice(ctx.ownedArg.indexOf('=') + 1).startsWith(ctx.dir + '/') &&
+    canonicalPath(ctx.ownedArg.slice(ctx.ownedArg.indexOf('=') + 1), 'directory') ? ctx.ownedArg : undefined;
   const response = runProcess('/usr/bin/osascript', ['-l', 'JavaScript', hostScript, JSON.stringify({
     bundle: task.bundle, targetURL: targetURL(ctx.target), control, fixturePath, fixtureRoot: fixturePath ? ctx.dir : undefined, startupMs: STARTUP_MS, ownedArg,
-    ...(ctx.windowMarker && ctx.target && ctx.dir.startsWith('/private/tmp/sleight-battery-') &&
-      dirname(ctx.target) === ctx.dir && realpathSync(ctx.target) === ctx.target && realpathSync(ctx.dir) === ctx.dir &&
+    ...(ctx.windowMarker && ctx.target && ownedRoot &&
+      dirname(ctx.target) === ctx.dir && canonicalPath(ctx.target) &&
       ctx.windowMarker.length >= 10 && (ctx.windowMarker === name || ctx.windowMarker === stem) ? { windowMarker: ctx.windowMarker } : {}) })], { timeoutMs: 650000, signal: hostController.signal,
     onStdout: receive });
   function receive(data) {
