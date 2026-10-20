@@ -307,6 +307,28 @@ test('native malformed inventory diagnostics include only a finite known count',
   assert.throws(() => api.windows(app), /inventory unavailable \[reason=malformed-list\]/);
 });
 
+test('native inventory reads the raw ObjC count once before validating or enumerating', () => {
+  const { api, app, window } = nativeFolderTrial();
+  for (const rawCount of [0, '1', { valueOf: () => 1 }, undefined, null, NaN, -1, 1.5, Infinity, 'private-owner-title']) {
+    let reads = 0, enumerated = 0;
+    app.AXWindows = {
+      get count() { reads++; return rawCount; },
+      objectAtIndex(index) { assert.equal(index, enumerated++); return window; },
+    };
+    const count = Number(rawCount);
+    if (rawCount != null && Number.isFinite(count) && Number.isInteger(count) && count >= 0) {
+      const windows = api.windows(app);
+      assert.equal(windows.length, count);
+      assert.ok(windows.every(value => value === window));
+      assert.equal(enumerated, count);
+    } else {
+      assert.throws(() => api.windows(app), /inventory malformed/);
+      assert.equal(enumerated, 0);
+    }
+    assert.equal(reads, 1);
+  }
+});
+
 for (const role of ['AXSheet', 'AXDialog', '', 'private-owner-title']) test(`inventory refuses role ${JSON.stringify(role)} using only the existing role read`, () => {
   const { api: nativeApi, native } = nativeFolderTrial(), reads = [];
   const read = native.AXUIElementCopyAttributeValue;

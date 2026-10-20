@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { appendFileSync, lstatSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { acquireLiveLock } from './live-lock.mjs';
@@ -110,7 +110,7 @@ export async function runFinderSmoke({ plan = false, ownerAway = false, signal }
   try {
     controller.signal.throwIfAborted();
     checkHold();
-    release = await lock(lockPath, { wait: false, signal: controller.signal });
+    release = await lock(deps.lockPath ?? lockPath, { wait: false, signal: controller.signal });
     result.liveLockKept = true;
     checkHold();
     const nonce = (deps.token ?? randomUUID)();

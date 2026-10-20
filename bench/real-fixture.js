@@ -1295,9 +1295,9 @@ function nativeAX(state, clock) {
     windows: function (app) {
       var values = read(app, 'AXWindows');
       if (!values) throw windowInventoryError('Fixture window inventory unavailable', 'malformed-list');
-      var count = Number(values.count);
-      if (values.count == null || !isFinite(count) || count < 0 || count !== Math.floor(count))
-        throw windowInventoryError('Fixture window inventory malformed', 'malformed-list', values.count == null ? undefined : count);
+      var rawCount = values.count, count = Number(rawCount);
+      if (rawCount == null || !isFinite(count) || count < 0 || count !== Math.floor(count))
+        throw windowInventoryError('Fixture window inventory malformed', 'malformed-list', rawCount == null ? undefined : count);
       var result = [];
       for (var i = 0; i < count; i++) result.push(values.objectAtIndex(i));
       return result;

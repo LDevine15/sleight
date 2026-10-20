@@ -8,16 +8,18 @@ import { homedir, tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
 import { runFinderSmoke, sampleForeground, smokeMain } from '../bench/finder-fixture-smoke.mjs';
 
-// The installed gateway path is an exact assertion, never a test allocation root.
-
 async function fake(t, changes = {}) {
   const parent = await mkdtemp(join(tmpdir(), 'fh1q-test-'));
   t.after(() => rm(parent, { recursive: true, force: true }));
   const calls = [], records = [], ctxs = [];
+  const lockPath = join(parent, 'synthetic-lock');
   const deps = {
-    tempRoot: parent, token: () => 'unique-test-token', intervalMs: 2, collectionMs: 20,
+    tempRoot: parent, lockPath, token: () => 'unique-test-token', intervalMs: 2, collectionMs: 20,
     hold: () => false,
-    lock: async () => { calls.push('lock'); return async () => { calls.push('release'); }; },
+    lock: async path => {
+      assert.equal(path, lockPath);
+      calls.push('lock'); return async () => { calls.push('release'); };
+    },
     permission: async () => false,
     foreground: async () => ({ pid: 42, windows: [101] }),
     persist: (_dir, receipt) => records.push(structuredClone(receipt)),
