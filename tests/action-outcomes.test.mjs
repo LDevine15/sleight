@@ -575,13 +575,14 @@ test('with both switches off the guard code is the base build\'s, byte for byte'
   // Guarded calls opt in explicitly. Their off path keeps the X19b pins; the DP1-off test below keeps all five.
   // PL1 changes the serialized list picker and its guard callbacks; the compact reuse payload stays the same.
   // PL1b restricts nested keyboard focus and click provenance. Substituting the original picker reproduces the PL1 pins.
+  // PL1c checks direct rows and stops when focus disappears after keys. Restoring the PL1b picker reproduces its pins.
   assert.deepEqual({
     guarded: hash(guardedCode('await app.click(1);', window)),
     guardedLean: hash(guardedCode('await app.click(1);', window, undefined, undefined, { prompt: 'lean' })),
     reuse: hash(guardedCode('await app.click(1);', window, undefined, undefined, { reuseSetup: true, acknowledge: true })),
     read: hash(readCode('void 0;', { acknowledge: true })),
     repl: hash(replSetupCode()),
-  }, { guarded: '66b2e33b91b804a0', guardedLean: '69f670f5c7e72105', reuse: 'b824edb3aa6dc2c4', read: 'a2533d4c86cd8ef9', repl: 'a2533d4c86cd8ef9' });
+  }, { guarded: 'd47bcdee67de5727', guardedLean: 'd34696bbd1080d75', reuse: 'b824edb3aa6dc2c4', read: '46f92b636f3b7d01', repl: '46f92b636f3b7d01' });
 });
 
 test('DP1 off preserves the pre-DP1 guard, read and REPL bytes', () => {
@@ -597,8 +598,8 @@ test('DP1 off preserves the pre-DP1 guard, read and REPL bytes', () => {
       repl: replSetupCode(),
     };
     assert.deepEqual(Object.fromEntries(Object.entries(codes).map(([key, code]) => [key, hash(code)])), {
-      guarded: '66b2e33b91b804a0', guardedLean: '69f670f5c7e72105', reuse: 'b824edb3aa6dc2c4',
-      read: 'e9e0f41ce7267428', repl: 'e9e0f41ce7267428',
+      guarded: 'd47bcdee67de5727', guardedLean: 'd34696bbd1080d75', reuse: 'b824edb3aa6dc2c4',
+      read: '259dd2223ed3af4c', repl: '259dd2223ed3af4c',
     });
     for (const code of Object.values(codes)) assert.doesNotMatch(code, /closedLast|beforeRead|state\.dp1|state\.closeRead|\[sleight:dp1\]/);
   } finally {

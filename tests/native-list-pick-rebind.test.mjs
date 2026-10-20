@@ -37,6 +37,10 @@ function fixture(recording, { focus = 'container', nested = false, duplicate = f
       (advanced ? 'text (' + (clicked === recording.target ? 'selected' : 'selectable') + ') ' + recording.target : picked));
     if (clicked && currentFocus === 'nested') text = text.replace(/The focused UI element is .*/, 'The focused UI element is 102 ' + nestedBody);
     if (clicked && currentFocus === 'outside') text = text.replace(/The focused UI element is .*/, 'The focused UI element is 43 button Save collection');
+    if (clicked && currentFocus === 'selected') {
+      const selectedRow = /^\t+37 (.*)$/m.exec(text)[1];
+      text = text.replace(/The focused UI element is .*/, 'Selected:\n\t37 ' + selectedRow);
+    }
     return text;
   };
   const handle = {
@@ -91,6 +95,37 @@ test('PL1: focused rows and nested plain text may receive page keys', async () =
   }
 });
 
+for (const role of ['text field (settable)', 'combo box', 'text (settable)',
+  'text (selectable), Secondary Actions: Press', 'cell, Secondary Actions: Press']) {
+  for (const nested of [false, true]) {
+    test('PL1c: ' + (nested ? 'text inside a direct ' : 'a direct ') + role + ' uses only the wheel', async () => {
+      let advanced = false;
+      const keys = [], scrolls = [], clicks = [];
+      const read = async () => {
+        const labels = advanced ? ['Romeo', 'Sierra', 'Tango', 'Uniform', 'Victor'] : ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo'];
+        const body = label => {
+          const name = clicks.length && label === 'Tango' ? '(selected) ' + label : label;
+          return role.includes(', ') ? role.replace(', ', ' ' + name + ', ') : role + ' ' + name;
+        };
+        return ['Window: "Collection", App: Fixture', '1 window Collection', '\t2 list Collection',
+          ...labels.flatMap((label, i) => ['\t\t' + (3 + i) + ' ' + body(label),
+            ...(nested && i === 0 ? ['\t\t\t100 static text Detail'] : [])]), '',
+          'The focused UI element is ' + (nested ? '100 static text Detail' : '3 ' + body(labels[0]))].join('\n');
+      };
+      const result = await listPicker({ read, observe() {}, parse: windowFromText, sameElement, sleep: async () => {},
+        press: async key => { keys.push(key); advanced = true; },
+        scroll: async (...args) => { scrolls.push(args); advanced = true; },
+        click: async line => clicks.push(line) })('Tango');
+      assert.deepEqual(keys, []);
+      assert.equal(result.clicked, true, JSON.stringify(result));
+      assert.equal(result.label, 'Tango');
+      assert.ok(scrolls.length > 0);
+      assert.equal(clicks.length, 1);
+      assert.match(clicks[0], /\bTango\b/);
+    });
+  }
+}
+
 for (const nestedBody of ['text field (settable) Detail', 'combo box (settable) Detail', 'slider (settable) Detail',
   'pop up button Detail', 'check box Detail', 'button Detail', 'link Detail', 'text (settable) Detail',
   'group Detail, Secondary Actions: Press', 'cell Detail, Actions: Press']) {
@@ -139,6 +174,15 @@ test('PL1b: moving focus to the ancestor after keys reports possible input to an
   await assert.rejects(h.pick(32), /focus-lost.*Keys may have reached another control\./);
   assert.deepEqual(h.keys, ['Page_Down']);
   assert.deepEqual(h.scrolls, []); assert.deepEqual(h.clicks, [37]);
+});
+
+test('PL1c: a read with only a selection after keys stops before any wheel or final click', async () => {
+  const h = fixture(recordings[0], { focus: 'row', focusAfterScroll: 'selected' });
+  await h.start();
+  await assert.rejects(h.pick(32), /focus-lost.*Keys may have reached another control\./);
+  assert.deepEqual(h.keys, ['Page_Down']);
+  assert.deepEqual(h.scrolls, []);
+  assert.deepEqual(h.clicks, [37]);
 });
 
 test('PL1: ambiguous, missing and nonunique prior list identities stop before any input', async () => {

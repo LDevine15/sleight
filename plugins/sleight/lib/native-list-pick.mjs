@@ -54,10 +54,10 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
     for (let i = at; i >= 0; i = parent(rows, i)) if (LIST_ROLE.test(rows[i].body)) return i;
     return -1;
   };
-  // A list and its direct row keep the original key rule. Deeper focus must pass only through plain display
-  // elements below that row. Unknown roles, settable elements and advertised actions get the wheel only.
+  // Focus below a list must pass only through plain display elements, including the direct row.
+  // Unknown roles, settable elements and advertised actions get the wheel only.
   const keyFocus = (rows, at, list) => {
-    for (let i = at; i !== list && parent(rows, i) !== list; i = parent(rows, i)) {
+    for (let i = at; i !== list; i = parent(rows, i)) {
       const body = rows[i].body, role = /^[a-z]+(?: [a-z]+)*/.exec(body)?.[0];
       if (!['text', 'static text', 'image', 'group', 'cell'].includes(role) ||
           /\([^()]*\bsettable\b[^()]*\)/.test(body) || /(?:^|, )(?:Secondary Actions|Actions):/.test(body)) return false;
@@ -120,7 +120,6 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
   const view = (text, trusted) => {
     const { rows, selected } = parseRows(text);
     let focus = /^The focused UI element is (\d+) (.+?)\r?$/m.exec(text);
-    const hasFocus = !!focus;
     let anchors = focus ? [{ number: Number(focus[1]), body: focus[2] }] : selected;
     if (!anchors.length) return { problem: 'The window names no focused element or selected row, so the list cannot be verified.' };
     // Firefox can keep the outer container focused after selecting the clicked row (PL1 B-r1/r2/r3).
@@ -160,7 +159,7 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
       return { problem: 'The read names a selected row in ' + JSON.stringify(list.body.slice(0, 60)) + ' but no focused element, and the action just before was not a click on that list or one of its rows.' };
     }
     const { labeled } = labelRows(kids);
-    return { list: list.body, rows: labeled, labels: labeled.map(row => row.label), hasFocus,
+    return { list: list.body, rows: labeled, labels: labeled.map(row => row.label),
       focused: !!focus && found.every(item => item.keySafe) };
   };
   let lastClick, ownFocusClick;
@@ -418,7 +417,7 @@ export function listPicker({ read, observe, press, scroll, click, parse, sameEle
       if (listLine && !sameElement(listLine, v.list)) {
         return stop('focus-lost', 'Focus moved from ' + JSON.stringify(listLine.slice(0, 60)) + ' to ' + JSON.stringify(v.list.slice(0, 60)) + '. Keys may have reached another control.');
       }
-      if (listLine && keys && v.hasFocus && !v.focused) {
+      if (listLine && keys && !v.focused) {
         return stop('focus-lost', 'Focus is no longer on the list or a plain row descendant. Keys may have reached another control.');
       }
       listLine ??= v.list;

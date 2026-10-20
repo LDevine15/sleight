@@ -969,15 +969,32 @@ test('CC3: an end the jump ran into, a top-clamped first measure and a redraw st
     assert.equal(result.clicked, true, JSON.stringify(result));
     assert.equal(labelOfClick(model, clicks[0]), target);
   }
-  // Safari and Firefox geometry, focus left elsewhere, every 50th row from the top, the middle and the end: no row is
-  // clicked outside the band shown, and none goes unfound.
+  // Safari and Firefox geometry, focus left elsewhere, every 50th row from the top, the middle and the end.
+  // A selection-only read after keys stops the search; every other search picks inside the visible band.
   for (const browser of ['safari', 'firefox']) {
     for (const top of [0, 500, 990]) {
       for (let i = 0; i < 1000; i += 50) {
         const m = webList(airports(), { browser, focus: 'city', top });
+        let lostFocus;
+        const tree = m.tree;
+        m.tree = async () => {
+          const text = await tree();
+          if (!lostFocus && m.keys.length && m.selected !== i && !/The focused UI element is /.test(text)) {
+            lostFocus = { keys: m.keys.length, wheels: m.ticks.length, selected: m.selected };
+          }
+          return text;
+        };
         const { run } = namedPicker(m, browser);
         const result = await run(m.list, m.names[i]);
-        assert.equal(result.clicked, true, `${browser} ${top} ${i}: ${JSON.stringify(result)}`);
+        if (lostFocus) {
+          assert.equal(result.reason, 'focus-lost', `${browser} ${top} ${i}: ${JSON.stringify(result)}`);
+          assert.match(result.note, /Keys may have reached another control/);
+          assert.deepEqual({ keys: m.keys.length, wheels: m.ticks.length, selected: m.selected }, lostFocus,
+            'no input after the read loses focus');
+          assert.equal(result.clicked, false);
+        } else {
+          assert.equal(result.clicked, true, `${browser} ${top} ${i}: ${JSON.stringify(result)}`);
+        }
         assert.equal(m.misclicks + m.noFrame, 0, `${browser} ${top} ${i}`);
       }
     }
