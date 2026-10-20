@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspectReleaseVersion } from '../scripts/release-version.mjs';
 import { doctorVersionLine, readPluginVersion } from '../plugins/sleight/lib/version.mjs';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const manifests = [
@@ -20,7 +21,7 @@ const plugin = host => `plugins/sleight/.${host}-plugin/plugin.json`;
 const market = host => host === 'codex' ? manifests[0] : `.${host}-plugin/marketplace.json`;
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'sleight-release-version-'));
+  const root = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-release-version-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const write = (path, value) => {
     mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -143,7 +144,7 @@ for (const host of ['claude', 'codex', 'cursor']) {
       test(`fixture: rejects unlisted ${location} symlink at ${host} ${boundary} directory`, t => {
         const f = fixture(t);
         const target = location === 'contained' ? join(f.root, 'tests/fixtures/linked-release')
-          : mkdtempSync(join(tmpdir(), 'sleight-release-outside-'));
+          : trackTemp(mkdtempSync(join(tmpdir(), 'sleight-release-outside-')));
         if (location === 'outside') t.after(() => rmSync(target, { recursive: true, force: true }));
         const manifestDirectory = boundary === 'plugin' ? join(target, `.${host}-plugin`) : target;
         mkdirSync(manifestDirectory, { recursive: true });
@@ -222,7 +223,7 @@ test('fixture: invalid expected versions and malformed newest headings fail', t 
 test('fixture: extra null manifests and symlinked source escapes fail', t => {
   const f = fixture(t);
   f.write('plugins/extra/.claude-plugin/plugin.json', 'null');
-  const outside = mkdtempSync(join(tmpdir(), 'sleight-release-outside-'));
+  const outside = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-release-outside-')));
   t.after(() => rmSync(outside, { recursive: true, force: true }));
   mkdirSync(join(outside, '.codex-plugin'));
   writeFileSync(join(outside, '.codex-plugin/plugin.json'), JSON.stringify({ name: 'sleight', version: '1.4.1' }));
