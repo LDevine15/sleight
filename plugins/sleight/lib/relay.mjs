@@ -121,6 +121,7 @@ import { initializationAdvice } from './initialization-guidance.mjs';
 import { syntaxErrorHint, syntaxOrigin } from './syntax-errors.mjs';
 import { compactJsDescription, engineJsVariant } from './tool-description.mjs';
 import { createLightReturn, lightReturnCode } from './light-return.mjs';
+import { createTabProbe, nativeTabPlan } from './tab-probe.mjs';
 import { hostLabel } from './host-label.mjs';
 import { TURN_START, TURN_START_TOOL, codexCallTurn, codexTurnClient, codexTurnFrame } from './codex-turn.mjs';
 import { rootWindowId, popupWindows } from './popup-window.mjs';
@@ -713,6 +714,7 @@ export function createRelay({
   // idle check), Safari's hidden one-tab strip counts (tabRefusal's hiddenStrip), and after the rest's Return the result
   // waits up to `tabLandingMs` for a tree that names the header's page (landingRefusal), reading every `tabLandingIntervalMs`.
   tabFirst = process.env.SLEIGHT_TABC !== '0', tabLandingMs = 1500, tabLandingIntervalMs = 150,
+  ck3 = process.env.SLEIGHT_CK3 !== '0',
   // A palette, gallery, floating window or popover covers the standard window under it the way a dialog does
   // (menu-continuation.mjs PALETTE_ROLES). SLEIGHT_POPOVER_CONTINUATION=0 is the behavior before it, for the A/B: plain
   // and floating windows still cover, popovers don't, and an untitled palette closed by a button isn't refused.
@@ -1081,6 +1083,8 @@ export function createRelay({
   const elicitations = new Map(); // our elicitation id -> resolve
   const lightReturn = guardLightReturn && windowIdentity && inputLease?.directory
     ? createLightReturn({ directory: inputLease.directory, observe: windowIdentity }) : undefined;
+  const tabProbe = ck3 && windowIdentity && inputLease?.directory
+    ? createTabProbe({ directory: inputLease.directory, observe: windowIdentity, trace }) : undefined;
   const promptFailures = new Map(); // call id -> native panel failure, distinct from a user decline
   const running = new Set(); // ids of engine calls waiting for a result
   const nativeChecked = new Set();
@@ -1835,6 +1839,8 @@ export function createRelay({
     hand?.result(id, true);
     callDetails.delete(id);
     lightReturn?.end(id);
+    tabProbe?.end(id);
+    tabLandings.delete(id);
     const call = leaseCalls.get(id);
     if (call) {
       if (call.key && !leaseFault && !disposed) {
@@ -2832,6 +2838,7 @@ export function createRelay({
   const filterMarks = new Map(), splitCalls = new Map(), splitHeads = new Map(), splitCodes = new Map(), rawHeads = new Map(), saveNotes = new Map(), preparedSaves = new Set();
   const openShots = new Map(), openReads = new Set(), textlessOpens = new Set();
   const menuAdmissions = new Map(), menuCalls = new Map(), menuBaselines = new Map(), menuContinued = new Map(), menuForwards = new Map();
+  const tabLandings = new Map();
   // Calls whose stop sleight continued: { head } while the head's result is processed, then { start }, the outcomes shown so far.
   const continuedOutcomes = new Map();
   // What a continued call ran before its window changed, for the line its final result opens with.
@@ -3163,6 +3170,8 @@ export function createRelay({
     if (!Array.isArray(msg.result?.content)) return false;
     const taken = takeGuardStop(msg.result.content, call.mark);
     msg.result.content = taken.content;
+    for (const decision of taken.bindings) trace('setvalue-binding', { id: msg.id, ...decision });
+    for (const decision of taken.tabProbes) trace('tab-probe', { id: msg.id, ...decision });
     // The private mark proves the guard wrote these: payments it let through count for the request, and a payment stop is
     // answered by the next user message (SLEIGHT_CONFIRM_PAYMENTS=always) or by sleight's own card below.
     for (const record of taken.paid ?? []) paymentMessages.paid(record);
@@ -3262,7 +3271,7 @@ export function createRelay({
     const expected = remainder.dialog ? { appId: covered.appId, title: covered.title, app: covered.app, url: covered.url }
       : remainder.palette ? { appId: call.target.appId, title: remainder.window.title, app: remainder.window.app, url: null }
       : remainder.navigation ? { ...call.target, ...remainder.window, windowNumber: call.baseline.windowNumber, nativeIdentity: call.baseline,
-        ...(remainder.tab ? { focus: true } : {}) } : call.target;
+        ...(remainder.tab ? { focus: true, ...(ck3 ? { tabCertificate: true } : {}) } : {}) } : call.target;
     // A palette the lease held must be gone, not just behind the document, unless Escape closed it.
     const gone = remainder.closeCheck ? windowGone(windowIdentity, { appId: covered.appId, title: call.target.title, url: call.target.url }, menuContinuationTimeoutMs)
       : Promise.resolve(true);
@@ -3295,7 +3304,7 @@ export function createRelay({
       // The rest goes to the covered window under its own lease, pinned to the native window just observed. A palette's rest
       // is pinned to the palette the same way and keeps the call's lease, as a menu's does.
       const pinned = remainder.dialog || remainder.palette;
-      const baseline = pinned ? observed : call.baseline, lease = remainder.dialog ? covered : call.target;
+      const baseline = pinned || remainder.tab && ck3 ? observed : call.baseline, lease = remainder.dialog ? covered : call.target;
       const forward = pinned ? { ...expected, windowNumber: observed.windowNumber } : expected;
       const original = structuredClone(msg), head = splitHeads.get(msg.id);
       // Keep output from before the refused action, drop its exception, then let the normal
@@ -3335,7 +3344,7 @@ export function createRelay({
   // tabLandingIntervalMs until a tree names the header's page or tabLandingMs pass, and deliver the latest read in place of
   // the stale tree. A read that fails, or a stop meanwhile, delivers what the call had.
   function landTab(msg) {
-    const forward = menuForwards.get(msg.id);
+    const forward = menuForwards.get(msg.id) ?? tabLandings.get(msg.id);
     if (!forward?.landing || forward.landed || msg.error || msg.result?.isError || !Array.isArray(msg.result?.content)) return false;
     const text = () => msg.result.content.filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
     if (!landingRefusal(text())) return false;
@@ -3538,7 +3547,8 @@ export function createRelay({
         running.add(msg.id); callDetails.set(msg.id, 'menu window admission');
         // The baseline is sampled before the call is sent, so HID idle has to cover the call from this moment.
         admission.sampledAt = clock();
-        admission.identity = Promise.resolve().then(() => windowIdentity(target));
+        admission.nativeTab = ck3 && tabContinuation && tabFirst && guardMode !== 'careful' && nativeTabPlan(plan);
+        admission.identity = Promise.resolve().then(() => windowIdentity(admission.nativeTab ? { ...target, tabCertificate: true } : target));
         menuIdentity(() => admission.identity, target, menuContinuationTimeoutMs).then(baseline => {
           if (generation !== stopGeneration || leaseWindow !== target || closing || disposed || stopCollected) {
             menuAdmissions.delete(msg.id); finishedCall(msg.id);
@@ -3879,6 +3889,15 @@ export function createRelay({
             if (filteredCode !== swipeCode || typedTarget || receiptTyping || outcomeMark) filterMarks.set(msg.id, filterMark);
             const light = lightReturn && inputLease && !careful && !documentMode && !changeReview && !menuBaseline &&
               target === leaseWindow && lightReturnCode(originalCode) ? lightReturn.begin(msg.id, leaseWindow) : undefined;
+            const tabForward = menuForwards.get(msg.id);
+            const tabAdmission = menuAdmissions.get(msg.id);
+            const probe = tabForward?.tab && !careful && !documentMode && !changeReview
+              ? tabProbe?.begin(msg.id, { ...tabForward.expected, nativeIdentity: tabForward.baseline },
+                Date.now() - Math.max(0, clock() - tabForward.stopAt))
+              : tabAdmission?.nativeTab && tabAdmission.baseline?.chrome?.complete && !careful && !documentMode && !changeReview
+                ? tabProbe?.begin(msg.id, { ...target, windowNumber: tabAdmission.baseline.windowNumber, nativeIdentity: tabAdmission.baseline },
+                  Date.now() - Math.max(0, clock() - tabAdmission.sampledAt), 'new-tab') : undefined;
+            if (probe?.mode === 'new-tab') tabLandings.set(msg.id, { landing: tabAdmission.plan.actions[0].handle });
             msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? target, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
               { ...setup, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, ...(outcomeMark ? { outcomeMark } : {}), timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
@@ -3890,6 +3909,7 @@ export function createRelay({
                 lastTree: lastTree && lastTree.seq + 1 === callSeqs.get(msg.id) && sameWindow(lastTree.window, target) ? lastTree.text : undefined,
                 actions: guardActions(originalCode),
                 ...(light ? { lightReturn: light } : {}),
+                ...(probe ? { tabProbe: probe } : {}),
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
                 seenLines, seenParents: compactor.seenParents(seenWindow, numbers), literals: numbers, literalOrder: literalElements(originalCode),
@@ -5175,6 +5195,8 @@ export function createRelay({
     for (const resolve of elicitations.values()) resolve({ result: { action: 'cancel' } });
     elicitations.clear();
     lightReturn?.dispose();
+    tabProbe?.dispose();
+    tabLandings.clear();
     paymentCard?.close?.();
     promptFailures.clear();
     flowRules?.dispose();

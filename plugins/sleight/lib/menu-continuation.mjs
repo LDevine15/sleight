@@ -149,6 +149,8 @@ export function splitMenuActions(code, { alias = name => /^__sleightOpenedApp\d+
 export function takeGuardStop(content, mark) {
   let receipt, count = 0, input = false, adopted;
   const paid = [];
+  const bindings = [];
+  const tabProbes = [];
   const head = [];
   const cleaned = content.flatMap(item => {
     if (item?.type !== 'text' || typeof item.text !== 'string') { if (!count) head.push(item); return [item]; }
@@ -161,12 +163,14 @@ export function takeGuardStop(content, mark) {
       if (record?.adopted) { adopted = record.adopted; return false; }
       // A payment the guard let through (payment-gate.mjs), for the request's count.
       if (record?.paid) { paid.push(record.paid); return false; }
+      if (record?.binding) { bindings.push(record.binding); return false; }
+      if (record?.tabProbe) { tabProbes.push(record.tabProbe); return false; }
       count++; receipt = record;
       return false;
     }).join('\n');
     return text ? [{ ...item, text }] : [];
   });
-  return { content: cleaned, head, receipt: count === 1 ? receipt : undefined, input, adopted, paid };
+  return { content: cleaned, head, receipt: count === 1 ? receipt : undefined, input, adopted, paid, bindings, tabProbes };
 }
 
 // A tab or navigation continuation passes through a stop on a page Claude never asked about (Firefox's New Tab, 381

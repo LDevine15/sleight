@@ -450,6 +450,23 @@ default and hasn't run live: we haven't measured how late alerts and sheets appe
 `SLEIGHT_TAB_CONTINUATION=0` (A/B baseline) stops a call at a tab its own Cmd+T opened as before, instead of typing the
 rest there ([input leases](design/input-lease.md#windows-a-call-opens-itself)).
 
+The checkout guard switches are on by default. Each `0` setting restores its earlier behavior:
+
+- `SLEIGHT_CK1=0` leaves setValue binding decisions out of the trace. Binding after another setValue still reads;
+  native AX metadata cannot prove what the engine's element number currently targets.
+- `SLEIGHT_CK2=0` keeps the earlier plain-line remap rules. With CK2 on, a moved plain line can also match by its exact
+  text and parent when unique in both captures. After setValue, the added recovery accepts only a plain text field,
+  with unchanged ancestors and the same settable-field inventory in a fresh engine read. Card fields and payment-worded
+  targets keep their stops on this path, as do sheets, duplicate parents and new settable fields.
+- `SLEIGHT_CK3=0` keeps the earlier reads around Cmd+T and inside tab continuations. With CK3 on, an awaited Cmd+T,
+  literal HTTP(S) URL and Return chain can use native tab-strip certificates. Each certificate checks the retained window
+  and process, tab membership, selected tab, editable address-field focus and absence of chrome transients. Unknown
+  address identifiers, partial metadata, a changed field or a failed probe take the full engine read. The final read and
+  page-landing reads remain. Careful mode, document scope and change review keep their earlier paths.
+
+These changes have offline tests only. CK3's native browser coverage and post-input timing need live A/B qualification
+and security review. CK1 read elimination needs an engine-owned element mapping.
+
 `SLEIGHT_POPOVER_CONTINUATION=0` (A/B baseline) restores the earlier behavior. When the call closes a dialog, sheet, palette,
 gallery or floating window, the rest of the call still goes to the window under it. A popover stops it, and an untitled
 palette closed by a button isn't refused. `SLEIGHT_PARENT_LEASE=0` (A/B baseline) keeps the "window changed
