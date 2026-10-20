@@ -685,3 +685,14 @@ posted presses keep the raise and settle wait.
 read of its leased native window and appends the compactor's changed lines when a prior tree exists.
 The read waits up to 5 s. A failed read leaves the drag result alone. These switches are on by default
 and have not had live A/B qualification.
+
+## Close-read and handle API A/B switches
+
+`SLEIGHT_DP1=0` keeps the guard's final read after a close shortcut. By default, the guard can skip
+that read after Cmd+W, Cmd+Shift+W or Cmd+Q when a fresh native observation matches the leased bundle ID,
+PID and process start. Both the window count and modal count must be 0. Missing identity, unknown metadata,
+remaining windows or modal children keep the read. The native relay must supply the call's private mark.
+This switch is on by default and needs live checks of unsaved TextEdit and Word close dialogs before release.
+
+`SLEIGHT_DP3=0` omits the engine app API list from confirmed `open_file` results. The list is on
+by default. Use sleight's `drag` tool for selected text moves.

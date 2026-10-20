@@ -4,6 +4,8 @@
 export function promptNotice(text, prompt) {
   if (prompt !== 'lean') return text;
   return text
+    .replace('sleight stopped the read after Close: ', 'Close read: ')
+    .replace('. Native metadata could not confirm a window. No engine read was sent.', '. Window unknown; no engine read.')
     .replace(': tab read timed out (1.5 s). Read this tab again.', ': timeout (1.5 s); reread tab.')
     .replace(' changed, is missing or ambiguous. Read this tab again.', ' stale; reread tab.')
     .replace(': the tab renumbered; the observed row is unique.', ': unique remap.')
@@ -25,6 +27,7 @@ export function promptNotice(text, prompt) {
     .replace('sleight: Paste and Move act on the folder the window shows, not a selected row. Open the destination first.', 'sleight: Paste/Move use the shown folder, not a selected row; open the destination.')
     .replace('A failed action without await can end the engine\'s session and lose every handle. ', '')
     .replace('sleight: screenshot added, the tree has no document text. ', 'Screenshot added: no text in tree. ')
+    .replace("It has the engine's app API: ", 'App API: ')
     .replace(', already acquired. Use it in place of `app`.', ', acquired; use it for `app`.')
     .replace(', already acquired, but `app` isn\'t set: start the next call with `let app = ', ', acquired; start the next call with `let app = ')
     .replace('sleight will make it a full read because automatic recovery consumed the engine\'s UI diff.', '')

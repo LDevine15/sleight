@@ -11,6 +11,7 @@ import { tabChromeRefusal, tabProbeRefusal } from './tab-probe.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { tabFocusRefusal } from './menu-continuation.mjs';
 import { nativeArgumentError } from './native-arguments.mjs';
+import { withoutTitles } from './dp1-trace.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -423,10 +424,117 @@ export function readCode(code, options = {}) {
 }
 
 // Advisory only: all of this runs in the same mutable JS realm as Claude's code.
+async function closedLastWindow(state, record, stopMessage) {
+  const active = state.activeApp, version = state.actionVersion;
+  const previous = state.previous.get(active), action = state.lastAction;
+  const identity = state.expected?.nativeIdentity;
+  const pid = identity?.pid ?? state.expected?.pid, processStart = identity?.processStart;
+  let native = {};
+  const decide = (reason, skip = false) => {
+    try { record({ decision: skip ? 'skipped-read' : 'kept-read', reason, ...native,
+      ...(skip ? { match: 'native-ax+leased-pid' } : {}) }); } catch {}
+    return skip;
+  };
+  if (action?.kind !== 'key' || !/^(?:super|cmd|command|meta)\+(?:shift\+w|w|q)$/i.test(action.value)) return decide('not a close shortcut');
+  if (!previous?.done || state.failures?.length || previous.key !== action.value) return decide('action not completed');
+  let blocked = false;
+  const block = reason => {
+    blocked = true;
+    try { record({ decision: 'blocked-read', reason, ...native }); } catch {}
+    throw new Error(stopMessage(reason));
+  };
+  if (!state.guardStopMark) return decide('no mark');
+  if (typeof setTimeout !== 'function' || typeof clearTimeout !== 'function') return decide('timers unavailable');
+  if (!Number.isSafeInteger(pid) || pid <= 0) return decide('leased pid missing');
+  if (!Number.isFinite(processStart)) return decide('leased process start missing');
+  if (!state.expected?.appId) return decide('leased bundle id missing');
+  const header = state.callHeaders.get(active);
+  if (!header?.app) return decide('app header missing');
+  if (typeof header.appId === 'string' && header.appId) {
+    if (header.appId !== state.expected.appId) return block('app header mismatch');
+  } else if (header.app !== state.expected.app) return decide('app header name differs');
+  if (!state.closeRead?.path) return decide('native observer unavailable');
+  let timer, pollTimer, wakePoll, ended = false, pendingReason = 'timeout';
+  const poll = () => new Promise(resolve => {
+    wakePoll = resolve;
+    pollTimer = setTimeout(() => { pollTimer = undefined; wakePoll = undefined; resolve(); }, 25);
+  });
+  try {
+    const timeout = {}, deadline = Date.now() + 1500, path = state.closeRead.path;
+    const changed = () => state.activeApp !== active || state.actionVersion !== version || state.lastAction !== action;
+    const sample = async () => {
+      const fs = await import('node:fs/promises');
+      while (!ended && Date.now() < deadline) {
+        if (changed()) return { reason: 'action changed' };
+        let data;
+        try {
+          data = JSON.parse(await fs.readFile(path, 'utf8'));
+          if (!Array.isArray(data.observations)) throw Error('Missing native samples');
+        } catch {
+          if (ended || Date.now() >= deadline) break;
+          pendingReason = 'error';
+          await poll();
+          continue;
+        }
+        if (ended || Date.now() >= deadline) break;
+        if (changed()) return { reason: 'action changed' };
+        // A sample that began before pressKey completed cannot prove its result.
+        const observations = data.observations.filter(o => typeof o?.start === 'number' && o.start > previous.done);
+        const newest = observations.at(-1), prior = observations.at(-2);
+        if (newest) {
+          const { status, unknownReason, appId, pid: actualPid, processStart: actualStart, running, windowCount, modalCount, closedWindowPresent } = newest;
+          native = { status, pid: actualPid, processStart: actualStart, running, windowCount, modalCount, closedWindowPresent,
+            ...(status === 'unknown' ? { unknownReason } : {}), keyDone: previous.done, sampleStart: newest.start, sampleEnd: newest.end };
+          // A dead leased process is a completed close. A replacement process or
+          // bundle is a conflict, including when the helper found it during AX.
+          if ((Number.isSafeInteger(actualPid) && actualPid > 0 && actualPid !== pid) ||
+              (Number.isFinite(actualStart) && actualStart !== processStart) ||
+              (typeof appId === 'string' && appId && appId !== state.expected.appId)) return { blocked: true, reason: 'process mismatch' };
+          const identityMatches = actualPid === pid && actualStart === processStart && appId === state.expected.appId;
+          const fresh = (o = newest) => Number.isFinite(o?.end) && o.end >= o.start && o.end <= Date.now() && Date.now() - o.end <= 200;
+          const consecutive = prior && newest.start > prior.start && Number.isFinite(prior.end) &&
+            prior.end >= prior.start && newest.end > prior.end && newest.end - prior.end <= 200;
+          const exited = o => o?.status === 'ok' && o.pid === pid && o.processStart === processStart &&
+            o.appId === state.expected.appId && o.running === false && fresh(o);
+          const modalOnTarget = o => o?.status === 'ok' && o.pid === pid && o.processStart === processStart &&
+            o.appId === state.expected.appId && o.running === true && Number.isSafeInteger(o.windowCount) && o.windowCount > 0 &&
+            o.closedWindowPresent === true && Number.isSafeInteger(o.modalCount) && o.modalCount > 0;
+          if (status !== 'ok') pendingReason = 'native unavailable';
+          else if (!identityMatches || typeof running !== 'boolean') pendingReason = 'native identity missing';
+          else if (running === false) {
+            if (consecutive && exited(newest) && exited(prior)) return { reason: 'process exited', skip: true };
+            pendingReason = fresh() ? 'timeout' : 'stale native sample';
+          } else if (!Number.isSafeInteger(windowCount) || windowCount < 0 || !Number.isSafeInteger(modalCount) || modalCount < 0) pendingReason = 'native counts missing';
+          else if (windowCount > 0 && closedWindowPresent === false) return { reason: 'windows non-empty' };
+          else if (modalCount > 0) {
+            // The newest observation must be fresh; its predecessor must have
+            // ended within 200 ms of it, even when the helper itself takes time.
+            if (consecutive && fresh() && modalOnTarget(newest) && modalOnTarget(prior)) return { reason: 'modal child' };
+            pendingReason = 'modal child';
+          } else if (windowCount === 0) {
+            // Check age at the skip itself. Stale or incomplete observations keep
+            // polling so a transient helper failure cannot reopen a closing app.
+            if (fresh()) return { reason: 'no windows', skip: true };
+            pendingReason = 'stale native sample';
+          } else pendingReason = 'timeout';
+        }
+        await poll();
+      }
+      return timeout;
+    };
+    const observed = await Promise.race([sample(), new Promise(resolve => { timer = setTimeout(() => resolve(timeout), 1500); })]);
+    if (changed()) return decide('action changed');
+    if (observed === timeout) return decide(pendingReason);
+    if (observed.blocked) return block(observed.reason);
+    return decide(observed.reason, observed.skip);
+  } catch (error) { if (blocked) throw error; return decide('error'); }
+  finally { ended = true; clearTimeout(timer); clearTimeout(pollTimer); wakePoll?.(); }
+}
+
 export function guardedCode(code, window, reason = /* notice */ 'Document scope stopped this action: window or URL changed. Read the window and ask the user with document_scope.', lease, options = {}) {
   // The lease needs a full header after the call. A read Claude made after its
   // last action already wrote one, so the guard reads again only without it.
-  const { reuseSetup, acknowledge, prompt, outcomes, kernel, ...checks } = options;
+  const { reuseSetup, acknowledge, prompt, outcomes, kernel, dp1 = false, ...checks } = options;
   const ck = ((checks.ck1 ?? process.env.SLEIGHT_CK1 !== '0') ? 1 : 0) |
     ((checks.ck2 ?? process.env.SLEIGHT_CK2 !== '0') ? 2 : 0);
   delete checks.ck1; delete checks.ck2;
@@ -437,11 +545,10 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   // last statement may be, so the call's read can't run beside it and return the window from before it (CC6 review).
   // An empty literal order is left out (the guard reads it as []), which keeps the per-call setup under 2,500 bytes.
   const literalOrder = checks.literalOrder ?? literalElements(code);
-  return guardSetup({ window, reason, lease, ...checks, literalOrder: literalOrder.length ? literalOrder : undefined }, { reuseSetup, acknowledge, prompt, outcomes, kernel }) +
+  return guardSetup({ window, reason, lease, ...checks, ...(dp1 ? { dp1: true } : {}), literalOrder: literalOrder.length ? literalOrder : undefined }, { reuseSetup, acknowledge, prompt, outcomes, kernel, dp1 }) +
     (options.browserCandidate ? '\nglobalThis.__sleightDocumentGuard.activeApp = undefined;' : '') + /* generated code */ `\n${code}
 {
   const guard = globalThis.__sleightDocumentGuard, last = await guard.settle?.() ?? (guard.activeApp && guard.reads.get(guard.activeApp));
-  // The call finished, so any failed action was one it didn't await or caught itself.
   if (guard.failures?.length) nodeRepl.write('sleight: an action in this call failed' + ${quoted(/* lean notice */ ', and the call went on without it: ')} + guard.failures.join('; ') + '. Read the window, then redo it with await.\\n');
   // A caught getApp failure sent no input, so it isn't a failed action; a later getApp that worked cleared it.
   if (guard.getAppFailures?.length) {
@@ -450,7 +557,7 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   }
   if (guard.activeApp && !last?.emitted && !last?.omit) {
     const split = !guard.acted && guard.activeApp === guard.startApp && guard.prior?.split;
-    const text = last?.text ?? (split ? guard.prior.text : await guard.readAfter(guard.activeApp));
+    const text = last?.text ?? (split ? guard.prior.text : await guard.readAfter(guard.activeApp${dp1 ? ', true' : ''}));
     guard.noteFocus?.(text);
     nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
   }
@@ -459,7 +566,7 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
 }
 
 // outcomes: the session records action outcomes (SLEIGHT_OUTCOMES or SLEIGHT_ACTION_LOG); without it the guard is unchanged.
-function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, outcomes = false, kernel } = {}) {
+function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, outcomes = false, kernel, dp1 = process.env.SLEIGHT_DP1 !== '0' } = {}) {
   const O = outcomes;
   // Notice text the guard throws or writes, in its SLEIGHT_PROMPT wording.
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
@@ -511,6 +618,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     state.acted = false; state.startApp = state.activeApp;
     state.actionVersion ??= 0;
     state.actionIndex = 0; state.completedActions = 0; state.ran = []; state.unknown = []; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
+    state.dp1 = !!update?.dp1; state.closeRead = update?.closeRead;
     state.inputSent = false;
     // This call's actions and picks still running, for the read that ends the call.
     state.inflight = new Set();
@@ -562,7 +670,25 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
           ms: clock() - start, chars: typeof text === 'string' ? text.length : 0, failed: text === undefined }) + '\\n');
       }
     };
-    state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');
+    ${dp1 ? `const closedLast = ${closedLastWindow.toString()}, withoutTitles = ${withoutTitles.toString()};
+    const recordDP1 = event => nodeRepl.write('[sleight:dp1]' + JSON.stringify(withoutTitles(event)) + '\\n');
+    const closeStop = reason => ${quoted(/* lean notice */ 'sleight stopped the read after Close: ')} + reason + ${quoted(/* lean notice */ '. Native metadata could not confirm a window. No engine read was sent.')};
+    const closeDecision = record => state.lastAction
+      ? state.lastAction.closeReadDecision ??= closedLast(state, record, closeStop)
+      : closedLast(state, record, closeStop);
+    state.readAfter = async (proxy, tail) => tail && await closeDecision(recordDP1)
+      ? state.guardStopMark + ':closed'
+      : timedRead(state.raws.get(proxy), 'after-call');
+    // A caller's final observation can satisfy the tail or throw before it runs.
+    // Confirm the close here too. Stop instead of inventing a screenshot or state.
+    state.beforeRead = async proxy => {
+      if (!state.dp1 || proxy !== state.activeApp || state.lastAction?.kind !== 'key' ||
+          !/^(?:super|cmd|command|meta)\\+(?:shift\\+w|w|q)$/i.test(state.lastAction.value)) return;
+      if (await closeDecision(event => recordDP1({ ...event, source: 'caller-read' }))) {
+        nodeRepl.write(state.guardStopMark + ':closed-read\\n');
+        throw new Error('[sleight:closed-read]');
+      }
+    };` : "state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');"}
     state.raws ||= new WeakMap();
     // Windows whose bound capture lost an element, by app and URL or title, to the clean actions left before
     // they bind again: each reads before a numbered or named action until STALE_PASSES of those pass (see the
@@ -925,7 +1051,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
         // Claude's tree reads are full reads the relay turns into changed lines,
         // and they double as the guard's own read until the next action.
         if (name === 'getAXState') return async (options = {}) => {
-          checkNative();
+          checkNative();${dp1 ? '\n          await state.beforeRead(proxy);' : ''}
           state.binding = undefined;
           const reads = state.reads, reading = {}, version = state.actionVersion;
           reads.set(proxy, reading);
@@ -940,7 +1066,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           return text;
         };
         if (name === 'getAXStateAndScreenshot') return async (options = {}) => {
-          checkNative();
+          checkNative();${dp1 ? '\n          await state.beforeRead(proxy);' : ''}
           state.binding = undefined;
           // The combined observation already paid for a full AX walk. Keep its
           // state just as we keep getAXState, until the next action or call.
@@ -959,7 +1085,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           return result;
         };
         if (name === 'getScreenshot') return async (options = {}) => {
-          checkNative();
+          checkNative();${dp1 ? '\n          await state.beforeRead(proxy);' : ''}
           state.binding = undefined;
           const reads = state.reads, reading = {};
           reads.set(proxy, reading);

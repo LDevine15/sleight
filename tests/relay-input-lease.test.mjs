@@ -2230,6 +2230,54 @@ test('GA1: closing the last window forgets the recovery target, so the next acti
   assert.equal(a.forwarded.length, 0);
   assert.equal(a.received.at(-1).result.isError, true);
 });
+test('DP1 native-confirmed close keeps the old result and clears the recovery target in both prompt forms', t => {
+  for (const prompt of [undefined, 'lean']) {
+    const traces = [];
+    const a = setup(t).harness('dp1-' + (prompt ?? 'default'), { fresh: true, changeReview: false, prompt,
+      trace: (direction, msg) => traces.push({ direction, msg }) });
+    a.send(rpc(1, 'js', { code: 'let app = await cua.getApp("TextEdit")' })); a.reply(result(1));
+    a.send(rpc(2, 'js', { code: 'await app.pressKey("super+shift+w")' }));
+    const code = a.forwarded.find(m => m.id === 2).params.arguments.code;
+    const mark = JSON.parse(/__sleightDocumentGuardSetup\((\{[^\n]*\})\);/.exec(code)[1]).guardStopMark;
+    const event = { decision: 'skipped-read', reason: 'no windows', status: 'ok', running: true,
+      pid: 123, processStart: 1, windowCount: 0, modalCount: 0, match: 'native-ax+leased-pid' };
+    a.reply(result(2, 'earlier output\n[sleight:dp1]' + JSON.stringify(event) + '\n' + mark + ':closed\n'));
+    assert.deepEqual(traces.filter(t => t.direction === 'dp1-decision').map(t => t.msg), [{ id: 2, ...event }]);
+    assert.deepEqual(a.received.at(-1).result.content, [{ type: 'text', text: prompt === 'lean'
+      ? 'sleight: last window closed; nothing more to read.'
+      : 'sleight: the app has no windows left, so the window this call closed was its last. Nothing more to read.' }]);
+    assert.equal(a.received.at(-1).result.isError, false);
+    a.forwarded.length = 0;
+    a.send(rpc(3, 'js', { code: 'await app.click(1)' }));
+    assert.equal(a.forwarded.length, 0);
+    assert.equal(a.received.at(-1).result.isError, true);
+  }
+});
+test('DP1 caller-read stops need the current private mark and the matching error', t => {
+  const cases = [
+    { isError: true, error: '[sleight:closed-read]', closed: true },
+    { isError: false, error: 'caller caught the stop', closed: false },
+    { isError: true, error: 'unrelated caller error', closed: false },
+    { isError: true, error: '[sleight:closed-read]', wrongMark: true, closed: false },
+    { isError: true, error: '[sleight:closed-read]', disabled: true, closed: false },
+  ];
+  for (const c of cases) {
+    const a = setup(t).harness('caller-read', { fresh: true, changeReview: false, closeReadSkip: !c.disabled });
+    a.send(rpc(1, 'js', { code: 'let app = await cua.getApp("TextEdit")' })); a.reply(result(1));
+    a.send(rpc(2, 'js', { code: 'await app.pressKey("super+w"); await app.getAXStateAndScreenshot();' }));
+    const code = a.forwarded.find(m => m.id === 2).params.arguments.code;
+    const mark = JSON.parse(/__sleightDocumentGuardSetup\((\{[^\n]*\})\);/.exec(code)[1]).guardStopMark;
+    const reply = result(2, (c.wrongMark ? 'wrong-mark' : mark) + ':closed-read\n' + c.error + '\n' + header);
+    reply.result.isError = c.isError;
+    a.reply(reply);
+    const outcome = a.received.at(-1).result;
+    assert.equal(outcome.isError, c.isError && !c.closed);
+    const text = outcome.content.map(item => item.text ?? '').join('\n');
+    if (c.closed) assert.match(text, /the app has no windows left/);
+    else assert.ok(!text.includes('the app has no windows left'));
+    if (!c.wrongMark) assert.ok(!text.includes(mark + ':closed-read'));
+  }
+});
 test('GA1: recovery sends nothing when the app is not running or the check gets no answer', async t => {
   for (const health of [{ status: 'absent' }, undefined]) {
     const { h, probed } = await droppedOnHelium(t, { runningProbe: async app => { probes.push(app); return health; } });

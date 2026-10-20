@@ -156,9 +156,132 @@ function axPair(value, type) {
   return type === 1 ? [s.x, s.y] : [s.width, s.height];
 }
 function run(argv) {
+  let closeCount = false, unknownReason = 'helper-error';
   try {
     if (!$.AXIsProcessTrusted()) return JSON.stringify({ status: 'denied' });
     const request = JSON.parse(argv[0]);
+    // DP1 asks only for metadata on the already approved leased process. Never
+    // resolve a different instance by bundle, or read title/document attributes.
+    if (request.closeCount) {
+      closeCount = true; unknownReason = 'lease-invalid';
+      const { pid, processStart } = request.nativeIdentity ?? {};
+      if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isFinite(processStart)) throw new Error('Missing leased process');
+      const current = () => {
+        unknownReason = 'process-changed';
+        const running = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+        if (!running || running.isNil()) return { status: 'ok', appId: request.appId, pid, processStart, running: false };
+        const actual = { appId: ObjC.unwrap(running.bundleIdentifier), pid: Number(running.processIdentifier),
+          processStart: Number(running.launchDate.timeIntervalSince1970), running: running.terminated === false };
+        // Preserve concrete conflicts even on a terminated replacement. Absence
+        // of the leased pid is distinct from reusing it for another launch.
+        if (actual.pid !== pid || actual.appId !== request.appId || actual.processStart !== processStart) {
+          return { status: 'unknown', unknownReason, ...actual };
+        }
+        if (running.terminated === true) return { status: 'ok', ...actual };
+        if (running.terminated !== false) throw new Error('Unknown process state');
+      };
+      const before = current();
+      if (before) return JSON.stringify(before);
+      unknownReason = 'ax-error';
+      const app = $.AXUIElementCreateApplication(pid), deadline = Date.now() + 150;
+      const expired = () => {
+        if (Date.now() >= deadline) { unknownReason = 'deadline'; throw new Error('Metadata deadline'); }
+      };
+      if (Number($.AXUIElementSetMessagingTimeout(app, 0.05)) !== 0) throw new Error('AX deadline unavailable');
+      const attr = (element, name, optional = false) => {
+        expired(); unknownReason = 'ax-error';
+        const value = Ref(), error = Number($.AXUIElementCopyAttributeValue(element, $(name), value));
+        if (optional && [-25205, -25212].includes(error)) return null;
+        if (error) throw new Error('AX metadata unavailable');
+        return ObjC.castRefToObject(value[0]);
+      };
+      const count = list => {
+        unknownReason = 'ax-invalid';
+        if (list === null || list === undefined) throw new Error('Missing AX list');
+        const n = Number(list.count);
+        if (!Number.isSafeInteger(n) || n < 0 || n > 64) throw new Error('AX list bound');
+        return n;
+      };
+      const windows = attr(app, 'AXWindows');
+      let windowCount = count(windows);
+      // A positive count just after Cmd+W may still contain the closing window.
+      // Only the retained AX reference can distinguish it from a remaining one.
+      const baseline = request.nativeIdentity.epoch === windowEpoch
+        ? windowReferences[request.nativeIdentity.window - 1] : undefined;
+      let closedWindowPresent;
+      if (baseline) {
+        closedWindowPresent = false;
+        for (let i = 0; i < windowCount; i++) {
+          expired();
+          if ($.CFEqual(baseline, windows.objectAtIndex(i))) closedWindowPresent = true;
+        }
+      }
+      let modalCount = 0, seen = 0;
+      const visit = (children, depth, descend = true) => {
+        const n = count(children);
+        if (depth > 8 || seen + n > 64) throw new Error('AX child bound');
+        seen += n;
+        for (let i = 0; i < n; i++) {
+          const child = children.objectAtIndex(i), role = ObjC.deepUnwrap(attr(child, 'AXRole'));
+          if (typeof role !== 'string') throw new Error('Missing AX role');
+          const subrole = ObjC.deepUnwrap(attr(child, 'AXSubrole', true));
+          if (role === 'AXSheet' || role === 'AXDialog' || subrole === 'AXDialog' || subrole === 'AXSystemDialog' ||
+              ObjC.deepUnwrap(attr(child, 'AXModal', true)) === true) { modalCount++; continue; }
+          if (role === 'AXWindow') throw new Error('Window missing from AXWindows');
+          // Menu contents are separate from the app's window and modal children.
+          if (role === 'AXMenuBar' || role === 'AXMenu') continue;
+          const nested = descend ? attr(child, 'AXChildren', true) : null;
+          if (nested !== null) visit(nested, depth + 1);
+        }
+      };
+      if (closedWindowPresent === true) {
+        // A sheet on a different window cannot confirm this Close. Inspect only
+        // its direct children, without walking the document's controls.
+        const children = attr(baseline, 'AXChildren', true);
+        if (children !== null) visit(children, 0, false);
+      }
+      if (windowCount === 0) {
+        visit(attr(app, 'AXChildren'), 0);
+        // AXWindows can omit windows on other Spaces. Filter the leased PID's
+        // document, panel and alert layers inside Foundation, without copying content.
+        expired(); unknownReason = 'cg-error';
+        const cg = ObjC.castRefToObject($.CGWindowListCopyWindowInfo(
+          $.kCGWindowListOptionAll | $.kCGWindowListExcludeDesktopElements, 0));
+        unknownReason = 'cg-invalid';
+        if (!cg || cg.isNil?.()) throw new Error('Missing CG list');
+        const total = Number(cg.count);
+        if (!Number.isSafeInteger(total) || total < 0 || total > 10000) throw new Error('CG list bound');
+        // Missing owners do not match. An owned row with a missing layer stays
+        // in the candidates so it makes the proof unknown instead of disappearing.
+        unknownReason = 'predicate-error';
+        const own = cg.filteredArrayUsingPredicate($.NSPredicate.predicateWithFormatArgumentArray(
+          'kCGWindowOwnerPID == %@ AND (kCGWindowLayer == nil OR (kCGWindowLayer >= 0 AND kCGWindowLayer <= 23))', [pid]));
+        unknownReason = 'cg-invalid';
+        const n = Number(own.count), ids = [];
+        if (!Number.isSafeInteger(n) || n < 0 || n > total) throw new Error('CG candidate bound');
+        for (let i = 0; i < n; i++) {
+          expired();
+          const row = own.objectAtIndex(i);
+          const layer = ObjC.unwrap(row.objectForKey('kCGWindowLayer'));
+          if (!Number.isSafeInteger(layer) || layer < 0 || layer > 23) throw new Error('Missing CG layer');
+          ids.push(ObjC.unwrap(row.objectForKey('kCGWindowNumber')));
+        }
+        // Reuse SW1b's Space membership check from the enclosing app-health
+        // helper. Ordered-out CG rows with no Space do not count as windows.
+        unknownReason = 'cgs-unbound';
+        const held = spaceWindows(ids, deadline, reason => { unknownReason = reason; });
+        if (!Number.isSafeInteger(held) || held < 0) throw new Error('Unknown Space membership');
+        windowCount = held;
+        // AX omitted these other-Space windows, so it cannot say whether one
+        // of them is the closing target. Keep positive-count reads blocked.
+        if (held > 0) closedWindowPresent = undefined;
+      }
+      const after = current();
+      if (after) return JSON.stringify(after);
+      expired();
+      return JSON.stringify({ status: 'ok', appId: request.appId, pid, processStart, running: true, windowCount, modalCount,
+        ...(closedWindowPresent !== undefined ? { closedWindowPresent } : {}) });
+    }
     const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(request.appId);
     if (Number(apps.count) !== 1) throw new Error('Expected one running app');
     const running = apps.objectAtIndex(0), pid = Number(running.processIdentifier);
@@ -281,5 +404,6 @@ function run(argv) {
       // The parent lease takes only a standard window (SLEIGHT_PARENT_LEASE), read before HID idle is sampled.
       windowSubrole: scalar(attr(window, 'AXSubrole', true)) ?? null,
       processStart: Number(running.launchDate.timeIntervalSince1970), hidIdleSeconds: hidIdleSeconds(), ...(focus ? { focus } : {}) });
-  } catch (error) { return JSON.stringify({ status: 'unknown', error: String(error.message || error) }); }
+  } catch (error) { return JSON.stringify(closeCount ? { status: 'unknown', unknownReason }
+    : { status: 'unknown', error: String(error.message || error) }); }
 }

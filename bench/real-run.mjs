@@ -90,7 +90,12 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
   } catch (error) {
     result.passed = false;
     if (error.browserReceipt?.acquisition?.length) result.browserAcquisition = error.browserReceipt.acquisition;
-    if (driverStarted && result.groupClean !== true) result.groupClean = false;
+    if (driverStarted && result.groupClean !== true) {
+      // A failed MCP initialize can still collect its owned child. Keep the failure
+      // verdict while allowing retained-fixture cleanup after that explicit proof.
+      result.groupClean = error.cleanupConfirmed === true && error.cleanupUnconfirmed !== true;
+      if (result.groupClean) result.taskPassed = false;
+    }
     result.reason = dialogReason() || (result.permissionPrompt ? 'macOS permission prompt: stopped' : result.permissionRefusal ? 'computer-use permission refused: stopped' : error.message);
   } finally {
     try {

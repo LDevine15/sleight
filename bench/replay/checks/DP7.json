@@ -1,0 +1,9 @@
+{
+  "id": "DP7",
+  "source": "~/Projects/sleight-wt/race-131/bench/results/2026-10-19T20-48-46-865Z.json",
+  "task": "textedit-window-drag", "arm": "sleight", "run": 1,
+  "switch": "SLEIGHT_DP7",
+  "tool": "drag", "resultIncludes": "\"path\"\\s*:\\s*\"accessibility\"",
+  "resultExcludes": "deliveryVerified[^\\n]*false", "fixturePass": true,
+  "assertion": "Cross-window empty-line drop uses Accessibility and both saved file contents pass the world fixture check."
+}

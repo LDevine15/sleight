@@ -1,0 +1,9 @@
+{
+  "id": "DP2",
+  "source": "~/Projects/sleight-wt/p131-int/bench/results/2026-10-19T20-41-28-692Z.json",
+  "task": "textedit-drag", "arm": "sleight", "run": 1,
+  "switch": "SLEIGHT_DP2",
+  "tool": "drag", "resultIncludes": "\"path\"\\s*:\\s*\"accessibility\"",
+  "toolRatioBelow": 1, "needsInternalOrder": true,
+  "assertion": "Accessibility drag has a lower per-call median than baseline, with paired drag-phase ax-move start/end before any raise and no posted-press. Missing phase events skip ordering; malformed or incomplete evidence fails."
+}

@@ -73,28 +73,32 @@ function frontFullScreen() {
 // minimized window is held is unmeasured (AXWindows counts this Space's minimized windows anyway).
 // Undefined when the call is missing or answers oddly.
 let spacesOf, spacesBroken = false;
-function spaceWindows(ids) {
-  if (spacesBroken) return undefined;
+function spaceWindows(ids, deadline = Infinity, unknown = () => {}) {
+  const fail = reason => { unknown(reason); return undefined; };
+  if (spacesBroken) return fail('cgs-unbound');
   try {
-    if (!ids.every(id => Number.isInteger(id) && id > 0)) return undefined;
+    if (!ids.every(id => Number.isInteger(id) && id > 0)) return fail('cgs-invalid');
+    if (Date.now() >= deadline) return fail('deadline');
     if (!spacesOf) {
       try {
         ObjC.bindFunction('CGSMainConnectionID', ['int', []]);
         ObjC.bindFunction('CGSCopySpacesForWindows', ['id', ['int', 'int', 'id']]);
-      } catch (error) { spacesBroken = true; throw error; }
+      } catch { spacesBroken = true; return fail('cgs-unbound'); }
       const connection = Number($.CGSMainConnectionID());
-      if (!Number.isInteger(connection) || connection <= 0) return undefined;
+      if (!Number.isInteger(connection) || connection <= 0) return fail('cgs-invalid');
       // 7: the current, other and user Spaces. The copied array is never released: one small array a window a read.
       spacesOf = id => ObjC.deepUnwrap($.CGSCopySpacesForWindows(connection, 7, $([id])));
     }
     let count = 0;
     for (const id of ids) {
+      if (Date.now() >= deadline) return fail('deadline');
       const held = spacesOf(id);
-      if (!Array.isArray(held)) return undefined;
+      if (!Array.isArray(held)) return fail('cgs-invalid');
       if (held.length) count++;
     }
+    if (Date.now() >= deadline) return fail('deadline');
     return count;
-  } catch { return undefined; }
+  } catch { return fail('cgs-error'); }
 }
 
 // On another Space, an app's windows leave AXWindows too (Calculator, 2026-10-09), so CGWindowList
@@ -129,6 +133,7 @@ function run(argv) {
   // Load each operation once, in this helper's JavaScript context.
   const query = name => {
     const source = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(`${argv[1]}/${name}.js`, $.NSUTF8StringEncoding, null));
+    // Operations share this helper's metadata functions, including SW1b's spaceWindows.
     return eval(`(function () { ${source}; return run; })()`);
   };
   let taps, target, windowIdentity, frontRestore, elementVisibility, handLocate;
@@ -156,7 +161,9 @@ function run(argv) {
           : request.op === 'keyboard-taps' ? JSON.parse((taps ||= query('keyboard-taps'))())
           : request.op === 'lease-target' ? JSON.parse((target ||= query('lease-target'))([JSON.stringify({ app: request.app })])) : probe(request.app, request.deadlineSeconds);
         reply = { id: request.id, ...result };
-      } catch { reply = { id: request?.id, status: 'unknown', ok: false, error: 'session query failed' }; }
+      } catch { reply = { id: request?.id, status: 'unknown', ok: false,
+        ...(request?.op === 'window-identity' && request.window?.closeCount
+          ? { unknownReason: 'helper-error' } : { error: 'session query failed' }) }; }
       stdout.writeData($(JSON.stringify(reply) + '\n').dataUsingEncoding($.NSUTF8StringEncoding));
     }
   }

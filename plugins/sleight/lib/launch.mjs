@@ -989,7 +989,9 @@ export function turboState(readConfig, env = process.env) {
 }
 
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
-  directBrowser, ensureTurbo = false, shellRoute = false, paymentCardFactory = createPaymentCard } = {}) {
+  directBrowser, ensureTurbo = false, shellRoute = false,
+  approvalStorage = { load: loadPreapproved, live: livePreapproved, add: addPreapproved },
+  paymentCardFactory = createPaymentCard } = {}) {
   let finishStartup;
   const startupReady = new Promise(resolve => { finishStartup = resolve; });
   process.stdin.on('end', () => stop());
@@ -1010,9 +1012,9 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const turnHook = prepared.turnHook;
   process.once('exit', () => { turnHook?.close(); });
   let flowRules, preapproved;
-  try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
+  try { flowRules = loadFlowRules(); preapproved = approvalStorage.load(); } catch (err) { fail(err.message); }
   // A revoke from the menu or the command reaches this session at once; the startup list is the first copy.
-  preapproved = livePreapproved(preapproved);
+  preapproved = approvalStorage.live(preapproved);
   // The user's blocks and site limits. With site limits already set, which apps are browsers is asked now, not at the first action.
   const permissionCheck = createPermissionCheck(), webBrowser = webBrowserCheck();
   if (permissionCheck.sitesLimited()) webBrowser.ask();
@@ -1148,7 +1150,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     approvalScope: ['once', 'document'].includes(process.env.SLEIGHT_APPROVAL_SCOPE) ? process.env.SLEIGHT_APPROVAL_SCOPE : 'session',
     ...promptOptions,
     preapproved,
-    alwaysAllow: (app, riskLevel) => { addPreapproved(app, riskLevel); preapproved.add(app, riskLevel); },
+    alwaysAllow: (app, riskLevel) => { approvalStorage.add(app, riskLevel); preapproved.add(app, riskLevel); },
     grantAudit,
     flowRules,
     changeReview: process.env.SLEIGHT_CHANGE_REVIEW === '1',

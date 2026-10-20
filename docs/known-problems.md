@@ -158,6 +158,11 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 
 ## The pointer, drags and hover
 
+- DP1 can skip a close shortcut's final read only when fresh native metadata matches the leased
+  bundle ID, PID and process start. Both the window count and modal count must be 0. Missing identity or
+  unknown metadata keeps the read. Delayed Save sheets and separate dialogs still need live checks. Before release, sleight-arch must
+  check Cmd+W on an unsaved TextEdit document with its sheet and an unsaved Word document.
+
 - Anything moving your real pointer in the app interrupts it. The engine watches real mouse and keyboard
   input to notice a person taking over, then makes Claude re-read the app. Another agent driving in the
   foreground counts too. Background sessions share the helper, with leases coordinating sleight's actions.
