@@ -5,15 +5,16 @@ import vm from 'node:vm';
 
 // Replace only AX/CG and the native text-area adapter; run() keeps the real guards and path ordering.
 function fixture(options = {}) {
-  const events = [], writes = [], activations = [], settles = [], restored = [];
+  const ids = options.windowIds ?? [11, 12];
+  const events = [], writes = [], activations = [], settles = [], restored = [], traces = [];
   const frames = [{ X: 100, Y: 100, Width: 600, Height: 400 }, { X: 750, Y: 100, Width: 500, Height: 400 }];
   if (options.stacked) frames[1] = { ...frames[0] };
   const area = (id, value, selected) => ({ id, AXRole: 'AXTextArea', AXValue: value, AXSelectedText: selected,
-    AXPosition: { x: frames[id - 11].X + 5, y: 130 }, AXSize: { width: 480, height: 365 }, AXChildren: [] });
-  const a = area(11, 'alpha beta\n', 'alpha'), b = area(12, 'gamma delta\n', '');
+    AXPosition: { x: frames[ids.indexOf(id)].X + 5, y: 130 }, AXSize: { width: 480, height: 365 }, AXChildren: [] });
+  const a = area(ids[0], 'alpha beta\n', 'alpha'), b = area(ids[1], 'gamma delta\n', '');
   a.range = { location: 0, length: 5 }; b.range = { location: 0, length: 0 };
   const wins = [a, b].map((el, i) => {
-    const win = { AXRole: 'AXWindow', AXWindowNumber: i + 11, AXTitle: options.sameTitle ? 'Same.txt' : `${i + 11}.txt`, AXChildren: [el],
+    const win = { AXRole: 'AXWindow', AXWindowNumber: ids[i], AXTitle: options.sameTitle ? 'Same.txt' : `${ids[i]}.txt`, AXChildren: [el],
       AXPosition: { x: frames[i].X, y: 100 }, AXSize: { width: frames[i].Width, height: 400 } };
     el.AXParent = win; return win;
   });
@@ -21,7 +22,7 @@ function fixture(options = {}) {
   const target = { processIdentifier: 7, activateWithOptions: () => { activations.push(7); options.onActivate?.({ a, b, frames }); } };
   const previous = { processIdentifier: 99, isNil: () => false, activateWithOptions() {} };
   const app = { AXWindows: wins, AXFocusedUIElement: b };
-  let order = [12, 11], delayed = 0, attempts = 0;
+  let order = [ids[1], ids[0]], delayed = 0, attempts = 0;
   const systemWide = { systemWide: true };
   const applyDrop = () => {
     if (options.unchanged) return;
@@ -43,7 +44,8 @@ function fixture(options = {}) {
       bundleURL: { path: pid === 7 ? '/Applications/Editor.app' : '/System/Library/CoreServices/Agent.app' } }) },
     AXUIElementCopyElementAtPosition: (_app, x, y, out) => {
       if (_app === systemWide) { const pid = options.eventPid(x, y); out[0] = { pid }; return pid ? 0 : -25212; }
-      const el = [a, b].find(el => x >= el.AXPosition.x && x < el.AXPosition.x + el.AXSize.width && y >= 130);
+      const el = [a, b].find(el => x >= el.AXPosition.x && x < el.AXPosition.x + el.AXSize.width &&
+        y >= el.AXPosition.y && y < el.AXPosition.y + el.AXSize.height);
       out[0] = el ?? wins.find(w => x >= w.AXPosition.x && x < w.AXPosition.x + w.AXSize.width);
       return out[0] ? 0 : -25212;
     },
@@ -64,7 +66,7 @@ function fixture(options = {}) {
       if (e.type === 2 && !options.postedUnchanged) applyDrop();
     },
   });
-  const context = vm.createContext({ $, Ref: () => [], ObjC: { import() {}, bindFunction() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v },
+  const context = vm.createContext({ console: { log: line => traces.push(JSON.parse(line.replace(/^sleight-drag-phase /, ''))) }, $, Ref: () => [], ObjC: { import() {}, bindFunction() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v },
     delay: () => { if (++delayed === 1) options.onSettle?.({ a, b, frames }); },
     Application: () => assert.fail('cross-window selection must not use app focus or Apple events'),
     SLEIGHT_ACCESSIBILITY_MOVE: options.ax !== false });
@@ -76,7 +78,7 @@ function fixture(options = {}) {
     ...(options.overlays ? [{ id: 40, pid: 739, title: 'Notification Center', owner: 'Notification Center', layer: 21, bounds: { X: 0, Y: 0, Width: 1512, Height: 982 } },
       { id: 310887, pid: 633, title: 'half-backdrop', owner: 'Dock', layer: 0, bounds: { X: -4, Y: 32, Width: 762, Height: 950 } }] : []),
     ...(options.cover ? [{ id: 50, pid: 99, title: 'cover', owner: 'Other', layer: 0, bounds: frames[1] }] : []),
-    ...order.filter(id => !(options.foreign && id === 12)).map(id => ({ id, pid: 7, title: options.sameTitle ? 'Same.txt' : `${id}.txt`, owner: 'Editor', layer: 0, bounds: { ...frames[id - 11] } })),
+    ...order.filter(id => !(options.foreign && id === ids[1])).map(id => ({ id, pid: 7, title: options.sameTitle ? 'Same.txt' : `${id}.txt`, owner: 'Editor', layer: 0, bounds: { ...frames[ids.indexOf(id)] } })),
   ];
   context.backgroundBuilder = () => {
     if (options.lateCover) options.cover = true;
@@ -89,10 +91,16 @@ function fixture(options = {}) {
     return {
       value: () => el.AXValue,
       selection: () => ({ ...el.range }),
-      lineRange: n => n === 0 ? { location: 0, length: el.AXValue.length } : null,
+      lineForIndex: () => 0,
+      lineRange: n => n === 0 ? { location: 0, length: el.AXValue.length } : options.emptyFinal && n === 1 ? { location: el.AXValue.length, length: 0 } : null,
       hasAttributes: () => !!options.formatted,
-      rect: i => ({ X: x + i * 8, Y: 130, Width: 8, Height: 14 }),
-      indexAt: p => Math.min(Math.floor((p.x - x) / 8), el.AXValue.length - 1), lineEnd: () => el.AXValue.length,
+      rect: (i, length = 1) => {
+        const end = el.AXValue.length - 1;
+        if (i === 0 && length === el.AXValue.length) return { X: x, Y: 130, Width: 8 * end, Height: 14 };
+        if (i === el.AXValue.length && length === 0) return { X: x, Y: 150, Width: 0, Height: 14 };
+        return { X: x + i * 8, Y: 130, Width: length === 0 || i === end ? 0 : 8, Height: 14 };
+      },
+      indexAt: p => options.emptyFinal && (p.y < 130 || p.y >= 144) ? 0 : Math.min(Math.floor((p.x - x) / 8), el.AXValue.length - 1), lineEnd: () => el.AXValue.length,
       replace: (at, length, text) => {
         if (options.rangeSideEffects) { el.range = { location: at, length }; el.AXSelectedText = el.AXValue.slice(at, at + length); }
         if (options.failWrite === ++attempts) throw new Error('write unavailable');
@@ -103,9 +111,9 @@ function fixture(options = {}) {
       select: (location, length) => { el.range = { location, length }; el.AXSelectedText = el.AXValue.slice(location, location + length); }, settle: () => settles.push(7),
     };
   };
-  const run = (change = {}) => JSON.parse(context.run([JSON.stringify({ app: 'Editor', windowId: 11, toWindowId: 12,
-    from: 'the current text selection', to: 'end of line 1', holdMs: 0, settleMs: 0, steps: 2, ...change })]));
-  return { run, context, a, b, frames, wins, events, writes, activations, settles, restored };
+  const run = (change = {}) => JSON.parse(context.run([JSON.stringify({ app: 'Editor', windowId: ids[0], toWindowId: ids[1],
+    dp7: options.dp7 ?? false, dp2: options.dp2 ?? false, from: 'the current text selection', to: 'end of line 1', holdMs: 0, settleMs: 0, steps: 2, ...change })]));
+  return { run, context, a, b, frames, wins, events, writes, activations, settles, restored, traces };
 }
 
 test('cross-window AX move finds A selection while B has focus and inserts at B line end', () => {
@@ -116,6 +124,24 @@ test('cross-window AX move finds A selection while B has focus and inserts at B 
   assert.equal(h.settles.length, 1); assert.equal(h.events.length, 0); assert.equal(h.activations.length, 0);
   // Like the single-window AX move, the moved text ends selected in its new place.
   assert.deepEqual(h.b.range, { location: 12, length: 5 }); assert.equal(h.b.AXSelectedText, 'alpha');
+});
+
+test('cross-window traces preserve DP2 ordering for AX and its posted fallback', () => {
+  for (const dp2 of [true, false]) {
+    for (const formatted of [false, true]) {
+      const h = fixture({ dp2, formatted }), r = h.run({ trace: true });
+      assert.equal(r.ok, true, r.error);
+      assert.equal(r.path, formatted ? 'background' : 'accessibility');
+      const pre = ['raise:start', 'raise:end', 'settle:start', 'settle:end'];
+      const ax = ['ax-move:start', ...(formatted ? [] : ['settle:start', 'settle:end']), 'ax-move:end'];
+      assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), [
+        ...(!dp2 ? pre : []), ...ax, ...(formatted ? [...(dp2 ? pre : []), 'posted-press:start', 'posted-press:end'] : []),
+      ]);
+      assert.ok(h.traces.every(e => e.monoMs === 1000));
+      const quiet = fixture({ dp2, formatted });
+      assert.deepEqual(quiet.run(), r); assert.deepEqual(quiet.traces, []);
+    }
+  }
 });
 
 test('destination coordinates use B screenshot scale even when A and B differ in size', () => {
@@ -329,3 +355,142 @@ test('a banner over the point is a system overlay: wait and retry once, no tilin
   assert.match(r.error, /^from is covered by Notification Center \(windowId 40\), a system window such as a notification banner or a system prompt; nothing was pressed\. If it is a security, permission, password or sign-in prompt, don't interact with it: tell the user now\. Otherwise it usually goes away within seconds: wait about 5 s, read the window again and retry the drag once/);
   assert.doesNotMatch(r.error, /tile the windows|nothing was pressed.*nothing was pressed/);
 });
+
+for (const options of [{ formatted: true }, { ignoreWrites: true }, { ax: false }, { noPosting: true, formatted: true }]) {
+  test(`DP7 refuses cross-window posting with its AX reason: ${JSON.stringify(options)}`, () => {
+    const h = fixture({ ...options, dp7: true, dp2: true }), r = h.run();
+    assert.equal(r.ok, false); assert.equal(r.path, 'none'); assert.equal(r.deliveryVerified, false);
+    assert.match(r.fallbackReason, /accessibility move unavailable/); assert.match(r.error, /cross-window posting can copy/);
+    assert.doesNotMatch(r.error + r.fallbackReason, /use the guarded posted or foreground drag/);
+    assert.equal(h.events.length + h.activations.length, 0); assert.equal(h.a.AXValue, 'alpha beta\n');
+    assert.equal(h.b.AXValue, 'gamma delta\n');
+  });
+}
+
+// WD2's recording tried both forms and got the same formatting refusal. Neither may bypass DP7.
+test('recorded semantic and coordinate cross-window requests preserve a genuine formatting refusal', () => {
+  for (const from of ['the current text selection', [185, 77]]) {
+    const h = fixture({ formatted: true, dp7: true, dp2: true });
+    h.a.AXValue = 'alpha move-8ea07288 omega\n'; h.a.AXSelectedText = 'move-8ea07288';
+    h.a.range = { location: 6, length: 13 }; h.b.AXValue = 'destination\n\n';
+    const r = h.run({ from, to: [60, 97], screenshotsByWindow: { 11: [600, 400], 12: [500, 400] } });
+    assert.equal(r.ok, false); assert.equal(r.path, 'none'); assert.equal(r.deliveryVerified, false);
+    assert.match(r.fallbackReason ?? r.error, /selected text carries formatting/);
+    assert.equal(h.a.AXValue, 'alpha move-8ea07288 omega\n'); assert.equal(h.b.AXValue, 'destination\n\n');
+    assert.equal(h.writes.length + h.events.length + h.activations.length, 0);
+  }
+});
+test('DP2 cross-window AX move skips the raise and settle', () => {
+  const h = fixture({ dp7: true, dp2: true });
+  h.context.raiseWindow = () => assert.fail('AX move did not need a raise');
+  h.context.delay = () => assert.fail('AX move did not need a settle delay');
+  assert.equal(h.run().path, 'accessibility'); assert.equal(h.writes.length, 2);
+});
+
+test('DP7 and DP2 default on: a cross-window drop uses the empty final line without raising', () => {
+  const h = fixture({ emptyFinal: true });
+  h.context.raiseWindow = () => assert.fail('default AX path raised');
+  h.context.delay = () => assert.fail('default AX path waited');
+  const r = h.run({ dp7: undefined, dp2: undefined, to: [20, 57], screenshotsByWindow: { 12: [500, 400] } });
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
+  assert.equal(h.a.AXValue, 'beta\n'); assert.equal(h.b.AXValue, 'gamma delta\nalpha\n');
+  assert.equal(h.events.length, 0);
+});
+
+for (const failure of [{ failWrite: 2 }, { ignoreWriteNumbers: [2] }]) {
+  test(`WD5 rolls back the inserted final newline when the source cut fails: ${JSON.stringify(failure)}`, () => {
+    const h = fixture({ emptyFinal: true, ...failure });
+    const r = h.run({ dp7: true, dp2: true, to: [20, 57], screenshotsByWindow: { 12: [500, 400] } });
+    assert.equal(r.ok, false); assert.equal(r.rolledBack, true); assert.equal(r.deliveryVerified, false);
+    assert.equal(h.a.AXValue, 'alpha beta\n'); assert.equal(h.b.AXValue, 'gamma delta\n');
+    assert.deepEqual(h.writes[0], [12, 12, 0, 'alpha\n']);
+    assert.deepEqual(h.writes.at(-1), [12, 12, 6, '']);
+    assert.equal(h.events.length + h.activations.length, 0);
+  });
+}
+
+test('DPd smoke endpoints move onto the second empty target row without a placeholder', () => {
+  for (const to of [[24, 128], [20, 132]]) {
+    const h = fixture(), adapter = h.context.axTextArea;
+    h.a.AXValue = 'alpha move-a7933cf2 omega\n'; h.a.AXSelectedText = 'move-a7933cf2';
+    h.a.range = { location: 6, length: 13 }; h.b.AXValue = 'destination\n\n';
+    Object.assign(h.frames[1], { X: 752, Y: 49, Width: 720, Height: 560 });
+    Object.assign(h.wins[1], { AXPosition: { x: 752, y: 49 }, AXSize: { width: 720, height: 560 } });
+    Object.assign(h.b, { AXPosition: { x: 757, y: 81 }, AXSize: { width: 700, height: 520 } });
+    h.context.axTextArea = (pid, point, reference) => {
+      const area = adapter(pid, point, reference);
+      if ((reference ?? (point.x < 750 ? h.a : h.b)) !== h.b) return area;
+      return { ...area,
+        indexAt: p => p.y >= 81 && p.y < 94 && p.x >= 762 && p.x < 833.5 ? Math.floor((p.x - 762) / 6.5) : 0,
+        rect: (i, n = 1) => i === 12 ? { X: 762, Y: 94, Width: 0, Height: 13 }
+          : i === 13 && n === 0 ? { X: 762, Y: 107, Width: 0, Height: 13 }
+            : { X: 762 + i * 6.5, Y: 81, Width: 6.5, Height: 13 },
+        lineRange: n => [{ location: 0, length: 12 }, { location: 12, length: 1 }, { location: 13, length: 0 }][n] ?? null,
+      };
+    };
+    h.context.raiseWindow = () => assert.fail('AX move raised a window');
+    const r = h.run({ dp7: undefined, dp2: undefined, to, screenshotsByWindow: { 12: [1440, 1120] }, trace: true });
+    assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
+    assert.equal(r.fallbackReason, null); assert.equal(r.deliveryVerified, true);
+    assert.equal(h.a.AXValue, 'alpha omega\n'); assert.equal(h.b.AXValue, 'destination\n\nmove-a7933cf2\n');
+    assert.deepEqual(h.writes, [[12, 13, 0, 'move-a7933cf2\n'], [11, 6, 14, '']]);
+    assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), ['ax-move:start', 'settle:start', 'settle:end', 'ax-move:end']);
+    assert.equal(h.events.length + h.activations.length, 0);
+  }
+});
+
+test('DPg recorded blank-line destination moves to line 2 without a placeholder or screenshot', () => {
+  const h = fixture({ emptyFinal: true }), adapter = h.context.axTextArea;
+  h.a.AXValue = 'alpha move-7a278a09 omega\n'; h.a.AXSelectedText = 'move-7a278a09';
+  h.a.range = { location: 6, length: 13 }; h.b.AXValue = 'destination\n\n';
+  h.context.axTextArea = (pid, point, reference) => {
+    const area = adapter(pid, point, reference);
+    if (reference !== h.b) return area;
+    return { ...area,
+      lineRange: n => [{ location: 0, length: 12 }, { location: 12, length: 1 }, { location: 13, length: 0 }][n] ?? null,
+      rect: (i, n = 1) => i === 12 ? { X: 755, Y: 150, Width: 0, Height: 14 }
+        : i === 13 && n === 0 ? { X: 755, Y: 170, Width: 0, Height: 14 }
+          : { X: 755 + i * 8, Y: 130, Width: 8, Height: 14 },
+    };
+  };
+  h.context.raiseWindow = () => assert.fail('AX move raised a window');
+  const r = h.run({ dp7: true, dp2: true, to: 'end of line 2', trace: true });
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
+  assert.equal(r.fallbackReason, null); assert.equal(r.deliveryVerified, true);
+  assert.equal(h.a.AXValue, 'alpha omega\n'); assert.equal(h.b.AXValue, 'destination\nmove-7a278a09\n');
+  assert.deepEqual(h.writes, [[12, 12, 0, 'move-7a278a09'], [11, 6, 14, '']]);
+  assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), ['ax-move:start', 'settle:start', 'settle:end', 'ax-move:end']);
+  assert.equal(h.events.length + h.activations.length, 0);
+});
+
+for (const to of [[24, 104], [20, 100], 'end of line 2']) {
+  test(`WD3 recorded selection request moves onto the empty final line: ${JSON.stringify(to)}`, () => {
+    const h = fixture({ windowIds: [323040, 323041] }), adapter = h.context.axTextArea;
+    h.a.AXValue = 'alpha move-c656f03d omega\n'; h.a.AXSelectedText = 'move-c656f03d';
+    h.a.range = { location: 6, length: 13 }; h.b.AXValue = 'destination\n';
+    Object.assign(h.frames[1], { X: 752, Y: 49, Width: 720, Height: 560 });
+    Object.assign(h.wins[1], { AXPosition: { x: 752, y: 49 }, AXSize: { width: 720, height: 560 } });
+    Object.assign(h.b, { AXPosition: { x: 757, y: 81 }, AXSize: { width: 700, height: 520 } });
+    h.context.axTextArea = (pid, point, reference) => {
+      const area = adapter(pid, point, reference);
+      if (reference !== h.b) return area;
+      return { ...area,
+        bounds: () => ({ X: 757, Y: 81, Width: 700, Height: 520 }),
+        characterCount: () => 12,
+        indexAt: () => 0,
+        rect: (i, n = 1) => i === 0 && n === 12 ? { X: 762, Y: 81, Width: 71.5, Height: 13 }
+          : i === 12 && n === 0 && typeof to === 'string' ? { X: 762, Y: 94, Width: 0, Height: 13 }
+          : i < 12 ? { X: 762 + i * 6.5, Y: 81, Width: i === 11 ? 0 : 6.5, Height: 13 } : null,
+        lineRange: n => [{ location: 0, length: 12 }, { location: 12, length: 0 }][n] ?? null,
+      };
+    };
+    h.context.raiseWindow = () => assert.fail('AX move raised a window');
+    const r = h.run({ app: 'TextEdit', dp7: undefined, dp2: undefined, to,
+      ...(Array.isArray(to) ? { screenshotsByWindow: { 323041: [1440, 1120] } } : {}), trace: true });
+    assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
+    assert.equal(r.toWindowId, 323041); assert.equal(r.fallbackReason, null); assert.equal(r.deliveryVerified, true);
+    assert.equal(h.a.AXValue, 'alpha omega\n'); assert.equal(h.b.AXValue, 'destination\nmove-c656f03d\n');
+    assert.deepEqual(h.writes, [[323041, 12, 0, 'move-c656f03d\n'], [323040, 6, 14, '']]);
+    assert.equal(h.events.length + h.activations.length, 0);
+  });
+}

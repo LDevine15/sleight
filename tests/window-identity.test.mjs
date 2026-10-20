@@ -112,3 +112,13 @@ test('the light check after Return gets sheets and the focused element only when
   assert.equal(focusOf(request, (app, windows) => { app.AXFocusedUIElement = { AXRole: 'AXComboBox', AXWindow: windows[0],
     AXParent: { AXRole: 'AXToolbar', AXParent: windows[0] } }; windows[0].AXParent = { AXRole: 'AXWebArea' }; }).inPage, false);
 });
+
+
+test('pre-selection identity can read an unfocused window without weakening ordinary admission', () => {
+  const requested = { ...target, windowNumber: 11 };
+  assert.equal(inspect(requested, [11, 22]).status, 'mismatch');
+  const result = inspect({ ...requested, allowUnfocused: true }, [11, 22]);
+  assert.equal(result.status, 'ok');
+  assert.equal(result.windowNumber, 11);
+  assert.equal(inspect({ ...target, allowUnfocused: true }, [11, 22]).matches, 2);
+});

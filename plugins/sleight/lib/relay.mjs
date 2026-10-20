@@ -58,7 +58,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isV3Frontend, isV3Bridge, failure as turboFailure } from './direct-browser/worker.mjs';
 import { browserBundleId } from './direct-browser/browsers.mjs';
 import { engineBrowserOpen as engineBrowserOpenSetting, engineOpenTool, widenTurboOpen, turboRoute, parseEngineOpen, siteOf, acquisitionCode, openCode,
@@ -1092,6 +1092,7 @@ export function createRelay({
     ? createTabProbe({ directory: inputLease.directory, observe: windowIdentity, trace }) : undefined;
   const promptFailures = new Map(); // call id -> native panel failure, distinct from a user decline
   const running = new Set(); // ids of engine calls waiting for a result
+  const engineCalls = new Set(); // calls actually sent to the current engine, including private reads
   const nativeChecked = new Set();
   const focusedChecked = new Set();
   const callDetails = new Map();
@@ -1141,6 +1142,7 @@ export function createRelay({
       detachServer();
       serverIn = engine.serverIn; serverOut = engine.serverOut;
       engineEpoch++;
+      engineCalls.clear();
       bindServer();
       stopCollected = false;
       if (initialization) {
@@ -1705,11 +1707,117 @@ export function createRelay({
     openedReads.clear();
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
-    clearSelection(); browserHandles.clear(); leaseWindow = undefined; lastShown = new Set(); for (const id of [...parentPins.keys()]) releasePin(id); dragWindows.clear(); handleBundles.clear(); unconfirmedHandles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
+    clearSelection(); browserHandles.clear(); leaseWindow = undefined; lastShown = new Set(); for (const id of [...parentPins.keys()]) releasePin(id); dragWindows.clear(); handleBundles.clear(); openedWindows.clear(); openedWindowCalls.clear(); openedAliases.clear(); unconfirmedHandles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
     standardWindows.clear(); appProcesses.clear(); processProbes.clear();
   }
   const dragWindows = new Map(); // successful numbered window reads, for cross-window endpoints
   const handleBundles = new Map();
+  // Engine app handles share the app's main window. Keep open_file's document binding separately from reads.
+  const openedWindows = new Map(), openedWindowCalls = new Set(), openedAliases = new Map();
+  const openedWindowLeases = new Map(), openedFlowPlans = new Map(), openedWindowReads = new Set();
+  function openedWindowCall(msg, flowPlan) {
+    if (msg.method !== 'tools/call' || msg.params?.name !== 'js' || openedWindowCalls.has(msg.id)) return false;
+    const code = msg.params.arguments?.code;
+    if (typeof code !== 'string' || !openedWindows.size) return false;
+    const bare = codeOnly(code), bindings = new Map(openedWindows);
+    // Retain only simple aliases, member receivers and standalone echoes. Any other use of a
+    // bound name can assign or shadow it (including patterns, loop heads and parameters), so forget it.
+    let rest = bare.replace(/(^|;)\s*(?:(?:let|const|var)\s+)?([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\s*(?=;|$)/g,
+      (match, boundary, name, source) => {
+        const target = bindings.get(source);
+        if (target) bindings.set(name, target); else bindings.delete(name);
+        return boundary + ' '.repeat(match.length - boundary.length);
+      });
+    rest = rest.replace(/\b[A-Za-z_$][\w$]*(?=\s*\.)/g, '')
+      .replace(/(^|;)\s*[A-Za-z_$][\w$]*\s*(?=;|$)/g, '$1');
+    const uncertain = new Set([...rest.matchAll(/[A-Za-z_$][\w$]*/g)].map(match => match[0]));
+    for (const name of bindings.keys()) if (uncertain.has(name) || /`[\s\S]*?\$\{/.test(code)) bindings.delete(name);
+    // Prune on mixed action paths too, before any async selection or successful reply can retain aliases.
+    for (const name of openedWindows.keys()) if (!bindings.has(name)) openedWindows.delete(name);
+    const handles = [...new Set([...bare.matchAll(HANDLE_CALL)].map(match => match[1]).filter(handle => bindings.has(handle)))];
+    if (!handles.length) {
+      // A standalone alias is a local REPL assignment; it needs no window selection.
+      if (/^\s*(?:(?:let|const|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*[A-Za-z_$][\w$]*\s*;?\s*$/.test(bare)) {
+        openedAliases.set(msg.id, bindings);
+      }
+      return false;
+    }
+    const target = bindings.get(handles[0]);
+    const request = { app: target.appId, url: target.url };
+    const refuse = () => leaseStop(msg, `handle ${handles[0]} belongs to ${JSON.stringify(target.url)}; window unconfirmed. Call select_window with ${JSON.stringify(request)}.`);
+    if (!inputLease || !windowIdentity || !localTools?.call || !localNames.has('select_window') || running.size || handles.some(handle => bindings.get(handle) !== target)) {
+      refuse(); return true;
+    }
+    const blocked = callBlock('js', msg.params.arguments) ?? appLine(target.appId, target.app);
+    if (blocked) { blockStop(msg, blocked); return true; }
+    // A sheet belongs to its document. The existing parent lease checks keep that dialog attached to this window.
+    if (leaseWindow?.appId === target.appId && sameWindow(leaseWindow.parent, target)) {
+      openedAliases.set(msg.id, bindings); return false;
+    }
+    if (documentMode && (!documentAllowed() || !sameWindow(observedDocument, target))) { refuse(); return true; }
+    const generation = stopGeneration;
+    const current = () => {
+      if (generation !== stopGeneration || closing || disposed) throw Error('opened window call stopped');
+    };
+    running.add(msg.id); localRunning.add(msg.id);
+    if (flowPlan) openedFlowPlans.set(msg.id, flowPlan);
+    callDetails.set(msg.id, 'opened handle window');
+    Promise.resolve().then(async () => {
+      current();
+      let key;
+      try { key = inputLease.acquire(target, 'app'); }
+      catch (error) { stop(error.message); return; }
+      openedWindowLeases.set(msg.id, key); refreshHeartbeat();
+      const identity = verifyWindowIdentity(target, await windowIdentity({ ...target, allowUnfocused: true }));
+      current();
+      const matched = leaseWindow?.appId === target.appId && sameWindow(leaseWindow, target);
+      if (!matched) {
+        const result = await localTools.call('select_window', { ...request, expectedAppId: target.appId,
+          ...(Number.isSafeInteger(identity.windowNumber) && identity.windowNumber > 0 ? { windowNumber: identity.windowNumber } : {}) }, async (parts, message, options) => {
+          const allowed = await approve(parts, message, msg.id, options); current();
+          if (allowed) inputLease.renew([key]);
+          return allowed;
+        }, undefined, target);
+        current();
+        const value = !result.isError && JSON.parse(result.content?.find(c => c.type === 'text')?.text ?? '{}');
+        if (!value?.ok || value.target?.appId !== target.appId || !sameWindow(value.target, target) ||
+            value.identity?.pid !== identity.pid || value.identity?.windowNumber !== identity.windowNumber) throw Error('selection unconfirmed');
+        selectedWindow = { ...value.target, windowNumber: identity.windowNumber };
+        selectionVerified = false;
+        const id = `sleight-opened-window-${nextInternalId++}`;
+        callGenerations.set(id, generation);
+        openedWindowReads.add(id);
+        splitCalls.set(id, async reply => {
+          try {
+            current();
+            if (reply.error || reply.result?.isError || leaseWindow?.appId !== target.appId || !sameWindow(leaseWindow, target)) throw Error('read unconfirmed');
+            const checked = verifyWindowIdentity({ ...target, nativeIdentity: identity, windowNumber: value.identity.windowNumber },
+              await windowIdentity({ ...target, windowNumber: value.identity.windowNumber }));
+            current();
+            resume(checked);
+          } catch { stop(); }
+        });
+        handleClient({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js', arguments: { code: `var __sleightWindowCheck${nextInternalId++} = await cua.getApp(${JSON.stringify(target.appId)})` } } });
+      } else {
+        const checked = verifyWindowIdentity({ ...target, nativeIdentity: identity }, await windowIdentity(target));
+        current(); resume(checked);
+      }
+    }).catch(() => stop());
+    const stop = reason => {
+      localRunning.delete(msg.id); finishedCall(msg.id);
+      if (generation === stopGeneration && !closing && !disposed) {
+        if (reason) leaseStop(msg, reason); else refuse();
+      }
+    };
+    const resume = identity => {
+      leaseWindow.nativeIdentity = identity; leaseWindow.identityRequired = true;
+      openedAliases.set(msg.id, bindings);
+      selectedWindow = { ...target, windowNumber: identity.windowNumber }; selectionVerified = true;
+      localRunning.delete(msg.id); running.delete(msg.id);
+      openedWindowCalls.add(msg.id); handleClient(msg);
+    };
+    return true;
+  }
   const unconfirmedHandles = new Set(); // handles an acquisition bound without a confirmed bundle ID
   // Windows seen with a standard-window root, by documentKey, with when, for which bundle and in which process: only
   // these can be covered by a dialog the lease moves to. A process note forgets the bundle's windows from any other
@@ -1835,11 +1943,11 @@ export function createRelay({
   }
   function refreshHeartbeat() {
     if (disposed) { stopHeartbeat(); return; }
-    const keys = [...leaseCalls.values()].map(c => c.key).filter(Boolean);
+    const keys = [...leaseCalls.values()].map(c => c.key).filter(Boolean).concat([...openedWindowLeases.values()]);
     if (!keys.length) { stopHeartbeat(); return; }
     if (leaseTimer) return;
     leaseTimer = setInterval(() => {
-      const active = new Set([...leaseCalls.values()].map(c => c.key).filter(Boolean));
+      const active = new Set([...leaseCalls.values()].map(c => c.key).filter(Boolean).concat([...openedWindowLeases.values()]));
       try { inputLease.renew(active); renewalFailures = 0; }
       catch (err) {
         trace('input-lease-renewal-error', { error: err.message });
@@ -1851,6 +1959,17 @@ export function createRelay({
     leaseTimer.unref?.();
   }
   function finishedCall(id) {
+    openedWindowCalls.delete(id);
+    openedFlowPlans.delete(id);
+    openedWindowReads.delete(id);
+    openedAliases.delete(id);
+    const openedKey = openedWindowLeases.get(id);
+    if (openedKey) {
+      openedWindowLeases.delete(id);
+      try { inputLease.release([openedKey]); }
+      catch (error) { trace('input-lease-release-error', { error: error.message }); }
+      refreshHeartbeat();
+    }
     // A call that ends without an engine result (a refusal, a retry, a stop) shows no more hand.
     hand?.result(id, true);
     handBindingMarks.delete(id);
@@ -2083,6 +2202,7 @@ export function createRelay({
     if (closing && msg.result?.action === 'accept') msg = { ...msg, result: { action: 'cancel' } };
     if (serverIn.writableEnded || serverIn.destroyed) { trace('server-input-closed', { id: msg.id }); return; }
     trace('to-server', msg);
+    if (msg.method === 'tools/call' && msg.id !== undefined) engineCalls.add(msg.id);
     if (msg.method === 'tools/call' && msg.id !== undefined && msg.params.name !== TURN_END_TOOL) {
       callDetails.set(msg.id, msg.params.name + (msg.params.arguments?.title ? ': ' + msg.params.arguments.title : ''));
     }
@@ -2251,6 +2371,8 @@ export function createRelay({
       clearTimeout(probe.timer); helperProbes.delete(msg.id); probe.receive?.(msg);
       trace('helper-recovery-result', msg); return;
     }
+    // Admission refusals can finish an opened-window call before it reaches the engine reply path.
+    if (msg.method === undefined && (openedWindowLeases.has(msg.id) || openedFlowPlans.has(msg.id))) finishedCall(msg.id);
     const clientTool = msg.method === undefined ? pendingClients.get(msg.id)?.split(': ')[0] : undefined;
     const nativeAcquisition = msg.method === undefined && nativeAcquisitions.delete(msg.id);
     if (msg.method === undefined) {
@@ -2518,6 +2640,48 @@ export function createRelay({
     return answer;
   }
 
+  // DP4: one engine read while the local drag still owns its app lease.
+  async function dragChangedLines(msg, outcome, current) {
+    if (process.env.SLEIGHT_DP4 === '0' || outcome.textChanged !== true || !inputLease || !leaseCalls.get(msg.id)?.key) return [];
+    current();
+    const args = msg.params.arguments, number = outcome.toWindowId ?? outcome.windowId;
+    if (!Number.isSafeInteger(number)) return [];
+    const known = [...dragWindows.values()].filter(window => window.windowNumber === number &&
+      [window.app, window.appId].includes(args.app));
+    const target = known.length === 1 ? known[0] : !outcome.toWindowId &&
+      leaseWindow && [leaseWindow.app, leaseWindow.appId].includes(args.app) ? leaseWindow : undefined;
+    if (!target || target.identityError || (target.identityRequired && !target.nativeIdentity) || webBrowser(target.appId) ||
+        [...dragWindows.values()].some(other => other.appId === target.appId && other.title === target.title && other.windowNumber !== number)) return [];
+    // Implicit app acquisitions have no window number. Prove the helper's returned
+    // number against that engine header before reading through its existing handle.
+    if (known.length !== 1) {
+      if (!windowIdentity) return [];
+      verifyWindowIdentity({ ...target, windowNumber: number }, await windowIdentity({ ...target, windowNumber: number }));
+      current();
+    }
+    const handle = [...handleBundles].find(([name, window]) => {
+      const selected = handleSelectors.get(name)?.match(/^\{\s*(?:windowId|"windowId")\s*:\s*(\d+)\s*\}$/)?.[1];
+      const bound = window.windowNumber ?? window.nativeIdentity?.windowNumber ?? (selected ? Number(selected) : undefined);
+      return !unconfirmedHandles.has(name) && window.appId === target.appId && sameWindow(window, target) &&
+        (bound === number || bound === undefined && window.nativeCandidates === 1);
+    })?.[0];
+    if (!handle || compactor.seenLines(target) === undefined) return [];
+    const reply = await new Promise(resolve => {
+      const id = `sleight-drag-read-${nextInternalId++}`;
+      const timer = setTimeout(() => { internalRequests.delete(id); lateHelperReplies.add(id); resolve(undefined); }, 5000);
+      internalRequests.set(id, response => { clearTimeout(timer); resolve(response); });
+      toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
+        arguments: { code: `await ${handle}.getAXState({ disableDiffing: true })` }, _meta: engineMeta() } });
+    });
+    current();
+    if (!reply?.result || reply.error || reply.result.isError) return [];
+    const content = reply.result.content ?? [], raw = content.filter(item => item?.type === 'text').map(item => item.text).join('\n');
+    const shown = windowFromText(raw), surface = reply.result._meta?.['codex/toolSurface'];
+    if (!hasFullTree(raw) || !shown || !sameWindow(target, shown) || surface?.kind === 'browserUse' ||
+        (surface?.app?.appId && surface.app.appId !== target.appId)) return [];
+    return compactor.process(content.filter(item => item?.type === 'text').map(item => ({ ...item, text: GUARD_MARK + item.text })));
+  }
+
   async function callLocal(msg, plan) {
     const generation = stopGeneration;
     const current = () => {
@@ -2527,7 +2691,7 @@ export function createRelay({
     localRunning.add(msg.id);
     let result;
     const name = msg.params.name;
-    const args = msg.params.arguments ?? {};
+    let args = msg.params.arguments ?? {};
     let resolved, prepared, preparedAsk, preparedFailed = false;
     if (name === 'select_window') clearSelection();
     try {
@@ -2575,6 +2739,23 @@ export function createRelay({
       let callArgs = name === 'select_window' && resolved
         ? { ...args, expectedAppId: resolved.appId } : args;
       if (name === 'drag') {
+        if (args.windowId === undefined && args.from === 'the current text selection' && resolved?.appId && localTools.selectionWindow && windowIdentity &&
+            [...handleBundles.values()].some(window => window?.appId === resolved.appId)) {
+          // Read selection ranges, never document text. An incomplete census keeps drag's ordinary ambiguity refusal.
+          try {
+            const selected = await localTools.selectionWindow(resolved);
+            current();
+            if (selected?.ok && selected.target?.appId === resolved.appId && selected.pid === resolved.pid &&
+                Number.isSafeInteger(selected.target.windowNumber) && selected.target.windowNumber > 0) {
+              const identity = verifyWindowIdentity(selected.target, await windowIdentity({ ...selected.target, allowUnfocused: true }));
+              current();
+              if (identity.pid === resolved.pid && Number.isSafeInteger(identity.windowNumber) && identity.windowNumber > 0) {
+                callArgs = { ...callArgs, windowId: identity.windowNumber };
+                args = callArgs;
+              }
+            }
+          } catch (error) { current(); trace('drag-selection-window-unconfirmed', { id: msg.id }); }
+        }
         // drag converts Claude's screenshot pixels to window points with this size (2026-10-08).
         const shot = [args.app, resolved?.app].map(a => typeof a === 'string' && screenshots.get(a.toLowerCase())).find(Boolean);
         // Per window too: a second, untitled Chess window left 3 of 13 drags unconverted (2026-10-09).
@@ -2616,7 +2797,7 @@ export function createRelay({
           evidence[prefix ? 'toElementWindow' : 'elementWindow'] = window ? { title: window.title,
             windowId: window.windowNumber ?? window.nativeIdentity?.windowNumber } : undefined;
         }
-        callArgs = { ...args, ...endpoints, screenshot: shot ? [shot.latest.width, shot.latest.height] : undefined, screenshots: shot?.byTitle,
+        callArgs = { ...callArgs, ...endpoints, screenshot: shot ? [shot.latest.width, shot.latest.height] : undefined, screenshots: shot?.byTitle,
           screenshotsByWindow: shot?.byWindow, toElementLines: undefined, toElementWindow: undefined, ...evidence };
       }
       result = await localTools.call(name, callArgs, async (parts, message, options) => {
@@ -2629,7 +2810,7 @@ export function createRelay({
         return allowed;
       // The fourth argument stays runLocal for callLocalTool; the resolved
       // lease target rides fifth.
-      }, undefined, resolved, prepared);
+      }, undefined, resolved, prepared, { afterDrag: outcome => dragChangedLines(msg, outcome, current) });
       current();
       if (msg.params.name === 'select_window' && !result.isError) {
         const value = JSON.parse(result.content.find(c => c.type === 'text')?.text ?? '{}');
@@ -2687,6 +2868,12 @@ export function createRelay({
           // read the window again and took a screenshot, two model turns, before its first edit. Only a window
           // whose URL is the opened file gets one: with no URL, the read may show another window.
           const matched = typeof shownPath === 'string' && [openedFile.path, openedFile.real].includes(shownPath);
+          if (typeof openedFile?.path === 'string') {
+            const target = { ...(matched ? shown : {}), appId: openedApp,
+              app: shown?.app ?? args.app, title: matched ? shown.title : openedFile.path.split('/').at(-1),
+              url: matched ? shown.url : pathToFileURL(openedFile.real ?? openedFile.path).href };
+            openedWindows.set(handle, target);
+          }
           let pictured = false;
           if (textless && matched && !state.isError) {
             const started = Date.now(), image = await openScreenshot(handle);
@@ -3571,69 +3758,6 @@ export function createRelay({
     if (msg.method === 'tools/call' && (serverIn.writableEnded || serverIn.destroyed)) {
       leaseStop(msg, promptNotice('the engine connection ended during stop. Reconnect sleight for a fresh engine and app read.', prompt)); return;
     }
-    if (windowIdentity && inputLease && !running.size && !documentMode && !changeReview && leaseWindow?.appId &&
-        msg.method === 'tools/call' && msg.params?.name === 'js' && !browserPlan(msg.params.arguments?.code ?? '') &&
-        !menuContinued.has(msg.id) && !menuAdmissions.has(msg.id) && !splitCalls.has(msg.id)) {
-      // A renamed handle counts only when it is open_file's or bound to the leased app.
-      const plan = splitMenuActions(msg.params.arguments?.code, { alias: name => handleBundles.has(name)
-        ? handleBundles.get(name)?.appId === leaseWindow.appId : /^__sleightOpenedApp\d+$/.test(name) });
-      if (plan && plan.actions.some((action, i) => action.selector && i < plan.actions.length - 1)) {
-        const target = leaseWindow, generation = stopGeneration;
-        // The window's lines as Claude last saw them, for the tab continuation to count its tabs against.
-        const admission = { plan, target, generation, before: compactor.seenLines(target, undefined, true) };
-        menuAdmissions.set(msg.id, admission);
-        running.add(msg.id); callDetails.set(msg.id, 'menu window admission');
-        // The baseline is sampled before the call is sent, so HID idle has to cover the call from this moment.
-        admission.sampledAt = clock();
-        admission.nativeTab = ck3 && tabContinuation && tabFirst && guardMode !== 'careful' && nativeTabPlan(plan);
-        admission.identity = Promise.resolve().then(() => windowIdentity(admission.nativeTab ? { ...target, tabCertificate: true } : target));
-        menuIdentity(() => admission.identity, target, menuContinuationTimeoutMs).then(baseline => {
-          if (generation !== stopGeneration || leaseWindow !== target || closing || disposed || stopCollected) {
-            menuAdmissions.delete(msg.id); finishedCall(msg.id);
-            const error = new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
-            if (!disposed && !stopCollected) leaseStop(msg, error.message);
-            return;
-          }
-          admission.baseline = baseline; noteProcess(baseline);
-          running.delete(msg.id); handleClient(msg);
-        });
-        return;
-      }
-    }
-    if (windowIdentity && inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' &&
-        !isLeaseRead(msg.params.arguments?.code) && !browserPlan(msg.params.arguments?.code ?? '') &&
-        leaseWindow && (leaseWindow.identityRequired || treeFreeFirstAction(msg.params.arguments?.code) || selectedCancel(msg.params.arguments?.code)) && !nativeChecked.has(msg.id)) {
-      if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return; }
-      if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return; }
-      if (leaseWindow.identityRequired && !leaseWindow.nativeIdentity) { leaseStop(msg, 'native window identity has no successful baseline. Read the app again.'); return; }
-      const target = leaseWindow;
-      // A menu header can omit the document URL; Cancel still checks the selected native window.
-      const expected = selectedCancel(msg.params.arguments?.code) && selectedWindow.windowNumber !== undefined
-        ? { ...target, windowNumber: selectedWindow.windowNumber } : target;
-      const generation = stopGeneration;
-      running.add(msg.id);
-      callDetails.set(msg.id, 'native window admission');
-      const started = performance.now();
-      Promise.resolve().then(() => menuAdmissions.get(msg.id)?.identity ?? windowIdentity(expected)).then(observed => {
-        // The parent lease's pin fails closed: an unavailable or ambiguous identity stops instead of dropping the pin. It
-        // holds until the pinned call's reply, so it covers the calls split from it (a text write's head) too.
-        const identity = target.parentPin ? verifyWindowIdentity(expected, observed) : nativeIdentity(expected, observed);
-        noteProcess(identity);
-        if (generation !== stopGeneration || leaseWindow !== target || closing || disposed) throw new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
-        if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
-        else focusedChecked.add(msg.id);
-        trace('native-window-admission', { id: msg.id, ms: performance.now() - started, confirmed: !!identity });
-        running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg);
-      }).catch(error => { if (stopCollected || generation !== stopGeneration) return;
-        // An optional focus probe that is unavailable leaves the full first read in place.
-        // Existing identity requirements and confirmed mismatches still stop admission.
-        if (!expected.identityRequired && !/^Input lease:/.test(error.message)) {
-          running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg); return;
-        }
-        finishedCall(msg.id); leaseStop(msg, error.message);
-      });
-      return;
-    }
     if (msg.method === 'tools/call') {
       if (disposed) { changeStop(msg, 'session has ended'); return; }
       if (flowAsking) { flowStop(msg, 'wait for the user decision'); return; }
@@ -3642,38 +3766,24 @@ export function createRelay({
       if (changeReview && msg.params?.name === REVIEW_TOOL.name) { reviewChanges(msg); return; }
       if (reviewing) { changeStop(msg, 'the user is reviewing changes, wait for their decision'); return; }
     }
-    if (inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' && typeof msg.params.arguments?.code === 'string' && !browserPlan(msg.params.arguments.code)) {
-      if (numberedHandles(msg.params.arguments.code).length > 1) {
-        leaseStop(msg, promptNotice('send numbered actions on one handle per call. Read that window before acting.', prompt)); return;
-      }
-      const ids = compactor.numberIds(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
-      if (ids) {
-        msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: ids.code } } };
-        for (const sent of ids.sent) {
-          const line = sent.line.length > 60 ? sent.line.slice(0, 57) + '...' : sent.line;
-          remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + `sleight: { id: "${sent.id}" } was sent as element ${sent.number}, ${line}.`);
-        }
-        trace('id-numbers', { id: msg.id, numbers: ids.sent.map(s => s.number) });
-      }
-      const stale = compactor.remapStale(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
-      if (stale) {
-        msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: stale.code } } };
-        remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + 'sleight: numbers in this window changed since you saw them, so ' +
-          stale.remapped.map(r => `${r.number} was found by its line ${JSON.stringify(r.line)}`).join(', ') + promptNotice('. Use the numbers in this result from now on.', prompt));
-        trace('stale-remapped', { id: msg.id, numbers: stale.remapped.map(r => r.number) });
-      }
-    }
     if (msg.method === 'tools/call' && msg.params?.name === 'js' && typeof msg.params.arguments?.code === 'string') {
       msg.params.arguments.code = autoPrintCode(msg.params.arguments.code, process.env.SLEIGHT_AUTOPRINT === '1');
     }
-    const retryClient = structuredClone(msg);
-    const originalCode = msg.params?.arguments?.code;
+    let retryClient = structuredClone(msg);
+    let originalCode = msg.params?.arguments?.code;
     if (typeof originalCode === 'string') {
       for (const native of nativeBindings(originalCode, nativeHandles)) {
         browserHandles.delete(native); nativeHandles.add(native);
       }
     }
     const browser = msg.method === 'tools/call' && msg.params?.name === 'js' && browserPlan(originalCode ?? '');
+    if (msg.method === 'tools/call' && msg.params?.name === 'js_reset') {
+      // A reset can repair orphaned bookkeeping, but cannot release a call still on the pipe or in native admission.
+      if (inputLease && (engineCalls.size || localRunning.size || [...pendingClients.keys()].some(id => id !== msg.id))) {
+        leaseStop(msg, 'another call in this session is pending.'); return;
+      }
+      clearStaleCalls(msg.id);
+    }
     if (msg.method === 'tools/call' && ['js', 'js_reset'].includes(msg.params?.name) && browserCalls.size) {
       leaseStop(msg, 'a browser candidate is pending; wait for its guarded result.'); return;
     }
@@ -3733,7 +3843,8 @@ export function createRelay({
       }
       requireNotes.set(msg.id, requireNote(false, saveReceipted, prompt));
     }
-    if (flowRules && msg.method === 'tools/call' && ['js', 'drag', 'menu_bar'].includes(msg.params?.name)) {
+    if (openedFlowPlans.has(msg.id) || openedWindowCalls.has(msg.id)) flowPlan = openedFlowPlans.get(msg.id);
+    else if (!openedWindowReads.has(msg.id) && flowRules && msg.method === 'tools/call' && ['js', 'drag', 'menu_bar'].includes(msg.params?.name)) {
       if (running.size || localRunning.size || documentAsking || reviewing) { flowStop(msg, 'wait for the pending call or prompt'); return; }
       if (msg.id === undefined || (msg.params.name === 'js' && typeof originalCode !== 'string')) { flowStop(msg, 'a request id and JavaScript code are required'); return; }
       flowPlan = flowRules.analyze(msg.params.name, msg.params.arguments, lastWindow);
@@ -3751,6 +3862,96 @@ export function createRelay({
       }
       flowPending = undefined;
     }
+    if (openedWindowCall(msg, flowPlan)) return;
+    if (windowIdentity && inputLease && !running.size && !documentMode && !changeReview && leaseWindow?.appId &&
+        msg.method === 'tools/call' && msg.params?.name === 'js' && !browserPlan(msg.params.arguments?.code ?? '') &&
+        !menuContinued.has(msg.id) && !menuAdmissions.has(msg.id) && !splitCalls.has(msg.id)) {
+      // A renamed handle counts only when it is open_file's or bound to the leased app.
+      const plan = splitMenuActions(msg.params.arguments?.code, { alias: name => handleBundles.has(name)
+        ? handleBundles.get(name)?.appId === leaseWindow.appId : /^__sleightOpenedApp\d+$/.test(name) });
+      if (plan && plan.actions.some((action, i) => action.selector && i < plan.actions.length - 1)) {
+        if (flowPlan) openedFlowPlans.set(msg.id, flowPlan);
+        const target = leaseWindow, generation = stopGeneration;
+        // The window's lines as Claude last saw them, for the tab continuation to count its tabs against.
+        const admission = { plan, target, generation, before: compactor.seenLines(target, undefined, true) };
+        menuAdmissions.set(msg.id, admission);
+        running.add(msg.id); callDetails.set(msg.id, 'menu window admission');
+        // The baseline is sampled before the call is sent, so HID idle has to cover the call from this moment.
+        admission.sampledAt = clock();
+        admission.nativeTab = ck3 && tabContinuation && tabFirst && guardMode !== 'careful' && nativeTabPlan(plan);
+        admission.identity = Promise.resolve().then(() => windowIdentity(admission.nativeTab ? { ...target, tabCertificate: true } : target));
+        menuIdentity(() => admission.identity, target, menuContinuationTimeoutMs).then(baseline => {
+          if (generation !== stopGeneration || leaseWindow !== target || closing || disposed || stopCollected) {
+            menuAdmissions.delete(msg.id); finishedCall(msg.id);
+            const error = new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
+            if (!disposed && !stopCollected) leaseStop(msg, error.message);
+            return;
+          }
+          admission.baseline = baseline; noteProcess(baseline);
+          running.delete(msg.id); handleClient(msg);
+        });
+        return;
+      }
+    }
+    if (windowIdentity && inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' &&
+        !isLeaseRead(msg.params.arguments?.code) && !browserPlan(msg.params.arguments?.code ?? '') &&
+        leaseWindow && (leaseWindow.identityRequired || treeFreeFirstAction(msg.params.arguments?.code) || selectedCancel(msg.params.arguments?.code)) && !nativeChecked.has(msg.id)) {
+      if (running.size) { leaseStop(msg, 'another call in this session is pending.'); return; }
+      if (leaseWindow.identityError) { leaseStop(msg, leaseWindow.identityError); return; }
+      if (leaseWindow.identityRequired && !leaseWindow.nativeIdentity) { leaseStop(msg, 'native window identity has no successful baseline. Read the app again.'); return; }
+      if (flowPlan) openedFlowPlans.set(msg.id, flowPlan);
+      const target = leaseWindow;
+      // A menu header can omit the document URL; Cancel still checks the selected native window.
+      const expected = selectedCancel(msg.params.arguments?.code) && selectedWindow.windowNumber !== undefined
+        ? { ...target, windowNumber: selectedWindow.windowNumber } : target;
+      const generation = stopGeneration;
+      running.add(msg.id);
+      callDetails.set(msg.id, 'native window admission');
+      const started = performance.now();
+      Promise.resolve().then(() => menuAdmissions.get(msg.id)?.identity ?? windowIdentity(expected)).then(observed => {
+        // The parent lease's pin fails closed: an unavailable or ambiguous identity stops instead of dropping the pin. It
+        // holds until the pinned call's reply, so it covers the calls split from it (a text write's head) too.
+        const identity = target.parentPin ? verifyWindowIdentity(expected, observed) : nativeIdentity(expected, observed);
+        noteProcess(identity);
+        if (generation !== stopGeneration || leaseWindow !== target || closing || disposed) throw new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
+        if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
+        else focusedChecked.add(msg.id);
+        trace('native-window-admission', { id: msg.id, ms: performance.now() - started, confirmed: !!identity });
+        running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg);
+      }).catch(error => { if (stopCollected || generation !== stopGeneration) return;
+        // An optional focus probe that is unavailable leaves the full first read in place.
+        // Existing identity requirements and confirmed mismatches still stop admission.
+        if (!expected.identityRequired && !/^Input lease:/.test(error.message)) {
+          running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg); return;
+        }
+        finishedCall(msg.id); leaseStop(msg, error.message);
+      });
+      return;
+    }
+    if (inputLease && msg.method === 'tools/call' && msg.params?.name === 'js' && typeof msg.params.arguments?.code === 'string' && !browserPlan(msg.params.arguments.code)) {
+      if (numberedHandles(msg.params.arguments.code).length > 1) {
+        leaseStop(msg, promptNotice('send numbered actions on one handle per call. Read that window before acting.', prompt)); return;
+      }
+      const ids = compactor.numberIds(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
+      if (ids) {
+        msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: ids.code } } };
+        for (const sent of ids.sent) {
+          const line = sent.line.length > 60 ? sent.line.slice(0, 57) + '...' : sent.line;
+          remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + `sleight: { id: "${sent.id}" } was sent as element ${sent.number}, ${line}.`);
+        }
+        trace('id-numbers', { id: msg.id, numbers: ids.sent.map(s => s.number) });
+      }
+      const stale = compactor.remapStale(numberWindow(msg.params.arguments.code, leaseWindow), msg.params.arguments.code);
+      if (stale) {
+        msg = { ...msg, params: { ...msg.params, arguments: { ...msg.params.arguments, code: stale.code } } };
+        remapNotes.set(msg.id, (remapNotes.has(msg.id) ? remapNotes.get(msg.id) + '\n' : '') + 'sleight: numbers in this window changed since you saw them, so ' +
+          stale.remapped.map(r => `${r.number} was found by its line ${JSON.stringify(r.line)}`).join(', ') + promptNotice('. Use the numbers in this result from now on.', prompt));
+        trace('stale-remapped', { id: msg.id, numbers: stale.remapped.map(r => r.number) });
+      }
+    }
+    originalCode = msg.params?.arguments?.code;
+    retryClient = structuredClone(msg);
+    if (msg.method === 'tools/call' && msg.params?.name === 'js' && msg.id !== undefined) jsCalls.set(msg.id, originalCode ?? '');
     if (documentMode && msg.method === 'tools/call' && !browser) {
       const name = msg.params?.name;
       if (name === DOCUMENT_TOOL.name) { approveDocument(msg); return; }
@@ -4103,6 +4304,7 @@ export function createRelay({
       clientOut.write(line + '\n');
       return;
     }
+    if (msg.method === undefined) engineCalls.delete(msg.id);
     // Only the id: with to-server and to-client it splits engine time from the relay's own.
     if (msg.method !== undefined && msg.id !== undefined) {
       const id = engineEpoch ? `sleight-engine-${engineEpoch}-${nextEngineRequest++}` : msg.id;
@@ -4845,7 +5047,14 @@ export function createRelay({
           promptNotice(refusalNotice(refused), prompt) }] };
       }
     }
-    if (msg.method === undefined) { hand?.result(msg.id, !!(msg.error || msg.result?.isError)); reportPreapprovals(msg); finishedCall(msg.id); }
+    if (msg.method === undefined) {
+      const aliases = openedAliases.get(msg.id);
+      if (aliases) for (const [handle, target] of aliases) {
+        if (!msg.error && !msg.result?.isError) openedWindows.set(handle, target);
+        else if (openedWindows.get(handle) !== target) openedWindows.delete(handle);
+      }
+      hand?.result(msg.id, !!(msg.error || msg.result?.isError)); reportPreapprovals(msg); finishedCall(msg.id);
+    }
     if (engineForbiddenTargets && isAppApproval(msg)) {
       const warning = forbiddenTargetWarning(msg.params?._meta?.tool_params?.app);
       if (warning && msg.params) msg.params.message = `${msg.params.message ?? 'Allow Computer Use?'} ${warning}`;
@@ -5194,6 +5403,7 @@ export function createRelay({
         for (const state of helperStates.values()) clearTimeout(state.timer);
         helperStates.clear(); helperHandles.clear(); helperAliases.clear();
         leaseCalls.clear(); changeCalls.clear(); documentCalls.clear(); jsCalls.clear(); syntaxOrigins.clear(); browserCalls.clear();
+        engineCalls.clear();
         spaceChecks.clear(); preHealth.clear(); nativeChecked.clear(); focusedChecked.clear(); restartRetries.clear(); debuggerDocs.clear();
         // The stopped turn's receipt keeps its unanswered calls as unknown; nothing carries into the next engine.
         resultCalls.clear(); guardCalls.clear(); finishReceipt();
@@ -5250,26 +5460,74 @@ export function createRelay({
     changes.dispose();
     trace('change-snapshots-deleted', { directory: changes.directory });
   }
+  function clearStaleCalls(resetId) {
+    // Keep live work and app-health faults. Only bookkeeping with no caller, native operation or engine RPC is stale.
+    const ids = new Set([...running, ...leaseCalls.keys(), ...openedWindowLeases.keys(), ...browserCalls.keys()]);
+    for (const id of ids) {
+      if (id === resetId || engineCalls.has(id) || localRunning.has(id) || pendingClients.has(id)) continue;
+      splitCalls.delete(id); browserCalls.delete(id);
+      nativeChecked.delete(id); focusedChecked.delete(id); restartRetries.delete(id);
+      finishedCall(id); stoppedClients.add(id);
+    }
+  }
+  function clearPendingCalls(message) {
+    // Split reads have no pendingClients entry. Invalidate their continuations before settling either parent or child.
+    stopGeneration++;
+    clearTimeout(idleTimer);
+    // Failure replies also call finishedCall. Remove renewal keys before any reply or callback can finish a call.
+    stopHeartbeat(); leaseCalls.clear(); openedWindowLeases.clear();
+    cancelFrontCalls();
+    splitCalls.clear();
+    cancelInternalRequests(message);
+    for (const pending of clipboardReplies.values()) pending.reject(new Error(message));
+    clipboardReplies.clear(); clipboardResets.clear();
+    for (const resolve of elicitations.values()) resolve({ result: { action: 'cancel' } });
+    elicitations.clear(); approvalRequests.clear(); listRequests.clear(); engineRequests.clear();
+    for (const id of [...pendingClients.keys()]) {
+      // Suppress late engine, local-tool and direct-browser results after the one failure reply.
+      leaseStop({ id }, `${message} Input outcome is unconfirmed; read the app again.`);
+      stoppedClients.add(id);
+    }
+    pendingClients.clear();
+    // The caller releases reservations after removing all call markers.
+    for (const id of [...running]) { stoppedClients.add(id); finishedCall(id); }
+    localRunning.clear();
+    callDetails.clear();
+    openedWindowCalls.clear(); openedFlowPlans.clear(); openedWindowReads.clear(); openedAliases.clear();
+    menuAdmissions.clear(); menuCalls.clear(); menuBaselines.clear(); menuContinued.clear(); menuForwards.clear(); continuedLeads.clear(); splitInputs.clear();
+    engineOpenPrints.clear(); engineOpenAcquisitions.clear(); engineOpenAllowed.clear();
+    filterMarks.clear(); splitHeads.clear(); splitCodes.clear(); rawHeads.clear(); openShots.clear(); openReads.clear(); textlessOpens.clear();
+    invalidateDiagnostics();
+    for (const probe of helperProbes.values()) { clearTimeout(probe.timer); probe.receive?.({ error: { message } }); }
+    for (const state of helperStates.values()) clearTimeout(state.timer);
+    helperProbes.clear(); helperStates.clear(); helperReads.clear(); helperControls.clear(); helperFullReads.clear(); helperDiagnosticReplies.clear(); lateDiagnosticControls.clear();
+    helperHandles.clear(); helperAliases.clear(); helperActive = undefined;
+    changeCalls.clear(); documentCalls.clear(); jsCalls.clear(); syntaxOrigins.clear(); browserCalls.clear();
+    spaceChecks.clear(); preHealth.clear(); nativeChecked.clear(); focusedChecked.clear(); restartRetries.clear(); debuggerDocs.clear();
+    flowCalls.clear(); flowPending = undefined; flowPermit = undefined;
+    resultCalls.clear(); guardCalls.clear(); promptFailures.clear();
+    stopHeartbeat();
+    engineCalls.clear();
+    callGenerations.clear();
+  }
   function engineEnded(message) {
-    if (disposed || closing) return;
+    if (disposed) return;
+    const leaseFailed = !!leaseFault;
     stopCollected = true; updatePending = true;
     // An engine that died unplanned leaves direct browser work with no owner; revoke it as a Stop does.
     directBrowser?.end();
-    rememberEngineBindings();
     startup?.close(); startup = undefined;
-    cancelInternalRequests(message);
-    // browser_open's acquisition is sleight's own call, so Claude's call waits on it: answer it through the acquisition.
-    for (const id of [...engineOpenAcquisitions]) {
-      const next = splitCalls.get(id);
-      splitCalls.delete(id); finishedCall(id);
-      next?.({ jsonrpc: '2.0', id, error: { code: -32000, message } });
-    }
-    for (const id of [...pendingClients.keys()]) {
-      if (!running.has(id)) continue;
-      finishedCall(id); restartRetries.delete(id);
-      leaseStop({ id }, message);
-      stoppedClients.add(id); // a direct browser call still running must not answer a second time
-    }
+    replWarmup.cancel();
+    privateWarmRequests.clear(); nativeWarmRequests.clear(); dropHeldWarmPrompts();
+    browserWarmConfirmed = false;
+    clearPendingCalls(message);
+    forgetHandles(); browserRecovery.reset();
+    lastConfirmedWindow = undefined; recoveryKnown = false; recoveryTarget = undefined;
+    priorRead = undefined; lastTree = undefined;
+    turnEndCalls.clear(); failedTurnEnds.clear(); turnEndAttempts.clear();
+    releaseLeases();
+    // A stream or renewal fault stopped the engine. Its confirmed exit permits a fresh read on a replacement.
+    if (leaseFailed) closing = false;
   }
   function close() {
     closing = true;

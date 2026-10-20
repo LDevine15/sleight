@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { packageSkip } from './requirements.mjs';
 const skip = packageSkip('typescript');
 const { dragMethodAudit } = skip ? {} : await import('../bench/world/method-check.mjs');
@@ -8,6 +9,63 @@ const claude = (code, error = false, acquire = true) => [
   { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'call', name: 'mcp__computer__js', input: { code: (acquire ? 'let app = await cua.getApp("Fixture"); ' : '') + code } }] } },
   { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'call', is_error: error }] } },
 ].map(JSON.stringify).join('\n');
+
+const requireRefusal = (content, name = 'mcp__plugin_sleight_computer__js', error = true) => [
+  { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'require', name,
+    input: { code: 'const fs = require("fs"); fs.readFileSync("/fixture/Source.txt", "utf8")' } }] } },
+  { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'require', is_error: error, content }] } },
+].map(JSON.stringify).join('\n');
+const refusedRequire = 'sleight stopped this call before it ran: `js` has no `require` and no file system access.';
+
+test('DPg recorded smoke proves a drag despite a filesystem request refused before execution', { skip }, () => {
+  const transcript = readFileSync(new URL('./fixtures/dpg-drag-method.jsonl', import.meta.url), 'utf8');
+  assert.deepEqual(dragMethodAudit(transcript), { drag: true, replacement: false, complete: true });
+});
+
+test('DPg only the exact failed Sleight pre-execution refusal preserves method proof', { skip }, () => {
+  const moved = claude('await app.drag({})');
+  for (const content of [refusedRequire, [{ type: 'text', text: refusedRequire }],
+    'sleight skipped this call: `js` has no `require` or file access.']) {
+    assert.deepEqual(dragMethodAudit(requireRefusal(content) + '\n' + moved), { drag: true, replacement: false, complete: true });
+    assert.equal(dragMethodAudit(requireRefusal(content)).drag, false);
+  }
+  for (const [content, name, error] of [[refusedRequire, 'mcp__other__js', true],
+    [refusedRequire, 'mcp__plugin_sleight_computer__js', false],
+    ['ReferenceError: require is not defined\n' + refusedRequire, 'mcp__plugin_sleight_computer__js', true],
+    [[{ type: 'text', text: refusedRequire }, { type: 'text', text: 'partial input possible' }], 'mcp__plugin_sleight_computer__js', true]]) {
+    assert.equal(dragMethodAudit(requireRefusal(content, name, error) + '\n' + moved).complete, false);
+  }
+  assert.equal(dragMethodAudit(claude('await app.typeText("x"); throw Error("failed")', true) + '\n' + moved).replacement, true);
+  assert.equal(dragMethodAudit(claude('await app.typeText("x")') + '\n' + requireRefusal(refusedRequire) + '\n' + moved).replacement, true);
+  assert.deepEqual(dragMethodAudit(claude('', false) + '\n' + requireRefusal(refusedRequire) + '\n' + claude('await app.drag({})', false, false)),
+    { drag: true, replacement: false, complete: true });
+  assert.equal(dragMethodAudit(requireRefusal([null]) + '\n' + moved).complete, false);
+});
+
+test('DPg Codex MCP results preserve the same pre-execution refusal boundary', { skip }, () => {
+  const refused = { type: 'item.completed', item: { type: 'mcp_tool_call', tool: 'mcp__plugin_sleight_computer__js',
+    arguments: { code: 'require("fs")' }, result: { isError: true, content: [{ type: 'text', text: refusedRequire }] } } };
+  assert.deepEqual(dragMethodAudit(JSON.stringify(refused) + '\n' + claude('await app.drag({})')),
+    { drag: true, replacement: false, complete: true });
+  assert.equal(dragMethodAudit(JSON.stringify(refused)).drag, false);
+});
+
+test('DPd recorded smoke recovery spoils proof through introspection and placeholder typing', { skip }, () => {
+  let serial = 0;
+  const drag = error => {
+    const id = `smoke-${++serial}`;
+    return [
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'mcp__plugin_sleight_computer__drag',
+        input: { app: 'TextEdit', from: 'the current text selection', to: [24, 128], windowId: 321951, toWindowId: 321952 } }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: error }] } },
+    ].map(JSON.stringify).join('\n');
+  };
+  const introspection = claude('Object.keys(app).concat(Object.getOwnPropertyNames(Object.getPrototypeOf(app)||{}))', false, false);
+  const recovered = [introspection, drag(true), drag(true), claude('await app.typeText("x")'), drag(false)].join('\n');
+  assert.deepEqual(dragMethodAudit(recovered), { drag: true, replacement: true, complete: false });
+  assert.deepEqual(dragMethodAudit(introspection + '\n' + drag(false)), { drag: true, replacement: false, complete: false });
+  assert.deepEqual(dragMethodAudit(drag(false)), { drag: true, replacement: false, complete: true });
+});
 test('drag audit requires a successful awaited call, not model prose or an uncalled function', { skip }, () => {
   assert.deepEqual(dragMethodAudit(claude('await app.drag({ from: [1,2], to: [3,4] })')), { drag: true, replacement: false, complete: true });
   for (const code of ['nodeRepl.write("await app.drag()")', 'function move() { app.drag() }', 'const move = () => app.drag()', 'app.drag()', 'if (false) { await app.drag({}) }']) {

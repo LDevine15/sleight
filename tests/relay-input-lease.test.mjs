@@ -17,6 +17,95 @@ const result = (id, text = header) => ({ jsonrpc: '2.0', id, result: { content: 
 const windowContent = msg => msg.result.content.filter(item => !/^sleight: (?:UI|call failed|saved:)/.test(item.text ?? ''));
 const duplicateTree = '[sleight:windows]' + JSON.stringify([{ id: 'com.apple.TextEdit', windows: [{ title: 'Untitled' }, { title: 'Untitled' }] }]) +
   '\nWindow: "Untitled", App: TextEdit.\n0 standard window Untitled';
+
+test('engine exit settles split acquisitions and drops their leases and late results', async t => {
+  const { harness } = setup(t);
+  const h = harness('split exit', { fresh: true, changeReview: false,
+    restartEngine: async () => ({ serverIn: h.serverIn, serverOut: h.serverOut }) });
+  h.send(rpc('parent', 'js', { code: 'let app = await cua.getApp("TextEdit"); await app.typeText("never replay");' }));
+  const child = h.forwarded.at(-1);
+  assert.match(child.id, /^sleight-acquire-/);
+  h.relay.engineEnded('Engine exited (0).');
+  assert.equal(h.received.filter(msg => msg.id === 'parent').length, 1);
+  assert.equal(h.received.find(msg => msg.id === 'parent').result.isError, true);
+  assert.equal(h.received.some(msg => msg.id === child.id), false);
+  assert.equal(h.inputLease.owned.size, 0);
+  h.send(rpc('fresh', 'js', { code: 'let fresh = await cua.getApp("TextEdit")' }));
+  await new Promise(resolve => setImmediate(resolve));
+  h.reply(result(child.id));
+  assert.equal(h.forwarded.some(msg => msg.id === 'parent'), false, 'the dead split never forwards its input');
+  h.reply(result('fresh'));
+  h.send(rpc('action', 'js', { code: 'await fresh.typeText("recovered")' }));
+  assert.equal(h.forwarded.at(-1).id, 'action');
+  h.reply(result('action'));
+  assert.equal(h.received.filter(msg => msg.id === 'parent').length, 1);
+});
+
+test('engine exit cancels native admission even after a replacement engine is ready', async t => {
+  const { harness } = setup(t);
+  let finishIdentity, delay = false;
+  const observed = target => ({ ...target, status: 'ok', matches: 1, epoch: 'fixture', window: 1, pid: 7, processStart: 1 });
+  const h = harness('admission exit', { fresh: true, changeReview: false,
+    windowIdentity: target => delay ? new Promise(resolve => { finishIdentity = () => resolve(observed(target)); }) : observed(target),
+    restartEngine: async () => ({ serverIn: h.serverIn, serverOut: h.serverOut }) });
+  h.send(rpc('read', 'js', { code: 'let app = await cua.getApp("TextEdit")' })); h.reply(result('read', duplicateTree));
+  await new Promise(resolve => setImmediate(resolve));
+  delay = true;
+  h.send(rpc('old', 'js', { code: 'await app.typeText("never replay")' }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(typeof finishIdentity, 'function');
+  h.relay.engineEnded('Engine exited (0).');
+  delay = false;
+  h.send(rpc('fresh', 'js', { code: 'let fresh = await cua.getApp("TextEdit")' }));
+  await new Promise(resolve => setImmediate(resolve));
+  h.reply(result('fresh', duplicateTree));
+  finishIdentity();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.forwarded.some(msg => msg.id === 'old'), false);
+  assert.equal(h.received.filter(msg => msg.id === 'old').length, 1);
+  h.send(rpc('action', 'js', { code: 'await fresh.typeText("recovered")' }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.forwarded.at(-1).id, 'action'); h.reply(result('action', duplicateTree));
+});
+
+test('js_reset refuses a live engine call and succeeds after it finishes', t => {
+  const { a } = setup(t);
+  a.send(rpc('pending', 'js', { code: 'await app.typeText("pending")' }));
+  a.send(rpc('busy-reset', 'js_reset'));
+  assert.equal(a.forwarded.some(msg => msg.id === 'busy-reset'), false);
+  assert.match(a.received.at(-1).result.content[0].text, /another call in this session is pending/);
+  assert.equal(a.inputLease.owned.size, 1, 'reset refusal preserves the live reservation');
+  a.reply(result('pending'));
+  a.send(rpc('reset', 'js_reset')); a.reply(result('reset', 'reset'));
+  a.send(rpc('fresh', 'js', { code: 'let fresh = await cua.getApp("TextEdit")' })); a.reply(result('fresh'));
+  a.send(rpc('action', 'js', { code: 'await fresh.typeText("recovered")' }));
+  assert.equal(a.forwarded.at(-1).id, 'action'); a.reply(result('action'));
+});
+
+for (const streamFault of [false, true]) test(`engine exit releases an active input lease and js_reset recovers (stream fault: ${streamFault})`, async t => {
+  const { harness, directory } = setup(t);
+  const h = harness('active exit', { changeReview: false,
+    restartEngine: async () => ({ serverIn: h.serverIn, serverOut: h.serverOut }) });
+  h.send(rpc('pending', 'js', { code: 'await app.typeText("unknown outcome")' }));
+  assert.equal(h.inputLease.owned.size, 1);
+  if (streamFault) h.serverIn.emit('error', new Error('stdin failed'));
+  let renewed = 0;
+  const renew = h.inputLease.renew.bind(h.inputLease);
+  h.inputLease.renew = keys => { renewed++; return renew(keys); };
+  h.relay.engineEnded('Engine exited (0).');
+  assert.equal(renewed, 0, 'failure replies never renew a dead engine reservation');
+  assert.equal(h.inputLease.owned.size, 0);
+  assert.equal(readdirSync(directory).filter(name => name.endsWith('.json')).length, 0);
+  h.send(rpc('reset', 'js_reset'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.forwarded.at(-1).id, 'reset'); h.reply(result('reset', 'reset'));
+  h.reply(result('pending'));
+  assert.equal(h.received.filter(msg => msg.id === 'pending').length, 1);
+  h.send(rpc('fresh', 'js', { code: 'let fresh = await cua.getApp("TextEdit")' })); h.reply(result('fresh'));
+  h.send(rpc('action', 'js', { code: 'await fresh.typeText("recovered")' }));
+  assert.equal(h.forwarded.at(-1).id, 'action'); h.reply(result('action'));
+});
+
 test('same-title replacement refuses input before forwarding', async t => {
   for (const combined of [false]) {
     const { harness } = setup(t);

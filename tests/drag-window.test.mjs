@@ -8,7 +8,7 @@ const test = (name, fn) => nodeTest(`${defaultAppId}: ${name}`, fn);
 
 // Only the native AX/CG boundary is replaced. run() does the real selection,
 // validation, coordinate conversion, mouse sequence and post-drop check.
-function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', setterFails = false, readFails = false, postFails = false, failBeforePress = false, releaseFails = false, changeOnActivate = false, second = true, before = 'alpha beta gamma\n', after = 'beta gamma alpha\n', selection = 'alpha', areaRole = 'AXTextArea', repairDeletesText = false, movedOnActivate = false, coveredEnd = false, coveredPid = 7, splitAreas = false, missingContent = false, extraElements = 0, stacked = false, raiseWorks = true, raiseActivates = false, offSpace = false, noWindows = false, appId = defaultAppId, busyChecks = 0, typesAt = null, ax = null, coverTitle = 'cover.txt', slowDelays = false, nativeFailure = null, rows = 0, coverBounds = null, rowRole = 'AXRow', rowChild = null, shiftRowsOnRaise = 0, extraWindows = [] } = {}) {
+function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', setterFails = false, readFails = false, postFails = false, failBeforePress = false, releaseFails = false, changeOnActivate = false, second = true, before = 'alpha beta gamma\n', after = 'beta gamma alpha\n', selection = 'alpha', areaRole = 'AXTextArea', repairDeletesText = false, movedOnActivate = false, coveredEnd = false, coveredPid = 7, splitAreas = false, missingContent = false, extraElements = 0, stacked = false, raiseWorks = true, raiseActivates = false, offSpace = false, noWindows = false, appId = defaultAppId, busyChecks = 0, typesAt = null, ax = null, coverTitle = 'cover.txt', slowDelays = false, nativeFailure = null, rows = 0, coverBounds = null, rowRole = 'AXRow', rowChild = null, shiftRowsOnRaise = 0, extraWindows = [], onDelay } = {}) {
   const events = [], restored = [], activations = [], pidEvents = [], mainWrites = [], textWrites = [];
   let visited = 0, inputChecks = 0, readbacks = 0;
   let mainId = 22, rowShift = 0;
@@ -148,7 +148,9 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     AXUIElementSetAttributeValue: (el, name, value) => { el.attributes.byName(name).value = value; return 0; },
     AXUIElementPerformAction: (el, name) => { el.actions.byName(name).perform(); return 0; },
   });
-  const context = vm.createContext({ SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $: native, Ref: () => [], ObjC: { import() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); if (slowDelays) clock += 30000; },
+  const traces = [];
+  Object.defineProperty(native.NSProcessInfo.processInfo, 'systemUptime', { get: () => 1 + ++clock / 1000 });
+  const context = vm.createContext({ console: { log: line => traces.push(JSON.parse(line.replace(/^sleight-drag-phase /, ''))) }, SLEIGHT_ACCESSIBILITY_MOVE: ax !== null, $: native, Ref: () => [], ObjC: { import() {}, unwrap: v => v, deepUnwrap: v => v, castRefToObject: v => v, bindFunction() { if (!background) throw new Error('private API missing'); } }, delay: s => { delays.push(s); onDelay?.({ values, selected }); if (slowDelays) clock += 30000; },
     Date: { now: () => clock },
     Application: () => ({ processes: { whose: () => [proc] } }) });
   vm.runInContext(readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8'), context);
@@ -164,6 +166,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
       value: () => { if (ax.failValue) throw new Error('value unavailable'); return ax.changedBeforeMove ? 'owner edit\n' : text(); },
       selection: () => { if (ax.failSelection) throw new Error('selection unavailable'); return { location: text().indexOf(selected.get(11)), length: selected.get(11).length }; },
       lineRange: line => line === 0 ? { location: 0, length: text().length } : null,
+      lineForIndex: () => 0,
       hasAttributes: (location, length, baseline) => {
         if (ax.unreadableAttributes) throw new Error('attributed string unavailable');
         if (!ax.attributes) return !!ax.formatted;
@@ -171,11 +174,16 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
         const size = location + length - baseline;
         return context.attributedTextHasAttributes({ length: size, attributesAtIndexEffectiveRange: index => {
           const font = ax.attributes[baseline + index];
-          return { count: 2, font, isEqualToDictionary: other => font === other.font };
+          return { count: 2, font, objectForKey: () => undefined, isEqualToDictionary: other => font === other.font };
         } }, size, location - baseline);
       },
       indexAt: p => { const i = Math.floor((p.x - x0) / 8); return p.y >= y0 && p.y < y0 + 13 && i >= 0 && i < text().length - 1 ? i : 0; },
-      rect: i => i < text().length - 1 ? { X: x0 + 8 * i, Y: y0, Width: 8, Height: 13 } : null,
+      rect: (i, length = 1) => {
+        const end = text().length - 1;
+        if (i === 0 && length === text().length) return { X: x0, Y: y0, Width: 8 * end, Height: 13 };
+        if (i === text().length && length === 0) return { X: x0, Y: y0 + 20, Width: 0, Height: 13 };
+        return i <= end ? { X: x0 + 8 * i, Y: y0, Width: length === 0 || i === end ? 0 : 8, Height: 13 } : null;
+      },
       lineEnd: () => text().length,
       replace: (location, length, s) => {
         if (ax.failWrite === axWrites.length + 1) throw new Error('AX write failed');
@@ -192,8 +200,8 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
     ...(coveredEnd ? [{ id: 33, pid: coveredPid, owner: coveredPid === 7 ? 'TextEdit' : 'Other app', title: coverTitle, layer: 0, bounds: coverBounds ? { ...coverBounds } : { X: 180, Y: 130, Width: 80, Height: 40 } }] : []),
     ...order.filter(id => second || id === 11).map(id => ({ id, pid: 7, owner: 'TextEdit', title: `${id}.txt`, layer: 0, bounds: { ...frames.get(id) } })),
   ];
-  const run = changes => JSON.parse(context.run([JSON.stringify({ app: defaultAppId, from: [26.6, 38.5], to: [119, 38.5], ...changes })]));
-  return { run, events, restored, activations, pidEvents, values, mainWrites, delays, axWrites, textWrites, visits: () => visited };
+  const run = changes => JSON.parse(context.run([JSON.stringify({ app: defaultAppId, from: [26.6, 38.5], to: [119, 38.5], dp2: false, ...changes })]));
+  return { run, traces, events, restored, activations, pidEvents, values, mainWrites, delays, axWrites, textWrites, visits: () => visited };
 }
 // Window 11's text area starts at x 105, so [150, 38.5] is past the line's end.
 const pastEnd = { windowId: 11, to: [150, 38.5] };
@@ -325,6 +333,78 @@ test('every selected-text drag tries Accessibility before posted events', () => 
     assert.equal(h.pidEvents.length, 0); assert.equal(h.events.length, 0);
     assert.equal(h.axWrites.at(-1), 'settle');
     }
+  }
+});
+test('DP2 moves text without a raise or pre-move settle, with a same-app overlap exception', () => {
+  for (const stacked of [false, true]) {
+    const h = harness({ background: true, stacked, ax: {} });
+    const r = h.run({ ...pastEnd, dp2: true });
+    assert.equal(r.ok, true, r.error); assert.equal(r.path, 'accessibility');
+    assert.deepEqual(h.mainWrites, stacked ? [11] : []);
+    assert.deepEqual(h.delays, []); assert.equal(h.axWrites.at(-1), 'settle');
+    assert.equal(h.pidEvents.length + h.events.length, 0);
+  }
+});
+test('DP2 trace proves AX starts before any raise, while DP2 off preserves raise and settle first', () => {
+  for (const dp2 of [true, false]) {
+    for (const failArea of [false, true]) {
+      const h = harness({ background: true, ax: { failArea } });
+      const result = h.run({ ...pastEnd, dp2, trace: true });
+      assert.equal(result.ok, true, result.error);
+      const phases = h.traces.map(e => `${e.phase}:${e.edge}`);
+      const prefix = ['raise:start', 'raise:end', 'settle:start', 'settle:end'];
+      assert.deepEqual(phases, dp2
+        ? failArea ? ['ax-move:start', 'ax-move:end', ...prefix, 'posted-press:start', 'posted-press:end', 'settle:start', 'settle:end']
+          : ['ax-move:start', 'settle:start', 'settle:end', 'ax-move:end']
+        : failArea ? [...prefix, 'ax-move:start', 'ax-move:end', 'posted-press:start', 'posted-press:end', 'settle:start', 'settle:end']
+          : [...prefix, 'ax-move:start', 'settle:start', 'settle:end', 'ax-move:end']);
+      h.traces.forEach((e, i) => {
+        assert.deepEqual(Object.keys(e).sort(), ['edge', 'monoMs', 'phase']);
+        assert.ok(Number.isFinite(e.monoMs) && e.monoMs >= 0);
+        if (i) assert.ok(e.monoMs > h.traces[i - 1].monoMs);
+      });
+      assert.equal(JSON.stringify(h.traces).includes('alpha'), false);
+      const quiet = harness({ background: true, ax: { failArea } });
+      assert.deepEqual(quiet.run({ ...pastEnd, dp2 }), result);
+      assert.deepEqual(quiet.traces, []);
+    }
+  }
+});
+test('DP2 keeps raise and settle for posted presses and refuses a failed overlap raise', () => {
+  const h = harness({ background: true });
+  assert.equal(h.run({ ...pastEnd, dp2: true }).path, 'background');
+  assert.deepEqual(h.mainWrites, [11]); assert.equal(h.delays[0], 1.5);
+  const blocked = harness({ background: true, stacked: true, raiseWorks: false, ax: {} });
+  assert.equal(blocked.run({ ...pastEnd, dp2: true }).ok, false);
+  assert.equal(blocked.axWrites.length + blocked.pidEvents.length + blocked.events.length, 0);
+});
+test('drag trace records the same-app overlap raise exception before the AX attempt', () => {
+  const h = harness({ background: true, stacked: true, ax: {} });
+  assert.equal(h.run({ ...pastEnd, dp2: true, trace: true }).path, 'accessibility');
+  assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), [
+    'raise:start', 'raise:end', 'ax-move:start', 'settle:start', 'settle:end', 'ax-move:end',
+  ]);
+});
+test('foreground and failed posted presses have paired phase events without changing results', () => {
+  for (const options of [{ ax: { failArea: true } }, { background: true, ax: { failArea: true }, postFails: true }]) {
+    const h = harness(options), r = h.run({ ...pastEnd, dp2: true, trace: true });
+    const quiet = harness(options);
+    assert.deepEqual(quiet.run({ ...pastEnd, dp2: true }), r);
+    assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), [
+      'ax-move:start', 'ax-move:end', 'raise:start', 'raise:end', 'settle:start', 'settle:end',
+      'posted-press:start', 'posted-press:end',
+      ...(options.background ? ['settle:start', 'settle:end'] : []),
+    ]);
+  }
+});
+test('DP2 posted fallback rechecks owner text and selection after its settle', () => {
+  for (const change of ['text', 'selection']) {
+    const h = harness({ background: true, ax: { failArea: true }, onDelay: ({ values, selected }) => {
+      if (change === 'text') values.set(11, 'owner edit\n'); else selected.set(11, 'beta');
+    } });
+    const r = h.run({ ...pastEnd, dp2: true });
+    assert.equal(r.ok, false); assert.match(r.error, /changed before input/);
+    assert.equal(h.pidEvents.length + h.events.length, 0);
   }
 });
 test('every covered window without a focused selection refuses before raising', () => {
