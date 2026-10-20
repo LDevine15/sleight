@@ -466,7 +466,8 @@ test('a live round reads the cover during the run, logs the owners it saw, and r
     runner: { gradeOutcome: () => ({ problems: ['nothing submitted'] }), gradeSite: () => ({ problems: [] }) }, runtime });
   console.error = error;
   process.exitCode = 0;
-  assert.deepEqual(places.map(([, options]) => options), [{ place: true }]);
+  // Placed once, then read again without moving the window after cover admission (VH1b).
+  assert.deepEqual(places.map(([, options]) => options), [{ place: true }, {}]);
   assert.equal(watched.length, 1);
   assert.equal(watched[0], places[0][0]);
   assert.deepEqual(rows[0].coverRun.covering, [{ owner: 'Claude', fraction: 0.826 }]);
