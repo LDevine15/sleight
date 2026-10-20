@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync, readFileSync, symlinkSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import vm from 'node:vm';
+import { EventEmitter } from 'node:events';
 const fixtureData = new URL('./fixtures/validation-140/', import.meta.url).pathname;
 const moduleURL = new URL('../bench/validation/validation-140.mjs', import.meta.url);
 
@@ -398,4 +400,220 @@ test('completion refuses unsafe existing evidence and partial round artifacts be
     raw.results[0].groupClean = false; writeFileSync(result, JSON.stringify(raw));
     assert.throws(() => selectRun(plan, ['release-opus']), /cleanup/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+async function resumeFixture(dir) {
+  const { planGroups, pinRun } = await import(moduleURL);
+  assert.equal(typeof pinRun, 'function', 'original run integrity pins are missing');
+  const fixture = completionFixture(dir, planGroups);
+  writeFileSync(join(dir, 'harness.json'), 'shared harness');
+  pinRun(fixture.plan);
+  return fixture;
+}
+
+test('resume retains safe rounds, archives a stopped round without deletion, and scores its replacement once', async () => {
+  const { selectRun, archiveAborted, scoreOutput } = await import(moduleURL);
+  const dir = mkdtempSync(join(tmpdir(), 'vp5-resume-'));
+  try {
+    const { plan, save } = await resumeFixture(dir);
+    const [finished, stopped] = plan.rounds;
+    save(finished);
+    save(stopped);
+    const receipt = join(dir, `${stopped.id}.receipt.json`);
+    writeFileSync(receipt, JSON.stringify({ ...JSON.parse(readFileSync(receipt)), safe: false }));
+    writeFileSync(join(dir, `${stopped.id}.log`), 'readiness -2700');
+    mkdirSync(join(dir, stopped.id));
+    writeFileSync(join(dir, stopped.id, 'partial.json'), 'partial');
+    const before = Object.fromEntries(readdirSync(dir).filter(f => f.startsWith(`${finished.id}.`)).map(f => [f, readFileSync(join(dir, f), 'utf8')]));
+    const selection = selectRun(plan, undefined, { resume: true });
+    assert.equal(selection.resume, true);
+    assert.deepEqual(selection.rounds.map(r => r.id), [stopped.id]);
+    assert.equal(existsSync(receipt), true, 'selection must be read only');
+    const archives = archiveAborted(selection);
+    assert.equal(archives.length, 1);
+    assert.equal(archives[0].to, join(dir, 'aborted', `${stopped.id}-1`));
+    assert.equal(readFileSync(join(archives[0].to, `${stopped.id}.log`), 'utf8'), 'readiness -2700');
+    assert.equal(readFileSync(join(archives[0].to, stopped.id, 'partial.json'), 'utf8'), 'partial');
+    assert.equal(existsSync(receipt), false);
+    save(stopped);
+    assert.equal(scoreOutput(dir).groups.find(g => g.id === 'native').complete, true);
+    for (const [file, bytes] of Object.entries(before)) assert.equal(readFileSync(join(dir, file), 'utf8'), bytes);
+    writeFileSync(receipt, JSON.stringify({ ...JSON.parse(readFileSync(receipt)), safe: false }));
+    const again = archiveAborted(selectRun(plan, undefined, { resume: true }));
+    assert.equal(again[0].to, join(dir, 'aborted', `${stopped.id}-2`));
+    assert.equal(existsSync(archives[0].to), true);
+    const log = readFileSync(join(dir, 'validate-140.log'), 'utf8');
+    assert.equal(log.split('\n').filter(line => line.includes(' resume-start ')).length, 2);
+    assert.equal(log.split('\n').filter(line => line.includes(' resume-archive ')).length, 2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('resume refuses changed plan, pins, safe evidence, full-check receipt, or staged harness before moving files', async () => {
+  const { selectRun } = await import(moduleURL);
+  const dir = mkdtempSync(join(tmpdir(), 'vp5-pins-'));
+  try {
+    const { plan, save } = await resumeFixture(dir);
+    const select = candidate => selectRun(candidate ?? plan, undefined, { resume: true });
+    for (const key of ['aBuild', 'bBuild', 'engine', 'harnessHash'])
+      assert.throws(() => select({ ...plan, [key]: 'changed' }), /differs|changed/);
+    assert.throws(() => select({ ...plan, rounds: [] }), /plan.*changed|plan.*differs/i);
+    const planFile = join(dir, 'plan.json'), bytes = readFileSync(planFile);
+    writeFileSync(planFile, JSON.stringify({ ...plan, rounds: [] }));
+    assert.throws(() => select(), /plan.*changed|plan.*differs/i);
+    writeFileSync(planFile, bytes);
+    for (const file of ['full-check.receipt.json', 'harness.json']) {
+      const original = readFileSync(join(dir, file));
+      writeFileSync(join(dir, file), file.startsWith('full') ? JSON.stringify({ code: 0, build: 'b', signal: 'changed' }) : 'changed');
+      assert.throws(() => select(), /changed/);
+      writeFileSync(join(dir, file), original);
+    }
+    save(plan.rounds[0]);
+    const result = join(dir, `${plan.rounds[0].id}.json`), raw = JSON.parse(readFileSync(result));
+    raw.results[0].groupClean = false;
+    writeFileSync(result, JSON.stringify(raw));
+    assert.throws(() => select(), /cleanup/);
+    assert.equal(existsSync(join(dir, 'aborted')), false);
+    rmSync(join(dir, 'run-identity.json'));
+    assert.throws(() => select(), /integrity|identity/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('resume handles missing and malformed receipts, leaves later safe rounds, and respects deferred selections', async () => {
+  const { selectRun, archiveAborted } = await import(moduleURL);
+  const dir = mkdtempSync(join(tmpdir(), 'vp5-partial-'));
+  try {
+    const { plan, save } = await resumeFixture(dir);
+    const [first, second] = plan.rounds;
+    save(second);
+    writeFileSync(join(dir, `${first.id}.receipt.json`), '{interrupted');
+    const selected = selectRun(plan, undefined, { resume: true });
+    assert.deepEqual(selected.rounds.map(r => r.id), [first.id]);
+    archiveAborted(selected);
+    save(first);
+    assert.throws(() => selectRun(plan, undefined, { resume: true }), /already complete/);
+    const completion = selectRun(plan, ['release-opus'], { resume: true });
+    assert.deepEqual(completion.rounds.map(r => r.id), ['release-opus-A-r1', 'release-opus-B-r1']);
+    assert.throws(() => selectRun(plan, ['native'], { resume: true }), /not deferred/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('resume archive refuses symlink banks and never moves finished evidence', async () => {
+  const { selectRun, archiveAborted } = await import(moduleURL);
+  const dir = mkdtempSync(join(tmpdir(), 'vp5-archive-'));
+  try {
+    const { plan } = await resumeFixture(dir);
+    writeFileSync(join(dir, `${plan.rounds[0].id}.log`), 'partial');
+    mkdirSync(join(dir, 'outside'));
+    symlinkSync(join(dir, 'outside'), join(dir, 'aborted'));
+    assert.throws(() => archiveAborted(selectRun(plan, undefined, { resume: true })), /symlink|ordinary/);
+    assert.equal(readFileSync(join(dir, `${plan.rounds[0].id}.log`), 'utf8'), 'partial');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('resume CLI rejects ambiguous or incomplete requests without starting validation', () => {
+  for (const flags of [['--resume'], ['--plan', '--resume'], ['--score', '--resume'], ['--resume', '--out', '/fixture/missing']]) {
+    const got = spawnSync(process.execPath, [moduleURL.pathname, ...flags], { encoding: 'utf8' });
+    assert.notEqual(got.status, 0);
+    assert.match(got.stderr, /--resume requires|--run requires/);
+  }
+});
+
+test('round app requirements come from fixture metadata, including CC browser tasks and Finder windows', async () => {
+  const { roundApps } = await import(moduleURL);
+  assert.equal(typeof roundApps, 'function', 'fixture app admission is missing');
+  assert.deepEqual(roundApps({ runner: 'native', tasks: ['textedit-edit', 'word-memo', 'excel-edit', 'finder-rename', 'vscode-edit'] }),
+    ['TextEdit', 'Microsoft Word', 'Microsoft Excel', 'Finder', 'Visual Studio Code']);
+  assert.deepEqual(roundApps({ runner: 'native', tasks: ['cc-list-firefox', 'cc-list-safari', 'cc-list-native'] }), ['Firefox', 'Safari', 'Finder']);
+  assert.deepEqual(roundApps({ runner: 'browser', browser: 'chrome', tasks: ['demoid'] }), ['Google Chrome']);
+  assert.throws(() => roundApps({ runner: 'native', tasks: ['unknown-task'] }), /Unknown task/);
+});
+
+test('app wait polls all round apps every 60 seconds, records each once, and waits for windowless TextEdit', async () => {
+  const { waitForRoundApps } = await import(moduleURL);
+  assert.equal(typeof waitForRoundApps, 'function', 'app wait is missing');
+  const records = [], waits = [], probes = [];
+  const states = [['TextEdit'], ['TextEdit', 'Finder'], []];
+  let pass = 0;
+  await waitForRoundApps({ id: 'native-A-r1', runner: 'native', tasks: ['textedit-edit', 'finder-rename'] }, (id, data) => records.push([id, data]), {
+    running: app => { probes.push(app); return states[pass].includes(app); },
+    sleep: async ms => { waits.push(ms); pass++; },
+  });
+  assert.deepEqual(waits, [60000, 60000]);
+  assert.deepEqual(probes, ['TextEdit', 'Finder', 'TextEdit', 'Finder', 'TextEdit', 'Finder']);
+  assert.deepEqual(records.map(([id]) => id), ['waiting-for-app-quit TextEdit', 'waiting-for-app-quit Finder']);
+});
+
+test('process admission fails closed on inspection errors, and Finder checks windows rather than its permanent process', async () => {
+  const { appRunning } = await import(moduleURL);
+  assert.equal(typeof appRunning, 'function', 'app state inspection is missing');
+  const calls = [];
+  const run = (cmd, args) => { calls.push([cmd, args]); return { status: 0, stdout: '0' }; };
+  assert.equal(appRunning('TextEdit', run), true);
+  assert.equal(appRunning('TextEdit', () => ({ status: 1 })), false);
+  assert.throws(() => appRunning('TextEdit', () => ({ status: 2 })), /inspect/);
+  assert.throws(() => appRunning('TextEdit', () => ({ status: null, error: Error('timeout') })), /inspect/);
+  assert.equal(appRunning('Finder', run), false);
+  assert.equal(appRunning('Finder', () => ({ status: 0, stdout: '2' })), true);
+  assert.throws(() => appRunning('Finder', () => ({ status: 0, stdout: 'unknown' })), /inspect/);
+  assert.deepEqual(calls[0], ['/usr/bin/pgrep', ['-x', 'TextEdit']]);
+  assert.equal(calls[1][0], '/usr/bin/osascript');
+  assert.ok(calls[1][1].at(-1).endsWith('/bench/validation/app-count.js'));
+  // VS Code's main executable is not guaranteed to be named Code, so use its bundle, including benchmark instances.
+  const codeCalls = [];
+  assert.equal(appRunning('Visual Studio Code', (cmd, args) => { codeCalls.push([cmd, args]); return { status: 0, stdout: '1' }; }), true);
+  assert.equal(codeCalls[0][0], '/usr/bin/osascript');
+});
+
+test('Finder inspector counts minimized windows without Apple events and fails closed without existing AX permission', () => {
+  const source = readFileSync(new URL('../bench/validation/app-count.js', import.meta.url), 'utf8');
+  const native = value => value;
+  let trusted = true, axCode = 0;
+  Object.assign(native, {
+    AXIsProcessTrusted: () => trusted,
+    NSRunningApplication: { runningApplicationsWithBundleIdentifier: bundle => {
+      assert.equal(bundle, 'com.apple.finder');
+      return { count: 1, objectAtIndex: () => ({ processIdentifier: 42 }) };
+    } },
+    AXUIElementCreateApplication: pid => { assert.equal(pid, 42); return 'finder'; },
+    AXUIElementSetMessagingTimeout: () => {},
+    AXUIElementCopyAttributeValue: (app, attribute, ref) => {
+      assert.equal(app, 'finder'); assert.equal(attribute, 'AXWindows'); ref[0] = { count: 2 }; return axCode;
+    },
+  });
+  const context = vm.createContext({ $: native, ObjC: { import() {}, castRefToObject: value => value }, Ref: () => [] });
+  vm.runInContext(source, context);
+  assert.equal(context.run(), '2');
+  axCode = -25204;
+  assert.throws(() => context.run(), /inspection failed/);
+  trusted = false;
+  assert.throws(() => context.run(), /existing Accessibility/);
+  native.NSRunningApplication.runningApplicationsWithBundleIdentifier = bundle => {
+    assert.equal(bundle, 'com.microsoft.VSCode'); return { count: 1 };
+  };
+  assert.equal(context.run(['vscode']), '1');
+});
+
+test('engine admission rejects a changed or missing installed engine before a resumed round', async () => {
+  const { verifyEngine } = await import(moduleURL);
+  assert.equal(typeof verifyEngine, 'function');
+  assert.doesNotThrow(() => verifyEngine({ engine: 'e' }, () => ({ version: 'e' })));
+  assert.throws(() => verifyEngine({ engine: 'e' }, () => ({ version: 'different' })), /engine changed/);
+  assert.throws(() => verifyEngine({ engine: 'e' }, () => ({ version: null })), /engine changed/);
+});
+
+test('operator interruption stops admission, cancels app polling, and releases signal handlers after cleanup', async () => {
+  const { stopGuard, waitForRoundApps } = await import(moduleURL);
+  assert.equal(typeof stopGuard, 'function', 'interrupted drivers must unwind their writer lock');
+  const events = new EventEmitter(), guard = stopGuard(events);
+  assert.doesNotThrow(guard.check);
+  let polls = 0;
+  await assert.rejects(waitForRoundApps({ id: 'native-A-r1', runner: 'native', tasks: ['textedit-edit'] }, () => {}, {
+    running: () => { polls++; return true; }, signal: guard.signal,
+    sleep: async () => { events.emit('SIGINT'); },
+  }), /stopped/);
+  assert.equal(polls, 1);
+  assert.throws(guard.check, /stopped/);
+  guard.close();
+  assert.equal(events.listenerCount('SIGINT'), 0);
+  assert.equal(events.listenerCount('SIGTERM'), 0);
 });
