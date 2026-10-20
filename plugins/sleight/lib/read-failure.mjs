@@ -48,7 +48,8 @@ function helperLane(kind, timeoutMs, spawnHelper) {
     try {
       if (!child) start();
       active.id = nextId++;
-      active.timer = setTimeout(() => finish(undefined, true), active.timeoutMs ?? timeoutMs);
+      active.timer = setTimeout(() => finish(active.fallback?.unknownReason
+        ? { ...active.fallback, unknownReason: 'deadline' } : undefined, true), active.timeoutMs ?? timeoutMs);
       child.stdin.write(JSON.stringify({ id: active.id, ...active.payload }) + '\n');
     } catch { finish(undefined, true); }
   }
@@ -82,7 +83,9 @@ export function createAppHealthHelper({ timeoutMs = 2000, operationTimeoutMs = 3
       deadlineSeconds > 0.5 ? Math.max(timeoutMs, deadlineSeconds * 1000 + 1500) : timeoutMs),
     frontRestore: request => probe.request({ ...request, op: 'front-restore' }, { status: 'unknown' }),
     handLocate: request => hand.request({ op: 'hand-locate', request }, { ok: false }),
-    windowIdentity: window => target.request({ op: 'window-identity', window }, { status: 'unknown' }),
+    // Leave room for dispatch and IPC beyond the helper's 150 ms metadata deadline.
+    windowIdentity: window => target.request({ op: 'window-identity', window },
+      { status: 'unknown', ...(window?.closeCount ? { unknownReason: 'helper-error' } : {}) }, window?.closeCount ? 400 : undefined),
     // On the probe lane with a short deadline: a result waits for it (offscreen-click.mjs).
     elementVisibility: request => probe.request({ ...request, op: 'element-visibility' }, { status: 'unknown' }, 1500),
     target: args => target.request({ op: 'lease-target', app: args.app }, { ok: false,

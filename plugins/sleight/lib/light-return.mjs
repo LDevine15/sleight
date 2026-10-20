@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CLOSE_COUNT_REASONS } from './close-count-reasons.mjs';
 
 // After Return, Enter, Tab, Escape or Space, the guard read the whole tree before the next typeText or
 // paste, and a read after input waits for the UI to settle: 26 to 31 reads at about 470 ms each in
@@ -24,7 +25,11 @@ export const lightReturnCode = code => typeof code === 'string' && KEY.test(code
 export const LIGHT_TIMING = { waitMs: 250, gapMs: 50, freshMs: 150, windowMs: 700, deadlineMs: 600, pollMs: 10 };
 
 export function createLightReturn({ directory, observe, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
-  delayMs = 80, intervalMs = 25, timing = LIGHT_TIMING, burstMs = timing.windowMs ?? 700, keep = 8 } = {}) {
+  delayMs = 80, intervalMs = 25, timing = LIGHT_TIMING, burstMs = timing.windowMs ?? 700, keep = 8,
+  continuous = false, maxFailures = Infinity, minGapMs = 0, project = observed => {
+    const { status = 'unknown', matches, window, title, url, focus } = observed ?? {};
+    return { status, matches, window, title, url, focus };
+  } } = {}) {
   const calls = new Map();
   const write = call => {
     try {
@@ -37,16 +42,18 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
     if (call.running || call.ended) return;
     call.running = true;
     try {
-      while (!call.ended && now() < call.until) {
+      while (!call.ended && !call.stopped && (continuous || now() < call.until)) {
         const start = now();
         let observed;
         try { observed = await observe({ ...call.window, focus: true }); } catch { observed = undefined; }
         if (call.ended) break;
-        const { status = 'unknown', matches, window, title, url, focus } = observed ?? {};
-        call.observations.push({ start, end: now(), status, matches, window, title, url, focus });
+        const sample = project(observed);
+        call.failures = sample.status === 'ok' ? 0 : (call.failures ?? 0) + 1;
+        call.observations.push({ start, end: now(), ...sample });
         if (call.observations.length > keep) call.observations.shift();
         write(call);
-        const wait = intervalMs - (now() - start);
+        if (call.failures >= maxFailures) { call.stopped = true; break; }
+        const wait = Math.max(minGapMs, intervalMs - (now() - start));
         if (wait > 0) await new Promise(resolve => setTimer(resolve, wait));
       }
     } finally { call.running = false; }
@@ -58,12 +65,13 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
       const call = { path: join(directory, `light-${randomUUID()}.obs`), window, observations: [], until: 0 };
       calls.set(id, call);
       write(call);
+      if (continuous) call.timer = setTimer(() => run(call), 0);
       return { path: call.path, app: window.app, ...timing };
     },
     // The engine asks approval before each key press, naming the app's bundle ID.
     keyPressed(appId) {
       for (const call of calls.values()) {
-        if (call.ended || call.window.appId !== appId) continue;
+        if (call.ended || call.stopped || call.window.appId !== appId) continue;
         call.until = Math.max(call.until, now() + burstMs);
         if (!call.running && !call.timer) call.timer = setTimer(() => run(call), delayMs);
       }
@@ -77,4 +85,15 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
     },
     dispose() { for (const id of [...calls.keys()]) this.end(id); },
   };
+}
+
+// DP1 uses the same read-only file channel for fresh metadata after a close.
+// Sampling stops with the call; a late native reply cannot recreate its file.
+export function createCloseRead({ directory, observe } = {}) {
+  return createLightReturn({ directory, observe: window => observe({ ...window, closeCount: true }),
+    continuous: true, intervalMs: 50, minGapMs: 25, maxFailures: 2, timing: {}, project: observed => {
+      const { status = 'unknown', unknownReason, appId, pid, processStart, running, windowCount, modalCount } = observed ?? {};
+      return { status, appId, pid, processStart, running, windowCount, modalCount,
+        ...(status === 'unknown' ? { unknownReason: CLOSE_COUNT_REASONS.includes(unknownReason) ? unknownReason : 'helper-error' } : {}) };
+    } });
 }

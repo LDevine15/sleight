@@ -3,13 +3,16 @@ import { PassThrough } from 'node:stream';
 import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import assert from 'node:assert/strict';
-import { runInNewContext } from 'node:vm';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { runInNewContext, constants as vmConstants } from 'node:vm';
+import { mkdtempSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { guardedCode, GUARD_MARK, GUARD_OMIT_MARK, GUARD_END, sameElement, samePlace, refusedPlace } from '../plugins/sleight/lib/document-scope.mjs';
 import { createReadCompactor } from '../plugins/sleight/lib/compact-reads.mjs';
+import { inspect } from './helpers/window-identity-fixture.mjs';
+import { loadCheck } from '../bench/replay/run.mjs';
+import { checkEvidence } from '../bench/replay/checks.mjs';
 
 const expected = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
 const tree = (window = expected, rows = '\t1 button Save, ID: Save') =>
@@ -54,10 +57,242 @@ function fixture({ current = () => tree(), action = () => {}, screenshotState, s
     if (key in object || typeof key === 'symbol' || key === 'then') return object[key];
     throw Error('unsupported engine method ' + key);
   } }) : raw;
-  const context = { app: engine, setTimeout, cua: { getApp: async () => engine, listApps: async () => [{ id: 'fixture.app', displayName: expected.app, windows: [{ id: 1, title: expected.title }] }] }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
-  const run = (code, options = ordinary ? defaultOptions() : {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, { focused: true, ...options })} })()`, context);
+  const context = { app: engine, setTimeout, clearTimeout, cua: { getApp: async () => engine, listApps: async () => [{ id: 'fixture.app', displayName: expected.app, windows: [{ id: 1, title: expected.title }] }] }, nodeRepl: { write: value => output.push(value), emitImage: async () => {} } };
+  const run = (code, options = ordinary ? defaultOptions() : {}, target = expected) => runInNewContext(`(async () => { ${guardedCode(code, target, 'changed window', undefined, { focused: true, ...options })} })()`, context,
+    { importModuleDynamically: vmConstants.USE_MAIN_CONTEXT_DEFAULT_LOADER });
   return { run, raw, calls, output, context };
 }
+
+const closeTarget = { ...expected, appId: 'fixture.app', nativeIdentity: { pid: 123, processStart: 1 } };
+const closeOptions = { dp1: true, guardStopMark: 'private-close-mark' };
+const nativeClosed = { status: 'ok', appId: 'fixture.app', pid: 123, processStart: 1,
+  running: true, windowCount: 0, modalCount: 0 };
+// Recorded engine AppInfo shape from sleight-arch's 25.3 s passing smoke.
+const recordedApp = { displayName: 'TextEdit', id: 'com.apple.TextEdit', isRunning: true };
+function closeFixture({ sample = nativeClosed, action = () => {}, ...options } = {}) {
+  const path = join(leaseDir, `close-${Math.random()}.obs`);
+  const f = fixture({ ...options, action: async (...args) => {
+    await action(...args);
+    // Simulate a native observation that starts after pressKey has completed.
+    setTimeout(() => {
+      const start = Date.now();
+      writeFileSync(path + '.tmp', JSON.stringify({ observations: [{ start, end: start,
+        ...(typeof sample === 'function' ? sample() : sample) }] }));
+      renameSync(path + '.tmp', path);
+    }, 5);
+  } });
+  const run = f.run;
+  f.context.cua.listApps = async () => [recordedApp];
+  f.run = (code, options = closeOptions, target = closeTarget) => {
+    writeFileSync(path, JSON.stringify({ observations: [] }));
+    return run(code, { closeRead: { path }, ...options }, target);
+  };
+  return f;
+}
+const recordedClose = 'let app = __sleightOpenedApp2;\nawait app.pressKey("super+w");\n' +
+  'const s = await app.getAXStateAndScreenshot();\nnodeRepl.write(s.state.split("\\n").slice(0, 6).join("\\n"));';
+
+for (const [name, layer] of [['six unheld CG rows', undefined], ['another-Space document', 0], ['another-Space alert', 8]]) {
+  test(`DPj caller-read decision with AX windows empty and ${name}`, async () => {
+    const target = { ...closeTarget, appId: 'com.apple.TextEdit' };
+    const sample = inspect({ ...target, closeCount: true }, [], 0, false, [], (app, windows, list, runtime) => {
+      runtime.cgWindows = Array.from({ length: 6 }, (_, i) => ({ kCGWindowOwnerPID: 123, kCGWindowLayer: 0, kCGWindowNumber: 100 + i }));
+      runtime.spaces = Object.fromEntries(runtime.cgWindows.map(row => [row.kCGWindowNumber, []]));
+      if (layer !== undefined) {
+        runtime.cgWindows.push({ kCGWindowOwnerPID: 123, kCGWindowLayer: layer, kCGWindowNumber: 200 });
+        runtime.spaces[200] = [5];
+      }
+    });
+    const f = closeFixture({ sample });
+    await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("com.apple.TextEdit");', closeOptions, target);
+    f.calls.length = 0; f.output.length = 0;
+    const run = f.run(recordedClose, closeOptions, target);
+    if (layer === undefined) await assert.rejects(run, /\[sleight:closed-read\]/);
+    else await run;
+    const decision = JSON.parse(f.output.find(text => text.startsWith('[sleight:dp1]')).slice(13));
+    assert.equal(decision.source, 'caller-read');
+    assert.equal(decision.decision, layer === undefined ? 'skipped-read' : 'kept-read');
+    assert.equal(decision.windowCount, layer === undefined ? 0 : 1);
+    assert.equal(f.calls.filter(call => call[0] === 'both').length, layer === undefined ? 0 : 1);
+  });
+}
+
+test('DP1 uses native zero counts despite the recorded inventory lacking pid and windows', async () => {
+  for (const key of ['super+w', 'cmd+shift+w', 'command+q']) {
+    const f = closeFixture();
+    f.context.cua.listApps = async () => { throw Error('DP1 must not depend on engine inventory'); };
+    await f.run(`await app.pressKey(${JSON.stringify(key)});`);
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 1);
+    const event = JSON.parse(f.output.find(text => text.startsWith('[sleight:dp1]')).slice(13));
+    assert.equal(event.decision, 'skipped-read');
+    assert.equal(event.windowCount, 0);
+    assert.equal(event.modalCount, 0);
+    assert.equal(event.match, 'native-ax+leased-pid');
+    assert.ok(f.output.some(text => text.includes('private-close-mark:closed')));
+  }
+});
+
+test('DP1 retains reads for native uncertainty, remaining windows and modal children', async () => {
+  for (const sample of [{ ...nativeClosed, windowCount: 1 }, { ...nativeClosed, modalCount: 1 },
+    { ...nativeClosed, windowCount: undefined }, { ...nativeClosed, modalCount: undefined },
+    { ...nativeClosed, windowCount: -1 }, { ...nativeClosed, windowCount: '0' },
+    { ...nativeClosed, pid: 456 }, { ...nativeClosed, processStart: 2 },
+    { ...nativeClosed, appId: 'other.app' }, { ...nativeClosed, running: false },
+    { status: 'unknown' }, { status: 'denied' }]) {
+    const f = closeFixture({ sample });
+    await f.run('await app.pressKey("super+w");');
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 2, JSON.stringify(sample));
+    assert.ok(!f.output.some(text => text.includes('private-close-mark:closed')));
+  }
+});
+
+test('DPk caller-read retains the engine read and carries the native failure code', async () => {
+  for (const unknownReason of ['cgs-unbound', 'cgs-error', 'predicate-error', 'deadline']) {
+    const f = closeFixture({ sample: { status: 'unknown', unknownReason } });
+    await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("fixture.app");', closeOptions, closeTarget);
+    f.calls.length = 0; f.output.length = 0;
+    await f.run(recordedClose);
+    const decision = JSON.parse(f.output.find(text => text.startsWith('[sleight:dp1]')).slice(13));
+    assert.equal(decision.decision, 'kept-read');
+    assert.equal(decision.reason, 'native unavailable');
+    assert.equal(decision.unknownReason, unknownReason);
+    assert.equal(f.calls.filter(call => call[0] === 'both').length, 1);
+  }
+});
+
+test('DP1 preserves action, private mark and opt-in checks in fresh and cached guards', async () => {
+  for (const cached of [false, true]) for (const c of [
+    { options: { dp1: false } }, { options: { guardStopMark: undefined } },
+    { options: { closeRead: undefined } }, { noTimers: true }, { target: expected },
+    { target: { ...closeTarget, nativeIdentity: { pid: 123 } } },
+    { target: { ...closeTarget, appId: undefined } },
+    { key: 'super+s' }, { key: 'ctrl+w' }, { key: 'super+alt+w' },
+    { code: 'await app.pressKey("super+w"); await app.typeText("x");' },
+    { code: 'try { await app.pressKey("super+w"); } catch {}', fail: true },
+  ]) {
+    const f = closeFixture({ action: (name, args) => { if (c.fail && args[0] === 'super+w') throw Error('failed'); } });
+    if (cached) await f.run('await app.pressKey("super+s");');
+    if (c.noTimers) f.context.clearTimeout = undefined;
+    f.calls.length = 0; f.output.length = 0;
+    await f.run(c.code ?? `await app.pressKey(${JSON.stringify(c.key ?? 'super+w')});`,
+      { ...closeOptions, reuseSetup: cached, ...c.options }, c.target ?? closeTarget);
+    assert.ok(f.calls.filter(call => call[0] === 'read').length >= 2, JSON.stringify(c));
+    assert.ok(!f.output.some(text => text.includes('private-close-mark:closed')), JSON.stringify(c));
+  }
+});
+
+test('DP1 covers the recorded caller observations without inventing a state or screenshot', async () => {
+  for (const cached of [false, true]) for (const method of ['getAXState', 'getAXStateAndScreenshot', 'getScreenshot']) {
+    for (const remaining of [false, true]) {
+      const f = closeFixture({ sample: { ...nativeClosed, windowCount: remaining ? 1 : 0 } });
+      await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("fixture.app");');
+      f.calls.length = 0; f.output.length = 0;
+      const code = method === 'getAXStateAndScreenshot' ? recordedClose : `await app.pressKey("super+w"); await app.${method}();`;
+      const run = f.run(code, { ...closeOptions, reuseSetup: cached });
+      if (remaining) await run;
+      else await assert.rejects(run, /\[sleight:closed-read\]/, JSON.stringify({ cached, method, output: f.output }));
+      assert.equal(f.calls.filter(c => c[0] === 'pressKey').length, 1);
+      assert.equal(f.calls.filter(c => c[0] === 'both' || c[0] === 'screenshot').length,
+        remaining && method !== 'getAXState' ? 1 : 0);
+      const events = f.output.filter(text => text.startsWith('[sleight:dp1]')).map(text => JSON.parse(text.slice(13)));
+      assert.equal(events[0].source, 'caller-read');
+      assert.equal(events[0].decision, remaining ? 'kept-read' : 'skipped-read');
+      assert.equal(events[0].windowCount, remaining ? 1 : 0);
+      assert.equal(f.output.some(text => text.includes('private-close-mark:closed-read')), !remaining);
+    }
+  }
+});
+
+test('DP1 keeps a read when the observation budget expires or input overtakes the sample', async () => {
+  const f = fixture();
+  const path = join(leaseDir, 'stale-close.obs');
+  writeFileSync(path, JSON.stringify({ observations: [{ start: 1, end: 2, ...nativeClosed }] }));
+  let largestWait = 0;
+  f.context.setTimeout = (fn, ms) => { largestWait = Math.max(largestWait, ms); return setTimeout(fn, ms); };
+  const start = Date.now();
+  await f.run('await app.pressKey("super+w");', { ...closeOptions, closeRead: { path } }, closeTarget);
+  assert.ok(Date.now() - start < 1000);
+  assert.ok(largestWait <= 200);
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
+  assert.ok(f.output.some(text => text.includes('"reason":"timeout"')));
+  const race = closeFixture();
+  await race.run('await app.pressKey("super+w"); const observation = app.getAXStateAndScreenshot(); await app.typeText("x"); await observation;');
+  assert.ok(race.output.some(text => text.includes('"reason":"action changed"')));
+  assert.equal(race.calls.filter(c => c[0] === 'both').length, 1);
+});
+
+test('DP1 recorded close runs through relay wrapping, emits its call id and returns the close notice', async () => {
+  for (const [remaining, enabled] of [[false, true], [true, true], [true, false]]) {
+    let closed = false, nativeReads = 0;
+    const f = fixture({ action: () => { closed = true; }, current: () => {
+      if (closed && !remaining) throw Error('noWindowsAvailable');
+      return closed ? tree({ ...expected, title: 'Untitled', url: undefined }) : tree();
+    } });
+    f.context.cua.listApps = async () => [{ ...recordedApp, id: 'fixture.app' }];
+    const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+    const sent = [], replies = [], traces = [];
+    serverIn.on('data', data => sent.push(JSON.parse(data)));
+    clientOut.on('data', data => replies.push(JSON.parse(data)));
+    const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, closeReadSkip: enabled, guardTiming: true,
+      inputLease: new InputLease({ directory: leaseDir, holder: 'recorded-close' }),
+      windowIdentity: async window => window.closeCount ? (nativeReads++, { ...nativeClosed, windowCount: remaining ? 1 : 0 }) : ({ ...window, status: 'ok', epoch: 'fixture', window: 1,
+        windowNumber: 44, pid: 123, processStart: 1, matches: 1 }),
+      trace: (direction, msg) => traces.push({ direction, msg }) });
+    const call = (id, code) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+    try {
+      call(1, 'let __sleightOpenedApp2 = await cua.getApp("TextEdit");');
+      // The VM wraps each execution in an async function; save the binding that
+      // the engine's persistent REPL would keep across calls.
+      await runInNewContext(`(async () => { ${sent.find(msg => msg.id === 1).params.arguments.code}
+        globalThis.__sleightOpenedApp2 = __sleightOpenedApp2; })()`, f.context,
+      { importModuleDynamically: vmConstants.USE_MAIN_CONTEXT_DEFAULT_LOADER });
+      serverOut.write(JSON.stringify({ id: 1, result: { content: [...f.output.map(text => ({ type: 'text', text })), { type: 'text', text: tree() }],
+        _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } }) + '\n');
+      await new Promise(resolve => setImmediate(resolve));
+      call(8, recordedClose);
+      await new Promise(resolve => setImmediate(resolve));
+      const forwarded = sent.find(msg => msg.id === 8)?.params.arguments.code;
+      assert.ok(forwarded?.includes('guardStopMark'), 'the recorded handle alias receives the native guard');
+      f.output.length = 0; f.calls.length = 0;
+      let error;
+      try { await runInNewContext(`(async () => { ${forwarded} })()`, f.context,
+        { importModuleDynamically: vmConstants.USE_MAIN_CONTEXT_DEFAULT_LOADER }); }
+      catch (caught) { error = caught; }
+      serverOut.write(JSON.stringify({ id: 8, result: { isError: !!error,
+        content: [...f.output.map(text => ({ type: 'text', text })), ...(error ? [{ type: 'text', text: error.message }] : [])],
+        _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } }) + '\n');
+      const decisions = traces.filter(t => t.direction === 'dp1-decision').map(t => t.msg);
+      assert.equal(decisions.length, enabled ? 1 : 0, JSON.stringify({ error: error?.message, output: f.output }));
+      if (enabled) {
+        assert.equal(decisions[0].id, 8);
+        assert.equal(decisions[0].source, 'caller-read');
+        assert.equal(decisions[0].reason, remaining ? 'windows non-empty' : 'no windows');
+        assert.equal(decisions[0].windowCount, remaining ? 1 : 0);
+        assert.ok(nativeReads > 0);
+      } else assert.equal(nativeReads, 0);
+      const reply = replies.find(msg => msg.id === 8);
+      assert.equal(reply.result.isError, false);
+      const check = loadCheck('DP1');
+      const replay = { calls: [{ index: 0, name: 'js', recordedArguments: { code: recordedClose },
+        result: reply.result, startedAt: '0', finishedAt: '2' }] };
+      const events = traces.map(({ direction, msg }) => ({ t: '1', direction, msg }));
+      assert.equal(checkEvidence(check, replay, events).verdict, enabled && !remaining ? 'pass' : 'fail');
+      if (enabled && !remaining) assert.equal(checkEvidence(check, replay,
+        [...events, { t: '1', direction: 'guard-read', msg: { phase: 'after-call' } }]).verdict, 'fail');
+      const text = JSON.stringify(reply.result.content);
+      assert.match(text, remaining ? /Untitled/ : /the app has no windows left/);
+      assert.ok(!text.includes('[sleight:dp1]') && !text.includes(':closed-read'));
+      assert.equal(f.calls.filter(c => c[0] === 'both').length, remaining ? 1 : 0);
+      if (!remaining) {
+        const count = sent.length;
+        call(9, 'await app.click(1)');
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(sent.length, count, 'a confirmed last-window close clears the recovery target');
+        assert.equal(replies.find(msg => msg.id === 9).result.isError, true);
+      }
+    } finally { await relay.dispose(); }
+  }
+});
 
 test('lean calls keep a strict native handle across calls and report an unchanged action compactly', async () => {
   const f = fixture({ strict: true });

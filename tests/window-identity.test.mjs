@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { runInNewContext } from 'node:vm';
+import { inspect } from './helpers/window-identity-fixture.mjs';
 import { verifyWindowIdentity } from '../plugins/sleight/lib/window-identity.mjs';
 // Header shape from the published TextEdit tree; native fields model AX observations.
 const target = { appId: 'com.apple.TextEdit', app: 'TextEdit', title: 'Untitled', url: null };
@@ -22,27 +21,6 @@ test('same-title replacement, app restart or helper replacement cannot reuse a l
   }
   assert.deepEqual(verifyWindowIdentity(leased, observed), observed);
 });
-const source = readFileSync(new URL('../plugins/sleight/lib/window-identity.js', import.meta.url), 'utf8');
-function inspect(request, numbers, focused = 1, cg = false, events = [], setup = () => {}) {
-  const list = values => ({ count: values.length, objectAtIndex: i => values[i] });
-  const windows = numbers.map((AXWindowNumber, i) => ({ AXTitle: 'Untitled', AXDocument: null, AXWindowNumber,
-    AXPosition: { x: i * 400, y: 20 }, AXSize: { width: 300, height: 200 } }));
-  const app = { AXWindows: list(windows), AXFocusedWindow: windows[focused] };
-  setup(app, windows, list);
-  const $ = value => value;
-  Object.assign($, { NSUUID: { UUID: { UUIDString: 'epoch' } }, AXIsProcessTrusted: () => true,
-    NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list([{ processIdentifier: 123, launchDate: { timeIntervalSince1970: 1 } }]) },
-    AXUIElementCreateApplication: () => app, AXUIElementSetMessagingTimeout: () => 0,
-    AXUIElementCopyAttributeValue: (element, name, value) => { events.push('ax'); if (element.missing?.includes(name)) return -25212; value[0] = element[name] ?? null; return 0; },
-    CFEqual: (a, b) => a === b, AXValueGetValue: (value, _type, bytes) => { bytes.value = value; return !!value; },
-    NSMutableData: { dataWithLength: () => { const bytes = {}; return { bytes, mutableBytes: bytes }; } },
-    NSValue: { valueWithBytesObjCType: bytes => ({ pointValue: bytes.value, sizeValue: bytes.value }) },
-    CGEventSourceSecondsSinceLastEventType: (source, type) => { events.push('hid'); assert.equal(source, 1); assert.equal(type, 0xFFFFFFFF); return 12.5; },
-    CGWindowListCopyWindowInfo: () => list(cg ? windows.map((window, i) => ({ kCGWindowOwnerPID: 123, kCGWindowLayer: 0,
-      kCGWindowNumber: 11 + i, kCGWindowBounds: { X: window.AXPosition.x, Y: 20, Width: 300, Height: 200 } })) : []) });
-  return JSON.parse(runInNewContext(source + '\nrun([JSON.stringify(request)])', { $, request, Ref: () => [],
-    ObjC: { import() {}, unwrap: value => value, deepUnwrap: value => value, castRefToObject: value => value } }));
-}
 test('native duplicate-title identity uses the focused window number or an explicit selection', () => {
   const current = inspect(target, [11, 22]);
   assert.equal(current.matches, 1); assert.equal(current.windowNumber, 22);
@@ -111,4 +89,136 @@ test('the light check after Return gets sheets and the focused element only when
   }
   assert.equal(focusOf(request, (app, windows) => { app.AXFocusedUIElement = { AXRole: 'AXComboBox', AXWindow: windows[0],
     AXParent: { AXRole: 'AXToolbar', AXParent: windows[0] } }; windows[0].AXParent = { AXRole: 'AXWebArea' }; }).inPage, false);
+});
+
+// DPh: the smoke's AppInfo has neither pid nor windows. The native proof must
+// select the leased process and inspect metadata without reading document fields.
+const closeRequest = { appId: target.appId, closeCount: true, nativeIdentity: { pid: 123, processStart: 1 } };
+test('DPh counts AXWindows on the leased running pid without reading titles or documents', () => {
+  const events = [];
+  const reply = inspect(closeRequest, [], 0, false, events, (app, windows, list, runtime) => {
+    app.AXChildren = list([{ AXRole: 'AXMenuBar', AXChildren: list([]) }]);
+    runtime.apps.push({ ...runtime.running, processIdentifier: 456 });
+  });
+  assert.equal(reply.status, 'ok');
+  assert.equal(reply.pid, 123);
+  assert.equal(reply.processStart, 1);
+  assert.equal(reply.running, true);
+  assert.equal(reply.windowCount, 0);
+  assert.equal(reply.modalCount, 0);
+  assert.ok(events.includes('AXWindows'));
+  assert.ok(!events.some(name => /Title|Document|Value|Description/.test(String(name))), events.join(','));
+});
+
+const orderedOut = Array.from({ length: 6 }, (_, i) => ({ kCGWindowOwnerPID: 123, kCGWindowLayer: 0, kCGWindowNumber: 100 + i }));
+const noSpaces = Object.fromEntries(orderedOut.map(row => [row.kCGWindowNumber, []]));
+test('DPk reports a fixed reason when native close counts fail instead of losing the exception', () => {
+  for (const [reason, change] of [
+    ['cgs-unbound', runtime => { runtime.bindThrows = true; }],
+    ['cgs-error', runtime => { runtime.onSpace = () => { throw Error('private query error'); }; }],
+    ['cgs-invalid', runtime => { runtime.spaces = { 100: null }; }],
+    ['cgs-invalid', runtime => { runtime.connection = 0; }],
+    ['predicate-error', runtime => { runtime.predicateThrows = true; }],
+    ['cg-invalid', runtime => { runtime.cgWindows = [{ kCGWindowOwnerPID: 123 }]; }],
+    ['deadline', runtime => { runtime.clockMs = 0; runtime.onSpace = () => { runtime.clockMs = 150; }; }],
+    ['deadline', runtime => { runtime.clockMs = 0; runtime.onRead = () => { runtime.clockMs = 150; }; }],
+  ]) {
+    const reply = inspect(closeRequest, [], 0, false, [], (app, windows, list, runtime) => {
+      runtime.cgWindows = [...orderedOut]; runtime.spaces = noSpaces; change(runtime);
+    });
+    assert.equal(reply.status, 'unknown');
+    assert.equal(reply.unknownReason, reason);
+    assert.ok(!JSON.stringify(reply).includes('private'));
+  }
+});
+test('DPj ignores six ordered-out CG windows after the last AX window closes', () => {
+  const events = [];
+  const reply = inspect(closeRequest, [], 0, false, events, (app, windows, list, runtime) => {
+    runtime.cgWindows = [...orderedOut, { kCGWindowLayer: 0 }, { kCGWindowOwnerPID: 456, kCGWindowLayer: 0 }];
+    runtime.spaces = noSpaces;
+  });
+  assert.equal(reply.status, 'ok');
+  assert.equal(reply.windowCount, 0);
+  assert.equal(events.filter(event => Array.isArray(event) && event[0] === 'spaces').length, 6);
+  assert.ok(events.some(event => Array.isArray(event) && event[0] === 'predicate' &&
+    event[1].includes('kCGWindowOwnerPID == %@') && event[1].includes('kCGWindowLayer <= 23') && event[2] === 123));
+  assert.ok(!events.some(event => /Name|Title|Bounds|Alpha|Onscreen/.test(String(event))));
+});
+test('DPj counts another-Space documents, floating panels and standalone alerts on layers 0 through 23', () => {
+  for (const layer of [0, 3, 8, 23]) {
+    const events = [];
+    const result = inspect(closeRequest, [], 0, false, events, (app, windows, list, runtime) => {
+      runtime.cgWindows = [...orderedOut, { kCGWindowOwnerPID: 123, kCGWindowLayer: layer, kCGWindowNumber: 200 }];
+      runtime.spaces = { ...noSpaces, 200: [5] };
+    });
+    assert.equal(result.status, 'ok');
+    assert.equal(result.windowCount, 1, `layer ${layer}`);
+    assert.ok(events.some(event => Array.isArray(event) && event[0] === 'cg' && event[1] === 16));
+  }
+  const excluded = inspect(closeRequest, [], 0, false, [], (app, windows, list, runtime) => {
+    runtime.cgWindows = [-1, 24].map(layer => ({ kCGWindowOwnerPID: 123, kCGWindowLayer: layer }));
+  });
+  assert.equal(excluded.windowCount, 0);
+});
+test('DPj failed or unknown CG and Space lookups keep the proof unknown within the 150 ms deadline', () => {
+  for (const setup of [
+    (app, windows, list, runtime) => { runtime.cgUnavailable = true; },
+    (app, windows, list, runtime) => { runtime.cgWindows = [{ kCGWindowOwnerPID: 123 }]; },
+    (app, windows, list, runtime) => { runtime.clockMs = 0; runtime.onRead = () => { runtime.clockMs = 150; }; },
+    ...[
+      runtime => { runtime.spaces = {}; },
+      runtime => { runtime.spaces = { ...noSpaces, 100: null }; },
+      runtime => { runtime.spaces = { ...noSpaces, 100: 'unknown' }; },
+      runtime => { runtime.bindThrows = true; },
+      runtime => { runtime.connection = 0; },
+      runtime => { runtime.cgWindows[0] = { kCGWindowOwnerPID: 123, kCGWindowLayer: 0 }; },
+      runtime => { runtime.onSpace = () => { throw Error('lookup failed'); }; },
+      runtime => { runtime.clockMs = 0; runtime.onSpace = () => { runtime.clockMs = 150; }; },
+    ].map(change => (app, windows, list, runtime) => {
+      runtime.cgWindows = [...orderedOut]; runtime.spaces = noSpaces; change(runtime);
+    }),
+  ]) assert.notEqual(inspect(closeRequest, [], 0, false, [], setup).status, 'ok');
+});
+test('DPh reports remaining windows and sheet or dialog descendants', () => {
+  assert.equal(inspect(closeRequest, [11], 0).windowCount, 1);
+  for (const node of [{ AXRole: 'AXSheet' }, { AXRole: 'AXWindow', AXSubrole: 'AXDialog' },
+    { AXRole: 'AXWindow', AXSubrole: 'AXSystemDialog' }, { AXRole: 'AXWindow', AXModal: true }]) {
+    const reply = inspect(closeRequest, [], 0, false, [], (app, windows, list) => {
+      app.AXChildren = list([{ AXRole: 'AXGroup', AXChildren: list([node]) }]);
+    });
+    assert.equal(reply.windowCount, 0);
+    assert.equal(reply.modalCount, 1, JSON.stringify(node));
+  }
+});
+test('DPh keeps native uncertainty for missing windows, restarted processes and incomplete children', () => {
+  const cases = [
+    (app, windows, list, runtime) => { runtime.running.terminated = true; },
+    (app, windows, list, runtime) => { runtime.trusted = false; },
+    (app, windows, list, runtime) => { runtime.timeoutError = -25205; },
+    (app, windows, list, runtime) => { runtime.onRead = () => { runtime.running.terminated = true; }; },
+    (app, windows, list) => { app.AXChildren = list([{ AXRole: 'AXWindow', AXSubrole: 'AXStandardWindow' }]); },
+    (app, windows, list) => {
+      let node = { AXRole: 'AXGroup' };
+      for (let i = 0; i < 10; i++) node = { AXRole: 'AXGroup', AXChildren: list([node]) };
+      app.AXChildren = list([node]);
+    },
+    (app, windows, list, runtime) => { runtime.running.launchDate.timeIntervalSince1970 = 2; },
+    (app, windows, list, runtime) => { runtime.running.bundleIdentifier = 'other.app'; },
+    (app, windows, list, runtime) => { runtime.apps = []; },
+    app => { app.missing = ['AXWindows']; },
+    app => { app.AXWindows = null; },
+    app => { app.missing = ['AXChildren']; },
+    (app, windows, list) => { app.AXChildren = list(Array.from({ length: 65 }, () => ({ AXRole: 'AXGroup' }))); },
+  ];
+  for (const setup of cases) assert.notEqual(inspect(closeRequest, [], 0, false, [], setup).status, 'ok');
+  assert.notEqual(inspect({ ...closeRequest, nativeIdentity: { pid: 123 } }, [], 0).status, 'ok');
+});
+
+test('DPh does not traverse menu contents when a windowless app exposes its menu bar', () => {
+  const reply = inspect(closeRequest, [], 0, false, [], (app, windows, list) => {
+    app.AXChildren = list([{ AXRole: 'AXMenuBar', AXChildren: list(Array.from({ length: 65 }, () => ({ AXRole: 'AXMenuBarItem' }))) }]);
+  });
+  assert.equal(reply.status, 'ok');
+  assert.equal(reply.windowCount, 0);
+  assert.equal(reply.modalCount, 0);
 });

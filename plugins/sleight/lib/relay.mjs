@@ -85,6 +85,7 @@ import { guardStopMark, splitMenuActions, takeGuardStop, withoutStopTree, hasWho
 import { checkedStop, stopText } from './checked-stop.mjs';
 import { stripHandBindings } from './hand/bindings.mjs';
 import { stripGuardTiming } from './guard-timing.mjs';
+import { stripDP1Trace } from './dp1-trace.mjs';
 import { createStuckEscapes } from './stuck-escape.mjs';
 import { isInventoryRead } from './inventory-read.mjs';
 import { createReadCompactor, dropAcquisitionTree, hasFullTree, filteredReadCode, filteredReadMark, failureReason, TEXTLESS_NOTE } from './compact-reads.mjs';
@@ -121,7 +122,7 @@ import { leanCallDescription } from './lean-calls.mjs';
 import { initializationAdvice } from './initialization-guidance.mjs';
 import { syntaxErrorHint, syntaxOrigin } from './syntax-errors.mjs';
 import { compactJsDescription, engineJsVariant } from './tool-description.mjs';
-import { createLightReturn, lightReturnCode } from './light-return.mjs';
+import { createLightReturn, createCloseRead, lightReturnCode } from './light-return.mjs';
 import { createTabProbe, nativeTabPlan } from './tab-probe.mjs';
 import { hostLabel } from './host-label.mjs';
 import { TURN_START, TURN_START_TOOL, codexCallTurn, codexTurnClient, codexTurnFrame } from './codex-turn.mjs';
@@ -866,6 +867,8 @@ export function createRelay({
   warmEngine = false,
   openFast = false,
   openShot = process.env.SLEIGHT_OPEN_SHOT !== '0',
+  closeReadSkip = process.env.SLEIGHT_DP1 !== '0',
+  handleApi = process.env.SLEIGHT_DP3 !== '0',
   // SLEIGHT_BROWSER_CORE=1: browser_open for a browser turbo doesn't drive, as two js calls (engine-browser-open.mjs).
   engineBrowserOpen = engineBrowserOpenSetting(),
   // open_file adds a screenshot only when the opened document's tree holds none of its text or cells.
@@ -1086,9 +1089,11 @@ export function createRelay({
     ? createLightReturn({ directory: inputLease.directory, observe: windowIdentity }) : undefined;
   const tabProbe = ck3 && windowIdentity && inputLease?.directory
     ? createTabProbe({ directory: inputLease.directory, observe: windowIdentity, trace }) : undefined;
+  const closeRead = closeReadSkip && windowIdentity && inputLease?.directory
+    ? createCloseRead({ directory: inputLease.directory, observe: windowIdentity }) : undefined;
   const promptFailures = new Map(); // call id -> native panel failure, distinct from a user decline
   const running = new Set(); // ids of engine calls waiting for a result
-  const nativeChecked = new Set();
+  const nativeChecked = new Map(); // call id -> its verified native admission, when available
   const focusedChecked = new Set();
   const callDetails = new Map();
   const pendingClients = new Map();
@@ -1853,6 +1858,7 @@ export function createRelay({
     lightReturn?.end(id);
     tabProbe?.end(id);
     tabLandings.delete(id);
+    closeRead?.end(id);
     const call = leaseCalls.get(id);
     if (call) {
       if (call.key && !leaseFault && !disposed) {
@@ -2683,7 +2689,8 @@ export function createRelay({
           const combined = { ...state, content: [...opened, ...(state.content ?? []),
             ...(!state.isError ? [{ type: 'text', text: promptNotice((pictured ? 'sleight: screenshot added, the tree has no document text. ' : '') +
               `Window handle: \`${handle}\`` + (!confirmed ? '.' : constApp ? ', already acquired. Use it in place of `app`.'
-                : `, already acquired, but \`app\` isn't set: start the next call with \`let app = ${handle};\`.`), prompt) }] : [])] };
+                : `, already acquired, but \`app\` isn't set: start the next call with \`let app = ${handle};\`.`) +
+              (handleApi && confirmed ? '\n' + "It has the engine's app API: click, doubleClick, rightClick, pressKey, typeText, paste, setValue, selectText, scroll, performSecondaryAction, getAXState, getScreenshot, getAXStateAndScreenshot." : ''), prompt) }] : [])] };
           if (pictured) recordScreenshot(combined.content);
           const response = { jsonrpc: '2.0', id: msg.id, result: combined };
           reportPreapprovals(response); toClient(response);
@@ -3175,6 +3182,7 @@ export function createRelay({
     handleClient({ ...msg, id: prefixId, params: { ...msg.params, arguments: { ...msg.params.arguments, code: acquire } } });
     return true;
   }
+  const closedWindowResults = new WeakSet();
   function continueMenu(msg) {
     const call = menuCalls.get(msg.id);
     if (!call) return false;
@@ -3182,6 +3190,15 @@ export function createRelay({
     // When the stop result arrived: a tab continuation asks for HID idle since then, not over the call.
     const stopAt = clock();
     if (!Array.isArray(msg.result?.content)) return false;
+    // A confirmed close can stop an explicit observation before the tail runs.
+    // A caught observation stop must not hide a later result or unrelated error.
+    const closedRead = msg.result.isError && msg.result.content.some(c => c.type === 'text' && c.text?.includes('[sleight:closed-read]'));
+    if (closeReadSkip && msg.result.content.some(c => c.type === 'text' && c.text?.split('\n').some(line =>
+      !msg.result.isError && line === call.mark + ':closed' || closedRead && line === call.mark + ':closed-read'))) {
+      closedWindowResults.add(msg);
+    }
+    msg.result.content = msg.result.content.map(c => c.type === 'text'
+      ? { ...c, text: c.text.split('\n').filter(line => line !== call.mark + ':closed' && line !== call.mark + ':closed-read').join('\n') } : c);
     const taken = takeGuardStop(msg.result.content, call.mark);
     msg.result.content = taken.content;
     for (const decision of taken.bindings) trace('setvalue-binding', { id: msg.id, ...decision });
@@ -3343,7 +3360,7 @@ export function createRelay({
         const last = call.plan.actions.at(-1).selector;
         const landing = remainder.tab && tabFirst && last?.kind === 'key' && /^(?:return|enter)$/i.test(last.value) ? call.plan.actions[0].handle : undefined;
         menuForwards.set(msg.id, { call, expected: forward, baseline, lease, original, head, current, tab: !!remainder.tab, stopAt, landing });
-        nativeChecked.add(msg.id); focusedChecked.add(msg.id);
+        nativeChecked.set(msg.id, undefined); focusedChecked.add(msg.id);
         handleClient({ ...call.request, params: { ...call.request.params,
           arguments: { ...call.request.params.arguments, code: remainder.code } } });
       });
@@ -3599,12 +3616,12 @@ export function createRelay({
         if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
         else focusedChecked.add(msg.id);
         trace('native-window-admission', { id: msg.id, ms: performance.now() - started, confirmed: !!identity });
-        running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg);
+        running.delete(msg.id); nativeChecked.set(msg.id, identity); handleClient(msg);
       }).catch(error => { if (stopCollected || generation !== stopGeneration) return;
         // An optional focus probe that is unavailable leaves the full first read in place.
         // Existing identity requirements and confirmed mismatches still stop admission.
         if (!expected.identityRequired && !/^Input lease:/.test(error.message)) {
-          running.delete(msg.id); nativeChecked.add(msg.id); handleClient(msg); return;
+          running.delete(msg.id); nativeChecked.set(msg.id, undefined); handleClient(msg); return;
         }
         finishedCall(msg.id); leaseStop(msg, error.message);
       });
@@ -3905,6 +3922,13 @@ export function createRelay({
             if (filteredCode !== swipeCode || typedTarget || receiptTyping || outcomeMark) filterMarks.set(msg.id, filterMark);
             const light = lightReturn && inputLease && !careful && !documentMode && !changeReview && !menuBaseline &&
               target === leaseWindow && lightReturnCode(originalCode) ? lightReturn.begin(msg.id, leaseWindow) : undefined;
+            // A unique file window may have no stored identity baseline. Its current
+            // admission still supplies DP1's leased process and window for this call.
+            const admitted = closeReadSkip && target === leaseWindow && nativeChecked.get(msg.id);
+            const closeWindow = admitted ? { ...target, nativeIdentity: admitted } : target;
+            const close = closeRead && closeWindow?.nativeIdentity &&
+              /\.\s*pressKey\s*\(\s*(['"`])(?:super|cmd|command|meta)\+(?:shift\+w|w|q)\1\s*\)/i.test(originalCode)
+              ? closeRead.begin(msg.id, closeWindow) : undefined;
             const tabForward = menuForwards.get(msg.id);
             const tabAdmission = menuAdmissions.get(msg.id);
             const probe = tabForward?.tab && !careful && !documentMode && !changeReview
@@ -3914,9 +3938,9 @@ export function createRelay({
                 ? tabProbe?.begin(msg.id, { ...target, windowNumber: tabAdmission.baseline.windowNumber, nativeIdentity: tabAdmission.baseline },
                   Date.now() - Math.max(0, clock() - tabAdmission.sampledAt), 'new-tab') : undefined;
             if (probe?.mode === 'new-tab') tabLandings.set(msg.id, { landing: tabAdmission.plan.actions[0].handle });
-            msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? target, reason,
+            msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? closeWindow, reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
-              { ...setup, handBindingMark, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, ...(outcomeMark ? { outcomeMark } : {}), timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
+              { ...setup, dp1: closeReadSkip, handBindingMark, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, ...(outcomeMark ? { outcomeMark } : {}), timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
                 firstOff: !careful && !documentMode && !changeReview,
                 focused: focusedChecked.has(msg.id),
                 quietEdits: !careful && !documentMode && !changeReview,
@@ -3926,6 +3950,7 @@ export function createRelay({
                 actions: guardActions(originalCode),
                 ...(light ? { lightReturn: light } : {}),
                 ...(probe ? { tabProbe: probe } : {}),
+                ...(close ? { closeRead: { path: close.path } } : {}),
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
                 seenLines, seenParents: compactor.seenParents(seenWindow, numbers), literals: numbers, literalOrder: literalElements(originalCode),
@@ -4086,6 +4111,9 @@ export function createRelay({
       msg = { ...msg, id };
     }
     trace('from-server', { id: msg.id, method: msg.method });
+    if (msg.method === undefined && jsCalls.has(msg.id) && Array.isArray(msg.result?.content)) {
+      msg.result.content = stripDP1Trace(msg.result.content, event => trace('dp1-decision', { id: msg.id, ...event }));
+    }
     if (msg.method === undefined && tabCleanupNotes.has(msg.id)) {
       const text = tabCleanupNotes.get(msg.id); tabCleanupNotes.delete(msg.id);
       if (msg.result) msg.result.content = [...(msg.result.content ?? []), { type: 'text', text }];
@@ -4459,10 +4487,10 @@ export function createRelay({
     }
     // A "call failed" line after this message sent Claude to check again (h2h-3, 2026-10-10), so the
     // close it reports gets no verified-results line.
-    let closedLast = false;
+    let closedLast = closedWindowResults.has(msg);
     // Reading after ⌘W closed the last window fails with noWindowsAvailable, but the
     // close worked (7 of 437 calls, 2026-10-07). Say so instead of reporting an error.
-    if (jsCode !== undefined && msg.result?.isError && /\bsuper\+w\b|cmd\+w\b|command\+w\b/i.test(jsCode) &&
+    if (closedLast || jsCode !== undefined && msg.result?.isError && /\bsuper\+w\b|cmd\+w\b|command\+w\b/i.test(jsCode) &&
         (msg.result.content ?? []).some(c => c.type === 'text' && /noWindowsAvailable/.test(c.text ?? ''))) {
       msg.result = { ...msg.result, isError: false, content: [...engineDocs(msg.result.content), { type: 'text', text: promptNotice('sleight: the app has no windows left, so the window this call closed was its last. Nothing more to read.', prompt) }] };
       closedLast = true;
@@ -5212,6 +5240,7 @@ export function createRelay({
     lightReturn?.dispose();
     tabProbe?.dispose();
     tabLandings.clear();
+    closeRead?.dispose();
     paymentCard?.close?.();
     promptFailures.clear();
     flowRules?.dispose();

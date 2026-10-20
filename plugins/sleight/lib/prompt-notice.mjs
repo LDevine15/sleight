@@ -25,6 +25,7 @@ export function promptNotice(text, prompt) {
     .replace('sleight: Paste and Move act on the folder the window shows, not a selected row. Open the destination first.', 'sleight: Paste/Move use the shown folder, not a selected row; open the destination.')
     .replace('A failed action without await can end the engine\'s session and lose every handle. ', '')
     .replace('sleight: screenshot added, the tree has no document text. ', 'Screenshot added: no text in tree. ')
+    .replace("It has the engine's app API: ", 'App API: ')
     .replace(', already acquired. Use it in place of `app`.', ', acquired; use it for `app`.')
     .replace(', already acquired, but `app` isn\'t set: start the next call with `let app = ', ', acquired; start the next call with `let app = ')
     .replace('sleight will make it a full read because automatic recovery consumed the engine\'s UI diff.', '')

@@ -10,6 +10,7 @@ import { paymentWords, refundableName } from './direct-browser/rules.mjs';
 import { tabChromeRefusal, tabProbeRefusal } from './tab-probe.mjs';
 import { verifyWindowIdentity } from './window-identity.mjs';
 import { tabFocusRefusal } from './menu-continuation.mjs';
+import { withoutTitles } from './dp1-trace.mjs';
 // Header identity is a cooperative runtime observation, not an OS capability.
 // Mark full trees the guard writes, which the relay compacts (compact-reads.mjs).
 export const GUARD_MARK = '[sleight:guard-read]\n';
@@ -422,10 +423,62 @@ export function readCode(code, options = {}) {
 }
 
 // Advisory only: all of this runs in the same mutable JS realm as Claude's code.
+async function closedLastWindow(state, record) {
+  const active = state.activeApp, version = state.actionVersion;
+  const previous = state.previous.get(active), action = state.lastAction;
+  const identity = state.expected?.nativeIdentity;
+  const pid = identity?.pid ?? state.expected?.pid, processStart = identity?.processStart;
+  let native = {};
+  const decide = (reason, skip = false) => {
+    try { record({ decision: skip ? 'skipped-read' : 'kept-read', reason, ...native,
+      ...(skip ? { match: 'native-ax+leased-pid' } : {}) }); } catch {}
+    return skip;
+  };
+  if (!state.guardStopMark) return decide('no mark');
+  if (typeof setTimeout !== 'function' || typeof clearTimeout !== 'function') return decide('timers unavailable');
+  if (!Number.isSafeInteger(pid) || pid <= 0) return decide('leased pid missing');
+  if (!Number.isFinite(processStart)) return decide('leased process start missing');
+  if (!state.expected?.appId) return decide('leased bundle id missing');
+  if (action?.kind !== 'key' || !/^(?:super|cmd|command|meta)\+(?:shift\+w|w|q)$/i.test(action.value)) return decide('not a close shortcut');
+  if (!previous?.done || state.failures?.length || previous.key !== action.value) return decide('action not completed');
+  if (state.callHeaders.get(active)?.app !== state.expected.app) return decide('app header mismatch');
+  if (!state.closeRead?.path) return decide('native observer unavailable');
+  let timer, ended = false;
+  try {
+    const timeout = {}, deadline = Date.now() + 200, path = state.closeRead.path;
+    const sample = async () => {
+      const fs = await import('node:fs/promises');
+      while (!ended && Date.now() < deadline) {
+        const data = JSON.parse(await fs.readFile(path, 'utf8'));
+        if (!Array.isArray(data.observations)) throw Error('Missing native samples');
+        // A sample that began before pressKey completed cannot prove its result.
+        const newest = data.observations.filter(o => typeof o?.start === 'number' && o.start > previous.done).at(-1);
+        if (newest) return newest;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      return timeout;
+    };
+    const observed = await Promise.race([sample(), new Promise(resolve => { timer = setTimeout(() => resolve(timeout), 200); })]);
+    if (state.activeApp !== active || state.actionVersion !== version || state.lastAction !== action) return decide('action changed');
+    if (observed === timeout || Date.now() >= deadline) return decide('timeout');
+    const { status, unknownReason, appId, pid: actualPid, processStart: actualStart, running, windowCount, modalCount } = observed ?? {};
+    native = { status, pid: actualPid, processStart: actualStart, running, windowCount, modalCount,
+      ...(status === 'unknown' && typeof unknownReason === 'string' ? { unknownReason } : {}) };
+    if (status !== 'ok') return decide('native unavailable');
+    if (actualPid !== pid || actualStart !== processStart || appId !== state.expected.appId || running !== true) return decide('process mismatch');
+    if (!Number.isFinite(observed.end) || observed.end < observed.start || observed.end > Date.now() || Date.now() - observed.end > 200) return decide('stale native sample');
+    if (!Number.isSafeInteger(windowCount) || windowCount < 0 || !Number.isSafeInteger(modalCount) || modalCount < 0) return decide('native counts missing');
+    if (windowCount) return decide('windows non-empty');
+    if (modalCount) return decide('modal child');
+    return decide('no windows', true);
+  } catch { return decide('error'); }
+  finally { ended = true; clearTimeout(timer); }
+}
+
 export function guardedCode(code, window, reason = /* notice */ 'Document scope stopped this action: window or URL changed. Read the window and ask the user with document_scope.', lease, options = {}) {
   // The lease needs a full header after the call. A read Claude made after its
   // last action already wrote one, so the guard reads again only without it.
-  const { reuseSetup, acknowledge, prompt, outcomes, kernel, ...checks } = options;
+  const { reuseSetup, acknowledge, prompt, outcomes, kernel, dp1 = false, ...checks } = options;
   const ck = ((checks.ck1 ?? process.env.SLEIGHT_CK1 !== '0') ? 1 : 0) |
     ((checks.ck2 ?? process.env.SLEIGHT_CK2 !== '0') ? 2 : 0);
   delete checks.ck1; delete checks.ck2;
@@ -436,11 +489,10 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   // last statement may be, so the call's read can't run beside it and return the window from before it (CC6 review).
   // An empty literal order is left out (the guard reads it as []), which keeps the per-call setup under 2,500 bytes.
   const literalOrder = checks.literalOrder ?? literalElements(code);
-  return guardSetup({ window, reason, lease, ...checks, literalOrder: literalOrder.length ? literalOrder : undefined }, { reuseSetup, acknowledge, prompt, outcomes, kernel }) +
+  return guardSetup({ window, reason, lease, ...checks, ...(dp1 ? { dp1: true } : {}), literalOrder: literalOrder.length ? literalOrder : undefined }, { reuseSetup, acknowledge, prompt, outcomes, kernel, dp1 }) +
     (options.browserCandidate ? '\nglobalThis.__sleightDocumentGuard.activeApp = undefined;' : '') + /* generated code */ `\n${code}
 {
   const guard = globalThis.__sleightDocumentGuard, last = await guard.settle?.() ?? (guard.activeApp && guard.reads.get(guard.activeApp));
-  // The call finished, so any failed action was one it didn't await or caught itself.
   if (guard.failures?.length) nodeRepl.write('sleight: an action in this call failed' + ${quoted(/* lean notice */ ', and the call went on without it: ')} + guard.failures.join('; ') + '. Read the window, then redo it with await.\\n');
   // A caught getApp failure sent no input, so it isn't a failed action; a later getApp that worked cleared it.
   if (guard.getAppFailures?.length) {
@@ -449,7 +501,7 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
   }
   if (guard.activeApp && !last?.emitted && !last?.omit) {
     const split = !guard.acted && guard.activeApp === guard.startApp && guard.prior?.split;
-    const text = last?.text ?? (split ? guard.prior.text : await guard.readAfter(guard.activeApp));
+    const text = last?.text ?? (split ? guard.prior.text : await guard.readAfter(guard.activeApp${dp1 ? ', true' : ''}));
     guard.noteFocus?.(text);
     nodeRepl.write(${JSON.stringify(GUARD_MARK)} + text + ${JSON.stringify(GUARD_END)});
   }
@@ -458,7 +510,7 @@ export function guardedCode(code, window, reason = /* notice */ 'Document scope 
 }
 
 // outcomes: the session records action outcomes (SLEIGHT_OUTCOMES or SLEIGHT_ACTION_LOG); without it the guard is unchanged.
-function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, outcomes = false, kernel } = {}) {
+function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, outcomes = false, kernel, dp1 = process.env.SLEIGHT_DP1 !== '0' } = {}) {
   const O = outcomes;
   // Notice text the guard throws or writes, in its SLEIGHT_PROMPT wording.
   const quoted = text => JSON.stringify(promptNotice(text, prompt));
@@ -509,6 +561,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     state.acted = false; state.startApp = state.activeApp;
     state.actionVersion ??= 0;
     state.actionIndex = 0; state.completedActions = 0; state.ran = []; state.unknown = []; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
+    state.dp1 = !!update?.dp1; state.closeRead = update?.closeRead;
     state.inputSent = false;
     // This call's actions and picks still running, for the read that ends the call.
     state.inflight = new Set();
@@ -560,7 +613,21 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
           ms: clock() - start, chars: typeof text === 'string' ? text.length : 0, failed: text === undefined }) + '\\n');
       }
     };
-    state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');
+    ${dp1 ? `const closedLast = ${closedLastWindow.toString()}, withoutTitles = ${withoutTitles.toString()};
+    const recordDP1 = event => nodeRepl.write('[sleight:dp1]' + JSON.stringify(withoutTitles(event)) + '\\n');
+    state.readAfter = async (proxy, tail) => tail && await closedLast(state, recordDP1)
+      ? state.guardStopMark + ':closed'
+      : timedRead(state.raws.get(proxy), 'after-call');
+    // A caller's final observation can satisfy the tail or throw before it runs.
+    // Confirm the close here too. Stop instead of inventing a screenshot or state.
+    state.beforeRead = async proxy => {
+      if (!state.dp1 || proxy !== state.activeApp || state.lastAction?.kind !== 'key' ||
+          !/^(?:super|cmd|command|meta)\\+(?:shift\\+w|w|q)$/i.test(state.lastAction.value)) return;
+      if (await closedLast(state, event => recordDP1({ ...event, source: 'caller-read' }))) {
+        nodeRepl.write(state.guardStopMark + ':closed-read\\n');
+        throw new Error('[sleight:closed-read]');
+      }
+    };` : "state.readAfter = proxy => timedRead(state.raws.get(proxy), 'after-call');"}
     state.raws ||= new WeakMap();
     // Windows whose bound capture lost an element, by app and URL or title, to the clean actions left before
     // they bind again: each reads before a numbered or named action until STALE_PASSES of those pass (see the
@@ -923,7 +990,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
         // Claude's tree reads are full reads the relay turns into changed lines,
         // and they double as the guard's own read until the next action.
         if (name === 'getAXState') return async (options = {}) => {
-          checkNative();
+          checkNative();${dp1 ? '\n          await state.beforeRead(proxy);' : ''}
           state.binding = undefined;
           const reads = state.reads, reading = {}, version = state.actionVersion;
           reads.set(proxy, reading);
@@ -938,7 +1005,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           return text;
         };
         if (name === 'getAXStateAndScreenshot') return async (options = {}) => {
-          checkNative();
+          checkNative();${dp1 ? '\n          await state.beforeRead(proxy);' : ''}
           state.binding = undefined;
           // The combined observation already paid for a full AX walk. Keep its
           // state just as we keep getAXState, until the next action or call.
@@ -957,7 +1024,7 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
           return result;
         };
         if (name === 'getScreenshot') return async (options = {}) => {
-          checkNative();
+          checkNative();${dp1 ? '\n          await state.beforeRead(proxy);' : ''}
           state.binding = undefined;
           const reads = state.reads, reading = {};
           reads.set(proxy, reading);

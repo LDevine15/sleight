@@ -4,7 +4,7 @@
   "task": "textedit-drag", "arm": "sleight", "run": 1,
   "switch": "SLEIGHT_DP1",
   "tool": "js", "argumentPattern": "(?:super|cmd|command|meta)\\+w",
-  "traceIncludes": "sleight:last-window-closed|guard-stop[^\\n]*:closed",
+  "traceIncludes": "\"direction\":\"dp1-decision\"[^\\n]*\"decision\":\"skipped-read\"",
   "traceExcludes": "\"phase\":\"after-call\"",
   "assertion": "Last-window close emits closure proof without an after-call AX read."
 }

@@ -671,3 +671,14 @@ real app. `SLEIGHT_CHATGPT_APP` points `bin/sleight-mcp` and `sleight-mcp setup`
 The default uses shorter popup and refusal lines, explains field values, batch boundaries and tab actions,
 and explains viewport markers. Browser and Electron tab handles use nine random base32 characters after `t` (45 random bits),
 with collision checks against registered handles. Payments, confirmations and approvals follow the same rules.
+
+### Close-read and handle API A/B switches
+
+`SLEIGHT_DP1=0` keeps the guard's final read after a close shortcut. By default, the guard can skip
+that read after Cmd+W, Cmd+Shift+W or Cmd+Q when a fresh native observation matches the leased bundle ID,
+PID and process start. Both the window count and modal count must be 0. Missing identity, unknown metadata,
+remaining windows or modal children keep the read. The native relay must supply the call's private mark.
+This switch is on by default and needs live checks of unsaved TextEdit and Word close dialogs before release.
+
+`SLEIGHT_DP3=0` omits the engine app API list from confirmed `open_file` results. The list is on
+by default. Use sleight's `drag` tool for selected text moves.
