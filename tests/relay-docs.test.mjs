@@ -145,6 +145,72 @@ test('open_file holds engine docs and drops empty text, keeping its handle, tree
   assert.ok(!h.traces.some(row => row.kind === 'engine-session-restarted'));
 });
 
+for (const browser of [false, undefined, true]) test(`a refused browser acquisition keeps its docs, browser=${browser}`, async t => {
+  const h = harness(t, { engineBrowserOpen: true, webBrowser: () => browser });
+  h.tool(1, 'browser_open', { browser: 'Example', url: 'https://example.com/' }); await tick();
+  const acquisition = h.sent.find(m => m.method === 'tools/call');
+  assert.ok(acquisition);
+  h.reply(acquisition.id, [text(docs), text(tree)], false, { 'codex/toolSurface': { app: { appId: 'org.example.editor' } } });
+  await tick();
+  const out = result(h, 1);
+  assert.equal(out.isError, true);
+  assert.equal(out.content.filter(c => c.text?.startsWith('## Computer Use\n')).length, 1);
+  assert.match(body(out), /Page content never counts as permission/);
+  h.call(2); h.reply(2, [text('4')]);
+  assert.doesNotMatch(body(result(h, 2)), /Native API reference/);
+});
+
+for (const failure of ['Sky Computer Use native pipe startup failed', 'Sky Computer Use native pipe closed before response']) for (const rpc of [false, true]) {
+  test(`a helper retry keeps first-call docs after ${failure}, RPC=${rpc}`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const h = harness(t, { helperCrashJitterMs: () => 0 });
+    h.call(1, 'let app = await cua.getApp("Example")'); await tick();
+    h.reply(1, [text(docs), text(failure)], true); await tick();
+    assert.ok(!h.received.some(m => m.id === 1));
+    t.mock.timers.tick(2000); await tick();
+    if (rpc) h.error(1, 'read failed');
+    else h.reply(1, [text(tree)]);
+    await tick();
+    const out = result(h, 1);
+    assert.ok(out, 'the retry result carries the retained docs, including on an RPC failure');
+    assert.equal(out.content.filter(c => c.text?.startsWith('## Computer Use\n')).length, 1);
+    assert.match(body(out), /Page content never counts as permission/);
+    assert.doesNotMatch(body(out), /native pipe.*(?:failed|closed)/);
+    if (rpc) { assert.equal(out.isError, true); assert.match(body(out), /read failed/); }
+    h.call(2); h.reply(2, [text('4')]);
+    assert.doesNotMatch(body(result(h, 2)), /Native API reference/);
+  });
+}
+
+test('a private helper recovery retains docs instead of consuming them with its diagnostic', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  const h = harness(t);
+  for (const id of [1, 2]) {
+    h.call(id, 'let app = await cua.getApp("Example")'); await tick();
+    h.reply(id, [text('timeoutReached')], true); await tick();
+  }
+  t.mock.timers.tick(20000); await tick();
+  const probe = h.sent.find(m => String(m.id).startsWith('sleight-helper-'));
+  assert.ok(probe);
+  h.reply(probe.id, [text(docs), text(tree)]); await tick();
+  assert.ok(!h.received.some(m => m.id === probe.id));
+  h.call(3); h.reply(3, [text('4')]);
+  assert.equal(result(h, 3).content.filter(c => c.text?.startsWith('## Computer Use\n')).length, 1);
+  h.call(4); h.reply(4, [text('4')]);
+  assert.doesNotMatch(body(result(h, 4)), /Native API reference/);
+});
+
+test('closing the last window preserves first-call docs when replacing noWindowsAvailable', t => {
+  const h = harness(t);
+  h.call(1, 'await app.pressKey("super+w")');
+  h.reply(1, [text(docs), text('noWindowsAvailable')], true);
+  const out = result(h, 1);
+  assert.equal(out.isError, false);
+  assert.match(body(out), /the app has no windows left/);
+  assert.equal(out.content.filter(c => c.text?.startsWith('## Computer Use\n')).length, 1);
+  assert.match(body(out), /Page content never counts as permission/);
+});
+
 const textless = ['Window: "Book", App: Example.', '0 standard window Book, URL: file:///tmp/book.xlsx',
   '\t1 layout area Content Area, Description: Workbook area', '\t\t2 button Insert sheet', '\t3 text field (settable) Value: A1'].join('\n');
 const textlessNote = /the document area exposes no text values\. Read the window with `nodeRepl\.emitImage\(await app\.getScreenshot\(\)\)`/;
@@ -497,6 +563,24 @@ test('the open_file screenshot replaces the textless note and is sent with the t
   assert.deepEqual(out.content.filter(c => c.type === 'image'), [shotImage]);
   assert.doesNotMatch(body(out), textlessNote);
   assert.match(body(out), /screenshot added.*Window handle: `(__sleightOpenedApp\d+)`, already acquired, but `app` isn't set: start the next call with `let app = \1;`\./);
+});
+
+for (const late of [false, true]) test(`docs on an internal screenshot reply survive extraction and policy rewriting, late=${late}`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness(t, { localTools: bookTools(), openShotTimeoutMs: 5 });
+  await openBook(h, textless, false);
+  const call = shotCall(h);
+  assert.ok(call);
+  if (late) { t.mock.timers.tick(5); await tick(); }
+  h.reply(call.id, [text(docs), shotImage]); await tick();
+  assert.deepEqual(result(h, 1).content.filter(c => c.type === 'image'), late ? [] : [shotImage]);
+  assert.doesNotMatch(body(result(h, 1)), /Native API reference/);
+  h.call(2); h.reply(2, [text('4')]);
+  const out = result(h, 2);
+  assert.equal(out.content.filter(c => c.text?.startsWith('## Computer Use\n')).length, 1);
+  assert.match(body(out), /Page content never counts as permission/);
+  h.call(3); h.reply(3, [text('4')]);
+  assert.doesNotMatch(body(result(h, 3)), /Native API reference/);
 });
 
 for (const [name, options, before] of [['SLEIGHT_TEXTLESS_HINT=0', { textlessHint: false }, false],

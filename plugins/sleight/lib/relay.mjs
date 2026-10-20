@@ -1338,6 +1338,16 @@ export function createRelay({
   const callSeqs = new Map();
   let docsShown = false;
   let deferredEngineDocs = [], clientJsDelivered = false, deferredRules;
+  const engineDocs = (content = [], embedded = false) => content.flatMap(item => {
+    if (item.type !== 'text') return [];
+    const start = item.text.search(/^(?:## Computer Use|# Other Browser APIs|# Computer Use Confirmations Policy|# Browser Safety|# API Reference)\n/m);
+    if (start < 0 || start > 0 && !embedded) return [];
+    const text = item.text.slice(start), at = text.search(/^Window: /m);
+    return [{ ...item, text: at < 0 ? text : text.slice(0, at) }];
+  });
+  const retainEngineDocs = content => {
+    for (const docs of engineDocs(content)) if (!deferredEngineDocs.some(c => c.text === docs.text)) deferredEngineDocs.push(docs);
+  };
   let clientJsSeen = false;
   const nativeAcquisitions = new Set();
   // Once per session: Claude keeps them in context across engine restarts.
@@ -2231,6 +2241,7 @@ export function createRelay({
         ...(stop > 0 ? [content[stop]] : []), ...content.filter((_, i) => stop <= 0 || i !== stop)] } };
     }
     if (helperProbes.has(msg.id) && msg.method === undefined) {
+      retainEngineDocs(msg.result?.content);
       const probe = helperProbes.get(msg.id);
       clearTimeout(probe.timer); helperProbes.delete(msg.id); probe.receive?.(msg);
       trace('helper-recovery-result', msg); return;
@@ -2648,7 +2659,7 @@ export function createRelay({
             try { await localTools.reopen(openedApp, openedFile.path); opened = true; } catch { /* The notice below says the file isn't confirmed. */ }
             trace('open-reopen', { id: msg.id, ms: Date.now() - started, ok: opened });
             if (generation !== stopGeneration || closing || disposed) return;
-            if (opened) { acquire(); return; }
+            if (opened) { retainEngineDocs(state.content); acquire(); return; }
           }
           const opened = confirmed ? result.content ?? []
             : [{ type: 'text', text: promptNotice(`${args.app}'s main window shows ${shown.url}, not ${args.path}, so sleight can't confirm the file opened. ` +
@@ -2975,7 +2986,7 @@ export function createRelay({
       engineOpenAcquisitions.delete(id);
       // A failed attempt was still the identical retry a flow exception allowed, so it uses the exception up.
       const spent = () => { engineOpenPrints.delete(msg.id); if (flowPermit?.fingerprint === print) flowPermit = undefined; };
-      const end = message => { spent(); toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: message }] } }); };
+      const end = message => { retainEngineDocs(reply.result?.content); spent(); toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: message }] } }); };
       if (generation !== stopGeneration || closing || disposed) { end(STOPPED_NOTE); stoppedClients.add(msg.id); return; }
       if (reply.error || reply.result?.isError) {
         spent();
@@ -4042,14 +4053,8 @@ export function createRelay({
     }
     if (!(crashed || unattached || failedWith(HELPER_RESTARTING)) || entry === true || closing) { restartRetries.delete(msg.id); return false; }
     restartRetries.set(msg.id, true);
-    if (unattached) {
-      const docs = (msg.result.content ?? []).flatMap(item => {
-        if (item.type !== 'text') return [];
-        const start = /(^|\n)(?:## Computer Use|# Other Browser APIs)\n/.exec(item.text ?? '');
-        return start ? [{ ...item, text: item.text.slice(start.index + start[1].length) }] : [];
-      });
-      if (docs.length) debuggerDocs.set(msg.id, docs);
-    }
+    const docs = engineDocs(msg.result.content, unattached);
+    if (docs.length) debuggerDocs.set(msg.id, docs);
     trace(unattached ? 'browser-debugger-retry' : crashed ? 'helper-crash-retry' : 'helper-restart-retry', { id: msg.id });
     const generation = stopGeneration, epoch = engineEpoch;
     setTimeout(() => {
@@ -4090,6 +4095,7 @@ export function createRelay({
     }
     if (retriedHelperStart(msg)) return;
     if (msg.method === undefined && debuggerDocs.has(msg.id)) {
+      if (msg.error) msg = { jsonrpc: msg.jsonrpc, id: msg.id, result: { isError: true, content: [{ type: 'text', text: msg.error.message }] } };
       if (msg.result) msg.result.content = [...debuggerDocs.get(msg.id), ...(msg.result.content ?? [])];
       debuggerDocs.delete(msg.id);
     }
@@ -4181,6 +4187,7 @@ export function createRelay({
       return;
     }
     if (msg.method === undefined && lateHelperReplies.has(msg.id)) {
+      replWarmup.retainDocs({ result: { content: engineDocs(msg.result?.content) } });
       lateHelperReplies.delete(msg.id);
       const control = lateDiagnosticControls.get(msg.id); lateDiagnosticControls.delete(msg.id);
       if (control?.generation === diagnosisGeneration) helperFullReads.add(control.key);
@@ -4365,6 +4372,8 @@ export function createRelay({
         (cut ? ' sleight can\'t see whether Cut took effect: an app that disables Cut for the selection ignores the key, and its Edit menu shows Cut disabled. Copy works there.' : ''), prompt)]);
     }
     if (msg.method === undefined && msg.id !== undefined && internalRequests.has(msg.id)) {
+      // Warm-up owns its retention. Other private reads may keep only an image, a tree or a diagnostic.
+      if (!String(msg.id).startsWith('sleight-warm-')) replWarmup.retainDocs({ result: { content: engineDocs(msg.result?.content) } });
       internalRequests.get(msg.id)(msg);
       internalRequests.delete(msg.id);
       return;
@@ -4455,7 +4464,7 @@ export function createRelay({
     // close worked (7 of 437 calls, 2026-10-07). Say so instead of reporting an error.
     if (jsCode !== undefined && msg.result?.isError && /\bsuper\+w\b|cmd\+w\b|command\+w\b/i.test(jsCode) &&
         (msg.result.content ?? []).some(c => c.type === 'text' && /noWindowsAvailable/.test(c.text ?? ''))) {
-      msg.result = { ...msg.result, isError: false, content: [{ type: 'text', text: promptNotice('sleight: the app has no windows left, so the window this call closed was its last. Nothing more to read.', prompt) }] };
+      msg.result = { ...msg.result, isError: false, content: [...engineDocs(msg.result.content), { type: 'text', text: promptNotice('sleight: the app has no windows left, so the window this call closed was its last. Nothing more to read.', prompt) }] };
       closedLast = true;
     } else if (jsCode !== undefined && msg.result?.isError && Array.isArray(msg.result.content) &&
         msg.result.content.some(c => c.type === 'text' && /noWindowsAvailable/.test(c.text ?? ''))) {
