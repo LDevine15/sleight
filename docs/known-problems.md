@@ -27,6 +27,13 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 
 ## Approvals and guards
 
+<a id="protected-consent-input"></a>
+
+- In 1.4.0, Always allow, payment and sleight consent buttons require a person's physical click or key press.
+  The native guard rejects Accessibility presses and posted input. VoiceOver, Switch Control, Voice Control and
+  screen-sharing users need a physical keyboard or pointer for these cards. A typed-confirmation alternative is planned
+  after 1.4.0. Plain session-only app approvals can still use the host's prompts. Decline and Cancel remain available.
+
 - On the engine path, Haiku 5.5 stopped before Create account in 18 of 24 requested sign-up runs
   (AS-3, 2026-10-19). The engine listed account creation under Always confirm, even if pre-approved,
   while sleight's requested-form rule covered only [9] and [10]. The owner ruled on 2026-10-19 that a
