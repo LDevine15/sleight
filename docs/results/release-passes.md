@@ -2,14 +2,14 @@
 
 # Release passes and the earlier head-to-heads
 
-One section per release pass, generated from the results files in [benchmarks](../benchmarks/). Every number comes from those files. Every run the benchmark made is published, failures included ([LAWS](../status/LAWS.md), Method). Known limits are quoted in [known-problems](../known-problems.md), not copied here. The [interactive page](https://land-o-clusters.github.io/sleight/results/explore.html) charts every run.
+The [benchmarks](../benchmarks/) results files supply every release-pass number. Every run the benchmark made is published, failures included ([LAWS](../status/LAWS.md), Method). See [known-problems](../known-problems.md) for quoted limits. The [interactive page](https://land-o-clusters.github.io/sleight/results/explore.html) charts every run.
 
 <details><summary>Method</summary>
 
 - Release passes run sleight alone on the benchmark's default suite (`bench/run.mjs`), up to 3 runs per task. Every pass ran `claude-sonnet-5-5` at medium effort.
 - A run passes when the task's own checker confirms the result in the app, and a failure's reason is the checker's output.
-- The page reports the last pass of each release file. Where a file kept the passes made on the way to the release, Method and caveats says how many.
-- The head-to-heads on this page are [2026-10-10-h2h-5.json](../benchmarks/2026-10-10-h2h-5.json) and [2026-10-03-sleight-vs-lcu.json](../benchmarks/2026-10-03-sleight-vs-lcu.json), picked per rival by `buildPage` in `bench/results-page.mjs`. The table near the end lists every other head-to-head.
+- Each release file contributes its last pass. Where a file kept the passes made on the way to the release, Method and caveats says how many.
+- The selected head-to-heads are [2026-10-10-h2h-5.json](../benchmarks/2026-10-10-h2h-5.json) and [2026-10-03-sleight-vs-lcu.json](../benchmarks/2026-10-03-sleight-vs-lcu.json), picked per rival by `buildPage` in `bench/results-page.mjs`. Every other head-to-head is also listed.
 - These passes predate the claim rules, so they report pass counts and totals instead of expected time. The tables include the failed runs.
 
 </details>

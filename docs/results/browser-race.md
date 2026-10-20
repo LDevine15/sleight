@@ -49,7 +49,7 @@ No pair within 20% of sleight is short of 5 runs.
 
 ### Same model: sleight inside Codex against Codex
 
-`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. It is sleight itself and stays out of sleight's verdict above. Here it takes sleight's place against Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 9 of 12".
+`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. This hosted sleight arm is excluded from sleight's main verdict and compared separately with Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 9 of 12".
 
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |
@@ -232,7 +232,7 @@ No pair within 20% of sleight is short of 5 runs.
 
 ### Same model: sleight inside Codex against Codex
 
-`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. It is sleight itself and stays out of sleight's verdict above. Here it takes sleight's place against Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 8 of 12".
+`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. This hosted sleight arm is excluded from sleight's main verdict and compared separately with Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 8 of 12".
 
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |
@@ -444,7 +444,7 @@ Pairs within 20% of sleight that still need 5 runs:
 
 #### Same model: sleight inside Codex against Codex
 
-`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. It is sleight itself and stays out of sleight's verdict above. Here it takes sleight's place against Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 9 of 12".
+`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. This hosted sleight arm is excluded from sleight's main verdict and compared separately with Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 9 of 12".
 
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |
@@ -650,7 +650,7 @@ Pairs within 20% of sleight that still need 5 runs:
 
 #### Same model: sleight inside Codex against Codex
 
-`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. It is sleight itself and stays out of sleight's verdict above. Here it takes sleight's place against Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 8 of 12".
+`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. This hosted sleight arm is excluded from sleight's main verdict and compared separately with Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 8 of 12".
 
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |
@@ -843,7 +843,7 @@ Pairs within 20% of sleight that still need 5 runs:
 
 #### Same model: sleight inside Codex against Codex
 
-`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. It is sleight itself and stays out of sleight's verdict above. Here it takes sleight's place against Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 8 of 12".
+`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. This hosted sleight arm is excluded from sleight's main verdict and compared separately with Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 8 of 12".
 
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |
@@ -1030,7 +1030,7 @@ Pairs within 20% of sleight that still need 5 runs:
 
 #### Same model: sleight inside Codex against Codex
 
-`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. It is sleight itself and stays out of sleight's verdict above. Here it takes sleight's place against Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 8 of 12".
+`codex-sleight` is sleight running inside Codex, and Codex is Codex with its own computer use, on the same model. This hosted sleight arm is excluded from sleight's main verdict and compared separately with Codex under the same rules. The scorer's wording for it is "completed every task, fastest on 8 of 12".
 
 | Task | sleight inside Codex | Codex |
 | --- | --- | --- |

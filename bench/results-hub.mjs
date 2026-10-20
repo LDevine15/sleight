@@ -751,7 +751,7 @@ function sameModelSection(study, pair, level) {
   const view = { ...study, me: pair.hosted, arms: [pair.hosted, pair.base], verdict: pair };
   const out = [`${level} Same model: ${armName(pair.hosted)} against ${armName(pair.base)}\n`];
   out.push(`${code(pair.hosted)} is sleight running inside Codex, and ${armName(pair.base)} is Codex with its own computer use, on the same model. ` +
-    `It is sleight itself and stays out of sleight's verdict above. Here it takes sleight's place against ${armName(pair.base)} under the same rules. ` +
+    `This hosted sleight arm is excluded from sleight's main verdict and compared separately with ${armName(pair.base)} under the same rules. ` +
     `The scorer's wording for it is "${pair.wording}".\n`);
   if (pair.wording === 'no comparison') return out.concat(list(pair.reasons.map(code)) + '\n').join('\n');
   out.push(taskMatrix(view) + '\n');
@@ -822,7 +822,7 @@ const GATE_SCORING = 'A gate run passes under the published scoring rules (LAWS)
 function renderTurboPage(all, id) {
   const data = all[id], fam = family(id);
   const out = [pageHead(fam.page, fam.title)];
-  out.push('Turbo is sleight\'s own browser path for Chrome and Helium. The real-window race runs FowlBrowser and turbo in the tester\'s Chrome and Helium benchmark profiles, and the gate rounds, before production turbo, raced FowlBrowser on FowlBrowser\'s own 13-task runner.\n');
+  out.push('Turbo is sleight\'s own browser path for Chrome and Helium. The real-window race runs FowlBrowser and turbo in the tester\'s Chrome and Helium benchmark profiles. Earlier gate rounds, before production turbo, raced FowlBrowser on FowlBrowser\'s own 13-task runner.\n');
   const sets = raceSets(all, data.race.studies, data.race.source.browsers, 'family-browser-turbo');
   out.push(...sets.newest);
   out.push(details('Method, and the rounds and sets left out', [list([raceGrading(data.race), SCORING, LAWS_RULES, RACE_SETS, RACE_EFFORT]), leftOutTables(data.race)].join('\n\n')));
@@ -850,7 +850,7 @@ function renderTurboPage(all, id) {
 function renderAbPage(all, id) {
   const data = all[id], fam = family(id);
   const out = [pageHead(fam.page, fam.title)];
-  out.push('Each study compares sleight variants on the same tasks. The pages score them the same way as the claims, with the first variant as the baseline.\n');
+  out.push('Each study compares sleight variants on the same tasks under the claim rules, with the first variant as the baseline.\n');
   out.push(details('Method', list([
     'Studies saved as JSON (`{ study, rounds }` or `{ study, sides }` in docs/benchmarks) are read run by run, and their model ids come from the runs. Studies saved as FowlBrowser-runner reports are parsed from their tables, and their model and effort come from the write-up.',
     SCORING,
@@ -868,7 +868,7 @@ function renderAbPage(all, id) {
       totals.join('. '), study.writeUp ? `[${basename(study.writeUp)}](${writeUpLink(study.writeUp)})` : DASH];
   });
   out.push(mdTable(['Date', 'Study', 'Model', 'Runs per task', 'Variants: passed, total s', 'Write-up'], summaryRows) + '\n');
-  out.push('Totals add every run, failures included, so a variant with more runs has a larger total. The per-task tables below compare like with like.\n');
+  out.push('Totals add every run, failures included, so a variant with more runs has a larger total. Per-task expected times account for the different run counts.\n');
   out.push('## Studies\n');
   for (const study of data.studies) {
     out.push(details(study.id, [
@@ -920,8 +920,8 @@ function renderReleasePage(all, id) {
   const method = details('Method', list([
     `Release passes run sleight alone on the benchmark's default suite (\`bench/run.mjs\`), up to ${perTask} runs per task. Every pass ran ${sortedUniq(releases.map(f => `${code(f.model)} at ${f.effort} effort`)).join(', ')}.`,
     'A run passes when the task\'s own checker confirms the result in the app, and a failure\'s reason is the checker\'s output.',
-    'The page reports the last pass of each release file. Where a file kept the passes made on the way to the release, Method and caveats says how many.',
-    `The head-to-heads on this page are ${joinAnd(RELEASE_RIVALS.map(n => `[${n}](../benchmarks/${n})`))}, picked per rival by \`buildPage\` in \`bench/results-page.mjs\`. The table near the end lists every other head-to-head.`,
+    'Each release file contributes its last pass. Where a file kept the passes made on the way to the release, Method and caveats says how many.',
+    `The selected head-to-heads are ${joinAnd(RELEASE_RIVALS.map(n => `[${n}](../benchmarks/${n})`))}, picked per rival by \`buildPage\` in \`bench/results-page.mjs\`. Every other head-to-head is also listed.`,
     'These passes predate the claim rules, so they report pass counts and totals instead of expected time. The tables include the failed runs.',
   ]));
   md = swap(md, '\n## Latest release pass\n', '\n' + method + '\n## Latest release pass\n');
@@ -1009,7 +1009,7 @@ function headlineFor(id, data) {
 
 function renderIndex(all) {
   const out = [pageHead('README.md', 'Benchmark results')];
-  out.push('The results include failed runs. Each family page gives the task results, with the method and exclusions folded below. The claim scorers compute the figures from recorded runs.\n');
+  out.push('The results include failed runs, with methods and exclusions for each benchmark family. The claim scorers compute the figures from recorded runs.\n');
   for (const id of ['headline-native', 'overview']) { const chart = chartFor(all, id); if (chart) out.push(chart); }
   out.push(`The [interactive page](${PAGES_URL}explore.html) has the same data with sorting, filters and a chart per task. Its source is [explore.html](explore.html) in this folder.\n`);
   out.push(mdTable(['Family', 'What it measures', 'Where it stands', 'Data'], FAMILIES.map(fam => [
@@ -1186,7 +1186,7 @@ export function render(all) {
   const files = {};
   for (const [id, data] of Object.entries(all)) files[`data/${id}.json`] = json(data);
   files['native-claim.md'] = renderClaimPage(all, 'native-claim', {
-    intro: 'The claim suite\'s 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight against LCU, Codex, Cua, Peekaboo and Claude\'s own computer use, in real windows with the tester away. The suite is sleight\'s own, its skill and tool wording were tuned on the runs of textedit-calculator, preview-read, excel-edit, word-edit, finder-move, textedit-save and textedit-drag (not calculator-click or calculator-menu), and the competitors ran their defaults.' });
+    intro: 'The claim suite runs 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight competes against LCU, Codex, Cua, Peekaboo and Claude\'s own computer use in real windows with the tester away. The suite is sleight\'s own, its skill and tool wording were tuned on the runs of textedit-calculator, preview-read, excel-edit, word-edit, finder-move, textedit-save and textedit-drag (not calculator-click or calculator-menu), and the competitors ran their defaults.' });
   files['app-claim.md'] = renderClaimPage(all, 'app-claim', {
     intro: 'The app tasks run on the native path with the same arms and rules as the native claim. In VS Code the agent edits a fixture file in a separate instance with a temporary profile. In Slack it posts one fixed message to a test channel of a throwaway account. In the tester\'s personal Spotify account it finds a track, plays it and pauses it.' });
   files['browser-turbo.md'] = renderTurboPage(all, 'browser-turbo');

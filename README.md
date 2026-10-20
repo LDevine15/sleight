@@ -66,8 +66,8 @@ From the installed plugin folder, you run `./bin/sleight-mcp turbo on` (Chrome f
 
 ## New in 1.4.0
 
-- Text drags move between windows, repair spacing and keep empty final lines. Opened-file handles keep their document window. Formatted cross-window moves refuse.
-- Malformed native arguments stop before the engine sends that input, with the correct signature. Startup handles shutdown while the engine loads.
+- Text drags move between windows, repair spacing and keep empty final lines. Opened-file handles keep their document window. sleight refuses formatted cross-window moves.
+- sleight rejects malformed native arguments before the engine sends input and reports the correct signature. It handles shutdown while the engine loads.
 - Turbo fills multi-selects and accepts modifier clicks on safe targets. Shorter replies explain field values, batch boundaries and viewport markers.
 - Requested sign-ups count as confirmed when your message names the username or email and password ([limits](docs/settings.md#requested-sign-ups)).
 - Opt-in [local stats](docs/settings.md#stats) report action times and reads saved.

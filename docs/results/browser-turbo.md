@@ -2,7 +2,7 @@
 
 # Chrome and Helium: turbo against FowlBrowser
 
-Turbo is sleight's own browser path for Chrome and Helium. The real-window race runs FowlBrowser and turbo in the tester's Chrome and Helium benchmark profiles, and the gate rounds, before production turbo, raced FowlBrowser on FowlBrowser's own 13-task runner.
+Turbo is sleight's own browser path for Chrome and Helium. The real-window race runs FowlBrowser and turbo in the tester's Chrome and Helium benchmark profiles. Earlier gate rounds, before production turbo, raced FowlBrowser on FowlBrowser's own 13-task runner.
 
 ## Chrome, sleight rounds `chrome-sleight-turbo-rel130-r*` (newest)
 

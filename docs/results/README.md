@@ -2,7 +2,7 @@ Benchmarks · [Native](native-claim.md) · [Apps](app-claim.md) · [Chrome and H
 
 # Benchmark results
 
-The results include failed runs. Each family page gives the task results, with the method and exclusions folded below. The claim scorers compute the figures from recorded runs.
+The results include failed runs, with methods and exclusions for each benchmark family. The claim scorers compute the figures from recorded runs.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/headline-native-dark.svg">
