@@ -17,6 +17,8 @@
 - A light and dark architecture diagram shows the engine and turbo paths. The demo export checks synchronized captures
   before making a GIF. A new demo has not yet been recorded.
 - An install benchmark checks the agent's plugin install, doctor result and remaining user steps in an isolated config.
+- The install guide is shorter, marks untested host installs and commands, and a test rejects release placeholders in
+  the docs unless a development override is set.
 
 ### Cursor
 
@@ -27,7 +29,13 @@
 ### Grok CLI and launcher shutdown
 
 - Grok CLI can use sleight through its Claude marketplace import or a direct MCP entry. Approval labels name Grok,
-  and the doctor reports its install route. Turbo stays off in Grok. Grok Bot.app is not yet supported.
+  and the doctor reports its install route. Turbo stays off in Grok.
+- Grok Bot can call `sleight-mcp js` through its local shell. Sessions start on demand, exit after ten idle minutes and
+  return screenshot paths. The doctor reports the shell route and live helper Accessibility status. Turbo stays off.
+  Payments, bookings, settings changes and submits ask on sleight's panel. Transport and guards have offline tests;
+  live bot survival and image delivery remain unchecked.
+- Protected consent buttons require physical input. VoiceOver, Switch Control, Voice Control and screen-sharing users
+  need a physical keyboard or pointer for these cards in 1.4.0. A typed-confirmation alternative is planned afterward.
 - The launcher registers stdin EOF and signal handlers before startup's first await, then waits for its engine and
   relay to be ready before collecting them on shutdown. A piped-handshake test checks clean launcher and engine exit.
 
