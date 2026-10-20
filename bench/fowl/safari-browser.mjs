@@ -179,7 +179,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     windowId = created.id; browser.profileWindow = windowId;
     browser.profileEvidence = safariProfileEvidence(created);
     await census();
-    await bridge.request('navigate', { window: windowId, url: plan.markerUrl });
+    await bridge.request('navigate', { window: windowId, url: plan.navigationUrl ?? plan.markerUrl });
     for (;;) {
       const list = await snapshot(), current = ownedWindow(list);
       const inventory = tabs(current), values = Object.values(inventory);
