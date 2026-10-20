@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { macCommandSkip } from './requirements.mjs';
+import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 import { createElectronConsent, createGrantStore } from '../plugins/sleight/lib/direct-browser/electron-consent.mjs';
 import { instance } from './fixtures/electron-app.mjs';
 
@@ -20,8 +21,7 @@ test('protected consent buttons use the input guard on every native card', () =>
 test('Swift consent input fixture refuses AX and posted input but admits a HID event seam', { skip: macCommandSkip('xcrun') }, async t => {
   const block = source.match(/\/\/ BEGIN PERSON INPUT\n([\s\S]*?)\/\/ END PERSON INPUT/);
   assert.ok(block, 'person input guard absent');
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-person-input-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = registerTemp(t, trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-person-input-')))));
   const binary = join(dir, 'fixture'), swift = join(dir, 'main.swift');
   writeFileSync(swift, 'import AppKit\nimport ObjectiveC\nimport Darwin\nimport os.log\n' + block[1] + readFileSync(new URL('./fixtures/consent-person-input.swift', import.meta.url), 'utf8'));
   const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', join(dir, 'cache'), swift, '-o', binary], { encoding: 'utf8', timeout: 120000 });
@@ -55,8 +55,7 @@ test('Swift consent input fixture refuses AX and posted input but admits a HID e
 });
 
 test('the complete Swift consent helper compiles without launching it', { skip: macCommandSkip('xcrun') }, t => {
-  const dir = mkdtempSync(join(tmpdir(), 'sleight-consent-build-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-consent-build-'))));
   const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', join(dir, 'cache'), sourcePath.pathname, '-o', join(dir, 'consent-host')], { encoding: 'utf8', timeout: 120000 });
   assert.equal(built.status, 0, built.stderr);
 });

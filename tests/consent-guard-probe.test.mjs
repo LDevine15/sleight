@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
+import { mkdtempSync, existsSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compileProbe, probeHostSource, runProbe, stepVerdict } from '../bench/consent-guard-probe.mjs';
 import { macCommandSkip } from './requirements.mjs';
+import { registerTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 
 test('missing delivery is inconclusive and acceptance outweighs a refusal receipt', () => {
   assert.equal(stepVerdict([]), 'no-receipt');
@@ -15,16 +16,14 @@ test('missing delivery is inconclusive and acceptance outweighs a refusal receip
 });
 
 test('probe and separate poster compile without launching either binary', { skip: macCommandSkip('xcrun') }, t => {
-  const directory = mkdtempSync(join(tmpdir(), 'sleight-consent-probe-build-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-consent-probe-build-'))));
   const binaries = compileProbe(directory);
   assert.ok(existsSync(binaries.host));
   assert.ok(existsSync(binaries.poster));
 });
 
 test('probe uses card receipts for all five steps and closes its owned host, fake processes only', async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'sleight-consent-probe-fake-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-consent-probe-fake-'))));
   const host = join(directory, 'host'), poster = join(directory, 'poster'), stopped = join(directory, 'stopped');
   writeFileSync(host, `#!${process.execPath}
 const { createInterface } = require('node:readline');
