@@ -1,20 +1,21 @@
+import { idleClock } from './fixtures/socket-clock.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, closeSync, mkdirSync, openSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, mkdirSync, openSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as tick } from 'node:timers/promises';
 import { createConnection, Server } from 'node:net';
-import { callSocket, createShellRelay, preparePeerCheck, printSocketResult, socketCommand, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
+import { callSocket, ensureSocketSession, createShellRelay, preparePeerCheck, printSocketResult, socketCommand, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(join('/private/tmp', 'sleight-socket-test-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const calls = [], signals = new EventEmitter();
   let collected = 0;
-  return { root, directory: join(root, 'session'), calls, signals, get collected() { return collected; },
+  return { root, directory: join(root, 'session'), calls, signals, idleClock: idleClock(), accessibility: () => false, get collected() { return collected; },
     startRelay: async () => ({ call: async (tool, args) => { calls.push({ tool, args }); return { content: [{ type: 'text', text: 'answer' }] }; },
       close: async () => { collected++; } }), peerUid: async () => process.getuid() };
 }
@@ -80,7 +81,8 @@ test('unsafe folders and occupied socket paths are refused without removal', asy
 });
 
 test('idle exit collects the engine and removes only the owned socket', async t => {
-  const f = fixture(t), session = await startSocketSession({ ...f, idleMs: 30 });
+  const f = fixture(t), session = await startSocketSession({ ...f, idleMs: 600000 });
+  f.idleClock.advance(600000);
   await session.closed;
   assert.equal(f.collected, 1);
   assert.equal(existsSync(session.socketPath), false);
@@ -119,16 +121,19 @@ test('SIGTERM while binding the socket closes it without starting an engine', as
 
 test('an active call does not expire as idle', async t => {
   const f = fixture(t);
-  let release;
+  let release, entered;
+  const started = new Promise(resolve => { entered = resolve; });
   const gate = new Promise(resolve => { release = resolve; });
   const relay = await f.startRelay();
-  const session = await startSocketSession({ ...f, idleMs: 40, startRelay: async () => ({ ...relay, call: async () => gate }) });
+  const session = await startSocketSession({ ...f, idleMs: 600000, startRelay: async () => ({ ...relay, call: async () => { entered(); return gate; } }) });
   t.after(() => session.close());
   const result = callSocket({ tool: 'js', args: { code: '1' } }, f);
-  await new Promise(resolve => setTimeout(resolve, 80));
+  await started;
+  f.idleClock.advance(1200000);
   assert.equal(f.collected, 0);
   release({ content: [{ type: 'text', text: 'done' }] });
   assert.equal((await result).content[0].text, 'done');
+  f.idleClock.advance(600000);
   await session.closed;
   assert.equal(f.collected, 1);
 });
@@ -276,17 +281,24 @@ test('a concurrent call is refused until the active engine reply', async t => {
 });
 
 test('a timed-out relay call stays busy until its late engine reply', async t => {
-  const f = fixture(t);
-  const session = await startSocketSession({ ...f, idleMs: 60, startRelay: options => createShellRelay({ ...options,
-    args: [fileURLToPath(new URL('fixtures/socket-stall.mjs', import.meta.url))], timeoutMs: 80,
-  }) });
+  const f = fixture(t), requestClock = idleClock(), release = join(f.root, 'release');
+  let active, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const session = await startSocketSession({ ...f, startRelay: async options => {
+    const relay = await createShellRelay({ ...options, requestClock,
+      args: [fileURLToPath(new URL('fixtures/socket-stall.mjs', import.meta.url))] });
+    return { ...relay, call(...args) { active = relay.call(...args); entered(); return active; } };
+  } });
   t.after(() => session.close());
-  await assert.rejects(callSocket({ tool: 'js', args: { code: '1', delay: 300 } }, f), /timed out/);
+  const first = assert.rejects(callSocket({ tool: 'js', args: { code: '1', release } }, f), /timed out/);
+  await started;
+  requestClock.advance(300000);
+  await first;
+  f.idleClock.advance(1200000);
   await assert.rejects(callSocket({ tool: 'js_reset', args: {} }, f), /busy/);
-  await tick(90);
   assert.equal(existsSync(session.socketPath), true);
-  await assert.rejects(callSocket({ tool: 'js_reset', args: {} }, f), /busy/);
-  await tick(150);
+  writeFileSync(release, 'reply');
+  await active.completed;
   assert.equal((await callSocket({ tool: 'js_reset', args: {} }, f)).content[0].text, 'done');
 });
 
@@ -342,4 +354,42 @@ test('post-listen ownership failure removes the socket bound by this startup', a
   });
   await assert.rejects(startSocketSession(f), /owned/);
   assert.equal(existsSync(join(f.directory, 'session.sock')), false);
+});
+
+
+test('readiness retries the owned socket publication interval without spawning', async t => {
+  const f = fixture(t);
+  let unlock, observed;
+  const gate = new Promise(resolve => { unlock = resolve; });
+  const published = new Promise(resolve => { observed = resolve; });
+  const starting = startSocketSession({ ...f, publishSocket: async path => { chmodSync(path, 0o755); observed(); await gate; } });
+  await published;
+  let retries = 0;
+  await ensureSocketSession({ directory: f.directory, notice() {}, spawnSession: () => assert.fail('not missing'),
+    probe: async (...args) => {
+      try { return await callSocket(...args); }
+      catch (err) { if (err.code === 'ESOCKETPRIVATE') { retries++; unlock(); } throw err; }
+    },
+  });
+  assert.equal(retries, 1);
+  await (await starting).close();
+});
+
+test('session image output keeps at most fifty private images', async t => {
+  const f = fixture(t), image = { content: [{ type: 'image', mimeType: 'image/png', data: 'aQ==' }] };
+  for (let i = 0; i < 55; i++) await printSocketResult(image, { directory: f.root, out() {} });
+  assert.equal(readdirSync(f.root).length, 50);
+  for (const name of readdirSync(f.root)) assert.equal(lstatSync(join(f.root, name)).mode & 0o777, 0o600);
+});
+
+
+test('status measures native trust inside the live session for every probe', async t => {
+  const f = fixture(t);
+  let trusted = false, checks = 0;
+  const session = await startSocketSession({ ...f, accessibility: () => { checks++; return trusted; } });
+  t.after(() => session.close());
+  assert.equal((await callSocket({ op: 'status' }, f)).nativeAccessibility, false);
+  trusted = true;
+  assert.equal((await callSocket({ op: 'status' }, f)).nativeAccessibility, true);
+  assert.equal(checks, 2);
 });

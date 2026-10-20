@@ -750,10 +750,11 @@ native reference, and oversized first results defer the browser reference while 
   Any process running as your macOS user can drive the session. A bot with shell access can edit `preapproved.json`
   directly. Socket permissions do not protect against either. A socket path longer than 103 UTF-8 bytes prevents startup.
   Startup reclaims a private stale socket only after its connection is refused and its file identity still matches.
-  An interrupted startup can leave a `starting` directory in the shell cache. Inspect that startup before removing the
-  directory. Session images are private cache files, pruned at exit or the next startup after a crash.
+  Startup reclaims a lock whose recorded PID has exited. An unpublished lock is reclaimed after six minutes;
+  a recorded live PID is preserved regardless of age. Session images are private cache files, capped at fifty and
+  pruned at exit or the next startup after a crash.
 - Grok Bot's local shell may lack Accessibility for sleight's native metadata helper even when the engine has its own
-  grants. Run doctor through the bot to check that process tree. A terminal's trust result does not prove the bot's.
+  grants. Doctor checks the live session's native helper. Without a live session its trust is unknown.
   Detached-session survival across bot turns and image upload still need a live bot check.
 - With Grok Bot's own computer use on, its helper is a second driver. It does not share sleight's input lease,
   so both could act on the same app. Turn that helper off before using sleight through Grok Bot.

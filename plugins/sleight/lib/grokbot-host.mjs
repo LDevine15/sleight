@@ -21,7 +21,7 @@ function pidRunning(pid) {
 }
 
 export function grokbotStatus({ home = homedir(), read = readFileSync, running = pidRunning,
-  accessibility = readNativeAccessibility } = {}) {
+  accessibility = () => undefined } = {}) {
   let installed = false, version;
   for (const app of ['/Applications/Grok Bot.app', join(home, 'Applications/Grok Bot.app')]) {
     let contents;
@@ -53,6 +53,18 @@ export function grokbotStatus({ home = homedir(), read = readFileSync, running =
   return { installed, version, computerUse, daemonRunning, localToolPermission, nativeAccessibility };
 }
 
+export async function grokbotSessionStatus({ metadata = grokbotStatus,
+  session = async () => (await import('./socket-bridge.mjs')).callSocket({ op: 'status' }, { timeoutMs: 2000 }) } = {}) {
+  const status = metadata();
+  status.nativeAccessibility = undefined;
+  status.accessibilitySource = 'live shell session';
+  try {
+    const live = await session();
+    if (live.ready && typeof live.nativeAccessibility === 'boolean') status.nativeAccessibility = live.nativeAccessibility;
+  } catch {}
+  return status;
+}
+
 export function grokbotDoctorLines(status) {
   const computerUse = status.computerUse === true ? 'on' : status.computerUse === false ? 'off' : 'unknown';
   const daemon = status.daemonRunning === true ? 'running (recorded PID exists, identity and health unchecked)'
@@ -62,9 +74,9 @@ export function grokbotDoctorLines(status) {
   else if (!status.version) lines.push('note      Grok Bot bundle version unknown.');
   lines.push(`note      local daemon: ${daemon}`, `note      local tool permission: ${status.localToolPermission ?? 'unknown'}`);
   const trust = status.nativeAccessibility === true ? 'granted' : status.nativeAccessibility === false ? 'denied' : 'unknown';
-  lines.push(`note      native helper Accessibility: ${trust} (current process tree, AXIsProcessTrusted; no prompt)`);
-  if (status.nativeAccessibility === false) lines.push('PROBLEM   grant Accessibility to the responsible app for this process tree, Grok Bot when called through its local shell, or the terminal when called there. Then rerun doctor from that same caller.');
-  if (status.nativeAccessibility === undefined) lines.push('note      native helper trust check unavailable; rerun doctor from Grok Bot\'s local shell to check its grant.');
+  lines.push(`note      native helper Accessibility: ${trust} (${status.accessibilitySource ?? 'current process tree'}, AXIsProcessTrusted; no prompt)`);
+  if (status.nativeAccessibility === false) lines.push('PROBLEM   Tell the owner that the responsible app for the shell session needs Accessibility. Do not change permissions.');
+  if (status.nativeAccessibility === undefined) lines.push('note      live shell session trust unavailable; start a session through the usual caller, then rerun doctor.');
   if (status.computerUse === true) lines.push('PROBLEM   Grok Bot computer use is a second driver. Its input does not share sleight\'s lease.');
   return lines;
 }

@@ -130,11 +130,13 @@ With ChatGPT and Computer Use set up, call the clone's executable by its full pa
 When no session is listening, `js` starts a detached session in its own process group. It keeps one relay behind
 `~/Library/Caches/sleight/shell/session.sock` (0600 in a 0700 folder). Connections require the same uid. The session
 needs Apple's clang from Xcode Command Line Tools to build its peer-check helper. sleight doesn't install a login job.
+The session and relay use a fixed environment and the shell cache as their working directory. Caller guard settings,
+Node options and flow-rule paths are not inherited.
 Any process running as your macOS user can drive this session. A bot with shell access can also edit
 `preapproved.json` directly. The socket's permissions do not isolate it from those processes.
 The socket path must fit in 103 UTF-8 bytes, so a long home path can prevent startup.
 After ten idle minutes it collects the engine, removes its socket and prunes its images. A call in progress does
-not count as idle. The next call starts a session again. A restarted session prints a notice that JavaScript handles
+not count as idle. The next call starts a session again. Every call prints the session ID on stdout before its result. A changed ID means JavaScript handles
 and session approvals have reset. Read the engine docs in its first reply before continuing.
 
 Startup waits at most 90 seconds. Each relay call keeps its five-minute timeout, and the shell waits at most 310 seconds
@@ -142,7 +144,7 @@ for the reply. Together these limits stay below the bot's reported 13-minute for
 have acted. The session refuses further calls until the engine replies or exits. Read current state before retrying input.
 sleight never replays a dispatched call during startup recovery.
 Images and screenshots become 0600 files in private `images-*` folders under that shell cache. Read the printed path
-through the bot's local file tool before the session exits. Startup also prunes image folders left by a crashed session.
+through the bot's local file tool before the session exits or fifty newer images replace it. Startup also prunes image folders left by a crashed session.
 
 Give the bot [the Grok Bot skill](grokbot-skill.md), replacing its executable placeholder with your clone's full path.
 Set this one-line profile pointer, replacing the skill path with its installed location:
@@ -160,9 +162,8 @@ If you want to start the session through launchd, preview the plist and command:
 ```
 
 This only prints the plist and `launchctl bootstrap` command. Save the plist and run the command yourself if you choose
-this route. sleight never writes or loads it. The session still exits after ten idle minutes. The agent restarts it
-only after an unsuccessful exit. To keep a session in a terminal instead, run `sleight-mcp session` and stop it with Ctrl-C.
-Permissions under launchd may differ from the bot's shell. Run doctor from the caller you plan to use.
+this route. sleight never writes or loads it. The session still exits after ten idle minutes. The agent runs once at load and does not restart failed sessions. To keep a session in a terminal instead, run `sleight-mcp session` and stop it with Ctrl-C.
+Permissions under launchd may differ from the bot's shell. Doctor checks the live session's native helper.
 
 The commands `open_file`, `select_window` and `drag` each accept one JSON argument with the same fields as their MCP tool.
 Run the command with `--help` to read its description and argument schema before using it:
@@ -176,10 +177,10 @@ Run the command with `--help` to read its description and argument schema before
 local daemon PID state and local tool permission setting, then prints `route: shell (sleight-mcp js)` even when a
 session isn't running. Missing or unreadable state
 shows as unknown. A running PID does not prove the daemon's identity or health. Doctor doesn't read daemon credentials or browser storage.
-It also starts sleight's native JXA helper from the current process tree and checks `AXIsProcessTrusted`, without a prompt
-or app interaction. If denied, grant Accessibility to that tree's responsible app, Grok Bot for its local shell or your
-terminal for a terminal call, then rerun doctor there. The engine's own grants belong to its helper and do not prove that
-sleight's metadata helper has access. A doctor run from a terminal cannot qualify the bot's process tree.
+It asks the live shell session to run sleight's native JXA helper and check `AXIsProcessTrusted`, without a prompt
+or app interaction. Without a live session the result is unknown. If denied, tell the owner that the session's
+responsible app needs Accessibility. Do not change permissions. The engine's own grants belong to its helper and do
+not prove that sleight's metadata helper has access.
 
 Grok Bot's own computer use is a second driver when it is on. Its helper and sleight do not share an input lease,
 so both could act on the same app. Grok's `always` local tool permission does not answer sleight's approval panel.

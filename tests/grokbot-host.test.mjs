@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { grokbotDoctorLines, grokbotStatus, readNativeAccessibility } from '../plugins/sleight/lib/grokbot-host.mjs';
+import { grokbotDoctorLines, grokbotStatus, grokbotSessionStatus, readNativeAccessibility } from '../plugins/sleight/lib/grokbot-host.mjs';
 import { doctor } from '../plugins/sleight/lib/launch.mjs';
 
 const systemPlist = '/Applications/Grok Bot.app/Contents/Info.plist';
@@ -159,7 +159,7 @@ test('doctor reports native helper Accessibility trust for this process tree wit
     const text = grokbotDoctorLines(status).join('\n');
     assert.match(text, /native helper Accessibility.*current process tree/);
     if (trust === true) assert.match(text, /Accessibility: granted/);
-    else if (trust === false) assert.match(text, /grant Accessibility to the responsible app.*Grok Bot/);
+    else if (trust === false) assert.match(text, /Tell the owner.*responsible app.*Accessibility/);
     else assert.match(text, /Accessibility: unknown/);
     assert.doesNotMatch(text, /PRIVATE/);
   }
@@ -199,4 +199,18 @@ test('native helper trust mode calls only AXIsProcessTrusted with no options', (
     assert.equal(JSON.parse(result).trusted, trusted);
     assert.equal(calls, 1);
   }
+});
+
+
+test('doctor uses live session trust instead of the caller and never starts a session', async () => {
+  for (const trust of [true, false, undefined]) {
+    const status = await grokbotSessionStatus({ metadata: () => ({ nativeAccessibility: !trust }),
+      session: async () => ({ ready: true, nativeAccessibility: trust }) });
+    assert.equal(status.nativeAccessibility, trust);
+    assert.match(grokbotDoctorLines(status).join('\n'), /live shell session/);
+  }
+  const status = await grokbotSessionStatus({ metadata: () => ({ nativeAccessibility: true }),
+    session: async () => { throw new Error('PRIVATE'); } });
+  assert.equal(status.nativeAccessibility, undefined);
+  assert.doesNotMatch(grokbotDoctorLines(status).join('\n'), /PRIVATE/);
 });

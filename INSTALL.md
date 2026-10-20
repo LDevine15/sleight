@@ -123,8 +123,8 @@ minutes. The next call starts it again and reports the reset. An optional `sleig
 a plist and command for the owner to save and run. It doesn't write or load the plist.
 
 Turn Grok Bot's own computer-use helper off. sleight shows its own approval panels, turbo stays off, and payments,
-bookings and submits ask each time. Run `sleight-mcp --doctor` from the bot's shell to check its native helper's
-Accessibility grant without a prompt. This route has offline tests. A live Grok Bot session has not been checked.
+bookings and submits ask each time. Run `sleight-mcp --doctor` to check the live session's native helper
+Accessibility grant without a prompt. Without a live session the result is unknown. This route has offline tests. A live Grok Bot session has not been checked.
 
 ## Other MCP clients
 

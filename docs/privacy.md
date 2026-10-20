@@ -24,8 +24,8 @@ cannot drift from the code.
 | Demonstration recordings | The JSON file you name, written once (0600). `record --watch` also compiles an observation helper, cached under `~/Library/Caches/sleight/observer/`, staged through the system temporary directory. | Until you delete it | `plugins/sleight/lib/demonstration.mjs` |
 | Window screenshots | A hover capture per call (`sleight-hover-` folders) and one file per blocked-app read (`sleight-blocked-<pid>-<time>.png`), written to the system temporary directory. Captures take the frame of the chosen window, never the whole screen. The pane's picture is passed to the pane in memory and written nowhere. | Life of the call | `plugins/sleight/lib/hover.js`, `plugins/sleight/lib/launch.mjs`, `plugins/sleight/hooks/snapshot.ts` |
 | Browser surface cache | `~/Library/Caches/sleight/extensions.json`: whether the engine's browser inventory connected and when, plus a hash of the engine's launch command. No profiles, tabs or approvals. | Refreshed each session; used for 6 hours after a connect, 24 otherwise | `plugins/sleight/lib/surface-cache.mjs` |
-| Grok Bot shell session | `~/Library/Caches/sleight/shell/session.sock`, a 0600 Unix socket in a user-owned 0700 folder. Calls and results pass through memory. A private `last-session` file keeps only the session UUID to report restarts, and `starting/` serializes startup. The peer-check helper is compiled in a private system temporary folder. This route never writes pre-approvals. | Socket, helper and session images removed when the session exits normally, on SIGTERM or after ten idle minutes | `plugins/sleight/lib/socket-bridge.mjs` |
-| Shell image results | `images-*` folders under `~/Library/Caches/sleight/shell/` (0700), with one 0600 file per returned image. The shell prints each path instead of inline image data. | Pruned when the session exits and at the next startup after a crash | `plugins/sleight/lib/socket-bridge.mjs` |
+| Grok Bot shell session | `~/Library/Caches/sleight/shell/session.sock`, a 0600 Unix socket in a user-owned 0700 folder. Calls and results pass through memory. Each reply prints the session UUID. Private `starting/owner` and `session-start.sqlite` files serialize the session through shutdown. Detached startup appends stderr to a 0600 `session.log` in that folder. The peer-check helper is compiled in a private system temporary folder. This route never writes pre-approvals. | Socket, startup owner, helper and images removed on normal exit, SIGTERM or ten idle minutes. Coordinator and stderr log remain until removed by the owner | `plugins/sleight/lib/socket-bridge.mjs` |
+| Shell image results | `images-*` folders under `~/Library/Caches/sleight/shell/` (0700), with one 0600 file per returned image. The shell prints each path instead of inline image data. | Capped at fifty per session. Pruned at exit and at the next startup after a crash | `plugins/sleight/lib/socket-bridge.mjs` |
 
 ## What leaves the Mac
 
@@ -42,7 +42,7 @@ either.
 Screenshots and app text sent through any Grok route go to Grok's hosted model. Grok Bot sends them through its gateway.
 Its custom STDIO MCP servers run in Grok's hosted box, off this Mac. The local shell route starts on demand and installs
 no LaunchAgent. Its doctor section reads local non-credential metadata, checks whether the recorded daemon PID exists,
-and runs sleight's own native helper's no-prompt Accessibility trust check from the caller's process tree
+and asks the live shell session for sleight's native helper's no-prompt Accessibility trust check
 (`plugins/sleight/lib/grokbot-host.mjs`).
 
 The results site doesn't load resources from third parties or use analytics.

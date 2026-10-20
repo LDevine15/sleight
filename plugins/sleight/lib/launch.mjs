@@ -50,7 +50,7 @@ import { ActionLog, actionLogPath } from './action-outcomes.mjs';
 import { codexDoctorLines, codexStatus } from './codex-host.mjs';
 import { cursorDoctorLines, cursorStatus } from './cursor-host.mjs';
 import { grokDoctorLines, grokStatus } from './grok-host.mjs';
-import { grokbotDoctorLines, grokbotStatus } from './grokbot-host.mjs';
+import { grokbotDoctorLines, grokbotSessionStatus } from './grokbot-host.mjs';
 import { hostLabel, hostName } from './host-label.mjs';
 import { createPaymentCard } from './payment-card.mjs';
 import { codexTurnClient } from './codex-turn.mjs';
@@ -176,8 +176,8 @@ function grokDoctor(env) {
   try { return grokDoctorLines(grokStatus({ env })); }
   catch (err) { return ['Grok CLI', `PROBLEM   could not read Grok's config (${err.message})`]; }
 }
-function grokbotDoctor() {
-  return grokbotDoctorLines(grokbotStatus());
+async function grokbotDoctor() {
+  return grokbotDoctorLines(await grokbotSessionStatus());
 }
 
 // Read-only. The doctor prints it first so it shows even when the engine checks below stop early.
@@ -209,7 +209,7 @@ export async function doctor({ env = process.env, log = console.log, app = proce
   for (const line of codex(env)) log(line);
   for (const line of cursor()) log(line);
   for (const line of grok(env)) log(line);
-  for (const line of grokbot()) log(line);
+  for (const line of await grokbot()) log(line);
   const s = resolveServer(env);
   if (s.error) { log(`sleight: ${s.error}`); return 1; }
   await probeSurfaces(s, env);

@@ -1,16 +1,18 @@
+import { idleClock } from './fixtures/socket-clock.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, symlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { callSocket, ensureSocketSession, socketCommand, spawnDetachedSession, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(join('/private/tmp', 'sleight-demand-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  return { directory: join(root, 'shell'), signals: new EventEmitter(), peerUid: async () => process.getuid(),
+  const cleanup = [];
+  t.after(async () => { for (const collect of cleanup) await collect(); rmSync(root, { recursive: true, force: true }); });
+  return { cleanup, directory: join(root, 'shell'), signals: new EventEmitter(), idleClock: idleClock(), accessibility: () => false, peerUid: async () => process.getuid(),
     startRelay: async () => ({ call: async () => ({ content: [{ type: 'text', text: 'ok' }] }), close: async () => {} }) };
 }
 
@@ -19,15 +21,17 @@ test('js starts a missing session once, reuses it, and reports a restart after i
   t.after(async () => { for (const s of sessions) await s.close(); });
   let starts = 0;
   const options = { directory: f.directory, notice: line => notices.push(line),
-    spawnSession: async () => { starts++; sessions.push(await startSocketSession({ ...f, idleMs: 80 })); } };
+    spawnSession: async () => { starts++; sessions.push(await startSocketSession({ ...f, idleMs: 600000 })); } };
   assert.equal(await socketCommand(['js', '1'], { ...options, out: () => {} }), 0);
   assert.equal(await socketCommand(['js', '2'], { ...options, out: () => {} }), 0);
   assert.equal(starts, 1);
-  assert.match(notices.join('\n'), /started/);
+  assert.match(notices.join('\n'), /shell session/);
+  f.idleClock.advance(600000);
   await sessions[0].closed;
   await socketCommand(['js', '3'], { ...options, out: () => {} });
   assert.equal(starts, 2);
-  assert.match(notices.at(-1), /restarted.*JavaScript.*reset/i);
+  assert.notEqual(notices[0], notices.at(-1));
+  assert.match(notices.at(-1), /JavaScript.*reset/i);
 });
 
 test('a failed dispatched call is never replayed or used to start another session', async t => {
@@ -44,7 +48,7 @@ test('a failed dispatched call is never replayed or used to start another sessio
 
 test('session owns image files in the cache directory and prunes them at idle exit', async t => {
   const f = fixture(t);
-  const session = await startSocketSession({ ...f, idleMs: 80, startRelay: async () => ({
+  const session = await startSocketSession({ ...f, idleMs: 600000, startRelay: async () => ({
     call: async () => ({ content: [{ type: 'image', mimeType: 'image/png', data: Buffer.from('png').toString('base64') }] }),
     close: async () => {},
   }) });
@@ -55,6 +59,7 @@ test('session owns image files in the cache directory and prunes them at idle ex
   assert.ok(path.startsWith(f.directory + '/images-'));
   assert.equal(readFileSync(path, 'utf8'), 'png');
   assert.equal(lstatSync(path).mode & 0o777, 0o600);
+  f.idleClock.advance(600000);
   await session.closed;
   assert.equal(existsSync(path), false);
 });
@@ -62,36 +67,46 @@ test('session owns image files in the cache directory and prunes them at idle ex
 test('on-demand child has its own process group and exits after collecting its offline relay', { timeout: 15000 }, async t => {
   const f = fixture(t);
   let child, closed;
-  t.after(async () => { await closed; });
+  f.cleanup.push(async () => { if (!child?.sessionExitResult) await callSocket({ tool: 'js', args: { code: 'stop' } }, f); await closed; });
   await ensureSocketSession({ directory: f.directory, notice: () => {}, spawnSession: async () => {
-    child = await spawnDetachedSession({ command: process.execPath,
+    child = await spawnDetachedSession({ directory: f.directory, command: process.execPath,
       args: [fileURLToPath(new URL('fixtures/socket-demand.mjs', import.meta.url)), f.directory],
       spawnChild: (command, args, options) => {
         assert.equal(options.detached, true);
-        assert.deepEqual(options.stdio, ['ignore', 'ignore', 'ignore']);
-        return spawn(command, args, { ...options, stdio: ['ignore', 'ignore', 'pipe'] });
+        assert.equal(options.stdio[0], 'ignore');
+        assert.equal(options.stdio[1], 'ignore');
+        assert.equal(typeof options.stdio[2], 'number');
+        assert.equal(options.cwd, f.directory);
+        return spawn(command, args, options);
       } });
-    let errors = '';
-    child.stderr.on('data', data => { errors += data; });
+    const errors = () => readFileSync(join(f.directory, 'session.log'), 'utf8');
     closed = new Promise((resolve, reject) => {
       child.once('error', reject);
-      child.once('close', code => code === 0 ? resolve() : reject(new Error(errors)));
+      child.once('close', code => code === 0 ? resolve() : reject(new Error(errors())));
     });
   } });
   const result = await callSocket({ tool: 'js', args: { code: '1' } }, f);
   assert.equal(JSON.parse(result.content[0].text).pid, child.pid);
+  assert.doesNotThrow(() => process.kill(-child.pid, 0));
+  await callSocket({ tool: 'js', args: { code: 'stop' } }, f);
   await closed;
   assert.equal(existsSync(join(f.directory, 'session.sock')), false);
   assert.equal(readFileSync(join(f.directory, 'collected'), 'utf8'), 'yes');
 });
 
-test('install-agent only prints an escaped plist and an explicit owner command', async () => {
-  let output = '';
+test('install-agent only prints an escaped plist and an explicit owner command', async t => {
+  const f = fixture(t);
+  const before = readdirSync(f.directory.replace(/\/shell$/, ''));
+  let output = '', errors = '';
   assert.equal(await socketCommand(['session', '--install-agent'], { out: s => { output += s; },
-    executable: '/a & b/sleight-mcp', spawnSession: () => assert.fail('no install or start') }), 0);
+    directory: f.directory, err: s => { errors += s; }, executable: '/a & b/sleight-mcp', spawnSession: () => assert.fail('no install or start') }), 0);
   assert.match(output, /<string>\/a &amp; b\/sleight-mcp<\/string>/);
-  assert.match(output, /launchctl bootstrap/);
-  assert.match(output, /owner|yourself/i);
+  assert.ok(output.startsWith('<?xml'));
+  assert.ok(output.trimEnd().endsWith('</plist>'));
+  assert.doesNotMatch(output, /KeepAlive|launchctl|Owner/);
+  assert.match(errors, /launchctl bootstrap/);
+  assert.match(errors, /Owner/);
+  assert.deepEqual(readdirSync(f.directory.replace(/\/shell$/, '')), before);
 });
 
 
@@ -127,7 +142,162 @@ test('a refused stale socket and old private images are reclaimed before dispatc
 test('unready startup is bounded and never dispatches a call', async t => {
   const f = fixture(t);
   let starts = 0;
-  await assert.rejects(ensureSocketSession({ directory: f.directory, startupMs: 60,
+  let now = 0;
+  await assert.rejects(ensureSocketSession({ directory: f.directory, startupMs: 90000, now: () => now, pause: async ms => { now += ms; },
     spawnSession: async () => { starts++; }, notice: () => {} }), /did not become ready/);
   assert.equal(starts, 1);
+});
+
+test('dead starter ownership and an old unpublished lock are reclaimed', async t => {
+  for (const published of [true, false]) {
+    const f = fixture(t);
+    mkdirSync(f.directory, { mode: 0o700 });
+    const lock = join(f.directory, 'starting');
+    mkdirSync(lock, { mode: 0o700 });
+    const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
+    await new Promise(resolve => child.once('close', resolve));
+    if (published) writeFileSync(join(lock, 'owner'), JSON.stringify({ pid: child.pid, time: Date.now() }), { mode: 0o600 });
+    else utimesSync(lock, new Date(0), new Date(0));
+    const session = await startSocketSession(f);
+    assert.equal(JSON.parse(readFileSync(join(lock, 'owner'))).pid, process.pid);
+    await session.close();
+    assert.equal(existsSync(lock), false);
+  }
+});
+
+test('a live owner is preserved even when its timestamp is old', async t => {
+  const f = fixture(t);
+  mkdirSync(join(f.directory, 'starting'), { recursive: true, mode: 0o700 });
+  const owner = join(f.directory, 'starting/owner');
+  writeFileSync(owner, JSON.stringify({ pid: process.pid, time: 0 }), { mode: 0o600 });
+  await assert.rejects(startSocketSession(f), /occupied/);
+  assert.equal(JSON.parse(readFileSync(owner)).pid, process.pid);
+});
+
+test('a failed detached starter reports its exit code and private stderr log without a readiness wait', async t => {
+  const f = fixture(t);
+  let polls = 0;
+  await assert.rejects(ensureSocketSession({ directory: f.directory, notice() {},
+    probe: (...args) => { assert.ok(++polls <= 2); return callSocket(...args); },
+    spawnSession: async () => {
+      const child = await spawnDetachedSession({ directory: f.directory,
+        args: [fileURLToPath(new URL('fixtures/socket-demand.mjs', import.meta.url)), f.directory, '--fail'] });
+      await child.sessionExit;
+      return child;
+    },
+  }), /starter exited \(23\).*session.log/);
+  assert.equal(readFileSync(join(f.directory, 'session.log'), 'utf8'), 'offline startup failure\n');
+  assert.equal(lstatSync(join(f.directory, 'session.log')).mode & 0o777, 0o600);
+});
+
+test('hostile caller settings never reach the detached session or its relay and cwd is the cache', async t => {
+  const f = fixture(t);
+  const hostile = { SLEIGHT_CK1: '0', SLEIGHT_CK2: '0', NODE_OPTIONS: '--require /not/caller-code.cjs',
+    SLEIGHT_FLOW_RULES: 'caller-rules.json', DYLD_INSERT_LIBRARIES: '/not/caller.dylib', SLEIGHT_GUARD: '0',
+    SLEIGHT_CLIPBOARD: '0', SLEIGHT_ACTION_LOG: '/not/log', SLEIGHT_SURFACES: 'browser', SLEIGHT_OFFSCREEN_CLICK: '1' };
+  const previous = Object.fromEntries(Object.keys(hostile).map(key => [key, process.env[key]]));
+  Object.assign(process.env, hostile);
+  t.after(() => { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  let child;
+  await ensureSocketSession({ directory: f.directory, notice() {}, spawnSession: async () => child = await spawnDetachedSession({
+    directory: f.directory, args: [fileURLToPath(new URL('fixtures/socket-demand.mjs', import.meta.url)), f.directory],
+  }) });
+  f.cleanup.push(async () => { if (!child.sessionExitResult) await callSocket({ tool: 'js', args: { code: 'stop' } }, f); await child.sessionExit; });
+  const { content } = await callSocket({ tool: 'js', args: { code: 'env' } }, f);
+  const result = JSON.parse(content[0].text);
+  assert.equal(result.cwd, f.directory);
+  assert.equal(result.relay.cwd, f.directory);
+  for (const key of Object.keys(hostile)) {
+    assert.equal(result.env[key], undefined, key);
+    assert.equal(result.relay.env[key], undefined, key);
+  }
+  assert.deepEqual(Object.keys(result.relay.env).sort(), ['HOME', 'LANG', 'PATH', 'TMPDIR', 'USER']);
+});
+
+test('a foreground session passes the same fixed environment and cache cwd to its relay', async t => {
+  const f = fixture(t);
+  const old = process.env.SLEIGHT_CK1;
+  process.env.SLEIGHT_CK1 = '0';
+  t.after(() => { if (old === undefined) delete process.env.SLEIGHT_CK1; else process.env.SLEIGHT_CK1 = old; });
+  const session = await startSocketSession({ ...f, startRelay: options => {
+    assert.equal(options.env.SLEIGHT_CK1, undefined);
+    assert.equal(options.cwd, f.directory);
+    return f.startRelay();
+  } });
+  await session.close();
+});
+
+test('odd image entries are preserved while private image and marker leftovers are pruned', async t => {
+  const f = fixture(t);
+  mkdirSync(f.directory, { mode: 0o700 });
+  writeFileSync(join(f.directory, 'images-file'), 'keep');
+  symlinkSync(f.directory, join(f.directory, 'images-link'));
+  mkdirSync(join(f.directory, 'images-public'), { mode: 0o755 });
+  mkdirSync(join(f.directory, 'marker-old'), { mode: 0o700 });
+  const session = await startSocketSession(f);
+  t.after(() => session.close());
+  assert.equal(readFileSync(join(f.directory, 'images-file'), 'utf8'), 'keep');
+  assert.equal(lstatSync(join(f.directory, 'images-link')).isSymbolicLink(), true);
+  assert.equal(existsSync(join(f.directory, 'images-public')), true);
+  assert.equal(existsSync(join(f.directory, 'marker-old')), false);
+});
+
+test('closing retains ownership until the old relay has finished collection', async t => {
+  const f = fixture(t);
+  let finish, entered;
+  const collecting = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { finish = resolve; });
+  const session = await startSocketSession({ ...f, startRelay: async () => ({ close: async () => { entered(); await gate; } }) });
+  const closing = session.close();
+  await collecting;
+  await assert.rejects(startSocketSession(f), /occupied/);
+  finish(); await closing;
+  const replacement = await startSocketSession(f);
+  await replacement.close();
+});
+
+test('separate starter processes create one session and one live process group', async t => {
+  const f = fixture(t);
+  const args = [fileURLToPath(new URL('fixtures/socket-demand.mjs', import.meta.url)), f.directory];
+  const children = await Promise.all([spawnDetachedSession({ directory: f.directory, args }), spawnDetachedSession({ directory: f.directory, args })]);
+  f.cleanup.push(async () => {
+    if (children.some(child => !child.sessionExitResult)) {
+      await ensureSocketSession({ directory: f.directory, notice() {}, spawnSession: async () => {} });
+      await callSocket({ tool: 'js', args: { code: 'stop' } }, f);
+    }
+    await Promise.all(children.map(child => child.sessionExit));
+  });
+  await ensureSocketSession({ directory: f.directory, notice() {}, spawnSession: async () => {} });
+  const result = JSON.parse((await callSocket({ tool: 'js', args: { code: 'pid' } }, f)).content[0].text);
+  assert.ok(children.some(child => child.pid === result.pid));
+  assert.doesNotThrow(() => process.kill(-result.pid, 0));
+  await callSocket({ tool: 'js', args: { code: 'stop' } }, f);
+  const exits = await Promise.all(children.map(child => child.sessionExit));
+  assert.deepEqual(exits.map(exit => exit.code).sort(), [0, 1]);
+});
+
+test('each independent caller sees the session identity on stdout before tool output', async t => {
+  const f = fixture(t), session = await startSocketSession(f);
+  t.after(() => session.close());
+  const outputs = [];
+  for (let i = 0; i < 2; i++) {
+    let text = '';
+    await socketCommand(['js', '1'], { directory: f.directory, out: chunk => { text += chunk; } });
+    outputs.push(text);
+    assert.match(text, /^sleight: shell session [a-f0-9-]+;.*reset.*\nok\n$/);
+  }
+  assert.equal(outputs[0], outputs[1]);
+});
+
+
+test('the foreground executable clears loader and guard variables before Node starts', t => {
+  const f = fixture(t), fakeApp = join(f.directory, 'fake.app'), node = join(fakeApp, 'Contents/Resources/cua_node/bin/node');
+  mkdirSync(node.slice(0, node.lastIndexOf('/')), { recursive: true, mode: 0o700 });
+  writeFileSync(node, '#!/bin/sh\nexec /usr/bin/env\n', { mode: 0o700 });
+  const text = execFileSync(fileURLToPath(new URL('../plugins/sleight/bin/sleight-mcp', import.meta.url)), ['session'], {
+    encoding: 'utf8', env: { ...process.env, SLEIGHT_CHATGPT_APP: fakeApp, NODE_OPTIONS: '--require /not/caller.cjs',
+      DYLD_INJECT_TEST: 'hostile', SLEIGHT_CK1: '0', SLEIGHT_FLOW_RULES: 'caller.json' },
+  });
+  assert.doesNotMatch(text, /NODE_OPTIONS|SLEIGHT_CK1|SLEIGHT_FLOW_RULES|DYLD_INJECT_TEST/);
+  assert.match(text, /PATH=\/usr\/bin:\/bin/);
 });

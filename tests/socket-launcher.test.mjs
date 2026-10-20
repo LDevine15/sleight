@@ -1,3 +1,4 @@
+import { idleClock } from './fixtures/socket-clock.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -16,8 +17,8 @@ for (const stop of ['idle', 'SIGTERM']) test(`${stop} collects the production la
     command: process.execPath, args: [fileURLToPath(new URL('fixtures/socket-engine.mjs', import.meta.url))],
   } } }));
   const log = join(bank, 'engine.jsonl'), traces = join(bank, 'trace');
-  const signals = new EventEmitter(), directory = join(bank, 'socket');
-  session = await startSocketSession({ directory, signals, idleMs: stop === 'idle' ? 40 : 600000,
+  const signals = new EventEmitter(), directory = join(bank, 'socket'), clock = idleClock();
+  session = await startSocketSession({ directory, signals, idleClock: clock, accessibility: () => false,
     peerUid: async () => process.getuid(), startRelay: () => createShellRelay({
       args: [fileURLToPath(new URL('fixtures/socket-launcher.mjs', import.meta.url)), join(bank, 'leases')],
       env: { ...process.env, HOME: bank, CODEX_HOME: codexHome, SLEIGHT_TEST_ENGINE_LOG: log, SLEIGHT_TRACE: traces,
@@ -30,6 +31,7 @@ for (const stop of ['idle', 'SIGTERM']) test(`${stop} collects the production la
   const result = await callSocket({ tool: 'js', args: { code: 'await app.click(88)' } }, { directory });
   assert.equal(result.content[0].text, '42');
   if (stop === 'SIGTERM') signals.emit('SIGTERM');
+  else clock.advance(600000);
   assert.equal((await session.closed).error, undefined);
   const events = readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
   assert.deepEqual(events.map(event => event.event), ['start', 'initialize', 'policy', 'panel', 'card-answer', 'exit']);

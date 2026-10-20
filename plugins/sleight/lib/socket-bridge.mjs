@@ -1,8 +1,9 @@
 // Grok Bot's local shell reaches one relay over a private, same-user Unix socket.
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { spawn, execFile } from 'node:child_process';
-import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { userInfo, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -10,6 +11,7 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { environment } from './direct-browser/host.mjs';
+import { readNativeAccessibility } from './grokbot-host.mjs';
 
 const LIB = dirname(fileURLToPath(import.meta.url));
 const TOOLS = new Set(['js', 'js_reset', 'open_file', 'select_window', 'drag']);
@@ -18,10 +20,27 @@ const MAX_REPLY = 64 * 1024 * 1024;
 const SOCKET_FILE = 'Library/Caches/sleight/shell/session.sock';
 export const socketDirectory = () => dirname(join(userInfo().homedir, SOCKET_FILE));
 
+// Caller settings must never weaken a persistent session's guards or load caller code.
+export function sessionEnvironment(env = process.env) {
+  const user = userInfo();
+  return { HOME: user.homedir, USER: user.username, PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    TMPDIR: '/private/tmp', LANG: 'en_US.UTF-8',
+    ...(env.SLEIGHT_CHATGPT_APP ? { SLEIGHT_CHATGPT_APP: env.SLEIGHT_CHATGPT_APP } : {}) };
+}
+
+export function enterSessionContext(directory = socketDirectory()) {
+  checkDirectory(directory, true);
+  const env = sessionEnvironment();
+  for (const key of Object.keys(process.env)) delete process.env[key];
+  Object.assign(process.env, env);
+  process.chdir(directory);
+}
+
 function owned(path, kind, mode) {
   const stat = lstatSync(path);
   if (stat.uid !== process.getuid() || (kind === 'directory' ? !stat.isDirectory() : !stat.isSocket()) ||
-      (stat.mode & 0o777) !== mode) throw new Error(`Shell bridge ${kind} must be private and owned by this user: ${path}`);
+      (stat.mode & 0o777) !== mode) throw Object.assign(new Error(`Shell bridge ${kind} must be private and owned by this user: ${path}`),
+        { code: kind === 'socket' && stat.isSocket() && stat.uid === process.getuid() ? 'ESOCKETPRIVATE' : 'EUNSAFE' });
   return stat;
 }
 
@@ -76,8 +95,8 @@ export async function preparePeerCheck({ tools = async () => process.platform !=
 
 // A fixed MCP client. The shell cannot send initialize, elicitation answers, metadata or turn frames.
 export async function createShellRelay({ command = process.execPath, args = [join(LIB, 'launch.mjs'), '--socket-relay'],
-  timeoutMs = 300000, termMs = 10000, killMs = 5000, env = process.env, signal } = {}) {
-  const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'inherit'], env });
+  timeoutMs = 300000, termMs = 10000, killMs = 5000, env = sessionEnvironment(), cwd, signal, requestClock = { setTimeout, clearTimeout } } = {}) {
+  const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'inherit'], env, cwd });
   const pending = new Map();
   let next = 0, closing, ended = false;
   const fail = error => {
@@ -110,9 +129,9 @@ export async function createShellRelay({ command = process.execPath, args = [joi
       if (ended || closing) { complete(); return reject(new Error('Shell relay is closed')); }
       const id = next++;
       // A timeout ends the caller's wait, but only an engine reply or exit ends its input ownership.
-      const timer = setTimeout(() => { reject(new Error('Shell relay call timed out; engine still busy until it replies; read state before retrying input')); }, timeoutMs);
-      pending.set(id, { resolve: value => { clearTimeout(timer); complete(); resolve(value); },
-        reject: err => { clearTimeout(timer); complete(); reject(err); } });
+      const timer = requestClock.setTimeout(() => { reject(new Error('Shell relay call timed out; engine still busy until it replies; read state before retrying input')); }, timeoutMs);
+      pending.set(id, { resolve: value => { requestClock.clearTimeout(timer); complete(); resolve(value); },
+        reject: err => { requestClock.clearTimeout(timer); complete(); reject(err); } });
       try { send({ id, method, params }); } catch (err) { pending.get(id).reject(err); pending.delete(id); }
     });
     return Object.assign(result, { completed });
@@ -134,19 +153,79 @@ export async function createShellRelay({ command = process.execPath, args = [joi
   } catch (err) { await close(); throw err; }
 }
 
-// Serialize startup, including stale socket recovery, without holding a lock during calls.
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch (err) { if (err.code === 'ESRCH') return false; throw err; }
+}
+
+function lockOwner(lock) {
+  owned(lock, 'directory', 0o700);
+  const path = join(lock, 'owner');
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o777) !== 0o600 || stat.size > 256) throw new Error('Unsafe shell startup owner');
+    const owner = JSON.parse(readFileSync(fd, 'utf8'));
+    if (!Number.isInteger(owner.pid) || owner.pid <= 0 || owner.pid > 2147483647 || !Number.isFinite(owner.time)) throw new Error('Invalid shell startup owner');
+    return owner;
+  } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+// Keep ownership through collection, even after the listener stops accepting connections.
 export async function startSocketSession(options = {}) {
   const directory = options.directory ?? socketDirectory();
   checkDirectory(directory, true);
+  // Kernel-backed admission prevents competing reclaims and releases automatically on death.
+  const coordinator = join(directory, 'session-start.sqlite');
+  const fd = openSync(coordinator, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o777) !== 0o600) throw new Error('Shell session coordinator must be a private owned file');
+  } finally { closeSync(fd); }
+  const db = new DatabaseSync(coordinator);
+  const unlock = () => { try { db.exec('ROLLBACK'); } finally { db.close(); } };
+  try { db.exec('PRAGMA busy_timeout=0; BEGIN IMMEDIATE'); }
+  catch (err) { db.close(); throw new Error('Shell socket is occupied by a starting or closing session', { cause: err }); }
   const lock = join(directory, 'starting');
-  try { mkdirSync(lock, { mode: 0o700 }); }
-  catch (err) { if (err.code === 'EEXIST') throw new Error('Shell session is starting; inspect its startup lock if it does not finish'); throw err; }
-  try { return await startSocketSessionLocked({ ...options, directory }); }
-  finally { rmSync(lock, { recursive: true }); }
+  try {
+    try { mkdirSync(lock, { mode: 0o700 }); }
+    catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      const before = owned(lock, 'directory', 0o700);
+      let reclaim = false;
+      try { reclaim = !pidAlive(lockOwner(lock).pid); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; reclaim = Date.now() - before.mtimeMs > 360000; }
+      if (!reclaim) throw new Error('Shell socket is occupied by a starting or closing session');
+      try { unlinkSync(join(lock, 'owner')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      // Preserve unexpected contents. No other new starter can enter while SQLite admission is held.
+      rmdirSync(lock);
+      mkdirSync(lock, { mode: 0o700 });
+    }
+  } catch (err) { unlock(); throw err; }
+  const identity = lstatSync(lock);
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    try {
+      const stat = lstatSync(lock);
+      if (stat.dev === identity.dev && stat.ino === identity.ino) {
+        unlinkSync(join(lock, 'owner')); rmdirSync(lock);
+      }
+    } catch (err) { if (err.code !== 'ENOENT') throw err; }
+    finally { unlock(); }
+  };
+  try {
+    writeFileSync(join(lock, 'owner'), JSON.stringify({ pid: process.pid, time: Date.now() }), { flag: 'wx', mode: 0o600 });
+    const session = await startSocketSessionLocked({ ...options, directory, release });
+    return session;
+  } catch (err) { release(); throw err; }
 }
 
 async function startSocketSessionLocked({ directory = socketDirectory(), startRelay = createShellRelay,
-  peerUid, idleMs = 600000, requestTimeoutMs = 10000, signals = process } = {}) {
+  peerUid, idleMs = 600000, requestTimeoutMs = 10000, signals = process, release = () => {},
+  idleClock = { setTimeout, clearTimeout }, accessibility = readNativeAccessibility, publishSocket = async () => {} } = {}) {
   checkDirectory(directory, true);
   const socketPath = join(directory, basename(SOCKET_FILE));
   // Darwin's sockaddr_un.sun_path has 104 bytes including the terminating NUL.
@@ -164,9 +243,9 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
     }
   } catch (err) { if (err.code !== 'ENOENT') throw err; }
   // A previous session may have crashed. Prune only its private image folders under this cache.
-  for (const name of readdirSync(directory).filter(name => /^images-[A-Za-z0-9]+$/.test(name))) {
+  for (const name of readdirSync(directory).filter(name => /^(images|marker)-[A-Za-z0-9]+$/.test(name))) {
     const path = join(directory, name);
-    owned(path, 'directory', 0o700);
+    try { owned(path, 'directory', 0o700); } catch { continue; }
     rmSync(path, { recursive: true });
   }
   const images = mkdtempSync(join(directory, 'images-'));
@@ -202,12 +281,14 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
               if (input.slice(newline + 1).trim()) throw new Error('One shell request per connection');
               const request = validate(JSON.parse(input.slice(0, newline)));
               if (request.op === 'status') {
-                socket.end(JSON.stringify({ result: { ready: !!relay && !closing, sessionId } }) + '\n');
+                let nativeAccessibility;
+                try { nativeAccessibility = accessibility(); } catch {}
+                socket.end(JSON.stringify({ result: { ready: !!relay && !closing, sessionId, nativeAccessibility } }) + '\n');
                 return;
               }
               const { tool, args } = request;
               if (!relay || busy || closing) throw new Error('Shell session is starting, busy or closing; read state before retrying input');
-              busy = true; clearTimeout(timer); socket.setTimeout(0);
+              busy = true; idleClock.clearTimeout(timer); socket.setTimeout(0);
               try {
                 const call = relay.call(tool, args);
                 try {
@@ -230,11 +311,11 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
       } catch { socket.end(JSON.stringify({ error: 'Unix peer credentials refused' }) + '\n'); }
     })();
   });
-  function armIdle() { if (!closing) timer = setTimeout(() => { void close(); }, idleMs); }
+  function armIdle() { if (!closing) timer = idleClock.setTimeout(() => { void close(); }, idleMs); }
   const onSignal = () => { void close(); };
   function close() {
     return closing ||= (async () => {
-      clearTimeout(timer);
+      idleClock.clearTimeout(timer);
       startupAbort.abort();
       for (const socket of peers) socket.destroy();
       let error, stopped = Promise.resolve();
@@ -253,6 +334,7 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
         }
         try { peer?.close(); } catch (err) { error ||= err; }
         try { rmSync(images, { recursive: true, force: true }); } catch (err) { error ||= err; }
+        try { release(); } catch (err) { error ||= err; }
         for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) signals.removeListener(signal, onSignal);
         finish({ error });
       }
@@ -267,9 +349,10 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
     // The private parent protects the socket during the brief listen-to-chmod interval.
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(socketPath, resolve); });
     socketStat = lstatSync(socketPath);
+    await publishSocket(socketPath);
     chmodSync(socketPath, 0o600); owned(socketPath, 'socket', 0o600);
     if (closing) throw new Error('Shell session stopped during startup');
-    relay = await startRelay({ signal: startupAbort.signal });
+    relay = await startRelay({ signal: startupAbort.signal, env: sessionEnvironment(), cwd: directory });
     if (closing) throw new Error('Shell session stopped during startup');
     relay.closed?.then(() => { void close(); });
     finishStartup();
@@ -318,6 +401,11 @@ export async function printSocketResult(result, { out = text => process.stdout.w
       }
       owned(directory, 'directory', 0o700);
       const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[block.mimeType] ?? 'bin';
+      const files = readdirSync(directory).filter(name => /^[0-9a-f-]{36}\.(png|jpg|webp|bin)$/.test(name))
+        .map(name => ({ name, stat: lstatSync(join(directory, name)) }))
+        .filter(({ stat }) => stat.isFile() && stat.uid === process.getuid() && (stat.mode & 0o777) === 0o600)
+        .sort((a, b) => a.stat.mtimeMs - b.stat.mtimeMs);
+      while (files.length >= 50) unlinkSync(join(directory, files.shift().name));
       const path = join(directory, `${randomUUID()}.${extension}`);
       writeFileSync(path, Buffer.from(block.data, 'base64'), { mode: 0o600, flag: 'wx' });
       out(path + '\n');
@@ -328,9 +416,10 @@ export async function printSocketResult(result, { out = text => process.stdout.w
 }
 
 export async function socketCommand([command, ...args], options = {}) {
-  const { out = text => process.stdout.write(text) } = options;
+  const { out = text => process.stdout.write(text), err = text => process.stderr.write(text) } = options;
   if (command === 'session' && args.length === 1 && args[0] === '--install-agent') {
     out(launchAgentInstructions(options));
+    err('Owner step: save the printed plist as ~/Library/LaunchAgents/com.sleight.shell.plist, then run:\nlaunchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sleight.shell.plist"\nsleight has not written or loaded this plist. The session still exits after ten idle minutes.\n');
     return 0;
   }
   if (['open_file', 'select_window', 'drag'].includes(command) && args.length === 1 && args[0] === '--help') {
@@ -339,6 +428,7 @@ export async function socketCommand([command, ...args], options = {}) {
     return 0;
   }
   if (command === 'session' && !args.length) {
+    enterSessionContext();
     const session = await startSocketSession();
     process.stderr.write(`sleight: Grok Bot shell session ready at ${session.socketPath}; idle timeout 10 minutes\n`);
     const { error } = await session.closed;
@@ -350,70 +440,67 @@ export async function socketCommand([command, ...args], options = {}) {
   else if (command === 'js_reset' && !args.length) toolArgs = {};
   else if (['open_file', 'select_window', 'drag'].includes(command) && args.length === 1) toolArgs = JSON.parse(args[0]);
   else throw new Error("usage: sleight-mcp session [--install-agent] | js '<code>' | js_reset | open_file|select_window|drag '<JSON arguments>'");
-  await ensureSocketSession(options);
+  await ensureSocketSession({ ...options, notice: options.notice ?? out });
   return printSocketResult(await callSocket({ tool: command, args: toolArgs }, options), { out });
 }
 
 // Child becomes a process-group leader. Its session owns idle shutdown and relay collection.
 export async function spawnDetachedSession({ command = process.execPath,
-  args = [join(LIB, 'launch.mjs'), 'session'], spawnChild = spawn } = {}) {
-  const child = spawnChild(command, args, { detached: true, stdio: ['ignore', 'ignore', 'ignore'] });
+  args = [join(LIB, 'launch.mjs'), 'session'], spawnChild = spawn, directory = socketDirectory() } = {}) {
+  checkDirectory(directory, true);
+  const log = join(directory, 'session.log');
+  const fd = openSync(log, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+  let child;
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o777) !== 0o600) throw new Error('Shell session log must be a private owned file');
+    child = spawnChild(command, args, { detached: true, env: sessionEnvironment(), cwd: directory, stdio: ['ignore', 'ignore', fd] });
+  } finally { closeSync(fd); }
+  // Install before awaiting spawn so even an immediate exit is observed.
+  child.sessionExit = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
+  child.sessionExit.then(result => { child.sessionExitResult = result; });
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
   child.unref();
   return child;
 }
 
-function rememberSession(directory, sessionId, notice) {
-  const path = join(directory, 'last-session');
-  let previous, fd;
-  try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o777) !== 0o600 || stat.size > 128) {
-      throw new Error('Shell session marker must be a private owned file');
-    }
-    previous = readFileSync(fd, 'utf8');
-  } catch (err) { if (err.code !== 'ENOENT') throw err; }
-  finally { if (fd !== undefined) closeSync(fd); }
-  if (previous === sessionId) return;
-  const staging = mkdtempSync(join(directory, 'marker-'));
-  try {
-    writeFileSync(join(staging, 'id'), sessionId, { flag: 'wx', mode: 0o600 });
-    renameSync(join(staging, 'id'), path);
-  } finally { rmSync(staging, { recursive: true }); }
-  notice(`sleight: shell session ${previous ? 'restarted' : 'started'}; JavaScript handles and session approvals are reset. Read the first call's engine docs.\n`);
-}
-
 export async function ensureSocketSession({ directory = socketDirectory(), spawnSession = spawnDetachedSession,
-  notice = text => process.stderr.write(text), startupMs = 90000 } = {}) {
+  notice = text => process.stdout.write(text), startupMs = 90000, probe = callSocket,
+  now = Date.now, pause = delay } = {}) {
   checkDirectory(directory, true);
-  const deadline = Date.now() + startupMs;
-  let started = false;
+  const deadline = now() + startupMs;
+  let started = false, child;
   do {
     try {
-      const status = await callSocket({ op: 'status' }, { directory, timeoutMs: Math.min(2000, Math.max(1, deadline - Date.now())) });
-      if (status.ready) { rememberSession(directory, status.sessionId, notice); return; }
+      const status = await probe({ op: 'status' }, { directory, timeoutMs: Math.min(2000, Math.max(1, deadline - now())) });
+      if (status.ready) {
+        // Every caller sees the identity. Another client's observation cannot hide a restart.
+        notice(`sleight: shell session ${status.sessionId}; if this ID changed, JavaScript handles and session approvals are reset. Read the first call's engine docs.\n`);
+        return;
+      }
     } catch (err) {
-      if (!['ENOENT', 'ECONNREFUSED'].includes(err.code)) throw err;
-      if (!started) { started = true; await spawnSession(); }
+      if (!['ENOENT', 'ECONNREFUSED', 'ESOCKETPRIVATE'].includes(err.code)) throw err;
+      if (!started && err.code !== 'ESOCKETPRIVATE') { started = true; child = await spawnSession({ directory }); }
     }
-    await delay(50);
-  } while (Date.now() < deadline);
-  throw new Error('Shell session did not become ready within 90 seconds; inspect sleight-mcp session before retrying input');
+    if (child?.sessionExitResult) {
+      let competing = false;
+      try { const owner = lockOwner(join(directory, 'starting')); competing = owner.pid !== child.pid && pidAlive(owner.pid); }
+      catch (err) { if (err.code !== 'ENOENT') throw err; }
+      if (!competing) throw new Error(`Shell session starter exited (${child.sessionExitResult.signal ?? child.sessionExitResult.code}); inspect ${join(directory, 'session.log')}; handles and session approvals may have reset`);
+    }
+    await pause(50);
+  } while (now() < deadline);
+  throw new Error('Shell session did not become ready before its startup deadline; handles and session approvals may have reset; inspect sleight-mcp session before retrying input');
 }
 
 export function launchAgentInstructions({ executable = join(LIB, '../bin/sleight-mcp') } = {}) {
   const xml = value => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
-  return `Owner step: save this plist yourself as ~/Library/LaunchAgents/com.sleight.shell.plist, then run the command below.
-<?xml version="1.0" encoding="UTF-8"?>
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>com.sleight.shell</string>
 <key>ProgramArguments</key><array><string>${xml(executable)}</string><string>session</string></array>
 <key>RunAtLoad</key><true/>
-<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 </dict></plist>
-launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sleight.shell.plist"
-sleight has not written or loaded this plist. The session still exits after ten idle minutes.
 `;
 }
