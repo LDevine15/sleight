@@ -109,6 +109,59 @@ for (const grant of ['session', 'preapproved']) test(`${grant} app grant cannot 
   assert.equal(f.panels.length, initial + 5);
 });
 
+for (const grant of ['session', 'preapproved']) test(`${grant} grant cannot answer a plain app card naming a different app`, async t => {
+  const preapproved = grant === 'preapproved'
+    ? new PreapprovedApps({ version: 1, apps: [{ app: 'Firefox', riskLevel: 'high' }] }) : undefined;
+  const f = fixture(t, { preapproved });
+  const meta = { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: { app: 'Firefox' } };
+  f.engine(card('original', 'Allow Computer Use to use "Firefox"?', meta));
+  await tick(0);
+  const initial = f.panels.length;
+  for (let n = 0; n < 2; n++) {
+    f.engine(card(`mismatch-${n}`, 'Allow Computer Use to use "Calculator"?', meta));
+    await tick(0);
+    assert.equal(f.panels.length, initial + n + 1);
+    assert.equal(f.panels.at(-1)[1], false);
+    assert.equal(f.sent.at(-1).result._meta, undefined);
+  }
+});
+
+test('accepting a mismatched app card never seeds session memory', async t => {
+  const f = fixture(t);
+  const meta = { connector_id: 'computer-use', persist: ['session'], riskLevel: 'high', tool_params: { app: 'Firefox' } };
+  f.engine(card('mismatch', 'Allow Computer Use to use "Calculator"?', meta)); await tick(0);
+  f.engine(card('matching', 'Allow Computer Use to use "Firefox"?', meta)); await tick(0);
+  assert.equal(f.panels.length, 2);
+  assert.equal(f.sent.find(msg => msg.id === 'mismatch').result._meta, undefined);
+});
+
+for (const tool of ['drag', 'open_file']) for (const grant of ['session', 'preapproved']) {
+  test(`shell ${tool} asks the panel each time despite ${grant} grants`, async t => {
+    const app = 'Calculator';
+    const preapproved = grant === 'preapproved'
+      ? new PreapprovedApps({ version: 1, apps: [{ app, riskLevel: 'high' }] }) : undefined;
+    let actions = 0;
+    const f = fixture(t, { preapproved, localTools: { tools: [{ name: tool }],
+      call: async (name, args, approve) => {
+        if (await approve([name, app], `Allow ${name} in ${app}?`)) actions++;
+        return { content: [] };
+      } } });
+    f.engine(card('app', `Allow Computer Use to use "${app}"?`, { connector_id: 'computer-use', persist: ['session'],
+      riskLevel: 'high', tool_params: { app } }));
+    await tick(0);
+    const initial = f.panels.length;
+    for (let n = 0; n < 2; n++) {
+      f.client({ id: `local-${n}`, method: 'tools/call', params: { name: tool, arguments: { app, from: [1, 2], to: [3, 4] } } });
+      await tick(0);
+      assert.equal(actions, n + 1);
+      assert.equal(f.panels.length, initial + n + 1);
+      assert.equal(f.panels.at(-1)[1], false);
+      assert.equal(f.panels.at(-1)[2].always, false);
+    }
+    assert.deepEqual(f.writes, []);
+  });
+}
+
 test('shell panel bounds the request while keeping the session scope visible', async t => {
   let shown;
   const panel = createPaymentCard({ open: async () => ({

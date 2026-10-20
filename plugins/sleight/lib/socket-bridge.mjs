@@ -95,17 +95,17 @@ export async function preparePeerCheck({ tools = async () => process.platform !=
 
 // A fixed MCP client. The shell cannot send initialize, elicitation answers, metadata or turn frames.
 export async function createShellRelay({ command = process.execPath, args = [join(LIB, 'launch.mjs'), '--socket-relay'],
-  timeoutMs = 300000, termMs = 10000, killMs = 5000, env = sessionEnvironment(), cwd, signal, requestClock = { setTimeout, clearTimeout } } = {}) {
-  const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'inherit'], env, cwd });
+  timeoutMs = 300000, recoveryMs = 30000, termMs = 10000, killMs = 5000, env = sessionEnvironment(), cwd, signal, requestClock = { setTimeout, clearTimeout } } = {}) {
+  const child = spawn(command, args, { detached: true, stdio: ['pipe', 'pipe', 'inherit'], env, cwd });
   const pending = new Map();
-  let next = 0, closing, ended = false;
+  let next = 0, closing, ended = false, groupGone = !child.pid;
   const fail = error => {
     // A broken protocol or pipe cannot prove that the engine stopped input. Close before releasing callers.
-    if (!ended) void close();
+    if (!closing) void close();
     for (const entry of pending.values()) entry.reject(error);
     pending.clear();
   };
-  const closed = new Promise(resolve => child.once('close', (code, signal) => {
+  const childClosed = new Promise(resolve => child.once('close', (code, signal) => {
     ended = true; fail(new Error(`Shell relay exited (${signal ?? code})`)); resolve({ code, signal });
   }));
   child.on('error', fail);
@@ -129,20 +129,42 @@ export async function createShellRelay({ command = process.execPath, args = [joi
       if (ended || closing) { complete(); return reject(new Error('Shell relay is closed')); }
       const id = next++;
       // A timeout ends the caller's wait, but only an engine reply or exit ends its input ownership.
-      const timer = requestClock.setTimeout(() => { reject(new Error('Shell relay call timed out; engine still busy until it replies; read state before retrying input')); }, timeoutMs);
-      pending.set(id, { resolve: value => { requestClock.clearTimeout(timer); complete(); resolve(value); },
-        reject: err => { requestClock.clearTimeout(timer); complete(); reject(err); } });
+      let recovery;
+      const timer = requestClock.setTimeout(() => {
+        reject(new Error('Shell relay call timed out; engine still busy until it replies or is collected; read state before retrying input'));
+        recovery = requestClock.setTimeout(() => { void close(); }, recoveryMs);
+      }, timeoutMs);
+      const clear = () => { requestClock.clearTimeout(timer); requestClock.clearTimeout(recovery); };
+      pending.set(id, { resolve: value => { clear(); complete(); resolve(value); },
+        reject: err => { clear(); complete(); reject(err); } });
       try { send({ id, method, params }); } catch (err) { pending.get(id).reject(err); pending.delete(id); }
     });
     return Object.assign(result, { completed });
   }
+  function signalGroup(signal) {
+    if (groupGone) return false;
+    try { process.kill(-child.pid, signal); return true; }
+    catch (err) {
+      // Darwin can report EPERM for a group containing only unreaped zombies. Keep ownership until ESRCH.
+      if (err.code === 'EPERM') return true;
+      if (err.code !== 'ESRCH') throw err;
+      groupGone = true; return false;
+    }
+  }
   const close = () => closing ||= (async () => {
     // EOF enters launch.mjs's shutdown path, which collects the engine before this child exits.
     child.stdin.end();
-    const timer = setTimeout(() => { if (!ended) child.kill('SIGTERM'); }, termMs);
-    const force = setTimeout(() => { if (!ended) child.kill('SIGKILL'); }, termMs + killMs);
-    try { return await closed; } finally { clearTimeout(timer); clearTimeout(force); lines.close(); signal?.removeEventListener('abort', abort); }
+    const timer = setTimeout(() => signalGroup('SIGTERM'), termMs);
+    const force = setTimeout(() => signalGroup('SIGKILL'), termMs + killMs);
+    try {
+      const result = await childClosed;
+      // A launcher exit alone cannot prove its engine exited. Collect residual group members too.
+      signalGroup('SIGTERM');
+      while (signalGroup(0)) await delay(10);
+      return result;
+    } finally { clearTimeout(timer); clearTimeout(force); lines.close(); signal?.removeEventListener('abort', abort); }
   })();
+  const closed = childClosed.then(() => close());
   const abort = () => { void close(); };
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) abort();
@@ -224,7 +246,8 @@ export async function startSocketSession(options = {}) {
 }
 
 async function startSocketSessionLocked({ directory = socketDirectory(), startRelay = createShellRelay,
-  peerUid, idleMs = 600000, requestTimeoutMs = 10000, signals = process, release = () => {},
+  peerUid, idleMs = 600000, requestTimeoutMs = 10000, writeTimeoutMs = 10000, signals = process, release = () => {},
+  writeClock = { setTimeout, clearTimeout },
   idleClock = { setTimeout, clearTimeout }, accessibility = readNativeAccessibility, publishSocket = async () => {} } = {}) {
   checkDirectory(directory, true);
   const socketPath = join(directory, basename(SOCKET_FILE));
@@ -261,8 +284,15 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
     socket.setEncoding('utf8');
     peers.add(socket);
     socket.on('error', () => {});
+    let writeDeadline;
+    const reply = value => {
+      if (socket.destroyed) return;
+      writeClock.clearTimeout(writeDeadline);
+      writeDeadline = writeClock.setTimeout(() => socket.destroy(), writeTimeoutMs);
+      socket.end(JSON.stringify(value) + '\n');
+    };
     const deadline = setTimeout(() => socket.destroy(), requestTimeoutMs);
-    socket.once('close', () => { clearTimeout(deadline); peers.delete(socket); });
+    socket.once('close', () => { clearTimeout(deadline); writeClock.clearTimeout(writeDeadline); peers.delete(socket); });
     void (async () => {
       try {
         if (await peerUid(socket) !== process.getuid()) throw new Error('Unix peer uid refused');
@@ -283,7 +313,7 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
               if (request.op === 'status') {
                 let nativeAccessibility;
                 try { nativeAccessibility = accessibility(); } catch {}
-                socket.end(JSON.stringify({ result: { ready: !!relay && !closing, sessionId, nativeAccessibility } }) + '\n');
+                reply({ result: { ready: !!relay && !closing, sessionId, nativeAccessibility } });
                 return;
               }
               const { tool, args } = request;
@@ -299,16 +329,16 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
                     else await printSocketResult({ content: [block] }, { directory: images,
                       out: text => content.push({ type: 'text', text: text.trimEnd() }) });
                   }
-                  socket.end(JSON.stringify({ result: { ...result, content } }) + '\n');
-                } catch (err) { socket.end(JSON.stringify({ error: err.message }) + '\n'); }
+                  reply({ result: { ...result, content } });
+                } catch (err) { reply({ error: err.message }); }
                 finally { await call.completed; }
               }
               finally { busy = false; armIdle(); }
-            } catch (err) { socket.end(JSON.stringify({ error: err.message }) + '\n'); }
+            } catch (err) { reply({ error: err.message }); }
           })();
         });
         socket.resume();
-      } catch { socket.end(JSON.stringify({ error: 'Unix peer credentials refused' }) + '\n'); }
+      } catch { reply({ error: 'Unix peer credentials refused' }); }
     })();
   });
   function armIdle() { if (!closing) timer = idleClock.setTimeout(() => { void close(); }, idleMs); }

@@ -667,7 +667,8 @@ function isAppApproval(msg) {
 
 // Persist metadata alone does not establish that a card grants app access.
 function plainAppCard(msg) {
-  return isAppApproval(msg) && /^Allow Computer Use to use "[^"\r\n]+"\?$/.test(msg.params?.message ?? '');
+  const match = /^Allow Computer Use to use "([^"\r\n]+)"\?$/.exec(msg.params?.message ?? '');
+  return isAppApproval(msg) && !!match && match[1] === msg.params?._meta?.tool_params?.app;
 }
 
 // A window whose title follows its active tab (a browser) is retitled by a new tab. When the tree Claude last saw for the
@@ -2610,8 +2611,8 @@ export function createRelay({
     const key = JSON.stringify(['sleight', ...keyParts]);
     // A once ask must reach the user every time: never answered from the
     // pre-approved list and never from session memory.
-    const scoped = approvalScope === 'session' && !options.once;
-    const preapprovable = !options.once && keyParts.length === 2 &&
+    const scoped = !panelOnly && approvalScope === 'session' && !options.once;
+    const preapprovable = !panelOnly && !options.once && keyParts.length === 2 &&
       ['drag', 'menu_bar', 'open_file'].includes(keyParts[0]);
     // withdraw() declines a pending ask whose call failed first: later asks stop waiting on it, an
     // elicitation of ours is cancelled, and a later answer grants nothing. A native panel stays up.

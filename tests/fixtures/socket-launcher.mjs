@@ -3,6 +3,7 @@ import { run } from '../../plugins/sleight/lib/launch.mjs';
 import { createPaymentCard } from '../../plugins/sleight/lib/payment-card.mjs';
 import { appendFileSync } from 'node:fs';
 await run({ shellRoute: true, leaseDirectory: process.argv[2],
+  directBrowser: new Proxy({}, { get() { throw new Error('shell launcher touched the supplied directBrowser'); } }),
   paymentCardFactory: () => createPaymentCard({ open: async () => ({
     present: (id, data, choices, answer) => {
       appendFileSync(process.env.SLEIGHT_TEST_ENGINE_LOG, JSON.stringify({ event: 'panel', data, choices }) + '\n');

@@ -12,10 +12,15 @@ import { callSocket, ensureSocketSession, createShellRelay, preparePeerCheck, pr
 
 function fixture(t) {
   const root = mkdtempSync(join('/private/tmp', 'sleight-socket-test-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cleanup = [];
+  t.after(async () => {
+    const results = await Promise.allSettled(cleanup.map(collect => collect()));
+    for (const result of results) if (result.status === 'rejected') throw result.reason;
+    rmSync(root, { recursive: true, force: true });
+  });
   const calls = [], signals = new EventEmitter();
   let collected = 0;
-  return { root, directory: join(root, 'session'), calls, signals, idleClock: idleClock(), accessibility: () => false, get collected() { return collected; },
+  return { root, cleanup, directory: join(root, 'session'), calls, signals, idleClock: idleClock(), accessibility: () => false, get collected() { return collected; },
     startRelay: async () => ({ call: async (tool, args) => { calls.push({ tool, args }); return { content: [{ type: 'text', text: 'answer' }] }; },
       close: async () => { collected++; } }), peerUid: async () => process.getuid() };
 }
@@ -299,6 +304,7 @@ test('a timed-out relay call stays busy until its late engine reply', async t =>
   assert.equal(existsSync(session.socketPath), true);
   writeFileSync(release, 'reply');
   await active.completed;
+  requestClock.advance(30000);
   assert.equal((await callSocket({ tool: 'js_reset', args: {} }, f)).content[0].text, 'done');
 });
 
@@ -306,6 +312,83 @@ test('shutdown escalates a relay that ignores EOF and SIGTERM', async () => {
   const relay = await createShellRelay({ args: [fileURLToPath(new URL('fixtures/socket-stall.mjs', import.meta.url)), 'stubborn'],
     termMs: 30, killMs: 30 });
   assert.equal((await relay.close()).signal, 'SIGKILL');
+});
+
+const alive = pid => {
+  try { process.kill(pid, 0); return true; } catch (err) { if (err.code === 'ESRCH') return false; throw err; }
+};
+async function until(predicate) {
+  const end = Date.now() + 5000;
+  while (!predicate()) { if (Date.now() >= end) assert.fail('offline fixture did not settle'); await tick(10); }
+}
+
+for (const mode of ['stubborn', 'exit']) test(`shutdown collects an engine descendant when its relay is ${mode}`, async t => {
+  const f = fixture(t);
+  let relay, pid;
+  f.cleanup.push(async () => {
+    writeFileSync(join(f.root, 'release'), 'stop');
+    if (pid) await until(() => !alive(pid));
+    await relay?.close();
+  });
+  relay = await createShellRelay({ args: [fileURLToPath(new URL('fixtures/socket-group.mjs', import.meta.url)), mode, f.root],
+    termMs: 50, killMs: 50 });
+  pid = Number(readFileSync(join(f.root, 'engine.pid'), 'utf8'));
+  assert.equal(alive(pid), true);
+  await relay.close();
+  assert.equal(alive(pid), false, 'engine descendant outlived relay collection');
+});
+
+test('a second deadline closes a wedged session and collects its engine group', async t => {
+  const f = fixture(t), clock = idleClock();
+  let pid, active, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  let session;
+  f.cleanup.push(async () => {
+    writeFileSync(join(f.root, 'release'), 'stop');
+    if (pid) await until(() => !alive(pid));
+    await session?.close();
+  });
+  session = await startSocketSession({ ...f, startRelay: async options => {
+    const relay = await createShellRelay({ ...options, requestClock: clock, timeoutMs: 100, recoveryMs: 200, termMs: 50, killMs: 50,
+      args: [fileURLToPath(new URL('fixtures/socket-group.mjs', import.meta.url)), 'stubborn', f.root] });
+    return { ...relay, call(...args) { active = relay.call(...args); entered(); return active; } };
+  } });
+  pid = Number(readFileSync(join(f.root, 'engine.pid'), 'utf8'));
+  const first = assert.rejects(callSocket({ tool: 'js', args: { code: 'wedge' } }, f), /timed out/);
+  await started; clock.advance(100); await first;
+  await assert.rejects(callSocket({ tool: 'js_reset', args: {} }, f), /busy/);
+  clock.advance(199);
+  assert.equal(existsSync(session.socketPath), true);
+  clock.advance(1);
+  // If recovery is absent, release the fixture before failing so the test cannot leak it.
+  const closed = await Promise.race([session.closed.then(() => true), tick(1000).then(() => false)]);
+  if (!closed) writeFileSync(join(f.root, 'release'), 'stop');
+  assert.equal(closed, true, 'wedged session outlived the recovery deadline');
+  await active.completed;
+  assert.equal(alive(pid), false);
+  assert.equal(existsSync(session.socketPath), false);
+});
+
+test('a write deadline frees all eight slots held by clients that never read replies', async t => {
+  const f = fixture(t), clock = idleClock(), sockets = [];
+  let writes = 0;
+  const writeClock = { clearTimeout: clock.clearTimeout, setTimeout(fn, ms) { writes++; return clock.setTimeout(fn, ms); } };
+  const session = await startSocketSession({ ...f, writeTimeoutMs: 100, writeClock,
+    startRelay: async () => ({ call: async () => ({ content: [{ type: 'text', text: 'x'.repeat(4 * 1024 * 1024) }] }), close: async () => {} }) });
+  t.after(async () => { for (const socket of sockets) socket.destroy(); await session.close(); });
+  for (let n = 0; n < 8; n++) {
+    const socket = createConnection(session.socketPath); sockets.push(socket);
+    socket.on('error', () => {});
+    await new Promise(resolve => socket.once('connect', resolve));
+    socket.write('{"tool":"js_reset","args":{}}\n');
+    // The client's read side stays paused, so end() cannot flush the large reply.
+    await tick(10);
+  }
+  assert.equal(await rawRequest(session.socketPath, '{"op":"status"}\n'), '');
+  assert.equal(writes, 8, 'every reply needs its own write deadline');
+  clock.advance(100);
+  await tick(20);
+  assert.equal((await callSocket({ op: 'status' }, f)).ready, true);
 });
 
 test('a signal cancels initialization and stays handled through relay collection', async t => {

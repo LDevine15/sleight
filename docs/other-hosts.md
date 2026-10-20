@@ -141,7 +141,11 @@ and session approvals have reset. Read the engine docs in its first reply before
 
 Startup waits at most 90 seconds. Each relay call keeps its five-minute timeout, and the shell waits at most 310 seconds
 for the reply. Together these limits stay below the bot's reported 13-minute foreground limit. A timed-out call may
-have acted. The session refuses further calls until the engine replies or exits. Read current state before retrying input.
+have acted. The session refuses further calls until the engine replies or exits. If it has not returned after another 30 seconds,
+the session begins shutdown. Shutdown gives the relay ten seconds after EOF, then sends SIGTERM to its process group and
+SIGKILL five seconds later if needed. It waits for that group to exit before releasing session ownership.
+Reply writes have a ten-second deadline so a caller that stops reading cannot hold a peer slot.
+Read current state before retrying input.
 sleight never replays a dispatched call during startup recovery.
 Images and screenshots become 0600 files in private `images-*` folders under that shell cache. Read the printed path
 through the bot's local file tool before the session exits or fifty newer images replace it. Startup also prunes image folders left by a crashed session.
@@ -186,7 +190,9 @@ Grok Bot's own computer use is a second driver when it is on. Its helper and sle
 so both could act on the same app. Grok's `always` local tool permission does not answer sleight's approval panel.
 The shell route has no trusted user-turn binding, so every payment, booking, settings change and submit asks on
 sleight's panel, including actions you requested. Turbo stays off because the route cannot bind a user turn.
-App Allow lasts for that session without adding an entry to the pre-approved list. Existing user pre-approvals still apply.
+App Allow lasts for that session without adding an entry to the pre-approved list. Existing user pre-approvals apply
+only to plain engine app-access cards whose quoted app name matches their app metadata. Local tools, including
+`drag` and `open_file`, ask on the panel for each action. Their approvals are never remembered on this route.
 
 Grok Bot has no Mac-side MCP client placement, so there is no HTTP bridge route. Offline tests cover the shell transport
 and its guards. A live Grok Bot read and image delivery have not been checked.

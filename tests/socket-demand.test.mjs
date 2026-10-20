@@ -1,5 +1,6 @@
 import { idleClock } from './fixtures/socket-clock.mjs';
 import { test } from 'node:test';
+import { spawnDemand } from './fixtures/socket-demand-owner.mjs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, symlinkSync, rmSync, writeFileSync } from 'node:fs';
@@ -11,7 +12,11 @@ import { callSocket, ensureSocketSession, socketCommand, spawnDetachedSession, s
 function fixture(t) {
   const root = mkdtempSync(join('/private/tmp', 'sleight-demand-'));
   const cleanup = [];
-  t.after(async () => { for (const collect of cleanup) await collect(); rmSync(root, { recursive: true, force: true }); });
+  t.after(async () => {
+    const results = await Promise.allSettled(cleanup.map(collect => collect()));
+    for (const result of results) if (result.status === 'rejected') throw result.reason;
+    rmSync(root, { recursive: true, force: true });
+  });
   return { cleanup, directory: join(root, 'shell'), signals: new EventEmitter(), idleClock: idleClock(), accessibility: () => false, peerUid: async () => process.getuid(),
     startRelay: async () => ({ call: async () => ({ content: [{ type: 'text', text: 'ok' }] }), close: async () => {} }) };
 }
@@ -67,18 +72,14 @@ test('session owns image files in the cache directory and prunes them at idle ex
 test('on-demand child has its own process group and exits after collecting its offline relay', { timeout: 15000 }, async t => {
   const f = fixture(t);
   let child, closed;
-  f.cleanup.push(async () => { if (!child?.sessionExitResult) await callSocket({ tool: 'js', args: { code: 'stop' } }, f); await closed; });
   await ensureSocketSession({ directory: f.directory, notice: () => {}, spawnSession: async () => {
-    child = await spawnDetachedSession({ directory: f.directory, command: process.execPath,
-      args: [fileURLToPath(new URL('fixtures/socket-demand.mjs', import.meta.url)), f.directory],
-      spawnChild: (command, args, options) => {
-        assert.equal(options.detached, true);
-        assert.equal(options.stdio[0], 'ignore');
-        assert.equal(options.stdio[1], 'ignore');
-        assert.equal(typeof options.stdio[2], 'number');
-        assert.equal(options.cwd, f.directory);
-        return spawn(command, args, options);
-      } });
+    child = await spawnDemand(f, { observe: options => {
+      assert.equal(options.detached, true);
+      assert.equal(options.stdio[0], 'ignore');
+      assert.equal(options.stdio[1], 'ignore');
+      assert.equal(typeof options.stdio[2], 'number');
+      assert.equal(options.cwd, f.directory);
+    } });
     const errors = () => readFileSync(join(f.directory, 'session.log'), 'utf8');
     closed = new Promise((resolve, reject) => {
       child.once('error', reject);
@@ -199,10 +200,7 @@ test('hostile caller settings never reach the detached session or its relay and 
   Object.assign(process.env, hostile);
   t.after(() => { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
   let child;
-  await ensureSocketSession({ directory: f.directory, notice() {}, spawnSession: async () => child = await spawnDetachedSession({
-    directory: f.directory, args: [fileURLToPath(new URL('fixtures/socket-demand.mjs', import.meta.url)), f.directory],
-  }) });
-  f.cleanup.push(async () => { if (!child.sessionExitResult) await callSocket({ tool: 'js', args: { code: 'stop' } }, f); await child.sessionExit; });
+  await ensureSocketSession({ directory: f.directory, notice() {}, spawnSession: async () => child = await spawnDemand(f) });
   const { content } = await callSocket({ tool: 'js', args: { code: 'env' } }, f);
   const result = JSON.parse(content[0].text);
   assert.equal(result.cwd, f.directory);
@@ -258,15 +256,7 @@ test('closing retains ownership until the old relay has finished collection', as
 
 test('separate starter processes create one session and one live process group', async t => {
   const f = fixture(t);
-  const args = [fileURLToPath(new URL('fixtures/socket-demand.mjs', import.meta.url)), f.directory];
-  const children = await Promise.all([spawnDetachedSession({ directory: f.directory, args }), spawnDetachedSession({ directory: f.directory, args })]);
-  f.cleanup.push(async () => {
-    if (children.some(child => !child.sessionExitResult)) {
-      await ensureSocketSession({ directory: f.directory, notice() {}, spawnSession: async () => {} });
-      await callSocket({ tool: 'js', args: { code: 'stop' } }, f);
-    }
-    await Promise.all(children.map(child => child.sessionExit));
-  });
+  const children = await Promise.all([spawnDemand(f), spawnDemand(f)]);
   await ensureSocketSession({ directory: f.directory, notice() {}, spawnSession: async () => {} });
   const result = JSON.parse((await callSocket({ tool: 'js', args: { code: 'pid' } }, f)).content[0].text);
   assert.ok(children.some(child => child.pid === result.pid));
@@ -300,4 +290,24 @@ test('the foreground executable clears loader and guard variables before Node st
   });
   assert.doesNotMatch(text, /NODE_OPTIONS|SLEIGHT_CK1|SLEIGHT_FLOW_RULES|DYLD_INJECT_TEST/);
   assert.match(text, /PATH=\/usr\/bin:\/bin/);
+});
+
+for (const phase of ['spawned', 'ready']) test(`after hooks collect detached fixtures when an assertion fails (${phase})`, { timeout: 15000 }, async t => {
+  const f = fixture(t), root = f.directory.replace(/\/shell$/, '');
+  const child = spawn(process.execPath, [fileURLToPath(new URL('fixtures/socket-demand-failure.mjs', import.meta.url)), root, phase],
+    { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NODE_TEST_CONTEXT: undefined } });
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { output += chunk; });
+  const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
+  assert.equal(code, 1, output);
+  assert.match(output, /intentional failure after fixture spawn/);
+  const exits = JSON.parse(readFileSync(join(root, 'exits.json')));
+  assert.equal(exits.length, phase === 'ready' ? 2 : 1);
+  assert.ok(exits.every(exit => [0, 1].includes(exit.code) && !exit.signal));
+  for (const pid of JSON.parse(readFileSync(join(root, 'pids.json')))) {
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  }
+  assert.equal(existsSync(join(f.directory, 'session.sock')), false);
+  if (phase === 'ready') assert.equal(readFileSync(join(f.directory, 'collected'), 'utf8'), 'yes');
 });

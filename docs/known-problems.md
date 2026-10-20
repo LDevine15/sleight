@@ -761,7 +761,9 @@ native reference, and oversized first results defer the browser reference while 
 - The Grok Bot shell route has no trusted user-turn binding. Every payment, booking, settings change and submit
   must ask on sleight's panel, including actions the user requested. Grok's `always` setting and auto-review cannot
   answer that panel, and `SLEIGHT_CONFIRM_PAYMENTS=never` cannot skip these confirmations. Turbo stays off. The route
-  offers session-only app Allow without adding entries to the pre-approved list.
+  offers session-only app Allow without adding entries to the pre-approved list. Existing pre-approvals cover only
+  plain engine app-access cards with matching app names. Local `drag` and `open_file` approvals ask on the panel
+  each time. If a timed-out call has not returned after 30 more seconds, shutdown begins collecting its process group. The next session has new handles and app approvals. Read state before retrying an action that timed out.
 - The Cursor plugin (1.4.0) hasn't been installed in Cursor yet. We don't know whether
   `cursor-agent plugin marketplace add` works on a personal account, whether Cursor accepts the
   manifest's empty `hooks` object without a warning, or whether it hides `turn_ended` from the model.
