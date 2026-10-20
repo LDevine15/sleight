@@ -321,8 +321,9 @@ async function lazyOpen(t, windows, { reopenFails = false } = {}) {
     for (const msg of bytes.toString().trim().split('\n').map(JSON.parse)) {
       if (msg.method !== 'tools/call' || msg.params.name !== 'js') continue;
       reads.push(msg.id); events.push('read');
-      const text = windows[Math.min(reads.length, windows.length) - 1];
-      serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text }] } }) + '\n');
+      const value = windows[Math.min(reads.length, windows.length) - 1];
+      const result = typeof value === 'string' ? { content: [{ type: 'text', text: value }] } : value;
+      serverOut.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\n');
     }
   });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, openFast: true,
@@ -338,7 +339,12 @@ async function lazyOpen(t, windows, { reopenFails = false } = {}) {
   t.after(() => relay.close());
   clientIn.write(JSON.stringify({ id: 1, method: 'tools/call', params: { name: 'open_file', arguments: { app, path: file } } }) + '\n');
   for (let i = 0; i < 40 && !received.some(m => m.id === 1); i++) await tick();
-  return { events, reply: received.find(m => m.id === 1)?.result, reads };
+  return { events, reply: received.find(m => m.id === 1)?.result, reads,
+    async js(id) {
+      clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code: 'nodeRepl.write(4)' } } }) + '\n');
+      for (let i = 0; i < 40 && !received.some(m => m.id === id); i++) await tick();
+      return received.find(m => m.id === id)?.result;
+    } };
 }
 const shows = name => `Window: "${name}", App: ${app}.\n0 standard window ${name}, URL: file:///tmp/${name}\n\t1 text area Value: x`;
 
@@ -367,4 +373,31 @@ test('lazy open: a failed reopen answers with the first read and its notice', as
   const { events, reply } = await lazyOpen(t, [shows('other.txt')], { reopenFails: true });
   assert.deepEqual(events, ['read', ['reopen', appId, '/tmp/note.txt']]);
   assert.ok(reply.content.some(c => /can't confirm/.test(c.text)));
+});
+
+for (const combined of [false, true]) for (const repeated of [false, true]) {
+  test(`lazy re-acquire keeps every engine docs block for the first js result once, combined=${combined}, repeated=${repeated}`, async t => {
+    const docs = ['## Computer Use', '# Other Browser APIs', '# Computer Use Confirmations Policy', '# Browser Safety', '# API Reference']
+      .map(header => ({ type: 'text', text: header + '\nReference for ' + header + '\n' }));
+    const first = combined ? [...docs.slice(0, -1), { ...docs.at(-1), text: docs.at(-1).text + shows('other.txt') }]
+      : [...docs, { type: 'text', text: shows('other.txt') }];
+    const h = await lazyOpen(t, [{ content: first },
+      { content: [...(repeated ? docs : []), { type: 'text', text: shows('note.txt') }] },
+      { content: [{ type: 'text', text: '4' }] }]);
+    assert.equal(h.reads.length, 2);
+    assert.ok(h.reply.content.some(c => /Window handle:/.test(c.text ?? '')));
+    assert.ok(h.reply.content.some(c => c.text?.includes(shows('note.txt'))));
+    assert.ok(!h.reply.content.some(c => /Reference for/.test(c.text ?? '')));
+    const next = await h.js(2);
+    for (const doc of docs) assert.equal(next.content.filter(c => c.text === doc.text).length, 1, doc.text);
+    assert.deepEqual(next.content.slice(0, docs.length), docs);
+    assert.ok(!next.content.some(c => c.text?.includes('other.txt')));
+    assert.ok(!(await h.js(3)).content.some(c => /Reference for/.test(c.text ?? '')));
+  });
+}
+
+test('a discarded window tree cannot turn its document headings into deferred engine docs', async t => {
+  const h = await lazyOpen(t, [shows('other.txt') + '\n# API Reference\nDocument text, not engine docs.', shows('note.txt'), '4']);
+  assert.equal(h.reads.length, 2);
+  assert.ok(!(await h.js(2)).content.some(c => /Document text, not engine docs/.test(c.text ?? '')));
 });
