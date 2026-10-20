@@ -112,8 +112,9 @@
 
 - A compatibility check runs after every ChatGPT update: a static half that reads each release's engine files on Linux
   (`bench/compat-static.mjs`, hourly), and the installed engine plus optional live checks on the Mac through
-  `scripts/watch.sh`. Results go to [the compatibility record](docs/results/engine-compat.md). The live checks haven't
-  run yet.
+  `scripts/watch.sh`. Results go to [the compatibility record](docs/results/engine-compat.md). On 2026-10-19 the
+  engine checks and the live Calculator check passed, and the live Safari page read didn't pass yet (the check's own
+  window-selection approval for Safari is missing).
 
 ### Codex
 
@@ -153,6 +154,13 @@ Each switch that was off by default ran an A/B, five alternating rounds a side o
   Only Word ran it. The lean skill is unchanged.
 - `SLEIGHT_COMPACT_CONFIRMATIONS` is gone. It didn't save time (92.3 s against 90.9 s), and confirmations read as before.
 - `SLEIGHT_COMPACT_TOOLBARS=1` stays off by default. It made textedit-replace-all 16% slower (26.9 s against 23.2 s).
+
+### Ghost hand
+
+- A hand drawn over the app shows where sleight acts. It is off by default: turn it on from the menu bar dropdown,
+  `sleight-mcp hand on` or the settings file. With it on, textedit-drag took 31 to 37 s against 23 to 26 s off (3 runs a
+  side, 2026-10-19), and the screenshots sleight takes for hover can show it. [Known problems](docs/known-problems.md)
+  has the numbers.
 
 ### Windows
 

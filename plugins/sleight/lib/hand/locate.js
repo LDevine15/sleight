@@ -106,6 +106,33 @@ function elements(win, identities, limit = ELEMENT_LIMIT, ms = WALK_MS) {
   return out;
 }
 
+// Each helper owns a bounded bank. Recheck window state, bounds, cover and focus on every request.
+// A changed line's identity replaces its old frame, even when the element number is unchanged.
+// Frames expire within 500 ms: scrolling and layout changes need not change the window bounds or tree lines.
+const geometryCache = new Map();
+function cachedElements(pid, windowNumber, bounds, win, identities, versions = {}) {
+  const key = JSON.stringify([pid, windowNumber, bounds.X, bounds.Y, bounds.Width, bounds.Height]);
+  // A moved window must not revive an older geometry when it moves back.
+  for (const [old, bank] of geometryCache) if (bank.pid === pid && bank.windowNumber === windowNumber && old !== key) geometryCache.delete(old);
+  let bank = geometryCache.get(key);
+  if (!bank) {
+    if (geometryCache.size >= 32) geometryCache.delete(geometryCache.keys().next().value);
+    bank = { pid, windowNumber, frames: new Map() }; geometryCache.set(key, bank);
+  }
+  const missing = {}, out = {}, at = Date.now();
+  for (const [number, identity] of Object.entries(identities ?? {})) {
+    const stamp = JSON.stringify([identity, versions[number]]), cached = bank.frames.get(number);
+    if (cached?.stamp === stamp && at >= cached.at && at - cached.at < 500) out[number] = cached.frame;
+    else { bank.frames.delete(number); missing[number] = identity; }
+  }
+  const found = Object.keys(missing).length ? elements(win, missing) : {};
+  for (const [number, frame] of Object.entries(found)) {
+    if (bank.frames.size >= 3000) bank.frames.delete(bank.frames.keys().next().value);
+    bank.frames.set(number, { stamp: JSON.stringify([missing[number], versions[number]]), frame, at }); out[number] = frame;
+  }
+  return out;
+}
+
 function focusedElement(app, win) {
   const el = attr(app, 'AXFocusedUIElement');
   if (!el) return undefined;
@@ -169,6 +196,6 @@ function run(argv) {
     if (state || !cg || !win) return JSON.stringify({ ok: true, pid, ...(state ? { state } : {}) });
     return JSON.stringify({ ok: true, pid, window: { pid, windowId: cg.id, bounds: cg.bounds },
       windows: onScreen.filter(w => w.bounds && overlaps(w.bounds, cg.bounds)), displays: displays(),
-      elements: elements(win, request.identities), ...(request.focus ? { focused: focusedElement(app, win) } : {}) });
+      elements: cachedElements(pid, cg.id, cg.bounds, win, request.identities, request.versions), ...(request.focus ? { focused: focusedElement(app, win) } : {}) });
   } catch (error) { return JSON.stringify({ ok: false, error: String(error.message || error) }); }
 }

@@ -20,7 +20,7 @@ export function superviseProbe(child, { input, output, owner, deadlineMs = 35000
       try { activeId = JSON.parse(line).id; } catch { activeId = undefined; }
       arm();
     }
-    if (pending.length > 4096) stop();
+    if (pending.length > 131072) stop();
   };
   const lines = createInterface({ input: child.stdout });
   lines.on('line', line => {
@@ -57,12 +57,15 @@ export function probePlan(mode, input) {
   if (mode === '--forbidden-targets') return { command: '/usr/bin/defaults', args: ['read', '-g', 'ComputerUseAllowForbiddenTargets'], deadlineMs: 5000, oneShot: true };
   if (mode === '--resolve-app') return { command: '/usr/bin/osascript',
     args: ['-l', 'JavaScript', fileURLToPath(new URL('./resolve-app-id.js', import.meta.url)), input[0]], deadlineMs: 10000, oneShot: true };
-  if (!['--session', '--once'].includes(mode)) throw new Error('Unknown probe mode');
+  if (!['--session', '--hand-session', '--once'].includes(mode)) throw new Error('Unknown probe mode');
   const script = fileURLToPath(new URL('./app-health.js', import.meta.url));
   const oneShot = mode === '--once';
   const args = oneShot ? input : ['--session', dirname(script)];
   const deadlineMs = oneShot ? Math.min(35000, Math.max(1000, Number(args[1] ?? 0.5) * 1000 + 1500)) : 35000;
-  return { command: '/usr/bin/osascript', args: ['-l', 'JavaScript', script, ...args], deadlineMs, oneShot };
+  const jxa = ['-l', 'JavaScript', script, ...args];
+  return mode === '--hand-session'
+    ? { command: '/usr/bin/nice', args: ['-n', '10', '/usr/bin/osascript', ...jxa], deadlineMs, oneShot }
+    : { command: '/usr/bin/osascript', args: jxa, deadlineMs, oneShot };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

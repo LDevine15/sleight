@@ -1,13 +1,15 @@
 // The ghost hand for turbo (H8): the same frames as the relay's planner, from the worker's act runner. act.mjs calls
 // step() when a step's input starts, after its rules allowed it. step() only queues work: the page metrics, the
 // element's CDP box (Playwright's boundingBox) and the browser window's geometry are read on later ticks, and the
-// act path never waits on them or reads anything back. Without a client (no client module, SLEIGHT_HAND=0) there is
+// act path never waits on them or reads anything back. Without a client (settings off, no client module) there is
 // no hand and no reads.
 //
 // Points: a box is CSS pixels relative to the main frame's viewport. The page's content area sits at the bottom of
 // the browser window (window.screenX/screenY/outerWidth/outerHeight, in screen points), and page zoom is the ratio of
 // the window's width to the viewport's CSS width, refined by devicePixelRatio (display scale times zoom). Pinch zoom
 // goes through the visual viewport. Turbo moves no real pointer, so it has nothing to hide the hand before.
+import { createAppHealthHelper } from '../read-failure.mjs';
+import { handSetting } from './settings.mjs';
 import { appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -82,8 +84,8 @@ const withTimeout = (promise, ms) => {
 
 export function createBrowserHand({ client, loadClient = () => import('./client.mjs'), clientOptions = {}, locate,
   readMetrics = page => trustedLocatorRead(page.locator('html'), pageMetrics), trace = () => {}, now = () => performance.now(),
-  defer = fn => setImmediate(fn), env = process.env } = {}) {
-  if (env.SLEIGHT_HAND === '0' || typeof locate !== 'function') return undefined;
+  defer = fn => setImmediate(fn), env = process.env, setting = () => handSetting({ env }) } = {}) {
+  if (env.SLEIGHT_HAND === '0' || !setting().enabled || typeof locate !== 'function') return undefined;
   let closed = false, resolved = client ?? undefined, loading;
   const load = () => loading ??= (client ? Promise.resolve(client) : Promise.resolve().then(loadClient).then(m => m.createHandClient(clientOptions)))
     .then(c => (resolved = c && typeof c.send === 'function' ? c : null), () => (resolved = null));
@@ -103,6 +105,7 @@ export function createBrowserHand({ client, loadClient = () => import('./client.
     const skip = reason => trace('hand-skipped', { op, reason });
     let metrics;
     try { metrics = await readMetrics(page); } catch { return skip('no-geometry'); }
+    if (!live()) return;
     const blocked = pageSkip(KINDS[op], metrics);
     if (blocked) return skip(blocked);
     const bounds = { X: metrics.screenX, Y: metrics.screenY, Width: metrics.outerWidth, Height: metrics.outerHeight };
@@ -142,20 +145,32 @@ export function workerHandTrace({ setting = process.env.SLEIGHT_TRACE, parentPid
   };
 }
 
-// One hand per worker process, for every runner it builds. The helper is the native hand's locate.js, run by bounds.
+// Inherited IPC sends frames to the relay's one client. The worker never starts another host.
+export function workerHandClient(channel, pid, { env = process.env, setting = () => handSetting({ env }), now = Date.now } = {}) {
+  let checked = -Infinity, enabled = false;
+  // Recheck at the next use after 250 ms, including before page reads. No idle timer or extra host is needed.
+  const live = () => {
+    const at = now();
+    if (at < checked || at - checked >= 250) {
+      checked = at;
+      try { enabled = env.SLEIGHT_HAND !== '0' && setting()?.enabled === true; } catch { enabled = false; }
+    }
+    return enabled && channel.connected !== false;
+  };
+  return { get enabled() { return live(); }, pid,
+    send(frame) { if (live()) try { channel.send({ version: 3, hand: frame }); } catch {} },
+    close() {} };
+}
+
+// One hand planner per worker, with a lazy persistent utility helper for Window Server geometry.
 let shared;
 export function sharedBrowserHand(env = process.env) {
   if (shared !== undefined) return shared ?? undefined;
-  shared = createBrowserHand({ env, locate: request => runLocate(request), trace: workerHandTrace({ setting: env.SLEIGHT_TRACE }) }) ?? null;
+  const helper = createAppHealthHelper();
+  const sharedUi = process.argv.includes('--shared-ui') && typeof process.send === 'function';
+  const pid = Number(process.argv.find(arg => arg.startsWith('--shared-hand-pid='))?.split('=')[1]);
+  const client = sharedUi ? workerHandClient(process, Number.isSafeInteger(pid) && pid > 0 ? pid : undefined, { env }) : undefined;
+  shared = createBrowserHand({ env, client, locate: request => helper.handLocate(request), trace: workerHandTrace({ setting: env.SLEIGHT_TRACE }) }) ?? null;
+  if (shared) process.once('exit', () => helper.close());
   return shared ?? undefined;
-}
-async function runLocate(request) {
-  const [{ execFile }, { fileURLToPath }] = await Promise.all([import('node:child_process'), import('node:url')]);
-  const script = fileURLToPath(new URL('./locate.js', import.meta.url));
-  return new Promise(resolve => {
-    // Stopped after 2.5 s, past the 2 s the hand waits, so a stalled AX app leaves no osascript behind.
-    execFile('osascript', ['-l', 'JavaScript', script, JSON.stringify(request)], { timeout: 2500 }, (error, stdout) => {
-      try { resolve(JSON.parse(stdout)); } catch { resolve({ ok: false }); }
-    });
-  });
 }

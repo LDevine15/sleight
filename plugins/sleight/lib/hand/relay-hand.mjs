@@ -1,14 +1,16 @@
 // The relay's side of the ghost hand: after admission decides a js call, plan its frames beside the engine
 // call and send them to the hand host at their beats. The relay calls admit, approval, answered, result, hide
 // and close, all fire-and-forget: none returns anything, throws or holds the call, and nothing here reads or
-// changes what the relay sends the engine or Claude. Without a client (no client module, SLEIGHT_HAND=0, a
+// changes what the relay sends the engine or Claude. Without a client (settings off, no client module, a
 // dead host) every call is a no-op.
 //
 // Beats: an accepted engine approval request (one per click, key, value or drag, except for apps on the
 // engine's own Always allow list) is the exact moment of its action. Once an app's actions have come with
 // approvals this session, its frames wait for them. Otherwise each frame goes out with the time left on the
 // planner's schedule. The result re-anchors frames still unsent at its own time, a warm write apart.
-import { planHandFrames, handTargets, WRITE_MS } from './planner.mjs';
+import { createHash } from 'node:crypto';
+import { handSetting } from './settings.mjs';
+import { planHandFrames, handTargets, WRITE_MS, GUARD_READ_MS } from './planner.mjs';
 
 // The kinds an approval's tool_name stands for. Unknown names beat the next action of any kind.
 const APPROVAL_KINDS = { click: ['click', 'double', 'right'], press_key: ['key'], set_value: ['type'], type_text: ['type'], drag: ['drag'], scroll: ['scroll'] };
@@ -16,8 +18,8 @@ const STALE_MS = 60000;
 
 export function createRelayHand({ client, loadClient = () => import('./client.mjs'), clientOptions = {}, locate,
   trace = () => {}, now = () => performance.now(), defer = fn => setImmediate(fn), locateTimeoutMs = 2000, lateMs = 1500,
-  env = process.env } = {}) {
-  if (env.SLEIGHT_HAND === '0' || typeof locate !== 'function') return undefined;
+  env = process.env, setting = () => handSetting({ env }) } = {}) {
+  if (env.SLEIGHT_HAND === '0' || !setting().enabled || typeof locate !== 'function') return undefined;
   let closed = false, locating = false, resolved = client ?? undefined, loading, pendingHide = false;
   const load = () => loading ??= (client ? Promise.resolve(client) : Promise.resolve().then(loadClient).then(m => m.createHandClient(clientOptions)))
     .then(c => (resolved = c && typeof c.send === 'function' ? c : null), () => (resolved = null))
@@ -59,14 +61,14 @@ export function createRelayHand({ client, loadClient = () => import('./client.mj
     if (call.done) forget(call);
   }
 
-  function beat(call, tool) {
+  function beat(call, tool, at = now()) {
     const kinds = APPROVAL_KINDS[tool];
     let index = call.kinds.findIndex((kind, i) => i >= call.beatIndex && (!kinds || kinds.includes(kind)));
     if (index < 0) index = call.beatIndex;
     if (index >= call.kinds.length) return;
     call.beatIndex = index + 1;
     const entry = call.entries.find(e => e.action === index);
-    if (entry && !entry.sent) trace('hand-beat', { id: call.id, action: index, driftMs: Math.round(now() - entry.plannedAt) });
+    if (entry && !entry.sent) call.beatTimes.push({ action: index, at });
     dispatch(call);
   }
 
@@ -77,7 +79,7 @@ export function createRelayHand({ client, loadClient = () => import('./client.mj
     const { code, target } = call.input;
     if (resolved === undefined) await load();
     if (!live() || call.dropped) { forget(call); return; }
-    const targets = handTargets({ code, lines, target });
+    const targets = call.targets = handTargets({ code, lines, target });
     if (targets.skip) { forget(call); note(targets.skip, call); return; }
     if (!targets.actions.length) { forget(call); return; }
     // One helper at a time: a call admitted while the last one's frames are still looked up gets no hand.
@@ -85,9 +87,14 @@ export function createRelayHand({ client, loadClient = () => import('./client.mj
     locating = true;
     let geometry, timer;
     try {
+      // Only hash the requested lines, without allocating another map of the whole engine tree.
+      const versions = Object.fromEntries(Object.keys(targets.identities).map(n => {
+        const line = typeof lines === 'string' ? new RegExp('^\\t*' + n + ' (.+)$', 'm').exec(lines)?.[1] : lines?.[n];
+        return [n, createHash('sha256').update(line ?? '').digest('hex')];
+      }));
       const request = Object.fromEntries(Object.entries({ app: target?.app, appId: target?.appId, title: target?.title,
         windowNumber: target?.windowNumber ?? target?.nativeIdentity?.windowNumber, pid: target?.nativeIdentity?.pid,
-        identities: targets.identities, focus: targets.focus }).filter(([, v]) => v !== undefined));
+        identities: targets.identities, versions, focus: targets.focus }).filter(([, v]) => v !== undefined));
       geometry = await Promise.race([Promise.resolve().then(() => locate(request)),
         new Promise(resolve => { timer = setTimeout(resolve, locateTimeoutMs); timer.unref?.(); })]);
     } catch { geometry = undefined; } finally { clearTimeout(timer); locating = false; }
@@ -95,20 +102,28 @@ export function createRelayHand({ client, loadClient = () => import('./client.mj
     if (!geometry?.ok) { forget(call); note('no-geometry', call); return; }
     const { window, elements, focused, windows, displays, state } = geometry;
     const planned = planHandFrames({ code, lines, screenshotSize, target, window, elements, focused, windows, displays, state,
-      ignorePids: [resolved.pid].filter(Number.isSafeInteger), targets });
+      ignorePids: [resolved.pid].filter(Number.isSafeInteger), targets, bindings: call.bindings });
     for (const skip of planned.skipped) note(skip.reason, call, skip.action === undefined ? {} : { action: skip.action, method: skip.method });
     call.kinds = targets.actions.map(a => a.kind);
     call.entries = planned.frames.map((frame, i) => ({ frame, action: planned.actions[i], plannedAt: call.startedAt + frame.delayMs }));
     const early = call.beats; call.beats = undefined;
-    for (const tool of early) beat(call, tool);
+    for (const { tool, at } of early) beat(call, tool, at);
     dispatch(call);
+    if (call.done) traceBeats(call);
+  }
+
+  function traceBeats(call) {
+    for (const beat of call.beatTimes.splice(0)) {
+      const entry = call.entries?.find(e => e.action === beat.action);
+      if (entry) trace('hand-beat', { id: call.id, action: beat.action, driftMs: Math.round(beat.at - entry.plannedAt) });
+    }
   }
 
   return {
     // input: { code, target, lines, screenshotSize }, lines and screenshotSize optionally as functions read on the next tick.
     admit: guarded((id, input) => {
       if (closed || id === undefined || typeof input?.code !== 'string') return;
-      const call = { id, input, target: input.target, startedAt: now(), beatIndex: 0, beats: [] };
+      const call = { id, input, target: input.target, startedAt: now(), beatIndex: 0, beats: [], beatTimes: [] };
       // A resent call replaces its first try, and a call whose result never came stops counting after a minute.
       for (const [other, old] of calls) if (other === id || call.startedAt - old.startedAt > STALE_MS) { old.dropped = true; calls.delete(other); }
       calls.set(id, call);
@@ -130,13 +145,25 @@ export function createRelayHand({ client, loadClient = () => import('./client.mj
       const { call, tool } = entry;
       // A declined action never runs: nothing of this call may still show.
       if (action !== 'accept') { call.dropped = true; forget(call); hideClient(); return; }
-      if (call.beats) call.beats.push(tool); else beat(call, tool);
+      if (call.beats) call.beats.push({ tool, at: now() }); else beat(call, tool);
+    }),
+    // The guard reports each attempt's actual binding choice under a per-call private mark.
+    // Those choices arrive with the result. Re-anchor unsent frames and measure drift against them.
+    bindings: guarded((id, bindings) => {
+      const call = calls.get(id);
+      if (!call || call.done || !Array.isArray(bindings)) return;
+      call.bindings = bindings;
+      for (const entry of call.entries ?? []) {
+        const reads = bindings.filter(b => b.bound === true && b.index <= entry.action && call.targets?.actions[b.index]?.element).length;
+        entry.plannedAt = call.startedAt + entry.frame.delayMs - reads * GUARD_READ_MS;
+      }
     }),
     result: guarded((id, failed) => {
       // The relay reports a result, then finishes the call: only the first report counts.
       const call = calls.get(id);
       if (!call || call.done) return;
       call.done = true; call.doneAt = now();
+      traceBeats(call);
       for (const [requestId, entry] of approvals) if (entry.call === call) approvals.delete(requestId);
       if (failed) {
         call.dropped = true; calls.delete(id);

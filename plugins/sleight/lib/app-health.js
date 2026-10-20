@@ -130,14 +130,14 @@ function run(argv) {
     const source = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(`${argv[1]}/${name}.js`, $.NSUTF8StringEncoding, null));
     return eval(`(function () { ${source}; return run; })()`);
   };
-  let taps, target, windowIdentity, frontRestore, elementVisibility;
+  let taps, target, windowIdentity, frontRestore, elementVisibility, handLocate;
   const stdin = $.NSFileHandle.fileHandleWithStandardInput, stdout = $.NSFileHandle.fileHandleWithStandardOutput;
   let buffer = '';
   for (;;) {
     const data = stdin.availableData;
     if (Number(data.length) === 0) return '';
     buffer += ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding));
-    if (buffer.length > 4096) return '';
+    if (buffer.length > 131072) return '';
     let at;
     while ((at = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, at); buffer = buffer.slice(at + 1);
@@ -149,6 +149,7 @@ function run(argv) {
       try {
         request = JSON.parse(line);
         const result = request.op === 'front-restore' ? (frontRestore ||= query('front-restore'))(request)
+          : request.op === 'hand-locate' ? JSON.parse((handLocate ||= query('hand/locate'))([JSON.stringify(request.request)]))
           : request.op === 'window-identity' ? JSON.parse((windowIdentity ||= query('window-identity'))([JSON.stringify(request.window)]))
           : request.op === 'element-visibility' ? JSON.parse((elementVisibility ||= query('element-visibility'))([JSON.stringify(request)]))
           : request.op === 'keyboard-taps' ? JSON.parse((taps ||= query('keyboard-taps'))())

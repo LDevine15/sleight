@@ -18,12 +18,12 @@ function fakeChild(pid = 4242, consent = true) {
   child.pid = pid; child.ended = false;
   child.stdin = Object.assign(new EventEmitter(), {
     writableLength: 0,
-    write(text) { for (const line of text.trimEnd().split('\n').map(line => JSON.parse(line))) (line.hand === 'menu' ? menus : lines).push(line); return true; },
+    write(text) { for (const line of text.trimEnd().split('\n').map(line => JSON.parse(line))) { (line.hand === 'menu' ? menus : lines).push(line); } return true; },
     end() { child.ended = true; },
   });
   child.stdout = new EventEmitter();
   child.kill = () => { child.killed = true; };
-  child.stdio = [child.stdin, child.stdout, null, ...consent ? [Object.assign(new EventEmitter(), { name: 'consent-in', destroy() { this.destroyed = true; } }),
+  child.stdio = [child.stdin, child.stdout, null, ...consent ? [Object.assign(new EventEmitter(), { name: 'consent-in', write(text) { const line = JSON.parse(text); lines.push(line); queueMicrotask(() => child.stdout.emit('data', JSON.stringify({ hand: 'consent-ready', nonce: line.nonce, token: line.token }) + '\n')); }, destroy() { this.destroyed = true; } }),
     Object.assign(new EventEmitter(), { name: 'consent-out', destroy() { this.destroyed = true; } })] : []];
   child.lines = lines; child.menus = menus;
   return child;
@@ -56,7 +56,7 @@ test('send and hide return at once without a promise, and the host gets exact no
   assert.deepEqual(Object.keys(first), ['hand', 'nonce', 'seq', 'kind', 'pid', 'windowId', 'at', 'path', 'delayMs', 'beats']);
   assert.deepEqual([second.seq, second.kind, second.delayMs, second.beats, second.nonce], [2, 'drag', 470, 2, first.nonce]);
   assert.deepEqual(hide, { hand: 'hide', nonce: first.nonce });
-  assert.deepEqual(h.spawns, [{ capture: 'hidden', consent: false }]);
+  assert.deepEqual(h.spawns, [{ capture: 'hidden', consent: true }]);
 });
 
 test('the host pid is set while the host runs and cleared when it ends; a dead host only traces and is not respawned', async t => {
@@ -72,15 +72,66 @@ test('the host pid is set while the host runs and cleared when it ends; a dead h
   assert.equal(h.children.length, 1); assert.equal(h.children[0].lines.length, 1);
 });
 
-test('a host that is not compiled yet starts the build in the background and this session has no hand', async () => {
+test('a cold build starts the hand in the same session without blocking sends', async t => {
+  t.after(() => setHandPid(0));
   const h = harness({ built: false });
+  t.after(() => h.client.close());
   h.client.send(frame()); await settle();
-  assert.equal(h.preparing(), 1); assert.equal(h.children.length, 0);
-  assert.equal(h.client.enabled, false);
-  assert.ok(h.traces.some(([d, detail]) => d === 'hand-off' && detail.reason === 'building'));
+  assert.equal(h.preparing(), 1); assert.equal(h.children.length, 1);
+  assert.equal(h.client.enabled, true);
+  assert.ok(h.traces.some(([d, detail]) => d === 'hand-building' && detail.reason === 'cold-cache'));
   assert.ok(h.traces.some(([d, detail]) => d === 'hand-built' && detail.status === 'ready'));
   h.client.send(frame()); await settle();
-  assert.equal(h.preparing(), 1); assert.equal(h.children.length, 0);
+  assert.equal(h.preparing(), 1); assert.equal(h.children.length, 1);
+});
+
+test('turbo falls back immediately during a cold build, which later starts one shared host', async t => {
+  t.after(() => setHandPid(0));
+  let finish, options, spawns = 0;
+  const traces = [], child = fakeChild();
+  const client = createHandClient({ built: () => false, setting: () => ({ enabled: true }), watch: () => undefined,
+    permissions: null, usage: null, prepare: value => { options = value; return new Promise(resolve => { finish = resolve; }); },
+    trace: (direction, detail) => traces.push([direction, detail]) });
+  t.after(() => client.close());
+  assert.equal(await shareConsent(), undefined);
+  await settle();
+  assert.equal(typeof finish, 'function');
+  assert.equal(await shareConsent(), undefined, 'a build does not hold turbo startup');
+  options.onProgress({ stage: 'compile', helper: 'consent-host', compiler: 'swiftc' });
+  assert.deepEqual(traces.at(-1), ['hand-build', { stage: 'compile', helper: 'consent-host', compiler: 'swiftc' }]);
+  finish({ status: 'ready', spawn() { spawns++; return child; } });
+  await settle();
+  assert.equal(spawns, 1);
+  assert.equal((await shareConsent()).pid, child.pid);
+});
+
+test('closing a cold build aborts compilation and traces the session ending without launching a host', async () => {
+  let options, finish;
+  const traces = [];
+  const client = createHandClient({ built: () => false, setting: () => ({ enabled: true }), watch: () => undefined,
+    permissions: null, usage: null, prepare: value => { options = value; return new Promise(resolve => { finish = resolve; }); },
+    trace: (direction, detail) => traces.push([direction, detail]) });
+  client.send(frame()); await settle();
+  client.close();
+  assert.equal(options.signal.aborted, true);
+  assert.ok(traces.some(([d, m]) => d === 'hand-off' && m.reason === 'session-ended' && m.code === 'HAND_BUILD_CANCELLED'));
+  finish({ status: 'ready', spawn: () => assert.fail('closed sessions never launch') });
+  await settle();
+});
+
+test('frames that expired while compiling are dropped instead of replayed on the user desktop', async t => {
+  t.after(() => setHandPid(0));
+  let clock = 0, finish;
+  const child = fakeChild(), traces = [];
+  const client = createHandClient({ built: () => false, setting: () => ({ enabled: true }), now: () => clock,
+    watch: () => undefined, permissions: null, usage: null,
+    prepare: () => new Promise(resolve => { finish = resolve; }), trace: (d, m) => traces.push([d, m]) });
+  t.after(() => client.close());
+  client.send(frame()); await settle(); clock = 10000;
+  finish({ status: 'ready', spawn: () => child }); await settle();
+  assert.equal(child.lines.length, 0);
+  assert.ok(traces.some(([d, m]) => d === 'hand-dropped' && m.reason === 'build-delay'));
+  client.send(frame()); assert.equal(child.lines.length, 1);
 });
 
 test('the hand off: no build, no spawn and no writes', async () => {
@@ -219,29 +270,67 @@ test('the Ghost Hand toggle reaches the relay on the host\'s stdout, nonce-bound
   assert.equal(h.traces.filter(([d]) => d === 'hand-toggle-refused').length, 5);
 });
 
-test('the consent channel opens only when turbo forks: a hand-only host has none, and each fork gets a fresh host that replaces the last', async t => {
+test('the first host is consent-capable and successive worker forks reuse its pid after exit and reset', async t => {
   t.after(() => setHandPid(0));
   const h = harness();
   h.client.send(frame()); await settle();
-  assert.deepEqual(h.spawns, [{ capture: 'hidden', consent: false }]);
-  assert.equal(h.children[0].stdio[3], undefined, 'a session that never uses turbo holds no consent ends');
-  const pipes = await shareConsent();
-  assert.deepEqual(h.spawns.at(-1), { capture: 'hidden', consent: true });
-  assert.equal(h.children.length, 2, 'one host at a time: the hand-only one is replaced');
-  assert.equal(h.children[0].ended, true); assert.equal(handPid(), 4243);
-  assert.equal(h.children[1].menus[0].nonce, h.children[0].menus[0].nonce, 'the same hand sender');
-  assert.deepEqual([pipes.write.name, pipes.read.name], ['consent-in', 'consent-out']);
-  pipes.release();
-  assert.equal(pipes.write.destroyed && pipes.read.destroyed, true, 'the relay keeps no copy of the consent channel');
+  assert.deepEqual(h.spawns, [{ capture: 'hidden', consent: true }]);
+  const pipes = await shareConsent(); pipes.release();
+  assert.equal(h.children.length, 1); assert.equal(handPid(), 4242);
+  assert.notEqual(pipes.write.destroyed, true, 'the session retains its descriptors');
+  await assert.rejects(shareConsent(), /HAND_CONSENT_IN_USE/, 'no simultaneous readers or fallback host');
+  pipes.detached();
+  assert.equal(h.children[0].lines.at(-1).hand, 'consent-reset', 'worker exit clears consent without another attach');
+  const resets = h.children[0].lines.length;
+  pipes.detached();
+  assert.equal(h.children[0].lines.length, resets, 'detaching twice sends one reset');
+  const again = await shareConsent(); again.release();
+  assert.equal(h.children.length, 1); assert.equal(h.children[0].ended, false);
+  assert.equal(again.write, pipes.write); assert.equal(again.read, pipes.read);
+  assert.equal(h.children[0].lines.at(-1).hand, 'consent-reset');
+  assert.equal(h.traces.filter(([d]) => d === 'hand-started').length, 1);
   h.client.send(frame()); await settle();
-  assert.equal(h.children[1].lines.at(-1).hand, 'act', 'the hand carries on in the new host');
-  // A crashed worker's successor reattaches: another fresh host and channel, still one glove.
-  const again = await shareConsent();
-  assert.equal(h.children.length, 3); assert.equal(h.children[1].ended, true); assert.ok(again.write !== pipes.write);
-  again.release();
-  // The replaced hosts with consent attached are left to end with their worker, never killed.
-  await new Promise(resolve => setTimeout(resolve, 40));
-  assert.equal(h.children[1].killed, undefined);
+  assert.equal(h.children[0].lines.at(-1).hand, 'act');
+  h.client.close();
+});
+
+test('turbo can fall back when the shared host cannot start or has exited', async t => {
+  t.after(() => setHandPid(0));
+  for (const options of [{ built: false }, { result: { status: 'unavailable', code: 'APPLE_TOOLS_MISSING' } },
+    { result: { status: 'unavailable', code: 'HOST_COMPILE_FAILED' } },
+    { result: { status: 'ready', spawn() { throw Error('SPAWN_FAILED'); } } }]) {
+    const h = harness(options);
+    try {
+      assert.equal(await shareConsent(), undefined);
+      assert.equal(await shareConsent(), undefined, 'a dead host still permits fallback');
+    } finally { h.client.close(); }
+  }
+  const h = harness();
+  h.client.send(frame()); await settle();
+  h.children[0].emit('exit', 65, null);
+  try { assert.equal(await shareConsent(), undefined); } finally { h.client.close(); }
+});
+
+test('a successor waits for the exit reset acknowledgement, and a failed reset permits fallback', async t => {
+  t.after(() => setHandPid(0));
+  const h = harness();
+  t.after(() => h.client.close());
+  const first = await shareConsent(), child = h.children[0];
+  let reset;
+  first.write.write = text => { reset = JSON.parse(text); };
+  first.detached();
+  let attached = false;
+  const pending = shareConsent().then(pipes => { attached = true; return pipes; });
+  await settle();
+  assert.equal(attached, false, 'no worker may inherit an uncleared consent channel');
+  child.stdout.emit('data', JSON.stringify({ hand: 'consent-ready', nonce: reset.nonce, token: reset.token }) + '\n');
+  const second = await pending;
+  assert.equal(second.pid, first.pid);
+  second.write.write = () => { throw Error('EPIPE'); };
+  second.detached();
+  assert.equal(await shareConsent(), undefined);
+  assert.equal(first.write.destroyed, true);
+  assert.equal(first.read.destroyed, true);
 });
 
 test('turbo gets a host even with the hand off; a closed client shares nothing', async t => {
@@ -274,6 +363,11 @@ test('the session\'s hand client is the integration point: one per process, none
   t.after(() => setHandPid(0));
   createHandClient({ setting: () => ({ enabled: false }), watch: () => undefined }).close(); // no earlier test's client stays current
   assert.equal(sessionHandClient({ env: { SLEIGHT_HAND: '0' } }), undefined);
+  let watched = 0, prepared = 0;
+  const off = { env: {}, setting: () => ({ enabled: false }), watch: () => { watched++; }, prepare: () => { prepared++; } };
+  assert.equal(sessionHandClient(off), undefined);
+  assert.equal(await shareConsent(), undefined);
+  assert.deepEqual([watched, prepared], [0, 0], 'off creates no watcher or host');
   const children = [], options = { setting: () => ({ enabled: true }), built: () => true, watch: () => undefined,
     prepare: async () => ({ status: 'ready', spawn: spawnOptions => { const c = fakeChild(5000 + children.length, spawnOptions.consent); children.push(c); return c; } }) };
   const first = sessionHandClient(options);
@@ -290,9 +384,12 @@ test('the session\'s hand client is the integration point: one per process, none
   const bridge = await createV3Bridge({}, { readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
     forkWorker(_path, args, forkOptions) { fork = { args, stdio: forkOptions.stdio }; queueMicrotask(() => session.ready()); return child; } });
   try {
-    assert.deepEqual(fork.args, ['--shared-ui']);
+    assert.deepEqual(fork.args, ['--shared-ui', '--shared-hand-pid=' + children.at(-1).pid]);
+    const before = children.at(-1).lines.length;
+    child.emit('message', { version: 3, hand: frame() });
+    assert.equal(children.at(-1).lines.length, before + 1, 'browser hand IPC uses the same host');
     assert.equal(fork.stdio[4], children.at(-1).stdio[3]); assert.equal(fork.stdio[5], children.at(-1).stdio[4]);
-    assert.equal(children.at(-1).stdio[3].destroyed, true, 'released after the fork');
+    assert.notEqual(children.at(-1).stdio[3].destroyed, true, 'retained for the session');
   } finally { await bridge.detach(); first.close(); }
   assert.notEqual(sessionHandClient(options), first, 'a closed session client is replaced');
   sessionHandClient(options).close();
@@ -351,6 +448,7 @@ test('prepareHandHost builds through the helper pipeline and its handle starts o
   for (const [options, args, descriptors] of [[undefined, '--hand --capture=hidden --menu', 3], [{ capture: 'visible' }, '--hand --capture=visible --menu', 3],
     [{ consent: true }, '--hand --capture=hidden --consent', 5]]) {
     const child = ready.spawn(options);
+    assert.match(child.spawnfile, /\/consent-host$/, 'consent runs directly at normal priority');
     assert.equal(child.stdio.filter(Boolean).length, descriptors - 1, args);
     child.stdin.end();
     assert.equal(await new Promise(resolve => child.on('exit', resolve)), 0);

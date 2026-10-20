@@ -20,23 +20,24 @@ function world(t) {
   return { home, path, lines, command, setting, write, output: () => lines.join('') };
 }
 
-test('precedence: platform, then SLEIGHT_HAND=0, then an unsafe file, then the user file, then on by default', t => {
+test('precedence: platform, explicit env 0 or 1, unsafe file, saved choice, then off by default', t => {
   const w = world(t);
-  assert.deepEqual(w.setting(), { enabled: true, reason: 'default', capture: 'hidden', captureReason: 'default' });
-  assert.deepEqual(w.setting({}, 'linux'), { enabled: false, reason: 'platform', capture: 'hidden', captureReason: 'default' });
-  assert.equal(w.setting({ SLEIGHT_HAND: '0' }).reason, 'env');
-  // Only 0 turns it off; any other value is the default.
-  for (const value of ['1', '', 'false', 'off']) assert.deepEqual([w.setting({ SLEIGHT_HAND: value }).enabled, w.setting({ SLEIGHT_HAND: value }).reason], [true, 'default'], value);
+  assert.deepEqual(w.setting(), { enabled: false, reason: 'default', capture: 'hidden', captureReason: 'default' });
+  assert.deepEqual(w.setting({ SLEIGHT_HAND: '1' }, 'linux'), { enabled: false, reason: 'platform', capture: 'hidden', captureReason: 'default' });
+  for (const value of ['', 'false', 'off', 'true', '2']) {
+    assert.deepEqual([w.setting({ SLEIGHT_HAND: value }).enabled, w.setting({ SLEIGHT_HAND: value }).reason], [false, 'default'], value);
+  }
+  assert.deepEqual([w.setting({ SLEIGHT_HAND: '1' }).enabled, w.setting({ SLEIGHT_HAND: '1' }).reason], [true, 'env']);
   w.write({ version: 1, enabled: false });
   assert.deepEqual([w.setting().enabled, w.setting().reason], [false, 'user']);
-  // The environment can only turn the hand off: SLEIGHT_HAND=1 never overrides the user's opt-out.
-  assert.deepEqual([w.setting({ SLEIGHT_HAND: '1' }).enabled, w.setting({ SLEIGHT_HAND: '1' }).reason], [false, 'user']);
+  assert.deepEqual([w.setting({ SLEIGHT_HAND: '1' }).enabled, w.setting({ SLEIGHT_HAND: '1' }).reason], [true, 'env']);
   w.write({ version: 1, enabled: true });
   assert.deepEqual([w.setting().enabled, w.setting().reason], [true, 'user']);
   assert.deepEqual([w.setting({ SLEIGHT_HAND: '0' }).enabled, w.setting({ SLEIGHT_HAND: '0' }).reason], [false, 'env']);
   w.write({ version: 1, enabled: true }, 0o644);
   assert.deepEqual([w.setting().enabled, w.setting().reason], [false, 'unsafe']);
   assert.equal(w.setting({ SLEIGHT_HAND: '0' }).reason, 'env');
+  assert.deepEqual([w.setting({ SLEIGHT_HAND: '1' }).enabled, w.setting({ SLEIGHT_HAND: '1' }).reason], [true, 'env']);
 });
 
 test('capture precedence: SLEIGHT_HAND_CAPTURE wins over the file, an unknown value keeps the panel hidden, default hidden', t => {
@@ -68,6 +69,18 @@ test('hand.json reads strictly: links, other modes and any other shape are unsaf
   const link = join(w.home, 'linked.json'); symlinkSync(target, link);
   assert.deepEqual(readHandConfig(link), { state: 'unsafe' });
   assert.deepEqual(readHandConfig(w.path, process.getuid() + 1), { state: 'unsafe' });
+});
+
+test('fresh status is off and changing capture alone preserves that default', t => {
+  const w = world(t);
+  assert.equal(w.command(['status']), 0);
+  assert.equal(w.output(), 'hand      off (the default; sleight-mcp hand on turns it on)\n');
+  assert.equal(w.command(['capture', 'visible']), 0);
+  assert.deepEqual(JSON.parse(readFileSync(w.path, 'utf8')), { version: 1, enabled: false, capture: 'visible' });
+  assert.equal(w.command(['off'], { env: { SLEIGHT_HAND: '1' } }), 0);
+  assert.match(w.output(), /SLEIGHT_HAND=1 in this environment still keeps it on/);
+  assert.deepEqual(handStatusLines(w.setting({ SLEIGHT_HAND: '1' }), true), [
+    'hand      on (SLEIGHT_HAND=1)', 'capture   visible (your screenshots and recordings show the hand)', 'host      compiled']);
 });
 
 test('hand off, on and capture write hand.json privately, each keeping the other field, and status reads it', t => {
@@ -108,8 +121,8 @@ test('hand on refuses a linked hand.json and leaves the link and its target alon
 });
 
 test('doctor and status lines name each state, and only an unsafe file or capture value is a problem', () => {
-  const on = { enabled: true, reason: 'default', capture: 'hidden', captureReason: 'default' };
-  assert.deepEqual(handDoctorLines(on, false), ['ghost hand', 'ok        hand: on (the default), sleight-mcp hand off turns it off',
+  const on = { enabled: true, reason: 'user', capture: 'hidden', captureReason: 'default' };
+  assert.deepEqual(handDoctorLines(on, false), ['ghost hand', 'ok        hand: on, sleight-mcp hand off turns it off',
     'ok        hand capture: hidden (no screenshot or recording shows the hand), the default',
     'ok        hand host: not compiled yet (it compiles in the background the first time sleight acts, and that session has no hand)']);
   assert.deepEqual(handDoctorLines({ ...on, reason: 'user', capture: 'visible', captureReason: 'user' }, true), ['ghost hand',
@@ -122,7 +135,7 @@ test('doctor and status lines name each state, and only an unsafe file or captur
   const invalid = handDoctorLines({ ...on, captureReason: 'env-invalid' }, true);
   assert.match(invalid[2], /^PROBLEM   hand capture: hidden .*neither hidden nor visible/); assert.match(invalid[3], /fix: set SLEIGHT_HAND_CAPTURE/);
   assert.deepEqual(handStatusLines({ ...on, capture: 'visible', captureReason: 'env' }, true),
-    ['hand      on (the default)', 'capture   visible (your screenshots and recordings show the hand), from SLEIGHT_HAND_CAPTURE', 'host      compiled']);
+    ['hand      on', 'capture   visible (your screenshots and recordings show the hand), from SLEIGHT_HAND_CAPTURE', 'host      compiled']);
   assert.deepEqual(handStatusLines({ ...on, enabled: false, reason: 'platform' }, false), ['hand      off (macOS only)']);
 });
 
@@ -132,6 +145,6 @@ test('doctor prints the ghost hand section after turbo, read-only', async t => {
   const code = await doctor({ env: { CODEX_HOME: '/no-such-sleight-home', SLEIGHT_CHATGPT_APP: '/no-such-ChatGPT.app' }, log: x => lines.push(x),
     turbo: async () => ['turbo (direct browser path)'], hand: async () => handDoctorLines(w.setting(), false) });
   assert.equal(code, 1);
-  assert.deepEqual(lines.slice(0, 3), ['turbo (direct browser path)', 'ghost hand', 'ok        hand: on (the default), sleight-mcp hand off turns it off']);
+  assert.deepEqual(lines.slice(0, 3), ['turbo (direct browser path)', 'ghost hand', 'ok        hand: off (the default; sleight-mcp hand on turns it on)']);
   assert.throws(() => lstatSync(w.path), /ENOENT/);
 });

@@ -233,3 +233,12 @@ test('hand dump: the panel has exactly the flags of the design, never shown, wit
   // After the fade's release the host holds no panel and no scheduled work.
   assert.equal(dump.idle, true);
 });
+
+
+test('explicit hide removes the panel before capture acknowledgement, without its idle fade', () => {
+  const hide = source.match(/func hide\(\) \{([\s\S]*?)\n    \}/)?.[1];
+  assert.match(hide, /fading\?\.cancel\(\); release\(\)/);
+  assert.doesNotMatch(hide, /fade\(after:/);
+  assert.match(source, /DispatchQueue\.global\(qos: \.utility\)/);
+  assert.match(source, /pthread_set_qos_class_self_np\(QOS_CLASS_UTILITY, 0\)/);
+});

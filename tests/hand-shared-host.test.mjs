@@ -191,3 +191,19 @@ test('the menu frame\'s Permissions rows and the status frame\'s site are admitt
     assert.equal(result.code, 65, name + ': ' + result.stderr);
   }
 });
+
+
+test('an exited worker can be replaced on the same host only after the parent resets its consent nonce', { skip }, async () => {
+  const token = 'e'.repeat(32), next = 'd'.repeat(64);
+  const reset = { hand: 'consent-reset', nonce: handNonce, token };
+  const result = await shared(build(), [[0, menu()], [3, status()], ['wait', 100], [3, reset],
+    [3, status({ nonce: next })], ['wait', 100], ['alive'], ['end', 3], ['end', 0]]);
+  assert.equal(result.code, 0, result.stderr); assert.deepEqual(result.alive, [true]);
+  assert.deepEqual(JSON.parse(result.stdout), { hand: 'consent-ready', nonce: handNonce, token });
+  assert.equal(result.consent, '');
+  const early = await shared(build(), [[3, reset], ['wait', 300], [0, menu()], ['wait', 100], [3, status({ nonce: next })], ['end', 3], ['end', 0]]);
+  assert.equal(early.code, 0, early.stderr);
+  assert.equal(JSON.parse(early.stdout).token, token, 'reset waits for the initial hand menu');
+  const forged = await shared(build(), [[0, menu()], [3, status()], ['wait', 100], [3, { ...reset, nonce: consentNonce }], ['wait', 100], ['end', 3], ['end', 0]]);
+  assert.equal(forged.code, 65); assert.equal(forged.stdout + forged.consent, '');
+});

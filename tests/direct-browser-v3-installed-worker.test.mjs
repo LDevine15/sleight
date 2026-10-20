@@ -23,7 +23,7 @@ function fixture() {
     close() { events.push('ui-close'); } };
   const pages = { endTurn: async () => { events.push('pages-end'); return { cleanedUp:true }; },
     list: async () => [] };
-  const dependencies = { schedule: () => undefined, readConfig: () => ({}), readConfigFile: () => null, readHand: () => ({ state: 'absent' }), setHand: () => assert.fail('the hand setting was written without a click'), acceptPackage: () => ({ current: () => true }),
+  const dependencies = { schedule: () => undefined, readConfig: () => ({}), readConfigFile: () => null, readHand: () => ({ state: 'on' }), setHand: () => assert.fail('the hand setting was written without a click'), acceptPackage: () => ({ current: () => true }),
     prepareHelpers: async () => ({ status:'ready', receipt:{} }), selectConnection: async () => selected,
     createUi: (_receipt, onLoss) => { ui.loss = onLoss; return ui; }, loadPlaywright: () => ({ inprocess: { playwright: { chromium: { async connectOverCDP(endpoint, options) {
       assert.equal(endpoint, 'private'); assert.equal(options.noDefaults,true);
@@ -262,7 +262,7 @@ test('a failed Turn turbo off keeps turbo connected and says so in the menu', as
 });
 test('the menu\'s Ghost Hand row writes the hand setting on the person\'s click and shows the new state, turbo untouched', async t => {
   const f = await controls(t);
-  let file = { state: 'absent' }; const writes = [];
+  let file = { state: 'on' }; const writes = [];
   f.dependencies.readHand = () => file;
   f.dependencies.setHand = async enabled => { writes.push(enabled); file = { state: enabled ? 'on' : 'off' }; };
   assert.equal(f.views[0].data.hand, 'on');
@@ -273,6 +273,18 @@ test('the menu\'s Ghost Hand row writes the hand setting on the person\'s click 
   assert.deepEqual(writes, [false, true]);
   assert.equal(f.views.at(-1).data.hand, 'on');
   assert.ok(!f.events.includes('disconnect'), 'the hand row never touches turbo');
+});
+test('a fresh install shows Ghost Hand off and the menu click saves on', async t => {
+  const f = await controls(t);
+  let file = { state: 'absent' };
+  f.dependencies.readHand = () => file;
+  f.dependencies.setHand = async enabled => { file = { state: enabled ? 'on' : 'off' }; };
+  f.refresh(); await settle();
+  assert.equal(f.views.at(-1).data.hand, 'off');
+  assert.ok(f.views.at(-1).choices.includes('hand-on'));
+  await f.choose(f.views.at(-1), 'hand-on');
+  assert.deepEqual(file, { state: 'on' });
+  assert.equal(f.views.at(-1).data.hand, 'on');
 });
 test('on the shared host the status frame carries no Ghost Hand row: the hand channel adds its own', async t => {
   const f = fixture(), views = [];

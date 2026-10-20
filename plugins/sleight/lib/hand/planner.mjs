@@ -226,14 +226,14 @@ export function exposure(p, window, windows, displays, ignorePids = []) {
 // actions with their reasons, and each frame's action index (actions), which approval beats count by.
 // targets is handTargets' answer for the same code and lines, when the caller already has it.
 export function planHandFrames({ code, lines, screenshotSize, window, elements = {}, focused, windows, displays, state,
-  target, ignorePids = [], targets } = {}) {
+  target, ignorePids = [], targets, bindings = [] } = {}) {
   const plan = targets ?? handTargets({ code, lines, target });
   if (plan.skip) return { frames: [], skipped: [{ reason: plan.skip }], actions: [] };
   const frames = [], skipped = [], actions = [];
   const scale = window && screenshotScale(screenshotSize, window.bounds);
   let t = 0, last;
   plan.actions.forEach((action, index) => {
-    if (action.element) t += GUARD_READ_MS;
+    if (action.element && !bindings.some(b => b.index === index && b.bound === true)) t += GUARD_READ_MS;
     const delayMs = t;
     t += WRITE_MS;
     const skip = reason => skipped.push({ action: index, method: action.method, reason });

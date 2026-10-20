@@ -326,6 +326,7 @@ final class NonceBook {
         bound[channel] = nonce
         return true
     }
+    func resetConsent() { lock.lock(); defer { lock.unlock() }; bound.removeValue(forKey: "consent") }
     func nonce(_ channel: String) -> String? { lock.lock(); defer { lock.unlock() }; return bound[channel] }
 }
 let nonceBook = NonceBook()
@@ -395,7 +396,27 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
     }
-    func receive(_ frame: [String: Any]) {
+    func receive(_ frame: [String: Any], resetDeadline: Date? = nil) {
+        // Parent-only reset on the consent pipe, after every byte from the exited worker.
+        // It carries the hand channel's secret, which no worker receives.
+        if shared, frame["hand"] as? String == "consent-reset" {
+            // The first worker can exit before this host has read its initial hand menu.
+            // Wait for that channel to bind itself; a reset never binds its secret on the worker's behalf.
+            let deadline = resetDeadline ?? Date().addingTimeInterval(2)
+            if nonceBook.nonce("hand") == nil && Date() < deadline {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { self.receive(frame, resetDeadline: deadline) }
+                return
+            }
+            guard Set(frame.keys) == ["hand", "nonce", "token"],
+                let incoming = frame["nonce"] as? String, incoming == nonceBook.nonce("hand"),
+                let token = frame["token"] as? String, token.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else { exit(65) }
+            modal.close(); pending.removeAll(); status = nil; nonce = nil
+            nonceBook.resetConsent(); rebuildMenu()
+            if let bytes = try? JSONSerialization.data(withJSONObject: ["hand": "consent-ready", "nonce": incoming, "token": token]) {
+                FileHandle.standardOutput.write(bytes + Data([10]))
+            }
+            return
+        }
         guard let id = frame["id"] as? String, !id.isEmpty,
             let incoming = frame["nonce"] as? String, incoming.count == 64,
             nonceBook.admit("consent", incoming),
@@ -1035,6 +1056,9 @@ final class HandHost: NSObject, NSApplicationDelegate {
     var capture = "hidden"
     var consent: ConsentHost?    // the shared host's consent channel and menu, with --consent
     var images: [String: CGImage] = [:]
+    var captureHolds: [String: Date] = [:]
+    var captureObserver: NSObjectProtocol?
+    var captureHeld: Bool { captureHolds = captureHolds.filter { $0.value > Date() }; return !captureHolds.isEmpty }
     var idle: Bool { panel == nil && hand == nil && glove == nil && dabs == nil && pending.isEmpty && fading == nil }
 
     func image(_ state: HandState) -> CGImage? {
@@ -1046,7 +1070,21 @@ final class HandHost: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let demo = demo { play(demo); return }
         consent?.applicationDidFinishLaunching(notification)
-        DispatchQueue.global().async { self.read() }
+        // Only suppresses artwork. No notification can answer a consent card or change a setting.
+        let name = "com.sleight.hand.capture.\(ProcessInfo.processInfo.processIdentifier)"
+        captureObserver = DistributedNotificationCenter.default().addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] note in
+            guard let self = self, let object = note.object as? String else { return }
+            let parts = object.split(separator: ":")
+            guard parts.count == 2, String(parts[1]).range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else { return }
+            let token = String(parts[1])
+            if parts[0] == "begin" {
+                _ = self.captureHeld
+                guard self.captureHolds.count < 32 || self.captureHolds[token] != nil else { return }
+                self.captureHolds[token] = Date().addingTimeInterval(30); self.hide()
+                DistributedNotificationCenter.default().postNotificationName(Notification.Name(name + ".ack"), object: token, userInfo: nil, deliverImmediately: true)
+            } else if parts[0] == "end" { self.captureHolds.removeValue(forKey: token) }
+        }
+        DispatchQueue.global(qos: .utility).async { self.read() }
     }
     // Validation, the nonce binding and the seq order run on this reader thread in frame order. Any bad frame ends the host.
     func read() {
@@ -1093,18 +1131,18 @@ final class HandHost: NSObject, NSApplicationDelegate {
     }
     // A frame plays after its delay unless a hide comes first. Past 64 waiting frames, new ones are dropped.
     func schedule(_ act: HandAct) {
-        guard pending.count < 64 else { return }
+        guard !captureHeld, pending.count < 64 else { return }
         let id = next; next += 1
         let item = DispatchWorkItem { [weak self] in
             self?.pending[id] = nil
-            if let bounds = handWindowBounds(act.windowId, pid: act.pid) { self?.draw(act, clip: bounds) }
+            if self?.captureHeld == false, let bounds = handWindowBounds(act.windowId, pid: act.pid) { self?.draw(act, clip: bounds) }
         }
         pending[id] = item
         DispatchQueue.main.asyncAfter(deadline: .now() + act.delay, execute: item)
     }
     func hide() {
         pending.values.forEach { $0.cancel() }; pending.removeAll()
-        if panel != nil { fade(after: 0) }
+        fading?.cancel(); release()
     }
     // A frame during the hold cancels the fade and glides on from where the hand is.
     func draw(_ act: HandAct, clip: CGRect) {
