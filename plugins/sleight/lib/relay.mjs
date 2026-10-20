@@ -120,7 +120,7 @@ import { leanCallDescription } from './lean-calls.mjs';
 import { initializationAdvice } from './initialization-guidance.mjs';
 import { syntaxErrorHint, syntaxOrigin } from './syntax-errors.mjs';
 import { compactJsDescription, engineJsVariant } from './tool-description.mjs';
-import { createLightReturn, lightReturnCode } from './light-return.mjs';
+import { createLightReturn, createCloseRead, lightReturnCode } from './light-return.mjs';
 import { hostLabel } from './host-label.mjs';
 import { TURN_START, TURN_START_TOOL, codexCallTurn, codexTurnClient, codexTurnFrame } from './codex-turn.mjs';
 import { rootWindowId, popupWindows } from './popup-window.mjs';
@@ -1078,6 +1078,8 @@ export function createRelay({
   const elicitations = new Map(); // our elicitation id -> resolve
   const lightReturn = guardLightReturn && windowIdentity && inputLease?.directory
     ? createLightReturn({ directory: inputLease.directory, observe: windowIdentity }) : undefined;
+  const closeRead = closeReadSkip && windowIdentity && inputLease?.directory
+    ? createCloseRead({ directory: inputLease.directory, observe: windowIdentity }) : undefined;
   const promptFailures = new Map(); // call id -> native panel failure, distinct from a user decline
   const running = new Set(); // ids of engine calls waiting for a result
   const nativeChecked = new Map(); // call id -> its verified native admission, when available
@@ -1830,6 +1832,7 @@ export function createRelay({
     hand?.result(id, true);
     callDetails.delete(id);
     lightReturn?.end(id);
+    closeRead?.end(id);
     const call = leaseCalls.get(id);
     if (call) {
       if (call.key && !leaseFault && !disposed) {
@@ -3879,6 +3882,10 @@ export function createRelay({
             // A unique file window may have no stored identity baseline. Its current
             // admission still supplies DP1's leased process and window for this call.
             const admitted = closeReadSkip && target === leaseWindow && nativeChecked.get(msg.id);
+            const closeWindow = admitted ? { ...target, nativeIdentity: admitted } : target;
+            const close = closeRead && closeWindow?.nativeIdentity &&
+              /\.\s*pressKey\s*\(\s*(['"`])(?:super|cmd|command|meta)\+(?:shift\+w|w|q)\1\s*\)/i.test(originalCode)
+              ? closeRead.begin(msg.id, closeWindow) : undefined;
             msg.params.arguments.code = guardedCode(filteredCode, menuBaseline ?? (admitted ? { ...target, nativeIdentity: admitted } : target), reason,
               inputLease ? inputLease.grant(leaseCalls.get(msg.id)?.key) : undefined,
               { ...setup, dp1: closeReadSkip, guardStopMark: stopMark, resultMark: typedTarget ? filterMark : undefined, ...(outcomeMark ? { outcomeMark } : {}), timing: guardTiming, careful: careful || documentMode || !!menuBaseline, fileOnly: changeReview && !documentMode, cancelOnly: changeReview && !documentMode && safe,
@@ -3890,6 +3897,7 @@ export function createRelay({
                 lastTree: lastTree && lastTree.seq + 1 === callSeqs.get(msg.id) && sameWindow(lastTree.window, target) ? lastTree.text : undefined,
                 actions: guardActions(originalCode),
                 ...(light ? { lightReturn: light } : {}),
+                ...(close ? { closeRead: { path: close.path } } : {}),
                 // The lines Claude last saw for the numbers it acts on, so the first action stops when
                 // the window renumbered between Claude's read and this call.
                 seenLines, seenParents: compactor.seenParents(seenWindow, numbers), literals: numbers, literalOrder: literalElements(originalCode),
@@ -5170,6 +5178,7 @@ export function createRelay({
     for (const resolve of elicitations.values()) resolve({ result: { action: 'cancel' } });
     elicitations.clear();
     lightReturn?.dispose();
+    closeRead?.dispose();
     paymentCard?.close?.();
     promptFailures.clear();
     flowRules?.dispose();

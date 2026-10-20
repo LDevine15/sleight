@@ -28,12 +28,16 @@ function inspect(request, numbers, focused = 1, cg = false, events = [], setup =
   const windows = numbers.map((AXWindowNumber, i) => ({ AXTitle: 'Untitled', AXDocument: null, AXWindowNumber,
     AXPosition: { x: i * 400, y: 20 }, AXSize: { width: 300, height: 200 } }));
   const app = { AXWindows: list(windows), AXFocusedWindow: windows[focused] };
-  setup(app, windows, list);
+  const running = { processIdentifier: 123, bundleIdentifier: target.appId, terminated: false,
+    launchDate: { timeIntervalSince1970: 1 }, isNil: () => false };
+  const runtime = { running, apps: [running], trusted: true, timeoutError: 0 };
+  setup(app, windows, list, runtime);
   const $ = value => value;
-  Object.assign($, { NSUUID: { UUID: { UUIDString: 'epoch' } }, AXIsProcessTrusted: () => true,
-    NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list([{ processIdentifier: 123, launchDate: { timeIntervalSince1970: 1 } }]) },
-    AXUIElementCreateApplication: () => app, AXUIElementSetMessagingTimeout: () => 0,
-    AXUIElementCopyAttributeValue: (element, name, value) => { events.push('ax'); if (element.missing?.includes(name)) return -25212; value[0] = element[name] ?? null; return 0; },
+  Object.assign($, { NSUUID: { UUID: { UUIDString: 'epoch' } }, AXIsProcessTrusted: () => runtime.trusted,
+    NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => list(runtime.apps),
+      runningApplicationWithProcessIdentifier: pid => runtime.apps.find(item => item.processIdentifier === pid) },
+    AXUIElementCreateApplication: () => app, AXUIElementSetMessagingTimeout: () => runtime.timeoutError,
+    AXUIElementCopyAttributeValue: (element, name, value) => { events.push(name); runtime.onRead?.(name); if (element.missing?.includes(name)) return -25212; value[0] = element[name] ?? null; return 0; },
     CFEqual: (a, b) => a === b, AXValueGetValue: (value, _type, bytes) => { bytes.value = value; return !!value; },
     NSMutableData: { dataWithLength: () => { const bytes = {}; return { bytes, mutableBytes: bytes }; } },
     NSValue: { valueWithBytesObjCType: bytes => ({ pointValue: bytes.value, sizeValue: bytes.value }) },
@@ -111,4 +115,66 @@ test('the light check after Return gets sheets and the focused element only when
   }
   assert.equal(focusOf(request, (app, windows) => { app.AXFocusedUIElement = { AXRole: 'AXComboBox', AXWindow: windows[0],
     AXParent: { AXRole: 'AXToolbar', AXParent: windows[0] } }; windows[0].AXParent = { AXRole: 'AXWebArea' }; }).inPage, false);
+});
+
+// DPh: the smoke's AppInfo has neither pid nor windows. The native proof must
+// select the leased process and inspect metadata without reading document fields.
+const closeRequest = { appId: target.appId, closeCount: true, nativeIdentity: { pid: 123, processStart: 1 } };
+test('DPh counts AXWindows on the leased running pid without reading titles or documents', () => {
+  const events = [];
+  const reply = inspect(closeRequest, [], 0, false, events, (app, windows, list, runtime) => {
+    app.AXChildren = list([{ AXRole: 'AXMenuBar', AXChildren: list([]) }]);
+    runtime.apps.push({ ...runtime.running, processIdentifier: 456 });
+  });
+  assert.equal(reply.status, 'ok');
+  assert.equal(reply.pid, 123);
+  assert.equal(reply.processStart, 1);
+  assert.equal(reply.running, true);
+  assert.equal(reply.windowCount, 0);
+  assert.equal(reply.modalCount, 0);
+  assert.ok(events.includes('AXWindows'));
+  assert.ok(!events.some(name => /Title|Document|Value|Description/.test(name)), events.join(','));
+});
+test('DPh reports remaining windows and sheet or dialog descendants', () => {
+  assert.equal(inspect(closeRequest, [11], 0).windowCount, 1);
+  for (const node of [{ AXRole: 'AXSheet' }, { AXRole: 'AXWindow', AXSubrole: 'AXDialog' },
+    { AXRole: 'AXWindow', AXSubrole: 'AXSystemDialog' }, { AXRole: 'AXWindow', AXModal: true }]) {
+    const reply = inspect(closeRequest, [], 0, false, [], (app, windows, list) => {
+      app.AXChildren = list([{ AXRole: 'AXGroup', AXChildren: list([node]) }]);
+    });
+    assert.equal(reply.windowCount, 0);
+    assert.equal(reply.modalCount, 1, JSON.stringify(node));
+  }
+});
+test('DPh keeps native uncertainty for missing windows, restarted processes and incomplete children', () => {
+  const cases = [
+    (app, windows, list, runtime) => { runtime.running.terminated = true; },
+    (app, windows, list, runtime) => { runtime.trusted = false; },
+    (app, windows, list, runtime) => { runtime.timeoutError = -25205; },
+    (app, windows, list, runtime) => { runtime.onRead = () => { runtime.running.terminated = true; }; },
+    (app, windows, list) => { app.AXChildren = list([{ AXRole: 'AXWindow', AXSubrole: 'AXStandardWindow' }]); },
+    (app, windows, list) => {
+      let node = { AXRole: 'AXGroup' };
+      for (let i = 0; i < 10; i++) node = { AXRole: 'AXGroup', AXChildren: list([node]) };
+      app.AXChildren = list([node]);
+    },
+    (app, windows, list, runtime) => { runtime.running.launchDate.timeIntervalSince1970 = 2; },
+    (app, windows, list, runtime) => { runtime.running.bundleIdentifier = 'other.app'; },
+    (app, windows, list, runtime) => { runtime.apps = []; },
+    app => { app.missing = ['AXWindows']; },
+    app => { app.AXWindows = null; },
+    app => { app.missing = ['AXChildren']; },
+    (app, windows, list) => { app.AXChildren = list(Array.from({ length: 65 }, () => ({ AXRole: 'AXGroup' }))); },
+  ];
+  for (const setup of cases) assert.notEqual(inspect(closeRequest, [], 0, false, [], setup).status, 'ok');
+  assert.notEqual(inspect({ ...closeRequest, nativeIdentity: { pid: 123 } }, [], 0).status, 'ok');
+});
+
+test('DPh does not traverse menu contents when a windowless app exposes its menu bar', () => {
+  const reply = inspect(closeRequest, [], 0, false, [], (app, windows, list) => {
+    app.AXChildren = list([{ AXRole: 'AXMenuBar', AXChildren: list(Array.from({ length: 65 }, () => ({ AXRole: 'AXMenuBarItem' }))) }]);
+  });
+  assert.equal(reply.status, 'ok');
+  assert.equal(reply.windowCount, 0);
+  assert.equal(reply.modalCount, 0);
 });

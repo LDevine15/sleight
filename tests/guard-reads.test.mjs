@@ -4,7 +4,7 @@ import { createRelay } from '../plugins/sleight/lib/relay.mjs';
 import { InputLease } from '../plugins/sleight/lib/input-lease.mjs';
 import assert from 'node:assert/strict';
 import { runInNewContext, constants as vmConstants } from 'node:vm';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { removeTemp, trackTemp } from '../scripts/temp-leftovers.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -60,174 +60,140 @@ function fixture({ current = () => tree(), action = () => {}, screenshotState, s
   return { run, raw, calls, output, context };
 }
 
-const closeTarget = { ...expected, appId: 'fixture.app', nativeIdentity: { pid: 123 } };
+const closeTarget = { ...expected, appId: 'fixture.app', nativeIdentity: { pid: 123, processStart: 1 } };
 const closeOptions = { dp1: true, guardStopMark: 'private-close-mark' };
+const nativeClosed = { status: 'ok', appId: 'fixture.app', pid: 123, processStart: 1,
+  running: true, windowCount: 0, modalCount: 0 };
+// Recorded engine AppInfo shape from sleight-arch's 25.3 s passing smoke.
+const recordedApp = { displayName: 'TextEdit', id: 'com.apple.TextEdit', isRunning: true };
+function closeFixture({ sample = nativeClosed, action = () => {}, ...options } = {}) {
+  const path = join(leaseDir, `close-${Math.random()}.obs`);
+  const f = fixture({ ...options, action: async (...args) => {
+    await action(...args);
+    // Simulate a native observation that starts after pressKey has completed.
+    setTimeout(() => {
+      const start = Date.now();
+      writeFileSync(path + '.tmp', JSON.stringify({ observations: [{ start, end: start,
+        ...(typeof sample === 'function' ? sample() : sample) }] }));
+      renameSync(path + '.tmp', path);
+    }, 5);
+  } });
+  const run = f.run;
+  f.context.cua.listApps = async () => [recordedApp];
+  f.run = (code, options = closeOptions, target = closeTarget) => {
+    writeFileSync(path, JSON.stringify({ observations: [] }));
+    return run(code, { closeRead: { path }, ...options }, target);
+  };
+  return f;
+}
+const recordedClose = 'let app = __sleightOpenedApp2;\nawait app.pressKey("super+w");\n' +
+  'const s = await app.getAXStateAndScreenshot();\nnodeRepl.write(s.state.split("\\n").slice(0, 6).join("\\n"));';
 
-test('DP1 skips only the tail read after an inventory-confirmed last-window close', async () => {
+test('DP1 uses native zero counts despite the recorded inventory lacking pid and windows', async () => {
   for (const key of ['super+w', 'cmd+shift+w', 'command+q']) {
-    let closed = false, inventories = 0;
-    const f = fixture({ action: () => { closed = true; }, current: () => {
-      if (closed) throw Error('noWindowsAvailable');
-      return tree();
-    } });
-    f.context.cua.listApps = async options => {
-      inventories++;
-      assert.equal(options.emit, false);
-      return [{ id: 'fixture.app', pid: 123, windows: [] }];
-    };
-    await f.run(`await app.pressKey(${JSON.stringify(key)});`, closeOptions, closeTarget);
-    assert.equal(inventories, 1);
-    assert.equal(f.calls.filter(c => c[0] === 'read').length, 1, 'before-action read stays');
+    const f = closeFixture();
+    f.context.cua.listApps = async () => { throw Error('DP1 must not depend on engine inventory'); };
+    await f.run(`await app.pressKey(${JSON.stringify(key)});`);
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 1);
+    const event = JSON.parse(f.output.find(text => text.startsWith('[sleight:dp1]')).slice(13));
+    assert.equal(event.decision, 'skipped-read');
+    assert.equal(event.windowCount, 0);
+    assert.equal(event.modalCount, 0);
+    assert.equal(event.match, 'native-ax+leased-pid');
     assert.ok(f.output.some(text => text.includes('private-close-mark:closed')));
   }
 });
 
-test('DP1 keeps the tail read for remaining windows, sheets, unknown inventory and every other ending', async () => {
-  const cases = [
-    { apps: [{ id: 'fixture.app', pid: 123, windows: [{ title: 'Other' }] }] },
-    { apps: [{ id: 'fixture.app', pid: 123, windows: [{ title: 'Save', role: 'sheet' }] }] },
-    { apps: [{ id: 'fixture.app', pid: 123 }] },
-    { apps: [{ id: 'other.app', pid: 123, displayName: expected.app, windows: [] }] },
-    { apps: [{ id: 'fixture.app', pid: 123, windows: [] }, { id: 'fixture.app', pid: 123, windows: [] }] },
-    { apps: [{ id: 'fixture.app', windows: [] }] },
-    { apps: [{ id: 'fixture.app', pid: 456, windows: [] }] },
-    { apps: null }, { error: true }, { noTimers: true },
+test('DP1 retains reads for native uncertainty, remaining windows and modal children', async () => {
+  for (const sample of [{ ...nativeClosed, windowCount: 1 }, { ...nativeClosed, modalCount: 1 },
+    { ...nativeClosed, windowCount: undefined }, { ...nativeClosed, modalCount: undefined },
+    { ...nativeClosed, windowCount: -1 }, { ...nativeClosed, windowCount: '0' },
+    { ...nativeClosed, pid: 456 }, { ...nativeClosed, processStart: 2 },
+    { ...nativeClosed, appId: 'other.app' }, { ...nativeClosed, running: false },
+    { status: 'unknown' }, { status: 'denied' }]) {
+    const f = closeFixture({ sample });
+    await f.run('await app.pressKey("super+w");');
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 2, JSON.stringify(sample));
+    assert.ok(!f.output.some(text => text.includes('private-close-mark:closed')));
+  }
+});
+
+test('DP1 preserves action, private mark and opt-in checks in fresh and cached guards', async () => {
+  for (const cached of [false, true]) for (const c of [
+    { options: { dp1: false } }, { options: { guardStopMark: undefined } },
+    { options: { closeRead: undefined } }, { noTimers: true }, { target: expected },
+    { target: { ...closeTarget, nativeIdentity: { pid: 123 } } },
+    { target: { ...closeTarget, appId: undefined } },
     { key: 'super+s' }, { key: 'ctrl+w' }, { key: 'super+alt+w' },
     { code: 'await app.pressKey("super+w"); await app.typeText("x");' },
-    { code: 'await app.pressKey("super+w"); try { await app.click(1); } catch {}', fail: true },
     { code: 'try { await app.pressKey("super+w"); } catch {}', fail: true },
-    { options: { dp1: false } }, { target: expected },
-    { target: { ...expected, appId: 'fixture.app' } },
-  ];
-  for (const c of cases) {
-    const f = fixture({ action: name => { if (c.fail && (name === 'click' || !c.code.includes('app.click'))) throw Error('failed'); } });
+  ]) {
+    const f = closeFixture({ action: (name, args) => { if (c.fail && args[0] === 'super+w') throw Error('failed'); } });
+    if (cached) await f.run('await app.pressKey("super+s");');
     if (c.noTimers) f.context.clearTimeout = undefined;
-    let inventories = 0;
-    f.context.cua.listApps = async () => { inventories++; if (c.error) throw Error('inventory unavailable'); return c.apps === undefined ? [{ id: 'fixture.app', pid: 123, windows: [] }] : c.apps; };
-    await f.run(c.code ?? `await app.pressKey(${JSON.stringify(c.key ?? 'super+w')});`, { ...closeOptions, ...c.options }, c.target ?? closeTarget);
+    f.calls.length = 0; f.output.length = 0;
+    await f.run(c.code ?? `await app.pressKey(${JSON.stringify(c.key ?? 'super+w')});`,
+      { ...closeOptions, reuseSetup: cached, ...c.options }, c.target ?? closeTarget);
     assert.ok(f.calls.filter(call => call[0] === 'read').length >= 2, JSON.stringify(c));
     assert.ok(!f.output.some(text => text.includes('private-close-mark:closed')), JSON.stringify(c));
-    if (c.options?.dp1 === false) assert.equal(inventories, 0);
   }
 });
 
-test('DP1 retains caller reads and falls back after the inventory budget expires', async () => {
-  const f = fixture();
-  let inventories = 0;
-  f.context.cua.listApps = async () => { inventories++; return [{ id: 'fixture.app', pid: 123, windows: [{ id: 44 }] }]; };
-  await f.run('await app.pressKey("super+w"); await app.getAXState();', closeOptions, closeTarget);
-  assert.equal(inventories, 1, 'the explicit final read checks inventory and stays with a remaining window');
-  f.context.cua.listApps = async () => { inventories++; return new Promise(() => {}); };
-  inventories = 0;
-  f.context.setTimeout = (fn, ms) => { assert.equal(ms, 1000); return setTimeout(fn, 0); };
-  f.calls.length = 0;
-  await f.run('await app.pressKey("super+w");', closeOptions, closeTarget);
-  assert.equal(inventories, 1);
-  assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
-});
-
-// transcript.jsonl:50, evidence-dpb2/sleight-textedit-drag-1. The explicit
-// combined read satisfied the tail, so the old DP1 path never ran.
-const recordedClose = 'let app = __sleightOpenedApp2;\nawait app.pressKey("super+w");\n' +
-  'const s = await app.getAXStateAndScreenshot();\nnodeRepl.write(s.state.split("\\n").slice(0, 6).join("\\n"));';
-
-test('DP1 checks the recorded close plus screenshot before the caller read, fresh and cached', async () => {
-  for (const cached of [false, true]) for (const remaining of [false, true]) {
-    let closed = false, inventories = 0;
-    const target = { ...closeTarget, nativeIdentity: { pid: 123, windowNumber: 44 } };
-    const f = fixture({ action: () => { closed = true; }, current: () => {
-      if (closed && !remaining) throw Error('noWindowsAvailable');
-      return closed ? tree({ ...expected, title: 'Untitled', url: undefined }) : tree();
-    } });
-    await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("fixture.app");', closeOptions, target);
-    f.output.length = 0; f.calls.length = 0;
-    f.context.cua.listApps = async () => {
-      inventories++;
-      return [{ id: 'fixture.app', windows: remaining ? [{ id: 55, title: 'Untitled' }] : [] }];
-    };
-    const run = f.run(recordedClose, { ...closeOptions, reuseSetup: cached }, target);
-    if (remaining) await run;
-    else await assert.rejects(run, /\[sleight:closed-read\]/);
-    assert.equal(inventories, 1);
-    assert.equal(f.calls.filter(c => c[0] === 'both').length, remaining ? 1 : 0);
-    assert.equal(f.calls.filter(c => c[0] === 'pressKey').length, 1);
-    assert.equal(f.calls.filter(c => c[0] === 'read').length, 1, 'before-action read stays');
-    const events = f.output.filter(text => text.startsWith('[sleight:dp1]')).map(text => JSON.parse(text.slice('[sleight:dp1]'.length)));
-    assert.equal(events.length, 1);
-    assert.equal(events[0].source, 'caller-read');
-    assert.equal(events[0].decision, remaining ? 'kept-read' : 'skipped-read');
-    assert.equal(events[0].reason, remaining ? 'windows non-empty' : 'no windows');
-    assert.ok(!JSON.stringify(events).includes('Untitled'));
-    assert.equal(f.output.some(text => text.includes('private-close-mark:closed-read')), !remaining);
-    if (remaining) assert.ok(f.output.some(text => text.includes('Untitled')));
-  }
-});
-
-test('DP1 covers each caller observation after close and keeps reads without conclusive inventory', async () => {
-  for (const method of ['getAXState', 'getAXStateAndScreenshot', 'getScreenshot']) {
-    for (const mode of ['closed', 'unknown', 'timeout', 'disabled', 'no-mark', 'other-handle']) {
-      const f = fixture();
-      await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("fixture.app");', closeOptions, closeTarget);
-      f.output.length = 0; f.calls.length = 0;
-      if (mode === 'other-handle') f.context.__sleightDocumentGuard.getApp = async () => ({ ...f.raw });
-      let inventories = 0;
-      f.context.cua.listApps = async () => {
-        inventories++;
-        if (mode === 'unknown') throw Error('inventory unavailable');
-        if (mode === 'timeout') return new Promise(() => {});
-        return [{ id: 'fixture.app', pid: 123, windows: [] }];
-      };
-      f.context.setTimeout = fn => setTimeout(fn, 0);
-      const options = { ...closeOptions, reuseSetup: true, ...(mode === 'disabled' ? { dp1: false } : {}),
-        ...(mode === 'no-mark' ? { guardStopMark: undefined } : {}) };
-      const code = `await app.pressKey("super+w"); ${mode === 'other-handle' ? 'const other = await cua.getApp("other.app"); await other' : 'await app'}.${method}();`;
-      const run = f.run(code, options, closeTarget);
-      if (mode === 'closed') await assert.rejects(run, /\[sleight:closed-read\]/);
-      else await run;
-      const callerReads = f.calls.filter(c => ['both', 'screenshot'].includes(c[0]) || c[0] === 'read').length;
-      assert.ok(callerReads >= (mode === 'closed' ? 1 : 2), method + ':' + mode);
-      if (mode === 'disabled' || mode === 'other-handle') assert.equal(inventories, 0);
-      assert.equal(f.output.some(text => text.includes('private-close-mark:closed-read')), mode === 'closed');
+test('DP1 covers the recorded caller observations without inventing a state or screenshot', async () => {
+  for (const cached of [false, true]) for (const method of ['getAXState', 'getAXStateAndScreenshot', 'getScreenshot']) {
+    for (const remaining of [false, true]) {
+      const f = closeFixture({ sample: { ...nativeClosed, windowCount: remaining ? 1 : 0 } });
+      await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("fixture.app");');
+      f.calls.length = 0; f.output.length = 0;
+      const code = method === 'getAXStateAndScreenshot' ? recordedClose : `await app.pressKey("super+w"); await app.${method}();`;
+      const run = f.run(code, { ...closeOptions, reuseSetup: cached });
+      if (remaining) await run;
+      else await assert.rejects(run, /\[sleight:closed-read\]/, JSON.stringify({ cached, method, output: f.output }));
+      assert.equal(f.calls.filter(c => c[0] === 'pressKey').length, 1);
+      assert.equal(f.calls.filter(c => c[0] === 'both' || c[0] === 'screenshot').length,
+        remaining && method !== 'getAXState' ? 1 : 0);
+      const events = f.output.filter(text => text.startsWith('[sleight:dp1]')).map(text => JSON.parse(text.slice(13)));
+      assert.equal(events[0].source, 'caller-read');
+      assert.equal(events[0].decision, remaining ? 'kept-read' : 'skipped-read');
+      assert.equal(events[0].windowCount, remaining ? 1 : 0);
+      assert.equal(f.output.some(text => text.includes('private-close-mark:closed-read')), !remaining);
     }
   }
 });
 
-test('DP1 retains a Save sheet after the recorded close and rejects an inventory overtaken by input', async () => {
+test('DP1 keeps a read when the observation budget expires or input overtakes the sample', async () => {
   const f = fixture();
-  await f.run('globalThis.__sleightOpenedApp2 = await cua.getApp("fixture.app");', closeOptions, closeTarget);
-  f.context.cua.listApps = async () => [{ id: 'fixture.app', pid: 123, windows: [{ id: 44, title: 'Save', role: 'sheet' }] }];
-  await f.run(recordedClose, { ...closeOptions, reuseSetup: true }, closeTarget);
-  assert.equal(f.calls.filter(c => c[0] === 'both').length, 1);
-  assert.ok(f.output.some(text => text.includes('windows non-empty')));
-  let finish;
-  f.output.length = 0; f.calls.length = 0;
-  f.context.cua.listApps = () => new Promise(resolve => { finish = resolve; });
-  const run = f.run('await app.pressKey("super+w"); const observation = app.getAXStateAndScreenshot(); await app.typeText("x"); await observation;',
-    { ...closeOptions, reuseSetup: true }, closeTarget);
-  await new Promise(resolve => setImmediate(resolve));
-  assert.ok(f.calls.some(c => c[0] === 'typeText'));
-  finish([{ id: 'fixture.app', pid: 123, windows: [] }]);
-  await run;
-  assert.ok(f.output.some(text => text.includes('"reason":"action changed"')));
-  assert.equal(f.calls.filter(c => c[0] === 'both').length, 1);
-  assert.ok(!f.output.some(text => text.includes('private-close-mark:closed')));
+  const path = join(leaseDir, 'stale-close.obs');
+  writeFileSync(path, JSON.stringify({ observations: [{ start: 1, end: 2, ...nativeClosed }] }));
+  let largestWait = 0;
+  f.context.setTimeout = (fn, ms) => { largestWait = Math.max(largestWait, ms); return setTimeout(fn, ms); };
+  const start = Date.now();
+  await f.run('await app.pressKey("super+w");', { ...closeOptions, closeRead: { path } }, closeTarget);
+  assert.ok(Date.now() - start < 1000);
+  assert.ok(largestWait <= 200);
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
+  assert.ok(f.output.some(text => text.includes('"reason":"timeout"')));
+  const race = closeFixture();
+  await race.run('await app.pressKey("super+w"); const observation = app.getAXStateAndScreenshot(); await app.typeText("x"); await observation;');
+  assert.ok(race.output.some(text => text.includes('"reason":"action changed"')));
+  assert.equal(race.calls.filter(c => c[0] === 'both').length, 1);
 });
 
 test('DP1 recorded close runs through relay wrapping, emits its call id and returns the close notice', async () => {
-  for (const remaining of [false, true]) {
-    let closed = false;
+  for (const [remaining, enabled] of [[false, true], [true, true], [true, false]]) {
+    let closed = false, nativeReads = 0;
     const f = fixture({ action: () => { closed = true; }, current: () => {
       if (closed && !remaining) throw Error('noWindowsAvailable');
       return closed ? tree({ ...expected, title: 'Untitled', url: undefined }) : tree();
     } });
-    f.context.cua.listApps = async () => [{ id: 'fixture.app', windows: remaining ? [{ id: 55, title: 'Untitled' }] : [] }];
+    f.context.cua.listApps = async () => [{ ...recordedApp, id: 'fixture.app' }];
     const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
     const sent = [], replies = [], traces = [];
     serverIn.on('data', data => sent.push(JSON.parse(data)));
     clientOut.on('data', data => replies.push(JSON.parse(data)));
-    const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
+    const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false, closeReadSkip: enabled,
       inputLease: new InputLease({ directory: leaseDir, holder: 'recorded-close' }),
-      windowIdentity: async window => ({ ...window, status: 'ok', epoch: 'fixture', window: 1,
+      windowIdentity: async window => window.closeCount ? (nativeReads++, { ...nativeClosed, windowCount: remaining ? 1 : 0 }) : ({ ...window, status: 'ok', epoch: 'fixture', window: 1,
         windowNumber: 44, pid: 123, processStart: 1, matches: 1 }),
       trace: (direction, msg) => traces.push({ direction, msg }) });
     const call = (id, code) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
@@ -254,10 +220,14 @@ test('DP1 recorded close runs through relay wrapping, emits its call id and retu
         content: [...f.output.map(text => ({ type: 'text', text })), ...(error ? [{ type: 'text', text: error.message }] : [])],
         _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } }) + '\n');
       const decisions = traces.filter(t => t.direction === 'dp1-decision').map(t => t.msg);
-      assert.equal(decisions.length, 1, JSON.stringify({ error: error?.message, output: f.output }));
-      assert.equal(decisions[0].id, 8);
-      assert.equal(decisions[0].source, 'caller-read');
-      assert.equal(decisions[0].reason, remaining ? 'windows non-empty' : 'no windows');
+      assert.equal(decisions.length, enabled ? 1 : 0, JSON.stringify({ error: error?.message, output: f.output }));
+      if (enabled) {
+        assert.equal(decisions[0].id, 8);
+        assert.equal(decisions[0].source, 'caller-read');
+        assert.equal(decisions[0].reason, remaining ? 'windows non-empty' : 'no windows');
+        assert.equal(decisions[0].windowCount, remaining ? 1 : 0);
+        assert.ok(nativeReads > 0);
+      } else assert.equal(nativeReads, 0);
       const reply = replies.find(msg => msg.id === 8);
       assert.equal(reply.result.isError, false);
       const text = JSON.stringify(reply.result.content);
@@ -272,77 +242,6 @@ test('DP1 recorded close runs through relay wrapping, emits its call id and retu
         assert.equal(replies.find(msg => msg.id === 9).result.isError, true);
       }
     } finally { await relay.dispose(); }
-  }
-});
-
-test('DP1 keeps reads without a private mark or explicit opt-in, including cached setup', async () => {
-  for (const cached of [false, true]) for (const options of [{}, { dp1: true }, { guardStopMark: 'private-close-mark' }]) {
-    const f = fixture();
-    let inventories = 0;
-    f.context.cua.listApps = async () => { inventories++; return [{ id: 'fixture.app', pid: 123, windows: [] }]; };
-    // A cached native setup must also refuse the skip when a later call has no mark.
-    if (cached) await f.run('await app.pressKey("super+w");', closeOptions, closeTarget);
-    f.calls.length = 0; f.output.length = 0; inventories = 0;
-    await f.run('await app.pressKey("super+w");', { ...options, reuseSetup: cached }, closeTarget);
-    assert.equal(f.calls.filter(c => c[0] === 'read').length, 2, JSON.stringify(options));
-    assert.equal(inventories, 0);
-    assert.ok(!f.output.some(text => /last-window-closed|private-close-mark:closed/.test(text)));
-  }
-});
-
-test('DP1 selects the leased pid when another instance of the bundle still has windows', async () => {
-  const f = fixture();
-  f.context.cua.listApps = async () => [{ id: 'fixture.app', pid: 456, windows: [{ title: 'Other instance' }] },
-    { id: 'fixture.app', pid: 123, windows: [] }];
-  await f.run('await app.pressKey("super+w");', closeOptions, closeTarget);
-  assert.equal(f.calls.filter(c => c[0] === 'read').length, 1);
-  assert.ok(f.output.some(text => text.includes('private-close-mark:closed')));
-});
-
-test('DP1 traces each decision and uses bundle plus window absence when inventory has no pid', async () => {
-  const row = { id: 'fixture.app', displayName: 'TextEdit', isRunning: true, useCount: 3, windows: [] };
-  const cases = [
-    { row, decision: 'skipped-read', match: 'bundle-id+leased-window-absence', inventoryHasPid: false },
-    { row: { ...row, pid: 123 }, decision: 'skipped-read', match: 'bundle-id+pid', inventoryHasPid: true },
-    { row, target: closeTarget, reason: 'pid missing in the row' },
-    { row: { ...row, windows: [{ id: 44, title: 'private title', app: 'TextEdit' }] }, reason: 'windows non-empty' },
-    { row: { ...row, windows: undefined }, reason: 'windows missing' },
-    { row: { ...row, pid: 456 }, reason: 'pid mismatch' },
-    { apps: [row, row], reason: 'ambiguous rows' },
-    { apps: [], reason: 'app row missing' },
-    { options: { guardStopMark: undefined }, reason: 'no mark' },
-    { error: true, reason: 'error' },
-    { timeout: true, reason: 'timeout' },
-    { key: 'super+s', reason: 'not a close shortcut' },
-  ];
-  for (const cached of [false, true]) for (const c of cases) {
-    const f = fixture();
-    const target = { ...closeTarget, nativeIdentity: { pid: 123, windowNumber: 44 } };
-    if (cached) await f.run('await app.pressKey("super+s");', closeOptions, target);
-    f.output.length = 0; f.calls.length = 0;
-    f.context.cua.listApps = async () => {
-      if (c.error) throw Error('private title');
-      if (c.timeout) return new Promise(() => {});
-      return c.apps ?? [c.row ?? row];
-    };
-    f.context.setTimeout = (fn, ms) => { assert.equal(ms, 1000); return setTimeout(fn, 0); };
-    await f.run(`await app.pressKey(${JSON.stringify(c.key ?? 'super+w')});`,
-      { ...closeOptions, reuseSetup: cached, ...c.options }, c.target ?? target);
-    const events = f.output.filter(text => text.startsWith('[sleight:dp1]'));
-    assert.equal(events.length, 1, JSON.stringify(c));
-    const event = JSON.parse(events[0].slice('[sleight:dp1]'.length));
-    assert.equal(event.decision, c.decision ?? 'kept-read');
-    if (c.reason) assert.equal(event.reason, c.reason);
-    if (c.match) {
-      assert.equal(event.match, c.match);
-      assert.equal(event.inventoryHasPid, c.inventoryHasPid);
-      assert.equal(event.rowHasPid, c.inventoryHasPid);
-      assert.deepEqual(event.row, c.row);
-      assert.equal(event.leasedWindowAbsent, true);
-    }
-    assert.ok(!events[0].includes('private title'));
-    if (c.reason === 'windows non-empty') assert.deepEqual(event.row.windows, [{ id: 44, app: 'TextEdit' }]);
-    assert.equal(f.calls.filter(call => call[0] === 'read').length, c.decision === 'skipped-read' ? 1 : 2);
   }
 });
 

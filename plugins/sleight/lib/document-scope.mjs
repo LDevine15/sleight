@@ -383,48 +383,55 @@ export function readCode(code, options = {}) {
 }
 
 // Advisory only: all of this runs in the same mutable JS realm as Claude's code.
-async function closedLastWindow(state, cua, record) {
+async function closedLastWindow(state, record) {
   const active = state.activeApp, version = state.actionVersion;
   const previous = state.previous.get(active), action = state.lastAction;
-  const pid = state.expected?.nativeIdentity?.pid ?? state.expected?.pid;
-  const window = state.expected?.nativeIdentity?.windowNumber ?? state.expected?.windowNumber;
-  let inventory = {};
-  const decide = (reason, extra = {}, skip = false) => {
-    try { record({ decision: skip ? 'skipped-read' : 'kept-read', reason, ...inventory, ...extra }); } catch {}
+  const identity = state.expected?.nativeIdentity;
+  const pid = identity?.pid ?? state.expected?.pid, processStart = identity?.processStart;
+  let native = {};
+  const decide = (reason, skip = false) => {
+    try { record({ decision: skip ? 'skipped-read' : 'kept-read', reason, ...native,
+      ...(skip ? { match: 'native-ax+leased-pid' } : {}) }); } catch {}
     return skip;
   };
   if (!state.guardStopMark) return decide('no mark');
   if (typeof setTimeout !== 'function' || typeof clearTimeout !== 'function') return decide('timers unavailable');
   if (!Number.isSafeInteger(pid) || pid <= 0) return decide('leased pid missing');
+  if (!Number.isFinite(processStart)) return decide('leased process start missing');
   if (!state.expected?.appId) return decide('leased bundle id missing');
   if (action?.kind !== 'key' || !/^(?:super|cmd|command|meta)\+(?:shift\+w|w|q)$/i.test(action.value)) return decide('not a close shortcut');
   if (!previous?.done || state.failures?.length || previous.key !== action.value) return decide('action not completed');
-  if (state.callHeaders.get(state.activeApp)?.app !== state.expected.app) return decide('app header mismatch');
-  let timer;
+  if (state.callHeaders.get(active)?.app !== state.expected.app) return decide('app header mismatch');
+  if (!state.closeRead?.path) return decide('native observer unavailable');
+  let timer, ended = false;
   try {
-    // Inventory has a 1 s budget. An unavailable or ambiguous answer keeps the full read.
-    const timeout = {};
-    const apps = await Promise.race([cua.listApps({ emit: false }), new Promise(resolve => { timer = setTimeout(() => resolve(timeout), 1000); })]);
+    const timeout = {}, deadline = Date.now() + 200, path = state.closeRead.path;
+    const sample = async () => {
+      const fs = await import('node:fs/promises');
+      while (!ended && Date.now() < deadline) {
+        const data = JSON.parse(await fs.readFile(path, 'utf8'));
+        if (!Array.isArray(data.observations)) throw Error('Missing native samples');
+        // A sample that began before pressKey completed cannot prove its result.
+        const newest = data.observations.filter(o => typeof o?.start === 'number' && o.start > previous.done).at(-1);
+        if (newest) return newest;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      return timeout;
+    };
+    const observed = await Promise.race([sample(), new Promise(resolve => { timer = setTimeout(() => resolve(timeout), 200); })]);
     if (state.activeApp !== active || state.actionVersion !== version || state.lastAction !== action) return decide('action changed');
-    if (apps === timeout) return decide('timeout');
-    if (!Array.isArray(apps)) return decide('error');
-    inventory = { inventoryHasPid: apps.some(app => app != null && Object.hasOwn(app, 'pid')) };
-    const bundle = apps.filter(app => app?.id === state.expected.appId);
-    const matches = bundle.filter(app => app.pid === pid);
-    const row = matches.length === 1 ? matches[0] : bundle.length === 1 ? bundle[0] : undefined;
-    if (!row) return decide(bundle.length ? 'ambiguous rows' : 'app row missing');
-    inventory = { ...inventory, row, rowHasPid: Object.hasOwn(row, 'pid') };
-    if (matches.length > 1) return decide('ambiguous rows');
-    if (inventory.rowHasPid && row.pid !== pid) return decide('pid mismatch');
-    if (!Array.isArray(row.windows)) return decide('windows missing');
-    if (row.windows.length) return decide('windows non-empty');
-    // AppInfo currently omits pid. Require a unique bundle row and a known leased
-    // window number before using its absence; any remaining window keeps the read.
-    if (!inventory.rowHasPid && (bundle.length !== 1 || !Number.isSafeInteger(window) || window <= 0)) return decide('pid missing in the row');
-    return decide('no windows', { match: inventory.rowHasPid ? 'bundle-id+pid' : 'bundle-id+leased-window-absence',
-      leasedWindowAbsent: true }, true);
+    if (observed === timeout || Date.now() >= deadline) return decide('timeout');
+    const { status, appId, pid: actualPid, processStart: actualStart, running, windowCount, modalCount } = observed ?? {};
+    native = { status, pid: actualPid, processStart: actualStart, running, windowCount, modalCount };
+    if (status !== 'ok') return decide('native unavailable');
+    if (actualPid !== pid || actualStart !== processStart || appId !== state.expected.appId || running !== true) return decide('process mismatch');
+    if (!Number.isFinite(observed.end) || observed.end < observed.start || observed.end > Date.now() || Date.now() - observed.end > 200) return decide('stale native sample');
+    if (!Number.isSafeInteger(windowCount) || windowCount < 0 || !Number.isSafeInteger(modalCount) || modalCount < 0) return decide('native counts missing');
+    if (windowCount) return decide('windows non-empty');
+    if (modalCount) return decide('modal child');
+    return decide('no windows', true);
   } catch { return decide('error'); }
-  finally { clearTimeout(timer); }
+  finally { ended = true; clearTimeout(timer); }
 }
 
 export function guardedCode(code, window, reason = /* notice */ 'Document scope stopped this action: window or URL changed. Read the window and ask the user with document_scope.', lease, options = {}) {
@@ -503,7 +510,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     state.acted = false; state.startApp = state.activeApp;
     state.actionVersion ??= 0;
     state.actionIndex = 0; state.completedActions = 0; state.ran = []; state.unknown = []; state.lastAction = null; state.guardStopMark = update?.guardStopMark;
-    state.dp1 = !!update?.dp1;
+    state.dp1 = !!update?.dp1; state.closeRead = update?.closeRead;
     state.inputSent = false;
     // This call's actions and picks still running, for the read that ends the call.
     state.inflight = new Set();
@@ -557,7 +564,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     };
     ${dp1 ? `const closedLast = ${closedLastWindow.toString()}, withoutTitles = ${withoutTitles.toString()};
     const recordDP1 = event => nodeRepl.write('[sleight:dp1]' + JSON.stringify(withoutTitles(event)) + '\\n');
-    state.readAfter = async (proxy, tail) => tail && await closedLast(state, cua, recordDP1)
+    state.readAfter = async (proxy, tail) => tail && await closedLast(state, recordDP1)
       ? state.guardStopMark + ':closed'
       : timedRead(state.raws.get(proxy), 'after-call');
     // A caller's final observation can satisfy the tail or throw before it runs.
@@ -565,7 +572,7 @@ function guardSetup(update, { reuseSetup = false, acknowledge = false, prompt, o
     state.beforeRead = async proxy => {
       if (!state.dp1 || proxy !== state.activeApp || state.lastAction?.kind !== 'key' ||
           !/^(?:super|cmd|command|meta)\\+(?:shift\\+w|w|q)$/i.test(state.lastAction.value)) return;
-      if (await closedLast(state, cua, event => recordDP1({ ...event, source: 'caller-read' }))) {
+      if (await closedLast(state, event => recordDP1({ ...event, source: 'caller-read' }))) {
         nodeRepl.write(state.guardStopMark + ':closed-read\\n');
         throw new Error('[sleight:closed-read]');
       }

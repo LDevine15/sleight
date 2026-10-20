@@ -131,3 +131,32 @@ test('one app-health helper answers many probes, and a stuck probe resolves unkn
   } finally { await helper.close(); }
   assert.deepEqual(await helper.probe('TextEdit'), { status: 'unknown' }, 'closed');
 });
+
+
+test('DPh bounds native close-count requests to 200 ms without shortening ordinary identity requests', async t => {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough, Writable } = await import('node:stream');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const helper = module.createAppHealthHelper({ spawnHelper: () => {
+    const child = new EventEmitter(); child.stdout = new PassThrough();
+    child.stdin = new Writable({ write(data, encoding, done) { done(); } });
+    child.kill = () => { queueMicrotask(() => child.emit('close')); return true; };
+    return child;
+  } });
+  try {
+    let resolved = false;
+    const count = helper.windowIdentity({ appId: 'fixture.app', closeCount: true,
+      nativeIdentity: { pid: 123, processStart: 1 } }).then(result => { resolved = true; return result; });
+    t.mock.timers.tick(199); await Promise.resolve();
+    assert.equal(resolved, false);
+    t.mock.timers.tick(1);
+    assert.deepEqual(await count, { status: 'unknown' });
+    resolved = false;
+    const identity = helper.windowIdentity({ appId: 'fixture.app' }).then(result => { resolved = true; return result; });
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(200); await Promise.resolve();
+    assert.equal(resolved, false, 'normal identity retains its existing deadline');
+    await helper.close();
+    assert.deepEqual(await identity, { status: 'unknown' });
+  } finally { await helper.close(); }
+});

@@ -24,7 +24,11 @@ export const lightReturnCode = code => typeof code === 'string' && KEY.test(code
 export const LIGHT_TIMING = { waitMs: 250, gapMs: 50, freshMs: 150, windowMs: 700, deadlineMs: 600, pollMs: 10 };
 
 export function createLightReturn({ directory, observe, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
-  delayMs = 80, intervalMs = 25, timing = LIGHT_TIMING, burstMs = timing.windowMs ?? 700, keep = 8 } = {}) {
+  delayMs = 80, intervalMs = 25, timing = LIGHT_TIMING, burstMs = timing.windowMs ?? 700, keep = 8,
+  continuous = false, project = observed => {
+    const { status = 'unknown', matches, window, title, url, focus } = observed ?? {};
+    return { status, matches, window, title, url, focus };
+  } } = {}) {
   const calls = new Map();
   const write = call => {
     try {
@@ -37,13 +41,12 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
     if (call.running || call.ended) return;
     call.running = true;
     try {
-      while (!call.ended && now() < call.until) {
+      while (!call.ended && (continuous || now() < call.until)) {
         const start = now();
         let observed;
         try { observed = await observe({ ...call.window, focus: true }); } catch { observed = undefined; }
         if (call.ended) break;
-        const { status = 'unknown', matches, window, title, url, focus } = observed ?? {};
-        call.observations.push({ start, end: now(), status, matches, window, title, url, focus });
+        call.observations.push({ start, end: now(), ...project(observed) });
         if (call.observations.length > keep) call.observations.shift();
         write(call);
         const wait = intervalMs - (now() - start);
@@ -58,6 +61,7 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
       const call = { path: join(directory, `light-${randomUUID()}.obs`), window, observations: [], until: 0 };
       calls.set(id, call);
       write(call);
+      if (continuous) call.timer = setTimer(() => run(call), 0);
       return { path: call.path, app: window.app, ...timing };
     },
     // The engine asks approval before each key press, naming the app's bundle ID.
@@ -77,4 +81,14 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
     },
     dispose() { for (const id of [...calls.keys()]) this.end(id); },
   };
+}
+
+// DP1 uses the same read-only file channel for fresh metadata after a close.
+// Sampling stops with the call; a late native reply cannot recreate its file.
+export function createCloseRead({ directory, observe } = {}) {
+  return createLightReturn({ directory, observe: window => observe({ ...window, closeCount: true }),
+    continuous: true, intervalMs: 10, timing: {}, project: observed => {
+      const { status = 'unknown', appId, pid, processStart, running, windowCount, modalCount } = observed ?? {};
+      return { status, appId, pid, processStart, running, windowCount, modalCount };
+    } });
 }

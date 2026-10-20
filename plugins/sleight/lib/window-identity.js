@@ -17,6 +17,60 @@ function run(argv) {
   try {
     if (!$.AXIsProcessTrusted()) return JSON.stringify({ status: 'denied' });
     const request = JSON.parse(argv[0]);
+    // DP1 asks only for metadata on the already approved leased process. Never
+    // resolve a different instance by bundle, or read title/document attributes.
+    if (request.closeCount) {
+      const { pid, processStart } = request.nativeIdentity ?? {};
+      if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isFinite(processStart)) throw new Error('Missing leased process');
+      const current = () => {
+        const running = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+        if (!running || running.isNil() || running.terminated !== false || Number(running.processIdentifier) !== pid ||
+            ObjC.unwrap(running.bundleIdentifier) !== request.appId || Number(running.launchDate.timeIntervalSince1970) !== processStart) {
+          throw new Error('Leased process changed');
+        }
+      };
+      current();
+      const app = $.AXUIElementCreateApplication(pid), deadline = Date.now() + 200;
+      if (Number($.AXUIElementSetMessagingTimeout(app, 0.05)) !== 0) throw new Error('AX deadline unavailable');
+      const attr = (element, name, optional = false) => {
+        if (Date.now() >= deadline) throw new Error('AX deadline');
+        const value = Ref(), error = Number($.AXUIElementCopyAttributeValue(element, $(name), value));
+        if (optional && [-25205, -25212].includes(error)) return null;
+        if (error) throw new Error('AX metadata unavailable');
+        return ObjC.castRefToObject(value[0]);
+      };
+      const count = list => {
+        if (list === null || list === undefined) throw new Error('Missing AX list');
+        const n = Number(list.count);
+        if (!Number.isSafeInteger(n) || n < 0 || n > 64) throw new Error('AX list bound');
+        return n;
+      };
+      const windows = attr(app, 'AXWindows'), windowCount = count(windows);
+      let modalCount = 0, seen = 0;
+      if (windowCount === 0) {
+        const visit = (children, depth) => {
+          const n = count(children);
+          if (depth > 8 || seen + n > 64) throw new Error('AX child bound');
+          seen += n;
+          for (let i = 0; i < n; i++) {
+            const child = children.objectAtIndex(i), role = ObjC.deepUnwrap(attr(child, 'AXRole'));
+            if (typeof role !== 'string') throw new Error('Missing AX role');
+            const subrole = ObjC.deepUnwrap(attr(child, 'AXSubrole', true));
+            if (role === 'AXSheet' || role === 'AXDialog' || subrole === 'AXDialog' || subrole === 'AXSystemDialog' ||
+                ObjC.deepUnwrap(attr(child, 'AXModal', true)) === true) { modalCount++; continue; }
+            if (role === 'AXWindow') throw new Error('Window missing from AXWindows');
+            // Menu contents are separate from the app's window and modal children.
+            if (role === 'AXMenuBar' || role === 'AXMenu') continue;
+            const nested = attr(child, 'AXChildren', true);
+            if (nested !== null) visit(nested, depth + 1);
+          }
+        };
+        visit(attr(app, 'AXChildren'), 0);
+      }
+      current();
+      if (Date.now() >= deadline) throw new Error('AX deadline');
+      return JSON.stringify({ status: 'ok', appId: request.appId, pid, processStart, running: true, windowCount, modalCount });
+    }
     const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(request.appId);
     if (Number(apps.count) !== 1) throw new Error('Expected one running app');
     const running = apps.objectAtIndex(0), pid = Number(running.processIdentifier);
