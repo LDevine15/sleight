@@ -141,7 +141,7 @@ export async function quitLaunched({ snapshot, act, launched = [], dryRun = fals
 }
 
 // Compile and invoke only inside the runner's live lock, never on import or a planning dry run.
-export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}) {
+export async function beginWindowControl({ cacheDir, run = runOwned, signal, includeFloating = false } = {}) {
   const source = fileURLToPath(new URL('./pass-hygiene.swift', import.meta.url));
   const hash = createHash('sha256').update(readFileSync(source)).digest('hex').slice(0, 16);
   mkdirSync(cacheDir, { recursive: true });
@@ -165,9 +165,8 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     finally { if (!uncollected) rmSync(bank, { recursive: true, force: true }); }
   }
   const call = async request => JSON.parse(await checked(binary, [JSON.stringify(request)], { timeoutMs: 10000 }));
-  let baselineError;
   const snapshot = async () => {
-    const value = await call({ action: 'snapshot' });
+    const value = await call({ action: 'snapshot', ...(includeFloating && { includeFloating: true }) });
     if (!value || !Array.isArray(value.apps) || !Array.isArray(value.windows) || !value.apps.every(valid) ||
       !value.windows.every(window => valid(window) && Number.isSafeInteger(window.id) && window.id > 0 &&
         value.apps.some(app => processKey(app) === processKey(window)))) {
@@ -175,6 +174,12 @@ export async function beginPassHygiene({ cacheDir, run = runOwned, signal } = {}
     }
     return value;
   };
+  return { snapshot, act: call };
+}
+
+export async function beginPassHygiene(options = {}) {
+  const { snapshot, act: call } = await beginWindowControl(options);
+  let baselineError;
   // A failed baseline still returns a receipts-only handle on the error: boundary snapshots can
   // prove later launches, and finish quits only those and the leases' receipts. An uncollected
   // helper gets no handle, so no further helper runs.

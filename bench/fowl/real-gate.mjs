@@ -18,6 +18,7 @@ import { startHostMonitor, gradeHostMonitor } from './host-monitor.mjs';
 import { startGateForms } from './real-gate-sites.mjs';
 import { startRoundAllow, allowPlan } from './chrome-allow.mjs';
 import { watchCover, windowCover } from './window-cover.mjs';
+import { guardBrowserGroup } from './group-cover.mjs';
 import { gradeGateTask, browserEvidence, runErrorClass, harnessFailure, coverEvidence, coverText, withAnswerGraders, currentAnswerGraders } from './real-gate-grade.mjs';
 import { taskSupport, raceBundles, isCodexSurface, isCodexSleightSurface, runsCodexExec, sleightKind, codexModelFor } from './support.mjs';
 import { CODEX_SLEIGHT_HOME, ensureCodexSleightHome, writeCodexSleightConfig, approvalSummary, PROXY, SLEIGHT_MCP } from '../codex-sleight.mjs';
@@ -367,6 +368,12 @@ export async function runRealGate({ args, repo = repoRoot, mcpRoot, runner, task
       // The browser's own window goes where the fewest other windows overlap it, and what still covers it is recorded beside the
       // task's outcome. An offline test that injects the browser never reads or moves the Mac's windows.
       const cover = await (runtime.windowCover || (runtime.launchBrowser ? async () => null : windowCover))(browser.pid, { place: true });
+      // Check the actual owned browser frame before any agent starts. Safari and Firefox relaunch on reset,
+      // so every task checks again. Only proven Finder fixture covers may close; owner covers wait.
+      await (runtime.guardBrowserGroup || (runtime.launchBrowser ? async () => {} : guardBrowserGroup))(browser.pid, {
+        cacheDir: join(plan.out, 'window-control'), signal: controller.signal,
+        log: event => appendFileSync(join(plan.out, 'group-cover.jsonl'), JSON.stringify(event) + '\n'),
+      });
       // Windows can come over it while the agent runs, so the cover is read again every 5 s and at the end (read only).
       const coverWatch = (runtime.watchCover || (runtime.launchBrowser ? null : watchCover))?.(browser.pid) ?? null;
       // Chrome and Helium report every page URL while the agent runs; the lookup graders need that visit.

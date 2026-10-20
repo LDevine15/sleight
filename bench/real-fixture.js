@@ -376,6 +376,9 @@ function closedUnderUs(window, app, api, request) {
 }
 
 function closeOwnedWindow(window, request, app, api) {
+  if (request.bundle === 'com.apple.finder' && request.mode === 'folder') {
+    return closeFinderFixtureWindows(window, request, app, api);
+  }
   var phase = 'start';
   try { return closeOwnedWindowSteps(window, request, app, api, function (name) { phase = name; }); }
   catch (error) {
@@ -387,6 +390,41 @@ function closeOwnedWindow(window, request, app, api) {
         ' sheets=' + probe('AXSheets') + ' children=' + probe('AXChildren') + ' minimized=' + probe('AXMinimized') + ']';
     }
     throw error;
+  }
+}
+
+// Finder can leave sibling windows at the fixture's parent folder after navigation.
+// A title alone proves only the task's unique folder, never a common name such as sleight-bench.
+function finderFixtureWindow(window, request, api) {
+  var document = api.text(window, 'AXDocument') || api.text(window, 'AXURL');
+  if (document) {
+    var current = api.path(document), root = api.path(request.fixtureRoot || request.target);
+    return !!current && !!root && (current === root || current.indexOf(root + '/') === 0);
+  }
+  return api.text(window, 'AXTitle') === request.token;
+}
+
+function closeFinderFixtureWindows(owned, request, app, api) {
+  function listed(window) { return api.windows(app).some(function (item) { return api.equal(item, window); }); }
+  function validate(window) {
+    if (api.dialog(app, window, Object.assign({}, request, { refuseDialogs: true })).length) {
+      throw new Error('Finder dialog present; fixture cleanup refused');
+    }
+    if (!listed(window) || !finderFixtureWindow(window, request, api)) throw new Error('Finder fixture identity changed');
+  }
+  var windows = api.windows(app).filter(function (window) { return finderFixtureWindow(window, request, api); });
+  // A retained window outside the fixture is left for review, rather than closing an owner's new location.
+  if (owned && listed(owned) && !windows.some(function (window) { return api.equal(window, owned); })) {
+    throw new Error('Finder fixture identity changed');
+  }
+  windows.forEach(function (window) {
+    validate(window);
+    api.closeButton(window, function () { validate(window); });
+    for (var attempt = 0; attempt < 30 && listed(window); attempt++) api.wait();
+    if (listed(window)) throw new Error('Finder fixture window is still open');
+  });
+  if (api.windows(app).some(function (window) { return finderFixtureWindow(window, request, api); })) {
+    throw new Error('Finder fixture window is still open');
   }
 }
 
@@ -754,7 +792,7 @@ function nativeAX(state, clock) {
       // These optional attributes can remain unsupported on a valid app
       // window. Their absence allows the existing nonce-title identity fallback.
       if (code === -25205 && state && (state.setup || state.cleanup || state.observation) &&
-          ['AXDocument', 'AXSheets', 'AXSubrole', 'AXMainWindow', 'AXWindows', 'AXChildren', 'AXValue', 'AXWindowNumber', 'AXParent'].indexOf(attribute) !== -1) {
+          ['AXDocument', 'AXURL', 'AXSheets', 'AXSubrole', 'AXMainWindow', 'AXWindows', 'AXChildren', 'AXValue', 'AXWindowNumber', 'AXParent'].indexOf(attribute) !== -1) {
         if (state.office) state.officeLastError = { code: code, attribute: attribute };
         return null;
       }
