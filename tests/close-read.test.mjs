@@ -83,7 +83,7 @@ test('DPi stops close polling after two consecutive failures, with success reset
   assert.equal(requests, 4, 'input cannot restart a failed poller in the same call');
 });
 
-test('DPi close samples use a 50 ms cadence and report offline observer CPU per call', async t => {
+test('DPn close samples refresh every 25 ms and report offline observer CPU per call', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-close-cost-')));
   const starts = [], cpu = process.cpuUsage();
@@ -91,11 +91,11 @@ test('DPi close samples use a 50 ms cadence and report offline observer CPU per 
   t.after(() => { observer.dispose(); removeTemp(directory); });
   observer.begin(1, window);
   t.mock.timers.tick(0); await new Promise(resolve => setImmediate(resolve));
-  for (let i = 0; i < 100; i++) { t.mock.timers.tick(10); await new Promise(resolve => setImmediate(resolve)); }
+  for (let i = 0; i < 40; i++) { t.mock.timers.tick(25); await new Promise(resolve => setImmediate(resolve)); }
   observer.end(1);
   const cost = process.cpuUsage(cpu);
-  assert.equal(starts.length, 21);
-  assert.ok(starts.slice(1).every((start, i) => start - starts[i] >= 50));
+  assert.equal(starts.length, 41);
+  assert.ok(starts.slice(1).every((start, i) => start - starts[i] === 25));
   t.diagnostic(JSON.stringify({ simulatedCallMs: 1000, samples: starts.length,
     observerUserCpuMs: cost.user / 1000, observerSystemCpuMs: cost.system / 1000,
     nativeHelperCpu: 'not measured, fake metadata only' }));

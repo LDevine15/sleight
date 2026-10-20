@@ -91,7 +91,7 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
 // Sampling stops with the call; a late native reply cannot recreate its file.
 export function createCloseRead({ directory, observe } = {}) {
   return createLightReturn({ directory, observe: window => observe({ ...window, closeCount: true }),
-    continuous: true, intervalMs: 50, minGapMs: 25, maxFailures: 2, timing: {}, project: observed => {
+    continuous: true, intervalMs: 25, minGapMs: 25, maxFailures: 2, timing: {}, project: observed => {
       const { status = 'unknown', unknownReason, appId, pid, processStart, running, windowCount, modalCount, closedWindowPresent } = observed ?? {};
       return { status, appId, pid, processStart, running, windowCount, modalCount, closedWindowPresent,
         ...(status === 'unknown' ? { unknownReason: CLOSE_COUNT_REASONS.includes(unknownReason) ? unknownReason : 'helper-error' } : {}) };
