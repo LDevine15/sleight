@@ -127,13 +127,13 @@ export async function clientsFor({ servers, policy, env, turbo, gateWindow }, sw
   } catch (error) { await close(); throw error; }
 }
 
-export async function liveIteration(recording, { env, dir, signal, abort, beforeCall, record, worktree = repo, prepared }) {
+export async function liveIteration(recording, { env, dir, signal, abort, beforeCall, record, worktree = repo, prepared, comparison = 'recording' }) {
   const { withNative, withRace } = await import('./fixtures.mjs');
   prepared ??= prepareReplay(recording, join(dir, 'fixture'));
   const { mapper } = prepared;
   const drive = async config => {
     const clients = await clientsFor(config, env, dir, record, worktree);
-    try { return await replayCalls(recording.calls, { mapper, call: clients.call, signal, beforeCall, record }); }
+    try { return await replayCalls(recording.calls, { mapper, call: clients.call, signal, beforeCall, record, comparison }); }
     finally { await clients.close(); }
   };
   const fixture = await (recording.kind === 'race' ? withRace : withNative)(recording,
@@ -192,10 +192,11 @@ export async function main(argv = process.argv.slice(2)) {
   // --plan shares the exact no-launch fixture validation used by live iterations.
   const preview = prepareReplay(recording, join(tmpdir(), 'sleight-replay-plan', 'fixture'));
   const roles = comparisonRoles(variants, check, comparingBuilds);
+  const comparison = opts.compare !== undefined ? 'switches' : 'recording';
   const plan = { source: recording.transcript, transcriptSHA256: recording.transcriptSHA256, kind: recording.kind, task: recording.task, calls: recording.calls.length,
     windowFrames: recording.calls.flatMap((call, index) => isNativeSelection(call) ? windowReceipts(resultText(call.result)).filter(row => row.frame).map(row => ({ index, ...row })) : []),
     nativeFixture: preview.native && { nonce: preview.native.ctx.nonce, suite: preview.native.suite, oldDir: preview.native.oldDir },
-    deadlineMs: opts['deadline-ms'], roles, schedule: order, check, model: false, mode: comparingBuilds ? 'worktrees' : 'switches', worktree: repo,
+    deadlineMs: opts['deadline-ms'], roles, schedule: order, check, model: false, comparison, mode: comparingBuilds ? 'worktrees' : 'switches', worktree: repo,
     commit: execFileSync('/usr/bin/git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     trackedDirty: Boolean(execFileSync('/usr/bin/git', ['-C', repo, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim()),
     recordedCommit: recording.row?.sleightCommit ?? recording.metadata?.sleight?.commit ?? null };
@@ -237,7 +238,7 @@ export async function main(argv = process.argv.slice(2)) {
       // From setup until cleanup proves otherwise, the lock belongs to this iteration.
       cleanupConfirmed = false;
       let result;
-      try { result = await liveIteration(recording, { env: step.env, dir, signal: iteration.signal, abort: iteration.abort, beforeCall: iteration.beforeCall, record, worktree: step.build?.worktree, prepared }); }
+      try { result = await liveIteration(recording, { env: step.env, dir, signal: iteration.signal, abort: iteration.abort, beforeCall: iteration.beforeCall, record, worktree: step.build?.worktree, prepared, comparison }); }
       finally { iteration.dispose(); }
       cleanupConfirmed = result.cleanupConfirmed;
       if (check) result.check = assertCheck(check, result, dir);

@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { divergence, refreshCode, resultText, TargetMapper, comparisonResult } from './mapping.mjs';
+import { divergence, refreshCode, resultText, TargetMapper, comparisonResult, normalized, replayResultStop } from './mapping.mjs';
 import { assertReplayArguments } from './allowlist.mjs';
 export { parseEnv } from './switches.mjs';
 
@@ -14,28 +14,33 @@ export function untilAbort(signal, operation) {
   });
 }
 
-export async function replayCalls(calls, { call, mapper = new TargetMapper(), signal, beforeCall = () => {}, record = () => {} } = {}) {
+export async function replayCalls(calls, { call, mapper = new TargetMapper(), signal, beforeCall = () => {}, record = () => {}, comparison = 'recording' } = {}) {
+  if (!['recording', 'switches'].includes(comparison)) throw Error('Unknown replay comparison');
   const rows = [];
   let verdict = 'pass', reason;
   for (const [index, original] of calls.entries()) {
     const startedAt = new Date().toISOString();
-    let args, result, mappingMs = 0, toolMs = 0;
+    let args, result, recordingTextDifference, mappingMs = 0, toolMs = 0;
     try {
       await untilAbort(signal, beforeCall);
       assertReplayArguments(original.arguments);
+      if (comparison === 'switches') {
+        const stop = replayResultStop(original.result);
+        if (stop) throw Error(stop);
+      }
       try { args = mapper.arguments(original.arguments); }
       catch (error) {
         // Never retry an action. Refresh only before sending it, on an already acquired handle.
         if (!/refresh required/.test(error.message)) throw error;
         const native = original.name === 'js';
         if (!native && original.server !== 'sleight-turbo') throw error;
-        const refresh = native ? { code: refreshCode(original.arguments), title: 'Replay target refresh' }
+        const refresh = native ? { code: mapper.replaceStrings(refreshCode(original.arguments)), title: 'Replay target refresh' }
           : { tab: mapper.arguments({ tab: original.arguments.tab }).tab, max_chars: 40000 };
         const start = performance.now();
         const fresh = await untilAbort(signal, () => call(original.server, native ? 'js' : 'browser_read', refresh));
         mappingMs = performance.now() - start;
         record({ event: 'mapping-read', index, arguments: refresh, result: fresh, ms: mappingMs });
-        if (fresh.isError) throw Error('Target refresh failed');
+        if (fresh.isError || comparison === 'switches' && replayResultStop(fresh)) throw Error('Target refresh failed');
         mapper.after = resultText(fresh);
         mapper.refresh(mapper.after, original.arguments);
         args = mapper.arguments(original.arguments);
@@ -44,12 +49,19 @@ export async function replayCalls(calls, { call, mapper = new TargetMapper(), si
       const start = performance.now();
       try { result = await untilAbort(signal, () => call(original.server, original.name, args)); }
       finally { toolMs = performance.now() - start; }
+      if (comparison === 'switches') {
+        const stop = replayResultStop(result);
+        if (stop) throw Error(stop);
+      }
       mapper.observe(resultText(original.result), resultText(result), original.arguments, original);
-      reason = divergence(original.result, result, mapper, original.arguments);
+      const recorded = normalized(resultText(original.result), mapper, true, original.arguments.tab), fresh = normalized(resultText(result), mapper);
+      if (recorded !== fresh) recordingTextDifference = { recorded, replay: fresh };
+      reason = divergence(original.result, result, mapper, original.arguments, { comparison });
     } catch (error) { reason = error.message; }
     const row = { index, id: original.id, server: original.server, name: original.name, arguments: args,
       recordedArguments: original.arguments, expected: original.result, result, toolMs, mappingMs, startedAt, finishedAt: new Date().toISOString(),
       comparisonResult: result && comparisonResult(result, mapper),
+      ...(recordingTextDifference ? { recordingTextDifference } : {}),
       verdict: reason ? 'diverge' : 'pass', ...(reason ? { reason } : {}) };
     rows.push(row); record({ event: 'call', ...row });
     if (reason) { verdict = 'diverge'; break; }

@@ -102,7 +102,7 @@ function nativeWindow(text) {
 }
 
 export class TargetMapper {
-  constructor() { this.strings = new Map(); this.identities = new Map(); this.tabs = new Map(); this.frames = new FrameMapper(); this.nativeTrees = new Map(); this.lastNative = undefined; }
+  constructor() { this.strings = new Map(); this.handles = new Map(); this.identities = new Map(); this.tabs = new Map(); this.frames = new FrameMapper(); this.nativeTrees = new Map(); this.lastNative = undefined; }
   refMapping(tab) {
     if (!tab || !this.tabs.has(tab) || !this.strings.has(tab)) throw Error(`Unmapped tab or missing tab snapshot: ${tab ?? '(absent)'}`);
     return this.tabs.get(tab).refMap;
@@ -125,6 +125,16 @@ export class TargetMapper {
     }
   }
   observe(before, after, args = {}, source) {
+    if (source?.server === 'plugin:sleight:computer' && source.name === 'open_file') {
+      const handles = text => [...text.matchAll(/^Window handle: `([A-Za-z_$][\w$]*)`/gm)].map(m => m[1]);
+      const old = handles(before), fresh = handles(after);
+      if (old.length) {
+        if (old.length !== 1 || fresh.length !== 1 || !nativeWindow(before) || !nativeWindow(after) || windowDifference(before, after, this) ||
+            this.handles.has(old[0]) && this.handles.get(old[0]) !== fresh[0] ||
+            [...this.handles].some(([key, value]) => key !== old[0] && value === fresh[0])) throw Error('Ambiguous acquired app handle mapping');
+        this.handles.set(old[0], fresh[0]);
+      }
+    }
     if (source?.server === 'plugin:sleight:computer' && source.name === 'js' && !elements(before).length && args.code && this.lastNative &&
         new RegExp(`\\b${this.lastNative.receiver.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=`).test(args.code)) this.lastNative = undefined;
     if (isNativeSelection(source)) this.lastNative = undefined;
@@ -168,13 +178,15 @@ export class TargetMapper {
     if (!before || !after || (this.strings.has(before) && this.strings.get(before) !== after)) throw Error('Ambiguous fixture mapping');
     this.strings.set(before, after);
   }
-  replaceStrings(value) {
-    if (!this.strings.size) return value;
-    const keys = [...this.strings.keys()].sort((a, b) => b.length - a.length).map(key => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    return value.replace(new RegExp(keys.join('|'), 'g'), key => this.strings.get(key));
+  replaceStrings(value, includeHandles = true) {
+    if (this.strings.size) {
+      const keys = [...this.strings.keys()].sort((a, b) => b.length - a.length).map(key => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      value = value.replace(new RegExp(keys.join('|'), 'g'), key => this.strings.get(key));
+    }
+    return includeHandles && this.handles.size ? value.replace(/(?<![\w$])[A-Za-z_$][\w$]*(?![\w$])/g, key => this.handles.get(key) ?? key) : value;
   }
   mapElement(id, receiver) {
-    if (!this.lastNative || receiver !== this.lastNative.receiver) throw Error('Native receiver differs from last-observed tree; read this receiver first');
+    if (!this.lastNative || this.replaceStrings(receiver ?? '') !== this.replaceStrings(this.lastNative.receiver)) throw Error('Native receiver differs from last-observed tree; read this receiver first');
     const { beforeRows, afterRows } = this.nativeTrees.get(this.lastNative.key);
     const matches = beforeRows.filter(row => row.id === id);
     const mapped = matchRows(beforeRows, afterRows).get(id);
@@ -182,7 +194,7 @@ export class TargetMapper {
     return mapped;
   }
   code(code) {
-    code = this.replaceStrings(code);
+    code = this.replaceStrings(code, false);
     const ast = ts.createSourceFile('recorded.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
     if (ast.parseDiagnostics.length) throw Error('Recorded JavaScript cannot be parsed');
     const edits = [];
@@ -208,6 +220,10 @@ export class TargetMapper {
     };
     const map = (id, receiver) => { assertReceiverBinding(receiver); return this.mapElement(id, receiver); };
     const visit = node => {
+      if (ts.isIdentifier(node) && this.handles.has(node.text) &&
+          !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) &&
+          !(ts.isPropertyAssignment(node.parent) && node.parent.name === node))
+        edits.push([node.getStart(ast), node.end, this.handles.get(node.text)]);
       if (ts.isPropertyAssignment(node)) {
         const key = node.name.text;
         if (['elementIndex', 'targetIndex', 'element', 'windowId', 'windowNumber', 'toWindowId'].includes(key) && !ts.isNumericLiteral(node.initializer))
@@ -293,7 +309,7 @@ export class TargetMapper {
       }
       if (Array.isArray(value)) return value.map(v => walk(v));
       if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v, k)]));
-      return typeof value === 'string' ? this.replaceStrings(value) : value;
+      return typeof value === 'string' ? this.replaceStrings(value, false) : value;
     };
     return walk(args);
   }
@@ -337,6 +353,7 @@ export function refreshCode(args) {
 export function comparisonResult(result, mapper) {
   const reverse = new TargetMapper();
   for (const [before, after] of mapper.strings) reverse.addString(after, before.replace(/^\/private(?=\/(?:var|tmp)\/)/, ''));
+  for (const [before, after] of mapper.handles) reverse.handles.set(after, before);
   for (const [key, id] of mapper.identities) reverse.identities.set(`${key.split(':')[0]}:${id}`, Number(key.split(':')[1]));
   return { isError: Boolean(result.isError),
     content: (result.content ?? []).map(block => block.type === 'text' ? { ...block, text: normalized(block.text, reverse, true) }
@@ -344,15 +361,42 @@ export function comparisonResult(result, mapper) {
     structuredContent: JSON.parse(normalized(JSON.stringify(result.structuredContent ?? result.structured_content ?? null), reverse, true)) };
 }
 
-export function divergence(expected, actual, mapper = new TargetMapper(), args = {}) {
+const approvalGate = /sleight stopped this payment|payment (?:confirmation|approval) (?:blocked|required)|confirmation required through the trusted consent UI|Replay approval declined|^\s*(?:approval declined|permission denied|not approved)\s*$|The user (?:didn't allow|did not allow|did not approve)|Computer Use was not approved|permission request[^\n]*(?:denied|dismissed)|waiting for (?:a |the )?(?:payment |confirmation )?card/im;
+
+// Result status and explicit stop messages are barriers even when both arms return them.
+export function replayResultStop(result) {
+  const text = resultText(result);
+  if (approvalGate.test(text)) return 'confirmation or approval gate';
+  if (!result || result.isError || result.error) return 'recording or replay error';
+  if (/^\s*(?:[\w.]*Error:|Error\b|(?:Read or input|Input|Action|Call) refused\b|sleight stopped this call\b|Computer Use is not allowed\b|[^\n]*\bnot run:)/im.test(text))
+    return 'recording or replay refusal or error';
+  return null;
+}
+
+function windowDifference(before, after, mapper) {
+  const headers = text => [...text.replace(/\r\n/g, '\n').matchAll(/^Window: "[^\n]+", App: [^\n]+$/gm)].map(m => m[0]);
+  const a = headers(before), b = headers(after);
+  if ((a.length || b.length) && (a.length !== 1 || b.length !== 1 || mapper.replaceStrings(a[0]) !== b[0]))
+    return 'native window or app changed';
+  const x = windowReceipts(before), y = windowReceipts(after);
+  if ((x.length || y.length) && (x.length !== 1 || y.length !== 1 || x[0].target.appId !== y[0].target.appId ||
+      mapper.replaceStrings(x[0].target.title) !== y[0].target.title)) return 'native window or app changed';
+  return null;
+}
+
+export function divergence(expected, actual, mapper = new TargetMapper(), args = {}, { comparison = 'recording' } = {}) {
   const text = resultText(actual);
-  if (/sleight stopped this payment|payment (?:confirmation|approval) (?:blocked|required)|confirmation required through the trusted consent UI|Replay approval declined|^\s*(?:approval declined|permission denied|not approved)\s*$|The user (?:didn't allow|did not allow|did not approve)|Computer Use was not approved|permission request[^\n]*(?:denied|dismissed)|waiting for (?:a |the )?(?:payment |confirmation )?card/im.test(text)) return 'confirmation or approval gate';
+  if (comparison === 'switches') {
+    const stop = replayResultStop(expected) ?? replayResultStop(actual) ?? windowDifference(resultText(expected), text, mapper);
+    if (stop) return stop;
+  }
+  if (approvalGate.test(text)) return 'confirmation or approval gate';
   if (Boolean(expected?.isError) !== Boolean(actual?.isError)) return 'success/error changed';
   const expectedMedia = (expected?.content ?? []).filter(b => b.type !== 'text');
   const actualMedia = (actual?.content ?? []).filter(b => b.type !== 'text');
   if (!matchingMedia(expectedMedia, actualMedia, resultText(expected), text, mapper)) return 'non-text evidence changed; visual interpretation required';
   const a = expected?.structuredContent ?? expected?.structured_content, b = actual?.structuredContent ?? actual?.structured_content;
   if (normalized(JSON.stringify(a ?? null), mapper, true, args.tab) !== normalized(JSON.stringify(b ?? null), mapper)) return 'structured result changed';
-  if (normalized(resultText(expected), mapper, true, tabHeaders(resultText(expected))[0]?.[1] ?? args.tab) !== normalized(text, mapper)) return 'observable text changed';
+  if (comparison !== 'switches' && normalized(resultText(expected), mapper, true, tabHeaders(resultText(expected))[0]?.[1] ?? args.tab) !== normalized(text, mapper)) return 'observable text changed';
   return null;
 }

@@ -37,13 +37,12 @@ export function campaignEvidence(runs, spec, roles = {}) {
     }
     if (!indexes.length) timing.push({ verdict: 'inconclusive', reason: 'Relative timing target was not reached' });
   }
-  const acceptableReplay = r => r.verdict === 'pass' || spec && roles.baseline &&
-    ['observable text changed', 'structured result changed', 'success/error changed'].includes(r.reason) &&
-    r.calls.at(-1)?.result && selected(spec, r.calls.at(-1)) && ['pass', 'fail'].includes(r.check?.verdict);
-  let verdict = !runs.length || runs.some(r => r.cleanupConfirmed !== true || !acceptableReplay(r)) ? 'diverge' : 'pass';
+  let verdict = !runs.length || runs.some(r => r.cleanupConfirmed !== true || r.verdict !== 'pass') ? 'diverge' : 'pass';
   if (verdict === 'pass' && (spec && (candidate.some(r => r.check?.verdict !== 'pass') || baseline.some(r => !['pass', 'fail'].includes(r.check?.verdict))) ||
-      timing.some(row => row.verdict !== 'pass') || roles.baseline && (candidate.length !== baseline.length || comparisons.some(pair => !pair.complete)))) verdict = 'check-incomplete';
-  if (!spec && comparisons.some(pair => pair.calls.some(row => row.verdict !== 'equal'))) verdict = 'diverge';
+      timing.some(row => row.verdict !== 'pass') || roles.baseline && (candidate.length !== baseline.length || comparisons.some(pair => !pair.complete)) ||
+      spec && runs.some(r => !r.calls.some(row => selected(spec, row) && row.result)))) verdict = 'check-incomplete';
+  if (comparisons.some(pair => pair.calls.some(row => row.verdict === 'missing' || row.verdict === 'changed' &&
+      (!spec || !runs.filter(r => r.iteration === pair.iteration).every(r => selected(spec, r.calls[row.index])))))) verdict = 'diverge';
   return { verdict, roles, comparisons, timing };
 }
 
