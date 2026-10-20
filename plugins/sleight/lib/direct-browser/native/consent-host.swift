@@ -11,7 +11,12 @@ import Darwin
 import os.log
 
 // BEGIN PERSON INPUT
-func refuseConsentInput() {
+private var consentFeedbackKey: UInt8 = 0
+let consentInputMessage = "This button needs your own click or key press."
+func refuseConsentInput(_ button: NSButton? = nil) {
+    if let button = button, let label = objc_getAssociatedObject(button, &consentFeedbackKey) as? NSTextField {
+        label.stringValue = consentInputMessage
+    }
     os_log("PERSON_INPUT_REQUIRED", log: OSLog(subsystem: "com.sleight.consent", category: "input"), type: .error)
     FileHandle.standardError.write(Data("sleight consent refused: PERSON_INPUT_REQUIRED\n".utf8))
 }
@@ -50,12 +55,12 @@ func refuseAccessibilityPress(_ button: NSButton) -> Bool {
     guard let method = class_getInstanceMethod(base, selector), let types = method_getTypeEncoding(method),
         let legacy = class_getInstanceMethod(base, legacySelector), let legacyTypes = method_getTypeEncoding(legacy),
         let guarded = objc_allocateClassPair(base, name, 0) else { return false }
-    let reject: @convention(block) (AnyObject) -> Bool = { _ in refuseConsentInput(); return false }
+    let reject: @convention(block) (AnyObject) -> Bool = { sender in refuseConsentInput(sender as? NSButton); return false }
     let implementation = imp_implementationWithBlock(reject)
     typealias LegacyAction = @convention(c) (AnyObject, Selector, NSString) -> Void
     let previous = unsafeBitCast(method_getImplementation(legacy), to: LegacyAction.self)
     let rejectLegacy: @convention(block) (AnyObject, NSString) -> Void = { sender, action in
-        if action as String == NSAccessibility.Action.press.rawValue { refuseConsentInput() }
+        if action as String == NSAccessibility.Action.press.rawValue { refuseConsentInput(sender as? NSButton) }
         else { previous(sender, legacySelector, action) }
     }
     let legacyImplementation = imp_implementationWithBlock(rejectLegacy)
@@ -74,22 +79,36 @@ final class ConsentInputAction: NSObject {
         originalTarget = button.target; originalAction = button.action; self.currentEvent = currentEvent
         super.init()
         // Failure leaves the protected button disabled. It must never fall back to the unguarded action.
-        guard refuseAccessibilityPress(button) else { button.isEnabled = false; refuseConsentInput(); return }
+        guard refuseAccessibilityPress(button) else { button.isEnabled = false; refuseConsentInput(button); return }
         button.target = self; button.action = #selector(press(_:))
     }
     @objc func press(_ sender: NSButton) {
         guard let event = currentEvent(), event.window === sender.window,
             event.timestamp <= ProcessInfo.processInfo.systemUptime,
-            ProcessInfo.processInfo.systemUptime - event.timestamp < 1,
-            personInput(event.cgEvent) else { refuseConsentInput(); return }
+            ProcessInfo.processInfo.systemUptime - event.timestamp < 5,
+            personInput(event.cgEvent) else { refuseConsentInput(sender); return }
         _ = sender.sendAction(originalAction, to: originalTarget)
     }
 }
 func consentInputActions(_ alert: NSAlert, choices: [String], kind: String) -> [ConsentInputAction] {
+    // Reserve a line before layout so a refusal does not resize or dismiss the card. Only fixed text goes here.
+    let feedback = NSTextField(wrappingLabelWithString: "")
+    feedback.frame = NSRect(x: 0, y: 0, width: 360, height: 36)
+    feedback.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    feedback.heightAnchor.constraint(equalToConstant: 36).isActive = true
+    feedback.textColor = .secondaryLabelColor
+    let previous = alert.accessoryView
+    if let previous = previous {
+        let stack = NSStackView(views: [previous, feedback])
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
+        stack.frame = NSRect(x: 0, y: 0, width: max(360, previous.frame.width), height: previous.frame.height + 44)
+        alert.accessoryView = stack
+    } else { alert.accessoryView = feedback }
     // Set the class before NSAlert's stack view registers KVO, then wrap the modal actions layout installed.
     let buttons = zip(alert.buttons, choices).compactMap { button, choice -> NSButton? in
         guard personChoice(kind, choice) else { return nil }
-        guard refuseAccessibilityPress(button) else { button.isEnabled = false; refuseConsentInput(); return nil }
+        objc_setAssociatedObject(button, &consentFeedbackKey, feedback, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        guard refuseAccessibilityPress(button) else { button.isEnabled = false; refuseConsentInput(button); return nil }
         return button
     }
     alert.layout()

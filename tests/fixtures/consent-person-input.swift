@@ -66,8 +66,23 @@ let old = event(.hidSystemState).cgEvent!
 old.timestamp = 1
 current = NSEvent(cgEvent: old); guarded.press(always)
 check(receipt.choices.count == 4, "old hardware event is refused")
+// A busy main thread may dispatch a genuine event after more than one second.
+func aged(_ seconds: Double) -> NSEvent {
+    let cg = event(.hidSystemState).cgEvent!
+    cg.timestamp = DispatchTime.now().uptimeNanoseconds - UInt64(seconds * 1_000_000_000)
+    return NSEvent(cgEvent: cg)!
+}
+current = aged(4); guarded.press(always)
+check(receipt.choices.count == 5, "four-second HID click is accepted")
+current = aged(5.1); guarded.press(always)
+check(receipt.choices.count == 5, "HID click beyond five seconds is refused")
+let future = event(.hidSystemState).cgEvent!
+future.timestamp = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
+current = NSEvent(cgEvent: future); guarded.press(always)
+check(receipt.choices.count == 5, "future event is refused")
 // Exercise installation on NSAlert's actual buttons too, without running or displaying the alert.
 let alert = NSAlert()
+alert.informativeText = "Private fixture details"
 for label in ["Allow once", "Allow this session", "Always allow", "Cancel"] { alert.addButton(withTitle: label) }
 let actions = consentInputActions(alert, choices: ["once", "session", "always", "cancel"], kind: "debugger")
 let sessionTarget = alert.buttons[1].target, sessionAction = alert.buttons[1].action
@@ -77,9 +92,18 @@ alert.layout()
 check(alert.buttons[1].target === sessionTarget && alert.buttons[1].action == sessionAction, "session action unchanged")
 check(alert.buttons[3].target === cancelTarget && alert.buttons[3].action == cancelAction, "cancel action unchanged")
 check(alert.buttons[2].target === actions[1], "layout retains the guarded target")
+let feedback = alert.accessoryView as! NSTextField
+check(feedback.stringValue.isEmpty, "feedback starts blank")
 check(!alert.buttons[2].accessibilityPerformPress(), "real alert AXPress refused")
+check(feedback.stringValue == consentInputMessage, "AX refusal shows the fixed line")
+feedback.stringValue = ""
 alert.buttons[2].accessibilityPerformAction(.press)
+check(feedback.stringValue == consentInputMessage, "legacy AX refusal shows the fixed line")
+feedback.stringValue = ""
 _ = alert.buttons[2].sendAction(alert.buttons[2].action, to: alert.buttons[2].target)
+check(feedback.stringValue == consentInputMessage, "action refusal shows the fixed line")
+check(alert.informativeText == "Private fixture details", "refusal preserves private card body")
+check(alert.buttons[2].isEnabled && alert.buttons[2].target === actions[1], "refused card stays answerable")
 check(!alert.window.isVisible, "fixture never opens a window")
 let result: [String: Any] = ["refused": refused, "accepted": receipt.choices]
 print(String(data: try! JSONSerialization.data(withJSONObject: result), encoding: .utf8)!)

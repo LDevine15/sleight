@@ -29,7 +29,7 @@ test('Swift consent input fixture refuses AX and posted input but admits a HID e
   const run = spawnSync(binary, [], { encoding: 'utf8', timeout: 10000 });
   assert.equal(run.status, 0, run.stderr + run.stdout);
   const receipts = JSON.parse(run.stdout);
-  assert.deepEqual(receipts, { refused: [], accepted: ['Always allow', 'Always allow', 'Allow this session', 'Decline'] });
+  assert.deepEqual(receipts, { refused: [], accepted: ['Always allow', 'Always allow', 'Allow this session', 'Decline', 'Always allow'] });
   assert.ok(run.stderr.trim().split('\n').every(line => line === 'sleight consent refused: PERSON_INPUT_REQUIRED'));
   // Send only receipts that crossed the native action to the actual grant pipeline. A refused input emits none.
   const path = join(dir, 'grants.json'), store = createGrantStore({ path }), presented = [];
