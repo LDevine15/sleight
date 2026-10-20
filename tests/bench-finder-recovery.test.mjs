@@ -512,7 +512,7 @@ test('Finder folder launch never calls open or a custom launcher with its folder
   const { openFixture } = await import('../bench/real-fixture.mjs');
   const dir = mkdtempSync(join(tmpdir(), 'fh1-open-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const ctx = { dir }, diagnostics = [], logs = [];
+  const ctx = { dir, lockPath: join(dir, 'synthetic-lock') }, diagnostics = [], logs = [];
   const run = async (_cmd, _args, { onStdout }) => {
     onStdout('{"stage":"finder-relaunch","finderRelaunch":{"reason":"three AXWindows timeouts","pid":41}}\n');
     onStdout('{"stage":"armed","running":true,"pid":42}\n');
@@ -537,7 +537,7 @@ test('parent keeps an unconfirmed Finder creation as a cleanup stop after helper
   const { openFixture, closeFixtures } = await import('../bench/real-fixture.mjs');
   const dir = mkdtempSync(join(tmpdir(), 'fh1r-refusal-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const ctx = { dir };
+  const ctx = { dir, lockPath: join(dir, 'synthetic-lock') };
   let runs = 0;
   const run = async (_cmd, _args, { onStdout }) => {
     runs++;
@@ -574,7 +574,7 @@ test('Finder setup failures are retryable only after every launched app and help
 test('an independent exit disagreement blocks the lifecycle infrastructure marker', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'fh1-disagreement-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const ctx = { dir: join(dir, 'fixture'), exitDisagreements: [{ pid: 5 }] };
+  const ctx = { dir: join(dir, 'fixture'), lockPath: join(dir, 'synthetic-lock'), exitDisagreements: [{ pid: 5 }] };
   const result = await executeRealTask({ setup(ctx) {
     ctx.fixtureDiagnostics = [finder];
     throw Object.assign(new Error('Finder AX failed'), { fixtureSetupFailure: 'finder-ax' });
@@ -585,7 +585,7 @@ test('an independent exit disagreement blocks the lifecycle infrastructure marke
 test('lifecycle marks a pre-driver Finder AX failure only after collecting its helper', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'fh1-lifecycle-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const ctx = { dir: join(dir, 'fixture') };
+  const ctx = { dir: join(dir, 'fixture'), lockPath: join(dir, 'synthetic-lock') };
   const result = await executeRealTask({
     setup(ctx) {
       ctx.fixtureDiagnostics = [{ ...finder, helperCollectionConfirmed: false }];
@@ -603,7 +603,7 @@ test('the real 640-file world caller carries an AX setup refusal through acquisi
   const { ccHeldOutTasks } = await import('../bench/world/cc-held-out.mjs');
   const dir = mkdtempSync(join(tmpdir(), 'fh1-world-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const ctx = { dir: join(dir, 'fixture'), nonce: 'fh1' };
+  const ctx = { dir: join(dir, 'fixture'), lockPath: join(dir, 'synthetic-lock'), nonce: 'fh1' };
   const failure = { stage: 'setup-failure', running: true, setupCase: 'already-running', actionTaken: false,
     cleanup: 'nothing created', finderAXError: { code: -25204, attribute: 'AXFocusedWindow' } };
   const task = ccHeldOutTasks((ctx, request) => openFixture(ctx, request, {
@@ -627,7 +627,7 @@ for (const boundary of ['second-probe', 'window-wait', 'sheet-wait']) test(`R1 c
   const dir = mkdtempSync(join(tmpdir(), 'a4r-cancel-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const abort = new AbortController(); let notified = false, destroyed = false;
-  const ctx = { dir, signal: abort.signal };
+  const ctx = { dir, lockPath: join(dir, 'synthetic-lock'), signal: abort.signal };
   await assert.rejects(openFixture(ctx, { app: 'Finder', bundle: 'com.apple.finder', mode: 'folder' }, {
     helper: async () => ({ command: 'fake', args: [] }),
     run: async (_cmd, args, options) => {
@@ -819,10 +819,12 @@ test('R5 original exit requires both retained termination and independent PID lo
   assert.equal(s.finderOriginalExited(original, receipt), false);
 });
 
-test('R1 an already-aborted run never starts a helper or launch', async () => {
+test('R1 an already-aborted run never starts a helper or launch', async t => {
   const { openFixture } = await import('../bench/real-fixture.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'a4r-aborted-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const abort = new AbortController(); abort.abort(new Error('already stopped'));
-  await assert.rejects(openFixture({ dir: '/unused', signal: abort.signal }, { bundle: 'com.apple.finder', mode: 'folder' }, {
+  await assert.rejects(openFixture({ dir, lockPath: join(dir, 'synthetic-lock'), signal: abort.signal }, { bundle: 'com.apple.finder', mode: 'folder' }, {
     helper: () => assert.fail('no helper resolution after abort'), run: () => assert.fail('no helper after abort'),
     open: () => assert.fail('no launch after abort'),
   }), /already stopped/);
@@ -834,7 +836,7 @@ test('R1 cancellation listener is removed after exact helper collection', async 
   const dir = mkdtempSync(join(tmpdir(), 'a4r-listener-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const abort = new AbortController();
-  const lease = await openFixture({ dir, signal: abort.signal }, { app: 'Finder', bundle: 'com.apple.finder', mode: 'folder' }, {
+  const lease = await openFixture({ dir, lockPath: join(dir, 'synthetic-lock'), signal: abort.signal }, { app: 'Finder', bundle: 'com.apple.finder', mode: 'folder' }, {
     helper: async () => ({ command: 'fake', args: [] }),
     run: async (_cmd, _args, { onStdout }) => {
       onStdout('{"stage":"armed"}\n{"stage":"ready"}\n');
