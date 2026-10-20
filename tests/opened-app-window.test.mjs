@@ -111,7 +111,8 @@ function fixture(t, options = {}) {
   });
   const call = async (id, name, args) => {
     clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n');
-    for (let i = 0; i < 50 && !received.some(msg => msg.id === id); i++) await tick();
+    // A full-suite load can stretch the fake engine round trip past 50 ticks (2026-10-20 full check); wait up to 5 s.
+    for (const end = Date.now() + 5000; Date.now() < end && !received.some(msg => msg.id === id);) await tick();
     const reply = received.find(msg => msg.id === id);
     assert.ok(reply, `no reply for ${id}`);
     return reply.result;
