@@ -4,6 +4,7 @@ import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createV3Bridge } from '../../plugins/sleight/lib/direct-browser/worker.mjs';
 import { fixturePolicy } from './setup.mjs';
+import { workerSwitches } from '../replay/switches.mjs';
 
 export async function createSession({ origins, taskMessage, forkWorker = fork, realBrowser } = {}) {
   // Tasks on the public web name no local fixture; any origins that are named still have to be runner fixtures.
@@ -27,6 +28,7 @@ export async function createSession({ origins, taskMessage, forkWorker = fork, r
       // metrics destination and LB1/LB2 and model-time A/B switches, so the worker records its phases beside this task's cleanup receipt.
       const env = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'DISPLAY', 'XDG_RUNTIME_DIR', 'SLEIGHT_TRACE', 'SLEIGHT_HAND', 'SLEIGHT_TURBO_METRICS', 'SLEIGHT_LB12', 'SLEIGHT_MT'].flatMap(key =>
         typeof process.env[key] === 'string' ? [[key, process.env[key]]] : []));
+      Object.assign(env, workerSwitches(process.env));
       env.SLEIGHT_TURBO_ORIGINS = JSON.stringify(origins);
       if (realBrowser) env.SLEIGHT_TURBO_REAL_BROWSER = JSON.stringify(realBrowser);
       return forkWorker(fileURLToPath(new URL('./v3-worker.mjs', import.meta.url)), [], { ...options, env });

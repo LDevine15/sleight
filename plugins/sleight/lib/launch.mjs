@@ -939,7 +939,9 @@ export function turboState(readConfig, env = process.env) {
 }
 
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
-  directBrowser, ensureTurbo = false } = {}) {
+  directBrowser, ensureTurbo = false,
+  approvalStorage = { load: loadPreapproved, live: livePreapproved, add: addPreapproved },
+  paymentCardFactory = createPaymentCard } = {}) {
   // The ghost hand's session client, before turbo's bridge forks its worker so the worker can share the session's one host.
   // It spawns nothing until sleight acts or turbo forks, and the default off setting leaves it out. The relay's hand hooks take this
   // same client.
@@ -953,9 +955,9 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   const turnHook = prepared.turnHook;
   process.once('exit', () => { turnHook?.close(); });
   let flowRules, preapproved;
-  try { flowRules = loadFlowRules(); preapproved = loadPreapproved(); } catch (err) { fail(err.message); }
+  try { flowRules = loadFlowRules(); preapproved = approvalStorage.load(); } catch (err) { fail(err.message); }
   // A revoke from the menu or the command reaches this session at once; the startup list is the first copy.
-  preapproved = livePreapproved(preapproved);
+  preapproved = approvalStorage.live(preapproved);
   // The user's blocks and site limits. With site limits already set, which apps are browsers is asked now, not at the first action.
   const permissionCheck = createPermissionCheck(), webBrowser = webBrowserCheck();
   if (permissionCheck.sitesLimited()) webBrowser.ask();
@@ -1077,7 +1079,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     confirmPayments: paymentConfirmationSetting(),
     rs: process.env.SLEIGHT_RS,
     // sleight's own card for an engine-path payment the gate stopped (payment-card.mjs); opened on the first such payment.
-    paymentCard: createPaymentCard(),
+    paymentCard: paymentCardFactory(),
     clientIn: replayClient.clientIn,
     clientOut: replayClient.clientOut,
     serverIn: child.stdin,
@@ -1089,7 +1091,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     approvalScope: ['once', 'document'].includes(process.env.SLEIGHT_APPROVAL_SCOPE) ? process.env.SLEIGHT_APPROVAL_SCOPE : 'session',
     ...promptOptions,
     preapproved,
-    alwaysAllow: (app, riskLevel) => { addPreapproved(app, riskLevel); preapproved.add(app, riskLevel); },
+    alwaysAllow: (app, riskLevel) => { approvalStorage.add(app, riskLevel); preapproved.add(app, riskLevel); },
     grantAudit,
     flowRules,
     changeReview: process.env.SLEIGHT_CHANGE_REVIEW === '1',

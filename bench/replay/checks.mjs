@@ -1,0 +1,116 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { resultText } from './mapping.mjs';
+import { median } from './engine.mjs';
+
+const selected = (spec, row) => (!spec.tool || row.name === spec.tool) &&
+  (!spec.argumentPattern || new RegExp(spec.argumentPattern, 'i').test(JSON.stringify(row.recordedArguments)));
+
+function resultDiff(A, B, path = '$') {
+  if (JSON.stringify(A) === JSON.stringify(B)) return [];
+  if (A && B && typeof A === 'object' && typeof B === 'object' && Array.isArray(A) === Array.isArray(B))
+    return [...new Set([...Object.keys(A), ...Object.keys(B)])].flatMap(key => resultDiff(A[key], B[key], `${path}.${key}`));
+  return [{ path, A, B }];
+}
+
+export function campaignEvidence(runs, spec, roles = {}) {
+  const comparisons = [...new Set(runs.map(r => r.iteration))].flatMap(iteration => {
+    const a = runs.find(r => r.iteration === iteration && r.variant === 'A'), b = runs.find(r => r.iteration === iteration && r.variant === 'B');
+    if (!roles.baseline) return [];
+    const calls = Array.from({ length: Math.max(a?.calls.length ?? 0, b?.calls.length ?? 0) }, (_, index) => {
+      const A = a?.calls[index]?.comparisonResult, B = b?.calls[index]?.comparisonResult;
+      return { index, A, B, changes: resultDiff(A, B), verdict: A === undefined || B === undefined ? 'missing' : JSON.stringify(A) === JSON.stringify(B) ? 'equal' : 'changed' };
+    });
+    return [{ iteration, calls, complete: Boolean(a && b) }];
+  });
+  const candidate = runs.filter(r => r.variant === (roles.candidate ?? 'A'));
+  const baseline = runs.filter(r => r.variant === roles.baseline);
+  const timing = [];
+  if (spec?.toolRatioBelow !== undefined) {
+    const indexes = [...new Set(candidate.flatMap(r => r.calls.filter(row => selected(spec, row)).map(row => row.index)))];
+    for (const index of indexes) {
+      const times = group => group.flatMap(r => r.calls.filter(row => row.index === index && selected(spec, row) && row.result && row.toolMs > 0).map(row => row.toolMs));
+      const a = times(candidate), b = times(baseline), candidateMs = median(a), baselineMs = median(b);
+      const ratio = candidateMs !== null && baselineMs > 0 ? candidateMs / baselineMs : null;
+      timing.push({ index, candidateMs, baselineMs, candidateSamples: a.length, baselineSamples: b.length, ratio,
+        verdict: ratio === null || a.length !== candidate.length || b.length !== baseline.length || !baseline.length ? 'inconclusive' : ratio < spec.toolRatioBelow ? 'pass' : 'fail' });
+    }
+    if (!indexes.length) timing.push({ verdict: 'inconclusive', reason: 'Relative timing target was not reached' });
+  }
+  const acceptableReplay = r => r.verdict === 'pass' || spec && roles.baseline &&
+    ['observable text changed', 'structured result changed', 'success/error changed'].includes(r.reason) &&
+    r.calls.at(-1)?.result && selected(spec, r.calls.at(-1)) && ['pass', 'fail'].includes(r.check?.verdict);
+  let verdict = !runs.length || runs.some(r => r.cleanupConfirmed !== true || !acceptableReplay(r)) ? 'diverge' : 'pass';
+  if (verdict === 'pass' && (spec && (candidate.some(r => r.check?.verdict !== 'pass') || baseline.some(r => !['pass', 'fail'].includes(r.check?.verdict))) ||
+      timing.some(row => row.verdict !== 'pass') || roles.baseline && (candidate.length !== baseline.length || comparisons.some(pair => !pair.complete)))) verdict = 'check-incomplete';
+  if (!spec && comparisons.some(pair => pair.calls.some(row => row.verdict !== 'equal'))) verdict = 'diverge';
+  return { verdict, roles, comparisons, timing };
+}
+
+function dragOrder(events) {
+  const phases = events.filter(e => e.direction === 'drag-phase').map(e => e.msg);
+  if (!phases.length) return { verdict: 'skip', reason: 'Selected build lacks DP2 drag-phase events; use the DPc build with SLEIGHT_TRACE enabled' };
+  const stack = [], axStarts = [], axEnds = [];
+  let previous = -Infinity;
+  const helperPid = phases[0]?.helperPid;
+  for (const [index, event] of phases.entries()) {
+    if (!event || !['ax-move', 'raise', 'settle', 'posted-press'].includes(event.phase) ||
+        !['start', 'end'].includes(event.edge) || !Number.isFinite(event.monoMs) || event.monoMs < 0 || event.monoMs < previous ||
+        !Number.isSafeInteger(helperPid) || helperPid < 1 || event.helperPid !== helperPid)
+      return { verdict: 'fail', failures: ['Invalid or mixed-helper DP2 phase evidence'] };
+    previous = event.monoMs;
+    if (event.edge === 'start') stack.push(event.phase);
+    else if (stack.pop() !== event.phase) return { verdict: 'fail', failures: ['Unpaired DP2 phase events'] };
+    if (event.phase === 'ax-move') (event.edge === 'start' ? axStarts : axEnds).push(index);
+  }
+  if (stack.length || axStarts.length !== 1 || axEnds.length !== 1)
+    return { verdict: 'fail', failures: ['Incomplete or ambiguous DP2 AX-move phase evidence'] };
+  if (phases.some((e, i) => e.phase === 'raise' && i < axEnds[0]))
+    return { verdict: 'fail', failures: ['DP2 raised the window before AX-move completed'] };
+  if (phases.some(e => e.phase === 'posted-press'))
+    return { verdict: 'fail', failures: ['Accessibility drag emitted posted-press evidence'] };
+  return { verdict: 'pass' };
+}
+
+export function checkEvidence(spec, replay, trace = []) {
+  const calls = replay.calls.filter(row => selected(spec, row));
+  if (!calls.length) return { verdict: 'inconclusive', reason: 'Replay stopped before the check target, or recording has no such call' };
+  const failures = [];
+  const skipped = [];
+  const selectedEvents = [];
+  for (const row of calls) {
+    const text = resultText(row.result);
+    const events = trace.filter(e => e.t >= row.startedAt && e.t <= row.finishedAt);
+    selectedEvents.push(...events);
+    if (spec.needsInternalOrder) {
+      const order = dragOrder(events);
+      if (order.verdict === 'fail') failures.push(...order.failures.map(f => `call ${row.index}: ${f}`));
+      if (order.verdict === 'skip') skipped.push(`call ${row.index}: ${order.reason}`);
+    }
+    const responses = events.filter(e => e.direction === 'from-server' || e.direction === 'guard-read');
+    if (spec.resultIncludes && !new RegExp(spec.resultIncludes, 'i').test(text)) failures.push(`call ${row.index}: expected result evidence missing`);
+    if (spec.alsoResultIncludes && !new RegExp(spec.alsoResultIncludes, 'i').test(text)) failures.push(`call ${row.index}: second result evidence missing`);
+    if (spec.resultExcludes && new RegExp(spec.resultExcludes, 'i').test(text)) failures.push(`call ${row.index}: forbidden result`);
+    if (spec.traceIncludes && !events.some(e => e.direction && e.direction !== 'to-server' && new RegExp(spec.traceIncludes, 'i').test(JSON.stringify(e)))) failures.push(`call ${row.index}: required trace evidence missing`);
+    if (spec.traceExcludes && responses.some(e => new RegExp(spec.traceExcludes, 'i').test(JSON.stringify(e)))) failures.push(`call ${row.index}: forbidden trace read`);
+    if (spec.tabProbeChain) {
+      const probes = events.filter(e => e.direction === 'tab-probe').map(e => e.msg);
+      if (probes.filter(p => p.decision === 'probe').length < 2 || !probes.some(p => p.transition === true && p.decision === 'probe'))
+        failures.push(`call ${row.index}: original tab chain probe evidence missing`);
+      if (probes.some(p => p.decision === 'read') || events.filter(e => e.direction === 'guard-read' && e.msg?.phase === 'before-action').length > 1)
+        failures.push(`call ${row.index}: intermediate tab-chain tree read`);
+    }
+  }
+  if (spec.traceIncludesAny && !selectedEvents.some(e => e.direction && e.direction !== 'to-server' && new RegExp(spec.traceIncludesAny, 'i').test(JSON.stringify(e))))
+    failures.push('No selected call emitted the required trace evidence');
+  if (spec.fixturePass && replay.lifecycle?.taskPassed !== true) failures.push('Benchmark fixture check did not pass');
+  if (failures.length) return { verdict: 'fail', failures };
+  if (skipped.length) return { verdict: 'skip', reason: skipped.join('; ') };
+  return { verdict: 'pass', coveredCalls: calls.map(c => c.index) };
+}
+
+export function assertCheck(spec, replay, dir) {
+  const trace = readdirSync(dir).filter(name => /^trace-\d+\.jsonl$/.test(name)).flatMap(name =>
+    readFileSync(join(dir, name), 'utf8').split('\n').filter(Boolean).map(JSON.parse));
+  return { id: spec.id, ...checkEvidence(spec, replay, trace) };
+}
