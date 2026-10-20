@@ -130,6 +130,26 @@ test('DPm distinguishes the closing AX reference from a remaining window without
     assert.ok(!events.some(name => /Title|Document|Value|Description/.test(String(name))), events.join(','));
   }
 });
+test('DPp counts modal children only under the retained closing target', () => {
+  for (const modalWindow of [0, 1]) for (const modal of [
+    { AXRole: 'AXSheet' }, { AXRole: 'AXWindow', AXSubrole: 'AXDialog' },
+    { AXRole: 'AXWindow', AXSubrole: 'AXSystemDialog' }, { AXRole: 'AXWindow', AXModal: true },
+  ]) {
+    const events = [];
+    const reply = inspect(closeRequest, [11, 12], 0, false, events, (app, windows, list, runtime) => {
+      runtime.seedWindowIdentity = true;
+      runtime.afterBaseline = () => {
+        windows[modalWindow].AXChildren = list([{ AXRole: 'AXGroup', AXChildren: list([modal]) }]);
+        events.length = 0;
+      };
+    });
+    assert.equal(reply.status, 'ok');
+    assert.equal(reply.closedWindowPresent, true);
+    assert.equal(reply.windowCount, 2);
+    assert.equal(reply.modalCount, modalWindow === 0 ? 1 : 0);
+    assert.ok(!events.some(name => /Title|Document|Value|Description/.test(String(name))), events.join(','));
+  }
+});
 test('DPh counts AXWindows on the leased running pid without reading titles or documents', () => {
   const events = [];
   const reply = inspect(closeRequest, [], 0, false, events, (app, windows, list, runtime) => {

@@ -89,11 +89,11 @@ function closeClock(f, onTick = () => {}) {
 }
 function closeFixture({ sample = nativeClosed, action = () => {}, ...options } = {}) {
   const path = join(leaseDir, `close-${Math.random()}.obs`);
-  let armed = false, keyAt;
+  let armed = false, keyAt, observations = [];
   const publish = start => {
     if (!armed) return;
-    writeFileSync(path + '.tmp', JSON.stringify({ observations: [{ start, end: start,
-      ...(typeof sample === 'function' ? sample(start - keyAt) : sample) }] }));
+    observations.push({ start, end: start, ...(typeof sample === 'function' ? sample(start - keyAt) : sample) });
+    writeFileSync(path + '.tmp', JSON.stringify({ observations }));
     renameSync(path + '.tmp', path);
   };
   const f = fixture({ ...options, action: async (...args) => {
@@ -105,7 +105,7 @@ function closeFixture({ sample = nativeClosed, action = () => {}, ...options } =
   f.context.cua.listApps = async () => [recordedApp];
   f.run = (code, options = closeOptions, target = closeTarget) => {
     writeFileSync(path, JSON.stringify({ observations: [] }));
-    armed = false;
+    armed = false; observations = [];
     return run(code, { closeRead: { path }, ...options }, target).finally(() => { armed = false; });
   };
   return f;
@@ -295,14 +295,65 @@ test('DPo a new close action gets a new decision and deadline', async () => {
   assert.equal(f.output.filter(text => text.startsWith('[sleight:dp1]')).length, 2);
 });
 
-test('DPo a modal on the closing target keeps polling until the deadline', async () => {
-  const f = closeFixture({ sample: { ...nativeClosed, windowCount: 1, closedWindowPresent: true, modalCount: 1 } });
-  await f.run('await app.pressKey("super+w");');
+const targetModal = { ...nativeClosed, windowCount: 1, closedWindowPresent: true, modalCount: 1 };
+test('DPp two fresh modal samples on the closing target keep caller and tail reads at once', async () => {
+  for (const caller of [false, true]) {
+    const f = closeFixture({ sample: targetModal });
+    await f.run('await app.pressKey("super+w");' + (caller ? 'await app.getAXState();' : ''));
+    assert.equal(f.clock(), 10050);
+    const events = f.output.filter(text => text.startsWith('[sleight:dp1]')).map(text => JSON.parse(text.slice(13)));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].decision, 'kept-read');
+    assert.equal(events[0].reason, 'modal child');
+    assert.equal(events[0].source, caller ? 'caller-read' : undefined);
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
+  }
+});
+
+test('DPp one modal sample followed by the last window disappearing still skips the read', async () => {
+  for (const caller of [false, true]) {
+    const f = closeFixture({ sample: ms => ms < 50 ? targetModal : nativeClosed });
+    const run = f.run('await app.pressKey("super+w");' + (caller ? 'await app.getAXState();' : ''));
+    if (caller) await assert.rejects(run, /\[sleight:closed-read\]/);
+    else await run;
+    assert.equal(f.clock(), 10050);
+    const event = JSON.parse(f.output.find(text => text.startsWith('[sleight:dp1]')).slice(13));
+    assert.equal(event.decision, 'skipped-read');
+    assert.equal(event.reason, 'no windows');
+    assert.equal(f.calls.filter(c => c[0] === 'read').length, 1);
+  }
+});
+
+test('DPp a modal on another window does not end the closing target wait early', async () => {
+  const target = { ...closeTarget, appId: 'com.apple.TextEdit' };
+  const sample = inspect({ ...target, closeCount: true }, [11, 12], 0, false, [], (app, windows, list, runtime) => {
+    runtime.seedWindowIdentity = true;
+    runtime.afterBaseline = () => { windows[1].AXChildren = list([{ AXRole: 'AXSheet' }]); };
+  });
+  assert.equal(sample.closedWindowPresent, true);
+  assert.equal(sample.modalCount, 0);
+  const f = closeFixture({ sample });
+  await f.run('await app.pressKey("super+w");', closeOptions, target);
   assert.equal(f.clock(), 11500);
   const event = JSON.parse(f.output.find(text => text.startsWith('[sleight:dp1]')).slice(13));
   assert.equal(event.decision, 'kept-read');
-  assert.equal(event.reason, 'modal child');
-  assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
+  assert.equal(event.reason, 'timeout');
+});
+
+test('DPp repeated, stale, incomplete or interrupted modal samples cannot supply the second confirmation', async () => {
+  for (const interruption of [
+    { ...targetModal, modalCount: 0 }, { status: 'unknown' }, { ...targetModal, end: 1 },
+    { ...targetModal, pid: undefined }, { ...targetModal, closedWindowPresent: undefined },
+    { ...targetModal, windowCount: 0 },
+  ]) {
+    const f = closeFixture({ sample: ms => ms === 50 ? interruption : targetModal });
+    await f.run('await app.pressKey("super+w");');
+    assert.equal(f.clock(), 10100, JSON.stringify(interruption));
+  }
+  const f = closeFixture({ sample: ms => ms < 100 ? { ...targetModal, start: 10025, end: 10025 } : nativeClosed });
+  await f.run('await app.pressKey("super+w");');
+  assert.equal(f.clock(), 10100);
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 1);
 });
 
 test('DPo Cmd+Q and quit-on-close return a closed notice for the same leased process exit', async () => {

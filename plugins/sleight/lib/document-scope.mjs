@@ -473,7 +473,8 @@ async function closedLastWindow(state, record) {
         if (ended || Date.now() >= deadline) break;
         if (changed()) return { reason: 'action changed' };
         // A sample that began before pressKey completed cannot prove its result.
-        const newest = data.observations.filter(o => typeof o?.start === 'number' && o.start > previous.done).at(-1);
+        const observations = data.observations.filter(o => typeof o?.start === 'number' && o.start > previous.done);
+        const newest = observations.at(-1), prior = observations.at(-2);
         if (newest) {
           const { status, unknownReason, appId, pid: actualPid, processStart: actualStart, running, windowCount, modalCount, closedWindowPresent } = newest;
           native = { status, pid: actualPid, processStart: actualStart, running, windowCount, modalCount, closedWindowPresent,
@@ -484,7 +485,10 @@ async function closedLastWindow(state, record) {
               (Number.isFinite(actualStart) && actualStart !== processStart) ||
               (typeof appId === 'string' && appId && appId !== state.expected.appId)) return { blocked: true, reason: 'process mismatch' };
           const identityMatches = actualPid === pid && actualStart === processStart && appId === state.expected.appId;
-          const fresh = () => Number.isFinite(newest.end) && newest.end >= newest.start && newest.end <= Date.now() && Date.now() - newest.end <= 200;
+          const fresh = (o = newest) => Number.isFinite(o?.end) && o.end >= o.start && o.end <= Date.now() && Date.now() - o.end <= 200;
+          const modalOnTarget = o => o?.status === 'ok' && o.pid === pid && o.processStart === processStart &&
+            o.appId === state.expected.appId && o.running === true && Number.isSafeInteger(o.windowCount) && o.windowCount > 0 &&
+            o.closedWindowPresent === true && Number.isSafeInteger(o.modalCount) && o.modalCount > 0 && fresh(o);
           if (status !== 'ok') pendingReason = 'native unavailable';
           else if (!identityMatches || typeof running !== 'boolean') pendingReason = 'native identity missing';
           else if (running === false) {
@@ -492,8 +496,12 @@ async function closedLastWindow(state, record) {
             pendingReason = 'stale native sample';
           } else if (!Number.isSafeInteger(windowCount) || windowCount < 0 || !Number.isSafeInteger(modalCount) || modalCount < 0) pendingReason = 'native counts missing';
           else if (windowCount > 0 && closedWindowPresent === false) return { reason: 'windows non-empty' };
-          else if (modalCount > 0) pendingReason = 'modal child';
-          else if (windowCount === 0) {
+          else if (modalCount > 0) {
+            // Two distinct fresh observations of the retained window's modal
+            // child allow a read while that window still exists.
+            if (modalOnTarget(newest) && modalOnTarget(prior) && newest.start > prior.start) return { reason: 'modal child' };
+            pendingReason = 'modal child';
+          } else if (windowCount === 0) {
             // Check age at the skip itself. Stale or incomplete observations keep
             // polling so a transient helper failure cannot reopen a closing app.
             if (fresh()) return { reason: 'no windows', skip: true };

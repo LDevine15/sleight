@@ -217,24 +217,30 @@ function run(argv) {
         }
       }
       let modalCount = 0, seen = 0;
+      const visit = (children, depth) => {
+        const n = count(children);
+        if (depth > 8 || seen + n > 64) throw new Error('AX child bound');
+        seen += n;
+        for (let i = 0; i < n; i++) {
+          const child = children.objectAtIndex(i), role = ObjC.deepUnwrap(attr(child, 'AXRole'));
+          if (typeof role !== 'string') throw new Error('Missing AX role');
+          const subrole = ObjC.deepUnwrap(attr(child, 'AXSubrole', true));
+          if (role === 'AXSheet' || role === 'AXDialog' || subrole === 'AXDialog' || subrole === 'AXSystemDialog' ||
+              ObjC.deepUnwrap(attr(child, 'AXModal', true)) === true) { modalCount++; continue; }
+          if (role === 'AXWindow') throw new Error('Window missing from AXWindows');
+          // Menu contents are separate from the app's window and modal children.
+          if (role === 'AXMenuBar' || role === 'AXMenu') continue;
+          const nested = attr(child, 'AXChildren', true);
+          if (nested !== null) visit(nested, depth + 1);
+        }
+      };
+      if (closedWindowPresent === true) {
+        // A sheet on a different window cannot confirm this Close. Inspect only
+        // metadata below the retained target, with the same bounds as below.
+        const children = attr(baseline, 'AXChildren', true);
+        if (children !== null) visit(children, 0);
+      }
       if (windowCount === 0) {
-        const visit = (children, depth) => {
-          const n = count(children);
-          if (depth > 8 || seen + n > 64) throw new Error('AX child bound');
-          seen += n;
-          for (let i = 0; i < n; i++) {
-            const child = children.objectAtIndex(i), role = ObjC.deepUnwrap(attr(child, 'AXRole'));
-            if (typeof role !== 'string') throw new Error('Missing AX role');
-            const subrole = ObjC.deepUnwrap(attr(child, 'AXSubrole', true));
-            if (role === 'AXSheet' || role === 'AXDialog' || subrole === 'AXDialog' || subrole === 'AXSystemDialog' ||
-                ObjC.deepUnwrap(attr(child, 'AXModal', true)) === true) { modalCount++; continue; }
-            if (role === 'AXWindow') throw new Error('Window missing from AXWindows');
-            // Menu contents are separate from the app's window and modal children.
-            if (role === 'AXMenuBar' || role === 'AXMenu') continue;
-            const nested = attr(child, 'AXChildren', true);
-            if (nested !== null) visit(nested, depth + 1);
-          }
-        };
         visit(attr(app, 'AXChildren'), 0);
         // AXWindows can omit windows on other Spaces. Filter the leased PID's
         // document, panel and alert layers inside Foundation, without copying content.
