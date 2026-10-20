@@ -68,6 +68,7 @@ import { DOCUMENT_TOOL, WINDOW_HEADER, documentKey, documentLabel, windowFromTex
 import { ChangeReview, REVIEW_TOOL, isChangeCancel } from './change-review.mjs';
 import { FLOW_TOOL } from './flow-rules.mjs';
 import { browserCall, browserReply, nativeBindings, browserLeaseNote } from './browser-call.mjs';
+import { nativeArgumentsProblem } from './native-arguments.mjs';
 import { BrowserRecovery } from './browser-recovery.mjs';
 import { selectedBrowserCode } from './browser-discovery.mjs';
 import { rewritePaymentPolicy } from './payment-policy.mjs';
@@ -3021,6 +3022,14 @@ export function createRelay({
     // A blocked app stops here, before an acquisition is split off and sent ahead of the call.
     const blocked = msg.method === 'tools/call' && (msg.params?.name === 'js' || localNames.has(msg.params?.name)) && callBlock(msg.params.name, msg.params.arguments ?? {});
     if (blocked) { finishedCall(msg.id); blockStop(msg, blocked); return; }
+    if (jsArgs && typeof msg.params.arguments?.code === 'string') {
+      const problem = nativeArgumentsProblem(msg.params.arguments.code, nativeHandles, browserHandles);
+      if (problem) {
+        finishedCall(msg.id);
+        toClient({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: problem }] } });
+        return;
+      }
+    }
     if (!splitAcquisition(msg) && !splitSave(msg)) handleClient(msg);
   }
 

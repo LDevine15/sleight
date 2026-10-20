@@ -225,6 +225,7 @@ async function failedCall(t, code, raw) {
   f.reply({ id: 1, result: { content: [text(content)], _meta: { 'codex/toolSurface': { app: { appId: 'org.test.editor' } } } } });
   f.call(2, code);
   const forwarded = f.sent.find(m => m.id === 2), output = [];
+  if (!forwarded) return f.received.at(-1).result.content.at(-1).text;
   const context = { app: { getAXState: async () => content, ...raw }, cua: {}, nodeRepl: { write: value => output.push(String(value)) } };
   context.cua.getApp = async () => context.app;
   try { await runInNewContext(`(async () => { ${forwarded.params.arguments.code} })()`, context); }
@@ -233,21 +234,23 @@ async function failedCall(t, code, raw) {
   return f.received.at(-1).result.content.at(-1).text;
 }
 
-test('a failed action names what ran, the call that failed and the app handle\'s shape for it', async t => {
+test('a malformed literal key stops the batch before its earlier setValue', async t => {
   const sent = [];
   const note = await failedCall(t, 'await app.setValue(1, "https://example.org/teapot"); await app.pressKey(null, "Return"); await app.getAXState();',
     { setValue: async (n, value) => sent.push(value), pressKey: async key => sent.push(key.trim()) });
-  assert.deepEqual(sent, ['https://example.org/teapot']);
-  assert.match(note, /^sleight: call failed \(partial input possible\): Cannot read properties of null \(reading 'trim'\)\./);
-  assert.match(note, /setValue ran; pressKey\(null, "Return"\) failed\. An app handle's pressKey takes the key first: pressKey\("Return"\)\.$/);
+  assert.deepEqual(sent, []);
+  assert.match(note, /Engine App\.pressKey\(key: string, options\?: PressKeyOptions\); nothing was sent\.$/);
+  assert.doesNotMatch(note, /partial input possible|outcome unconfirmed/);
   // Set text stays out of the note.
   assert.doesNotMatch(note, /example\.org/);
 });
 
-test('typeText with an element first gets the text-first shape, and typed text stays out', async t => {
+test('typeText with an element first stops before its earlier click, and typed text stays out', async t => {
+  let clicks = 0;
   const note = await failedCall(t, 'await app.click(1); await app.typeText(1, "secret words");',
-    { click: async () => {}, typeText: async value => value.trim() });
-  assert.match(note, /click ran; typeText\(1, <12 characters>\) failed\. An app handle's typeText takes the text first: typeText\(<text>\)\./);
+    { click: async () => { clicks++; }, typeText: async value => value.trim() });
+  assert.equal(clicks, 0);
+  assert.match(note, /Engine App\.typeText\(text: string\); nothing was sent\.$/);
   assert.doesNotMatch(note, /secret/);
 });
 
