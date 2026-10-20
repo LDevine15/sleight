@@ -951,6 +951,12 @@ export function turboState(readConfig, env = process.env) {
 
 export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, healthHelperFactory = createAppHealthHelper,
   directBrowser, ensureTurbo = false } = {}) {
+  let finishStartup;
+  const startupReady = new Promise(resolve => { finishStartup = resolve; });
+  process.stdin.on('end', () => stop());
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(signal, () => stop(signal));
+  }
   // The ghost hand's session client, before turbo's bridge forks its worker so the worker can share the session's one host.
   // It spawns nothing until sleight acts or turbo forks, and the default off setting leaves it out. The relay's hand hooks take this
   // same client.
@@ -1187,6 +1193,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   // Claude Code closing the connection is the end of the session: end the
   // open turn so the server releases what it holds, then stop the server.
   async function stop(signal) {
+    // Collect an early EOF or signal once the owned engine and relay are ready to shut down.
+    await startupReady;
     if (stopping) return;
     stopping = true;
     trace?.('stop-entry', { signal });
@@ -1201,10 +1209,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     await childClosed;
     await stopHelpers(); await appHealth.close(); await relay.close(); process.exit(0);
   }
-  process.stdin.on('end', () => stop());
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    process.on(signal, () => stop(signal));
-  }
+  finishStartup();
 }
 
 // `record` and `replay` (replay.mjs): a finished run, run again with no model. Approvals go to the
