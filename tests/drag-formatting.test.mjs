@@ -6,13 +6,12 @@ import vm from 'node:vm';
 import { macCommandSkip } from './requirements.mjs';
 
 const source = readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8');
-const context = vm.createContext({ ObjC: { import() {} }, $: {
-  NSAccessibilityMisspelledTextAttribute: 'AXMisspelled',
-  NSAccessibilityMarkedMisspelledTextAttribute: 'AXMarkedMisspelled',
-} });
+// No exported spelling constants: the AX dictionary keys are literal NSStrings.
+const context = vm.createContext({ ObjC: { import() {} }, $: value => value });
 vm.runInContext(source, context);
 const plain = { font: 'regular', color: 'black' }, bold = { font: 'bold', color: 'black' };
 const dictionary = attrs => ({ count: Object.keys(attrs).length,
+  objectForKey: key => attrs[key],
   isEqualToDictionary: other => JSON.stringify(attrs) === other.key, key: JSON.stringify(attrs),
   get mutableCopy() {
     const copy = { ...attrs };
@@ -31,6 +30,16 @@ const attributed = values => ({ length: values.length,
 
 test('default font and color remain plain against the paragraph baseline', () => {
   assert.equal(context.attributedTextHasAttributes(attributed([plain, plain, plain]), 3, 1), false);
+});
+
+test('attributes without spelling keys are compared without copying', () => {
+  const value = attributed([plain, plain, bold]), read = value.attributesAtIndexEffectiveRange;
+  value.attributesAtIndexEffectiveRange = (index, range) => {
+    const attrs = read(index, range);
+    Object.defineProperty(attrs, 'mutableCopy', { get: () => assert.fail('unmarked attributes need no copy') });
+    return attrs;
+  };
+  assert.equal(context.attributedTextHasAttributes(value, 3, 1), true);
 });
 
 test('spelling markers differ from the paragraph baseline without making plain text formatted', () => {
@@ -75,14 +84,18 @@ test('production JXA reads attributes of real attributed strings without a bridg
         return s;
       };
       const spelling = make(null);
-      spelling.addAttributeValueRange($.NSAccessibilityMisspelledTextAttribute, $(true), $.NSMakeRange(3, 2));
-      spelling.addAttributeValueRange($.NSAccessibilityMarkedMisspelledTextAttribute, $(true), $.NSMakeRange(3, 2));
+      spelling.addAttributeValueRange($('AXMisspelled'), $(true), $.NSMakeRange(3, 2));
+      spelling.addAttributeValueRange($('AXMarkedMisspelled'), $(true), $.NSMakeRange(3, 2));
+      const markedBaseline = make(null);
+      markedBaseline.addAttributeValueRange($('AXMisspelled'), $(true), $.NSMakeRange(0, 1));
+      markedBaseline.addAttributeValueRange($('AXMarkedMisspelled'), $(true), $.NSMakeRange(0, 1));
       const markedBold = make(3);
-      markedBold.addAttributeValueRange($.NSAccessibilityMarkedMisspelledTextAttribute, $(true), $.NSMakeRange(3, 2));
+      markedBold.addAttributeValueRange($('AXMarkedMisspelled'), $(true), $.NSMakeRange(3, 2));
       return JSON.stringify([attributedTextHasAttributes(make(null), 5, 3), attributedTextHasAttributes(make(3), 5, 3), attributedTextHasAttributes(make(4), 5, 3),
         attributedTextHasAttributes(spelling, 5, 3), attributedTextHasAttributes(markedBold, 5, 3),
-        Number(spelling.attributesAtIndexEffectiveRange(3, null).count)]);
+        Number(spelling.attributesAtIndexEffectiveRange(3, null).count), attributedTextHasAttributes(markedBaseline, 5, 3),
+        Number(markedBaseline.attributesAtIndexEffectiveRange(0, null).count)]);
     }`], { encoding: 'utf8', timeout: 15000 });
   assert.equal(probe.status, 0, probe.stderr);
-  assert.deepEqual(JSON.parse(probe.stdout), [false, true, true, false, true, 3]);
+  assert.deepEqual(JSON.parse(probe.stdout), [false, true, true, false, true, 3, false, 3]);
 });

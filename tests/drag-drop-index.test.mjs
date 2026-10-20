@@ -117,3 +117,92 @@ test('DP7 rejects missing caret geometry and never swallows an AX timeout', () =
   h.area.lineRange = () => { throw Object.assign(Error('AX timeout'), { axCode: -25204 }); };
   assert.throws(() => h.drop({ x: 20, y: 126 }), e => e.axCode === -25204);
 });
+
+function finalRangeFixture() {
+  const h = fixture(), reads = [];
+  h.area.bounds = () => ({ X: 757, Y: 81, Width: 700, Height: 520 });
+  h.area.characterCount = () => { reads.push('count'); return 12; };
+  h.area.indexAt = () => null;
+  h.area.rect = (index, length = 1) => {
+    reads.push([index, length]);
+    return index === 11 && length === 1 ? { X: 833.5, Y: 81, Width: 0, Height: 13 } : null;
+  };
+  h.area.value = () => assert.fail('drop geometry must never read document text');
+  h.area.lineForIndex = () => assert.fail('end-of-text fallback needs no line lookup');
+  h.area.lineRange = () => assert.fail('end-of-text fallback needs no line range');
+  return { ...h, reads, drop: p => h.context.dropIndex(h.area, p) };
+}
+
+for (const [x, y] of [[24, 104], [20, 100]]) {
+  test(`WD3 resolves the recorded empty-final-line point ${x},${y} with metadata only`, () => {
+    const h = finalRangeFixture();
+    assert.equal(h.drop({ x: 752 + x / 2, y: 49 + y / 2 }), 12);
+    assert.ok(h.reads.some(read => Array.isArray(read) && read[0] === 11 && read[1] === 1));
+  });
+}
+
+test('WD3 also handles AX returning the sentinel first-character index or no-value error', () => {
+  for (const indexAt of [() => 0, () => { throw Object.assign(Error('no AX value'), { axCode: -25212 }); }]) {
+    const h = finalRangeFixture(); h.area.indexAt = indexAt;
+    assert.equal(h.drop({ x: 762, y: 99 }), 12);
+  }
+});
+
+for (const point of [{ x: 756, y: 99 }, { x: 1457, y: 99 }, { x: 762, y: 601 },
+  { x: 762, y: 80 }, { x: 1000, y: 87 }, { x: 762, y: 93.5 }]) {
+  test(`WD3 refuses outside or non-final-row point ${JSON.stringify(point)}`, () => {
+    const h = finalRangeFixture();
+    delete h.area.lineForIndex; delete h.area.lineRange;
+    assert.throws(() => h.drop(point), /cannot find where the drop point falls/);
+  });
+}
+
+for (const [name, change] of [
+  ['no count', area => { area.characterCount = () => null; }],
+  ['empty document', area => { area.characterCount = () => 0; }],
+  ['fractional count', area => { area.characterCount = () => 11.5; }],
+  ['no frame', area => { area.bounds = () => null; }],
+  ['invalid frame', area => { area.bounds = () => ({ X: 757, Y: 81, Width: NaN, Height: 520 }); }],
+  ['no last range', area => { area.rect = () => null; }],
+  ['last range outside frame', area => { area.rect = () => ({ X: 756, Y: 81, Width: 0, Height: 13 }); }],
+  ['zero-height last range', area => { area.rect = () => ({ X: 762, Y: 81, Width: 0, Height: 0 }); }],
+  ['negative-width last range', area => { area.rect = () => ({ X: 762, Y: 81, Width: -1, Height: 13 }); }],
+  ['nonfinite last range', area => { area.rect = () => ({ X: 762, Y: NaN, Width: 0, Height: 13 }); }],
+]) {
+  test(`WD3 refuses ambiguous final geometry: ${name}`, () => {
+    const h = finalRangeFixture(); change(h.area);
+    delete h.area.lineForIndex; delete h.area.lineRange;
+    assert.throws(() => h.drop({ x: 762, y: 99 }), /cannot find where the drop point falls/);
+  });
+}
+
+test('WD3 metadata and hit-test timeouts propagate before any fallback', () => {
+  for (const method of ['indexAt', 'bounds', 'characterCount', 'rect']) {
+    const h = finalRangeFixture();
+    h.area[method] = () => { throw Object.assign(Error('AX timeout'), { axCode: -25204 }); };
+    assert.throws(() => h.drop({ x: 762, y: 99 }), error => error.axCode === -25204);
+  }
+});
+
+test('WD3 never appends from a point to the right of a non-final line', () => {
+  const h = finalRangeFixture(), lastRect = h.area.rect;
+  h.area.indexAt = p => p.y >= 81 && p.y < 94 && p.x >= 762 && p.x < 786 ? Math.floor((p.x - 762) / 8) : 0;
+  h.area.rect = (i, n) => i < 3 ? { X: 762 + i * 8, Y: 81, Width: 8, Height: 13 }
+    : i === 11 ? { ...lastRect(i, n), Y: 110 } : null;
+  h.area.lineEnd = () => 4;
+  assert.throws(() => h.context.dropIndex(h.area, { x: 800, y: 87 }, 'abc\ndefghij\n'), /cannot find where the drop point falls/);
+});
+
+test('WD3 refuses the zero-origin sentinel even within a text-area frame', () => {
+  const h = finalRangeFixture();
+  h.area.bounds = () => ({ X: 0, Y: 0, Width: 100, Height: 100 });
+  h.area.rect = () => ({ X: 0, Y: 0, Width: 0, Height: 13 });
+  delete h.area.lineForIndex; delete h.area.lineRange;
+  assert.throws(() => h.drop({ x: 20, y: 30 }), /cannot find where the drop point falls/);
+});
+
+test('WD3 does not treat other AX hit-test failures as an empty hit', () => {
+  const h = finalRangeFixture(), error = Object.assign(Error('invalid AX argument'), { axCode: -25202 });
+  h.area.indexAt = () => { throw error; };
+  assert.throws(() => h.drop({ x: 762, y: 99 }), actual => actual === error);
+});

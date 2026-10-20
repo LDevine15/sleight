@@ -5,15 +5,16 @@ import vm from 'node:vm';
 
 // Replace only AX/CG and the native text-area adapter; run() keeps the real guards and path ordering.
 function fixture(options = {}) {
+  const ids = options.windowIds ?? [11, 12];
   const events = [], writes = [], activations = [], settles = [], restored = [], traces = [];
   const frames = [{ X: 100, Y: 100, Width: 600, Height: 400 }, { X: 750, Y: 100, Width: 500, Height: 400 }];
   if (options.stacked) frames[1] = { ...frames[0] };
   const area = (id, value, selected) => ({ id, AXRole: 'AXTextArea', AXValue: value, AXSelectedText: selected,
-    AXPosition: { x: frames[id - 11].X + 5, y: 130 }, AXSize: { width: 480, height: 365 }, AXChildren: [] });
-  const a = area(11, 'alpha beta\n', 'alpha'), b = area(12, 'gamma delta\n', '');
+    AXPosition: { x: frames[ids.indexOf(id)].X + 5, y: 130 }, AXSize: { width: 480, height: 365 }, AXChildren: [] });
+  const a = area(ids[0], 'alpha beta\n', 'alpha'), b = area(ids[1], 'gamma delta\n', '');
   a.range = { location: 0, length: 5 }; b.range = { location: 0, length: 0 };
   const wins = [a, b].map((el, i) => {
-    const win = { AXRole: 'AXWindow', AXWindowNumber: i + 11, AXTitle: options.sameTitle ? 'Same.txt' : `${i + 11}.txt`, AXChildren: [el],
+    const win = { AXRole: 'AXWindow', AXWindowNumber: ids[i], AXTitle: options.sameTitle ? 'Same.txt' : `${ids[i]}.txt`, AXChildren: [el],
       AXPosition: { x: frames[i].X, y: 100 }, AXSize: { width: frames[i].Width, height: 400 } };
     el.AXParent = win; return win;
   });
@@ -21,7 +22,7 @@ function fixture(options = {}) {
   const target = { processIdentifier: 7, activateWithOptions: () => { activations.push(7); options.onActivate?.({ a, b, frames }); } };
   const previous = { processIdentifier: 99, isNil: () => false, activateWithOptions() {} };
   const app = { AXWindows: wins, AXFocusedUIElement: b };
-  let order = [12, 11], delayed = 0, attempts = 0;
+  let order = [ids[1], ids[0]], delayed = 0, attempts = 0;
   const systemWide = { systemWide: true };
   const applyDrop = () => {
     if (options.unchanged) return;
@@ -77,7 +78,7 @@ function fixture(options = {}) {
     ...(options.overlays ? [{ id: 40, pid: 739, title: 'Notification Center', owner: 'Notification Center', layer: 21, bounds: { X: 0, Y: 0, Width: 1512, Height: 982 } },
       { id: 310887, pid: 633, title: 'half-backdrop', owner: 'Dock', layer: 0, bounds: { X: -4, Y: 32, Width: 762, Height: 950 } }] : []),
     ...(options.cover ? [{ id: 50, pid: 99, title: 'cover', owner: 'Other', layer: 0, bounds: frames[1] }] : []),
-    ...order.filter(id => !(options.foreign && id === 12)).map(id => ({ id, pid: 7, title: options.sameTitle ? 'Same.txt' : `${id}.txt`, owner: 'Editor', layer: 0, bounds: { ...frames[id - 11] } })),
+    ...order.filter(id => !(options.foreign && id === ids[1])).map(id => ({ id, pid: 7, title: options.sameTitle ? 'Same.txt' : `${id}.txt`, owner: 'Editor', layer: 0, bounds: { ...frames[ids.indexOf(id)] } })),
   ];
   context.backgroundBuilder = () => {
     if (options.lateCover) options.cover = true;
@@ -106,7 +107,7 @@ function fixture(options = {}) {
       select: (location, length) => { el.range = { location, length }; el.AXSelectedText = el.AXValue.slice(location, location + length); }, settle: () => settles.push(7),
     };
   };
-  const run = (change = {}) => JSON.parse(context.run([JSON.stringify({ app: 'Editor', windowId: 11, toWindowId: 12,
+  const run = (change = {}) => JSON.parse(context.run([JSON.stringify({ app: 'Editor', windowId: ids[0], toWindowId: ids[1],
     dp7: options.dp7 ?? false, dp2: options.dp2 ?? false, from: 'the current text selection', to: 'end of line 1', holdMs: 0, settleMs: 0, steps: 2, ...change })]));
   return { run, context, a, b, frames, wins, events, writes, activations, settles, restored, traces };
 }
@@ -445,3 +446,34 @@ test('DPg recorded blank-line destination moves to line 2 without a placeholder 
   assert.deepEqual(h.traces.map(e => `${e.phase}:${e.edge}`), ['ax-move:start', 'settle:start', 'settle:end', 'ax-move:end']);
   assert.equal(h.events.length + h.activations.length, 0);
 });
+
+for (const to of [[24, 104], [20, 100], 'end of line 2']) {
+  test(`WD3 recorded selection request moves onto the empty final line: ${JSON.stringify(to)}`, () => {
+    const h = fixture({ windowIds: [323040, 323041] }), adapter = h.context.axTextArea;
+    h.a.AXValue = 'alpha move-c656f03d omega\n'; h.a.AXSelectedText = 'move-c656f03d';
+    h.a.range = { location: 6, length: 13 }; h.b.AXValue = 'destination\n';
+    Object.assign(h.frames[1], { X: 752, Y: 49, Width: 720, Height: 560 });
+    Object.assign(h.wins[1], { AXPosition: { x: 752, y: 49 }, AXSize: { width: 720, height: 560 } });
+    Object.assign(h.b, { AXPosition: { x: 757, y: 81 }, AXSize: { width: 700, height: 520 } });
+    h.context.axTextArea = (pid, point, reference) => {
+      const area = adapter(pid, point, reference);
+      if (reference !== h.b) return area;
+      return { ...area,
+        bounds: () => ({ X: 757, Y: 81, Width: 700, Height: 520 }),
+        characterCount: () => 12,
+        indexAt: () => 0,
+        rect: (i, n = 1) => i === 12 && n === 0 && typeof to === 'string' ? { X: 762, Y: 94, Width: 0, Height: 13 }
+          : i < 12 ? { X: 762 + i * 6.5, Y: 81, Width: i === 11 ? 0 : 6.5, Height: 13 } : null,
+        lineRange: n => [{ location: 0, length: 12 }, { location: 12, length: 0 }][n] ?? null,
+      };
+    };
+    h.context.raiseWindow = () => assert.fail('AX move raised a window');
+    const r = h.run({ app: 'TextEdit', dp7: undefined, dp2: undefined, to,
+      ...(Array.isArray(to) ? { screenshotsByWindow: { 323041: [1440, 1120] } } : {}), trace: true });
+    assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.path, 'accessibility');
+    assert.equal(r.toWindowId, 323041); assert.equal(r.fallbackReason, null); assert.equal(r.deliveryVerified, true);
+    assert.equal(h.a.AXValue, 'alpha omega\n'); assert.equal(h.b.AXValue, 'destination\nmove-c656f03d');
+    assert.deepEqual(h.writes, [[323041, 12, 0, 'move-c656f03d'], [323040, 6, 14, '']]);
+    assert.equal(h.events.length + h.activations.length, 0);
+  });
+}

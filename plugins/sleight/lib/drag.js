@@ -533,9 +533,10 @@ function attributedTextHasAttributes(value, length, start = 0) {
     if (!attributes || !Number.isSafeInteger(Number(attributes.count))) throw new Error('the selected text attributes are unavailable');
     // Spelling annotations describe the editor's proofing state, not document formatting.
     // Keep every other attribute, including unknown ones, in the comparison.
+    if (!attributes.objectForKey($('AXMisspelled')) && !attributes.objectForKey($('AXMarkedMisspelled'))) return attributes;
     const formatting = attributes.mutableCopy;
-    formatting.removeObjectForKey($.NSAccessibilityMisspelledTextAttribute);
-    formatting.removeObjectForKey($.NSAccessibilityMarkedMisspelledTextAttribute);
+    formatting.removeObjectForKey($('AXMisspelled'));
+    formatting.removeObjectForKey($('AXMarkedMisspelled'));
     return formatting;
   };
   const baseline = attributesAt(0);
@@ -580,6 +581,8 @@ function axTextArea(pid, point, reference) {
   };
   return {
     value: () => ObjC.unwrap(ObjC.castRefToObject(get(el, 'AXValue'))),
+    characterCount: () => Number(ObjC.unwrap(ObjC.castRefToObject(get(el, 'AXNumberOfCharacters')))),
+    bounds: () => frame(axElement(el)),
     selection: () => rangeOf(get(el, 'AXSelectedTextRange')),
     lineForIndex: index => Number(ObjC.unwrap(ObjC.castRefToObject(ask(el, 'AXLineForIndex', $(index))))),
     lineRange: line => rangeOf(ask(el, 'AXRangeForLine', $.NSNumber.numberWithInteger(line))),
@@ -600,16 +603,37 @@ function axTextArea(pid, point, reference) {
 }
 
 // Where text dropped at a point lands: before or after the character under it,
-// or at the end of its line when the point is past the line's last character
-// (AXRangeForPosition answers 0 there).
+// at the final line's end, or after all text when the point is below the last character.
+// AXRangeForPosition can answer 0 or no value where there is no character.
 function dropIndex(area, p, text) {
   const onRow = r => r && p.y >= r.Y && p.y < r.Y + r.Height;
-  const index = area.indexAt(p), r = area.rect(index);
+  const validRect = r => r && ['X', 'Y', 'Width', 'Height'].every(key => Number.isFinite(r[key])) && r.Width >= 0 && r.Height > 0;
+  const refusal = 'cannot find where the drop point falls in the text; nothing was changed';
+  const bounds = dp7 && area.bounds ? attempt(() => area.bounds(), null) : undefined;
+  if (bounds !== undefined && (!validRect(bounds) || bounds.Width <= 0 || !inside(bounds, p))) throw new Error(refusal);
+  const noValue = fn => {
+    try { return fn(); } catch (error) { if (error?.axCode !== -25212) throw error; return null; }
+  };
+  const hit = point => {
+    const index = noValue(() => area.indexAt(point));
+    return { index, r: Number.isSafeInteger(index) && index >= 0 ? noValue(() => area.rect(index)) : null };
+  };
+  const { index, r } = hit(p);
   if (onRow(r) && p.x >= r.X && p.x < r.X + r.Width) return p.x < r.X + r.Width / 2 ? index : index + 1;
+  const count = dp7 && bounds && area.characterCount ? attempt(() => area.characterCount(), null) : null;
+  if (dp7 && bounds && area.characterCount) {
+    // A point below the final character, inside this text area, can only append.
+    // FM6: locate it with AXNumberOfCharacters and AXBoundsForRange, without document text or a line scan.
+    const last = Number.isSafeInteger(count) && count > 0 ? attempt(() => area.rect(count - 1, 1), null) : null;
+    if (validRect(last) && !(last.X === 0 && last.Y === 0) && last.X >= bounds.X && last.Y >= bounds.Y &&
+        last.X + last.Width <= bounds.X + bounds.Width && last.Y + last.Height <= bounds.Y + bounds.Height &&
+        p.y >= last.Y + last.Height) return count;
+  }
   for (let x = p.x - 4; x >= p.x - 600; x -= 4) {
-    const i = area.indexAt({ x, y: p.y }), q = area.rect(i);
+    const { index: i, r: q } = hit({ x, y: p.y });
     if (onRow(q) && x >= q.X && x < q.X + q.Width) {
       const end = area.lineEnd(i);
+      if (bounds && (!Number.isSafeInteger(count) || count <= 0 || end !== count)) throw new Error(refusal);
       return end > 0 && text[end - 1] === '\n' ? end - 1 : end;
     }
   }
@@ -622,7 +646,7 @@ function dropIndex(area, p, text) {
       if (Date.now() - started > 1000) break;
       for (let x = p.x; x >= p.x - 600; x -= 4) {
         if (Date.now() - started > 1000) break;
-        const i = area.indexAt({ x, y }), q = area.rect(i);
+        const { index: i, r: q } = hit({ x, y });
         if (!q || y < q.Y || y >= q.Y + q.Height || x < q.X || x >= q.X + q.Width) continue;
         const line = area.lineForIndex(i);
         if (!Number.isSafeInteger(line) || line < 0) throw new Error('cannot find where the drop point falls in the text; nothing was changed');

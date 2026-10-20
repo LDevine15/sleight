@@ -323,6 +323,40 @@ test('text adapter asks AX for a visual line and a nonempty glyph range without 
   assert.equal(h.hits.length, 0); assert.equal(allocations.length, 0);
 });
 
+test('WD3 native adapter resolves below the last range without reading document text', () => {
+  const h = harness(), api = h.context.$, parameters = [];
+  h.area.AXNumberOfCharacters = 12;
+  h.area.AXPosition = { x: 757, y: 81 }; h.area.AXSize = { width: 700, height: 520 };
+  const attribute = api.AXUIElementCopyAttributeValue;
+  api.AXUIElementCopyAttributeValue = (el, name, out) => {
+    assert.notEqual(name, 'AXValue', 'geometry must not read the document');
+    return attribute(el, name, out);
+  };
+  Object.assign(api, {
+    malloc: () => ({}), free() {},
+    NSMakeRange: (location, length) => ({ location, length }), NSMakePoint: (x, y) => ({ x, y }),
+    NSValue: { ...api.NSValue,
+      valueWithRange: value => ({ getValue: buffer => { buffer.value = value; } }),
+      valueWithPoint: value => ({ getValue: buffer => { buffer.value = value; } }),
+    },
+    AXValueCreate: (_type, buffer) => buffer.value,
+    AXUIElementCopyParameterizedAttributeValue: (el, name, arg, out) => {
+      assert.equal(el, h.area); parameters.push([name, arg]);
+      if (name === 'AXRangeForPosition') return -25212;
+      assert.equal(name, 'AXBoundsForRange');
+      assert.deepEqual(JSON.parse(JSON.stringify(arg)), { location: 11, length: 1 });
+      out[0] = { description: 'x:833.5 y:81 w:0 h:13' }; return 0;
+    },
+    AXUIElementSetAttributeValue: () => assert.fail('endpoint resolution must not write'),
+  });
+  h.context.ObjC.bindFunction = () => {};
+  const area = h.context.axTextArea(7, null, h.area);
+  assert.equal(h.context.dropIndex(area, { x: 764, y: 101 }), 12);
+  assert.ok(h.reads.includes('AXNumberOfCharacters'));
+  assert.ok(h.reads.includes('AXPosition')); assert.ok(h.reads.includes('AXSize'));
+  assert.equal(parameters.length, 2); assert.equal(h.hits.length, 0);
+});
+
 test('line-end geometry requests the whole last Unicode glyph and skips CRLF', () => {
   const h = semanticFixture(), ranges = [];
   h.area.AXValue = 'alpha\nlast 😀\r\n';

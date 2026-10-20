@@ -173,7 +173,7 @@ function harness({ background = false, backgroundAfter = 'beta gammaalpha\n', se
         const size = location + length - baseline;
         return context.attributedTextHasAttributes({ length: size, attributesAtIndexEffectiveRange: index => {
           const font = ax.attributes[baseline + index];
-          return { count: 2, get mutableCopy() { return { font, removeObjectForKey() {}, isEqualToDictionary: other => font === other.font }; } };
+          return { count: 2, font, objectForKey: () => undefined, isEqualToDictionary: other => font === other.font };
         } }, size, location - baseline);
       },
       indexAt: p => { const i = Math.floor((p.x - x0) / 8); return p.y >= y0 && p.y < y0 + 13 && i >= 0 && i < text().length - 1 ? i : 0; },
