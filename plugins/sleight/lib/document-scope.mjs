@@ -453,7 +453,11 @@ async function closedLastWindow(state, record) {
     if (header.appId !== state.expected.appId) return block('app header mismatch');
   } else if (header.app !== state.expected.app) return decide('app header name differs');
   if (!state.closeRead?.path) return decide('native observer unavailable');
-  let timer, ended = false, pendingReason = 'timeout';
+  let timer, pollTimer, wakePoll, ended = false, pendingReason = 'timeout';
+  const poll = () => new Promise(resolve => {
+    wakePoll = resolve;
+    pollTimer = setTimeout(() => { pollTimer = undefined; wakePoll = undefined; resolve(); }, 25);
+  });
   try {
     const timeout = {}, deadline = Date.now() + 1500, path = state.closeRead.path;
     const changed = () => state.activeApp !== active || state.actionVersion !== version || state.lastAction !== action;
@@ -466,8 +470,9 @@ async function closedLastWindow(state, record) {
           data = JSON.parse(await fs.readFile(path, 'utf8'));
           if (!Array.isArray(data.observations)) throw Error('Missing native samples');
         } catch {
+          if (ended || Date.now() >= deadline) break;
           pendingReason = 'error';
-          await new Promise(resolve => setTimeout(resolve, 25));
+          await poll();
           continue;
         }
         if (ended || Date.now() >= deadline) break;
@@ -486,20 +491,24 @@ async function closedLastWindow(state, record) {
               (typeof appId === 'string' && appId && appId !== state.expected.appId)) return { blocked: true, reason: 'process mismatch' };
           const identityMatches = actualPid === pid && actualStart === processStart && appId === state.expected.appId;
           const fresh = (o = newest) => Number.isFinite(o?.end) && o.end >= o.start && o.end <= Date.now() && Date.now() - o.end <= 200;
+          const consecutive = prior && newest.start > prior.start && Number.isFinite(prior.end) &&
+            prior.end >= prior.start && newest.end > prior.end && newest.end - prior.end <= 200;
+          const exited = o => o?.status === 'ok' && o.pid === pid && o.processStart === processStart &&
+            o.appId === state.expected.appId && o.running === false && fresh(o);
           const modalOnTarget = o => o?.status === 'ok' && o.pid === pid && o.processStart === processStart &&
             o.appId === state.expected.appId && o.running === true && Number.isSafeInteger(o.windowCount) && o.windowCount > 0 &&
-            o.closedWindowPresent === true && Number.isSafeInteger(o.modalCount) && o.modalCount > 0 && fresh(o);
+            o.closedWindowPresent === true && Number.isSafeInteger(o.modalCount) && o.modalCount > 0;
           if (status !== 'ok') pendingReason = 'native unavailable';
           else if (!identityMatches || typeof running !== 'boolean') pendingReason = 'native identity missing';
           else if (running === false) {
-            if (fresh()) return { reason: 'process exited', skip: true };
-            pendingReason = 'stale native sample';
+            if (consecutive && exited(newest) && exited(prior)) return { reason: 'process exited', skip: true };
+            pendingReason = fresh() ? 'timeout' : 'stale native sample';
           } else if (!Number.isSafeInteger(windowCount) || windowCount < 0 || !Number.isSafeInteger(modalCount) || modalCount < 0) pendingReason = 'native counts missing';
           else if (windowCount > 0 && closedWindowPresent === false) return { reason: 'windows non-empty' };
           else if (modalCount > 0) {
-            // Two distinct fresh observations of the retained window's modal
-            // child allow a read while that window still exists.
-            if (modalOnTarget(newest) && modalOnTarget(prior) && newest.start > prior.start) return { reason: 'modal child' };
+            // The newest observation must be fresh; its predecessor must have
+            // ended within 200 ms of it, even when the helper itself takes time.
+            if (consecutive && fresh() && modalOnTarget(newest) && modalOnTarget(prior)) return { reason: 'modal child' };
             pendingReason = 'modal child';
           } else if (windowCount === 0) {
             // Check age at the skip itself. Stale or incomplete observations keep
@@ -508,17 +517,17 @@ async function closedLastWindow(state, record) {
             pendingReason = 'stale native sample';
           } else pendingReason = 'timeout';
         }
-        await new Promise(resolve => setTimeout(resolve, 25));
+        await poll();
       }
       return timeout;
     };
     const observed = await Promise.race([sample(), new Promise(resolve => { timer = setTimeout(() => resolve(timeout), 1500); })]);
     if (changed()) return decide('action changed');
-    if (observed === timeout || Date.now() >= deadline) return decide(pendingReason);
+    if (observed === timeout) return decide(pendingReason);
     if (observed.blocked) return block(observed.reason);
     return decide(observed.reason, observed.skip);
   } catch (error) { if (blocked) throw error; return decide('error'); }
-  finally { ended = true; clearTimeout(timer); }
+  finally { ended = true; clearTimeout(timer); clearTimeout(pollTimer); wakePoll?.(); }
 }
 
 export function guardedCode(code, window, reason = /* notice */ 'Document scope stopped this action: window or URL changed. Read the window and ask the user with document_scope.', lease, options = {}) {

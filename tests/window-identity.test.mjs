@@ -139,7 +139,7 @@ test('DPp counts modal children only under the retained closing target', () => {
     const reply = inspect(closeRequest, [11, 12], 0, false, events, (app, windows, list, runtime) => {
       runtime.seedWindowIdentity = true;
       runtime.afterBaseline = () => {
-        windows[modalWindow].AXChildren = list([{ AXRole: 'AXGroup', AXChildren: list([modal]) }]);
+        windows[modalWindow].AXChildren = list([modal]);
         events.length = 0;
       };
     });
@@ -148,6 +148,22 @@ test('DPp counts modal children only under the retained closing target', () => {
     assert.equal(reply.windowCount, 2);
     assert.equal(reply.modalCount, modalWindow === 0 ? 1 : 0);
     assert.ok(!events.some(name => /Title|Document|Value|Description/.test(String(name))), events.join(','));
+  }
+});
+test('DPr target sheet checks do not descend into document children', () => {
+  for (const sheet of [false, true]) {
+    const events = [];
+    const reply = inspect(closeRequest, [11], 0, false, events, (app, windows, list, runtime) => {
+      runtime.seedWindowIdentity = true;
+      runtime.afterBaseline = () => {
+        const document = { AXRole: 'AXGroup', get AXChildren() { throw Error('document traversal'); } };
+        windows[0].AXChildren = list([document, ...(sheet ? [{ AXRole: 'AXSheet' }] : [])]);
+        events.length = 0;
+      };
+    });
+    assert.equal(reply.status, 'ok');
+    assert.equal(reply.modalCount, sheet ? 1 : 0);
+    assert.equal(events.filter(name => name === 'AXChildren').length, 1);
   }
 });
 test('DPh counts AXWindows on the leased running pid without reading titles or documents', () => {

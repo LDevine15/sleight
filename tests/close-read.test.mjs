@@ -75,9 +75,79 @@ test('DPo keeps sampling through consecutive failures until usable metadata retu
   } });
   t.after(() => { observer.dispose(); removeTemp(directory); });
   const info = observer.begin(1, window);
-  for (let i = 0; i < 5; i++) { t.mock.timers.tick(25); await new Promise(resolve => setImmediate(resolve)); }
+  for (let i = 0; i < 20; i++) { t.mock.timers.tick(25); await new Promise(resolve => setImmediate(resolve)); }
   assert.ok(requests >= 4);
   assert.equal(JSON.parse(readFileSync(info.path, 'utf8')).observations.at(-1).status, 'ok');
+});
+
+function observerClock() {
+  let time = 0;
+  const pending = new Set(), fired = [], cleared = [];
+  return {
+    now: () => time,
+    setTimer(fn, ms) { const timer = { fn, ms, at: time + ms }; pending.add(timer); return timer; },
+    clearTimer(timer) { if (pending.delete(timer)) cleared.push(timer); },
+    async tick(ms) {
+      time += ms;
+      for (const timer of [...pending]) if (timer.at <= time) { pending.delete(timer); fired.push(timer); timer.fn(); }
+      await new Promise(resolve => setImmediate(resolve));
+    },
+    pending, fired, cleared,
+  };
+}
+
+test('DPr bounds close sampling to two seconds after the last matching key and can restart it', async t => {
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-close-bound-')));
+  const clock = observerClock(), starts = [];
+  const observer = observers.createCloseRead({ directory, ...clock, observe: async () => { starts.push(clock.now()); return ok; } });
+  t.after(() => { observer.dispose(); removeTemp(directory); });
+  observer.begin(1, window);
+  await clock.tick(0);
+  for (let i = 0; i < 60; i++) await clock.tick(25);
+  observer.keyPressed(window.appId);
+  for (let i = 0; i < 40; i++) await clock.tick(25);
+  assert.ok(starts.at(-1) >= 2475, 'the matching key extends sampling beyond begin + 2 s');
+  observer.keyPressed('other.app');
+  for (let i = 0; i < 80; i++) await clock.tick(25);
+  assert.ok(starts.at(-1) < 3500, 'sampling stops at last matching key + 2 s');
+  assert.equal(clock.pending.size, 0);
+  const before = starts.length;
+  observer.keyPressed(window.appId);
+  await clock.tick(80);
+  assert.equal(starts.length, before + 1);
+  observer.end(1);
+  assert.equal(clock.pending.size, 0, 'end clears the pending sample timer');
+  assert.ok(clock.cleared.length > 0);
+});
+
+test('DPr backs off non-ok samples, resets after recovery and clears a paused wait', async t => {
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-close-backoff-')));
+  const clock = observerClock(), starts = [];
+  const observer = observers.createCloseRead({ directory, ...clock, observe: async () => {
+    starts.push(clock.now());
+    return starts.length < 4 ? { status: 'denied' } : ok;
+  } });
+  t.after(() => { observer.dispose(); removeTemp(directory); });
+  observer.begin(1, window);
+  await clock.tick(0);
+  for (let i = 0; i < 9; i++) await clock.tick(25);
+  assert.deepEqual(starts.slice(0, 6), [0, 25, 75, 175, 200, 225]);
+  observer.pause(1);
+  assert.equal(clock.pending.size, 0);
+  await clock.tick(2000);
+  assert.equal(starts.length, 6);
+});
+
+test('DPr persistent helper failures stop by two seconds with capped backoff', async t => {
+  const directory = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-close-denied-')));
+  const clock = observerClock(), starts = [];
+  const observer = observers.createCloseRead({ directory, ...clock, observe: async () => { starts.push(clock.now()); return { status: 'unknown' }; } });
+  t.after(() => { observer.dispose(); removeTemp(directory); });
+  observer.begin(1, window);
+  await clock.tick(0);
+  for (let i = 0; i < 120; i++) await clock.tick(25);
+  assert.deepEqual(starts, [0, 25, 75, 175, 375, 775, 1175, 1575, 1975]);
+  assert.equal(clock.pending.size, 0);
 });
 
 test('DPo a decided call stops sampling and discards an in-flight reply until end removes the file', async t => {

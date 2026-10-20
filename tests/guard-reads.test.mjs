@@ -13,6 +13,8 @@ import { createReadCompactor } from '../plugins/sleight/lib/compact-reads.mjs';
 import { inspect } from './helpers/window-identity-fixture.mjs';
 import { loadCheck } from '../bench/replay/run.mjs';
 import { checkEvidence } from '../bench/replay/checks.mjs';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 
 const expected = { title: 'a.txt', app: 'TextEdit', url: 'file:///tmp/a.txt' };
 const tree = (window = expected, rows = '\t1 button Save, ID: Save') =>
@@ -71,21 +73,27 @@ const nativeClosed = { status: 'ok', appId: 'fixture.app', pid: 123, processStar
 const recordedApp = { displayName: 'TextEdit', id: 'com.apple.TextEdit', isRunning: true };
 function closeClock(f, onTick = () => {}) {
   let now = 10000;
-  const timers = new Set();
+  const timers = new Set(), scheduled = [], fired = [], cleared = [];
+  const advance = ms => {
+    now += ms;
+    onTick(now);
+    for (const due of [...timers]) if (due.at <= now) { timers.delete(due); fired.push(due); due.fn(); }
+  };
   f.context.Date = class extends Date { static now() { return now; } };
   f.context.setTimeout = (fn, ms) => {
-    const timer = { fn, at: now + ms };
+    const timer = { fn, ms, at: now + ms };
     timers.add(timer);
+    scheduled.push(timer);
     if (ms < 1500) setImmediate(() => {
       if (!timers.has(timer)) return;
-      now = Math.max(now, timer.at);
-      onTick(now);
-      for (const due of [...timers]) if (due.at <= now) { timers.delete(due); due.fn(); }
+      advance(Math.max(0, timer.at - now));
     });
     return timer;
   };
-  f.context.clearTimeout = timer => timers.delete(timer);
+  f.context.clearTimeout = timer => { if (timers.delete(timer)) cleared.push(timer); };
   f.clock = () => now;
+  f.advance = advance;
+  f.timers = { pending: timers, scheduled, fired, cleared };
 }
 function closeFixture({ sample = nativeClosed, action = () => {}, ...options } = {}) {
   const path = join(leaseDir, `close-${Math.random()}.obs`);
@@ -146,6 +154,8 @@ test('DPn retains the engine read when the closing window remains at the 1500 ms
     await f.run('await app.pressKey("super+w"); await app.getAXState();');
     assert.equal(f.clock() - start, 1500);
     assert.equal(f.calls.filter(call => call[0] === 'read').length, 2);
+    assert.equal(f.timers.fired.filter(timer => timer.ms === 1500).length, 1);
+    assert.equal(f.timers.pending.size, 0);
     assert.ok(f.output.some(text => text.includes('"decision":"kept-read"') && text.includes('"reason":"timeout"') && text.includes('"windowCount":1')));
   }
 });
@@ -366,8 +376,102 @@ test('DPo Cmd+Q and quit-on-close return a closed notice for the same leased pro
     const event = JSON.parse(f.output.find(text => text.startsWith('[sleight:dp1]')).slice(13));
     assert.equal(event.decision, 'skipped-read');
     assert.equal(event.reason, 'process exited');
+    assert.equal(f.clock(), 10050, 'two distinct fresh exit observations are required');
     assert.equal(f.calls.filter(c => c[0] === 'read').length, 1);
   }
+});
+
+test('DPr transient, repeated, stale and interrupted exit samples keep polling', async () => {
+  const exited = { ...nativeClosed, running: false };
+  for (const sample of [
+    ms => ms < 50 ? exited : { ...nativeClosed, windowCount: 1 },
+    ms => ms < 100 ? { ...exited, start: 10025, end: 10025 } : nativeClosed,
+    ms => ms < 100 ? { ...exited, end: 1 } : nativeClosed,
+    ms => ms === 50 ? { status: 'unknown' } : ms < 100 ? exited : nativeClosed,
+  ]) {
+    const f = closeFixture({ sample });
+    await f.run('await app.pressKey("super+w");');
+    const event = JSON.parse(f.output.find(text => text.startsWith('[sleight:dp1]')).slice(13));
+    assert.notEqual(event.reason, 'process exited');
+    assert.equal(f.clock(), event.reason === 'windows non-empty' ? 10050 : 10100);
+  }
+});
+
+test('DPr a concrete identity mismatch in an old post-key sample still blocks', async () => {
+  const f = closeFixture({ sample: { ...nativeClosed, pid: 456, start: 10001, end: 10025 } });
+  await assert.rejects(f.run('await app.pressKey("super+w"); await new Promise(resolve => setTimeout(resolve, 250));'), /process mismatch/);
+  assert.equal(f.clock(), 10250);
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 1);
+  assert.ok(f.output.some(text => text.includes('"decision":"blocked-read"')));
+});
+
+test('DPr valid exit timestamps older than 200 ms keep polling until fresh zero counts', async () => {
+  const f = closeFixture({ sample: ms => ms < 350
+    ? { ...nativeClosed, running: false, start: 10001, end: 10025 } : nativeClosed });
+  await f.run('await app.pressKey("super+w"); await new Promise(resolve => setTimeout(resolve, 250));');
+  assert.equal(f.clock(), 10350);
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 1);
+  assert.ok(f.output.some(text => text.includes('"reason":"no windows"')));
+});
+
+test('DPr modal confirmation uses a fresh newest sample and a 175 ms pair cadence', async () => {
+  const f = closeFixture({ sample: ms => {
+    if (ms < 250) return { status: 'unknown' };
+    const end = 10150 + Math.floor((ms - 250) / 175) * 175;
+    return { ...targetModal, start: end - 125, end };
+  } });
+  await f.run('await app.pressKey("super+w");');
+  assert.equal(f.clock(), 10425);
+  assert.ok(f.output.some(text => text.includes('"reason":"modal child"')));
+});
+
+test('DPr rejects modal pairs more than 200 ms apart', async () => {
+  const f = closeFixture({ sample: ms => {
+    if (ms < 250) return { status: 'unknown' };
+    const end = 10150 + Math.floor((ms - 250) / 225) * 225;
+    return { ...targetModal, start: end - 125, end };
+  } });
+  await f.run('await app.pressKey("super+w");');
+  assert.equal(f.clock(), 11500);
+});
+
+test('DPr a proven skip that wins the race survives crossing the deadline before continuation', async () => {
+  const f = closeFixture();
+  let checks = 0;
+  f.context.Date = class extends Date { static now() {
+    if (f.clock() > 10000 && ++checks >= 5) return 11500;
+    return f.clock();
+  } };
+  await f.run('await app.pressKey("super+w");');
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 1);
+  assert.ok(f.output.some(text => text.includes('"decision":"skipped-read"')));
+  assert.equal(f.timers.cleared.filter(timer => timer.ms === 1500).length, 1);
+});
+
+for (const rejects of [false, true]) test(`DPr the 1500 ms race ignores a stuck file read's late ${rejects ? 'rejection' : 'reply'}`, async t => {
+  const f = closeFixture();
+  const readFile = fsPromises.readFile;
+  let finish, started;
+  const waiting = new Promise(resolve => { started = resolve; });
+  t.mock.method(fsPromises, 'readFile', (...args) => {
+    if (!String(args[0]).includes('close-')) return readFile(...args);
+    started();
+    return new Promise((resolve, reject) => { finish = rejects ? reject : resolve; });
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const run = f.run('await app.pressKey("super+w");');
+  await waiting;
+  f.advance(1500);
+  await run;
+  assert.equal(f.calls.filter(c => c[0] === 'read').length, 2);
+  assert.equal(f.timers.fired.filter(timer => timer.ms === 1500).length, 1);
+  assert.equal(f.timers.pending.size, 0);
+  finish(rejects ? Error('late file error') : JSON.stringify({ observations: [{ ...nativeClosed, start: 10025, end: 11500 }] }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.output.filter(text => text.startsWith('[sleight:dp1]')).length, 1);
+  assert.ok(f.output.some(text => text.includes('"decision":"kept-read"')));
+  assert.equal(f.timers.pending.size, 0);
 });
 
 test('DPn caller-read retains the engine read and carries the native failure code', async () => {
@@ -521,6 +625,81 @@ test('DP1 recorded close runs through relay wrapping, emits its call id and retu
       }
     } finally { await relay.dispose(); }
   }
+});
+
+test('DPr relay renews close observation on accepted app keys and pauses before tracing the decision', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10000 });
+  const clearTimer = globalThis.clearTimeout;
+  let cleared = 0, clearedBeforeResult, clearedAtDecision;
+  t.mock.method(globalThis, 'clearTimeout', timer => { if (timer !== undefined) cleared++; return clearTimer(timer); });
+  const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
+  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const sent = [], received = [], starts = [];
+  serverIn.on('data', data => sent.push(JSON.parse(data)));
+  clientOut.on('data', data => received.push(JSON.parse(data)));
+  let sampledAtDecision;
+  const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: false,
+    inputLease: new InputLease({ directory: leaseDir, holder: 'bounded-close' }),
+    windowIdentity: async window => {
+      if (window.closeCount) { starts.push(Date.now()); return nativeClosed; }
+      return { ...window, status: 'ok', epoch: 'fixture', window: 1, windowNumber: 44, pid: 123, processStart: 1, matches: 1 };
+    },
+    trace: direction => {
+      if (direction !== 'dp1-decision') return;
+      sampledAtDecision = starts.length;
+      clearedAtDecision = cleared;
+      // stripDP1Trace invokes pause before this trace, while finishedCall has
+      // not yet invoked end. A waiting observer must already be cancelled.
+      t.mock.timers.tick(25);
+      assert.equal(starts.length, sampledAtDecision);
+    } });
+  t.after(() => relay.dispose());
+  const call = (id, code) => clientIn.write(JSON.stringify({ id, method: 'tools/call', params: { name: 'js', arguments: { code } } }) + '\n');
+  const tick = async ms => { t.mock.timers.tick(ms); await settle(); };
+  const key = async (id, app, action) => {
+    serverOut.write(JSON.stringify({ id, method: 'elicitation/create', params: { message: 'Allow?', mode: 'form',
+      requestedSchema: { type: 'object', properties: {} }, _meta: { connector_id: 'computer-use', tool_name: 'press_key',
+        tool_params: { app }, persist: ['session'], riskLevel: 'low' } } }) + '\n');
+    await settle();
+    if (!sent.some(message => message.id === id && message.result)) {
+      const request = received.find(message => message.id === id);
+      assert.ok(request, 'the fake approval is forwarded to the fake client');
+      clientIn.write(JSON.stringify({ id, result: { action, content: {} } }) + '\n');
+      await settle();
+    }
+  };
+  call(1, 'let app = await cua.getApp("TextEdit");');
+  serverOut.write(JSON.stringify({ id: 1, result: { content: [{ type: 'text', text: tree() }],
+    _meta: { 'codex/toolSurface': { app: { appId: 'fixture.app' } } } } }) + '\n');
+  await settle();
+  call(8, 'await app.pressKey("super+w");');
+  await settle();
+  await tick(0);
+  assert.equal(starts.length, 1);
+  await tick(1500);
+  await key('declined', 'fixture.app', 'decline');
+  await tick(500);
+  const stopped = starts.length;
+  await tick(500);
+  assert.equal(starts.length, stopped, 'a decline does not extend the initial bound');
+  await key('wrong-app', 'other.app', 'accept');
+  await tick(100);
+  assert.equal(starts.length, stopped, 'another app cannot restart the observer');
+  await key('accepted', 'fixture.app', 'accept');
+  await tick(80);
+  assert.equal(starts.length, stopped + 1, 'an accepted key restarts the expired observer');
+  await tick(1500);
+  await key('cached', 'fixture.app', 'accept');
+  await tick(600);
+  assert.ok(starts.at(-1) > 14000, 'a cached approval also renews the bound');
+  clearedBeforeResult = cleared;
+  serverOut.write(JSON.stringify({ id: 8, result: { content: [{ type: 'text', text:
+    '[sleight:dp1]{"decision":"kept-read","reason":"windows non-empty"}\n' + tree() }] } }) + '\n');
+  await settle();
+  assert.ok(clearedAtDecision > clearedBeforeResult, 'pause clears the observer wait before the decision trace and end');
+  assert.equal(sampledAtDecision, starts.length);
+  await tick(2000);
+  assert.equal(starts.length, sampledAtDecision);
 });
 
 test('lean calls keep a strict native handle across calls and report an unchanged action compactly', async () => {

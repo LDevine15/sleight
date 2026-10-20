@@ -2038,6 +2038,7 @@ export function createRelay({
   let nextElicitId = 0;
 
   const toServer = (msg, continuationChecked = false) => {
+    let closeKeyApp;
     // An accepted app approval is the exact beat of its action.
     if (hand && msg.method === undefined && msg.id !== undefined) hand.answered(msg.id, msg.result?.action);
     if (msg.method === undefined && msg.id !== undefined) {
@@ -2045,6 +2046,7 @@ export function createRelay({
       if (request) {
         engineRequests.delete(msg.id);
         if (request.epoch !== engineEpoch) return;
+        closeKeyApp = request.closeKeyApp;
         msg = { ...msg, id: request.id };
       } else if (engineEpoch > 0) return;
       if (actionLog) try { actionLog.waitEnd('s:' + msg.id); } catch {}
@@ -2083,6 +2085,7 @@ export function createRelay({
     }
     if (closing && msg.result?.action === 'accept') msg = { ...msg, result: { action: 'cancel' } };
     if (serverIn.writableEnded || serverIn.destroyed) { trace('server-input-closed', { id: msg.id }); return; }
+    if (msg.result?.action === 'accept' && closeKeyApp) closeRead?.keyPressed(closeKeyApp);
     trace('to-server', msg);
     if (msg.method === 'tools/call' && msg.id !== undefined && msg.params.name !== TURN_END_TOOL) {
       callDetails.set(msg.id, msg.params.name + (msg.params.arguments?.title ? ': ' + msg.params.arguments.title : ''));
@@ -4107,7 +4110,9 @@ export function createRelay({
     // Only the id: with to-server and to-client it splits engine time from the relay's own.
     if (msg.method !== undefined && msg.id !== undefined) {
       const id = engineEpoch ? `sleight-engine-${engineEpoch}-${nextEngineRequest++}` : msg.id;
-      engineRequests.set(id, { id: msg.id, epoch: engineEpoch });
+      engineRequests.set(id, { id: msg.id, epoch: engineEpoch,
+        ...(isAppApproval(msg) && msg.params?._meta?.tool_name === 'press_key'
+          ? { closeKeyApp: msg.params._meta.tool_params?.app } : {}) });
       msg = { ...msg, id };
     }
     trace('from-server', { id: msg.id, method: msg.method });

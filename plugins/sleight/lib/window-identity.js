@@ -217,7 +217,7 @@ function run(argv) {
         }
       }
       let modalCount = 0, seen = 0;
-      const visit = (children, depth) => {
+      const visit = (children, depth, descend = true) => {
         const n = count(children);
         if (depth > 8 || seen + n > 64) throw new Error('AX child bound');
         seen += n;
@@ -230,15 +230,15 @@ function run(argv) {
           if (role === 'AXWindow') throw new Error('Window missing from AXWindows');
           // Menu contents are separate from the app's window and modal children.
           if (role === 'AXMenuBar' || role === 'AXMenu') continue;
-          const nested = attr(child, 'AXChildren', true);
+          const nested = descend ? attr(child, 'AXChildren', true) : null;
           if (nested !== null) visit(nested, depth + 1);
         }
       };
       if (closedWindowPresent === true) {
         // A sheet on a different window cannot confirm this Close. Inspect only
-        // metadata below the retained target, with the same bounds as below.
+        // its direct children, without walking the document's controls.
         const children = attr(baseline, 'AXChildren', true);
-        if (children !== null) visit(children, 0);
+        if (children !== null) visit(children, 0, false);
       }
       if (windowCount === 0) {
         visit(attr(app, 'AXChildren'), 0);

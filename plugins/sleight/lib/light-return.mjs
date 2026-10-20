@@ -26,7 +26,7 @@ export const LIGHT_TIMING = { waitMs: 250, gapMs: 50, freshMs: 150, windowMs: 70
 
 export function createLightReturn({ directory, observe, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
   delayMs = 80, intervalMs = 25, timing = LIGHT_TIMING, burstMs = timing.windowMs ?? 700, keep = 8,
-  continuous = false, maxFailures = Infinity, minGapMs = 0, project = observed => {
+  continuous = false, maxFailures = Infinity, minGapMs = 0, failureBackoffMs = 0, project = observed => {
     const { status = 'unknown', matches, window, title, url, focus } = observed ?? {};
     return { status, matches, window, title, url, focus };
   } } = {}) {
@@ -42,19 +42,24 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
     if (call.running || call.ended) return;
     call.running = true;
     try {
-      while (!call.ended && !call.stopped && (continuous || now() < call.until)) {
+      while (!call.ended && !call.stopped && now() < call.until) {
         const start = now();
         let observed;
         try { observed = await observe({ ...call.window, focus: true }); } catch { observed = undefined; }
-        if (call.ended || call.stopped) break;
+        if (call.ended || call.stopped || now() >= call.until) break;
         const sample = project(observed);
         call.failures = sample.status === 'ok' ? 0 : (call.failures ?? 0) + 1;
         call.observations.push({ start, end: now(), ...sample });
         if (call.observations.length > keep) call.observations.shift();
         write(call);
         if (call.failures >= maxFailures) { call.stopped = true; break; }
-        const wait = Math.max(minGapMs, intervalMs - (now() - start));
-        if (wait > 0) await new Promise(resolve => setTimer(resolve, wait));
+        const backoff = failureBackoffMs && call.failures
+          ? Math.min(failureBackoffMs, intervalMs * 2 ** Math.min(call.failures - 1, 8)) : 0;
+        const wait = Math.min(call.until - now(), Math.max(backoff, minGapMs, intervalMs - (now() - start)));
+        if (wait > 0) await new Promise(resolve => {
+          call.wake = resolve;
+          call.timer = setTimer(() => { call.timer = undefined; call.wake = undefined; resolve(); }, wait);
+        });
       }
     } finally { call.running = false; }
   }
@@ -62,7 +67,7 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
     // A guarded call that may take the light check. Returns what the guard needs, or undefined.
     begin(id, window) {
       if (!directory || !window?.appId || calls.has(id)) return undefined;
-      const call = { path: join(directory, `light-${randomUUID()}.obs`), window, observations: [], until: 0 };
+      const call = { path: join(directory, `light-${randomUUID()}.obs`), window, observations: [], until: continuous ? now() + burstMs : 0 };
       calls.set(id, call);
       write(call);
       if (continuous) call.timer = setTimer(() => run(call), 0);
@@ -73,21 +78,24 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
       for (const call of calls.values()) {
         if (call.ended || call.stopped || call.window.appId !== appId) continue;
         call.until = Math.max(call.until, now() + burstMs);
-        if (!call.running && !call.timer) call.timer = setTimer(() => run(call), delayMs);
+        if (!call.running && call.timer === undefined) call.timer = setTimer(() => run(call), delayMs);
       }
     },
     pause(id) {
       const call = calls.get(id);
       if (!call) return;
       call.stopped = true;
-      if (call.timer) clearTimer(call.timer);
+      if (call.timer !== undefined) clearTimer(call.timer);
       call.timer = undefined;
+      call.wake?.(); call.wake = undefined;
     },
     end(id) {
       const call = calls.get(id);
       if (!call) return;
       call.ended = true; calls.delete(id);
-      if (call.timer) clearTimer(call.timer);
+      if (call.timer !== undefined) clearTimer(call.timer);
+      call.timer = undefined;
+      call.wake?.(); call.wake = undefined;
       for (const path of [call.path, call.path + '.tmp']) { try { rmSync(path, { force: true }); } catch {} }
     },
     dispose() { for (const id of [...calls.keys()]) this.end(id); },
@@ -95,11 +103,12 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
 }
 
 // DP1 uses the same read-only file channel for fresh metadata after a close.
-// Sampling stops when the relay receives its decision or the call ends. The
-// engine can only read this channel, so an in-engine decision arrives in the result.
-export function createCloseRead({ directory, observe } = {}) {
+// Sampling lasts two seconds from begin or the last approved key in a close
+// call. Non-ok replies back off to 400 ms. A decision or call end stops it sooner.
+export function createCloseRead({ directory, observe, now, setTimer, clearTimer } = {}) {
   return createLightReturn({ directory, observe: window => observe({ ...window, closeCount: true }),
-    continuous: true, intervalMs: 25, minGapMs: 25, timing: {}, project: observed => {
+    now, setTimer, clearTimer, continuous: true, burstMs: 2000, failureBackoffMs: 400,
+    intervalMs: 25, minGapMs: 25, timing: {}, project: observed => {
       const { status = 'unknown', unknownReason, appId, pid, processStart, running, windowCount, modalCount, closedWindowPresent } = observed ?? {};
       return { status, appId, pid, processStart, running, windowCount, modalCount, closedWindowPresent,
         ...(status === 'unknown' ? { unknownReason: CLOSE_COUNT_REASONS.includes(unknownReason) ? unknownReason : 'helper-error' } : {}) };
