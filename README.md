@@ -54,7 +54,7 @@ Paste that into your coding agent. It follows [INSTALL.md](INSTALL.md), stopping
 | Claude Code 2.1.288 or later | [Plugin](INSTALL.md#claude-code). Native and app claims on 2.1.289. | No known host-specific gaps. |
 | Codex CLI | [Plugin](INSTALL.md#codex). Calculator and TextEdit passed on 0.160.0 after first-call retries, fixed since but not rerun live. | Turbo needs trusted hooks and awaits a live check. |
 | Grok CLI | [Direct MCP](INSTALL.md#grok-cli). Handshake on 1.0.13. Model and app tasks untested. | Turbo off. Results capped at 20,000 bytes. |
-| Grok Bot | [Local shell](INSTALL.md#grok-bot) via `sleight-mcp js`, awaiting a live app check. | Turbo off. Approvals use sleight's panel. |
+| Grok Bot (preview) | [Local shell](INSTALL.md#grok-bot) via `sleight-mcp js`. One live read passed. | Turbo off. Approvals wait in the menu bar glove ([limits](docs/known-problems.md#hosts-and-platform)). |
 | Other MCP clients | [Stdio config](INSTALL.md#other-mcp-clients), tested with our own client. | Turbo unavailable. |
 | Cursor | [Plugin](INSTALL.md#cursor), with marketplace install unverified. | Turbo unavailable. |
 
@@ -73,7 +73,7 @@ Safari and Firefox use the engine's accessibility path. The engine refuses termi
 - Turbo fills multi-selects and accepts modifier clicks on safe targets. Shorter replies explain field values, batch boundaries and viewport markers.
 - Requested sign-ups count as confirmed when your message names the username or email and password ([limits](docs/settings.md#requested-sign-ups)).
 - Opt-in [local stats](docs/settings.md#stats) report action times and reads saved.
-- Grok CLI adds direct MCP (10 tools in its 1.0.13 handshake). Cursor adds a plugin, with install not yet run. Grok Bot adds the local shell route, tested offline.
+- Grok CLI adds direct MCP (10 tools in its 1.0.13 handshake). Cursor adds a plugin, with install not yet run. Grok Bot adds the local shell route as a preview: one live Calculator read passed, and its approvals wait in the menu bar glove.
 - Protected consent buttons require physical input ([accessibility limits](docs/known-problems.md#protected-consent-input)). Chrome and Helium turbo is on by default after Chrome's debugging consent.
 - The ghost hand is off by default: textedit-drag took 31 to 37 s with it, 23 to 26 s without (3 runs a side, [details](docs/known-problems.md)).
 

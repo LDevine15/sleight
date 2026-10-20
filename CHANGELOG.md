@@ -30,10 +30,10 @@
 
 - Grok CLI can use sleight through its Claude marketplace import or a direct MCP entry. Approval labels name Grok,
   and the doctor reports its install route. Turbo stays off in Grok.
-- Grok Bot can call `sleight-mcp js` through its local shell. Sessions start on demand, exit after ten idle minutes and
-  return screenshot paths. The doctor reports the shell route and live helper Accessibility status. Turbo stays off.
-  Payments, bookings, settings changes and submits ask on sleight's panel. Transport and guards have offline tests;
-  live bot survival and image delivery remain unchecked.
+- Grok Bot (preview) can call `sleight-mcp js` through its local shell. Sessions start on demand, exit after ten idle
+  minutes and return screenshot paths. The doctor reports the shell route and live helper Accessibility status. Turbo
+  stays off. Payments, bookings, settings changes and submits ask on sleight's panel. One live Calculator read passed.
+  Approvals wait in the menu bar glove as a plain window and can repeat. Image delivery is unchecked.
 - The Grok Bot shell route prints that it is waiting for approval on the Mac while a card is pending (GB14f).
 - Protected consent buttons require physical input. VoiceOver, Switch Control, Voice Control and screen-sharing users
   need a physical keyboard or pointer for these cards in 1.4.0. A typed-confirmation alternative is planned afterward.

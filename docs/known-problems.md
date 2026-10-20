@@ -773,10 +773,13 @@ An A/B of the 1.4.0 workflow text, using `SLEIGHT_WORKFLOW_DOCS=0`, is next (WF3
   loaded the Claude marketplace checkout. That can differ from Claude Code's cached sleight version (1.3.1 versus 1.3.0
   on the study Mac). Check the target in `grok inspect --json` and keep one route. The direct MCP entry passed doctor.
   Grok form answers never write Always allow. Only the user's click on sleight's panel can do that.
-- Grok Bot's shell route has offline transport and guard tests, with no live bot read or image delivery check. Its
-  custom STDIO MCP servers run in a hosted box without this Mac's apps or ChatGPT's engine. Use `sleight-mcp js '<code>'`
-  through the local daemon, which starts a session on demand. Doctor reports `route: shell (sleight-mcp js)`,
-  even when a session isn't running. There is no Mac-side HTTP client placement.
+- Grok Bot's shell route is a preview. One live read passed on 2026-10-20 (Calculator through the shell route); image
+  delivery hasn't been checked live. Its approval requests don't open a card. They wait in the menu bar glove under
+  Review sleight request, which macOS 27 can hide behind the menu bar's overflow chevron. Clicking it shows a plain
+  window. The same request can come back several times (about 7 in that check) before one approval takes. The fix
+  (GB18) is planned for 1.4.1. Its custom STDIO MCP servers run in a hosted box without this Mac's apps or ChatGPT's
+  engine. Use `sleight-mcp js '<code>'` through the local daemon, which starts a session on demand. Doctor reports
+  `route: shell (sleight-mcp js)`, even when a session isn't running. There is no Mac-side HTTP client placement.
 - A shell session requires Apple's clang and stops after ten idle minutes. The next call starts it again.
   Any process running as your macOS user can drive the session. A bot with shell access can edit `preapproved.json`
   directly. Socket permissions do not protect against either. A socket path longer than 103 UTF-8 bytes prevents startup.

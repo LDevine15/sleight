@@ -195,7 +195,8 @@ only to plain engine app-access cards whose quoted app name matches their app me
 `drag` and `open_file`, ask on the panel for each action. Their approvals are never remembered on this route.
 
 Grok Bot has no Mac-side MCP client placement, so there is no HTTP bridge route. Offline tests cover the shell transport
-and its guards. A live Grok Bot read and image delivery have not been checked.
+and its guards. One live read passed (2026-10-20). Image delivery hasn't been checked live. Grok Bot support is a preview:
+approvals wait in the menu bar glove ([known problems](known-problems.md#hosts-and-platform)).
 
 Screenshots and app text sent through any Grok route go to Grok's hosted model. Grok Bot sends them through its gateway.
 See [privacy](privacy.md#what-leaves-the-mac).
