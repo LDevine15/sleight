@@ -30,7 +30,7 @@ function run(argv) {
         }
       };
       current();
-      const app = $.AXUIElementCreateApplication(pid), deadline = Date.now() + 200;
+      const app = $.AXUIElementCreateApplication(pid), deadline = Date.now() + 150;
       if (Number($.AXUIElementSetMessagingTimeout(app, 0.05)) !== 0) throw new Error('AX deadline unavailable');
       const attr = (element, name, optional = false) => {
         if (Date.now() >= deadline) throw new Error('AX deadline');
@@ -45,7 +45,8 @@ function run(argv) {
         if (!Number.isSafeInteger(n) || n < 0 || n > 64) throw new Error('AX list bound');
         return n;
       };
-      const windows = attr(app, 'AXWindows'), windowCount = count(windows);
+      const windows = attr(app, 'AXWindows');
+      let windowCount = count(windows);
       let modalCount = 0, seen = 0;
       if (windowCount === 0) {
         const visit = (children, depth) => {
@@ -66,6 +67,22 @@ function run(argv) {
           }
         };
         visit(attr(app, 'AXChildren'), 0);
+        // AXWindows can omit windows on other Spaces. Count only the leased
+        // process's layer-0 CG windows, without reading names or document data.
+        const cg = ObjC.castRefToObject($.CGWindowListCopyWindowInfo(
+          $.kCGWindowListOptionAll | $.kCGWindowListExcludeDesktopElements, 0));
+        if (!cg || cg.isNil?.()) throw new Error('Missing CG list');
+        const n = Number(cg.count);
+        if (!Number.isSafeInteger(n) || n < 0 || n > 10000) throw new Error('CG list bound');
+        for (let i = 0; i < n; i++) {
+          if (Date.now() >= deadline) throw new Error('CG deadline');
+          const row = cg.objectAtIndex(i), owner = ObjC.unwrap(row.objectForKey('kCGWindowOwnerPID'));
+          if (!Number.isSafeInteger(owner) || owner <= 0) throw new Error('Missing CG owner');
+          if (owner !== pid) continue;
+          const layer = ObjC.unwrap(row.objectForKey('kCGWindowLayer'));
+          if (!Number.isSafeInteger(layer)) throw new Error('Missing CG layer');
+          if (layer === 0) windowCount++;
+        }
       }
       current();
       if (Date.now() >= deadline) throw new Error('AX deadline');

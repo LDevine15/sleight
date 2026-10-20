@@ -25,7 +25,7 @@ export const LIGHT_TIMING = { waitMs: 250, gapMs: 50, freshMs: 150, windowMs: 70
 
 export function createLightReturn({ directory, observe, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
   delayMs = 80, intervalMs = 25, timing = LIGHT_TIMING, burstMs = timing.windowMs ?? 700, keep = 8,
-  continuous = false, project = observed => {
+  continuous = false, maxFailures = Infinity, project = observed => {
     const { status = 'unknown', matches, window, title, url, focus } = observed ?? {};
     return { status, matches, window, title, url, focus };
   } } = {}) {
@@ -41,14 +41,17 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
     if (call.running || call.ended) return;
     call.running = true;
     try {
-      while (!call.ended && (continuous || now() < call.until)) {
+      while (!call.ended && !call.stopped && (continuous || now() < call.until)) {
         const start = now();
         let observed;
         try { observed = await observe({ ...call.window, focus: true }); } catch { observed = undefined; }
         if (call.ended) break;
-        call.observations.push({ start, end: now(), ...project(observed) });
+        const sample = project(observed);
+        call.failures = sample.status === 'ok' ? 0 : (call.failures ?? 0) + 1;
+        call.observations.push({ start, end: now(), ...sample });
         if (call.observations.length > keep) call.observations.shift();
         write(call);
+        if (call.failures >= maxFailures) { call.stopped = true; break; }
         const wait = intervalMs - (now() - start);
         if (wait > 0) await new Promise(resolve => setTimer(resolve, wait));
       }
@@ -67,7 +70,7 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
     // The engine asks approval before each key press, naming the app's bundle ID.
     keyPressed(appId) {
       for (const call of calls.values()) {
-        if (call.ended || call.window.appId !== appId) continue;
+        if (call.ended || call.stopped || call.window.appId !== appId) continue;
         call.until = Math.max(call.until, now() + burstMs);
         if (!call.running && !call.timer) call.timer = setTimer(() => run(call), delayMs);
       }
@@ -87,7 +90,7 @@ export function createLightReturn({ directory, observe, now = Date.now, setTimer
 // Sampling stops with the call; a late native reply cannot recreate its file.
 export function createCloseRead({ directory, observe } = {}) {
   return createLightReturn({ directory, observe: window => observe({ ...window, closeCount: true }),
-    continuous: true, intervalMs: 10, timing: {}, project: observed => {
+    continuous: true, intervalMs: 50, maxFailures: 2, timing: {}, project: observed => {
       const { status = 'unknown', appId, pid, processStart, running, windowCount, modalCount } = observed ?? {};
       return { status, appId, pid, processStart, running, windowCount, modalCount };
     } });

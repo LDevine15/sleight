@@ -414,7 +414,7 @@ async function closedLastWindow(state, record) {
         // A sample that began before pressKey completed cannot prove its result.
         const newest = data.observations.filter(o => typeof o?.start === 'number' && o.start > previous.done).at(-1);
         if (newest) return newest;
-        await new Promise(resolve => setTimeout(resolve, 10));
+        await new Promise(resolve => setTimeout(resolve, 25));
       }
       return timeout;
     };

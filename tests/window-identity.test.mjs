@@ -27,10 +27,10 @@ function inspect(request, numbers, focused = 1, cg = false, events = [], setup =
   const list = values => ({ count: values.length, objectAtIndex: i => values[i] });
   const windows = numbers.map((AXWindowNumber, i) => ({ AXTitle: 'Untitled', AXDocument: null, AXWindowNumber,
     AXPosition: { x: i * 400, y: 20 }, AXSize: { width: 300, height: 200 } }));
-  const app = { AXWindows: list(windows), AXFocusedWindow: windows[focused] };
+  const app = { AXWindows: list(windows), AXFocusedWindow: windows[focused], AXChildren: list([]) };
   const running = { processIdentifier: 123, bundleIdentifier: target.appId, terminated: false,
     launchDate: { timeIntervalSince1970: 1 }, isNil: () => false };
-  const runtime = { running, apps: [running], trusted: true, timeoutError: 0 };
+  const runtime = { running, apps: [running], trusted: true, timeoutError: 0, cgWindows: [] };
   setup(app, windows, list, runtime);
   const $ = value => value;
   Object.assign($, { NSUUID: { UUID: { UUIDString: 'epoch' } }, AXIsProcessTrusted: () => runtime.trusted,
@@ -42,9 +42,12 @@ function inspect(request, numbers, focused = 1, cg = false, events = [], setup =
     NSMutableData: { dataWithLength: () => { const bytes = {}; return { bytes, mutableBytes: bytes }; } },
     NSValue: { valueWithBytesObjCType: bytes => ({ pointValue: bytes.value, sizeValue: bytes.value }) },
     CGEventSourceSecondsSinceLastEventType: (source, type) => { events.push('hid'); assert.equal(source, 1); assert.equal(type, 0xFFFFFFFF); return 12.5; },
-    CGWindowListCopyWindowInfo: () => list(cg ? windows.map((window, i) => ({ kCGWindowOwnerPID: 123, kCGWindowLayer: 0,
-      kCGWindowNumber: 11 + i, kCGWindowBounds: { X: window.AXPosition.x, Y: 20, Width: 300, Height: 200 } })) : []) });
+    kCGWindowListOptionAll: 0, kCGWindowListExcludeDesktopElements: 16,
+    CGWindowListCopyWindowInfo: options => { events.push(['cg', options]); return runtime.cgUnavailable ? null : list(cg ? windows.map((window, i) => ({ kCGWindowOwnerPID: 123, kCGWindowLayer: 0,
+      kCGWindowNumber: 11 + i, kCGWindowBounds: { X: window.AXPosition.x, Y: 20, Width: 300, Height: 200 } })) :
+      runtime.cgWindows.map(info => ({ objectForKey: key => { events.push(key); return info[key]; } }))); } });
   return JSON.parse(runInNewContext(source + '\nrun([JSON.stringify(request)])', { $, request, Ref: () => [],
+    Date: { now: () => runtime.clockMs ?? Date.now() },
     ObjC: { import() {}, unwrap: value => value, deepUnwrap: value => value, castRefToObject: value => value } }));
 }
 test('native duplicate-title identity uses the focused window number or an explicit selection', () => {
@@ -133,7 +136,35 @@ test('DPh counts AXWindows on the leased running pid without reading titles or d
   assert.equal(reply.windowCount, 0);
   assert.equal(reply.modalCount, 0);
   assert.ok(events.includes('AXWindows'));
-  assert.ok(!events.some(name => /Title|Document|Value|Description/.test(name)), events.join(','));
+  assert.ok(!events.some(name => /Title|Document|Value|Description/.test(String(name))), events.join(','));
+});
+
+test('DPi cross-checks zero AX windows against CG windows on all Spaces for the leased pid', () => {
+  const events = [];
+  const result = inspect(closeRequest, [], 0, false, events, (app, windows, list, runtime) => {
+    runtime.cgWindows = [
+      { kCGWindowOwnerPID: 456, kCGWindowLayer: 0 },
+      { kCGWindowOwnerPID: 123, kCGWindowLayer: 3 },
+      { kCGWindowOwnerPID: 123, kCGWindowLayer: 0, kCGWindowIsOnscreen: false, kCGWindowName: 'private' },
+    ];
+  });
+  assert.equal(result.status, 'ok');
+  assert.equal(result.windowCount, 1);
+  assert.ok(events.some(event => Array.isArray(event) && event[0] === 'cg' && event[1] === 16));
+  assert.ok(!events.includes('kCGWindowName'));
+  assert.ok(!events.includes('kCGWindowIsOnscreen'));
+  const unrelated = inspect(closeRequest, [], 0, false, [], (app, windows, list, runtime) => {
+    runtime.cgWindows = [{ kCGWindowOwnerPID: 456, kCGWindowLayer: 0 }, { kCGWindowOwnerPID: 123, kCGWindowLayer: 3 }];
+  });
+  assert.equal(unrelated.windowCount, 0);
+});
+
+test('DPi missing CG metadata or an expired 150 ms helper deadline keeps the proof unknown', () => {
+  for (const setup of [
+    (app, windows, list, runtime) => { runtime.cgUnavailable = true; },
+    (app, windows, list, runtime) => { runtime.cgWindows = [{ kCGWindowOwnerPID: 123 }]; },
+    (app, windows, list, runtime) => { runtime.clockMs = 0; runtime.onRead = () => { runtime.clockMs = 150; }; },
+  ]) assert.notEqual(inspect(closeRequest, [], 0, false, [], setup).status, 'ok');
 });
 test('DPh reports remaining windows and sheet or dialog descendants', () => {
   assert.equal(inspect(closeRequest, [11], 0).windowCount, 1);

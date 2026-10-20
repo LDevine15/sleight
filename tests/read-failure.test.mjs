@@ -133,7 +133,7 @@ test('one app-health helper answers many probes, and a stuck probe resolves unkn
 });
 
 
-test('DPh bounds native close-count requests to 200 ms without shortening ordinary identity requests', async t => {
+test('DPi gives close-count requests 400 ms without shortening ordinary identity requests', async t => {
   const { EventEmitter } = await import('node:events');
   const { PassThrough, Writable } = await import('node:stream');
   t.mock.timers.enable({ apis: ['setTimeout'] });
@@ -147,7 +147,7 @@ test('DPh bounds native close-count requests to 200 ms without shortening ordina
     let resolved = false;
     const count = helper.windowIdentity({ appId: 'fixture.app', closeCount: true,
       nativeIdentity: { pid: 123, processStart: 1 } }).then(result => { resolved = true; return result; });
-    t.mock.timers.tick(199); await Promise.resolve();
+    t.mock.timers.tick(399); await Promise.resolve();
     assert.equal(resolved, false);
     t.mock.timers.tick(1);
     assert.deepEqual(await count, { status: 'unknown' });
@@ -158,5 +158,34 @@ test('DPh bounds native close-count requests to 200 ms without shortening ordina
     assert.equal(resolved, false, 'normal identity retains its existing deadline');
     await helper.close();
     assert.deepEqual(await identity, { status: 'unknown' });
+  } finally { await helper.close(); }
+});
+
+test('DPi a slow close-count reply retains the shared target helper for queued identity work', async t => {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough, Writable } = await import('node:stream');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let starts = 0, kills = 0;
+  const helper = module.createAppHealthHelper({ spawnHelper: () => {
+    starts++;
+    const child = new EventEmitter(); child.stdout = new PassThrough();
+    child.stdin = new Writable({ write(data, encoding, done) {
+      const request = JSON.parse(data);
+      setTimeout(() => child.stdout.write(JSON.stringify({ id: request.id, status: 'unknown' }) + '\n'),
+        request.window.closeCount ? 250 : 0);
+      done();
+    } });
+    child.kill = () => { kills++; queueMicrotask(() => child.emit('close')); return true; };
+    return child;
+  } });
+  try {
+    const close = helper.windowIdentity({ closeCount: true });
+    const ordinary = helper.windowIdentity({ appId: 'fixture.app' });
+    t.mock.timers.tick(250);
+    assert.deepEqual(await close, { status: 'unknown' });
+    t.mock.timers.tick(1);
+    assert.deepEqual(await ordinary, { status: 'unknown' });
+    assert.equal(starts, 1);
+    assert.equal(kills, 0);
   } finally { await helper.close(); }
 });

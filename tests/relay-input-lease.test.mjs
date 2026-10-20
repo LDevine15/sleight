@@ -2141,7 +2141,7 @@ test('GA1: closing the last window forgets the recovery target, so the next acti
   assert.equal(a.forwarded.length, 0);
   assert.equal(a.received.at(-1).result.isError, true);
 });
-test('DP1 inventory-confirmed close keeps the old result and clears the recovery target in both prompt forms', t => {
+test('DP1 native-confirmed close keeps the old result and clears the recovery target in both prompt forms', t => {
   for (const prompt of [undefined, 'lean']) {
     const traces = [];
     const a = setup(t).harness('dp1-' + (prompt ?? 'default'), { fresh: true, changeReview: false, prompt,
@@ -2150,8 +2150,8 @@ test('DP1 inventory-confirmed close keeps the old result and clears the recovery
     a.send(rpc(2, 'js', { code: 'await app.pressKey("super+shift+w")' }));
     const code = a.forwarded.find(m => m.id === 2).params.arguments.code;
     const mark = JSON.parse(/__sleightDocumentGuardSetup\((\{[^\n]*\})\);/.exec(code)[1]).guardStopMark;
-    const event = { decision: 'skipped-read', reason: 'no windows', inventoryHasPid: false, rowHasPid: false,
-      match: 'bundle-id+leased-window-absence', leasedWindowAbsent: true, row: { id: 'com.apple.TextEdit', windows: [] } };
+    const event = { decision: 'skipped-read', reason: 'no windows', status: 'ok', running: true,
+      pid: 123, processStart: 1, windowCount: 0, modalCount: 0, match: 'native-ax+leased-pid' };
     a.reply(result(2, 'earlier output\n[sleight:dp1]' + JSON.stringify(event) + '\n' + mark + ':closed\n'));
     assert.deepEqual(traces.filter(t => t.direction === 'dp1-decision').map(t => t.msg), [{ id: 2, ...event }]);
     assert.deepEqual(a.received.at(-1).result.content, [{ type: 'text', text: prompt === 'lean'

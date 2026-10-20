@@ -4064,7 +4064,7 @@ export function createRelay({
       msg = { ...msg, id };
     }
     trace('from-server', { id: msg.id, method: msg.method });
-    if (msg.method === undefined && Array.isArray(msg.result?.content)) {
+    if (msg.method === undefined && jsCalls.has(msg.id) && Array.isArray(msg.result?.content)) {
       msg.result.content = stripDP1Trace(msg.result.content, event => trace('dp1-decision', { id: msg.id, ...event }));
     }
     if (msg.method === undefined && tabCleanupNotes.has(msg.id)) {

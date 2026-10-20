@@ -80,7 +80,8 @@ export function createAppHealthHelper({ timeoutMs = 2000, operationTimeoutMs = 3
     probe: (app, { deadlineSeconds = 0.5 } = {}) => probe.request({ app, deadlineSeconds }, { status: 'unknown' },
       deadlineSeconds > 0.5 ? Math.max(timeoutMs, deadlineSeconds * 1000 + 1500) : timeoutMs),
     frontRestore: request => probe.request({ ...request, op: 'front-restore' }, { status: 'unknown' }),
-    windowIdentity: window => target.request({ op: 'window-identity', window }, { status: 'unknown' }, window?.closeCount ? 200 : undefined),
+    // Leave room for dispatch and IPC beyond the helper's 150 ms metadata deadline.
+    windowIdentity: window => target.request({ op: 'window-identity', window }, { status: 'unknown' }, window?.closeCount ? 400 : undefined),
     // On the probe lane with a short deadline: a result waits for it (offscreen-click.mjs).
     elementVisibility: request => probe.request({ ...request, op: 'element-visibility' }, { status: 'unknown' }, 1500),
     target: args => target.request({ op: 'lease-target', app: args.app }, { ok: false,
