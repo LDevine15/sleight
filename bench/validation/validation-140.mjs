@@ -205,12 +205,12 @@ export async function waitGate(out = EVIDENCE) {
 }
 const runGit = (cwd, ...args) => execFileSync('/usr/bin/git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024 });
 
-async function child(command, args, cwd, log) {
+async function child(command, args, cwd, log, extraEnv = {}) {
   // Every check and runner gets its own throwaway outer Claude config. World arms keep their isolated account logins.
   const config = mkdtempSync('/tmp/lane-claude-');
   try {
     return await new Promise((done, fail) => {
-      const p = spawn(command, args, { cwd, env: { ...process.env, CLAUDE_CONFIG_DIR: config, DISABLE_AUTOUPDATER: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      const p = spawn(command, args, { cwd, env: { ...process.env, ...extraEnv, CLAUDE_CONFIG_DIR: config, DISABLE_AUTOUPDATER: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
       p.stdout.on('data', data => appendFileSync(log, data)); p.stderr.on('data', data => appendFileSync(log, data));
       p.once('error', fail); p.once('close', (code, signal) => done({ code, signal }));
       // Remain in the caller's foreground process group. The terminal's Ctrl-C reaches this child too.
@@ -277,7 +277,9 @@ async function execute(plan) {
   try {
     await waitGate();
     record('full-check-start', { build: plan.bBuild });
-    const check = await child('npm', ['run', 'check'], ROOT, join(plan.out, 'full-check.log'));
+    // Validation runs before the release numbers exist, so the README validation token and the CHANGELOG date are still
+    // placeholders; only the release check (after scoring) runs without this override.
+    const check = await child('npm', ['run', 'check'], ROOT, join(plan.out, 'full-check.log'), { SLEIGHT_ALLOW_RELEASE_TODO: '1' });
     record('full-check-exit', check);
     writeFileSync(join(plan.out, 'full-check.receipt.json'), JSON.stringify({ ...check, build: plan.bBuild }));
     if (check.code !== 0) throw Error('Full check failed; stopped before live rounds');
