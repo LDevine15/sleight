@@ -52,9 +52,10 @@ func near(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) < 1 }
 func target() -> AXUIElement {
     fixtureIdentity()
     guard !FileManager.default.fileExists(atPath: "/tmp/sleight-hold") else { fail("HOLD") }
-    // Fixed reason codes identify the failed boundary without exposing window metadata.
-    // Keep the original identity predicates and their evaluation order before any input.
-    guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], window) as? [[String: Any]] else { fail("WINDOW_QUERY_UNAVAILABLE") }
+    // Quartz's ID arrays contain raw window IDs, not CFNumber objects. Request only our fixture window.
+    var requestedWindow = UnsafeRawPointer(bitPattern: UInt(window))
+    guard let requestedWindows = CFArrayCreate(kCFAllocatorDefault, &requestedWindow, 1, nil),
+        let list = CGWindowListCreateDescriptionFromArray(requestedWindows) as? [[String: Any]] else { fail("WINDOW_QUERY_UNAVAILABLE") }
     guard list.count == 1 else { fail("WINDOW_QUERY_COUNT") }
     guard let info = list.first else { fail("WINDOW_QUERY_EMPTY") }
     guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid else { fail("WINDOW_OWNER_MISMATCH") }
