@@ -14,6 +14,90 @@ function nativeSource() {
   return sandbox;
 }
 
+function unsupportedRecovery({ foreignParent = false, listedSheet = false, extraCG = false, receiptNumber = 100 } = {}) {
+  const sandbox = nativeSource(), presses = [], events = [];
+  sandbox.ObjC.castRefToObject = value => value;
+  sandbox.ObjC.deepUnwrap = value => value;
+  let closed = false, exited = false, time = 0;
+  const button = { AXRole: 'AXButton', AXTitle: "Don't Save" };
+  const window = { AXRole: 'AXWindow', AXDocument: 'file:///run/Report-nonce.docx', AXWindowNumber: 100, AXChildren: [] };
+  const sheet = { AXRole: 'AXSheet', AXParent: foreignParent ? {} : window, AXWindowNumber: 101,
+    AXChildren: [button, { AXRole: 'AXButton', AXTitle: 'Save' }, { AXRole: 'AXButton', AXTitle: 'Cancel' }] };
+  const app = { AXFocusedWindow: sheet };
+  const process = { processIdentifier: 42, bundleIdentifier: 'com.microsoft.Word', isNil: () => false,
+    isFinishedLaunching: true, launchDate: { isNil: () => false, timeIntervalSince1970: 5 },
+    get isTerminated() { return exited; },
+    get terminate() { assert.equal(closed, true); exited = true; return true; } };
+  const native = value => value;
+  native.CFEqual = (a, b) => a === b;
+  native.AXUIElementCopyAttributeValue = (element, attribute, output) => {
+    if (element === window && attribute === 'AXTitle') return -25205;
+    if (element === window && attribute === 'AXSheets') { output[0] = null; return 0; }
+    let value = element[attribute] ?? null;
+    if (element === app && attribute === 'AXWindows') value = closed ? [] : listedSheet ? [window, sheet] : [window];
+    if (element === app && attribute === 'AXFocusedWindow' && closed) value = null;
+    if (element === window && attribute === 'AXRole' && closed) value = '';
+    output[0] = Array.isArray(value) ? { count: value.length, objectAtIndex: i => value[i] } : value;
+    return 0;
+  };
+  native.AXUIElementPerformAction = element => {
+    assert.equal(element, button, 'an existing sheet needs no second close request');
+    presses.push(element); closed = true; return 0;
+  };
+  native.AXUIElementCreateApplication = pid => { assert.equal(pid, 42); return app; };
+  native.AXUIElementSetMessagingTimeout = () => {};
+  native.AXUIElementGetPid = (_app, output) => { output[0] = 42; return 0; };
+  native.NSRunningApplication = {
+    runningApplicationsWithBundleIdentifier: () => ({ count: exited ? 0 : 1, objectAtIndex: () => process }),
+    runningApplicationWithProcessIdentifier: () => process,
+  };
+  native.NSThread = { sleepForTimeInterval: seconds => { time += seconds * 1000; } };
+  native.NSURL = {
+    URLWithString: value => ({ isNil: () => false, isFileURL: true, URLByResolvingSymlinksInPath: { path: value.slice(7) } }),
+    fileURLWithPath: value => ({ absoluteString: `file://${value}` }),
+  };
+  native.CGWindowListCopyWindowInfo = () => (closed ? [] : [100, 101, ...(extraCG ? [102] : [])])
+    .map(kCGWindowNumber => ({ kCGWindowNumber, kCGWindowOwnerPID: 42, kCGWindowLayer: 0 }));
+  sandbox.$ = native; sandbox.Ref = () => [];
+  const clock = { now: () => time, wait: ms => { time += ms; }, emit: event => events.push(event) };
+  const api = sandbox.nativeAX({ cleanup: true, bundle: 'com.microsoft.Word' }, clock);
+  const request = { fixtureMode: 'document', running: false, launched: true, startedAtMs: 4000, runToken: 'nonce',
+    fixtureDir: '/run', bundle: 'com.microsoft.Word', pids: [42],
+    fixtureWindows: [{ target: '/run/Report-nonce.docx', windowNumber: receiptNumber }] };
+  return { presses, events, api, window, app, request, native,
+    run: () => sandbox.recoverFixtureApplications(request, api, clock) };
+}
+
+for (const listedSheet of [false, true]) test(`recovery excludes the fixture's parented CG sheet with persistent AXTitle -25205 (AXWindows sheet=${listedSheet})`, () => {
+  const f = unsupportedRecovery({ listedSheet });
+  assert.deepEqual(Array.from(f.run().pids), [42]);
+  assert.equal(f.presses.length, 1);
+  assert.equal(f.events.filter(event => event.stage === 'fixture-sheet').length, 1);
+  assert.equal(f.events.at(-1).quitWait.reason, 'exited');
+});
+
+for (const options of [{ foreignParent: true }, { extraCG: true }, { receiptNumber: 999 }]) {
+  test(`recovery refuses foreign sheets or unmatched windows ${JSON.stringify(options)}`, () => {
+    const f = unsupportedRecovery(options);
+    assert.throws(f.run, /dialog present|Extra window|outside owned run/);
+    assert.deepEqual(f.presses, []);
+  });
+}
+
+test('setup CG identity maps AX bounds without a title and refuses ambiguous or foreign-pid bounds', () => {
+  const f = unsupportedRecovery();
+  delete f.window.AXWindowNumber;
+  f.api.frame = () => ({ x: 10, y: 20, width: 400, height: 300 });
+  let cg = [{ kCGWindowOwnerPID: 42, kCGWindowLayer: 0, kCGWindowNumber: 100,
+    kCGWindowBounds: { X: 10, Y: 20, Width: 400, Height: 300 } }];
+  f.native.CGWindowListCopyWindowInfo = () => cg;
+  assert.equal(f.api.windowNumber(f.window, f.app), 100);
+  cg.push({ ...cg[0], kCGWindowNumber: 102 });
+  assert.equal(f.api.windowNumber(f.window, f.app), null);
+  cg = [{ ...cg[0], kCGWindowOwnerPID: 43 }];
+  assert.equal(f.api.windowNumber(f.window, f.app), null);
+});
+
 for (const evidence of ['app name', 'window reasons']) test(`created-window cleanup failures retain ${evidence}`, async t => {
   const { openFixture } = await import('../bench/real-fixture.mjs');
   const dir = mkdtempSync(join(tmpdir(), 'web-cleanup-row-'));

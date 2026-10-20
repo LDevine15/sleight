@@ -24,8 +24,10 @@ function wordFixture({ where = 'focused sheet', preexisting = true, label = 'Don
   const prompt = { AXRole: where === 'alert' ? 'AXWindow' : 'AXSheet', ...(where === 'alert' && { AXSubrole: 'AXDialog' }),
     AXChildren: [{ AXRole: 'AXStaticText', AXValue: 'Do you want to save the changes you made to Report-nonce.docx?' },
       button, { AXRole: 'AXButton', AXTitle: 'Cancel' }, { AXRole: 'AXButton', AXTitle: 'Save' }] };
-  const window = { AXRole: 'AXWindow', AXTitle: 'Report-nonce  -  Compatibility Mode', AXDocument: 'file:///run/Report-nonce.docx',
+  const window = { AXRole: 'AXWindow', AXWindowNumber: 100, AXTitle: 'Report-nonce  -  Compatibility Mode', AXDocument: 'file:///run/Report-nonce.docx',
     AXChildren: [], AXCloseButton: { AXRole: 'AXButton' } };
+  prompt.AXWindowNumber = 101;
+  app.AXWindows = [window];
   if (where !== 'alert') prompt.AXParent = window;
   const show = () => {
     if (where === 'children') window.AXChildren = [prompt];
@@ -43,20 +45,24 @@ function wordFixture({ where = 'focused sheet', preexisting = true, label = 'Don
   native.AXUIElementPerformAction = element => {
     presses.push(element);
     if (element === window.AXCloseButton) show();
-    else { window.AXRole = ''; window.AXChildren = []; app.AXFocusedWindow = null; }
+    else { window.AXRole = ''; window.AXChildren = []; app.AXFocusedWindow = null; app.AXWindows = []; }
     return 0;
   };
   native.CFEqual = (a, b) => a === b;
+  native.AXUIElementGetPid = (_app, output) => { output[0] = 42; return 0; };
+  native.CGWindowListCopyWindowInfo = () => [100, 101].map(kCGWindowNumber => ({ kCGWindowNumber, kCGWindowOwnerPID: 42, kCGWindowLayer: 0 }));
   native.NSThread = { sleepForTimeInterval() {} };
   native.NSURL = {
     URLWithString: value => ({ isNil: () => false, isFileURL: value.startsWith('file://'), URLByResolvingSymlinksInPath: { path: value.slice(7) } }),
     fileURLWithPath: value => ({ absoluteString: `file://${value}` }),
   };
   sandbox.$ = native; sandbox.Ref = () => []; sandbox.ObjC.castRefToObject = value => value;
+  let time = 0;
   const api = sandbox.nativeAX({ cleanup: true, setupCase: 'cold-launch' },
-    { now: () => 1, check() {}, emit: event => events.push(event), wait() {}, cleanupRequested: () => true });
+    { now: () => time, check() {}, emit: event => events.push(event), wait: ms => { time += ms; }, cleanupRequested: () => true });
   const request = { mode: 'document', target: '/run/Report-nonce.docx', token: 'Report-nonce.docx', runToken: 'nonce', stopOnAppDialog: true };
-  return { sandbox, app, button, prompt, window, presses, events, api, request,
+  const receipt = api.retain(window, request, app);
+  return { sandbox, app, button, prompt, window, presses, events, api, request, receipt,
     close() { return sandbox.closeOwnedWindow(window, request, app, api); } };
 }
 
@@ -106,11 +112,16 @@ test('the refusal names the dialog it saw', () => {
   assert.throws(() => f.close(), /fixture cleanup refused \(application-result "" \[Don’t Save, Cancel, Save, Allow\]\)/);
 });
 
-test('the retained Word helper answers its own sheet at cleanup and reports the press', () => {
+test('the retained Word helper records setup CG identity and answers its own sheet despite unsupported AXTitle', () => {
   const f = wordFixture({ preexisting: false }), out = [];
-  let command = 'opened';
+  let command = 'opened', titleMissing = false;
   Object.assign(f.app, { processIdentifier: 42, bundleIdentifier: 'com.microsoft.Word', isFinishedLaunching: true });
   const native = f.sandbox.$;
+  const read = native.AXUIElementCopyAttributeValue;
+  native.AXUIElementCopyAttributeValue = (element, attribute, output) => {
+    if (titleMissing && element === f.window && attribute === 'AXTitle') return -25205;
+    return read(element, attribute, output);
+  };
   native.AXIsProcessTrusted = () => true;
   native.NSRunningApplication = {
     runningApplicationsWithBundleIdentifier: () => ({ count: 1, objectAtIndex: () => f.app }),
@@ -124,11 +135,12 @@ test('the retained Word helper answers its own sheet at cleanup and reports the 
   native.NSFileHandle = { fileHandleWithStandardOutput: { writeData: value => {
     const event = JSON.parse(value); out.push(event);
     // The task typed and never saved: Word shows its sheet as the focused window, then the harness asks for cleanup.
-    if (event.stage === 'ready') { f.app.AXFocusedWindow = f.prompt; command = 'close'; }
+    if (event.stage === 'ready') { titleMissing = true; f.app.AXFocusedWindow = f.prompt; command = 'close'; }
   } } };
   f.sandbox.$ = Object.assign(value => ({ toString: () => value, dataUsingEncoding: () => value }), native);
   f.sandbox.run([JSON.stringify({ ...f.request, app: 'Microsoft Word', bundle: 'com.microsoft.Word', control: 'fake' })]);
   assert.equal(out.at(-1).stage, 'closed');
+  assert.deepEqual(out.find(event => event.stage === 'ready').fixtureWindow, { target: f.request.target, windowNumber: 100 });
   assert.equal(out.find(event => event.stage === 'fixture-sheet')?.fixtureSheet.pressed, 'Don’t Save');
   assert.deepEqual(f.presses, [f.button]);
 });
@@ -146,6 +158,47 @@ test('the wait-0 Word title failure recovers before pressing its own save sheet'
   f.sandbox.closeOwnedWindow(f.window, f.request, f.app, api);
   assert.deepEqual(f.presses, [f.window.AXCloseButton, f.button]);
   assert.equal(f.events.find(e => e.stage === 'cleanup-read-wait').cleanupReadWait.elapsedMs, 500);
+});
+
+for (const preexisting of [false, true]) test(`persistent unsupported Word title answers its parented focused sheet (${preexisting ? 'already open' : 'wait-0'})`, () => {
+  const f = wordFixture({ preexisting }), native = f.sandbox.$, read = native.AXUIElementCopyAttributeValue;
+  native.AXUIElementCopyAttributeValue = (element, attribute, output) => {
+    if (element === f.window && attribute === 'AXTitle' && (preexisting || f.presses.length)) return -25205;
+    return read(element, attribute, output);
+  };
+  f.close();
+  assert.equal(f.window.AXRole, '');
+  assert.equal(f.presses.filter(element => element === f.button).length, 1);
+  assert.equal(f.events.filter(event => event.stage === 'fixture-sheet').length, 1);
+  assert.equal(f.events.find(event => event.stage === 'fixture-sheet').fixtureSheet.windowTitle, null);
+});
+
+test('a save sheet that stays visible after discard is pressed only once and still needs close proof', () => {
+  const f = wordFixture(), native = f.sandbox.$, read = native.AXUIElementCopyAttributeValue;
+  native.AXUIElementCopyAttributeValue = (element, attribute, output) => {
+    if (element === f.window && attribute === 'AXTitle') return -25205;
+    return read(element, attribute, output);
+  };
+  native.AXUIElementPerformAction = element => { f.presses.push(element); return 0; };
+  assert.throws(f.close, /still open/);
+  assert.deepEqual(f.presses, [f.button]);
+});
+
+for (const change of ['path', 'number', 'reference', 'listed', 'parent']) test(`unsupported title never bypasses changed ${change}`, () => {
+  const f = wordFixture(), native = f.sandbox.$, read = native.AXUIElementCopyAttributeValue;
+  native.AXUIElementCopyAttributeValue = (element, attribute, output) => {
+    if (element === f.window && attribute === 'AXTitle') return -25205;
+    return read(element, attribute, output);
+  };
+  if (change === 'path') f.window.AXDocument = 'file:///owner/Report-nonce.docx';
+  if (change === 'number') f.window.AXWindowNumber = 101;
+  if (change === 'listed') f.app.AXWindows = [];
+  if (change === 'parent') f.prompt.AXParent = { AXRole: 'AXWindow' };
+  const window = change === 'reference' ? { ...f.window } : f.window;
+  if (change === 'reference') f.app.AXWindows = [window];
+  // A missing listing can establish absence, but can never authorize a discard.
+  try { f.sandbox.closeOwnedWindow(window, f.request, f.app, f.api); } catch {}
+  assert.deepEqual(f.presses, []);
 });
 
 function officeQuit({ windows = { none: true, axWindows: 0, onScreen: 0 }, launchMs = 5000, startedAtMs = 5000, pid = 42 } = {}) {
@@ -188,10 +241,18 @@ test('Word under another pid is refused before any force', () => {
   assert.equal(q.forced, false);
 });
 
-function quittingOffice({ bundle = 'com.microsoft.Word', label = "Don't Save", change, terminateAt = 600, where = 'children' } = {}) {
+function quittingOffice({ bundle = 'com.microsoft.Word', label = "Don't Save", change, terminateAt = 600, where = 'children', unsupportedTitle = false } = {}) {
   const f = wordFixture({ preexisting: false, label, where });
   let time = 0, quitting = false;
   const native = f.sandbox.$;
+  if (unsupportedTitle) {
+    const read = native.AXUIElementCopyAttributeValue;
+    native.AXUIElementCopyAttributeValue = (element, attribute, output) => {
+      if (element === f.window && attribute === 'AXTitle') return -25205;
+      return read(element, attribute, output);
+    };
+    f.request.fixtureWindow = f.receipt;
+  }
   Object.assign(f.app, { processIdentifier: 42, bundleIdentifier: bundle, isFinishedLaunching: true,
     AXWindows: [f.window], isNil: () => false });
   Object.defineProperties(f.app, {
@@ -232,6 +293,28 @@ for (const bundle of ['com.microsoft.Word', 'com.microsoft.Excel']) for (const l
     assert.equal(f.events.find(e => e.stage === 'fixture-sheet').fixtureSheet.pressed, label);
     assert.equal(f.time(), 600, 'an accepted quit and an AX press are not exit proof');
     assert.equal(f.events.at(-1).quitWait.reason, 'exited');
+  });
+}
+
+test('Office quit binds the setup number despite a persistently unsupported title and presses once', () => {
+  const f = quittingOffice({ unsupportedTitle: true, where: 'focused sheet' });
+  assert.equal(f.run(), true);
+  assert.deepEqual(f.presses, [f.button]);
+  assert.equal(f.events.at(-1).quitWait.reason, 'exited');
+});
+
+test('Office quit with unsupported title never answers another window\'s sheet', () => {
+  const f = quittingOffice({ unsupportedTitle: true, where: 'focused sheet', change: 'sheet' });
+  assert.throws(f.run, /quit unconfirmed|sheet/);
+  assert.deepEqual(f.presses, []);
+});
+
+for (const receipt of [null, { target: '/run/Report-nonce.docx', windowNumber: 999 }, { target: '/owner/report.docx', windowNumber: 100 }]) {
+  test(`Office quit refuses unsupported title without the matching setup CG receipt ${JSON.stringify(receipt)}`, () => {
+    const f = quittingOffice({ unsupportedTitle: true, where: 'focused sheet' });
+    f.request.fixtureWindow = receipt;
+    assert.throws(f.run, /quit unconfirmed/);
+    assert.deepEqual(f.presses, []);
   });
 }
 
@@ -283,17 +366,21 @@ test('the native window count reads AXWindows and on-screen layer-zero windows o
 });
 
 // The parent side: the helper's close receipt and press event, then a quit the helper force-terminated by the exact pid.
-function wordLease(t, { close, quit, exited = async () => true }) {
+function wordLease(t, { close, quit, exited = async () => true, fixtureWindow }) {
   const dir = mkdtempSync(join(tmpdir(), 'save-sheet-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const ctx = { dir: join(dir, 'fixture'), nonce: 'nonce' }, quits = [];
+  const ctx = { dir: join(dir, 'fixture'), nonce: 'nonce' }, quits = [], recoveries = [];
   const options = {
     helper: async () => ({ command: 'fake', args: [] }), open: async () => {}, exited,
     run: async (_command, args, runOptions) => {
       const request = JSON.parse(args.at(-1));
       if (request.mode === 'quit') { quits.push(request); return quit; }
-      if (request.mode === 'recover') return { groupClean: true, exit: { code: 1 }, stdout: '', stderr: 'Application dialog present; fixture recovery refused' };
-      runOptions.onStdout('{"stage":"armed","running":false,"pid":42,"processStartedAtMs":5000}\n{"stage":"ready"}\n');
+      if (request.mode === 'recover') {
+        recoveries.push(request);
+        return { groupClean: true, exit: { code: 1 }, stdout: '', stderr: 'Application dialog present; fixture recovery refused' };
+      }
+      runOptions.onStdout('{"stage":"armed","running":false,"pid":42,"processStartedAtMs":5000}\n' +
+        JSON.stringify({ stage: 'ready', bundle: 'com.microsoft.Word', fixtureWindow }) + '\n');
       return new Promise(resolve => {
         const poll = setInterval(() => {
           try { if (JSON.parse(readFileSync(request.control, 'utf8')).command !== 'close') return; } catch { return; }
@@ -310,7 +397,7 @@ function wordLease(t, { close, quit, exited = async () => true }) {
       target: join(c.dir, 'Report-nonce.docx'), token: 'Report-nonce.docx', stopOnAppDialog: true }, options); },
     prompt: () => 'edit', check: () => 'the report was not saved', cleanup: closeFixtures,
   };
-  return { ctx, task, quits };
+  return { ctx, task, quits, recoveries };
 }
 
 const sheetEvent = '{"stage":"fixture-sheet","fixtureSheet":{"pressed":"Don’t Save","source":"focused sheet","windowTitle":"Report-nonce  -  Compatibility Mode","buttons":["Don’t Save","Cancel","Save"]}}\n';
@@ -338,6 +425,16 @@ test('the parent keeps quit-time sheet receipts with the launched process identi
   const result = await executeRealTask(task, ctx, { lockHeld: true, drive: async () => ({ code: 0, out: { result: '' } }) });
   assert.equal(result.cleanupError, undefined);
   assert.equal(result.fixtureDiagnostics[0].fixtureSheets[0].pressed, 'Don’t Save');
+});
+
+test('the parent carries the setup CG receipt to quit and recovery instead of inventing a cleanup identity', async t => {
+  const fixtureWindow = { target: '/run/Report-nonce.docx', windowNumber: 100 };
+  const { ctx, task, quits, recoveries } = wordLease(t, { fixtureWindow,
+    close: { events: '', result: { groupClean: true, exit: { code: 1 }, stdout: '', stderr: 'unsupported title' } },
+    quit: { groupClean: true, exit: { code: 1 }, stdout: '', stderr: 'quit unconfirmed' } });
+  await executeRealTask(task, ctx, { lockHeld: true, drive: async () => ({ code: 0, groupClean: true, out: { result: '' } }) });
+  assert.deepEqual(quits[0].fixture.fixtureWindow, fixtureWindow);
+  assert.deepEqual(recoveries[0].fixtureWindows, [fixtureWindow]);
 });
 
 test('a forced Word exit the kernel does not confirm keeps the stop', async t => {

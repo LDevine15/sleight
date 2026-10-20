@@ -354,14 +354,19 @@ function chooseFileMenu(file, titles, api) {
 
 // A window the task already closed can keep answering AXRole while its title is unsupported (-25205): Chess and Word did after
 // their tasks saved and closed them (2026-10-16). It counts as closed only when the app's own window list, read successfully,
-// no longer holds it. Any other read failure, or a window still listed, keeps the stop.
-function closedUnderUs(window, app, api) {
+// no longer holds it. A still-listed window can continue only when its setup binding supplies the missing title identity.
+function closedUnderUs(window, app, api, request) {
   if (!api.text || !api.listed) return false;
-  try { api.text(window, 'AXTitle'); return false; }
+  try {
+    if (api.title && api.title(window) === null && api.titleFree && api.titleFree(window, request, app)) return false;
+    api.text(window, 'AXTitle');
+    return false;
+  }
   catch (error) {
     if (error.code !== -25205) throw error;
     var listed = api.listed(app, window);
     if (listed === false) return true;
+    if (api.titleFree && api.titleFree(window, request, app)) return false;
     // Still listed (or the list is unreadable): say what the window looks like, so the next fix is measured, not guessed.
     var probe = function (attribute) { try { var v = api.read(window, attribute); return v === null ? 'null' : 'ok'; } catch (e) { return String(e.code); } };
     error.message += ' [listed=' + listed + ' role=' + probe('AXRole') + ' subrole=' + probe('AXSubrole') + ' document=' + probe('AXDocument') +
@@ -393,7 +398,7 @@ function closedWithoutSheet(app, window, api) { return !(api.hiddenSheet && api.
 function closeOwnedWindowSteps(window, request, app, api, step) {
   if (request.mode === 'document' && request.stopOnAppDialog) request = Object.assign({}, request, { refuseDialogs: true });
   if (!window) return;
-  if (!api.exists(window) || closedUnderUs(window, app, api)) {
+  if (!api.exists(window) || closedUnderUs(window, app, api, request)) {
     if (closedWithoutSheet(app, window, api)) return;
     throw new Error(HIDDEN_SHEET);
   }
@@ -437,7 +442,7 @@ function closeOwnedWindowSteps(window, request, app, api, step) {
     step('wait-' + attempt);
     api.wait();
     try {
-      if (!api.exists(window) || closedUnderUs(window, app, api) || (request.mode === 'document' && !api.matches(window, request, true))) {
+      if (!api.exists(window) || closedUnderUs(window, app, api, request) || (request.mode === 'document' && !api.matches(window, request, true))) {
         if (closedWithoutSheet(app, window, api)) return;
         sheetLeft = true;
         continue;
@@ -576,8 +581,8 @@ function attachedSheets(window, app, api) {
   return { sheets: [], source: null };
 }
 
-// Only a save prompt attached to the exact nonce-bearing file can bypass a dialog refusal: the window's AXDocument is the
-// fixture path, its title carries the run nonce, and the prompt has exactly one Don't Save and no unknown button.
+// Only the exact fixture file's save prompt bypasses a dialog refusal. An unsupported title needs the retained AX reference,
+// successful listing and setup's CG number instead. The prompt has exactly one Don't Save and no unknown button.
 function fixtureDiscardSheet(window, request, api, app) {
   var located = fixtureDiscardPrompt(window, request, api, app);
   return located ? located.sheet : null;
@@ -586,10 +591,13 @@ function fixtureDiscardSheet(window, request, api, app) {
 function fixtureDiscardPrompt(window, request, api, app) {
   var token = request.runToken || request.token;
   if (!window || !token || !request.target || request.target[0] !== '/') return null;
-  var document = api.path(api.text(window, 'AXDocument')), expected = api.path(request.target), title = api.text(window, 'AXTitle');
-  if (!document || document !== expected || title.indexOf(token) === -1) return null;
+  var document = api.path(api.text(window, 'AXDocument')), expected = api.path(request.target), title;
+  try { title = api.title ? api.title(window) : api.text(window, 'AXTitle'); }
+  catch (error) { if (error.code !== -25205) throw error; title = null; }
+  if (!document || document !== expected || (title === null ?
+      !(api.titleFree && api.titleFree(window, request, app)) : title.indexOf(token) === -1)) return null;
   var found = attachedSheets(window, app, api);
-  if (found.alert && request.requireAttachedSheet) return null;
+  if (found.alert && (request.requireAttachedSheet || title === null)) return null;
   if (found.sheets.length !== 1) return null;
   var sheet = found.sheets[0];
   if (!found.alert && api.text(sheet, 'AXRole') !== 'AXSheet') return null;
@@ -613,10 +621,14 @@ function prepareOfficeQuitDiscard(request, app, api) {
   var token = request.runToken || request.token, expected = api.path(request.target);
   if (!expected) throw new Error('Office quit fixture path unavailable');
   function matches(window) {
-    return api.path(api.text(window, 'AXDocument')) === expected &&
-      api.text(window, 'AXTitle').indexOf(token) !== -1;
+    var title = api.title ? api.title(window) : api.text(window, 'AXTitle');
+    return api.path(api.text(window, 'AXDocument')) === expected && (title === null ?
+      !!(api.titleFree && api.titleFree(window, request, app)) : title.indexOf(token) !== -1);
   }
-  var windows = api.windows(app).filter(matches);
+  var windows = api.windows(app).filter(function (window) {
+    if (api.bindRetained && request.fixtureWindow) api.bindRetained(window, request, app, request.fixtureWindow);
+    return matches(window);
+  });
   if (windows.length > 1) throw new Error('Ambiguous Office quit fixture window');
   var owned = windows[0], guarded = Object.assign({}, request, { refuseDialogs: true, requireAttachedSheet: true }), answered = false;
   return function (validateProcess) {
@@ -662,18 +674,40 @@ function recoverFixtureApplications(request, api, clock) {
       if (!(pid > 0) || runningBundle(target) !== request.bundle || !date || date.isNil() ||
           !(Number(date.timeIntervalSince1970) * 1000 >= request.startedAtMs)) throw new Error('Fixture process ownership unconfirmed');
       if (original && original.indexOf(pid) === -1) throw new Error('Fixture process identity changed during recovery');
-      var app = api.app(target), windows = api.windows(app).map(function (window) {
+      var app = api.app(target), listedWindows = api.windows(app), excluded = [];
+      // A sheet may have its own AXWindows and CG entries. Exclude only a child
+      // whose AXParent is one of this inventory's validated fixture windows.
+      var documents = listedWindows.filter(function (window) {
+        var parent = api.read ? api.read(window, 'AXParent') : null;
+        return !parent || !listedWindows.some(function (candidate) { return api.equal(parent, candidate); });
+      });
+      var windows = documents.map(function (window) {
         var path = api.path(api.text(window, 'AXDocument'));
-        if (!path || path.indexOf(root + '/') !== 0 || api.text(window, 'AXTitle').indexOf(request.runToken) === -1) {
+        var closeRequest = Object.assign({}, request, { mode: 'window', target: path, token: request.runToken, refuseDialogs: true });
+        if (api.bindRetained) (request.fixtureWindows || []).forEach(function (receipt) {
+          if (receipt.target === path) api.bindRetained(window, closeRequest, app, receipt);
+        });
+        var title = api.title ? api.title(window) : api.text(window, 'AXTitle');
+        if (!path || path.indexOf(root + '/') !== 0 || (title === null ?
+            !(api.titleFree && api.titleFree(window, closeRequest, app)) : title.indexOf(request.runToken) === -1)) {
           throw new Error('Fixture window outside owned run directory');
         }
-        var closeRequest = Object.assign({}, request, { mode: 'window', target: path, token: request.runToken, refuseDialogs: true });
+        if (api.read && api.windowNumber) {
+          var candidates = listedWindows.concat(attachedSheets(window, app, api).sheets);
+          candidates.forEach(function (child) {
+            var parent = api.read(child, 'AXParent');
+            if (parent && api.equal(parent, window)) {
+              var number = api.windowNumber(child, app);
+              if (number && excluded.indexOf(number) === -1) excluded.push(number);
+            }
+          });
+        }
         if (api.dialog(app, window, closeRequest).length) throw new Error('Application dialog present; fixture recovery refused');
         return { window: window, request: closeRequest };
       });
       if (!windows.length && (!request.pids || request.pids.indexOf(pid) === -1)) throw new Error('Empty fixture process ownership unconfirmed; recorded pid required');
       if (!windows.length && api.dialog(app, null, Object.assign({}, request, { refuseDialogs: true })).length) throw new Error('Application dialog present; fixture recovery refused');
-      if (api.cgWindowCount(pid) > windows.length) throw new Error('Extra window in fixture process inventory; recovery refused');
+      if (api.cgWindowCount(pid, excluded) > windows.length) throw new Error('Extra window in fixture process inventory; recovery refused');
       return { pid: pid, processStartedAtMs: Number(date.timeIntervalSince1970) * 1000, app: app, windows: windows };
     });
     return plans;
@@ -709,17 +743,18 @@ function recoverFixtureApplications(request, api, clock) {
 }
 
 function nativeAX(state, clock) {
-  var placementBound = false;
-  function read(element, attribute) {
+  var placementBound = false, retainedWindows = [], discardedWindows = [], unsupportedTitle = {};
+  function read(element, attribute, titleOptional) {
     var operation = function () {
       if (clock && clock.check) clock.check();
       if (state && state.officeWaiting && clock.now() >= state.officeDeadline) throw officeDeadlineError(state);
       var value = Ref();
       var code = Number($.AXUIElementCopyAttributeValue(element, $(attribute), value));
+      if (code === -25205 && attribute === 'AXTitle' && titleOptional) return unsupportedTitle;
       // These optional attributes can remain unsupported on a valid app
       // window. Their absence allows the existing nonce-title identity fallback.
       if (code === -25205 && state && (state.setup || state.cleanup || state.observation) &&
-          ['AXDocument', 'AXSheets', 'AXSubrole', 'AXMainWindow', 'AXWindows', 'AXChildren', 'AXValue'].indexOf(attribute) !== -1) {
+          ['AXDocument', 'AXSheets', 'AXSubrole', 'AXMainWindow', 'AXWindows', 'AXChildren', 'AXValue', 'AXWindowNumber', 'AXParent'].indexOf(attribute) !== -1) {
         if (state.office) state.officeLastError = { code: code, attribute: attribute };
         return null;
       }
@@ -776,7 +811,7 @@ function nativeAX(state, clock) {
     }
     var found = [];
     var safeSheet;
-    try { safeSheet = state.cleanup && owned && fixtureDiscardSheet(owned, request, { text: text, children: children, path: path, read: read, equal: equal }, app); }
+    try { safeSheet = state.cleanup && owned && fixtureDiscardSheet(owned, request, promptApi, app); }
     catch (error) { if (error.code !== -25202) throw error; }
     for (var index = 0; index < candidates.length; index++) {
       var candidate = candidates[index];
@@ -843,17 +878,77 @@ function nativeAX(state, clock) {
       }
       var current = path(document), expected = request.target && request.target[0] === '/' ?
         path(String(ObjC.unwrap($.NSURL.fileURLWithPath(request.target).absoluteString))) : null;
-      if (current && expected) return current === expected ||
-        (request.mode === 'folder' && current.indexOf(expected + '/') === 0);
+      if (current && expected) {
+        if (state && (state.cleanup || state.observation) && identityTitle(window) === null) return titleFree(window, request);
+        return current === expected || (request.mode === 'folder' && current.indexOf(expected + '/') === 0);
+      }
       return false;
     }
     var title = text(window, 'AXTitle');
     return request.mode === 'inherit' || title.indexOf(request.token) !== -1 ||
       (retained === true && request.mode === 'folder' && title === 'Archive');
   }
-  var promptApi = { text: text, children: children, path: path, read: read, equal: equal };
-  return {
-    read: read, text: text, press: press, fileMenu: fileMenu, path: path,
+  function identityTitle(window) {
+    var value = read(window, 'AXTitle', true);
+    return value === unsupportedTitle ? null : value ? String(ObjC.unwrap(value)) : '';
+  }
+  function listed(app, window) {
+    var values = read(app, 'AXWindows');
+    if (!values) return undefined;
+    for (var index = 0; index < Number(values.count); index++) if (equal(values.objectAtIndex(index), window)) return true;
+    return false;
+  }
+  function cgWindows(pid) {
+    if (clock && clock.check) clock.check();
+    var raw = $.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID);
+    if (!raw || raw.isNil && raw.isNil()) throw new Error('Fixture CG window inventory unavailable');
+    return ObjC.deepUnwrap(ObjC.castRefToObject(raw)).filter(function (window) {
+      return Number(window.kCGWindowOwnerPID) === pid && Number(window.kCGWindowLayer) === 0;
+    });
+  }
+  function windowNumber(window, app) {
+    var pid = Ref();
+    if (Number($.AXUIElementGetPid(app, pid)) !== 0) throw new Error('Fixture window process unavailable');
+    var windows = cgWindows(Number(pid[0])), direct = read(window, 'AXWindowNumber');
+    if (direct && Number(ObjC.unwrap(direct)) > 0) {
+      windows = windows.filter(function (info) { return Number(info.kCGWindowNumber) === Number(ObjC.unwrap(direct)); });
+    } else {
+      var frame = api.frame(window);
+      if (!frame) return null;
+      var bounds = [frame.x, frame.y, frame.width, frame.height];
+      if (!bounds.every(function (value) { return isFinite(value); })) return null;
+      windows = windows.filter(function (info) {
+        return ['X', 'Y', 'Width', 'Height'].every(function (key, index) {
+          return info.kCGWindowBounds && Math.abs(Number(info.kCGWindowBounds[key]) - bounds[index]) < 0.5;
+        });
+      });
+    }
+    var number = windows.length === 1 ? Number(windows[0].kCGWindowNumber) : null;
+    return number > 0 && number === Math.floor(number) ? number : null;
+  }
+  function retain(window, request, app, receipt) {
+    var expected = request.target && request.target[0] === '/' ? path(request.target) : null;
+    if (!expected || path(text(window, 'AXDocument')) !== expected || listed(app, window) !== true) return null;
+    var number = windowNumber(window, app);
+    if (!number || (receipt && (receipt.target !== expected || receipt.windowNumber !== number))) return null;
+    var existing = retainedWindows.filter(function (item) { return equal(item.window, window); })[0];
+    if (existing) return existing.receipt.target === expected && existing.receipt.windowNumber === number ? existing.receipt : null;
+    var record = { target: expected, windowNumber: number };
+    retainedWindows.push({ window: window, app: app, receipt: record });
+    return record;
+  }
+  function titleFree(window, request, app) {
+    if (!request) return false;
+    var binding = retainedWindows.filter(function (item) { return equal(item.window, window); })[0];
+    return !!binding && (!app || equal(app, binding.app)) && listed(binding.app, window) === true &&
+      path(text(window, 'AXDocument')) === binding.receipt.target && path(request.target) === binding.receipt.target &&
+      windowNumber(window, binding.app) === binding.receipt.windowNumber;
+  }
+  var promptApi = { text: text, title: identityTitle, titleFree: titleFree, children: children, path: path, read: read, equal: equal };
+  var api = {
+    title: identityTitle, titleFree: titleFree, retain: retain, windowNumber: windowNumber,
+    bindRetained: function (window, request, app, receipt) { return receipt ? retain(window, request, app, receipt) : null; },
+    read: read, text: text, children: children, press: press, fileMenu: fileMenu, path: path,
     applications: function () {
       var values = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(state.bundle), result = [];
       for (var i = 0; i < Number(values.count); i++) result.push(values.objectAtIndex(i));
@@ -875,12 +970,8 @@ function nativeAX(state, clock) {
       for (var i = 0; i < Number(values.count); i++) result.push(values.objectAtIndex(i));
       return result;
     },
-    cgWindowCount: function (pid) {
-      if (clock && clock.check) clock.check();
-      var raw = $.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID);
-      if (!raw || raw.isNil && raw.isNil()) throw new Error('Fixture CG window inventory unavailable');
-      var windows = ObjC.deepUnwrap(ObjC.castRefToObject(raw));
-      return windows.filter(function (window) { return Number(window.kCGWindowOwnerPID) === pid && Number(window.kCGWindowLayer) === 0; }).length;
+    cgWindowCount: function (pid, excluded) {
+      return cgWindows(pid).filter(function (window) { return !excluded || excluded.indexOf(Number(window.kCGWindowNumber)) === -1; }).length;
     },
     readEpoch: function () { return state && state.readEpoch || 0; },
     wait: function () { $.NSThread.sleepForTimeInterval(0.1); },
@@ -889,12 +980,7 @@ function nativeAX(state, clock) {
     mainWindow: function (app) { return read(app, 'AXMainWindow'); },
     windowCount: function (app) { return children(app, 'AXWindows').length; },
     // true or false only when the app's window list was read; undefined when it couldn't be.
-    listed: function (app, window) {
-      var values = read(app, 'AXWindows');
-      if (!values) return undefined;
-      for (var index = 0; index < Number(values.count); index++) if ($.CFEqual(values.objectAtIndex(index), window)) return true;
-      return false;
-    },
+    listed: listed,
     exists: function (window) {
       try { return text(window, 'AXRole') === 'AXWindow'; }
       catch (error) { if (error.code === -25202) return false; throw error; }
@@ -1007,6 +1093,7 @@ function nativeAX(state, clock) {
     discardable: function (window, request, app) { return fixtureDiscardSheet(window, request, promptApi, app); },
     discard: function (window, validate, request, app) {
       if (request && request.refuseDialogs) {
+        if (discardedWindows.some(function (answered) { return equal(answered, window); })) return true;
         var prompt = fixtureDiscardPrompt(window, request, promptApi, app);
         if (!prompt) {
           if (!attachedSheets(window, app, promptApi).sheets.length) return;
@@ -1019,6 +1106,7 @@ function nativeAX(state, clock) {
         if (!current || !$.CFEqual(prompt.sheet, current)) throw new Error('Owned fixture sheet identity changed');
         var pressed = text(discardButton[0], 'AXTitle');
         press(discardButton[0]);
+        discardedWindows.push(window);
         if (clock && clock.emit) clock.emit({ stage: 'fixture-sheet', fixtureSheet: { pressed: pressed, source: prompt.source,
           windowTitle: prompt.windowTitle, buttons: prompt.buttons } });
         return true;
@@ -1032,6 +1120,7 @@ function nativeAX(state, clock) {
       press(plain[0]);
     },
   };
+  return api;
 }
 
 function run(argv) {
@@ -1259,7 +1348,8 @@ function run(argv) {
     if (!api.matches(owned, request)) throw new Error('Fixture document identity unconfirmed');
     emit({ stage: 'placement', placement: placement });
   }
-  emit({ stage: 'ready', pid: pid, pids: pids.slice(), processHandoff: processHandoff,
+  var fixtureWindow = !inherited && request.mode === 'document' && api.retain ? api.retain(owned, request, app) : null;
+  emit({ stage: 'ready', pid: pid, pids: pids.slice(), processHandoff: processHandoff, fixtureWindow: fixtureWindow,
     processStartedAtMs: processStartedAtMs,
     inheritReady: state.inheritReady, bundle: runningBundle(target) || request.bundle,
     fresh: state.fresh, totalWaitMs: state.retryWaitMs, setupCase: state.setupCase });
