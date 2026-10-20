@@ -17,7 +17,7 @@ function fixture(t, options = {}) {
   const window = name => ({ appId, app, title: `${name}.txt`, url: `file://${root}/${name}.txt` });
   const streams = Array.from({ length: 4 }, () => new PassThrough());
   const [clientIn, clientOut, serverIn, serverOut] = streams;
-  const sent = [], received = [], selections = [], leases = [], drags = [], invalidRequests = [];
+  const sent = [], received = [], selections = [], leases = [], drags = [], invalidRequests = [], actions = [];
   let current, broken = false, epoch = 1, focusOverride;
   const observations = [], released = [], active = new Set();
   const windows = ['Source', 'Target'].map((name, i) => ({ AXTitle: `${name}.txt`, AXDocument: `file://${root}/${name}.txt`, AXWindowNumber: 11 + i }));
@@ -37,6 +37,16 @@ function fixture(t, options = {}) {
     vm.runInContext(identityScript, context);
   };
   resetIdentity();
+  const snapshot = () => options.tree?.(current) ?? `Window: "${current.title}", App: ${app}.\nURL: ${current.url}\n0 standard window ${current.title}\n\t1 text area Value: sample\n\t2 text area Value: alpha move-62f9a451 omega`;
+  let output;
+  const raw = { getAXState: async (args = {}) => {
+    const text = snapshot(); if (args.emit !== false) output.push(text); return text;
+  } };
+  for (const name of ['click', 'pressKey', 'performSecondaryAction', 'typeText']) raw[name] = async (...args) => {
+    actions.push([name, ...args]); options.action?.(name, args);
+  };
+  const engine = vm.createContext({ app: raw, cua: { getApp: async () => { output.push(snapshot()); return raw; } },
+    setTimeout, clearTimeout, nodeRepl: { write: value => output.push(String(value)) } });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: options.changeReview ?? false, flowRules: options.flowRules,
     restartEngine: async () => ({ serverIn, serverOut }),
     ask: options.ask ?? (async () => 'accept'),
@@ -47,7 +57,8 @@ function fixture(t, options = {}) {
     }, grant: () => ({}), renew() {}, release: keys => { for (const key of keys) { released.push(key); active.delete(key); } }, close: () => active.clear() },
     windowIdentity: async target => {
       observations.push(structuredClone(target));
-      return broken ? { status: 'unknown' } : JSON.parse(context.run([JSON.stringify(target)]));
+      const observed = broken ? { status: 'unknown' } : JSON.parse(context.run([JSON.stringify(target)]));
+      return { ...observed, ...options.nativeMutation };
     },
     localTools: { tools: [{ name: 'open_file' }, { name: 'select_window' }, { name: 'drag' }],
       target: async () => ({ appId, app, pid: 7 }),
@@ -67,7 +78,7 @@ function fixture(t, options = {}) {
       } } });
   t.after(() => { relay.dispose(); for (const stream of streams) stream.destroy(); });
   clientOut.on('data', bytes => received.push(...bytes.toString().trim().split('\n').map(JSON.parse)));
-  serverIn.on('data', bytes => {
+  serverIn.on('data', async bytes => {
     for (const msg of bytes.toString().trim().split('\n').map(JSON.parse)) {
       sent.push(msg);
       if (msg.method !== 'tools/call') continue;
@@ -78,9 +89,18 @@ function fixture(t, options = {}) {
         continue;
       }
       if (options.holdOpenedRead && String(msg.id).startsWith('sleight-opened-window-')) continue;
-      serverOut.write(JSON.stringify({ id: msg.id, result: { content: [{ type: 'text',
-        text: `Window: "${current.title}", App: ${app}.\nURL: ${current.url}\n0 standard window ${current.title}\n\t1 text area Value: sample\n\t2 text area Value: alpha move-62f9a451 omega` }],
-      _meta: { 'codex/toolSurface': { app: { appId } } } } }) + '\n');
+      output = [];
+      let isError;
+      if (options.execute) {
+        try { await vm.runInContext(`(async () => { ${msg.params.arguments.code} })()`, engine,
+          { importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER }); }
+        catch (error) { isError = true; output.push(error.message); }
+        const proxy = engine.__sleightDocumentGuard?.wrap(raw) ?? raw;
+        engine.app = proxy;
+        for (const [handle] of msg.params.arguments.code.matchAll(/\b__sleightOpenedApp\d+\b/g)) engine[handle] = proxy;
+      } else output.push(snapshot());
+      serverOut.write(JSON.stringify({ id: msg.id, result: { ...(isError ? { isError } : {}), content: [{ type: 'text', text: output.join('\n') }],
+      _meta: { 'codex/toolSurface': { app: { appId: options.engineAppId ?? appId } } } } }) + '\n');
     }
   });
   const call = async (id, name, args) => {
@@ -94,7 +114,129 @@ function fixture(t, options = {}) {
     const result = await call(name, 'open_file', { app, path: `${root}/${name}.txt` });
     return /Window handle: `([^`]+)`/.exec(result.content.map(c => c.text ?? '').join('\n'))[1];
   };
-  return { call, open, sent, selections, leases, drags, relay, received, invalidRequests, send: (id, name, args) => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n'), released, active, observations, resetIdentity, focusDuplicate: () => { Object.assign(windows[1], { AXTitle: 'Source.txt', AXDocument: window('Source').url }); focusOverride = 1; }, breakIdentity: () => { broken = true; } };
+  return { call, open, sent, selections, leases, drags, relay, received, invalidRequests, actions, send: (id, name, args) => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n'), released, active, observations, resetIdentity, focusDuplicate: () => { Object.assign(windows[1], { AXTitle: 'Source.txt', AXDocument: window('Source').url }); focusOverride = 1; }, breakIdentity: () => { broken = true; } };
+}
+
+// B transcript lines 120-184: opened alias, URL-less Edit menu, another item,
+// fresh getApp, advertised Cancel, fresh getApp and Escape. Use a generic editor.
+const childTree = (window, root = '0 Edit, Secondary Actions: Cancel, Pick\n\t1 menu Secondary Actions: Cancel') =>
+  `Window: "${window.title}", App: ${window.app}.\n${window.url ? `URL: ${window.url}\n` : ''}${root}\n\t\t19 Replace..., ID: replace:`;
+
+test('OH1 B actions execute through the generated runtime guards, including both menu dismissals', async t => {
+  let child = false;
+  const directory = mkdtempSync('/tmp/oh1-runtime-leases-');
+  const inputLease = new InputLease({ directory, holder: 'OH1' });
+  t.after(() => { inputLease.close(); rmSync(directory, { recursive: true, force: true }); });
+  const h = fixture(t, { execute: true, inputLease,
+    action: (name, args) => { if (name === 'click') child = true; else if (name === 'pressKey' || name === 'performSecondaryAction') child = false; },
+    tree: current => child ? childTree({ ...current, url: undefined }) : undefined });
+  const source = await h.open('Source');
+  for (const [id, code] of [
+    ['menu', `let app = ${source}; await app.click(1);`],
+    ['replace', `let app = ${source}; await app.click(19);`],
+    ['fresh', 'let app = await cua.getApp("TextEdit");'],
+    ['cancel', 'let app = await cua.getApp("TextEdit"); await app.performSecondaryAction(1, "Cancel");'],
+    ['menu-again', `let app = ${source}; await app.click(1);`],
+    ['escape', 'let app = await cua.getApp("TextEdit"); await app.pressKey("Escape");'],
+    ['reacquire', 'let app = await cua.getApp("TextEdit");'],
+    ['continued', 'await app.typeText("continued");'],
+  ]) {
+    const result = await h.call(id, 'js', { code });
+    assert.ok(!result.isError, `${id}: ${JSON.stringify(result)}`);
+  }
+  assert.deepEqual(h.actions, [['click', 1], ['click', 19], ['performSecondaryAction', 1, 'Cancel'],
+    ['click', 1], ['pressKey', 'Escape'], ['typeText', 'continued']]);
+});
+
+for (const root of ['0 Edit, Secondary Actions: Cancel, Pick\n\t1 menu Secondary Actions: Cancel',
+  '0 menu Secondary Actions: Cancel', '0 sheet\n\t1 button Cancel', '0 dialog\n\t1 button Cancel']) {
+  test(`OH1 B sequence keeps the selected document through a URL-less child: ${root.split('\n')[0]}`, async t => {
+    let child = false;
+    const options = { onEngineCall: msg => { if (msg.id === 'menu') child = true; },
+      tree: current => child ? childTree({ ...current, url: undefined }, root) : undefined };
+    const h = fixture(t, options), source = await h.open('Source');
+    const cancel = root.includes('menu') ? `await app.performSecondaryAction(${root.startsWith('0 menu') ? 0 : 1}, "Cancel");`
+      : 'await app.click(1);';
+    for (const [id, code] of [
+      ['menu', `let app = ${source}; await app.click(1);`],
+      ['replace', `let app = ${source}; await app.click(19);`],
+      ['fresh', 'let app = await cua.getApp("TextEdit");'],
+      ['cancel', cancel],
+      ['acquire-cancel', `let app = await cua.getApp("TextEdit"); ${cancel}`],
+      ['escape', 'let app = await cua.getApp("TextEdit"); await app.pressKey("Escape");'],
+      ['reacquire', 'let app = await cua.getApp("TextEdit");'],
+      ['continued', 'await app.typeText("continued");'],
+    ]) {
+      const result = await h.call(id, 'js', { code });
+      assert.ok(!result.isError, `${id}: ${JSON.stringify(result)}`);
+      assert.ok(h.sent.some(msg => msg.id === id), `${id} must reach the engine`);
+      if (id === 'reacquire') assert.doesNotMatch(JSON.stringify(result), /selected window not observed/);
+    }
+    assert.equal(h.selections.length, 0, 'a child must not trigger another window selection');
+    assert.ok(h.observations.some(o => o.url === window('Source').url && o.nativeIdentity?.pid === 7));
+  });
+}
+
+test('OH1 fresh acquisition verifies a URL-less menu after explicit selection', async t => {
+  let child = false;
+  const h = fixture(t, { tree: current => child ? childTree({ ...current, url: undefined }) : undefined });
+  const source = await h.open('Source');
+  await h.call('first', 'js', { code: `await ${source}.click(1);` });
+  await h.call('select', 'select_window', { app: appId, url: window('Source').url });
+  child = true;
+  const result = await h.call('recovered', 'js', { code: 'let app = await cua.getApp("TextEdit"); await app.performSecondaryAction(1, "Cancel");' });
+  assert.ok(!result.isError, JSON.stringify(result));
+  assert.ok(h.sent.some(msg => msg.id === 'recovered'));
+});
+
+test('OH1 menu dismissal still requires the window lease', async t => {
+  let child = false;
+  const options = { onEngineCall: msg => { if (msg.id === 'menu') child = true; },
+    tree: current => child ? childTree({ ...current, url: undefined }) : undefined };
+  const h = fixture(t, options), source = await h.open('Source');
+  await h.call('menu', 'js', { code: `let app = ${source}; await app.click(1);` });
+  options.busyWindow = true;
+  const result = await h.call('cancel', 'js', { code: 'await app.performSecondaryAction(1, "Cancel");' });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /window action refused/);
+  assert.equal(h.sent.some(msg => msg.id === 'cancel'), false);
+});
+
+for (const [label, change] of [
+  ['different URL', { url: 'file:///tmp/Other.txt' }],
+  ['different title', { title: 'Other.txt', url: undefined }],
+  ['other app', { app: 'Other', url: undefined }],
+  ['standard document without URL', { url: undefined, root: '0 standard window' }],
+]) test(`OH1 a ${label} never inherits the selected document`, async t => {
+  let child = false;
+  const options = { decline: true, onEngineCall: msg => { if (msg.id === 'menu') child = true; },
+    tree: current => child ? childTree({ ...current, ...change }, change.root) : undefined };
+  const h = fixture(t, options), source = await h.open('Source');
+  await h.call('menu', 'js', { code: `let app = ${source}; await app.click(1);` });
+  const result = await h.call('wrong', 'js', { code: `await ${source}.typeText("must not run");` });
+  assert.equal(result.isError, true);
+  assert.equal(h.sent.some(msg => msg.id === 'wrong'), false);
+});
+
+for (const nativeMutation of [{ pid: 99 }, { processStart: 99 }, { windowNumber: 99 }, { window: 99 },
+  { status: 'unknown' }, { matches: 2 }, { url: 'file:///tmp/Other.txt' }, { appId: 'org.example.Other' }]) {
+  test(`OH1 a URL-less menu cannot hide changed native identity: ${JSON.stringify(nativeMutation)}`, async t => {
+    let child = false;
+    const options = { onEngineCall: msg => { if (msg.id === 'menu') child = true; },
+      tree: current => child ? childTree({ ...current, url: undefined }) : undefined };
+    const h = fixture(t, options), source = await h.open('Source');
+    await h.call('menu', 'js', { code: `let app = ${source}; await app.click(1);` });
+    assert.ok(!(await h.call('same-app', 'js', { code: 'let app = await cua.getApp("TextEdit");' })).isError);
+    options.nativeMutation = nativeMutation;
+    for (const [id, code] of [['cancel', 'await app.performSecondaryAction(1, "Cancel");'],
+      ['escape', 'await app.pressKey("Escape");']]) {
+      const result = await h.call(id, 'js', { code });
+      assert.equal(result.isError, true);
+      assert.equal(h.sent.some(msg => msg.id === id), false);
+    }
+    const fresh = await h.call('fresh', 'js', { code: 'let app = await cua.getApp("TextEdit");' });
+    assert.equal(fresh.isError, true, 'a fresh read must not certify a different process or document');
+  });
 }
 
 test('WD456 calls 5 to 7: refusal, select_window and handle retry send valid JSON-RPC', async t => {

@@ -133,6 +133,21 @@ test('the retained Word helper answers its own sheet at cleanup and reports the 
   assert.deepEqual(f.presses, [f.button]);
 });
 
+test('the wait-0 Word title failure recovers before pressing its own save sheet', () => {
+  const f = wordFixture({ preexisting: false });
+  let time = 0;
+  const native = f.sandbox.$, read = native.AXUIElementCopyAttributeValue;
+  native.AXUIElementCopyAttributeValue = (element, attribute, output) => {
+    if (element === f.window && attribute === 'AXTitle' && f.presses.includes(f.window.AXCloseButton) && time < 600) return -25205;
+    return read(element, attribute, output);
+  };
+  native.NSThread.sleepForTimeInterval = seconds => { time += seconds * 1000; };
+  const api = f.sandbox.nativeAX({ cleanup: true, setupCase: 'cold-launch' }, { now: () => time, wait: ms => { time += ms; }, emit: e => f.events.push(e) });
+  f.sandbox.closeOwnedWindow(f.window, f.request, f.app, api);
+  assert.deepEqual(f.presses, [f.window.AXCloseButton, f.button]);
+  assert.equal(f.events.find(e => e.stage === 'cleanup-read-wait').cleanupReadWait.elapsedMs, 500);
+});
+
 function officeQuit({ windows = { none: true, axWindows: 0, onScreen: 0 }, launchMs = 5000, startedAtMs = 5000, pid = 42 } = {}) {
   const { quitFixtureApplication } = source();
   let forced = false, time = 0;
@@ -163,7 +178,7 @@ for (const [kind, options] of [
   ['no recorded launch time', { startedAtMs: 0 }],
 ]) test(`Word with ${kind} keeps the quit stop and is never force-terminated`, () => {
   const q = officeQuit(options);
-  assert.throws(q.run, /quit unconfirmed after thirty seconds/);
+  assert.throws(q.run, /quit unconfirmed after thirty seconds|start time changed/);
   assert.equal(q.forced, false);
 });
 
@@ -171,6 +186,75 @@ test('Word under another pid is refused before any force', () => {
   const q = officeQuit({ pid: 43 });
   assert.throws(q.run, /identity changed/);
   assert.equal(q.forced, false);
+});
+
+function quittingOffice({ bundle = 'com.microsoft.Word', label = "Don't Save", change, terminateAt = 600, where = 'children' } = {}) {
+  const f = wordFixture({ preexisting: false, label, where });
+  let time = 0, quitting = false;
+  const native = f.sandbox.$;
+  Object.assign(f.app, { processIdentifier: 42, bundleIdentifier: bundle, isFinishedLaunching: true,
+    AXWindows: [f.window], isNil: () => false });
+  Object.defineProperties(f.app, {
+    launchDate: { get: () => ({ isNil: () => false, timeIntervalSince1970: quitting && change === 'start' ? 6 : 5 }) },
+    isTerminated: { get: () => quitting && f.presses.includes(f.button) && time >= terminateAt },
+    terminate: { get: () => {
+      quitting = true;
+      if (where === 'children') f.window.AXChildren = [f.prompt];
+      else f.app.AXFocusedWindow = f.prompt;
+      if (change === 'path') f.window.AXDocument = 'file:///owner/Report-nonce.docx';
+      if (change === 'sheet') f.prompt.AXParent = { AXRole: 'AXWindow' };
+      if (change === 'button') f.prompt.AXChildren.push({ AXRole: 'AXButton', AXTitle: 'Always Allow' });
+      if (change === 'sign-in') f.prompt.AXChildren[0].AXValue = 'Sign in to save to OneDrive';
+      if (change === 'bundle') f.app.bundleIdentifier = 'owner.app';
+      if (change === 'pid') f.app.processIdentifier = 43;
+      return true;
+    } },
+    forceTerminate: { get: () => assert.fail('Office with a window must not be forced') },
+  });
+  native.AXIsProcessTrusted = () => true;
+  native.NSRunningApplication = { runningApplicationWithProcessIdentifier: pid => { assert.equal(pid, 42); return f.app; } };
+  native.AXUIElementCreateApplication = pid => { assert.equal(pid, 42); return f.app; };
+  native.AXUIElementSetMessagingTimeout = () => {};
+  native.NSFileHandle = { fileHandleWithStandardOutput: { writeData: line => f.events.push(JSON.parse(line)) } };
+  f.sandbox.$ = Object.assign(value => typeof value === 'string' && value.startsWith('{') ? { dataUsingEncoding: () => value } : value, native);
+  f.sandbox.Date = { now: () => time };
+  f.sandbox.waitForLaunch = seconds => { time += seconds * 1000; };
+  f.sandbox.windowlessProcess = () => ({ none: false });
+  return { ...f, time: () => time, run: () => f.sandbox.run([JSON.stringify({ bundle, mode: 'quit', pid: 42,
+    processStartedAtMs: 5000, fixture: f.request })]) };
+}
+
+for (const bundle of ['com.microsoft.Word', 'com.microsoft.Excel']) for (const label of ["Don't Save", 'Don’t Save']) {
+  test(`${bundle} quit answers only its owned ${label} sheet and waits for isTerminated`, () => {
+    const f = quittingOffice({ bundle, label });
+    assert.equal(f.run(), true);
+    assert.deepEqual(f.presses, [f.button]);
+    assert.equal(f.events.find(e => e.stage === 'fixture-sheet').fixtureSheet.pressed, label);
+    assert.equal(f.time(), 600, 'an accepted quit and an AX press are not exit proof');
+    assert.equal(f.events.at(-1).quitWait.reason, 'exited');
+  });
+}
+
+for (const change of ['path', 'sheet', 'button', 'sign-in', 'bundle', 'pid', 'start']) {
+  test(`Office quit refuses changed ${change} identity`, () => {
+    const f = quittingOffice({ change, where: change === 'sheet' ? 'focused sheet' : 'children' });
+    assert.throws(f.run, /identity changed|start time changed|sheet|quit unconfirmed/);
+    assert.deepEqual(f.presses, []);
+  });
+}
+
+test('Office quit never answers an app-wide alert even when it names the fixture', () => {
+  const f = quittingOffice({ where: 'alert' });
+  assert.throws(f.run, /sheet/);
+  assert.deepEqual(f.presses, []);
+});
+
+test('Office quit cannot report exit merely because its save sheet was pressed', () => {
+  const f = quittingOffice({ terminateAt: Infinity });
+  // Keep the no-window force fallback unavailable in this fake.
+  f.sandbox.windowlessProcess = () => ({ none: false });
+  assert.throws(f.run, /quit unconfirmed after thirty seconds/);
+  assert.deepEqual(f.presses, [f.button]);
 });
 
 test('the native window count reads AXWindows and on-screen layer-zero windows of only that pid', () => {
@@ -245,6 +329,15 @@ test('an answered fixture sheet is a clean cleanup and the pass continues on the
   assert.equal(diagnostics.appQuit, true);
   assert.equal(quits[0].pid, 42);
   assert.equal(quits[0].processStartedAtMs, 5000, 'the helper checks the launch time before any force');
+  assert.deepEqual(quits[0].fixture, { mode: 'document', target: join(ctx.dir, 'Report-nonce.docx'), token: 'Report-nonce.docx', runToken: 'nonce' });
+});
+
+test('the parent keeps quit-time sheet receipts with the launched process identity', async t => {
+  const { ctx, task } = wordLease(t, { close: { events: '', result: { groupClean: true, exit: { code: 0 }, stdout: '{"stage":"closed"}\n' } },
+    quit: { ...forcedQuit, stdout: sheetEvent + forcedQuit.stdout } });
+  const result = await executeRealTask(task, ctx, { lockHeld: true, drive: async () => ({ code: 0, out: { result: '' } }) });
+  assert.equal(result.cleanupError, undefined);
+  assert.equal(result.fixtureDiagnostics[0].fixtureSheets[0].pressed, 'Don’t Save');
 });
 
 test('a forced Word exit the kernel does not confirm keeps the stop', async t => {

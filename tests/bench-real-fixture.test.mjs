@@ -299,7 +299,7 @@ test('a close request during a successful observation read preserves the origina
 });
 
 test('cleanup stops immediately on other AX errors and retains a terminating hard error after a retry', () => {
-  for (const code of [-25205, -25211, -25202, -25200]) {
+  for (const code of [-25211, -25202, -25200]) {
     const fixture = cleanupNative(() => ({ code }));
     assert.throws(() => fixture.api.focused({}), error => error.code === code);
     assert.equal(fixture.time(), 0);
@@ -310,6 +310,30 @@ test('cleanup stops immediately on other AX errors and retains a terminating har
   assert.equal(fixture.time(), 100);
   assert.equal(fixture.events.at(-1).cleanupReadWait.reason, 'error');
   assert.equal(fixture.events.at(-1).cleanupReadWait.code, -25211);
+});
+
+test('cleanup retries transient AXTitle -25205 with a short pump and a three-second bound', () => {
+  for (const recoverAt of [200, 2900, Infinity]) {
+    const fixture = cleanupNative((_element, attribute, time) => {
+      assert.equal(attribute, 'AXTitle');
+      return time < recoverAt ? { code: -25205 } : { value: 'Memo nonce' };
+    });
+    if (Number.isFinite(recoverAt)) assert.equal(fixture.api.text({}, 'AXTitle'), 'Memo nonce');
+    else assert.throws(() => fixture.api.text({}, 'AXTitle'), error => error.code === -25205);
+    assert.equal(fixture.time(), Math.min(recoverAt, 3000));
+    assert.ok(fixture.events.filter(e => e.stage === 'retry').every(e => e.waitMs <= 100));
+  }
+});
+
+test('a retried title cannot authorize a close after the fixture identity changed', () => {
+  const window = {}, actions = [];
+  const fixture = cleanupNative((_element, attribute, time) => {
+    if (attribute === 'AXTitle') return time < 200 ? { code: -25205 } : { value: 'Owner document' };
+    return { value: attribute === 'AXRole' ? 'AXWindow' : null };
+  });
+  fixture.native.AXUIElementPerformAction = () => { actions.push('press'); return 0; };
+  assert.throws(() => fixture.sandbox.closeOwnedWindow(window, { mode: 'document', token: 'nonce' }, {}, fixture.api), /identity changed/);
+  assert.deepEqual(actions, []);
 });
 
 test('cleanup preserves absent optional attributes without retries and never retries a press', () => {

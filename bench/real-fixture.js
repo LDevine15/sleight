@@ -69,6 +69,7 @@ function quitFixtureApplication(pid, bundle, application, clock) {
       throw new Error('Launched app identity changed; quit refused (pid ' + actualPid + ' vs ' + pid +
         ', bundle ' + actualBundle + ' vs ' + bundle + ')');
     }
+    if (clock.startedAtMs > 0 && !launchedByThisRun(target)) throw new Error('Launched app start time changed; quit refused');
   }
   var windowless;
   function receipt(reason) {
@@ -100,9 +101,17 @@ function quitFixtureApplication(pid, bundle, application, clock) {
   var target = application();
   if (!target) { receipt('already-exited'); return true; }
   identity(target);
+  var discard = clock.prepareDiscard ? clock.prepareDiscard(validateProcess) : null;
+  function validateProcess() {
+    if (clock.check) clock.check();
+    var current = application();
+    if (!current) throw new Error('Launched app exited during sheet validation');
+    identity(current);
+  }
   // NSRunningApplication.terminate requests an ordinary quit. Acceptance does
   // not mean the process has exited, especially while Office is still starting.
   if (clock.check) clock.check();
+  validateProcess();
   accepted = !!target.terminate;
   if (!accepted) { receipt('refused'); throw new Error('Launched app refused quit'); }
   while (true) {
@@ -110,6 +119,7 @@ function quitFixtureApplication(pid, bundle, application, clock) {
     target = application();
     if (!target) { receipt('exited'); return true; }
     identity(target);
+    if (discard) discard(validateProcess);
     // Word ignored a quit with no windows left after its fixture's Don't Save sheet was answered (2026-10-18, by hand: AX
     // press, terminate, then forceTerminate). With no window there is no document to recover, so after ten seconds the exact
     // launched process is force-terminated. With any window, or an unproven launch time, Office keeps the stop below.
@@ -229,7 +239,7 @@ function beginCleanup(state) {
 }
 
 function cleanupRead(operation, state, clock) {
-  var lastError, episode;
+  var lastError, episode, transientStarted, receiptStarted;
   function currentEpisode() {
     // A close request may arrive during a ready-state observation or its wait.
     // Carry that episode's spent budget into cleanup instead of starting over.
@@ -241,7 +251,8 @@ function cleanupRead(operation, state, clock) {
   function receipt(reason) {
     if (!lastError) return;
     var phase = state.cleanup ? 'cleanup' : 'observation', key = phase + 'ReadWait';
-    state[key] = { reason: reason, setupCase: state.setupCase, elapsedMs: clock.now() - episode.cleanupRetryStarted,
+    state[key] = { reason: reason, setupCase: state.setupCase, elapsedMs: clock.now() -
+      (receiptStarted === undefined ? episode.cleanupRetryStarted : receiptStarted),
       code: lastError.code, attribute: lastError.attribute };
     var event = { stage: phase + '-read-wait' }; event[key] = state[key]; clock.emit(event);
   }
@@ -253,20 +264,29 @@ function cleanupRead(operation, state, clock) {
     try { var value = operation(); episode = currentEpisode(); receipt('ready'); return value; }
     catch (error) {
       episode = currentEpisode();
-      if (error.code !== -25204) {
-        if (episode.cleanupRetryError) lastError = error;
+      if (error.code !== -25204 && error.code !== -25205) {
+        if (lastError || episode.cleanupRetryError) lastError = error;
         receipt('error'); throw error;
       }
-      if (episode.cleanupRetryStarted === undefined) episode.cleanupRetryStarted = clock.now();
-      lastError = episode.cleanupRetryError = error;
-      var remaining = 15000 - (clock.now() - episode.cleanupRetryStarted);
+      lastError = error;
+      // Required window attributes can fail briefly while Office closes a document.
+      // Keep this read's short budget separate from the existing busy-app episode.
+      if (error.code === -25205) {
+        if (transientStarted === undefined) transientStarted = clock.now();
+      } else {
+        if (episode.cleanupRetryStarted === undefined) episode.cleanupRetryStarted = clock.now();
+        episode.cleanupRetryError = error;
+      }
+      var remaining = error.code === -25205 ? 3000 - (clock.now() - transientStarted) : 15000 - (clock.now() - episode.cleanupRetryStarted);
+      receiptStarted = error.code === -25205 ? transientStarted : episode.cleanupRetryStarted;
+      if (episode.cleanupRetryStarted !== undefined) remaining = Math.min(remaining, 15000 - (clock.now() - episode.cleanupRetryStarted));
       if (remaining <= 0) { receipt('deadline'); throw error; }
       var before = clock.now();
       state.readEpoch = (state.readEpoch || 0) + 1;
       clock.wait(Math.min(100, remaining));
       episode = currentEpisode();
       clock.emit({ stage: 'retry', phase: state.cleanup ? 'cleanup' : 'observation', code: error.code, waitMs: clock.now() - before,
-        totalWaitMs: clock.now() - episode.cleanupRetryStarted, setupCase: state.setupCase });
+        totalWaitMs: clock.now() - (error.code === -25205 ? transientStarted : episode.cleanupRetryStarted), setupCase: state.setupCase });
     }
   }
 }
@@ -569,6 +589,7 @@ function fixtureDiscardPrompt(window, request, api, app) {
   var document = api.path(api.text(window, 'AXDocument')), expected = api.path(request.target), title = api.text(window, 'AXTitle');
   if (!document || document !== expected || title.indexOf(token) === -1) return null;
   var found = attachedSheets(window, app, api);
+  if (found.alert && request.requireAttachedSheet) return null;
   if (found.sheets.length !== 1) return null;
   var sheet = found.sheets[0];
   if (!found.alert && api.text(sheet, 'AXRole') !== 'AXSheet') return null;
@@ -582,6 +603,38 @@ function fixtureDiscardPrompt(window, request, api, app) {
     if (said.indexOf(stem) === -1 || said.indexOf(token) === -1) return null;
   }
   return { sheet: sheet, source: found.source, windowTitle: title, buttons: buttons };
+}
+
+// Bind the file window before requesting quit. Poll only its own save sheet,
+// never an app-wide button search or an Apple event to Office.
+function prepareOfficeQuitDiscard(request, app, api) {
+  if (!request || request.mode !== 'document' || !request.target || request.target[0] !== '/' ||
+      !(request.runToken || request.token)) throw new Error('Office quit fixture identity unavailable');
+  var token = request.runToken || request.token, expected = api.path(request.target);
+  if (!expected) throw new Error('Office quit fixture path unavailable');
+  function matches(window) {
+    return api.path(api.text(window, 'AXDocument')) === expected &&
+      api.text(window, 'AXTitle').indexOf(token) !== -1;
+  }
+  var windows = api.windows(app).filter(matches);
+  if (windows.length > 1) throw new Error('Ambiguous Office quit fixture window');
+  var owned = windows[0], guarded = Object.assign({}, request, { refuseDialogs: true, requireAttachedSheet: true }), answered = false;
+  return function (validateProcess) {
+    if (!owned || answered || !api.exists(owned)) return;
+    var validate = function () {
+      var epoch;
+      do {
+        epoch = api.readEpoch();
+        validateProcess();
+        if (!matches(owned) || !api.listed(app, owned)) throw new Error('Office quit fixture window identity changed');
+      } while (epoch !== api.readEpoch());
+      validateProcess();
+    };
+    validate();
+    // The existing guarded discard rechecks the exact sheet and accepts only
+    // the save-prompt table's single Don't Save button.
+    answered = api.discard(owned, validate, guarded, app) === true;
+  };
 }
 
 function discardButtons(sheet, api) {
@@ -968,7 +1021,7 @@ function nativeAX(state, clock) {
         press(discardButton[0]);
         if (clock && clock.emit) clock.emit({ stage: 'fixture-sheet', fixtureSheet: { pressed: pressed, source: prompt.source,
           windowTitle: prompt.windowTitle, buttons: prompt.buttons } });
-        return;
+        return true;
       }
       var sheets = children(window, 'AXSheets');
       if (!sheets.length) return;
@@ -1007,17 +1060,25 @@ function run(argv) {
   }
   if (request.mode === 'quit') {
     if ((allowed.indexOf(request.bundle) === -1 && !webFixture) || request.bundle === 'com.apple.finder' || !(request.pid > 0)) throw new Error('Invalid launched app quit request');
-    return quitFixtureApplication(request.pid, request.bundle, function () {
-      var value = $.NSRunningApplication.runningApplicationWithProcessIdentifier(request.pid);
-      return value.isNil() || value.isTerminated ? null : value;
-    }, { check: free, now: function () { return Date.now(); }, wait: function (ms) { free(); waitForLaunch(ms / 1000); }, emit: emit,
+    var quitClock = { check: free, now: function () { return Date.now(); }, wait: function (ms) { free(); waitForLaunch(ms / 1000); }, emit: emit,
       startedAtMs: Number(request.processStartedAtMs) || 0,
       windowless: function () { return windowlessProcess(request.pid); },
       sameApp: function (target, bundle) {
         var url = target.bundleURL, expected = $.NSWorkspace.sharedWorkspace.URLForApplicationWithBundleIdentifier(bundle);
         if (!url || url.isNil() || !expected || expected.isNil()) return false;
         return ObjC.unwrap(url.URLByResolvingSymlinksInPath.path) === ObjC.unwrap(expected.URLByResolvingSymlinksInPath.path);
-      } });
+      } };
+    if (/^com\.microsoft\.(Word|Excel)$/.test(request.bundle) && request.fixture && quitClock.startedAtMs > 0) {
+      quitClock.prepareDiscard = function (validateProcess) {
+        if (!$.AXIsProcessTrusted()) throw new Error('Accessibility is unavailable; Office quit sheet refused');
+        var quitApi = nativeAX({ cleanup: true, bundle: request.bundle }, Object.assign({}, quitClock, { check: validateProcess }));
+        return prepareOfficeQuitDiscard(request.fixture, quitApi.app({ processIdentifier: request.pid }), quitApi);
+      };
+    }
+    return quitFixtureApplication(request.pid, request.bundle, function () {
+      var value = $.NSRunningApplication.runningApplicationWithProcessIdentifier(request.pid);
+      return value.isNil() || value.isTerminated ? null : value;
+    }, quitClock);
   }
   if ((allowed.indexOf(request.bundle) === -1 && !webFixture) || !request.control || !request.mode || (webFixture && request.mode !== 'window')) throw new Error('Invalid fixture request');
   if (!$.AXIsProcessTrusted()) throw new Error('Accessibility is unavailable; fixture not opened');

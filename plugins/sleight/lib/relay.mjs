@@ -1698,7 +1698,10 @@ export function createRelay({
   let selectedWindow;
   let selectionVerified = false;
   function clearSelection() { selectedWindow = undefined; selectionVerified = false; }
-  const sameWindow = (a, b) => a && b && ['title', 'app', 'url'].every(key => a[key] === b[key]);
+  const sameHeader = (a, b) => a && b && ['title', 'app', 'url'].every(key => a[key] === b[key]);
+  // Only a natively verified menu/sheet may omit its selected document's URL.
+  const sameWindow = (a, b) => sameHeader(a, b) || a && b && a.title === b.title && a.app === b.app &&
+    (!a.url && sameHeader(a.selectedParent, b) || !b.url && sameHeader(b.selectedParent, a));
   function selectionRecovery() {
     const args = { app: selectedWindow.appId, ...(selectedWindow.url ? { url: selectedWindow.url } : { title: selectedWindow.title }) };
     if (selectedWindow.windowNumber !== undefined) args.windowNumber = selectedWindow.windowNumber;
@@ -1708,8 +1711,18 @@ export function createRelay({
     return promptNotice(`Begin js with \u0060${constApp ? '' : 'let app = '}await cua.getApp(${JSON.stringify(selectedWindow.appId)})\u0060 (name or bundle ID); actions may follow on its returned handle.`, prompt);
   }
   function selectedCancel(code) {
-    return selectedWindow && selectedWindow.windowNumber !== undefined && leaseWindow?.appId === selectedWindow.appId &&
-      sameWindow(leaseWindow, selectedWindow) && isChangeCancel(code, lastWindowText);
+    return typeof code === 'string' && selectedWindow && selectedWindow.windowNumber !== undefined && leaseWindow?.appId === selectedWindow.appId &&
+      sameWindow(leaseWindow, selectedWindow) && code.trim().replace(/;$/, '').split(';').every(statement => {
+        const action = /^\s*await\s+([A-Za-z_$][\w$]*)\.(pressKey|click|performSecondaryAction)\((.*)\)\s*$/.exec(statement);
+        if (!action) return isLeaseRead(statement.trim());
+        if (handleBundles.get(action[1])?.appId !== selectedWindow.appId) return false;
+        if (isChangeCancel(`await app.${action[2]}(${action[3]})`, lastWindowText)) return true;
+        const cancel = action[2] === 'performSecondaryAction' && /^\s*(\d+)\s*,\s*(["'])Cancel\2\s*$/.exec(action[3]);
+        return !!cancel && lastWindowText.split('\n').some(line => {
+          const element = /^\s*(\d+) (.*)$/.exec(line);
+          return element && element[1] === cancel[1] && /Secondary Actions: (?:[^,]*, )*Cancel(?:,|$)/.test(element[2]);
+        });
+      });
   }
   let constApp = false;
   // After js_reset, or when the engine's session restarts on its own, no handle survives.
@@ -1782,7 +1795,9 @@ export function createRelay({
       try { key = inputLease.acquire(target, 'app'); }
       catch (error) { stop(error.message); return; }
       openedWindowLeases.set(msg.id, key); refreshHeartbeat();
-      const identity = verifyWindowIdentity(target, await windowIdentity({ ...target, allowUnfocused: true }));
+      const expected = leaseWindow?.selectedParent && sameWindow(leaseWindow, target)
+        ? { ...target, windowNumber: leaseWindow.selectedParent.windowNumber, nativeIdentity: leaseWindow.nativeIdentity } : target;
+      const identity = verifyWindowIdentity(expected, await windowIdentity({ ...expected, allowUnfocused: true }));
       current();
       const matched = leaseWindow?.appId === target.appId && sameWindow(leaseWindow, target);
       if (!matched) {
@@ -1826,7 +1841,7 @@ export function createRelay({
     const resume = identity => {
       leaseWindow.nativeIdentity = identity; leaseWindow.identityRequired = true;
       openedAliases.set(msg.id, bindings);
-      selectedWindow = { ...target, windowNumber: identity.windowNumber }; selectionVerified = true;
+      selectedWindow = { ...target, windowNumber: identity.windowNumber, nativeIdentity: identity }; selectionVerified = true;
       localRunning.delete(msg.id); running.delete(msg.id);
       openedWindowCalls.add(msg.id); handleClient(msg);
     };
@@ -3939,8 +3954,9 @@ export function createRelay({
       if (flowPlan) openedFlowPlans.set(msg.id, flowPlan);
       const target = leaseWindow;
       // A menu header can omit the document URL; Cancel still checks the selected native window.
-      const expected = selectedCancel(msg.params.arguments?.code) && selectedWindow.windowNumber !== undefined
-        ? { ...target, windowNumber: selectedWindow.windowNumber } : target;
+      const expected = target.selectedParent ? { ...target.selectedParent, nativeIdentity: target.nativeIdentity, identityRequired: true }
+        : selectedCancel(msg.params.arguments?.code) && selectedWindow.windowNumber !== undefined
+          ? { ...target, windowNumber: selectedWindow.windowNumber } : target;
       const generation = stopGeneration;
       running.add(msg.id);
       callDetails.set(msg.id, 'native window admission');
@@ -3948,7 +3964,7 @@ export function createRelay({
       Promise.resolve().then(() => menuAdmissions.get(msg.id)?.identity ?? windowIdentity(expected)).then(observed => {
         // The parent lease's pin fails closed: an unavailable or ambiguous identity stops instead of dropping the pin. It
         // holds until the pinned call's reply, so it covers the calls split from it (a text write's head) too.
-        const identity = target.parentPin ? verifyWindowIdentity(expected, observed) : nativeIdentity(expected, observed);
+        const identity = target.parentPin || target.selectedParent ? verifyWindowIdentity(expected, observed) : nativeIdentity(expected, observed);
         noteProcess(identity);
         if (generation !== stopGeneration || leaseWindow !== target || closing || disposed) throw new Error(/* notice */ 'Input lease: window changed while checking. Read again.');
         if (!identity) { expected.identityRequired = false; delete expected.nativeIdentity; }
@@ -4570,7 +4586,30 @@ export function createRelay({
       return;
     }
     const identityCall = msg.method === undefined && leaseCalls.get(msg.id);
-    if (windowIdentity && identityCall?.observe && identityCall.read && !identityCall.identityChecked) {
+    if (windowIdentity && selectedWindow && inputLease && !documentMode && !changeReview && identityCall?.observe &&
+        !identityCall.selectedChildChecked && !msg.error && !msg.result?.isError) {
+      const text = (msg.result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+      const window = lastWindowFromText(text), appId = observedAppId(identityCall, window, msg.result);
+      if (window && !window.url && selectedWindow.url && window.title === selectedWindow.title && window.app === selectedWindow.app &&
+          appId === selectedWindow.appId && (menuRoot(text) || /^0 (?:sheet|dialog)\b/m.test(text))) {
+        const expected = selectedWindow, generation = stopGeneration;
+        identityCall.selectedChildChecked = true;
+        Promise.resolve().then(() => windowIdentity(expected)).then(observed => {
+          const identity = verifyWindowIdentity(expected, observed);
+          if (generation !== stopGeneration || selectedWindow !== expected) return;
+          identityCall.selectedParent = expected;
+          identityCall.nativeIdentity = identity; identityCall.identityRequired = true;
+          expected.nativeIdentity = identity;
+          noteProcess(identity);
+        }).catch(error => {
+          msg.result = { ...msg.result, isError: true, content: [...(msg.result.content ?? []), { type: 'text', text: error.message }] };
+        }).finally(() => {
+          if (generation === stopGeneration) observeServerMessage(msg);
+        });
+        return;
+      }
+    }
+    if (windowIdentity && identityCall?.observe && identityCall.read && !identityCall.identityChecked && !identityCall.selectedParent) {
       const text = (msg.result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
       const window = !msg.result?.isError && windowFromText(text);
       const appId = observedAppId(identityCall, window, msg.result);
@@ -4834,7 +4873,11 @@ export function createRelay({
       }
       const text = (msg.result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
       if (!automatic) journal?.observe(msg.id, text);
-      if (call.observe && !automatic && !confirmedBrowser) { lastWindowText = text; lastWindow = windowFromText(text); }
+      if (call.observe && !automatic && !confirmedBrowser) {
+        lastWindowText = text; lastWindow = windowFromText(text);
+        const parent = leaseCalls.get(msg.id)?.selectedParent;
+        if (lastWindow && parent) lastWindow.selectedParent = parent;
+      }
       // The app's windows before the acquisition; none when the acquisition launched it.
       const appId = msg.result?._meta?.['codex/toolSurface']?.app?.appId;
       const before = inventory && typeof appId === 'string' && inventory.filter(a => a.id === appId);
@@ -4858,7 +4901,7 @@ export function createRelay({
       if (!automatic) lastTree = finalWindow && /\n\t*\d+ /.test(finalTree) ? { seq: callSeqs.get(msg.id), window: finalWindow, text: finalTree } : undefined;
       callSeqs.delete(msg.id); callStarts.delete(msg.id); preHealth.delete(msg.id);
       if (!confirmedBrowser && selectedWindow && !call.read && call.target && msg.result &&
-          (!lastWindow || ['title', 'app', 'url'].some(key => lastWindow[key] !== call.target[key])) &&
+          !sameWindow(lastWindow, call.target) &&
           !(lastWindow && newTabOf(call.target, treeBefore, finalWindow, finalTree))) {
         windowNote = `Sleight: outcome unconfirmed. Intended ${documentLabel(call.target)}. ` +
           (lastWindow ? `Observed ${documentLabel(lastWindow)}.` : 'Result missing full window header.');
@@ -4920,6 +4963,7 @@ export function createRelay({
       // window still refuses if another session holds it.
       const guardStop = msg.result?.isError && /^(?:Error: )?(?:sleight stopped before |Input lease stopped this action: (?:window or URL|app) changed)/m.test(text);
       const window = !msg.error && (!msg.result?.isError || guardStop) && lastWindowFromText(text);
+      if (window && call.selectedParent) window.selectedParent = call.selectedParent;
       const known = observedAppId(call, window, msg.result);
       // A pop-up the action brought up, or the window it returns to (SW1, popup-window.mjs). It gets the note below even
       // under its opener's title and URL, and the selected-window path's "outcome unconfirmed" note gets the same line.
