@@ -665,6 +665,12 @@ function isAppApproval(msg) {
   return msg.method === 'elicitation/create' && msg.params?._meta?.connector_id === 'computer-use';
 }
 
+// Persist metadata alone does not establish that a card grants app access.
+function plainAppCard(msg) {
+  const match = /^Allow Computer Use to use "([^"\r\n]+)"\?$/.exec(msg.params?.message ?? '');
+  return isAppApproval(msg) && !!match && match[1] === msg.params?._meta?.tool_params?.app;
+}
+
 // A window whose title follows its active tab (a browser) is retitled by a new tab. When the tree Claude last saw for the
 // intended window is still there with exactly one selected tab added, it is the same window and gets no window note:
 // "outcome unconfirmed" there read as "my keys went to another window", and Haiku stopped (Firefox mdn b7 r2, 2026-10-19;
@@ -829,6 +835,8 @@ export function createRelay({
   // SLEIGHT_TEXTLESS_HINT=0 leaves it out, including the open_file textless fallback.
   textlessHint = process.env.SLEIGHT_TEXTLESS_HINT !== '0',
   confirmPayments = 'requested',
+  // Shell hosts have no form surface. Every engine card goes to sleight's panel.
+  panelOnly = false,
   rs,
   // sleight's own payment card for the engine-path payment gate (payment-card.mjs); the launcher supplies it. Without it a
   // payment stop reaches Claude as it is.
@@ -2530,7 +2538,7 @@ export function createRelay({
 
   function askUser(msg, ignoreMemory = false) {
     const generation = stopGeneration;
-    const key = approvalScope === 'session' ? approvalKey(msg) : undefined;
+    const key = approvalScope === 'session' && (!panelOnly || plainAppCard(msg)) ? approvalKey(msg) : undefined;
     asking = asking.then(async () => {
       if (generation !== stopGeneration) return { action: 'cancel' };
       if (!ignoreMemory && key !== undefined && approved.has(key)) {
@@ -2603,8 +2611,8 @@ export function createRelay({
     const key = JSON.stringify(['sleight', ...keyParts]);
     // A once ask must reach the user every time: never answered from the
     // pre-approved list and never from session memory.
-    const scoped = approvalScope === 'session' && !options.once;
-    const preapprovable = !options.once && keyParts.length === 2 &&
+    const scoped = !panelOnly && approvalScope === 'session' && !options.once;
+    const preapprovable = !panelOnly && !options.once && keyParts.length === 2 &&
       ['drag', 'menu_bar', 'open_file'].includes(keyParts[0]);
     // withdraw() declines a pending ask whose call failed first: later asks stop waiting on it, an
     // elicitation of ours is cancelled, and a later answer grants nothing. A native panel stays up.
@@ -5068,7 +5076,8 @@ export function createRelay({
       const warning = forbiddenTargetWarning(msg.params?._meta?.tool_params?.app);
       if (warning && msg.params) msg.params.message = `${msg.params.message ?? 'Allow Computer Use?'} ${warning}`;
     }
-    if (isAppApproval(msg)) {
+    // A shell action confirmation must reach the panel even when its app is pre-approved.
+    if (isAppApproval(msg) && (!panelOnly || plainAppCard(msg))) {
       hand?.approval(msg.id, msg.params?._meta);
       // Observation only: the answer below is unchanged. The light check needs the key's time.
       if (msg.params?._meta?.tool_name === 'press_key') lightReturn?.keyPressed(msg.params._meta.tool_params?.app);
@@ -5106,7 +5115,7 @@ export function createRelay({
         return;
       }
     }
-    if (ask && (isAppApproval(msg) || (msg.method === 'elicitation/create' && msg.params?._meta?.connector_id === 'browser-use'))) {
+    if (ask && (isAppApproval(msg) || (msg.method === 'elicitation/create' && (panelOnly || msg.params?._meta?.connector_id === 'browser-use')))) {
       askUser(msg);
       return;
     }

@@ -108,3 +108,24 @@ test('the full consent host still compiles with the app cards, without launching
     new URL('../plugins/sleight/lib/direct-browser/native/consent-host.swift', import.meta.url).pathname, '-o', join(dir, 'consent-host')], { encoding: 'utf8' });
   assert.equal(built.status, 0, built.stderr);
 });
+
+test('operation cards show scope first and label a session app grant accurately without UI', { skip: macCommandSkip('xcrun') }, t => {
+  const block = source.match(/\/\/ BEGIN OPERATION TEXT\n([\s\S]*?)\/\/ END OPERATION TEXT/);
+  assert.ok(block);
+  const dir = registerTemp(t, trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-operation-text-')))));
+  const swift = join(dir, 'main.swift'), binary = join(dir, 'fixture');
+  writeFileSync(swift, 'import Foundation\n' + block[1] + `
+let scope = "Allow for this Grok Bot session only"
+let app = operationCardText(["request": String(repeating: "x", count: 2048), "scope": scope], scope: scope)!
+let action = operationCardText(["request": "Pay $268?", "scope": "Allow this action once"], scope: "Allow this action once")!
+let payment = operationCardText(["amount": "$268"], scope: nil)!
+let valid = app.body.hasPrefix(scope + "\\n\\n") && app.allow == "Allow for this session"
+  && action.body.hasPrefix("Allow this action once\\n\\n") && action.allow == "Once"
+  && payment.body.contains("$268") && payment.allow == "Once"
+print(valid ? "pass" : "fail")
+`);
+  const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(), swift, '-o', binary], { encoding: 'utf8' });
+  assert.equal(built.status, 0, built.stderr);
+  const run = spawnSync(binary, [], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr); assert.equal(run.stdout.trim(), 'pass');
+});

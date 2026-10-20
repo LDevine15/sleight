@@ -70,6 +70,6 @@ export function grokDoctorLines(status) {
       `PROBLEM   Grok's import and Claude Code run different copies: Grok ${entry.version}, Claude Code cache ${status.cachedVersions.join(', ')}. Update both and reconnect.`);
   }
   if (!status.mcp.length && !status.local.length && !status.native.length && !(status.importing && status.imports.length)) lines.push(`note      No sleight route found. To install: ${GROK_INSTALL}`);
-  lines.push('note      Grok turbo is off in 1.4.0: no trusted user-turn binding. Grok Bot.app has no local route yet.');
+  lines.push('note      Grok turbo is off in 1.4.0: no trusted user-turn binding. Grok Bot.app uses sleight-mcp js through its local shell.');
   return lines;
 }

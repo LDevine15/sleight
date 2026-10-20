@@ -122,29 +122,23 @@ marketplace add and `plugin install sleight --trust` succeeded, but `grok inspec
 import. Check its `mcpServers` target before relying on the marketplace install.
 
 Turbo is off in Grok for 1.4.0 because its calls have no trusted binding to the user's message. Use the engine path.
-Grok's form answers allow this server session only. Always allow needs your click on sleight's own panel, selected
-with `SLEIGHT_APPROVAL_PROMPT=dialog` in the server environment. Grok 1.0.13 passed the handshake. Model tasks and image
-delivery remain unchecked. Results have a 20,000-byte cap. After a delivery error, read current state before retrying
-input, since the action may have run. [Grok CLI details](docs/other-hosts.md#grok-cli).
+See [Grok CLI](docs/other-hosts.md#grok-cli) for approval and result limits.
 
-## Grok Bot <!-- GB14 -->
+## Grok Bot
 
-Use Grok Bot's local shell on this Mac. Its custom STDIO MCP servers run in a hosted box without Mac apps. <!-- GB14 -->
-Clone sleight with the commands under [Grok CLI](#grok-cli), then run the doctor through the bot's local shell too. <!-- GB14 -->
-Its Grok Bot section reports the shell route and Accessibility status for that launch context. A local app task <!-- GB14 -->
-through this route has not yet been verified. <!-- GB14 -->
+Clone sleight as below and set up ChatGPT's Computer Use on the Mac where Grok Bot's local daemon runs. Give the bot the
+[Grok Bot skill](docs/grokbot-skill.md) with the clone's full executable path and add the
+[profile pointer](docs/other-hosts.md#grok-bot). The bot calls `sleight-mcp js '<code>'` through its local shell.
+The first call starts a detached session on demand. Its hosted STDIO MCP box cannot drive your Mac, and there is no
+Mac-side HTTP client placement.
 
-Give the bot this standing instruction, replacing the path with the clone's full path: <!-- GB14 -->
+The session needs Apple's clang from Xcode Command Line Tools. It collects its engine and cache images after ten idle
+minutes. The next call starts it again and reports the reset. An optional `sleight-mcp session --install-agent` prints
+a plist and command for the owner to save and run. It doesn't write or load the plist.
 
-> For Mac UI work, use sleight through the local shell: `/absolute/path/to/sleight/plugins/sleight/bin/sleight-mcp js '<JavaScript>'`. Read the engine API docs printed by the first call before sending actions. Read screenshot files at the printed paths. Never edit sleight's approval files or answer its consent cards. <!-- GB14 -->
-
-`js` starts the session on demand, and it exits after about ten idle minutes. Images go to private files under sleight's <!-- GB14 -->
-cache, and the bot reads their printed paths with your file approval. You choose whether to install an optional LaunchAgent. <!-- GB14 -->
-Keep Grok Bot's own computer use off while using sleight: the two drivers do not share an input lease. <!-- GB14 -->
-
-App approvals use sleight's own panel. Every payment, booking, settings change and submit asks there, even when <!-- GB14 -->
-you requested it, because this route cannot bind calls to your message. Turbo stays off. Grok's local-tool approvals <!-- GB14 -->
-and auto-review do not answer sleight's cards. Screenshots and app text go to Grok's hosted model through its gateway. <!-- GB14 -->
+Turn Grok Bot's own computer-use helper off. sleight shows its own approval panels, turbo stays off, and payments,
+bookings and submits ask each time. Run `sleight-mcp --doctor` to check the live session's native helper
+Accessibility grant without a prompt. Without a live session the result is unknown. This route has offline tests. A live Grok Bot session has not been checked.
 
 ## Other MCP clients
 

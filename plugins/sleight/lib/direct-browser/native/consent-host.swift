@@ -20,6 +20,15 @@ func sessionFrame(_ data: [String: Any], _ choices: [String]) -> (kind: String, 
 }
 // END SESSION FRAME
 
+// BEGIN OPERATION TEXT
+func operationCardText(_ operation: [String: Any], scope: String?) -> (body: String, allow: String)? {
+    guard let bytes = try? JSONSerialization.data(withJSONObject: operation, options: [.prettyPrinted, .sortedKeys]),
+        let text = String(data: bytes, encoding: .utf8) else { return nil }
+    return ((scope.map { $0 + "\n\n" } ?? "") + "Page labels are observations. Review this exact operation:\n" + text,
+        scope == "Allow for this Grok Bot session only" ? "Allow for this session" : "Once")
+}
+// END OPERATION TEXT
+
 // BEGIN APP FRAME
 // Debugger and relaunch cards for an Electron app. Exact keys and exact choice sets: Always is offered only on a
 // debugger card for a persistent profile, and a relaunch card never offers a standing choice.
@@ -626,8 +635,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let privateOperation = data["operation"] as? [String: Any],
             let view = data["view"] as? [String: Any],
             let session = view["clientSession"] as? String, let origin = view["origin"] as? String,
-            let bytes = try? JSONSerialization.data(withJSONObject: privateOperation, options: [.prettyPrinted, .sortedKeys]),
-            let text = String(data: bytes, encoding: .utf8) else { return }
+            let words = operationCardText(privateOperation, scope: view["scope"] as? String) else { return }
         let alert = NSAlert()
         // A document inside an Electron app is named as one. It never reads as a web address.
         if view["documentKind"] as? String == "app-document" {
@@ -635,8 +643,10 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else { alert.messageText = "sleight request for " + session + " at " + origin }
         // Native plain text, outside the page. Exact destination, payload and
         // payment terms are visible to the person, and never emitted on stdout.
-        alert.informativeText = "Page labels are observations. Review this exact operation:\n" + text
-        for choice in choices { alert.addButton(withTitle: choice.capitalized) }
+        alert.informativeText = words.body
+        for choice in choices {
+            alert.addButton(withTitle: choice == "once" ? words.allow : choice.capitalized)
+        }
         let result = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         if result >= 0 && result < choices.count { respond(id, choices[result]) }
         else { respond(id, "cancel") }
