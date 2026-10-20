@@ -731,11 +731,15 @@ test('Finder inspector counts minimized windows without Apple events and fails c
     } },
     AXUIElementCreateApplication: pid => { assert.equal(pid, 42); return 'finder'; },
     AXUIElementSetMessagingTimeout: () => {},
-    AXUIElementCopyAttributeValue: (app, attribute, ref) => {
-      assert.equal(app, 'finder'); assert.equal(attribute, 'AXWindows'); ref[0] = { count: 2 }; return axCode;
+    AXUIElementCopyAttributeValue: (element, attribute, ref) => {
+      if (attribute === 'AXRole') { ref[0] = element.role; return 0; }
+      assert.equal(element, 'finder'); assert.equal(attribute, 'AXWindows');
+      // The desktop is listed beside real windows as an AXScrollArea and must not count.
+      const items = [{ role: 'AXWindow' }, { role: 'AXScrollArea' }, { role: 'AXWindow' }];
+      ref[0] = { count: items.length, objectAtIndex: i => items[i] }; return axCode;
     },
   });
-  const context = vm.createContext({ $: native, ObjC: { import() {}, castRefToObject: value => value }, Ref: () => [] });
+  const context = vm.createContext({ $: native, ObjC: { import() {}, castRefToObject: value => value, unwrap: value => value }, Ref: () => [] });
   vm.runInContext(source, context);
   assert.equal(context.run(), '2');
   axCode = -25204;

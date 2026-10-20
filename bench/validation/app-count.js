@@ -19,7 +19,13 @@ function run(args) {
     if (code !== 0) throw new Error('Finder window inspection failed: ' + code);
     var windows = ObjC.castRefToObject(value[0]);
     if (!windows || (windows.isNil && windows.isNil())) throw new Error('Finder window count unavailable');
-    count += Number(windows.count);
+    // AXWindows also lists the desktop as an AXScrollArea, so count only real windows.
+    for (var j = 0; j < Number(windows.count); j++) {
+      var role = Ref();
+      if (Number($.AXUIElementCopyAttributeValue(windows.objectAtIndex(j), $('AXRole'), role)) !== 0)
+        throw new Error('Finder window role unavailable');
+      if (ObjC.unwrap(ObjC.castRefToObject(role[0])) === 'AXWindow') count++;
+    }
   }
   return String(count);
 }
