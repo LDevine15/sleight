@@ -49,7 +49,7 @@ function fixture(t, options = {}) {
     setTimeout, clearTimeout, nodeRepl: { write: value => output.push(String(value)) } });
   const relay = createRelay({ clientIn, clientOut, serverIn, serverOut, changeReview: options.changeReview ?? false, flowRules: options.flowRules,
     restartEngine: async () => ({ serverIn, serverOut }),
-    stopEngine: async () => ({ collected: true, cutOff: false }), stopGraceMs: 20,
+    stopEngine: options.stopEngine ?? (async () => ({ collected: true, cutOff: false })), stopGraceMs: 20,
     confirmPayments: options.confirmPayments,
     ask: options.ask ?? (async () => 'accept'),
     inputLease: options.inputLease ?? { acquire: (target, scope = 'window') => {
@@ -292,7 +292,8 @@ test('OH3 selection seeds its native identity before the first child observation
 test('OH3 a stopped child identity check still settles its client reply once', async t => {
   let child = false, entered, release;
   const waiting = new Promise(resolve => { entered = resolve; });
-  const options = { tree: current => child ? childTree({ ...current, url: undefined }) : undefined };
+  const options = { stopEngine: async () => ({ collected: false, cutOff: false }),
+    tree: current => child ? childTree({ ...current, url: undefined }) : undefined };
   const h = fixture(t, options);
   await h.open('Source');
   await h.call('select', 'select_window', { app: appId, url: window('Source').url });
