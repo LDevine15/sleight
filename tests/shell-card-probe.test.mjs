@@ -121,7 +121,9 @@ function fakeRun({ permissionAbsent = false, acceptSynthetic = false, missing = 
     options: { directory: '/fake/bank', binaries: { host: 'host', poster: 'poster' }, launch,
       signals: signal, input, say: r => receipts.push(r), prompt: () => {},
       admission: { check: async () => { if (holdDuringAttempt === 'held') throw Error('HOLD'); }, release: async () => { released = true; } },
-      timing: { ready: 100, attempt: 20, settle: 5, person: 100, cleanup: 100, poll: 1 } } };
+      // Keep the production observation window for the delayed-acceptance regression.
+      // A five-millisecond substitute can expire before Node delivers its timer under load.
+      timing: { ready: 100, attempt: 20, settle: lateAcceptance ? 500 : 5, person: 100, cleanup: 100, poll: 1 } } };
 }
 
 test('fake run checks lifecycle, all refusal receipts, physical click and exact cleanup', async () => {
