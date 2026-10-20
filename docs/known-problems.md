@@ -15,6 +15,32 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 - Turbo may ask about an honest checkout: on 2026-10-15, 50/98 honest payment fixtures allowed without asking (83/98 in round 12) ([browsers](#browsers)).
 - Safari may stop between opening a tab and typing: 36 of 36 Codex chains and 19 of 19 Claude Code chains stopped. The fix is untested live ([approvals and guards](#approvals-and-guards)).
 
+## 1.4.1 candidate checks
+
+- Release qualification applies to the final integrated commit. The 1.4.1 manifests, doctor output and unreleased
+  CHANGELOG heading must agree there. After all merges, the architect must reconcile the documented scope and run
+  the full check, release pass and final-build A/B. Passing offline tests does not qualify a release.
+- Finder's recorded setup smoke failed on 2026-10-20 with `Finder fixture window inventory unconfirmed` before
+  creating a window or opening a folder. Cleanup was confirmed, but the failed run retained its live lock until
+  the operator removed it at 21:26Z. No new live evidence establishes the cause or a fix. Finder setup, Go to Folder
+  ancestry, respawn and cleanup need qualification, including the `cc-list-native` and `textedit-two-windows` fixture
+  paths. Cancellation must stop owned setup work; cleanup must preserve baseline windows and retain the lock when
+  ownership or cleanup is uncertain. Receipts must exclude owner text, and timeout evidence must bind the same
+  process instance. These requirements need review before live adoption. Exclusive Finder setup and the remaining
+  window-focus race still need an owner decision.
+- Offline portability checks do not establish Linux compatibility. The path guard must pass without exemptions on
+  the integrated tree. Actual Linux testing through the Node 24 Docker preflight remains unrun.
+- Candidate and tagged-release preflights must run after the reset against the final commit. Release mode must
+  also verify the intended tag points to that commit. Every check and Linux receipt must identify that same clean
+  tree through completion. The unreleased heading, Linux helper interface, receipt and caller must agree. Private terms need an external
+  file and human review. A generic Linux account's history scan does not prove the owner's identity was checked.
+  Candidate mode keeps `releaseReady: false`. Publication remains a separate owner decision.
+- The final-build driver has only offline proof. It rejected the historical `validation-140-final` bank because
+  the task, prompt or harness changed. The architect must select compatible A evidence or collect a fresh A/B,
+  then run three new rounds per selected group on the final integrated commit. Later merges require another run.
+- Shortening the first native API reference is blocked because the available result does not authenticate which
+  text items came from the engine's documentation emitter. The existing reference is unchanged.
+
 ## Flag A/B limits
 
 - Across five alternating rounds with Haiku 5.5 at high effort, open-shot won by about 1.1 SE
@@ -160,7 +186,10 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 
 - The ghost hand is off by default. When an app doesn't send per-action approvals, the hand can run ahead of the field
   being filled. Its frames follow a planned schedule, about 470 ms, then 72 ms per action, instead of the engine's
-  writes. A fix is planned for 1.4.1 (GH8).
+  writes. GH8 remains blocked: engine-persisted Always allow can consume action requests without exposing supported
+  per-action events to the relay, and retries and paste need correct action/attempt correlation. The partial pacing
+  candidate stays unmerged. The existing visible-hand behavior is unchanged. Visual qualification and the A/B
+  required to change the default have not passed.
 
 - DP1 can skip a close shortcut's final read only when fresh native metadata matches the leased
   bundle ID, PID and process start. Both the window count and modal count must be 0. Missing identity or
@@ -774,10 +803,17 @@ An A/B of the 1.4.0 workflow text, using `SLEIGHT_WORKFLOW_DOCS=0`, is next (WF3
   on the study Mac). Check the target in `grok inspect --json` and keep one route. The direct MCP entry passed doctor.
   Grok form answers never write Always allow. Only the user's click on sleight's panel can do that.
 - Grok Bot's shell route is a preview. One live read passed on 2026-10-20 (Calculator through the shell route); image
-  delivery hasn't been checked live. Its approval requests don't open a card. They wait in the menu bar glove under
+  delivery hasn't been checked live. In 1.4.0 its approval requests don't open a card. They wait in the menu bar glove under
   Review sleight request, which macOS 27 can hide behind the menu bar's overflow chevron. Clicking it shows a plain
-  window. The same request can come back several times (about 7 in that check) before one approval takes. The fix
-  (GB18) is planned for 1.4.1. Its custom STDIO MCP servers run in a hosted box without this Mac's apps or ChatGPT's
+  window. The same request can come back several times (about 7 in that check) before one approval takes. The intended
+  1.4.1 candidate behavior is described in the [CHANGELOG](../CHANGELOG.md#141-unreleased). Native compilation passed
+  without UI. Physical consent checks and real GL9 through Grok Bot's priya remain unqualified. Qualification must
+  record Calculator/TextEdit card counts with the owner's current preapprovals, one physical Allow where needed,
+  repeated same-session requests and identical retries while a decision waits. Appearance, sound, glove review under
+  menu overflow, cancellation, channel reset, fd transport and shared-host operation also need live checks. The guard
+  probe must separately prove synthetic-fixture cleanup before a fresh physical-click fixture starts. Protected
+  buttons still require physical input.
+  Grok Bot's custom STDIO MCP servers run in a hosted box without this Mac's apps or ChatGPT's
   engine. Use `sleight-mcp js '<code>'` through the local daemon, which starts a session on demand. Doctor reports
   `route: shell (sleight-mcp js)`, even when a session isn't running. There is no Mac-side HTTP client placement.
 - A shell session requires Apple's clang and stops after ten idle minutes. The next call starts it again.
