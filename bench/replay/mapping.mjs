@@ -1,5 +1,6 @@
 import ts from 'typescript';
 import { FrameMapper, windowReceipts, isNativeSelection } from './frames.mjs';
+import { imageShape, matchingMedia } from './images.mjs';
 
 export const resultText = result => (result?.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n');
 
@@ -338,17 +339,18 @@ export function comparisonResult(result, mapper) {
   for (const [before, after] of mapper.strings) reverse.addString(after, before.replace(/^\/private(?=\/(?:var|tmp)\/)/, ''));
   for (const [key, id] of mapper.identities) reverse.identities.set(`${key.split(':')[0]}:${id}`, Number(key.split(':')[1]));
   return { isError: Boolean(result.isError),
-    content: (result.content ?? []).map(block => block.type === 'text' ? { ...block, text: normalized(block.text, reverse, true) } : block),
+    content: (result.content ?? []).map(block => block.type === 'text' ? { ...block, text: normalized(block.text, reverse, true) }
+      : block.type === 'image' ? imageShape(block) ?? { type: 'image', dimensions: 'unknown' } : block),
     structuredContent: JSON.parse(normalized(JSON.stringify(result.structuredContent ?? result.structured_content ?? null), reverse, true)) };
 }
 
-export function divergence(expected, actual, mapper, args = {}) {
+export function divergence(expected, actual, mapper = new TargetMapper(), args = {}) {
   const text = resultText(actual);
   if (/sleight stopped this payment|payment (?:confirmation|approval) (?:blocked|required)|confirmation required through the trusted consent UI|Replay approval declined|^\s*(?:approval declined|permission denied|not approved)\s*$|The user (?:didn't allow|did not allow|did not approve)|Computer Use was not approved|permission request[^\n]*(?:denied|dismissed)|waiting for (?:a |the )?(?:payment |confirmation )?card/im.test(text)) return 'confirmation or approval gate';
   if (Boolean(expected?.isError) !== Boolean(actual?.isError)) return 'success/error changed';
   const expectedMedia = (expected?.content ?? []).filter(b => b.type !== 'text');
   const actualMedia = (actual?.content ?? []).filter(b => b.type !== 'text');
-  if (JSON.stringify(expectedMedia) !== JSON.stringify(actualMedia)) return 'non-text evidence changed; visual interpretation required';
+  if (!matchingMedia(expectedMedia, actualMedia, resultText(expected), text, mapper)) return 'non-text evidence changed; visual interpretation required';
   const a = expected?.structuredContent ?? expected?.structured_content, b = actual?.structuredContent ?? actual?.structured_content;
   if (normalized(JSON.stringify(a ?? null), mapper, true, args.tab) !== normalized(JSON.stringify(b ?? null), mapper)) return 'structured result changed';
   if (normalized(resultText(expected), mapper, true, tabHeaders(resultText(expected))[0]?.[1] ?? args.tab) !== normalized(text, mapper)) return 'observable text changed';

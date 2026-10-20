@@ -63,7 +63,7 @@ A server that exits before answering initialize still fails the iteration. Once 
 - Turbo ref maps are scoped to recorded tab handles. Snapshot and diff state is separate for each page, so overlapping `e5` refs cannot share mappings. Missing tab mappings or snapshots stop input. Removals and refreshes affect only the target tab.
 - Tab handles match one header on each side with the same URL and title. Native window numbers map from matching `select_window` receipts, by app and title. `windowId` and `toWindowId` use those receipts too. Unknown IDs are refused.
 - The fixture directory and gate marker have explicit substitutions, including the encoded marker URL. Other window titles must match exactly. A missing element mapping triggers one read on the already acquired app handle, or `browser_read` on the mapped turbo tab, before input. A second ambiguity stops. Replay never resends an action after partial or uncertain input.
-- Result comparison normalizes mapped handles, element numbering, runtime process IDs and line endings. Text, values, errors and structured results otherwise compare exactly. Images must match byte for byte. Changed images stop for visual interpretation. Replay also diverges when failure becomes success, since the recorded recovery step is no longer justified. The improved call's output and timing are retained.
+- Result comparison normalizes mapped handles, element numbering, runtime process IDs and line endings. Text, values, errors and structured results otherwise compare exactly. Image items match by count, order, type, MIME type and pixel dimensions, with one matching window header after fixture path substitution. PNG and JPEG dimensions come from the image data, in either recorded or MCP format. Pixel bytes may differ. Missing dimensions or missing, changed or ambiguous window headers stop for visual interpretation. Other media still compare exactly. Replay also diverges when failure becomes success, since the recorded recovery step is no longer justified. The improved call's output and timing are retained.
 
 Replay serializes requests even if the original host overlapped them. It cannot reproduce concurrency, model reasoning, changed wording, unrecorded intermediate UI states or a model's response to a different result. A new tool description or screenshot can stop replay earlier than the mechanism being checked. A recording that guessed an unseen ref has no identity to map and can stop even against its own recorded responses.
 
@@ -81,7 +81,7 @@ CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node bench/replay/startup
 
 This sends only `initialize`, its initialized notification and `tools/list`, then closes stdin and collects the owned server. `startup.json` records the launcher Node, resolved engine runtime, handshake results and exit. It uses the replay environment with installed turbo and the ghost hand off. A startup pass does not qualify a live replay.
 
-Each A/B pair includes a per-call result diff, with normalized A and B outputs, changed JSON paths and explicit missing results. Fixture aliases, changing handles and runtime IDs are normalized. Values and errors remain.
+Each A/B pair includes a per-call result diff, with normalized A and B outputs, changed JSON paths and explicit missing results. Fixture aliases, changing handles and runtime IDs are normalized. Image comparisons contain MIME type and pixel dimensions. Raw images remain in each call's evidence. Values and errors remain.
 
 Per-call medians include the reached prefixes, with sample counts. Total tool-time medians include complete passing replays only. Mapping-read milliseconds are reported separately. Setup, server startup, cleanup and model time do not enter tool time. Missing or divergent runs never appear as a faster total.
 
@@ -101,6 +101,7 @@ CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node --test tests/bench-r
 CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node --test tests/bench-replay-sr2d.test.mjs
 CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node --test tests/bench-replay-audit.test.mjs
 CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node --test tests/bench-replay-sr2e.test.mjs
+CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node --test tests/bench-replay-sr2f.test.mjs
 ```
 
 The feedback audit returns recorded responses through the mapper without launching fixtures or servers. It refuses an unrecorded mapping read rather than consuming the next action's response. It covers eight check IDs from seven retained recordings when installed. Absent recordings are named as skipped, and synthetic unit coverage runs on every machine. A feedback match establishes agreement with the recorded responses. Feature checks, trace ordering, fixture outcomes and live performance need separate qualification.

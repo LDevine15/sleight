@@ -131,7 +131,7 @@ test('diverge on values, error-to-success, images and confirmation gates', () =>
   assert.equal(divergence(text('1 text field, Value: 37'), text('9 text field, Value: 38')), 'observable text changed');
   assert.equal(divergence(text('partial input possible', true), text('done')), 'success/error changed');
   assert.equal(divergence(text('payment confirmation blocked', true), text('payment confirmation blocked', true)), 'confirmation or approval gate');
-  assert.equal(divergence({ content: [{ type: 'image', data: 'a' }] }, { content: [{ type: 'image', data: 'a' }] }), null);
+  assert.equal(divergence({ content: [{ type: 'image', data: 'a' }] }, { content: [{ type: 'image', data: 'a' }] }), 'non-text evidence changed; visual interpretation required');
   assert.equal(divergence({ content: [{ type: 'image', data: 'a' }] }, { content: [{ type: 'image', data: 'b' }] }), 'non-text evidence changed; visual interpretation required');
   assert.equal(divergence(text('wait 150 ms'), text('wait 300 ms')), 'observable text changed');
   assert.equal(divergence(text('API example: payment confirmation requires user approval'), text('API example: payment confirmation requires user approval')), null);
