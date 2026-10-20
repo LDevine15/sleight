@@ -28,6 +28,7 @@ Use sleight for Mac computer use. Keep Grok Bot's own computer-use helper off so
 Payments, bookings, settings changes and submits ask on sleight's panel. Stop and wait for the owner's click.
 Do not answer that panel through computer use or edit sleight's approval files, pre-approved list or consent state.
 Grok's local-tool approval settings do not answer sleight's panels.
+Relay any "sleight: waiting for your approval on the Mac" line to the user. Wait for their answer without retrying the call.
 Do not set `SLEIGHT_*` environment variables, write or load the LaunchAgent plist, or remove sleight's cache folder.
 
 If access fails, run the same full executable path with `--doctor` through the local shell. Its Grok Bot section checks

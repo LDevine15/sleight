@@ -10,7 +10,8 @@ import { escapeLabel } from './direct-browser/consent-ui.mjs';
 //
 // ask({ session, site, shown, control }) resolves 'once' (Allow once), 'cancel' (Cancel, closed or timed out) or undefined when
 // no card can be shown (no helper build, no window server, the host lost). open() gives the channel or undefined; tests pass one.
-export function createPaymentCard({ open = openConsentHost, now = Date.now, timeoutMs = 120000 } = {}) {
+export function createPaymentCard({ open = openConsentHost, now = Date.now, timeoutMs = 120000,
+  onStatus, clock = { setTimeout, clearTimeout } } = {}) {
   let channel;
   // A host that exits or never starts leaves no channel, and the next payment opens one again.
   // A lost host is also closed, so a late answer doesn't leave one running beside the next (review F15).
@@ -26,25 +27,33 @@ export function createPaymentCard({ open = openConsentHost, now = Date.now, time
     },
     async close() { const ui = await channel?.catch(() => undefined); channel = undefined; ui?.close?.(); },
   };
-  async function show({ session, site, shown, control, request, scoped }) {
+  async function show({ session, site, shown, control, request, scoped, app }) {
     const ui = await connect();
     if (!ui) return;
     return new Promise(resolve => {
-      const timer = setTimeout(() => resolve('cancel'), timeoutMs);
+      const id = 'payment-' + randomUUID(), deadline = now() + timeoutMs;
+      let settled = false;
+      // These observations grant nothing. The channel still authenticates every answer.
+      const status = state => { try { onStatus?.({ id, state, app: app || site || 'this Mac', deadline }); } catch {} };
+      const done = (choice, state = 'answered') => {
+        if (settled) return;
+        settled = true; clock.clearTimeout(timer); status(state); resolve(choice);
+      };
+      const timer = clock.setTimeout(() => done('cancel', 'unanswered'), timeoutMs);
       timer.unref?.();
-      const done = choice => { clearTimeout(timer); resolve(choice); };
       try {
         const scope = scoped ? 'Allow for this Grok Bot session only' : 'Allow this action once';
         // Bound untrusted engine text by UTF-8 bytes, with an explicit truncation marker.
         const bounded = request === undefined ? undefined : Buffer.byteLength(request) <= 2048 ? request
           : Buffer.from(request).subarray(0, 2020).toString('utf8').replace(/\uFFFD$/, '') + '\n[request truncated]';
-        ui.present('payment-' + randomUUID(),
+        ui.present(id,
           { view: { clientSession: escapeLabel(session), origin: escapeLabel(site || 'this page'), ...(request === undefined ? {} : { scope }) },
             operation: request === undefined ? { site: site || 'this page', amount: shown ?? 'no amount shown', button: control }
               : { request: bounded, scope } },
           ['once', 'cancel'], event => { if (ui.authenticate(event) === true) done(event.choice === 'once' ? 'once' : 'cancel'); },
-          { deadline: now() + timeoutMs });
-      } catch { clearTimeout(timer); resolve(undefined); }
+          { deadline });
+        if (!settled) status('waiting');
+      } catch { done(undefined, 'unavailable'); }
     });
   }
 }

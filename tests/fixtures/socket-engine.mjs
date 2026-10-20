@@ -20,6 +20,16 @@ lines.on('line', line => {
   } else if (msg.method === 'tools/list') result = { tools: ['js', 'js_reset', 'turn_ended'].map(name => ({ name, inputSchema: { type: 'object' } })) };
   else if (msg.params?.name === 'js') {
     const code = msg.params.arguments.code;
+    if (process.env.SLEIGHT_TEST_CARD_MODE && code.includes('cua.getApp("TextEdit")')) {
+      paymentCall = msg.id;
+      log({ event: 'app-request' });
+      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 'fixture-payment', method: 'elicitation/create', params: {
+        message: process.env.SLEIGHT_TEST_CARD_KIND === 'action' ? 'Submit this form?' : 'Allow TextEdit?',
+        requestedSchema: { type: 'object', properties: {} },
+        _meta: { connector_id: 'computer-use', persist: ['session', 'always'], riskLevel: 'high', tool_params: { app: 'TextEdit' } },
+      } }) + '\n');
+      return;
+    }
     if (process.env.SLEIGHT_TEST_CONFIRM === '1' && code.includes('let app = await cua.getApp("Firefox")')) {
       result = { content: [{ type: 'text', text: readFileSync(new URL('payment-gate/firefox-checkout-sol.txt', import.meta.url), 'utf8') }],
         _meta: { 'codex/toolSurface': { app: { appId: 'org.mozilla.firefox' } } } };

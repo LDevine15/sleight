@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as tick } from 'node:timers/promises';
-import { createConnection, Server } from 'node:net';
+import { createConnection, createServer, Server } from 'node:net';
 import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
 import { callSocket, ensureSocketSession, createShellRelay, preparePeerCheck, printSocketResult, socketCommand, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
 
@@ -38,6 +38,26 @@ test('socket and folder are private and one relay serves consecutive calls', asy
   await session.close();
   assert.equal(f.collected, 1);
   assert.equal(existsSync(session.socketPath), false);
+});
+
+test('socket progress frames can be split and coalesced with the final reply', async t => {
+  const f = fixture(t), statuses = [];
+  mkdirSync(f.directory, { mode: 0o700 });
+  const path = join(f.directory, 'session.sock');
+  const server = createServer(socket => {
+    socket.once('data', () => {
+      const waiting = JSON.stringify({ approval: { state: 'waiting', app: 'TextEdit', deadline: Date.now() + 120000 } }) + '\n';
+      socket.write(waiting.slice(0, 10));
+      setImmediate(() => socket.end(waiting.slice(10) + JSON.stringify({ approval: { state: 'answered' } }) + '\n' +
+        JSON.stringify({ result: { content: [{ type: 'text', text: 'done' }] } }) + '\n'));
+    });
+  });
+  await new Promise(resolve => server.listen(path, resolve));
+  chmodSync(path, 0o600);
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const result = await callSocket({ tool: 'js', args: { code: '1' } }, { ...f, onApproval: s => statuses.push(s) });
+  assert.deepEqual(statuses.map(s => s.state), ['waiting', 'answered']);
+  assert.equal(result.content[0].text, 'done');
 });
 
 test('another uid and unavailable peer credentials are refused before dispatch', async t => {
@@ -313,6 +333,23 @@ test('shutdown escalates a relay that ignores EOF and SIGTERM', async () => {
   const relay = await createShellRelay({ args: [fileURLToPath(new URL('fixtures/socket-stall.mjs', import.meta.url)), 'stubborn'],
     termMs: 30, killMs: 30 });
   assert.equal((await relay.close()).signal, 'SIGKILL');
+});
+
+for (const ending of ['reply', 'error', 'call deadline']) test(`an outstanding approval is named when the engine ends by ${ending}`, async t => {
+  const f = fixture(t), clock = idleClock();
+  const relay = await createShellRelay({ requestClock: clock, timeoutMs: 300000,
+    args: [fileURLToPath(new URL('fixtures/socket-stall.mjs', import.meta.url))], termMs: 50, killMs: 50 });
+  t.after(() => relay.close());
+  let noticed;
+  const notice = new Promise(resolve => { noticed = resolve; });
+  const call = relay.call('js', { code: '1', approval: true, error: ending === 'error', delay: ending === 'call deadline' ? 600000 : 50 },
+    { onApproval: noticed });
+  const rejected = assert.rejects(call, /approval not answered for TextEdit.*deadline/);
+  await notice;
+  if (ending === 'call deadline') clock.advance(300000);
+  await rejected;
+  await relay.closed;
+  await call.completed;
 });
 
 const alive = pid => {

@@ -2604,7 +2604,8 @@ export function createRelay({
       let action;
       const always = alwaysChoice(msg);
       try {
-        action = await ask(msg.params?.message ?? 'Allow Computer Use?', key !== undefined, always ? { always: true } : undefined);
+        action = await ask(msg.params?.message ?? 'Allow Computer Use?', key !== undefined,
+          panelOnly ? { app: msg.params?._meta?.tool_params?.app } : always ? { always: true } : undefined);
       } catch (error) {
         // The engine owns the elicitation's parent call. Return its error there rather than
         // attributing one failed panel to every concurrent call waiting on the engine.

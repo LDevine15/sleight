@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { trackTemp, removeTemp } from '../scripts/temp-leftovers.mjs';
-import { callSocket, createShellRelay, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
+import { callSocket, createShellRelay, socketCommand, startSocketSession } from '../plugins/sleight/lib/socket-bridge.mjs';
 
 for (const stop of ['idle', 'SIGTERM', 'turbo']) test(stop === 'turbo'
   ? 'the shell launcher discards directBrowser even with turbo enabled and a supplied frontend'
@@ -51,4 +51,46 @@ for (const stop of ['idle', 'SIGTERM', 'turbo']) test(stop === 'turbo'
   assert.equal(panel.data.operation.scope, 'Allow this action once');
   assert.equal(events.find(e => e.event === 'card-answer').result.action, 'cancel');
   assert.doesNotMatch(JSON.stringify(panel), /remember|Always|This session/);
+});
+
+for (const kind of ['app', 'action']) for (const mode of ['allow', 'cancel', 'unanswered']) test(`shell stdout explains a TextEdit ${kind} card before its ${mode} result`, { timeout: 15000 }, async t => {
+  const bank = trackTemp(mkdtempSync(join('/private/tmp', 'sleight-shell-card-')));
+  let session;
+  t.after(async () => { try { await session?.close(); } finally { removeTemp(bank); } });
+  const codexHome = join(bank, 'codex'), config = join(codexHome, 'plugins/cache/openai-bundled/unified-computer-use/1.0');
+  mkdirSync(config, { recursive: true });
+  writeFileSync(join(config, '.mcp.json'), JSON.stringify({ mcpServers: { cua_repl: {
+    command: process.execPath, args: [fileURLToPath(new URL('fixtures/socket-engine.mjs', import.meta.url))],
+  } } }));
+  const directory = join(bank, 'socket'), log = join(bank, 'engine.jsonl');
+  session = await startSocketSession({ directory, accessibility: () => false, peerUid: async () => process.getuid(),
+    startRelay: options => createShellRelay({ ...options,
+      args: [fileURLToPath(new URL('fixtures/socket-launcher.mjs', import.meta.url)), join(bank, 'leases')],
+      env: { ...process.env, HOME: bank, CODEX_HOME: codexHome, SLEIGHT_TEST_ENGINE_LOG: log,
+        SLEIGHT_HAND: '0', SLEIGHT_SURFACES: 'computer', SLEIGHT_WARM_REPL: '0', SLEIGHT_WARM_ENGINE: '0',
+        SLEIGHT_CHANGE_REVIEW: '0', SLEIGHT_SKILL: 'none', SLEIGHT_TURBO: '0',
+        SLEIGHT_TEST_CARD_MODE: mode, SLEIGHT_TEST_CARD_KIND: kind },
+    }) });
+  let output = '', finished = false, noticed;
+  const notice = new Promise(resolve => { noticed = resolve; });
+  const start = Date.now();
+  const call = socketCommand(['js', 'let app = await cua.getApp("TextEdit")'], { directory, notice() {},
+    out: text => { output += text; if (text.includes('waiting for your approval')) noticed(); },
+  }).finally(() => { finished = true; });
+  // Attach the rejection handler before waiting for the streaming notice.
+  const result = mode === 'unanswered' ? assert.rejects(call, /approval not answered for TextEdit.*deadline.*do not retry/) : call;
+  await Promise.race([notice, new Promise((_, reject) => {
+    const timer = setTimeout(() => reject(new Error('approval notice missing after 2 s')), 2000); timer.unref();
+  })]);
+  assert.ok(Date.now() - start < 2000);
+  assert.equal(finished, false, 'notice must reach stdout while the call is pending');
+  assert.match(output, /sleight: waiting for your approval on the Mac \(menu bar glove > Review sleight request\) for TextEdit; the call continues when you answer, or cancels after \d+ s\n/);
+  if (mode === 'unanswered') await result;
+  else assert.equal(await result, 0);
+  // Even after the shell gets its deadline error, collection retains input ownership until the engine replies.
+  await session.close();
+  const events = readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(events.filter(e => e.event === 'app-request').length, 1, 'never retries the app request');
+  assert.equal(events.find(e => e.event === 'card-answer').result.action, mode === 'allow' ? 'accept' : 'cancel');
+  assert.doesNotMatch(JSON.stringify(events.find(e => e.event === 'panel')), /Always allow|remember/);
 });
