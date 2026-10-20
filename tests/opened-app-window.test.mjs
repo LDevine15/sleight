@@ -39,7 +39,7 @@ function fixture(t, options = {}) {
   resetIdentity();
   const snapshot = () => options.tree?.(current) ?? `Window: "${current.title}", App: ${app}.\nURL: ${current.url}\n0 standard window ${current.title}\n\t1 text area Value: sample\n\t2 text area Value: alpha move-62f9a451 omega`;
   let output;
-  const raw = { getAXState: async (args = {}) => {
+  const raw = { getScreenshot: async () => 'screenshot', getAXState: async (args = {}) => {
     const text = snapshot(); if (args.emit !== false) output.push(text); return text;
   } };
   for (const name of ['click', 'pressKey', 'performSecondaryAction', 'typeText']) raw[name] = async (...args) => {
@@ -123,6 +123,73 @@ function fixture(t, options = {}) {
   return { call, open, sent, selections, leases, drags, relay, received, invalidRequests, actions, send: (id, name, args) => clientIn.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n'), released, active, observations, resetIdentity, focusDuplicate: () => { Object.assign(windows[1], { AXTitle: 'Source.txt', AXDocument: window('Source').url }); focusOverride = 1; }, breakIdentity: () => { broken = true; } };
 }
 
+// Refused call shapes from wordmemo-study.md, B 09-50 runs 1 and 2.
+// Execute the generated guards as well as checking that each request is forwarded.
+for (const root of ['0 Table, Secondary Actions: Cancel\n\t1 menu Secondary Actions: Cancel',
+  '0 dialog\n\t1 button Cancel', '0 sheet\n\t1 button Cancel']) {
+  test(`OH4 opened-only word-memo refusals execute on a URL-less child: ${root.split('\n')[0]}`, async t => {
+    let child = false;
+    const directory = mkdtempSync('/tmp/oh4-runtime-leases-');
+    const inputLease = new InputLease({ directory, holder: 'OH4' });
+    t.after(() => { inputLease.close(); rmSync(directory, { recursive: true, force: true }); });
+    const h = fixture(t, { execute: true, inputLease,
+      tree: current => child ? childTree({ ...current, url: undefined }, root) + '\n\t5 button Table\n\t47 button Table...' : undefined });
+    const source = await h.open('Source');
+    assert.ok(!(await h.call('menu', 'js', { code: `let app = ${source}; await app.click(1);` })).isError);
+    child = true;
+    const calls = [
+      ['run1-178', `await ${source}.getAXState();`],
+      ['run1-198', 'let app = await cua.getApp("TextEdit");'],
+      ['run1-205', `let app = ${source}; await app.click(19);`],
+      ['run1-237', 'await app.click(47);'],
+      ['run1-258', 'await app.performSecondaryAction(1, "Cancel"); "closed";'],
+      ['run1-292', 'await app.performSecondaryAction(1, "Cancel"); let s = await app.getAXState(); s;'],
+      ['run1-308', `await ${source}.getAXState();`],
+      ['run2-85', `await ${source}.click(5);`],
+      ['run2-99', 'await app.click(5);'],
+      ['run2-106', 'await app.performSecondaryAction(1, "Cancel"); nodeRepl.write("cancelled");'],
+      ['run2-112', 'await app.pressKey("Escape"); nodeRepl.write("closed");'],
+      ['run2-121', 'await app.performSecondaryAction(0, "Cancel"); nodeRepl.write("cancelled");'],
+      ['run2-128', 'await app.pressKey("Escape"); nodeRepl.write("cancelled");'],
+      ['run2-146', `let app = await cua.getApp("TextEdit"); await app.getAXState(); nodeRepl.write("read");`],
+    ];
+    for (const [id, code] of calls) {
+      const before = h.actions.length;
+      const result = await h.call(id, 'js', { code });
+      assert.ok(!result.isError, `${id}: ${JSON.stringify(result)}`);
+      assert.ok(h.sent.some(msg => msg.id === id), `${id} reaches the engine`);
+      if (/\.(click|pressKey|performSecondaryAction)\(/.test(code)) assert.equal(h.actions.length, before + 1, id);
+    }
+    assert.equal(h.selections.length, 0, 'opened-only calls never invoke select_window');
+  });
+}
+
+async function selectSource(h) {
+  assert.ok(!(await h.call('explicit-source', 'select_window', { app: appId, url: window('Source').url })).isError);
+  assert.ok(!(await h.call('confirm-source', 'js', { code: 'let app = await cua.getApp("TextEdit");' })).isError);
+}
+
+for (const code of ['await app.click(47);', 'await app.click(5);',
+  'await app.performSecondaryAction(1, "Cancel"); "closed";',
+  'await app.performSecondaryAction(1, "Cancel"); let s = await app.getAXState(); s;',
+  'await app.performSecondaryAction(1, "Cancel"); nodeRepl.write("cancelled");',
+  'await app.pressKey("Escape"); nodeRepl.write("closed");',
+  'await app.performSecondaryAction(0, "Cancel"); nodeRepl.write("cancelled");']) {
+  test(`OH4 explicit selection retains the study call refusal: ${code}`, async t => {
+    let child = false;
+    const h = fixture(t, { tree: current => child ? childTree({ ...current, url: undefined }) +
+      '\n\t5 button Table\n\t47 button Table...' : undefined });
+    await h.open('Source');
+    await selectSource(h);
+    child = true;
+    assert.ok(!(await h.call('child', 'js', { code: 'let app = await cua.getApp("TextEdit");' })).isError);
+    const result = await h.call('refused', 'js', { code });
+    assert.equal(result.isError, true, JSON.stringify(result));
+    assert.match(JSON.stringify(result), /selected window is not confirmed/);
+    assert.equal(h.sent.some(msg => msg.id === 'refused'), false);
+  });
+}
+
 // B transcript lines 120-184: opened alias, URL-less Edit menu, fresh getApp,
 // advertised Cancel and Escape. Other input needs the document URL again.
 const childTree = (window, root = '0 Edit, Secondary Actions: Cancel, Pick\n\t1 menu Secondary Actions: Cancel') =>
@@ -137,6 +204,7 @@ test('OH1 B actions execute through the generated runtime guards, including both
     action: (name, args) => { if (name === 'click') child = true; else if (name === 'pressKey' || name === 'performSecondaryAction') child = false; },
     tree: current => child ? childTree({ ...current, url: undefined }) : undefined });
   const source = await h.open('Source');
+  await selectSource(h);
   for (const [id, code] of [
     ['menu', `let app = ${source}; await app.click(1);`],
     ['replace', `let app = ${source}; await app.click(19);`],
@@ -162,6 +230,7 @@ for (const root of ['0 Edit, Secondary Actions: Cancel, Pick\n\t1 menu Secondary
     const options = { onEngineCall: msg => { if (msg.id === 'menu') child = true; if (msg.id === 'reacquire') child = false; },
       tree: current => child ? childTree({ ...current, url: undefined }, root) : undefined };
     const h = fixture(t, options), source = await h.open('Source');
+    await selectSource(h);
     const cancel = root.includes('menu') ? `await app.performSecondaryAction(${root.startsWith('0 menu') ? 0 : 1}, "Cancel");`
       : 'await app.click(1);';
     for (const [id, code] of [
@@ -184,7 +253,7 @@ for (const root of ['0 Edit, Secondary Actions: Cancel, Pick\n\t1 menu Secondary
       assert.ok(h.sent.some(msg => msg.id === id), `${id} must reach the engine`);
       if (id === 'reacquire') assert.doesNotMatch(JSON.stringify(result), /selected window not observed/);
     }
-    assert.equal(h.selections.length, 0, 'a child must not trigger another window selection');
+    assert.equal(h.selections.length, 1, 'a child must not trigger another window selection');
     assert.ok(h.observations.some(o => o.url === window('Source').url && o.nativeIdentity?.pid === 7));
   });
 }
@@ -193,6 +262,7 @@ test('OH1 fresh acquisition verifies a URL-less menu after explicit selection', 
   let child = false;
   const h = fixture(t, { tree: current => child ? childTree({ ...current, url: undefined }) : undefined });
   const source = await h.open('Source');
+  await selectSource(h);
   await h.call('first', 'js', { code: `await ${source}.click(1);` });
   await h.call('select', 'select_window', { app: appId, url: window('Source').url });
   child = true;
@@ -315,6 +385,7 @@ test('OH3 a menu closing onto another same-title document loses its selected par
   const h = fixture(t, { tree: current => child ? childTree({ ...current, url: undefined }) :
     other ? childTree({ ...current, url: 'file:///tmp/other/Source.txt' }, '0 standard window Source.txt') : undefined });
   const source = await h.open('Source');
+  await selectSource(h);
   await h.call('menu', 'js', { code: `let app = ${source}; await app.click(1);` }); child = true;
   await h.call('child', 'js', { code: 'let app = await cua.getApp("TextEdit");' });
   child = false; other = true;
@@ -330,6 +401,7 @@ test('OH3 a lease parent cannot retain the selected-child shortcut', async t => 
     phase === 'menu' ? childTree({ ...current, url: undefined }) :
     phase === 'dialog' ? childTree({ ...current, title: 'Panel', url: undefined }, '0 sheet\n\t1 button Cancel') : undefined });
   const source = await h.open('Source');
+  await selectSource(h);
   phase = 'standard';
   await h.call('standard', 'js', { code: 'let app = await cua.getApp("TextEdit");' });
   await h.call('select', 'select_window', { app: appId, url: window('Source').url });
@@ -341,7 +413,7 @@ test('OH3 a lease parent cannot retain the selected-child shortcut', async t => 
   const selections = h.selections.length;
   const result = await h.call('source', 'js', { code: `await ${source}.pressKey("Escape");` });
   assert.ok(!result.isError, JSON.stringify(result));
-  assert.equal(h.selections.length, selections + 1, 'an opened handle must reselect and verify its document');
+  assert.equal(h.selections.length, selections + 1, 'explicit selection retains opened-handle recovery');
 });
 
 test('OH3 a selected child sheet cannot bypass the runtime payment guard', async t => {
@@ -400,6 +472,7 @@ for (const root of ['0 standard window Source.txt', '0 sheet']) test(`OH3 advert
   const h = fixture(t, { tree: current => child ? childTree({ ...current, url: undefined },
     `${root}\n\t1 menu Secondary Actions: Cancel\n9 text Secondary Actions: Cancel`) : undefined });
   const source = await h.open('Source');
+  await selectSource(h);
   await h.call('menu', 'js', { code: `let app = ${source}; await app.click(1);` }); child = true;
   await h.call('read', 'js', { code: 'let app = await cua.getApp("TextEdit");' });
   const result = await h.call('forged', 'js', { code: 'await app.performSecondaryAction(9, "Cancel");' });
@@ -412,6 +485,7 @@ test('OH1 menu dismissal still requires the window lease', async t => {
   const options = { onEngineCall: msg => { if (msg.id === 'menu') child = true; },
     tree: current => child ? childTree({ ...current, url: undefined }) : undefined };
   const h = fixture(t, options), source = await h.open('Source');
+  await selectSource(h);
   await h.call('menu', 'js', { code: `let app = ${source}; await app.click(1);` });
   options.busyWindow = true;
   const result = await h.call('cancel', 'js', { code: 'await app.performSecondaryAction(1, "Cancel");' });
@@ -427,10 +501,14 @@ for (const [label, change] of [
   ['standard document without URL', { url: undefined, root: '0 standard window' }],
 ]) test(`OH1 a ${label} never inherits the selected document`, async t => {
   let child = false;
-  const options = { decline: true, onEngineCall: msg => { if (msg.id === 'menu') child = true; },
+  const options = { onEngineCall: msg => { if (msg.id === 'menu') child = true; },
     tree: current => child ? childTree({ ...current, ...change }, change.root) : undefined };
   const h = fixture(t, options), source = await h.open('Source');
+  await selectSource(h);
   await h.call('menu', 'js', { code: `let app = ${source}; await app.click(1);` });
+  await h.call('select-changed', 'select_window', { app: appId, url: window('Source').url });
+  await h.call('read-changed', 'js', { code: 'let app = await cua.getApp("TextEdit");' });
+  options.decline = true;
   const result = await h.call('wrong', 'js', { code: `await ${source}.typeText("must not run");` });
   assert.equal(result.isError, true);
   assert.equal(h.sent.some(msg => msg.id === 'wrong'), false);
@@ -443,6 +521,7 @@ for (const nativeMutation of [{ pid: 99 }, { processStart: 99 }, { epoch: 'diffe
     const options = { onEngineCall: msg => { if (msg.id === 'menu') child = true; },
       tree: current => child ? childTree({ ...current, url: undefined }) : undefined };
     const h = fixture(t, options), source = await h.open('Source');
+    await selectSource(h);
     await h.call('menu', 'js', { code: `let app = ${source}; await app.click(1);` });
     assert.ok(!(await h.call('same-app', 'js', { code: 'let app = await cua.getApp("TextEdit");' })).isError);
     options.nativeMutation = nativeMutation;
@@ -457,22 +536,7 @@ for (const nativeMutation of [{ pid: 99 }, { processStart: 99 }, { epoch: 'diffe
   });
 }
 
-test('WD456 calls 5 to 7: refusal, select_window and handle retry send valid JSON-RPC', async t => {
-  const options = { strictProtocol: true, decline: true };
-  const h = fixture(t, options), source = await h.open('Source');
-  await h.open('Target');
-  const refused = await h.call('call5', 'js', { code: `let src = ${source}; await src.selectText(2, "move-62f9a451"); src` });
-  assert.equal(refused.isError, true);
-  assert.match(refused.content[0].text, /window unconfirmed.*select_window/);
-  options.decline = false;
-  assert.ok(!(await h.call('call6', 'select_window', { app: appId, url: window('Source').url })).isError);
-  const retry = await h.call('call7', 'js', { code: `await ${source}.selectText(2, "move-62f9a451")` });
-  assert.equal(h.invalidRequests.length, 0);
-  assert.ok(!retry.isError, JSON.stringify(retry));
-  assert.equal(h.active.has('app:Source.txt'), false);
-});
-
-test('the app reservation survives prepareLease through the internal read and final handle action', async t => {
+test('explicit selection: the app reservation survives prepareLease through the internal read and final handle action', async t => {
   const directory = mkdtempSync('/tmp/wd6c-leases-');
   const inputLease = new InputLease({ directory, holder: 'WD6c' });
   t.after(() => { inputLease.close(); rmSync(directory, { recursive: true, force: true }); });
@@ -481,15 +545,17 @@ test('the app reservation survives prepareLease through the internal read and fi
     assert.equal(inputLease.inspect(leaseKey(window('Source'), 'app'))?.active, true);
   } });
   const source = await h.open('Source'); await h.open('Target');
+  await h.call('explicit', 'select_window', { app: appId, url: window('Source').url });
   const result = await h.call('action', 'js', { code: `await ${source}.selectText(2, "move-62f9a451")` });
   assert.ok(!result.isError);
   assert.equal(inputLease.owned.has(leaseKey(window('Source'), 'app')), false);
 });
 
-for (const reset of [false, true]) test(`engine exit during an internal opened-window read recovers${reset ? ' through js_reset' : ''}`, async t => {
+for (const reset of [false, true]) test(`explicit selection: engine exit during an internal opened-window read recovers${reset ? ' through js_reset' : ''}`, async t => {
   const options = { holdOpenedRead: true };
   const h = fixture(t, options), source = await h.open('Source');
   await h.open('Target');
+  await h.call('explicit', 'select_window', { app: appId, url: window('Source').url });
   h.send('interrupted', 'js', { code: `await ${source}.selectText(2, "move-62f9a451")` });
   for (let i = 0; i < 50 && !h.sent.some(msg => String(msg.id).startsWith('sleight-opened-window-')); i++) await tick();
   assert.ok(h.sent.some(msg => String(msg.id).startsWith('sleight-opened-window-')));
@@ -509,63 +575,48 @@ for (const reset of [false, true]) test(`engine exit during an internal opened-w
   assert.ok(!(await h.call('select', 'select_window', { app: appId, url: window('Source').url })).isError);
 });
 
-test('WD3 calls 4 to 8: the first opened handle selects its Source URL before selectText', async t => {
+test('WD6 opened handle retains its Source URL as the drag default after Target opens', async t => {
   const h = fixture(t), source = await h.open('Source');
   await h.open('Target');
-  const result = await h.call('select', 'js', { code: `let src = ${source};\nawait src.selectText(2, "move-62f9a451");\nsrc` });
-  assert.ok(!result.isError);
-  assert.equal(h.selections.length, 1);
-  assert.equal(h.selections[0].url, 'file:///tmp/Source.txt');
-  assert.equal(h.selections[0].expectedAppId, appId);
-  assert.ok(h.leases.some(target => target.appId === appId && target.title == null));
-  const action = h.sent.find(msg => msg.id === 'select');
-  assert.match(action.params.arguments.code, /Source\.txt/);
-  assert.doesNotMatch(action.params.arguments.code, /"title":"Target\.txt"/);
-});
-
-test('an opened handle alias keeps its file and avoids selection while already targeted', async t => {
-  const h = fixture(t), source = await h.open('Source');
-  await h.call('alias', 'js', { code: `let doc = ${source}; await doc.selectText(1, "sample")` });
+  const action = await h.call('source', 'js', { code: `await ${source}.selectText(2, "move-62f9a451");` });
+  assert.ok(!action.isError, JSON.stringify(action));
   assert.equal(h.selections.length, 0);
-  await h.open('Target');
-  await h.call('act', 'js', { code: 'await doc.typeText("text")' });
-  assert.equal(h.selections.length, 1);
+  assert.ok(!(await h.call('drag', 'drag', { app, from: [10, 20], to: [20, 98] })).isError);
+  assert.equal(h.drags[0].windowId, 11);
+  assert.equal(h.drags[0].toWindowId, undefined);
+  assert.ok(h.observations.some(target => target.url === window('Source').url && target.allowUnfocused));
 });
 
-test('a standalone alias keeps its document on a later call', async t => {
+for (const options of [{ decline: true }, { wrongRead: true }, { wrongNumber: true }, { unfocusedSelection: true },
+  { nativeMutation: { status: 'unknown' } }, { nativeMutation: { matches: 0 } }]) {
+  test(`OH4 opened hints add no selection admission: ${JSON.stringify(options)}`, async t => {
+    const h = fixture(t, options), source = await h.open('Source');
+    await h.open('Target');
+    const result = await h.call('action', 'js', { code: `await ${source}.selectText(2, "move-62f9a451");` });
+    assert.ok(!result.isError, JSON.stringify(result));
+    assert.ok(h.sent.some(msg => msg.id === 'action'));
+    assert.equal(h.selections.length, 0);
+    assert.equal(h.observations.length, 0);
+  });
+}
+
+for (const aliasOnly of [false, true]) test(`WD6 opened alias supplies a later drag default (${aliasOnly})`, async t => {
   const h = fixture(t), source = await h.open('Source');
-  await h.call('alias', 'js', { code: `let app = ${source};` });
+  await h.call('alias', 'js', { code: `let doc = ${source};${aliasOnly ? '' : ' await doc.selectText(1, "sample");'}` });
   await h.open('Target');
-  const result = await h.call('act', 'js', { code: 'await app.selectText(1, "sample")' });
-  assert.ok(!result.isError);
-  assert.equal(h.selections.length, 1);
+  const result = await h.call('act', 'js', { code: 'await doc.typeText("text");' });
+  assert.ok(!result.isError, JSON.stringify(result));
+  await h.call('drag', 'drag', { app, from: [10, 20], to: [30, 40] });
+  assert.equal(h.drags[0].windowId, 11);
+  assert.equal(h.selections.length, 0);
 });
 
-test('a call using two opened documents refuses before either receives input', async t => {
-  const h = fixture(t), source = await h.open('Source'), target = await h.open('Target');
-  const result = await h.call('both', 'js', { code: `await ${source}.typeText("a"); await ${target}.typeText("b")` });
-  assert.equal(result.isError, true);
-  assert.equal(h.sent.some(msg => msg.id === 'both'), false);
-});
-
-for (const options of [{ decline: true }, { wrongRead: true }]) test(`unproven opened window refuses with its URL and select_window call: ${JSON.stringify(options)}`, async t => {
-  const h = fixture(t, options), source = await h.open('Source');
-  await h.open('Target');
-  const result = await h.call('refuse', 'js', { code: `await ${source}.selectText(1, "sample")` });
-  assert.equal(result.isError, true);
-  assert.equal(h.sent.some(msg => msg.id === 'refuse'), false);
-  const text = result.content.map(c => c.text).join('\n');
-  assert.match(text, /Source\.txt.*select_window.*"url":"file:\/\/\/tmp\/Source.txt"/);
-  assert.equal(text.split('\n').length, 1);
-});
-
-test('unavailable native identity refuses an opened handle instead of falling back to another document', async t => {
-  const h = fixture(t), source = await h.open('Source');
-  await h.open('Target'); h.breakIdentity();
-  const result = await h.call('refuse', 'js', { code: `await ${source}.typeText("text")` });
-  assert.equal(result.isError, true);
-  assert.equal(h.sent.some(msg => msg.id === 'refuse'), false);
-  assert.match(result.content[0].text, /Source.txt.*select_window/);
+for (const unavailable of [false, true]) test(`OH4 unconfirmed drag hint falls through to ordinary drag handling (${unavailable})`, async t => {
+  const h = fixture(t, { nativeMutation: unavailable ? { status: 'unknown' } : { matches: 2 } });
+  await h.open('Source');
+  const result = await h.call('drag', 'drag', { app, from: [10, 20], to: [30, 40] });
+  assert.ok(!result.isError, JSON.stringify(result));
+  assert.equal(h.drags[0].windowId, undefined);
 });
 
 test('WD3 call 13: the sole selected window supplies only the drag source windowId', async t => {
@@ -585,6 +636,24 @@ test('an explicit drag source and destination stay unchanged', async t => {
   assert.equal(h.drags[0].toWindowId, 11);
 });
 
+test('WD6 an explicit coordinate drag source overrides the opened hint', async t => {
+  const h = fixture(t);
+  await h.open('Source');
+  await h.call('drag', 'drag', { app, windowId: 12, toWindowId: 11, from: [10, 20], to: [30, 40] });
+  assert.equal(h.drags[0].windowId, 12);
+  assert.equal(h.drags[0].toWindowId, 11);
+  assert.equal(h.observations.length, 0);
+});
+
+test('OH4 reset clears the advisory opened drag hint', async t => {
+  const h = fixture(t);
+  await h.open('Source');
+  await h.call('reset', 'js_reset', {});
+  await h.call('drag', 'drag', { app, from: [10, 20], to: [30, 40] });
+  assert.equal(h.drags[0].windowId, undefined);
+  assert.equal(h.observations.length, 0);
+});
+
 for (const selection of [{ ok: false }, { ok: true, target: window('Source'), pid: 99 }]) test(`unproven selection retains drag ambiguity: ${JSON.stringify(selection)}`, async t => {
   const h = fixture(t, { selection });
   await h.open('Source');
@@ -592,32 +661,6 @@ for (const selection of [{ ok: false }, { ok: true, target: window('Source'), pi
   assert.equal(h.drags[0]?.windowId, undefined);
 });
 
-
-test('a successful selection releases its app lease after the action reply', async t => {
-  const h = fixture(t), source = await h.open('Source');
-  await h.open('Target');
-  assert.ok(!(await h.call('act', 'js', { code: `await ${source}.typeText("text")` })).isError);
-  assert.ok(h.released.includes('app:Source.txt'));
-  assert.equal(h.active.has('app:Source.txt'), false);
-});
-
-test('busy opened-window lease reports the holder instead of an unconfirmed window', async t => {
-  const h = fixture(t, { busy: true }), source = await h.open('Source');
-  await h.open('Target');
-  const result = await h.call('busy', 'js', { code: `await ${source}.typeText("text")` });
-  assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /held by another session/);
-  assert.doesNotMatch(result.content[0].text, /window unconfirmed/);
-  assert.equal(h.selections.length, 0);
-});
-
-test('a selection returning a different window number never forwards the action', async t => {
-  const h = fixture(t, { wrongNumber: true }), source = await h.open('Source');
-  await h.open('Target');
-  const result = await h.call('wrong-number', 'js', { code: `await ${source}.typeText("text")` });
-  assert.equal(result.isError, true);
-  assert.equal(h.sent.some(msg => msg.id === 'wrong-number'), false);
-});
 
 test('opened bindings survive a helper epoch change after a fresh app read', async t => {
   const h = fixture(t), source = await h.open('Source');
@@ -680,19 +723,9 @@ test('a flow exception permits one identical opened-window retry', async t => {
   assert.ok(!(await h.call('exception', 'flow_exception', {})).isError);
   const result = await h.call('permitted', 'js', { code });
   assert.ok(!result.isError, JSON.stringify(result));
-  assert.equal(h.selections.length, 1);
+  assert.equal(h.selections.length, 0);
 });
 
-
-test('selection still requires focused identity after the engine read confirms the header', async t => {
-  const h = fixture(t, { unfocusedSelection: true }), source = await h.open('Source');
-  await h.open('Target');
-  const result = await h.call('unfocused', 'js', { code: `await ${source}.typeText("text")` });
-  assert.equal(result.isError, true);
-  assert.equal(h.selections.length, 1);
-  assert.equal(h.sent.some(msg => msg.id === 'unfocused'), false);
-  assert.equal(h.active.has('app:Source.txt'), false);
-});
 
 test('drag inference uses the census number when a different window of the same file is focused', async t => {
   const h = fixture(t);
@@ -728,12 +761,12 @@ test('an opened-window call cannot select while saved changes await a review dec
 });
 
 
-test('a refusal after opened-window selection releases its app lease', async t => {
+test('OH4 ordinary window lease refusal still stops an opened handle', async t => {
   const h = fixture(t, { busyWindow: true }), source = await h.open('Source');
   await h.open('Target');
-  const result = await h.call('late-refusal', 'js', { code: `await ${source}.typeText("text")` });
+  const result = await h.call('refusal', 'js', { code: `await ${source}.typeText("text")` });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /window action refused/);
-  assert.equal(h.selections.length, 1);
-  assert.equal(h.active.has('app:Source.txt'), false);
+  assert.equal(h.selections.length, 0);
+  assert.equal(h.sent.some(msg => msg.id === 'refusal'), false);
 });

@@ -1695,7 +1695,8 @@ export function createRelay({
     if (nativeIdentity === undefined) delete target.nativeIdentity; else target.nativeIdentity = nativeIdentity;
     if (identityRequired === undefined) delete target.identityRequired; else target.identityRequired = identityRequired;
   }
-  let selectedWindow;
+  let selectedWindow; // Explicit select_window only, including its opened-handle recovery.
+  let openedWindow; // Advisory document hint, used only for drag defaults.
   let selectionVerified = false;
   function clearSelection() { selectedWindow = undefined; selectionVerified = false; }
   const sameHeader = (a, b) => a && b && ['title', 'app', 'url'].every(key => a[key] === b[key]);
@@ -1745,7 +1746,7 @@ export function createRelay({
     openedReads.clear();
     // Keep native routing names, not their handles or grants. A stale native name must still take
     // the native read and clipboard path until a confirmed browser binding replaces it.
-    clearSelection(); browserHandles.clear(); leaseWindow = undefined; lastShown = new Set(); for (const id of [...parentPins.keys()]) releasePin(id); dragWindows.clear(); handleBundles.clear(); openedWindows.clear(); openedWindowCalls.clear(); openedAliases.clear(); unconfirmedHandles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
+    clearSelection(); openedWindow = undefined; browserHandles.clear(); leaseWindow = undefined; lastShown = new Set(); for (const id of [...parentPins.keys()]) releasePin(id); dragWindows.clear(); handleBundles.clear(); openedWindows.clear(); openedWindowCalls.clear(); openedAliases.clear(); unconfirmedHandles.clear(); handleSelectors.clear(); handleOrigins.clear(); constApp = false;
     standardWindows.clear(); appProcesses.clear(); processProbes.clear();
   }
   const dragWindows = new Map(); // successful numbered window reads, for cross-window endpoints
@@ -1781,6 +1782,13 @@ export function createRelay({
       return false;
     }
     const target = bindings.get(handles[0]);
+    openedWindow = handles.every(handle => bindings.get(handle) === target) ? target : undefined;
+    if (!selectedWindow) {
+      // Opened handles share the engine's app window. Keep their file URL as a hint,
+      // without selecting, re-reading or requiring document identity on a URL-less child.
+      openedAliases.set(msg.id, bindings);
+      return false;
+    }
     const request = { app: target.appId, url: target.url };
     const refuse = () => leaseStop(msg, promptNotice(`handle ${handles[0]} belongs to ${JSON.stringify(target.url)}; window unconfirmed. Call select_window with ${JSON.stringify(request)}.`, prompt));
     if (!inputLease || !windowIdentity || !localTools?.call || !localNames.has('select_window') || running.size || handles.some(handle => bindings.get(handle) !== target)) {
@@ -2737,7 +2745,7 @@ export function createRelay({
     const name = msg.params.name;
     let args = msg.params.arguments ?? {};
     let resolved, prepared, preparedAsk, preparedFailed = false;
-    if (name === 'select_window') clearSelection();
+    if (name === 'select_window') { clearSelection(); openedWindow = undefined; }
     try {
       current();
       if (openFast && name === 'open_file' && localTools.prepareOpen) {
@@ -2783,6 +2791,18 @@ export function createRelay({
       let callArgs = name === 'select_window' && resolved
         ? { ...args, expectedAppId: resolved.appId } : args;
       if (name === 'drag') {
+        if (args.windowId === undefined && args.from !== 'the current text selection' &&
+            !selectedWindow && openedWindow?.appId === resolved?.appId && windowIdentity) {
+          // Only a fresh native match turns the advisory file URL into a drag source number.
+          try {
+            const identity = verifyWindowIdentity(openedWindow, await windowIdentity({ ...openedWindow, allowUnfocused: true }));
+            current();
+            if (identity.pid === resolved.pid && Number.isSafeInteger(identity.windowNumber) && identity.windowNumber > 0) {
+              callArgs = { ...callArgs, windowId: identity.windowNumber };
+              args = callArgs;
+            }
+          } catch { current(); trace('drag-opened-window-unconfirmed', { id: msg.id }); }
+        }
         if (args.windowId === undefined && args.from === 'the current text selection' && resolved?.appId && localTools.selectionWindow && windowIdentity &&
             [...handleBundles.values()].some(window => window?.appId === resolved.appId)) {
           // Read selection ranges, never document text. An incomplete census keeps drag's ordinary ambiguity refusal.
@@ -2924,6 +2944,7 @@ export function createRelay({
               app: shown?.app ?? args.app, title: matched ? shown.title : openedFile.path.split('/').at(-1),
               url: matched ? shown.url : pathToFileURL(openedFile.real ?? openedFile.path).href };
             openedWindows.set(handle, target);
+            openedWindow = target;
           }
           let pictured = false;
           if (textless && matched && !state.isError) {
