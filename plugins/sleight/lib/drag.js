@@ -531,7 +531,12 @@ function attributedTextHasAttributes(value, length, start = 0) {
   const attributesAt = i => {
     const attributes = value.attributesAtIndexEffectiveRange(i, null);
     if (!attributes || !Number.isSafeInteger(Number(attributes.count))) throw new Error('the selected text attributes are unavailable');
-    return attributes;
+    // Spelling annotations describe the editor's proofing state, not document formatting.
+    // Keep every other attribute, including unknown ones, in the comparison.
+    const formatting = attributes.mutableCopy;
+    formatting.removeObjectForKey($.NSAccessibilityMisspelledTextAttribute);
+    formatting.removeObjectForKey($.NSAccessibilityMarkedMisspelledTextAttribute);
+    return formatting;
   };
   const baseline = attributesAt(0);
   for (let i = start; i < length; i++) {

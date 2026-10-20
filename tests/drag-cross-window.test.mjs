@@ -361,6 +361,20 @@ for (const options of [{ formatted: true }, { ignoreWrites: true }, { ax: false 
     assert.equal(h.b.AXValue, 'gamma delta\n');
   });
 }
+
+// WD2's recording tried both forms and got the same formatting refusal. Neither may bypass DP7.
+test('recorded semantic and coordinate cross-window requests preserve a genuine formatting refusal', () => {
+  for (const from of ['the current text selection', [185, 77]]) {
+    const h = fixture({ formatted: true, dp7: true, dp2: true });
+    h.a.AXValue = 'alpha move-8ea07288 omega\n'; h.a.AXSelectedText = 'move-8ea07288';
+    h.a.range = { location: 6, length: 13 }; h.b.AXValue = 'destination\n\n';
+    const r = h.run({ from, to: [60, 97], screenshotsByWindow: { 11: [600, 400], 12: [500, 400] } });
+    assert.equal(r.ok, false); assert.equal(r.path, 'none'); assert.equal(r.deliveryVerified, false);
+    assert.match(r.fallbackReason ?? r.error, /selected text carries formatting/);
+    assert.equal(h.a.AXValue, 'alpha move-8ea07288 omega\n'); assert.equal(h.b.AXValue, 'destination\n\n');
+    assert.equal(h.writes.length + h.events.length + h.activations.length, 0);
+  }
+});
 test('DP2 cross-window AX move skips the raise and settle', () => {
   const h = fixture({ dp7: true, dp2: true });
   h.context.raiseWindow = () => assert.fail('AX move did not need a raise');

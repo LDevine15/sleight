@@ -6,19 +6,47 @@ import vm from 'node:vm';
 import { macCommandSkip } from './requirements.mjs';
 
 const source = readFileSync(new URL('../plugins/sleight/lib/drag.js', import.meta.url), 'utf8');
-const context = vm.createContext({ ObjC: { import() {} }, $: {} });
+const context = vm.createContext({ ObjC: { import() {} }, $: {
+  NSAccessibilityMisspelledTextAttribute: 'AXMisspelled',
+  NSAccessibilityMarkedMisspelledTextAttribute: 'AXMarkedMisspelled',
+} });
 vm.runInContext(source, context);
 const plain = { font: 'regular', color: 'black' }, bold = { font: 'bold', color: 'black' };
+const dictionary = attrs => ({ count: Object.keys(attrs).length,
+  isEqualToDictionary: other => JSON.stringify(attrs) === other.key, key: JSON.stringify(attrs),
+  get mutableCopy() {
+    const copy = { ...attrs };
+    return { removeObjectForKey: key => { delete copy[key]; },
+      isEqualToDictionary: other => JSON.stringify(copy) === other.key,
+      get key() { return JSON.stringify(copy); } };
+  },
+});
 const attributed = values => ({ length: values.length,
   attributesAtIndexEffectiveRange: (index, range) => {
     // JXA refuses a malloc'd buffer here ("Ref has incompatible type"); the optional range is passed as null.
     assert.equal(range, null, 'the effective range is not requested');
     const attrs = values[index];
-    return attrs && { count: Object.keys(attrs).length, isEqualToDictionary: other => JSON.stringify(attrs) === other.key, key: JSON.stringify(attrs) };
+    return attrs && dictionary(attrs);
   } });
 
 test('default font and color remain plain against the paragraph baseline', () => {
   assert.equal(context.attributedTextHasAttributes(attributed([plain, plain, plain]), 3, 1), false);
+});
+
+test('spelling markers differ from the paragraph baseline without making plain text formatted', () => {
+  for (const key of ['AXMisspelled', 'AXMarkedMisspelled']) {
+    for (const values of [[plain, { ...plain, [key]: true }, plain], [{ ...plain, [key]: true }, plain, plain]]) {
+      const value = attributed(values);
+      assert.equal(context.attributedTextHasAttributes(value, 3, 1), false);
+      assert.equal(value.attributesAtIndexEffectiveRange(values[0][key] ? 0 : 1, null).count, 3, 'the original attributes survive');
+    }
+  }
+});
+
+test('spelling markers cannot hide formatting or unknown attribute differences', () => {
+  for (const attrs of [bold, { ...plain, AXUnderline: 1 }, { ...plain, AXLink: 'link' }, { ...plain, futureAttribute: true }]) {
+    assert.equal(context.attributedTextHasAttributes(attributed([plain, { ...attrs, AXMisspelled: true }]), 2, 1), true);
+  }
 });
 
 test('mixed runs and uniform bold inside a plain paragraph count as formatting', () => {
@@ -46,8 +74,15 @@ test('production JXA reads attributes of real attributed strings without a bridg
         if (boldFrom !== null) s.setAttributesRange($.NSDictionary.dictionaryWithObjectForKey($.NSFont.boldSystemFontOfSize(12), $.NSFontAttributeName), $.NSMakeRange(boldFrom, 5 - boldFrom));
         return s;
       };
-      return JSON.stringify([attributedTextHasAttributes(make(null), 5, 3), attributedTextHasAttributes(make(3), 5, 3), attributedTextHasAttributes(make(4), 5, 3)]);
+      const spelling = make(null);
+      spelling.addAttributeValueRange($.NSAccessibilityMisspelledTextAttribute, $(true), $.NSMakeRange(3, 2));
+      spelling.addAttributeValueRange($.NSAccessibilityMarkedMisspelledTextAttribute, $(true), $.NSMakeRange(3, 2));
+      const markedBold = make(3);
+      markedBold.addAttributeValueRange($.NSAccessibilityMarkedMisspelledTextAttribute, $(true), $.NSMakeRange(3, 2));
+      return JSON.stringify([attributedTextHasAttributes(make(null), 5, 3), attributedTextHasAttributes(make(3), 5, 3), attributedTextHasAttributes(make(4), 5, 3),
+        attributedTextHasAttributes(spelling, 5, 3), attributedTextHasAttributes(markedBold, 5, 3),
+        Number(spelling.attributesAtIndexEffectiveRange(3, null).count)]);
     }`], { encoding: 'utf8', timeout: 15000 });
   assert.equal(probe.status, 0, probe.stderr);
-  assert.deepEqual(JSON.parse(probe.stdout), [false, true, true]);
+  assert.deepEqual(JSON.parse(probe.stdout), [false, true, true, false, true, 3]);
 });
