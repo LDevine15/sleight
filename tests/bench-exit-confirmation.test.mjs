@@ -7,8 +7,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
-import { openFixture, processExitConfirmed } from '../bench/real-fixture.mjs';
-import { executeRealTask } from '../bench/real-run.mjs';
+import { finderDiagnostic, openFixture, processExitConfirmed } from '../bench/real-fixture.mjs';
+import { executeRealTask, releaseFixtureLock } from '../bench/real-run.mjs';
+import { acquireLiveLock } from '../bench/live-lock.mjs';
 
 const fail = code => () => { throw Object.assign(new Error(code), { code }); };
 
@@ -25,15 +26,22 @@ test('an exit counts only when the kernel agrees the launched process is gone', 
   await assert.rejects(processExitConfirmed(42, 1000, { kill: fail('EINVAL') }), /EINVAL/);
 });
 
-test('the live ps reader sees this test process as running', async () => {
-  assert.equal(await processExitConfirmed(process.pid, Date.now() - process.uptime() * 1000), false);
+test('an independent process-state read failure cannot confirm exit', async () => {
+  await assert.rejects(processExitConfirmed(42, 1000, {
+    kill() {}, ps: async () => { throw new Error('process state unreadable'); },
+  }), /process state unreadable/);
 });
 
-function lease(t, { stdout = '{"stage":"armed","running":false,"pid":42,"processStartedAtMs":1000}\n{"stage":"ready"}\n', closed, quit, recovered, exited }) {
-  const dir = mkdtempSync(join(tmpdir(), 'exit-confirmation-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const ctx = { dir, nonce: 'nonce' };
-  return openFixture(ctx, { app: 'Microsoft Excel', bundle: 'com.microsoft.Excel', mode: 'document', target: join(dir, 'Book-nonce.xlsx'), token: 'nonce' }, {
+function lease(t, { stdout = '{"stage":"armed","running":false,"pid":42,"processStartedAtMs":1000}\n{"stage":"ready"}\n', closed, quit, recovered,
+  exited = () => assert.fail('no uninjected process inspection'), finder = false, ctx }) {
+  if (!ctx) {
+    const dir = mkdtempSync(join(tmpdir(), 'exit-confirmation-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    ctx = { dir, nonce: 'nonce', lockPath: join(dir, 'synthetic-lock') };
+  }
+  const request = finder ? { app: 'Finder', bundle: 'com.apple.finder', mode: 'folder', target: join(ctx.dir, 'Files-nonce') } :
+    { app: 'Microsoft Excel', bundle: 'com.microsoft.Excel', mode: 'document', target: join(ctx.dir, 'Book-nonce.xlsx'), token: 'nonce' };
+  return openFixture(ctx, request, {
     helper: async () => ({ command: 'fake', args: [] }), open: async () => {}, exited,
     run: async (_command, args, options) => {
       const request = JSON.parse(args.at(-1));
@@ -42,7 +50,12 @@ function lease(t, { stdout = '{"stage":"armed","running":false,"pid":42,"process
       options.onStdout(stdout);
       // The helper answers the parent's close command, or its collection.
       return new Promise(resolve => {
-        const finish = () => { clearInterval(poll); resolve({ groupClean: true, exit: { code: 0 }, stdout: JSON.stringify(closed ?? { stage: 'closed' }) + '\n' }); };
+        const finish = () => {
+          clearInterval(poll);
+          const stdout = JSON.stringify(closed ?? { stage: 'closed' }) + '\n';
+          options.onStdout(stdout);
+          resolve({ groupClean: true, exit: { code: 0 }, stdout });
+        };
         const poll = setInterval(() => { try { if (JSON.parse(readFileSync(request.control, 'utf8')).command === 'close') finish(); } catch {} }, 5);
         options.signal.addEventListener('abort', finish, { once: true });
       });
@@ -81,6 +94,66 @@ test('an ordinary closed receipt needs no exit check', async t => {
   const { lease: owned } = await lease(t, { exited: () => assert.fail('the window was closed, not skipped') });
   await owned.close();
 });
+
+test('Finder filtering retains only boolean appAbsent through repeated receipt filtering', () => {
+  for (const appAbsent of [true, false]) {
+    const event = { stage: 'closed', appAbsent, pid: 42, title: 'OWNER-SECRET' };
+    assert.deepEqual(finderDiagnostic(event), { stage: 'closed', appAbsent, pid: 42 });
+    assert.deepEqual(finderDiagnostic(finderDiagnostic(event)), { stage: 'closed', appAbsent, pid: 42 });
+  }
+  for (const appAbsent of ['OWNER-SECRET', 1, null, {}])
+    assert.deepEqual(finderDiagnostic({ stage: 'closed', appAbsent }), { stage: 'closed' });
+});
+
+for (const answer of ['alive', 'throws', 'exited']) for (const lockHeld of [false, true])
+  test(`Finder appAbsent cleanup with ${answer} checker preserves the ${lockHeld ? 'outer' : 'task'} lock until exit is confirmed`, async t => {
+    const bank = mkdtempSync(join(tmpdir(), 'finder-exit-lock-'));
+    t.after(() => rmSync(bank, { recursive: true, force: true }));
+    const ctx = { dir: join(bank, 'fixture'), nonce: 'nonce', lockPath: join(bank, 'synthetic-lock') };
+    let releases = 0;
+    const checks = [];
+    const lock = async (path, options) => {
+      assert.equal(path, ctx.lockPath);
+      const release = await acquireLiveLock(path, options);
+      return async () => { releases++; await release(); };
+    };
+    const outerRelease = lockHeld ? await lock(ctx.lockPath) : undefined;
+    const result = await executeRealTask({
+      async setup() {
+        assert.equal(existsSync(ctx.lockPath), true);
+        const opened = await lease(t, { ctx, finder: true,
+          stdout: '{"stage":"armed","running":true,"bundle":"com.apple.finder","pid":42,"processStartedAtMs":1000}\n{"stage":"ready"}\n',
+          closed: { stage: 'closed', appAbsent: true, pid: 42 },
+          exited: async (pid, start) => {
+            checks.push([pid, start]);
+            if (answer === 'throws') throw new Error('independent state unreadable');
+            return answer === 'exited';
+          },
+        });
+        ctx.fixture = opened.lease;
+      },
+      prompt: () => 'offline', cleanup: c => c.fixture.close(),
+    }, ctx, { lockHeld, lock, setupOnly: true });
+    const confirmed = answer === 'exited';
+    if (lockHeld) assert.equal(await releaseFixtureLock([ctx], outerRelease), confirmed);
+    assert.equal(releases, confirmed ? 1 : 0);
+    assert.equal(existsSync(ctx.lockPath), !confirmed);
+    assert.equal(existsSync(ctx.dir), !confirmed);
+    assert.equal(result.fixtureDir, confirmed ? undefined : ctx.dir);
+    assert.equal(result.liveLockKept, confirmed ? undefined : ctx.lockPath);
+    assert.equal(result.passed, confirmed);
+    assert.equal(ctx.fixtureLockUnconfirmed, !confirmed);
+    assert.deepEqual(checks, [[42, 1000]]);
+    const diagnostic = ctx.fixtureDiagnostics[0];
+    assert.equal(diagnostic.helperCollectionConfirmed, true);
+    assert.equal(diagnostic.launched, false);
+    assert.equal(diagnostic.windowCleanupConfirmed, confirmed ? true : undefined);
+    assert.equal(diagnostic.cleanup, confirmed ? undefined : 'unconfirmed');
+    assert.deepEqual(ctx.exitDisagreements, confirmed ? undefined : [
+      { app: 'Finder', bundle: 'com.apple.finder', step: 'window cleanup', pid: 42 },
+    ]);
+    if (!confirmed) assert.match(result.cleanupError, answer === 'throws' ? /independent check failed/ : /process is still running/);
+  });
 
 test('recovery confirms every pid it quit with the start times it read', async t => {
   const checks = [];

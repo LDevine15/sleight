@@ -16,7 +16,11 @@ function fixture() {
     { title: 'sleight-bench', document: 'file:///owner/sleight-bench' },
     { title: 'sleight-bench', document: '' },
     { title: 'Files-12345678', document: 'file:///scratch/sleight-bench-other/Files-12345678' },
+    { title: 'Files-12345678', document: 'file:///scratch/sleight-bench/run/Files-12345678' },
+    { title: 'sleight-bench', document: 'file:///scratch/sleight-bench' },
+    { title: 'Files-12345678', document: '' },
   ];
+  request.finderOwnership = { baseline: windows.slice(4), created: windows.slice(0, 4) };
   const closed = [], app = {};
   const api = {
     windows: () => windows.filter(w => !w.closed), equal: (a, b) => a === b,
@@ -29,11 +33,12 @@ function fixture() {
     close() { return source.closeOwnedWindow(windows[0], request, app, api); } };
 }
 
-test('Finder cleanup closes all fixture windows including its scratch-root window and preserves owner windows', () => {
+test('Finder cleanup closes windows with creation receipts and preserves baseline windows at matching fixture paths', () => {
   const f = fixture();
   assert.equal(typeof f.source.closeFinderFixtureWindows, 'function', 'Finder enumeration cleanup is missing');
   f.close();
   assert.deepEqual(f.closed, f.windows.slice(0, 4));
+  assert.deepEqual(f.api.windows(), f.request.finderOwnership.baseline);
 });
 
 test('Finder cleanup presses AXCloseButton through the native adapter without sending Apple events', () => {
@@ -79,25 +84,61 @@ test('an already closed retained Finder window does not prevent sibling fixture 
 test('Finder cleanup recognizes AXURL metadata when AXDocument is absent', () => {
   const f = fixture();
   const window = { title: 'Other fixture folder', document: '', url: 'file:///scratch/sleight-bench/run/Created' };
-  f.windows.push(window);
+  const baseline = { ...window };
+  f.windows.push(window, baseline);
+  f.request.finderOwnership.created.push(window);
+  f.request.finderOwnership.baseline.push(baseline);
   f.close();
   assert.ok(window.closed, 'AXURL fixture window was left open');
+  assert.equal(baseline.closed, undefined, 'AXURL location alone must not authorize a close');
 });
 
-test('Finder cleanup rechecks path identity at the AX press boundary', () => {
+for (const metadata of ['document', 'url']) test(`Finder cleanup rechecks ${metadata === 'url' ? 'AXURL' : 'AXDocument'} identity at the AX press boundary`, () => {
   const f = fixture();
-  f.api.closeButton = (w, validate) => { w.document = 'file:///owner/Files-12345678'; validate(); assert.fail('pressed changed window'); };
+  if (metadata === 'url') { f.windows[0].url = f.windows[0].document; f.windows[0].document = ''; }
+  f.api.closeButton = (w, validate) => { w[metadata] = 'file:///owner/Files-12345678'; validate(); assert.fail('pressed changed window'); };
   assert.throws(() => f.close(), /identity changed/);
   assert.equal(f.closed.length, 0);
 });
 
-test('Finder cleanup refuses dialogs, unavailable inventories and windows that stay listed', () => {
-  for (const failure of ['dialog', 'inventory', 'stays']) {
+for (const [failure, expected, description] of [
+  ['dialog', /dialog/, 'dialogs'], ['inventory', /inventory unavailable/, 'unavailable inventories'], ['stays', /still open/, 'windows that stay listed'],
+]) test(`Finder cleanup refuses ${description} after creation ownership is established`, () => {
     const f = fixture();
     if (failure === 'dialog') f.api.dialog = () => [{ category: 'permission' }];
     if (failure === 'inventory') f.api.windows = () => { throw Error('inventory unavailable'); };
     if (failure === 'stays') f.api.closeButton = (_w, validate) => validate();
-    assert.throws(() => f.close(), /dialog|inventory unavailable|still open/);
+    assert.throws(() => f.close(), expected);
     assert.equal(f.closed.length, 0);
-  }
 });
+
+test('Finder cleanup refuses matching fixture paths without a creation receipt', () => {
+  const f = fixture();
+  delete f.request.finderOwnership;
+  assert.throws(() => f.close(), /ownership unconfirmed/);
+  assert.deepEqual(f.closed, []);
+  assert.equal(f.api.windows().length, f.windows.length);
+});
+
+test('Finder cleanup preserves an unreceipted extra window even at the exact target path', () => {
+  const f = fixture(), extra = { ...f.windows[0] };
+  f.windows.push(extra);
+  assert.throws(() => f.close(), /extra window ownership unconfirmed/);
+  assert.deepEqual(f.closed, []);
+  assert.ok(f.api.windows().includes(extra));
+});
+
+test('Finder cleanup refuses a retained reference that belongs to the baseline', () => {
+  const f = fixture();
+  f.request.finderOwnership.baseline.push(f.windows[0]);
+  assert.throws(() => f.close(), /ownership unconfirmed/);
+  assert.deepEqual(f.closed, []);
+});
+
+for (const document of ['file:///owner/Files-12345678', 'file:///scratch/sleight-bench-other/Files-12345678', ''])
+  test(`Finder creation ownership still requires fixture location (${document || 'wrong title without a path'})`, () => {
+    const f = fixture();
+    Object.assign(f.windows[0], { document, title: document ? 'Files-12345678' : 'sleight-bench' });
+    assert.throws(() => f.close(), /identity changed/);
+    assert.deepEqual(f.closed, []);
+  });

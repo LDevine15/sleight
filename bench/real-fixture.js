@@ -37,6 +37,199 @@ function runningPid(target) {
   return value;
 }
 
+function runningStart(target) {
+  var date = target && target.launchDate;
+  if (!date || (date.isNil && date.isNil())) return null;
+  var value = Number(date.timeIntervalSince1970) * 1000;
+  return isFinite(value) && value > 0 ? value : null;
+}
+
+function finderOriginalExited(original, receipt) {
+  if (!original || !original.isTerminated) return false;
+  var current = $.NSRunningApplication.runningApplicationWithProcessIdentifier(receipt.pid);
+  if (!current || (current.isNil && current.isNil()) || current.isTerminated) return true;
+  var started = runningStart(current);
+  return started !== null && started !== receipt.startedAtMs;
+}
+
+// Three slow AXCannotComplete responses authorize one recovery of this exact
+// Finder incarnation. A PID alone cannot carry timeout evidence across launches.
+function ensureFinderAX(api, clock) {
+  var target, original, receipt, code, timeouts = 0;
+  function failure(message) {
+    return Object.assign(new Error('Finder AX ' + message), { code: code, attribute: 'AXWindows', finderAX: true });
+  }
+  function identity(value) {
+    var pid = runningPid(value), startedAtMs = runningStart(value);
+    if (!value || runningBundle(value) !== 'com.apple.finder' || !(pid > 0) || !isFinite(pid) || Math.floor(pid) !== pid || startedAtMs === null)
+      throw failure('process identity unavailable');
+    return { pid: pid, startedAtMs: startedAtMs };
+  }
+  function same(value, expected) {
+    var actual = identity(value);
+    if (actual.pid !== expected.pid || actual.startedAtMs !== expected.startedAtMs || value.isTerminated)
+      throw failure('process changed during probes or before relaunch');
+    return value;
+  }
+  for (var attempt = 0; attempt < 3; attempt++) {
+    clock.check();
+    target = api.application();
+    if (!receipt) { receipt = identity(target); original = target; }
+    same(target, receipt);
+    var started = clock.now();
+    code = api.probe(target, 0.5);
+    var probeMs = clock.now() - started;
+    clock.check();
+    same(api.application(), receipt);
+    if (code === 0) return target;
+    if (code === -25204 && probeMs >= 400) timeouts++;
+    if (attempt < 2) clock.wait(100);
+  }
+  if (timeouts !== 3) throw failure('probe failed: ' + code);
+  clock.check();
+  var current = same(api.application(), receipt);
+  var deadline = clock.now() + 30000;
+  clock.emit({ stage: 'finder-relaunch', finderRelaunch: { reason: 'three AXWindows timeouts', pid: receipt.pid, startedAtMs: receipt.startedAtMs } });
+  current = same(api.application(), receipt);
+  clock.check();
+  current = same(api.application(), receipt);
+  if (!current.forceTerminate) throw failure('force termination refused');
+  while (clock.now() < deadline) {
+    clock.check();
+    var exited = (api.exited || finderOriginalExited)(original, receipt) === true;
+    target = api.application();
+    if (exited && target && runningPid(target) !== receipt.pid) {
+      var successor = identity(target);
+      if (successor.startedAtMs <= receipt.startedAtMs) throw failure('successor start time unconfirmed');
+      if (clock.now() >= deadline) break;
+      code = api.probe(target, Math.min(0.5, (deadline - clock.now()) / 1000));
+      clock.check();
+      same(api.application(), successor);
+      if (!(api.exited || finderOriginalExited)(original, receipt)) throw failure('original exit unconfirmed');
+      if (code === 0 && clock.now() <= deadline) {
+        clock.emit({ stage: 'finder-recovered', finderRecovery: { originalExitConfirmed: true,
+          fromPid: receipt.pid, fromStartedAtMs: receipt.startedAtMs, toPid: successor.pid, toStartedAtMs: successor.startedAtMs } });
+        return target;
+      }
+    }
+    var remaining = deadline - clock.now();
+    if (remaining > 0) clock.wait(Math.min(100, remaining));
+  }
+  throw failure('did not answer within thirty seconds after relaunch; original exit or successor unconfirmed');
+}
+
+function probeFinderAX(target, seconds) {
+  var app = $.AXUIElementCreateApplication(runningPid(target)), value = Ref();
+  $.AXUIElementSetMessagingTimeout(app, seconds);
+  var code = Number($.AXUIElementCopyAttributeValue(app, $('AXWindows'), value));
+  if (code !== 0) return code;
+  var windows = ObjC.castRefToObject(value[0]);
+  return windows && !(windows.isNil && windows.isNil()) ? 0 : -25205;
+}
+
+function finderMenuDiagnostics(items, api) {
+  var commands = { 'New Finder Window': 'new-window', 'Go to Folder…': 'go-to-folder', 'Go to Folder...': 'go-to-folder' };
+  return items.reduce(function (result, item) {
+    var title = api.text(item, 'AXTitle');
+    if (Object.prototype.hasOwnProperty.call(commands, title))
+      result.push({ command: commands[title], enabled: api.enabled(item) ? 1 : 0 });
+    return result;
+  }, []);
+}
+
+function windowInventoryError(message, reason, count, index, detail) {
+  var fields = ['reason=' + reason];
+  if (typeof count === 'number' && isFinite(count)) fields.push('count=' + count);
+  if (index !== undefined) fields.push('index=' + index);
+  if (detail) {
+    if (detail.duplicateIndex !== undefined) fields.push('duplicateIndex=' + detail.duplicateIndex);
+    if (typeof detail.role === 'string' && /^AX[A-Za-z][A-Za-z0-9]*$/.test(detail.role)) fields.push('role=' + detail.role);
+    if (detail.axCode === -25202) fields.push('axCode=-25202');
+  }
+  return new Error(message + ' [' + fields.join(' ') + ']');
+}
+
+// open -a Finder <folder> sends an open-document Apple Event. Finder deadlocked
+// in NodeCopyFromURL after the 640-file trial (2026-10-20). Keep folder navigation
+// on AX, in a new window, without asking Finder to resolve an Apple Event URL.
+function openFinderFolder(request, app, previous, api, clock, retain) {
+  function inventory() {
+    var windows = api.windows(app), message = 'Finder fixture window inventory unconfirmed';
+    if (!Array.isArray(windows)) throw windowInventoryError(message, 'malformed-list');
+    windows.some(function (item, index) {
+      if (!item) throw windowInventoryError(message, 'missing-element', windows.length, index);
+      if (!api.equal(item, item)) throw windowInventoryError(message, 'failed-self-identity', windows.length, index);
+      var detail = {};
+      if (!api.exists(item, detail)) throw windowInventoryError(message, 'non-window-or-stale', windows.length, index, detail);
+      windows.slice(0, index).some(function (other, otherIndex) {
+        if (api.equal(item, other)) throw windowInventoryError(message, 'duplicate-identity', windows.length, index, { duplicateIndex: otherIndex });
+        return false;
+      });
+      return false;
+    });
+    return windows.slice();
+  }
+  var before = inventory(), window, sheet, requested = false;
+  // These references stay inside this helper. The temporal addition requires
+  // exclusive Finder setup; inventory and the menu action are separate calls.
+  request.finderOwnership = { baseline: before.slice(), created: [] };
+  if (previous && !before.some(function (item) { return api.equal(item, previous); })) throw new Error('Finder previous window absent from inventory');
+  function candidates() {
+    var current = inventory();
+    if (before.some(function (item) { return !current.some(function (other) { return api.equal(item, other); }); }))
+      throw new Error('Finder pre-action window inventory changed');
+    return current.filter(function (item) { return !before.some(function (other) { return api.equal(item, other); }); });
+  }
+  function unopened() {
+    clock.check();
+    if (candidates().length) throw new Error('Finder window appeared before New Finder Window');
+    api.finderFolderGuard(app, null, null);
+  }
+  function validate() {
+    clock.check();
+    var fresh = candidates();
+    if (fresh.length !== 1 || !api.equal(fresh[0], window)) throw new Error('New Finder fixture window identity changed');
+    api.finderFolderGuard(app, window, sheet);
+  }
+  try {
+  unopened();
+  // The menu can wait while it opens. Check again at the command's AXPress.
+  requested = true;
+  api.fileMenu(app, ['New Finder Window'], unopened, true);
+  var deadline = clock.now() + 5000;
+  while (clock.now() < deadline) {
+    clock.check();
+    var fresh = candidates();
+    if (fresh.length > 1) throw new Error('New Finder fixture window ambiguous');
+    if (fresh.length === 1) { window = fresh[0]; break; }
+    api.finderFolderGuard(app, null, null);
+    clock.wait(100);
+  }
+  if (!window) throw new Error('New Finder fixture window unconfirmed');
+  validate();
+  request.finderOwnership.created.push(window);
+  retain(window);
+  if (clock.emit) clock.emit({ stage: 'finder-window-retained', referenceExported: false });
+  validate();
+  api.menu(app, 'Go', ['Go to Folder…', 'Go to Folder...'], validate, true);
+  deadline = clock.now() + 5000;
+  while (clock.now() < deadline) {
+    sheet = api.folderSheet(window, app);
+    validate();
+    if (sheet) break;
+    clock.wait(100);
+  }
+  if (!sheet) throw new Error('Finder Go to Folder sheet unconfirmed');
+  validate();
+  api.submitFolder(window, sheet, request.target, validate);
+  if (clock.emit) clock.emit({ stage: 'finder-folder-submitted', target: request.target });
+  return window;
+  } catch (error) {
+    if (requested) error.finderWindowRequested = true;
+    throw error;
+  }
+}
+
 function inheritReadyCondition(target, app, api, control) {
   if (!target) return null;
   // DeviceHub after open -g can run for tens of seconds with isFinishedLaunching
@@ -315,8 +508,13 @@ function validateOwnedFixture(window, request, app, api, focus, sibling) {
   } while (api.readEpoch && api.readEpoch() !== epoch);
 }
 
-function recoverSetup(window, request, api) {
+function recoverSetup(window, request, api, app) {
   if (!window) return 'unconfirmed';
+  if (request.bundle === 'com.apple.finder' && request.mode === 'folder') {
+    if (api.exists(window) && !api.matches(window, request, true)) return 'unconfirmed';
+    closeFinderFixtureWindows(window, request, app, api);
+    return 'closed retained fixture';
+  }
   if (!api.exists(window)) return 'closed retained fixture';
   if (!api.matches(window, request, true)) return 'unconfirmed';
   api.closeButton(window, function () { validateOwnedFixture(window, request, null, api, false); });
@@ -393,8 +591,8 @@ function closeOwnedWindow(window, request, app, api) {
   }
 }
 
-// Finder can leave sibling windows at the fixture's parent folder after navigation.
-// A title alone proves only the task's unique folder, never a common name such as sleight-bench.
+// A retained Finder window may navigate within the fixture bank. Its path
+// confirms location; the separate creation receipt establishes ownership.
 function finderFixtureWindow(window, request, api) {
   var document = api.text(window, 'AXDocument') || api.text(window, 'AXURL');
   if (document) {
@@ -405,27 +603,34 @@ function finderFixtureWindow(window, request, api) {
 }
 
 function closeFinderFixtureWindows(owned, request, app, api) {
-  function listed(window) { return api.windows(app).some(function (item) { return api.equal(item, window); }); }
+  var receipt = request.finderOwnership;
+  function contains(list, window) { return list.some(function (item) { return api.equal(item, window); }); }
+  if (!receipt || !Array.isArray(receipt.baseline) || !Array.isArray(receipt.created) ||
+      !owned || !contains(receipt.created, owned) || contains(receipt.baseline, owned))
+    throw new Error('Finder fixture window ownership unconfirmed');
+  function inventory() {
+    var windows = api.windows(app);
+    if (!Array.isArray(windows) || windows.some(function (window) {
+      return !window || (!contains(receipt.baseline, window) && !contains(receipt.created, window));
+    })) throw new Error('Finder extra window ownership unconfirmed');
+    return windows;
+  }
+  function listed(window) { return contains(inventory(), window); }
   function validate(window) {
-    if (api.dialog(app, window, Object.assign({}, request, { refuseDialogs: true })).length) {
+    if (api.dialog(app, window, Object.assign({}, request, { refuseDialogs: true })).length)
       throw new Error('Finder dialog present; fixture cleanup refused');
-    }
-    if (!listed(window) || !finderFixtureWindow(window, request, api)) throw new Error('Finder fixture identity changed');
+    if (!listed(window) || contains(receipt.baseline, window) || !finderFixtureWindow(window, request, api))
+      throw new Error('Finder fixture identity changed');
   }
-  var windows = api.windows(app).filter(function (window) { return finderFixtureWindow(window, request, api); });
-  // A retained window outside the fixture is left for review, rather than closing an owner's new location.
-  if (owned && listed(owned) && !windows.some(function (window) { return api.equal(window, owned); })) {
-    throw new Error('Finder fixture identity changed');
-  }
-  windows.forEach(function (window) {
+  inventory();
+  receipt.created.forEach(function (window) {
+    if (!listed(window)) return;
     validate(window);
     api.closeButton(window, function () { validate(window); });
     for (var attempt = 0; attempt < 30 && listed(window); attempt++) api.wait();
     if (listed(window)) throw new Error('Finder fixture window is still open');
   });
-  if (api.windows(app).some(function (window) { return finderFixtureWindow(window, request, api); })) {
-    throw new Error('Finder fixture window is still open');
-  }
+  inventory();
 }
 
 // Word put an untitled document's Don't Save sheet only behind AXFocusedUIElement, absent from AXWindows and AXSheets
@@ -810,9 +1015,11 @@ function nativeAX(state, clock) {
     if (values) for (var index = 0; index < Number(values.count); index++) result.push(values.objectAtIndex(index));
     return result;
   }
-  function press(element) {
+  function press(element, beforePress) {
     if (clock && clock.check) clock.check();
     if (state && state.setup) { state.actionTaken = true; clock.emit({ stage: 'action', actionTaken: true }); }
+    if (beforePress) beforePress();
+    if (clock && clock.check) clock.check();
     var code = Number($.AXUIElementPerformAction(element, $('AXPress')));
     if (code !== 0) throw new Error('AX fixture press failed: ' + code);
   }
@@ -871,11 +1078,13 @@ function nativeAX(state, clock) {
     return found;
   }
   function equal(a, b) { return !!a && !!b && !!$.CFEqual(a, b); }
-  function fileMenu(app, titles, beforePress, refuseDialogs) {
+  function menu(app, name, titles, beforePress, refuseDialogs) {
     var bar = read(app, 'AXMenuBar');
-    var files = children(bar).filter(function (item) { return text(item, 'AXTitle') === 'File'; });
-    if (files.length !== 1) throw new Error('Fixture needs the File menu');
-    chooseFileMenu(files[0], titles, { press: press, children: children, text: text, beforePress: beforePress,
+    var files = children(bar).filter(function (item) { return text(item, 'AXTitle') === name; });
+    if (files.length !== 1) throw new Error('Fixture needs the ' + name + ' menu');
+    var commandGuard;
+    chooseFileMenu(files[0], titles, { press: function (element) { press(element, commandGuard); }, children: children, text: text,
+      beforePress: function () { commandGuard = beforePress; },
       enabled: function (item) { return Number(ObjC.unwrap(read(item, 'AXEnabled'))) === 1; }, cancel: function (menu) {
       if (clock && clock.check) clock.check();
       var method = cancelFixtureMenu(menu, { role: function (target) { return text(target, 'AXRole'); },
@@ -890,12 +1099,18 @@ function nativeAX(state, clock) {
       } }, refuseDialogs === true || state.refuseDialogs);
       clock.emit({ stage: 'menu-cancel', menuCancelled: true, menuCancelMethod: method });
     }, inspect: function (items) {
+      if (state.bundle === 'com.apple.finder') {
+        clock.emit({ stage: 'menu-items', menuCommands: finderMenuDiagnostics(items, { text: text,
+          enabled: function (item) { return Number(ObjC.unwrap(read(item, 'AXEnabled'))) === 1; } }) });
+        return;
+      }
       clock.emit({ stage: 'menu-items', menuItems: items.map(function (item) {
         var title = text(item, 'AXTitle');
         return /^New .+ Window$/.test(title) && title !== 'New Private Window' ? 'New <profile> Window' : title;
       }), menuCommands: items.map(function (item) { return { title: text(item, 'AXTitle'), enabled: Number(ObjC.unwrap(read(item, 'AXEnabled'))) === 1 }; }) });
     } });
   }
+  function fileMenu(app, titles, beforePress, refuseDialogs) { return menu(app, 'File', titles, beforePress, refuseDialogs); }
   function path(value) {
     if (value && value[0] === '/') value = String(ObjC.unwrap($.NSURL.fileURLWithPath(value).absoluteString));
     if (!value || value.indexOf('file://') !== 0) return null;
@@ -986,7 +1201,83 @@ function nativeAX(state, clock) {
   var api = {
     title: identityTitle, titleFree: titleFree, retain: retain, windowNumber: windowNumber,
     bindRetained: function (window, request, app, receipt) { return receipt ? retain(window, request, app, receipt) : null; },
-    read: read, text: text, children: children, press: press, fileMenu: fileMenu, path: path,
+    read: read, text: text, children: children, press: press, fileMenu: fileMenu, menu: menu, path: path,
+    finderFolderGuard: function (app, window, sheet) {
+      var focused = this.focused(app);
+      function refuseForeign(element) {
+        if (!sheet || !equal(element, sheet)) throw new Error('Foreign Finder dialog; folder setup refused');
+      }
+      function inspect(element) {
+        var role = text(element, 'AXRole'), subrole = text(element, 'AXSubrole');
+        if (role === 'AXSheet' || ['AXDialog', 'AXSystemDialog'].indexOf(subrole) !== -1) refuseForeign(element);
+        children(element, 'AXSheets').forEach(refuseForeign);
+        // Some sheets are children but absent from AXSheets.
+        if (role === 'AXWindow') children(element).forEach(function (child) {
+          if (text(child, 'AXRole') === 'AXSheet' || ['AXDialog', 'AXSystemDialog'].indexOf(text(child, 'AXSubrole')) !== -1)
+            refuseForeign(child);
+        });
+      }
+      this.windows(app).forEach(inspect);
+      children(app).forEach(inspect);
+      if (focused) inspect(focused);
+      var node = read(app, 'AXFocusedUIElement'), depth = 0;
+      for (; node && depth < 12; node = read(node, 'AXParent'), depth++) {
+        inspect(node);
+        if (text(node, 'AXRole') === 'AXWindow' || equal(node, app)) break;
+      }
+      if (node && depth === 12) throw new Error('Finder focused element ancestry unconfirmed');
+      if (window) {
+        if (!this.exists(window) || this.listed(app, window) !== true) throw new Error('Finder folder window vanished');
+        if (sheet && !equal(this.folderSheet(window, app), sheet)) throw new Error('Finder folder sheet identity changed');
+        // AXFocusedWindow can be the parent or its sheet. Never raise either.
+        if (!equal(focused, window) && !(sheet && equal(focused, sheet))) throw new Error('Finder folder window lost focus');
+        // Dialog inspection itself may span a focus change.
+        var current = this.focused(app);
+        if (!equal(current, focused)) throw new Error('Finder folder focus changed during validation');
+      }
+    },
+    folderSheet: function (window, app) {
+      var sheets = children(window, 'AXSheets');
+      var sheet = sheets.length === 1 ? sheets[0] : this.hiddenSheet(app, window);
+      if (!sheet || text(sheet, 'AXRole') !== 'AXSheet') return null;
+      // A Go to Folder sheet is valid only under the new window this helper created.
+      for (var parent = read(sheet, 'AXParent'), depth = 0; parent && depth < 12; parent = read(parent, 'AXParent'), depth++) {
+        if (equal(parent, window)) return sheet;
+        if (text(parent, 'AXRole') === 'AXWindow') return null;
+      }
+      return null;
+    },
+    submitFolder: function (window, sheet, target, validate) {
+      var pidRef = Ref();
+      if (Number($.AXUIElementGetPid(window, pidRef)) !== 0) throw new Error('Finder folder window process unavailable');
+      var app = $.AXUIElementCreateApplication(Number(pidRef[0]));
+      $.AXUIElementSetMessagingTimeout(app, 0.5);
+      if (!equal(this.folderSheet(window, app), sheet)) throw new Error('Finder folder sheet identity changed');
+      var fields = [], combos = [], count = 0;
+      function walk(node, depth) {
+        if (depth > 6 || ++count > 128) throw new Error('Finder folder sheet exceeds bounded search');
+        var role = text(node, 'AXRole');
+        if (role === 'AXTextField') fields.push(node);
+        if (role === 'AXComboBox') combos.push(node);
+        children(node).forEach(function (child) { walk(child, depth + 1); });
+      }
+      walk(sheet, 0);
+      if (!fields.length) fields = combos;
+      var go = buttons(sheet, ['Go'], 6);
+      if (fields.length !== 1 || go.length !== 1) throw new Error('Finder folder sheet controls ambiguous');
+      if (clock && clock.check) clock.check();
+      if (validate) validate();
+      this.finderFolderGuard(app, window, sheet);
+      if (clock && clock.check) clock.check();
+      var code = Number($.AXUIElementSetAttributeValue(fields[0], $('AXValue'), $(target)));
+      if (code !== 0) throw Object.assign(new Error('Finder folder AXValue failed: ' + code), { code: code, attribute: 'AXValue' });
+      var self = this;
+      press(go[0], function () {
+        if (!equal(self.folderSheet(window, app), sheet)) throw new Error('Finder folder sheet identity changed');
+        if (validate) validate();
+        self.finderFolderGuard(app, window, sheet);
+      });
+    },
     applications: function () {
       var values = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(state.bundle), result = [];
       for (var i = 0; i < Number(values.count); i++) result.push(values.objectAtIndex(i));
@@ -1003,9 +1294,12 @@ function nativeAX(state, clock) {
     },
     windows: function (app) {
       var values = read(app, 'AXWindows');
-      if (!values) throw new Error('Fixture window inventory unavailable');
+      if (!values) throw windowInventoryError('Fixture window inventory unavailable', 'malformed-list');
+      var count = Number(values.count);
+      if (values.count == null || !isFinite(count) || count < 0 || count !== Math.floor(count))
+        throw windowInventoryError('Fixture window inventory malformed', 'malformed-list', values.count == null ? undefined : count);
       var result = [];
-      for (var i = 0; i < Number(values.count); i++) result.push(values.objectAtIndex(i));
+      for (var i = 0; i < count; i++) result.push(values.objectAtIndex(i));
       return result;
     },
     cgWindowCount: function (pid, excluded) {
@@ -1019,9 +1313,16 @@ function nativeAX(state, clock) {
     windowCount: function (app) { return children(app, 'AXWindows').length; },
     // true or false only when the app's window list was read; undefined when it couldn't be.
     listed: listed,
-    exists: function (window) {
-      try { return text(window, 'AXRole') === 'AXWindow'; }
-      catch (error) { if (error.code === -25202) return false; throw error; }
+    exists: function (window, diagnostic) {
+      try {
+        var role = text(window, 'AXRole');
+        if (diagnostic) diagnostic.role = role;
+        return role === 'AXWindow';
+      }
+      catch (error) {
+        if (error.code === -25202) { if (diagnostic) diagnostic.axCode = error.code; return false; }
+        throw error;
+      }
     },
     matches: matches, dialog: dialog,
     readiness: function (app, request) {
@@ -1056,6 +1357,7 @@ function nativeAX(state, clock) {
         var bytes = $.malloc(32);
         try {
           boxed.getValue(bytes);
+          if (clock && clock.check) clock.check();
           var code = Number($.AXUIElementSetAttributeValue(window, $(attribute), $.AXValueCreate(type, bytes)));
           if (code !== 0) throw Object.assign(new Error('Fixture window placement failed: ' + code + ' (' + attribute + ')'), { code: code });
         } finally { $.free(bytes); }
@@ -1080,6 +1382,7 @@ function nativeAX(state, clock) {
     raise: function (window) {
       if (clock && clock.check) clock.check();
       if (Number($.AXUIElementPerformAction(window, $('AXRaise'))) !== 0) throw new Error('Owned fixture window raise failed');
+      if (clock && clock.check) clock.check();
       $.AXUIElementSetAttributeValue(window, $('AXMain'), $.kCFBooleanTrue);
     },
     closeButton: function (window, validate) {
@@ -1210,14 +1513,25 @@ function run(argv) {
   if ((allowed.indexOf(request.bundle) === -1 && !webFixture) || !request.control || !request.mode || (webFixture && request.mode !== 'window')) throw new Error('Invalid fixture request');
   if (!$.AXIsProcessTrusted()) throw new Error('Accessibility is unavailable; fixture not opened');
   function emit(value) {
+    if (state && value.stage === 'finder-relaunch') state.finderRecoveryPending = true;
+    if (state && value.stage === 'finder-recovered') state.finderRecoveryPending = false;
     $.NSFileHandle.fileHandleWithStandardOutput.writeData($(JSON.stringify(value) + '\n').dataUsingEncoding($.NSUTF8StringEncoding));
   }
   function controlData() {
     free();
     var data = $.NSData.dataWithContentsOfFile(request.control);
-    if (data.isNil()) return {};
+    if (data.isNil()) {
+      if (request.bundle === 'com.apple.finder' && state && state.setup) throw new Error('Finder setup control unavailable');
+      return {};
+    }
     var string = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding);
-    try { return JSON.parse(ObjC.unwrap(string)); } catch (error) { return {}; }
+    var control;
+    try { control = JSON.parse(ObjC.unwrap(string)); } catch (error) {}
+    if (!control || typeof control.command !== 'string') {
+      if (request.bundle === 'com.apple.finder' && state && state.setup) throw new Error('Finder setup control unavailable');
+      return {};
+    }
+    return control;
   }
   function command() { return controlData().command || ''; }
   function application() {
@@ -1231,8 +1545,8 @@ function run(argv) {
     if (Number(matches.count) > 1) throw new Error('Ambiguous fixture process');
     return Number(matches.count) === 1 ? matches.objectAtIndex(0) : null;
   }
-  var state = { setup: true, fresh: false, fixtureExists: false, actionTaken: false, retryWaitMs: 0, refuseDialogs: request.refuseDialogs === true };
-  var clock = { check: free, now: function () { return Date.now(); }, wait: function (ms) { free(); waitForLaunch(ms / 1000); }, emit: emit,
+  var state = { bundle: request.bundle, setup: true, fresh: false, fixtureExists: false, actionTaken: false, retryWaitMs: 0, refuseDialogs: request.refuseDialogs === true };
+  var clock = { check: function () { free(); if (state.setup) checkOpening(); }, now: function () { return Date.now(); }, wait: function (ms) { free(); waitForLaunch(ms / 1000); }, emit: emit,
     cleanupRequested: function () { return command() === 'close'; } };
   var api = nativeAX(state, clock);
   var target, running, pid, app, previous, owned, observedDialogs = [];
@@ -1273,7 +1587,7 @@ function run(argv) {
   }
   function checkOpening() {
     var control = controlData();
-    if (control.command !== 'close') return;
+    if (control.command !== 'close' && control.cancelled !== true) return;
     // Ordinary cancellation may coincide with the launcher's exit. Record only
     // an eligible owned successor before ending setup, without any AX action.
     if (control.launched === true && !running) {
@@ -1302,6 +1616,11 @@ function run(argv) {
     Number(target.launchDate.timeIntervalSince1970) * 1000 >= request.startedAtMs);
   state.setupCase = running ? 'already-running' : 'cold-launch';
   state.office = ['com.microsoft.Word', 'com.microsoft.Excel', 'com.microsoft.Powerpoint'].indexOf(request.bundle) !== -1;
+  if (request.bundle === 'com.apple.finder') {
+    target = ensureFinderAX({ application: application, probe: probeFinderAX }, Object.assign({}, clock, { check: checkOpening }));
+    running = true;
+    state.setupCase = 'already-running';
+  }
   if (webFixture || request.bundle === 'com.apple.Safari') {
     emit({ stage: 'launch', running: running });
     target = waitForApplication(application, waitForLaunch);
@@ -1313,6 +1632,7 @@ function run(argv) {
   }
   emit({ stage: 'identified', running: running, pid: pid, setupCase: state.setupCase });
   if (!state.office || running) checkAppDialog();
+  checkOpening();
   if (webFixture || request.bundle === 'com.apple.Safari') {
     if (!target) {
       emit({ stage: 'untouched' });
@@ -1337,6 +1657,12 @@ function run(argv) {
       if (target) recordProcess(target);
     }
     waitForLaunch();
+  }
+  if (request.bundle === 'com.apple.finder' && request.mode === 'folder') {
+    owned = openFinderFolder(request, app, previous, api, Object.assign({}, clock, { check: checkOpening }), function (window) {
+      owned = window;
+      state.fixtureExists = true;
+    });
   }
   function probeReadiness(attempt) {
     checkOpening();
@@ -1416,10 +1742,13 @@ function run(argv) {
       state.cleanup = true;
       var cleanup, cleanupError = error.menuCleanupError;
       try {
-        cleanup = error.appDialog ? 'unconfirmed' : recoverSetup(owned, request, api);
+        cleanup = error.appDialog ? 'unconfirmed' : request.bundle === 'com.apple.finder' && !state.finderRecoveryPending && !state.actionTaken && !owned && !error.finderWindowRequested
+          ? 'nothing created' : recoverSetup(owned, request, api, app);
       } catch (failure) { cleanupError = [cleanupError, failure.message].filter(Boolean).join('; '); }
       emit({ stage: 'setup-failure', fresh: state.fresh, running: running, setupCase: state.setupCase, actionTaken: state.actionTaken, pid: pid,
         pids: pids.slice(), processHandoff: processHandoff, cleanup: cleanup, cleanupError: cleanupError,
+        finderAXError: request.bundle === 'com.apple.finder' && (error.finderAX || [-25204, -25205].indexOf(error.code) !== -1)
+          ? { code: error.code, attribute: error.attribute } : undefined,
         totalWaitMs: state.retryWaitMs, readWait: state.readWait, launchWait: state.launchWait });
     }
     throw error;
