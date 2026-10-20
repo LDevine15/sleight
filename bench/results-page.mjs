@@ -300,7 +300,7 @@ const LIVE_MD = 'A live pass auto-approves the benchmark apps and drives them un
   'simulator need `--owner-away`. Live runs take /tmp/sleight-live.lock and stop while /tmp/sleight-hold exists. ' +
   'See [benchmark.md](../benchmark.md) for the full method.';
 const LAWS_MD = 'Every run the benchmark made is published, failures included ([LAWS](../status/LAWS.md), Method). ' +
-  'Known limits are quoted in [known-problems](../known-problems.md), not copied here.';
+  'See [known-problems](../known-problems.md) for quoted limits.';
 const htmlLinks = text => text
   .replace('[LAWS](../status/LAWS.md)', '<a href="../status/LAWS.md">LAWS</a>')
   .replace('[known-problems](../known-problems.md)', '<a href="../known-problems.md">known-problems</a>')
@@ -315,8 +315,8 @@ export function renderMarkdown(page, opts = {}) {
   const chart = opts.chart ?? 'release-passes.html';
   const out = [];
   out.push(`# ${opts.title ?? 'Release passes'}\n`);
-  out.push('One section per release pass, generated from the results files in [benchmarks](../benchmarks/). ' +
-    `Every number comes from those files. ${LAWS_MD} The same page with a chart is [${chart}](${chart}).\n`);
+  out.push('The [benchmarks](../benchmarks/) results files supply every release-pass number. ' +
+    `${LAWS_MD} The same page with a chart is [${chart}](${chart}).\n`);
   const latest = page.latestRelease;
   if (latest) {
     const stats = summarize(latest.results);

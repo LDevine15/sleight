@@ -291,29 +291,34 @@ test('family text in the static landing is escaped as HTML', () => {
   } finally { FAMILIES.pop(); }
 });
 
-test('the README follows the newest compatibility entry and only calls out a newer engine', () => {
+test('the native results follow the newest compatibility entry and the short README stays unchanged', () => {
   const all = committed();
   const compat = readJson(join(OUT, 'data/engine-compat.json'));
   all['engine-compat'] = compat;
-  const before = readmeBlocks(all).claim;
+  const shortClaim = readmeBlocks(all).claim;
+  const nativePage = () => render(all)['native-claim.md'];
+  const before = nativePage();
   compat.entries.unshift({ checkedAt: '2026-11-01T00:00:00Z', appVersion: '26.1101.100', engineVersion: '26.1101.200' });
-  const after = readmeBlocks(all).claim;
+  const after = nativePage();
   assert.notEqual(after, before);
   assert.match(after, /newer ChatGPT release, 26\.1101\.100/);
   assert.doesNotMatch(after, /26\.1013\.40934/);
   compat.entries = [{ checkedAt: '2026-11-02T00:00:00Z', appVersion: null, engineVersion: '26.1007.71326' }];
-  assert.doesNotMatch(readmeBlocks(all).claim, /newer ChatGPT release|Compatibility checks do not remeasure speed/);
+  assert.doesNotMatch(nativePage(), /newer ChatGPT release|Compatibility checks do not remeasure speed/);
   compat.entries[0].engineVersion = '26.1007.21159';
-  assert.doesNotMatch(readmeBlocks(all).claim, /newer ChatGPT release/);
+  assert.doesNotMatch(nativePage(), /newer ChatGPT release/);
   compat.entries[0].engineVersion = '26.1102.200';
-  assert.match(readmeBlocks(all).claim, /newer ChatGPT release, 26\.1102\.200/);
+  assert.match(nativePage(), /newer ChatGPT release, 26\.1102\.200/);
+  assert.equal(readmeBlocks(all).claim, shortClaim);
 });
 
 test('the native comparison changes when the number or order of competing totals changes', () => {
   const all = committed(), study = all['native-claim'].studies[0];
-  assert.match(readmeBlocks(all).claim, /Claude computer use, the only other arm that passed every task, took 453\.9 s/);
+  assert.match(render(all)['native-claim.md'], /Claude computer use, the only other arm that passed every task, took 453\.9 s/);
+  assert.match(readmeBlocks(all).claim, /Claude computer use: 453\.9 s/);
   study.verdict.totals.lcu = 400;
-  assert.match(readmeBlocks(all).claim, /LCU, the fastest of 2 other arms that passed every task, took 400\.0 s/);
+  assert.match(render(all)['native-claim.md'], /LCU, the fastest of 2 other arms that passed every task, took 400\.0 s/);
+  assert.match(readmeBlocks(all).claim, /LCU: 400\.0 s/);
   for (const arm of study.arms.filter(a => a !== study.me)) study.verdict.totals[arm] = null;
   assert.doesNotMatch(readmeBlocks(all).claim, /\bother arm\b|next lowest total/);
 });
@@ -510,10 +515,15 @@ test('the README\'s generated blocks match the data, and every number in the cla
   }
   const { claim, benchmarks } = readmeBlocks(all);
   const study = all['native-claim'].studies[0];
-  assert.match(claim, new RegExp(`"${study.verdict.wording}": the lowest expected time on ${study.verdict.lowest.length} of ${study.tasks.length} `));
+  const native = render(all)['native-claim.md'];
+  assert.match(native, new RegExp(`"${study.verdict.wording}": the lowest expected time on ${study.verdict.lowest.length} of ${study.tasks.length} `));
   assert.ok(claim.includes(`${(Math.round(study.verdict.totals.sleight * 10) / 10).toFixed(1)} s`));
-  assert.ok(claim.includes(`over ${study.runs.length} runs dated ${study.date}`));
-  assert.ok(claim.includes('The hub lists each run, failures included, with the method and the model each arm ran.'));
+  assert.ok(native.includes(`over ${study.runs.length} runs dated ${study.date}`));
+  assert.equal(claim.split('\n').length, 3);
+  for (const fact of ['claude-haiku-5-5', 'gpt-6-luna', 'Competitors ran their defaults.', 'The skill was tuned on some of these tasks.',
+    '2026-10-03 native comparison against LCU', '2026-10-08 sleight-only pass at medium effort', '2026-10-12 engine comparison against FowlBrowser',
+    '2026-10-12 lean-skill A/B', '2026-10-16 turbo comparison against FowlBrowser', 'Compatibility checks do not remeasure speed.'])
+    assert.ok(native.includes(fact), `the native results preserve ${fact}`);
   for (const fam of FAMILIES) assert.ok(benchmarks.includes(`](docs/results/${fam.page})`), `the benchmarks block links ${fam.page}`);
   // The hub landing's table and the README's lines are the same text.
   const landing = page('README.md');

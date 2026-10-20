@@ -2,7 +2,7 @@
 
 # Experiments
 
-Each study compares sleight variants on the same tasks. The pages score them the same way as the claims, with the first variant as the baseline.
+Each study compares sleight variants on the same tasks using the claims' expected-time scoring, with the first variant as the baseline.
 
 <details><summary>Method</summary>
 
@@ -34,7 +34,7 @@ Each study compares sleight variants on the same tasks. The pages score them the
 | 2026-10-19 | `2026-10-19-flag-ab-open-shot` | `claude-haiku-5-5` | 5 to 10 | off 25/25 passed, 355 s. on 25/25 passed, 325 s | [2026-10-19-flag-ab.md](../benchmarks/2026-10-19-flag-ab.md) |
 | 2026-10-19 | `2026-10-19-flag-ab-skill-screenshot` | `claude-haiku-5-5` | 5 | off 9/10 passed, 860 s. on 10/10 passed, 810 s | [2026-10-19-flag-ab.md](../benchmarks/2026-10-19-flag-ab.md) |
 
-Totals add every run, failures included, so a variant with more runs has a larger total. The per-task tables below compare like with like.
+Totals add every run, failures included, so a variant with more runs has a larger total. Per-task expected times account for the different run counts.
 
 ## Studies
 

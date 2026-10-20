@@ -52,6 +52,36 @@ test('the first screen explains the app, requirements and setup limits before th
   assert.ok(readme.indexOf('## Install') < readme.indexOf('## Where it runs'));
 });
 
+test('the opening claim has three lines and sends benchmark details to the hub', () => {
+  const claim = readme.split('<!-- hub:claim -->')[1].split('<!-- /hub:claim -->')[0].trim().split('\n');
+  assert.equal(claim.length, 3);
+  assert.match(claim[0], /sleight's own.*native Mac benchmark/);
+  assert.match(claim[0], /<br>$/);
+  assert.match(claim[1], /^Expected time is .*pass rate.*failed attempts are retried\.<br>$/);
+  assert.match(claim[2], /\[Benchmark hub\]\(docs\/results\/README\.md\)/);
+  assert.doesNotMatch(claim.join('\n'), /claude-haiku|gpt-6-luna|engine 26\.|Earlier Opus/);
+});
+
+test('the ChatGPT app is required without requiring its account or sign-in', () => {
+  assert.match(readme, /ChatGPT desktop app[^\n]*is required in `\/Applications`/);
+  assert.match(readme, /You don't need a ChatGPT account or sign-in/);
+});
+
+test('Turbo explains consent, dated results, the existing chart and user controls', () => {
+  const turbo = readme.split('## Turbo\n')[1]?.split('\n## ')[0];
+  assert.ok(turbo, 'the Turbo section exists');
+  assert.match(turbo, /Chrome and Helium directly/);
+  assert.match(turbo, /one-time debugging switch/);
+  assert.match(turbo, /Chrome.*10 of 13.*258\.9 s.*447\.8 s.*2026-10-18 to 2026-10-19/);
+  assert.match(turbo, /Helium.*11 of 13.*241\.8 s.*338\.3 s.*2026-10-18/);
+  assert.match(turbo, /docs\/results\/browser-turbo\.md/);
+  assert.match(turbo, /docs\/results\/img\/family-browser-turbo-chrome-light\.svg/);
+  assert.match(turbo, /`\.\/bin\/sleight-mcp turbo on`/);
+  assert.match(turbo, /`\.\/bin\/sleight-mcp turbo on --browser helium`/);
+  assert.match(turbo, /`\.\/bin\/sleight-mcp turbo off`/);
+  assert.match(turbo, /From the installed plugin folder, you run/);
+});
+
 test('INSTALL.md exists, the README links it, and it names the steps only the user can do', () => {
   assert.ok(existsSync(new URL('INSTALL.md', root)));
   assert.match(readme, /\]\(INSTALL\.md\)/);

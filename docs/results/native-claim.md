@@ -2,7 +2,7 @@
 
 # Native claim
 
-The claim suite's 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight against LCU, Codex, Cua, Peekaboo and Claude's own computer use, in real windows with the tester away. The suite is sleight's own, its skill and tool wording were tuned on the runs of textedit-calculator, preview-read, excel-edit, word-edit, finder-move, textedit-save and textedit-drag (not calculator-click or calculator-menu), and the competitors ran their defaults. The scorer's wording is "fastest". sleight has the lowest expected time on 8 of 9 tasks.
+The claim suite runs 9 native tasks in Calculator, TextEdit, Finder, Preview, Word and Excel, one task per skill. sleight competes against LCU, Codex, Cua, Peekaboo and Claude's own computer use in real windows with the tester away. The suite is sleight's own, its skill and tool wording were tuned on the runs of textedit-calculator, preview-read, excel-edit, word-edit, finder-move, textedit-save and textedit-drag (not calculator-click or calculator-menu), and the competitors ran their defaults. The scorer's wording is "fastest". sleight has the lowest expected time on 8 of 9 tasks.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/family-native-claim-dark.svg">
@@ -140,6 +140,26 @@ Passing runs, median [fastest to slowest], with p90 at 5 or more runs:
 | `excel-edit` | Codex | `2026-10-17T06-52-09-961Z.json` | 14.7 | `saved Office file: unexpected worksheet names or order` |
 | `textedit-drag` | Claude computer use | `2026-10-17T15-51-43-164Z.json` | 40.8 | `the word was not moved; the file was unchanged` |
 | `textedit-calculator` | LCU | `2026-10-17T17-22-14-603Z.json` | 123.3 | `WORLD_CROSS_FILE_MISMATCH` |
+
+</details>
+
+<details><summary>Claim context and earlier comparisons</summary>
+
+In sleight's own native Mac benchmark, its total expected time over 9 tasks was 251.2 s. Claude computer use, the only other arm that passed every task, took 453.9 s.
+
+Expected time is the mean time per attempt divided by the pass rate. It estimates the time to a correct result when failed attempts are retried.
+
+The claim is "fastest": the lowest expected time on 8 of 9 tasks and the lowest total, with 5 runs wherever sleight and another arm were within 20%.
+
+This was measured over 197 runs dated 2026-10-17 to 2026-10-18 on `claude-haiku-5-5` at high effort (engine 26.1007.71326, 2026-10-17 to 2026-10-18). The skill was tuned on some of these tasks. Competitors ran their defaults. Codex ran `gpt-6-luna`.
+
+Haiku 5.5 drove this native claim. Earlier Opus 5.5 runs include the [2026-10-03 native comparison against LCU](../benchmark.md#earlier-benchmarks) and the [2026-10-08 sleight-only pass at medium effort](../benchmark.md#time-per-run).
+
+Opus browser runs include the [2026-10-12 engine comparison against FowlBrowser](../benchmarks/2026-10-12-fowlbrowser-h2h.md), its [later rounds](../benchmarks/2026-10-12-fowlbrowser-h2h-2.md), the [2026-10-12 lean-skill A/B](../benchmarks/2026-10-12-lean-skill-ab.md) and the [2026-10-16 turbo comparison against FowlBrowser](../benchmarks/2026-10-16-opus.md).
+
+The [compatibility record](engine-compat.md) lists a newer ChatGPT release, 26.1013.40934, than these runs. Compatibility checks do not remeasure speed.
+
+The [benchmark hub](README.md) lists each run, failures included, with the method and the model each arm ran.
 
 </details>
 

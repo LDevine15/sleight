@@ -18,7 +18,7 @@ The per-benchmark tables are in the [benchmark hub](README.md) and the [interact
    turns. FowlBrowser's medians across that night's three Haiku gate runs were 677 s, 685 s and 720 s. That spread is why A/Bs
    alternate the old and new builds inside each round. Source: [2026-10-16-gate.md](../benchmarks/2026-10-16-gate.md),
    [2026-10-16-turbo-ab.md](../benchmarks/2026-10-16-turbo-ab.md).
-3. An unchanged arm got faster by itself. FowlBrowser took 1,744 s at 16:06 and 1,234 s at 19:12 on 2026-10-12.
+3. An unchanged arm ran faster later. FowlBrowser took 1,744 s at 16:06 and 1,234 s at 19:12 on 2026-10-12.
    Source: [2026-10-12-haiku-round-2.md](../benchmarks/2026-10-12-haiku-round-2.md).
 4. The noise sets the sample size. word-edit's wall time had a standard deviation of 28 s on a mean of 81 s, so a 10% effect
    needs about 200 runs per side unpaired, or 50 without the stuck-menu runs. excel-edit needs about 60 (`fable-1017-office-turns.md`,
@@ -71,14 +71,14 @@ The per-benchmark tables are in the [benchmark hub](README.md) and the [interact
 
 ### What paid
 
-17. Turns are the lever. In the Firefox race (2026-10-18), sleight's median gap from a tool result to the next call was 2.16 s
+17. Extra calls cost time. In the Firefox race (2026-10-18), sleight's median gap from a tool result to the next call was 2.16 s
     (n=93) against Codex's 2.19 s (n=67) and LCU's 2.39 s. sleight lost on the number of calls, 8.75 a run against Codex's 6.6.
     On the short Firefox tasks, per-turn latency was 2.44 s against LCU's 2.75 s, and wasted turns took 12.0 s a run against
     4.4 s. Source: `fable-1018-loss-reads.md`, `fable-1018-loss-short.md`.
 18. A turn takes about 4.2 s in Office tasks (median model gap 2.8 s, p90 5.6 s, tool time 0.9 s). Seconds
     per turn tracked thinking time (r 0.94 to 0.96) and not context size (r about 0). A turn after a screenshot took 4.0 s
     against 2.0 s. Source: `fable-1017-office-turns.md`, `LEDGER.md` RA1, 2026-10-17.
-19. Tokens aren't seconds. Streaming a native call's code took 315 ms of a 2,725 ms turn, and model time was 23.7 s of a
+19. Streaming a native call's code took 315 ms of a 2,725 ms turn, and model time was 23.7 s of a
     38.8 s run (2026-10-14 native A/B). A separate count over the 2026-10-16 claim runs put model time at about 85% of each run.
     These samples differ, and the first counts startup and harness time in the run. Source: `opus-less-code-report.md`,
     `queue/speed/README.md`.
@@ -144,7 +144,7 @@ The per-benchmark tables are in the [benchmark hub](README.md) and the [interact
 
 ## Engine and macOS quirks
 
-Each of these cost time in a run. The fix column says what sleight does about it.
+Quirks in the engine and macOS added time to benchmark runs.
 
 | # | Quirk, as measured | What sleight does |
 | --- | --- | --- |
