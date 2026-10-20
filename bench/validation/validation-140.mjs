@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Release comparison orchestration. Existing runners own app lifecycles and the live lock.
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, appendFileSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
 import { join, resolve, dirname, posix } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ROOT, EVIDENCE, HARNESS_PATHS, git, sha } from './audit-140.mjs';
+import { ROOT, EVIDENCE, HARNESS_PATHS, git, sha, harness } from './audit-140.mjs';
 import { readValidationData, validationDataDir } from './data.mjs';
 import { score } from '../claim-score.mjs';
 import { loadRound } from '../fowl/race-score.mjs';
@@ -63,19 +63,29 @@ export function estimateCC(tasks, samples = [], model = 'claude-haiku-5-5') {
   return { seconds: missing.length ? null : measuredSeconds, measuredSeconds, perTask, missing };
 }
 
-export function planGroups(groups) {
+function checkGroups(ids, groups) {
+  if (!ids.length || ids.some(id => !id)) throw Error('Group selection must contain nonempty IDs');
+  if (new Set(ids).size !== ids.length) throw Error('Duplicate group ID');
+  for (const id of ids) if (!groups.some(g => g.id === id)) throw Error(`Unknown group: ${id}`);
+}
+
+export function planGroups(groups, { deferGroups = [] } = {}) {
+  if (deferGroups.length) checkGroups(deferGroups, groups);
+  groups = groups.map(group => ({ ...group, deferred: deferGroups.includes(group.id) }));
   const rounds = [];
   for (const group of groups) for (let n = 1; n <= group.rounds; n++) {
     for (const side of (n % 2 ? ['A', 'B'] : ['B', 'A'])) {
       const tasks = side === 'A' ? group.freshA?.[n - 1] ?? group.both : group.tasks;
       if (tasks.length) rounds.push({ id: `${group.id}-${side}-r${n}`, group: group.id, side, n, tasks,
-        runner: group.runner, browser: group.browser, model: group.model, expectedSeconds: group.seconds * tasks.length / group.tasks.length });
+        runner: group.runner, browser: group.browser, model: group.model, deferred: group.deferred,
+        expectedSeconds: group.seconds * tasks.length / group.tasks.length });
     }
   }
-  return { groups, rounds, measuredEstimateSeconds: rounds.reduce((sum, r) => sum + r.expectedSeconds, 0) };
+  return { groups, rounds, deferredGroups: groups.filter(g => g.deferred).map(g => g.id),
+    measuredEstimateSeconds: rounds.filter(r => !r.deferred).reduce((sum, r) => sum + r.expectedSeconds, 0) };
 }
 
-export function makePlan(audit, { out = DEFAULT_OUT, engine = '26.1013.40934', classification } = {}) {
+export function makePlan(audit, { out = DEFAULT_OUT, engine = '26.1013.40934', classification, deferGroups = [] } = {}) {
   const groups = [];
   const as3Catalog = JSON.parse(readFileSync(join(ROOT, 'bench/world/tasks/browser-open-heldout.json')));
   const group = (id, kind, select, extra = {}) => {
@@ -108,7 +118,7 @@ export function makePlan(audit, { out = DEFAULT_OUT, engine = '26.1013.40934', c
   for (const task of cc) groups.push({ id: task, runner: 'native', tasks: [task], both: [task], a: [], rounds: 3,
     model: 'claude-haiku-5-5', seconds: ccEstimate.perTask[task]?.meanSeconds ?? 0,
     ...(ccEstimate.missing.includes(task) ? { estimateMissing: 'No recorded CC task duration.' } : {}) });
-  const p = planGroups(groups);
+  const p = planGroups(groups, { deferGroups });
   return { schema: 1, live: false, root: ROOT, out: resolve(out), aBuild: audit.rounds.find(r => r.kind === 'release-haiku')?.build,
     bBuild: audit.bBuild, engine, harnessHash: audit.bHarness.hash,
     fullCheck: { side: 'B', command: ['npm', 'run', 'check'], estimateMissing: 'No comparable full-check timing in the A-round evidence.' },
@@ -137,11 +147,64 @@ function options(args) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (['--plan', '--run', '--score', '--owner-away'].includes(a)) out[a.slice(2)] = true;
-    else if (['--out', '--b-build', '--engine', '--classification', '--data'].includes(a) && args[i + 1] && !args[i + 1].startsWith('--')) out[a.slice(2)] = args[++i];
+    else if (['--out', '--b-build', '--engine', '--classification', '--data', '--defer-groups', '--only-groups'].includes(a) && args[i + 1] && !args[i + 1].startsWith('--')) {
+      if (out[a.slice(2)] !== undefined) throw Error(`Duplicate option: ${a}`);
+      out[a.slice(2)] = args[++i];
+    }
     else throw Error(`Unknown or incomplete option: ${a}`);
   }
   if (['plan', 'run', 'score'].filter(k => out[k]).length > 1) throw Error('Choose --plan, --run or --score');
+  if (out['defer-groups'] && out['only-groups']) throw Error('Choose --defer-groups or --only-groups');
+  if (out['only-groups'] && !out.run) throw Error('--only-groups requires --run and existing output');
+  if (out['defer-groups'] && out.score) throw Error('--defer-groups is for --plan or --run');
   return out;
+}
+
+function readReceipt(out, plan, round) {
+  const receipt = JSON.parse(readFileSync(join(out, `${round.id}.receipt.json`)));
+  if (!receipt.safe || receipt.harnessHash !== plan.harnessHash || receipt.build !== (round.side === 'A' ? plan.aBuild : plan.bBuild) || receipt.engine !== plan.engine)
+    throw Error(`${round.id}: receipt identity, cleanup or engine mismatch`);
+  if (!safeResult(receipt.result, round.runner, round.tasks, plan.engine, round.model, receipt.build))
+    throw Error(`${round.id}: saved build, model, engine or cleanup evidence mismatch`);
+  return receipt;
+}
+
+// Read-only selection is shared with offline tests. Completion always uses the first plan's round inventory.
+export function selectRun(candidate, onlyGroups) {
+  const out = candidate.out;
+  if (!onlyGroups) {
+    if (existsSync(out)) throw Error('Output already exists; choose a new --out or complete deferred groups with --only-groups.');
+    return { plan: candidate, rounds: candidate.rounds.filter(r => !r.deferred), completion: false };
+  }
+  if (!existsSync(join(out, 'plan.json'))) throw Error('--only-groups requires existing output with plan.json');
+  const plan = JSON.parse(readFileSync(join(out, 'plan.json')));
+  for (const key of ['aBuild', 'bBuild', 'engine', 'harnessHash'])
+    if (!plan[key] || candidate[key] !== plan[key]) throw Error(`${key} differs from the first run's plan`);
+  if (resolve(plan.out) !== resolve(out)) throw Error('Output differs from the first run\'s plan');
+  checkGroups(onlyGroups, plan.groups);
+  for (const id of onlyGroups) if (!plan.deferredGroups?.includes(id)) throw Error(`${id}: group was not deferred in the first plan`);
+  const check = JSON.parse(readFileSync(join(out, 'full-check.receipt.json')));
+  if (check.code !== 0 || check.build !== plan.bBuild) throw Error('Original full check failed or build differs');
+  const files = readdirSync(out), pending = [];
+  for (const round of plan.rounds) {
+    if (existsSync(join(out, `${round.id}.receipt.json`))) readReceipt(out, plan, round);
+    else {
+      if (files.some(file => file === round.id || file.startsWith(`${round.id}.`)))
+        throw Error(`${round.id}: partial artifacts exist; evidence will not be overwritten`);
+      if (!plan.deferredGroups?.includes(round.group)) throw Error(`${round.id}: original nondeferred round is incomplete`);
+      if (onlyGroups.includes(round.group)) pending.push(round);
+    }
+  }
+  if (!pending.length) throw Error('Selected groups are already complete');
+  return { plan, rounds: pending, completion: true };
+}
+
+export function saveScore(out, scored) {
+  for (let n = 1; ; n++) {
+    const file = join(out, n === 1 ? 'score.json' : `score-${n}.json`);
+    try { writeFileSync(file, JSON.stringify(scored, null, 2), { flag: 'wx' }); return file; }
+    catch (error) { if (error.code !== 'EEXIST') throw error; }
+  }
 }
 
 function readRows(path, runner, tasks, side, name) {
@@ -160,18 +223,17 @@ export function scoreOutput(out) {
   let complete = true;
   for (const group of plan.groups) {
     const rows = [], errors = [];
+    const deferred = plan.deferredGroups?.includes(group.id) && plan.rounds.some(r => r.group === group.id && !existsSync(join(out, `${r.id}.receipt.json`)));
+    if (deferred) errors.push(`DEFERRED ${group.id}: comparison awaits completion with --only-groups ${group.id}`);
     for (const round of plan.rounds.filter(r => r.group === group.id)) {
+      if (deferred && !existsSync(join(out, `${round.id}.receipt.json`))) continue;
       try {
-        const receipt = JSON.parse(readFileSync(join(out, `${round.id}.receipt.json`)));
-        if (!receipt.safe || receipt.harnessHash !== plan.harnessHash || receipt.build !== (round.side === 'A' ? plan.aBuild : plan.bBuild) || receipt.engine !== plan.engine)
-          throw Error('receipt identity, cleanup or engine mismatch');
-        if (!safeResult(receipt.result, round.runner, round.tasks, plan.engine, round.model, receipt.build))
-          throw Error('saved build, model, engine or cleanup evidence mismatch');
+        const receipt = readReceipt(out, plan, round);
         rows.push(...readRows(receipt.result, round.runner, round.tasks, round.side, receipt.result));
       } catch (error) { errors.push(`${round.id}: ${error.message}`); }
     }
     const reused = group.reuse ?? group.a.map(path => ({ path, tasks: group.tasks.filter(t => !group.both.includes(t)) }));
-    for (const { path: file, tasks, fileHash, build } of reused) if (tasks.length) {
+    for (const { path: file, tasks, fileHash, build } of reused) if (tasks.length && !deferred) {
       try {
         if (fileHash && sha(readFileSync(file)) !== fileHash) throw Error('historical A evidence hash changed');
         const result = group.runner === 'browser' ? dirname(file) : file;
@@ -182,8 +244,9 @@ export function scoreOutput(out) {
       catch (error) { errors.push(`${file}: ${error.message}`); }
     }
     const got = compareRows(rows, group.tasks, group.rounds);
-    complete &&= got.complete && !errors.length;
-    summary.push({ id: group.id, ...got, errors });
+    const groupComplete = got.complete && !errors.length;
+    complete &&= groupComplete;
+    summary.push({ id: group.id, ...got, complete: groupComplete, deferred: !!deferred, errors });
     console.log(`\n${group.id}: task | A passes/runs, expected s | B passes/runs, expected s`);
     console.log(`Historical A candidates: ${group.a.join(', ') || '(none, new task)'}`);
     console.log(`A rounds: ${got.aRounds.join(', ') || '(missing)'}`);
@@ -196,7 +259,8 @@ export function scoreOutput(out) {
   const check = JSON.parse(readFileSync(join(out, 'full-check.receipt.json')));
   complete &&= check.code === 0 && check.build === plan.bBuild;
   console.log(`\nFull check exit ${check.code}; comparison ${complete ? 'complete' : 'INCOMPLETE'}. Failures count in expected time.`);
-  return { complete, groups: summary };
+  return { complete, groups: summary, deferredGroups: summary.filter(g => g.deferred).map(g => g.id),
+    incompleteGroups: summary.filter(g => !g.complete).map(g => g.id) };
 }
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -265,29 +329,47 @@ export function sharedHarnessSource(text, path, helperRoot) {
   return { source, imports };
 }
 
-async function execute(plan) {
+async function execute(plan, onlyGroups) {
   if (plan.blockers.length) throw Error(plan.blockers.join('\n'));
   if (!/^[a-f0-9]{40}$/.test(plan.aBuild ?? '') || !/^[a-f0-9]{40}$/.test(plan.bBuild)) throw Error('Build pin missing');
   if (git('rev-parse', 'HEAD').trim() !== plan.bBuild || git('status', '--porcelain', '--untracked-files=no').trim()) throw Error('Run from the clean, pinned B build');
-  if (existsSync(plan.out)) throw Error('Output already exists; choose a new --out. Existing evidence is never removed or overwritten.');
+  if (harness(plan.bBuild).hash !== plan.harnessHash) throw Error('Current harness hash differs from the plan');
   // No inherited tuning switches: validate exactly the product defaults on both builds.
   const inherited = Object.keys(process.env).filter(k => k !== 'SLEIGHT_VALIDATION_DATA' && /^(SLEIGHT_|AS3_|BENCH_ARM_HOME$)/.test(k));
   if (inherited.length) throw Error(`Unset benchmark overrides first: ${inherited.join(', ')}`);
-  mkdirSync(plan.out, { recursive: true, mode: 0o700 });
-  writeFileSync(join(plan.out, 'plan.json'), JSON.stringify(plan, null, 2));
+  let selection = selectRun(plan, onlyGroups);
+  if (!selection.completion) {
+    mkdirSync(dirname(plan.out), { recursive: true, mode: 0o700 });
+    mkdirSync(plan.out, { mode: 0o700 });
+    writeFileSync(join(plan.out, 'plan.json'), JSON.stringify(plan, null, 2), { flag: 'wx' });
+  }
+  // One writer per output bank. The lock is transient; all evidence files remain append-only.
+  const writer = join(plan.out, '.active-run');
+  mkdirSync(writer, { mode: 0o700 });
   const log = join(plan.out, 'validate-140.log');
   const record = (id, result) => appendFileSync(log, `${new Date().toISOString()} ${id} ${JSON.stringify(result)}\n`);
-  const staging = mkdtempSync('/tmp/lane-vp1-');
-  const aRoot = join(staging, 'A'); let registered = false, unsafe = false;
+  let staging, aRoot, registered = false, unsafe = false;
   try {
+    if (selection.completion) selection = selectRun(plan, onlyGroups);
+    plan = selection.plan;
+    const selectedIds = new Set(selection.rounds.map(r => r.id));
+    record(selection.completion ? 'completion-start' : 'run-start', { groups: [...new Set(selection.rounds.map(r => r.group))] });
+    for (const id of plan.deferredGroups ?? []) {
+      const remaining = plan.rounds.filter(r => r.group === id && !selectedIds.has(r.id) && !existsSync(join(plan.out, `${r.id}.receipt.json`)));
+      if (remaining.length) record('deferred', { group: id, rounds: remaining.map(r => r.id), status: 'deferred' });
+    }
+    staging = mkdtempSync('/tmp/lane-vp1-');
+    aRoot = join(staging, 'A');
     await waitGate();
-    record('full-check-start', { build: plan.bBuild });
-    // Validation runs before the release numbers exist, so the README validation token and the CHANGELOG date are still
-    // placeholders; only the release check (after scoring) runs without this override.
-    const check = await child('npm', ['run', 'check'], ROOT, join(plan.out, 'full-check.log'), { SLEIGHT_ALLOW_RELEASE_TODO: '1' });
-    record('full-check-exit', check);
-    writeFileSync(join(plan.out, 'full-check.receipt.json'), JSON.stringify({ ...check, build: plan.bBuild }));
-    if (check.code !== 0) throw Error('Full check failed; stopped before live rounds');
+    if (!selection.completion) {
+      record('full-check-start', { build: plan.bBuild });
+      // Validation runs before the release numbers exist, so the README validation token and the CHANGELOG date are still
+      // placeholders; only the release check (after scoring) runs without this override.
+      const check = await child('npm', ['run', 'check'], ROOT, join(plan.out, 'full-check.log'), { SLEIGHT_ALLOW_RELEASE_TODO: '1' });
+      record('full-check-exit', check);
+      writeFileSync(join(plan.out, 'full-check.receipt.json'), JSON.stringify({ ...check, build: plan.bBuild }), { flag: 'wx' });
+      if (check.code !== 0) throw Error('Full check failed; stopped before live rounds');
+    }
     runGit(ROOT, 'worktree', 'add', '--detach', aRoot, plan.aBuild); registered = true;
     // The A plugin is unchanged. Both arms use B's identical tracked harness and fixtures, including the new CC tasks.
     for (const dir of ['bench', 'scripts']) rmSync(join(aRoot, dir), { recursive: true, force: true });
@@ -307,15 +389,20 @@ async function execute(plan) {
     }
     symlinkSync(join(ROOT, 'node_modules'), join(aRoot, 'node_modules'));
     if (runGit(aRoot, 'diff', plan.aBuild, '--', 'plugins').trim()) throw Error('A plugin changed during harness staging');
-    writeFileSync(join(plan.out, 'harness.json'), JSON.stringify({ hash: plan.harnessHash, aBuild: plan.aBuild, bBuild: plan.bBuild,
+    const harnessEvidence = JSON.stringify({ hash: plan.harnessHash, aBuild: plan.aBuild, bBuild: plan.bBuild,
       aPluginTree: runGit(aRoot, 'rev-parse', `${plan.aBuild}:plugins`).trim(), bPluginTree: git('rev-parse', `${plan.bBuild}:plugins`).trim(),
       sharedHelperRoot: join(ROOT, 'plugins'), helperImports, stagedFiles,
-      note: 'A uses B harness modules and B helper imports, with A plugin command paths. Native results mark A dirty for the staged harness. Plugin trees and transformed file hashes are separate.' }, null, 2));
+      note: 'A uses B harness modules and B helper imports, with A plugin command paths. Native results mark A dirty for the staged harness. Plugin trees and transformed file hashes are separate.' }, null, 2);
+    const harnessFile = join(plan.out, 'harness.json');
+    if (selection.completion) {
+      if (readFileSync(harnessFile, 'utf8') !== harnessEvidence) throw Error('Staged harness differs from the first run');
+    } else writeFileSync(harnessFile, harnessEvidence, { flag: 'wx' });
     // Chrome rounds need Chrome quit, and a Chrome the owner left open is never quit for them (2026-10-20: the owner's
     // Chrome stopped the first round). They run last and wait for Chrome to be closed; every other round goes first.
     const chromeLast = [...plan.rounds.filter(r => r.browser !== 'chrome'), ...plan.rounds.filter(r => r.browser === 'chrome')];
     let waitedForChrome = false;
     for (const round of chromeLast) {
+      if (!selectedIds.has(round.id)) continue;
       await waitGate();
       while (round.browser === 'chrome' && chromeRunning()) {
         if (!waitedForChrome) { record('waiting-for-chrome-quit', { round: round.id }); waitedForChrome = true; }
@@ -342,20 +429,22 @@ async function execute(plan) {
         }
       } catch { /* Partial artifacts always stop the window. */ }
       writeFileSync(`${stem}.receipt.json`, JSON.stringify({ ...round, ...exit, result, safe, engine: plan.engine,
-        build: round.side === 'A' ? plan.aBuild : plan.bBuild, harnessHash: plan.harnessHash }, null, 2));
+        build: round.side === 'A' ? plan.aBuild : plan.bBuild, harnessHash: plan.harnessHash }, null, 2), { flag: 'wx' });
       if (!safe) { unsafe = true; throw Error(`${round.id}: incomplete evidence, engine change or unproved cleanup; stopped. Keep ${aRoot}`); }
       unsafe = false;
     }
     const scored = scoreOutput(plan.out);
-    writeFileSync(join(plan.out, 'score.json'), JSON.stringify(scored, null, 2));
-    if (!scored.complete) throw Error('Comparison incomplete');
-    record('done', { complete: true });
+    const scoreFile = saveScore(plan.out, scored);
+    if (!scored.complete && !scored.groups.every(g => g.complete || g.deferred && g.errors.every(e => e.startsWith('DEFERRED '))))
+      throw Error('Comparison incomplete beyond deferred groups');
+    record(scored.complete ? 'done' : 'deferred-window-complete', { complete: scored.complete, deferredGroups: scored.deferredGroups, score: scoreFile });
   } finally {
     // Never remove the staging bank while any round's app or subprocess cleanup is unproved.
     if (!unsafe) {
       if (registered) runGit(ROOT, 'worktree', 'remove', '--force', aRoot);
-      rmSync(staging, { recursive: true, force: true });
+      if (staging) rmSync(staging, { recursive: true, force: true });
     }
+    rmSync(writer, { recursive: true });
   }
 }
 
@@ -363,6 +452,7 @@ export async function main(args = process.argv.slice(2)) {
   const o = options(args);
   if (o.run && (!o['owner-away'] || !/^[a-f0-9]{40}$/.test(o['b-build'] ?? '') || !o.engine))
     throw Error('--run requires --owner-away, --b-build FULL_SHA and --engine VERSION');
+  if (o['only-groups'] && !o.out) throw Error('--only-groups requires the original --out');
   if (o.score) return scoreOutput(resolve(o.out ?? DEFAULT_OUT)).complete ? 0 : 1;
   const data = validationDataDir(o.data);
   const audit = readValidationData('validation-140-a.json', data);
@@ -370,9 +460,10 @@ export async function main(args = process.argv.slice(2)) {
   const classificationPath = o.classification ?? join(data, 'validation-140-classification.json');
   const classification = existsSync(classificationPath) ? JSON.parse(readFileSync(classificationPath)) : null;
   if (o.classification && !classification) throw Error('Classification file missing');
-  const plan = makePlan(audit, { out: o.out, engine: o.engine, classification });
+  const deferGroups = o['defer-groups']?.split(',').map(id => id.trim());
+  const plan = makePlan(audit, { out: o.out, engine: o.engine, classification, deferGroups });
   if (!o.run) { console.log(JSON.stringify(plan, null, 2)); return 0; }
-  await execute(plan); return 0;
+  await execute(plan, o['only-groups']?.split(',').map(id => id.trim())); return 0;
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try { process.exitCode = await main(); }

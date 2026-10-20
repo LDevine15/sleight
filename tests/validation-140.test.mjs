@@ -141,7 +141,7 @@ test('zsh plan and invalid invocation never create output or run a child benchma
       ['smoke-red', 'survey-p09', 'survey-p10', 'ao-moss-color', 'ao-cheapest-mug']);
     assert.deepEqual(plan.groups.find(g => g.id === 'race-safari').both.filter(t => t === 'demoid'), ['demoid']);
     assert.deepEqual(readdirSync(dir), []);
-    const bad = spawnSync('/bin/zsh', [command, '--run', '--out', dir], { encoding: 'utf8' });
+    const bad = spawnSync('/bin/zsh', [command, '--b-build'], { encoding: 'utf8' });
     assert.notEqual(bad.status, 0);
     assert.deepEqual(readdirSync(dir), []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -278,4 +278,124 @@ test('Chrome counts as running only while a Google Chrome process exists, and no
   const source = readFileSync(new URL('../bench/validation/validation-140.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /pkill|killall|osascript[^\n]*quit|terminate\(\)/);
   assert.match(source, /\.\.\.plan\.rounds\.filter\(r => r\.browser !== 'chrome'\), \.\.\.plan\.rounds\.filter\(r => r\.browser === 'chrome'\)/);
+});
+
+test('deferred plan keeps every group and round, names deferrals, and estimates only active rounds', async () => {
+  const { planGroups } = await import(moduleURL);
+  const groups = ['native', 'release-opus'].map(id => ({ id, rounds: 1, tasks: ['one'], both: ['one'],
+    a: [], seconds: 10, runner: 'native', model: 'haiku' }));
+  const plan = planGroups(groups, { deferGroups: ['release-opus'] });
+  assert.deepEqual(plan.deferredGroups, ['release-opus']);
+  assert.equal(plan.groups.length, 2);
+  assert.equal(plan.rounds.length, 4);
+  assert.equal(plan.groups.find(g => g.id === 'release-opus').deferred, true);
+  assert.ok(plan.rounds.filter(r => r.group === 'release-opus').every(r => r.deferred));
+  assert.equal(plan.measuredEstimateSeconds, 20);
+  assert.throws(() => planGroups(groups, { deferGroups: ['typo'] }), /Unknown group/);
+  assert.throws(() => planGroups(groups, { deferGroups: ['native', 'native'] }), /Duplicate group/);
+});
+
+test('plan CLI accepts explicit deferral and rejects empty, unknown, or conflicting selections', () => {
+  const args = [moduleURL.pathname, '--plan', '--data', fixtureData];
+  const got = spawnSync(process.execPath, [...args, '--defer-groups', 'release-opus'], { encoding: 'utf8' });
+  assert.equal(got.status, 0, got.stderr);
+  const plan = JSON.parse(got.stdout);
+  assert.deepEqual(plan.deferredGroups, ['release-opus']);
+  assert.equal(plan.rounds.filter(r => r.group === 'release-opus').length, 2);
+  for (const flags of [['--defer-groups', 'typo'], ['--defer-groups', ','], ['--defer-groups', 'native,'],
+    ['--only-groups', 'release-opus'], ['--defer-groups', 'native', '--only-groups', 'release-opus']]) {
+    const bad = spawnSync(process.execPath, [...args, ...flags], { encoding: 'utf8' });
+    assert.notEqual(bad.status, 0, flags.join(' '));
+  }
+});
+
+function completionFixture(dir, planGroups) {
+  const plan = { aBuild: 'a', bBuild: 'b', engine: 'e', harnessHash: 'h', out: dir, blockers: [],
+    ...planGroups(['native', 'release-opus'].map(id => ({ id, runner: 'native', model: 'haiku', tasks: ['one'],
+      both: ['one'], rounds: 1, a: [], seconds: 10 })), { deferGroups: ['release-opus'] }) };
+  writeFileSync(join(dir, 'plan.json'), JSON.stringify(plan));
+  writeFileSync(join(dir, 'full-check.receipt.json'), JSON.stringify({ code: 0, build: 'b' }));
+  const save = round => {
+    const build = round.side === 'A' ? 'a' : 'b', result = join(dir, `${round.id}.json`);
+    writeFileSync(result, JSON.stringify({ sleight: { commit: build }, model: 'haiku', effort: 'high',
+      engine: { version: 'e', changed: false }, results: [{ task: 'one', arm: 'sleight', seconds: 10,
+        passed: true, groupClean: true, models: ['haiku'] }], leftWindows: [], hygiene: { errors: [], trackingErrors: [] } }));
+    writeFileSync(join(dir, `${round.id}.receipt.json`), JSON.stringify({ safe: true, build, engine: 'e', harnessHash: 'h', result }));
+  };
+  return { plan, save };
+}
+
+test('run selection excludes deferred rounds and refuses accidental overwrite or nondeferred completion', async () => {
+  const { planGroups, selectRun } = await import(moduleURL);
+  const dir = mkdtempSync(join(tmpdir(), 'vp4-selection-'));
+  try {
+    const out = join(dir, 'new');
+    const plan = { ...planGroups(['native', 'release-opus'].map(id => ({ id, rounds: 1, tasks: ['one'], both: ['one'], seconds: 10 })),
+      { deferGroups: ['release-opus'] }), out };
+    assert.equal(selectRun(plan).rounds.length, 2);
+    assert.ok(selectRun(plan).rounds.every(r => r.group === 'native'));
+    assert.throws(() => selectRun(plan, ['release-opus']), /existing output/);
+    mkdirSync(out);
+    assert.throws(() => selectRun(plan), /Output already exists/);
+    const fixture = completionFixture(dir, planGroups);
+    fixture.plan.rounds.filter(r => r.group === 'native').forEach(fixture.save);
+    assert.throws(() => selectRun(fixture.plan, ['native']), /not deferred/);
+    assert.throws(() => selectRun(fixture.plan, ['typo']), /Unknown group/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('partial scoring names deferred groups and completion appends evidence against the original plan', async () => {
+  const { planGroups, selectRun, scoreOutput, saveScore } = await import(moduleURL);
+  const dir = mkdtempSync(join(tmpdir(), 'vp4-completion-'));
+  try {
+    const { plan, save } = completionFixture(dir, planGroups);
+    plan.rounds.filter(r => r.group === 'native').forEach(save);
+    const original = Object.fromEntries(readdirSync(dir).map(file => [file, readFileSync(join(dir, file), 'utf8')]));
+    const partial = scoreOutput(dir);
+    assert.equal(partial.complete, false);
+    assert.deepEqual(partial.deferredGroups, ['release-opus']);
+    assert.deepEqual(partial.incompleteGroups, ['release-opus']);
+    assert.equal(partial.groups.find(g => g.id === 'release-opus').complete, false);
+    assert.match(partial.groups.find(g => g.id === 'release-opus').errors.join(' '), /DEFERRED release-opus/);
+    const firstScore = saveScore(dir, partial);
+    for (const key of ['aBuild', 'bBuild', 'engine', 'harnessHash'])
+      assert.throws(() => selectRun({ ...plan, [key]: 'changed' }, ['release-opus']), /differs from.*plan/);
+    const completion = selectRun({ ...plan, rounds: [] }, ['release-opus']);
+    assert.equal(completion.completion, true);
+    assert.equal(completion.rounds.length, 2);
+    assert.ok(completion.rounds.every(r => r.group === 'release-opus'));
+    completion.rounds.forEach(save);
+    const complete = scoreOutput(dir);
+    assert.equal(complete.complete, true);
+    assert.deepEqual(complete.deferredGroups, []);
+    assert.deepEqual(complete.incompleteGroups, []);
+    assert.notEqual(saveScore(dir, complete), firstScore);
+    assert.deepEqual(JSON.parse(readFileSync(firstScore)), partial);
+    for (const [file, bytes] of Object.entries(original)) assert.equal(readFileSync(join(dir, file), 'utf8'), bytes);
+    assert.throws(() => selectRun(plan, ['release-opus']), /already complete/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('completion refuses unsafe existing evidence and partial round artifacts before selecting work', async () => {
+  const { planGroups, selectRun } = await import(moduleURL);
+  const dir = mkdtempSync(join(tmpdir(), 'vp4-refuse-'));
+  try {
+    const { plan, save } = completionFixture(dir, planGroups);
+    assert.throws(() => selectRun(plan, ['release-opus']), /nondeferred round is incomplete/);
+    plan.rounds.filter(r => r.group === 'native').forEach(save);
+    const check = join(dir, 'full-check.receipt.json');
+    writeFileSync(check, JSON.stringify({ code: 1, build: 'b' }));
+    assert.throws(() => selectRun(plan, ['release-opus']), /full check failed/);
+    writeFileSync(check, JSON.stringify({ code: 0, build: 'b' }));
+    const round = plan.rounds.find(r => r.group === 'release-opus');
+    writeFileSync(join(dir, `${round.id}.log`), 'unfinished');
+    assert.throws(() => selectRun(plan, ['release-opus']), /partial artifacts/);
+    rmSync(join(dir, `${round.id}.log`));
+    save(round);
+    const selected = selectRun(plan, ['release-opus']);
+    assert.equal(selected.rounds.length, 1);
+    const result = join(dir, `${round.id}.json`), raw = JSON.parse(readFileSync(result));
+    raw.results[0].groupClean = false; writeFileSync(result, JSON.stringify(raw));
+    assert.throws(() => selectRun(plan, ['release-opus']), /cleanup/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
