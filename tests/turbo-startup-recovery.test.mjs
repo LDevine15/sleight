@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { withMT } from './fixtures/mt-env.mjs';
 import { PassThrough } from 'node:stream';
 import { mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -169,7 +170,7 @@ function fork({ fail, exit, begin, exitFirst, disconnectOnCall } = {}) {
 const bridgeDependencies = forkWorker => ({ readConfig: () => ({}), acceptPackage: () => ({ current: () => true }),
   shareConsent: async () => undefined, tracePhase: () => {}, forkWorker });
 
-test('a worker lost on the first call returns the Helium failure pair without entering TU1 startup retry', async () => {
+for (const mode of [undefined, '0']) test(`a worker lost on the first call returns the Helium failure pair without entering TU1 startup retry, MT=${mode}`, async () => withMT(mode, async () => {
   const worker = fork({ disconnectOnCall: true });
   let starts = 0;
   const f = protocolFixture(async () => {
@@ -182,13 +183,15 @@ test('a worker lost on the first call returns the Helium failure pair without en
     name: 'browser_open', arguments: { url: 'https://fixture.invalid', browser: 'bbench' } } });
   await f.protocol.message({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: {
     name: 'browser_tabs', arguments: { do: 'list' } } });
-  assert.equal(f.text(0), 'Input outcome is unconfirmed. Read state before retrying; use the engine browser path if needed.');
+  assert.equal(f.text(0), mode === '0'
+    ? 'Input outcome is unconfirmed. Read state before retrying; use the engine browser path if needed.'
+    : 'Input outcome is unconfirmed. Read state before retrying.');
   assert.equal(f.messages[0].result.isError, false);
   assert.equal(f.text(1), 'Turbo is unavailable for this turn. Use the engine browser path.');
   assert.equal(f.messages[1].result.isError, true);
   assert.equal(starts, 1); assert.equal(worker.forks.length, 1); assert.deepEqual(f.failures, []);
   await f.protocol.close();
-});
+}));
 
 test('the bridge keeps the worker\'s stage and code, and an older three-field frame still works', async () => {
   const frame = { version: 3, status: 'unavailable', code: 'V3_RUNTIME_UNAVAILABLE', stage: 'connection-select', reason: 'STALE_INSTANCE' };

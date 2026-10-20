@@ -355,7 +355,10 @@ for (const mode of [undefined, '0']) test(`MT descriptions and scroll guidance, 
     assert.match(descriptions.browser_tabs, /keep one open for the user to look at after the turn/);
     assert.match(descriptions.browser_tabs, /hand one off when the user must act in it/);
   }
-  assert.match(descriptions.browser_act, /Never blindly resend an uncertain submit/);
+  assert.match(descriptions.browser_act, /Never blindly resend an uncertain submit\. click accepts modifier:cmd\/ctrl\./);
+  assert.doesNotMatch(descriptions.browser_act, /modifier:[^.]*shift|modifier:[^.]*alt/);
+  assert.match(descriptions.browser_fill, /For a multi-select, an array sets exactly those option texts; \[\] clears all\./);
+  assert.deepEqual(tools.find(tool => tool.name === 'browser_act').inputSchema.properties.steps.items.properties.modifier.enum, ['cmd', 'ctrl']);
   const { dispatcher, calls } = fixture();
   const result = await dispatcher.call({ name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'scroll', to: 'e1' }] } });
   assert.equal(result.isError, true); assert.equal(calls.length, 0);

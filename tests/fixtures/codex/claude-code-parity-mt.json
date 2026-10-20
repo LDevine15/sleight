@@ -97,7 +97,7 @@
      },
      {
       "name": "browser_act",
-      "description": "Run 1 to 12 steps on observed refs, returning outcome lines and a diff. A step that navigates, opens a tab, raises a dialog, loads or closes the page, or reaches the settle cap ends the batch (later steps read \"not reached\"), so put one such step last. Never blindly resend an uncertain submit. viewport with width and height resizes and reports the old size; with neither it restores that size. scroll with until:text finds a row in a long list. navigate with a link ref follows it.",
+      "description": "Run 1 to 12 steps on observed refs, returning outcome lines and a diff. A step that navigates, opens a tab, raises a dialog, loads or closes the page, or reaches the settle cap ends the batch (later steps read \"not reached\"), so put one such step last. Never blindly resend an uncertain submit. click accepts modifier:cmd/ctrl. viewport with width and height resizes and reports the old size; with neither it restores that size. scroll with until:text finds a row in a long list. navigate with a link ref follows it.",
       "inputSchema": {
        "type": "object",
        "properties": {
@@ -145,6 +145,13 @@
            "key": {
             "type": "string",
             "maxLength": 65536
+           },
+           "modifier": {
+            "type": "string",
+            "enum": [
+             "cmd",
+             "ctrl"
+            ]
            },
            "values": {
             "type": [
@@ -224,7 +231,7 @@
      },
      {
       "name": "browser_fill",
-      "description": "Fill up to 60 observed fields in one call: text or a number for a textbox; true or false for a checkbox, switch or the radio option to choose; a number for a slider; the option text for a select or combobox, even in a long or virtual list; all row names in the wanted order for a drag-reorderable list. submit is an observed ref, only when the user asked for that submit. Returns each field's status and the page diff.",
+      "description": "Fill up to 60 observed fields in one call: text or a number for a textbox; true or false for a checkbox, switch or the radio option to choose; a number for a slider; the option text for a select or combobox, even in a long or virtual list; all row names in the wanted order for a drag-reorderable list. For a multi-select, an array sets exactly those option texts; [] clears all. submit is an observed ref, only when the user asked for that submit. Returns each field's status and the page diff.",
       "inputSchema": {
        "type": "object",
        "properties": {

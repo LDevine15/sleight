@@ -36,6 +36,8 @@
 
 ### Native actions and engine browsers
 
+- Keep the engine API documentation when opening a file requires a second window acquisition, and preserve it
+  through internal reads, helper retries and acquisition refusals.
 - The first scroll that moves a sorted list points Claude to `pickFromList` with that list's number. The skill gives
   the list instruction beside form batching.
 - `app.pickFromList(<list>, "<row>")` accepts a list number or label and focuses the list itself. It checks the observed
@@ -67,6 +69,12 @@
 
 ### Turbo
 
+- Shorter turbo popup and refusal messages, with the same payment, confirmation and approval rules.
+- Browser tools explain field values, batch boundaries, viewport markers and tab handoffs.
+- Tab handles are shorter in browsers and Electron, with random generation and collision checks. `SLEIGHT_MT=0`
+  restores the earlier wording and handles, and benchmark workers forward the switch for an A/B.
+- Viewport guidance defines outside and partly offscreen markers. Fill and action fallbacks omit consent-refusal
+  routing hints, while capability failures keep engine-path advice.
 - Viewport, plain scroll, history and wait steps use bounded frame and request settling. Calls with `observe: none`
   skip an unrequested final snapshot. Waits report elapsed time and keep their duration after an uncertain submit.
 - When a popup closes during input, sleight can return its owned opener's snapshot and keeps the warning for an
