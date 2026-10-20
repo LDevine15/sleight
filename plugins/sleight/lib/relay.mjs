@@ -533,14 +533,21 @@ export function imageSize(data) {
 // The engine's screenshots are in pixels, 2× a window's points on a Retina display, and Claude
 // reads drag points off them. Returns [app name, size, window title] for the last image in an
 // engine result that names one app ("Window: "Game 1", App: Chess."), so drag can convert. The
-// title is undefined when the result names more than one window.
-export function screenshotOf(content) {
+// title is undefined when the result names more than one window. A headerless
+// image can instead use the one acquired handle identified by the caller.
+export function screenshotOf(content, target) {
   const image = content.filter(c => c?.type === 'image' && typeof c.data === 'string').at(-1);
   if (!image) return undefined;
   const headers = content.filter(c => c?.type === 'text').flatMap(c => [...(c.text ?? '').matchAll(/^Window: ("(?:[^"\\]|\\.)*"), App: ([^\n]+?)\.?$/gm)]);
   const apps = new Set(headers.map(m => m[2].trim()));
   const titles = new Set(headers.map(m => { try { return JSON.parse(m[1]); } catch { return undefined; } }));
   const size = imageSize(image.data);
+  // Standalone getScreenshot() replies have no Window header. Bind their one
+  // distinct image only to the acquired handle identified by this call.
+  if (!content.some(c => c?.type === 'text' && /^Window:/m.test(c.text ?? '')) && target?.app && target?.title && size &&
+      new Set(content.filter(c => c?.type === 'image').map(c => c.data)).size === 1) {
+    return [target.app, size, target.title];
+  }
   return apps.size === 1 && size ? [[...apps][0], size, titles.size === 1 ? [...titles][0] : undefined] : undefined;
 }
 
@@ -2310,8 +2317,8 @@ export function createRelay({
     });
   }
   // The last screenshot's size per app and window title, for drag to convert Claude's pixels.
-  function recordScreenshot(content, certifiedRead) {
-    const shot = screenshotOf(content);
+  function recordScreenshot(content, certifiedRead, target) {
+    const shot = screenshotOf(content, target);
     if (!shot) return;
     const entry = screenshots.get(shot[0].toLowerCase()) ?? { byTitle: {}, byWindow: {} };
     entry.latest = shot[1];
@@ -5302,19 +5309,23 @@ export function createRelay({
     if (msg.method === undefined && Array.isArray(msg.result?.content)) {
       chromeSettle = !automatic && !confirmedBrowser && jsCode !== undefined && !msg.error &&
         !msg.result?.isError && shouldSettleChromeScreenshot(jsCode, msg.result.content);
-      if (jsCode !== undefined) recordScreenshot(msg.result.content, certifiedRead);
+      const screenshotCode = codeOnly(jsCode ?? '');
+      const screenshotHandles = new Set([...screenshotCode.matchAll(/\b([A-Za-z_$][\w$]*)\.(?:getScreenshot|getAXStateAndScreenshot)\s*\(/g)].map(match => match[1]));
+      const screenshotHandle = screenshotHandles.size === 1 ? [...screenshotHandles][0] : undefined;
+      const screenshotReassigned = screenshotHandle && new RegExp(`(?:^|[^\\w$.])${screenshotHandle.replace(/\$/g, '\\$')}\\s*=(?!=)`).test(screenshotCode);
+      const screenshotTarget = screenshotHandle && !screenshotReassigned && handleBundles.get(screenshotHandle);
+      const screenshotAppId = msg.result._meta?.['codex/toolSurface']?.app?.appId;
+      const screenshotWindow = !automatic && !confirmedBrowser && !msg.result.isError && screenshotTarget &&
+        (!screenshotAppId || screenshotAppId === screenshotTarget.appId) ? screenshotTarget : undefined;
+      if (jsCode !== undefined) recordScreenshot(msg.result.content, certifiedRead, screenshotWindow);
       if (simFocusNote && !automatic && !confirmedBrowser && !msg.result.isError && typeof jsCode === 'string') {
         // A screenshot need not contain a Window header. Associate only the one acquired handle the
         // code screenshots and doesn't reassign, never the session's most recently observed app.
         // Batches count: both Firefox settings runs (2026-10-17) took their first screenshot with
         // emitImage or a later write, got no note, and sent drags in the shown image's frame.
-        const handles = new Set([...jsCode.matchAll(/\b([A-Za-z_$][\w$]*)\.(?:getScreenshot|getAXStateAndScreenshot)\s*\(/g)].map(m => m[1]));
-        const handle = handles.size === 1 ? [...handles][0] : undefined;
-        const reassigned = handle && new RegExp(`(?:^|[^\\w$.])${handle.replace(/\$/g, '\\$')}\\s*=(?!=)`).test(jsCode);
-        const target = handle && !reassigned && handleBundles.get(handle);
-        const appId = msg.result._meta?.['codex/toolSurface']?.app?.appId;
+        const target = screenshotWindow;
         // emitImage repeats the same picture; dropRepeatedImages removes the copy below.
-        const note = target && (!appId || appId === target.appId) &&
+        const note = target &&
           simulatorScreenshotNote(dropRepeatedImages(msg.result.content), target, imageSize);
         // Once per window and size: Claude Code's own line repeats the multiplier on every image.
         const key = note && JSON.stringify([target.appId ?? target.app, target.title, imageSize(msg.result.content.find(c => c?.type === 'image').data)]);
@@ -5367,10 +5378,6 @@ export function createRelay({
       }
       // Explicit reads stay whole unless Claude printed a derived value. Recovery still forces
       // full output; neither choice skips the action's UI comparison.
-      const screenshotHandles = new Set([...(jsCode ?? '').matchAll(/\b([A-Za-z_$][\w$]*)\.(?:getScreenshot|getAXStateAndScreenshot)\s*\(/g)].map(match => match[1]));
-      const screenshotTarget = screenshotHandles.size === 1 && handleBundles.get([...screenshotHandles][0]);
-      const screenshotAppId = msg.result._meta?.['codex/toolSurface']?.app?.appId;
-      const screenshotWindow = screenshotTarget && (!screenshotAppId || screenshotAppId === screenshotTarget.appId) ? screenshotTarget : undefined;
       const input = automatic ? undefined : dropRepeatedImages(dropRepeatedText(msg.result.content), prompt);
       if (input && compactReacquire && healthPlan?.acquisition && splitCalls.has(msg.id) && String(msg.id).startsWith('sleight-acquire-')) rawHeads.set(msg.id, input);
       const typingReceipt = !automatic && typingReceiptCall(jsCode) && typedTextReceipt({
