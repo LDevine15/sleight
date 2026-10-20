@@ -55,6 +55,13 @@ function browserIdentity(result, tasks, build) {
     taskSpecs: Object.fromEntries(tasks.map(task => [task, sha(canonical(raw.find(r => r.task.name === task).task))])) };
 }
 
+function safeRemeasureResult(result, runner, tasks, engine, model, build) {
+  // run.mjs only writes hygieneError when an inventory or cleanup boundary failed.
+  // A receipts-only finish with empty final arrays cannot repair that failure.
+  return safeResult(result, runner, tasks, engine, model, build) &&
+    (runner !== 'native' || !Object.hasOwn(json(result), 'hygieneError'));
+}
+
 export function verifyInputs(plan) {
   for (const [dir, entries] of Object.entries(plan.inputDirectories)) {
     ordinary(dir, true);
@@ -93,7 +100,7 @@ export function makeRemeasurePlan({ baseline, tasks, build, engine, out, reposit
   const selected = typeof tasks === 'string' ? tasks.split(',') : tasks;
   if (!selected?.length || selected.some(t => !/^[a-z0-9-]+:[a-z0-9-]+$/.test(t)) || new Set(selected).size !== selected.length)
     throw Error('Select unique named tasks as group:task');
-  const inputHashes = {}, inputDirectories = {}, groups = [];
+  const inputHashes = {}, inputDirectories = {}, groups = [], evidenceDirectories = new Set();
   for (const file of ['plan.json', 'harness.json', 'full-check.receipt.json', 'full-check.log', 'validate-140.log', 'run-identity.json']) {
     if (file === 'run-identity.json' && !existsSync(join(baseline, file))) continue;
     pinTree(join(baseline, file), inputHashes, inputDirectories);
@@ -129,13 +136,14 @@ export function makeRemeasurePlan({ baseline, tasks, build, engine, out, reposit
         sourceBuild = source.build; name = source.name;
         commit(repository, sourceBuild);
       }
-      if (!safeResult(result, group.runner, group.tasks, engine, group.model, sourceBuild)) throw Error(`${id}: A identity or cleanup incompatible`);
+      if (!safeRemeasureResult(result, group.runner, group.tasks, engine, group.model, sourceBuild)) throw Error(`${id}: A identity or cleanup incompatible`);
       if (group.runner === 'browser') {
         const identity = browserIdentity(result, group.tasks, sourceBuild);
         if (browserPin && canonical(browserPin) !== canonical(identity)) throw Error(`${id}: A prompt or upstream provenance differs across rounds`);
         browserPin = identity;
       }
       pinTree(result, inputHashes, inputDirectories);
+      evidenceDirectories.add(realpathSync(group.runner === 'browser' ? result : dirname(result)));
       sources.push({ n, name, result, build: sourceBuild });
       rows.push(...readRows(result, group.runner, wanted, 'A', name));
     }
@@ -144,6 +152,10 @@ export function makeRemeasurePlan({ baseline, tasks, build, engine, out, reposit
       throw Error(`${id}: A has no passing speed baseline`);
     groups.push({ id, runner: group.runner, browser: group.browser, model: group.model,
       tasks: group.tasks, selectedTasks: wanted, aRounds: sources, aRows: rows, ...(browserPin ? { browserPin } : {}) });
+  }
+  for (const dir of evidenceDirectories) {
+    if (below(dir, actualOut) || below(actualOut, dir))
+      throw Error('Use a separate fresh output bank outside every A evidence directory');
   }
   const rounds = groups.flatMap(g => [1, 2, 3].map(n => ({ id: `${g.id}-final-r${n}`, group: g.id,
     side: 'B', n, runner: g.runner, browser: g.browser, model: g.model, tasks: g.tasks })));
@@ -214,7 +226,7 @@ export async function runRemeasure(plan, { run = child, gate = waitGate, apps = 
           writeFileSync(result, readFileSync(source), { flag: 'wx', mode: 0o600 });
         } else result = source;
         safe = [0, 1].includes(exit.code) && !exit.signal && !!result &&
-          safeResult(result, round.runner, round.tasks, plan.engine, round.model, plan.build);
+          safeRemeasureResult(result, round.runner, round.tasks, plan.engine, round.model, plan.build);
         if (safe && round.runner === 'browser') {
           const expected = plan.groups.find(g => g.id === round.group).browserPin;
           if (canonical(browserIdentity(result, round.tasks, plan.build)) !== canonical(expected))

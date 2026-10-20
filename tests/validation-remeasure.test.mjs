@@ -19,7 +19,7 @@ function native(build, tasks, seconds = 34, passed = true) {
     leftWindows: [], hygiene: { errors: [], trackingErrors: [] } };
 }
 
-function fixture({ runner = 'native', count = 3, reuse = false, legacy = false } = {}) {
+function fixture({ runner = 'native', count = 3, reuse = false, legacy = false, external = false, nativeResult = native } = {}) {
   const bank = mkdtempSync(join(tmpdir(), 'remeasure-test-')), root = join(bank, 'repo'), baseline = join(bank, 'baseline'), out = join(bank, 'final');
   mkdirSync(root); mkdirSync(baseline);
   const git = (...args) => execFileSync('/usr/bin/git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -50,8 +50,9 @@ function fixture({ runner = 'native', count = 3, reuse = false, legacy = false }
     return dir;
   }
   for (const round of rounds) {
-    const result = runner === 'native' ? join(baseline, `${round.id}.json`) : join(baseline, round.id);
-    if (runner === 'native') put(result, native(aBuild, tasks)); else browser(result, aBuild);
+    const evidence = external ? join(bank, 'historical') : baseline;
+    const result = runner === 'native' ? join(evidence, `${round.id}.json`) : join(evidence, round.id);
+    if (runner === 'native') put(result, nativeResult(aBuild, tasks)); else browser(result, aBuild);
     if (reuse) group.reuse.push({ n: round.n, name: round.id, path: runner === 'native' ? result : join(result, 'results.json'),
       fileHash: sha(readFileSync(runner === 'native' ? result : join(result, 'results.json'))), build: aBuild, tasks });
     else put(join(baseline, `${round.id}.receipt.json`), { ...round, code: 0, signal: null, safe: true, result,
@@ -289,6 +290,57 @@ test('fresh output guard rejects baseline aliases and symlinked scorer inputs', 
     const file = join(f.baseline, 'native-A-r1.json'), bytes = readFileSync(file);
     put(join(f.bank, 'external.json'), bytes); rmSync(file); symlinkSync(join(f.bank, 'external.json'), file);
     assert.throws(() => f.make(), /ordinary/);
+  } finally { f.close(); }
+});
+
+// beginPassHygiene can throw with a receiptsOnly handle. Its successful finish has
+// empty final arrays, while run.mjs saves the failed initial inventory separately.
+function missingInitialInventory(raw, errors = ['Pass hygiene snapshot unavailable or incomplete']) {
+  raw.hygiene = { leftWindows: [], errors: [], trackingErrors: [], trackingErrorCount: 0 };
+  raw.leftWindows = [];
+  raw.hygieneError = { errors, count: 1 };
+  return raw;
+}
+
+for (const reuse of [false, true]) test(`native A ${reuse ? 'reused' : 'fresh'} receipts-only inventory failure refuses before writes`, () => {
+  const f = fixture({ reuse, nativeResult: (...args) => missingInitialInventory(native(...args)) });
+  try {
+    const before = snapshot(f.baseline), entries = readdirSync(f.bank, { recursive: true });
+    assert.throws(() => f.make(), /A identity or cleanup incompatible/);
+    assert.equal(existsSync(f.out), false);
+    assert.deepEqual(snapshot(f.baseline), before);
+    assert.deepEqual(readdirSync(f.bank, { recursive: true }), entries);
+  } finally { f.close(); }
+});
+
+for (const countOnly of [false, true]) test(`native B receipts-only ${countOnly ? 'count-only' : 'recorded'} inventory failure retains a stopped receipt`, async () => {
+  const f = fixture();
+  try {
+    const before = snapshot(f.baseline), host = fakeHost(f, { mutate: (_, file) => {
+      put(file, missingInitialInventory(JSON.parse(readFileSync(file)), countOnly ? [] : undefined));
+    } });
+    await assert.rejects(runRemeasure(f.make(), host), /unproved cleanup/);
+    assert.equal(host.calls.length, 1);
+    const receipt = JSON.parse(readFileSync(join(f.out, 'native-final-r1.receipt.json')));
+    assert.equal(receipt.safe, false); assert.equal(receipt.code, 0); assert.equal(receipt.signal, null);
+    assert.equal(JSON.parse(readFileSync(receipt.result)).hygieneError.count, 1);
+    assert.match(readFileSync(join(f.out, 'remeasure.log'), 'utf8'), /stopped/);
+    assert.equal(existsSync(join(f.out, 'comparison.json')), false);
+    assert.deepEqual(snapshot(f.baseline), before);
+  } finally { f.close(); }
+});
+
+for (const alias of [false, true]) test(`external reused browser evidence rejects ${alias ? 'aliased' : 'direct'} output overlap before writes`, () => {
+  const f = fixture({ runner: 'browser', reuse: true, external: true });
+  try {
+    const evidence = dirname(f.plan.groups[0].reuse[0].path);
+    let parent = evidence;
+    if (alias) { parent = join(f.bank, 'historical-alias'); symlinkSync(evidence, parent); }
+    const out = join(parent, 'final-remeasure'), before = snapshot(f.bank), entries = readdirSync(f.bank, { recursive: true });
+    assert.throws(() => f.make({ out }), /separate.*evidence/);
+    assert.equal(existsSync(out), false);
+    assert.deepEqual(snapshot(f.bank), before);
+    assert.deepEqual(readdirSync(f.bank, { recursive: true }), entries);
   } finally { f.close(); }
 });
 
