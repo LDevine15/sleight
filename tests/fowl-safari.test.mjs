@@ -237,9 +237,36 @@ test('missing or ambiguous new profile evidence stops before navigating or closi
       if (op === 'new-profile') f.windows(ambiguous ? [window('a'), window('b')] : [{ ...window('a'), toolbar: [] }]);
       return result;
     };
-    await assert.rejects(launchRealBrowser(f.plan, f.options), /PROFILE_WINDOW_UNPROVED/);
+    await assert.rejects(launchRealBrowser(f.plan, f.options), error => {
+      assert.match(error.message, /BENCH_SAFARI_PROFILE_WINDOW_UNPROVED/);
+      const seen = ambiguous ? [{ title: 'Start Page', tabs: 1, profile: true }, { title: 'Start Page', tabs: 1, profile: true }] :
+        [{ title: 'Start Page', tabs: 1, profile: false }];
+      assert.ok(error.message.includes(`${seen.length} new windows ${JSON.stringify(seen)}`));
+      if (!ambiguous) assert.ok(error.message.endsWith(', 0 before'));
+      return true;
+    });
     assert.ok(!f.calls.some(([op]) => ['navigate', 'close-window'].includes(op)));
     assert.ok(f.calls.some(([op]) => op === 'quit'));
+  }
+});
+
+test('a refused new-profile frame stops before navigation and collects the owned browser and helper', { skip: launchSkip }, async t => {
+  for (const reason of ['BENCH_SAFARI_FRAME_WINDOW_UNPROVED', 'BENCH_SAFARI_FRAME_REFUSED: [-25205]',
+    'BENCH_SAFARI_FRAME_UNPROVED: [width: 600] for 1280 x 900', 'BENCH_SAFARI_DISPLAY_TOO_SMALL']) {
+    const f = fixture(t), request = f.bridge.request;
+    f.bridge.request = async (op, input) => {
+      const result = await request(op, input);
+      if (op === 'new-profile') throw Error(reason);
+      return result;
+    };
+    await assert.rejects(launchRealBrowser(f.plan, f.options), error => {
+      assert.equal(error.message, reason);
+      assert.equal(error.cleanupConfirmed, true);
+      return true;
+    });
+    assert.ok(!f.calls.some(([op]) => ['navigate', 'close-window'].includes(op)));
+    assert.deepEqual(f.calls.slice(-2).map(([op]) => op), ['quit', 'bridge-closed']);
+    assert.equal(existsSync(dirname(f.plan.profileRoot)), false);
   }
 });
 
@@ -371,6 +398,24 @@ test('a failed fresh launch still quits the launched Safari, and a forced termin
   await browser.stop();
   assert.equal(browser.collections.at(-1).forceTerminated, true);
   assert.equal(f.calls.filter(([op]) => op === 'quit').length, 2);
+});
+
+test('a post-quit receipt failure still collects the helper before reporting the error', { skip: launchSkip }, async t => {
+  const f = fixture(t), browser = await launchRealBrowser(f.plan, f.options), request = f.bridge.request;
+  f.bridge.request = async (op, input) => {
+    const result = await request(op, input);
+    if (op === 'quit') Object.defineProperty(result, 'menuCleanup', { get() { throw Error('receipt unavailable'); } });
+    return result;
+  };
+  await assert.rejects(browser.stop(), error => {
+    assert.equal(error.message, 'BENCH_BROWSER_CLEANUP_UNPROVED');
+    assert.equal(error.cause.message, 'receipt unavailable');
+    return true;
+  });
+  assert.deepEqual(f.calls.slice(-2).map(([op]) => op), ['quit', 'bridge-closed']);
+  assert.equal(existsSync(dirname(f.plan.profileRoot)), false);
+  assert.equal((await browser.stop()).browserClosed, true);
+  assert.equal(f.calls.filter(([op]) => op === 'quit').length, 1);
 });
 
 test('Safari stop is idempotent after proven collection', { skip: launchSkip }, async t => {
@@ -524,26 +569,48 @@ test('native Safari helper compiles and rejects unowned requests before any app 
     probe: { AXTitle: '[redacted]', AXDescription: profile, AXURL: '[redacted]', AXValue: '[redacted]' },
     wrongKey: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED', missingKey: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED',
     missingProfile: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED', verifiedKey: true,
-    menuEscapes: 2, menuEscapePosted: true, stuckEscapes: 2, stuckMenu: 'BENCH_SAFARI_MENU_STUCK',
+    menuEscapes: 1, menuEscapePosted: true, stuckEscapes: 1, stuckMenu: 'BENCH_SAFARI_MENU_STUCK',
     unsafeEscapes: 0, unsafeMenu: 'BENCH_SAFARI_KEY_WINDOW_UNPROVED',
     identifierProfile: true, identifierOther: false, identifierPrefix: true, identifierDuplicates: true, conflictingProfile: true,
     searchFieldReadable: true, menuChildrenUnreadable: false, menuWithoutVisible: true, menuVisibleUnknown: false,
     preferredElement: 'profile', ambiguousProfile: true, visibleMenuClear: false, selectedMenuClear: false,
-    clearMenuEscapes: 1,
+    clearMenuEscapes: 0,
     unknownSelectedMenuClear: false, unknownRoleMenuClear: false, bridgedSelectedMenuClear: false,
     fixtureStartPage: true, fixtureNonStartPage: 'BENCH_SAFARI_START_PAGE_UNPROVED',
     fixtureSheet: 'BENCH_SAFARI_START_PAGE_UNPROVED',
   });
+  const quitSafety = spawnSync(executable, ['--self-test-quit-safety'], { encoding: 'utf8', timeout: 1000 });
+  assert.equal(quitSafety.status, 0, quitSafety.stderr);
+  assert.deepEqual(JSON.parse(quitSafety.stdout), { passed: true });
+  const setup = spawnSync(executable, ['--self-test-window-setup'], { encoding: 'utf8', timeout: 1000 });
+  assert.equal(setup.status, 0, setup.stderr);
+  assert.deepEqual(JSON.parse(setup.stdout), { passed: true });
+  const frame = spawnSync(executable, [], { encoding: 'utf8', timeout: 1000,
+    input: '{"op":"frame"}\n{"op":"frame","window":"unowned"}\n' });
+  assert.equal(frame.status, 0, frame.stderr);
+  assert.deepEqual(frame.stdout.trim().split('\n').map(line => JSON.parse(line).error),
+    ['BENCH_SAFARI_WINDOW_UNPROVED', 'BENCH_SAFARI_IDENTITY_UNPROVED:nil']);
 });
 
 test('an Escape post without verified menu dismissal cannot navigate or close windows', { skip: launchSkip }, async t => {
   for (const receipt of [{ menuEscapePosted: true }, { menuEscapePosted: true, menuCleared: false, menuEscapes: 2 },
-    { menuEscapePosted: true, menuCleared: true, menuEscapes: 3 }]) {
+    { menuEscapePosted: true, menuCleared: true, menuEscapes: 2 }, { menuEscapePosted: true, menuCleared: true, menuEscapes: 3 }]) {
     const f = fixture(t), request = f.bridge.request;
     f.bridge.request = async (op, input) => { const result = await request(op, input); return op === 'new-profile' ? receipt : result; };
     await assert.rejects(launchRealBrowser(f.plan, f.options), /MENU_ESCAPE_UNPROVED/);
     assert.ok(!f.calls.some(([op]) => ['navigate', 'close-window'].includes(op)));
   }
+});
+
+test('a profile menu already confirmed clear needs no Escape before navigation', { skip: launchSkip }, async t => {
+  const f = fixture(t), request = f.bridge.request;
+  f.bridge.request = async (op, input) => {
+    const result = await request(op, input);
+    return op === 'new-profile' ? { menuEscapePosted: false, menuCleared: true, menuEscapes: 0 } : result;
+  };
+  const browser = await launchRealBrowser(f.plan, f.options);
+  assert.ok(f.calls.some(([op]) => op === 'navigate'));
+  await browser.stop();
 });
 
 test('Safari CLI dry plans enumerate pinned tasks for all five arms without creating a browser or output', t => {
@@ -605,4 +672,15 @@ test('Safari profile proof refuses conflicting labels and malformed duplicate id
   for (const [identifier, title] of [['TabGroupPickerButton?Profile=Personal', profile], ['TabGroupPickerButton?Profile=sleight%20benchmark', 'Personal']]) {
     assert.equal(safariProfileEvidence({ toolbar: [{ id: 'profile', role: 'AXButton', identifier, title }] }), null);
   }
+});
+
+
+test('Safari menu Escape checks the environment, owner idle time and key profile before input', () => {
+  const source = readFileSync(new URL('../bench/fowl/safari-helper.swift', import.meta.url), 'utf8');
+  const release = source.slice(source.indexOf('func releaseProfileMenus('), source.indexOf('func newProfile('));
+  for (const guard of ['keyProfileWindow()', 'SLEIGHT_STUCK_ESCAPE', 'requireProfileEscape(', '.combinedSessionState', 'UInt32.max']) {
+    assert.ok(release.indexOf(guard) >= 0 && release.indexOf(guard) < release.indexOf('try key(53,'), guard);
+  }
+  const key = source.slice(source.indexOf('func key('), source.indexOf('func keyProfileWindow('));
+  assert.ok(key.indexOf('try verifyKeyWindow(') < key.indexOf('down.postToPid('));
 });

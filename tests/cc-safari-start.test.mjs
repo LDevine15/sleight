@@ -239,7 +239,7 @@ test('Safari fixture plans admit only held-out fixture bases and retain the orig
 
 for (const [stuckAt, stage, reason, windowCount, tabCount] of [
   ['close-launch-window', 'close-launch-window', 'BENCH_SAFARI_LAUNCH_WINDOW_UNCLOSED', 1, null],
-  ['new-profile', 'new-profile', 'BENCH_SAFARI_PROFILE_WINDOW_UNPROVED', 0, null],
+  ['new-profile', 'new-profile', 'BENCH_SAFARI_PROFILE_WINDOW_UNPROVED: 0 new windows [], 0 before', 0, null],
   [undefined, 'await-fixture', 'BENCH_SAFARI_MARKER_UNPROVED', 1, 1],
 ]) {
   test(`Safari ${stage} timeout preserves its last observation in the run receipt`, async t => {

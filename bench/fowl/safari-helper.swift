@@ -182,6 +182,60 @@ func probeSnapshot(_ application: AXUIElement) throws -> [String: Any] {
 }
 
 var owned: NSRunningApplication?, birth: Date?, launchPending = false, launchRequested = false, profileRequested = false
+var frameWindow: AXUIElement?
+
+func standardFrame(visible: CGRect) throws -> CGRect {
+    guard [visible.minX, visible.minY, visible.width, visible.height].allSatisfy({ $0.isFinite }),
+          visible.width >= 1280, visible.height >= 900 else { throw refuse("BENCH_SAFARI_DISPLAY_TOO_SMALL") }
+    return CGRect(x: visible.minX, y: visible.minY, width: 1280, height: 900)
+}
+func frameMatches(_ actual: [String: Double], _ wanted: CGRect) -> Bool {
+    let expected = ["x": Double(wanted.minX), "y": Double(wanted.minY), "width": Double(wanted.width), "height": Double(wanted.height)]
+    return expected.allSatisfy { key, value in actual[key].map { $0.isFinite && abs($0 - value) <= 0.5 } ?? false }
+}
+func setStandardFrame(_ id: String) throws -> [String: Any] {
+    let app = try ownedAX(), windows = elements(app, "AXWindows")
+    // Only the sole window created by new-profile after an empty census may be sized without profile evidence.
+    guard let window = frameWindow, identifier(window) == id, windows.count == 1,
+          CFEqual(windows[0], window), string(window, "AXSubrole") == "AXStandardWindow",
+          sheets(window).isEmpty else { throw refuse("BENCH_SAFARI_FRAME_WINDOW_UNPROVED") }
+    guard let primary = NSScreen.screens.first else { throw refuse("BENCH_SAFARI_DISPLAY_UNOBSERVED") }
+    let visible = primary.visibleFrame
+    let wanted = try standardFrame(visible: CGRect(x: visible.minX, y: primary.frame.maxY - visible.maxY,
+                                                  width: visible.width, height: visible.height))
+    var point = wanted.origin, size = wanted.size
+    // Position first: macOS clamps a size request to the space right of the window's current origin, so a remembered
+    // 600 pt window at x 912 couldn't grow to 1280 before it moved (05:28Z take). Size is set again once it has moved.
+    // A repeated set can report failure while the window is already there, so the read-back below is the proof; only a
+    // request that no set accepted at all is refused here.
+    guard let position = AXValueCreate(.cgPoint, &point), let dimensions = AXValueCreate(.cgSize, &size) else { throw refuse("BENCH_SAFARI_FRAME_REFUSED") }
+    let results = [AXUIElementSetAttributeValue(window, "AXPosition" as CFString, position),
+                   AXUIElementSetAttributeValue(window, "AXSize" as CFString, dimensions),
+                   AXUIElementSetAttributeValue(window, "AXPosition" as CFString, position),
+                   AXUIElementSetAttributeValue(window, "AXSize" as CFString, dimensions)]
+    guard results.contains(.success) else { throw refuse("BENCH_SAFARI_FRAME_REFUSED: \(results.map { $0.rawValue })") }
+    let deadline = Date().addingTimeInterval(1)
+    while true {
+        let actual = windowShape(window, focused: nil)["frame"] as? [String: Double] ?? [:]
+        if frameMatches(actual, wanted) { return ["window": id, "frame": actual] }
+        guard Date() < deadline else { throw refuse("BENCH_SAFARI_FRAME_UNPROVED: \(actual) for \(wanted)") }
+        pump(0.025)
+    }
+}
+func prepareProfileWindow(created: () throws -> String?, frame: (String) throws -> Void,
+                          ready: () -> Bool, now: () -> Double = { ProcessInfo.processInfo.systemUptime },
+                          pause: (Double) -> Void = pump) throws {
+    let deadline = now() + 2
+    var id: String?
+    repeat {
+        id = try created()
+        if id != nil { break }
+        guard now() < deadline else { throw refuse("BENCH_SAFARI_FRAME_WINDOW_UNPROVED") }
+        pause(0.025)
+    } while true
+    try frame(id!)
+    while !ready() && now() < deadline { pause(0.025) }
+}
 // Set once before launch by the run's validated plan. A navigation request cannot pick a different port or fixture.
 var fixtureURL: String?
 func validatedFixtureURL(_ value: String?) throws -> String {
@@ -295,17 +349,42 @@ func menusClearSoon(_ seconds: Double) throws -> Bool {
     return try menusClear()
 }
 func cleanMenus(escape: () throws -> Void, clear: () throws -> Bool) throws -> [String: Any] {
-    for count in 1...2 {
-        try escape()
-        if try clear() { return ["menuEscapePosted": true, "menuEscapes": count, "menuCleared": true] }
+    for _ in 0..<2 {
+        if try clear() { return ["menuEscapePosted": false, "menuEscapes": 0, "menuCleared": true] }
     }
+    try escape()
+    if try clear() { return ["menuEscapePosted": true, "menuEscapes": 1, "menuCleared": true] }
     throw refuse("BENCH_SAFARI_MENU_STUCK")
+}
+var menuEscapeUsed = false
+func profileMenuEpisode(escape: () throws -> Void, clear: () throws -> Bool) throws -> [String: Any] {
+    let receipt = try cleanMenus(escape: {
+        guard !menuEscapeUsed else { throw refuse("BENCH_SAFARI_MENU_ESCAPE_REFUSED") }
+        menuEscapeUsed = true
+        try escape()
+    }, clear: clear)
+    menuEscapeUsed = false // Only observed clearance ends a stuck episode.
+    return receipt
+}
+func requireProfileEscape(enabled: Bool, noDialogs: Bool, idleSeconds: Double) throws {
+    guard enabled, noDialogs else { throw refuse("BENCH_SAFARI_MENU_ESCAPE_REFUSED") }
+    guard idleSeconds >= 1 else { throw refuse("BENCH_SAFARI_OWNER_ACTIVE") }
+}
+func releaseProfileMenus() throws -> [String: Any] {
+    try profileMenuEpisode(escape: {
+        let window = try keyProfileWindow()
+        try requireProfileEscape(enabled: ProcessInfo.processInfo.environment["SLEIGHT_STUCK_ESCAPE"] != "0",
+            noDialogs: sheets(window).isEmpty && !chrome(window).contains(where: { ["AXDialog", "AXSystemDialog"].contains(string($0, "AXSubrole")) }),
+            idleSeconds: CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: UInt32.max)!))
+        try key(53, window: window); pump(0.1)
+    }, clear: { try menusClearSoon(1) })
 }
 func newProfile() throws -> [String: Any] {
     profileRequested = true
     var failure: Error?
     do {
         let app = try ownedAX()
+        guard elements(app, "AXWindows").isEmpty else { throw refuse("BENCH_SAFARI_EXTRA_WINDOWS") }
         guard let menuBarValue = attribute(app, "AXMenuBar"), CFGetTypeID(menuBarValue) == AXUIElementGetTypeID() else { throw refuse("BENCH_SAFARI_MENU_UNAVAILABLE") }
         let menuBar = menuBarValue as! AXUIElement
         let files = elements(menuBar).filter { string($0, "AXTitle") == "File" }
@@ -326,17 +405,24 @@ func newProfile() throws -> [String: Any] {
         }
         guard let item = try target() else { throw refuse("BENCH_SAFARI_PROFILE_MENU_UNAVAILABLE") }
         try press(item)
+        try prepareProfileWindow(created: {
+            let windows = elements(try ownedAX(), "AXWindows")
+            guard windows.count <= 1 else { throw refuse("BENCH_SAFARI_EXTRA_WINDOWS") }
+            guard let window = windows.first else { return nil }
+            guard string(window, "AXSubrole") == "AXStandardWindow", sheets(window).isEmpty else { throw refuse("BENCH_SAFARI_FRAME_WINDOW_UNPROVED") }
+            frameWindow = window
+            return identifier(window)
+        }, frame: { id in _ = try command(["op": "frame", "window": id]) }, ready: { (try? keyProfileWindow()) != nil })
     } catch { failure = error }
     // Menu tracking must be dismissed, but keys must never reach an owner window.
-    let deadline = Date().addingTimeInterval(2)
-    while (try? keyProfileWindow()) == nil && Date() < deadline { pump(0.025) }
-    let cleanup = try cleanMenus(escape: { try key(53, window: keyProfileWindow()); pump(0.1) }, clear: { try menusClearSoon(1) })
+    let cleanup = try releaseProfileMenus()
     if let error = failure { throw error }
     return cleanup
 }
 func launch() throws -> [String: Any] {
     guard owned == nil, !launchPending,
           !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == "com.apple.Safari" }) else { throw refuse("BENCH_SAFARI_ALREADY_RUNNING") }
+    menuEscapeUsed = false
     launchPending = true; launchRequested = true
     let started = Date(), configuration = NSWorkspace.OpenConfiguration()
     configuration.activates = false
@@ -389,33 +475,46 @@ func confirmUnsubmittedFormClose(_ window: AXUIElement) throws -> Bool {
     }
     throw refuse("BENCH_SAFARI_CLOSE_UNPROVED")
 }
+// The same collection path serves quit and its offline safety fixture. Menu
+// cleanup is evidence; only process identity can authorize termination.
+func collectSafari(_ seconds: Double, release: () throws -> [String: Any], validate: () throws -> Void,
+    terminated: () -> Bool, terminate: () -> Bool, forceTerminate: () -> Bool,
+    confirm: () -> Bool, pump: (Double) -> Void, now: () -> Date = Date.init) throws -> [String: Any] {
+    try validate()
+    var menuCleanup: [String: Any]
+    do { menuCleanup = try release() }
+    catch { menuCleanup = ["menuCleared": false, "error": (error as? Refusal)?.message ?? String(describing: error), "menuEscapeUsed": menuEscapeUsed] }
+    try validate()
+    let accepted = terminate()
+    var confirmed = false, forced = false
+    let deadline = now().addingTimeInterval(seconds)
+    while accepted && !terminated() && now() < deadline {
+        if !confirmed && confirm() { confirmed = true }
+        pump(0.025)
+    }
+    if !terminated() {
+        // Recheck the recorded pid, executable and launch date before the backstop.
+        try validate()
+        forced = forceTerminate()
+        let hard = now().addingTimeInterval(5)
+        while !terminated() && now() < hard { pump(0.025) }
+    }
+    guard terminated() else { throw refuse("BENCH_BROWSER_CLEANUP_UNPROVED") }
+    return ["browserClosed": true, "unsubmittedFormQuitConfirmed": confirmed, "forceTerminated": forced, "menuCleanup": menuCleanup]
+}
 func quit(_ seconds: Double) throws -> [String: Any] {
     guard !launchPending else { throw refuse("BENCH_SAFARI_LAUNCH_PENDING") }
     guard owned != nil || !launchRequested else { throw refuse("BENCH_SAFARI_LAUNCH_UNRECEIPTED") }
-    var confirmed = false, forced = false
-    if let app = owned {
-        if !app.isTerminated {
-            _ = try ownedApplication()
-            guard app.terminate() else { throw refuse("BENCH_SAFARI_QUIT_REFUSED") }
-            let deadline = Date().addingTimeInterval(seconds)
-            while !app.isTerminated && Date() < deadline {
-                if !confirmed && confirmUnsubmittedFormQuit() { confirmed = true }
-                pump(0.025)
-            }
-            if !app.isTerminated {
-                // Safari ignored the quit (a sheet on a window can hold it). Only the process this helper launched, with the
-                // recorded launch date, is force-terminated, so a failed round never leaves its Safari running.
-                _ = try ownedApplication()
-                forced = app.forceTerminate()
-                let hard = Date().addingTimeInterval(5)
-                while !app.isTerminated && Date() < hard { pump(0.025) }
-            }
-            guard app.isTerminated else { throw refuse("BENCH_BROWSER_CLEANUP_UNPROVED") }
-        }
+    var receipt: [String: Any] = ["browserClosed": true, "unsubmittedFormQuitConfirmed": false, "forceTerminated": false, "menuCleanup": [:] as [String: Any]]
+    if let app = owned, !app.isTerminated {
+        receipt = try collectSafari(seconds, release: releaseProfileMenus, validate: { _ = try ownedApplication() },
+            terminated: { app.isTerminated }, terminate: { app.terminate() }, forceTerminate: { app.forceTerminate() },
+            confirm: confirmUnsubmittedFormQuit, pump: pump)
     }
-    // The process is gone: the next launch starts from a clean slate (one Safari per task), never reusing its windows.
-    if owned != nil { owned = nil; birth = nil; profileRequested = false; launchRequested = false; references.removeAll() }
-    return ["browserClosed": true, "unsubmittedFormQuitConfirmed": confirmed, "forceTerminated": forced]
+    // The process is gone. The next launch starts a new menu episode.
+    if owned != nil { owned = nil; birth = nil; profileRequested = false; launchRequested = false; frameWindow = nil; references.removeAll() }
+    menuEscapeUsed = false
+    return receipt
 }
 func command(_ input: [String: Any]) throws -> [String: Any] {
     switch input["op"] as? String {
@@ -426,6 +525,9 @@ func command(_ input: [String: Any]) throws -> [String: Any] {
     case "launch": return try launch()
     case "snapshot": return try snapshot(ownedAX())
     case "new-profile": return try newProfile()
+    case "frame":
+        guard let id = input["window"] as? String else { throw refuse("BENCH_SAFARI_WINDOW_UNPROVED") }
+        return try setStandardFrame(id)
     case "close-window":
         guard let id = input["window"] as? String else { throw refuse("BENCH_SAFARI_WINDOW_UNPROVED") }
         let window = try windowById(id)
@@ -460,6 +562,46 @@ func emit(_ value: [String: Any]) throws {
     print(String(decoding: data, as: UTF8.self)); fflush(stdout)
 }
 
+if CommandLine.arguments.dropFirst() == ["--self-test-window-setup"] {
+    // Pure fixtures. No application lookup, window creation, AX calls or event posting.
+    for visible in [CGRect(x: 0, y: 33, width: 1512, height: 949), CGRect(x: -1512, y: 233, width: 1440, height: 900)] {
+        let frame = try standardFrame(visible: visible)
+        guard frame == CGRect(x: visible.minX, y: visible.minY, width: 1280, height: 900), visible.contains(frame) else { throw refuse("SELF_TEST_FRAME") }
+        let good = ["x": Double(frame.minX), "y": Double(frame.minY), "width": 1280.0, "height": 900.0]
+        guard frameMatches(good, frame) else { throw refuse("SELF_TEST_FRAME_READBACK") }
+        for bad in [["width": 600.0], ["height": 880.0], ["x": Double.nan], ["y": Double(frame.minY + 1)]] {
+            guard !frameMatches(good.merging(bad) { _, new in new }, frame) else { throw refuse("SELF_TEST_FRAME_ACCEPTED") }
+        }
+        guard !frameMatches([:], frame) else { throw refuse("SELF_TEST_MISSING_FRAME_ACCEPTED") }
+    }
+    for visible in [CGRect(x: 0, y: 0, width: 1279, height: 900), CGRect(x: 0, y: 33, width: 1512, height: 899),
+                    CGRect(x: Double.nan, y: 33, width: 1512, height: 949)] {
+        do { _ = try standardFrame(visible: visible); throw refuse("SELF_TEST_SMALL_DISPLAY_ACCEPTED") }
+        catch let error as Refusal { guard error.message == "BENCH_SAFARI_DISPLAY_TOO_SMALL" else { throw error } }
+    }
+    var time = 0.0, probes = 0, framed = false, events: [String] = []
+    try prepareProfileWindow(created: {
+        probes += 1; events.append("created")
+        return probes == 1 ? nil : "new-window"
+    }, frame: { id in
+        guard id == "new-window" else { throw refuse("SELF_TEST_WINDOW") }
+        framed = true; events.append("frame")
+    }, ready: { events.append("profile"); return framed }, now: { time }, pause: { time += $0 })
+    guard events == ["created", "created", "frame", "profile"], time == 0.025 else { throw refuse("SELF_TEST_ORDER") }
+    events = []
+    do {
+        try prepareProfileWindow(created: { "new-window" }, frame: { _ in throw refuse("frame-refused") },
+            ready: { events.append("profile"); return true })
+        throw refuse("SELF_TEST_FRAME_FAILURE_ACCEPTED")
+    } catch let error as Refusal { guard error.message == "frame-refused", events.isEmpty else { throw error } }
+    time = 0
+    do {
+        try prepareProfileWindow(created: { nil }, frame: { _ in events.append("frame") },
+            ready: { events.append("profile"); return true }, now: { time }, pause: { time += $0 })
+        throw refuse("SELF_TEST_MISSING_WINDOW_ACCEPTED")
+    } catch let error as Refusal { guard error.message == "BENCH_SAFARI_FRAME_WINDOW_UNPROVED", events.isEmpty else { throw error } }
+    try emit(["passed": true]); exit(0)
+}
 if CommandLine.arguments.dropFirst() == ["--self-test-identity-retry"] {
     // The retry policy uses synthetic reads and waits, without app lookup or AX access.
     var result: [String: Any] = [:]
@@ -475,6 +617,45 @@ if CommandLine.arguments.dropFirst() == ["--self-test-identity-retry"] {
         } catch { result[name] = ["attempts": attempts, "waits": waits, "error": (error as? Refusal)?.message ?? "UNKNOWN"] }
     }
     try emit(result); exit(0)
+}
+if CommandLine.arguments.dropFirst() == ["--self-test-quit-safety"] {
+    // No application lookup, AX read, input or process signal in these fixtures.
+    for accepted in [true, false] {
+        var calls: [String] = [], stopped = false
+        let receipt = try collectSafari(0, release: { calls.append("menu"); throw refuse("BENCH_SAFARI_MENU_STUCK") },
+            validate: { calls.append("identity") }, terminated: { stopped }, terminate: { calls.append("terminate"); return accepted },
+            forceTerminate: { calls.append("force"); stopped = true; return true }, confirm: { false }, pump: { _ in })
+        guard calls == ["identity", "menu", "identity", "terminate", "identity", "force"],
+              receipt["forceTerminated"] as? Bool == true,
+              (receipt["menuCleanup"] as? [String: Any])?["error"] as? String == "BENCH_SAFARI_MENU_STUCK" else {
+            throw refuse("TEST_MENU_FAILURE_SKIPPED_COLLECTION")
+        }
+    }
+    var validations = 0, forced = false, identityRefused = false
+    do {
+        _ = try collectSafari(0, release: { [:] }, validate: {
+            validations += 1
+            if validations == 3 { throw refuse("CHANGED_PID") }
+        }, terminated: { false }, terminate: { true }, forceTerminate: { forced = true; return true }, confirm: { false }, pump: { _ in })
+    } catch { identityRefused = (error as? Refusal)?.message == "CHANGED_PID" }
+    guard identityRefused, !forced else { throw refuse("TEST_FORCE_IDENTITY_SKIPPED") }
+    menuEscapeUsed = false
+    var escapes = 0
+    do { _ = try profileMenuEpisode(escape: { escapes += 1 }, clear: { false }) } catch {}
+    do { _ = try profileMenuEpisode(escape: { escapes += 1 }, clear: { false }) } catch {}
+    guard escapes == 1, menuEscapeUsed else { throw refuse("TEST_FAILED_EPISODE_REPEATED_ESCAPE") }
+    _ = try profileMenuEpisode(escape: { escapes += 1 }, clear: { true })
+    guard escapes == 1, !menuEscapeUsed else { throw refuse("TEST_CLEAR_MENU_USED_ESCAPE") }
+    var stuck = true
+    _ = try profileMenuEpisode(escape: { escapes += 1; stuck = false }, clear: { !stuck })
+    guard escapes == 2, !menuEscapeUsed else { throw refuse("TEST_NEXT_EPISODE_NOT_RESET") }
+    for index in 0..<3 {
+        var refused = false
+        do { try requireProfileEscape(enabled: index != 0, noDialogs: index != 1, idleSeconds: index == 2 ? 0 : 2) }
+        catch { refused = true }
+        guard refused else { throw refuse("TEST_UNSAFE_ESCAPE_ADMITTED") }
+    }
+    try emit(["passed": true]); exit(0)
 }
 if CommandLine.arguments.dropFirst() == ["--self-test-owner-safety"] {
     // Pure policy fixtures: no application lookup, AX messaging or event posting.
@@ -499,7 +680,7 @@ if CommandLine.arguments.dropFirst() == ["--self-test-owner-safety"] {
     result["fixtureSheet"] = refusal { try verifyNavigationStart(startPage: true, sheetCount: 1) }
     var escapes = 0
     let cleaned = try cleanMenus(escape: { escapes += 1 }, clear: {
-        menuStateClear(escapes == 1 ? [["role": "AXMenuBarItem", "selected": true]] : [["role": "AXMenu", "visible": false]])
+        menuStateClear(escapes == 0 ? [["role": "AXMenuBarItem", "selected": true]] : [["role": "AXMenu", "visible": false]])
     })
     result["menuEscapes"] = escapes; result["menuEscapePosted"] = cleaned["menuEscapePosted"]
     escapes = 0
@@ -508,7 +689,7 @@ if CommandLine.arguments.dropFirst() == ["--self-test-owner-safety"] {
     }
     result["stuckEscapes"] = escapes; escapes = 0
     result["unsafeMenu"] = refusal {
-        _ = try cleanMenus(escape: { try verifyKeyWindow(hasProfile: false, matches: true); escapes += 1 }, clear: { true })
+        _ = try cleanMenus(escape: { try verifyKeyWindow(hasProfile: false, matches: true); escapes += 1 }, clear: { false })
     }
     result["unsafeEscapes"] = escapes
     result["identifierProfile"] = identifierProfile("TabGroupPickerButton?Profile=sleight%20benchmark&Icon=hammer.fill") == profileName

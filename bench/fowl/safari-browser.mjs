@@ -196,14 +196,17 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
     const previous = new Set(before.map(w => w.id));
     stage('new-profile');
     const menu = await bridge.request('new-profile');
-    if (menu.menuEscapePosted !== true || menu.menuCleared !== true || ![1, 2].includes(menu.menuEscapes)) throw Error('BENCH_SAFARI_MENU_ESCAPE_UNPROVED');
+    if (menu.menuCleared !== true || !((menu.menuEscapes === 0 && menu.menuEscapePosted === false) ||
+      (menu.menuEscapes === 1 && menu.menuEscapePosted === true))) throw Error('BENCH_SAFARI_MENU_ESCAPE_UNPROVED');
     const deadline = Date.now() + timeoutMs;
     let created;
     for (;;) {
       const added = (await snapshot()).filter(w => !previous.has(w.id));
-      if (added.length > 1) throw Error('BENCH_SAFARI_PROFILE_WINDOW_UNPROVED');
+      const seen = () => JSON.stringify(added.map(w => ({ title: String(w.title ?? '').slice(0, 80), tabs: Object.keys(w.tabs ?? {}).length,
+        profile: Boolean(safariProfileEvidence(w)) })));
+      if (added.length > 1) throw Error(`BENCH_SAFARI_PROFILE_WINDOW_UNPROVED: ${added.length} new windows ${seen()}`);
       if (added.length === 1 && safariProfileEvidence(added[0])) { created = added[0]; break; }
-      if (Date.now() >= deadline) throw Error('BENCH_SAFARI_PROFILE_WINDOW_UNPROVED');
+      if (Date.now() >= deadline) throw Error(`BENCH_SAFARI_PROFILE_WINDOW_UNPROVED: ${added.length} new windows ${seen()}, ${before.length} before`);
       await pause(25);
     }
     windowId = created.id; browser.profileWindow = windowId;
@@ -235,6 +238,7 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
       receipt.browserClosed = true; receipt.quitMs = Date.now() - began; running = false; windowId = undefined;
       if (result.unsubmittedFormQuitConfirmed === true) receipt.unsubmittedFormQuitConfirmed = true;
       if (result.forceTerminated === true) receipt.forceTerminated = true;
+      if (result.menuCleanup) receipt.menuCleanup = result.menuCleanup;
     } catch (error) { receipt.error = error.message; throw Error('BENCH_BROWSER_CLEANUP_UNPROVED', { cause: error }); }
   };
   const startSafari = async () => {
@@ -291,10 +295,16 @@ export async function launchSafari(plan, { spawnBrowser, listProcesses, timeoutM
   };
   browser.stop = async () => {
     if (stopped) return stopped;
-    if (running) await quitCurrent();
+    let collectionError;
+    if (running) {
+      try { await quitCurrent(); }
+      catch (error) { if (running) throw error; collectionError = error; }
+    }
     try { await bridge?.close(); } catch (error) { throw Error('BENCH_BROWSER_CLEANUP_UNPROVED', { cause: error }); }
     rmSync(root, { recursive: true });
-    return stopped = { browserClosed: true, profileDeleted: false, harnessDeleted: true };
+    stopped = { browserClosed: true, profileDeleted: false, harnessDeleted: true };
+    if (collectionError) throw collectionError;
+    return stopped;
   };
   try {
     acquiring = { stage: 'prepare-helper', lastObserved: lastObserved() };
