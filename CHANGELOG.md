@@ -2,6 +2,17 @@
 
 ## 1.4.1 (unreleased)
 
+### README and documentation
+
+- The README has a three-line native benchmark summary. Full methods, model and engine versions, run counts and
+  earlier comparisons remain in the results pages. A Turbo section shows the published Chrome and Helium results
+  and gives commands to turn it on and off.
+- Requirements state that the ChatGPT desktop app is required in `/Applications`. A ChatGPT account or sign-in
+  isn't required. Published documentation has been reviewed for clarity while retaining its measurements and caveats.
+- An offline tool prepares a comparison GIF from approved recordings with measured clocks and reviewed pixel
+  redaction. It refuses outputs of 5,000,000 bytes or more. The storyboard awaits owner-approved captures after
+  the Haiku quota reset, followed by review before publication.
+
 ### Version and release checks
 
 - Plugin manifests and the Claude and Cursor marketplace entries report 1.4.1. Codex's marketplace reads the

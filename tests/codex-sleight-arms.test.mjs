@@ -54,7 +54,8 @@ for (const [surface, model] of MODELS) {
     assert.equal(setup.metadata.model, model); assert.equal(setup.metadata.effort, 'high'); assert.equal(setup.metadata.sleightAs, 'sleight');
     const toml = setup.codexConfig.toml;
     assert.deepEqual(toml.match(/^\[mcp_servers\.[^\]]+\]/gm), ['[mcp_servers.plugin_sleight_computer]', '[mcp_servers.plugin_sleight_computer.env]']);
-    assert.ok(!/cua_repl|cua-repl|ChatGPT\.app/.test(toml), 'the engine\'s own computer-use server is not configured');
+    // The proxy may use ChatGPT's bundled Node. Its runtime path is not an engine server entry.
+    assert.ok(!/cua_repl|cua-repl/.test(toml), 'the engine\'s own computer-use server is not configured');
     assert.ok(toml.includes(`model = "${model}"`) && toml.includes('model_reasoning_effort = "high"'));
     assert.ok(toml.includes('enabled_tools = ["js", "js_reset", "open_file", "drag", "select_window"]'), 'the engine race arm\'s tools');
     // Engine path only (turbo off, as the Claude-hosted Firefox arm), the panel impossible, and the gate window bound.
