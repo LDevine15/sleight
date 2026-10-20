@@ -6,6 +6,115 @@ import Foundation
 import CoreFoundation
 import QuartzCore
 import Carbon.HIToolbox
+import ObjectiveC
+import Darwin
+import os.log
+
+// BEGIN PERSON INPUT
+private var consentFeedbackKey: UInt8 = 0
+let consentInputMessage = "This button needs your own click or key press."
+func refuseConsentInput(_ button: NSButton? = nil) {
+    if let button = button, let label = objc_getAssociatedObject(button, &consentFeedbackKey) as? NSTextField {
+        label.stringValue = consentInputMessage
+    }
+    os_log("PERSON_INPUT_REQUIRED", log: OSLog(subsystem: "com.sleight.consent", category: "input"), type: .error)
+    FileHandle.standardError.write(Data("sleight consent refused: PERSON_INPUT_REQUIRED\n".utf8))
+}
+// Source state alone is insufficient: a poster can select the HID state table too.
+func personInput(_ event: CGEvent?) -> Bool {
+    guard let event = event, [.leftMouseDown, .leftMouseUp, .keyDown, .keyUp].contains(event.type),
+        event.getIntegerValueField(.eventSourceStateID) == Int64(CGEventSourceStateID.hidSystemState.rawValue),
+        event.getIntegerValueField(.eventSourceUserData) == 0 else { return false }
+    let pid = event.getIntegerValueField(.eventSourceUnixProcessID)
+    if pid == 0 { return true }
+    guard pid > 0, pid <= Int64(Int32.max) else { return false }
+    var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+    guard proc_pidpath(Int32(pid), &path, UInt32(path.count)) > 0 else { return false }
+    let systemServer = URL(fileURLWithPath: "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer").resolvingSymlinksInPath().path
+    return URL(fileURLWithPath: String(cString: path)).resolvingSymlinksInPath().path == systemServer
+}
+func personChoice(_ kind: String, _ choice: String) -> Bool {
+    if ["cancel", "decline", "session"].contains(choice) { return false }
+    // A debugger's Once is also a consent to debugging. Plain session app approvals remain host-answerable.
+    return choice == "always" || ["action", "debugger", "relaunch", "opt-in", "resume", "turbo-off"].contains(kind)
+}
+// NSAlert owns its NSButtons and their private subclasses. Add only an AX override to a zero-storage runtime
+// subclass of the actual button class, preserving its layout, key equivalents and original modal action.
+func refuseAccessibilityPress(_ button: NSButton) -> Bool {
+    guard let base = object_getClass(button) else { return false }
+    // Layout may have put a KVO subclass above ours. Never replace that observer's class.
+    var ancestor: AnyClass? = base
+    while let next = ancestor {
+        if NSStringFromClass(next).hasPrefix("SleightPersonInput_") { return true }
+        ancestor = class_getSuperclass(next)
+    }
+    let name = "SleightPersonInput_" + NSStringFromClass(base)
+    if let guarded = NSClassFromString(name) { object_setClass(button, guarded); return true }
+    let selector = #selector(NSButton.accessibilityPerformPress)
+    let legacySelector = #selector(NSButton.accessibilityPerformAction(_:))
+    guard let method = class_getInstanceMethod(base, selector), let types = method_getTypeEncoding(method),
+        let legacy = class_getInstanceMethod(base, legacySelector), let legacyTypes = method_getTypeEncoding(legacy),
+        let guarded = objc_allocateClassPair(base, name, 0) else { return false }
+    let reject: @convention(block) (AnyObject) -> Bool = { sender in refuseConsentInput(sender as? NSButton); return false }
+    let implementation = imp_implementationWithBlock(reject)
+    typealias LegacyAction = @convention(c) (AnyObject, Selector, NSString) -> Void
+    let previous = unsafeBitCast(method_getImplementation(legacy), to: LegacyAction.self)
+    let rejectLegacy: @convention(block) (AnyObject, NSString) -> Void = { sender, action in
+        if action as String == NSAccessibility.Action.press.rawValue { refuseConsentInput(sender as? NSButton) }
+        else { previous(sender, legacySelector, action) }
+    }
+    let legacyImplementation = imp_implementationWithBlock(rejectLegacy)
+    guard class_addMethod(guarded, selector, implementation, types),
+        class_addMethod(guarded, legacySelector, legacyImplementation, legacyTypes) else {
+        imp_removeBlock(implementation); imp_removeBlock(legacyImplementation); objc_disposeClassPair(guarded); return false
+    }
+    objc_registerClassPair(guarded)
+    object_setClass(button, guarded)
+    return true
+}
+final class ConsentInputAction: NSObject {
+    let originalTarget: AnyObject?, originalAction: Selector?
+    let currentEvent: () -> NSEvent?
+    init(_ button: NSButton, currentEvent: @escaping () -> NSEvent? = { NSApp.currentEvent }) {
+        originalTarget = button.target; originalAction = button.action; self.currentEvent = currentEvent
+        super.init()
+        // Failure leaves the protected button disabled. It must never fall back to the unguarded action.
+        guard refuseAccessibilityPress(button) else { button.isEnabled = false; refuseConsentInput(button); return }
+        button.target = self; button.action = #selector(press(_:))
+    }
+    @objc func press(_ sender: NSButton) {
+        guard let event = currentEvent(), event.window === sender.window,
+            event.timestamp <= ProcessInfo.processInfo.systemUptime,
+            ProcessInfo.processInfo.systemUptime - event.timestamp < 5,
+            personInput(event.cgEvent) else { refuseConsentInput(sender); return }
+        _ = sender.sendAction(originalAction, to: originalTarget)
+    }
+}
+func consentInputActions(_ alert: NSAlert, choices: [String], kind: String) -> [ConsentInputAction] {
+    // Reserve a line before layout so a refusal does not resize or dismiss the card. Only fixed text goes here.
+    let feedback = NSTextField(wrappingLabelWithString: "")
+    feedback.frame = NSRect(x: 0, y: 0, width: 360, height: 36)
+    feedback.widthAnchor.constraint(equalToConstant: 360).isActive = true
+    feedback.heightAnchor.constraint(equalToConstant: 36).isActive = true
+    feedback.textColor = .secondaryLabelColor
+    let previous = alert.accessoryView
+    if let previous = previous {
+        let stack = NSStackView(views: [previous, feedback])
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
+        stack.frame = NSRect(x: 0, y: 0, width: max(360, previous.frame.width), height: previous.frame.height + 44)
+        alert.accessoryView = stack
+    } else { alert.accessoryView = feedback }
+    // Set the class before NSAlert's stack view registers KVO, then wrap the modal actions layout installed.
+    let buttons = zip(alert.buttons, choices).compactMap { button, choice -> NSButton? in
+        guard personChoice(kind, choice) else { return nil }
+        objc_setAssociatedObject(button, &consentFeedbackKey, feedback, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        guard refuseAccessibilityPress(button) else { button.isEnabled = false; refuseConsentInput(button); return nil }
+        return button
+    }
+    alert.layout()
+    return buttons.map { ConsentInputAction($0) }
+}
+// END PERSON INPUT
 
 // BEGIN SESSION FRAME
 func sessionFrame(_ data: [String: Any], _ choices: [String]) -> (kind: String, session: String)? {
@@ -360,6 +469,10 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var input: FileHandle? = FileHandle.standardInput, output = FileHandle.standardOutput, shared = false
     var consentOpen = true, handOpen = true
     let modal = ModalGuard()
+    func personModal(_ alert: NSAlert, choices: [String], kind: String) -> NSApplication.ModalResponse {
+        let actions = consentInputActions(alert, choices: choices, kind: kind)
+        return withExtendedLifetime(actions) { modal.run(abort: { NSApp.abortModal() }) { alert.runModal() } }
+    }
     // The hand channel's state in the shared host: its setting, the version for its block, and when sleight last acted.
     var hand: (enabled: Bool, version: String)?
     // The Permissions submenu's rows from the hand channel; its times are worded again each time the submenu opens.
@@ -570,7 +683,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.informativeText = "Turbo stops in every Claude Code session within a minute, and browsers go back to the engine's slower path. Run sleight-mcp turbo on to turn it back on."
         alert.addButton(withTitle: "Turn Off")
         alert.addButton(withTitle: "Cancel")
-        let answer = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }
+        let answer = personModal(alert, choices: ["turbo-off", "cancel"], kind: "turbo-off")
         if answer == .alertFirstButtonReturn { respond(id, choice) }
     }
     @objc func help(_ sender: NSMenuItem) {
@@ -607,7 +720,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             alert.messageText = session.kind == "opt-in" ? "Enable sleight turbo for " + session.session : "Resume sleight turbo for " + session.session
             alert.informativeText = "This choice applies only to this session. Site permissions and action confirmations still apply."
             for choice in choices { alert.addButton(withTitle: choice.capitalized) }
-            let result = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            let result = personModal(alert, choices: choices, kind: session.kind).rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
             respond(id, result >= 0 && result < choices.count ? choices[result] : "cancel")
             return
         }
@@ -618,7 +731,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             alert.informativeText = words.body
             let labels = ["once": "Allow once", "session": "Allow this session", "always": "Always allow", "relaunch": "Quit and reopen", "cancel": "Cancel"]
             for choice in choices { alert.addButton(withTitle: labels[choice] ?? "Cancel") }
-            let result = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            let result = personModal(alert, choices: choices, kind: card.kind).rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
             respond(id, result >= 0 && result < choices.count ? choices[result] : "cancel")
             return
         }
@@ -637,7 +750,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // payment terms are visible to the person, and never emitted on stdout.
         alert.informativeText = "Page labels are observations. Review this exact operation:\n" + text
         for choice in choices { alert.addButton(withTitle: choice.capitalized) }
-        let result = modal.run(abort: { NSApp.abortModal() }) { alert.runModal() }.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        let result = personModal(alert, choices: choices, kind: "action").rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         if result >= 0 && result < choices.count { respond(id, choices[result]) }
         else { respond(id, "cancel") }
     }

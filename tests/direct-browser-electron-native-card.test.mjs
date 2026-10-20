@@ -17,7 +17,7 @@ test('native host source: the debugger and relaunch cards have their own exact f
   assert.match(source, /temporary\.boolValue \? \["once", "session", "cancel"\] : \["once", "session", "always", "cancel"\]/);
   // The card answers only from a button of its own alert. The first button is the narrowest choice (Allow once).
   assert.match(source, /guard let id = sender\.representedObject as\? String, let frame = pending\[id\]/);
-  assert.doesNotMatch(source, /AXUIElement|CGEvent|activate\(ignoringOtherApps|performClick/);
+  assert.doesNotMatch(source, /AXUIElement|CGEventPost|\.post\(|activate\(ignoringOtherApps|performClick/);
   // The ordinary payment sheet names an app document as one.
   assert.match(source, /documentKind"\] as\? String == "app-document"/);
   // The payment and operation sheet takes exactly the JS choices, never session or Always.
