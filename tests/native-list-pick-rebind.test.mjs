@@ -11,7 +11,7 @@ const recordings = JSON.parse(readFileSync(new URL('./fixtures/native-list-pick-
 const row = 'text (selectable) Alder Depot COL-0005';
 const picked = 'text (selected) Alder Depot COL-0005';
 
-function fixture(recording, { focus = 'container', nested = false, duplicate = false, missing = false, selected = true,
+function fixture(recording, { focus = 'container', nested = false, duplicate = false, missing = false,
   focusAfterScroll = focus, nestedBody = 'text Detail', wrapperBody = 'group Row detail' } = {}) {
   let clicked, advanced = false, started = false;
   const clicks = [], keys = [], scrolls = [], notes = [];
@@ -19,7 +19,7 @@ function fixture(recording, { focus = 'container', nested = false, duplicate = f
     let text = recording.current;
     if (duplicate) text = text.replace('\t44 close button', '\t100 list Collection\n\t44 close button');
     if (missing) text = text.replace('32 list Collection', '32 list Other');
-    if (clicked && selected) text = text.replace(row, picked).replace('42 text No collection selected', '42 text Alder Depot COL-0005')
+    if (clicked) text = text.replace(row, picked).replace('42 text No collection selected', '42 text Alder Depot COL-0005')
       .replace('43 button (disabled) Save collection', '43 button Save collection');
     if (advanced) {
       // A wheel step has reached a sorted band around the recorded distant target. Geometry is modeled, not timed.
@@ -64,25 +64,23 @@ function fixture(recording, { focus = 'container', nested = false, duplicate = f
 }
 
 for (const recording of recordings) {
-  test('PL1 ' + recording.run + ': old number 29 rebinds to 32 and the descendant selection uses only the wheel', async () => {
+  test('PL1d ' + recording.run + ': old number 29 rebinds to 32 then container focus stops before paging', async () => {
     const h = fixture(recording);
     await h.start();
-    const result = await h.pick(29);
-    assert.equal(result.clicked, true);
-    assert.equal(result.label, recording.target);
-    assert.equal(result.focusClick, row);
-    assert.deepEqual(h.clicks, [37, 37]);
+    await assert.rejects(h.pick(29), /focus-lost.*The click did not focus the named list\. No key was sent\./);
+    assert.deepEqual(h.clicks, [37]);
     assert.deepEqual(h.keys, []);
-    assert.ok(h.scrolls.length > 0);
+    assert.deepEqual(h.scrolls, []);
     assert.match(h.notes.join('\n'), /pickFromList\(29\) went to element 32, the same "list Collection".*renumbered/);
   });
 
-  test('PL1 ' + recording.run + ': current number 32 accepts its selected descendant despite container focus', async () => {
+  test('PL1d ' + recording.run + ': current number 32 stops at container focus before paging', async () => {
     const h = fixture(recording);
     await h.start();
-    assert.equal((await h.pick(32)).clicked, true);
+    await assert.rejects(h.pick(32), /focus-lost.*The click did not focus the named list\. No key was sent\./);
+    assert.deepEqual(h.clicks, [37]);
     assert.deepEqual(h.keys, []);
-    assert.ok(h.scrolls.length > 0);
+    assert.deepEqual(h.scrolls, []);
   });
 }
 
@@ -158,16 +156,6 @@ test('PL1b: nested static text, image, group and cell without actions allow keys
   }
 });
 
-test('PL1b: the guard previous click cannot authorize the container fallback', async () => {
-  const text = recordings[0].current.replace(row, picked);
-  const keys = [], scrolls = [], clicks = [];
-  const result = await listPicker({ read: async () => text, observe() {}, press: async key => keys.push(key),
-    scroll: async (...args) => scrolls.push(args), click: async line => clicks.push(line), parse: windowFromText, sameElement,
-    clicked: { number: 37, line: row }, sleep: async () => {} })(recordings[0].target);
-  assert.equal(result.reason, 'not-a-list');
-  assert.deepEqual(keys, []); assert.deepEqual(scrolls, []); assert.deepEqual(clicks, []);
-});
-
 test('PL1b: moving focus to the ancestor after keys reports possible input to another control', async () => {
   const h = fixture(recordings[0], { focus: 'row', focusAfterScroll: 'container' });
   await h.start();
@@ -201,22 +189,8 @@ test('PL1: focus outside the list stops after its one focusing click, before any
   assert.deepEqual(h.clicks, [37]); assert.deepEqual(h.keys, []); assert.deepEqual(h.scrolls, []);
 });
 
-test('PL1: a click with no descendant selection proof stops before any key or wheel', async () => {
-  const h = fixture(recordings[0], { selected: false });
-  await h.start();
-  await assert.rejects(h.pick(32), /focus-lost/);
-  assert.deepEqual(h.clicks, [37]); assert.deepEqual(h.keys, []); assert.deepEqual(h.scrolls, []);
-});
-
-test('PL1: focus leaving the ancestor container for an outside control stops further wheel input too', async () => {
-  const h = fixture(recordings[0], { focusAfterScroll: 'outside' });
-  await h.start();
-  await assert.rejects(h.pick(32), /focus-lost/);
-  assert.deepEqual(h.clicks, [37]); assert.deepEqual(h.keys, []); assert.equal(h.scrolls.length, 1);
-});
-
 test('PL1: an old number absent from the current tree still rebinds its unique list', async () => {
-  const h = fixture({ ...recordings[0], current: recordings[0].current.replace(/^\t+29 text Display mode \n/m, '') });
+  const h = fixture({ ...recordings[0], current: recordings[0].current.replace(/^\t+29 text Display mode \n/m, '') }, { focus: 'row' });
   await h.start();
   assert.equal((await h.pick(29)).clicked, true);
   assert.match(h.notes.join('\n'), /went to element 32/);
