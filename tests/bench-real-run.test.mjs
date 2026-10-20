@@ -96,7 +96,7 @@ test('an app dialog during the model stops before an app-data checker or AX clea
   assert.equal(disposed, true);
   assert.equal(serverClosed, true);
   assert.equal(existsSync(ctx.dir), true);
-  assert.equal(existsSync(ctx.lockPath), false);
+  assert.equal(existsSync(ctx.lockPath), true);
 });
 
 test('a passed task stays passed when simctl shutdown 405 lists the device Shutdown', async t => {
@@ -204,7 +204,7 @@ test('a prompt appearing with a streamed refusal is observed before any fixture 
   assert.match(result.cleanupError, /permission/);
   assert.equal(serverClosed, true);
   assert.equal(existsSync(ctx.dir), true);
-  assert.equal(existsSync(ctx.lockPath), false);
+  assert.equal(existsSync(ctx.lockPath), true);
 });
 
 test('real runner holds the lock through the awaited check and cleanup, then removes fixture files', async t => {
@@ -221,7 +221,7 @@ test('real runner holds the lock through the awaited check and cleanup, then rem
   assert.equal(existsSync(ctx.lockPath), false);
 });
 
-test('partial setup is cleaned and reported; a failed cleanup releases the exit lock and preserves its fixture', async t => {
+test('partial setup is cleaned and reported; a failed cleanup retains the owning lock and preserves its fixture', async t => {
   const execute = await runner(), ctx = fixture(t);
   let cleaned = false;
   const result = await execute({
@@ -236,7 +236,7 @@ test('partial setup is cleaned and reported; a failed cleanup releases the exit 
   }, ctx, { drive: async () => ({ code: 0, out: {} }) });
   assert.equal(failed.passed, false);
   assert.match(failed.cleanupError, /owned window remains/);
-  assert.equal(existsSync(ctx.lockPath), false);
+  assert.equal(existsSync(ctx.lockPath), true);
   assert.equal(existsSync(ctx.dir), true);
 });
 
@@ -281,7 +281,7 @@ test('a macOS prompt during setup stops before driving and records the safety st
   assert.equal(result.permissionPrompt, true);
   assert.equal(result.passed, false);
   assert.match(result.reason, /macOS permission prompt/);
-  assert.equal(existsSync(ctx.lockPath), false);
+  assert.equal(existsSync(ctx.lockPath), true);
 });
 
 test('an unavailable permission observer refuses setup and releases only an untouched fixture', async t => {
@@ -312,14 +312,14 @@ test('an unresolved acquisition or uncollected driver preserves the fixture and 
     cleanup: () => {},
   }, ctx);
   assert.match(result.cleanupError, /simulator/);
-  assert.equal(existsSync(ctx.lockPath), false);
-  ctx.pendingAcquisitions.clear();
+  assert.equal(existsSync(ctx.lockPath), true);
+  const second = fixture(t);
   const uncollected = await execute({ setup: () => {}, prompt: () => '', check: () => true,
     cleanup: () => assert.fail('no window cleanup while driver can still act'),
-  }, ctx, { drive: async () => ({ code: 0, out: {}, groupClean: false }) });
+  }, second, { drive: async () => ({ code: 0, out: {}, groupClean: false }) });
   assert.equal(uncollected.passed, false);
   assert.match(uncollected.cleanupError, /process group/);
-  assert.equal(existsSync(ctx.lockPath), false);
+  assert.equal(existsSync(second.lockPath), true);
 });
 
 test('fixture acquisition records ownership before resolving and retains uncertainty after a failed mutation', async () => {
@@ -361,10 +361,10 @@ for (const dialogStop of [false, true]) test(`an uncollected driver still closes
   assert.equal(result.passed, false);
   assert.match(result.cleanupError, /process group/);
   assert.equal(existsSync(ctx.dir), true);
-  assert.equal(existsSync(ctx.lockPath), false);
+  assert.equal(existsSync(ctx.lockPath), true);
 });
 
-test('local server cleanup failure preserves the fixture and still releases the lock', async t => {
+test('local server cleanup failure preserves the fixture and retains the lock', async t => {
   const execute = await runner(), ctx = fixture(t);
   ctx.closeServer = async () => { throw new Error('listener cleanup failed'); };
   const result = await execute({ setup: () => {}, prompt: () => '', check: () => true, cleanup: () => {} },
@@ -372,7 +372,7 @@ test('local server cleanup failure preserves the fixture and still releases the 
   assert.equal(result.passed, false);
   assert.match(result.cleanupError, /listener cleanup failed/);
   assert.equal(existsSync(ctx.dir), true);
-  assert.equal(existsSync(ctx.lockPath), false);
+  assert.equal(existsSync(ctx.lockPath), true);
 });
 
 test('a task under the runner-owned lock does not wait on itself or release its caller lock', async t => {
@@ -385,7 +385,7 @@ test('a task under the runner-owned lock does not wait on itself or release its 
   assert.equal(existsSync(ctx.lockPath), true);
 });
 
-test('a refused cleanup collects fixture helpers before releasing its live lock', async t => {
+test('a refused cleanup collects fixture helpers and retains its live lock', async t => {
   const execute = await runner(), ctx = fixture(t);
   let collected = false;
   ctx.windowLeases = [{ dispose: async () => {
@@ -399,7 +399,7 @@ test('a refused cleanup collects fixture helpers before releasing its live lock'
   }, ctx, { drive: async () => ({ code: 1, groupClean: false }) });
   assert.equal(collected, true);
   assert.match(result.cleanupError, /process group/);
-  assert.equal(existsSync(ctx.lockPath), false);
+  assert.equal(existsSync(ctx.lockPath), true);
 });
 
 test('a check that returns a stop outcome records it with its reason and does not pass', async t => {
@@ -447,7 +447,7 @@ for (const recovered of [true, false]) test(`recorded task gets one final owned-
   const execute = await runner(), ctx = fixture(t), calls = [];
   const diagnostic = { launched: true, appQuit: false, helperCollectionConfirmed: true, cleanup: 'unconfirmed' };
   ctx.fixtureDiagnostics = [diagnostic];
-  ctx.windowLeases = [{ running: false, launched: true,
+  ctx.windowLeases = [{ running: false, launched: true, diagnostics: diagnostic,
     recover: async () => {
       calls.push('recover');
       assert.ok(existsSync(ctx.lockPath));

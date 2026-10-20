@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { acquireLiveLock } from './live-lock.mjs';
-import { openFixture, closeFixtures } from './real-fixture.mjs';
+import { openFixture, closeFixtures, finderDiagnostic, finderFailureDiagnostic } from './real-fixture.mjs';
 import { observePermission } from './real-permission.mjs';
 import { runOwned } from './preapproved-process.mjs';
 
@@ -58,7 +58,7 @@ export async function runFinderSmoke({ plan = false, ownerAway = false, signal }
     foreground: { samples: [], changed: false, limitation }, liveLockKept: false };
   let release, timer, observation, setupAttempted = false, persistenceFailed = false;
   let ctx;
-  const fail = (phase, error) => result.failures.push({ phase, message: String(error.message ?? error) });
+  const fail = (phase, error) => result.failures.push({ phase, message: `Finder smoke ${phase} failed`, diagnostic: finderFailureDiagnostic(error) });
   const cancel = () => { result.cancelled = true; controller.abort(signal?.reason ?? new Error('Run interrupted')); };
   const persist = deps.persist ?? ((dir, receipt) => appendFileSync(join(dir, 'receipts.jsonl'),
     JSON.stringify({ kind: 'result', at: new Date().toISOString(), receipt }) + '\n', { mode: 0o600 }));
@@ -75,7 +75,7 @@ export async function runFinderSmoke({ plan = false, ownerAway = false, signal }
   };
   const stopAX = (phase, error) => {
     fail(phase, error); controller.abort(error); cleanup.abort(error);
-    record('stop', { phase, message: error.message });
+    record('stop', { phase, failed: true });
   };
   const checkHold = () => {
     if (hold()) throw new Error('Live hold exists; smoke stopped');
@@ -98,9 +98,9 @@ export async function runFinderSmoke({ plan = false, ownerAway = false, signal }
     try {
       checkHold();
       const prompt = await bounded(permission, 12000, 'Permission observation');
-      record('permission-observation', { prompt: prompt || false });
+      record('permission-observation', { prompt: !!prompt });
       if (prompt) {
-        result.permission = prompt;
+        result.permission = true;
         throw new Error('Permission window observed; no response sent');
       }
     } catch (error) { stopAX('permission-or-hold', error); }
@@ -123,13 +123,13 @@ export async function runFinderSmoke({ plan = false, ownerAway = false, signal }
     mkdirSync(result.target, { mode: 0o700 });
     // mkdtemp creates the bank with 0700. Keep the bank even on success: it owns all receipts.
     ctx.onAppDialog = dialog => {
-      (result.appDialogs ??= []).push(structuredClone(dialog));
+      (result.appDialogs ??= []).push(finderDiagnostic(dialog));
       // This smoke never answers even the dialogs other fixtures permit.
       stopAX('app-dialog', new Error('Application dialog observed; no response sent'));
     };
     ctx.onFixtureDiagnostics = diagnostics => {
-      result.fixtureDiagnostics = structuredClone(ctx.fixtureDiagnostics ?? [diagnostics]);
-      record('fixture-diagnostics', diagnostics);
+      result.fixtureDiagnostics = (ctx.fixtureDiagnostics ?? [diagnostics]).map(value => finderDiagnostic(value));
+      record('fixture-diagnostics', finderDiagnostic(diagnostics));
     };
     ctx.beforeFixtureCleanup = async () => {
       await observation;
@@ -155,7 +155,7 @@ export async function runFinderSmoke({ plan = false, ownerAway = false, signal }
     record('setup-start', { target: result.target });
     await open(ctx, { app: 'Finder', bundle: 'com.apple.finder', mode: 'folder',
       target: result.target, token: `Finder-smoke-${nonce}`, stopOnAppDialog: true, stopOnLiveHold: true }, {
-      // Preserve every production helper event, including receipts before a setup refusal.
+      // Persist only the fixed Finder receipt schema, including failed stages.
       run: async (command, args, options) => {
         let buffer = '';
         const response = await (deps.fixtureRun ?? runOwned)(command, args, { ...options, onStdout: data => {
@@ -164,20 +164,24 @@ export async function runFinderSmoke({ plan = false, ownerAway = false, signal }
           while ((end = buffer.indexOf('\n')) !== -1) {
             const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
             try {
-              const event = JSON.parse(line);
+              const event = finderDiagnostic(JSON.parse(line));
               if (event.stage === 'finder-window-retained') result.retainedWindow = {
                 confirmed: true, referenceExported: false, evidence: event.stage,
               };
               if (event.stage === 'finder-folder-submitted') result.navigation = {
-                confirmed: false, submitted: true, target: event.target, evidence: event.stage,
+                confirmed: false, submitted: true, target: result.target, evidence: event.stage,
               };
               record('fixture-event', event);
-            } catch { record('fixture-output', { line }); }
+            } catch { record('fixture-output', { bytes: Buffer.byteLength(line), parsed: false }); }
           }
           options.onStdout?.(data);
         } });
-        if (buffer) record('fixture-output-tail', { line: buffer });
-        record('helper-result', response);
+        if (buffer) record('fixture-output-tail', { bytes: Buffer.byteLength(buffer), parsed: false });
+        record('helper-result', { groupClean: response.groupClean === true,
+          exit: { code: Number.isInteger(response.exit?.code) ? response.exit.code : null },
+          stdoutBytes: Buffer.byteLength(String(response.stdout ?? '')), stderrBytes: Buffer.byteLength(String(response.stderr ?? '')),
+          failed: !!response.error, diagnostic: finderFailureDiagnostic(response.stderr || response.error),
+        });
         return response;
       },
     });
@@ -190,7 +194,7 @@ export async function runFinderSmoke({ plan = false, ownerAway = false, signal }
     controller.signal.throwIfAborted();
   } catch (error) {
     fail('setup', error);
-    if (error.fixtureDiagnostics) record('setup-failure-diagnostics', error.fixtureDiagnostics);
+    if (error.fixtureDiagnostics) record('setup-failure-diagnostics', finderDiagnostic(error.fixtureDiagnostics));
   } finally {
     clearInterval(timer);
     await observation;
@@ -204,7 +208,7 @@ export async function runFinderSmoke({ plan = false, ownerAway = false, signal }
         if (setupAttempted && !ctx.windowLeases.length) result.cleanup.confirmed = false;
         if (!result.cleanup.confirmed) throw new Error('Window cleanup receipt unconfirmed');
         record('cleanup', result.cleanup);
-      } catch (error) { fail('cleanup', error); record('cleanup-failure', { message: error.message }); }
+      } catch (error) { fail('cleanup', error); record('cleanup-failure', { failed: true }); }
       const collected = [];
       for (const lease of ctx.windowLeases) {
         try {
@@ -213,10 +217,10 @@ export async function runFinderSmoke({ plan = false, ownerAway = false, signal }
           if (lease.diagnostics) lease.diagnostics.helperCollectionConfirmed = confirmed === true;
           if (confirmed !== true) throw new Error('Fixture helper collection unconfirmed');
           record('helper-collected', { confirmed: true });
-        } catch (error) { collected.push(false); fail('collection', error); record('collection-failure', { message: error.message }); }
+        } catch (error) { collected.push(false); fail('collection', error); record('collection-failure', { failed: true }); }
       }
       result.collection.confirmed = collected.every(Boolean) && (!setupAttempted || collected.length > 0);
-      if (ctx.fixtureDiagnostics) result.fixtureDiagnostics = structuredClone(ctx.fixtureDiagnostics);
+      if (ctx.fixtureDiagnostics) result.fixtureDiagnostics = ctx.fixtureDiagnostics.map(value => finderDiagnostic(value));
       if (ctx.exitDisagreements?.length) result.exitDisagreements = ctx.exitDisagreements;
       try { await sample('after-cleanup'); } catch (error) { fail('foreground-after-cleanup', error); }
       record('cleanup-result', { cleanup: result.cleanup, collection: result.collection });

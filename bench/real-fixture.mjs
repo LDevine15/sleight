@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -8,6 +8,58 @@ import { heliumHelper } from './real-helium.mjs';
 
 const execute = promisify(execFile);
 const script = fileURLToPath(new URL('./real-fixture.js', import.meta.url));
+
+// Finder receipts contain only fixed identifiers, numeric evidence and flags.
+// Titles, paths, dialog text and raw helper output never enter this schema.
+const finderEnums = {
+  stage: ['identified', 'identified-process', 'armed', 'ready', 'closed', 'setup-failure', 'untouched', 'action', 'retry',
+    'finder-relaunch', 'finder-recovered', 'finder-window-retained', 'finder-folder-submitted', 'menu-items', 'menu-cancel', 'readiness'],
+  app: ['Finder'], bundle: ['com.apple.finder'], observedBundle: ['com.apple.finder'],
+  cleanup: ['nothing created', 'closed retained fixture', 'unconfirmed'],
+  setupCase: ['already-running', 'cold-launch'], attribute: ['AXWindows', 'AXRole', 'AXValue', 'AXFocusedWindow'],
+  reason: ['three AXWindows timeouts', 'malformed-list', 'missing-element', 'failed-self-identity', 'non-window-or-stale', 'duplicate-identity'],
+  role: ['AXWindow', 'AXSheet', 'AXDialog', 'AXGroup', 'AXButton'], phase: ['cleanup', 'observation'],
+  command: ['new-window', 'go-to-folder'], menuCancelMethod: ['AXCancel'],
+};
+const finderNumbers = new Set(['pid', 'fromPid', 'toPid', 'startedAtMs', 'fromStartedAtMs', 'toStartedAtMs',
+  'processStartedAtMs', 'code', 'count', 'index', 'duplicateIndex', 'axCode', 'waitMs', 'totalWaitMs', 'elapsedMs', 'enabled']);
+const finderFlags = new Set(['running', 'launched', 'fresh', 'actionTaken', 'referenceExported', 'originalExitConfirmed',
+  'windowCleanupConfirmed', 'helperCollectionConfirmed', 'menuCancelled', 'finished', 'titleMatches', 'appQuit', 'stop']);
+const finderObjects = new Set(['finderRelaunch', 'finderRecovery', 'finderAXError', 'readiness', 'appDialog', 'diagnostic']);
+const finderLists = new Set(['menuCommands', 'retries', 'cleanupRetries', 'observationRetries']);
+export function finderDiagnostic(value, depth = 0) {
+  const safe = {};
+  if (!value || typeof value !== 'object' || depth > 6) return safe;
+  for (const [key, item] of Object.entries(value)) {
+    if (Array.isArray(finderEnums[key]) && finderEnums[key].includes(item)) safe[key] = item;
+    else if (finderNumbers.has(key) && typeof item === 'number' && Number.isFinite(item)) safe[key] = item;
+    else if (finderFlags.has(key) && typeof item === 'boolean') safe[key] = item;
+    else if (['cleanupError', 'menuCleanupError', 'closeFailure'].includes(key) && item) safe[key] = true;
+    else if (finderObjects.has(key) && item && typeof item === 'object') safe[key] = finderDiagnostic(item, depth + 1);
+    else if (finderLists.has(key) && Array.isArray(item)) safe[key] = item.slice(0, 128).map(value => finderDiagnostic(value, depth + 1));
+  }
+  return safe;
+}
+export function finderFailureDiagnostic(error) {
+  const text = String(error?.message ?? error ?? '');
+  const diagnostic = {};
+  const reason = /reason=(malformed-list|missing-element|failed-self-identity|non-window-or-stale|duplicate-identity)(?=[ \]])/.exec(text);
+  if (reason) diagnostic.reason = reason[1];
+  const role = /role=(AXWindow|AXSheet|AXDialog|AXGroup|AXButton)(?=[ \]])/.exec(text);
+  if (role) diagnostic.role = role[1];
+  for (const key of ['count', 'index', 'duplicateIndex']) {
+    const match = new RegExp('(?: |\\[)' + key + '=(\\d+)(?=[ \\]])').exec(text);
+    if (match && Number.isSafeInteger(Number(match[1]))) diagnostic[key] = Number(match[1]);
+  }
+  if (/axCode=-25202(?=[ \]])/.test(text)) diagnostic.axCode = -25202;
+  const ax = /AX fixture read failed: (-25204|-25205|-25202) \((AXWindows|AXFocusedWindow|AXRole|AXValue)\)/.exec(text);
+  if (ax) { diagnostic.code = Number(ax[1]); diagnostic.attribute = ax[2]; }
+  return diagnostic;
+}
+function finderHelperFailure(error) {
+  const diagnostic = finderFailureDiagnostic(error);
+  return 'Finder helper failed' + (Object.keys(diagnostic).length ? ' [' + Object.entries(diagnostic).map(([k, v]) => `${k}=${v}`).join(' ') + ']' : '');
+}
 
 // Setup capabilities belong to browser data. The older Firefox grid/spa tasks
 // retain their IDs and setup outside this catalog.
@@ -45,9 +97,9 @@ async function fixtureHelper(request, signal) {
     : { command: '/usr/bin/osascript', args: ['-l', 'JavaScript', script] };
 }
 
-// The child retains its AX window reference through cleanup. It never needs a
-// window inventory for cleanup or an Apple Event. Only a retained reference permits closing
-// a window; a missing reference leaves cleanup unconfirmed.
+// The child retains its AX window reference through cleanup. Finder also retains
+// its baseline inventory so cleanup can refuse extra windows without adopting
+// them by path. Only explicit creation identities permit closing.
 // A document app launched without these restores the owner's windows and iCloud "Untitled" documents (TextEdit did, 2026-10-16),
 // and then can't quit cleanly. The other bench launchers pass the same flags (bench/tasks.mjs).
 const DOCUMENT_LAUNCH = ['--args', '-ApplePersistenceIgnoreState', 'YES', '-NSShowAppCentricOpenPanelInsteadOfUntitledFile', 'NO',
@@ -214,11 +266,29 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
     async dispose() { controller.abort(); return (await response).groupClean === true; },
   };
   let command;
-  const writeControl = command => writeFileSync(control, JSON.stringify({
-    command, launched: lease.launched,
+  const writeControl = command => {
+    const next = control + '.next';
+    writeFileSync(next, JSON.stringify({
+    command, cancelled: signal?.aborted === true, launched: lease.launched,
     ...(lease.simulatorBooted === true ? { simulatorBooted: true } : {}),
-  }), { mode: 0o600 });
+    }), { mode: 0o600 });
+    renameSync(next, control);
+  };
+  const cancelSetup = () => {
+    try { writeControl('cancel'); }
+    catch {
+      // A failed notification cannot leave setup running. The lost reference
+      // keeps window cleanup unconfirmed and the owning lock retained.
+      diagnostics.cleanup = 'unconfirmed';
+      diagnostics.cancellationDeliveryFailed = true;
+      controller.abort();
+    }
+  };
+  writeControl('waiting');
+  signal?.addEventListener('abort', cancelSetup, { once: true });
+  if (signal?.aborted) cancelSetup();
   const beginLaunch = (launched = true) => {
+    signal?.throwIfAborted();
     lease.launched = launched;
     diagnostics.launched = launched;
     writeControl('launching');
@@ -228,7 +298,8 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
     get() { return lease.simulatorBooted === true; },
   });
   try { command = await helper(request, signal); }
-  catch (error) { if (error.noMutation === true) diagnostics.cleanup = 'nothing created'; throw error; }
+  catch (error) { signal?.removeEventListener('abort', cancelSetup); if (error.noMutation === true) diagnostics.cleanup = 'nothing created'; throw error; }
+  if (signal?.aborted) { signal.removeEventListener('abort', cancelSetup); signal.throwIfAborted(); }
   ctx.windowLeases.push(lease);
   response = run(command.command, [...command.args, JSON.stringify({ ...request, control, startedAtMs, launchedProcesses })], {
     signal: helperSignal, timeoutMs: 600000, graceMs: 1000,
@@ -238,6 +309,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
       while ((index = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
         let event; try { event = JSON.parse(line); } catch { continue; }
+        if (finderFolder) event = finderDiagnostic(event);
         if (typeof event.running === 'boolean') { lease.running = event.running; diagnostics.running = event.running; }
         if (event.pid > 0) { lease.pid = event.pid; diagnostics.pid = event.pid; }
         if (event.bundle) { lease.bundle = event.bundle; diagnostics.observedBundle = event.bundle; }
@@ -263,26 +335,41 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
             diagnostics[event.phase + 'TotalWaitMs'] = event.totalWaitMs;
           } else diagnostics.retries.push(retry);
         }
-        for (const key of ['finderRelaunch', 'finderAXError', 'fixtureWindow', 'menuCleanup', 'menuCleanupError', 'menuCleared', 'menuEscapePid', 'windows', 'fresh', 'totalWaitMs', 'actionTaken', 'cleanup', 'cleanupError', 'menuCancelled', 'menuCancelMethod', 'menuItems', 'menuCommands', 'readiness', 'navigation', 'creation', 'foregroundFallback', 'launchWait', 'readWait', 'cleanupReadWait', 'observationReadWait', 'setupCase', 'inheritReady', 'placement']) {
+        for (const key of ['finderRelaunch', 'finderRecovery', 'finderAXError', 'fixtureWindow', 'menuCleanup', 'menuCleanupError', 'menuCleared', 'menuEscapePid', 'windows', 'fresh', 'totalWaitMs', 'actionTaken', 'cleanup', 'cleanupError', 'menuCancelled', 'menuCancelMethod', 'menuItems', 'menuCommands', 'readiness', 'navigation', 'creation', 'foregroundFallback', 'launchWait', 'readWait', 'cleanupReadWait', 'observationReadWait', 'setupCase', 'inheritReady', 'placement']) {
           if (event[key] !== undefined) diagnostics[key] = event[key];
         }
         ctx.onFixtureDiagnostics?.(diagnostics);
         if (event.stage) stage(event.stage).resolve(event);
       }
     },
-  }).catch(error => ({ error: error.message, groupClean: false })).then(result => { completed = result; return result; });
+  }).catch(error => ({ error: error.message, groupClean: false })).then(result => {
+    if (finderFolder) result = { ...result,
+      stdout: String(result.stdout ?? '').split('\n').flatMap(line => {
+        try { return [JSON.stringify(finderDiagnostic(JSON.parse(line)))]; } catch { return []; }
+      }).join('\n'),
+      stderr: result.stderr ? finderHelperFailure(result.stderr) : '',
+      error: result.error ? finderHelperFailure(result.error) : undefined,
+    };
+    completed = result; return result; }).finally(() => signal?.removeEventListener('abort', cancelSetup));
   const waitStage = async name => {
-    let timer;
+    signal?.throwIfAborted();
+    let timer, onAbort;
+    const aborted = new Promise((_, reject) => {
+      onAbort = () => reject(signal.reason ?? new Error('Fixture setup cancelled'));
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+    });
     try {
-      return await Promise.race([stage(name).promise, response.then(result => {
+      return await Promise.race([aborted, stage(name).promise, response.then(result => {
         throw Object.assign(new Error(`Fixture setup failed: ${result.stderr?.trim() || result.error || 'helper exited before readiness'}`),
           { noMutation: untouched(result) });
       }), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Fixture setup readiness timed out')), finderFolder ? 75000 : 40000); })]);
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); }
   };
   try {
   if (blankWindow) {
     await waitStage('launch');
+    signal?.throwIfAborted();
     beginLaunch();
     await open('/usr/bin/open', fixtureLaunch === 'retained-url' ? ['-g', '-a', request.app, '--args', '-ApplePersistenceIgnoreState', 'YES'] : ['-g', '-b', request.bundle], { signal, timeout: 15000 });
   }
@@ -299,8 +386,10 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
       : ['-g', '-a', request.app, ...(request.target ? [request.target] : []), ...(request.mode === 'document' ? DOCUMENT_LAUNCH : [])];
     await open('/usr/bin/open', args, { signal, timeout: 15000 });
   }
+  signal?.throwIfAborted();
   writeControl('opened');
   await waitStage('ready');
+  signal?.throwIfAborted();
   return lease;
   } catch (error) {
     // LaunchServices errors and readiness deadlines can precede the helper's

@@ -40,7 +40,7 @@ import { CODEX_SLEIGHT_HOME, ensureCodexSleightHome, writeCodexSleightConfig, co
 import { startFootprint, cpuSplit } from './footprint.mjs';
 import { watchAppWindows } from './app-windows.mjs';
 import { runTiming, traceTiming, withStamps } from './timing.mjs';
-import { executeRealTask, cleanupContained } from './real-run.mjs';
+import { executeRealTask, cleanupContained, releaseFixtureLock } from './real-run.mjs';
 import { mergeArmHooks } from './arm-hooks.mjs';
 import { observePermission } from './real-permission.mjs';
 import { runOwned } from './preapproved-process.mjs';
@@ -877,7 +877,7 @@ pass: for (let run = 1; run <= runs; run++) {
           fixtureNames: fixtureContexts.flatMap(ctx => [ctx.document, ctx.pdf, ctx.folder, ...(ctx.documents ?? [])].filter(Boolean).map(path => basename(path))),
           armPids, daemonPaths: armNames.filter(isNativeArm).flatMap(name => Object.values(nativeArmPlan(name, { armHome: ARM_HOME, dir: ARMS[name].cwd }).mcp.mcpServers).map(server => server.command)),
           // Closing and quitting are visible actions, so only a pass started with --owner-away takes them.
-          blocked: !ownerAway || controller.signal.aborted || results.some(result => result.groupClean === false || result.cleanupError || result.appDialog || result.permissionPrompt || result.observerError || result.approvalStop),
+          blocked: !ownerAway || controller.signal.aborted || realContexts.some(ctx => ctx.fixtureLockUnconfirmed) || results.some(result => result.groupClean === false || result.cleanupError || result.appDialog || result.permissionPrompt || result.observerError || result.approvalStop),
           launched: realContexts.flatMap(ctx => (ctx.windowLeases ?? []).filter(lease => lease.launched && lease.running === false)
             .map(lease => ({ pid: lease.pid, start: lease.processStartedAtMs / 1000, bundle: lease.bundle }))),
           beforeAction: async () => {
@@ -907,7 +907,12 @@ pass: for (let run = 1; run <= runs; run++) {
     // Stops only a daemon this pass started; one already listening was the owner's and stays.
     try { await cuaDaemon?.stop(); }
     catch (error) { console.error(`Cua daemon: ${error.message}`); process.exitCode = 1; }
-    try { await unlock?.(); }
+    try {
+      if (!await releaseFixtureLock(realContexts, unlock)) {
+        process.exitCode = 1;
+        console.error('STOP: fixture setup, window cleanup or helper collection unconfirmed; live lock kept.');
+      }
+    }
     catch (error) { console.error(`Live lock: ${error.message}`); process.exitCode = 1; }
     unlock = undefined;
   }

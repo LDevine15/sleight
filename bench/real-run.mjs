@@ -7,9 +7,9 @@ import { withElapsed, withStamps } from './timing.mjs';
 
 // The real suite and default tasks with retained fixtures use this lifecycle.
 // A cleanup failure preserves its fixture and stops the pass, unless cleanupContained
-// says otherwise. The cooperative lock is released on exit, as the task brief requires.
-export async function executeRealTask(task, ctx, { drive, dryRun = false, setupOnly = false, signal, permissionCheck, stop, lockHeld = false } = {}) {
-  let release, cleanupConfirmed = false, driverStarted = false;
+// says otherwise. Unresolved fixture ownership or cleanup retains the owning lock.
+export async function executeRealTask(task, ctx, { drive, dryRun = false, setupOnly = false, signal, permissionCheck, stop, lockHeld = false, lock = acquireLiveLock } = {}) {
+  let release, cleanupConfirmed = false, driverStarted = false, setupStarted = false, serverCleanupFailed = false;
   let monitor, observation;
   const cleanupController = new AbortController();
   const result = setupOnly ? { setupOnly: true } : {};
@@ -39,7 +39,7 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
   };
   if (!dryRun && permissionCheck) ctx.beforeFixtureCleanup = async () => { await observation; await observe(); };
   try {
-    if (!dryRun && !lockHeld) release = await acquireLiveLock(ctx.lockPath ?? '/tmp/sleight-live.lock', { wait: true, signal, interval: 2000 });
+    if (!dryRun && !lockHeld) release = await lock(ctx.lockPath ?? '/tmp/sleight-live.lock', { wait: true, signal, interval: 2000 });
     signal?.throwIfAborted();
     if (!dryRun && permissionCheck) {
       await observe();
@@ -53,6 +53,7 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
     mkdirSync(ctx.dir, { recursive: true });
     // A drag the previous run left half done keeps the app in its tracking loop and breaks this setup (Finder, 2026-10-16).
     if (!dryRun && ctx.ownerAway) await releaseInput();
+    setupStarted = true;
     await (dryRun ? task.prepare?.(ctx) : task.setup?.(ctx));
     signal?.throwIfAborted();
     const prompt = task.prompt(ctx);
@@ -131,14 +132,14 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
     // driver could not be collected or a dialog prevents fixture cleanup.
     try { if (ctx.closeServer) { await ctx.closeServer(); ctx.closeServer = undefined; } }
     catch (error) {
-      result.passed = false; cleanupConfirmed = false;
+      result.passed = false; cleanupConfirmed = false; serverCleanupFailed = true;
       result.cleanupError = [result.cleanupError, error.message].filter(Boolean).join('; ');
     }
     for (const helper of ctx.windowLeases ?? []) {
       try {
         const collected = await helper.dispose();
-        if (helper.diagnostics) helper.diagnostics.helperCollectionConfirmed = collected;
-        if (!collected) throw new Error('Fixture helper process group cleanup unconfirmed');
+        (helper.diagnostics ??= {}).helperCollectionConfirmed = collected === true;
+        if (collected !== true) throw new Error('Fixture helper process group cleanup unconfirmed');
       } catch (error) { result.passed = false; result.cleanupError = error.message; cleanupConfirmed = false; }
     }
     clearInterval(monitor);
@@ -151,19 +152,35 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
     if (!driverStarted && result.fixtureSetupFailure === 'finder-ax' && cleanupConfirmed && !signal?.aborted) {
       result.groupClean = true; // No driver was started, and every fixture helper was collected above.
     }
-    if (cleanupConfirmed && !result.cleanupUnconfirmed) {
-      rmSync(ctx.dir, { recursive: true, force: true });
-    } else result.fixtureDir = ctx.dir;
-    // A JXA helper read an owned app as gone while the kernel still ran it (real-fixture.mjs): that app is still ours, so the
-    // live lock stays until someone checks it.
     if (ctx.exitDisagreements?.length) {
       result.passed = false;
       result.exitDisagreements = ctx.exitDisagreements;
-      if (release) result.liveLockKept = ctx.lockPath ?? '/tmp/sleight-live.lock';
-    } else await release?.();
+    }
+    ctx.fixtureLockUnconfirmed = !!(serverCleanupFailed || ctx.exitDisagreements?.length || ctx.pendingAcquisitions?.size ||
+      (!cleanupConfirmed && setupStarted && !cleanupContained(result)) || (ctx.windowLeases ?? []).some(lease => {
+        const d = lease.diagnostics;
+        return !d || (d.helperCollectionConfirmed !== true ||
+          ((d.cleanup === 'unconfirmed' || d.windowCleanupConfirmed !== true) &&
+            !(d.launched === true && d.appQuit === true && d.helperCollectionConfirmed === true)));
+      }));
+    if (cleanupConfirmed && !result.cleanupUnconfirmed && !ctx.fixtureLockUnconfirmed) {
+      rmSync(ctx.dir, { recursive: true, force: true });
+    } else result.fixtureDir = ctx.dir;
+    if (!await releaseFixtureLock([ctx], release)) {
+      result.passed = false;
+      if (release || lockHeld) result.liveLockKept = ctx.lockPath ?? '/tmp/sleight-live.lock';
+    }
     if (!signal?.aborted && finderSetupRetryable(result)) result.retryableInfrastructure = 'finder-ax';
   }
   return result;
+}
+
+// Both task-owned and pass-owned locks use this boundary. An externally held
+// lock belongs to the outer runner; the context carries the unresolved state.
+export async function releaseFixtureLock(contexts, release) {
+  if (contexts.some(ctx => ctx.fixtureLockUnconfirmed || ctx.exitDisagreements?.length || ctx.pendingAcquisitions?.size)) return false;
+  await release?.();
+  return true;
 }
 
 export async function acquireFixture(ctx, key, operation) {

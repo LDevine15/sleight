@@ -80,7 +80,7 @@ test('setup uncertainty survives a later successful close and collection', async
   const result = await runFinderSmoke({ ownerAway: true }, f.deps);
   assert.equal(result.liveLockKept, true);
   assert.equal(result.setup.confirmed, false);
-  assert.match(result.failures[0].message, /creation uncertain/);
+  assert.equal(result.failures[0].message, 'Finder smoke setup failed');
   assert.deepEqual(f.calls, ['lock', 'open', 'close', 'dispose']);
 });
 
@@ -163,7 +163,7 @@ test('release ownership failure is preserved and never retried', async t => {
   const result = await runFinderSmoke({ ownerAway: true }, f.deps);
   assert.equal(result.liveLockKept, true);
   assert.equal(result.passed, false);
-  assert.match(result.failures.at(-1).message, /ownership changed/);
+  assert.equal(result.failures.at(-1).message, 'Finder smoke lock-release failed');
 });
 
 test('foreground adapter uses only the installed no-argument operation and rejects unknown identity', async () => {
@@ -282,7 +282,8 @@ test('production setup refusal preserves retained-window evidence without claimi
   assert.equal(result.collection.confirmed, true);
   assert.equal(result.liveLockKept, true);
   assert.ok(!f.calls.includes('release'));
-  assert.ok(result.failures.some(failure => /late Go menu refusal/.test(failure.message)));
+  assert.ok(result.failures.some(failure => failure.phase === 'setup'));
+  assert.ok(!JSON.stringify(result).includes('late Go menu refusal'));
   const records = (await readFile(join(result.fixtureDir, 'receipts.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.ok(records.some(event => event.kind === 'fixture-event' && event.data.stage === 'setup-failure'));
 });
@@ -313,8 +314,26 @@ test('production inventory exception reaches the smoke receipt log before any ac
   assert.equal(result.collection.confirmed, true);
   assert.equal(result.liveLockKept, true);
   assert.ok(!f.calls.includes('release'));
-  assert.ok(result.failures.some(failure => failure.message.includes(message)));
+  assert.ok(result.failures.some(failure => failure.diagnostic.reason === 'missing-element' && failure.diagnostic.count === 1));
   const records = (await readFile(join(result.fixtureDir, 'receipts.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
-  assert.ok(records.some(event => event.kind === 'helper-result' && event.data.stderr === message));
-  assert.ok(records.some(event => event.kind === 'result' && event.receipt.failures.some(failure => failure.message.includes(message))));
+  assert.ok(records.some(event => event.kind === 'helper-result' && event.data.diagnostic.reason === 'missing-element' && event.data.diagnostic.count === 1));
+  assert.ok(records.some(event => event.kind === 'result' && event.receipt.failures.some(failure => failure.diagnostic.reason === 'missing-element')));
+});
+
+test('R4 receipts and final result omit owner text from every helper and dialog channel', async t => {
+  const sentinel = 'OWNER-SECRET-FILENAME-DIALOG';
+  const f = await fake(t); delete f.deps.open; delete f.deps.close; delete f.deps.persist;
+  f.deps.fixtureRun = async (_command, _args, { onStdout }) => {
+    const stdout = JSON.stringify({ stage: 'menu-items', menuItems: [sentinel], menuCommands: [{ title: sentinel, enabled: true }] }) + '\n' +
+      JSON.stringify({ stage: 'setup-failure', cleanup: 'unconfirmed', cleanupError: sentinel, appDialog: { title: sentinel, buttons: [sentinel] } }) + '\n' + sentinel + '\n' + sentinel;
+    onStdout(stdout.slice(0, 9)); onStdout(stdout.slice(9));
+    return { stdout, stderr: sentinel, error: sentinel, groupClean: true, exit: { code: 1 } };
+  };
+  const result = await runFinderSmoke({ ownerAway: true }, f.deps);
+  const receipts = await readFile(join(result.fixtureDir, 'receipts.jsonl'), 'utf8');
+  assert.ok(!receipts.includes(sentinel), 'event, diagnostics, raw stdout/stderr and final persistence must be schema bounded');
+  assert.ok(!JSON.stringify(result).includes(sentinel));
+  const records = receipts.trim().split('\n').map(JSON.parse);
+  assert.ok(records.some(e => e.kind === 'fixture-event' && e.data.stage === 'setup-failure'));
+  assert.ok(records.some(e => e.kind === 'helper-result' && e.data.groupClean === true && e.data.exit.code === 1));
 });

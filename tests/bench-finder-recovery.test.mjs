@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { getEventListeners } from 'node:events';
+import { readFileSync, readdirSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -20,10 +21,11 @@ function source() {
 function health({ codes = [-25204, -25204, -25204], recoveredAt = 0, bundle = 'com.apple.finder', force = true } = {}) {
   const s = source(), events = [];
   let time = 0, probes = 0, terminations = 0, forcedAt;
-  const old = { processIdentifier: 42, bundleIdentifier: bundle,
+  const old = { processIdentifier: 42, bundleIdentifier: bundle, launchDate: { timeIntervalSince1970: 1 },
     get forceTerminate() { terminations++; forcedAt = time; return force; } };
-  const successor = { processIdentifier: 43, bundleIdentifier: 'com.apple.finder' };
+  const successor = { processIdentifier: 43, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 2, isNil: () => false } };
   const api = {
+    exited: () => forcedAt !== undefined,
     application: () => forcedAt === undefined ? old : time - forcedAt >= recoveredAt ? successor : null,
     probe: () => { time += 500; return forcedAt === undefined ? codes[Math.min(probes++, codes.length - 1)] : time - forcedAt >= recoveredAt ? 0 : -25204; },
   };
@@ -37,7 +39,8 @@ test('Finder probes twice after its first failure, then force-terminates only th
   assert.equal(f.run().processIdentifier, 43);
   assert.equal(f.probes, 3);
   assert.equal(f.terminations, 1);
-  assert.equal(f.events.length, 1);
+  assert.equal(f.events.length, 2);
+  assert.equal(f.events[1].finderRecovery.originalExitConfirmed, true);
   assert.equal(f.events[0].stage, 'finder-relaunch');
   assert.match(f.events[0].finderRelaunch.reason, /AX.*timeout/i);
 });
@@ -58,7 +61,7 @@ test('non-timeout AX errors fail without terminating Finder', () => {
 
 test('immediate CannotComplete errors do not prove a hung main thread', () => {
   const s = source(); let terminations = 0, time = 0;
-  const app = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', get forceTerminate() { terminations++; return true; } };
+  const app = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 1 }, get forceTerminate() { terminations++; return true; } };
   assert.throws(() => s.ensureFinderAX({ application: () => app, probe: () => -25204 }, {
     now: () => time, check() {}, wait: ms => { time += ms; }, emit() {},
   }), /probe failed/);
@@ -67,7 +70,7 @@ test('immediate CannotComplete errors do not prove a hung main thread', () => {
 
 test('timeouts across changing Finder processes never authorize termination', () => {
   const s = source(); let pid = 40, terminations = 0, time = 0;
-  const app = () => ({ processIdentifier: pid++, bundleIdentifier: 'com.apple.finder', get forceTerminate() { terminations++; return true; } });
+  const app = () => ({ processIdentifier: pid++, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 1 }, get forceTerminate() { terminations++; return true; } });
   assert.throws(() => s.ensureFinderAX({ application: app, probe: () => { time += 500; return -25204; } }, {
     now: () => time, check() {}, wait: ms => { time += ms; }, emit() {},
   }), /process changed/);
@@ -266,7 +269,7 @@ function nativeFolderTrial(clockChanges = {}) {
     AXUIElementPerformAction: (el, action) => { presses.push([el, action]); return 0; },
   });
   s.$ = native; s.Ref = () => []; s.ObjC.castRefToObject = v => v;
-  const api = s.nativeAX({ setup: true }, { check() {}, emit() {}, ...clockChanges });
+  const api = s.nativeAX({ setup: true, bundle: 'com.apple.finder' }, { check() {}, emit() {}, ...clockChanges });
   return { s, api, app, window, sheet, field, button, writes, presses, native };
 }
 
@@ -428,12 +431,12 @@ test('native guard accepts focus on the owned sheet and refuses a focus change d
 
 function finderRun(change = () => {}) {
   const s = source(), events = [], calls = []; let time = 0, forced = false, armed = false, ready = false, navigated = false;
-  const old = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', get forceTerminate() { calls.push('force'); forced = true; return true; } };
-  const successor = { processIdentifier: 43, bundleIdentifier: 'com.apple.finder' };
+  const old = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 1, isNil: () => false }, get isTerminated() { return forced; }, get forceTerminate() { calls.push('force'); forced = true; return true; } };
+  const successor = { processIdentifier: 43, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 2, isNil: () => false } };
   const previous = {}, window = {}, sheet = {}, native = value => ({ dataUsingEncoding: () => value });
   Object.assign(native, {
     AXIsProcessTrusted: () => true,
-    NSRunningApplication: { runningApplicationsWithBundleIdentifier: bundle => {
+    NSRunningApplication: { runningApplicationWithProcessIdentifier: () => old, runningApplicationsWithBundleIdentifier: bundle => {
       assert.equal(bundle, 'com.apple.finder'); return { count: 1, objectAtIndex: () => forced ? successor : old };
     } },
     AXUIElementCreateApplication: pid => ({ pid }), AXUIElementSetMessagingTimeout() {},
@@ -616,4 +619,262 @@ test('the real 640-file world caller carries an AX setup refusal through acquisi
   assert.equal(result.retryableInfrastructure, 'finder-ax');
   assert.match(result.reason, /-25204.*AXFocusedWindow/);
   assert.equal(result.fixtureDiagnostics[0].helperCollectionConfirmed, true);
+});
+
+// A4 review regressions. These use VM AX objects and fake children only.
+for (const boundary of ['second-probe', 'window-wait', 'sheet-wait']) test(`R1 cancellation reaches active helper at ${boundary}`, async t => {
+  const { openFixture } = await import('../bench/real-fixture.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'a4r-cancel-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const abort = new AbortController(); let notified = false, destroyed = false;
+  const ctx = { dir, signal: abort.signal };
+  await assert.rejects(openFixture(ctx, { app: 'Finder', bundle: 'com.apple.finder', mode: 'folder' }, {
+    helper: async () => ({ command: 'fake', args: [] }),
+    run: async (_cmd, args, options) => {
+      const request = JSON.parse(args.at(-1));
+      if (boundary !== 'second-probe') options.onStdout('{"stage":"armed","running":true}\n');
+      await new Promise(resolve => setImmediate(resolve));
+      abort.abort(new Error(boundary));
+      try { const c = JSON.parse(readFileSync(request.control, 'utf8')); notified = c.cancelled === true; } catch {}
+      destroyed = options.signal.aborted;
+      const stdout = '{"stage":"setup-failure","cleanup":"nothing created"}\n';
+      options.onStdout(stdout);
+      return { stdout, groupClean: true, exit: { code: 1 } };
+    }, open: () => assert.fail('no launch'),
+  }));
+  assert.equal(notified, true, 'cancellation must be visible before the helper takes another action');
+  assert.equal(destroyed, false, 'retain the helper for exact-reference cleanup');
+});
+
+for (const boundary of ['probe', 'termination', 'window', 'sheet']) test(`R1 VM stops setup actions after cancellation during ${boundary}`, () => {
+  let cancelled = false, probe = 0;
+  if (boundary === 'probe' || boundary === 'termination') {
+    const s = source(), app = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder',
+      launchDate: { isNil: () => false, timeIntervalSince1970: 1 },
+      get forceTerminate() { assert.fail('no termination after cancellation'); } };
+    let time = 0;
+    assert.throws(() => s.ensureFinderAX({ application: () => app, probe: () => {
+      time += 500; if (++probe === (boundary === 'probe' ? 2 : 3)) cancelled = true; return -25204;
+    } }, { now: () => time, wait: ms => { time += ms; }, emit() {}, check() { if (cancelled) throw new Error('cancelled'); } }), /cancelled/);
+  } else {
+    const f = folderTrial((f, api, clock) => {
+      clock.check = () => { if (cancelled) throw new Error('cancelled'); };
+      if (boundary === 'window') api.fileMenu = () => { cancelled = true; };
+      else api.folderSheet = () => { cancelled = true; return f.sheet; };
+    });
+    assert.throws(f.run, /cancelled/);
+    assert.deepEqual(f.navigations, []);
+    assert.equal(f.commands.includes('go'), boundary === 'sheet');
+  }
+});
+
+for (const extra of [false, true]) test(`R2 cleanup preserves baseline fixture-root windows (extra=${extra})`, () => {
+  const s = source(), baseline = { AXDocument: '/fixture/old' }, owned = { AXDocument: '/fixture/current' },
+    unknown = { AXDocument: '/fixture/extra' }, closed = [];
+  let windows = [baseline, owned, ...(extra ? [unknown] : [])];
+  const api = { windows: () => windows, equal: (a, b) => a === b, dialog: () => [],
+    text: (w, key) => w[key], path: v => v, wait() {},
+    closeButton: (w, guard) => { guard(); closed.push(w); windows = windows.filter(item => item !== w); } };
+  const request = { fixtureRoot: '/fixture', target: '/fixture/current', finderOwnership: { baseline: [baseline], created: [owned] } };
+  if (extra) assert.throws(() => s.closeFinderFixtureWindows(owned, request, {}, api), /ownership unconfirmed/);
+  else s.closeFinderFixtureWindows(owned, request, {}, api);
+  assert.ok(windows.includes(baseline));
+  assert.ok(!closed.includes(baseline));
+  if (extra) assert.ok(windows.includes(unknown));
+  else assert.deepEqual(closed, [owned]);
+});
+
+test('R2 path alone never authorizes Finder cleanup', () => {
+  const s = source(), owned = { AXDocument: '/fixture/current' };
+  assert.throws(() => s.closeFinderFixtureWindows(owned, { target: '/fixture/current' }, {}, {
+    windows: () => [owned], equal: (a, b) => a === b, text: (w, k) => w[k], path: v => v,
+    closeButton: () => assert.fail('no creation receipt'), dialog: () => [],
+  }), /ownership unconfirmed/);
+});
+
+for (const kind of ['delayed-creation', 'retained-window', 'helper-collection']) for (const lockHeld of [false, true])
+  test(`R3 ${kind} retains actual ${lockHeld ? 'outer' : 'task'} owning lock`, async t => {
+    const dir = mkdtempSync(join(tmpdir(), 'a4r-release-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const ctx = { dir, lockPath: join(dir, 'synthetic-lock') }; let releases = 0;
+    const release = async () => { releases++; };
+    const task = { setup() {
+      ctx.windowLeases = [{ diagnostics: { bundle: 'com.apple.finder', launched: false,
+        cleanup: 'unconfirmed', windowCleanupConfirmed: false }, dispose: async () => kind !== 'helper-collection' }];
+      ctx.fixtureDiagnostics = ctx.windowLeases.map(l => l.diagnostics);
+      if (kind === 'delayed-creation') { ctx.pendingAcquisitions = new Set(['finder']); throw new Error('delayed creation'); }
+    }, prompt: () => 'offline', cleanup() { throw new Error('Owned Finder fixture window cleanup unconfirmed'); } };
+    const result = await executeRealTask(task, ctx, { lockHeld, lock: async () => release, setupOnly: true });
+    if (lockHeld) {
+      assert.equal(typeof lifecycle.releaseFixtureLock, 'function');
+      assert.equal(await lifecycle.releaseFixtureLock([ctx], release), false);
+    }
+    assert.equal(releases, 0);
+    assert.equal(ctx.fixtureLockUnconfirmed, true);
+    assert.ok(result.liveLockKept);
+  });
+
+test('R3 outer runner uses the shared fail-closed release boundary', () => {
+  const text = readFileSync(new URL('../bench/run.mjs', import.meta.url), 'utf8');
+  assert.match(text, /releaseFixtureLock\(realContexts, unlock\)/);
+});
+
+for (const when of ['second-probe', 'last-probe', 'before-force', 'missing-start', 'original-alive'])
+  test(`R5 recovery refuses changed or unproved process incarnation: ${when}`, () => {
+    const s = source(); let time = 0, probes = 0, lookups = 0, forced = 0;
+    const date = value => ({ isNil: () => false, timeIntervalSince1970: value });
+    const old = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: date(1), isTerminated: false,
+      get forceTerminate() { forced++; return true; } };
+    const replacement = { processIdentifier: when === 'original-alive' ? 43 : 42, bundleIdentifier: 'com.apple.finder', launchDate: date(2), get forceTerminate() { forced++; return true; } };
+    if (when === 'missing-start') old.launchDate = null;
+    const api = { application: () => {
+      lookups++;
+      if ((when === 'before-force' && lookups >= 4) || (when === 'second-probe' && probes >= 1) ||
+          (when === 'last-probe' && probes >= 3) || (when === 'original-alive' && forced)) return replacement;
+      return old;
+    }, probe: () => { time += 500; probes++; return forced ? 0 : -25204; }, exited: () => false };
+    assert.throws(() => s.ensureFinderAX(api, { now: () => time, check() {}, wait: ms => { time += ms; }, emit() {} }), /Finder AX/);
+    assert.equal(forced, when === 'original-alive' ? 1 : 0);
+  });
+
+for (const boundary of ['probe', 'window', 'sheet']) test(`R1 JXA control cancellation stops setup during ${boundary}`, () => {
+  let cancelled = false, probes = 0;
+  const { run, calls, events } = finderRun(({ s, api }) => {
+    const control = s.$.NSString.alloc.initWithDataEncoding;
+    s.$.NSString.alloc.initWithDataEncoding = () => JSON.stringify({ ...JSON.parse(control()), cancelled });
+    if (boundary === 'probe') {
+      const probe = s.probeFinderAX;
+      s.probeFinderAX = (...args) => { const code = probe(...args); if (++probes === 2) cancelled = true; return code; };
+    } else if (boundary === 'window') api.fileMenu = () => { calls.push('new-window'); cancelled = true; };
+    else api.folderSheet = () => { cancelled = true; return null; };
+  });
+  assert.throws(run, /opening interrupted/);
+  assert.equal(calls.includes('submit'), false);
+  if (boundary === 'probe') assert.equal(calls.includes('force'), false);
+  if (boundary === 'window') assert.equal(calls.includes('go-menu'), false);
+  assert.equal(events.some(e => e.stage === 'ready'), false);
+});
+
+test('R1 native press checks cancellation after action bookkeeping', () => {
+  let cancelled = false;
+  const f = nativeFolderTrial({ check() { if (cancelled) throw new Error('cancelled'); },
+    emit(event) { if (event.stage === 'action') cancelled = true; } });
+  assert.throws(() => f.api.submitFolder(f.window, f.sheet, '/fixture/target'), /cancelled/);
+  assert.equal(f.writes.length, 1);
+  assert.deepEqual(f.presses, [], 'no Go press after cancellation was observed');
+});
+
+test('R2 successful setup carries exact creation and baseline identities into cleanup', () => {
+  const s = source(), baseline = { AXDocument: '/fixture/old' }, owned = { AXDocument: '/fixture/new' }, sheet = {};
+  const request = { target: '/fixture/new', fixtureRoot: '/fixture' };
+  let windows = [baseline]; const closed = [];
+  const api = { windows: () => windows, equal: (a, b) => a === b, exists: () => true, finderFolderGuard() {},
+    fileMenu: (_a, _t, validate) => { validate(); windows.push(owned); },
+    menu: (_a, _n, _t, validate) => validate(), folderSheet: () => sheet, submitFolder() {},
+    dialog: () => [], text: (w, key) => w[key], path: v => v,
+    closeButton: (w, validate) => { validate(); closed.push(w); windows = windows.filter(item => item !== w); }, wait() {} };
+  s.openFinderFolder(request, {}, baseline, api, { check() {}, now: () => 0 }, () => {});
+  s.closeFinderFixtureWindows(owned, request, {}, api);
+  assert.deepEqual(closed, [owned]);
+  assert.deepEqual(windows, [baseline]);
+});
+
+test('R4 Finder menu diagnostics emit only fixed requested commands and numeric status', () => {
+  const s = source(), seen = [];
+  const safe = s.finderMenuDiagnostics([
+    { title: 'Compress OWNER-SECRET-FILENAME', enabled: true },
+    { title: 'New Finder Window', enabled: true }, { title: 'Go to Folder…', enabled: false },
+  ], { text: item => item.title, enabled: item => { seen.push(item.title); return item.enabled; } });
+  assert.equal(JSON.stringify(safe), '[{"command":"new-window","enabled":1},{"command":"go-to-folder","enabled":0}]');
+  assert.deepEqual(seen, ['New Finder Window', 'Go to Folder…']);
+});
+
+for (const boundary of ['receipt', 'final-check']) test(`R5 replacement immediately before force at ${boundary} refuses termination`, () => {
+  const s = source(); let time = 0, replaced = false, announced = false, checks = 0, forces = 0;
+  const old = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 1 },
+    get isTerminated() { return replaced; }, get forceTerminate() { forces++; return true; } };
+  const replacement = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 2 },
+    get forceTerminate() { forces++; return true; } };
+  assert.throws(() => s.ensureFinderAX({ application: () => replaced ? replacement : old,
+    probe: () => { time += 500; return -25204; } }, {
+    now: () => time, wait: ms => { time += ms; },
+    emit() { announced = true; if (boundary === 'receipt') replaced = true; },
+    check() { if (announced && ++checks === 1 && boundary === 'final-check') replaced = true; },
+  }), /Finder AX.*process changed/);
+  assert.equal(forces, 0);
+});
+
+test('R5 original exit requires both retained termination and independent PID lookup evidence', () => {
+  const s = source(), original = { isTerminated: false }, receipt = { pid: 42, startedAtMs: 1000 };
+  let current = { isNil: () => true };
+  s.$ = { NSRunningApplication: { runningApplicationWithProcessIdentifier: () => current } };
+  assert.equal(s.finderOriginalExited(original, receipt), false);
+  original.isTerminated = true;
+  assert.equal(s.finderOriginalExited(original, receipt), true);
+  current = { launchDate: { timeIntervalSince1970: 1 }, isTerminated: false };
+  assert.equal(s.finderOriginalExited(original, receipt), false);
+  current.launchDate.timeIntervalSince1970 = 2;
+  assert.equal(s.finderOriginalExited(original, receipt), true);
+  current.launchDate = null;
+  assert.equal(s.finderOriginalExited(original, receipt), false);
+});
+
+test('R1 an already-aborted run never starts a helper or launch', async () => {
+  const { openFixture } = await import('../bench/real-fixture.mjs');
+  const abort = new AbortController(); abort.abort(new Error('already stopped'));
+  await assert.rejects(openFixture({ dir: '/unused', signal: abort.signal }, { bundle: 'com.apple.finder', mode: 'folder' }, {
+    helper: () => assert.fail('no helper resolution after abort'), run: () => assert.fail('no helper after abort'),
+    open: () => assert.fail('no launch after abort'),
+  }), /already stopped/);
+  assert.equal(getEventListeners(abort.signal, 'abort').length, 0);
+});
+
+test('R1 cancellation listener is removed after exact helper collection', async t => {
+  const { openFixture } = await import('../bench/real-fixture.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'a4r-listener-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const abort = new AbortController();
+  const lease = await openFixture({ dir, signal: abort.signal }, { app: 'Finder', bundle: 'com.apple.finder', mode: 'folder' }, {
+    helper: async () => ({ command: 'fake', args: [] }),
+    run: async (_cmd, _args, { onStdout }) => {
+      onStdout('{"stage":"armed"}\n{"stage":"ready"}\n');
+      return { groupClean: true, exit: { code: 0 }, stdout: '{"stage":"closed"}\n' };
+    },
+  });
+  assert.equal(await lease.dispose(), true);
+  assert.equal(getEventListeners(abort.signal, 'abort').length, 0);
+});
+
+test('R5 identity lookup latency cannot turn an immediate AX error into timeout evidence', () => {
+  const s = source(); let time = 0, forces = 0;
+  const app = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 1 },
+    get forceTerminate() { forces++; return false; } };
+  assert.throws(() => s.ensureFinderAX({ application: () => { time += 500; return app; }, probe: () => -25204 }, {
+    check() {}, now: () => time, wait: ms => { time += ms; }, emit() {},
+  }), /probe failed/);
+  assert.equal(forces, 0);
+});
+
+test('R2 setup recovery checks extra windows even after the retained window disappears', () => {
+  const s = source(), owned = {}, extra = {}, request = { bundle: 'com.apple.finder', mode: 'folder',
+    finderOwnership: { baseline: [], created: [owned] } };
+  assert.throws(() => s.recoverSetup(owned, request, {
+    exists: () => false, windows: () => [extra], equal: (a, b) => a === b,
+    closeButton: () => assert.fail('preserve an extra window without creation proof'),
+  }, {}), /ownership unconfirmed/);
+});
+
+test('R3 default acquisition retains the exact synthetic task lock after Finder cleanup fails', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'a4r-synthetic-lock-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const ctx = { dir, lockPath: join(dir, 'synthetic-lock') };
+  const diagnostic = { bundle: 'com.apple.finder', launched: false, cleanup: 'unconfirmed', windowCleanupConfirmed: false };
+  const result = await executeRealTask({ setup() {
+    assert.equal(existsSync(ctx.lockPath), true);
+    ctx.windowLeases = [{ diagnostics: diagnostic, dispose: async () => true }];
+    ctx.fixtureDiagnostics = [diagnostic];
+  }, prompt: () => 'offline', cleanup() { throw new Error('Owned Finder fixture window cleanup unconfirmed'); } }, ctx, { setupOnly: true });
+  assert.equal(existsSync(ctx.lockPath), true, 'the original acquired lock must survive collection and failed window cleanup');
+  assert.equal(result.liveLockKept, ctx.lockPath);
+  assert.equal(existsSync(dir), true);
 });

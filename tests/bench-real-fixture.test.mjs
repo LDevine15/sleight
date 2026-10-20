@@ -794,13 +794,12 @@ test('inherit helpers never claim or close an application window during setup re
 
 test('an inherited app that never launches fails setup before reporting readiness', () => {
   const events = [];
-  let controlReads = 0;
   const native = value => ({ dataUsingEncoding: () => value });
   Object.assign(native, {
     AXIsProcessTrusted: () => true,
     NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => ({ count: 0 }) },
     NSData: { dataWithContentsOfFile: () => ({ isNil: () => false }) },
-    NSString: { alloc: { initWithDataEncoding: () => JSON.stringify({ command: ++controlReads > 201 ? 'close' : 'opened' }) } },
+    NSString: { alloc: { initWithDataEncoding: () => JSON.stringify({ command: 'opened' }) } },
     NSThread: { sleepForTimeInterval() {} },
     NSFileHandle: { fileHandleWithStandardOutput: { writeData: value => events.push(JSON.parse(value)) } },
   });
@@ -1541,7 +1540,7 @@ test('a collected helper refusal before any mutation confirms cleanup without an
   }), error => error.noMutation === true);
   await closeFixtures(ctx);
   assert.equal(await ctx.windowLeases[0].dispose(), true);
-  assert.throws(() => readFileSync(join(dir, 'window-0-control.json')), /ENOENT/);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'window-0-control.json'))).command, 'waiting');
 });
 
 test('a document fixture launches without window restoration or the iCloud open panel', async t => {
