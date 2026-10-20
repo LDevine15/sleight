@@ -1037,6 +1037,9 @@ ${O ? `    // What each action did (action-outcomes.mjs), for SLEIGHT_OUTCOMES a
             click: line => proxy.click({ line }),
             // A list number Claude wrote names the line it saw for that number, when the relay passed it.
             lineSeen: number => state.seenLines?.[number],
+            uniqueSeen: number => state.uniqueSeen.has(number),
+            rebound: (from, to, line) => nodeRepl.write('sleight: pickFromList(' + from + ') went to element ' + to +
+              ', the same ' + JSON.stringify(line) + ': the window renumbered since you read it.\\n'),
             parse, sameElement, clicked, expected: state.guarded ? state.expected : undefined
           })(...args);
           // A search that did not click ends the call, so later actions in it don't run past the failure.

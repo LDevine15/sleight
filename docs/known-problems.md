@@ -491,6 +491,7 @@ native reference, and oversized first results defer the browser reference while 
   The next read stops the search. Jumps check the sort order only on the rows they see.
 - The focusing click of `app.pickFromList(<list number>, …)` selects a row of that list, which stays selected if the
   search then stops. The list number is checked against the line Claude saw, as a click's is.
+- The engine tree may omit actions for a group or cell whose only action is the default press, so the passive-role check is the main protection for nested focus (measured in PL1b review, 2026-10-20).
 
 ### Turbo (on by default)
 
