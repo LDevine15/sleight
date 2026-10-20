@@ -4,10 +4,14 @@ const writers = /^(?:type|typeText|type_text|insert_text|setValue|fill|paste|cut
 const cutOrPaste = text => /(?:command|cmd|super|meta|ctrl|control)[+\s-]+(?:(?:command|cmd|super|meta|ctrl|control|shift|alt|option)[+\s-]+)*(?:key[_-]?)?[xv]\b|shift[+\s-]+(?:key[_-]?)?insert\b/i.test(text.replace(/["'\[\],]/g, ' '));
 const writeAction = /(?:^|[_\s.-])(?:type|paste|cut)(?:$|[_\s.-])|^(?:set|write)[_\s.-]?clipboard$|^clipboard[_\s.-](?:set|write)$/i;
 const indirect = /^(?:eval|Function|apply|call|bind)$/;
-// Optional API discovery may name a read absent from this engine version. Keep write-like
-// names and indirect calls unknown; their arguments and consumers are still visited below.
-const optionalRead = name => /^(?:get|list|find|read|query|has|is)(?:[A-Z_]|$)/.test(name) &&
-  !/(?:type|insert|paste|cut|fill|set|write|eval|function|apply|call|bind)/i.test(name);
+// Native app and inventory reads in the saved engine-api-26.1013.40934.md API.
+// findElement and readWindowInfo are not defined in any saved engine API.
+const optionalReads = new Set(['getState', 'listApps', 'listWindows', 'listBrowsers', 'listTabs',
+  'getAXState', 'getScreenshot', 'getAXStateAndScreenshot']);
+const sleightPrefix = 'mcp__plugin_sleight_computer__';
+// open_file appends this dedicated relay block after document content. Accept the
+// full and lean notices, including the optional screenshot lead, as whole blocks.
+const openedNotice = /^(?:sleight: screenshot added, the tree has no document text\. |Screenshot added: no text in tree\. )?Window handle: `(__sleightOpenedApp\d+)`(?:\.|, already acquired\. Use it in place of `app`\.|, acquired; use it for `app`\.|, (?:already acquired, but `app` isn't set:|acquired;) start the next call with `let app = \1;`\.)$/;
 const builtins = new Set(['setTimeout', 'clearTimeout', 'setInterval', 'isNaN', 'isFinite', 'parseInt', 'parseFloat', 'Number', 'String', 'Boolean']);
 const ordinaryTools = new Set(['notifications', 'turn_ended', 'blocked_app', 'hover', 'open_file', 'js_reset', 'ToolSearch']);
 const methods = new Set(['getApp', 'getState', 'listApps', 'listWindows', 'getAXState', 'getScreenshot', 'getAXStateAndScreenshot',
@@ -28,16 +32,16 @@ function literal(node) {
 // Supplement saved artifacts with drag and prohibited replacement patterns.
 export function dragMethodAudit(transcript) {
   const audit = { drag: false, replacement: false, complete: true }, pending = new Map(), apps = new Set();
-  let calls = 0, engine = true;
+  let calls = 0, engine = true, openedHandle = false;
   const inspect = (name, input, success, content) => {
     calls++;
     if (!input || typeof input !== 'object' || Array.isArray(input)) { audit.complete = false; return; }
     const tool = name.split('__').at(-1);
-    if (tool === 'open_file' && success) {
-      // Trust the returned handle notice, never a matching name in model code or input.
-      const texts = typeof content === 'string' ? [content] : Array.isArray(content)
-        ? content.filter(c => c?.type === 'text' && typeof c.text === 'string').map(c => c.text) : [];
-      for (const text of texts) for (const match of text.matchAll(/\bWindow handle: `(__sleightOpenedApp\d+)`/g)) apps.add(match[1]);
+    const sleight = name === sleightPrefix + tool;
+    if (sleight && tool === 'open_file' && success && Array.isArray(content)) {
+      const last = content.filter(c => c?.type === 'text').at(-1);
+      const match = typeof last?.text === 'string' && openedNotice.exec(last.text);
+      if (match) { apps.add(match[1]); openedHandle = true; }
     }
     if (tool === 'replay') audit.complete = false;
     if (tool === 'blocked_app' && input.op === 'type') audit.replacement = true;
@@ -61,6 +65,24 @@ export function dragMethodAudit(transcript) {
           ts.isCaseClause(node) || ts.isDefaultClause(node) || ts.isCatchClause(node) || ts.isTryStatement(node);
         if (ts.isSourceFile(node) || ts.isBlock(node)) {
           const locals = new Map();
+          // Declarations shadow for the whole scope, including calls before a
+          // hoisted function or a class's temporal dead zone.
+          for (const statement of node.statements) {
+            const names = [];
+            if ((ts.isClassDeclaration(statement) || ts.isFunctionDeclaration(statement)) && statement.name) names.push(statement.name);
+            if (ts.isImportDeclaration(statement) && statement.importClause) {
+              const clause = statement.importClause;
+              if (clause.name) names.push(clause.name);
+              if (clause.namedBindings) {
+                if (ts.isNamespaceImport(clause.namedBindings)) names.push(clause.namedBindings.name);
+                else names.push(...clause.namedBindings.elements.map(binding => binding.name));
+              }
+            }
+            for (const name of names) {
+              if (!locals.has(name.text)) locals.set(name.text, apps.has(name.text));
+              bind(name, undefined, deferred);
+            }
+          }
           let stopped;
           for (const statement of node.statements) {
             if (ts.isVariableStatement(statement) && (statement.declarationList.flags & ts.NodeFlags.BlockScoped)) for (const declaration of statement.declarationList.declarations) {
@@ -76,6 +98,8 @@ export function dragMethodAudit(transcript) {
           const end = visit(node.statement, deferred);
           return end === ts.SyntaxKind.ReturnStatement || end === ts.SyntaxKind.ThrowStatement ? end : undefined;
         }
+        if ((ts.isClassDeclaration(node) || ts.isFunctionDeclaration(node) || ts.isImportClause(node) ||
+          ts.isImportSpecifier(node) || ts.isNamespaceImport(node)) && node.name) bind(node.name, undefined, deferred);
         if (ts.isVariableDeclaration(node)) bind(node.name, node.initializer, deferred);
         if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
           if (ts.isIdentifier(node.left)) bind(node.left, node.operatorToken.kind === ts.SyntaxKind.EqualsToken ? node.right : undefined, deferred);
@@ -86,7 +110,7 @@ export function dragMethodAudit(transcript) {
             ts.isElementAccessExpression(expr) && ts.isStringLiteral(expr.argumentExpression) ? expr.argumentExpression.text : '';
           const receiver = ts.isPropertyAccessExpression(expr) && ts.isIdentifier(expr.expression) &&
             (apps.has(expr.expression.text) || engine && expr.expression.text === 'cua');
-          const read = receiver && (node.flags & ts.NodeFlags.OptionalChain) && optionalRead(method) &&
+          const read = sleight && openedHandle && receiver && (node.flags & ts.NodeFlags.OptionalChain) && optionalReads.has(method) &&
             node.arguments.every(arg => literal(arg) && !cutOrPaste(arg.getText(file)));
           const known = ts.isPropertyAccessExpression(expr) ? methods.has(method) || writers.test(method) || read || ['nodeRepl.write', 'nodeRepl.emitImage'].includes(expr.getText(file)) : ts.isIdentifier(expr) && builtins.has(expr.text);
           if (!known || indirect.test(method)) audit.complete = false;
@@ -106,7 +130,7 @@ export function dragMethodAudit(transcript) {
       visit(file);
     } else {
       const action = String(input.action ?? input.op ?? tool);
-      if (tool === 'js_reset') { apps.clear(); engine = true; }
+      if (tool === 'js_reset') { apps.clear(); engine = true; openedHandle = false; }
       // A refused drag moved nothing and typed nothing, so it neither proves nor spoils the method (WD1, 2026-10-17).
       if (/^(drag|mouse_drag|drag_and_drop)$/.test(action)) { if (success) audit.drag = true; }
       else if (writers.test(action) || writeAction.test(action)) audit.replacement = true;
@@ -120,7 +144,8 @@ export function dragMethodAudit(transcript) {
       const item = event.item;
       let input = item.arguments === undefined ? {} : item.arguments;
       if (typeof input === 'string') { try { input = JSON.parse(input); } catch {} }
-      inspect(item.tool ?? '', input, item.status !== 'failed' && !!item.result && item.result.isError !== true && !item.error, item.result?.content);
+      const name = item.server ? `mcp__${item.server}__${(item.tool ?? '').split('__').at(-1)}` : item.tool ?? '';
+      inspect(name, input, item.status !== 'failed' && !!item.result && item.result.isError !== true && !item.error, item.result?.content);
     }
     for (const item of event.message?.content ?? []) {
       if (item.type === 'tool_use') pending.set(item.id, item);
