@@ -24,7 +24,7 @@ function fixture(t, options = {}) {
   }, engineReply(reply) { serverOut.write(JSON.stringify({ jsonrpc: '2.0', ...reply }) + '\n'); } };
 }
 
-for (const args of ['2, "super+Down"', 'null, "Return"', '{}', '"Return", "extra"', '"Return", { durationMs: "long" }', '']) {
+for (const args of ['2, "super+Down"', 'null, "Return"', '{}', '""', '"Return", "extra"', '"Return", { durationMs: "long" }', '']) {
   test(`relay refuses malformed native pressKey(${args}) before forwarding`, t => {
     const f = fixture(t);
     f.call(`await app.pressKey(${args}); await app.pressKey("Return");`);
@@ -59,13 +59,68 @@ for (const [method, args] of [
   ['click', 'null'], ['click', '[1, "two"]'], ['click', '[, 2]'], ['click', '1, { key: 2 }'],
   ['selectText', '1, null'], ['selectText', '1, "hello", { prefix: 2 }'],
   ['typeText', '2, "hello"'], ['typeText', '{}'],
-  ['scroll', '1, {}'], ['scroll', '[1, 2], "down", { pixels: "many" }'],
+  ['scroll', '1, {}'], ['scroll', '[1, 2], "down", "many"'],
   ['drag', '[1, 2], null'], ['drag', '[1, 2, 3], [4, 5]'],
+  ['click', ''], ['selectText', '1'], ['typeText', ''], ['scroll', '1'], ['drag', '[1, 2]'],
+  ['click', '1, { mouseButton: 2 }'], ['selectText', '1, "hello", { selectionType: 2 }'],
 ]) test(`relay refuses malformed native ${method}(${args}) without forwarding`, t => {
   const f = fixture(t);
   f.call(`await app.${method}(${args});`);
   assert.equal(f.sent.length, 0);
   assert.match(f.received.at(-1).result.content[0].text, new RegExp(`${method}\\(.*nothing was sent`));
+});
+
+const compatibleArguments = [
+  ['single key', 'pressKey', ['a']],
+  ['space key', 'pressKey', [' ']],
+  ['tab key', 'pressKey', ['\t']],
+  ['newline key', 'pressKey', ['\n']],
+  ['future key', 'pressKey', ['FutureKey']],
+  ['null key options', 'pressKey', ['Return', null]],
+  ['future option field', 'pressKey', ['Return', { futureOption: { mode: 'new' } }]],
+  ['extra key argument', 'pressKey', ['Return', {}, { future: true }]],
+  ['future text options', 'typeText', ['hello', { futureOption: true }]],
+  ['undefined text options', 'typeText', ['hello', undefined]],
+  ['null text options', 'typeText', ['hello', null]],
+  ['future mouse button', 'click', [1, { mouseButton: 'future-button' }]],
+  ['null click options', 'click', [1, null]],
+  ['extra click argument', 'click', [1, {}, { future: true }]],
+  ['future selection type', 'selectText', [1, 'hello', { selectionType: 'future-selection' }]],
+  ['null selection options', 'selectText', [1, 'hello', null]],
+  ['extra selection argument', 'selectText', [1, 'hello', {}, { future: true }]],
+  ...['u', 'd', 'l', 'r', 'future-direction'].map(direction => [
+    `scroll direction ${direction}`, 'scroll', [1, direction],
+  ]),
+  ['page scroll distance', 'scroll', [1, 'down', 2]],
+  ['future scroll distance', 'scroll', [1, 'down', { pages: 2, futureUnit: 'new' }]],
+  ['empty scroll distance', 'scroll', [1, 'down', {}]],
+  ['opaque scroll distance fields', 'scroll', [1, 'down', { pixels: 'future-value' }]],
+  ['null scroll distance', 'scroll', [1, 'down', null]],
+  ['extra scroll argument', 'scroll', [1, 'down', 2, { future: true }]],
+  ['extra drag argument', 'drag', [[1, 2], [3, 4], { future: true }]],
+];
+
+for (const [label, method, args] of compatibleArguments) {
+  test(`relay forwards ${label}`, t => {
+    const f = fixture(t);
+    const source = args.map(value => value === undefined ? 'undefined' : JSON.stringify(value)).join(', ');
+    f.call(`await app.${method}(${source});`);
+    assert.equal(f.sent.length, 1, f.received.at(-1)?.result?.content?.[0]?.text);
+  });
+
+  test(`runtime forwards ${label} unchanged`, async () => {
+    const sent = [];
+    const raw = { getAXState: async () => tree, [method]: async (...received) => sent.push(received) };
+    const realm = { app: raw, args, cua: { getApp: async () => raw }, nodeRepl: { write() {} } };
+    await runInNewContext(`(async () => { ${guardedCode(`await app.${method}(...args);`, window)} })()`, realm);
+    assert.deepEqual(sent, [args]);
+  });
+}
+
+for (const selector of ['Body', 'id:body']) test(`relay forwards string click selector ${selector}`, t => {
+  const f = fixture(t);
+  f.call(`await app.click(${JSON.stringify(selector)});`);
+  assert.equal(f.sent.length, 1);
 });
 
 test('valid native literals, unknown expressions and method names in text still forward', t => {

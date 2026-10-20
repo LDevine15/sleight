@@ -11,41 +11,39 @@ export function nativeArgumentError(name, args, unknown = Symbol()) {
   const element = value => !known(value) || Number.isInteger(value) && value >= 0 || typeof value === 'string' ||
     object(value) && value && ['id', 'label', 'line'].some(key => key in value && string(value[key]));
   const target = value => element(value) || point(value);
-  const options = (value, fields) => value === undefined || object(value) && (!known(value) ||
+  const options = (value, fields) => value == null || object(value) && (!known(value) ||
     Object.entries(fields).every(([key, valid]) => value[key] === undefined || valid(value[key])));
-  const oneOf = values => value => !known(value) || values.includes(value);
   const [a, b, c] = args;
   let valid = true, signature;
   switch (name) {
     case 'pressKey':
       signature = 'pressKey(key: string, options?: PressKeyOptions)';
-      valid = args.length >= 1 && args.length <= 2 && string(a) && (!known(a) || a.trim().length > 0) &&
+      valid = args.length >= 1 && string(a) && (!known(a) || a.length > 0) &&
         options(b, { durationMs: number });
       break;
     case 'typeText':
       signature = 'typeText(text: string)';
-      valid = args.length === 1 && string(a);
+      valid = args.length >= 1 && string(a);
       break;
     case 'click':
       signature = 'click(target: number | Vec2, options?: ClickOptions)';
-      valid = args.length >= 1 && args.length <= 2 && target(a) && options(b, {
-        key: string, durationMs: number, clickCount: number, mouseButton: oneOf(['left', 'right', 'middle', 'l', 'r', 'm']),
+      valid = args.length >= 1 && target(a) && options(b, {
+        key: string, durationMs: number, clickCount: number, mouseButton: string,
       });
       break;
     case 'selectText':
       signature = 'selectText(elementIndex: number, text: string, options?: SelectTextOptions)';
-      valid = args.length >= 2 && args.length <= 3 && element(a) && string(b) && options(c, {
-        prefix: string, suffix: string, selectionType: oneOf(['text', 'cursor_before', 'cursor_after']),
+      valid = args.length >= 2 && element(a) && string(b) && options(c, {
+        prefix: string, suffix: string, selectionType: string,
       });
       break;
     case 'scroll':
       signature = 'scroll(target: number | Vec2, direction: Direction, distance?: number | { pixels: number })';
-      valid = args.length >= 2 && args.length <= 3 && target(a) && oneOf(['up', 'down', 'left', 'right', 'u', 'd', 'l', 'r'])(b) &&
-        (c === undefined || number(c) || object(c) && c && 'pixels' in c && number(c.pixels));
+      valid = args.length >= 2 && target(a) && string(b) && (c == null || number(c) || object(c));
       break;
     case 'drag':
       signature = 'drag(from: Vec2, to: Vec2)';
-      valid = args.length === 2 && point(a) && point(b);
+      valid = args.length >= 2 && point(a) && point(b);
       break;
   }
   return valid ? undefined : 'sleight: invalid native arguments. Engine App.' + signature + '; nothing was sent';
