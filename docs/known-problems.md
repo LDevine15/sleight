@@ -738,7 +738,13 @@ native reference, and oversized first results defer the browser reference while 
   loaded the Claude marketplace checkout. That can differ from Claude Code's cached sleight version (1.3.1 versus 1.3.0
   on the study Mac). Check the target in `grok inspect --json` and keep one route. The direct MCP entry passed doctor.
   Grok form answers never write Always allow. Only the user's click on sleight's panel can do that.
-- Grok Bot.app's local MCP support is unknown. The Grok CLI checks do not cover that app.
+- Grok Bot.app has no local sleight route yet. Its custom STDIO MCP servers run in a hosted box without this Mac's
+  apps or ChatGPT's engine. The shell and HTTP routes are pending. Doctor reports `route: none yet`.
+- With Grok Bot's own computer use on, its helper is a second driver. It does not share sleight's input lease,
+  so both could act on the same app. Turn that helper off before using sleight through a future Grok Bot route.
+- The proposed Grok Bot routes have no trusted user-turn binding. Every payment, booking, settings change and submit
+  must ask on sleight's panel, including actions the user requested. Grok's `always` setting and auto-review cannot
+  answer that panel, and `SLEIGHT_CONFIRM_PAYMENTS=never` cannot skip these confirmations. Turbo stays off.
 - The Cursor plugin (1.4.0) hasn't been installed in Cursor yet. We don't know whether
   `cursor-agent plugin marketplace add` works on a personal account, whether Cursor accepts the
   manifest's empty `hooks` object without a warning, or whether it hides `turn_ended` from the model.

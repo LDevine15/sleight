@@ -1,0 +1,149 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { grokbotDoctorLines, grokbotStatus } from '../plugins/sleight/lib/grokbot-host.mjs';
+import { doctor } from '../plugins/sleight/lib/launch.mjs';
+
+const systemPlist = '/Applications/Grok Bot.app/Contents/Info.plist';
+const userPlist = '/home/Applications/Grok Bot.app/Contents/Info.plist';
+const gate = '/home/.grokbot/local-computer-use-gate.json';
+const settings = '/home/.grokbot/settings.json';
+const daemon = '/home/.grokbot/local-exec-daemon.json';
+const plist = version => `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>${version}</string></dict></plist>`;
+const installed = {
+  [systemPlist]: plist('0.71.2'),
+  [gate]: '{"isOn":false}',
+  [settings]: '{"localToolPermission":"always","mcpBoxServers":{"ignored":"PRIVATE"}}',
+  [daemon]: '{"pid":4029,"startedAt":123,"servingAt":124,"inflightCount":0,"filesKeyId":"PRIVATE","generation":2}',
+};
+function fixture(files = installed, running = () => true) {
+  const reads = [], pids = [];
+  return { reads, pids, home: '/home', running: pid => { pids.push(pid); return running(pid); },
+    read: path => {
+      reads.push(path);
+      assert.ok([systemPlist, userPlist, gate, settings, daemon].includes(path), `forbidden read: ${path}`);
+      if (!(path in files)) throw Object.assign(new Error('PRIVATE'), { code: 'ENOENT' });
+      if (files[path] instanceof Error) throw files[path];
+      return files[path];
+    },
+  };
+}
+
+test('reports the bundle version and separate computer-use, daemon and permission states', () => {
+  const io = fixture();
+  const status = grokbotStatus(io);
+  assert.equal(status.version, '0.71.2');
+  assert.equal(status.computerUse, false);
+  assert.equal(status.daemonRunning, true);
+  assert.equal(status.localToolPermission, 'always');
+  assert.deepEqual(io.pids, [4029]);
+  assert.deepEqual(io.reads, [systemPlist, gate, settings, daemon]);
+  const text = grokbotDoctorLines(status).join('\n');
+  assert.match(text, /Grok Bot 0\.71\.2, computer use off, route: none yet/);
+  assert.match(text, /local daemon.*running.*PID/);
+  assert.match(text, /local tool permission: always/);
+  assert.doesNotMatch(JSON.stringify(status) + text, /PRIVATE|mcpBoxServers|filesKeyId/);
+});
+
+test('warns about a second driver only when Grok computer use is on', () => {
+  const off = grokbotDoctorLines(grokbotStatus(fixture())).join('\n');
+  assert.doesNotMatch(off, /second driver/);
+  const on = grokbotDoctorLines(grokbotStatus(fixture({ ...installed, [gate]: '{"isOn":true}' }))).join('\n');
+  assert.match(on, /computer use on/);
+  assert.match(on, /second driver/);
+});
+
+test('finds a user-installed bundle when the system bundle is absent', () => {
+  const files = { ...installed, [userPlist]: plist('0.72.0') };
+  delete files[systemPlist];
+  const io = fixture(files);
+  assert.equal(grokbotStatus(io).version, '0.72.0');
+  assert.deepEqual(io.reads, [systemPlist, userPlist, gate, settings, daemon]);
+});
+
+test('reads the release from a binary bundle plist', () => {
+  const binary = execFileSync('/usr/bin/plutil', ['-convert', 'binary1', '-o', '-', '--', '-'], { input: plist('0.71.2') });
+  assert.equal(grokbotStatus(fixture({ ...installed, [systemPlist]: binary })).version, '0.71.2');
+});
+
+test('unreadable system bundle does not silently select another installation', () => {
+  const io = fixture({ ...installed, [systemPlist]: Object.assign(new Error('PRIVATE'), { code: 'EACCES' }), [userPlist]: plist('0.72.0') });
+  const status = grokbotStatus(io);
+  assert.equal(status.version, undefined);
+  assert.equal(status.installed, undefined);
+  assert.ok(!io.reads.includes(userPlist));
+  assert.doesNotMatch(grokbotDoctorLines(status).join('\n'), /PRIVATE|0\.72\.0|bundle not found/);
+});
+
+test('missing metadata stays unknown and never probes a PID', () => {
+  const io = fixture({});
+  const status = grokbotStatus(io);
+  assert.equal(status.installed, false);
+  assert.equal(status.computerUse, undefined);
+  assert.equal(status.localToolPermission, undefined);
+  assert.equal(status.daemonRunning, undefined);
+  assert.deepEqual(io.pids, []);
+  const text = grokbotDoctorLines(status).join('\n');
+  assert.match(text, /bundle not found/);
+  assert.match(text, /computer use unknown, route: none yet/);
+  assert.match(text, /local daemon: unknown/);
+  assert.match(text, /local tool permission: unknown/);
+});
+
+test('stale daemon PID reports stopped without changing the computer-use setting', () => {
+  const status = grokbotStatus(fixture(installed, () => false));
+  assert.equal(status.daemonRunning, false);
+  assert.equal(status.computerUse, false);
+  assert.match(grokbotDoctorLines(status).join('\n'), /local daemon: not running/);
+});
+
+test('failed liveness check and unreadable files report unknown without exposing errors', () => {
+  const privateError = Object.assign(new Error('PRIVATE'), { code: 'EACCES' });
+  const status = grokbotStatus(fixture({ ...installed, [gate]: privateError, [settings]: privateError }, () => { throw privateError; }));
+  assert.equal(status.computerUse, undefined);
+  assert.equal(status.localToolPermission, undefined);
+  assert.equal(status.daemonRunning, undefined);
+  const text = grokbotDoctorLines(status).join('\n');
+  assert.match(text, /computer use unknown/);
+  assert.match(text, /local daemon: unknown/);
+  assert.doesNotMatch(text, /PRIVATE/);
+});
+
+test('malformed metadata never becomes an off setting or a running daemon', () => {
+  for (const value of ['{', 'null', '[]', '"PRIVATE"', '{"isOn":"false","localToolPermission":"always\\nPRIVATE","pid":"4029"}']) {
+    const io = fixture({ [systemPlist]: 'not a plist', [gate]: value, [settings]: value, [daemon]: value });
+    const status = grokbotStatus(io);
+    assert.equal(status.version, undefined);
+    assert.equal(status.computerUse, undefined);
+    assert.equal(status.localToolPermission, undefined);
+    assert.equal(status.daemonRunning, undefined);
+    assert.deepEqual(io.pids, []);
+    assert.doesNotMatch(grokbotDoctorLines(status).join('\n'), /PRIVATE/);
+  }
+});
+
+test('rejects unsafe PIDs before checking liveness', () => {
+  for (const pid of [0, -1, 1.5, '4029', null, 2147483648]) {
+    const io = fixture({ ...installed, [daemon]: JSON.stringify({ pid }) });
+    assert.equal(grokbotStatus(io).daemonRunning, undefined);
+    assert.deepEqual(io.pids, []);
+  }
+});
+
+test('keeps raw bundle values and unknown permission values out of doctor output', () => {
+  const status = grokbotStatus(fixture({ ...installed, [systemPlist]: plist('PRIVATE'), [settings]: '{"localToolPermission":"PRIVATE"}' }));
+  assert.equal(status.version, undefined);
+  assert.equal(status.localToolPermission, undefined);
+  assert.doesNotMatch(grokbotDoctorLines(status).join('\n'), /PRIVATE/);
+});
+
+test('launcher prints Grok Bot metadata before unavailable engine discovery stops doctor', async () => {
+  const lines = [], io = fixture();
+  const code = await doctor({ env: { CODEX_HOME: '/no-such-sleight-home', SLEIGHT_CHATGPT_APP: '/no-such-ChatGPT.app' },
+    turbo: async () => [], hand: async () => [], permissions: async () => [], codex: () => [], cursor: () => [], grok: () => [],
+    grokbot: () => grokbotDoctorLines(grokbotStatus(io)), log: line => lines.push(line),
+  });
+  assert.equal(code, 1);
+  assert.match(lines[0], /Grok Bot 0\.71\.2, computer use off, route: none yet/);
+  assert.match(lines.join('\n'), /local tool permission: always/);
+});

@@ -50,7 +50,7 @@ test('launcher prints the Grok section before an unavailable engine stops doctor
   const lines = [];
   const code = await doctor({ env: { CODEX_HOME: '/no-such-sleight-home', SLEIGHT_CHATGPT_APP: '/no-such-ChatGPT.app' },
     turbo: async () => [], hand: async () => [], permissions: async () => [], codex: () => [], cursor: () => [],
-    grok: () => grokDoctorLines(grokStatus(fake(imported))), log: line => lines.push(line),
+    grok: () => grokDoctorLines(grokStatus(fake(imported))), grokbot: () => [], log: line => lines.push(line),
   });
   assert.equal(code, 1);
   assert.equal(lines[0], 'Grok CLI 1.0.13');
