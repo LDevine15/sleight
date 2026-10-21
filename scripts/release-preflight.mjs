@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { inspectReleaseVersion } from './release-version.mjs';
 import { isReleaseVersion } from '../plugins/sleight/lib/version.mjs';
 import { parseLinuxReceipt, runLinuxPreflight, runOwnedCommand } from './linux-preflight.mjs';
+import { runColimaPreflight } from './linux-preflight-colima.mjs';
 import { fileURLToPath } from 'node:url';
 import { privateIdentity, privateMatches } from './lib/public-privacy.mjs';
 
@@ -22,13 +23,13 @@ const placeholder = /\b(?:TODO|TBD|FIXME|XXX|CHANGEME)\b|\bv?X\.Y\.Z\b|\{\{[^}]+
 
 // No exception text, document text, runner output or private match is copied to the result.
 export async function preflight({ root = process.cwd(), mode = 'release', tag, version, historyBase = 'origin/main',
-  runner, readFile = path => readText(path, 'utf8'), identity = privateIdentity(), privateTerms = [], privateTermsFile } = {}) {
+  linuxRuntime = 'docker', runner, readFile = path => readText(path, 'utf8'), identity = privateIdentity(), privateTerms = [], privateTermsFile } = {}) {
   const result = { ok: false, mode: mode === 'candidate' ? 'candidate' : 'release', releaseReady: false, failures: [] };
   const fail = (check, code, details = {}) => result.failures.push({ check, code, ...details });
   const requested = mode === 'release' && validTag(tag) ? tag.slice(1) : version;
   if (!['release', 'candidate'].includes(mode) || !isReleaseVersion(requested)
     || (mode === 'release' && (!validTag(tag) || version !== undefined))
-    || (mode === 'candidate' && tag !== undefined) || !validRef(historyBase)
+    || (mode === 'candidate' && tag !== undefined) || !validRef(historyBase) || !['docker', 'colima'].includes(linuxRuntime)
     || typeof runner !== 'function' || (privateTermsFile !== undefined && typeof privateTermsFile !== 'string')
     || (!privateTermsFile && (!Array.isArray(privateTerms) || !privateTerms.length
       || privateTerms.some(term => typeof term !== 'string' || !term.trim())))) {
@@ -157,7 +158,8 @@ export async function preflight({ root = process.cwd(), mode = 'release', tag, v
 
 // This is the only real subprocess boundary. Tests inject execute; there is no shell or arbitrary command option.
 // Call A5 directly, so this process retains the signal channel and awaits container cleanup.
-export function createReviewedRunner(root, { execute = runOwnedCommand, signal } = {}) {
+export function createReviewedRunner(root, { execute = runOwnedCommand, signal, linuxRuntime = 'docker' } = {}) {
+  if (!['docker', 'colima'].includes(linuxRuntime)) throw Error('Invalid Linux runtime');
   return async request => {
     let command = '/usr/bin/git', args, timeout = 30_000;
     switch (request.step) {
@@ -172,12 +174,23 @@ export function createReviewedRunner(root, { execute = runOwnedCommand, signal }
       case 'ancestor':
         if (!shaPattern.test(request.base ?? '') || !shaPattern.test(request.head ?? '')) throw Error('Invalid commits');
         args = ['merge-base', '--is-ancestor', request.base, request.head]; break;
-      case 'sources': args = ['ls-files', '--error-unmatch', '--', 'scripts/release-history-scan.mjs', 'scripts/linux-preflight.mjs']; break;
+      case 'sources': args = ['ls-files', '--error-unmatch', '--', 'scripts/release-history-scan.mjs', 'scripts/linux-preflight.mjs',
+        ...(linuxRuntime === 'colima' ? ['scripts/linux-preflight-colima.mjs'] : [])]; break;
       case 'history':
         if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})\.\.(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(request.range ?? '')) throw Error('Invalid range');
         command = process.execPath; args = ['scripts/release-history-scan.mjs', request.range]; timeout = 120_000; break;
       case 'linux': {
         if (!shaPattern.test(request.head ?? '')) throw Error('Invalid commit');
+        if (linuxRuntime === 'colima') {
+          const result = await runColimaPreflight({ worktree: root, commit: request.head, execute, signal });
+          if (result.exitCode !== 0 || result.vm?.cleanupConfirmed !== true || result.vm?.childCollected !== true) {
+            return { status: Number.isInteger(result.exitCode) && result.exitCode !== 0 ? result.exitCode : 1, stdout: '' };
+          }
+          const stdout = JSON.stringify(result.linuxReceipt);
+          try { parseLinuxReceipt(stdout, { commit: request.head, worktree: realpathSync(root) }); }
+          catch { return { status: 1, stdout: '' }; }
+          return { status: 0, stdout };
+        }
         const receipt = await runLinuxPreflight({ worktree: root, commit: request.head, execute, signal });
         return { status: receipt.exitCode, stdout: JSON.stringify(receipt) };
       }
@@ -202,21 +215,23 @@ export async function main(args = process.argv.slice(2), dependencies = {}) {
   const cancel = () => controller.abort();
   signals.on('SIGINT', cancel); signals.on('SIGTERM', cancel);
   try {
-    const options = {}, seen = new Set();
+    const options = { linuxRuntime: 'docker' }, seen = new Set();
     for (let index = 0; index < args.length; index += 2) {
       const flag = args[index], value = args[index + 1];
-      if (!['--tag', '--candidate', '--history-base', '--private-terms'].includes(flag)
+      if (!['--tag', '--candidate', '--history-base', '--private-terms', '--linux-runtime'].includes(flag)
         || seen.has(flag) || !value || value.startsWith('--')) throw Error();
       seen.add(flag);
       if (flag === '--tag') { options.mode = 'release'; options.tag = value; }
       if (flag === '--candidate') { options.mode = 'candidate'; options.version = value; }
       if (flag === '--history-base') options.historyBase = value;
       if (flag === '--private-terms') options.privateTermsFile = value;
+      if (flag === '--linux-runtime') options.linuxRuntime = value;
     }
-    if (seen.has('--tag') === seen.has('--candidate') || !seen.has('--private-terms')) throw Error();
+    if (seen.has('--tag') === seen.has('--candidate') || !seen.has('--private-terms') || !['docker', 'colima'].includes(options.linuxRuntime)) throw Error();
     const root = dependencies.root ?? process.cwd();
     const result = await preflight({ ...dependencies, root, tag: undefined, version: undefined,
-      runner: dependencies.runner ?? createReviewedRunner(root, { execute: dependencies.execute, signal: controller.signal }), ...options });
+      runner: dependencies.runner ?? createReviewedRunner(root, { execute: dependencies.execute, signal: controller.signal,
+        linuxRuntime: options.linuxRuntime }), ...options });
     log(JSON.stringify(result));
     return result.ok ? 0 : 1;
   } catch {

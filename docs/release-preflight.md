@@ -1,6 +1,6 @@
 # Release preflight
 
-Run from the release worktree on macOS or Linux with local Docker available. The command
+Run from the release worktree on macOS or Linux. Docker is the default Linux runtime. The command
 prints one JSON result and returns nonzero on any failure. Keep the private terms file
 outside the repository as a nonempty JSON array of strings. Include the owner's username,
 home path, full name, email addresses and other private terms in the notes. Terms and
@@ -21,6 +21,13 @@ Before tagging, use candidate mode:
 ```sh
 CLAUDE_CONFIG_DIR=$(mktemp -d /tmp/lane-claude-XXXXXX) node scripts/release-preflight.mjs --candidate 1.4.1 --private-terms /run/private/release-terms.json
 ```
+
+On macOS with Colima installed, append `--linux-runtime colima` to either command. This
+starts an owned VM through the Colima helper, runs the same exact-commit Linux producer,
+then waits for container and VM cleanup. The helper keeps its 20-minute total budget.
+A passing Linux receipt with failed VM teardown or an expired runtime budget fails A6.
+`--linux-runtime docker` explicitly selects the default route. Other values are rejected
+before source checks or commands run. Each flag takes one value and may appear only once.
 
 Candidate mode skips tag lookup and always returns `releaseReady: false`. It accepts
 `## 1.4.1 (unreleased)` or a dated release heading, with an optional preceding
@@ -58,14 +65,17 @@ prove the owner's identity is absent from history; retain the owner-identity his
 scan as a separate release requirement.
 
 The Linux step calls the actual A5 `runLinuxPreflight` API with the captured HEAD and
-source worktree. Both helper sources must be tracked. Docker runs a separate exact-commit
+source worktree. The Colima route calls `runColimaPreflight`, which runs the same producer
+and handles VM cleanup. The history scanner and Linux helper must be tracked; selecting Colima
+also requires its helper to be tracked. Docker runs a separate exact-commit
 checkout with usable Git metadata, isolated dependencies and a fresh Claude configuration.
 The complete receipt must pass A5's exported parser for that same commit and canonical
 worktree. A failed install or test, absent counts, a plan, a Mac result or unconfirmed
 cleanup fails. See [Linux preflight](linux-preflight.md) for the CLI and receipt fields.
 
-A6 waits for A5's owned Docker child and container cleanup after cancellation. Its CLI
-passes SIGINT and SIGTERM through an AbortSignal. There is no synchronous helper wrapper
+A6 waits for A5's owned Docker child and container cleanup after cancellation, and for
+VM cleanup when Colima is selected. Its CLI passes SIGINT and SIGTERM through an AbortSignal.
+There is no synchronous helper wrapper
 whose timeout could leave Docker uncollected. A6's successful result includes the tested
 commit, counts and cleanup status while omitting the receipt's private host worktree path.
 
@@ -76,9 +86,9 @@ and an optional document reader. Its operations are `status`, `head`, `tag`, `ba
 `ancestor`, `sources`, `history` and `linux`. The Linux request includes `head`.
 Version inspection always uses the actual A1 API against the supplied root.
 
-`createReviewedRunner(root, { execute, signal })` owns fixed Git reads, the history
-scanner and the A5 producer. The shared process executor uses argument arrays without
-a shell. Git/history calls use disposable Claude configurations and strip Git and Node
+`createReviewedRunner(root, { execute, signal, linuxRuntime })` owns fixed Git reads, the history
+scanner and the selected Linux runtime, defaulting to Docker. The shared process executor uses
+argument arrays without a shell. Git/history calls use disposable Claude configurations and strip Git and Node
 runtime overrides. Linux preparation uses its own isolated Git environment. Docker image
 and dependency downloads require network access during actual qualification.
 

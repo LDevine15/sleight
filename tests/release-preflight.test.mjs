@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
-import { runContainerChecks } from '../scripts/linux-preflight.mjs';
+import { runContainerChecks, runOwnedCommand } from '../scripts/linux-preflight.mjs';
 import { preflight, main, createReviewedRunner, manifestFiles } from '../scripts/release-preflight.mjs';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
@@ -446,4 +446,184 @@ test('A6 signal channel waits for actual helper cancellation and confirmed Docke
   assert.notEqual(result.status, 0);
   assert.equal(JSON.parse(result.stdout).cleanupConfirmed, true);
   assert.deepEqual(boundary.calls.filter(c => c.command === 'docker').slice(-2).map(c => c.args[0]), ['rm', 'container']);
+});
+
+// Exercise the real A6, Colima and Linux APIs; only external command execution is replaced.
+async function colimaFixture(t, overrides = {}) {
+  const f = fixture(), root = f.options.root;
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  f.files.delete('private-terms.json');
+  const termsBank = realpathSync(trackTemp(mkdtempSync(join(tmpdir(), 'a6-colima-terms-'))));
+  t.after(() => rmSync(termsBank, { recursive: true, force: true }));
+  const terms = join(termsBank, 'terms.json'); writeFileSync(terms, '["Private Fixture Name"]');
+  for (const name of ['release-history-scan', 'linux-preflight', ...(overrides.missingHelper ? [] : ['linux-preflight-colima'])]) {
+    f.files.set(`scripts/${name}.mjs`, '// tracked fixture source\n');
+  }
+  const env = { PATH: process.env.PATH, HOME: termsBank, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const git = async args => {
+    const result = await runOwnedCommand('/usr/bin/git', args, { cwd: root, env });
+    assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+  };
+  await git(['init', '--quiet']); await git(['add', '--', '.']);
+  await git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'Fixture']);
+  const commit = await git(['rev-parse', 'HEAD']);
+  const calls = [], banks = new Set(); let state, profile, checkout, runId, control;
+  const execute = async (command, originalArgs, options = {}) => {
+    calls.push({ command, args: originalArgs, options });
+    if (command === '/usr/bin/git') {
+      if (options.cwd.includes('sleight-linux-')) banks.add(trackTemp(options.cwd));
+      return runOwnedCommand(command, originalArgs, options);
+    }
+    if (command === process.execPath) {
+      assert.equal(originalArgs[0], 'scripts/release-history-scan.mjs');
+      return ok('Release history scan: 0 added line(s) contain private identity data.\n');
+    }
+    const args = command === 'docker' && originalArgs[0] === '--host' ? originalArgs.slice(2) : originalArgs;
+    if (options.env?.COLIMA_HOME) { control = dirname(options.env.COLIMA_HOME); banks.add(trackTemp(control)); }
+    if (command === 'colima') {
+      if (args[0] === 'list') return ok(state ? JSON.stringify({ name: profile, status: state,
+        arch: 'aarch64', cpus: 2, memory: 4294967296, disk: 10737418240, runtime: 'docker' }) : '');
+      profile = args[args.indexOf('--profile') + 1];
+      if (args[0] === 'start') {
+        state = 'Running';
+        for (const [directory, file] of [[join(options.env.COLIMA_HOME, profile), 'colima.yaml'],
+          [join(options.env.LIMA_HOME, `colima-${profile}`), 'lima.yaml']]) {
+          mkdirSync(directory, { recursive: true }); writeFileSync(join(directory, file), 'owned config\n');
+        }
+        return ok('');
+      }
+      if (args[0] === 'stop') {
+        if (overrides.stop) return overrides.stop(options, () => { state = 'Stopped'; return ok(''); });
+        state = 'Stopped'; return ok('');
+      }
+      if (args[0] === 'delete') {
+        state = undefined;
+        rmSync(join(options.env.COLIMA_HOME, profile), { recursive: true, force: true });
+        rmSync(join(options.env.LIMA_HOME, `colima-${profile}`), { recursive: true, force: true });
+        return ok('');
+      }
+    }
+    assert.equal(command, 'docker');
+    const socket = `unix://${join(options.env.COLIMA_HOME, profile, 'docker.sock')}`;
+    if (args[0] === 'context') return ok(JSON.stringify([{ Name: args[2], Endpoints: { docker: { Host: socket } } }]));
+    assert.deepEqual(originalArgs.slice(0, 2), ['--host', socket]);
+    if (args[0] === 'info') return ok('linux');
+    if (args[0] === 'create') {
+      assert.equal(args[args.indexOf('--workdir') + 1], '/');
+      checkout = args[args.indexOf('--mount') + 1].match(/source=(.*),target=/)[1];
+      runId = args[args.indexOf('--name') + 1]; return ok('d'.repeat(64));
+    }
+    if (args[0] === 'inspect') return ok(`sha256:${'e'.repeat(64)}`);
+    if (args[0] === 'start') {
+      if (overrides.attach) return overrides.attach(options);
+      const receipt = await runContainerChecks({ platform: 'linux', commit, runId, source: checkout,
+        root: join(termsBank, 'container-workspace'), log() {},
+        makeConfig: () => mkdtempSync(join(termsBank, 'config-')),
+        execute: async (program, argv, config) => {
+          assert.equal(config.cwd, join(termsBank, 'container-workspace'));
+          if (program === '/usr/bin/git') return runOwnedCommand(program, argv, config);
+          assert.equal(program, 'npm'); return ok(argv[0] === 'test' ? tap : '');
+        } });
+      overrides.receipt?.(receipt); overrides.attached?.();
+      return { ...ok(JSON.stringify(receipt)), status: receipt.exitCode };
+    }
+    if (args[0] === 'rm' || args[0] === 'container') return ok('');
+    assert.fail('Unexpected external operation');
+  };
+  t.after(() => { for (const bank of banks) rmSync(bank, { recursive: true, force: true }); });
+  return { root, terms, commit, calls, execute, control: () => control,
+    args: ['--candidate', '1.4.1', '--history-base', 'HEAD', '--private-terms', terms, '--linux-runtime', 'colima'] };
+}
+
+test('Linux runtime validation precedes custom runners and source reads', async () => {
+  assert.throws(() => createReviewedRunner('/fixture', { linuxRuntime: 'unknown' }));
+  const f = fixture(); let invoked = false;
+  const result = await preflight({ ...f.options, linuxRuntime: 'unknown', runner() { invoked = true; assert.fail('Invalid runtime'); } });
+  assert.equal(result.ok, false); assert.equal(invoked, false);
+  for (const runtime of ['unknown', 'Colima', 'colima\n']) {
+    const output = [];
+    assert.equal(await main(['--candidate', '1.4.1', '--private-terms', '/not-read', '--linux-runtime', runtime],
+      { root: f.options.root, runner() { assert.fail('Invalid runtime must not invoke a runner'); }, log: text => output.push(text) }), 1);
+    assert.equal(JSON.parse(output[0]).ok, false);
+  }
+});
+
+test('explicit Docker runtime keeps the original fixed source gate and Docker route', async () => {
+  const { options, boundary } = fixture();
+  const runner = createReviewedRunner(options.root, { execute: boundary.execute, linuxRuntime: 'docker' });
+  await runner({ step: 'sources' });
+  assert.deepEqual(boundary.calls[0].args, ['ls-files', '--error-unmatch', '--', 'scripts/release-history-scan.mjs', 'scripts/linux-preflight.mjs']);
+  assert.equal((await runner({ step: 'linux', head })).status, 0);
+  assert.equal(boundary.calls.some(call => call.command === 'colima'), false);
+});
+
+test('A6 Colima CLI owns actual producers, requires tracked helper and rechecks final identity', async t => {
+  const f = await colimaFixture(t), output = [];
+  assert.equal(await main(f.args, { root: f.root, execute: f.execute, log: text => output.push(text) }), 0);
+  const result = JSON.parse(output[0]);
+  assert.equal(result.ok, true); assert.equal(result.releaseReady, false); assert.equal(result.linux.commit, f.commit);
+  assert.equal(output.join('').includes(f.root), false);
+  const sources = f.calls.find(call => call.args[0] === 'ls-files' && call.args.includes('--error-unmatch'));
+  assert.deepEqual(sources.args, ['ls-files', '--error-unmatch', '--', 'scripts/release-history-scan.mjs', 'scripts/linux-preflight.mjs', 'scripts/linux-preflight-colima.mjs']);
+  assert.ok(f.calls.some(call => call.command === 'colima' && call.args[0] === 'delete'));
+  assert.deepEqual(f.calls.slice(-2).map(call => call.args), [
+    ['status', '--porcelain=v1', '--untracked-files=all'], ['rev-parse', '--verify', 'HEAD^{commit}'],
+  ]);
+  assert.equal(existsSync(f.control()), false);
+});
+
+test('Colima selection refuses an untracked helper before VM commands', async t => {
+  const f = await colimaFixture(t, { missingHelper: true }), output = [];
+  assert.equal(await main(f.args, { root: f.root, execute: f.execute, log: text => output.push(text) }), 1);
+  assert.equal(f.calls.some(call => call.command === 'colima'), false);
+  assert.equal(JSON.parse(output[0]).failures[0].check, 'sources');
+});
+
+test('Colima Linux success cannot pass failed or uncollected VM teardown', async t => {
+  for (const stop of [() => ok(''), () => ({ status: null, stdout: '', collected: false })]) {
+    const f = await colimaFixture(t, { stop }), output = [];
+    assert.equal(await main(f.args, { root: f.root, execute: f.execute, log: text => output.push(text) }), 1);
+    assert.equal(JSON.parse(readFileSync(join(f.control(), 'linux-receipt.json'))).exitCode, 0);
+    assert.equal(JSON.parse(output[0]).ok, false);
+    assert.equal(f.calls.some(call => call.command === 'colima' && call.args[0] === 'delete'), false);
+  }
+});
+
+test('Colima composite deadline failure survives a passing Linux receipt and completed VM cleanup', async t => {
+  let now = Date.now(); t.mock.method(Date, 'now', () => now);
+  const f = await colimaFixture(t, { attached() { now += 17 * 60_000; } }), output = [];
+  assert.equal(await main(f.args, { root: f.root, execute: f.execute, log: text => output.push(text) }), 1);
+  assert.equal(JSON.parse(readFileSync(join(f.control(), 'linux-receipt.json'))).exitCode, 0);
+  assert.equal(JSON.parse(readFileSync(join(f.control(), 'vm-cleanup.json'))).cleanupConfirmed, true);
+  assert.equal(JSON.parse(output[0]).ok, false);
+});
+
+test('Colima route rejects a mismatched actual container receipt', async t => {
+  const f = await colimaFixture(t, { receipt(value) { value.commit = 'c'.repeat(40); } }), output = [];
+  assert.equal(await main(f.args, { root: f.root, execute: f.execute, log: text => output.push(text) }), 1);
+  assert.equal(JSON.parse(output[0]).ok, false);
+});
+
+test('A6 Colima cancellation waits for VM cleanup with one OS signal owner', async t => {
+  const signals = new EventEmitter(); let release, entered;
+  const stopped = new Promise(resolve => { entered = resolve; });
+  const f = await colimaFixture(t, {
+    attach(options) {
+      assert.equal(signals.listenerCount('SIGINT'), 1);
+      return new Promise(resolve => {
+        options.signal.addEventListener('abort', () => resolve({ status: null, stdout: '', collected: true }), { once: true });
+        signals.emit('SIGINT');
+      });
+    },
+    stop(options, finish) {
+      assert.equal(options.signal.aborted, false);
+      entered(); return new Promise(resolve => { release = () => resolve(finish()); });
+    },
+  });
+  let settled = false;
+  const result = main(f.args, { root: f.root, execute: f.execute, signals, log() {} }).then(value => { settled = true; return value; });
+  await stopped; await Promise.resolve(); assert.equal(settled, false);
+  release(); assert.equal(await result, 1);
+  assert.equal(JSON.parse(readFileSync(join(f.control(), 'vm-cleanup.json'))).cleanupConfirmed, true);
+  assert.equal(signals.listenerCount('SIGINT'), 0); assert.equal(signals.listenerCount('SIGTERM'), 0);
 });
