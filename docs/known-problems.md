@@ -816,8 +816,11 @@ compaction, so it cannot isolate wording alone. That A/B has not run live.
   delivery hasn't been checked live. In 1.4.0 its approval requests don't open a card. They wait in the menu bar glove under
   Review sleight request, which macOS 27 can hide behind the menu bar's overflow chevron. Clicking it shows a plain
   window. The same request can come back several times (about 7 in that check) before one approval takes. The
-  1.4.1 candidate behavior is described in the [CHANGELOG](../CHANGELOG.md#141-unreleased). Native compilation passed
-  without UI. Physical GB18 consent checks and real GL9 through Grok Bot's priya remain unqualified. Qualification must
+  1.4.1 candidate behavior is described in the [CHANGELOG](../CHANGELOG.md#141-unreleased). The card is now visible
+  while its host is inactive. An owned fake-card run accepted the owner's physical click. A separate run on the
+  same production source explicitly refused Accessibility, PID-posted and spoofed-HID input after both mouse
+  attempts reached the button. Both runs confirmed cleanup. A complete combined fake-card run and real GL9
+  through Grok Bot's priya remain unqualified. Qualification must
   record Calculator/TextEdit card counts with the owner's current preapprovals, one physical Allow where needed,
   repeated same-session requests and identical retries while a decision waits. Appearance, sound, glove review under
   menu overflow, cancellation, channel reset, fd transport and shared-host operation also need live checks. The guard

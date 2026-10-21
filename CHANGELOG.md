@@ -39,9 +39,12 @@
 - Distinct action and payment requests get separate decisions even when their terms match. The guard probe
   collects the synthetic fixture before starting a separate physical-click fixture, so delayed synthetic
   acceptance cannot count as the person's answer.
-- Native compilation passed without UI. Physical consent, appearance, sound, menu overflow, transport and
-  shared-host operation remain unqualified, including physical GB18 checks, GL9 and Calculator/TextEdit card counts
-  through Grok Bot's priya.
+- Approval cards are visible while their accessory host is inactive. An owned fake-card run accepted the
+  owner's physical click. A separate run on the same production source explicitly refused Accessibility,
+  PID-posted and spoofed-HID input, with both mouse attempts delivered to the button. Both runs confirmed cleanup.
+- A complete combined fake-card run remains pending. Appearance, sound, menu overflow, transport and
+  shared-host operation still need qualification, including GL9 and Calculator/TextEdit card counts through
+  Grok Bot's priya.
 
 ### Finder fixtures and ghost hand
 
