@@ -288,15 +288,35 @@ export const CELLS = Object.freeze([
   { id: 'revoke', apps: ['vscode'], editor: true, input: true, async run(c) {
     // Pause mid-batch: the revocation parks the batch, and no step is sent twice.
     const ref = await c.openScratch();
+    const before = { ...c.driver.identity() };
+    if (!Number.isSafeInteger(before.pid) || before.pid <= 0 || typeof before.pidBirth !== 'string' || !before.pidBirth ||
+        typeof before.instance !== 'string' || !before.instance) fail('REVOKE_IDENTITY_MISSING');
+    const rows = await c.list(), original = rows.filter(row => row.tab === c.tab());
+    if (original.length !== 1 || original[0].parked || !Number.isSafeInteger(original[0].window) || original[0].window <= 0 ||
+        rows.filter(row => row.window === original[0].window).length !== 1) fail('REVOKE_WINDOW_NOT_UNIQUE');
+    const window = original[0].window;
     const tag = Math.random().toString(36).slice(2, 6), markers = Array.from({ length: 6 }, (_, i) => `rv${tag}${i}`);
     const pending = c.tool('browser_act', { tab: c.tab(), steps: markers.flatMap(text => [{ do: 'type', ref, text: text + ' ' }, { do: 'wait', ms: 250 }]), observe: 'none' });
     await c.sleep(300);
     await c.driver.revoke();
     const r = await pending;
-    await c.driver.resume();
+    const parkedReported = /ELECTRON_PARKED|parked|revoked/i.test(r.text);
+    if (!parkedReported) throw Object.assign(Error('REVOKE_NOT_REPORTED'), { detail: {
+      isError: !!r.isError, parkedReported, unavailableReported: /unavailable/i.test(r.text),
+    } });
+    const refused = await c.tool('browser_tabs', { do: 'list' });
+    if (!refused.isError) fail('REVOKED_CALL_ANSWERED');
+    // Resume cannot revive the revoked provider channel. A new turn reuses the session grant and mints new tab refs.
+    const card = await c.driver.reconnect({ consentWaitMs: c.options.consentWaitMs });
+    c.consent(card, 'revoke');
+    if (card?.status !== 'granted') fail('REVOKE_RECONNECT_CONSENT_REQUIRED');
+    const after = c.driver.identity();
+    if (after?.pid !== before.pid || after?.pidBirth !== before.pidBirth || after?.instance !== before.instance) fail('REVOKE_RECONNECT_IDENTITY_CHANGED');
+    const joined = (await c.list()).filter(row => row.window === window);
+    if (joined.length !== 1 || joined[0].parked) fail('REVOKE_RECONNECT_WINDOW_NOT_UNIQUE');
+    c.state.tab = joined[0].tab;
     const text = (await c.read(c.tab(), { find: 'rv|Editor content' })).text;
     const replays = markers.filter(m => text.split(m).length > 2).length;
-    if (!/ELECTRON_PARKED|parked|revoked/i.test(r.text)) fail('REVOKE_NOT_REPORTED');
     if (replays) fail(`REPLAYED: ${replays}`);
     return { detail: { replays, present: markers.filter(m => text.includes(m)).length } };
   } },

@@ -11,7 +11,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import {
   APPS, CELLS, RELAUNCH_CELLS, backgroundEvidence, cellsFor, main, parseArgs, percentile, prepareWorkspace, relaunchCellsFor, requiredCells, runQualification,
-  scrubReceipt, timingSummary, validateReceipt,
+  scrubReceipt, tabsOf, timingSummary, validateReceipt,
 } from '../bench/electron-qualification.mjs';
 import { fakeDriver, fakeObserver } from '../bench/electron-qualification-fakes.mjs';
 
@@ -801,6 +801,126 @@ test('the live disconnect cell passes only when the disconnect itself refuses th
 });
 
 // The relaunch flow (1.3.1): every app-dependent behaviour is a cell of its own, run dry only; the owner watches any live run.
+test('revocation recovery uses a fresh live-worker turn and the unique original native window without replay', async t => {
+  const { liveDriver } = await import('../bench/electron-qualification-live.mjs');
+  const cell = CELLS.find(row => row.id === 'revoke');
+  async function attempt({ changedIdentity = {}, rows, oldAnswers = false, batchText = 'ELECTRON_PARKED: revoked', replay = false,
+    beforeRows, beforeIdentity = identity,
+    reconnectCard = { shown: false, existing: true, status: 'granted', by: 'existing', scope: 'session' } } = {}) {
+    const calls = [], ops = [], cards = [], turns = [];
+    let turn, generation = 0, finishBatch, markers = [];
+    const oldRows = beforeRows ?? [{ tab: 'told', window: 41 }, { tab: 'tother', window: 42 }];
+    const newRows = rows ?? [{ tab: 'tnewOther', window: 42 }, { tab: 'tnewOriginal', window: 41 }];
+    const worker = { lost: false, kill() { worker.lost = true; }, async send(op, message) {
+      ops.push(op);
+      if (op === 'start') {
+        generation++;
+        turn = { generation, dead: false }; turns.push(turn);
+        return { ok: true, identity: generation === 1 ? beforeIdentity : { ...identity, ...changedIdentity },
+          card: generation === 1 ? { status: 'granted' } : reconnectCard, launch: {}, connectMs: 1 };
+      }
+      if (op === 'revoke') { turn.dead = true; finishBatch?.({ ok: true, result: { text: batchText, isError: false } }); return { ok: true }; }
+      if (op === 'resume') return { ok: true }; // The host resumes; this turn's provider channel stays fenced.
+      if (op !== 'call') return { ok: true };
+      const { name, arguments: args } = message.request;
+      calls.push({ generation, name, args });
+      if (turn.dead && !oldAnswers) return { ok: true, result: { text: 'Turbo is unavailable for this turn. Use the engine browser path.', isError: true } };
+      if (name === 'browser_tabs') return { ok: true, result: { isError: false, text: (generation === 1 ? oldRows : newRows)
+        .map(row => `${row.tab} Visual Studio Code window ${row.window} ${row.parked ? 'parked: revoked' : 'joined'} join 1`).join('\n') } };
+      if (name === 'browser_act') {
+        markers = args.steps.filter(step => step.do === 'type').map(step => step.text.trim());
+        return new Promise(resolve => { finishBatch = resolve; });
+      }
+      if (name === 'browser_read') {
+        const row = (generation === 1 ? oldRows : newRows).find(row => row.tab === args.tab);
+        if (!row || turn.dead) return { ok: true, result: { text: 'Unknown or revoked tab', isError: true } };
+        return { ok: true, result: { isError: false, text: `# Visual Studio Code window ${row.window} epoch 1, join 1 joined\n` +
+          markers.slice(0, 2).join(' ') + (replay ? ` ${markers[0]}` : '') } };
+      }
+      throw Error('unexpected tool');
+    } };
+    const driver = liveDriver(APPS.vscode, { root: temp(t), exec: async () => ({ stdout: '', stderr: '' }), observer: {}, forkWorker: () => worker });
+    await driver.reconnect({});
+    const c = { driver, state: { tab: 'told' }, options: { consentWaitMs: 0 }, openScratch: async () => 'x7',
+      tab: () => c.state.tab, sleep: async () => {}, consent: (card, cell) => cards.push({ card, cell }),
+      tool: (name, args) => driver.tool(name, args),
+      async list() { const result = await c.tool('browser_tabs', { do: 'list' }); if (result.isError) throw Error(result.text); return tabsOf(result.text); },
+      async read(tab, extra) { const result = await c.tool('browser_read', { tab, ...extra }); if (result.isError) throw Error(result.text); return result; } };
+    const result = await cell.run(c).then(out => ({ out }), error => ({ error }));
+    return { ...result, calls, ops, cards, turns, state: c.state };
+  }
+  await t.test('permanently fenced old channel, reversed windows and all-new tab IDs', async () => {
+    const r = await attempt();
+    assert.deepEqual(r.out?.detail, { replays: 0, present: 2 }, r.error?.message);
+    assert.equal(r.state.tab, 'tnewOriginal');
+    assert.equal(r.turns.length, 2);
+    assert.equal(r.turns[0].dead, true);
+    assert.equal(r.ops.includes('resume'), false, 'old-turn host resume is not recovery');
+    assert.deepEqual(r.calls.map(call => [call.generation, call.name]), [[1, 'browser_tabs'], [1, 'browser_act'], [1, 'browser_tabs'], [2, 'browser_tabs'], [2, 'browser_read']]);
+    assert.equal(r.calls.at(-1).args.tab, 'tnewOriginal');
+    assert.deepEqual(r.cards, [{ card: { shown: false, existing: true, status: 'granted', by: 'existing', scope: 'session' }, cell: 'revoke' }]);
+    assert.equal(r.calls.filter(call => call.name === 'browser_act').length, 1, 'the interrupted batch is never resubmitted');
+    assert.ok(r.calls.filter(call => call.generation === 2).every(call => !call.args.steps && !call.args.ref), 'no stale editor ref enters the fresh turn');
+  });
+  await t.test('each identity component must survive the fresh connection', async () => {
+    for (const changedIdentity of [{ pid: 502 }, { pidBirth: 'b2' }, { instance: 'i2' }]) {
+      const r = await attempt({ changedIdentity });
+      assert.match(r.error?.message ?? '', /REVOKE_RECONNECT_IDENTITY_CHANGED/);
+      assert.equal(r.calls.some(call => call.name === 'browser_read'), false);
+    }
+  });
+  await t.test('refused, timed-out or missing reconnect consent refuses otherwise usable tools', async () => {
+    for (const reconnectCard of [{ status: 'refused' }, { status: 'timeout' }, {}]) {
+      const r = await attempt({ reconnectCard });
+      assert.equal(r.error?.message, 'REVOKE_RECONNECT_CONSENT_REQUIRED');
+      assert.deepEqual(r.cards, [{ card: reconnectCard, cell: 'revoke' }], 'record the returned card even on refusal');
+      assert.equal(r.calls.some(call => call.generation === 2), false, 'no recovery list or read before granted consent');
+      assert.equal(r.state.tab, 'told');
+    }
+  });
+  await t.test('missing identity cannot compare equal by absence', async () => {
+    const r = await attempt({ beforeIdentity: { pid: 501 } });
+    assert.match(r.error?.message ?? '', /REVOKE_IDENTITY_MISSING/);
+    assert.equal(r.calls.some(call => call.name === 'browser_act'), false);
+  });
+  await t.test('missing, parked or ambiguous original window refuses recovery input and read', async () => {
+    for (const rows of [[{ tab: 'tnewOther', window: 42 }], [{ tab: 'tnewOriginal', window: 41, parked: true }],
+      [{ tab: 'tnewOriginal', window: 41 }, { tab: 'tduplicate', window: 41 }]]) {
+      const r = await attempt({ rows });
+      assert.match(r.error?.message ?? '', /REVOKE_RECONNECT_WINDOW_NOT_UNIQUE/);
+      assert.equal(r.calls.some(call => call.name === 'browser_read'), false);
+    }
+    const r = await attempt({ beforeRows: [{ tab: 'told', window: 41 }, { tab: 'tduplicate', window: 41 }] });
+    assert.match(r.error?.message ?? '', /REVOKE_WINDOW_NOT_UNIQUE/);
+    assert.equal(r.calls.some(call => call.name === 'browser_act'), false);
+  });
+  await t.test('the old turn must refuse before selecting the fresh connection', async () => {
+    const r = await attempt({ oldAnswers: true });
+    assert.match(r.error?.message ?? '', /REVOKED_CALL_ANSWERED/);
+    assert.equal(r.turns.length, 1);
+  });
+  await t.test('unavailable alone does not broaden the required batch parked report', async () => {
+    const r = await attempt({ batchText: 'Turbo is unavailable for this turn. Use the engine browser path.' });
+    assert.equal(r.error?.message, 'REVOKE_NOT_REPORTED');
+    assert.deepEqual(r.error?.detail, { isError: false, parkedReported: false, unavailableReported: true });
+    assert.equal(r.turns.length, 1, 'report the actual batch result before recovery can hide it');
+    assert.equal(r.calls.some(call => call.name === 'browser_read'), false);
+  });
+  await t.test('duplicate markers still fail the replay check after fresh recovery', async () => {
+    assert.match((await attempt({ replay: true })).error?.message ?? '', /REPLAYED: 1/);
+  });
+});
+
+test('the dry driver keeps a revoked turn unusable after host resume until a fresh reconnect', async () => {
+  const driver = fakeDriver();
+  await driver.connect();
+  await driver.revoke();
+  await driver.resume();
+  assert.equal((await driver.tool('browser_tabs', { do: 'list' })).isError, true);
+  await driver.reconnect();
+  assert.equal((await driver.tool('browser_tabs', { do: 'list' })).isError, false);
+});
+
 test('relaunch cells name what each app decides, run dry on both apps, and a live relaunch run is refused', async t => {
   assert.deepEqual(RELAUNCH_CELLS.map(cell => cell.id), ['relaunch-card', 'relaunch-quit', 'relaunch-unsaved', 'relaunch-pipe', 'relaunch-background',
     'relaunch-restore', 'relaunch-reuse', 'relaunch-user-quit', 'relaunch-host-loss']);

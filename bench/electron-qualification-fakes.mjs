@@ -94,9 +94,9 @@ export function fakeDriver({ now = Date.now, app = APPS.vscode, overlay = { pres
     readFile: name => files[name] ?? '',
     async appAlive() { return alive; },
     async revoke() { revoked = true; },
-    async resume() { revoked = false; },
+    async resume() {}, // Broker resume does not restore a revoked turn's worker channel.
     async disconnect() { connected = false; return { appAlive: alive, pipeRetained: ownership === 'owned' }; },
-    async reconnect() { connected = true; readJoin = 0; return card(); },
+    async reconnect() { connected = true; revoked = false; readJoin = 0; return card(); },
     async killWorker() { connected = false; return { killed: true }; },
     async killHost() { connected = false; ownership = 'unresolved'; return { appAlive: alive }; },
     async secondLaunch() { return { code: ownership === 'unresolved' ? 'ELECTRON_OWNERSHIP_UNRESOLVED' : null }; },
