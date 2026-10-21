@@ -1,4 +1,4 @@
-// Separate child of the runner. All input is bound to one fixture PID, window and Allow Once button.
+// Separate child of the runner. All input is bound to one fixture PID, window and Allow once button.
 // No TCC prompt and no global HID posting. Spoofed HID metadata is still delivered only to the owned PID.
 import AppKit
 import Foundation
@@ -138,7 +138,7 @@ func target() -> (button: AXUIElement, rect: CGRect) {
     func walk(_ element: AXUIElement, _ depth: Int) {
         visited += 1
         guard visited < 1000, depth < 20 else { truncated = true; return }
-        if attribute(element, kAXTitleAttribute as CFString) as? String == "Allow Once",
+        if attribute(element, kAXTitleAttribute as CFString) as? String == "Allow once",
             attribute(element, kAXRoleAttribute as CFString) as? String == kAXButtonRole as String { buttons.append(element) }
         for child in attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] ?? [] { walk(child, depth + 1) }
     }

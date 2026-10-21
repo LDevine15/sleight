@@ -42,6 +42,17 @@
 
 ### Grok Bot and Electron approvals
 
+- Approval cards use one horizontal button row, with width based on their choices. The ordinary card's extra
+  bottom space is removed. Electron cards keep the app name, version, bundle and permission explanation visible;
+  technical identity fields open under Details. Feedback takes space only when present. Choices, sound and
+  physical-input checks are unchanged. Small displays keep long content scrollable.
+- Permission labels state their scope with Allow once, Allow this session and Always allow. Refusal says Don't allow.
+  The buttons run from refusal through increasing scope, and each card offers only its supported scopes.
+  Restart cards keep Cancel and Quit and reopen.
+- The isolated Electron workspace enables VS Code's accessible editor. A failed lookup reports its known
+  accessibility warning without targeting an unnamed textbox. Native setup failures retain bounded helper
+  diagnostics, and background failures retain their measured samples. Qualification thresholds are unchanged.
+
 - Electron's internal admin client can await peer closure before reconnecting, avoiding a false foreign-host
   refusal while the previous connection closes. Errors and timeout report an unconfirmed close. Concurrent
   administrators and incorrect secrets remain refused.
@@ -60,18 +71,20 @@
   waits for compiler collection. A valid cached helper still works without an available toolchain.
 - A real Chess request through Grok Bot failed before the cold helper was ready. One explicit retry showed the
   card and icon, accepted the owner's Allow, and a same-session repeat asked no further question. The owner heard
-  no sound. Cold-start behavior after the fix, sound, menu overflow, transport and shared-host operation still
-  need qualification, including GL9 and Calculator/TextEdit card counts through Grok Bot's priya.
+  no sound. On 2026-10-21, the owner reported a fresh Grok Bot Chess request succeeded with one normal card and
+  normal sound. A same-session repeat asked no further question. Menu overflow, transport and shared-host operation
+  still need qualification, including GL9 and Calculator/TextEdit card counts through Grok Bot's priya.
 - Electron debugger and relaunch requests use the same automatic styled presenter, with the installed icon and
   initial-display sound. Menu review reopens the panel quietly. Existing choices and input guards are preserved;
   relaunch remains a separate decision with its foreground warning. Native compilation and policy checks passed.
-  Live appearance and audible sound remain unverified. Qualification logs separate requests and answers from
-  uncorrelated observations of a matching card.
+  The owner rejected the live Electron layout on 2026-10-21. The revised layout awaits its live retry.
+  Qualification logs separate requests and answers from uncorrelated observations of a matching card.
 - The benchmark runner stops accepting work on interruption and waits for accepted operations to settle.
   Uncertain effects retain the app, its pipe owners, evidence and lock. Release requires a completed drain,
   confirmed cleanup and a saved terminal receipt. Offline cancellation and recovery checks passed;
-  live interruption of the repaired runner remains unqualified. The earlier interrupted fixture was recovered
-  through its normal Quit, followed by verified process exit and lock release.
+  the 2026-10-21 interruption collected the fixture and workers, removed its profile and released the lock.
+  That attempt completed 9 of 18 qualification cells and did not run relaunch, so it does not qualify Electron.
+  The earlier interrupted fixture was recovered through its normal Quit, followed by verified process exit and lock release.
 
 ### Finder fixtures and ghost hand
 
@@ -83,7 +96,8 @@
   Native calibration corrected role-type diagnostics. Setup and cleanup preserve the complete baseline inventory,
   including inert scroll areas, with stable reference identities and exact roles. Only new windows can become
   fixture candidates. The latest smoke failed after menu selection and before retaining a window identity;
-  cleanup remains unconfirmed and the lock is retained. Setup, cancellation,
+  automated window cleanup remains unconfirmed. The owner closed irrelevant windows on 2026-10-21, after which
+  a durable owner-release receipt permitted removal of the exact empty lock. The evidence remains retained. Setup, cancellation,
   cleanup ownership, lock retention and receipt privacy still need live qualification. The owner approved exclusive
   setup and the remaining window-focus assumption.
 - Finder failures preserve fixed reason categories and bounded native error metadata before stderr masking.

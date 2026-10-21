@@ -121,9 +121,9 @@ let scope = "Allow for this Grok Bot session only"
 let app = operationCardText(["request": String(repeating: "x", count: 2048), "scope": scope], scope: scope)!
 let action = operationCardText(["request": "Pay $268?", "scope": "Allow this action once"], scope: "Allow this action once")!
 let payment = operationCardText(["amount": "$268"], scope: nil)!
-let valid = app.body.hasPrefix(scope + "\\n\\n") && app.allow == "Allow for this session"
-  && action.body.hasPrefix("Allow this action once\\n\\n") && action.allow == "Once"
-  && payment.body.contains("$268") && payment.allow == "Once"
+let valid = app.body.hasPrefix(scope + "\\n\\n") && app.allow == "Allow this session"
+  && action.body.hasPrefix("Allow this action once\\n\\n") && action.allow == "Allow once"
+  && payment.body.contains("$268") && payment.allow == "Allow once"
 print(valid ? "pass" : "fail")
 `);
   const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(), swift, '-o', binary], { encoding: 'utf8' });

@@ -31,7 +31,8 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   `AXScrollArea`. Setup now retains the baseline references with their exact roles and accepts only new `AXWindow`
   candidates. The 05:33Z smoke reached menu selection but failed before retaining a window identity. Whether the
   New Window command ran is unproved. Helper collection completed; window cleanup is unconfirmed, and its fixture
-  and lock remain retained. Finder setup, Go to Folder
+  remains retained. On 2026-10-21, the owner closed irrelevant windows; a durable owner-release receipt then
+  permitted removal of the exact empty lock. This does not establish automated window cleanup. Finder setup, Go to Folder
   ancestry, respawn and cleanup need qualification, including the `cc-list-native` fixture. The `textedit-two-windows` fixture
   remains parked unless its failure recurs. For either fixture, cancellation must stop owned setup work.
   Cleanup must preserve baseline windows and retain the lock when
@@ -56,7 +57,9 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   container removal and VM teardown confirmed. A diagnostic using Docker's init process completed on 2026-10-21:
   12,283 cases, 11,198 passed, 11 failed and 1,074 skipped. Cleanup was confirmed. The failures exposed environment
   assumptions, a connection-close race and a latency test affected by sample order. These results belong to that tested
-  commit. The final candidate requires its own complete Linux receipt.
+  commit. A later candidate preflight at `f7dd9c79` passed on 2026-10-21: 12,297 cases, 11,223 passed,
+  1,074 skipped and zero failures, with container and VM cleanup confirmed. Subsequent changes require their own
+  complete Linux receipt.
 - Candidate and tagged-release preflights must verify the same clean final commit through completion, including
   the Linux receipt. These model-free checks do not require a quota reset. Candidate mode accepts an unreleased
   heading and keeps `releaseReady: false`. Release mode requires a dated heading and the intended tag at that exact
@@ -75,11 +78,18 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   matching the final plugin and Node runtime, plus live qualification. Interrupted Electron runs need separate
   exit and lock-ownership evidence. The repaired runner closes admission on interruption and requires a checked
   drain before cleanup. Unknown effects retain the app and pipe owners. Receipt publication precedes lock release.
-  Combined cancellation and recovery checks passed 286 tests. Live interruption of the repaired runner remains unqualified.
+  Combined cancellation and recovery checks passed 286 tests. On 2026-10-21, the repaired runner was interrupted
+  after the owner rejected the card layout. It collected the fixture and workers, removed its profile and released
+  its lock. That run completed 9 of 18 qualification cells. Relaunch did not run. The receipt retains editor
+  accessibility failures, unconfirmed second-window setup and a pointer movement of 5 px. The fixture now enables the
+  accessible editor and retains bounded setup diagnostics and background failure samples. These changes need a live retry.
 - Electron debugger and relaunch requests now use the same automatic styled presenter as shell app approvals.
   Their existing choices and input guards are preserved. The launcher supplies the installed icon path, and the
-  presenter plays Glass on initial display. Native compilation and policy checks passed; live appearance and
-  audible sound remain unverified. The helper remains an unbundled accessory process, so styling alone does not
+  presenter plays Glass on initial display. The owner rejected the live Electron layout on 2026-10-21. Its
+  replacement uses one button row, a shorter explanation and expandable technical details; ordinary cards also
+  remove unused bottom space. The revised layout and Electron sound await the live retry. The owner separately
+  reported one normal card and normal sound for a fresh Grok Bot Chess request, with no repeat prompt in that session.
+  The helper remains an unbundled accessory process, so styling alone does not
   establish computer-use discovery or input support. Qualification logs distinguish requests and answers from
   uncorrelated observations of a visible matching card.
 - The first native reference uses origin captured during the existing isolated startup call. A live relay

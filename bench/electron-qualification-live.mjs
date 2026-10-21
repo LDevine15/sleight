@@ -14,6 +14,7 @@ import { execFile, fork, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join, normalize } from 'node:path';
+import { constants as osConstants } from 'node:os';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -200,12 +201,29 @@ export async function liveRuntime(options, { io, root: parentRoot, qualification
 }
 
 // Every native helper invocation owns and collects its child before returning a receipt.
+const FIXTURE_STAGES = new Set(['quit', 'ready', 'table', 'launch', 'new-window', 'births']);
+const WINDOW_SETUP_CODES = new Set(['WINDOW_SETUP_REQUEST', 'WINDOW_SETUP_IDENTITY_CHANGED', 'WINDOW_SETUP_TIMEOUT',
+  'WINDOW_SETUP_WINDOW_CHANGED', 'WINDOW_SETUP_ACCESSIBILITY', 'WINDOW_SETUP_MENU_AMBIGUOUS', 'WINDOW_SETUP_PRESS_FAILED']);
+function fixtureHelperFailure(request, result, row) {
+  const codes = [...new Set(String(result?.stderr ?? '').match(/\bWINDOW_SETUP_[A-Z_]+\b/g) ?? [])];
+  const exitCode = result?.exit?.code, exitSignal = result?.exit?.signal;
+  // Never copy helper output, exception text, paths or arbitrary native error codes into the receipt.
+  return Object.assign(Error('FIXTURE_HELPER_UNCONFIRMED'), { detail: { helper: {
+    expectedStage: FIXTURE_STAGES.has(request.mode) ? request.mode : null,
+    matchedStage: FIXTURE_STAGES.has(row?.stage) ? row.stage : null,
+    groupClean: typeof result?.groupClean === 'boolean' ? result.groupClean : null,
+    exitCode: Number.isInteger(exitCode) && exitCode >= -2147483648 && exitCode <= 2147483647 ? exitCode : null,
+    exitSignal: typeof exitSignal === 'string' && Object.hasOwn(osConstants.signals, exitSignal) ? exitSignal : null,
+    code: codes.length === 1 && WINDOW_SETUP_CODES.has(codes[0]) ? codes[0] : null,
+  } } });
+}
 export function fixtureHelper(bundle, run = runOwned) {
   return async request => {
-    const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', QUIT_HELPER, JSON.stringify({ ...request, bundle })], { timeoutMs: 45000 });
-    if (!result.groupClean || result.exit?.code !== 0) throw Error('FIXTURE_HELPER_UNCONFIRMED');
-    const row = String(result.stdout).split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } }).find(row => row.stage === request.mode);
-    if (!row) throw Error('FIXTURE_HELPER_UNCONFIRMED');
+    let result;
+    try { result = await run('/usr/bin/osascript', ['-l', 'JavaScript', QUIT_HELPER, JSON.stringify({ ...request, bundle })], { timeoutMs: 45000 }); }
+    catch { throw fixtureHelperFailure(request); }
+    const row = String(result?.stdout ?? '').split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } }).find(row => row?.stage === request.mode);
+    if (!result?.groupClean || result.exit?.code !== 0 || !row) throw fixtureHelperFailure(request, result, row);
     return row;
   };
 }

@@ -135,7 +135,7 @@ func operationCardText(_ operation: [String: Any], scope: String?) -> (body: Str
     guard let bytes = try? JSONSerialization.data(withJSONObject: operation, options: [.prettyPrinted, .sortedKeys]),
         let text = String(data: bytes, encoding: .utf8) else { return nil }
     return ((scope.map { $0 + "\n\n" } ?? "") + "Page labels are observations. Review this exact operation:\n" + text,
-        scope == "Allow for this Grok Bot session only" ? "Allow for this session" : "Once")
+        scope == "Allow for this Grok Bot session only" ? "Allow this session" : "Allow once")
 }
 // END OPERATION TEXT
 
@@ -179,7 +179,7 @@ func appFrame(_ data: [String: Any], _ choices: [String]) -> (kind: String, app:
         else { return nil }
     return (kind, app, session, turn)
 }
-func appCardText(_ card: (kind: String, app: [String: Any], session: String, turn: String)) -> (title: String, body: String) {
+func appCardText(_ card: (kind: String, app: [String: Any], session: String, turn: String)) -> (title: String, body: String, summary: String, identity: String) {
     let name = card.app["name"] as? String ?? "", version = card.app["version"] as? String ?? ""
     let bundle = card.app["bundleId"] as? String ?? "", profile = card.app["profile"] as? String ?? ""
     let pid = (card.app["pid"] as? NSNumber)?.intValue ?? 0
@@ -187,12 +187,17 @@ func appCardText(_ card: (kind: String, app: [String: Any], session: String, tur
     // pid 0: no process with the debugger yet. A copy the user is running without it gets its own relaunch card next.
     let process = pid == 0 ? "not connected yet (sleight starts or reopens it only after your approval)" : "\(pid)"
     let identity = "\(name) \(version)\nBundle: \(bundle)\nSigner: \(signer)\nExecutable: \(executable)\nProfile: \(profile)\nProcess: \(process)\nSession: \(card.session)"
+    let title: String, explanation: String
     if card.kind == "relaunch" {
-        return ("Quit and reopen " + name + " for sleight?",
-            "sleight will ask " + name + " to quit through its own Quit command, then reopen it on the same profile with the debugger connection. It may come to the front briefly. Unsaved work follows the app's own prompts, and sleight answers none of them. Cancel keeps " + name + " as it is. This approval is for this process only, once.\n\n" + identity)
+        title = "Quit and reopen " + name + " for sleight?"
+        explanation = "sleight will ask " + name + " to quit through its own Quit command, then reopen it on the same profile with the debugger connection. It may come to the front briefly. Unsaved work follows the app's own prompts, and sleight answers none of them. Cancel keeps " + name + " as it is. This approval is for this process only, once."
+    } else {
+        title = "Let sleight control " + name + "?"
+        let standing = (card.app["temporary"] as? NSNumber)?.boolValue == true ? "" : " Always allow stays until you revoke it for this build and profile."
+        explanation = "The debugger lets sleight read the pages in " + name + " and operate them in the background, including anything open or signed in. This is separate from the app approval you already gave. Once ends with this turn. This session ends with the session." + standing
     }
-    return ("Let sleight control " + name + "?",
-        "The debugger lets sleight read the pages in " + name + " and operate them in the background, including anything open or signed in. This is separate from the app approval you already gave. Once ends with this turn, This session ends with the session, and Always allow stays until you revoke it for this build and profile.\n\n" + identity)
+    let summary = "\(name) \(version) · \(bundle)\n\n" + explanation
+    return (title, explanation + "\n\n" + identity, summary, identity)
 }
 // END APP FRAME
 
@@ -439,9 +444,10 @@ final class ModalGuard {
 struct AskCard {
     let question: String, detail: String, host: String, icon: String, kind: String
     let choices: [String]
+    var diagnostics: String = ""
     var labels: [String] {
-        if kind == "app" || kind == "action" { return ["Don't Allow", kind == "app" ? "Allow" : "Allow Once"] }
-        let names = ["once": "Allow once", "session": "Allow this session", "always": "Always allow", "relaunch": "Quit and reopen", "cancel": "Cancel"]
+        if kind == "app" || kind == "action" { return ["Don't allow", kind == "app" ? "Allow this session" : "Allow once"] }
+        let names = ["once": "Allow once", "session": "Allow this session", "always": "Always allow", "relaunch": "Quit and reopen", "cancel": kind == "relaunch" ? "Cancel" : "Don't allow"]
         return choices.map { names[$0] ?? "Cancel" }
     }
 }
@@ -474,8 +480,8 @@ func automaticCard(_ data: [String: Any], _ choices: [String]) -> AskCard? {
     if data["presentation"] != nil { return askCard(data, choices) }
     guard let card = appFrame(data, choices) else { return nil }
     let words = appCardText(card)
-    return AskCard(question: words.title, detail: words.body, host: "sleight", icon: consentIconPath(), kind: card.kind,
-        choices: ["cancel"] + choices.filter { $0 != "cancel" })
+    return AskCard(question: words.title, detail: words.summary, host: "sleight", icon: consentIconPath(), kind: card.kind,
+        choices: ["cancel"] + choices.filter { $0 != "cancel" }, diagnostics: words.identity)
 }
 
 final class AskCardPanel: NSObject {
@@ -485,28 +491,32 @@ final class AskCardPanel: NSObject {
     var timer: Timer?
     var finished = false
     let choices: [String]
+    let content = NSView()
+    let text = NSView()
+    let scroll = NSScrollView()
+    let detailsScroll = NSScrollView()
+    let detailsText = NSTextField(wrappingLabelWithString: "")
+    let disclosure = NSButton(title: "Details", target: nil, action: nil)
+    let feedback = AskCardFeedback(wrappingLabelWithString: "")
+    let icon = NSImageView()
+    var fields: [NSTextField] = []
+    var buttons: [NSButton] = []
+    var expanded = false
+    var area: NSRect
     init(_ card: AskCard, deadline: Double, answer: @escaping (String) -> Void) {
         self.answer = answer
         choices = card.choices
-        let rows = (choices.count + 1) / 2
-        let buttonHeight = CGFloat(rows * 28 + (rows - 1) * 8)
-        let width: CGFloat = 400, pad: CGFloat = 20, textX: CGFloat = 92, textWidth: CGFloat = 288
         func label(_ text: String, _ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor) -> NSTextField {
             let field = NSTextField(wrappingLabelWithString: text)
             field.font = .systemFont(ofSize: size, weight: weight); field.textColor = color
-            field.preferredMaxLayoutWidth = textWidth
-            field.frame.size = NSSize(width: textWidth, height: ceil(field.sizeThatFits(NSSize(width: textWidth, height: 10000)).height))
             return field
         }
         let eyebrow = label(card.host == "sleight" ? "sleight · computer use" : "sleight · " + card.host + " computer use", 10, .medium, .tertiaryLabelColor)
         let title = label(card.question, 13, .semibold, .labelColor)
         let body = label(card.detail, 11, .regular, .secondaryLabelColor)
-        let textHeight = eyebrow.frame.height + 2 + title.frame.height + 4 + body.frame.height
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
-        let area = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1024, height: 768)
-        let topHeight = min(max(56, textHeight), max(56, area.height - 152 - buttonHeight))
-        let height = pad + topHeight + 18 + buttonHeight + 36 + pad
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+        area = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1024, height: 768)
+        panel = NSPanel(contentRect: .zero,
             styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
         super.init()
         panel.title = "sleight"; panel.titlebarAppearsTransparent = true; panel.titleVisibility = .hidden
@@ -515,53 +525,122 @@ final class AskCardPanel: NSObject {
         panel.hidesOnDeactivate = false
         panel.level = .modalPanel; panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] { panel.standardWindowButton(button)?.isHidden = true }
-        panel.setFrame(NSRect(x: area.midX - width / 2, y: area.minY + (area.height - height) * 0.62,
-            width: width, height: height), display: false)
-        let bounds = NSRect(x: 0, y: 0, width: width, height: height), content = NSView(frame: bounds)
         if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView(frame: bounds)
+            let glass = NSGlassEffectView(frame: .zero)
             glass.cornerRadius = 22; glass.contentView = content; panel.contentView = glass
         } else {
-            let frost = NSVisualEffectView(frame: bounds)
+            let frost = NSVisualEffectView(frame: .zero)
             frost.material = .hudWindow; frost.blendingMode = .behindWindow; frost.state = .active
             frost.wantsLayer = true; frost.layer?.cornerRadius = 16; frost.layer?.masksToBounds = true
             frost.addSubview(content); panel.contentView = frost
         }
-        let icon = NSImageView(frame: NSRect(x: pad, y: height - pad - 56, width: 56, height: 56))
         icon.image = NSImage(contentsOfFile: card.icon) ?? NSImage(systemSymbolName: "hand.raised.fill", accessibilityDescription: "sleight")
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.wantsLayer = true; icon.layer?.cornerRadius = 12; icon.layer?.masksToBounds = true; content.addSubview(icon)
-        let text = NSView(frame: NSRect(x: 0, y: 0, width: textWidth, height: textHeight))
-        var y = textHeight
-        let fields: [(NSTextField, CGFloat)] = [(eyebrow, 0), (title, 2), (body, 4)]
-        for (field, gap) in fields {
-            y -= gap + field.frame.height; field.frame.origin = NSPoint(x: 0, y: y); text.addSubview(field)
-        }
-        let scroll = NSScrollView(frame: NSRect(x: textX, y: height - pad - topHeight, width: textWidth, height: topHeight))
-        scroll.drawsBackground = false; scroll.hasVerticalScroller = textHeight > topHeight
+        fields = [eyebrow, title, body]
+        for field in fields { text.addSubview(field) }
+        scroll.drawsBackground = false
         scroll.documentView = text; content.addSubview(scroll)
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, textHeight - topHeight)))
-        let feedback = NSTextField(wrappingLabelWithString: "")
-        feedback.frame = NSRect(x: textX, y: pad, width: textWidth, height: 32)
         feedback.font = .systemFont(ofSize: 10); feedback.textColor = .secondaryLabelColor; content.addSubview(feedback)
+        feedback.changed = { [weak self] in self?.layout() }
+        detailsText.stringValue = card.diagnostics; detailsText.font = .systemFont(ofSize: 10)
+        detailsText.textColor = .secondaryLabelColor; detailsText.isSelectable = true
+        detailsScroll.drawsBackground = false; detailsScroll.hasVerticalScroller = true
+        detailsScroll.documentView = detailsText; content.addSubview(detailsScroll)
+        disclosure.setButtonType(.momentaryPushIn); disclosure.isBordered = false
+        disclosure.alignment = .left; disclosure.imagePosition = .imageLeading
+        disclosure.target = self; disclosure.action = #selector(toggleDetails(_:))
+        disclosure.font = .systemFont(ofSize: 11); content.addSubview(disclosure)
         let labels = card.labels, choices = card.choices
         for index in choices.indices {
             let button = NSButton(title: labels[index], target: self, action: #selector(press(_:)))
             button.tag = index
-            button.frame = NSRect(x: textX + CGFloat(index % 2) * 148,
-                y: pad + 36 + CGFloat(rows - 1 - index / 2) * 36, width: 140, height: 28)
             button.controlSize = .large
             if index == 0 { button.keyEquivalent = "\u{1b}" }
             // Return has no default action, as in ask.js.
             if index == 1 { if #available(macOS 26.0, *) { button.tintProminence = .primary } else { button.bezelColor = .controlAccentColor } }
             content.addSubview(button)
+            buttons.append(button)
             if personChoice(card.kind, choices[index]) {
                 objc_setAssociatedObject(button, &consentFeedbackKey, feedback, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
                 actions.append(ConsentInputAction(button))
             }
         }
+        layout()
         timer = Timer.scheduledTimer(withTimeInterval: max(0.001, deadline / 1000 - Date().timeIntervalSince1970), repeats: false) { [weak self] _ in self?.finish("cancel") }
     }
+    func layout(in availableArea: NSRect? = nil) {
+        let area = availableArea ?? self.area
+        self.area = area
+        let pad: CGFloat = 20, textX: CGFloat = 92, gap: CGFloat = 8, buttonHeight: CGFloat = 28
+        let intrinsicWidths = buttons.map { ceil($0.intrinsicContentSize.width) }
+        let preferredWidths = intrinsicWidths.map { max(96, $0 + 12) }
+        let gaps = gap * CGFloat(max(0, buttons.count - 1))
+        let preferredRow = preferredWidths.reduce(0, +) + gaps
+        let minimumRow = intrinsicWidths.reduce(0, +) + gaps
+        let buttonPad = max(8, min(pad, (area.width - minimumRow) / 2))
+        let width = max(minimumRow + buttonPad * 2, min(max(400, textX + preferredRow + pad), area.width))
+        let textWidth = width - textX - pad
+        // On a narrow display the row may use the icon column, preserving every label on one line.
+        let buttonX = textWidth >= minimumRow ? textX : buttonPad
+        let rowWidth = width - buttonX - buttonPad
+        let baseWidths = rowWidth >= preferredRow ? preferredWidths : intrinsicWidths
+        let extraWidth = (rowWidth - baseWidths.reduce(0, +) - gaps) / CGFloat(buttons.count)
+        let widths = baseWidths.map { $0 + extraWidth }
+        func measure(_ field: NSTextField, _ width: CGFloat) -> CGFloat {
+            field.preferredMaxLayoutWidth = width
+            return ceil(field.sizeThatFits(NSSize(width: width, height: 100000)).height)
+        }
+        let heights = fields.map { measure($0, textWidth) }
+        let textHeight = heights.reduce(0, +) + 6
+        let hasDetails = !detailsText.stringValue.isEmpty
+        let disclosureHeight: CGFloat = hasDetails ? 26 : 0
+        let feedbackHeight: CGFloat = feedback.stringValue.isEmpty ? 0 : measure(feedback, textWidth) + gap
+        let fixedHeight = pad * 2 + 18 + buttonHeight + disclosureHeight + feedbackHeight
+        let detailsWanted = expanded && hasDetails ? measure(detailsText, textWidth - 18) : 0
+        // Reserve a readable Details viewport before a long summary consumes the available height.
+        let detailsReserved = min(detailsWanted, min(120, max(0, area.height - fixedHeight - 56 - 48)))
+        let summaryBudget = area.height - fixedHeight - 40 - (detailsReserved > 0 ? detailsReserved + gap : 0)
+        let topHeight = min(max(56, textHeight), max(56, summaryBudget))
+        let detailHeight = min(detailsWanted, max(0, area.height - fixedHeight - topHeight - 48))
+        let detailsHeight = detailHeight > 0 ? detailHeight + gap : 0
+        let height = fixedHeight + topHeight + detailsHeight
+        // Preserve the top edge during disclosure/refusal so the existing controls never change consent targets.
+        let wasSized = panel.frame.width > 0
+        let origin = wasSized ? NSPoint(x: max(area.minX, min(panel.frame.minX, area.maxX - width)),
+            y: max(area.minY, min(area.maxY - height, panel.frame.maxY - height))) :
+            NSPoint(x: area.midX - width / 2, y: area.minY + (area.height - height) * 0.62)
+        panel.setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: false)
+        content.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        panel.contentView?.frame = content.frame
+        icon.frame = NSRect(x: pad, y: height - pad - 56, width: 56, height: 56)
+        text.frame = NSRect(x: 0, y: 0, width: textWidth, height: textHeight)
+        var y = textHeight
+        for index in fields.indices {
+            y -= [0.0, 2.0, 4.0][index] + heights[index]
+            fields[index].frame = NSRect(x: 0, y: y, width: textWidth, height: heights[index])
+        }
+        scroll.frame = NSRect(x: textX, y: height - pad - topHeight, width: textWidth, height: topHeight)
+        scroll.hasVerticalScroller = textHeight > topHeight
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, textHeight - topHeight)))
+        disclosure.isHidden = !hasDetails
+        disclosure.frame = NSRect(x: textX, y: scroll.frame.minY - disclosureHeight, width: 90, height: 22)
+        disclosure.image = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
+        disclosure.setAccessibilityValue(expanded ? "Expanded" : "Collapsed")
+        detailsScroll.isHidden = detailHeight == 0
+        detailsScroll.frame = NSRect(x: textX, y: disclosure.frame.minY - detailsHeight, width: textWidth, height: detailHeight)
+        detailsText.isHidden = detailHeight == 0
+        detailsText.frame = NSRect(x: 0, y: 0, width: textWidth - 18, height: measure(detailsText, textWidth - 18))
+        detailsScroll.contentView.scroll(to: NSPoint(x: 0, y: detailsText.isFlipped ? 0 : max(0, detailsText.frame.height - detailHeight)))
+        feedback.isHidden = feedbackHeight == 0
+        feedback.frame = NSRect(x: textX, y: pad, width: textWidth, height: max(0, feedbackHeight - gap))
+        var x = buttonX
+        for index in buttons.indices {
+            buttons[index].frame = NSRect(x: x, y: pad + feedbackHeight, width: widths[index], height: buttonHeight)
+            x += widths[index] + gap
+        }
+    }
+    @objc func toggleDetails(_ sender: NSButton) { expanded.toggle(); layout() }
     func show() {
         panel.makeKeyAndOrderFront(nil)
         NSSound(named: "Glass")?.play()
@@ -580,6 +659,10 @@ final class AskCardPanel: NSObject {
         // The guarded action retains its original target (this card). Break that cycle after dismissal.
         actions.removeAll()
     }
+}
+final class AskCardFeedback: NSTextField {
+    var changed: (() -> Void)?
+    override var stringValue: String { didSet { changed?() } }
 }
 // END ASK CARD
 
@@ -742,7 +825,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else if data["kind"] != nil {
             guard sessionFrame(data, choices) != nil else { exit(65) }
         } else {
-            // A payment or operation sheet offers exactly what consent-ui sends: Allow once or Cancel.
+            // A payment or operation sheet offers exactly what consent-ui sends: Allow once or Don't allow.
             guard choices == ["once", "cancel"] else { exit(65) }
         }
         rebuildMenu()
@@ -908,7 +991,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let alert = NSAlert()
             alert.messageText = session.kind == "opt-in" ? "Enable sleight turbo for " + session.session : "Resume sleight turbo for " + session.session
             alert.informativeText = "This choice applies only to this session. Site permissions and action confirmations still apply."
-            for choice in choices { alert.addButton(withTitle: choice.capitalized) }
+            for choice in choices { alert.addButton(withTitle: choice == "cancel" ? "Don't allow" : "Allow this session") }
             let result = personModal(alert, choices: choices, kind: session.kind).rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
             respond(id, result >= 0 && result < choices.count ? choices[result] : "cancel")
             return
@@ -927,7 +1010,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // payment terms are visible to the person, and never emitted on stdout.
         alert.informativeText = words.body
         for choice in choices {
-            alert.addButton(withTitle: choice == "once" ? words.allow : choice.capitalized)
+            alert.addButton(withTitle: choice == "once" ? words.allow : "Don't allow")
         }
         let result = personModal(alert, choices: choices, kind: "action").rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         if result >= 0 && result < choices.count { respond(id, choices[result]) }

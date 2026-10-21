@@ -158,18 +158,18 @@ test('native panel keeps Claude branding and rewrites other hosts at the prompt 
   const claude = await panel('Allow Computer Use to use "Calculator"?', true);
   assert.equal(claude.args[3], 'Allow Claude to use Calculator?');
   assert.match(claude.args[4], /Claude can then click.*this Claude session ends/);
-  assert.equal(claude.args.at(-1), 'claude-code');
+  assert.equal(claude.args[8], 'claude-code');
   const other = await panel('Allow Claude to read and use your notifications?', false);
   assert.equal(other.args[3], 'Allow this agent to read and use your notifications?');
   assert.match(other.args[4], /this sleight server session ends/);
-  assert.equal(other.args.at(-1), 'generic');
+  assert.equal(other.args[8], 'generic');
 });
 
 test('native panel names Cursor from clientInfo and leaves Claude Code text unchanged', async t => {
   const claudeText = await panel('Allow Computer Use to use "Calculator"?', true);
   assert.equal(claudeText.args[3], 'Allow Claude to use Calculator?');
   assert.equal(claudeText.args[4], 'Claude can then click and type in Calculator in the background. Allow lasts until this Claude session ends.');
-  assert.equal(claudeText.args.at(-1), 'claude-code');
+  assert.equal(claudeText.args[8], 'claude-code');
 
   let args;
   const dialog = (message, scoped, options) => launcher.askWithDialog(message, scoped, options, (_command, argv, callback) => {
@@ -183,7 +183,22 @@ test('native panel names Cursor from clientInfo and leaves Claude Code text unch
   h.engine(approval('named')); await tick();
   assert.equal(args[3], 'Allow Cursor to use Calculator?');
   assert.equal(args[4], 'Cursor can then click and type in Calculator in the background. Allow lasts until this Cursor session ends.');
-  assert.equal(args.at(-1), 'Cursor');
+  assert.equal(args[8], 'Cursor');
+});
+
+test('native panel passes trusted grant scope after a stable optional Always offer', async () => {
+  for (const scoped of [false, true]) for (const always of [false, true]) {
+    let args;
+    const answer = await launcher.askWithDialog('Allow this session is only message text', scoped, { always }, (_command, argv, callback) => {
+      args = argv;
+      const child = new EventEmitter();
+      queueMicrotask(() => { callback(null, 'decline', ''); child.emit('close'); });
+      return child;
+    });
+    assert.equal(answer, 'decline');
+    assert.equal(args[9], always ? 'always' : '');
+    assert.equal(args[10], scoped ? 'session' : 'once');
+  }
 });
 
 test('a failed native panel returns an elicitation error without replacing unrelated successful calls', async t => {

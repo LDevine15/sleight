@@ -74,7 +74,7 @@ let full = ["once", "session", "always", "cancel"], short = ["once", "session", 
 let debug = automaticCard(data("debugger"), full)!, temporary = automaticCard(data("debugger", temporary: true), short)!
 let relaunch = automaticCard(data("relaunch"), reopen)!
 precondition(debug.kind == "debugger" && debug.host == "sleight" && debug.choices == ["cancel", "once", "session", "always"])
-precondition(debug.labels == ["Cancel", "Allow once", "Allow this session", "Always allow"])
+precondition(debug.labels == ["Don't allow", "Allow once", "Allow this session", "Always allow"])
 precondition(debug.question == "Let sleight control Fixture?" && debug.detail.contains("including anything open or signed in"))
 precondition(temporary.choices == ["cancel", "once", "session"] && !temporary.labels.contains("Always allow"))
 precondition(relaunch.kind == "relaunch" && relaunch.choices == ["cancel", "relaunch"])
@@ -90,7 +90,7 @@ let shell: [String: Any] = ["view": ["clientSession": "Grok Bot", "scope": scope
   "presentation": ["style": "ask", "question": "Allow Fixture?", "detail": scope, "host": "Grok Bot",
     "icon": "/installed/sleight/assets/icon.png", "kind": "app"]]
 let existing = automaticCard(shell, ["once", "cancel"])!
-precondition(existing.kind == "app" && existing.choices == ["cancel", "once"] && existing.labels == ["Don't Allow", "Allow"])
+precondition(existing.kind == "app" && existing.choices == ["cancel", "once"] && existing.labels == ["Don't allow", "Allow this session"])
 precondition(automaticCard(shell, full) == nil)
 precondition(automaticCard(["kind": "opt-in", "session": "client", "epoch": 1], ["enable", "cancel"]) == nil)
 // The actual panel expression, with the image framework replaced by a headless dependency.

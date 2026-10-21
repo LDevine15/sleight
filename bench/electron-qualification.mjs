@@ -36,6 +36,8 @@ export const SELECTORS = Object.freeze({
 
 export function prepareWorkspace(root) {
   mkdirSync(join(root, 'rows'), { recursive: true });
+  mkdirSync(join(root, '.vscode'), { recursive: true });
+  writeFileSync(join(root, '.vscode', 'settings.json'), JSON.stringify({ 'editor.accessibilitySupport': 'on' }, null, 2) + '\n');
   for (let i = 1; i <= 200; i++) writeFileSync(join(root, 'rows', `row-${String(i).padStart(3, '0')}.txt`), `row ${i}\n`);
   writeFileSync(join(root, 'b-big.txt'), Array.from({ length: 1500 }, (_, i) => `line ${i + 1}`).join('\n') + '\n');
   writeFileSync(join(root, 'a-notes.md'), '# Notes\n\n- [Item one](#one)\n\n## One\n\nQualification notes.\n');
@@ -505,7 +507,15 @@ function context({ app, driver, clock, options, state, timings, consentLog }) {
       await c.act(c.tab(), [{ do: 'click', ref }]);
       let editor;
       await c.until(async () => (editor = editorRefOf((await c.read(c.tab(), { find: 'Editor content|' + name })).text, name)), 5000);
-      if (!editor) fail('EDITOR_NOT_FOUND');
+      if (!editor) {
+        // The normal editor query omits this VS Code prerequisite warning. Diagnose only after its unchanged deadline.
+        const text = (await c.read(c.tab(), { find: 'The editor is not accessible at this time|' + name })).text;
+        const tab = new RegExp('tab "' + escaped(name) + '(?:"|,)');
+        if (text.split('\n').some(line => tab.test(line) && /\[selected\]/.test(line)) &&
+            /^\s*- textbox "The editor is not accessible at this time\. To enable screen reader optimized mode, use Shift\+Option\+F1"(?:\s|$)/m.test(text))
+          fail('EDITOR_ACCESSIBILITY_REQUIRED');
+        fail('EDITOR_NOT_FOUND');
+      }
       await c.act(c.tab(), [{ do: 'click', ref: editor }]);
       return editor;
     },
@@ -530,7 +540,8 @@ async function runCell(cell, c, { driver, observer, clock }) {
     let detail;
     try { detail = await cell.prepare(c); }
     catch (error) { preparationError = error; }
-    record.setup = { ms: clock.now() - started, ...(detail ? { detail } : {}), ...(preparationError ? { error: preparationError.message } : {}) };
+    record.setup = { ms: clock.now() - started, ...(detail ? { detail } : {}), ...(preparationError ? { error: preparationError.message,
+      ...(preparationError.detail ? { detail: preparationError.detail } : {}) } : {}) };
   }
   if (cell.input) {
     const id = driver.identity();
@@ -575,10 +586,6 @@ async function runCell(cell, c, { driver, observer, clock }) {
       background: backgroundEvidence(samples, { startMs: w.execMs, endMs: Math.min(end, w.endMs), fixturePid: w.pid }) });
   }
   record.background = evidence;
-  // Failed startup used to discard every timestamp unless a launch exemption was accepted.
-  // Keep the whole cell timeline, including consent-host focus, for attribution against card events.
-  if (record.status === 'fail' || evidence.unexpectedFixtureFront > 0)
-    evidence.frontmostSamples = samples.filter(s => s.t >= start && s.t <= end);
   if (!c.options.relaunch && evidence.unexpectedFixtureFront > 0) {
     record.detail = { ...record.detail, ...(record.error ? { startupError: record.error } : {}), focusTaken: true };
     Object.assign(record, { status: 'fail', error: `BACKGROUND_FOCUS_TAKEN: ${evidence.unexpectedFixtureFront} samples` });
@@ -592,6 +599,9 @@ async function runCell(cell, c, { driver, observer, clock }) {
     if (out.expectFront !== undefined) record.detail = { ...record.detail, otherFront: !problem };
     if (problem) Object.assign(record, { status: 'fail', error: problem });
   }
+  // Include failures decided by the background gate, as well as startup failures and unexpected fixture focus.
+  if (record.status === 'fail' || evidence.unexpectedFixtureFront > 0)
+    evidence.frontmostSamples = samples.filter(s => s.t >= start && s.t <= end);
   if (record.status === 'fail') {
     try { record.broker = await driver.status?.() ?? null; }
     catch { record.broker = null; }

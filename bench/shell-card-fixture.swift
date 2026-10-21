@@ -39,12 +39,12 @@ func shellButtons(_ view: NSView?) -> [NSButton] {
     return (view as? NSButton).map { [$0] } ?? view.subviews.flatMap { shellButtons($0) }
 }
 func shellCards() -> Int {
-    NSApp.windows.filter { $0.isVisible && shellButtons($0.contentView).contains { $0.title == "Allow Once" } }.count
+    NSApp.windows.filter { $0.isVisible && shellButtons($0.contentView).contains { $0.title == "Allow once" } }.count
 }
 @discardableResult func shellSubmit() -> String {
     shellSequence += 1
     let id = String(format: "gb18q-%04d", shellSequence)
-    let presentation: [String: Any] = ["style": "ask", "question": "Fake request: test Allow Once?",
+    let presentation: [String: Any] = ["style": "ask", "question": "Fake request: test Allow once?",
         "detail": "This fixture cannot approve any app, pay, persist grants or send a real action. Wait for the terminal's physical-click prompt.",
         "host": "Grok Bot", "icon": shellIcon, "kind": "action"]
     let data: [String: Any] = ["view": ["clientSession": "Grok Bot"],
@@ -61,7 +61,7 @@ func shellReady() {
 }
 func shellReadyReceipt() {
     guard let active = host.activeAsk,
-        let button = shellButtons(active.panel.panel.contentView).first(where: { $0.title == "Allow Once" }),
+        let button = shellButtons(active.panel.panel.contentView).first(where: { $0.title == "Allow once" }),
         let screen = NSScreen.screens.first else { shellReceipt("target-missing"); return }
     let panel = active.panel.panel
     shellTargets[active.id] = ["id": active.id, "window": panel.windowNumber, "button": button.title]
@@ -139,7 +139,7 @@ final class ShellFixture: NSObject, NSApplicationDelegate {
             shellMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { event in
                 if shellMouseSamples < 8, ["pid", "hid"].contains(shellStep),
                     let panel = host.activeAsk?.panel.panel,
-                    let button = shellButtons(panel.contentView).first(where: { $0.title == "Allow Once" }) {
+                    let button = shellButtons(panel.contentView).first(where: { $0.title == "Allow once" }) {
                     shellMouseSamples += 1
                     let local = button.convert(event.locationInWindow, from: nil)
                     var mouse: [String: Any] = ["type": event.type.rawValue, "window": event.windowNumber,

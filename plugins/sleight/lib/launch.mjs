@@ -411,7 +411,7 @@ export function approvalCardText(message, sessionScoped, options = {}) {
   const review = options?.kind === 'review';
   const flow = options?.kind === 'flow';
   const detail = flow ? options.detail : review ? `${options.detail}\n\nUndo restores the saved copy shown above. Reopen it in the app afterward. Later leaves the decision pending.` : (app ? `${actor} can then click and type in ${app} in the background. ` : '') +
-    (sessionScoped ? `Allow lasts until ${session} ends.${options?.always ? ' Always Allow adds it to your pre-approved list.' : ''}` : 'It asks again next time.');
+    (sessionScoped ? `Allow lasts until ${session} ends.${options?.always ? ' Always allow adds it to your pre-approved list.' : ''}` : 'It asks again next time.');
   return { question, detail, panel, mode: flow ? 'flow' : review ? 'review' : 'approval' };
 }
 
@@ -419,7 +419,8 @@ export function askWithDialog(message, sessionScoped, options = {}, launch = exe
   if (helpersClosing) return Promise.resolve('cancel');
   const { question, detail, panel, mode } = approvalCardText(message, sessionScoped, options);
   const review = mode === 'review';
-  const args = ['-l', 'JavaScript', join(LIB, 'ask.js'), question, detail, ICON, String(ASK_SECONDS), mode, panel, ...(options?.always ? ['always'] : [])];
+  const args = ['-l', 'JavaScript', join(LIB, 'ask.js'), question, detail, ICON, String(ASK_SECONDS), mode, panel,
+    options?.always ? 'always' : '', sessionScoped ? 'session' : 'once'];
   return new Promise((resolve, reject) => {
     ownHelper(launch('osascript', args, (err, stdout, stderr) => {
       const answer = stdout.trim();

@@ -149,7 +149,7 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
             record.fixture !== owned.token || record.phase !== owned.phase) throw Error('SHELL_CARD_RECEIPT_IDENTITY');
           if (record.id && owned.step !== 'setup' && record.id !== owned.cardID) throw Error('SHELL_CARD_ANSWER_IDENTITY');
           if (['accepted', 'refused'].includes(record.outcome) && (record.id !== owned.cardID ||
-            record.window !== owned.target?.window || record.button !== 'Allow Once')) throw Error('SHELL_CARD_ANSWER_IDENTITY');
+            record.window !== owned.target?.window || record.button !== 'Allow once')) throw Error('SHELL_CARD_ANSWER_IDENTITY');
         }
         // The unchanged ConsentHost.respond writes only to this runner's pipe, never to a relay.
         else if (record.id && ['once', 'cancel'].includes(record.choice)) {
@@ -248,9 +248,9 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
     step = 'person-click'; child.step = step;
     const offset = records.length;
     await command('arm', 'armed');
-    prompt(`Fake request only. Click the visible Allow Once button yourself within ${ms.person / 1000} seconds. Do not press Return. Ctrl-C or stdin EOF cancels.`);
+    prompt(`Fake request only. Click the visible Allow once button yourself within ${ms.person / 1000} seconds. Do not press Return. Ctrl-C or stdin EOF cancels.`);
     say({ step, outcome: 'waiting-for-person', deadline: new Date(Date.now() + ms.person).toISOString(),
-      fixture: child.token, pid: person.pid, window: person.window, id: person.id, button: 'Allow Once' });
+      fixture: child.token, pid: person.pid, window: person.window, id: person.id, button: 'Allow once' });
     const received = await until(() => selected(offset).some(r => ['accepted', 'refused', 'cancelled'].includes(r.outcome)), ms.person);
     const verdict = received ? attemptVerdict(selected(offset), { outcome: 'attempted' }) : 'no-receipt';
     result.steps.push({ step, verdict, ok: verdict === 'accepted' }); say(result.steps.at(-1));
