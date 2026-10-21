@@ -178,6 +178,30 @@ function fakeRun({ permissionAbsent = false, acceptSynthetic = false, missing = 
         person: crossPhaseAcceptance ? 1000 : 100, cleanup: crossPhaseAcceptance ? 1000 : 100, poll: 1 } } };
 }
 
+test('synthetic-only run ends after owned cleanup without asking for a physical click', async () => {
+  const fake = fakeRun();
+  const result = await runShellCard({ ...fake.options, syntheticOnly: true });
+  assert.equal(result.passed, false);
+  assert.equal(result.synthetic?.complete, true);
+  assert.deepEqual(result.steps.map(s => s.step), ['ax', 'pid', 'hid']);
+  assert.ok(result.steps.every(s => s.verdict === 'refused'));
+  assert.equal(fake.hosts.length, 1);
+  assert.equal(fake.receipts.some(r => r.outcome === 'waiting-for-person'), false);
+  assert.equal(result.cleanup.confirmed, true);
+  assert.equal(fake.released, true);
+});
+
+for (const options of [{ missing: true }, { acceptSynthetic: true }, { cleanupMissing: true }]) {
+  test(`synthetic-only run cannot complete without refusals and cleanup: ${JSON.stringify(options)}`, async () => {
+    const fake = fakeRun(options);
+    const result = await runShellCard({ ...fake.options, syntheticOnly: true });
+    assert.equal(result.passed, false);
+    assert.equal(result.synthetic?.complete, false);
+    assert.equal(fake.hosts.length, 1);
+    assert.equal(fake.receipts.some(r => r.outcome === 'waiting-for-person'), false);
+  });
+}
+
 test('visibility study compares true false true without action or person phases and never qualifies consent', async () => {
   const fake = fakeRun();
   const result = await runShellCard({ ...fake.options, visibilityStudy: true });

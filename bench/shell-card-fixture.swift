@@ -7,6 +7,8 @@ var shellTargets: [String: [String: Any]] = [:]
 var shellSequence = 0
 var shellNonce = String(repeating: "a", count: 64)
 let shellHandNonce = String(repeating: "b", count: 64)
+var shellMouseMonitor: Any?
+var shellMouseSamples = 0
 guard CommandLine.arguments.count == 4, CommandLine.arguments[1].hasPrefix("/"),
     CommandLine.arguments[1].hasSuffix("/assets/icon.png"),
     ["synthetic", "person", "visibility"].contains(CommandLine.arguments[2]),
@@ -54,6 +56,10 @@ func shellCards() -> Int {
 }
 func shellReady() {
     if host.activeAsk == nil { shellSubmit() }
+    // Allow AppKit's initial ordering animation to finish before publishing target geometry.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { shellReadyReceipt() }
+}
+func shellReadyReceipt() {
     guard let active = host.activeAsk,
         let button = shellButtons(active.panel.panel.contentView).first(where: { $0.title == "Allow Once" }),
         let screen = NSScreen.screens.first else { shellReceipt("target-missing"); return }
@@ -100,6 +106,7 @@ func shellLifecycle() {
     shellReceipt("lifecycle", ["ok": checks.values.allSatisfy { $0 }, "checks": checks, "entry": "direct-production-methods"])
 }
 func shellStop(_ reason: String) -> Never {
+    if let monitor = shellMouseMonitor { NSEvent.removeMonitor(monitor); shellMouseMonitor = nil }
     host.channelClosed()
     host.visibility?.cancel(); host.hookupTimer?.invalidate()
     NSStatusBar.system.removeStatusItem(host.item)
@@ -127,6 +134,33 @@ final class ShellFixture: NSObject, NSApplicationDelegate {
         host.shared = true; host.input = nil
         _ = nonceBook.admit("hand", shellHandNonce)
         shellReceipt("boot", ["pid": getpid(), "fake": true])
+        // Observe only events already delivered to this fake app. Return each event unchanged.
+        if shellPhase == "synthetic" {
+            shellMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { event in
+                if shellMouseSamples < 8, ["pid", "hid"].contains(shellStep),
+                    let panel = host.activeAsk?.panel.panel,
+                    let button = shellButtons(panel.contentView).first(where: { $0.title == "Allow Once" }) {
+                    shellMouseSamples += 1
+                    let local = button.convert(event.locationInWindow, from: nil)
+                    var mouse: [String: Any] = ["type": event.type.rawValue, "window": event.windowNumber,
+                        "targetWindow": panel.windowNumber, "sameWindow": event.window === panel,
+                        "clickCount": event.clickCount, "eventNumber": event.eventNumber,
+                        "appActive": app.isActive, "keyWindow": panel.isKeyWindow,
+                        "acceptsFirstMouse": button.acceptsFirstMouse(for: event),
+                        "windowPoint": ["x": event.locationInWindow.x, "y": event.locationInWindow.y],
+                        "insideButton": event.window === panel && button.bounds.contains(local)]
+                    if let cg = event.cgEvent {
+                        mouse["screenPoint"] = ["x": cg.location.x, "y": cg.location.y]
+                        mouse["routingWindow"] = cg.getIntegerValueField(.mouseEventWindowUnderMousePointer)
+                        mouse["handlingWindow"] = cg.getIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent)
+                        mouse["sourcePid"] = cg.getIntegerValueField(.eventSourceUnixProcessID)
+                        mouse["sourceState"] = cg.getIntegerValueField(.eventSourceStateID)
+                    }
+                    shellReceipt("mouse-observed", ["mouse": mouse])
+                }
+                return event
+            }
+        }
         // Independent ceiling if the controlling runner disappears without delivering EOF.
         DispatchQueue.main.asyncAfter(deadline: .now() + 240) { shellStop("watchdog") }
         DispatchQueue.global().async {
@@ -143,7 +177,7 @@ final class ShellFixture: NSObject, NSApplicationDelegate {
                     switch op {
                     case "show": shellReady()
                     case "lifecycle": shellLifecycle()
-                    case "arm": shellReceipt("armed", ["accessibility": shellAccessibilityState()])
+                    case "arm": shellMouseSamples = 0; shellReceipt("armed", ["accessibility": shellAccessibilityState()])
                     case "visibility-hide", "visibility-show":
                         guard shellPhase == "visibility", let panel = host.activeAsk?.panel.panel else { shellStop("invalid-visibility-command") }
                         panel.hidesOnDeactivate = op == "visibility-hide"

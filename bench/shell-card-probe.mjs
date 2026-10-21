@@ -63,10 +63,11 @@ export async function acquireAdmission({ lock = '/tmp/sleight-live.lock', hold =
 }
 
 export async function runShellCard({ directory, binaries, admission, launch = spawn, input = process.stdin,
-  signals = process, say = r => console.log(JSON.stringify(r)), prompt = text => console.error(text), timing = {}, visibilityStudy = false }) {
+  signals = process, say = r => console.log(JSON.stringify(r)), prompt = text => console.error(text), timing = {}, visibilityStudy = false, syntheticOnly = false }) {
   const ms = { ready: 10000, attempt: 3000, settle: 500, person: 120000, cleanup: 5000, poll: 20, ...timing };
   const result = { passed: false, steps: [], cleanup: { confirmed: false } }, records = [], children = [];
   if (visibilityStudy) result.study = { complete: false, samples: [] };
+  if (syntheticOnly) result.synthetic = { complete: false };
   let stopped, fault, child, step = 'setup', syntheticAccepted = false;
   const abort = () => { stopped = 'INTERRUPTED'; }, eof = () => { stopped = 'OPERATOR_EOF'; };
   signals.on('SIGINT', abort); signals.on('SIGTERM', abort);
@@ -236,6 +237,10 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
     const cleaned = await collect(synthetic);
     if (!cleaned.confirmed) throw Error('SHELL_CARD_SYNTHETIC_CLEANUP_UNCONFIRMED');
     if (syntheticAccepted) throw Error('SHELL_CARD_SYNTHETIC_ACCEPTANCE');
+    if (syntheticOnly) {
+      result.synthetic.complete = result.steps.length === 3 && result.steps.every(r => r.ok);
+      return result;
+    }
     // The old process and every poster are gone, with all output drained. A new process
     // receives no synthetic input and uses a separate receipt token and target identity.
     child = undefined;
@@ -271,6 +276,10 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
       result.passed = false;
       result.study.complete = result.study.complete && result.cleanup.confirmed && !result.error;
     }
+    if (result.synthetic) {
+      result.passed = false;
+      result.synthetic.complete = result.synthetic.complete && result.cleanup.confirmed && !result.error;
+    }
     for (const owned of fixtures) owned.lines?.close();
     signals.removeListener('SIGINT', abort); signals.removeListener('SIGTERM', abort);
     input.removeListener('end', eof); input.pause();
@@ -283,9 +292,9 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
 
 async function main(args) {
   const mode = args[0];
-  if (process.platform !== 'darwin' || !['--compile-only', '--live', '--visibility-study'].includes(mode) || args.length !== 3 ||
+  if (process.platform !== 'darwin' || !['--compile-only', '--live', '--visibility-study', '--synthetic-only'].includes(mode) || args.length !== 3 ||
     args[1] !== '--receipt' || !isAbsolute(args[2])) {
-    console.error('usage on macOS: node bench/shell-card-probe.mjs --compile-only|--live|--visibility-study --receipt /absolute/new.jsonl');
+    console.error('usage on macOS: node bench/shell-card-probe.mjs --compile-only|--live|--visibility-study|--synthetic-only --receipt /absolute/new.jsonl');
     process.exitCode = 2; return;
   }
   const fd = openSync(args[2], 'wx', 0o600), run = randomUUID();
@@ -307,12 +316,14 @@ async function main(args) {
     if (interrupted) throw Error('INTERRUPTED_BEFORE_LAUNCH');
     if (mode !== '--compile-only') {
       const visibilityStudy = mode === '--visibility-study';
+      const syntheticOnly = mode === '--synthetic-only';
       console.error(visibilityStudy
         ? 'Visibility study only. Do not click the fake panel. It sends no input and makes no permission requests.'
+        : syntheticOnly ? 'Synthetic checks only. Do not click the fake panel. The runner closes it without requesting a physical click.'
         : 'Only this fake panel is targeted. Do not interact until the physical-click prompt. Existing Accessibility and Post-event permissions are required; this runner requests none.');
-      result = await runShellCard({ directory, binaries, admission, say, visibilityStudy });
+      result = await runShellCard({ directory, binaries, admission, say, visibilityStudy, syntheticOnly });
       admission = null; retain = !result.cleanup.confirmed;
-      say({ summary: result }); process.exitCode = (visibilityStudy ? result.study?.complete : result.passed) ? 0 : 1;
+      say({ summary: result }); process.exitCode = (visibilityStudy ? result.study?.complete : syntheticOnly ? result.synthetic?.complete : result.passed) ? 0 : 1;
     }
   } catch (error) { say({ outcome: 'failed', reason: error.message }); process.exitCode = 1; }
   finally {

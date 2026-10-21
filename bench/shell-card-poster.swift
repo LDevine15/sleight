@@ -1,6 +1,6 @@
 // Separate child of the runner. All input is bound to one fixture PID, window and Allow Once button.
 // No TCC prompt and no global HID posting. Spoofed HID metadata is still delivered only to the owned PID.
-import ApplicationServices
+import AppKit
 import Foundation
 import Darwin
 
@@ -11,6 +11,45 @@ func receipt(_ outcome: String, _ fields: [String: Any] = [:]) {
 }
 func fail(_ reason: String) -> Never { receipt("poster-failed", ["reason": reason]); exit(1) }
 func permission(_ name: String) -> Never { receipt("permission-absent", ["permission": name]); exit(77) }
+// BEGIN SHELL MOUSE EVENT
+private typealias ShellWindowLocationSetter = @convention(c) (CGEvent, CGPoint) -> Void
+private typealias ShellWindowLocationGetter = @convention(c) (CGEvent) -> CGPoint
+private let shellWindowLocation: (set: ShellWindowLocationSetter, get: ShellWindowLocationGetter)? = {
+    guard let framework = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW | RTLD_LOCAL) else { return nil }
+    guard let setter = dlsym(framework, "CGEventSetWindowLocation"),
+        let getter = dlsym(framework, "CGEventGetWindowLocation") else {
+        dlclose(framework)
+        return nil
+    }
+    // Keep the framework loaded for the lifetime of these function pointers.
+    return (unsafeBitCast(setter, to: ShellWindowLocationSetter.self),
+        unsafeBitCast(getter, to: ShellWindowLocationGetter.self))
+}()
+func shellMouseEvent(type: CGEventType, source: CGEventSource, mode: String,
+    window: UInt32, rect: CGRect, point: CGPoint) -> CGEvent? {
+    guard [.leftMouseDown, .leftMouseUp].contains(type), window > 0, rect.contains(point),
+        let windowLocation = shellWindowLocation else { return nil }
+    let local = CGPoint(x: point.x - rect.minX, y: rect.maxY - point.y)
+    guard let native = NSEvent.mouseEvent(with: type == .leftMouseDown ? .leftMouseDown : .leftMouseUp,
+        location: local, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: Int(window), context: nil, eventNumber: 1, clickCount: 1,
+        pressure: type == .leftMouseDown ? 1 : 0), let event = native.cgEvent else { return nil }
+    event.setSource(source)
+    // A foreign window has no local AppKit transform. Set the global point first;
+    // the window-location annotation uses a top-left origin, unlike NSEvent.
+    event.location = point
+    event.flags = []
+    event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window))
+    event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window))
+    if mode == "hid" {
+        event.setIntegerValueField(.eventSourceStateID, value: Int64(CGEventSourceStateID.hidSystemState.rawValue))
+        event.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+    }
+    event.setIntegerValueField(.eventSourceUserData, value: 0)
+    windowLocation.set(event, CGPoint(x: point.x - rect.minX, y: point.y - rect.minY))
+    return event
+}
+// END SHELL MOUSE EVENT
 let args = Array(CommandLine.arguments.dropFirst())
 guard args.count == 5, ["ax", "pid", "hid", "inspect"].contains(args[0]),
     let pid = Int32(args[1]), pid > 0, getppid() > 1,
@@ -49,7 +88,7 @@ func size(_ element: AXUIElement) -> CGSize? {
     return value
 }
 func near(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) < 1 }
-func target() -> AXUIElement {
+func target() -> (button: AXUIElement, rect: CGRect) {
     fixtureIdentity()
     guard !FileManager.default.fileExists(atPath: "/tmp/sleight-hold") else { fail("HOLD") }
     // Quartz's ID arrays contain raw window IDs, not CFNumber objects. Request only our fixture window.
@@ -108,7 +147,7 @@ func target() -> AXUIElement {
         attribute(button, kAXEnabledAttribute as CFString) as? Bool == true,
         let origin = point(button), let extent = size(button),
         near(origin.x + extent.width / 2, CGFloat(x)), near(origin.y + extent.height / 2, CGFloat(y)) else { fail("BUTTON_IDENTITY") }
-    return button
+    return (button, rect)
 }
 if mode == "inspect" {
     fixtureIdentity()
@@ -132,21 +171,26 @@ if mode == "inspect" {
         "axStatus": status.rawValue, "axWindows": (value as? [AXUIElement])?.count ?? -1])
     exit(0)
 } else if mode == "ax" {
-    let result = AXUIElementPerformAction(target(), kAXPressAction as CFString)
+    let result = AXUIElementPerformAction(target().button, kAXPressAction as CFString)
     receipt("attempted", ["mode": mode, "pid": pid, "window": window, "axResult": result.rawValue])
 } else {
     let state: CGEventSourceStateID = mode == "hid" ? .hidSystemState : .privateState
     guard let source = CGEventSource(stateID: state) else { fail("EVENT_SOURCE") }
     source.userData = 0
     for type in [CGEventType.leftMouseDown, .leftMouseUp] {
-        _ = target()
-        guard let event = CGEvent(mouseEventSource: source, mouseType: type,
-            mouseCursorPosition: CGPoint(x: x, y: y), mouseButton: .left) else { fail("MOUSE_EVENT") }
-        if mode == "hid" {
-            event.setIntegerValueField(.eventSourceStateID, value: Int64(CGEventSourceStateID.hidSystemState.rawValue))
-            event.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+        let bound = target()
+        guard let event = shellMouseEvent(type: type, source: source, mode: mode,
+            window: window, rect: bound.rect, point: CGPoint(x: x, y: y)) else { fail("MOUSE_EVENT") }
+        // Sender-side NSEvent cannot convert a foreign window's local point.
+        // Validate its stored top-left annotation against the verified geometry.
+        guard let windowLocation = shellWindowLocation,
+            let native = NSEvent(cgEvent: event), native.windowNumber == Int(window),
+            near(event.location.x, CGFloat(x)), near(event.location.y, CGFloat(y)),
+            near(windowLocation.get(event).x, CGFloat(x) - bound.rect.minX),
+            near(windowLocation.get(event).y, CGFloat(y) - bound.rect.minY), native.clickCount == 1 else {
+            receipt("event-encoding-failed", ["window": window, "screenPoint": ["x": event.location.x, "y": event.location.y]])
+            fail("MOUSE_EVENT_BINDING")
         }
-        event.setIntegerValueField(.eventSourceUserData, value: 0)
         event.postToPid(pid)
         receipt("posted-event", ["mode": mode, "pid": pid, "window": window, "type": event.type.rawValue,
             "sourceState": event.getIntegerValueField(.eventSourceStateID),
