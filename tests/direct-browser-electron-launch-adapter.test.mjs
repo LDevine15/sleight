@@ -22,6 +22,20 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const until = async (check, label, ms = 8000) => { const start = Date.now(); while (!await check()) { if (Date.now() - start > ms) throw Error('timed out waiting for ' + label); await sleep(20); } };
 const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
+// CPython can add locale metadata at startup. Measure that interpreter under an
+// independently specified input environment, never by exempting returned keys.
+function expectedPythonEnvironment(userProfile = false) {
+  const env = { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' };
+  if (userProfile) {
+    const account = userInfo();
+    Object.assign(env, { HOME: account.homedir, USER: account.username, LOGNAME: account.username, SHELL: account.shell });
+  }
+  const baseline = spawnSync(python.stdout.trim(), ['-c', 'import json,os; print(json.dumps(dict(os.environ)))'],
+    { env, encoding: 'utf8', timeout: 10000 });
+  assert.equal(baseline.status, 0, baseline.stderr);
+  return JSON.parse(baseline.stdout);
+}
+
 function environment() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'eadp-')));
   const executable = python.stdout.trim();
@@ -79,7 +93,9 @@ test('handshake over host-created pipes: the app sees only descriptors 3 and 4, 
     const info = await host.broker.pipe.request('Fake.argv');
     assert.ok(info.argv.includes('--remote-debugging-pipe'));
     assert.ok(!info.argv.some(arg => /^--(remote-debugging-port|inspect|no-sandbox)/.test(arg)), JSON.stringify(info.argv));
-    assert.deepEqual(Object.keys(info.env).sort(), ['LANG', 'PATH'].concat(Object.keys(info.env).filter(k => k.startsWith('__CF'))).sort());
+    const expectedEnv = expectedPythonEnvironment();
+    assert.deepEqual(Object.keys(info.env).sort(), Object.keys(expectedEnv).sort());
+    assert.deepEqual(info.env, expectedEnv);
     assert.equal(existsSync(lockPath(e)), true);
     await connection.disconnect();
   } finally { await finishReal(host, e); }
@@ -95,7 +111,9 @@ test('a user-profile launch names no profile, has the account\'s home, logs noth
     const pid = connection.identity.pid;
     const info = await host.broker.pipe.request('Fake.argv');
     assert.deepEqual(info.argv, [fake, '--fake-host', '--remote-debugging-pipe'], 'the recipe\'s userProfile arguments and the pipe, no profile path');
-    assert.deepEqual(Object.keys(info.env).filter(key => !key.startsWith('__CF')).sort(), ['HOME', 'LANG', 'LOGNAME', 'PATH', 'SHELL', 'USER']);
+    const expectedEnv = expectedPythonEnvironment(true);
+    assert.deepEqual(Object.keys(info.env).sort(), Object.keys(expectedEnv).sort());
+    assert.deepEqual(info.env, expectedEnv);
     assert.equal(info.env.HOME, userInfo().homedir);
     const { fds } = await host.broker.pipe.request('Fake.fds');
     assert.equal(fds['1'], 'chr'); assert.equal(fds['2'], 'chr');
@@ -184,7 +202,9 @@ test('quit and collect through the adapter: exact descendant census, profile and
     assert.ok(journal.observed.some(([id]) => id === orphan), 'the descendant is durable');
     const receipt = await host.quit(async () => true);   // the app's own quit; its child outlives it
     assert.equal(receipt.cleanup, 'retained', JSON.stringify(receipt));
-    assert.equal(alive(pid), false);
+    // A retained descendant can make quit return before the adapter's next
+    // WNOHANG poll reaps its parent. Require actual PID disappearance.
+    await until(() => !alive(pid), 'the exact owned parent is reaped');
     assert.equal(existsSync(lockPath(e)), true, 'the lock is kept while a recorded descendant may still run');
     process.kill(orphan);
     await until(() => !alive(orphan), 'orphan gone');

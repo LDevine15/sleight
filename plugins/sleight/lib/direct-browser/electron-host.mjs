@@ -480,6 +480,8 @@ export async function createElectronHost({
       else if (last) socket.end();
     };
     socket.write(bare({ t: 'hello', v: CHANNEL_VERSION, host: hostId, nonce: hostNonce }));
+    // Release this connection's role before the peer can observe our EOF.
+    socket.on('end', drop);
     socket.on('close', drop);
     socket.on('data', chunk => {
       let frames;

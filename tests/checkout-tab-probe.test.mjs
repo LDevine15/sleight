@@ -94,9 +94,9 @@ for (const replacement of ['file', 'symlink']) {
 }
 
 async function fixture(t, { observe = async () => identity, current = () => tree, onType = () => {}, onOutput = () => {}, guardDate = Date,
-  sandboxFS = engineFS, setupProbe = () => {} } = {}) {
+  sandboxFS = engineFS, setupProbe = () => {}, probeFreshMs = 30, probeDeadlineMs = 650 } = {}) {
   const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-ck3-'))));
-  const probe = createTabProbe({ directory, observe, intervalMs: 2, timeoutMs: 20, deadlineMs: 650, freshMs: 30 });
+  const probe = createTabProbe({ directory, observe, intervalMs: 2, timeoutMs: 20, deadlineMs: probeDeadlineMs, freshMs: probeFreshMs });
   const info = probe.begin(1, target);
   setupProbe(info);
   t.after(() => probe.dispose());
@@ -123,7 +123,7 @@ test('CK3 remainder probes address focus before typing and Return and keeps its 
 });
 
 test('CK3 requests reach the relay when the engine sandbox refuses every file write', async t => {
-  let writes = 0, opens = 0;
+  let writes = 0, opens = 0, delayed = false;
   const promises = { ...engineFS.promises,
     writeFile: async () => { writes++; throw Object.assign(Error('sandbox denied write'), { code: 'EPERM', syscall: 'open' }); },
     open: async (path, flags) => {
@@ -131,11 +131,19 @@ test('CK3 requests reach the relay when the engine sandbox refuses every file wr
       assert.equal(flags, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
       assert.equal(lstatSync(path).isFIFO(), true);
       assert.equal(lstatSync(path).mode & 0o777, 0o600);
-      return engineFS.promises.open(path, flags);
+      const handle = await engineFS.promises.open(path, flags);
+      if (opens === 3) {
+        delayed = true;
+        // The relay can publish while an engine filesystem promise waits to resume.
+        await new Promise(resolve => setTimeout(resolve, 60));
+      }
+      return handle;
     } };
   await assert.rejects(promises.writeFile('/sandbox/request', '{}'), { code: 'EPERM', syscall: 'open' });
-  const f = await fixture(t, { sandboxFS: { constants, promises } });
+  // This checks read-only transport. Freshness expiry has separate tests with the strict fixture defaults.
+  const f = await fixture(t, { sandboxFS: { constants, promises }, probeFreshMs: 1000, probeDeadlineMs: 5000 });
   await f.run();
+  assert.equal(delayed, true, 'the first Return observation reached the delayed reader');
   assert.equal(writes, 1, 'only the simulated old request write was refused');
   assert.equal(opens, 4, 'two samples for each guarded input');
   assert.deepEqual(f.calls, ['typeText', 'pressKey', 'read']);

@@ -15,13 +15,15 @@ import { CHANNEL_VERSION, DEFAULT_MAX_FRAME_BYTES, FrameReader, HANDSHAKE_MAX_BY
 const fail = code => { throw Error(code); };
 const HOST_RUN = fileURLToPath(new URL('./electron-host-run.mjs', import.meta.url));
 
-/** Opens the admin channel. Resolves to { hostId, status, start, issue, revoke, revokeAll, resume, reconcile, quit, collect, close }. */
+/** Opens the admin channel. close() resolves true after clean peer EOF/close; errors or a bounded timeout resolve false.
+ * The host releases this exact admin role before replying with EOF. Ignored close results never reject. */
 export async function connectAdmin({ stateDir, secret, hostId, socketPath = join(String(stateDir), 'host.sock'), connect = path => net.connect(path),
   timeoutMs = 10000 } = {}) {
   if (!Buffer.isBuffer(secret) || secret.length < 32) fail('ADMIN_SECRET_INVALID');
   if (hostId !== undefined && !validToken(hostId)) fail('ELECTRON_HOST_MISMATCH');
   const socket = connect(socketPath), reader = new FrameReader(HANDSHAKE_MAX_BYTES), pending = new Map();
-  let stage = 'hello', derived, clientNonce, send, receive, host, closed = false, sequence = 0;
+  let stage = 'hello', derived, clientNonce, send, receive, host, closed = false, sequence = 0, peerEnded = false, closeResult;
+  socket.on('end', () => { peerEnded = true; });
   const shut = code => {
     if (closed) return; closed = true;
     for (const entry of pending.values()) entry.reject(Error(code));
@@ -71,6 +73,27 @@ export async function connectAdmin({ stateDir, secret, hostId, socketPath = join
       try { socket.write(send({ op, id, ...(args === undefined ? {} : { args }) })); } catch { shut('ELECTRON_HOST_CLOSED'); }
     });
   };
+  const close = () => {
+    if (closeResult) return closeResult;
+    if (closed || socket.destroyed) return closeResult = Promise.resolve(false);
+    closed = true;
+    closeResult = new Promise(resolve => {
+      let done = false, timer;
+      const finish = result => {
+        if (done) return; done = true;
+        clearTimeout(timer); socket.off('close', onClose); socket.off('error', onError);
+        if (!result) socket.destroy();
+        resolve(result);
+      };
+      const onClose = hadError => finish(peerEnded && !hadError);
+      const onError = () => finish(false);
+      socket.once('close', onClose); socket.once('error', onError);
+      const closeMs = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 10000) : 10000;
+      timer = setTimeout(() => finish(false), closeMs); timer.unref?.();
+      try { socket.end(); } catch { finish(false); }
+    });
+    return closeResult;
+  };
   return Object.freeze({
     hostId: host,
     status: () => request('status'),
@@ -85,7 +108,7 @@ export async function connectAdmin({ stateDir, secret, hostId, socketPath = join
     prepare: ({ build, profile } = {}) => request('prepare', { build, profile }),
     quit: () => request('quit'),
     collect: () => request('collect'),
-    close: () => { try { socket.end(); } catch { /* closed */ } closed = true; },
+    close,
   });
 }
 

@@ -435,7 +435,7 @@ test('an orphan adapter uses the run-selected Python binary, including a path wi
   assert.equal(rows[0].pid, 702);
 });
 
-test('run startup resolves under the host PATH and launches and reaps the expanded executable', async t => {
+test('run startup rejects unsupported hosts or resolves and reaps the expanded executable on macOS', async t => {
   const root = createRunRoot('eqpy-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const actual = join(root, 'Python interpreter'), alias = join(root, 'python3');
@@ -455,9 +455,18 @@ test('run startup resolves under the host PATH and launches and reaps the expand
     assert.match(args[3], /sys.executable/);
     return { stdout: alias + '\n' }; // The supported system launcher expands to a different executable.
   };
-  const runtime = await liveRuntime({}, { root, io: { permission: async () => false } }, {
+  let permissionChecks = 0;
+  const start = () => liveRuntime({}, { root, io: { permission: async () => { permissionChecks++; return false; } } }, {
     exec, load: async file => Object.fromEntries(CONTRACT.find(([name]) => name === file)[1].map(name => [name, () => {}])),
   });
+  if (process.platform !== 'darwin') {
+    await assert.rejects(start, { message: 'MACOS_REQUIRED' });
+    assert.deepEqual(commands, [], 'unsupported hosts do not resolve or launch an interpreter');
+    assert.equal(permissionChecks, 0, 'unsupported hosts do not request permission');
+    return;
+  }
+  const runtime = await start();
+  assert.equal(permissionChecks, 1);
   let rows = [];
   const signalled = [];
   const driver = runtime.driverFor(APPS.vscode, { deps: { list: async () => rows, sleep: async () => {},

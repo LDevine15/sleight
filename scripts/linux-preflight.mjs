@@ -212,7 +212,7 @@ export async function runContainerChecks({ execute = runOwnedCommand, platform =
     prepare();
     stage = 'config-create';
     config = makeConfig();
-    const options = { cwd: root, env: { ...env, CLAUDE_CONFIG_DIR: config, GIT_CONFIG_NOSYSTEM: '1',
+    const options = { cwd: root, env: { ...env, HOME: config, CLAUDE_CONFIG_DIR: config, GIT_CONFIG_NOSYSTEM: '1',
       GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' } };
     stage = 'git-head';
     const head = await execute('/usr/bin/git', ['rev-parse', '--verify', 'HEAD^{commit}'], options);
@@ -276,7 +276,7 @@ export function linuxPreflightPlan({ checkout, runId, commit } = {}) {
     throw Error('Invalid container plan input');
   }
   return { command: 'docker', args: ['create', '--name', runId, '--label', `sleight.preflight=${runId}`,
-    '--mount', `type=bind,source=${root},target=/source,readonly`, '--workdir', '/',
+    '--init', '--mount', `type=bind,source=${root},target=/source,readonly`, '--workdir', '/',
     'node:24', 'node', '--input-type=module', '-e', containerProgram, commit, runId] };
 }
 

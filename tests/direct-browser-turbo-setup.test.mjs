@@ -415,12 +415,18 @@ test('launcher startup logs one line and keeps the engine when setup cannot writ
   await prepareInstalledStartup(() => null, () => {}, { ensure: log => ensureInstalledTurbo(log, none.base), log: x => lines.push(x) });
   assert.equal(lines.length, 1); assert.match(lines[0], /turbo stays off: No supported browser found/); assert.equal(existsSync(none.configPath), false);
   const w = world(t, { chrome: true }), failures = [];
-  const support = join(w.home, 'Library/Application Support');
-  mkdirSync(support, { recursive: true }); chmodSync(support, 0o500);
-  let result;
-  try { result = await ensureInstalledTurbo(x => failures.push(x), w.base); } finally { chmodSync(support, 0o700); }
+  const directory = dirname(w.configPath), marker = join(directory, 'owned-marker');
+  mkdirSync(directory, { recursive: true, mode: 0o700 }); writeFileSync(marker, 'owned write obstruction', { mode: 0o600 });
+  chmodSync(directory, 0o770);
+  let result, bridgeStarted = false;
+  const startup = await prepareInstalledStartup(() => { bridgeStarted = true; return null; }, () => assert.fail('setup failure must retain the engine'), {
+    ensure: async log => { result = await ensureInstalledTurbo(log, w.base); }, log: x => failures.push(x),
+  });
   assert.equal(result.action, 'failed'); assert.equal(failures.length, 1); assert.match(failures[0], /turbo stays off: could not write turbo\.json/);
+  assert.equal(result.reason, 'TURBO_DIRECTORY_UNSAFE');
   assert.equal(existsSync(w.configPath), false);
+  assert.equal(readFileSync(marker, 'utf8'), 'owned write obstruction');
+  assert.equal(bridgeStarted, true); assert.equal(startup.directBrowser, undefined); assert.equal(startup.turboUnavailable, undefined);
 });
 
 test('doctor prints the turbo section after its version, read-only', async t => {

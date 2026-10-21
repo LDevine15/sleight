@@ -5,6 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { planBrowserFrame, createBrowserHand, pageMetrics, workerHandTrace } from '../plugins/sleight/lib/hand/browser-hand.mjs';
 import { createActionRunner } from '../plugins/sleight/lib/direct-browser/act.mjs';
 import { utilityLocator } from './direct-browser-utility-fixture.mjs';
+import { assessLatencyCycles, collectLatencyCycles } from './fixtures/hand-act-latency.mjs';
 
 // A 1200×900-point browser window at (100, 50) with 100 points of tabs and toolbar, on a 2× display, page zoom 100%.
 const OUTER = { X: 100, Y: 50, Width: 1200, Height: 900 };
@@ -124,6 +125,7 @@ test('SLEIGHT_HAND=0, a missing client or a disabled client means no hand and no
 function actFixture(hand, verdict = { kind: 'allow' }) {
   const page = new EventEmitter(), actions = [];
   const loc = ref => utilityLocator({ ref,
+    async boundingBox() { return BOX; },
     async evaluate(fn) {
       if (fn.name === 'inspectTarget') return { name: 'Continue', submit: false, payment: false, form: false, formSignature: 'x' };
       if (fn.name === 'overlaySignature') return { count: 0, hash: 1 };
@@ -164,31 +166,33 @@ test('the act runner tells the hand about each step it starts, after its rules a
 });
 
 test('act latency with the hand is within 0.1 ms of act without it', async t => {
-  const N = 300;
-  async function measure(hand) {
-    const f = actFixture(hand), times = [];
-    for (let i = 0; i < N; i++) {
-      const start = performance.now();
-      await f.run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'type', ref: 'e2', text: 'hi' }], {});
-      times.push(performance.now() - start);
-      await new Promise(r => setImmediate(r)); // the hand's deferred work runs between runs, on the same loop
-    }
-    times.sort((a, b) => a - b);
-    return { median: times[N >> 1], p95: times[Math.floor(N * 0.95)] };
-  }
-  const sent = [];
-  const make = () => createBrowserHand({ client: { enabled: true, send: frame => sent.push(frame), hide() {}, close() {} }, env: { SLEIGHT_HAND: '1' }, setting: () => ({ enabled: true }),
+  let sent = 0, closed = 0;
+  const hand = createBrowserHand({ client: { enabled: true, send() { sent++; }, hide() {}, close() { closed++; } }, env: { SLEIGHT_HAND: '1' }, setting: () => ({ enabled: true }),
     readMetrics: async () => METRICS, locate: async () => GEOMETRY });
-  // The fake locators have no boundingBox, so give each step one the way Playwright locators do.
-  const boxed = hand => ({ step: input => hand.step({ ...input, locator: { boundingBox: async () => BOX } }) });
-  await measure(); await measure(boxed(make()));
-  const off = await measure(), on = await measure(boxed(make()));
-  assert.ok(sent.length >= N, 'the hand sent frames during the timed runs');
-  const hand = make(); let stepping = 0;
-  for (let i = 0; i < 10000; i++) { const s = performance.now(); hand.step({ op: 'click', page: {}, locator: {}, ref: 'e1' }); stepping += performance.now() - s; }
-  hand.close();
-  t.diagnostic(`act median off ${off.median.toFixed(4)} ms, on ${on.median.toFixed(4)} ms; p95 off ${off.p95.toFixed(4)}, on ${on.p95.toFixed(4)}; hand.step ${(stepping / 10).toFixed(2)} µs`);
-  assert.ok(on.median - off.median < 0.1, `act ${on.median} ms with the hand against ${off.median} ms without`);
+  const fixtures = { off: actFixture(), on: actFixture(hand) };
+  const measure = async side => {
+    const f = fixtures[side], before = sent, beforeActions = f.actions.length;
+    const start = performance.now();
+    const result = await f.run(f.tab, [{ do: 'click', ref: 'e1' }, { do: 'type', ref: 'e2', text: 'hi' }], {});
+    const elapsed = performance.now() - start;
+    // Default setImmediate scheduling remains active. Drain the fake async readers after stopping the clock.
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(result.lines.length, 2);
+    assert.equal(result.stoppedAt, null);
+    assert.deepEqual(f.actions.slice(beforeActions), [['click', 'e1'], ['fill', 'e2', 'hi']]);
+    assert.equal(sent - before, side === 'on' ? 2 : 0, 'every enabled click and type delivered its deferred frame');
+    return elapsed;
+  };
+  try {
+    await collectLatencyCycles(measure); // 300 warmup samples per side, in the same balanced order
+    const measured = assessLatencyCycles(await collectLatencyCycles(measure)), { off, on } = measured;
+    assert.equal(sent, 1200, 'warmup and measured on runs each delivered 600 frames');
+    t.diagnostic(`act median off ${off.median.toFixed(4)} ms, on ${on.median.toFixed(4)} ms; delta ${measured.deltaMs.toFixed(4)} ms; ` +
+      `whole-cycle bootstrap upper95 ${measured.upper95Ms.toFixed(4)} ms; p95 off ${off.p95.toFixed(4)}, on ${on.p95.toFixed(4)}; ` +
+      `${measured.samplesPerCondition} per side, ${measured.cycles} cycles, ${measured.resamples} resamples, seed ${measured.seed}`);
+    assert.ok(on.median - off.median < 0.1, `act ${on.median} ms with the hand against ${off.median} ms without`);
+    assert.ok(measured.upper95Ms < 0.1, `act latency measurement inconclusive: cycle-bootstrap upper95 ${measured.upper95Ms} ms exceeds the strict 0.1 ms limit`);
+  } finally { hand.close(); assert.equal(closed, 1); }
 });
 
 test('the worker\'s hand events reach the relay\'s trace file with the operation and a fixed reason or kind only', async () => {

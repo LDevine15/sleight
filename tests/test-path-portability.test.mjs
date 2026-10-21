@@ -155,6 +155,8 @@ test('plan uses a readonly prepared checkout with fixed image, no host dependenc
   const plan = linuxPreflightPlan({ checkout: resolve(tmpdir(), 'worktree with spaces $(never)'),
     runId: containerOptions().runId, commit });
   assert.equal(plan.command, 'docker');
+  assert.equal(plan.args.filter(arg => arg === '--init').length, 1, 'Docker must provide the container init reaper');
+  assert.ok(plan.args.indexOf('--init') < plan.args.indexOf('node:24'));
   assert.equal(plan.args[plan.args.indexOf('--workdir') + 1], '/', 'Docker must leave /w absent for the guarded copy');
   assert.ok(plan.args.includes('node:24'));
   assert.ok(plan.args.includes(containerProgram));
@@ -181,6 +183,7 @@ test('container producer verifies platform and Git, runs actual npm argv, captur
   for (const [, , options] of calls) {
     assert.equal(options.cwd, '/w');
     assert.equal(options.env.CLAUDE_CONFIG_DIR, '/container/config');
+    assert.equal(options.env.HOME, '/container/config', 'the runtime home must be the owned disposable directory');
   }
   assert.deepEqual(removed, ['/container/config']);
 });
@@ -198,10 +201,12 @@ test('container rejects Mac, wrong Git commit, no tracked files, install/test fa
 });
 
 test('serialized container program runs the same receipt producer with injected process boundary and stderr logs', async () => {
-  const calls = [], logs = [], output = [], process = { env: {}, platform: 'linux', argv: ['node', commit, containerOptions().runId],
+  const calls = [], logs = [], output = [], process = { env: { HOME: '/inherited-home' }, platform: 'linux', argv: ['node', commit, containerOptions().runId],
     stdout: { write: text => output.push(text) }, stderr: { write: text => logs.push(text) } };
   const source = containerProgram.replace(/^import .*;\n/gm, '');
-  const spawn = (command, args) => {
+  const spawn = (command, args, options) => {
+    assert.equal(options.env.HOME, '/config', 'serialized Git/npm children must not inherit the image home');
+    assert.equal(options.env.CLAUDE_CONFIG_DIR, '/config');
     calls.push([command, [...args]]);
     const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
     queueMicrotask(() => { child.stdout.emit('data', command === 'npm' ? (args[0] === 'test' ? tap : 'install log\n')

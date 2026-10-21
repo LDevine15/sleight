@@ -31,10 +31,17 @@ requires `process.platform === "linux"`, the requested Git HEAD and a nonempty
 writable layer. No host dependency bank, home directory, credential store, Docker socket
 or host environment variables are mounted or forwarded into the container.
 
+Docker creates the container with `--init` to forward signals and reap orphaned child
+processes. Process-exit assertions and cleanup checks remain required.
+
 The container runs `npm ci --ignore-scripts`, then exactly `npm test`, with argument arrays
-and no shell. Both commands use a fresh disposable Claude configuration inside Linux.
+and no shell. Git and npm use a fresh disposable directory as both `HOME` and
+`CLAUDE_CONFIG_DIR` inside Linux. The inherited image home is replaced for these children.
 The helper removes that configuration after the checks. The public-tree privacy test
 continues to run with usable Git metadata.
+
+The Word fixture tests use `/usr/bin/python3` and its standard `zipfile` module to build
+their handwritten compressed archives independently of the production document writer.
 
 ## Receipt and cleanup
 

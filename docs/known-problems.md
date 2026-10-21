@@ -44,15 +44,19 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 - Offline portability checks do not establish Linux compatibility. The path guard must pass without exemptions on
   the final tree. Actual Node 24 Linux testing remains a release gate.
   The helper prepares the exact commit with usable Git metadata, mounts that snapshot read-only and tests a writable
-  container copy with isolated dependencies. Offline tests cover its shared receipt contract and asynchronous cleanup;
-  cancellation during a test run still needs qualification. The Colima wrapper
+  container copy with isolated dependencies. Offline tests cover its shared receipt contract and asynchronous cleanup.
+  The Colima wrapper
   isolates VM state and Docker configuration and pins engine commands to its owned socket. VM startup and teardown
-  passed in the host attempt, including container removal. Both sandbox and host attempts stopped before npm,
-  so no Linux test result exists. The exact-commit retry failed during copy preparation with `ERR_FS_CP_EEXIST`.
+  passed in the host attempt, including container removal. The first sandbox and host attempts stopped before npm.
+  An exact-commit retry failed during copy preparation with `ERR_FS_CP_EEXIST`.
   Failure receipts now report the stage, bounded error code, Node version and destination state. A recognized copy
   collision reports a normalized relative-path hash and closed path category, never the raw path or stderr.
   A diagnostic retry identified an empty destination-root collision on Node 24.22.0. Docker now starts in `/`,
-  leaving the guarded copy to create `/w`. The final commit still needs actual Linux qualification.
+  leaving the guarded copy to create `/w`. A later test run was interrupted after failures, with child collection,
+  container removal and VM teardown confirmed. A diagnostic using Docker's init process completed on 2026-10-21:
+  12,283 cases, 11,198 passed, 11 failed and 1,074 skipped. Cleanup was confirmed. The failures exposed environment
+  assumptions, a connection-close race and a latency test affected by sample order. These results belong to that tested
+  commit. The final candidate requires its own complete Linux receipt.
 - Candidate and tagged-release preflights must verify the same clean final commit through completion, including
   the Linux receipt. These model-free checks do not require a quota reset. Candidate mode accepts an unreleased
   heading and keeps `releaseReady: false`. Release mode requires a dated heading and the intended tag at that exact

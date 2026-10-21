@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import net from 'node:net';
 import { connectAdmin, ensureHost } from '../plugins/sleight/lib/direct-browser/electron-admin.mjs';
 import { createExitRule, hostDependencies, quitThroughApp } from '../plugins/sleight/lib/direct-browser/electron-host-run.mjs';
 import { readRecipeRegistry } from '../plugins/sleight/lib/direct-browser/electron-recipes.mjs';
@@ -181,6 +182,57 @@ test('exit rule: the host exits after 10 min with ownership free and no channel;
   assert.deepEqual(exits, ['closed', 0]);
 });
 
+test('admin close completion waits for peer release and never permits overlapping administrators', async t => {
+  const secret = randomBytes(32), h = await makeHost({ hostOptions: { adminSecret: secret } });
+  t.after(() => finish(h));
+  let releaseFin, second;
+  const first = await connectAdmin({ stateDir: h.state.dir, secret, connect: path => {
+    const socket = net.connect(path), end = socket.end.bind(socket);
+    socket.end = (...args) => { releaseFin = () => end(...args); return socket; };
+    return socket;
+  } });
+  let settled = false;
+  const closing = Promise.resolve(first.close()).then(result => { settled = true; return result; });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.host.status().channels, 1, 'the controlled peer still holds the admin role');
+    await assert.rejects(ensureHost({ stateDir: h.state.dir, secret,
+      spawn: () => assert.fail('a conflicting administrator cannot spawn a replacement') }), /ELECTRON_HOST_FOREIGN/);
+    assert.equal(settled, false, 'close completion cannot precede remote role release');
+    releaseFin(); releaseFin = undefined;
+    assert.equal(await closing, true);
+    assert.equal(h.host.status().channels, 0, 'peer EOF follows removal of the exact administrator');
+    await assert.rejects(ensureHost({ stateDir: h.state.dir, secret: randomBytes(32),
+      spawn: () => assert.fail('a wrong secret cannot spawn a replacement') }), /ELECTRON_HOST_FOREIGN/);
+    second = await ensureHost({ stateDir: h.state.dir, secret });
+    assert.equal(second.spawned, false);
+    assert.equal(second.hostId, first.hostId);
+    assert.equal(await second.close(), true);
+  } finally {
+    releaseFin?.();
+    if (second) await second.close();
+    await until(() => h.host.status().channels === 0, 'test administrators released');
+  }
+});
+
+for (const mode of ['error', 'timeout', 'local-only']) test(`admin close ${mode} resolves false without unhandled rejection or a peer-release claim`, async t => {
+  const secret = randomBytes(32), h = await makeHost({ hostOptions: { adminSecret: secret } });
+  t.after(() => finish(h));
+  const admin = await connectAdmin({ stateDir: h.state.dir, secret, timeoutMs: 250, connect: path => {
+    const socket = net.connect(path);
+    socket.end = () => {
+      if (mode === 'error') throw Error('controlled close failure');
+      if (mode === 'local-only') socket.destroy();
+      return socket;
+    };
+    return socket;
+  } });
+  const closing = admin.close();
+  assert.equal(admin.close(), closing, 'close completion is idempotent');
+  assert.equal(await closing, false);
+  await until(() => h.host.status().channels === 0, 'failed local close eventually drops its own channel');
+});
+
 test('ensureHost spawns the host detached with the secret on descriptor 3, waits for its ready line, reconnects with the secret, refuses without it', { skip: skipSpawn }, async t => {
   const { root } = registryFile(t);
   const registryPath = join(root, 'recipes.json');
@@ -193,11 +245,11 @@ test('ensureHost spawns the host detached with the secret on descriptor 3, waits
     const status = await first.status();
     assert.equal(status.ownership.state, 'free');
     assert.equal(status.hostId, first.hostId);
-    first.close();
+    assert.equal(await first.close(), true);
     const again = await ensureHost({ stateDir, registryPath, tempRoot: tempRootDir, build: 'com.example.Editor@1.2.3', secret: first.secret });
     assert.equal(again.spawned, false);
     assert.equal(again.hostId, first.hostId, 'the same host, not a second one');
-    again.close();
+    assert.equal(await again.close(), true);
     await assert.rejects(ensureHost({ stateDir, registryPath, tempRoot: tempRootDir, build: 'com.example.Editor@1.2.3' }), /ELECTRON_HOST_FOREIGN/);
     await assert.rejects(ensureHost({ stateDir, registryPath, tempRoot: tempRootDir, build: 'com.example.Editor@1.2.3', secret: randomBytes(32) }), /ELECTRON_HOST_FOREIGN/);
   } finally {
@@ -215,11 +267,11 @@ test('ensureHost with a parent-chosen secret (hex) spawns the host with it, and 
     first = await ensureHost({ ...options, adminSecret });
     assert.equal(first.spawned, true);
     assert.equal(first.secret.toString('hex'), adminSecret);
-    first.close();
+    assert.equal(await first.close(), true);
     const second = await ensureHost({ ...options, adminSecret });
     assert.equal(second.spawned, false);
     assert.equal(second.hostId, first.hostId);
-    second.close();
+    assert.equal(await second.close(), true);
     await assert.rejects(ensureHost({ ...options, adminSecret: 'abc' }), /ADMIN_SECRET_INVALID/);
   } finally { if (first?.pid) try { process.kill(first.pid, 'SIGTERM'); } catch { /* gone */ } }
   await until(() => { try { process.kill(first.pid, 0); return false; } catch { return true; } }, 'host process gone', 5000);

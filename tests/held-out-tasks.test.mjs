@@ -4,19 +4,22 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 
 const heldOut = await import('../bench/tasks-held-out.mjs').catch(() => ({}));
 const w = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const r = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
-const temp = t => { const dir = mkdtempSync(join(tmpdir(), 'held-out-')); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir; };
+const temp = t => { const dir = trackTemp(mkdtempSync(join(tmpdir(), 'held-out-'))); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir; };
 const task = id => heldOut.heldOutTasks?.(async () => ({})).find(item => item.id === id);
 
-// Saved outcomes built by hand; /usr/bin/zip is only the transport, independent of the fixture writer.
-function save(path, parts) {
+// Saved outcomes built by hand; Python's standard ZIP library is independent of the production fixture writer.
+function save(path, parts, archive = execFileSync) {
   rmSync(path, { force: true });
-  const stage = mkdtempSync(join(dirname(path), 'package-'));
+  const stage = trackTemp(mkdtempSync(join(dirname(path), 'package-')));
   for (const [name, data] of Object.entries(parts)) { mkdirSync(dirname(join(stage, name)), { recursive: true }); writeFileSync(join(stage, name), data); }
-  execFileSync('/usr/bin/zip', ['-q', path, ...Object.keys(parts)], { cwd: stage });
+  archive('/usr/bin/python3', ['-I', '-B', '-c',
+    'import sys, zipfile\nwith zipfile.ZipFile(sys.argv[1], "w", compression=zipfile.ZIP_DEFLATED) as output:\n for name in sys.argv[2:]: output.write(name, arcname=name)\n',
+    path, ...Object.keys(parts)], { cwd: stage, timeout: 10000, killSignal: 'SIGKILL' });
 }
 const rels = entries => `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${entries.map(([id, type, target]) => `<Relationship Id="${id}" Type="${r}/${type}" Target="${target}"/>`).join('')}</Relationships>`;
 const p = (text, style) => `<w:p>${style ? `<w:pPr><w:pStyle w:val="${style}"/></w:pPr>` : ''}<w:r><w:t>${text}</w:t></w:r></w:p>`;
@@ -67,6 +70,21 @@ test('held out: word-memo checks two heading levels, the replacement and a 3x2 t
     save(ctx.officePath, docx(body.join('')));
     assert.notEqual(item.check(ctx), true, why);
   }
+});
+
+test('held out: handwritten Word fixtures remain checkable without a zip executable', async t => {
+  const item = task('word-memo'), ctx = { dir: temp(t), nonce: 'abc123' };
+  await item.prepare(ctx);
+  const body = [p('Memo abc123', 'Heading1'), p('Summary', 'Heading2'), p('The silver order shipped on time.'), p('Keep this line abc123.'),
+    table([['Name', 'Role'], ['Ada', 'Lead'], ['Lin', 'Review']])];
+  save(ctx.officePath, docx(body.join('')), (command, args, options) => {
+    if (command === 'zip' || command.endsWith('/zip')) throw Object.assign(Error('zip unavailable'), { code: 'ENOENT' });
+    assert.ok(options.timeout > 0 && options.timeout <= 10000, 'the fixture archiver must be bounded');
+    assert.equal(options.killSignal, 'SIGKILL');
+    return execFileSync(command, args, options);
+  });
+  assert.equal(item.check(ctx), true);
+  assert.equal(readFileSync(ctx.officePath).readUInt16LE(8), 8, 'independent fixture transport still exercises DEFLATE');
 });
 
 test('held out: word-brief checks Heading 2, both replacements and a 2x3 table', async t => {

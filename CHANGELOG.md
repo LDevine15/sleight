@@ -25,10 +25,10 @@
 - A test-path guard rejects hardcoded macOS temporary and home paths. Offline fixtures use the platform temporary
   directory where their ownership checks permit it. A Node 24 Docker preflight prepares an exact-commit Git snapshot,
   mounts it read-only and installs locked Linux dependencies in a writable container copy before running the suite.
-  It awaits child collection and confirms container cleanup after cancellation. An optional Colima wrapper keeps
+  Docker's init process reaps orphaned children, and Git and npm use a disposable home. The preflight awaits
+  child collection and confirms container cleanup after cancellation. An optional Colima wrapper keeps
   VM state and Docker configuration private, mounts only the prepared checkout, and verifies VM teardown.
-  Sandbox and host attempts stopped before npm. Host VM and container cleanup was confirmed, but Linux tests
-  and cancellation during a test run remain unqualified. Copy preparation failures report bounded diagnostics,
+  Copy preparation failures report bounded diagnostics,
   including destination state and a relative-path hash for recognized collisions. Docker starts outside the copy
   destination so the guarded copy can create it. The overwrite guard is unchanged.
 - The preflight script checks versions, CHANGELOG and tag agreement, placeholders, private release-note data,
@@ -41,6 +41,10 @@
   Final-build measurements need compatible evidence.
 
 ### Grok Bot and Electron approvals
+
+- Electron's internal admin client can await peer closure before reconnecting, avoiding a false foreign-host
+  refusal while the previous connection closes. Errors and timeout report an unconfirmed close. Concurrent
+  administrators and incorrect secrets remain refused.
 
 - Shell approvals open a styled sleight card with its icon. The glove reopens that card. Identical shell
   retries join a call waiting for approval and execute once. Verified app approvals honor preapprovals and session
