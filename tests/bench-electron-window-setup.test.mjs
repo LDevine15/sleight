@@ -143,6 +143,63 @@ test('native setup waits briefly for the owned File menu to expose its New Windo
   assert.equal(w.run().created, true);
   assert.equal(polls, 3);
 });
+for (const kind of ['null', 'read-error']) test(`new-window waits for transient ${kind} census without replaying the menu action`, () => {
+  const w = nativeWorld(); let polls = 0;
+  w.api.windowIds = () => {
+    if (!w.events.includes('new-window')) return [11];
+    if (++polls < 3) { if (kind === 'read-error') throw Error('private native diagnostic'); return null; }
+    return [11, 12];
+  };
+  assert.deepEqual(Array.from(w.run().windows), [11, 12]);
+  assert.equal(polls, 3);
+  assert.deepEqual(w.events.filter(event => typeof event === 'string'), ['file', 'new-window', 'cancel-menu']);
+  assert.equal(w.events.some(event => event?.stage === 'new-window-failure'), false);
+});
+for (const kind of ['null', 'read-error']) test(`persistent ${kind} census times out with closed metadata and identity checked on every poll`, () => {
+  const w = nativeWorld(), running = w.api.running, trace = []; let polls = 0;
+  w.api.running = () => { trace.push('identity'); return running(); };
+  w.api.windowIds = () => {
+    if (!w.events.includes('new-window')) return [11];
+    trace.push('poll'); polls++;
+    if (kind === 'read-error') throw Error('private native diagnostic');
+    return null;
+  };
+  assert.throws(w.run, /WINDOW_SETUP_TIMEOUT/);
+  assert.equal(polls, 3, 'the existing 300ms deadline bounds 100ms polling');
+  for (const [index, item] of trace.entries()) if (item === 'poll') assert.equal(trace[index - 1], 'identity');
+  assert.deepEqual(w.events.filter(event => typeof event === 'string'), ['file', 'new-window', 'cancel-menu']);
+  const failures = w.events.filter(event => event?.stage === 'new-window-failure');
+  assert.equal(failures.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(failures[0])), { stage: 'new-window-failure',
+    census: { phase: 'after-new-window', reason: 'unavailable', count: null, originalPresent: null } });
+  assert.equal(w.events.some(event => event?.stage === 'new-window'), false);
+  assert.doesNotMatch(JSON.stringify(w.events), /private native diagnostic/);
+});
+test('an initial null census still refuses immediately before a menu action', () => {
+  const w = nativeWorld(); let polls = 0;
+  w.api.windowIds = () => { polls++; return null; };
+  assert.throws(w.run, /WINDOW_SETUP_WINDOW_CHANGED/);
+  assert.equal(polls, 1);
+  assert.deepEqual(w.events.filter(event => typeof event === 'string'), []);
+});
+test('birth replacement during unavailable polling stops before another census or menu cleanup', () => {
+  const w = nativeWorld({ changedAt: 5 }); let polls = 0;
+  w.api.windowIds = () => { if (!w.events.includes('new-window')) return [11]; polls++; return null; };
+  assert.throws(w.run, /WINDOW_SETUP_IDENTITY_CHANGED/);
+  assert.equal(polls, 1);
+  assert.deepEqual(w.events.filter(event => typeof event === 'string'), ['file', 'new-window']);
+});
+for (const [name, values] of [['invalid', [NaN]], ['duplicate', [11, 11]], ['extra', [11, 12, 13]], ['missing original', [12, 13]], ['empty', []]])
+  test(`a ${name} census after an unavailable read still fails immediately without retrying input`, () => {
+    const w = nativeWorld(); let polls = 0;
+    w.api.windowIds = () => {
+      if (!w.events.includes('new-window')) return [11];
+      return ++polls === 1 ? null : values;
+    };
+    assert.throws(w.run, /WINDOW_SETUP_WINDOW_CHANGED/);
+    assert.equal(polls, 2);
+    assert.deepEqual(w.events.filter(event => typeof event === 'string'), ['file', 'new-window', 'cancel-menu']);
+  });
 for (const [name, options, code] of [
   ['accessibility', { trusted: false }, 'WINDOW_SETUP_ACCESSIBILITY'],
   ['ambiguous File menu', { files: [{}, {}] }, 'WINDOW_SETUP_MENU_AMBIGUOUS'],

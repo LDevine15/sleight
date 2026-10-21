@@ -124,6 +124,48 @@ test('native census failure keeps its fixed phase, count and original-window pre
   assert.doesNotMatch(JSON.stringify(scrubReceipt(receipt)), /private-owner|private-content/);
 });
 
+test('unavailable census timeout keeps its closed diagnostic through the public receipt', async () => {
+  const census = { phase: 'after-new-window', reason: 'unavailable', count: null, originalPresent: null };
+  const helper = fixtureHelper(APPS.vscode.bundleId, async () => ({ groupClean: true, exit: { code: 1 },
+    stdout: JSON.stringify({ stage: 'new-window-failure', census, privateText }), stderr: 'Error: WINDOW_SETUP_TIMEOUT' }));
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.nativeSecondWindow = () => helper({ mode: 'new-window' });
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo, clock: c, cells: cells('new-window') });
+  const row = receipt.cells.at(-1);
+  assert.equal(row.status, 'fail');
+  assert.equal(row.error, 'FIXTURE_HELPER_UNCONFIRMED');
+  assert.equal(row.detail.helper.code, 'WINDOW_SETUP_TIMEOUT');
+  assert.deepEqual(row.setup.detail.helper.census, census);
+  assert.deepEqual(row.detail.helper.census, census);
+  assert.doesNotMatch(JSON.stringify(scrubReceipt(receipt)), /private-owner|private-content/);
+});
+
+for (const census of [
+  { phase: 'initial', reason: 'unavailable', count: null, originalPresent: null },
+  { phase: 'after-new-window', reason: 'count', count: null, originalPresent: null },
+  { phase: 'after-new-window', reason: 'unavailable', count: 0, originalPresent: null },
+  { phase: 'after-new-window', reason: 'unavailable', count: null, originalPresent: false },
+]) test(`timeout census diagnostics reject any other shape ${JSON.stringify(census)}`, async () => {
+  const helper = fixtureHelper(APPS.vscode.bundleId, async () => ({ groupClean: true, exit: { code: 1 },
+    stdout: JSON.stringify({ stage: 'new-window-failure', census }), stderr: 'Error: WINDOW_SETUP_TIMEOUT' }));
+  await assert.rejects(helper({ mode: 'new-window' }), error => {
+    assert.equal(Object.hasOwn(error.detail.helper, 'census'), false);
+    return error.message === 'FIXTURE_HELPER_UNCONFIRMED';
+  });
+});
+
+test('unavailable timeout diagnostics reject duplicate rows and other native codes', async () => {
+  const row = { stage: 'new-window-failure', census: { phase: 'after-new-window', reason: 'unavailable', count: null, originalPresent: null } };
+  for (const [stdout, stderr] of [[JSON.stringify(row) + '\n' + JSON.stringify(row), 'WINDOW_SETUP_TIMEOUT'],
+    [JSON.stringify(row), 'WINDOW_SETUP_IDENTITY_CHANGED']]) {
+    const helper = fixtureHelper(APPS.vscode.bundleId, async () => ({ groupClean: true, exit: { code: 1 }, stdout, stderr }));
+    await assert.rejects(helper({ mode: 'new-window' }), error => {
+      assert.equal(Object.hasOwn(error.detail.helper, 'census'), false);
+      return error.message === 'FIXTURE_HELPER_UNCONFIRMED';
+    });
+  }
+});
+
 for (const bad of [
   { phase: privateText, reason: 'count', count: 3, originalPresent: null },
   { phase: 'initial', reason: privateText, count: 3, originalPresent: null },

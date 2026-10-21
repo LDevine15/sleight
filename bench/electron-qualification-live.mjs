@@ -204,10 +204,12 @@ const FIXTURE_STAGES = new Set(['quit', 'ready', 'table', 'launch', 'new-window'
 const WINDOW_SETUP_CODES = new Set(['WINDOW_SETUP_REQUEST', 'WINDOW_SETUP_IDENTITY_CHANGED', 'WINDOW_SETUP_TIMEOUT',
   'WINDOW_SETUP_WINDOW_CHANGED', 'WINDOW_SETUP_ACCESSIBILITY', 'WINDOW_SETUP_MENU_AMBIGUOUS', 'WINDOW_SETUP_PRESS_FAILED']);
 function fixtureCensus(rows, request, code) {
-  if (request.mode !== 'new-window' || code !== 'WINDOW_SETUP_WINDOW_CHANGED') return null;
+  if (request.mode !== 'new-window' || !['WINDOW_SETUP_WINDOW_CHANGED', 'WINDOW_SETUP_TIMEOUT'].includes(code)) return null;
   const failures = rows.filter(row => row?.stage === 'new-window-failure');
   if (failures.length !== 1) return null;
   const c = failures[0].census;
+  if (code === 'WINDOW_SETUP_TIMEOUT' && (!c || c.phase !== 'after-new-window' || c.reason !== 'unavailable' ||
+      c.count !== null || c.originalPresent !== null)) return null;
   if (!c || !['initial', 'after-new-window'].includes(c.phase) ||
       !['unavailable', 'invalid', 'duplicate', 'count', 'original-missing'].includes(c.reason) ||
       !(c.count === null || Number.isInteger(c.count) && c.count >= 0 && c.count <= 65) ||
@@ -260,6 +262,7 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
   let cleanupConfirmed = false;
   let found, build, recipe, active, current, last, otherFront, hostPid, appSecret;
   let hostIdentity;
+  let pendingStartup;
   let cleaning = false;
   const boundary = () => { if (lifecycle?.cleanupAllowed === false) throw Error('RUN_CANCELLATION_UNSETTLED'); if (!cleaning) checkRunSignal(signal); };
   const uncertainEffect = () => { if (lifecycle) { lifecycle.cleanupAllowed = false; lifecycle.unsettled = true; lifecycle.effectUnknown = true; } };
@@ -334,30 +337,52 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
   const alive = async (pid, birth) => (await list()).some(p => p.pid === pid && String(p.startedAtMs) === String(birth ?? p.startedAtMs));
   const census = async () => profileProcesses(await list(), tempRoot);
 
-  async function observeFixtureLaunch() {
+  async function observeFixtureLaunch({ settled = () => true } = {}) {
     if (app.key !== 'vscode' || !observer.firstWindowMs || !launched.length) return;
     const target = launched.at(-1), now = deps.now ?? Date.now;
     if (observedLaunches.has(target.pid)) return;
-    observedLaunches.add(target.pid);
     if (!(target.processStartedAtMs > 0)) return;
     // Kernel birth bounds exec, including direct launches that have no AppKit launchDate.
     let firstWindowMs;
-    for (let attempt = 0; attempt < 200; attempt++) {
+    for (;;) {
+      boundary();
       firstWindowMs = observer.firstWindowMs(target.pid, target.processStartedAtMs);
       if (Number.isFinite(firstWindowMs)) break;
+      if (settled()) break;
       await sleep(50);
     }
     if (Number.isFinite(firstWindowMs)) {
       const endMs = firstWindowMs + 2000;
-      launchWindows.push({ pid: target.pid, execMs: target.processStartedAtMs, firstWindowMs, endMs });
       // Restore as soon as the first window is observed, within the allowance when selection returns promptly.
+      await driver.adoptRunning(target);
+      launchWindows.push({ pid: target.pid, execMs: target.processStartedAtMs, firstWindowMs, endMs });
       await driver.frontApp();
       const remainingMs = endMs - now();
       if (remainingMs > 0) await sleep(remainingMs);
+      observedLaunches.add(target.pid);
       return;
     }
     // Missing first-window evidence grants no exception. Restore the prelaunch app before any later cell starts.
+    await driver.adoptRunning(target);
     await driver.frontApp();
+    observedLaunches.add(target.pid);
+  }
+
+  async function monitorFixtureLaunch(startup) {
+    // Physical consent and qualification already bound the start request. Keep observing until
+    // that request settles so a late approval cannot exhaust a separate prelaunch polling budget.
+    while (!startup.settled) {
+      boundary();
+      await driver.adoptRunning();
+      const target = launched.at(-1);
+      if (target && !observedLaunches.has(target.pid)) {
+        await observeFixtureLaunch({ settled: () => startup.settled });
+        return true;
+      }
+      if (startup.settled) return false;
+      await sleep(50);
+    }
+    return false;
   }
 
   const driver = {
@@ -371,10 +396,13 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
       allowlist: [...BENCHMARK_ALLOWLIST], python, qualificationDiagnosticPath, workspace: files.root, ...(cardLog ? { cardLog } : {}) }),
     // The arm's worker launched the app, not this driver: the main process naming this run's temporary root joins the
     // launched list, so cleanup quits it like its own. Nothing else is adopted.
-    async adoptRunning() {
+    async adoptRunning(expected) {
       await reaper.scan();
       const all = await list(), mains = profileProcesses(all, tempRoot).filter(p => found && p.args.startsWith(found.executable + ' ') &&
         p.args.includes(`--user-data-dir=${tempRoot}/`));
+      if (expected && !mains.some(p => p.pid === expected.pid && p.startedAtMs === expected.startedAtMs)) {
+        throw Error('FIXTURE_LAUNCH_IDENTITY_CHANGED');
+      }
       // Keep host ownership even if the app's native identity cannot be joined.
       hostPid ??= all.find(p => ` ${p.args} `.includes(` --state-dir ${stateDir} `))?.pid;
       const host = all.find(p => p.pid === hostPid && ` ${p.args} `.includes(` --state-dir ${stateDir} `));
@@ -429,8 +457,36 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
       if (!otherFront) { const front = await inspect({ mode: 'front' }, exec); if (!BENCHMARK_ALLOWLIST.includes(front.bundle)) otherFront = front; }
       const started = performance.now();
       let w, reply;
-      try { ({ w, reply } = await startWorker(consentWaitMs, session, active)); }
-      finally { await driver.adoptRunning(); await observeFixtureLaunch(); }
+      if (app.key === 'vscode' && observer.firstWindowMs) {
+        const startup = { settled: false };
+        const worker = startWorker(consentWaitMs, session, active).finally(() => { startup.settled = true; });
+        // Observe the owned launch while consent/qualification still occupies the worker's start request.
+        // Collect both outcomes before returning, including when either side fails first.
+        const collection = (async () => {
+          const outcomes = await Promise.allSettled([worker, monitorFixtureLaunch(startup)]);
+          const errors = outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
+          if (outcomes[1].status === 'fulfilled' && !outcomes[1].value && lifecycle?.cleanupAllowed !== false) {
+            try {
+              await driver.adoptRunning();
+              // A launch may become visible only as start settles. Check its current evidence once;
+              // no fresh polling may continue after the worker has settled.
+              await observeFixtureLaunch({ settled: () => true });
+            } catch (error) { errors.push(error); }
+          }
+          if (errors.length > 1) throw Object.assign(new AggregateError(errors, errors.map(error => error.message).join('; ')), {
+            cause: errors[0], ...(errors[0]?.detail ? { detail: errors[0].detail } : {}),
+          });
+          if (errors.length) throw errors[0];
+          return outcomes[0].value;
+        })();
+        const collected = collection.then(() => {}, () => {});
+        pendingStartup = collected;
+        try { ({ w, reply } = await collection); }
+        finally { if (pendingStartup === collected) pendingStartup = undefined; }
+      } else {
+        try { ({ w, reply } = await startWorker(consentWaitMs, session, active)); }
+        finally { await driver.adoptRunning(); await observeFixtureLaunch(); }
+      }
       if (!reply.ok) {
         const card = reply.card ?? { shown: false, status: /DEBUGGER_REQUIRED/.test(reply.error) ? 'timeout' : 'refused', error: reply.error };
         w.kill(); if (active === w) active = undefined;
@@ -608,6 +664,8 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
       return { exited: appExited, quit, collected, ms: Math.round(performance.now() - started), censusLeft: left.length, profileRemoved: readdirSync(tempRoot).length === 0 };
     },
     async cleanup() {
+      // A dispatched start and its observer retain ownership until both settle.
+      await pendingStartup;
       const uncertain = () => ({ confirmed: false, appExited: false, workersExited: false, hostExited: false,
         runProcessesExited: false, profileRemoved: false, errors: ['RUN_CANCELLATION_UNSETTLED'], retainedRoot: base });
       if (lifecycle?.cleanupAllowed === false) return uncertain();

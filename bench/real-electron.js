@@ -118,19 +118,24 @@ function newWindow(request, api, clock) {
   function deadline() {
     if (clock.now() - started >= waitMs) throw new Error('WINDOW_SETUP_TIMEOUT');
   }
-  function censusFailure(phase, reason, values, original) {
+  function reportCensus(phase, reason, values, original) {
     clock.emit({ stage: 'new-window-failure', census: { phase: phase, reason: reason,
       count: Array.isArray(values) ? Math.min(values.length, 65) : null,
       originalPresent: original === undefined || !Array.isArray(values) ? null : values.indexOf(original) !== -1 } });
+  }
+  function censusFailure(phase, reason, values, original) {
+    reportCensus(phase, reason, values, original);
     throw new Error('WINDOW_SETUP_WINDOW_CHANGED');
   }
-  function ids(phase, original) {
+  function ids(phase, original, allowUnavailable) {
     var values;
     try { values = api.windowIds(pid, request.pidBirth); }
     catch (error) {
       if (error && error.message === 'WINDOW_SETUP_IDENTITY_CHANGED') throw error;
+      if (allowUnavailable) return null;
       censusFailure(phase, 'unavailable', null, original);
     }
+    if (values == null && allowUnavailable) return null;
     if (!Array.isArray(values)) censusFailure(phase, 'unavailable', null, original);
     if (values.some(function (id) { return !(id > 0 && id % 1 === 0); })) censusFailure(phase, 'invalid', values, original);
     if (values.some(function (id, i) { return values.indexOf(id) !== i; })) censusFailure(phase, 'duplicate', values, original);
@@ -163,12 +168,22 @@ function newWindow(request, api, clock) {
     identity(); deadline();
     if (!api.press(items[0])) throw new Error('WINDOW_SETUP_PRESS_FAILED');
     deadline();
-    for (;;) {
-      deadline(); identity(); deadline();
-      var after = ids('after-new-window', before[0]);
+    var unavailable = false;
+    function pollDeadline() {
+      if (unavailable && clock.now() - started >= waitMs) reportCensus('after-new-window', 'unavailable', null, before[0]);
       deadline();
-      if (after.indexOf(before[0]) === -1) censusFailure('after-new-window', 'original-missing', after, before[0]);
-      if (after.length === 2) break;
+    }
+    for (;;) {
+      pollDeadline(); identity(); pollDeadline();
+      // The one menu action may briefly leave AX/CG metadata unavailable while the new window opens.
+      // Poll only reads; a fresh valid census must still prove both unique IDs and the original window.
+      var after = ids('after-new-window', before[0], true);
+      unavailable = after === null;
+      pollDeadline();
+      if (after) {
+        if (after.indexOf(before[0]) === -1) censusFailure('after-new-window', 'original-missing', after, before[0]);
+        if (after.length === 2) break;
+      }
       clock.wait(100);
     }
   } finally {

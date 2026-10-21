@@ -83,6 +83,18 @@ async function utilityRead(subject, reader, arg, owner = false) {
   if (utility?.world !== 'utility' || typeof utility.evaluateExpression !== 'function') fail('TRUSTED_DOM_REQUIRED');
   return utility.evaluateExpression(reader.toString(), { isFunction: true }, owner ? impl : arg);
 }
+// Observe cached worlds only. Do not request a context, evaluate in MAIN, or expose a context identity.
+function existingExecutionWorlds(frame) {
+  let impl;
+  try { impl = frame?._connection?.toImpl?.(frame); } catch { /* fixed availability only */ }
+  const presence = world => {
+    try {
+      if (typeof impl?.existingContext !== 'function') return 'unavailable';
+      return impl.existingContext(world) == null ? 'absent' : 'present';
+    } catch { return 'unavailable'; }
+  };
+  return { main: presence('main'), utility: presence('utility') };
+}
 const schemeOf = frame => {
   // URL comes from the trusted protocol-backed frame, never page JavaScript, and is reduced before returning.
   const url = frame.url(), scheme = typeof url === 'string' ? /^([a-z][a-z0-9+.-]*):/i.exec(url)?.[1]?.toLowerCase() : undefined;
@@ -144,6 +156,7 @@ async function captureOwnedFixtureObservation({ turn, currentTurn, tab, fixtureN
           if (frame.isDetached()) fail('ELECTRON_FIXTURE_IDENTITY_CHANGED');
           const parent = frame.parentFrame(), parentOrdinal = parent === null ? null : allFrames.indexOf(parent);
           if (parentOrdinal === -1) fail('ELECTRON_FIXTURE_IDENTITY_CHANGED');
+          const worldsBefore = existingExecutionWorlds(frame);
           let owner = null, ownerStatus = parent === null ? 'root' : 'unavailable';
           if (parent !== null) {
             let handle;
@@ -158,11 +171,13 @@ async function captureOwnedFixtureObservation({ turn, currentTurn, tab, fixtureN
           let raw, captureStatus = 'captured', captureCode = null;
           try { raw = await utilityRead(frame, observeFixtureDocument, fixtureName); }
           catch (error) { captureStatus = 'unavailable'; captureCode = error?.message === 'TRUSTED_DOM_REQUIRED' ? 'utility-world-unavailable' : 'capture-failed'; }
+          const worldsAfter = existingExecutionWorlds(frame);
           assertCurrent();
           if (frame.isDetached()) fail('ELECTRON_FIXTURE_IDENTITY_CHANGED');
           const rawEditors = raw === undefined ? [] : field(raw, 'editors');
           if (!Array.isArray(rawEditors) || rawEditors.length > 64) fail('ELECTRON_FIXTURE_CAPTURE_FAILED');
           frames.push({ ordinal, parentOrdinal, scheme: schemeOf(frame), owner, ownerStatus, captureStatus, captureCode,
+            executionWorlds: { before: worldsBefore, after: worldsAfter },
             textboxCount: count(field(raw, 'textboxCount')), matchedCount: count(field(raw, 'matchedCount')),
             selectedFixtureTab: bool(field(raw, 'selectedFixtureTab')), activeFixtureEditor: field(raw, 'activeFixtureEditor') === true,
             truncated: field(raw, 'truncated') === true, editors: rawEditors.map(metadata) });

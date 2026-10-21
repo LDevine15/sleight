@@ -63,6 +63,8 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
   let socket, send, receive, opened = false, fenced = false, attempted = false, opening, closing, confirmed = false, app;
   let sequence = 0;
   const losses = new Set(), callbacks = new Set(), pending = new Map();
+  const ingress = [], queuedReplies = new Set();
+  let ingressBytes = 0, drain;
   let lossNotified = false;
   const sessionId = 'r' + randomBytes(24).toString('hex');
 
@@ -73,7 +75,10 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
   }
   function rejectAll(code) { for (const entry of pending.values()) entry.reject(Object.assign(Error(code), { dispatched: entry.sent })); pending.clear(); }
   function fence(code = 'ELECTRON_CONNECTION_CLOSED') {
-    fenced = true; opened = false; notifyLoss();
+    fenced = true; opened = false;
+    if (drain !== undefined) clearImmediate(drain);
+    drain = undefined; ingress.length = 0; ingressBytes = 0; queuedReplies.clear();
+    notifyLoss();
     rejectAll(code);
     if (socket && !socket.destroyed) socket.destroy();
   }
@@ -93,13 +98,47 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
       const frame = message.frame;
       if (!ordinaryObject(frame) || !methodName(frame.method) || !ordinaryObject(frame.params ?? {}) ||
           frame.sessionId !== undefined && (typeof frame.sessionId !== 'string' || !frame.sessionId || frame.sessionId.length > 512)) fail('ELECTRON_PROTOCOL');
-      if (!fenced) for (const callback of callbacks) {
+      for (const callback of callbacks) {
+        if (fenced) break; // A preceding listener can revoke the connection reentrantly.
         try { callback(Object.freeze({ method: frame.method, params: frame.params ?? {}, ...(frame.sessionId === undefined ? {} : { sessionId: frame.sessionId }) })); } catch { /* listener error */ }
       }
     } else if (message.op === 'parked') {
       // Revoked, or the app connection parked: stop at once. The host keeps the app's pipe.
       fence('CDP_HOST_PARKED');
     } else fail('ELECTRON_PROTOCOL');
+  }
+
+  function scheduleIngress() {
+    if (fenced || drain !== undefined || !ingress.length) return;
+    // Replies resolve through the filter, transport and consumer's Promise chains. One ordinary record per task
+    // lets all those microtasks finish before the next wire record, preserving either reply/event order.
+    drain = setImmediate(() => {
+      drain = undefined;
+      if (fenced) return;
+      const { message, bytes } = ingress.shift();
+      ingressBytes -= bytes;
+      if (message.op === 'reply') queuedReplies.delete(message.id);
+      try { onFrame(message); } catch { fence(); }
+      scheduleIngress();
+    });
+  }
+
+  function acceptFrame(message, bytes) {
+    if (fenced) return;
+    // Authentication has already happened. Validate and fence now, even when earlier normal records are queued.
+    if (message.op === 'parked') { fence('CDP_HOST_PARKED'); return; }
+    if (message.op === 'reply') {
+      if (!pending.has(message.id) || queuedReplies.has(message.id) || Object.hasOwn(message, 'result') === Object.hasOwn(message, 'error')) fail('ELECTRON_PROTOCOL');
+    } else if (message.op === 'event') {
+      const frame = message.frame;
+      if (!ordinaryObject(frame) || !methodName(frame.method) || !ordinaryObject(frame.params ?? {}) ||
+          frame.sessionId !== undefined && (typeof frame.sessionId !== 'string' || !frame.sessionId || frame.sessionId.length > 512)) fail('ELECTRON_PROTOCOL');
+    } else fail('ELECTRON_PROTOCOL');
+    // Reuse the channel's existing count and frame-byte budgets for the whole retained ingress bank.
+    if (ingress.length >= maxPending || ingressBytes + bytes > maxFrameBytes + 1) fail('ELECTRON_INGRESS_OVERFLOW');
+    if (message.op === 'reply') queuedReplies.add(message.id);
+    ingress.push({ message, bytes }); ingressBytes += bytes;
+    scheduleIngress();
   }
 
   const session = Object.freeze({ sessionId,
@@ -135,8 +174,10 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
       const finish = error => { clearTimeout(timer); if (error) reject(error); else resolve(); };
       socket.on('close', () => finish(Error('ELECTRON_CONNECTION_CLOSED')));
       socket.on('data', chunk => {
+        if (fenced) return;
         try {
           for (const frame of reader.push(chunk)) {
+            if (fenced) break;
             if (stage === 'hello') {
               const hello = plainJson(frame);
               // Only the exact host this handle was issued by can continue the exchange.
@@ -160,7 +201,7 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
                 stage = 'live'; finish();
               } else if (message.op === 'refused') fail(message.code === 'ELECTRON_BUSY' ? 'ELECTRON_BUSY' : 'ELECTRON_APP_PARKED');
               else fail('ELECTRON_PROTOCOL');
-            } else onFrame(receive(frame));
+            } else acceptFrame(receive(frame), Buffer.byteLength(frame) + 1);
           }
         } catch (error) {
           if (stage !== 'live') finish(error); // before open the caller gets the reason

@@ -1,10 +1,184 @@
 const MAC_USERS = '/' + 'Users/';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createFilterTransport } from '../plugins/sleight/lib/direct-browser/electron-connection.mjs';
+import { EventEmitter } from 'node:events';
+import { createElectronConnection, createFilterTransport } from '../plugins/sleight/lib/direct-browser/electron-connection.mjs';
+import { CHANNEL_VERSION, FrameReader, bare, deriveChannel, opener, plainJson, sealer } from '../plugins/sleight/lib/direct-browser/electron-channel.mjs';
 import { errorFrame } from '../plugins/sleight/lib/direct-browser/electron-host.mjs';
 import { staleDOMReference } from '../plugins/sleight/lib/direct-browser/electron-cdp-errors.mjs';
 import { connectWorker, makeHost, pageSession, until } from './direct-browser-electron-host-fixture.mjs';
+
+// An authenticated host channel entirely in memory. One emit is one coalesced socket data chunk.
+async function orderedWire(t, { connectionOptions = {}, responseDepth = 0 } = {}) {
+  const secret = Buffer.alloc(32, 7), hostNonce = 'n'.repeat(32), instance = 'i'.repeat(32);
+  const handle = { host: 'h'.repeat(32), ticket: 't'.repeat(32), secret: secret.toString('base64url'),
+    socket: '/tmp/electron-ordering-in-memory', session: 'ordering-test', expiresAt: Date.now() + 60000 };
+  const socket = new EventEmitter(), reader = new FrameReader(), requests = [];
+  let seal, open;
+  socket.destroyed = false;
+  socket.destroy = () => { if (!socket.destroyed) { socket.destroyed = true; socket.emit('close'); } };
+  socket.write = (bytes, callback) => {
+    for (const raw of reader.push(bytes)) {
+      if (!open) {
+        const auth = plainJson(raw);
+        const derived = deriveChannel(secret, { host: handle.host, hostNonce, clientNonce: auth.cn, ticket: handle.ticket, role: 'worker' });
+        assert.deepEqual(auth, { t: 'auth', ticket: handle.ticket, role: 'worker', cn: auth.cn, proof: derived.clientProof });
+        seal = sealer(derived.hostKey); open = opener(derived.clientKey);
+        queueMicrotask(() => socket.emit('data', Buffer.concat([bare({ t: 'ready', proof: derived.hostProof }),
+          seal({ op: 'open', incarnation: { pid: 4100, birth: 'fixture-birth' }, epoch: 1, instance })])));
+      } else requests.push(open(raw));
+    }
+    callback?.();
+    return true;
+  };
+  const connection = await createElectronConnection({ ...connectionOptions, handle, connect(path) {
+    assert.equal(path, handle.socket);
+    queueMicrotask(() => socket.emit('data', bare({ t: 'hello', v: CHANNEL_VERSION, host: handle.host, nonce: hostNonce })));
+    return socket;
+  } });
+  await connection.connect();
+  const session = responseDepth ? { ...connection.session, async send(...args) {
+    const result = await connection.session.send(...args);
+    for (let i = 0; i < responseDepth; i++) await Promise.resolve();
+    return result;
+  } } : connection.session;
+  const transport = createFilterTransport({ session });
+  t.after(async () => { transport.close(); await connection.disconnect(); });
+  return { transport, connection, socket, requests,
+    deliver: messages => socket.emit('data', Buffer.concat(messages.map(message => seal(message)))),
+    corrupt: () => socket.emit('data', bare({ s: 999, p: '{}', a: 'invalid' })) };
+}
+
+for (const delivery of ['coalesced', 'split']) for (const order of [['reply', 'event'], ['event', 'reply']]) {
+  test(`${delivery} authenticated ${order.join('-then-')} preserves frame/context initialization order`, async t => {
+    const h = await orderedWire(t, { responseDepth: 12 }), received = [];
+    let frameInstalled = false, contextAccepted = false, eventSawFrame;
+    const complete = new Promise(resolve => {
+      h.transport.onmessage = frame => {
+        if (frame.id === 1) { received.push('reply'); frameInstalled = true; }
+        else {
+          assert.equal(frame.method, 'Runtime.executionContextCreated');
+          received.push('event'); eventSawFrame = frameInstalled;
+          if (frameInstalled) contextAccepted = true;
+        }
+        if (received.length === 2) resolve();
+      };
+    });
+    h.transport.send({ id: 1, method: 'Page.getFrameTree', params: {}, sessionId: 'owned-page' });
+    assert.equal(h.requests.length, 1);
+    const request = h.requests[0];
+    assert.equal(request.method, 'Page.getFrameTree');
+    const messages = {
+      reply: { op: 'reply', id: request.id, result: { frameTree: { frame: { id: 'fixture-frame' } } } },
+      event: { op: 'event', frame: { method: 'Runtime.executionContextCreated', sessionId: 'owned-page',
+        params: { context: { id: 7, auxData: { frameId: 'fixture-frame', isDefault: true } } } } },
+    };
+    if (delivery === 'coalesced') h.deliver(order.map(kind => messages[kind]));
+    else for (const kind of order) h.deliver([messages[kind]]);
+    await complete;
+    assert.deepEqual({ received, eventSawFrame, contextAccepted }, {
+      received: order, eventSawFrame: order[0] === 'reply', contextAccepted: order[0] === 'reply',
+    }, 'a reply-following default context must arrive after its frame exists; an earlier event must stay earlier');
+  });
+}
+
+const contextEvent = (ordinal = 1, padding = '') => ({ op: 'event', frame: { method: 'Runtime.executionContextCreated',
+  sessionId: 'owned-page', params: { context: { id: ordinal, padding } } } });
+const task = () => new Promise(resolve => setImmediate(resolve));
+
+test('authenticated ingress preserves interleaved records and drains each response microtask chain before the next record', async t => {
+  const h = await orderedWire(t, { responseDepth: 20 }), received = [];
+  h.transport.onmessage = frame => received.push(frame.id ? 'reply-' + frame.id : 'event-' + frame.params.context.id);
+  for (const id of [1, 2, 3]) h.transport.send({ id, method: 'Page.getFrameTree', params: {}, sessionId: 'owned-page' });
+  const reply = index => ({ op: 'reply', id: h.requests[index].id, result: {} });
+  h.deliver([contextEvent(1), reply(1), contextEvent(2), reply(0), reply(2), contextEvent(3)]);
+  assert.deepEqual(received, [], 'normal callbacks must not run inside socket data delivery');
+  await until(() => received.length === 6);
+  assert.deepEqual(received, ['event-1', 'reply-2', 'event-2', 'reply-1', 'reply-3', 'event-3']);
+});
+
+test('authenticated ingress delivers only one ordinary record per task', async t => {
+  const h = await orderedWire(t), received = [];
+  h.connection.session.on('event', frame => {
+    received.push(frame.params.context.id);
+    queueMicrotask(() => received.push('microtask-' + frame.params.context.id));
+  });
+  h.deliver([contextEvent(1), contextEvent(2)]);
+  assert.deepEqual(received, []);
+  await task();
+  assert.deepEqual(received, [1, 'microtask-1']);
+  await task();
+  assert.deepEqual(received, [1, 'microtask-1', 2, 'microtask-2']);
+});
+
+for (const cause of ['parked', 'protocol', 'authentication', 'close']) {
+  test(`authenticated ingress ${cause} fences synchronously before queued records drain`, async t => {
+    const h = await orderedWire(t), events = [];
+    let losses = 0;
+    h.connection.onConnectionLoss(() => losses++);
+    h.connection.session.on('event', frame => events.push(frame));
+    const pending = h.connection.session.send('Page.getFrameTree', {}, 'owned-page').catch(error => error);
+    const reply = { op: 'reply', id: h.requests[0].id, result: {} };
+    if (cause === 'parked') h.deliver([reply, contextEvent(), { op: 'parked' }, contextEvent(2)]);
+    else if (cause === 'protocol') h.deliver([reply, contextEvent(), { op: 'event', frame: { method: 'invalid' } }, contextEvent(2)]);
+    else { h.deliver([reply, contextEvent()]); if (cause === 'authentication') h.corrupt(); else h.socket.destroy(); }
+    assert.equal(losses, 1, 'loss notification is immediate and exactly once');
+    assert.equal(h.socket.destroyed, true);
+    assert.match((await pending).message, /CLOSED|PARKED/);
+    await assert.rejects(h.connection.session.send('Input.insertText', { text: 'must not send' }, 'owned-page'), /CLOSED/);
+    await task(); await task();
+    assert.deepEqual(events, [], 'queued and trailing events must be discarded after fencing');
+    assert.equal(h.requests.some(request => request.method?.startsWith('Input.')), false);
+  });
+}
+
+test('authenticated ingress stops remaining listeners and queued records when an event listener fences reentrantly', async t => {
+  const h = await orderedWire(t), received = [];
+  h.connection.session.on('event', () => { received.push('first'); void h.connection.disconnect(); });
+  h.connection.session.on('event', () => received.push('late'));
+  h.deliver([contextEvent(1), contextEvent(2)]);
+  await task(); await task();
+  assert.deepEqual(received, ['first']);
+});
+
+test('authenticated ingress rejects a duplicate queued reply before any normal callback', async t => {
+  const h = await orderedWire(t), events = [];
+  h.connection.session.on('event', frame => events.push(frame));
+  const pending = h.connection.session.send('Page.getFrameTree', {}, 'owned-page').catch(error => error);
+  const reply = { op: 'reply', id: h.requests[0].id, result: {} };
+  h.deliver([contextEvent(), reply, reply]);
+  assert.equal(h.socket.destroyed, true);
+  assert.match((await pending).message, /CLOSED/);
+  await task();
+  assert.deepEqual(events, []);
+});
+
+for (const bound of ['count', 'bytes']) {
+  test(`authenticated ingress ${bound} overflow fences without delivering queued events`, async t => {
+    const connectionOptions = bound === 'count' ? { maxPending: 2 } : { maxFrameBytes: 1024 };
+    const h = await orderedWire(t, { connectionOptions }), events = [];
+    let losses = 0;
+    h.connection.onConnectionLoss(() => losses++);
+    h.connection.session.on('event', frame => events.push(frame));
+    const pending = h.connection.session.send('Page.getFrameTree', {}, 'owned-page').catch(error => error);
+    h.deliver(bound === 'count' ? [contextEvent(1), contextEvent(2), contextEvent(3)] : [contextEvent(1, 'x'.repeat(450)), contextEvent(2, 'x'.repeat(450))]);
+    assert.equal(losses, 1);
+    assert.equal(h.socket.destroyed, true);
+    assert.match((await pending).message, /CLOSED/);
+    await task(); await task();
+    assert.deepEqual(events, []);
+  });
+}
+
+test('closing the Playwright transport before authenticated ingress drains suppresses late transport callbacks', async t => {
+  const h = await orderedWire(t), received = [];
+  h.transport.onmessage = frame => received.push(frame);
+  h.transport.send({ id: 1, method: 'Page.getFrameTree', params: {}, sessionId: 'owned-page' });
+  h.deliver([{ op: 'reply', id: h.requests[0].id, result: {} }, contextEvent()]);
+  h.transport.close();
+  await task(); await task();
+  assert.deepEqual(received, []);
+});
 
 test('an expired DOM object keeps its CDP cause through the host and Playwright transport', async t => {
   const h = await makeHost();

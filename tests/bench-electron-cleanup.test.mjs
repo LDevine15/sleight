@@ -11,7 +11,7 @@ import { createPythonAdapter } from '../plugins/sleight/lib/direct-browser/elect
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
-function world(t, { stuckWorker = false, stuckApp = false, reused = false, throws = false, host = false, stuckHost = false, observeLaunch = false, missingWindow = false, connectedBirth, lifecycle, signal } = {}) {
+function world(t, { stuckWorker = false, stuckApp = false, reused = false, throws = false, host = false, stuckHost = false, observeLaunch = false, missingWindow = false, connectedBirth, lifecycle, signal, onSleep } = {}) {
   const root = createRunRoot('eqcl-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const found = { path: '/fixture/Code.app', executable: '/fixture/Code.app/Contents/MacOS/Code' };
@@ -39,7 +39,7 @@ function world(t, { stuckWorker = false, stuckApp = false, reused = false, throw
     exited: async () => !running,
     signal: (pid, signal) => { assert.equal(pid, 701); assert.equal(signal, 'SIGTERM'); events.push('host-stop'); if (!stuckHost) hostRunning = false; },
     now: () => 1234500,
-    sleep: async ms => { events.push({ sleep: ms }); },
+    sleep: async ms => { events.push({ sleep: ms }); await onSleep?.(ms); },
   };
   const exec = async () => ({ stdout: '{"front":90,"bundle":"fixture.other"}', stderr: '' });
   const observer = observeLaunch ? { firstWindowMs: (pid, since) => {
@@ -47,7 +47,7 @@ function world(t, { stuckWorker = false, stuckApp = false, reused = false, throw
   } } : {};
   const driver = liveDriver(APPS.vscode, { root, exec, observer, forkWorker: () => w, python: '/run/python3', qualificationDiagnosticPath: '/run/diagnostic', lifecycle, signal, deps });
   driver.frontApp = async () => { events.push('restore-front'); return { pid: 90, bundle: 'com.apple.Terminal' }; };
-  return { root, driver, events, deps, app, w };
+  return { root, driver, events, deps, app, w, observer };
 }
 
 function workerWorld(t, { endReply = { ok: true, ended: true, cleanup: [] }, loseEnd = false, delayedKillExit = false } = {}) {
@@ -188,6 +188,230 @@ test('failed selection still records the exec-to-window interval and waits its r
   assert.ok(events.some(event => event.sleep === 1700));
   assert.ok(events.indexOf('restore-front') < events.findIndex(event => event.sleep === 1700));
   assert.equal((await driver.cleanup()).confirmed, true);
+});
+
+function holdStart(w) {
+  const send = w.send.bind(w);
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  w.send = async (...args) => {
+    const reply = await send(...args);
+    if (args[0] === 'start') await held;
+    return reply;
+  };
+  return release;
+}
+
+test('owned launch restores foreground while a slow worker start still awaits qualification', async t => {
+  const { driver, events, w } = world(t, { observeLaunch: true });
+  const release = holdStart(w);
+  let settled = false;
+  const connected = driver.connect({}).finally(() => { settled = true; });
+  try {
+    await new Promise(setImmediate);
+    assert.ok(events.includes('restore-front'), 'restoration must not wait for the worker reply');
+    assert.equal(settled, false);
+    assert.deepEqual(driver.launchWindows(), [{ pid: 501, execMs: 1234000, firstWindowMs: 1234200, endMs: 1236200 }]);
+    assert.equal(events.filter(event => event === 'restore-front').length, 1);
+    assert.ok(events.some(event => event.sleep === 1700), 'the fixed two-second allowance is unchanged');
+  } finally { release(); }
+  assert.equal((await connected).error, 'ELECTRON_UNQUALIFIED');
+  assert.equal(events.filter(event => event === 'restore-front').length, 1);
+  assert.equal((await driver.cleanup()).confirmed, true);
+});
+
+for (const valid of [true, false]) test(`owned main appearing after 200 prelaunch polls ${valid ? 'restores before reply' : 'still requires exact native identity'}`, async t => {
+  let polls = 0, visible = false;
+  const { driver, events, deps, app, w } = world(t, { observeLaunch: true,
+    onSleep: ms => { if (ms === 50 && ++polls === 205) visible = true; } });
+  const list = deps.list;
+  deps.list = async () => (await list()).filter(row => visible || row.pid !== 501);
+  if (!valid) app.path = '/fixture/Other.app';
+  const release = holdStart(w);
+  let settled = false;
+  const connected = driver.connect({}).finally(() => { settled = true; });
+  const refused = valid ? null : assert.rejects(connected, /FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED/);
+  try {
+    await new Promise(setImmediate);
+    assert.equal(polls, 205, 'observation remains active throughout pending consent');
+    assert.equal(settled, false);
+    assert.equal(events.includes('restore-front'), valid);
+    assert.equal(driver.launchWindows().length, valid ? 1 : 0);
+  } finally { release(); }
+  if (refused) { await refused; assert.equal((await driver.cleanup()).confirmed, false); }
+  else { await connected; assert.equal((await driver.cleanup()).confirmed, true); }
+});
+
+test('first window appearing after 200 polls remains observed while worker startup is pending', async t => {
+  let polls = 0;
+  const { driver, events, deps, observer, w } = world(t, { observeLaunch: true,
+    onSleep: ms => { if (ms === 50) polls++; } });
+  deps.now = () => 1234500 + polls * 50;
+  observer.firstWindowMs = () => polls >= 205 ? deps.now() : null;
+  const release = holdStart(w);
+  let settled = false;
+  const connected = driver.connect({}).finally(() => { settled = true; });
+  try {
+    await new Promise(setImmediate);
+    assert.equal(polls, 205);
+    assert.equal(settled, false);
+    assert.equal(events.filter(event => event === 'restore-front').length, 1);
+    assert.deepEqual(driver.launchWindows(), [{ pid: 501, execMs: 1234000, firstWindowMs: 1244750, endMs: 1246750 }]);
+    assert.ok(events.some(event => event.sleep === 2000), 'allowance still starts at the actual first window');
+  } finally { release(); }
+  await connected;
+  assert.equal(events.filter(event => event === 'restore-front').length, 1);
+  assert.equal((await driver.cleanup()).confirmed, true);
+});
+
+test('a run interruption after 200 prelaunch polls stops monitoring and collects startup before return', async t => {
+  let polls = 0;
+  const controller = new AbortController();
+  const { driver, events, deps, w } = world(t, { observeLaunch: true, signal: controller.signal,
+    onSleep: ms => { if (ms === 50 && ++polls === 205) controller.abort(); } });
+  const list = deps.list;
+  deps.list = async () => (await list()).filter(row => row.pid !== 501);
+  const release = holdStart(w);
+  let settled = false;
+  const connected = driver.connect({}).finally(() => { settled = true; });
+  const refused = assert.rejects(connected, /RUN_INTERRUPTED/);
+  try {
+    await new Promise(setImmediate);
+    assert.equal(polls, 205);
+    assert.equal(settled, false);
+    assert.equal(events.includes('restore-front'), false);
+  } finally { release(); }
+  await refused;
+  const stoppedAt = polls;
+  await new Promise(setImmediate);
+  assert.equal(polls, stoppedAt);
+  assert.equal((await driver.cleanup()).confirmed, true);
+});
+
+test('launch monitoring waits for restoration after an early worker reply before returning', async t => {
+  const { driver, events } = world(t, { observeLaunch: true });
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  driver.frontApp = async () => { events.push('restore-front'); await held; };
+  let settled = false;
+  const connected = driver.connect({}).finally(() => { settled = true; });
+  let cleaned = false;
+  let cleanup;
+  try {
+    await new Promise(setImmediate); assert.equal(settled, false);
+    cleanup = driver.cleanup().then(result => { cleaned = true; return result; });
+    await new Promise(setImmediate);
+    assert.equal(cleaned, false, 'cleanup must also wait when final restoration follows worker settlement');
+    assert.equal(events.some(event => event.mode === 'quit'), false);
+  }
+  finally { release(); }
+  await connected;
+  assert.equal((await cleanup).confirmed, true);
+});
+
+test('launch monitoring refuses unproved ownership before restoration and still collects the worker outcome', async t => {
+  const { driver, events, app, w } = world(t, { observeLaunch: true });
+  app.path = '/fixture/Other.app';
+  const release = holdStart(w);
+  let settled = false;
+  const connected = driver.connect({}).finally(() => { settled = true; });
+  const refused = assert.rejects(connected, /FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED/);
+  try {
+    await new Promise(setImmediate);
+    assert.equal(events.includes('restore-front'), false);
+    assert.equal(settled, false, 'an observer failure cannot abandon the dispatched worker start');
+  } finally { release(); }
+  await refused;
+});
+
+test('launch restoration rechecks native birth after the first-window evidence arrives', async t => {
+  const { driver, events, app, w, observer } = world(t, { observeLaunch: true });
+  const firstWindow = observer.firstWindowMs;
+  observer.firstWindowMs = (...args) => { app.pidBirth = '1234.000001'; return firstWindow(...args); };
+  const release = holdStart(w), connected = driver.connect({});
+  const refused = assert.rejects(connected, /FIXTURE_LAUNCH_IDENTITY_CHANGED/);
+  try {
+    await new Promise(setImmediate);
+    assert.equal(events.includes('restore-front'), false);
+    assert.deepEqual(driver.launchWindows(), [], 'unproved birth gets no launch exemption');
+  } finally { release(); }
+  await refused;
+});
+
+test('without first-window observation enabled, start retains its existing sequential adoption path', async t => {
+  const { driver, events, w } = world(t);
+  const release = holdStart(w), connected = driver.connect({});
+  try {
+    await new Promise(setImmediate);
+    assert.equal(driver.identity(), null);
+    assert.equal(events.includes('restore-front'), false);
+  } finally { release(); }
+  await connected;
+  assert.equal(driver.identity().pid, 501);
+});
+
+test('worker and launch-observer failures are both retained after both settle', async t => {
+  const { driver, events, app, w } = world(t, { observeLaunch: true });
+  app.path = '/fixture/Other.app';
+  const send = w.send.bind(w);
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const workerError = Object.assign(Error('IPC_LOST'), { detail: { start: 'dispatched' } });
+  w.send = async (...args) => { await send(...args); await held; throw workerError; };
+  const connected = driver.connect({});
+  const refused = assert.rejects(connected, error => {
+    assert.ok(error instanceof AggregateError);
+    assert.deepEqual(error.errors.map(item => item.message), ['IPC_LOST', 'FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED']);
+    assert.equal(error.cause, workerError);
+    assert.equal(error.detail, workerError.detail);
+    return true;
+  });
+  await new Promise(setImmediate);
+  assert.equal(events.includes('restore-front'), false);
+  release();
+  await refused;
+});
+
+test('cleanup waits for an outstanding worker start after its launch monitor finishes', async t => {
+  const { driver, events, w } = world(t, { observeLaunch: true });
+  const release = holdStart(w), connected = driver.connect({});
+  await new Promise(setImmediate);
+  assert.ok(events.includes('restore-front'));
+  let cleaned = false;
+  const cleanup = driver.cleanup().then(result => { cleaned = true; return result; });
+  try {
+    await new Promise(setImmediate);
+    assert.equal(cleaned, false);
+    assert.equal(events.some(event => event.mode === 'quit'), false);
+    assert.equal(events.includes('worker-stop'), false);
+  } finally { release(); }
+  await connected;
+  assert.equal((await cleanup).confirmed, true);
+});
+
+test('an uncertain dispatched start stops monitoring and retains cleanup ownership', async t => {
+  const lifecycle = { cleanupAllowed: true }, { driver, deps, events, w } = world(t, { observeLaunch: true, lifecycle });
+  const send = w.send.bind(w), list = deps.list;
+  let released = false, listsAfterSettlement = 0, release;
+  const held = new Promise(resolve => { release = resolve; });
+  deps.list = async () => { if (released) listsAfterSettlement++; return list(); };
+  w.send = async (...args) => {
+    await send(...args); await held;
+    lifecycle.cleanupAllowed = false; lifecycle.unsettled = true;
+    throw Error('IPC_LOST');
+  };
+  const connected = driver.connect({});
+  const refused = assert.rejects(connected, /IPC_LOST/);
+  await new Promise(setImmediate);
+  release(); released = true;
+  await refused;
+  const observed = listsAfterSettlement;
+  await new Promise(setImmediate);
+  assert.equal(listsAfterSettlement, observed, 'monitor has no detached continuation');
+  assert.equal(listsAfterSettlement, 0, 'uncertain start cannot begin a fresh process adoption');
+  assert.equal((await driver.cleanup()).confirmed, false);
+  assert.equal(events.some(event => event.mode === 'quit'), false);
+  assert.equal(events.includes('worker-stop'), false);
 });
 
 test('missing first-window evidence never invents a launch exemption', async t => {

@@ -91,6 +91,49 @@ test('uses current owned page guards without a new snapshot and returns bounded 
   assert.equal(h.counts().guards, 1);
   assert.ok(!JSON.stringify(result).includes('private-'));
 });
+test('reports absent MAIN and present utility from the existing cache without requesting or evaluating MAIN', async () => {
+  const h = harness(), calls = [];
+  h.impl.mainContext = () => { throw Error('MAIN acquisition is forbidden'); };
+  h.impl.existingContext = world => { calls.push(world); return world === 'utility' ? h.utility : null; };
+  const result = await h.run();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.frames[0].executionWorlds, {
+    before: { main: 'absent', utility: 'present' }, after: { main: 'absent', utility: 'present' },
+  });
+  assert.deepEqual(calls, ['main', 'utility', 'main', 'utility']);
+  assert.equal(result.complete, true);
+});
+test('reports existing execution worlds unavailable when the synchronous cache method is missing', async () => {
+  const result = await harness().run();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.frames[0].executionWorlds, {
+    before: { main: 'unavailable', utility: 'unavailable' }, after: { main: 'unavailable', utility: 'unavailable' },
+  });
+  assert.equal(result.complete, true);
+});
+test('contains cache errors per world and never returns their messages or context identities', async () => {
+  const h = harness();
+  h.impl.existingContext = world => { if (world === 'main') throw Error(poison); return { id: poison, objectId: poison }; };
+  const result = await h.run();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.frames[0].executionWorlds, {
+    before: { main: 'unavailable', utility: 'present' }, after: { main: 'unavailable', utility: 'present' },
+  });
+  assert.ok(!JSON.stringify(result).includes(poison));
+});
+test('captures changes in existing execution worlds across the utility-only observation', async () => {
+  let captured = false;
+  const h = harness({ afterRead() { captured = true; } });
+  const main = { evaluateExpression() { throw Error('MAIN evaluation is forbidden'); } };
+  Object.defineProperty(main, 'id', { get() { throw Error('context identity must not be read'); } });
+  h.impl.mainContext = () => { throw Error('MAIN acquisition is forbidden'); };
+  h.impl.existingContext = world => world === 'main' ? captured ? main : null : captured ? null : h.utility;
+  const result = await h.run();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.frames[0].executionWorlds, {
+    before: { main: 'absent', utility: 'present' }, after: { main: 'present', utility: 'absent' },
+  });
+});
 test('refuses grant, connection, turn, and page identity changes before releasing diagnostic output', async t => {
   assert.equal(typeof mod.captureFixtureObservation, 'function', 'guarded fixture diagnostic exists');
   for (const [name, change] of [ ['grant', h => h.revoke()], ['turn', h => { h.current = {}; }],
