@@ -13,7 +13,7 @@
 import { execFile, fork, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, normalize } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -193,6 +193,17 @@ export async function liveRuntime(options, { io, root: parentRoot, qualification
     } };
 }
 
+// Every native helper invocation owns and collects its child before returning a receipt.
+export function fixtureHelper(bundle, run = runOwned) {
+  return async request => {
+    const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', QUIT_HELPER, JSON.stringify({ ...request, bundle })], { timeoutMs: 45000 });
+    if (!result.groupClean || result.exit?.code !== 0) throw Error('FIXTURE_HELPER_UNCONFIRMED');
+    const row = String(result.stdout).split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } }).find(row => row.stage === request.mode);
+    if (!row) throw Error('FIXTURE_HELPER_UNCONFIRMED');
+    return row;
+  };
+}
+
 // forkWorker: the seam the unit tests use for a fake worker; the run forks electron-qualification-worker.mjs.
 // cardLog: the live runner's card log (electron-qualification-worker.mjs cardLine), passed to every worker.
 export function liveDriver(app, { root, exec, observer, forkWorker = qualificationWorker, cardLog, python = 'python3', qualificationDiagnosticPath, deps = {} }) {
@@ -214,13 +225,7 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
   const liveChild = w => !w.lost && w.child?.exitCode == null && w.child?.signalCode == null;
   const reaper = createRunReaper(base, { python, list, pids: () => [...workers].filter(liveChild).map(w => workerBirths.get(w)).filter(Boolean), signal: (...args) => (deps.signal ?? process.kill)(...args), sleep });
   const exited = (...args) => (deps.exited ?? processExitConfirmed)(...args);
-  const electron = deps.electron ?? (async request => {
-    const result = await runOwned('/usr/bin/osascript', ['-l', 'JavaScript', QUIT_HELPER, JSON.stringify({ ...request, bundle: app.bundleId })], { timeoutMs: 45000 });
-    if (!result.groupClean || result.exit?.code !== 0) throw Error('FIXTURE_HELPER_UNCONFIRMED');
-    const row = String(result.stdout).split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } }).find(row => row.stage === request.mode);
-    if (!row) throw Error('FIXTURE_HELPER_UNCONFIRMED');
-    return row;
-  });
+  const electron = deps.electron ?? fixtureHelper(app.bundleId);
 
   async function prepare() {
     if (recipe) return;
@@ -392,6 +397,34 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
     async geometry() {
       const r = await active.send('receipt'), delta = r.receipt?.cells?.delta;
       return { delta, zoomLevel: r.recipe?.zoomLevel, scaleMatch: (r.receipt?.cells?.joined ?? 0) > 0 };
+    },
+    async nativeSecondWindow() {
+      const target = launched.find(row => row.pid === current?.pid);
+      const changed = () => { throw Error('WINDOW_SETUP_IDENTITY_CHANGED'); };
+      const verify = async expected => {
+        if (app.key !== 'vscode' || !active || !target || !/^[1-9]\d*\.\d{6}$/.test(target.pidBirth ?? '') || !found?.executable) changed();
+        const rows = (await list()).filter(row => row.pid === target.pid);
+        if (rows.length !== 1) changed();
+        const row = rows[0];
+        if (row.uid !== process.getuid() || row.startedAtMs !== target.startedAtMs ||
+            row.startedAtMs !== Math.floor(Number(target.pidBirth)) * 1000 || !row.args.startsWith(found.executable + ' ')) changed();
+        const flags = [...row.args.slice(found.executable.length).matchAll(/(?:^|\s)--user-data-dir(?:=([^\s]+)|(?=\s|$))/g)];
+        if (flags.length !== 1 || !flags[0][1]) changed();
+        const profile = flags[0][1];
+        if (normalize(profile) !== profile || !profile.startsWith(tempRoot + '/') || expected && profile !== expected) changed();
+        try { if (realpathSync(tempRoot) !== tempRoot || realpathSync(profile) !== profile) changed(); }
+        catch { changed(); }
+        return profile;
+      };
+      const profile = await verify();
+      try {
+        const result = await electron({ mode: 'new-window', bundle: app.bundleId, pid: target.pid, pidBirth: target.pidBirth,
+          appPath: found.path, profileRoot: tempRoot, profile, waitMs: 10000 });
+        await verify(profile);
+        if (!Array.isArray(result.windows) || result.windows.length !== 2 || new Set(result.windows).size !== 2 ||
+            result.windows.some(id => !Number.isSafeInteger(id) || id <= 0)) throw Error('WINDOW_SETUP_WINDOW_CHANGED');
+        return result;
+      } finally { await driver.frontApp({ bundle: 'com.apple.Terminal' }); }
     },
     async nativeSheetCancel() { return helper({ mode: 'press', pid: current.pid, title: 'Cancel' }, exec); },
     readFile: name => { try { return readFileSync(join(files.root, name), 'utf8'); } catch { return ''; } },

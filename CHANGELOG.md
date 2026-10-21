@@ -25,7 +25,9 @@
 - A test-path guard rejects hardcoded macOS temporary and home paths. Offline fixtures use the platform temporary
   directory where their ownership checks permit it. A Node 24 Docker preflight prepares an exact-commit Git snapshot,
   mounts it read-only and installs locked Linux dependencies in a writable container copy before running the suite.
-  It awaits child collection and confirms container cleanup after cancellation. Actual Linux testing remains unrun.
+  It awaits child collection and confirms container cleanup after cancellation. An optional Colima wrapper keeps
+  VM state and Docker configuration private, mounts only the prepared checkout, and verifies VM teardown.
+  Actual Linux execution remains a release gate.
 - The preflight script checks versions, CHANGELOG and tag agreement, placeholders, private release-note data,
   history findings and Linux test evidence through the shared helper and receipt contract. Candidate mode accepts
   an unreleased heading and keeps `releaseReady: false`. Both modes verify the same clean commit through completion.
@@ -37,7 +39,7 @@
 
 ### Grok Bot approvals
 
-- Shell approvals open a styled sleight card with its icon and sound. The glove reopens that card. Identical shell
+- Shell approvals open a styled sleight card with its icon. The glove reopens that card. Identical shell
   retries join a call waiting for approval and execute once. Verified app approvals honor preapprovals and session
   grants. Action and payment confirmations still ask.
 - Distinct action and payment requests get separate decisions even when their terms match. The guard probe
@@ -46,9 +48,13 @@
 - Approval cards are visible while their accessory host is inactive. A combined owned fake-card run refused
   Accessibility, PID-posted and spoofed-HID input, collected that fixture, then accepted the owner's physical
   click in a fresh fixture. All seven lifecycle checks and cleanup passed, and all five children exited 0.
-- Appearance, sound, menu overflow, transport and
-  shared-host operation still need qualification, including GL9 and Calculator/TextEdit card counts through
-  Grok Bot's priya.
+- Cold helper compilation now shares startup preparation with the pending shell request. The original call budget
+  reserves 120 seconds for the person's answer. Expired requests cannot present a late card, and session shutdown
+  waits for compiler collection. A valid cached helper still works without an available toolchain.
+- A real Chess request through Grok Bot failed before the cold helper was ready. One explicit retry showed the
+  card and icon, accepted the owner's Allow, and a same-session repeat asked no further question. The owner heard
+  no sound. Cold-start behavior after the fix, sound, menu overflow, transport and shared-host operation still
+  need qualification, including GL9 and Calculator/TextEdit card counts through Grok Bot's priya.
 
 ### Finder fixtures and ghost hand
 
@@ -56,9 +62,11 @@
   then waits at most 30 seconds for readiness. Folder setup retains exactly one proven new window and uses its
   Go to Folder sheet. Uncertain window ownership stops setup and keeps cleanup unconfirmed.
 - Finder smoke receipts record setup, foreground samples and cleanup. Inventory refusals include diagnostic
-  details when available. The cleanup repair passed offline tests and review. The recorded live inventory
-  failure remains unresolved. Setup, cancellation, cleanup ownership, lock retention, receipt privacy and process
-  identity still need live qualification. Exclusive setup and the focus race need an owner decision before adoption.
+  details when available. Finder process identity uses the kernel's exact birth time when AppKit has no launch date.
+  The live retry passed identity checks, then stopped at the window-inventory guard before any action or relaunch.
+  The cleanup repair passed offline tests and review. The inventory failure remains unresolved. Setup, cancellation,
+  cleanup ownership, lock retention and receipt privacy still need live qualification. The owner approved exclusive
+  setup and the remaining window-focus assumption.
 - GH8 remains blocked on supported action events for engine-persisted Always allow grants and correct retry/paste
   correlation. The partial pacing change stays unmerged. Existing visible-hand behavior and its off default remain unchanged.
 
@@ -67,8 +75,10 @@
 - A workflow-documentation A/B driver pins both sides to the same build, alternates the flag and stops on native
   permission refusals, including refusals followed by a passing outcome. It has only offline test and review evidence.
 - Electron qualification preparation uses one resolved Python executable for launch and cleanup, and private
-  diagnostics in relaunch workers. Electron remains unqualified. Model-backed runs wait for the planned quota reset
-  and an owner-approved away window. No performance improvement is claimed for either preparation.
+  diagnostics in relaunch workers. Its approved native setup creates a second benchmark VS Code window before
+  measurement, with process and profile checks. The host-loss launch has the same bounded foreground allowance
+  as the initial benchmark launch. Model-backed runs wait for the planned quota reset and an owner-approved away
+  window. No performance improvement is claimed for either preparation.
 
 ## 1.4.0 (2026-10-20)
 

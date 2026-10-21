@@ -80,9 +80,22 @@ test('preflight stops on a missing piece, and skips the relaunch phase while the
 
 test('each card names the choice and whether the owner\'s delegation covers it', () => {
   assert.deepEqual([cardInstruction({ kind: 'debugger', temporary: false }), cardInstruction({ kind: 'debugger', temporary: true }), cardInstruction({ kind: 'relaunch', temporary: false })]
-    .map(c => [c.click, c.delegated]), [['Always allow', true], ['Allow this session', false], ['Quit and reopen', false]]);
-  assert.match(cardInstruction({ kind: 'debugger', temporary: true }).note, /offers no Always allow/);
-  assert.match(cardInstruction({ kind: 'relaunch' }).note, /owner clicks this, or extends the delegation/);
+    .map(c => [c.click, c.delegated]), [['Always allow', true], ['Allow this session', true], ['Quit and reopen', true]]);
+  assert.match(cardInstruction({ kind: 'debugger', temporary: true }).note, /benchmark VS Code/);
+  assert.match(cardInstruction({ kind: 'relaunch' }).note, /benchmark VS Code/);
+});
+
+test('qualify and relaunch omit the Claude arm and its executable preflight', async () => {
+  const options = parseRunnerArgs(['--owner-away', '--phases', 'qualify,relaunch']);
+  const io = fakeIo({ armClaude: '/absent/claude', exists: path => path !== '/absent/claude' && path !== '/tmp/sleight-hold' });
+  assert.equal((await preflight({ phases: options.phases, io })).ok, true);
+  const calls = [], deps = phaseDeps({ io, phases: {
+    qualify: async () => { calls.push('qualify'); return { status: 'pass', cleanup: { confirmed: true } }; },
+    relaunch: async () => { calls.push('relaunch'); return { status: 'pass', cleanup: { confirmed: true } }; },
+    arm: async () => assert.fail('model-free phases must not enter the arm'),
+  } });
+  assert.equal((await runPhases({ options, deps })).code, 0);
+  assert.deepEqual(calls, ['qualify', 'relaunch']);
 });
 
 test('the card is located from the consent host\'s own windows: glove, menu, card window and its button', () => {
@@ -229,7 +242,7 @@ test('the dry run passes every phase on fakes, models seven cards, and qualifies
   assert.deepEqual(summary.cards.map(c => c.click), [...Array(5).fill('Allow this session'), 'Always allow', 'Quit and reopen']);
   assert.deepEqual(Object.values(EXPECTED_CARDS).flat().map(card => card.split(' (')[0]), summary.cards.map(c => c.click), 'the announced plan matches the model');
   assert.match(logs.find(l => l.startsWith('cards to click')), /qualify: Allow this session \(first launch\).*relaunch: Quit and reopen/);
-  assert.deepEqual(summary.clicks, { total: 7, delegated: 1, late: 0, unanswered: 0 });
+  assert.deepEqual(summary.clicks, { total: 7, delegated: 7, late: 0, unanswered: 0 });
   for (const p of summary.phases.filter(p => p.receipt)) assert.equal(JSON.parse(readFileSync(p.receipt, 'utf8')).qualified, false);
 });
 

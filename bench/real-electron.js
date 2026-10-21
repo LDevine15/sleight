@@ -90,6 +90,71 @@ function waitReady(request, api, clock) {
   }
 }
 
+// Benchmark setup only. The driver has proved this exact birth owns a canonical
+// temporary profile. Recheck native identity before either menu press and every wait.
+function newWindow(request, api, clock) {
+  var pid = Number(request.pid), started = clock.now(), waitMs = request.waitMs;
+  var root = request.profileRoot, profile = request.profile, menu;
+  if (!(pid > 0) || request.bundle !== 'com.microsoft.VSCode' || !request.appPath ||
+      !/^[1-9]\d*\.\d{6}$/.test(request.pidBirth || '') || !(waitMs > 0 && waitMs <= 10000) ||
+      typeof root !== 'string' || root.charAt(0) !== '/' || /(?:^|\/)\.\.?(?:\/|$)|[\0\r\n]/.test(root) ||
+      typeof profile !== 'string' || profile.indexOf(root + '/') !== 0 || /(?:^|\/)\.\.?(?:\/|$)|[\0\r\n]/.test(profile))
+    throw new Error('WINDOW_SETUP_REQUEST');
+  function identity() {
+    var target = api.running(pid);
+    if (!target || target.pid !== pid || target.pidBirth !== request.pidBirth ||
+        target.bundle !== request.bundle || target.path !== request.appPath) throw new Error('WINDOW_SETUP_IDENTITY_CHANGED');
+  }
+  function deadline() {
+    if (clock.now() - started >= waitMs) throw new Error('WINDOW_SETUP_TIMEOUT');
+  }
+  function ids() {
+    var values = api.windowIds(pid);
+    if (!Array.isArray(values) || values.some(function (id, i) { return !(id > 0 && id % 1 === 0) || values.indexOf(id) !== i; }) ||
+        values.length < 1 || values.length > 2) throw new Error('WINDOW_SETUP_WINDOW_CHANGED');
+    return values;
+  }
+  identity();
+  deadline();
+  if (!api.trusted()) throw new Error('WINDOW_SETUP_ACCESSIBILITY');
+  var before = ids();
+  function done(values, created) {
+    deadline(); identity(); deadline();
+    var receipt = { stage: 'new-window', created: created, windows: values, elapsedMs: clock.now() - started };
+    clock.emit(receipt); return receipt;
+  }
+  if (before.length === 2) return done(before, false);
+  deadline();
+  var files = api.fileMenus(pid);
+  if (files.length !== 1) throw new Error('WINDOW_SETUP_MENU_AMBIGUOUS');
+  deadline(); identity(); deadline(); menu = files[0];
+  try {
+    if (!api.press(menu)) throw new Error('WINDOW_SETUP_PRESS_FAILED');
+    deadline();
+    var items = api.newWindowItems(menu);
+    while (!items.length && clock.now() - started < Math.min(waitMs, 1000)) {
+      clock.wait(50); deadline(); identity(); deadline(); items = api.newWindowItems(menu);
+    }
+    deadline();
+    if (items.length !== 1) throw new Error('WINDOW_SETUP_MENU_AMBIGUOUS');
+    identity(); deadline();
+    if (!api.press(items[0])) throw new Error('WINDOW_SETUP_PRESS_FAILED');
+    deadline();
+    for (;;) {
+      deadline(); identity(); deadline();
+      var after = ids();
+      deadline();
+      if (after.indexOf(before[0]) === -1) throw new Error('WINDOW_SETUP_WINDOW_CHANGED');
+      if (after.length === 2) break;
+      clock.wait(100);
+    }
+  } finally {
+    // A recycled PID must not receive even a menu-cleanup action.
+    try { identity(); api.cancelMenu(menu); } catch (_) {}
+  }
+  return done(after, true);
+}
+
 function nativeElectron() {
   function unwrap(value) { return value == null || (value.isNil && value.isNil()) ? '' : String(ObjC.unwrap(value)); }
   function attribute(element, name) {
@@ -116,6 +181,29 @@ function nativeElectron() {
       terminate: function () { return !!app.terminate; }, forceTerminate: function () { return !!app.forceTerminate; } };
   }
   return {
+    trusted: function () { return !!$.AXIsProcessTrusted(); },
+    fileMenus: function (pid) {
+      var bar = attribute($.AXUIElementCreateApplication(pid), 'AXMenuBar');
+      return bar ? list(bar, 'AXChildren').filter(function (item) {
+        return text(item, 'AXRole') === 'AXMenuBarItem' && text(item, 'AXTitle') === 'File';
+      }) : [];
+    },
+    newWindowItems: function (menu) {
+      var found = [];
+      function walk(item, depth) {
+        if (text(item, 'AXRole') === 'AXMenuItem' && text(item, 'AXTitle') === 'New Window') found.push(item);
+        if (depth > 0) list(item, 'AXChildren').forEach(function (child) { walk(child, depth - 1); });
+      }
+      walk(menu, 3); return found;
+    },
+    cancelMenu: function (menu) { try { $.AXUIElementPerformAction(menu, $('AXCancel')); } catch (_) {} },
+    windowIds: function (pid) {
+      var raw = $.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID);
+      if (!raw || (raw.isNil && raw.isNil())) throw new Error('WINDOW_SETUP_WINDOW_CHANGED');
+      return ObjC.deepUnwrap(ObjC.castRefToObject(raw)).filter(function (window) {
+        return Number(window.kCGWindowOwnerPID) === pid && Number(window.kCGWindowLayer) === 0;
+      }).map(function (window) { return Number(window.kCGWindowNumber); });
+    },
     launch: function (request) {
       var workspace = $.NSWorkspace.sharedWorkspace, url = workspace.URLForApplicationWithBundleIdentifier(request.bundle);
       // appPath: the live runner's own copy of the bundle (electron-relaunch-live.mjs), checked to carry the same bundle id.
@@ -158,7 +246,7 @@ function nativeElectron() {
       });
       return found;
     },
-    press: function (button) { $.AXUIElementPerformAction(button, $('AXPress')); },
+    press: function (button) { return Number($.AXUIElementPerformAction(button, $('AXPress'))) === 0; },
     windowCount: function (pid) {
       var raw = $.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID);
       if (!raw || (raw.isNil && raw.isNil())) throw new Error('Window inventory unavailable');
@@ -178,7 +266,7 @@ function waitSeconds(seconds) {
 
 function run(argv) {
   var request = JSON.parse(argv[0]);
-  if (['quit', 'ready', 'table', 'launch'].indexOf(request.mode) === -1) throw new Error('Invalid editor request');
+  if (['quit', 'ready', 'table', 'launch', 'new-window'].indexOf(request.mode) === -1) throw new Error('Invalid editor request');
   var allowed = ['com.microsoft.VSCode', 'com.todesktop.230313mzl4w4u92', 'org.mozilla.firefox'];
   if (allowed.indexOf(request.bundle) === -1) throw new Error('Invalid editor quit request');
   var out = $.NSFileHandle.fileHandleWithStandardOutput;
@@ -190,7 +278,7 @@ function run(argv) {
     out.writeData($(JSON.stringify({ stage: 'table', processes: nativeElectron().table(request.bundle) }) + '\n').dataUsingEncoding($.NSUTF8StringEncoding));
     return '';
   }
-  (request.mode === 'ready' ? waitReady : quitElectron)(request, nativeElectron(), {
+  (request.mode === 'new-window' ? newWindow : request.mode === 'ready' ? waitReady : quitElectron)(request, nativeElectron(), {
     now: function () { return Date.now(); }, wait: function (ms) { waitSeconds(ms / 1000); },
     emit: function (value) { out.writeData($(JSON.stringify(value) + '\n').dataUsingEncoding($.NSUTF8StringEncoding)); },
   });

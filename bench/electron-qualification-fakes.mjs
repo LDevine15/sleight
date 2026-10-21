@@ -86,6 +86,7 @@ export function fakeDriver({ now = Date.now, app = APPS.vscode, overlay = { pres
       return error('unsupported in the fake');
     },
     async frontApp() { return { pid: otherPid, bundle: 'com.apple.Terminal' }; },
+    async nativeSecondWindow() { if (windows.length === 1) windows.push({ id: windows[0].id + 1, epoch: 1 }); return { windows: windows.map(w => w.id) }; },
     async ownerInstances() { return 1; },
     async windowOwners(ids) { return Object.fromEntries(ids.map(id => [id, windows.some(w => w.id === id) ? current.pid : 0])); },
     async geometry() { return { delta: { width: 0, height: 28 }, zoomLevel: 0, scaleMatch: true }; },

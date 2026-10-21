@@ -5,6 +5,7 @@ import { readFileSync, readdirSync, mkdtempSync, rmSync, existsSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
+import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import * as lifecycle from '../bench/real-run.mjs';
 const { executeRealTask } = lifecycle;
 const finderSetupRetryable = result => {
@@ -25,6 +26,7 @@ function health({ codes = [-25204, -25204, -25204], recoveredAt = 0, bundle = 'c
     get forceTerminate() { terminations++; forcedAt = time; return force; } };
   const successor = { processIdentifier: 43, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 2, isNil: () => false } };
   const api = {
+    birth: pid => pid === 42 ? '1.000000' : '2.000000',
     exited: () => forcedAt !== undefined,
     application: () => forcedAt === undefined ? old : time - forcedAt >= recoveredAt ? successor : null,
     probe: () => { time += 500; return forcedAt === undefined ? codes[Math.min(probes++, codes.length - 1)] : time - forcedAt >= recoveredAt ? 0 : -25204; },
@@ -33,6 +35,109 @@ function health({ codes = [-25204, -25204, -25204], recoveredAt = 0, bundle = 'c
   return { run: () => s.ensureFinderAX(api, clock), events,
     get time() { return time; }, get probes() { return probes; }, get terminations() { return terminations; } };
 }
+
+for (const [name, fields, reason, reads] of [
+  ['missing target', null, 'target-unavailable', []],
+  ['wrong bundle before invalid pid and start', { bundle: 'owner-private-bundle', pid: 0, start: null }, 'bundle-mismatch', ['pid', 'bundle']],
+  ...[undefined, null, 0, -1, 1.5, NaN, Infinity].map(pid => [
+    `invalid pid ${String(pid)}`, { pid, start: null }, 'pid-invalid', ['pid', 'bundle'],
+  ]),
+  ...[null, {}, '0.000001', '1.000001\n', '1.000000x'].map((start, index) => [
+    `unavailable start ${index}`, { start }, 'start-unavailable', ['pid', 'bundle', 'birth'],
+  ]),
+  ['terminated target', { terminated: true }, 'terminated', ['pid', 'bundle', 'birth', 'pid', 'bundle', 'birth', 'terminated']],
+]) test(`Finder identity reason identifies ${name} without probing or recovery`, () => {
+  const s = source(), seen = [], events = []; let probes = 0, terminations = 0;
+  const values = fields && { pid: 42, start: '1.000000', bundle: 'com.apple.finder', ...fields };
+  const app = values && {
+    get processIdentifier() { seen.push('pid'); return values.pid; },
+    get launchDate() { assert.fail('Finder birth cannot depend on AppKit launchDate'); },
+    get bundleIdentifier() { seen.push('bundle'); return values.bundle; },
+    get isTerminated() { seen.push('terminated'); return values.terminated; },
+    get forceTerminate() { terminations++; return true; },
+  };
+  assert.throws(() => s.ensureFinderAX({ application: () => app, birth: pid => {
+    assert.equal(pid, values.pid); seen.push('birth'); return values.start;
+  }, probe: () => { probes++; return 0; } }, {
+    now: () => 0, check() {}, wait: () => assert.fail('no retry without identity'), emit: event => events.push(event),
+  }), error => {
+    assert.equal(error.identityReason, reason);
+    assert.equal(error.attribute, 'AXWindows');
+    assert.equal(error.code, undefined);
+    assert.equal(error.finderAX, true);
+    assert.doesNotMatch(error.message, /owner-private-bundle/);
+    return true;
+  });
+  assert.deepEqual(seen, reads, 'kernel lookup follows target, bundle and PID validation');
+  assert.equal(probes, 0);
+  assert.equal(terminations, 0);
+  assert.deepEqual(events, []);
+});
+
+for (const [field, value, reason] of [
+  ['processIdentifier', 43, 'pid-changed'],
+  ['pidBirth', '1.000001', 'start-changed'],
+  ['isTerminated', true, 'terminated'],
+]) for (const boundary of ['after-first-probe', 'before-force'])
+  test(`Finder identity reason reports ${reason} ${boundary} and refuses recovery`, () => {
+    const s = source(), events = []; let probes = 0, terminations = 0, time = 0;
+    const app = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', pidBirth: '1.000000',
+      get forceTerminate() { terminations++; return true; } };
+    assert.throws(() => s.ensureFinderAX({ application: () => app, birth: () => app.pidBirth, probe: () => {
+      time += 500; probes++;
+      if (boundary === 'after-first-probe') app[field] = value;
+      return -25204;
+    } }, { now: () => time, check() {}, wait: ms => { time += ms; }, emit: event => {
+      events.push(event); if (boundary === 'before-force') app[field] = value;
+    } }), error => {
+      assert.equal(error.identityReason, reason);
+      assert.equal(error.code, -25204);
+      assert.equal(error.attribute, 'AXWindows');
+      return true;
+    });
+    assert.equal(probes, boundary === 'after-first-probe' ? 1 : 3);
+    assert.equal(terminations, 0);
+    assert.equal(events.some(event => event.stage === 'finder-recovered'), false);
+  });
+
+test('Finder identity reason allowlist strips arbitrary metadata while retaining code and attribute', async () => {
+  const { finderDiagnostic } = await import('../bench/real-fixture.mjs');
+  for (const identityReason of ['target-unavailable', 'bundle-mismatch', 'pid-invalid', 'start-unavailable', 'pid-changed', 'start-changed', 'terminated']) {
+    assert.deepEqual(finderDiagnostic({ finderAXError: { code: -25204, attribute: 'AXWindows', identityReason,
+      message: 'owner-private-title', stderr: '/owner/private/path' } }), {
+      finderAXError: { code: -25204, attribute: 'AXWindows', identityReason },
+    });
+  }
+  for (const identityReason of ['owner-private-title', 'start-unavailable /owner/private/path', '', null, 42, {}, ['terminated']]) {
+    assert.deepEqual(finderDiagnostic({ finderAXError: { code: -25204, attribute: 'AXWindows', identityReason } }), {
+      finderAXError: { code: -25204, attribute: 'AXWindows' },
+    });
+  }
+});
+
+test('Finder identity reason survives helper failure collection without raw helper text', async t => {
+  const { openFixture } = await import('../bench/real-fixture.mjs');
+  const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-finder-identity-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const ctx = { dir, lockPath: join(dir, 'synthetic-lock') };
+  await assert.rejects(openFixture(ctx, { app: 'Finder', bundle: 'com.apple.finder', mode: 'folder' }, {
+    helper: async () => ({ command: 'fake', args: [] }),
+    open: () => assert.fail('identity failure cannot launch Finder'),
+    run: async (_command, _args, { onStdout }) => {
+      const stdout = JSON.stringify({ stage: 'setup-failure', actionTaken: false, cleanup: 'nothing created',
+        finderAXError: { attribute: 'AXWindows', identityReason: 'start-unavailable', message: 'owner-private-title' } }) + '\n';
+      onStdout(stdout);
+      return { stdout, stderr: 'owner-private-title /owner/private/path', groupClean: true, exit: { code: 1 } };
+    },
+  }), error => {
+    assert.deepEqual(error.fixtureDiagnostics.finderAXError, { attribute: 'AXWindows', identityReason: 'start-unavailable' });
+    assert.equal(error.fixtureSetupFailure, 'finder-ax');
+    assert.doesNotMatch(error.message, /owner-private-title|\/owner\/private/);
+    return true;
+  });
+  assert.equal(await ctx.windowLeases[0].dispose(), true);
+  assert.equal(ctx.fixtureDiagnostics[0].windowCleanupConfirmed, true);
+});
 
 test('Finder probes twice after its first failure, then force-terminates only the hung Finder and waits for its successor', () => {
   const f = health({ recoveredAt: 1600 });
@@ -62,7 +167,7 @@ test('non-timeout AX errors fail without terminating Finder', () => {
 test('immediate CannotComplete errors do not prove a hung main thread', () => {
   const s = source(); let terminations = 0, time = 0;
   const app = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 1 }, get forceTerminate() { terminations++; return true; } };
-  assert.throws(() => s.ensureFinderAX({ application: () => app, probe: () => -25204 }, {
+  assert.throws(() => s.ensureFinderAX({ application: () => app, birth: () => '1.000000', probe: () => -25204 }, {
     now: () => time, check() {}, wait: ms => { time += ms; }, emit() {},
   }), /probe failed/);
   assert.equal(terminations, 0);
@@ -71,7 +176,7 @@ test('immediate CannotComplete errors do not prove a hung main thread', () => {
 test('timeouts across changing Finder processes never authorize termination', () => {
   const s = source(); let pid = 40, terminations = 0, time = 0;
   const app = () => ({ processIdentifier: pid++, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 1 }, get forceTerminate() { terminations++; return true; } });
-  assert.throws(() => s.ensureFinderAX({ application: app, probe: () => { time += 500; return -25204; } }, {
+  assert.throws(() => s.ensureFinderAX({ application: app, birth: () => '1.000000', probe: () => { time += 500; return -25204; } }, {
     now: () => time, check() {}, wait: ms => { time += ms; }, emit() {},
   }), /process changed/);
   assert.equal(terminations, 0);
@@ -469,6 +574,7 @@ function finderRun(change = () => {}) {
     NSString: { alloc: { initWithDataEncoding: () => JSON.stringify({ command: ready ? 'close' : armed ? 'opened' : 'launching', launched: false }) } },
   });
   s.$ = native; s.Date = { now: () => time };
+  s.finderProcessBirth = pid => pid === 42 ? '1.000000' : '2.000000';
   s.waitForLaunch = seconds => { time += (seconds ?? 0.1) * 1000; };
   s.probeFinderAX = () => { calls.push('probe'); time += 500; return forced ? 0 : -25204; };
   const api = {
@@ -480,10 +586,30 @@ function finderRun(change = () => {}) {
   };
   s.nativeAX = () => api;
   s.closeOwnedWindow = (owned, _request, app) => { assert.equal(owned, window); assert.equal(app.pid, 43); calls.push('close'); };
-  change({ s, api, previous, window, sheet, calls });
+  change({ s, api, previous, window, sheet, calls, old, successor });
   const run = () => s.run([JSON.stringify({ app: 'Finder', bundle: 'com.apple.finder', mode: 'folder', control: 'fake', target: '/fixture/Collections-1', token: 'Collections-1' })]);
   return { run, events, calls };
 }
+
+test('JXA Finder identity refusal exports only its closed reason before any probe or action', () => {
+  const { run, events, calls } = finderRun(({ s }) => {
+    s.finderProcessBirth = () => null;
+    s.$.NSRunningApplication.runningApplicationsWithBundleIdentifier = () => ({ count: 1, objectAtIndex: () => ({
+      processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: null,
+      get forceTerminate() { assert.fail('identity refusal cannot terminate Finder'); },
+    }) });
+  });
+  assert.throws(run, error => {
+    assert.equal(error.identityReason, 'start-unavailable');
+    return true;
+  });
+  const failure = events.find(event => event.stage === 'setup-failure');
+  assert.deepEqual(failure.finderAXError, { attribute: 'AXWindows', identityReason: 'start-unavailable' });
+  assert.equal(failure.actionTaken, false);
+  assert.equal(failure.cleanup, 'nothing created');
+  assert.deepEqual(calls, []);
+  assert.equal(events.some(event => ['identified', 'identified-process', 'ready', 'finder-relaunch'].includes(event.stage)), false);
+});
 
 test('JXA setup probes and recovers before any Finder read, then opens and closes one new window', () => {
   const { run, events, calls } = finderRun();
@@ -492,6 +618,18 @@ test('JXA setup probes and recovers before any Finder read, then opens and close
   assert.equal(events.find(e => e.stage === 'ready').pid, 43);
   assert.deepEqual(calls.slice(0, 6), ['probe', 'probe', 'probe', 'force', 'probe', 'focused']);
   assert.equal(calls.filter(c => c === 'submit').length, 1);
+  assert.equal(calls.at(-1), 'close');
+});
+
+test('JXA Finder setup and cleanup work with kernel births when AppKit launch dates are absent', () => {
+  const { run, events, calls } = finderRun(({ old, successor }) => {
+    old.launchDate = null; successor.launchDate = null;
+  });
+  run();
+  assert.equal(events.find(event => event.stage === 'finder-relaunch').finderRelaunch.pidBirth, '1.000000');
+  assert.equal(events.find(event => event.stage === 'finder-recovered').finderRecovery.toPidBirth, '2.000000');
+  assert.equal(events.some(event => event.stage === 'ready'), true);
+  assert.equal(calls.filter(call => call === 'force').length, 1);
   assert.equal(calls.at(-1), 'close');
 });
 
@@ -675,7 +813,7 @@ for (const boundary of ['probe', 'termination', 'window', 'sheet']) test(`R1 VM 
       launchDate: { isNil: () => false, timeIntervalSince1970: 1 },
       get forceTerminate() { assert.fail('no termination after cancellation'); } };
     let time = 0;
-    assert.throws(() => s.ensureFinderAX({ application: () => app, probe: () => {
+    assert.throws(() => s.ensureFinderAX({ application: () => app, birth: () => '1.000000', probe: () => {
       time += 500; if (++probe === (boundary === 'probe' ? 2 : 3)) cancelled = true; return -25204;
     } }, { now: () => time, wait: ms => { time += ms; }, emit() {}, check() { if (cancelled) throw new Error('cancelled'); } }), /cancelled/);
   } else {
@@ -745,16 +883,17 @@ for (const when of ['second-probe', 'last-probe', 'before-force', 'missing-start
   test(`R5 recovery refuses changed or unproved process incarnation: ${when}`, () => {
     const s = source(); let time = 0, probes = 0, lookups = 0, forced = 0;
     const date = value => ({ isNil: () => false, timeIntervalSince1970: value });
-    const old = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: date(1), isTerminated: false,
+    const old = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: date(1), pidBirth: '1.000000', isTerminated: false,
       get forceTerminate() { forced++; return true; } };
-    const replacement = { processIdentifier: when === 'original-alive' ? 43 : 42, bundleIdentifier: 'com.apple.finder', launchDate: date(2), get forceTerminate() { forced++; return true; } };
-    if (when === 'missing-start') old.launchDate = null;
+    const replacement = { processIdentifier: when === 'original-alive' ? 43 : 42, bundleIdentifier: 'com.apple.finder', launchDate: date(2), pidBirth: '2.000000', get forceTerminate() { forced++; return true; } };
+    if (when === 'missing-start') old.pidBirth = null;
+    let current = old;
     const api = { application: () => {
       lookups++;
       if ((when === 'before-force' && lookups >= 4) || (when === 'second-probe' && probes >= 1) ||
-          (when === 'last-probe' && probes >= 3) || (when === 'original-alive' && forced)) return replacement;
-      return old;
-    }, probe: () => { time += 500; probes++; return forced ? 0 : -25204; }, exited: () => false };
+          (when === 'last-probe' && probes >= 3) || (when === 'original-alive' && forced)) current = replacement;
+      return current;
+    }, birth: () => current.pidBirth, probe: () => { time += 500; probes++; return forced ? 0 : -25204; }, exited: () => false };
     assert.throws(() => s.ensureFinderAX(api, { now: () => time, check() {}, wait: ms => { time += ms; }, emit() {} }), /Finder AX/);
     assert.equal(forced, when === 'original-alive' ? 1 : 0);
   });
@@ -813,11 +952,11 @@ test('R4 Finder menu diagnostics emit only fixed requested commands and numeric 
 
 for (const boundary of ['receipt', 'final-check']) test(`R5 replacement immediately before force at ${boundary} refuses termination`, () => {
   const s = source(); let time = 0, replaced = false, announced = false, checks = 0, forces = 0;
-  const old = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 1 },
+  const old = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', pidBirth: '1.000000',
     get isTerminated() { return replaced; }, get forceTerminate() { forces++; return true; } };
-  const replacement = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 2 },
+  const replacement = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', pidBirth: '2.000000',
     get forceTerminate() { forces++; return true; } };
-  assert.throws(() => s.ensureFinderAX({ application: () => replaced ? replacement : old,
+  assert.throws(() => s.ensureFinderAX({ application: () => replaced ? replacement : old, birth: () => (replaced ? replacement : old).pidBirth,
     probe: () => { time += 500; return -25204; } }, {
     now: () => time, wait: ms => { time += ms; },
     emit() { announced = true; if (boundary === 'receipt') replaced = true; },
@@ -827,17 +966,18 @@ for (const boundary of ['receipt', 'final-check']) test(`R5 replacement immediat
 });
 
 test('R5 original exit requires both retained termination and independent PID lookup evidence', () => {
-  const s = source(), original = { isTerminated: false }, receipt = { pid: 42, startedAtMs: 1000 };
+  const s = source(), original = { isTerminated: false }, receipt = { pid: 42, pidBirth: '1.000000' };
   let current = { isNil: () => true };
+  s.finderProcessBirth = () => current.pidBirth;
   s.$ = { NSRunningApplication: { runningApplicationWithProcessIdentifier: () => current } };
   assert.equal(s.finderOriginalExited(original, receipt), false);
   original.isTerminated = true;
   assert.equal(s.finderOriginalExited(original, receipt), true);
-  current = { launchDate: { timeIntervalSince1970: 1 }, isTerminated: false };
+  current = { pidBirth: '1.000000', isTerminated: false };
   assert.equal(s.finderOriginalExited(original, receipt), false);
-  current.launchDate.timeIntervalSince1970 = 2;
+  current.pidBirth = '1.000001';
   assert.equal(s.finderOriginalExited(original, receipt), true);
-  current.launchDate = null;
+  current.pidBirth = null;
   assert.equal(s.finderOriginalExited(original, receipt), false);
 });
 
@@ -873,7 +1013,7 @@ test('R5 identity lookup latency cannot turn an immediate AX error into timeout 
   const s = source(); let time = 0, forces = 0;
   const app = { processIdentifier: 42, bundleIdentifier: 'com.apple.finder', launchDate: { timeIntervalSince1970: 1 },
     get forceTerminate() { forces++; return false; } };
-  assert.throws(() => s.ensureFinderAX({ application: () => { time += 500; return app; }, probe: () => -25204 }, {
+  assert.throws(() => s.ensureFinderAX({ application: () => { time += 500; return app; }, birth: () => '1.000000', probe: () => -25204 }, {
     check() {}, now: () => time, wait: ms => { time += ms; }, emit() {},
   }), /probe failed/);
   assert.equal(forces, 0);

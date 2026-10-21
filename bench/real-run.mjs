@@ -8,7 +8,7 @@ import { withElapsed, withStamps } from './timing.mjs';
 // The real suite and default tasks with retained fixtures use this lifecycle.
 // A cleanup failure preserves its fixture and stops the pass, unless cleanupContained
 // says otherwise. Unresolved fixture ownership or cleanup retains the owning lock.
-export async function executeRealTask(task, ctx, { drive, dryRun = false, setupOnly = false, signal, permissionCheck, stop, lockHeld = false, lock = acquireLiveLock } = {}) {
+export async function executeRealTask(task, ctx, { drive, dryRun = false, setupOnly = false, retainFixture = false, signal, permissionCheck, stop, lockHeld = false, lock = acquireLiveLock } = {}) {
   let release, cleanupConfirmed = false, driverStarted = false, setupStarted = false, serverCleanupFailed = false;
   let monitor, observation;
   const cleanupController = new AbortController();
@@ -164,7 +164,8 @@ export async function executeRealTask(task, ctx, { drive, dryRun = false, setupO
             !(d.launched === true && d.appQuit === true && d.helperCollectionConfirmed === true)));
       }));
     if (cleanupConfirmed && !result.cleanupUnconfirmed && !ctx.fixtureLockUnconfirmed) {
-      rmSync(ctx.dir, { recursive: true, force: true });
+      // A receipt-owning outer runner may keep these artifacts through terminal persistence.
+      if (!retainFixture) rmSync(ctx.dir, { recursive: true, force: true });
     } else result.fixtureDir = ctx.dir;
     if (!await releaseFixtureLock([ctx], release)) {
       result.passed = false;

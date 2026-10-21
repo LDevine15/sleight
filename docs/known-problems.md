@@ -22,18 +22,25 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   on that final commit. Passing offline tests does not qualify a release.
 - Finder's recorded setup smoke failed at 21:16Z on 2026-10-20 with `Finder fixture window inventory unconfirmed` before
   creating a window or opening a folder. Cleanup was confirmed, but the failed run retained its live lock until
-  the operator removed it at 21:26Z. No new live evidence establishes the cause or a fix. Finder setup, Go to Folder
-  ancestry, respawn and cleanup need qualification, including the `cc-list-native` and `textedit-two-windows` fixture
+  the operator removed it at 21:26Z. A later run at 02:58Z on 2026-10-21 refused an unavailable AppKit launch time
+  before any AX probe or fixture action. Its helper exited and cleanup completed; the exact empty lock was recovered
+  after a durable receipt. Finder identity now uses the kernel's exact process birth time. The 03:09Z retry passed
+  that check, then refused one inventory entry as `non-window-or-stale` before any action or relaunch. Cleanup and
+  helper collection completed. Its receipt was retained and the exact empty lock recovered. Finder setup, Go to Folder
+  ancestry, respawn and cleanup need qualification, including the `cc-list-native` fixture. The `textedit-two-windows` fixture
+  remains parked unless its failure recurs. Both fixture
   paths. Cancellation must stop owned setup work; cleanup must preserve baseline windows and retain the lock when
   ownership or cleanup is uncertain. Receipts must exclude owner text, and timeout evidence must bind the same
   process instance. The offline recovery, ownership and app-absent cleanup changes passed tests and review.
-  Exclusive Finder setup and the remaining window-focus race still need an
-  owner decision. The old smoke and lock removal establish no current lock state or successful live repair.
+  The owner approved exclusive Finder setup and the remaining window-focus assumption. Failed smokes and lock
+  recovery establish no successful live repair.
 - Offline portability checks do not establish Linux compatibility. The path guard must pass without exemptions on
-  the final tree. Actual Node 24 Linux testing remains unrun.
+  the final tree. Actual Node 24 Linux testing remains a release gate.
   The helper prepares the exact commit with usable Git metadata, mounts that snapshot read-only and tests a writable
   container copy with isolated dependencies. Offline tests cover its shared receipt contract and asynchronous cleanup;
-  actual Docker cancellation, child collection and container cleanup still need qualification.
+  actual Docker cancellation, child collection and container cleanup still need qualification. The Colima wrapper
+  isolates VM state and Docker configuration and pins engine commands to its owned socket. VM startup and teardown
+  require their own confirmed result.
 - Candidate and tagged-release preflights must verify the same clean final commit through completion, including
   the Linux receipt. These model-free checks do not require a quota reset. Candidate mode accepts an unreleased
   heading and keeps `releaseReady: false`. Release mode requires a dated heading and the intended tag at that exact
@@ -44,9 +51,10 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   then run three new rounds per selected group on the final integrated commit. Later merges require another run.
 - Workflow-documentation A/B and Electron qualification preparation have passed offline review and tests, with no
   new live results or performance claim. Model-backed release passes, final-build A/B, workflow A/B and the Electron
-  arm wait for the planned quota reset and an owner-approved away window. Electron still needs a fresh owner turbo
-  receipt matching the final plugin and Node runtime, an approved second-window setup and a decision on host-kill
-  focus. Interrupted Electron runs need separate exit and lock-ownership evidence.
+  arm wait for the planned quota reset and an owner-approved away window. The owner approved a second benchmark
+  VS Code window and bounded foreground during its host-loss launch. Electron still needs a turbo startup receipt
+  matching the final plugin and Node runtime, plus live qualification. Interrupted Electron runs need separate
+  exit and lock-ownership evidence.
 - The first native reference uses origin captured during the existing isolated startup call. A live relay
   comparison on engine 26.1013.40934 reduced it from 19,743 to 19,542 characters while preserving policy and all
   text outside the API block. Unknown formats, metadata or changed context keep the full reference. The broader
@@ -826,7 +834,13 @@ compaction, so it cannot isolate wording alone. That A/B has not run live.
   while its host is inactive. A combined owned fake-card run on 2026-10-21 explicitly refused Accessibility,
   PID-posted and spoofed-HID input, collected that fixture, then accepted the owner's physical click in a fresh
   fixture. Lifecycle checks passed 7/7, all five children exited 0, and cleanup released the lock.
-  Real GL9 through Grok Bot's priya remains unqualified. Qualification must
+  A real Chess acquisition through Grok Bot on 2026-10-21 failed after about 21 seconds while its helper was still
+  compiling, with no visible card. One explicit retry after compilation passed in about five seconds. The owner
+  saw the card and icon and clicked Allow, but heard no sound. A repeat in the same session passed in about
+  0.4 seconds without another card. The candidate now shares compilation with startup preparation and preserves
+  the original call deadline plus a full answer window. Expiry and shutdown prevent late presentation; the cold
+  native path after this correction remains unqualified. Real GL9 through Grok Bot's priya also remains unqualified.
+  Qualification must
   record Calculator/TextEdit card counts with the owner's current preapprovals, one physical Allow where needed,
   repeated same-session requests and identical retries while a decision waits. Appearance, sound, glove review under
   menu overflow, cancellation, channel reset, fd transport and shared-host operation also need live checks. The guard
@@ -835,7 +849,8 @@ compaction, so it cannot isolate wording alone. That A/B has not run live.
   The owner reported first-call TextEdit timeouts in two Grok sessions, followed by successful reads. Separate
   owned relay and shell diagnostics on engine `26.1013.40934` acquired TextEdit in 211 and 260 ms without a prompt.
   The raw-engine diagnostic stopped at a declined new-session Calculator approval. These runs did not reproduce
-  the recurring timeout or identify its cause, and they did not run inside the owner's Grok process.
+  the recurring timeout or identify its cause, and they did not run inside the owner's Grok process. The owner
+  parked further TextEdit investigation unless it recurs.
   Grok Bot's custom STDIO MCP servers run in a hosted box without this Mac's apps or ChatGPT's
   engine. Use `sleight-mcp js '<code>'` through the local daemon, which starts a session on demand. Doctor reports
   `route: shell (sleight-mcp js)`, even when a session isn't running. There is no Mac-side HTTP client placement.

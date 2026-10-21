@@ -21,6 +21,9 @@ const SOCKET_FILE = 'Library/Caches/sleight/shell/session.sock';
 const approvalLabel = value => typeof value === 'string'
   ? value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').slice(0, 160).trim() || 'this Mac' : 'this Mac';
 const approvalError = app => new Error(`sleight: approval not answered for ${approvalLabel(app)} before the deadline; no approval was granted. Tell the user and do not retry.`);
+const pendingApprovalError = status => status.state === 'preparing'
+  ? new Error(`sleight: approval preparation for ${approvalLabel(status.app)} did not finish before the deadline; no approval was granted. Tell the user and do not retry.`)
+  : approvalError(status.app);
 export const socketDirectory = () => dirname(join(userInfo().homedir, SOCKET_FILE));
 
 // Caller settings must never weaken a persistent session's guards or load caller code.
@@ -98,8 +101,9 @@ export async function preparePeerCheck({ tools = async () => process.platform !=
 
 // A fixed MCP client. The shell cannot send initialize, elicitation answers, metadata or turn frames.
 export async function createShellRelay({ command = process.execPath, args = [join(LIB, 'launch.mjs'), '--socket-relay'],
-  timeoutMs = 300000, recoveryMs = 30000, termMs = 10000, killMs = 5000, env = sessionEnvironment(), cwd, signal, requestClock = { setTimeout, clearTimeout } } = {}) {
-  const child = spawn(command, args, { detached: true, stdio: ['pipe', 'pipe', 'inherit'], env, cwd });
+  timeoutMs = 300000, recoveryMs = 30000, termMs = 10000, killMs = 5000, env = sessionEnvironment(), cwd, signal,
+  now = Date.now, spawnChild = spawn, requestClock = { setTimeout, clearTimeout } } = {}) {
+  const child = spawnChild(command, args, { detached: true, stdio: ['pipe', 'pipe', 'inherit'], env, cwd });
   const pending = new Map();
   let next = 0, closing, ended = false, groupGone = !child.pid;
   const fail = error => {
@@ -121,7 +125,7 @@ export async function createShellRelay({ command = process.execPath, args = [joi
       if (msg.method === 'notifications/sleight/approval' && msg.id === undefined) {
         const status = msg.params;
         if (typeof status?.id !== 'string' || !Number.isFinite(status.deadline) ||
-            !['waiting', 'answered', 'unanswered', 'unavailable'].includes(status.state)) return;
+            !['preparing', 'waiting', 'answered', 'unanswered', 'unavailable'].includes(status.state)) return;
         for (const entry of pending.values()) entry.approval(status);
       }
       else if (msg.method && msg.id !== undefined) send({ id: msg.id, error: { code: -32601, message: 'No host forms on shell route' } });
@@ -139,7 +143,7 @@ export async function createShellRelay({ command = process.execPath, args = [joi
       const id = next++;
       // A timeout ends the caller's wait, but only an engine reply or exit ends its input ownership.
       let recovery, expired = false;
-      const approvals = new Map(), deadline = Date.now() + timeoutMs;
+      const approvals = new Map(), deadline = now() + timeoutMs;
       const expire = error => {
         if (expired) return;
         expired = true;
@@ -149,7 +153,7 @@ export async function createShellRelay({ command = process.execPath, args = [joi
       };
       const timer = requestClock.setTimeout(() => {
         const waiting = approvals.values().next().value;
-        expire(waiting ? approvalError(waiting.app) : new Error('Shell relay call timed out; engine still busy until it replies or is collected; read state before retrying input'));
+        expire(waiting ? pendingApprovalError(waiting) : new Error('Shell relay call timed out; engine still busy until it replies or is collected; read state before retrying input'));
         // End any outstanding card with the call rather than allowing an answer after its deadline.
         if (waiting) void close();
       }, timeoutMs);
@@ -157,19 +161,19 @@ export async function createShellRelay({ command = process.execPath, args = [joi
       pending.set(id, { resolve: value => {
         clear(); complete();
         const waiting = approvals.values().next().value;
-        if (waiting) { reject(approvalError(waiting.app)); void close(); }
+        if (waiting) { reject(pendingApprovalError(waiting)); void close(); }
         else resolve(value);
       },
         reject: err => {
           clear(); complete();
           const waiting = approvals.values().next().value;
-          reject(waiting ? approvalError(waiting.app) : err);
+          reject(waiting ? pendingApprovalError(waiting) : err);
           if (waiting) void close();
         },
         approval: status => {
           if (method !== 'tools/call' || expired) return;
-          if (status.state === 'waiting') {
-            if (approvals.has(status.id)) return;
+          if (status.state === 'preparing' || status.state === 'waiting') {
+            if (approvals.get(status.id)?.state === status.state) return;
             approvals.set(status.id, status);
             onApproval?.({ ...status, app: approvalLabel(status.app), deadline: Math.min(status.deadline, deadline) });
           } else {
@@ -178,7 +182,9 @@ export async function createShellRelay({ command = process.execPath, args = [joi
             if (status.state === 'unanswered') expire(approvalError(status.app));
           }
         } });
-      try { send({ id, method, params }); } catch (err) { pending.get(id).reject(err); pending.delete(id); }
+      // This parent owns the call lifetime. No caller tool argument supplies it.
+      const trustedParams = method === 'tools/call' ? { ...params, _meta: { sleightShellDeadline: deadline } } : params;
+      try { send({ id, method, params: trustedParams }); } catch (err) { pending.get(id).reject(err); pending.delete(id); }
     });
     return Object.assign(result, { completed });
   }
@@ -372,7 +378,7 @@ async function startSocketSessionLocked({ directory = socketDirectory(), startRe
                 current.observers.add(observe);
                 const call = Promise.resolve().then(() => {
                   const pending = relay.call(tool, args, { onApproval: approval => {
-                    if (approval.state === 'waiting') current.waiting.set(approval.id, approval);
+                    if (approval.state === 'preparing' || approval.state === 'waiting') current.waiting.set(approval.id, approval);
                     else current.waiting.delete(approval.id);
                     for (const subscriber of current.observers) subscriber(approval);
                   } });
@@ -469,7 +475,7 @@ export async function callSocket(request, { directory = socketDirectory(), timeo
     socket.setEncoding('utf8');
     let input = '', settled = false, bytes = 0, waiting;
     const fail = error => { if (!settled) { settled = true; reject(error); } socket.destroy(); };
-    socket.setTimeout(timeoutMs, () => fail(waiting ? approvalError(waiting.app) : new Error('Shell call timed out; read state before retrying input')));
+    socket.setTimeout(timeoutMs, () => fail(waiting ? pendingApprovalError(waiting) : new Error('Shell call timed out; read state before retrying input')));
     socket.once('connect', () => socket.write(JSON.stringify(request) + '\n'));
     socket.on('data', chunk => {
       input += chunk;
@@ -481,7 +487,7 @@ export async function callSocket(request, { directory = socketDirectory(), timeo
           const reply = JSON.parse(input.slice(0, newline));
           input = input.slice(newline + 1);
           if (reply.approval) {
-            waiting = reply.approval.state === 'waiting' ? reply.approval : undefined;
+            waiting = ['preparing', 'waiting'].includes(reply.approval.state) ? reply.approval : undefined;
             onApproval?.(reply.approval); continue;
           }
           if (reply.error) throw new Error(reply.error);
@@ -546,6 +552,7 @@ export async function socketCommand([command, ...args], options = {}) {
   await ensureSocketSession({ ...options, notice: options.notice ?? out });
   return printSocketResult(await callSocket({ tool: command, args: toolArgs }, { ...options,
     onApproval: approval => {
+      if (approval.state === 'preparing') out(`sleight: preparing the approval panel for ${approvalLabel(approval.app)}; no card is ready yet. The call is still pending.\n`);
       if (approval.state === 'waiting') out(`sleight: waiting for your approval in the sleight card on the Mac (also menu bar glove > Review sleight request) for ${approvalLabel(approval.app)}; the call continues when you answer, or cancels after ${Math.max(0, Math.ceil((approval.deadline - Date.now()) / 1000))} s\n`);
     },
   }), { out });

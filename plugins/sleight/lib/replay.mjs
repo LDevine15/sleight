@@ -357,7 +357,7 @@ function messageLines(input, receive) {
   input.once('end', () => { if (pending) receive(pending); });
 }
 
-export function replayBridge({ input, output, clock = realClock }) {
+export function replayBridge({ input, output, clock = realClock, onRequest, onReply, onClose }) {
   const clientIn = new PassThrough(), clientOut = new PassThrough();
   const internal = new Map(), lists = new Map();
   const prefix = `sleight-replay-${randomUUID()}-`;
@@ -373,12 +373,13 @@ export function replayBridge({ input, output, clock = realClock }) {
   });
   messageLines(clientOut, line => {
     // With no replay or tool-list reply pending, even image payloads pass without inspection.
-    if ((!internal.size && !lists.size) || (!line.includes('\\u') && !line.includes('\\/') &&
-        !(internal.size && line.includes(prefix)) && ![...lists.values()].some(matches => matches.test(line)))) {
+    if (!onReply && ((!internal.size && !lists.size) || (!line.includes('\\u') && !line.includes('\\/') &&
+        !(internal.size && line.includes(prefix)) && ![...lists.values()].some(matches => matches.test(line))))) {
       output.write(line); return;
     }
     let msg;
     try { msg = JSON.parse(line); } catch { output.write(line); return; }
+    if (!msg.method && msg.id !== undefined) onReply?.(msg);
     if (!msg.method && internal.has(msg.id)) {
       if (active?.inFlight === msg.id) active.inFlight = undefined;
       const resolve = internal.get(msg.id); internal.delete(msg.id); resolve(msg); return;
@@ -392,12 +393,13 @@ export function replayBridge({ input, output, clock = realClock }) {
   messageLines(input, line => {
     const toolCall = line.includes('"tools/call"');
     // Escaped envelope fields are uncommon, but may spell the same methods, names and IDs.
-    if (!line.includes('\\u') && !line.includes('\\/') && !line.includes('"tools/list"') && !(toolCall && (active || line.includes('"replay"'))) &&
+    if (!onRequest && !line.includes('\\u') && !line.includes('\\/') && !line.includes('"tools/list"') && !(toolCall && (active || line.includes('"replay"'))) &&
         !(active && line.includes('"notifications/cancelled"'))) {
       clientIn.write(line); return;
     }
     let msg;
     try { msg = JSON.parse(line); } catch { clientIn.write(line); return; }
+    if (onRequest) { onRequest(msg); line = JSON.stringify(msg) + '\n'; }
     if (active && msg.method === 'notifications/cancelled' && msg.params?.requestId === active.id) {
       active.cancelled = true;
       if (!active.inFlight) return;
@@ -430,6 +432,7 @@ export function replayBridge({ input, output, clock = realClock }) {
   const close = () => {
     if (ended) return;
     ended = true;
+    onClose?.();
     if (active) active.cancelled = true;
     for (const resolve of internal.values()) resolve({ error: { message: 'The replay connection closed. Read the window before acting.' } });
     internal.clear();

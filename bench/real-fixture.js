@@ -37,38 +37,72 @@ function runningPid(target) {
   return value;
 }
 
-function runningStart(target) {
-  var date = target && target.launchDate;
-  if (!date || (date.isNil && date.isNil())) return null;
-  var value = Number(date.timeIntervalSince1970) * 1000;
-  return isFinite(value) && value > 0 ? value : null;
+function finderBirthParts(value) {
+  if (typeof value !== 'string') return null;
+  var match = /^([1-9][0-9]{0,15})\.([0-9]{6})$/.exec(value);
+  if (!match || match[0] !== value || Number(match[1]) > 9007199254740991) return null;
+  return [Number(match[1]), Number(match[2])];
 }
 
-function finderOriginalExited(original, receipt) {
-  if (!original || !original.isTerminated) return false;
+var finderBirthBound = false;
+// Same PROC_PIDTBSDINFO layout as real-electron.js. Keep microseconds exact:
+// AppKit launchDate can be absent and rounded milliseconds cannot bind a PID.
+function finderProcessBirth(pid) {
+  if (typeof pid !== 'number' || !(pid > 0) || pid > 2147483647 || Math.floor(pid) !== pid) return null;
+  try {
+    if (!finderBirthBound) {
+      ObjC.bindFunction('proc_pidinfo', ['int', ['int', 'int', 'unsigned long long', 'void *', 'int']]);
+      finderBirthBound = true;
+    }
+    var data = $.NSMutableData.dataWithLength(136);
+    if (Number($.proc_pidinfo(pid, 3, 0, data.mutableBytes, 136)) !== 136) return null;
+    var encoded = String(ObjC.unwrap(data.base64EncodedStringWithOptions(0)));
+    if (!/^[A-Za-z0-9+/]{182}==$/.test(encoded) || encoded.length !== 184) return null;
+    var alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', bytes = [], bits = 0, value = 0;
+    for (var i = 0; i < encoded.length - 2; i++) {
+      value = value << 6 | alphabet.indexOf(encoded[i]); bits += 6;
+      if (bits >= 8) { bits -= 8; bytes.push(value >> bits & 255); }
+    }
+    if (bytes.length !== 136) return null;
+    function u32(at) { return bytes[at] + bytes[at + 1] * Math.pow(2, 8) + bytes[at + 2] * Math.pow(2, 16) + bytes[at + 3] * Math.pow(2, 24); }
+    function u64(at) { return u32(at) + u32(at + 4) * Math.pow(2, 32); }
+    if (u32(12) !== pid || u32(4) === 5) return null;
+    var seconds = u64(120), micros = u64(128);
+    if (!(seconds > 0) || seconds > 9007199254740991 || Math.floor(seconds) !== seconds ||
+        micros < 0 || micros > 999999 || Math.floor(micros) !== micros) return null;
+    return seconds + '.' + ('000000' + micros).slice(-6);
+  } catch (error) { return null; }
+}
+
+function finderOriginalExited(original, receipt, birth) {
+  if (!original || !original.isTerminated || !finderBirthParts(receipt.pidBirth)) return false;
   var current = $.NSRunningApplication.runningApplicationWithProcessIdentifier(receipt.pid);
   if (!current || (current.isNil && current.isNil()) || current.isTerminated) return true;
-  var started = runningStart(current);
-  return started !== null && started !== receipt.startedAtMs;
+  var started = (birth || finderProcessBirth)(receipt.pid);
+  return finderBirthParts(started) !== null && started !== receipt.pidBirth;
 }
 
 // Three slow AXCannotComplete responses authorize one recovery of this exact
 // Finder incarnation. A PID alone cannot carry timeout evidence across launches.
 function ensureFinderAX(api, clock) {
-  var target, original, receipt, code, timeouts = 0;
-  function failure(message) {
-    return Object.assign(new Error('Finder AX ' + message), { code: code, attribute: 'AXWindows', finderAX: true });
+  var target, original, receipt, code, timeouts = 0, birth = api.birth || finderProcessBirth;
+  function failure(message, identityReason) {
+    return Object.assign(new Error('Finder AX ' + message), { code: code, attribute: 'AXWindows', finderAX: true, identityReason: identityReason });
   }
   function identity(value) {
-    var pid = runningPid(value), startedAtMs = runningStart(value);
-    if (!value || runningBundle(value) !== 'com.apple.finder' || !(pid > 0) || !isFinite(pid) || Math.floor(pid) !== pid || startedAtMs === null)
-      throw failure('process identity unavailable');
-    return { pid: pid, startedAtMs: startedAtMs };
+    var pid = runningPid(value);
+    if (!value) throw failure('process identity unavailable', 'target-unavailable');
+    if (runningBundle(value) !== 'com.apple.finder') throw failure('process identity unavailable', 'bundle-mismatch');
+    if (!(pid > 0) || !isFinite(pid) || Math.floor(pid) !== pid) throw failure('process identity unavailable', 'pid-invalid');
+    var pidBirth = birth(pid);
+    if (!finderBirthParts(pidBirth)) throw failure('process identity unavailable', 'start-unavailable');
+    return { pid: pid, pidBirth: pidBirth };
   }
   function same(value, expected) {
     var actual = identity(value);
-    if (actual.pid !== expected.pid || actual.startedAtMs !== expected.startedAtMs || value.isTerminated)
-      throw failure('process changed during probes or before relaunch');
+    if (actual.pid !== expected.pid) throw failure('process changed during probes or before relaunch', 'pid-changed');
+    if (actual.pidBirth !== expected.pidBirth) throw failure('process changed during probes or before relaunch', 'start-changed');
+    if (value.isTerminated) throw failure('process changed during probes or before relaunch', 'terminated');
     return value;
   }
   for (var attempt = 0; attempt < 3; attempt++) {
@@ -89,26 +123,29 @@ function ensureFinderAX(api, clock) {
   clock.check();
   var current = same(api.application(), receipt);
   var deadline = clock.now() + 30000;
-  clock.emit({ stage: 'finder-relaunch', finderRelaunch: { reason: 'three AXWindows timeouts', pid: receipt.pid, startedAtMs: receipt.startedAtMs } });
+  clock.emit({ stage: 'finder-relaunch', finderRelaunch: { reason: 'three AXWindows timeouts', pid: receipt.pid, pidBirth: receipt.pidBirth } });
   current = same(api.application(), receipt);
   clock.check();
   current = same(api.application(), receipt);
   if (!current.forceTerminate) throw failure('force termination refused');
   while (clock.now() < deadline) {
     clock.check();
-    var exited = (api.exited || finderOriginalExited)(original, receipt) === true;
+    var exited = (api.exited || finderOriginalExited)(original, receipt, birth) === true;
     target = api.application();
     if (exited && target && runningPid(target) !== receipt.pid) {
       var successor = identity(target);
-      if (successor.startedAtMs <= receipt.startedAtMs) throw failure('successor start time unconfirmed');
+      if (target.isTerminated) throw failure('process changed during probes or before relaunch', 'terminated');
+      var nextBirth = finderBirthParts(successor.pidBirth), previousBirth = finderBirthParts(receipt.pidBirth);
+      if (nextBirth[0] < previousBirth[0] || nextBirth[0] === previousBirth[0] && nextBirth[1] <= previousBirth[1])
+        throw failure('successor start time unconfirmed');
       if (clock.now() >= deadline) break;
       code = api.probe(target, Math.min(0.5, (deadline - clock.now()) / 1000));
       clock.check();
       same(api.application(), successor);
-      if (!(api.exited || finderOriginalExited)(original, receipt)) throw failure('original exit unconfirmed');
+      if (!(api.exited || finderOriginalExited)(original, receipt, birth)) throw failure('original exit unconfirmed');
       if (code === 0 && clock.now() <= deadline) {
         clock.emit({ stage: 'finder-recovered', finderRecovery: { originalExitConfirmed: true,
-          fromPid: receipt.pid, fromStartedAtMs: receipt.startedAtMs, toPid: successor.pid, toStartedAtMs: successor.startedAtMs } });
+          fromPid: receipt.pid, fromPidBirth: receipt.pidBirth, toPid: successor.pid, toPidBirth: successor.pidBirth } });
         return target;
       }
     }
@@ -1748,7 +1785,7 @@ function run(argv) {
       emit({ stage: 'setup-failure', fresh: state.fresh, running: running, setupCase: state.setupCase, actionTaken: state.actionTaken, pid: pid,
         pids: pids.slice(), processHandoff: processHandoff, cleanup: cleanup, cleanupError: cleanupError,
         finderAXError: request.bundle === 'com.apple.finder' && (error.finderAX || [-25204, -25205].indexOf(error.code) !== -1)
-          ? { code: error.code, attribute: error.attribute } : undefined,
+          ? { code: error.code, attribute: error.attribute, identityReason: error.identityReason } : undefined,
         totalWaitMs: state.retryWaitMs, readWait: state.readWait, launchWait: state.launchWait });
     }
     throw error;

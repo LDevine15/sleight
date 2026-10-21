@@ -194,7 +194,17 @@ export const CELLS = Object.freeze([
     if (after.pid !== before.pid || after.pidBirth !== before.pidBirth) fail('IDENTITY_CHANGED');
     return { detail: { openRefused: true, ...refused } };
   } },
-  { id: 'new-window', apps: ['vscode'], editor: true, input: 'record', async run(c) {
+  { id: 'new-window', apps: ['vscode'], editor: true, input: 'record',
+    async prepare(c) {
+      const setup = await c.driver.nativeSecondWindow(), expected = setup?.windows;
+      if (!Array.isArray(expected) || expected.length !== 2 || new Set(expected).size !== 2) fail('MULTI_WINDOW_UNMEASURED');
+      const joined = await c.until(async () => {
+        const rows = (await c.list()).filter(row => !row.parked);
+        return rows.length === 2 && new Set(rows.map(row => row.window)).size === 2 && rows.every(row => expected.includes(row.window));
+      }, 10000);
+      if (!joined) fail('MULTI_WINDOW_UNMEASURED');
+      return { created: setup.created, windows: expected };
+    }, async run(c) {
     // Creating a native window can activate the app. Turbo must hand that key back to the native path.
     // Joining multiple already-open fixture windows is a separate requirement, never satisfied by a refusal alone.
     const owners = await c.driver.ownerInstances(), before = (await c.list()).filter(row => !row.parked);
@@ -514,9 +524,10 @@ async function runCell(cell, c, { driver, observer, clock }) {
   let preparationError;
   if (cell.prepare) {
     const started = clock.now();
-    try { await cell.prepare(c); }
+    let detail;
+    try { detail = await cell.prepare(c); }
     catch (error) { preparationError = error; }
-    record.setup = { ms: clock.now() - started, ...(preparationError ? { error: preparationError.message } : {}) };
+    record.setup = { ms: clock.now() - started, ...(detail ? { detail } : {}), ...(preparationError ? { error: preparationError.message } : {}) };
   }
   if (cell.input) {
     const id = driver.identity();
@@ -546,8 +557,8 @@ async function runCell(cell, c, { driver, observer, clock }) {
   const samples = await observer.samples(start, end);
   const fixturePids = driver.fixturePids?.() ?? [];
   const evidence = backgroundEvidence(samples, { startMs: start, endMs: end, fixturePid: id?.pid, fixturePids });
-  // EQ1c permits only the benchmark VS Code's initial direct exec, never input or the product relaunch flow.
-  const launches = !c.options.relaunch && c.app.key === 'vscode' && cell.id === 'consent-card' && !cell.input
+  // The owner permits these benchmark direct launches, bounded by the measured first window plus two seconds.
+  const launches = !c.options.relaunch && c.app.key === 'vscode' && ['consent-card', 'host-kill'].includes(cell.id) && !cell.input
     ? (driver.launchWindows?.() ?? []).filter(w => Number.isFinite(w.execMs) && Number.isFinite(w.firstWindowMs) &&
       w.execMs >= start && w.firstWindowMs >= w.execMs && w.endMs === w.firstWindowMs + 2000 &&
       w.endMs <= end && (w.pid === id?.pid || fixturePids.includes(w.pid)) &&
@@ -651,7 +662,7 @@ export function validateReceipt(receipt, { required = requiredCells(appFor(recei
     else if (cell.status === 'fail') unqualified.push('CELL_FAILED:' + cell.id);
     else if (cell.status !== 'pass') errors.push('CELL_STATUS_INVALID:' + cell.id);
     if (cell.id === 'new-window' && cell.status === 'pass' &&
-        (!(cell.detail?.joined >= 2) || cell.detail?.falseJoins !== 0 || new Set((cell.windows ?? []).map(w => w.id)).size < 2))
+        (cell.detail?.joined !== 2 || cell.detail?.falseJoins !== 0 || new Set((cell.windows ?? []).map(w => w.id)).size !== 2))
       unqualified.push('MULTI_WINDOW_UNMEASURED');
     for (const w of cell.windows ?? []) {
       const owner = `${w.pid}/${w.pidBirth}`;

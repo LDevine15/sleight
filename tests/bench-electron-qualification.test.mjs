@@ -65,8 +65,9 @@ test('a missing terminal ref cannot leave subsequent cells typing into the termi
 
 test('window creation must refuse without input focus, and one window cannot qualify multi-window joins', async () => {
   const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.nativeSecondWindow = async () => {};
   const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
-    cells: CELLS.filter(cell => ['consent-card', 'list', 'new-window'].includes(cell.id)) });
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'new-window'].includes(cell.id)).map(cell => ({ ...cell, prepare: undefined })) });
   const row = receipt.cells.at(-1);
   assert.equal(row.status, 'pass', row.error);
   assert.equal(row.detail.windowCreationRefused, true);
@@ -77,6 +78,12 @@ test('window creation must refuse without input focus, and one window cannot qua
       windows: [{ id: 77, epoch: 1, pid: 501, pidBirth: 'b1' }] })]), { required: ['new-window'] });
     assert.ok(verdict.unqualified.includes('MULTI_WINDOW_UNMEASURED'), JSON.stringify(detail));
   }
+});
+
+test('three joined windows cannot substitute for the two owned fixture windows', () => {
+  const receipt = receiptWith([passed('new-window', { detail: { joined: 3, falseJoins: 0 },
+    windows: [77, 78, 79].map(id => ({ id, epoch: 1, pid: 501, pidBirth: 'b1' })) })]);
+  assert.ok(validateReceipt(receipt, { required: ['new-window'] }).unqualified.includes('MULTI_WINDOW_UNMEASURED'));
 });
 
 test('cold act timing restores the editor before reconnecting, so Escape is the first action of the new turn', async () => {
@@ -97,6 +104,81 @@ test('cold act timing restores the editor before reconnecting, so Escape is the 
   assert.deepEqual(firstActions.at(-1), { do: 'press', key: 'Escape' });
   assert.equal(receipt.timings.act.cold.n, 1);
 });
+
+test('native second-window preparation finishes before measurement and Turbo still refuses creating a window', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now }), tool = driver.tool;
+  let prepared = false;
+  driver.nativeSecondWindow = async () => { c.advance(300); prepared = true; return { created: true, windows: [4100, 4101] }; };
+  driver.tool = async (name, args) => {
+    const result = await tool(name, args);
+    if (name === 'browser_tabs' && prepared) result.text += '\nt00000000000000000000000000001005 Visual Studio Code window 4101 joined join 1';
+    return result;
+  };
+  driver.windowOwners = async ids => Object.fromEntries(ids.map(id => [id, driver.identity().pid]));
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'new-window'].includes(cell.id)) });
+  const row = receipt.cells.at(-1);
+  assert.equal(prepared, true);
+  assert.equal(row.setup.ms, 300);
+  assert.equal(row.startMs, 1300);
+  assert.equal(row.status, 'pass', row.error);
+  assert.equal(row.detail.joined, 2);
+  assert.equal(row.detail.falseJoins, 0);
+  assert.equal(row.detail.windowCreationRefused, true);
+  assert.equal(new Set(row.windows.map(window => window.id)).size, 2);
+});
+
+test('failed native window preparation prevents the measured Turbo action', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.nativeSecondWindow = async () => { throw Error('WINDOW_SETUP_IDENTITY_CHANGED'); };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'new-window'].includes(cell.id)) });
+  assert.equal(receipt.cells.at(-1).error, 'WINDOW_SETUP_IDENTITY_CHANGED');
+  assert.equal(driver.calls.some(call => call.args.steps?.some(step => step.key === 'Meta+Shift+N')), false);
+});
+test('second-window setup waits for both renderer joins before the measured refusal', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now }), tool = driver.tool, native = driver.nativeSecondWindow;
+  let setup = false, lists = 0;
+  driver.nativeSecondWindow = async () => { const result = await native(); setup = true; return result; };
+  driver.tool = async (name, args) => {
+    const result = await tool(name, args);
+    if (setup && name === 'browser_tabs' && ++lists < 3) result.text = result.text.split('\n')[0];
+    return result;
+  };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'new-window'].includes(cell.id)) });
+  const row = receipt.cells.at(-1);
+  assert.equal(row.status, 'pass', row.error);
+  assert.equal(row.setup.ms, 200);
+  assert.equal(row.startMs, 1200);
+  assert.equal(row.detail.joined, 2);
+});
+
+test('host-kill permits only its measured owned direct launch through first window plus two seconds', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.fixturePids = () => [501];
+  driver.launchWindows = () => [{ pid: 501, execMs: 1050, firstWindowMs: 1200, endMs: 3200 }];
+  const receipt = await runQualification({ app: APPS.vscode, driver,
+    observer: fakeObserver({ now: c.now, fixturePid: () => 501, front: t => t >= 1050 && t <= 3200 ? 501 : 90 }), io: quietIo(), clock: c,
+    cells: [{ id: 'host-kill', run: async () => { c.advance(2300); } }] });
+  assert.equal(receipt.cells[0].status, 'pass', receipt.cells[0].error);
+  assert.equal(receipt.cells[0].background.unexpectedFixtureFront, 0);
+  assert.equal(receipt.launchFindings.length, 1);
+});
+
+for (const scenario of ['before-exec', 'after-cutoff', 'missing-window', 'wrong-pid', 'input'])
+  test(`host-kill direct launch allowance rejects ${scenario}`, async () => {
+    const c = clock(), driver = fakeDriver({ now: c.now });
+    driver.fixturePids = () => [501];
+    driver.launchWindows = () => [{ pid: scenario === 'wrong-pid' ? 999 : 501, execMs: 1050,
+      firstWindowMs: scenario === 'missing-window' ? null : 1200, endMs: 3200 }];
+    const at = scenario === 'before-exec' ? 1000 : scenario === 'after-cutoff' ? 3250 : 1200;
+    const receipt = await runQualification({ app: APPS.vscode, driver,
+      observer: fakeObserver({ now: c.now, fixturePid: () => 501, front: t => t === at ? 501 : 90 }), io: quietIo(), clock: c,
+      cells: [{ id: 'host-kill', input: scenario === 'input', run: async () => { c.advance(2300); } }] });
+    assert.equal(receipt.cells[0].status, 'fail');
+    assert.match(receipt.cells[0].error, /BACKGROUND_FOCUS_TAKEN/);
+  });
 
 for (const target of ['key', 'webview']) test(`${target} waits for the intended selected document instead of using a previous editor`, async () => {
   const c = clock(), driver = fakeDriver({ now: c.now }), tool = driver.tool;

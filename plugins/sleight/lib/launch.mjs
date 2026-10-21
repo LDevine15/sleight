@@ -921,6 +921,41 @@ export function shellRelayOptions(dialog, card = createPaymentCard()) {
   };
 }
 
+// Only the fixed socket relay supplies this envelope field. Tool arguments are
+// never deadline authority, and the private envelope is removed before forwarding.
+export function shellCardContext({ now = Date.now, clock = { setTimeout, clearTimeout } } = {}) {
+  const calls = new Map();
+  let closed = false;
+  const end = id => {
+    const call = calls.get(id);
+    if (!call) return;
+    calls.delete(id); clock.clearTimeout(call.timer); call.controller.abort();
+  };
+  return {
+    current: () => !closed && calls.size === 1 ? calls.values().next().value.context : undefined,
+    onRequest(message) {
+      if (message.method === 'notifications/cancelled') { end(message.params?.requestId); return; }
+      if (message.method !== 'tools/call' || message.id === undefined) return;
+      const supplied = message.params?._meta?.sleightShellDeadline;
+      if (message.params?._meta) {
+        delete message.params._meta.sleightShellDeadline;
+        if (!Object.keys(message.params._meta).length) delete message.params._meta;
+      }
+      end(message.id);
+      if (closed) return;
+      const controller = new AbortController();
+      const deadline = Number.isFinite(supplied) ? Math.min(supplied, now() + 300000) : now();
+      const context = Object.freeze({ deadline, signal: controller.signal });
+      const timer = clock.setTimeout(() => controller.abort(), Math.max(0, deadline - now()));
+      timer?.unref?.();
+      calls.set(message.id, { context, controller, timer });
+      if (deadline <= now()) controller.abort();
+    },
+    onReply: message => end(message.id),
+    onClose() { closed = true; for (const id of calls.keys()) end(id); },
+  };
+}
+
 // The fixed trusted host authenticates opt-in and package before binding a
 // branded frontend. Environment and project settings cannot supply one.
 export function directBrowserServer(server, frontend) {
@@ -1039,7 +1074,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   let s = directBrowserServer(resolveServer(), directBrowser);
   if (s.error) fail(s.error);
   if (!existsSync(s.command)) fail(`server runtime missing: ${s.command}`);
-  let surfaceCache, child, childClosed, firstCallObserver, relay;
+  let surfaceCache, child, childClosed, firstCallObserver, relay, paymentCard;
   let stopping = false, deadCleanup;
   let stoppingForReceipt = false;
   let terminating = false;
@@ -1080,6 +1115,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
       relay?.engineEnded(startError ? `Could not start engine: ${startError.message}`
         : `Engine exited (${signal ?? code ?? 'unknown'}).`);
       if (stopping) {
+        await paymentCard?.close?.();
         await stopHelpers(); await appHealth.close(); await relay.close(); process.exit(code ?? 0);
       }
       // The launcher outlives an engine that died unplanned, so stop its helpers as a Stop does (the relay revokes
@@ -1109,10 +1145,15 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
   let appHealth = healthHelperFactory();
   const openedFiles = new Map();
   process.once('exit', () => appHealth.close());
-  const replayClient = replayBridge({ input: process.stdin, output: process.stdout });
-  const paymentCard = paymentCardFactory(shellRoute ? { presentation: { icon: ICON }, onStatus: params => {
+  const cardContext = shellRoute ? shellCardContext() : undefined;
+  const replayClient = replayBridge({ input: process.stdin, output: process.stdout, ...cardContext });
+  paymentCard = paymentCardFactory(shellRoute ? { presentation: { icon: ICON },
+    requestContext: cardContext.current, prepareTimeoutMs: 175000, onStatus: params => {
     replayClient.clientOut.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/sleight/approval', params }) + '\n');
   } } : undefined);
+  // Compilation checks for installed Apple tools before xcrun and starts no UI.
+  // The first request joins this work; startup does not wait for a cold compiler.
+  if (shellRoute) void paymentCard.prepare?.();
   const approval = shellRoute ? shellRelayOptions(undefined, paymentCard) : approvalOptions();
   const { wording, ...promptOptions } = approval;
   relay = createRelay({
@@ -1264,6 +1305,8 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     await startupReady;
     if (stopping) return;
     stopping = true;
+    cardContext?.onClose();
+    const cardClosed = paymentCard.close?.();
     trace?.('stop-entry', { signal });
     // Begin the deadline before draining, not after an unanswered call.
     const deadline = setTimeout(() => terminateEngine(signal), 3000);
@@ -1274,6 +1317,7 @@ export async function run({ leaseDirectory, inspectInput: inspectStoppedInput, h
     if (ended !== false) clearTimeout(deadline);
     terminateEngine(signal);
     await childClosed;
+    await cardClosed;
     await stopHelpers(); await appHealth.close(); await relay.close(); process.exit(0);
   }
   finishStartup();

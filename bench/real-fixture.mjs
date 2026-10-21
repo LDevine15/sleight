@@ -18,6 +18,7 @@ const finderEnums = {
   cleanup: ['nothing created', 'closed retained fixture', 'unconfirmed'],
   setupCase: ['already-running', 'cold-launch'], attribute: ['AXWindows', 'AXRole', 'AXValue', 'AXFocusedWindow'],
   reason: ['three AXWindows timeouts', 'malformed-list', 'missing-element', 'failed-self-identity', 'non-window-or-stale', 'duplicate-identity'],
+  identityReason: ['target-unavailable', 'bundle-mismatch', 'pid-invalid', 'start-unavailable', 'pid-changed', 'start-changed', 'terminated'],
   role: ['AXWindow', 'AXSheet', 'AXDialog', 'AXGroup', 'AXButton'], phase: ['cleanup', 'observation'],
   command: ['new-window', 'go-to-folder'], menuCancelMethod: ['AXCancel'],
 };
@@ -27,11 +28,14 @@ const finderFlags = new Set(['running', 'launched', 'fresh', 'actionTaken', 'ref
   'windowCleanupConfirmed', 'helperCollectionConfirmed', 'menuCancelled', 'finished', 'titleMatches', 'appQuit', 'stop']);
 const finderObjects = new Set(['finderRelaunch', 'finderRecovery', 'finderAXError', 'readiness', 'appDialog', 'diagnostic']);
 const finderLists = new Set(['menuCommands', 'retries', 'cleanupRetries', 'observationRetries']);
+const finderBirths = new Set(['pidBirth', 'fromPidBirth', 'toPidBirth']);
 export function finderDiagnostic(value, depth = 0) {
   const safe = {};
   if (!value || typeof value !== 'object' || depth > 6) return safe;
   for (const [key, item] of Object.entries(value)) {
     if (Array.isArray(finderEnums[key]) && finderEnums[key].includes(item)) safe[key] = item;
+    else if (finderBirths.has(key) && typeof item === 'string' && /^[1-9][0-9]{0,15}\.[0-9]{6}$/.test(item) &&
+      item.length === item.trim().length && Number.isSafeInteger(Number(item.split('.')[0]))) safe[key] = item;
     else if (finderNumbers.has(key) && typeof item === 'number' && Number.isFinite(item)) safe[key] = item;
     else if (finderFlags.has(key) && typeof item === 'boolean') safe[key] = item;
     else if (['cleanupError', 'menuCleanupError', 'closeFailure'].includes(key) && item) safe[key] = true;
