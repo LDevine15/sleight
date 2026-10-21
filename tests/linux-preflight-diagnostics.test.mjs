@@ -98,6 +98,10 @@ test('host receipt keeps only validated diagnostics and rejects a passing receip
   await git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'Fixture', '--', 'README']);
   const head = await git(['rev-parse', 'HEAD']);
   const failure = { stage: 'git-head', code: 'child-failed', childExitCode: 128, reason: 'unsafe-repository' };
+  const copyFailure = { stage: 'prepare', code: 'exception', errorCode: 'ERR_FS_CP_EEXIST', copy: {
+    nodeVersion: 'v24.19.0', destination: { state: 'empty', count: 0 },
+    collision: { location: 'descendant', area: '.git', pathSha256: 'a'.repeat(64) },
+  } };
   for (const [diagnostic, passing, expected] of [
     [{ ...failure, stderr: privateText, error: privateText, path: privateText }, false, failure],
     [{ ...failure, stage: privateText }, false, undefined],
@@ -105,6 +109,15 @@ test('host receipt keeps only validated diagnostics and rejects a passing receip
     [{ ...failure, stage: ['git-head'] }, false, undefined],
     [{ ...failure, reason: privateText }, false, undefined],
     [failure, true, failure],
+    [{ ...copyFailure, copy: { ...copyFailure.copy, path: privateText } }, false, copyFailure],
+    [{ ...copyFailure, copy: { ...copyFailure.copy, nodeVersion: privateText } }, false, undefined],
+    [{ ...copyFailure, copy: { ...copyFailure.copy, nodeVersion: ['v24.19.0'] } }, false, undefined],
+    [{ ...copyFailure, copy: { ...copyFailure.copy, nodeVersion: 'v24.19.0\n' } }, false, undefined],
+    [{ ...copyFailure, copy: { ...copyFailure.copy, destination: { state: 'empty', count: 1 } } }, false, undefined],
+    [{ ...copyFailure, copy: { ...copyFailure.copy, collision: { location: 'descendant', area: '.git', pathSha256: privateText } } }, false, undefined],
+    [{ ...copyFailure, copy: { ...copyFailure.copy, collision: { location: 'descendant', area: '.git', pathSha256: ['a'.repeat(64)] } } }, false, undefined],
+    [{ ...copyFailure, copy: { ...copyFailure.copy, collision: { location: 'descendant', area: '.git', pathSha256: 'a'.repeat(64) + '\n' } } }, false, undefined],
+    [{ ...copyFailure, copy: { ...copyFailure.copy, collision: { location: 'descendant', area: privateText, pathSha256: 'a'.repeat(64) } } }, false, undefined],
   ]) {
     let name;
     const result = await runLinuxPreflight({ worktree, commit: head, log() {}, execute: async (command, args, options) => {

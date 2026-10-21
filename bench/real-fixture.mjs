@@ -13,7 +13,7 @@ const script = fileURLToPath(new URL('./real-fixture.js', import.meta.url));
 // Titles, paths, dialog text and raw helper output never enter this schema.
 const finderEnums = {
   stage: ['identified', 'identified-process', 'armed', 'ready', 'closed', 'setup-failure', 'untouched', 'action', 'retry',
-    'finder-relaunch', 'finder-recovered', 'finder-window-retained', 'finder-folder-submitted', 'menu-items', 'menu-cancel', 'readiness'],
+    'finder-relaunch', 'finder-recovered', 'finder-window-retained', 'finder-folder-submitted', 'finder-failure', 'menu-items', 'menu-cancel', 'readiness'],
   app: ['Finder'], bundle: ['com.apple.finder'], observedBundle: ['com.apple.finder'],
   cleanup: ['nothing created', 'closed retained fixture', 'unconfirmed'],
   setupCase: ['already-running', 'cold-launch'], attribute: ['AXWindows', 'AXRole', 'AXValue', 'AXFocusedWindow'],
@@ -21,15 +21,27 @@ const finderEnums = {
   identityReason: ['target-unavailable', 'bundle-mismatch', 'pid-invalid', 'start-unavailable', 'pid-changed', 'start-changed', 'terminated'],
   role: ['AXWindow', 'AXSheet', 'AXDialog', 'AXGroup', 'AXButton'], phase: ['cleanup', 'observation'],
   roleReadCode: [0, -25212, -25202, 'other'], roleState: ['nil', 'empty', 'known-nonwindow', 'other-string', 'nonstring'],
+  roleKnown: ['AXApplication', 'AXSystemWide', 'AXWindow', 'AXSheet', 'AXDrawer', 'AXDialog', 'AXGroup', 'AXButton', 'AXScrollArea', 'AXUnknown'],
   roleNativeType: ['cf-string', 'other', 'unavailable'], roleNativeWindowEqual: ['yes', 'no', 'unavailable'],
   roleDeepWindowEqual: ['yes', 'no', 'unavailable'],
+  failureReason: ['unclassified', 'ledger-unconfirmed', 'inventory-unconfirmed', 'baseline-changed', 'previous-absent',
+    'window-before-new-command', 'new-window-ambiguous', 'new-window-unconfirmed', 'new-window-identity-changed', 'foreign-dialog',
+    'window-vanished', 'window-focus-lost', 'window-focus-changed', 'focused-ancestry-unconfirmed', 'menu-unavailable',
+    'menu-item-unavailable', 'ax-read-failed', 'ax-press-failed', 'ax-write-failed', 'opening-interrupted', 'retained-reference-unavailable',
+    'fixture-location-mismatch', 'fixture-ownership-unconfirmed', 'extra-window-unconfirmed', 'fixture-identity-changed',
+    'fixture-still-open', 'dialog-present', 'menu-cancel-target-unconfirmed', 'menu-cancel-failed', 'cancellation-app-identity-lost'],
+  errorName: ['unavailable', 'other', 'Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'EvalError',
+    'NSInvalidArgumentException', 'NSRangeException', 'NSInternalInconsistencyException', 'NSUnknownKeyException', 'NSGenericException'],
+  errorCode: ['unavailable', 'other', 0, -25200, -25201, -25202, -25203, -25204, -25205, -25206, -25207, -25208, -25209,
+    -25210, -25211, -25212, -25213, -25214],
   command: ['new-window', 'go-to-folder'], menuCancelMethod: ['AXCancel'],
 };
 const finderNumbers = new Set(['pid', 'fromPid', 'toPid', 'startedAtMs', 'fromStartedAtMs', 'toStartedAtMs',
   'processStartedAtMs', 'code', 'count', 'index', 'duplicateIndex', 'axCode', 'waitMs', 'totalWaitMs', 'elapsedMs', 'enabled']);
 const finderFlags = new Set(['running', 'launched', 'fresh', 'actionTaken', 'referenceExported', 'originalExitConfirmed', 'appAbsent',
   'windowCleanupConfirmed', 'helperCollectionConfirmed', 'menuCancelled', 'finished', 'titleMatches', 'appQuit', 'stop']);
-const finderObjects = new Set(['finderRelaunch', 'finderRecovery', 'finderAXError', 'readiness', 'appDialog', 'diagnostic']);
+const finderObjects = new Set(['finderRelaunch', 'finderRecovery', 'finderAXError', 'finderFailure', 'finderCleanupFailure',
+  'finderMenuCleanupFailure', 'readiness', 'appDialog', 'diagnostic']);
 const finderLists = new Set(['menuCommands', 'retries', 'cleanupRetries', 'observationRetries']);
 const finderBirths = new Set(['pidBirth', 'fromPidBirth', 'toPidBirth']);
 export function finderDiagnostic(value, depth = 0) {
@@ -64,6 +76,8 @@ export function finderFailureDiagnostic(error) {
   if (roleReadCode) diagnostic.roleReadCode = roleReadCode[1] === 'other' ? 'other' : Number(roleReadCode[1]);
   const roleState = /(?: |\[)roleState=(nil|empty|known-nonwindow|other-string|nonstring)(?=[ \]])/.exec(text);
   if (roleState) diagnostic.roleState = roleState[1];
+  const roleKnown = /(?: |\[)roleKnown=(AXApplication|AXSystemWide|AXWindow|AXSheet|AXDrawer|AXDialog|AXGroup|AXButton|AXScrollArea|AXUnknown)(?=[ \]])/.exec(text);
+  if (roleKnown) diagnostic.roleKnown = roleKnown[1];
   for (const [key, values] of [['roleNativeType', 'cf-string|other|unavailable'], ['roleNativeWindowEqual', 'yes|no|unavailable'],
     ['roleDeepWindowEqual', 'yes|no|unavailable']]) {
     const match = new RegExp('(?: |\\[)' + key + '=(' + values + ')(?=[ \\]])').exec(text);
@@ -73,8 +87,9 @@ export function finderFailureDiagnostic(error) {
   if (ax) { diagnostic.code = Number(ax[1]); diagnostic.attribute = ax[2]; }
   return diagnostic;
 }
-function finderHelperFailure(error) {
+function finderHelperFailure(error, failure) {
   const diagnostic = finderFailureDiagnostic(error);
+  Object.assign(diagnostic, finderDiagnostic({ finderFailure: failure }).finderFailure);
   return 'Finder helper failed' + (Object.keys(diagnostic).length ? ' [' + Object.entries(diagnostic).map(([k, v]) => `${k}=${v}`).join(' ') + ']' : '');
 }
 
@@ -352,7 +367,7 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
             diagnostics[event.phase + 'TotalWaitMs'] = event.totalWaitMs;
           } else diagnostics.retries.push(retry);
         }
-        for (const key of ['finderRelaunch', 'finderRecovery', 'finderAXError', 'fixtureWindow', 'menuCleanup', 'menuCleanupError', 'menuCleared', 'menuEscapePid', 'windows', 'fresh', 'totalWaitMs', 'actionTaken', 'cleanup', 'cleanupError', 'menuCancelled', 'menuCancelMethod', 'menuItems', 'menuCommands', 'readiness', 'navigation', 'creation', 'foregroundFallback', 'launchWait', 'readWait', 'cleanupReadWait', 'observationReadWait', 'setupCase', 'inheritReady', 'placement']) {
+        for (const key of ['finderRelaunch', 'finderRecovery', 'finderAXError', 'finderFailure', 'finderCleanupFailure', 'finderMenuCleanupFailure', 'fixtureWindow', 'menuCleanup', 'menuCleanupError', 'menuCleared', 'menuEscapePid', 'windows', 'fresh', 'totalWaitMs', 'actionTaken', 'cleanup', 'cleanupError', 'menuCancelled', 'menuCancelMethod', 'menuItems', 'menuCommands', 'readiness', 'navigation', 'creation', 'foregroundFallback', 'launchWait', 'readWait', 'cleanupReadWait', 'observationReadWait', 'setupCase', 'inheritReady', 'placement']) {
           if (event[key] !== undefined) diagnostics[key] = event[key];
         }
         ctx.onFixtureDiagnostics?.(diagnostics);
@@ -364,8 +379,8 @@ export async function openFixture(ctx, request, { run = runOwned, open = execute
       stdout: String(result.stdout ?? '').split('\n').flatMap(line => {
         try { return [JSON.stringify(finderDiagnostic(JSON.parse(line)))]; } catch { return []; }
       }).join('\n'),
-      stderr: result.stderr ? finderHelperFailure(result.stderr) : '',
-      error: result.error ? finderHelperFailure(result.error) : undefined,
+      stderr: result.stderr ? finderHelperFailure(result.stderr, diagnostics.finderFailure) : '',
+      error: result.error ? finderHelperFailure(result.error, diagnostics.finderFailure) : undefined,
     };
     completed = result; return result; }).finally(() => signal?.removeEventListener('abort', cancelSetup));
   const waitStage = async name => {

@@ -108,9 +108,10 @@ test('duplicate demand and missing event fail with retained diagnostic receipts'
   for (const fault of ['duplicate', 'missing']) {
     const root = temporary();
     try {
-      const receipt = await runProbe({ engine: mockEngine(), root, timeoutMs: 300, pollMs: 2, fault });
+      // Allow the same wall time as the successful FIFO cases. The next test covers expiry.
+      const receipt = await runProbe({ engine: mockEngine(), root, timeoutMs: 3000, pollMs: 2, fault });
       assert.equal(receipt.status, 'fail');
-      assert.match(receipt.failure.message, fault === 'duplicate' ? /duplicate/ : /missing|timeout/);
+      assert.match(receipt.failure.message, fault === 'duplicate' ? /duplicate/ : /missing/);
       assert.equal(receipt.retainedDiagnostic, true);
     } finally { rmSync(root, { recursive: true, force: true }); }
   }

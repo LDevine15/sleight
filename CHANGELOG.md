@@ -28,7 +28,9 @@
   It awaits child collection and confirms container cleanup after cancellation. An optional Colima wrapper keeps
   VM state and Docker configuration private, mounts only the prepared checkout, and verifies VM teardown.
   Sandbox and host attempts stopped before npm. Host VM and container cleanup was confirmed, but Linux tests
-  and cancellation during a test run remain unqualified. Failure receipts now report the stage and a bounded code.
+  and cancellation during a test run remain unqualified. Copy preparation failures report bounded diagnostics,
+  including destination state and a relative-path hash for recognized collisions. Docker starts outside the copy
+  destination so the guarded copy can create it. The overwrite guard is unchanged.
 - The preflight script checks versions, CHANGELOG and tag agreement, placeholders, private release-note data,
   history findings and Linux test evidence through the shared helper and receipt contract. Candidate mode accepts
   an unreleased heading and keeps `releaseReady: false`. Both modes verify the same clean commit through completion.
@@ -74,11 +76,15 @@
   Go to Folder sheet. Uncertain window ownership stops setup and keeps cleanup unconfirmed.
 - Finder smoke receipts record setup, foreground samples and cleanup. Inventory refusals include diagnostic
   details when available. Finder process identity uses the kernel's exact birth time when AppKit has no launch date.
-  The live retry passed identity checks, then stopped at the window-inventory guard before any action or relaunch.
-  The cleanup repair passed offline tests and review. Failure diagnostics now preserve closed metadata from the
-  existing role read, without adding probes or relaxing the window guard. The inventory failure remains unresolved. Setup, cancellation,
+  Native calibration corrected role-type diagnostics. Setup and cleanup preserve the complete baseline inventory,
+  including inert scroll areas, with stable reference identities and exact roles. Only new windows can become
+  fixture candidates. The latest smoke failed after menu selection and before retaining a window identity;
+  cleanup remains unconfirmed and the lock is retained. Setup, cancellation,
   cleanup ownership, lock retention and receipt privacy still need live qualification. The owner approved exclusive
   setup and the remaining window-focus assumption.
+- Finder failures preserve fixed reason categories and bounded native error metadata before stderr masking.
+  Separate setup, cleanup and menu-cleanup diagnostics exclude owner text. They cannot recover the earlier
+  discarded error or identify its unretained window.
 - GH8 remains blocked on supported action events for engine-persisted Always allow grants and correct retry/paste
   correlation. The partial pacing change stays unmerged. Existing visible-hand behavior and its off default remain unchanged.
 

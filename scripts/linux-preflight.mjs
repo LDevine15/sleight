@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdtempSync, opendirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, posix, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 const shaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const imagePattern = /^sha256:[a-f0-9]{64}$/;
@@ -103,6 +103,58 @@ function closedFailure(value) {
       result[key] = value[key];
     }
   }
+  if (Object.hasOwn(value, 'copy')) {
+    if (value.stage !== 'prepare' || value.code !== 'exception' || value.errorCode !== 'ERR_FS_CP_EEXIST') return null;
+    const copy = value.copy, destination = copy?.destination, collision = copy?.collision;
+    if (!(copy?.nodeVersion === 'unavailable' || typeof copy?.nodeVersion === 'string' && /^v\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(copy.nodeVersion))
+      || !['absent', 'empty', 'nonempty', 'unsafe', 'unavailable'].includes(destination?.state)
+      || !['destination-root', 'descendant', 'unavailable'].includes(collision?.location)) return null;
+    const closedDestination = { state: destination.state }, closedCollision = { location: collision.location };
+    if (['empty', 'nonempty'].includes(destination.state)) {
+      if (!Number.isInteger(destination.count) || destination.count < (destination.state === 'empty' ? 0 : 1)
+        || destination.count > (destination.state === 'empty' ? 0 : 256)) return null;
+      closedDestination.count = destination.count;
+    } else if (Object.hasOwn(destination, 'count')) return null;
+    if (collision.location === 'descendant') {
+      if (!['.git', 'tracked', 'other'].includes(collision.area) || typeof collision.pathSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(collision.pathSha256)) return null;
+      closedCollision.area = collision.area; closedCollision.pathSha256 = collision.pathSha256;
+    }
+    result.copy = { nodeVersion: copy.nodeVersion, destination: closedDestination, collision: closedCollision };
+  }
+  return result;
+}
+
+// Inspect only the owned copy root, with a bounded directory read and no symlink traversal.
+function copyDestinationState(root) {
+  let directory;
+  try {
+    const stat = lstatSync(root);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return { state: 'unsafe' };
+    directory = opendirSync(root);
+    let count = 0;
+    while (count < 256 && directory.readSync() !== null) count++;
+    return { state: count ? 'nonempty' : 'empty', count };
+  } catch (error) { return { state: error?.code === 'ENOENT' ? 'absent' : 'unavailable' }; }
+  finally { try { directory?.closeSync(); } catch {} }
+}
+
+// Native Node 24 puts the collision path only in this fixed message. Never return that text.
+function copyFailureDiagnostic(error, root, destination, nodeVersion) {
+  const result = { nodeVersion: typeof nodeVersion === 'string' && /^v\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(nodeVersion) ? nodeVersion : 'unavailable',
+    destination, collision: { location: 'unavailable' } };
+  try {
+    let path = typeof error?.path === 'string' ? error.path : error?.info?.path;
+    if (typeof path !== 'string') path = /^\[ERR_FS_CP_EEXIST\]: Target already exists: cp returned EEXIST \((.+) already exists\)$/.exec(error?.message ?? '')?.[1];
+    if (typeof path !== 'string' || /[\x00-\x1f\x7f]/.test(path) || !posix.isAbsolute(root) || root === '/'
+      || posix.normalize(root) !== root || !posix.isAbsolute(path) || posix.normalize(path) !== path) return result;
+    if (path === root) result.collision = { location: 'destination-root' };
+    else if (path.startsWith(`${root}/`)) {
+      const relative = path.slice(root.length + 1);
+      if (!relative || relative.split('/').some(part => !part || part === '.' || part === '..')) return result;
+      result.collision = { location: 'descendant', area: relative === '.git' || relative.startsWith('.git/') ? '.git' : 'other',
+        pathSha256: createHash('sha256').update(relative).digest('hex') };
+    }
+  } catch {}
   return result;
 }
 
@@ -120,7 +172,7 @@ export function parseLinuxReceipt(text, { commit, worktree } = {}) {
 
 // Serialized below and executed inside Linux. Every command uses the copied exact-commit checkout.
 export async function runContainerChecks({ execute = runOwnedCommand, platform = process.platform,
-  env = process.env, commit, runId, source = '/source', root = '/w',
+  env = process.env, commit, runId, source = '/source', root = '/w', nodeVersion = process.version,
   prepare = () => cpSync(source, root, { recursive: true, dereference: false, verbatimSymlinks: true, errorOnExist: true, force: false }),
   makeConfig = () => mkdtempSync(join(tmpdir(), 'lane-claude-')),
   removeConfig = directory => rmSync(directory, { recursive: true, force: true }),
@@ -129,7 +181,7 @@ export async function runContainerChecks({ execute = runOwnedCommand, platform =
   const receipt = { schemaVersion: 1, platform, command: ['npm', 'test'], commit, runId,
     executed: false, exitCode: 1, installExitCode: null, counts: null, trackedFiles: 0 };
   if (platform !== 'linux' || !shaPattern.test(commit ?? '')) return receipt;
-  let config, stage = 'prepare';
+  let config, destination, stage = 'prepare';
   const errorCode = error => ['ENOENT', 'EACCES', 'EPERM', 'EEXIST', 'ENOTDIR', 'EISDIR', 'EINVAL', 'ENOSPC', 'EROFS',
     'EMFILE', 'ENFILE', 'ERR_FS_CP_EEXIST', 'ERR_FS_CP_DIR_TO_NON_DIR', 'ERR_FS_CP_NON_DIR_TO_DIR',
     'ERR_FS_CP_SOCKET', 'ERR_FS_CP_FIFO_PIPE', 'ERR_FS_CP_UNKNOWN'].includes(error?.code) ? error.code : 'other';
@@ -147,10 +199,16 @@ export async function runContainerChecks({ execute = runOwnedCommand, platform =
         : text.trim() ? 'other-stderr' : 'no-stderr';
       if (child.errorCode) receipt.failure.errorCode = errorCode({ code: child.errorCode });
     }
-    if (code === 'exception') receipt.failure.errorCode = errorCode(error);
+    if (code === 'exception') {
+      receipt.failure.errorCode = errorCode(error);
+      if (stage === 'prepare' && error?.code === 'ERR_FS_CP_EEXIST') {
+        receipt.failure.copy = copyFailureDiagnostic(error, root, destination, nodeVersion);
+      }
+    }
     return receipt;
   };
   try {
+    destination = copyDestinationState(root);
     prepare();
     stage = 'config-create';
     config = makeConfig();
@@ -197,12 +255,15 @@ export async function runContainerChecks({ execute = runOwnedCommand, platform =
 
 export const containerProgram = `
 import { spawn } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, lstatSync, mkdtempSync, opendirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
+import { createHash } from 'node:crypto';
 const shaPattern = ${shaPattern};
 const runOwnedCommand = ${runOwnedCommand.toString()};
 const testCounts = ${testCounts.toString()};
+const copyDestinationState = ${copyDestinationState.toString()};
+const copyFailureDiagnostic = ${copyFailureDiagnostic.toString()};
 const runContainerChecks = ${runContainerChecks.toString()};
 const receipt = await runContainerChecks({ commit: process.argv[1], runId: process.argv[2] });
 process.stdout.write(JSON.stringify(receipt) + '\\n');
@@ -215,7 +276,7 @@ export function linuxPreflightPlan({ checkout, runId, commit } = {}) {
     throw Error('Invalid container plan input');
   }
   return { command: 'docker', args: ['create', '--name', runId, '--label', `sleight.preflight=${runId}`,
-    '--mount', `type=bind,source=${root},target=/source,readonly`, '--workdir', '/w',
+    '--mount', `type=bind,source=${root},target=/source,readonly`, '--workdir', '/',
     'node:24', 'node', '--input-type=module', '-e', containerProgram, commit, runId] };
 }
 

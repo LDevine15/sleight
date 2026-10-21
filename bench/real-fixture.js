@@ -183,6 +183,8 @@ function roleReadFields(detail) {
   if ([0, -25212, -25202, 'other'].indexOf(detail.roleReadCode) !== -1) fields.push('roleReadCode=' + detail.roleReadCode);
   if (['nil', 'empty', 'known-nonwindow', 'other-string', 'nonstring'].indexOf(detail.roleState) !== -1)
     fields.push('roleState=' + detail.roleState);
+  if (['AXApplication', 'AXSystemWide', 'AXWindow', 'AXSheet', 'AXDrawer', 'AXDialog', 'AXGroup', 'AXButton', 'AXScrollArea', 'AXUnknown'].indexOf(detail.roleKnown) !== -1)
+    fields.push('roleKnown=' + detail.roleKnown);
   if (['cf-string', 'other', 'unavailable'].indexOf(detail.roleNativeType) !== -1) fields.push('roleNativeType=' + detail.roleNativeType);
   ['roleNativeWindowEqual', 'roleDeepWindowEqual'].forEach(function (key) {
     if (['yes', 'no', 'unavailable'].indexOf(detail[key]) !== -1) fields.push(key + '=' + detail[key]);
@@ -199,56 +201,134 @@ function windowInventoryError(message, reason, count, index, detail) {
     if (['AXWindow', 'AXSheet', 'AXDialog', 'AXGroup', 'AXButton'].indexOf(detail.role) !== -1) fields.push('role=' + detail.role);
     fields = fields.concat(roleReadFields(detail));
   }
-  return new Error(message + ' [' + fields.join(' ') + ']');
+  return Object.assign(new Error(message + ' [' + fields.join(' ') + ']'), { finderFailureReason: 'inventory-unconfirmed' });
+}
+
+function finderStaticFailure(error) {
+  function field(key) { try { return error == null ? undefined : error[key]; } catch (ignored) { return undefined; } }
+  var messages = {
+    'Finder baseline role ledger ownership unconfirmed': 'ledger-unconfirmed',
+    'Finder pre-action baseline role inventory changed': 'baseline-changed',
+    'Finder previous window absent from inventory': 'previous-absent',
+    'Finder window appeared before New Finder Window': 'window-before-new-command',
+    'New Finder fixture window ambiguous': 'new-window-ambiguous',
+    'New Finder fixture window unconfirmed': 'new-window-unconfirmed',
+    'New Finder fixture window identity changed': 'new-window-identity-changed',
+    'Foreign Finder dialog; folder setup refused': 'foreign-dialog',
+    'Finder folder window vanished': 'window-vanished',
+    'Finder folder window lost focus': 'window-focus-lost',
+    'Finder folder focus changed during validation': 'window-focus-changed',
+    'Finder focused element ancestry unconfirmed': 'focused-ancestry-unconfirmed',
+    'Fixture needs the File menu': 'menu-unavailable', 'Fixture needs the Go menu': 'menu-unavailable',
+    'Fixture menu item unavailable or ambiguous': 'menu-item-unavailable',
+    'Fixture opening interrupted before identity was recorded': 'opening-interrupted',
+    'Finder fixture window ownership unconfirmed': 'fixture-ownership-unconfirmed',
+    'Finder extra window ownership unconfirmed': 'extra-window-unconfirmed',
+    'Finder fixture identity changed': 'fixture-identity-changed',
+    'Finder fixture window is still open': 'fixture-still-open',
+    'Finder dialog present; fixture cleanup refused': 'dialog-present',
+    'Fixture cancellation target is not an observed menu': 'menu-cancel-target-unconfirmed',
+    'Fixture menu cancellation failed; Escape refused': 'menu-cancel-failed',
+    'File-menu cancellation lost the app identity': 'cancellation-app-identity-lost'
+  };
+  var message = field('message'), name = field('name'), code = field('code'), attribute = field('attribute');
+  var reason = typeof message === 'string' && Object.prototype.hasOwnProperty.call(messages, message) ? messages[message] : 'unclassified';
+  if (field('finderFailureReason') === 'inventory-unconfirmed') reason = 'inventory-unconfirmed';
+  else if (typeof code === 'number' && (code === 0 || code >= -25214 && code <= -25200 && code === Math.floor(code)) &&
+      ['AXWindows', 'AXFocusedWindow', 'AXRole', 'AXValue', 'AXMenuBar', 'AXChildren', 'AXTitle', 'AXSubrole', 'AXParent', 'AXSheets', 'AXFocusedUIElement', 'AXEnabled', 'AXCloseButton'].indexOf(attribute) !== -1)
+    reason = 'ax-read-failed';
+  var pressCode = typeof message === 'string' && /^AX fixture press failed: (-?\d{1,8})$/.exec(message);
+  if (pressCode) { reason = 'ax-press-failed'; if (code === undefined) code = Number(pressCode[1]); }
+  var writeCode = typeof message === 'string' && /^Finder folder AXValue failed: (-?\d{1,8})$/.exec(message);
+  if (writeCode) { reason = 'ax-write-failed'; if (code === undefined) code = Number(writeCode[1]); }
+  var names = ['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'EvalError',
+    'NSInvalidArgumentException', 'NSRangeException', 'NSInternalInconsistencyException', 'NSUnknownKeyException', 'NSGenericException'];
+  return { failureReason: reason,
+    errorName: name === undefined ? 'unavailable' : names.indexOf(name) !== -1 ? name : 'other',
+    errorCode: code === undefined ? 'unavailable' : typeof code === 'number' &&
+      (code === 0 || code >= -25214 && code <= -25200 && code === Math.floor(code)) ? code : 'other' };
+}
+
+function finderMissingFailure(reason) {
+  return { failureReason: reason, errorName: 'unavailable', errorCode: 'unavailable' };
+}
+
+function finderRoleLedger(receipt, api) {
+  if (!receipt || receipt.schema !== 'finder-role-baseline-v1' || !Array.isArray(receipt.baseline) || !Array.isArray(receipt.created) ||
+      receipt.baseline.some(function (entry, index) {
+        return !entry || !entry.reference || ['AXWindow', 'AXScrollArea'].indexOf(entry.role) === -1 ||
+          receipt.baseline.slice(0, index).some(function (other) { return api.equal(entry.reference, other.reference); });
+      }) || receipt.created.some(function (item, index) {
+        return !item || receipt.baseline.some(function (entry) { return api.equal(entry.reference, item); }) ||
+          receipt.created.slice(0, index).some(function (other) { return api.equal(item, other); });
+      })) throw new Error('Finder baseline role ledger ownership unconfirmed');
+  return receipt;
+}
+
+// Keep every reference in the inventory, including inert baseline scroll areas.
+// Only new AXWindow references can become fixture candidates.
+function finderRoleInventory(app, api, receipt) {
+  if (receipt) finderRoleLedger(receipt, api);
+  var windows = api.windows(app), message = 'Finder fixture window inventory unconfirmed', result = [];
+  if (!Array.isArray(windows)) throw windowInventoryError(message, 'malformed-list');
+  windows.forEach(function (item, index) {
+    if (!item) throw windowInventoryError(message, 'missing-element', windows.length, index);
+    if (!api.equal(item, item)) throw windowInventoryError(message, 'failed-self-identity', windows.length, index);
+    var detail = {}, role = api.finderRole ? api.finderRole(item, detail) : null;
+    if (['AXWindow', 'AXScrollArea'].indexOf(role) === -1)
+      throw windowInventoryError(message, 'non-window-or-stale', windows.length, index, detail);
+    windows.slice(0, index).forEach(function (other, otherIndex) {
+      if (api.equal(item, other)) throw windowInventoryError(message, 'duplicate-identity', windows.length, index, { duplicateIndex: otherIndex });
+    });
+    result.push({ reference: item, role: role });
+  });
+  if (receipt) {
+    receipt.baseline.forEach(function (entry) {
+      var matches = result.filter(function (current) { return api.equal(current.reference, entry.reference); });
+      if (matches.length !== 1 || matches[0].role !== entry.role)
+        throw new Error('Finder pre-action baseline role inventory changed');
+    });
+    result.forEach(function (entry, index) {
+      if (entry.role !== 'AXWindow' && !receipt.baseline.some(function (before) { return api.equal(entry.reference, before.reference); }))
+        throw windowInventoryError(message, 'non-window-or-stale', windows.length, index);
+    });
+  }
+  return result;
 }
 
 // open -a Finder <folder> sends an open-document Apple Event. Finder deadlocked
 // in NodeCopyFromURL after the 640-file trial (2026-10-20). Keep folder navigation
 // on AX, in a new window, without asking Finder to resolve an Apple Event URL.
 function openFinderFolder(request, app, previous, api, clock, retain) {
-  function inventory() {
-    var windows = api.windows(app), message = 'Finder fixture window inventory unconfirmed';
-    if (!Array.isArray(windows)) throw windowInventoryError(message, 'malformed-list');
-    windows.some(function (item, index) {
-      if (!item) throw windowInventoryError(message, 'missing-element', windows.length, index);
-      if (!api.equal(item, item)) throw windowInventoryError(message, 'failed-self-identity', windows.length, index);
-      var detail = {};
-      if (!api.exists(item, detail)) throw windowInventoryError(message, 'non-window-or-stale', windows.length, index, detail);
-      windows.slice(0, index).some(function (other, otherIndex) {
-        if (api.equal(item, other)) throw windowInventoryError(message, 'duplicate-identity', windows.length, index, { duplicateIndex: otherIndex });
-        return false;
-      });
-      return false;
-    });
-    return windows.slice();
-  }
-  var before = inventory(), window, sheet, requested = false;
+  var before = finderRoleInventory(app, api), window, sheet, requested = false;
   // These references stay inside this helper. The temporal addition requires
   // exclusive Finder setup; inventory and the menu action are separate calls.
-  request.finderOwnership = { baseline: before.slice(), created: [] };
-  if (previous && !before.some(function (item) { return api.equal(item, previous); })) throw new Error('Finder previous window absent from inventory');
+  request.finderOwnership = { schema: 'finder-role-baseline-v1', baseline: before, created: [] };
+  if (previous && !before.some(function (item) { return api.equal(item.reference, previous); })) throw new Error('Finder previous window absent from inventory');
   function candidates() {
-    var current = inventory();
-    if (before.some(function (item) { return !current.some(function (other) { return api.equal(item, other); }); }))
-      throw new Error('Finder pre-action window inventory changed');
-    return current.filter(function (item) { return !before.some(function (other) { return api.equal(item, other); }); });
+    return finderRoleInventory(app, api, request.finderOwnership).filter(function (item) {
+      return !before.some(function (other) { return api.equal(item.reference, other.reference); });
+    }).map(function (item) { return item.reference; });
   }
   function unopened() {
     clock.check();
     if (candidates().length) throw new Error('Finder window appeared before New Finder Window');
     api.finderFolderGuard(app, null, null);
+    if (candidates().length) throw new Error('Finder window appeared before New Finder Window');
   }
   function validate() {
     clock.check();
     var fresh = candidates();
     if (fresh.length !== 1 || !api.equal(fresh[0], window)) throw new Error('New Finder fixture window identity changed');
     api.finderFolderGuard(app, window, sheet);
+    fresh = candidates();
+    if (fresh.length !== 1 || !api.equal(fresh[0], window)) throw new Error('New Finder fixture window identity changed');
   }
   try {
   unopened();
   // The menu can wait while it opens. Check again at the command's AXPress.
   requested = true;
-  api.fileMenu(app, ['New Finder Window'], unopened, true);
+  api.fileMenu(app, ['New Finder Window'], unopened, true, true);
   var deadline = clock.now() + 5000;
   while (clock.now() < deadline) {
     clock.check();
@@ -264,7 +344,7 @@ function openFinderFolder(request, app, previous, api, clock, retain) {
   retain(window);
   if (clock.emit) clock.emit({ stage: 'finder-window-retained', referenceExported: false });
   validate();
-  api.menu(app, 'Go', ['Go to Folder…', 'Go to Folder...'], validate, true);
+  api.menu(app, 'Go', ['Go to Folder…', 'Go to Folder...'], validate, true, true);
   deadline = clock.now() + 5000;
   while (clock.now() < deadline) {
     sheet = api.folderSheet(window, app);
@@ -561,10 +641,16 @@ function validateOwnedFixture(window, request, app, api, focus, sibling) {
   } while (api.readEpoch && api.readEpoch() !== epoch);
 }
 
-function recoverSetup(window, request, api, app) {
-  if (!window) return 'unconfirmed';
+function recoverSetup(window, request, api, app, failure) {
+  if (!window) {
+    if (failure) Object.assign(failure, finderMissingFailure('retained-reference-unavailable'));
+    return 'unconfirmed';
+  }
   if (request.bundle === 'com.apple.finder' && request.mode === 'folder') {
-    if (api.exists(window) && !api.matches(window, request, true)) return 'unconfirmed';
+    if (api.exists(window) && !api.matches(window, request, true)) {
+      if (failure) Object.assign(failure, finderMissingFailure('fixture-location-mismatch'));
+      return 'unconfirmed';
+    }
     closeFinderFixtureWindows(window, request, app, api);
     return 'closed retained fixture';
   }
@@ -579,9 +665,10 @@ function recoverSetup(window, request, api, app) {
 }
 
 function chooseFileMenu(file, titles, api) {
-  var menus = [];
+  var menus = [], openingAttempted = api.tracksOpeningAttempt !== true;
   try {
-    api.press(file);
+    api.press(file, function () { openingAttempted = true; });
+    openingAttempted = true;
     menus = api.children(file).filter(function (child) { return api.text(child, 'AXRole') === 'AXMenu'; });
     var items = [], allItems = [];
     menus.forEach(function (menu) {
@@ -597,8 +684,11 @@ function chooseFileMenu(file, titles, api) {
     if (api.beforePress) api.beforePress();
     api.press(items[0]);
   } catch (error) {
-    try { api.cancel(menus.length === 1 ? menus[0] : file); }
-    catch (failure) { error.menuCleanupError = failure.message; }
+    try { if (openingAttempted) api.cancel(menus.length === 1 ? menus[0] : file); }
+    catch (failure) {
+      if (api.tracksOpeningAttempt) error.finderMenuCleanupFailure = finderStaticFailure(failure);
+      error.menuCleanupError = failure.message;
+    }
     throw error;
   }
 }
@@ -656,30 +746,32 @@ function finderFixtureWindow(window, request, api) {
 }
 
 function closeFinderFixtureWindows(owned, request, app, api) {
-  var receipt = request.finderOwnership;
+  var receipt = finderRoleLedger(request.finderOwnership, api);
   function contains(list, window) { return list.some(function (item) { return api.equal(item, window); }); }
-  if (!receipt || !Array.isArray(receipt.baseline) || !Array.isArray(receipt.created) ||
-      !owned || !contains(receipt.created, owned) || contains(receipt.baseline, owned))
+  var baseline = receipt.baseline.map(function (entry) { return entry.reference; });
+  if (!owned || !contains(receipt.created, owned) || contains(baseline, owned))
     throw new Error('Finder fixture window ownership unconfirmed');
   function inventory() {
-    var windows = api.windows(app);
-    if (!Array.isArray(windows) || windows.some(function (window) {
-      return !window || (!contains(receipt.baseline, window) && !contains(receipt.created, window));
+    var windows = finderRoleInventory(app, api, receipt).map(function (entry) { return entry.reference; });
+    if (windows.some(function (window) {
+      return !contains(baseline, window) && !contains(receipt.created, window);
     })) throw new Error('Finder extra window ownership unconfirmed');
     return windows;
   }
   function listed(window) { return contains(inventory(), window); }
   function validate(window) {
+    inventory();
     if (api.dialog(app, window, Object.assign({}, request, { refuseDialogs: true })).length)
       throw new Error('Finder dialog present; fixture cleanup refused');
-    if (!listed(window) || contains(receipt.baseline, window) || !finderFixtureWindow(window, request, api))
+    if (!listed(window) || contains(baseline, window) || !finderFixtureWindow(window, request, api))
       throw new Error('Finder fixture identity changed');
+    if (!listed(window)) throw new Error('Finder fixture identity changed');
   }
   inventory();
   receipt.created.forEach(function (window) {
     if (!listed(window)) return;
     validate(window);
-    api.closeButton(window, function () { validate(window); });
+    api.closeButton(window, function () { validate(window); }, true);
     for (var attempt = 0; attempt < 30 && listed(window); attempt++) api.wait();
     if (listed(window)) throw new Error('Finder fixture window is still open');
   });
@@ -1040,18 +1132,18 @@ function recoverFixtureApplications(request, api, clock) {
 
 function nativeAX(state, clock) {
   var placementBound = false, retainedWindows = [], discardedWindows = [], unsupportedTitle = {};
-  function roleValueDiagnostic(nativeValue, object) {
+  function roleValueDiagnostic(object) {
     var diagnostic = { roleNativeType: 'unavailable', roleNativeWindowEqual: 'unavailable', roleDeepWindowEqual: 'unavailable' };
-    try { if (!nativeValue || !object || (object.isNil && object.isNil())) return diagnostic; }
+    try { if (!object || (object.isNil && object.isNil())) return diagnostic; }
     catch (error) { return diagnostic; }
     try {
-      var type = Number($.CFGetTypeID(nativeValue)), stringType = Number($.CFStringGetTypeID());
+      var type = Number($.CFGetTypeID(object)), stringType = Number($.CFStringGetTypeID());
       if (isFinite(type) && type > 0 && isFinite(stringType) && stringType > 0)
         diagnostic.roleNativeType = type === stringType ? 'cf-string' : 'other';
     } catch (error) {}
     if (diagnostic.roleNativeType === 'cf-string') {
       try {
-        var equal = Number($.CFEqual(nativeValue, $('AXWindow')));
+        var equal = Number($.CFEqual(object, $('AXWindow')));
         if (equal === 0 || equal === 1) diagnostic.roleNativeWindowEqual = equal === 1 ? 'yes' : 'no';
       } catch (error) {}
     }
@@ -1063,7 +1155,7 @@ function nativeAX(state, clock) {
   }
   function refusedRoleCapture(capture) {
     if (!capture) return;
-    var diagnostic = capture.roleValueProbe ? capture.roleValueProbe() : roleValueDiagnostic(null, null);
+    var diagnostic = capture.roleValueProbe ? capture.roleValueProbe() : roleValueDiagnostic(null);
     delete capture.roleValueProbe;
     Object.assign(capture, diagnostic);
   }
@@ -1088,7 +1180,7 @@ function nativeAX(state, clock) {
       if (code === -25212 || (code === -25205 && !(state && (state.setup || state.cleanup || state.observation)))) return null;
       if (code !== 0) throw Object.assign(new Error('AX fixture read failed: ' + code + ' (' + attribute + ')'), { code: code, attribute: attribute });
       var nativeValue = value[0], object = ObjC.castRefToObject(nativeValue);
-      if (capture) capture.roleValueProbe = function () { return roleValueDiagnostic(nativeValue, object); };
+      if (capture) capture.roleValueProbe = function () { return roleValueDiagnostic(object); };
       return object;
     };
     if (state && (state.cleanup || state.observation)) return cleanupRead(operation, state, clock);
@@ -1098,6 +1190,8 @@ function nativeAX(state, clock) {
     var value = read(element, attribute, undefined, capture), raw = value ? ObjC.unwrap(value) : value;
     var result = value ? String(raw) : '';
     if (capture) {
+      if (typeof raw === 'string' && ['AXApplication', 'AXSystemWide', 'AXWindow', 'AXSheet', 'AXDrawer', 'AXDialog', 'AXGroup', 'AXButton', 'AXScrollArea', 'AXUnknown'].indexOf(raw) !== -1)
+        capture.roleKnown = raw;
       if (raw == null) capture.roleState = 'nil';
       else if (typeof raw !== 'string') capture.roleState = 'nonstring';
       else if (!raw) capture.roleState = 'empty';
@@ -1112,11 +1206,12 @@ function nativeAX(state, clock) {
     if (values) for (var index = 0; index < Number(values.count); index++) result.push(values.objectAtIndex(index));
     return result;
   }
-  function press(element, beforePress) {
+  function press(element, beforePress, onAttempt) {
     if (clock && clock.check) clock.check();
     if (state && state.setup) { state.actionTaken = true; clock.emit({ stage: 'action', actionTaken: true }); }
     if (beforePress) beforePress();
     if (clock && clock.check) clock.check();
+    if (onAttempt) onAttempt();
     var code = Number($.AXUIElementPerformAction(element, $('AXPress')));
     if (code !== 0) throw new Error('AX fixture press failed: ' + code);
   }
@@ -1175,12 +1270,13 @@ function nativeAX(state, clock) {
     return found;
   }
   function equal(a, b) { return !!a && !!b && !!$.CFEqual(a, b); }
-  function menu(app, name, titles, beforePress, refuseDialogs) {
+  function menu(app, name, titles, beforePress, refuseDialogs, finderBaseline) {
     var bar = read(app, 'AXMenuBar');
     var files = children(bar).filter(function (item) { return text(item, 'AXTitle') === name; });
     if (files.length !== 1) throw new Error('Fixture needs the ' + name + ' menu');
-    var commandGuard;
-    chooseFileMenu(files[0], titles, { press: function (element) { press(element, commandGuard); }, children: children, text: text,
+    var trackedOpening = finderBaseline === true && state.bundle === 'com.apple.finder', commandGuard = trackedOpening ? beforePress : undefined;
+    chooseFileMenu(files[0], titles, { tracksOpeningAttempt: trackedOpening,
+      press: function (element, onAttempt) { press(element, commandGuard, onAttempt); }, children: children, text: text,
       beforePress: function () { commandGuard = beforePress; },
       enabled: function (item) { return Number(ObjC.unwrap(read(item, 'AXEnabled'))) === 1; }, cancel: function (menu) {
       if (clock && clock.check) clock.check();
@@ -1207,7 +1303,7 @@ function nativeAX(state, clock) {
       }), menuCommands: items.map(function (item) { return { title: text(item, 'AXTitle'), enabled: Number(ObjC.unwrap(read(item, 'AXEnabled'))) === 1 }; }) });
     } });
   }
-  function fileMenu(app, titles, beforePress, refuseDialogs) { return menu(app, 'File', titles, beforePress, refuseDialogs); }
+  function fileMenu(app, titles, beforePress, refuseDialogs, finderBaseline) { return menu(app, 'File', titles, beforePress, refuseDialogs, finderBaseline); }
   function path(value) {
     if (value && value[0] === '/') value = String(ObjC.unwrap($.NSURL.fileURLWithPath(value).absoluteString));
     if (!value || value.indexOf('file://') !== 0) return null;
@@ -1365,6 +1461,7 @@ function nativeAX(state, clock) {
       if (clock && clock.check) clock.check();
       if (validate) validate();
       this.finderFolderGuard(app, window, sheet);
+      if (validate) validate();
       if (clock && clock.check) clock.check();
       var code = Number($.AXUIElementSetAttributeValue(fields[0], $('AXValue'), $(target)));
       if (code !== 0) throw Object.assign(new Error('Finder folder AXValue failed: ' + code), { code: code, attribute: 'AXValue' });
@@ -1373,6 +1470,7 @@ function nativeAX(state, clock) {
         if (!equal(self.folderSheet(window, app), sheet)) throw new Error('Finder folder sheet identity changed');
         if (validate) validate();
         self.finderFolderGuard(app, window, sheet);
+        if (validate) validate();
       });
     },
     applications: function () {
@@ -1410,6 +1508,24 @@ function nativeAX(state, clock) {
     windowCount: function (app) { return children(app, 'AXWindows').length; },
     // true or false only when the app's window list was read; undefined when it couldn't be.
     listed: listed,
+    finderRole: function (window, diagnostic) {
+      var capture = {};
+      try {
+        var role = text(window, 'AXRole', capture);
+        if (diagnostic) diagnostic.role = role;
+        if (capture.roleReadCode === 0 && ['AXWindow', 'AXScrollArea'].indexOf(capture.roleKnown) !== -1) return capture.roleKnown;
+        refusedRoleCapture(capture);
+        if (diagnostic) Object.assign(diagnostic, capture);
+        return null;
+      } catch (error) {
+        refusedRoleCapture(capture);
+        if (diagnostic) Object.assign(diagnostic, capture);
+        if (error.code === -25202) { if (diagnostic) diagnostic.axCode = error.code; return null; }
+        var fields = roleReadFields(capture);
+        if (fields.length) error.message += ' [' + fields.join(' ') + ']';
+        throw error;
+      }
+    },
     exists: function (window, diagnostic) {
       var capture = diagnostic ? {} : undefined;
       try {
@@ -1490,11 +1606,11 @@ function nativeAX(state, clock) {
       if (clock && clock.check) clock.check();
       $.AXUIElementSetAttributeValue(window, $('AXMain'), $.kCFBooleanTrue);
     },
-    closeButton: function (window, validate) {
+    closeButton: function (window, validate, finderBaseline) {
       var button = read(window, 'AXCloseButton');
       if (!button) throw new Error('Owned window has no close button');
       if (validate) validate();
-      press(button);
+      press(button, finderBaseline === true ? validate : undefined);
     },
     closesDocumentByButton: function () { return !!(state && (state.setupCase === 'cold-launch' || state.launchedByRun)); },
     closeDocument: function (app, validate, request, window) {
@@ -1842,20 +1958,28 @@ function run(argv) {
   if (target && !inherited) closeOwnedWindow(owned, request, app, api);
   emit(target || inherited ? { stage: 'closed' } : { stage: 'closed', appAbsent: true, pid: pid });
   } catch (error) {
+    var finderFailure = request.bundle === 'com.apple.finder' ? finderStaticFailure(error) : undefined;
     if (state.setup) {
       state.setup = false;
       state.cleanup = true;
-      var cleanup, cleanupError = error.menuCleanupError;
+      var cleanup, cleanupError = error.menuCleanupError, finderCleanupFailure = request.bundle === 'com.apple.finder' ? {} : undefined;
       try {
         cleanup = error.appDialog ? 'unconfirmed' : request.bundle === 'com.apple.finder' && !state.finderRecoveryPending && !state.actionTaken && !owned && !error.finderWindowRequested
-          ? 'nothing created' : recoverSetup(owned, request, api, app);
-      } catch (failure) { cleanupError = [cleanupError, failure.message].filter(Boolean).join('; '); }
+          ? 'nothing created' : recoverSetup(owned, request, api, app, finderCleanupFailure);
+      } catch (failure) {
+        if (finderCleanupFailure) finderCleanupFailure = finderStaticFailure(failure);
+        cleanupError = [cleanupError, failure.message].filter(Boolean).join('; ');
+      }
       emit({ stage: 'setup-failure', fresh: state.fresh, running: running, setupCase: state.setupCase, actionTaken: state.actionTaken, pid: pid,
         pids: pids.slice(), processHandoff: processHandoff, cleanup: cleanup, cleanupError: cleanupError,
+        finderFailure: finderFailure, finderCleanupFailure: finderCleanupFailure && finderCleanupFailure.failureReason ? finderCleanupFailure : undefined,
+        finderMenuCleanupFailure: request.bundle === 'com.apple.finder' ? error.finderMenuCleanupFailure : undefined,
         finderAXError: request.bundle === 'com.apple.finder' && (error.finderAX || [-25204, -25205].indexOf(error.code) !== -1)
           ? { code: error.code, attribute: error.attribute, identityReason: error.identityReason } : undefined,
         totalWaitMs: state.retryWaitMs, readWait: state.readWait, launchWait: state.launchWait });
-    }
+    } else if (finderFailure) emit({ stage: 'finder-failure', finderFailure: finderFailure,
+      finderCleanupFailure: state.cleanup ? finderFailure : undefined,
+      finderMenuCleanupFailure: error.finderMenuCleanupFailure });
     throw error;
   }
 }

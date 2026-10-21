@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { macCommandSkip } from './requirements.mjs';
 import { swiftModuleCache } from '../bench/swift-cache.mjs';
+import { runSharedHost as shared } from './fixtures/shared-consent-host.mjs';
 
 // The shared host: one consent-host process per session serves the hand (stdin, toggle events on stdout) and turbo's consent
 // channel (fd 3 in, fd 4 out). These tests never show anything: the turbo status is disconnected and the hand is off, so the
@@ -23,33 +24,11 @@ function build() {
   return (built = binary);
 }
 const handNonce = 'a'.repeat(64), consentNonce = 'c'.repeat(64);
-const line = frame => JSON.stringify(frame) + '\n';
 const menu = (over = {}) => ({ hand: 'menu', nonce: handNonce, enabled: false, capture: 'hidden', version: '1.3.1', ...over });
 const act = (seq, over = {}) => ({ hand: 'act', nonce: handNonce, seq, kind: 'click', pid: 2147483647, windowId: 4294967295,
   at: [10, 10], path: [[10, 10]], delayMs: 0, beats: 1, ...over });
 const status = (over = {}) => ({ id: 'v3-control-1', nonce: consentNonce, choices: ['connect'], deadline: Date.now() + 60000,
   data: { status: 'disconnected' }, ...over });
-
-// Runs the host with both channels. steps: [fd, frame] pairs or ['end', fd] or ['wait', ms]. Resolves with the exit code and
-// every byte written on stdout and fd 4.
-function shared(binary, steps, args = ['--hand', '--consent']) {
-  const child = spawn(binary, args, { stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' } });
-  const out = { stdout: '', consent: '', stderr: '', alive: [] }, exited = new Promise(resolve => child.on('exit', resolve));
-  child.stdout.on('data', d => { out.stdout += d; }); child.stdio[4].on('data', d => { out.consent += d; }); child.stderr.on('data', d => { out.stderr += d; });
-  for (const fd of [0, 3]) child.stdio[fd].on('error', () => {});
-  const timer = setTimeout(() => child.kill('SIGKILL'), 30000);
-  return (async () => {
-    for (const [what, value] of steps) {
-      if (what === 'wait') await new Promise(resolve => setTimeout(resolve, value));
-      else if (what === 'alive') out.alive.push(child.exitCode === null && child.signalCode === null);
-      else if (what === 'end') child.stdio[value].end();
-      else child.stdio[what].write(typeof value === 'string' ? value + '\n' : line(value));
-    }
-    const code = await exited;
-    clearTimeout(timer);
-    return { code, ...out };
-  })();
-}
 
 test('two senders share one host: consent on fds 3 and 4, the hand on stdin, and turbo ending leaves the hand running', { skip }, async () => {
   const binary = build();
@@ -198,11 +177,11 @@ test('an exited worker can be replaced on the same host only after the parent re
   const token = 'e'.repeat(32), next = 'd'.repeat(64);
   const reset = { hand: 'consent-reset', nonce: handNonce, token };
   const result = await shared(build(), [[0, menu()], [3, status()], ['wait', 100], [3, reset],
-    [3, status({ nonce: next })], ['wait', 100], ['alive'], ['end', 3], ['end', 0]]);
+    ['ready', { nonce: handNonce, token }], [3, status({ nonce: next })], ['wait', 100], ['alive'], ['end', 3], ['end', 0]]);
   assert.equal(result.code, 0, result.stderr); assert.deepEqual(result.alive, [true]);
   assert.deepEqual(JSON.parse(result.stdout), { hand: 'consent-ready', nonce: handNonce, token });
   assert.equal(result.consent, '');
-  const early = await shared(build(), [[3, reset], ['wait', 300], [0, menu()], ['wait', 100], [3, status({ nonce: next })], ['end', 3], ['end', 0]]);
+  const early = await shared(build(), [[3, reset], ['wait', 300], [0, menu()], ['ready', { nonce: handNonce, token }], [3, status({ nonce: next })], ['end', 3], ['end', 0]]);
   assert.equal(early.code, 0, early.stderr);
   assert.equal(JSON.parse(early.stdout).token, token, 'reset waits for the initial hand menu');
   const forged = await shared(build(), [[0, menu()], [3, status()], ['wait', 100], [3, { ...reset, nonce: consentNonce }], ['wait', 100], ['end', 3], ['end', 0]]);

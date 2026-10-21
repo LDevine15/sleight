@@ -91,6 +91,7 @@ function dockerBoundary(fixture, overrides = {}) {
     if (command === '/usr/bin/git') return runOwnedCommand(command, args, options);
     assert.equal(command, 'docker');
     if (args[0] === 'create') {
+      assert.equal(args[args.indexOf('--workdir') + 1], '/', 'Docker must not create the copy destination');
       runId = args[args.indexOf('--name') + 1];
       checkout = args[args.indexOf('--mount') + 1].match(/source=(.*),target=/)[1];
       assert.equal(existsSync(join(checkout, '.git', 'objects')), true);
@@ -110,10 +111,11 @@ function dockerBoundary(fixture, overrides = {}) {
       // Exercise the container's real copy, Git reads and config cleanup on the host.
       // Only the platform observation and Docker/npm boundaries are simulated.
       const root = join(fixture.bank, 'container-workspace');
-      mkdirSync(root);
+      assert.equal(existsSync(root), false);
       let config;
       const receipt = await runContainerChecks({ platform: 'linux', commit: fixture.head, runId,
         source: checkout, root, log() {}, execute: async (command, args, options) => {
+          assert.equal(options.cwd, root);
           config = options.env.CLAUDE_CONFIG_DIR;
           assert.equal(existsSync(config), true);
           if (command === '/usr/bin/git') return runOwnedCommand(command, args, options);
@@ -153,6 +155,7 @@ test('plan uses a readonly prepared checkout with fixed image, no host dependenc
   const plan = linuxPreflightPlan({ checkout: resolve(tmpdir(), 'worktree with spaces $(never)'),
     runId: containerOptions().runId, commit });
   assert.equal(plan.command, 'docker');
+  assert.equal(plan.args[plan.args.indexOf('--workdir') + 1], '/', 'Docker must leave /w absent for the guarded copy');
   assert.ok(plan.args.includes('node:24'));
   assert.ok(plan.args.includes(containerProgram));
   assert.ok(plan.args.includes(`type=bind,source=${resolve(tmpdir(), 'worktree with spaces $(never)')},target=/source,readonly`));
@@ -175,7 +178,10 @@ test('container producer verifies platform and Git, runs actual npm argv, captur
     ['/usr/bin/git', ['rev-parse', '--verify', 'HEAD^{commit}']], ['/usr/bin/git', ['ls-files', '-z']],
     ['npm', ['ci', '--ignore-scripts']], ['npm', ['test']],
   ]);
-  for (const [, , options] of calls) assert.equal(options.env.CLAUDE_CONFIG_DIR, '/container/config');
+  for (const [, , options] of calls) {
+    assert.equal(options.cwd, '/w');
+    assert.equal(options.env.CLAUDE_CONFIG_DIR, '/container/config');
+  }
   assert.deepEqual(removed, ['/container/config']);
 });
 

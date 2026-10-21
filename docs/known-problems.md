@@ -26,7 +26,12 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   before any AX probe or fixture action. Its helper exited and cleanup completed; the exact empty lock was recovered
   after a durable receipt. Finder identity now uses the kernel's exact process birth time. The 03:09Z retry passed
   that check, then refused one inventory entry as `non-window-or-stale` before any action or relaunch. Cleanup and
-  helper collection completed. Its receipt was retained and the exact empty lock recovered. Finder setup, Go to Folder
+  helper collection completed. Its receipt was retained and the exact empty lock recovered. Fixed-string native
+  calibration corrected a raw-reference diagnostic error. The 05:15Z retry identified the initial entry as an
+  `AXScrollArea`. Setup now retains the baseline references with their exact roles and accepts only new `AXWindow`
+  candidates. The 05:33Z smoke reached menu selection but failed before retaining a window identity. Whether the
+  New Window command ran is unproved. Helper collection completed; window cleanup is unconfirmed, and its fixture
+  and lock remain retained. Finder setup, Go to Folder
   ancestry, respawn and cleanup need qualification, including the `cc-list-native` fixture. The `textedit-two-windows` fixture
   remains parked unless its failure recurs. For either fixture, cancellation must stop owned setup work.
   Cleanup must preserve baseline windows and retain the lock when
@@ -34,6 +39,8 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   process instance. The offline recovery, ownership and app-absent cleanup changes passed tests and review.
   The owner approved exclusive Finder setup and the remaining window-focus assumption. Failed smokes and lock
   recovery establish no successful live repair.
+  Future failures preserve fixed reason categories for setup, cleanup and menu cleanup, plus bounded native
+  error metadata. The earlier discarded error remains unknown. The new diagnostics cannot resolve its cleanup.
 - Offline portability checks do not establish Linux compatibility. The path guard must pass without exemptions on
   the final tree. Actual Node 24 Linux testing remains a release gate.
   The helper prepares the exact commit with usable Git metadata, mounts that snapshot read-only and tests a writable
@@ -41,7 +48,11 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   cancellation during a test run still needs qualification. The Colima wrapper
   isolates VM state and Docker configuration and pins engine commands to its owned socket. VM startup and teardown
   passed in the host attempt, including container removal. Both sandbox and host attempts stopped before npm,
-  so no Linux test result exists. Failure receipts now report the stage and a bounded error code without raw stderr.
+  so no Linux test result exists. The exact-commit retry failed during copy preparation with `ERR_FS_CP_EEXIST`.
+  Failure receipts now report the stage, bounded error code, Node version and destination state. A recognized copy
+  collision reports a normalized relative-path hash and closed path category, never the raw path or stderr.
+  A diagnostic retry identified an empty destination-root collision on Node 24.22.0. Docker now starts in `/`,
+  leaving the guarded copy to create `/w`. The final commit still needs actual Linux qualification.
 - Candidate and tagged-release preflights must verify the same clean final commit through completion, including
   the Linux receipt. These model-free checks do not require a quota reset. Candidate mode accepts an unreleased
   heading and keeps `releaseReady: false`. Release mode requires a dated heading and the intended tag at that exact
