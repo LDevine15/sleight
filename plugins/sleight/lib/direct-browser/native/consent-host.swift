@@ -488,6 +488,8 @@ final class AskCardPanel: NSObject {
         super.init()
         panel.title = "sleight"; panel.titlebarAppearsTransparent = true; panel.titleVisibility = .hidden
         panel.isMovableByWindowBackground = true; panel.isOpaque = false; panel.backgroundColor = .clear
+        // Keep the card visible while the accessory host is inactive.
+        panel.hidesOnDeactivate = false
         panel.level = .modalPanel; panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] { panel.standardWindowButton(button)?.isHidden = true }
         panel.setFrame(NSRect(x: area.midX - width / 2, y: area.minY + (area.height - height) * 0.62,
