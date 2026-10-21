@@ -63,9 +63,11 @@ export async function acquireAdmission({ lock = '/tmp/sleight-live.lock', hold =
 }
 
 export async function runShellCard({ directory, binaries, admission, launch = spawn, input = process.stdin,
-  signals = process, say = r => console.log(JSON.stringify(r)), prompt = text => console.error(text), timing = {} }) {
+  signals = process, say = r => console.log(JSON.stringify(r)), prompt = text => console.error(text), timing = {}, visibilityStudy = false, syntheticOnly = false }) {
   const ms = { ready: 10000, attempt: 3000, settle: 500, person: 120000, cleanup: 5000, poll: 20, ...timing };
   const result = { passed: false, steps: [], cleanup: { confirmed: false } }, records = [], children = [];
+  if (visibilityStudy) result.study = { complete: false, samples: [] };
+  if (syntheticOnly) result.synthetic = { complete: false };
   let stopped, fault, child, step = 'setup', syntheticAccepted = false;
   const abort = () => { stopped = 'INTERRUPTED'; }, eof = () => { stopped = 'OPERATOR_EOF'; };
   signals.on('SIGINT', abort); signals.on('SIGTERM', abort);
@@ -139,6 +141,7 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
     owned.lines.on('line', line => {
       try {
         const record = JSON.parse(line);
+        if (visibilityStudy && ['accepted', 'refused', 'cancelled'].includes(record.outcome)) throw Error('SHELL_CARD_STUDY_INPUT');
         if (owned.phase === 'synthetic' && (record.outcome === 'accepted' || record.choice === 'once')) syntheticAccepted = true;
         if (record.outcome) {
           owned.records.push(record); records.push(record); say({ card: record });
@@ -175,6 +178,30 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
     return target;
   };
   try {
+    if (visibilityStudy) {
+      const target = await openFixture('visibility');
+      for (const hides of [true, false, true]) {
+        const native = await command(hides ? 'visibility-hide' : 'visibility-show', 'visibility-ready');
+        if (native.accessibility?.hidesOnDeactivate !== hides) throw Error('SHELL_CARD_STUDY_SETTING');
+        await check();
+        const observer = start(binaries.poster, ['inspect', String(target.pid), String(target.window), String(target.x), String(target.y)]);
+        const observations = [], lines = createInterface({ input: observer.proc.stdout });
+        lines.on('line', line => {
+          try { const record = JSON.parse(line); observations.push(record); say({ observer: 'visibility', ...record }); }
+          catch (error) { fault = error; }
+        });
+        observer.proc.stdin.end();
+        try {
+          if (!await until(() => observer.closed, ms.ready)) throw Error('SHELL_CARD_STUDY_TIMEOUT');
+          const external = observations.findLast(r => r.outcome === 'inspection');
+          if (observer.code !== 0 || !external || external.mode !== 'inspect' ||
+              external.pid !== target.pid || external.window !== target.window) throw Error('SHELL_CARD_STUDY_INSPECTION');
+          result.study.samples.push({ native: native.accessibility, external });
+        } finally { lines.close(); }
+      }
+      result.study.complete = true;
+      return result;
+    }
     const target = await openFixture('synthetic');
     const synthetic = child;
     for (const mode of ['ax', 'pid', 'hid']) {
@@ -210,6 +237,10 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
     const cleaned = await collect(synthetic);
     if (!cleaned.confirmed) throw Error('SHELL_CARD_SYNTHETIC_CLEANUP_UNCONFIRMED');
     if (syntheticAccepted) throw Error('SHELL_CARD_SYNTHETIC_ACCEPTANCE');
+    if (syntheticOnly) {
+      result.synthetic.complete = result.steps.length === 3 && result.steps.every(r => r.ok);
+      return result;
+    }
     // The old process and every poster are gone, with all output drained. A new process
     // receives no synthetic input and uses a separate receipt token and target identity.
     child = undefined;
@@ -241,6 +272,14 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
     if (fault) { result.error = fault.message; result.passed = false; }
     if (syntheticAccepted) { result.error = 'SHELL_CARD_SYNTHETIC_ACCEPTANCE'; result.passed = false; }
     result.passed = result.passed && result.cleanup.confirmed;
+    if (result.study) {
+      result.passed = false;
+      result.study.complete = result.study.complete && result.cleanup.confirmed && !result.error;
+    }
+    if (result.synthetic) {
+      result.passed = false;
+      result.synthetic.complete = result.synthetic.complete && result.cleanup.confirmed && !result.error;
+    }
     for (const owned of fixtures) owned.lines?.close();
     signals.removeListener('SIGINT', abort); signals.removeListener('SIGTERM', abort);
     input.removeListener('end', eof); input.pause();
@@ -253,9 +292,9 @@ export async function runShellCard({ directory, binaries, admission, launch = sp
 
 async function main(args) {
   const mode = args[0];
-  if (process.platform !== 'darwin' || !['--compile-only', '--live'].includes(mode) || args.length !== 3 ||
+  if (process.platform !== 'darwin' || !['--compile-only', '--live', '--visibility-study', '--synthetic-only'].includes(mode) || args.length !== 3 ||
     args[1] !== '--receipt' || !isAbsolute(args[2])) {
-    console.error('usage on macOS: node bench/shell-card-probe.mjs --compile-only|--live --receipt /absolute/new.jsonl');
+    console.error('usage on macOS: node bench/shell-card-probe.mjs --compile-only|--live|--visibility-study|--synthetic-only --receipt /absolute/new.jsonl');
     process.exitCode = 2; return;
   }
   const fd = openSync(args[2], 'wx', 0o600), run = randomUUID();
@@ -269,17 +308,22 @@ async function main(args) {
   process.on('SIGINT', abort); process.on('SIGTERM', abort);
   try {
     say({ outcome: 'start', mode, sourceSHA256: createHash('sha256').update(readFileSync(hostURL)).digest('hex') });
-    if (mode === '--live') { admission = await acquireAdmission(); say({ outcome: 'admitted' }); }
+    if (mode !== '--compile-only') { admission = await acquireAdmission(); say({ outcome: 'admitted' }); }
     if (interrupted) throw Error('INTERRUPTED_BEFORE_COMPILE');
     directory = realpathSync(mkdtempSync(join(tmpdir(), 'sleight-shell-card-')));
     const binaries = compileShellCard(directory);
     say({ outcome: 'compiled', launched: false });
     if (interrupted) throw Error('INTERRUPTED_BEFORE_LAUNCH');
-    if (mode === '--live') {
-      console.error('Only this fake panel is targeted. Do not interact until the physical-click prompt. Existing Accessibility and Post-event permissions are required; this runner requests none.');
-      result = await runShellCard({ directory, binaries, admission, say });
+    if (mode !== '--compile-only') {
+      const visibilityStudy = mode === '--visibility-study';
+      const syntheticOnly = mode === '--synthetic-only';
+      console.error(visibilityStudy
+        ? 'Visibility study only. Do not click the fake panel. It sends no input and makes no permission requests.'
+        : syntheticOnly ? 'Synthetic checks only. Do not click the fake panel. The runner closes it without requesting a physical click.'
+        : 'Only this fake panel is targeted. Do not interact until the physical-click prompt. Existing Accessibility and Post-event permissions are required; this runner requests none.');
+      result = await runShellCard({ directory, binaries, admission, say, visibilityStudy, syntheticOnly });
       admission = null; retain = !result.cleanup.confirmed;
-      say({ summary: result }); process.exitCode = result.passed ? 0 : 1;
+      say({ summary: result }); process.exitCode = (visibilityStudy ? result.study?.complete : syntheticOnly ? result.synthetic?.complete : result.passed) ? 0 : 1;
     }
   } catch (error) { say({ outcome: 'failed', reason: error.message }); process.exitCode = 1; }
   finally {
