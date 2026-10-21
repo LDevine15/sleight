@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { trustedRead, trustedReadNode, trustedHandle } from './trusted-dom.mjs';
-import { closedDetails, hostsRootEvidence, clickListeners } from './closed-handle.mjs';
+import { closedDetails, hostsRootEvidence, clickListeners, nativeEditContextDetails } from './closed-handle.mjs';
+import { readNativeEditContext, retainNativeEditContext, sameNativeEditContext, nativeEditContextSelection } from './edit-context.mjs';
 import { canonical } from './authority.mjs';
-import { check, inspectElement, releaseNavigation, intent, expirePaymentDialog, keyClass, activationKey, textChord, deferRefund, endDeferredRefund } from './rules.mjs';
+import { check, inspectElement, releaseNavigation, intent, expirePaymentDialog, keyClass, activationKey, textChord, deferRefund, endDeferredRefund, internalNativeKeyboardTarget, lineBreakRefusal } from './rules.mjs';
 import { createUserFileProvider, stageUserUploads } from './files.mjs';
 import { createConsentUi } from './consent-ui.mjs';
 import { isAppBinding } from './electron-identity.mjs';
@@ -96,6 +97,13 @@ async function focusProved(handle, focus, closed) {
 
 export function ownDocument(el, unused, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) { return read(el, 'ownerDocument'); }
 export function samePageDocument(el, doc, read = (node, key) => { const value = node?.[key]; return typeof value === 'function' ? value.bind(node) : value; }) { return read(el, 'isConnected') && read(el, 'ownerDocument') === doc; }
+
+// The final native input evidence is one synchronous utility-world read, including focus and document identity.
+export function checkedNativeEditContextSelection(el, arg, read) {
+  if (!samePageDocument(el, arg.document, read) || !focusCheckedNode(el, { focus: false, hostsRoot: arg.hostsRoot }, read)) return null;
+  return nativeEditContextSelection(el, arg.context, read);
+}
+checkedNativeEditContextSelection.helpers = [...nativeEditContextSelection.helpers, nativeEditContextSelection, samePageDocument, focusCheckedNode];
 
 // A click can activate something other than the element named by the ref. HTML label activation: the first
 // label at or above the element forwards to its control unless interactive content sits between. Closure-free
@@ -638,11 +646,14 @@ export function createV3Context({ binding, browser, app, ui, confirmPayments, no
     return { ...bound.message, ...(requested && observed && equal(observed, requested) ? { payment: requested } : {}) };
   }, consent, files, confirmPayments };
   async function prepare(target) {
-    if (!current() || !target.locator || !target.state) throw Error('TRUSTED_TARGET_REQUIRED');
+    internalNativeKeyboardTarget(target, false);
     const old = targets.get(target);
+    if (old) old.allowedKind = undefined;
+    if (!current() || !target.locator || !target.state) throw Error('TRUSTED_TARGET_REQUIRED');
     const handle = old?.handle ?? (typeof target.locator.elementHandle === 'function' ? await target.locator.elementHandle({ timeout: 1000 }) : target.locator);
     if (!handle) throw Error('TRUSTED_TARGET_REQUIRED');
     held.add(handle);
+    let keyboardBinding;
     try {
       const frame = await handle.ownerFrame();
       if (!frame || !current() || old && (!old.doc.valid || !await trustedRead(handle, samePageDocument, old.doc.handle))) throw Error('TRUSTED_TARGET_REQUIRED');
@@ -672,13 +683,27 @@ export function createV3Context({ binding, browser, app, ui, confirmPayments, no
         watched.set(target.page, handlers);
       }
       const closed = closedDetails(handle);
-      if (target.do === 'press' && !await focusProved(handle, true, closed)) throw Error(focusRequired);
+      keyboardBinding = nativeEditContextDetails(handle);
+      if (/^x\d+$/.test(target.ref) && !keyboardBinding || keyboardBinding?.keyboardOnly && !['type', 'press'].includes(target.do)) throw Error('TRUSTED_TARGET_REQUIRED');
+      if (!keyboardBindingCurrent(keyboardBinding)) throw Error('EDIT_CONTEXT_CHANGED');
+      let nativeEditor, editContext;
+      if (['type', 'press'].includes(target.do)) {
+        nativeEditor = await trustedRead(handle, readNativeEditContext).catch(() => ({ native: false, eligible: false }));
+        if (nativeEditor.native || keyboardBinding) {
+          if (!nativeEditor.native || !nativeEditor.eligible) throw Error('EDIT_CONTEXT_CHANGED');
+          editContext = keyboardBinding?.context ?? old?.editContext;
+          if (!editContext) { editContext = await trustedHandle(handle, retainNativeEditContext); held.add(editContext); }
+          if (!await trustedRead(handle, sameNativeEditContext, editContext)) throw Error('EDIT_CONTEXT_CHANGED');
+          if (keyboardBinding?.keyboardOnly && !await focusProved(handle, false, closed)) throw Error(focusRequired);
+        }
+      }
+      if ((target.do === 'press' || editContext) && !await focusProved(handle, true, closed)) throw Error(focusRequired);
       const observed = await trustedRead(handle, readPaymentPage, never);
       const place = documentOf(frame, observed.origin);
       if (!current()) throw Error('TRUSTED_TARGET_REQUIRED');
       const identity = { browserIncarnation: app ? app.incarnation : browser, brokerEpoch: 1, clientSession: bound.message.session, turn: bound.message.turn,
         leaseGeneration: 1, target: doc.id, frame: doc.id, document: doc.id, origin: place.origin };
-      const record = { handle, doc, frame, page: target.page, identity, origin: place.origin, principal: place.principal, name: observed.name, ref: target.ref, closed };
+      const record = { handle, doc, frame, page: target.page, identity, origin: place.origin, principal: place.principal, name: observed.name, ref: target.ref, closed, editContext, keyboardBinding };
       targets.set(target, record); live = identity;
       // Last inspection is on the exact pinned element, after all page terms.
       const { seal, ...element } = await trustedRead(handle, inspectElement);
@@ -686,13 +711,37 @@ export function createV3Context({ binding, browser, app, ui, confirmPayments, no
       const freed = element.navigation === true && releaseNavigation(element, await clickListeners(handle));
       // The act's own earlier read of the same link (legacy classifier) carries the same checkout wording; a released link frees it too.
       const before = target.prior ?? target.element, prior = freed && before?.checkoutLink === true ? { ...before, payment: false } : before;
+      record.prior = prior;
       const sealEvidence = { element: seal, ...await foldForwarded(handle, element) };
-      if (!current()) throw Error('TRUSTED_TARGET_REQUIRED');
+      if (!current() || !keyboardBindingCurrent(keyboardBinding)) throw Error('TRUSTED_TARGET_REQUIRED');
       Object.assign(target, { session: bound.message.session, turn: bound.message.turn, document: doc.id, origin: place.origin,
         sealEvidence, element, prior, locator: handle, terms: { page: observed.page, ...(never && observed.unchecked ? { unchecked: observed.unchecked } : {}), method: requested?.method },
         submit: intent(target.do ?? 'click', { ...target, element }).submit });
+      if (editContext && nativeEditor.zeroArea && (target.do === 'type' || target.do === 'press' && keyClass(target.key).kind === 'safe'))
+        internalNativeKeyboardTarget(target, true);
       return record;
-    } catch (error) { held.delete(handle); await handle.dispose().catch(() => {}); throw error; }
+    } catch (error) { keyboardBinding?.retire?.(); held.delete(handle); await handle.dispose().catch(() => {}); throw error; }
+  }
+  function keyboardBindingCurrent(binding) { return !binding || typeof binding.current === 'function' && binding.current() === true; }
+  const nativeFieldOnly = el => el?.kind === 'text' && ['textbox', 'searchbox'].includes(el.role)
+    && ['payment', 'submit', 'formPayment'].every(key => el[key] === false);
+  async function nativeInputReady(record, selection) {
+    try {
+      if (!current() || !record?.doc.valid || !record.editContext ||
+          !keyboardBindingCurrent(record.keyboardBinding) ||
+          !await trustedRead(record.handle, samePageDocument, record.doc.handle) || !current() ||
+          !await focusProved(record.handle, false, record.closed)) throw Error(focusRequired);
+      const element = await trustedRead(record.handle, inspectElement);
+      if (!nativeFieldOnly(element) || record.prior && !nativeFieldOnly(record.prior) ||
+          element.connected === false || element.enabled === false || element.hit === false) throw Error('EDIT_CONTEXT_CHANGED');
+      const hostsRoot = await hostsRootEvidence(record.handle);
+      if (hostsRoot !== false) throw Error(focusRequired);
+      const actual = await trustedRead(record.handle, checkedNativeEditContextSelection,
+        { context: record.editContext, document: record.doc.handle, hostsRoot });
+      if (!actual || selection && (actual.start !== selection.start || actual.end !== selection.end) || !record.doc.valid || !current() ||
+          !keyboardBindingCurrent(record.keyboardBinding)) throw Error('EDIT_CONTEXT_CHANGED');
+      return actual;
+    } catch (error) { record?.keyboardBinding?.retire?.(); throw error; }
   }
   const ctx = Object.freeze({ session: bound.message.session, turn: bound.message.turn, userMessage: ruleContext.userMessage,
     consent, files, prepareTarget: prepare, paymentTerms: target => targets.get(target) ? target.terms : undefined,
@@ -722,6 +771,8 @@ export function createV3Context({ binding, browser, app, ui, confirmPayments, no
         if (fieldOnly && intent(kind, target).submit) return refused();
         ruleTarget = target;
         const result = check(ruleContext, kind, target);
+        const checked = targets.get(target);
+        if (checked) { checked.allowedKind = result.verdict === 'allow' ? kind : undefined; checked.allowedKey = target.key; }
         if (result.verdict === 'allow' && ['click', 'press', 'submit'].includes(kind))
           dialogOwner = { ...targets.get(target), target, active: false };
         if (kind === 'dialog' && result.verdict === 'allow') { dialogOwner = undefined; expirePaymentDialog(ruleContext); }
@@ -745,6 +796,10 @@ export function createV3Context({ binding, browser, app, ui, confirmPayments, no
       const record = targets.get(target);
       if (!current() || !record?.doc.valid || !await trustedRead(record.handle, samePageDocument, record.doc.handle) ||
           !await focusProved(record.handle, false, record.closed) || !current()) throw Error(focusRequired);
+      if (record.editContext) {
+        if (record.allowedKind !== 'press' || key !== record.allowedKey) throw Error('EDIT_CONTEXT_CHANGED');
+        await nativeInputReady(record);
+      }
       const { kind, chord } = keyClass(key);
       if (kind === 'unknown' || chord && kind !== 'safe' && !textChord(key, target.element)) throw Error('KEY_NOT_ALLOWED: this key or chord is not sent in the background (Shift+Enter and Control+Enter in a text field are). Use the engine browser path');
       // ElementHandle.press focuses again without verifying its recipient. Use only the owned page keyboard after
@@ -761,6 +816,25 @@ export function createV3Context({ binding, browser, app, ui, confirmPayments, no
         for (const name of names) { await keyboard.down(name); down++; }
         await keys.between();
       } finally { for (let i = down - 1; i >= 0; i--) await keyboard.up(names[i]); }
+    },
+    async typeTarget(target, value, options) {
+      const record = targets.get(target);
+      if (typeof value !== 'string' || !current() || !record?.doc.valid || record.allowedKind !== 'type' ||
+          !await trustedRead(record.handle, samePageDocument, record.doc.handle) || !current()) throw Error('TRUSTED_TARGET_REQUIRED');
+      if (!record.editContext) {
+        if (target.element.tag === 'input' && /[\r\n]/.test(value)) throw Error(lineBreakRefusal);
+        return record.handle.fill(value, options);
+      }
+      await nativeInputReady(record);
+      await record.page.keyboard.press('ControlOrMeta+A', options);
+      // SelectAll is a real editor action, including its keyup handlers. Native offsets can be only a partial buffer;
+      // retain their resulting selection without pretending that they prove the whole virtual document was selected.
+      const selection = await nativeInputReady(record);
+      await nativeInputReady(record, selection);
+      if (value === '') await record.page.keyboard.press('Backspace', options);
+      else await record.page.keyboard.insertText(value);
+      // Input may have been delivered before the document, focus, context or grant changed. Refuse success without replay.
+      await nativeInputReady(record);
     },
     async stageUploads(target, paths) {
       const entry = uploads.get(target); uploads.delete(target);

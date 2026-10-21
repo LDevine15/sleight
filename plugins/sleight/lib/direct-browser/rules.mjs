@@ -8,6 +8,17 @@ const allow = Object.freeze({ verdict: 'allow' });
 const refuse = (message, capability = false) => ({ verdict: 'refuse', message: message + (capability || process.env.SLEIGHT_MT === '0' ? ' Use the engine browser path if needed.' : '') });
 const payments = new WeakMap();
 const captures = new WeakMap();
+const nativeKeyboardTargets = new WeakSet();
+// Internal only: v3 grants this after native capability, attachment and exact focus proof. Tool/page flags grant nothing.
+export function internalNativeKeyboardTarget(target, allowed) {
+  nativeKeyboardTargets.delete(target);
+  if (allowed === true) nativeKeyboardTargets.add(target);
+}
+function nativeKeyboardInput(kind, target) {
+  return nativeKeyboardTargets.has(target) && (kind === 'type' || kind === 'press' && keyClass(target.key).kind === 'safe')
+    && [target.element, target.prior].filter(Boolean).every(el => el.kind === 'text' && ['textbox', 'searchbox'].includes(el.role)
+      && ['payment', 'submit', 'formPayment'].every(key => el[key] === false));
+}
 const paymentPages = new WeakSet(), historyRequests = new WeakMap();
 export const paymentWords = text => /\b(?:pay|payment|purchase|buy|checkout|donate|subscribe|place order|complete order|order now|book now|upgrade|send money|charge)\b/i.test(text ?? '');
 const ordinary = new Set(['read', 'open', 'click', 'type', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'drag', 'upload',
@@ -191,7 +202,7 @@ export function check(ctx, kind, target = {}) {
     if (!['read', 'dialog', 'open', 'wait', 'back', 'forward', 'reload', 'viewport', 'close', 'keep', 'handoff'].includes(kind)) {
       if (!el || !text(el.tag)) return refuse('Read the target before input.');
       if (['iframe', 'frame', 'object', 'embed'].includes(el.tag)) return refuse('Use a ref for the child-frame control.');
-      if (['connected', 'visible', 'enabled', 'hit'].some(key => el[key] === false)) return refuse('The checked target changed; read it again.');
+      if (['connected', 'enabled', 'hit'].some(key => el[key] === false) || el.visible === false && !nativeKeyboardInput(kind, target)) return refuse('The checked target changed; read it again.');
     }
     if (['click', 'press', 'submit'].includes(kind) && ['payment', 'submit', 'form', 'formPayment'].some(key => typeof el?.[key] !== 'boolean'))
       return refuse('Read final submit and payment classification before activation.');

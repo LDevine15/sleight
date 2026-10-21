@@ -54,7 +54,7 @@ export function headerOf(text) {
     reason: m[4] === 'joined' ? null : m[4].slice(8), rendererHidden: !!m[5] };
 }
 export function refOf(text, pattern) {
-  for (const line of String(text).split('\n')) if (pattern.test(line)) { const m = /\[ref=((?:f\d+)?[es]\d+)\]/.exec(line); if (m) return m[1]; }
+  for (const line of String(text).split('\n')) if (pattern.test(line)) { const m = /\[ref=((?:f\d+)?e\d+|[sx]\d+)\]/.exec(line); if (m) return m[1]; }
   return null;
 }
 const escaped = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -65,6 +65,11 @@ function editorRefOf(text, name) {
   const editors = lines.filter(line => /textbox/.test(line) && (line.includes(name) || /Editor content/i.test(line)));
   const named = editors.filter(line => line.includes(name));
   if (named.length === 1) return refOf(named[0], /textbox/);
+  // The ordinary tree may describe the same zero-area editor without an actionable ref.
+  // Only the separately proved active keyboard capability can resolve that case; two actionable editors still refuse.
+  const actionable = named.filter(line => refOf(line, /textbox/));
+  if (actionable.length === 1 && /\[active\]/.test(actionable[0]) && /\[keyboard-only\]/.test(actionable[0]) &&
+      /^x\d+$/.test(refOf(actionable[0], /textbox/))) return refOf(actionable[0], /textbox/);
   return editors.length === 1 && /textbox "Editor content(?:"|[,;])/i.test(editors[0]) ? refOf(editors[0], /textbox/) : null;
 }
 const first = text => String(text).split('\n')[0].slice(0, 240);
@@ -142,9 +147,9 @@ export const CELLS = Object.freeze([
     return { number: r.ms, unit: 'ms' };
   } },
   { id: 'key', editor: true, input: true, async run(c) {
-    await c.openScratch();
+    const ref = await c.openScratch();
     try {
-      await c.act(c.tab(), [{ do: 'press', key: 'Meta+P' }]);
+      await c.act(c.tab(), [{ do: 'press', ref, key: 'Meta+P' }]);
       if (!await c.until(async () => SELECTORS.quickOpen.test((await c.read(c.tab(), { find: 'Search files by name|Quick open|type the name' })).text), 5000)) fail('QUICK_OPEN_MISSING');
     } finally {
       await c.read(c.tab(), { find: 'Search files by name|Quick open|type the name' });
@@ -176,8 +181,8 @@ export const CELLS = Object.freeze([
     return { number: present, unit: `of ${trials}`, expectFront: front.pid, detail: { frontBundle: front.bundle } };
   } },
   { id: 'webview', apps: ['vscode'], editor: true, input: true, async run(c) {
-    await c.openFile('a-notes.md');
-    await c.act(c.tab(), [{ do: 'press', key: 'Meta+Shift+V' }]);
+    const ref = await c.openFile('a-notes.md');
+    await c.act(c.tab(), [{ do: 'press', ref, key: 'Meta+Shift+V' }]);
     let frame;
     await c.until(async () => (frame = SELECTORS.frameRef.exec((await c.read(c.tab(), { find: 'Item one|Qualification notes' })).text)?.[1]), 5000);
     if (!frame) fail('WEBVIEW_NOT_READ');
@@ -234,16 +239,16 @@ export const CELLS = Object.freeze([
     return { detail: { zoomLevel: 0, scaleMatch: true } };
   } },
   { id: 'terminal-refusal', apps: ['vscode'], editor: true, input: true, async run(c) {
-    await c.openScratch();
+    const editor = await c.openScratch();
     try {
-      await c.act(c.tab(), [{ do: 'press', key: 'Control+`' }]);
+      await c.act(c.tab(), [{ do: 'press', ref: editor, key: 'Control+`' }]);
       let ref;
       await c.until(async () => (ref = refOf((await c.read(c.tab(), { find: 'Terminal' })).text, SELECTORS.terminal)), 5000);
       if (!ref) fail('TERMINAL_NOT_FOUND');
       const r = await c.tool('browser_act', { tab: c.tab(), steps: [{ do: 'type', ref, text: 'echo refused' }] });
       if (!r.isError || !/ELECTRON_TERMINAL_REFUSED/.test(r.text)) fail('TERMINAL_INPUT_NOT_REFUSED');
     } finally {
-      // A key in the terminal is correctly refused. Click the editor instead, including on a failed probe.
+      // A key in the terminal is correctly refused. Select the editor again; later input carries its exact ref.
       await c.openScratch();
     }
     return { detail: { refused: true } };
@@ -261,8 +266,10 @@ export const CELLS = Object.freeze([
   } },
   { id: 'sheet-parking', apps: ['vscode'], editor: true, input: true, async run(c) {
     await c.openScratch();
-    const before = headerOf((await c.read(c.tab())).text) ?? fail('APP_HEADER_MISSING');
-    await c.act(c.tab(), [{ do: 'press', key: 'Meta+Shift+S' }], { allowPark: true });
+    const read = await c.read(c.tab(), { find: 'Editor content|a-scratch.txt' });
+    const before = headerOf(read.text) ?? fail('APP_HEADER_MISSING');
+    const ref = editorRefOf(read.text, 'a-scratch.txt') ?? fail('EDITOR_NOT_FOUND');
+    await c.act(c.tab(), [{ do: 'press', ref, key: 'Meta+Shift+S' }], { allowPark: true });
     let row;
     await c.until(async () => (row = (await c.list()).find(r => r.tab === c.tab()))?.parked, 5000);
     if (!row?.parked) fail('SHEET_NOT_PARKED');
@@ -319,9 +326,9 @@ export const CELLS = Object.freeze([
   { id: 'timings', apps: ['vscode'], editor: true, async run(c) {
     // Workflow time at the tool-call boundary, never component time. Cold is the first call on a fresh connection.
     const kinds = { list: { cold: [], warm: [] }, read: { cold: [], warm: [] }, act: { cold: [], warm: [] } };
-    const op = async (kind, tab) => {
+    const op = async (kind, tab, ref) => {
       const r = kind === 'list' ? await c.tool('browser_tabs', { do: 'list' }) : kind === 'read' ? await c.tool('browser_read', { tab, max_chars: 8000 })
-        : await c.tool('browser_act', { tab, steps: [{ do: 'press', key: 'Escape' }], observe: 'none' });
+        : await c.tool('browser_act', { tab, steps: [{ do: 'press', ref, key: 'Escape' }], observe: 'none' });
       if (r.isError) throw Object.assign(Error(`${kind.toUpperCase()}_FAILED: ${first(r.text)}`), { detail: { snapshotFailure: r.snapshotFailure ?? null } });
       return r.ms;
     };
@@ -333,12 +340,12 @@ export const CELLS = Object.freeze([
         const rows = kind === 'list' ? [] : await c.list();
         const tab = kind === 'list' ? undefined : (rows.find(row => !row.parked && row.window === c.state.workspaceWindow)
           ?? rows.find(row => !row.parked))?.tab ?? fail('NO_JOINED_APP_TAB');
-        if (kind === 'act') await c.read(tab, { find: 'Editor content|a-scratch.txt' });
-        kinds[kind].cold.push(await op(kind, tab));
+        const ref = kind === 'act' ? editorRefOf((await c.read(tab, { find: 'Editor content|a-scratch.txt' })).text, 'a-scratch.txt') ?? fail('EDITOR_NOT_FOUND') : undefined;
+        kinds[kind].cold.push(await op(kind, tab, ref));
       }
-      if (kind === 'act') await c.openScratch();
+      const ref = kind === 'act' ? await c.openScratch() : undefined;
       const tab = kind === 'act' ? c.tab() : (await c.list()).find(row => !row.parked)?.tab;
-      for (let i = 0; i < c.options.samples; i++) kinds[kind].warm.push(await op(kind, tab));
+      for (let i = 0; i < c.options.samples; i++) kinds[kind].warm.push(await op(kind, tab, ref));
       c.state.tab = tab ?? c.state.tab;
     }
     for (const [kind, v] of Object.entries(kinds)) c.timings[kind] = { scope: 'tool-call', cold: timingSummary(v.cold), warm: timingSummary(v.warm) };
@@ -516,7 +523,6 @@ function context({ app, driver, clock, options, state, timings, consentLog }) {
           fail('EDITOR_ACCESSIBILITY_REQUIRED');
         fail('EDITOR_NOT_FOUND');
       }
-      await c.act(c.tab(), [{ do: 'click', ref: editor }]);
       return editor;
     },
     async act(tab, steps, { allowPark = false } = {}) {

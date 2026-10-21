@@ -434,7 +434,7 @@ export class ActionLog {
     if (call.name === 'browser_open') return [{ ...base, ...where, kind: 'open', ...(error ? refused({}) : { result: 'ok', outcome: 'opened' }) }];
     const rows = [];
     for (const line of text.split('\n')) {
-      const step = /^(\d+) (\w+)(?: ((?:f\d+)?e\d+|s\d+))?: (.*)$/.exec(line) ?? (call.name === 'browser_fill' && /^()()((?:f\d+)?e\d+|s\d+): (.*)$/.exec(line));
+      const step = /^(\d+) (\w+)(?: ((?:f\d+)?e\d+|[sx]\d+))?: (.*)$/.exec(line) ?? (call.name === 'browser_fill' && /^()()((?:f\d+)?e\d+|[sx]\d+): (.*)$/.exec(line));
       if (!step) continue;
       const outcome = step[4].trim(), kind = !step[2] ? 'fill' : TURBO_STEPS.has(step[2]) ? step[2] : 'step', target = step[3] ? { target: { ref: step[3] } } : {};
       const row = { ...base, ...where, kind, ...target };

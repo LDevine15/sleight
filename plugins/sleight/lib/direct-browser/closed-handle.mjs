@@ -6,7 +6,9 @@
 // Playwright 1.64.0 is pinned and runs in-process (see trusted-dom.mjs), so the client connection can map a client
 // object to its server object and back. Nothing here evaluates page JavaScript to find the element, and the one
 // bootstrap evaluation below only learns a class, never trusts the element it returns.
-const classes = new WeakMap(), details = new WeakMap();
+import { trustedRead } from './trusted-dom.mjs';
+import { sameNativeEditContext } from './edit-context.mjs';
+const classes = new WeakMap(), details = new WeakMap(), editContexts = new WeakMap();
 const unavailable = () => Error('Closed-root actions need the in-process browser connection; use the engine browser path.');
 const stale = () => Error('Closed-root ref is stale or unavailable; take a new snapshot.');
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -14,12 +16,30 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 // What the Node side learned about a resolved handle: its backend node and whether it hosts a closed root itself.
 // Absent for every handle that did not come from this module.
 export const closedDetails = handle => details.get(handle);
+export const nativeEditContextDetails = handle => editContexts.get(handle);
+export function keyboardFocusChain(el, unused, read) {
+  try {
+    const seen = new Set();
+    for (let node = el; node;) {
+      if (seen.has(node) || seen.size >= 32 || read(node, 'isConnected') !== true) return false;
+      seen.add(node);
+      const doc = read(node, 'ownerDocument'), view = read(doc, 'defaultView');
+      if (read(doc, 'activeElement') !== node || read(read(node, 'shadowRoot'), 'activeElement')) return false;
+      const owner = read(view, 'frameElement');
+      if (!owner) return view === read(view, 'top');
+      node = owner;
+    }
+  } catch { /* inaccessible frame or native getter */ }
+  return false;
+}
 
-async function dispatcherClass(connection, dispatchers, frame) {
+async function dispatcherClass(connection, dispatchers, frame, keyboardOnly = false) {
   let found = classes.get(dispatchers);
   if (found) return found;
   // Any element handle's dispatcher is an ElementHandleDispatcher. The returned element is only used for its class.
-  const seed = await frame.evaluateHandle(() => document.documentElement);
+  // Keyboard-only resolution never enters MAIN. This fixed utility locator teaches the dispatcher class only;
+  // the backend ID and the frame already pin the target, and the seed is never used as identity evidence.
+  const seed = keyboardOnly ? await frame.locator(':root').elementHandle({ timeout: 1000 }) : await frame.evaluateHandle(() => document.documentElement);
   try {
     const dispatcher = dispatchers._dispatcherByGuid.get(seed._guid);
     if (!dispatcher?._type_ElementHandle || typeof dispatcher.constructor?.fromJSOrElementHandle !== 'function') throw unavailable();
@@ -32,7 +52,17 @@ async function dispatcherClass(connection, dispatchers, frame) {
 // child frame shares its parent's CDP session, so the binding's frame can be the parent of the frame that owns the node,
 // and a cross-origin child can refuse the parent's context outright. Backend ids are unique per process only, so the
 // owner is searched among frames of the same session, and the handle's own ownerFrame() must confirm the choice.
-export async function resolveClosedHandle({ frame, backendNodeId }) {
+export async function resolveClosedHandle(binding) {
+  if (!binding?.keyboardOnly) return resolveBackendHandle(binding);
+  try {
+    if (binding.current?.() !== true || !binding.context || !Number.isSafeInteger(binding.generation)) throw stale();
+    return await resolveBackendHandle(binding);
+  } catch {
+    binding.retire?.();
+    throw stale();
+  }
+}
+async function resolveBackendHandle({ frame, backendNodeId, keyboardOnly = false, ...binding }) {
   const connection = frame?._connection, toImpl = connection?.toImpl;
   if (typeof toImpl !== 'function' || !Number.isSafeInteger(backendNodeId) || backendNodeId <= 0) throw unavailable();
   const frameImpl = toImpl.call(connection, frame), dispatchers = toImpl.call(connection, connection);
@@ -43,11 +73,16 @@ export async function resolveClosedHandle({ frame, backendNodeId }) {
   // Anything but a clear "no" counts as a host.
   const described = await session._client._sendMayFail('DOM.describeNode', { backendNodeId });
   const hostsRoot = !described?.node || (described.node.shadowRoots?.length ?? 0) > 0;
-  const Dispatcher = await dispatcherClass(connection, dispatchers, frame);
+  if (keyboardOnly && delegate.noUtilityWorld?.()) throw stale();
+  const Dispatcher = await dispatcherClass(connection, dispatchers, frame, keyboardOnly);
   const sameSession = candidate => delegate._sessionForFrame(candidate) === session;
   const build = async candidate => {
     let impl;
-    try { impl = await session._adoptBackendNodeId(backendNodeId, await candidate.mainContext()); } catch { return null; }
+    try {
+      const context = keyboardOnly ? await candidate.utilityContext() : await candidate.mainContext();
+      if (keyboardOnly && context?.world !== 'utility') throw stale();
+      impl = await session._adoptBackendNodeId(backendNodeId, context);
+    } catch { return null; }
     try {
       const scope = candidate === frameImpl ? dispatchers._dispatcherByGuid.get(frame._guid) : dispatchers.existingDispatcher(candidate);
       const dispatcher = Dispatcher.fromJSOrElementHandle(scope, impl);
@@ -58,7 +93,7 @@ export async function resolveClosedHandle({ frame, backendNodeId }) {
       return handle;
     } catch (error) { try { await impl.dispose(); } catch { /* already gone */ } throw error; }
   };
-  const order = [frameImpl, ...(frameImpl._page.frames?.() ?? []).filter(candidate => candidate !== frameImpl && sameSession(candidate))];
+  const order = keyboardOnly ? [frameImpl] : [frameImpl, ...(frameImpl._page.frames?.() ?? []).filter(candidate => candidate !== frameImpl && sameSession(candidate))];
   const tried = new Set();
   let next = order[0];
   while (next && tried.size < 32) {
@@ -68,11 +103,20 @@ export async function resolveClosedHandle({ frame, backendNodeId }) {
       let ownerImpl;
       try { const owner = await handle.ownerFrame(); ownerImpl = owner && toImpl.call(connection, owner); } catch { /* detached */ }
       if (ownerImpl === next) {
+        if (keyboardOnly) {
+          try {
+            if (ownerImpl !== frameImpl || binding.current?.() !== true ||
+                await trustedRead(handle, sameNativeEditContext, binding.context) !== true ||
+                hostsRoot || await trustedRead(handle, keyboardFocusChain) !== true || binding.current?.() !== true) throw stale();
+            editContexts.set(handle, Object.freeze({ frame, backendNodeId, generation: binding.generation, context: binding.context,
+              keyboardOnly: true, current: binding.current, retire: binding.retire }));
+          } catch (error) { await handle.dispose().catch(() => {}); throw error; }
+        }
         details.set(handle, Object.freeze({ backendNodeId, hostsRoot }));
         return handle;
       }
       await handle.dispose().catch(() => {});
-      if (ownerImpl && !tried.has(ownerImpl) && sameSession(ownerImpl)) { next = ownerImpl; continue; }
+      if (!keyboardOnly && ownerImpl && !tried.has(ownerImpl) && sameSession(ownerImpl)) { next = ownerImpl; continue; }
     }
     next = order.find(candidate => !tried.has(candidate));
   }
@@ -119,8 +163,8 @@ const direct = ['click', 'dblclick', 'fill', 'check', 'uncheck', 'setChecked', '
 // current binding, so a ref that went stale after a re-read fails instead of reaching some other node.
 export function closedLocator(binding) {
   const open = async () => resolveClosedHandle(binding());
-  const using = async use => {
-    const handle = await open();
+  const using = async (use, pinned) => {
+    const handle = pinned ? await resolveClosedHandle(pinned) : await open();
     try { return await use(handle); } finally { await handle.dispose().catch(() => {}); }
   };
   const locator = {
@@ -132,7 +176,12 @@ export function closedLocator(binding) {
       if (['visible', 'hidden', 'stable', 'enabled', 'disabled', 'editable'].includes(state)) await handle.waitForElementState(state, { timeout });
     }),
   };
-  for (const name of direct) locator[name] = (...args) => using(handle => handle[name](...args));
+  const reads = new Set(['inputValue', 'isChecked', 'isVisible', 'isEnabled', 'isDisabled', 'isEditable', 'textContent', 'innerText', 'getAttribute', 'boundingBox']);
+  for (const name of direct) locator[name] = async (...args) => {
+    const pinned = binding();
+    if (pinned.keyboardOnly && !reads.has(name)) throw Error('keyboard-only refs require a guarded keyboard capability; direct locator actions are unavailable.');
+    return using(handle => handle[name](...args), pinned);
+  };
   for (const name of ['locator', 'getByRole', 'getByText', 'getByLabel', 'frameLocator', 'filter', 'first', 'last', 'nth']) locator[name] = unsupported(name);
   return Object.freeze(locator);
 }

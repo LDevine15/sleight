@@ -3,13 +3,14 @@ import { isV3Context } from './v3-context.mjs';
 import { backgroundClick as guardedClick } from './page.mjs';
 import { readOptions, moveList, pickElement, findPopup, searchOptions, describeMiss, normalize, queries } from './pick-option.mjs';
 import { lineBreakRefusal } from './rules.mjs';
+import { snapshotAcquisitionPending } from './snapshot.mjs';
 // Whole-form strategies are sleight's own (the v2 forms.mjs they came from is gone). Playwright's
 // aria-ref selector routes fNeM refs to their child frame, without parent fallback.
 class FieldError extends Error {}
 // A refusal after only typing or scrolling, which says plainly what happened instead of "field may have changed".
 const said = message => Object.assign(new FieldError(message), { said: true });
 const actionFailed = result => result?.lines?.some(line => /: not run:|effect unconfirmed;/.test(line));
-const refPattern = /^(?:(?:f\d+)?e\d+|s\d+)$/;
+const refPattern = /^(?:(?:f\d+)?e\d+|[sx]\d+)$/;
 const options = { timeout: 1500 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -50,7 +51,14 @@ function inspect(el, expected, read = (node, key) => { const value = node?.[key]
   const submit = !!(type === 'submit' || button && form && attr('type') !== 'button' && attr('type') !== 'reset' || button && payment);
   const rect = read(el, 'getBoundingClientRect')?.(), style = read(read(read(el, 'ownerDocument'), 'defaultView'), 'getComputedStyle')?.(el);
   const multiList = kind === 'listbox' && attr('aria-multiselectable') === 'true';
-  return { kind, type, tag, role, editableText: !read(el, 'readOnly') && (tag === 'input' || tag === 'textarea' || read(el, 'isContentEditable')), submit, payment, form: !!form, formPayment: payment, enabled: !read(el, 'disabled') && attr('aria-disabled') !== 'true',
+  // This only chooses the guarded action route; that route proves eligibility, attachment and focus again.
+  const nativeEditContext = (() => { try {
+    if (typeof HTMLElement === 'undefined' || typeof EditContext === 'undefined') return false;
+    const context = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'editContext')?.get?.call(el);
+    return !!context && Array.isArray(Object.getOwnPropertyDescriptor(EditContext.prototype, 'attachedElements')?.value?.call(context));
+  } catch { return false; } })();
+  return { kind, type, tag, role, nativeEditContext,
+    editableText: !read(el, 'readOnly') && (tag === 'input' || tag === 'textarea' || read(el, 'isContentEditable')), submit, payment, form: !!form, formPayment: payment, enabled: !read(el, 'disabled') && attr('aria-disabled') !== 'true',
     hiddenLabel: ['checkbox', 'radio'].includes(type) && !!read(el, 'labels')?.length && (!!style?.clip && style.clip !== 'auto' || rect && (!rect.width || !rect.height)),
     visible: rect ? rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden' && style?.display !== 'none' : undefined, checked, connected: read(el, 'isConnected'), readonly: !!read(el, 'readOnly') || multiList && attr('aria-readonly') === 'true', disabled: !!read(el, 'disabled') || attr('aria-disabled') === 'true',
     controls: attr('aria-controls'), expanded: attr('aria-expanded'), multiple: !!read(el, 'multiple') || multiList,
@@ -70,9 +78,11 @@ function inspect(el, expected, read = (node, key) => { const value = node?.[key]
 function validate(fields, submit) {
   if (!Array.isArray(fields) || fields.length < 1 || fields.length > 60) throw new FieldError('fields must contain 1 to 60 entries');
   if (submit !== undefined && !refPattern.test(submit)) throw new FieldError('submit needs a snapshot ref');
+  if (/^x\d+$/.test(submit)) throw new FieldError('keyboard-only ref cannot submit');
   for (const field of fields) {
     if (!field || typeof field.ref !== 'string' || !refPattern.test(field.ref)) throw new FieldError('each field needs a snapshot ref');
     const value = field.value;
+    if (/^x\d+$/.test(field.ref) && !['string', 'number'].includes(typeof value)) throw new FieldError('keyboard-only fields need text or a number');
     if (!(typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value) ||
       typeof value === 'string' && value.length <= 65536 || Array.isArray(value) && value.length <= 100 &&
       value.every(v => typeof v === 'string' && v.length <= 512))) throw new FieldError('unsupported field value');
@@ -103,6 +113,16 @@ export function createFillFields({ check, runSteps, backgroundClick = guardedCli
         const { ref, value } = fields[i]; sent = false;
         try {
           if (tab.state.actionPending) throw new FieldError('an earlier input is still pending; wait before filling');
+          if (snapshotAcquisitionPending(page)) throw new FieldError('Snapshot acquisition is still pending; wait before another action or read.');
+          const nativeText = async () => {
+            if (!isV3Context(ctx)) throw new FieldError('keyboard-only refs require a trusted context');
+            if (!['string', 'number'].includes(typeof value)) throw new FieldError('EditContext fields need text or a number');
+            const result = await runSteps(tab, [{ do: 'type', ref, text: String(value) }], ctx);
+            sent = !!result?.lines?.length && !result.lines.some(line => /: not run:/.test(line));
+            if (!result?.lines?.length || actionFailed(result)) throw new FieldError('EditContext field stopped; read the page');
+            rows[i].status = 'set';
+          };
+          if (/^x\d+$/.test(ref)) { await nativeText(); continue; }
           if (/^s\d+$/.test(ref)) {
             // A closed-root select takes its option as a string too, so ask the pinned node what kind of control it is.
             const kind = typeof value === 'boolean' || Array.isArray(value) || typeof page.getByRef !== 'function' ? undefined :
@@ -117,6 +137,7 @@ export function createFillFields({ check, runSteps, backgroundClick = guardedCli
           }
           const loc = typeof page.getByRef === 'function' ? page.getByRef(ref) : page.locator('aria-ref=' + ref);
           let state = await trustedLocatorRead(loc, inspect, value);
+          if (state.nativeEditContext) { await nativeText(); continue; }
           if (state.kind === 'select' && state.disabled) {
             const until = now() + 1500;
             while (state.disabled && !stopped && now() < until) {

@@ -318,10 +318,10 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
   // The driver's own admin connection, once the workers' channels have closed (the host takes one administrator at a time).
   async function driverAdmin() {
     boundary();
-    const guarded = admin => new Proxy(admin, { get(target, key) {
-      const value = target[key];
-      return typeof value !== 'function' ? value : (...args) => { if (key !== 'close') boundary(); else if (lifecycle?.cleanupAllowed === false) throw Error('RUN_CANCELLATION_UNSETTLED'); return value.apply(target, args); };
-    } });
+    // Admin connections are frozen; put guarded methods on a separate facade rather than replace Proxy reads of them.
+    const guarded = admin => Object.freeze(Object.fromEntries(Object.entries(admin).map(([key, value]) => [key,
+      typeof value !== 'function' ? value : (...args) => { if (key !== 'close') boundary(); else if (lifecycle?.cleanupAllowed === false) throw Error('RUN_CANCELLATION_UNSETTLED'); return value.apply(admin, args); },
+    ])));
     if (deps.admin) return guarded(await deps.admin());
     const { ensureHost } = deps.ensureHost ? deps : await import(new URL('electron-admin.mjs', D));
     for (let i = 0; ; i++) {

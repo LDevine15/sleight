@@ -8,6 +8,7 @@ import { observeActivity } from './activity.mjs';
 import { trustedLocatorRead } from './trusted-dom.mjs';
 import { endpointURL, endpointBlock } from './endpoint-guard.mjs';
 import { setViewport } from './viewport.mjs';
+import { snapshotAcquisitionPending } from './snapshot.mjs';
 import { originOf, pathOf, guardChooser } from './output-hygiene.mjs';
 const OPS = new Set('click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport navigate'.split(' '));
 const REF_OPS = new Set('click type select check uncheck hover drag upload'.split(' '));
@@ -21,7 +22,7 @@ export const shortStepOutcomes = Object.freeze({ quiet: 'page quiet after <ms> m
 const dialogOutcome = dialog => `dialog ${clean(dialog.type())} is waiting; message (untrusted page content): "${clean(dialog.message())}"`;
 const lineBreak = /[\r\n]/;
 const clean = value => String(value ?? '').replace(/[\r\n\t]+/g, ' ').slice(0, 240);
-const refOf = value => typeof value === 'string' && /^(?:(?:f\d+)?e\d+|s\d+)$/.test(value) ? value : null;
+const refOf = value => typeof value === 'string' && /^(?:(?:f\d+)?e\d+|[sx]\d+)$/.test(value) ? value : null;
 async function bounded(task, ms) {
   let timer;
   try {
@@ -43,6 +44,8 @@ function validate(steps) {
   if (!Array.isArray(steps) || !steps.length || steps.length > 12) throw Error('steps needs 1 to 12 operations');
   for (const s of steps) {
     if (!s || !OPS.has(s.do)) throw Error('unsupported do operation');
+    if (/^x\d+$/.test(s.to) || /^x\d+$/.test(s.ref) && !['type', 'press'].includes(s.do))
+      throw Error('keyboard-only refs support only type and press');
     if (s.modifier !== undefined && (s.do !== 'click' || typeof s.modifier !== 'string' || !Object.hasOwn(clickModifiers, s.modifier)))
       throw Error('click modifier must be cmd or ctrl');
     const needs = name => { throw Error(s.do + ' needs ' + name); };
@@ -251,6 +254,8 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
         if (state.dialog && step.do !== 'dialog') throw Error('a page dialog is waiting; answer it with the dialog operation');
         if (step.do === 'dialog' && !state.dialog) throw Error('no waiting dialog; read the page');
         pendingGate(state, step);
+        if (snapshotAcquisitionPending(page)) throw Error('Snapshot acquisition is still pending; wait before another action or read.');
+        if (/^x\d+$/.test(step.ref) && !isV3Context(ctx)) throw Error('keyboard-only refs require a trusted context');
         locator = step.ref ? page.getByRef(step.ref) : step.do === 'press' ? page.locator(':focus') : null;
         if (step.do === 'press' && !step.ref && !await locator.count()) locator = page.locator('body');
         let info = locator ? await trustedLocatorRead(locator, inspectTarget) : {};
@@ -330,7 +335,7 @@ export function createActionRunner({ check, snapshot, backgroundClick = (tab, lo
           }, { press: activation, keys: trusted });
           if (trusted && step.do !== 'upload') { await gate(); ctx.beginInput(target); }
           begin();
-          if (step.do === 'type') return locator.fill(step.text, options);
+          if (step.do === 'type') return trusted ? ctx.typeTarget(target, step.text, options) : locator.fill(step.text, options);
           if (step.do === 'press') return pressKey();
           if (step.do === 'select') return locator.selectOption(step.values, options);
           if (step.do === 'check') return locator.check({ ...options, ...await aimedAt(locator) });

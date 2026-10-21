@@ -6,6 +6,13 @@ func frame(_ rect: NSRect) -> [String: Double] {
     ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height]
 }
 var records: [[String: Any]] = []
+var trackingRecords: [[String: Any]] = []
+func restingAccent(_ button: NSButton) -> Bool {
+    if #available(macOS 26.0, *) {
+        return button.tintProminence == .primary || button.tintProminence == .secondary || button.bezelColor != nil
+    }
+    return button.bezelColor != nil
+}
 let destination = CommandLine.arguments[1]
 let installedIcon = CommandLine.arguments[2]
 func capture(_ card: AskCardPanel, _ name: String) throws {
@@ -23,7 +30,8 @@ func capture(_ card: AskCardPanel, _ name: String) throws {
         "summaryFrame": frame(card.scroll.frame),
         "hidesOnDeactivate": card.panel.hidesOnDeactivate,
         "buttons": buttons.map { ["title": $0.title, "tag": $0.tag, "frame": frame($0.convert($0.bounds, to: view)),
-            "intrinsicWidth": $0.intrinsicContentSize.width, "default": $0.keyEquivalent == "\r"] },
+            "intrinsicWidth": $0.intrinsicContentSize.width, "default": $0.keyEquivalent == "\r" || card.panel.defaultButtonCell === $0.cell,
+            "restingAccent": restingAccent($0), "highlighted": $0.isHighlighted] },
         "fields": fields.map { ["text": $0.stringValue, "frame": frame($0.convert($0.bounds, to: view))] }])
 }
 let ordinary = AskCard(question: "Allow Grok Bot to use TextEdit?", detail: "Allow for this Grok Bot session only.", host: "Grok Bot", icon: installedIcon, kind: "app", choices: ["cancel", "once"])
@@ -45,6 +53,17 @@ for temporary in [true, false] {
     let panel = AskCardPanel(card, deadline: deadline) { answers.append($0) }
     let prefix = temporary ? "electron-three" : "electron-four"
     try capture(panel, prefix + "-collapsed")
+    let sessionButton = panel.buttons.first { $0.title == "Allow this session" }!
+    let targets = panel.buttons.map { $0.target }, selectors = panel.buttons.map { $0.action }
+    // Exercise AppKit's visual tracking state only. Never dispatch an action or manufacture input.
+    sessionButton.highlight(true)
+    trackingRecords.append(["name": prefix, "highlighted": panel.buttons.map { $0.isHighlighted },
+        "restingAccents": panel.buttons.map { restingAccent($0) }])
+    sessionButton.highlight(false)
+    precondition(panel.buttons.allSatisfy { !$0.isHighlighted } && answers.isEmpty && !panel.finished)
+    for index in panel.buttons.indices {
+        precondition(panel.buttons[index].target === targets[index] && panel.buttons[index].action == selectors[index])
+    }
     let buttons = descendants(panel.panel.contentView!).compactMap { $0 as? NSButton }
     let approval = buttons.first { $0.title == "Allow once" }!
     let originalTarget = approval.target
@@ -104,5 +123,5 @@ for temporary in [true, false] {
         }
     }
 }
-let output = try JSONSerialization.data(withJSONObject: ["cards": records, "answers": answers], options: [.sortedKeys])
+let output = try JSONSerialization.data(withJSONObject: ["cards": records, "tracking": trackingRecords, "answers": answers], options: [.sortedKeys])
 print(String(data: output, encoding: .utf8)!)

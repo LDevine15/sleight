@@ -101,7 +101,7 @@ test('cold act timing restores the editor before reconnecting, so Escape is the 
   const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
     cells: CELLS.filter(cell => ['consent-card', 'list', 'timings'].includes(cell.id)), options: { samples: 1, coldSamples: 1 } });
   assert.equal(receipt.cells.at(-1).status, 'pass', receipt.cells.at(-1).error);
-  assert.deepEqual(firstActions.at(-1), { do: 'press', key: 'Escape' });
+  assert.deepEqual(firstActions.at(-1), { do: 'press', ref: 'e3', key: 'Escape' });
   assert.equal(receipt.timings.act.cold.n, 1);
 });
 
@@ -211,6 +211,41 @@ test('each failed cell records host park status and receipt scrubbing refuses ar
   for (const cell of receipt.cells) assert.deepEqual(cell.broker.parked, { reason: 'pipe queue full', resumable: true });
   assert.deepEqual(scrubReceipt({ parked: { reason: 'page supplied private text', resumable: true, secretText: 'private' } }),
     { parked: { reason: 'host failure', resumable: true } });
+});
+
+for (const keyboardOnly of [false, true]) test(`editor shortcuts target the selected editor ref without clicking its input surface (keyboard-only=${keyboardOnly})`, async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now }), tool = driver.tool, keys = [];
+  driver.tool = async (name, args) => {
+    if (name === 'browser_act') for (const step of args.steps) {
+      if (step.do === 'click' && ['e3', 'e10', 'x3'].includes(step.ref)) return { isError: true, text: 'EDITOR_POINTER_NOT_AVAILABLE' };
+      if (['Meta+P', 'Meta+Shift+V'].includes(step.key)) {
+        keys.push(step);
+        const expected = step.key === 'Meta+P' ? keyboardOnly ? 'x3' : 'e3' : 'e10';
+        if (step.ref !== expected) return { isError: true, text: 'EXACT_EDITOR_REF_REQUIRED' };
+      }
+    }
+    const r = await tool(name, args);
+    if (keyboardOnly && name === 'browser_read') return { ...r, text: r.text.replace(
+      '- textbox "a-scratch.txt, Editor content" [ref=e3]',
+      '- textbox "a-scratch.txt, Editor content" [active]\n- textbox "a-scratch.txt, Editor content" [active] [keyboard-only] [ref=x3]') };
+    return r;
+  };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'key', 'webview'].includes(cell.id)) });
+  assert.deepEqual(receipt.cells.filter(cell => cell.status !== 'pass').map(cell => [cell.id, cell.error]), []);
+  assert.deepEqual(keys.map(step => step.ref), [keyboardOnly ? 'x3' : 'e3', 'e10']);
+});
+
+test('two actionable named editor refs remain ambiguous even when one is keyboard-only', async () => {
+  const c = clock(), driver = fakeDriver({ now: c.now }), tool = driver.tool;
+  driver.tool = async (name, args) => {
+    const r = await tool(name, args);
+    return name === 'browser_read' ? { ...r, text: r.text.replace('- textbox "a-scratch.txt, Editor content" [ref=e3]',
+      '- textbox "a-scratch.txt, Editor content" [ref=e3]\n- textbox "a-scratch.txt, Editor content" [active] [keyboard-only] [ref=x3]') } : r;
+  };
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo(), clock: c,
+    cells: CELLS.filter(cell => ['consent-card', 'list', 'key'].includes(cell.id)) });
+  assert.equal(receipt.cells.at(-1).error, 'EDITOR_NOT_FOUND');
 });
 
 test('a failed first connection keeps the host refusal, skips dependent cells and still cleans up', async () => {

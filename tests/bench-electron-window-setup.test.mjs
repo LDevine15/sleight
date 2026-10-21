@@ -9,6 +9,80 @@ import * as live from '../bench/electron-qualification-live.mjs';
 const { createRunRoot, liveDriver } = live;
 const fakeProfileRoot = join(tmpdir(), 'owned', 'profiles');
 
+// Offline JXA bridge: exercise nativeElectron().windowIds itself, including its AX/CG join.
+function nativeCensus({ windows = [axWindow(10)], cg = [cgWindow(11, 10)], births = ['1234.000000'], appError,
+  trusted = true, timeoutStatus = 0, onRead } = {}) {
+  const reads = [], created = [], list = rows => ({ count: rows.length, objectAtIndex: i => rows[i] });
+  const app = { AXWindows: list(windows) }, $ = value => value;
+  Object.assign($, { AXIsProcessTrusted: () => trusted, AXUIElementCreateApplication: pid => { created.push(pid); return app; },
+    AXUIElementSetMessagingTimeout: () => timeoutStatus,
+    AXUIElementCopyAttributeValue(element, name, ref) {
+      reads.push(name); onRead?.(name);
+      assert.ok(['AXWindows', 'AXRole', 'AXSubrole', 'AXModal', 'AXPosition', 'AXSize'].includes(name), 'no content attribute may be read');
+      if (element === app && appError) return appError;
+      if (!(name in element)) return -25205;
+      ref[0] = element[name]; return 0;
+    },
+    AXValueGetValue(value, _type, bytes) { bytes.value = value; return !!value; },
+    NSMutableData: { dataWithLength() { const holder = {}; return { bytes: holder, mutableBytes: holder }; } },
+    NSValue: { valueWithBytesObjCType: bytes => ({ pointValue: bytes.value, sizeValue: bytes.value }) },
+    kCGWindowListOptionAll: 0, kCGNullWindowID: 0,
+    CGWindowListCopyWindowInfo: () => cg,
+  });
+  const sandbox = { $, Ref: () => [], ObjC: { import() {}, bindFunction() {}, unwrap: value => value, deepUnwrap: value => value, castRefToObject: value => value } };
+  runInNewContext(readFileSync(new URL('../bench/real-electron.js', import.meta.url), 'utf8'), sandbox);
+  let birthReads = 0;
+  sandbox.processBirth = pid => { assert.equal(pid, 501); return births[Math.min(birthReads++, births.length - 1)]; };
+  return { run: () => Array.from(sandbox.nativeElectron().windowIds(501, '1234.000000')), reads, created, birthReads: () => birthReads };
+}
+function axWindow(x, extra = {}) { return { AXRole: 'AXWindow', AXSubrole: 'AXStandardWindow', AXModal: false,
+  AXPosition: { x, y: 30 }, AXSize: { width: 800, height: 600 }, ...extra }; }
+function cgWindow(id, x, extra = {}) { return { kCGWindowOwnerPID: 501, kCGWindowLayer: 0, kCGWindowNumber: id,
+  kCGWindowBounds: { X: x, Y: 30, Width: 800, Height: 600 }, ...extra }; }
+
+test('native document census excludes same-PID layer-zero CG utility windows without an AX document match', () => {
+  const w = nativeCensus({ cg: [cgWindow(91, -500), cgWindow(92, -700), cgWindow(11, 10), cgWindow(93, -900), cgWindow(94, -1100), cgWindow(95, -1300)] });
+  assert.deepEqual(w.run(), [11]);
+  assert.deepEqual(w.created, [501]);
+  assert.equal(w.birthReads(), 2);
+  for (const name of ['AXTitle', 'AXDocument', 'AXValue', 'AXDescription']) assert.ok(!w.reads.includes(name));
+});
+test('native document census preserves two genuine AX documents among unrelated CG utilities', () => {
+  const w = nativeCensus({ windows: [axWindow(10), axWindow(900)], cg: [cgWindow(90, -500), cgWindow(12, 900), cgWindow(11, 10), cgWindow(91, -900)] });
+  assert.deepEqual(w.run(), [11, 12]);
+});
+for (const [name, options] of [
+  ['two CG candidates for one AX frame', { cg: [cgWindow(11, 10), cgWindow(12, 10)] }],
+  ['two AX documents sharing one CG ID', { windows: [axWindow(10), axWindow(10)] }],
+  ['duplicate CG ID across different frames', { windows: [axWindow(10), axWindow(900)], cg: [cgWindow(11, 10), cgWindow(11, 900)] }],
+  ['unmatched AX document', { windows: [axWindow(10), axWindow(900)] }],
+  ['absent AX windows', { windows: [] }],
+  ['unavailable AX windows', { appError: -25204 }],
+  ['unknown AX window subrole', { windows: [axWindow(10, { AXSubrole: 'AXMysteryWindow' })] }],
+  ['absent AX window role', { windows: [axWindow(10, { AXRole: undefined })] }],
+  ['modal AX window', { windows: [axWindow(10, { AXModal: true })] }],
+  ['AX document without geometry', { windows: [axWindow(10, { AXPosition: null })] }],
+  ['nonfinite AX geometry', { windows: [axWindow(NaN)] }],
+  ['invalid CG ID', { cg: [cgWindow(0, 10)] }],
+  ['unavailable AX timeout', { timeoutStatus: -25204 }],
+]) test(`native document census refuses ${name}`, () => {
+  assert.throws(nativeCensus(options).run, /WINDOW_SETUP_CENSUS_INVALID/);
+});
+test('native document census never numbers another PID or a different CG layer as the document', () => {
+  for (const change of [{ kCGWindowOwnerPID: 777 }, { kCGWindowLayer: 101 }])
+    assert.throws(nativeCensus({ cg: [cgWindow(11, 10, change)] }).run, /WINDOW_SETUP_CENSUS_INVALID/);
+});
+test('native document census uses the product half-point rectangle tolerance without broad geometry guessing', () => {
+  assert.deepEqual(nativeCensus({ cg: [cgWindow(11, 10.499)] }).run(), [11]);
+  assert.throws(nativeCensus({ cg: [cgWindow(11, 10.5)] }).run, /WINDOW_SETUP_CENSUS_INVALID/);
+});
+test('native document census refuses exact process birth replacement before and during the census', () => {
+  const before = nativeCensus({ births: ['1234.000001'] });
+  assert.throws(before.run, /WINDOW_SETUP_IDENTITY_CHANGED/);
+  assert.deepEqual(before.reads, []);
+  assert.throws(nativeCensus({ births: ['1234.000000', '1234.000001'] }).run, /WINDOW_SETUP_IDENTITY_CHANGED/);
+});
+
 function nativeWorld({ windows = [11], after = [11, 12], changedAt, trusted = true, files = [{}], items = [{}], accepted = true } = {}) {
   const sandbox = { ObjC: { import() {}, bindFunction() {} } };
   runInNewContext(readFileSync(new URL('../bench/real-electron.js', import.meta.url), 'utf8'), sandbox);
@@ -35,6 +109,28 @@ test('native window setup presses only the owned File/New Window route and waits
   assert.equal(result.created, true);
   assert.deepEqual(Array.from(result.windows), [11, 12]);
   assert.deepEqual(w.events.filter(event => typeof event === 'string'), ['file', 'new-window', 'cancel-menu']);
+});
+test('one-to-two setup uses matched document IDs while utility CG surfaces remain present', () => {
+  const w = nativeWorld(), first = nativeCensus({ cg: [cgWindow(11, 10), cgWindow(90, -500), cgWindow(91, -700)] });
+  const second = nativeCensus({ windows: [axWindow(10), axWindow(900)],
+    cg: [cgWindow(90, -500), cgWindow(11, 10), cgWindow(91, -700), cgWindow(12, 900)] });
+  w.api.windowIds = (pid, birth) => { assert.equal(pid, 501); assert.equal(birth, w.request.pidBirth);
+    return w.events.includes('new-window') ? second.run() : first.run(); };
+  assert.deepEqual(Array.from(w.run().windows), [11, 12]);
+});
+test('a third matched AX document still refuses setup even when CG utility windows are excluded', () => {
+  const w = nativeWorld(), census = nativeCensus({ windows: [axWindow(10), axWindow(900), axWindow(1800)],
+    cg: [cgWindow(11, 10), cgWindow(12, 900), cgWindow(13, 1800), cgWindow(90, -500)] });
+  w.api.windowIds = () => census.run();
+  assert.throws(w.run, /WINDOW_SETUP_WINDOW_CHANGED/);
+  assert.deepEqual(w.events.filter(event => typeof event === 'string'), []);
+  assert.deepEqual(JSON.parse(JSON.stringify(w.events[0].census)), { phase: 'initial', reason: 'count', count: 3, originalPresent: null });
+});
+test('birth replacement inside the native census reaches setup as an identity refusal before any menu action', () => {
+  const w = nativeWorld(), census = nativeCensus({ births: ['1234.000000', '1234.000001'] });
+  w.api.windowIds = () => census.run();
+  assert.throws(w.run, /WINDOW_SETUP_IDENTITY_CHANGED/);
+  assert.deepEqual(w.events, []);
 });
 test('two existing owned native windows make setup idempotent', () => {
   const w = nativeWorld({ windows: [11, 12] });
@@ -111,7 +207,7 @@ test('native setup refuses a different bundle/path and a profile outside the tem
 });
 
 for (const [name, options, expected] of [
-  ['initial extra CG windows', { windows: [11, 12, 13] }, { phase: 'initial', reason: 'count', count: 3, originalPresent: null }],
+  ['initial extra document windows', { windows: [11, 12, 13] }, { phase: 'initial', reason: 'count', count: 3, originalPresent: null }],
   ['initial empty census', { windows: [] }, { phase: 'initial', reason: 'count', count: 0, originalPresent: null }],
   ['initial duplicate IDs', { windows: [11, 11] }, { phase: 'initial', reason: 'duplicate', count: 2, originalPresent: null }],
   ['initial invalid ID', { windows: [NaN] }, { phase: 'initial', reason: 'invalid', count: 1, originalPresent: null }],

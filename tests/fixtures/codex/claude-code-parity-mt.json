@@ -136,7 +136,7 @@
            },
            "ref": {
             "type": "string",
-            "pattern": "^(?:(?:f[0-9]+)?e[0-9]+|s[0-9]+)$"
+            "pattern": "^(?:(?:f[0-9]+)?e[0-9]+|[sx][0-9]+)$"
            },
            "text": {
             "type": "string",
@@ -166,7 +166,7 @@
            },
            "to": {
             "type": "string",
-            "pattern": "^(?:(?:f[0-9]+)?e[0-9]+|s[0-9]+)$"
+            "pattern": "^(?:(?:f[0-9]+)?e[0-9]+|[sx][0-9]+)$"
            },
            "until": {
             "type": "string",
@@ -248,7 +248,7 @@
           "properties": {
            "ref": {
             "type": "string",
-            "pattern": "^(?:(?:f[0-9]+)?e[0-9]+|s[0-9]+)$"
+            "pattern": "^(?:(?:f[0-9]+)?e[0-9]+|[sx][0-9]+)$"
            },
            "value": {
             "type": [
@@ -274,7 +274,7 @@
         },
         "submit": {
          "type": "string",
-         "pattern": "^(?:(?:f[0-9]+)?e[0-9]+|s[0-9]+)$"
+         "pattern": "^(?:(?:f[0-9]+)?e[0-9]+|[sx][0-9]+)$"
         }
        },
        "required": [

@@ -281,6 +281,54 @@ test('Quit waits for kernel exit before collection and retains the host quit rec
   assert.ok(events.filter(event => event.sleep === 100).length >= 2);
 });
 
+test('Quit wraps an immutable admin while retaining its method receiver and receipts', async t => {
+  const { driver, deps } = world(t, { connectedBirth: '1234.000000' }), calls = [];
+  const admin = Object.freeze({ hostId: 'fixture-host', pid: 701, spawned: false,
+    async quit() { assert.equal(this, admin); calls.push('quit'); return { cleanup: 'retained', reason: this.hostId }; },
+    async collect() { assert.equal(this, admin); calls.push('collect'); return { cleanup: 'removed' }; },
+    async close() { assert.equal(this, admin); calls.push('close'); return true; },
+  });
+  deps.admin = async () => admin;
+  deps.exited = async () => true;
+  await driver.connect({});
+  const result = await driver.quit();
+  assert.equal(result.exited, true);
+  assert.equal(result.quit.reason, 'fixture-host');
+  assert.equal(result.collected.cleanup, 'removed');
+  assert.deepEqual(calls, ['quit', 'collect', 'close']);
+  assert.equal(Object.isFrozen(admin), true);
+});
+
+for (const stage of ['quit', 'collect', 'close']) test(`immutable admin checks cleanup authority immediately before ${stage}`, async t => {
+  const lifecycle = { cleanupAllowed: true }, calls = [];
+  const { driver, deps } = world(t, { connectedBirth: '1234.000000', lifecycle });
+  const admin = Object.freeze({ hostId: 'fixture-host',
+    async quit() { assert.equal(this, admin); calls.push('quit'); return {}; },
+    async collect() { assert.equal(this, admin); calls.push('collect'); if (stage === 'close') lifecycle.cleanupAllowed = false; return { cleanup: 'removed' }; },
+    async close() { assert.equal(this, admin); calls.push('close'); return true; },
+  });
+  deps.admin = async () => { if (stage === 'quit') lifecycle.cleanupAllowed = false; return admin; };
+  deps.exited = async () => { if (stage === 'collect') lifecycle.cleanupAllowed = false; return true; };
+  await driver.connect({});
+  await assert.rejects(driver.quit(), /RUN_CANCELLATION_UNSETTLED/);
+  assert.deepEqual(calls, stage === 'quit' ? [] : stage === 'collect' ? ['quit'] : ['quit', 'collect']);
+});
+
+test('immutable admin close remains allowed after interruption while collect is blocked', async t => {
+  const controller = new AbortController(), calls = [], lifecycle = { cleanupAllowed: true };
+  const { driver, deps } = world(t, { connectedBirth: '1234.000000', lifecycle, signal: controller.signal });
+  const admin = Object.freeze({ hostId: 'fixture-host',
+    async quit() { assert.equal(this, admin); calls.push('quit'); controller.abort(); return {}; },
+    async collect() { assert.fail('collect must recheck the interrupted run'); },
+    async close() { assert.equal(this, admin); calls.push('close'); return true; },
+  });
+  deps.admin = async () => admin; deps.exited = async () => true;
+  await driver.connect({});
+  await assert.rejects(driver.quit(), /RUN_INTERRUPTED/);
+  assert.deepEqual(calls, ['quit', 'close']);
+  assert.equal(lifecycle.cleanupAllowed, true);
+});
+
 test('the driver admin carries the qualification flag when it must respawn a host', async t => {
   const { driver, deps } = world(t, { connectedBirth: '1234.000000' });
   await driver.connect({});

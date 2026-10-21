@@ -1,8 +1,10 @@
 import { assertEndpointRead } from './endpoint-guard.mjs';
-import { closedLocator } from './closed-handle.mjs';
+import { closedLocator, keyboardFocusChain } from './closed-handle.mjs';
+import { trustedReadNode } from './trusted-dom.mjs';
+import { readNativeEditContext, retainNativeEditContext, sameNativeEditContext } from './edit-context.mjs';
 // Compact page snapshots for turbo v3, with an independent CR1 closed-root reader.
 const pages = new WeakMap();
-const REF = /^(?:(?:f\d+)?e\d+|s\d+)$/;
+const REF = /^(?:(?:f\d+)?e\d+|[sx]\d+)$/;
 const MORE = /^more\d+_\d+$/;
 const SENSITIVE = /password|passcode|secret|one.?time|\botp\b|\bcc[-_ ]|card|expiry|expiration|cvv|cvc|security.?code/i;
 const TIMEOUT = 3000;
@@ -29,10 +31,16 @@ function stateOf(page) {
   if (!state) {
     state = { number: 0, generation: 0, busy: false, history: new Map(), continuations: new Map(),
       closed: new Map(), shadowNumber: 0, deliveredClosed: new Set(), rawRefs: new Map(), usedRefs: new Set(),
-      refBank: new Map(), deliveredRefs: new Set(), pending: new Map(), nextRef: 0, listed: null };
+      refBank: new Map(), deliveredRefs: new Set(), pending: new Map(), nextRef: 0, listed: null,
+      keyboard: new Map(), keyboardNumber: 0, keyboardEpoch: 0, deliveredKeyboard: new Set(), keyboardPending: new Set(), keyboardTasks: new Set() };
     pages.set(page, state);
     if (typeof page.locator === 'function') {
       Object.defineProperty(page, 'getByRef', { configurable: true, value(ref) {
+        assertKeyboardSettled(state);
+        if (/^x\d+$/.test(ref)) {
+          keyboardRefBinding(page, ref);
+          return closedLocator(() => keyboardRefBinding(page, ref));
+        }
         if (/^s\d+$/.test(ref)) {
           // A closed-root control resolves from its CDP backend node on every use, never through a page-side query.
           closedRefBinding(page, ref);
@@ -42,12 +50,113 @@ function stateOf(page) {
       } });
     }
     page.on('framenavigated', () => forget(state));
+    page.on('framedetached', () => retireKeyboard(state));
+    page.on('close', () => forget(state));
   }
   return state;
 }
 // A new generation: every ref, continuation and diff baseline of the old document is retired.
 function forget(state) {
+  retireKeyboard(state);
   state.generation++; state.listed = null; state.rawRefs.clear(); state.deliveredRefs.clear(); state.pending.clear(); state.history.clear(); state.continuations.clear(); state.closed.clear(); state.deliveredClosed.clear();
+}
+function disposeContext(context) { try { Promise.resolve(context.dispose()).catch(() => {}); } catch { /* detached context */ } }
+function assertKeyboardSettled(state) {
+  if (state?.busy || state?.keyboardTasks.size) throw Error('Snapshot acquisition is still pending; wait before another action or read.');
+}
+function retireKeyboard(state) {
+  state.keyboardEpoch++;
+  const contexts = new Set([...state.keyboard.values()].map(record => record.context));
+  for (const context of state.keyboardPending) contexts.add(context);
+  state.keyboard.clear(); state.deliveredKeyboard.clear(); state.keyboardPending.clear();
+  for (const context of contexts) disposeContext(context);
+}
+
+// A utility-world native getter identifies the exact active node; neither MAIN properties nor labels locate it.
+function nativeActiveElement() { return Object.getOwnPropertyDescriptor(Document.prototype, 'activeElement').get.call(document); }
+function activeNativeNode(el, unused, read) {
+  return read(el, 'isConnected') === true && read(read(el, 'ownerDocument'), 'activeElement') === el;
+}
+const retainedExpression = '([el]) => { return (' + retainNativeEditContext.toString() + ')(el); ' +
+  (retainNativeEditContext.helpers ?? []).map(helper => helper.toString()).join(' ') + ' }';
+
+async function keyboardEditors(page, state, generation, epoch) {
+  const records = new Map(), children = [], previous = new Map(state.keyboard);
+  const previousContexts = new Set([...previous.values()].map(record => record.context));
+  const current = () => {
+    if (state.generation !== generation || state.keyboardEpoch !== epoch || page.isClosed?.()) throw Error('keyboard acquisition changed');
+  };
+  try {
+    const frames = page.frames();
+    if (frames.length > 32) throw Error('keyboard frame budget exceeded');
+    for (const frame of frames) {
+      current();
+      // Non in-process callers get no capability. Existing ordinary and closed refs keep their own paths.
+      const frameImpl = frame?._connection?.toImpl?.(frame);
+      if (!frameImpl) continue;
+      if (frameImpl._page?.delegate?.noUtilityWorld?.() || frame.isDetached?.()) throw Error('keyboard utility unavailable');
+      const utility = await frameImpl.utilityContext(); current();
+      if (utility?.world !== 'utility' || typeof utility.evaluateExpressionHandle !== 'function') throw Error('keyboard utility unavailable');
+      let active, context, kept = false, borrowed = false;
+      try {
+        const handle = await utility.evaluateExpressionHandle(nativeActiveElement.toString(), { isFunction: true });
+        active = handle.asElement?.();
+        if (!active) { await handle.dispose(); current(); continue; }
+        current();
+        if (active._frame !== frameImpl || typeof active._objectId !== 'string') throw Error('keyboard active identity unavailable');
+        const evidence = await trustedReadNode(active, readNativeEditContext); current();
+        if (evidence?.native !== true || evidence.eligible !== true || evidence.zeroArea !== true || !['textbox', 'searchbox'].includes(evidence.role)) continue;
+        if (await trustedReadNode(active, activeNativeNode) !== true) continue;
+        current();
+        const session = frameImpl._page.delegate._sessionForFrame(frameImpl);
+        const described = await session._client._sendMayFail('DOM.describeNode', { objectId: active._objectId }); current();
+        const backendNodeId = described?.node?.backendNodeId;
+        if (!Number.isSafeInteger(backendNodeId) || backendNodeId < 1) throw Error('keyboard backend identity unavailable');
+        if ((described.node.shadowRoots?.length ?? 0) > 0 || await trustedReadNode(active, keyboardFocusChain) !== true) continue;
+        current();
+        const ax = await session._client._sendMayFail('Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false }); current();
+        if (!Array.isArray(ax?.nodes)) throw Error('keyboard AX identity unavailable');
+        const node = ax?.nodes?.find(row => row.backendDOMNodeId === backendNodeId && row.ignored === false && row.role?.value === evidence.role);
+        if (!node || node.properties?.some(property => ['disabled', 'readonly', 'hidden'].includes(property.name) && property.value?.value === true)) continue;
+        const prior = [...previous].find(([, record]) => record.frame === frame && record.backendNodeId === backendNodeId && record.generation === generation);
+        if (prior && await trustedReadNode(active, sameNativeEditContext, prior[1].context) === true) {
+          current(); context = prior[1].context; borrowed = true;
+        } else {
+          current();
+          context = await utility.evaluateExpressionHandle(retainedExpression, { isFunction: true }, [active]);
+          state.keyboardPending.add(context); current();
+        }
+        if (await trustedReadNode(active, sameNativeEditContext, context) !== true || await trustedReadNode(active, keyboardFocusChain) !== true) continue;
+        current();
+        const ref = borrowed ? prior[0] : 'x' + (++state.keyboardNumber);
+        const record = borrowed ? prior[1] : { frame, backendNodeId, generation, context, keyboardOnly: true, deliveryEpoch: 0 };
+        records.set(ref, record); kept = true;
+        children.push({ role: evidence.role, name: node.name?.value ?? '', ref, active: true, keyboardOnly: true, protected: true });
+      } finally {
+        if (active) await active.dispose();
+        if (context && !kept && !borrowed) { state.keyboardPending.delete(context); disposeContext(context); }
+      }
+    }
+    current();
+    const after = page.frames();
+    if ([...records.values()].some(({ frame }) => !after.includes(frame) || frame.isDetached?.())) throw Error('keyboard frames changed');
+    return { records, sections: children.length ? [{ role: 'group', name: 'Keyboard-only editor controls', children }] : [] };
+  } catch (error) {
+    for (const { context } of records.values()) if (!previousContexts.has(context)) { state.keyboardPending.delete(context); disposeContext(context); }
+    throw error;
+  }
+}
+
+export function keyboardRefBinding(page, ref) {
+  const state = pages.get(page), record = state?.keyboard.get(ref);
+  assertKeyboardSettled(state);
+  if (!record || record.generation !== state.generation || !state.deliveredKeyboard.has(ref) || record.frame.isDetached?.())
+    throw Error('Keyboard-only ref is stale or its snapshot was not delivered; use browser_read again.');
+  return { ...record,
+    current: () => state.keyboard.get(ref) === record && state.generation === record.generation && state.deliveredKeyboard.has(ref) &&
+      !state.busy && !state.keyboardTasks.size && !page.isClosed?.() && !record.frame.isDetached?.() && page.frames().includes(record.frame),
+    retire: () => { if (state.keyboard.get(ref) === record) { state.keyboardEpoch++; state.keyboard.delete(ref); state.deliveredKeyboard.delete(ref); disposeContext(record.context); } },
+  };
 }
 // For a page that reuses its elements without navigating (a virtual list recycles rows on scroll, EPV3-5):
 // old refs then refuse with the browser_read hint, and the next read mints new ones. A page never read has none.
@@ -55,6 +164,7 @@ export function invalidateRefs(page) {
   const state = pages.get(page);
   if (state) forget(state);
 }
+export const snapshotAcquisitionPending = page => Boolean(pages.get(page)?.keyboardTasks.size);
 
 // Native CDP values and attributes cannot be hidden by MAIN-world getters.
 function sensitiveValues({ strings, documents }) {
@@ -239,6 +349,7 @@ async function closedRoots(page, state) {
 // actually returned in a snapshot are eligible; caller owns its CDP session.
 export function closedRefBinding(page, ref) {
   const state = pages.get(page);
+  assertKeyboardSettled(state);
   if (state?.deliveredClosed.has(ref)) {
     for (const [frame, refs] of state.closed) for (const [backendNodeId, known] of refs) {
       if (known === ref) return { frame, backendNodeId };
@@ -253,7 +364,7 @@ function publicRefs(nodes, state) {
   for (const node of nodes) {
     if (!node || typeof node !== 'object') continue;
     const raw = node.ref;
-    if (REF.test(raw) && !/^s\d+$/.test(raw)) {
+    if (REF.test(raw) && !/^[sx]\d+$/.test(raw)) {
       let ref = state.rawRefs.get(raw);
       if (!ref) {
         ref = raw;
@@ -274,11 +385,18 @@ export function acknowledgeSnapshot(page, number) {
   const state = pages.get(page), record = state?.pending.get(number);
   if (!record || record.generation !== state.generation) return false;
   state.pending.delete(number);
-  for (const ref of record.refs) if (!/^s\d+$/.test(ref)) state.deliveredRefs.add(ref);
+  for (const ref of record.refs) {
+    if (/^x\d+$/.test(ref)) {
+      const current = state.keyboard.get(ref), printed = record.keyboard?.get(ref);
+      if (current && printed?.record === current && printed.epoch === current.deliveryEpoch) state.deliveredKeyboard.add(ref);
+    }
+    else if (!/^s\d+$/.test(ref)) state.deliveredRefs.add(ref);
+  }
   return true;
 }
 export function snapshotRefBinding(page, ref) {
   const state = pages.get(page), record = state?.refBank.get(ref);
+  assertKeyboardSettled(state);
   if (!record || record.generation !== state.generation || !state.deliveredRefs.has(ref))
     throw Error('Ref is stale or its snapshot was not delivered; use browser_read again.');
   // Playwright resolves aria-ref only against the latest read of the ref's frame, whoever took it, and never reuses a ref
@@ -295,7 +413,7 @@ function listedRefs(tree) {
   const visit = nodes => {
     for (const node of nodes) {
       if (!node || typeof node !== 'object') continue;
-      if (REF.test(node.ref) && !/^s\d+$/.test(node.ref)) { refs.add(node.ref); frames.add(/^(?:f\d+)?/.exec(node.ref)[0]); }
+      if (REF.test(node.ref) && !/^[sx]\d+$/.test(node.ref)) { refs.add(node.ref); frames.add(/^(?:f\d+)?/.exec(node.ref)[0]); }
       if (Array.isArray(node.children)) visit(node.children);
     }
   };
@@ -328,6 +446,7 @@ function rowsOf(tree, secrets, viewport) {
       for (const flag of ['checked', 'disabled', 'expanded', 'active', 'pressed', 'selected', 'invalid', 'level']) {
         if (node[flag]) line += ` [${flag}${node[flag] === true ? '' : '=' + JSON.stringify(node[flag])}]`;
       }
+      if (node.keyboardOnly === true && /^x\d+$/.test(ref)) line += ' [keyboard-only]';
       if (ref) line += ` [ref=${ref}]` + placement(node, ref, viewport);
       if (protectedValue) line += ': "[redacted]"';
       else if (node.text !== undefined) line += ': ' + JSON.stringify(scrub(node.text, secrets));
@@ -408,7 +527,7 @@ function cap(rows, offset, header, maxChars, continuation) {
       if (next > offset) break;
       // Keep valid YAML and any usable ref, rather than slicing a quoted name.
       const role = /^- ([\w-]+)/.exec(row.line)?.[1] ?? 'text';
-      line = prefix + `- ${role}${row.ref ? ' [ref=' + row.ref + ']' : ''}: `
+      line = prefix + `- ${role}${/^x\d+$/.test(row.ref) ? ' [keyboard-only]' : ''}${row.ref ? ' [ref=' + row.ref + ']' : ''}: `
         + JSON.stringify('[line shortened; read with max_chars: 40000 or the engine browser path]');
       shortened = true;
     }
@@ -428,21 +547,32 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
     || ref !== undefined && (typeof ref !== 'string' || !REF.test(ref) && !MORE.test(ref))) throw Error('Invalid snapshot request');
   await assertEndpointRead(page);
   const state = stateOf(page);
+  assertKeyboardSettled(state);
   if (state.busy) throw Error('Snapshot read in progress; try browser_read again.');
   state.busy = true;
-  const generation = state.generation, url = page.url();
+  const keyboardEpoch = ++state.keyboardEpoch, generation = state.generation, url = page.url();
   try {
+    const keyboardTask = keyboardEditors(page, state, generation, keyboardEpoch);
+    state.keyboardTasks.add(keyboardTask);
+    keyboardTask.then(() => state.keyboardTasks.delete(keyboardTask), () => state.keyboardTasks.delete(keyboardTask));
     const acquired = await Promise.allSettled([
       bounded(() => page.ariaSnapshotJSON({ mode: 'ai', boxes: true, timeout: TIMEOUT })), closedRoots(page, state),
+      bounded(() => keyboardTask),
     ]);
     // A failed tree read leaves the frames' maps unknown, so the ref check falls back to Playwright's own lookup.
     state.listed = acquired[0].status === 'fulfilled' && generation === state.generation ? listedRefs(acquired[0].value) : null;
     const failed = acquired.find(result => result.status === 'rejected');
     if (failed) throw failed.reason;
-    const tree = acquired[0].value, closed = acquired[1].value, secrets = closed.secrets;
+    const tree = acquired[0].value, closed = acquired[1].value, keyboard = acquired[2].value, secrets = closed.secrets;
     publicRefs(tree, state);
-    const rows = rowsOf([...tree, ...closed.sections], secrets, closed.viewport);
-    if (generation !== state.generation || url !== page.url()) throw hinted('the page changed during the read; read again');
+    const rows = rowsOf([...tree, ...closed.sections, ...keyboard.sections], secrets, closed.viewport);
+    if (generation !== state.generation || keyboardEpoch !== state.keyboardEpoch || url !== page.url() ||
+        [...keyboard.records.values()].some(({ frame }) => frame.isDetached?.() || !page.frames().includes(frame))) throw hinted('the page changed during the read; read again');
+    const previousKeyboard = state.keyboard;
+    state.keyboard = keyboard.records;
+    state.deliveredKeyboard = new Set([...state.deliveredKeyboard].filter(ref => previousKeyboard.get(ref) === keyboard.records.get(ref)));
+    for (const [ref, record] of previousKeyboard) if (keyboard.records.get(ref) !== record) disposeContext(record.context);
+    for (const { context } of keyboard.records.values()) state.keyboardPending.delete(context);
     const continuation = MORE.test(ref) ? state.continuations.get(ref) : null;
     if (MORE.test(ref) && (!continuation || continuation.source !== JSON.stringify(rows))) throw hinted('that continuation expired because the page changed; read again from the top');
     const scope = continuation?.scope ?? JSON.stringify([ref ?? null, find ?? null]);
@@ -462,7 +592,14 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
       if (/^s\d+$/.test(row.ref)) state.deliveredClosed.add(row.ref);
     }
     const history = { scope, rows: [...delivered.values()] };
-    state.pending.set(number, { generation, refs: result.delivered.filter(row => row.ref && !row.removed).map(row => row.ref) });
+    const printedKeyboard = new Set(result.delivered.filter(row => /^x\d+$/.test(row.ref) && !row.removed).map(row => row.ref));
+    for (const [known, record] of state.keyboard) if (!printedKeyboard.has(known)) {
+      // Keep internal native identity for an unchanged continuation, but an omitted row confers no authority.
+      // A delayed ACK for an older printed slice must not restore that authority after this omission.
+      record.deliveryEpoch++; state.deliveredKeyboard.delete(known);
+    }
+    const keyboardReceipt = new Map([...printedKeyboard].map(known => [known, { record: state.keyboard.get(known), epoch: state.keyboard.get(known)?.deliveryEpoch }]));
+    state.pending.set(number, { generation, refs: result.delivered.filter(row => row.ref && !row.removed).map(row => row.ref), keyboard: keyboardReceipt });
     state.history.set(number, history);
     if (result.next < candidates.length) state.continuations.set(token, { source: JSON.stringify(rows), scope, selected,
       candidates, baseline: history, delta, since: continuation?.since ?? since, offset: result.next });
@@ -471,6 +608,7 @@ export async function snapshot(page, { ref, find, maxChars = 8000, since } = {})
     await assertEndpointRead(page);
     return { text: result.text, number };
   } catch (error) {
+    retireKeyboard(state);
     state.deliveredClosed.clear();
     if (error.message === 'blocked: DevTools endpoint') throw error;
     throw Error(error.hinted ? 'Snapshot unavailable: ' + error.message : 'Snapshot unavailable; try browser_read again');

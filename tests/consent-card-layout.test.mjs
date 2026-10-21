@@ -31,8 +31,13 @@ test('ordinary approval labels fit without changing flow or review geometry', { 
 
 test('real cards keep choices on one row and expand details and feedback without retargeting consent', { skip: macCommandSkip('xcrun') }, t => {
   const directory = registerTemp(t, trackTemp(mkdtempSync(join(tmpdir(), 'sleight-card-layout-'))));
-  const { cards, answers } = previewConsentCards(directory);
+  const { cards, tracking, answers } = previewConsentCards(directory);
   assert.deepEqual(answers, []);
+  for (const record of tracking) {
+    assert.ok(record.restingAccents.every(accent => !accent), `${record.name}: Allow once must not stay accented while the session button is tracked`);
+    assert.deepEqual(record.highlighted, record.name === 'electron-three' ? [false, false, true] : [false, false, true, false]);
+  }
+  assert.equal(tracking.length, 2);
   const labels = Object.fromEntries(cards.map(card => [card.name, card.buttons.map(button => button.title)]));
   assert.deepEqual(labels.ordinary, ["Don't allow", 'Allow this session']);
   assert.deepEqual(labels['electron-three-collapsed'], ["Don't allow", 'Allow once', 'Allow this session']);
@@ -47,6 +52,8 @@ test('real cards keep choices on one row and expand details and feedback without
       assert.ok(button.frame.width >= button.intrinsicWidth, `${card.name}: ${button.title} clipped`);
       assert.ok(button.frame.x >= edge && button.frame.x + button.frame.width <= card.frame.width - edge);
       assert.equal(button.default, false);
+      assert.equal(button.restingAccent, false, `${card.name}: ${button.title} must be neutral at rest`);
+      assert.equal(button.highlighted, false);
     }
     const sorted = card.buttons.toSorted((a, b) => a.frame.x - b.frame.x);
     for (let i = 1; i < sorted.length; i++) assert.ok(sorted[i].frame.x >= sorted[i - 1].frame.x + sorted[i - 1].frame.width + 8);

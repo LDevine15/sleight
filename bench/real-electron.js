@@ -22,6 +22,15 @@ function processBirth(pid) {
   return u64(120) + '.' + String(u64(128)).padStart(6, '0');
 }
 
+// Same native struct bridge as the product's electron-windows.js; Ref('CGPoint') does not read back reliably.
+function axPair(value, type) {
+  var bytes = $.NSMutableData.dataWithLength(16);
+  if (!$.AXValueGetValue(value, type, bytes.mutableBytes)) return null;
+  var boxed = $.NSValue.valueWithBytesObjCType(bytes.bytes, type === 1 ? '{CGPoint=dd}' : '{CGSize=dd}');
+  var pair = ObjC.deepUnwrap(type === 1 ? boxed.pointValue : boxed.sizeValue);
+  return type === 1 ? [pair.x, pair.y] : [pair.width, pair.height];
+}
+
 var DONT_SAVE = ["Don't Save", 'Don’t Save'];
 
 // request: { pid, bundle, appPath, waitMs }. api: running(pid) -> null | { pid, bundle, path, terminate(), forceTerminate() },
@@ -117,8 +126,11 @@ function newWindow(request, api, clock) {
   }
   function ids(phase, original) {
     var values;
-    try { values = api.windowIds(pid); }
-    catch (_) { censusFailure(phase, 'unavailable', null, original); }
+    try { values = api.windowIds(pid, request.pidBirth); }
+    catch (error) {
+      if (error && error.message === 'WINDOW_SETUP_IDENTITY_CHANGED') throw error;
+      censusFailure(phase, 'unavailable', null, original);
+    }
     if (!Array.isArray(values)) censusFailure(phase, 'unavailable', null, original);
     if (values.some(function (id) { return !(id > 0 && id % 1 === 0); })) censusFailure(phase, 'invalid', values, original);
     if (values.some(function (id, i) { return values.indexOf(id) !== i; })) censusFailure(phase, 'duplicate', values, original);
@@ -208,12 +220,62 @@ function nativeElectron() {
       walk(menu, 3); return found;
     },
     cancelMenu: function (menu) { try { $.AXUIElementPerformAction(menu, $('AXCancel')); } catch (_) {} },
-    windowIds: function (pid) {
+    windowIds: function (pid, expectedBirth) {
+      function invalid() { throw new Error('WINDOW_SETUP_CENSUS_INVALID'); }
+      if (processBirth(pid) !== expectedBirth) throw new Error('WINDOW_SETUP_IDENTITY_CHANGED');
+      if (!$.AXIsProcessTrusted()) invalid();
+      var app = $.AXUIElementCreateApplication(pid);
+      if (Number($.AXUIElementSetMessagingTimeout(app, 0.1)) !== 0) invalid();
+      function strictAttribute(element, name, optional) {
+        var value = Ref(), status = Number($.AXUIElementCopyAttributeValue(element, $(name), value));
+        if (optional && (status === -25205 || status === -25212)) return null;
+        if (status !== 0) invalid();
+        return ObjC.castRefToObject(value[0]);
+      }
+      function scalar(value) { return value === null ? null : ObjC.deepUnwrap(value); }
+      // CG also lists Electron utility surfaces at layer zero. Only a standard AX document window
+      // with one unique matching CG rectangle may contribute an ID, as in the product's window reader.
+      var windows = strictAttribute(app, 'AXWindows'), count = windows && Number(windows.count);
+      if (!(count > 0 && count <= 64 && count % 1 === 0)) invalid();
       var raw = $.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID);
-      if (!raw || (raw.isNil && raw.isNil())) throw new Error('WINDOW_SETUP_WINDOW_CHANGED');
-      return ObjC.deepUnwrap(ObjC.castRefToObject(raw)).filter(function (window) {
+      if (!raw || (raw.isNil && raw.isNil())) invalid();
+      var all = ObjC.deepUnwrap(ObjC.castRefToObject(raw));
+      if (!Array.isArray(all) || all.length > 8192) invalid();
+      var cg = all.filter(function (window) {
         return Number(window.kCGWindowOwnerPID) === pid && Number(window.kCGWindowLayer) === 0;
-      }).map(function (window) { return Number(window.kCGWindowNumber); });
+      });
+      if (cg.length > 256) invalid();
+      var cgIds = [], ids = [];
+      cg.forEach(function (window) {
+        var id = Number(window.kCGWindowNumber);
+        if (!(id > 0 && id <= 2147483647 && id % 1 === 0) || cgIds.indexOf(id) !== -1) invalid();
+        cgIds.push(id);
+      });
+      for (var i = 0; i < count; i++) {
+        var window = windows.objectAtIndex(i);
+        if (scalar(strictAttribute(window, 'AXRole')) !== 'AXWindow' ||
+            scalar(strictAttribute(window, 'AXSubrole')) !== 'AXStandardWindow') invalid();
+        var modal = scalar(strictAttribute(window, 'AXModal', true));
+        if (modal !== null && modal !== false) invalid();
+        var position = strictAttribute(window, 'AXPosition'), size = strictAttribute(window, 'AXSize');
+        var point = position && axPair(position, 1), extent = size && axPair(size, 2);
+        var frame = point && extent && [point[0], point[1], extent[0], extent[1]];
+        if (!frame || frame.some(function (value) { return !Number.isFinite(value) || Math.abs(value) > 1000000; }) || frame[2] <= 0 || frame[3] <= 0) invalid();
+        var found = cg.filter(function (info) {
+          return ['X', 'Y', 'Width', 'Height'].every(function (key, k) {
+            var value = info.kCGWindowBounds && info.kCGWindowBounds[key];
+            return Number.isFinite(value) && Math.abs(value - frame[k]) < 0.5;
+          });
+        });
+        // Unlike the general reader, setup may not omit an ambiguous or unnumbered AX document:
+        // doing so could hide a third real document and weaken the exact two-window precondition.
+        if (found.length !== 1) invalid();
+        var id = Number(found[0].kCGWindowNumber);
+        if (ids.indexOf(id) !== -1) invalid();
+        ids.push(id);
+      }
+      if (processBirth(pid) !== expectedBirth) throw new Error('WINDOW_SETUP_IDENTITY_CHANGED');
+      return ids;
     },
     launch: function (request) {
       var workspace = $.NSWorkspace.sharedWorkspace, url = workspace.URLForApplicationWithBundleIdentifier(request.bundle);

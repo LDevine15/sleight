@@ -558,7 +558,9 @@ final class AskCardPanel: NSObject {
             button.controlSize = .large
             if index == 0 { button.keyEquivalent = "\u{1b}" }
             // Return has no default action, as in ask.js.
-            if index == 1 { if #available(macOS 26.0, *) { button.tintProminence = .primary } else { button.bezelColor = .controlAccentColor } }
+            // A resting accent can look like a different choice was pressed when the panel activates.
+            // Let AppKit highlight only the button the person is pressing.
+            if #available(macOS 26.0, *) { button.tintProminence = .none }
             content.addSubview(button)
             buttons.append(button)
             if personChoice(card.kind, choices[index]) {

@@ -3,7 +3,7 @@ import { originOf, chooserNote } from './output-hygiene.mjs'; // a page picks it
 // v3's five eagerly advertised tools. No generic JavaScript or authority fields.
 const object = (properties, required) => ({ type: 'object', properties, required, additionalProperties: false });
 const text = { type: 'string', maxLength: 65536 };
-const ref = { type: 'string', pattern: '^(?:(?:f[0-9]+)?e[0-9]+|s[0-9]+)$' };
+const ref = { type: 'string', pattern: '^(?:(?:f[0-9]+)?e[0-9]+|[sx][0-9]+)$' };
 const tab = { type: 'string', pattern: '^t[A-Za-z0-9_-]{1,64}$' };
 const strings = { type: 'array', maxItems: 100, items: text };
 const ops = 'click type press select check uncheck hover scroll drag upload dialog wait back forward reload viewport navigate'.split(' ');

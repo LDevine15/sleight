@@ -385,6 +385,18 @@ test('turbo steps are logged by origin with their outcome category, never page t
   assert.doesNotMatch(readFileSync(path, 'utf8'), /p07|token|Private|done|"37"|:37/);
 });
 
+test('keyboard-only turbo refs retain per-step outcomes without typed content', () => {
+  const path = join(dir, 'keyboard-turbo.jsonl');
+  const log = new ActionLog({ path, root: dir, now: () => new Date(0) });
+  log.request({ id: 1, method: 'tools/call', params: { name: 'browser_act', arguments: { tab: 't1', steps: [{ do: 'type', ref: 'x3', text: 'private sentinel' }] } } });
+  log.reply({ id: 1, result: { content: [{ type: 'text', text: '1 type x3: no visible change\n2 press x3: not reached' }] } });
+  log.request({ id: 2, method: 'tools/call', params: { name: 'browser_fill', arguments: { tab: 't1', fields: [{ ref: 'x4', value: 'private sentinel' }] } } });
+  log.reply({ id: 2, result: { content: [{ type: 'text', text: 'x4: set\nsubmit: not requested' }] } });
+  const text = readFileSync(path, 'utf8'), rows = text.trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(rows.map(row => [row.kind, row.target?.ref, row.result]), [['type', 'x3', 'ok'], ['press', 'x3', 'not run'], ['fill', 'x4', 'ok']]);
+  assert.doesNotMatch(text, /private sentinel/);
+});
+
 test('the log rotates by size, keeps two old files, and refuses a symlink', () => {
   const path = join(dir, 'rotate.jsonl');
   const log = new ActionLog({ path, root: dir, maxBytes: 400 });
