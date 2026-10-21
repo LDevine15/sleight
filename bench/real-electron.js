@@ -109,16 +109,26 @@ function newWindow(request, api, clock) {
   function deadline() {
     if (clock.now() - started >= waitMs) throw new Error('WINDOW_SETUP_TIMEOUT');
   }
-  function ids() {
-    var values = api.windowIds(pid);
-    if (!Array.isArray(values) || values.some(function (id, i) { return !(id > 0 && id % 1 === 0) || values.indexOf(id) !== i; }) ||
-        values.length < 1 || values.length > 2) throw new Error('WINDOW_SETUP_WINDOW_CHANGED');
+  function censusFailure(phase, reason, values, original) {
+    clock.emit({ stage: 'new-window-failure', census: { phase: phase, reason: reason,
+      count: Array.isArray(values) ? Math.min(values.length, 65) : null,
+      originalPresent: original === undefined || !Array.isArray(values) ? null : values.indexOf(original) !== -1 } });
+    throw new Error('WINDOW_SETUP_WINDOW_CHANGED');
+  }
+  function ids(phase, original) {
+    var values;
+    try { values = api.windowIds(pid); }
+    catch (_) { censusFailure(phase, 'unavailable', null, original); }
+    if (!Array.isArray(values)) censusFailure(phase, 'unavailable', null, original);
+    if (values.some(function (id) { return !(id > 0 && id % 1 === 0); })) censusFailure(phase, 'invalid', values, original);
+    if (values.some(function (id, i) { return values.indexOf(id) !== i; })) censusFailure(phase, 'duplicate', values, original);
+    if (values.length < 1 || values.length > 2) censusFailure(phase, 'count', values, original);
     return values;
   }
   identity();
   deadline();
   if (!api.trusted()) throw new Error('WINDOW_SETUP_ACCESSIBILITY');
-  var before = ids();
+  var before = ids('initial');
   function done(values, created) {
     deadline(); identity(); deadline();
     var receipt = { stage: 'new-window', created: created, windows: values, elapsedMs: clock.now() - started };
@@ -143,9 +153,9 @@ function newWindow(request, api, clock) {
     deadline();
     for (;;) {
       deadline(); identity(); deadline();
-      var after = ids();
+      var after = ids('after-new-window', before[0]);
       deadline();
-      if (after.indexOf(before[0]) === -1) throw new Error('WINDOW_SETUP_WINDOW_CHANGED');
+      if (after.indexOf(before[0]) === -1) censusFailure('after-new-window', 'original-missing', after, before[0]);
       if (after.length === 2) break;
       clock.wait(100);
     }

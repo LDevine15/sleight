@@ -109,6 +109,51 @@ test('collected successful helpers preserve their receipt without failure diagno
   assert.deepEqual(await helper({ mode: 'new-window' }), { stage: 'new-window', windows: [4100, 4101], privateText });
 });
 
+test('native census failure keeps its fixed phase, count and original-window presence through the public receipt', async () => {
+  const census = { phase: 'initial', reason: 'count', count: 3, originalPresent: null };
+  const helper = fixtureHelper(APPS.vscode.bundleId, async () => ({ groupClean: true, exit: { code: 1 },
+    stdout: JSON.stringify({ stage: 'new-window-failure', census, privateText }), stderr: 'Error: WINDOW_SETUP_WINDOW_CHANGED' }));
+  const c = clock(), driver = fakeDriver({ now: c.now });
+  driver.nativeSecondWindow = () => helper({ mode: 'new-window' });
+  const receipt = await runQualification({ app: APPS.vscode, driver, observer: fakeObserver({ now: c.now }), io: quietIo, clock: c, cells: cells('new-window') });
+  const row = receipt.cells.at(-1);
+  assert.equal(row.status, 'fail');
+  assert.equal(row.error, 'FIXTURE_HELPER_UNCONFIRMED');
+  assert.deepEqual(row.setup.detail.helper.census, census);
+  assert.deepEqual(row.detail.helper.census, census);
+  assert.doesNotMatch(JSON.stringify(scrubReceipt(receipt)), /private-owner|private-content/);
+});
+
+for (const bad of [
+  { phase: privateText, reason: 'count', count: 3, originalPresent: null },
+  { phase: 'initial', reason: privateText, count: 3, originalPresent: null },
+  { phase: 'initial', reason: 'count', count: privateText, originalPresent: null },
+  { phase: 'initial', reason: 'count', count: 66, originalPresent: null },
+  { phase: 'initial', reason: 'count', count: 3, originalPresent: privateText },
+  { phase: 'initial', reason: 'original-missing', count: 2, originalPresent: false },
+]) test(`native census diagnostics reject malformed metadata ${JSON.stringify(bad).slice(0, 80)}`, async () => {
+  const helper = fixtureHelper(APPS.vscode.bundleId, async () => ({ groupClean: true, exit: { code: 1 },
+    stdout: JSON.stringify({ stage: 'new-window-failure', census: bad }), stderr: 'Error: WINDOW_SETUP_WINDOW_CHANGED' }));
+  await assert.rejects(helper({ mode: 'new-window' }), error => {
+    assert.equal(error.message, 'FIXTURE_HELPER_UNCONFIRMED');
+    assert.equal(Object.hasOwn(error.detail.helper, 'census'), false);
+    assert.doesNotMatch(JSON.stringify(error.detail), /private-owner|private-content/);
+    return true;
+  });
+});
+
+test('duplicate census diagnostics or a different helper failure never gain census evidence', async () => {
+  const row = { stage: 'new-window-failure', census: { phase: 'initial', reason: 'count', count: 3, originalPresent: null } };
+  for (const [stdout, stderr] of [[JSON.stringify(row) + '\n' + JSON.stringify(row), 'WINDOW_SETUP_WINDOW_CHANGED'],
+    [JSON.stringify(row), 'WINDOW_SETUP_TIMEOUT']]) {
+    const helper = fixtureHelper(APPS.vscode.bundleId, async () => ({ groupClean: true, exit: { code: 1 }, stdout, stderr }));
+    await assert.rejects(helper({ mode: 'new-window' }), error => {
+      assert.equal(Object.hasOwn(error.detail.helper, 'census'), false);
+      return error.message === 'FIXTURE_HELPER_UNCONFIRMED';
+    });
+  }
+});
+
 test('a successful four-key refusal that fails the 5 px pointer gate retains the measured samples', async () => {
   const c = clock(), driver = fakeDriver({ now: c.now }), tool = driver.tool;
   driver.tool = async (name, args) => {

@@ -299,7 +299,7 @@ export async function runPhases({ options, deps }) {
 }
 
 // ---- live phases
-async function livePhases({ options, root, out, cardLog, exec, python, qualificationDiagnosticPath, signal, lifecycle }) {
+async function livePhases({ options, root, out, cardLog, exec, python, qualificationDiagnosticPath, signal, lifecycle, qualificationCells }) {
   const { liveRuntime, liveDriver } = await import('./electron-qualification-live.mjs');
   const { observePermission } = await import('./real-permission.mjs');
   const permission = () => observePermission({ stopOnLiveHold: false });
@@ -311,7 +311,12 @@ async function livePhases({ options, root, out, cardLog, exec, python, qualifica
       const runtime = await liveRuntime(options, { io, clock, root, python, lifecycle, signal });
       try {
         const driver = runtime.driverFor(app, { cardLog, qualificationDiagnosticPath, lifecycle, signal });
-        const receipt = await runQualification({ app, driver, observer: runtime.observer, io, clock, options: runOptions });
+        const receipt = await runQualification({ app, driver, observer: runtime.observer, io, clock, cells: qualificationCells, options: runOptions });
+        if (qualificationCells) {
+          receipt.diagnosticOnly = true;
+          receipt.qualified = false;
+          receipt.validation.unqualified.push('DIAGNOSTIC_SUBSET');
+        }
         return { status: receipt.qualified ? 'pass' : 'fail', receipt: writeReceipt(out, receipt, app.key), qualified: receipt.qualified,
           cells: `${receipt.cells.filter(c => c.status === 'pass').length}/${receipt.cells.length}`, failed: receipt.cells.filter(c => c.status === 'fail').map(c => `${c.id}: ${c.error}`),
           cleanup: receipt.cleanup, ...(receipt.stopped ? { stopped: receipt.stopped.reason } : {}) };
@@ -411,7 +416,7 @@ export async function runMain(argv, deps = {}, qualificationDiagnosticPath) {
   try {
     if (options.mode === 'dry-run') {
       const { fakeRunnerDeps } = await import('./electron-live-runner-fakes.mjs');
-      result = await runPhases({ options, deps: { ...fakeRunnerDeps({ cardLog, out }), log, signal, lifecycle, publish } });
+      result = await runPhases({ options, deps: { ...fakeRunnerDeps({ cardLog, out, qualificationCells: deps.qualificationCells }), log, signal, lifecycle, publish } });
     } else {
       checkRunSignal(signal);
       const python = await (deps.resolvePython ?? resolveRunPython)('python3', { exec }); checkRunSignal(signal);
@@ -425,7 +430,7 @@ export async function runMain(argv, deps = {}, qualificationDiagnosticPath) {
       const commit = await exec('/usr/bin/git', ['-C', fileURLToPath(new URL('..', import.meta.url)), 'rev-parse', 'HEAD'], { timeout: 5000 }).then(r => r.stdout.trim(), () => null);
       result = await runPhases({ options, deps: { log, now: Date.now, sleep: ms => delay(ms), io, watcher, preflight, build: () => ({ commit }), signal, lifecycle, publish,
         lock: signal => acquireLiveLock(LOCK, { wait: true, interval: 15000, signal }),
-        cleanup: () => createRunReaper(root, { python, list: () => listProcesses(exec), lifecycle }).reap(), ...await livePhases({ options, root, out, cardLog, exec, python, qualificationDiagnosticPath, signal, lifecycle }), ...deps.phases } });
+        cleanup: () => createRunReaper(root, { python, list: () => listProcesses(exec), lifecycle }).reap(), ...await livePhases({ options, root, out, cardLog, exec, python, qualificationDiagnosticPath, signal, lifecycle, qualificationCells: deps.qualificationCells }), ...deps.phases } });
     }
   } catch {
     result = { code: signal?.aborted ? 130 : 1, keep: true, ...(lifecycle.unsettled ? { unsettled: true } : {}),

@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:
 import { join } from 'node:path';
 import { readArmConfig } from '../bench/electron-arm-server.mjs';
 import { APPS } from '../bench/electron-qualification.mjs';
-import { CONTRACT, createRunRoot, listProcesses, liveDriver, liveRuntime } from '../bench/electron-qualification-live.mjs';
+import { CONTRACT, createRunRoot, listProcesses, liveDriver, liveRuntime, qualificationWorker } from '../bench/electron-qualification-live.mjs';
 import { createRunReaper, resolveRunPython } from '../bench/electron-run-cleanup.mjs';
 import { createPythonAdapter } from '../plugins/sleight/lib/direct-browser/electron-host.mjs';
 import { EventEmitter } from 'node:events';
@@ -20,7 +20,7 @@ function world(t, { stuckWorker = false, stuckApp = false, reused = false, throw
   const w = { child: { pid: 101 }, lost: false, kill() { events.push('kill'); }, async stop() { events.push('worker-stop'); workerRunning = stuckWorker; w.lost = !workerRunning; return !workerRunning; },
     async send(op, msg) { if (op === 'start') { config = msg; if (throws) throw Error('IPC_LOST');
       if (connectedBirth) return { ok: true, identity: { pid: 501, pidBirth: connectedBirth }, card: { shown: true, status: 'granted' }, launch: {}, connectMs: 1 };
-      return { ok: false, error: 'ELECTRON_UNQUALIFIED', stage: 'app-select', card: { shown: true, status: 'granted' } }; } return { ok: true }; } };
+      return { ok: false, error: 'ELECTRON_UNQUALIFIED', stage: 'app-select', card: { shown: true, status: 'granted' } }; } return op === 'end' ? { ok: true, ended: true, cleanup: [] } : { ok: true }; } };
   const deps = {
     inspectBundle: async () => ({ found, build: {}, recipe: { build: 'fixture' }, appSecret: 'fixture' }),
     list: async () => [...(workerRunning ? [{ pid: 101, ppid: process.pid, uid: process.getuid(), startedAtMs: 1000, args: `${process.execPath} worker.mjs` }] : []), ...(config && running ? [
@@ -49,6 +49,96 @@ function world(t, { stuckWorker = false, stuckApp = false, reused = false, throw
   driver.frontApp = async () => { events.push('restore-front'); return { pid: 90, bundle: 'com.apple.Terminal' }; };
   return { root, driver, events, deps, app, w };
 }
+
+function workerWorld(t, { endReply = { ok: true, ended: true, cleanup: [] }, loseEnd = false, delayedKillExit = false } = {}) {
+  const root = createRunRoot('eqcw-'), children = [], events = [], lifecycle = { cleanupAllowed: true };
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const found = { path: '/fixture/Code.app', executable: '/fixture/Code.app/Contents/MacOS/Code' };
+  const identity = { pid: 501, pidBirth: '1234.000000' };
+  let config, running = true;
+  const forkWorker = options => {
+    let killed = false;
+    const worker = qualificationWorker({ ...options, exitWaitMs: 100, forkProcess: () => {
+      const child = new EventEmitter(); child.pid = 101 + children.length;
+      child.kill = signal => {
+        killed = true;
+        events.push({ pid: child.pid, signal });
+        // An exit event, rather than just a sent signal, is the worker's exit proof.
+        const exit = () => { events.push({ pid: child.pid, exit: true }); child.signalCode = signal; child.emit('exit', null, signal); };
+        if (delayedKillExit && child.pid === 101) setImmediate(() => { child.emit('disconnect'); exit(); });
+        else queueMicrotask(exit);
+      };
+      child.send = msg => {
+        events.push({ pid: child.pid, op: msg.op });
+        if (delayedKillExit && child.pid === 101 && killed) return;
+        if (msg.op === 'start') config = msg;
+        if (msg.op === 'end' && loseEnd) { queueMicrotask(() => child.emit('disconnect')); return; }
+        const reply = msg.op === 'start' ? { ok: true, identity, launch: {}, card: { status: 'granted' } }
+          : msg.op === 'end' ? endReply : { ok: true, status: { hostPid: null } };
+        queueMicrotask(() => child.emit('message', { id: msg.id, ...reply }));
+      };
+      children.push(child); return child;
+    } });
+    const stop = worker.stop.bind(worker);
+    worker.stop = () => { events.push({ pid: worker.child.pid, stop: true }); return stop(); };
+    return worker;
+  };
+  const driver = liveDriver(APPS.vscode, { root, observer: {}, forkWorker, lifecycle, python: '/run/python3',
+    exec: async file => ({ stdout: file === '/usr/sbin/lsof' ? '' : '{"front":90,"bundle":"fixture.other"}' }),
+    deps: {
+      inspectBundle: async () => ({ found, recipe: { build: 'fixture' }, build: {}, appSecret: 'fixture' }),
+      list: async () => [
+        ...children.filter(child => child.signalCode == null).map(child => ({ pid: child.pid, ppid: process.pid, uid: process.getuid(), startedAtMs: 1000, args: `${process.execPath} worker.mjs` })),
+        ...(config && running ? [{ pid: 501, startedAtMs: 1234000, args: `${found.executable} --user-data-dir=${config.tempRoot}/owned/user-data` }] : []),
+      ],
+      electron: async request => {
+        if (request.mode === 'table') return { processes: running ? [{ ...identity, path: found.path, bundle: APPS.vscode.bundleId }] : [] };
+        assert.equal(request.mode, 'quit'); running = false; return { reason: 'exited' };
+      },
+      exited: async () => !running,
+      admin: async () => ({ quit: async () => { events.push('admin-quit'); running = false; return { requested: true }; },
+        collect: async () => ({ cleanup: 'removed' }), close: async () => {} }),
+      sleep: async () => {}, signal: () => assert.fail('worker exits must be collected before reaping'),
+    } });
+  return { driver, lifecycle, children, events };
+}
+
+test('Quit waits for intentional worker termination when disconnect and exit arrive after reconnect', async t => {
+  const { driver, lifecycle, children, events } = workerWorld(t, { delayedKillExit: true });
+  await driver.connect({});
+  await driver.killWorker();
+  assert.equal((await driver.reconnect({})).status, 'granted');
+  const quit = await driver.quit();
+  assert.equal(quit.exited, true);
+  assert.equal(lifecycle.cleanupAllowed, true);
+  assert.deepEqual(events.filter(row => row.op === 'end').map(row => row.pid), [102]);
+  assert.ok(children.every(child => child.signalCode === 'SIGKILL'));
+  const stopIndex = events.findIndex(row => row.pid === 101 && row.stop);
+  assert.ok(stopIndex >= 0 && stopIndex < events.findIndex(row => row.pid === 101 && row.exit));
+  assert.ok(events.findIndex(row => row.pid === 101 && row.exit) < events.indexOf('admin-quit'));
+  assert.equal((await driver.cleanup()).confirmed, true);
+});
+
+for (const endReply of [{ ok: false, error: 'END_FAILED' }, { ok: true }, { ok: true, ended: false }]) {
+  test(`Quit refuses an unconfirmed worker end (${JSON.stringify(endReply)}) after collecting exit`, async t => {
+    const { driver, lifecycle, children, events } = workerWorld(t, { endReply });
+    await driver.connect({});
+    await assert.rejects(driver.quit(), /WORKER_END_UNCONFIRMED/);
+    assert.equal(lifecycle.cleanupAllowed, true, 'a known end refusal has no unknown dispatched effect');
+    assert.equal(children[0].signalCode, 'SIGKILL');
+    assert.equal(events.includes('admin-quit'), false);
+    assert.equal((await driver.cleanup()).confirmed, true);
+  });
+}
+
+test('losing a dispatched worker end keeps Quit and cleanup blocked as effect unknown', async t => {
+  const { driver, lifecycle, events } = workerWorld(t, { loseEnd: true });
+  await driver.connect({});
+  await assert.rejects(driver.quit(), /RUN_CANCELLATION_UNSETTLED/);
+  assert.equal(lifecycle.cleanupAllowed, false);
+  assert.equal(events.includes('admin-quit'), false);
+  assert.equal((await driver.cleanup()).confirmed, false);
+});
 
 test('cancellation during preparation prevents the later worker start', async t => {
   const controller = new AbortController(), { driver, deps, w } = world(t, { signal: controller.signal });

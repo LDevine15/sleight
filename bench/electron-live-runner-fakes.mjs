@@ -18,7 +18,7 @@ export function logCard(cardLog, { kind = 'debugger', temporary = true, at = Dat
   cardLine(cardLog, { event: 'answered', id, kind, at: at + 40, status, scope: kind === 'relaunch' ? null : scope });
 }
 
-export function fakeRunnerDeps({ cardLog, out, write = true }) {
+export function fakeRunnerDeps({ cardLog, out, write = true, qualificationCells }) {
   let virtual = Date.now();
   const clock = { now: () => virtual, sleep: async ms => { virtual += ms; await new Promise(resolve => setImmediate(resolve)); } };
   const io = fakeIo();
@@ -53,7 +53,8 @@ export function fakeRunnerDeps({ cardLog, out, write = true }) {
     preflight, lock: async () => async () => {},
     async qualify({ app }) {
       const driver = withCards(fakeDriver({ now: clock.now, app }), true);
-      const receipt = await runQualification({ app, driver, observer: fakeObserver({ now: clock.now, fixturePid: () => driver.identity()?.pid }), io, clock, options });
+      const receipt = await runQualification({ app, driver, observer: fakeObserver({ now: clock.now, fixturePid: () => driver.identity()?.pid }), io, clock, cells: qualificationCells, options });
+      if (qualificationCells) { receipt.diagnosticOnly = true; receipt.qualified = false; receipt.validation.unqualified.push('DIAGNOSTIC_SUBSET'); }
       return record(receipt, app.key);
     },
     async arm() {

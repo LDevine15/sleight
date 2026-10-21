@@ -14,6 +14,7 @@ import { performance } from 'node:perf_hooks';
 import { CARD_TTL_MS, cardLine } from './electron-cards.mjs';
 import { ensureHost as ensureQualificationHost } from '../plugins/sleight/lib/direct-browser/electron-admin.mjs';
 import { parkedReceipt } from '../plugins/sleight/lib/direct-browser/electron-host-reasons.mjs';
+import { captureFixtureObservation } from './electron-fixture-observation.mjs';
 
 export const qualificationStatus = (s, hostPid) => ({ ownership: s?.ownership?.state ?? null, hostPid: hostPid ?? null,
   broker: s?.broker?.state ?? null, parked: parkedReceipt(s?.broker?.parked), workers: s?.workers ?? null });
@@ -119,6 +120,9 @@ async function endTurn() {
 }
 
 const ops = {
+  async 'fixture-observation'(msg) {
+    return { diagnostic: await captureFixtureObservation({ turn, currentTurn: () => turn, tab: msg.tab, fixtureName: msg.fixtureName }) };
+  },
   async 'probe-launch'(msg) {
     const b = await setup(msg);
     return { probe: await probeLaunch(b.host.admin, admin => select(msg, { ...b, host: { ...b.host, admin } })) };

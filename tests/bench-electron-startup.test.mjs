@@ -85,6 +85,57 @@ test('a signalled worker that never exits stays unconfirmed', async () => {
   assert.equal(await w.stop(), false);
 });
 
+test('an idle worker lost before a new request refuses without dispatch or effect uncertainty', async () => {
+  for (const event of ['exit', 'error', 'disconnect']) {
+    const child = new EventEmitter(), losses = [], dispatched = [];
+    child.send = msg => dispatched.push(msg); child.kill = () => {};
+    const w = live.qualificationWorker({ forkProcess: () => child, onUnsettled: () => losses.push('unknown') });
+    child.emit(event);
+    assert.deepEqual(await w.send('end'), { ok: false, error: 'V3_WORKER_UNAVAILABLE' });
+    assert.deepEqual(dispatched, []);
+    assert.deepEqual(losses, [], `${event} before dispatch has no unknown effect`);
+  }
+});
+
+test('stopping an IPC-disconnected live worker signals it and collects its eventual exit', async () => {
+  const child = new EventEmitter(), signals = [];
+  child.kill = signal => { signals.push(signal); queueMicrotask(() => child.emit('exit', null, signal)); };
+  const w = live.qualificationWorker({ forkProcess: () => child, exitWaitMs: 1 });
+  child.emit('disconnect');
+  assert.equal(await w.stop(), true);
+  assert.deepEqual(signals, ['SIGKILL']);
+});
+
+test('a synchronous send failure after dispatch begins retains effect uncertainty', async () => {
+  const child = new EventEmitter(), losses = [];
+  child.send = () => { throw Error('closed IPC'); }; child.kill = () => {};
+  const w = live.qualificationWorker({ forkProcess: () => child, onUnsettled: () => losses.push('unknown') });
+  assert.equal((await w.send('call')).ok, false);
+  assert.deepEqual(losses, ['unknown']);
+});
+
+test('an intentional kill refuses new sends before any disconnect or exit event', async () => {
+  const child = new EventEmitter(), losses = [], dispatched = [];
+  child.send = msg => dispatched.push(msg); child.kill = () => {};
+  const w = live.qualificationWorker({ forkProcess: () => child, onUnsettled: () => losses.push('unknown') });
+  w.kill();
+  const pending = w.send('end');
+  child.emit('disconnect'); child.emit('exit', null, 'SIGKILL');
+  assert.deepEqual(await pending, { ok: false, error: 'V3_WORKER_UNAVAILABLE' });
+  assert.deepEqual(dispatched, []);
+  assert.deepEqual(losses, []);
+});
+
+test('an intentional kill preserves uncertainty for a request already dispatched', async () => {
+  const child = new EventEmitter(), losses = [];
+  child.send = () => {}; child.kill = () => {};
+  const w = live.qualificationWorker({ forkProcess: () => child, onUnsettled: () => losses.push('unknown') });
+  const pending = w.send('call');
+  w.kill(); child.emit('disconnect'); child.emit('exit', null, 'SIGKILL');
+  assert.equal((await pending).ok, false);
+  assert.deepEqual(losses, ['unknown']);
+});
+
 test('the macOS temporary path from the failed run exceeds the product socket bound; runner roots fit every phase', async t => {
   const old = '/private/var/folders/1x/q5_9hz5j3gs1fcf2z5yz477m0000gn/T/sleight-eq-XXXXXX/vscode-XXXXXX/state';
   assert.equal(Buffer.byteLength(join(old, 'host.sock')), 104);

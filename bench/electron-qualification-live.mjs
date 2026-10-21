@@ -157,24 +157,23 @@ export function qualificationWorker({ forkProcess = fork, env = process.env, exi
   const child = forkProcess(WORKER, [], { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json',
     env: { ...env, SLEIGHT_TURBO_UNQUALIFIED: '1' } });
   const pending = new Map();
-  let sequence = 0, lost;
-  const exited = new Promise(resolve => child.once('exit', () => resolve(true)));
+  let sequence = 0, lost, didExit = false, signalled = false;
+  const exited = new Promise(resolve => child.once('exit', () => { didExit = true; resolve(true); }));
   child.on('message', msg => { const entry = pending.get(msg.id); if (entry) { pending.delete(msg.id); entry(msg); } });
   const lose = () => { if (lost) return; lost = true; if (pending.size) onUnsettled(); for (const entry of pending.values()) entry({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); pending.clear(); };
   for (const event of ['exit', 'error', 'disconnect']) child.on(event, lose);
   const send = (op, extra = {}) => new Promise(resolve => {
-    if (lost) { onUnsettled(); return resolve({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); }
+    if (lost || signalled) return resolve({ ok: false, error: 'V3_WORKER_UNAVAILABLE' });
     const id = ++sequence; pending.set(id, resolve);
     try { child.send({ id, op, ...extra }, error => { if (error) lose(); }); } catch { lose(); }
   });
-  let signalled = false;
-  const kill = () => { if (!lost && !signalled) { signalled = true; child.kill('SIGKILL'); } };
+  const kill = () => { if (!didExit && !signalled) { signalled = true; child.kill('SIGKILL'); } };
   return { child, send, kill, async stop() {
     kill();
     let timer;
     try { return await Promise.race([exited, new Promise(resolve => { timer = setTimeout(() => resolve(false), exitWaitMs); })]); }
     finally { clearTimeout(timer); }
-  }, get lost() { return lost; } };
+  }, get lost() { return lost; }, get terminating() { return signalled && !didExit; } };
 }
 
 export async function liveRuntime(options, { io, root: parentRoot, qualificationDiagnosticPath, python = 'python3', lifecycle, signal } = {}, deps = {}) {
@@ -204,9 +203,25 @@ export async function liveRuntime(options, { io, root: parentRoot, qualification
 const FIXTURE_STAGES = new Set(['quit', 'ready', 'table', 'launch', 'new-window', 'births']);
 const WINDOW_SETUP_CODES = new Set(['WINDOW_SETUP_REQUEST', 'WINDOW_SETUP_IDENTITY_CHANGED', 'WINDOW_SETUP_TIMEOUT',
   'WINDOW_SETUP_WINDOW_CHANGED', 'WINDOW_SETUP_ACCESSIBILITY', 'WINDOW_SETUP_MENU_AMBIGUOUS', 'WINDOW_SETUP_PRESS_FAILED']);
-function fixtureHelperFailure(request, result, row) {
+function fixtureCensus(rows, request, code) {
+  if (request.mode !== 'new-window' || code !== 'WINDOW_SETUP_WINDOW_CHANGED') return null;
+  const failures = rows.filter(row => row?.stage === 'new-window-failure');
+  if (failures.length !== 1) return null;
+  const c = failures[0].census;
+  if (!c || !['initial', 'after-new-window'].includes(c.phase) ||
+      !['unavailable', 'invalid', 'duplicate', 'count', 'original-missing'].includes(c.reason) ||
+      !(c.count === null || Number.isInteger(c.count) && c.count >= 0 && c.count <= 65) ||
+      !(c.originalPresent === null || typeof c.originalPresent === 'boolean') ||
+      c.phase === 'initial' && c.originalPresent !== null ||
+      c.reason === 'original-missing' && (c.phase !== 'after-new-window' || c.originalPresent !== false) ||
+      c.reason === 'unavailable' && (c.count !== null || c.originalPresent !== null)) return null;
+  return { phase: c.phase, reason: c.reason, count: c.count, originalPresent: c.originalPresent };
+}
+function fixtureHelperFailure(request, result, row, rows = []) {
   const codes = [...new Set(String(result?.stderr ?? '').match(/\bWINDOW_SETUP_[A-Z_]+\b/g) ?? [])];
   const exitCode = result?.exit?.code, exitSignal = result?.exit?.signal;
+  const code = codes.length === 1 && WINDOW_SETUP_CODES.has(codes[0]) ? codes[0] : null;
+  const census = fixtureCensus(rows, request, code);
   // Never copy helper output, exception text, paths or arbitrary native error codes into the receipt.
   return Object.assign(Error('FIXTURE_HELPER_UNCONFIRMED'), { detail: { helper: {
     expectedStage: FIXTURE_STAGES.has(request.mode) ? request.mode : null,
@@ -214,7 +229,7 @@ function fixtureHelperFailure(request, result, row) {
     groupClean: typeof result?.groupClean === 'boolean' ? result.groupClean : null,
     exitCode: Number.isInteger(exitCode) && exitCode >= -2147483648 && exitCode <= 2147483647 ? exitCode : null,
     exitSignal: typeof exitSignal === 'string' && Object.hasOwn(osConstants.signals, exitSignal) ? exitSignal : null,
-    code: codes.length === 1 && WINDOW_SETUP_CODES.has(codes[0]) ? codes[0] : null,
+    code, ...(census ? { census } : {}),
   } } });
 }
 export function fixtureHelper(bundle, run = runOwned) {
@@ -222,8 +237,9 @@ export function fixtureHelper(bundle, run = runOwned) {
     let result;
     try { result = await run('/usr/bin/osascript', ['-l', 'JavaScript', QUIT_HELPER, JSON.stringify({ ...request, bundle })], { timeoutMs: 45000 }); }
     catch { throw fixtureHelperFailure(request); }
-    const row = String(result?.stdout ?? '').split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } }).find(row => row?.stage === request.mode);
-    if (!result?.groupClean || result.exit?.code !== 0 || !row) throw fixtureHelperFailure(request, result, row);
+    const rows = String(result?.stdout ?? '').split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+    const row = rows.find(row => row?.stage === request.mode);
+    if (!result?.groupClean || result.exit?.code !== 0 || !row) throw fixtureHelperFailure(request, result, row, rows);
     return row;
   };
 }
@@ -397,6 +413,17 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
       return mains.length;
     },
     identity: () => current ?? last ?? null,
+    async fixtureObservation({ tab, fixtureName }) {
+      boundary();
+      if (!active || active.lost) throw Error('WORKER_NOT_CONNECTED');
+      const result = await active.send('fixture-observation', { tab, fixtureName });
+      boundary();
+      if (result.diagnostic?.pending === true && lifecycle) {
+        lifecycle.cleanupAllowed = false;
+        lifecycle.unsettled = true;
+      }
+      return result.diagnostic ?? { ok: false, code: 'ELECTRON_FIXTURE_OBSERVATION_FAILED' };
+    },
     async connect({ consentWaitMs } = {}) {
       await prepare();
       if (!otherFront) { const front = await inspect({ mode: 'front' }, exec); if (!BENCHMARK_ALLOWLIST.includes(front.bundle)) otherFront = front; }
@@ -549,9 +576,11 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
       const status = active ? (await active.send('status')).status : null;
       hostPid = status?.hostPid ?? hostPid;
       for (const w of workers) {
-        await w.send('end');
+        // Deliberately killed workers stay owned until their exit is collected, but have no IPC turn left to end.
+        const ended = w.lost || w.terminating ? null : await w.send('end');
         if (!await w.stop()) throw Error('WORKER_EXIT_UNCONFIRMED');
         workers.delete(w);
+        if (ended && (ended.ok !== true || ended.ended !== true)) throw Error('WORKER_END_UNCONFIRMED');
       }
       active = undefined;
       // Quit through the app (the host's requestQuit: NSRunningApplication terminate after the birth matches).

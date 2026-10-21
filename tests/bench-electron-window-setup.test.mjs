@@ -110,7 +110,33 @@ test('native setup refuses a different bundle/path and a profile outside the tem
   }
 });
 
-function liveWorld(t, { ownedHelper, helperCollected = true } = {}) {
+for (const [name, options, expected] of [
+  ['initial extra CG windows', { windows: [11, 12, 13] }, { phase: 'initial', reason: 'count', count: 3, originalPresent: null }],
+  ['initial empty census', { windows: [] }, { phase: 'initial', reason: 'count', count: 0, originalPresent: null }],
+  ['initial duplicate IDs', { windows: [11, 11] }, { phase: 'initial', reason: 'duplicate', count: 2, originalPresent: null }],
+  ['initial invalid ID', { windows: [NaN] }, { phase: 'initial', reason: 'invalid', count: 1, originalPresent: null }],
+  ['after-creation extra windows', { after: [11, 12, 13] }, { phase: 'after-new-window', reason: 'count', count: 3, originalPresent: true }],
+  ['original window replaced', { after: [12, 13] }, { phase: 'after-new-window', reason: 'original-missing', count: 2, originalPresent: false }],
+]) test(`window census failure records bounded phase and reason: ${name}`, () => {
+  const w = nativeWorld(options);
+  assert.throws(w.run, /WINDOW_SETUP_WINDOW_CHANGED/);
+  const failures = w.events.filter(event => event?.stage === 'new-window-failure');
+  assert.equal(failures.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(failures[0])), { stage: 'new-window-failure', census: expected });
+  assert.equal(w.events.some(event => event?.stage === 'new-window'), false);
+});
+
+test('unavailable native census has no output text or guessed count in its diagnostic', () => {
+  const w = nativeWorld();
+  w.api.windowIds = () => { throw Error('untrusted-private-window-title'); };
+  assert.throws(w.run, /WINDOW_SETUP_WINDOW_CHANGED/);
+  const failure = w.events.find(event => event?.stage === 'new-window-failure');
+  assert.deepEqual(JSON.parse(JSON.stringify(failure)), { stage: 'new-window-failure',
+    census: { phase: 'initial', reason: 'unavailable', count: null, originalPresent: null } });
+  assert.doesNotMatch(JSON.stringify(w.events), /untrusted-private-window-title/);
+});
+
+function liveWorld(t, { ownedHelper, helperCollected = true, lifecycle } = {}) {
   const root = createRunRoot('eqws-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const found = { path: '/Applications/Fixture Code.app', executable: '/Applications/Fixture Code.app/Contents/MacOS/Code' };
@@ -147,11 +173,27 @@ function liveWorld(t, { ownedHelper, helperCollected = true } = {}) {
       return { groupClean: helperCollected, exit: { code: 0 }, stdout: JSON.stringify({ stage: 'new-window', created: true, windows: [11, 12] }) };
     });
   }
-  const driver = liveDriver(APPS.vscode, { root, observer: {}, forkWorker: () => worker, python: '/run/python3', deps,
+  const driver = liveDriver(APPS.vscode, { root, observer: {}, forkWorker: () => worker, python: '/run/python3', deps, lifecycle,
     exec: async () => ({ stdout: '{"front":90,"bundle":"com.apple.Terminal"}', stderr: '' }) });
   driver.frontApp = async options => { events.push({ restored: options?.bundle }); };
-  return { driver, events, deps, get row() { return row; }, set row(value) { row = value; }, get profile() { return profile; }, get config() { return config; } };
+  return { driver, worker, events, deps, get row() { return row; }, set row(value) { row = value; }, get profile() { return profile; }, get config() { return config; } };
 }
+test('a pending fixture observation blocks later input and retains cleanup ownership', async t => {
+  const lifecycle = { cleanupAllowed: true }, w = liveWorld(t, { lifecycle });
+  const calls = [], send = w.worker.send;
+  w.worker.send = async (op, args) => {
+    if (op !== 'fixture-observation') return send(op, args);
+    calls.push({ op, args }); return { diagnostic: { ok: false, pending: true, code: 'ELECTRON_FIXTURE_CAPTURE_PENDING' } };
+  };
+  await w.driver.connect({});
+  const diagnostic = await w.driver.fixtureObservation({ tab: 't1', fixtureName: 'a-scratch.txt' });
+  assert.equal(diagnostic.pending, true);
+  assert.equal(lifecycle.unsettled, true);
+  assert.equal(lifecycle.cleanupAllowed, false);
+  await assert.rejects(w.driver.tool('browser_act', { tab: 't1', steps: [{ do: 'press', key: 'Escape' }] }), /RUN_CANCELLATION_UNSETTLED/);
+  assert.equal((await w.driver.cleanup()).confirmed, false);
+  assert.equal(calls.length, 1);
+});
 test('live setup binds the native request to recorded birth and canonical run profile, then restores Terminal', async t => {
   const w = liveWorld(t); await w.driver.connect({});
   const result = await w.driver.nativeSecondWindow();
