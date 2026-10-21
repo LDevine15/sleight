@@ -162,7 +162,7 @@ export function createResultBudget({ platform = process.platform, limit = RESULT
   return {
     request(id, { browser, code = '' }) {
       browserFirst ??= browser;
-      requests.set(id, { browser, reference: NATIVE_REFERENCE.test(code) });
+      requests.set(id, { browser, reference: NATIVE_REFERENCE.test(code) || requestsFullDocumentation(code) });
     },
     finish(id) { requests.delete(id); },
     code(code) {

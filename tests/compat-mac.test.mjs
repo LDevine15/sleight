@@ -11,6 +11,19 @@ import { busy, compatApproval, docsDiff, engineTier, lastRecord, launcherChecks,
 const fake = fileURLToPath(new URL('./fixtures/compat-engine.mjs', import.meta.url));
 const server = (mode = 'ok') => ({ command: process.execPath, args: [fake], env: { COMPAT_FAKE_MODE: mode } });
 
+test('client reports its exact spawned child and collected close', async () => {
+  const events = [];
+  const { openClient } = await import('../bench/compat/client.mjs');
+  const client = await openClient({ ...server(), onLifecycle: event => events.push(event) });
+  try { assert.ok((await client.listTools()).length > 0); }
+  finally { assert.equal(await client.close(), true); }
+  assert.deepEqual(events.map(event => event.event), ['spawn', 'close']);
+  assert.ok(Number.isSafeInteger(events[0].pid) && events[0].pid > 0);
+  assert.equal(events[1].pid, events[0].pid);
+  assert.equal(events[1].code, 0);
+  assert.equal(events[1].signal, null);
+});
+
 function temp(t) {
   const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-compat-mac-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -71,7 +84,7 @@ test('the probe runs with the surfaces the launcher picks and says which (CF2)',
   assert.equal(gone.status, 'fail');
   assert.match(gone.reason, /cua\.getTab is undefined \(surfaces browser,computer\)/);
 
-  // The engine tier asks the launcher's surface choice and hands it to both sessions.
+  // Raw and launcher sessions use the selected surfaces. The bootstrap diagnostic stays computer-only.
   const opened = [];
   const open = options => (opened.push(options), import('../bench/compat/client.mjs').then(m => m.openClient(options)));
   const pick = surfaces => server => { server.env.CUA_REPL_ENABLED_SURFACES = surfaces; return { close: async () => opened.push('cache closed') }; };
@@ -83,7 +96,8 @@ test('the probe runs with the surfaces the launcher picks and says which (CF2)',
     assert.match(tier.steps.find(s => s.id === 'repl-probe').reason, new RegExp(`\\(surfaces ${surfaces}\\)`));
     assert.equal(opened[0], 'cache closed');
     assert.equal(opened[1].env.CUA_REPL_ENABLED_SURFACES, surfaces);
-    assert.equal(opened[2].env.SLEIGHT_SURFACES, surfaces);
+    assert.equal(opened[2].env.CUA_REPL_ENABLED_SURFACES, 'computer');
+    assert.equal(opened[3].env.SLEIGHT_SURFACES, surfaces);
   }
 });
 
@@ -116,6 +130,7 @@ test('the engine tier runs doctor, raw engine, launcher and diff in order', asyn
   const tier = await engineTier({ launcher: launcher(dir), logs: dir, resolve: () => server(), ...quiet(dir) });
   assert.equal(tier.version, '26.1013.1001501');
   assert.equal(verdictOf(tier.steps), 'pass');
+  assert.equal(tier.steps.find(step => step.id === 'documentation-bootstrap')?.status, 'pass');
   assert.deepEqual([tier.steps[0].id, ...tier.steps.slice(-2).map(s => s.id)], ['doctor', 'sleight-start', 'api-docs']);
   const failed = await engineTier({ launcher: launcher(dir, { fail: true }), logs: dir, resolve: () => { throw new Error('not called'); }, ...quiet(dir) });
   assert.equal(failed.steps.length, 1);
@@ -125,6 +140,21 @@ test('the engine tier runs doctor, raw engine, launcher and diff in order', asyn
   const deferred = await engineTier({ launcher: join(dir, 'absent'), logs: dir, ...quiet(dir) });
   assert.match(deferred.pending, /a live run is going/);
   assert.equal(busy({ holdPath: '/h', lockPath: '/l', exists: path => path === '/h' }), "/h exists (another project's timed window)");
+});
+test('the engine tier stops before another launcher when bootstrap collection is unproved', async t => {
+  const dir = temp(t), opened = [];
+  const open = async options => {
+    opened.push(options.name);
+    if (options.name === 'sleight-documentation-bootstrap') return {
+      call: async () => ({ content: [] }), close: async () => false,
+      cleanupReceipt: () => ({ childCollected: true, groupCollected: false }),
+    };
+    return (await import('../bench/compat/client.mjs')).openClient(options);
+  };
+  const tier = await engineTier({ launcher: launcher(dir), logs: dir, resolve: () => server(), open, ...quiet(dir) });
+  assert.deepEqual(opened, ['sleight-compat-engine', 'sleight-documentation-bootstrap']);
+  assert.equal(tier.steps.at(-1).id, 'documentation-bootstrap');
+  assert.equal(tier.steps.at(-1).status, 'fail');
 });
 
 test('approvals go only to Calculator and Safari on the benchmark allowlist', async () => {

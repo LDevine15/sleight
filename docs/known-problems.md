@@ -47,8 +47,10 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   arm wait for the planned quota reset and an owner-approved away window. Electron still needs a fresh owner turbo
   receipt matching the final plugin and Node runtime, an approved second-window setup and a decision on host-kill
   focus. Interrupted Electron runs need separate exit and lock-ownership evidence.
-- Shortening the first native API reference is blocked because the available result does not authenticate which
-  text items came from the engine's documentation emitter. The existing reference is unchanged.
+- The first native reference uses origin captured during the existing isolated startup call. A live relay
+  comparison on engine 26.1013.40934 reduced it from 19,743 to 19,542 characters while preserving policy and all
+  text outside the API block. Unknown formats, metadata or changed context keep the full reference. The broader
+  4,600-character target remains unmet, and latency and token savings have not been measured.
 
 ## Flag A/B limits
 
@@ -199,6 +201,10 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   per-action events to the relay, and retries and paste need correct action/attempt correlation. The partial pacing
   candidate stays unmerged. The existing visible-hand behavior is unchanged. Visual qualification and the A/B
   required to change the default have not passed.
+  A caller-owned FIFO experiment delivered 16/16 events from fake methods in the engine sandbox on 2026-10-21,
+  but failed on uncertain group cleanup. After verified recovery, a new run passed four cases with 40/40 events
+  and complete cleanup. Invocation/return delay was 0 to 9 ms with action and retry identity intact. Completion
+  could arrive after the next action began, so this proves neither current-action pacing nor native dispatch.
 
 - DP1 can skip a close shortcut's final read only when fresh native metadata matches the leased
   bundle ID, PID and process start. Both the window count and modal count must be 0. Missing identity or
@@ -817,15 +823,19 @@ compaction, so it cannot isolate wording alone. That A/B has not run live.
   Review sleight request, which macOS 27 can hide behind the menu bar's overflow chevron. Clicking it shows a plain
   window. The same request can come back several times (about 7 in that check) before one approval takes. The
   1.4.1 candidate behavior is described in the [CHANGELOG](../CHANGELOG.md#141-unreleased). The card is now visible
-  while its host is inactive. An owned fake-card run accepted the owner's physical click. A separate run on the
-  same production source explicitly refused Accessibility, PID-posted and spoofed-HID input after both mouse
-  attempts reached the button. Both runs confirmed cleanup. A complete combined fake-card run and real GL9
-  through Grok Bot's priya remain unqualified. Qualification must
+  while its host is inactive. A combined owned fake-card run on 2026-10-21 explicitly refused Accessibility,
+  PID-posted and spoofed-HID input, collected that fixture, then accepted the owner's physical click in a fresh
+  fixture. Lifecycle checks passed 7/7, all five children exited 0, and cleanup released the lock.
+  Real GL9 through Grok Bot's priya remains unqualified. Qualification must
   record Calculator/TextEdit card counts with the owner's current preapprovals, one physical Allow where needed,
   repeated same-session requests and identical retries while a decision waits. Appearance, sound, glove review under
   menu overflow, cancellation, channel reset, fd transport and shared-host operation also need live checks. The guard
   probe must separately prove synthetic-fixture cleanup before a fresh physical-click fixture starts. Protected
   buttons still require physical input.
+  The owner reported first-call TextEdit timeouts in two Grok sessions, followed by successful reads. Separate
+  owned relay and shell diagnostics on engine `26.1013.40934` acquired TextEdit in 211 and 260 ms without a prompt.
+  The raw-engine diagnostic stopped at a declined new-session Calculator approval. These runs did not reproduce
+  the recurring timeout or identify its cause, and they did not run inside the owner's Grok process.
   Grok Bot's custom STDIO MCP servers run in a hosted box without this Mac's apps or ChatGPT's
   engine. Use `sleight-mcp js '<code>'` through the local daemon, which starts a session on demand. Doctor reports
   `route: shell (sleight-mcp js)`, even when a session isn't running. There is no Mac-side HTTP client placement.

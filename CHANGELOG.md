@@ -4,6 +4,10 @@
 
 ### README and documentation
 
+- The first native reference can reuse documentation captured during the existing isolated startup call.
+  On the qualified engine format, it removes 201 characters of API whitespace and preserves the policy and
+  surrounding text. Unknown formats and uncertain origin keep the full reference. A live relay comparison
+  passed on engine 26.1013.40934. Latency and token savings have not been measured.
 - The README has a three-line native benchmark summary. Full methods, model and engine versions, run counts and
   earlier comparisons remain in the results pages. A Turbo section shows the published Chrome and Helium results
   and gives commands to turn it on and off.
@@ -39,10 +43,10 @@
 - Distinct action and payment requests get separate decisions even when their terms match. The guard probe
   collects the synthetic fixture before starting a separate physical-click fixture, so delayed synthetic
   acceptance cannot count as the person's answer.
-- Approval cards are visible while their accessory host is inactive. An owned fake-card run accepted the
-  owner's physical click. A separate run on the same production source explicitly refused Accessibility,
-  PID-posted and spoofed-HID input, with both mouse attempts delivered to the button. Both runs confirmed cleanup.
-- A complete combined fake-card run remains pending. Appearance, sound, menu overflow, transport and
+- Approval cards are visible while their accessory host is inactive. A combined owned fake-card run refused
+  Accessibility, PID-posted and spoofed-HID input, collected that fixture, then accepted the owner's physical
+  click in a fresh fixture. All seven lifecycle checks and cleanup passed, and all five children exited 0.
+- Appearance, sound, menu overflow, transport and
   shared-host operation still need qualification, including GL9 and Calculator/TextEdit card counts through
   Grok Bot's priya.
 

@@ -12,9 +12,10 @@ const text = text => ({ type: 'text', text });
 const docs = '## Computer Use\nNative API reference.\n\n' + readFileSync(new URL('fixtures/engine-confirmations-policy.txt', import.meta.url), 'utf8');
 const tree = 'Window: "note.txt", App: Example.\n0 standard window note.txt\n\t1 text area Value: draft';
 const rules = 'Keep the existing skill rules.';
+const ownedDocs = readFileSync(new URL('fixtures/native-api-docs.txt', import.meta.url), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function harness(t, options = {}) {
-  const clientIn = new PassThrough(), clientOut = new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
+  const clientIn = new PassThrough(), clientOut = options.clientOut ?? new PassThrough(), serverIn = new PassThrough(), serverOut = new PassThrough();
   const sent = [], received = [], traces = [];
   serverIn.on('data', data => sent.push(...data.toString().trim().split('\n').map(JSON.parse)));
   clientOut.on('data', data => received.push(...data.toString().trim().split('\n').map(JSON.parse)));
@@ -49,6 +50,150 @@ function harness(t, options = {}) {
 }
 const body = result => result.content.map(c => c.text ?? '').join('\n');
 const result = (h, id) => h.received.find(m => m.id === id).result;
+
+async function beginOwnedWarm(h) {
+  h.send({ id: -1, method: 'initialize', params: { capabilities: {} } });
+  h.reply(-1, []);
+  h.send({ method: 'notifications/initialized' }); await tick();
+  return h.sent.find(m => m.params?.arguments?.title === 'Prepare sleight REPL');
+}
+test('only the isolated app-free warmup projects the known native fence, once', async t => {
+  const h = harness(t, { warmRepl: true });
+  const warm = await beginOwnedWarm(h);
+  h.reply(warm.id, [text(ownedDocs), text('[sleight:guard-ready]\n')]); await tick();
+  h.call(1, 'await cua.getApp("Example")'); h.reply(1, [text('ordinary output')]); await tick();
+  const delivered = result(h, 1).content.find(c => c.text?.startsWith('## Computer Use\n'));
+  assert.ok(delivered, JSON.stringify(result(h, 1)));
+  assert.equal(ownedDocs.length - delivered.text.length, 201);
+  assert.ok(delivered.text.endsWith(ownedDocs.slice(ownedDocs.indexOf('## Output'))));
+  h.call(2, 'await cua.rewriteDocumentation()'); h.reply(2, [{ ...text(ownedDocs), _meta: { source: 'cua.core' } }]);
+  assert.ok(result(h, 2).content.some(c => c.text === ownedDocs), 'printed copies remain whole');
+});
+for (const duration of [0, 1.25]) test(`owned warmup accepts the observed timing singleton: ${duration}`, async t => {
+  const h = harness(t, { warmRepl: true }); const warm = await beginOwnedWarm(h);
+  h.reply(warm.id, [text(ownedDocs), text('[sleight:guard-ready]\n')], false, { 'codex/nodeReplExecutionDurationMs': duration }); await tick();
+  h.call(1, 'await cua.getApp("Example")'); h.reply(1, [text('output')]); await tick();
+  const delivered = result(h, 1).content.find(c => c.text?.startsWith('## Computer Use\n'));
+  assert.equal(ownedDocs.length - delivered.text.length, 201);
+  assert.ok(delivered.text.endsWith(ownedDocs.slice(ownedDocs.indexOf('## Output'))));
+});
+test('owned warmup compacts the observed Notes format while preserving its complete suffix', async t => {
+  const notes = '\n## Notes\n\nLiteral note: `a  b`.\n  Preserve indentation and Unicode: café.\n\n';
+  const full = ownedDocs.replace('\n# Computer Use Confirmations Policy', notes + '\n# Computer Use Confirmations Policy');
+  const h = harness(t, { warmRepl: true }); const warm = await beginOwnedWarm(h);
+  h.reply(warm.id, [text(full), text('[sleight:guard-ready]\n')], false, { 'codex/nodeReplExecutionDurationMs': 0 }); await tick();
+  h.call(1, 'await cua.getApp("Example")'); h.reply(1, [text('ordinary output')]); await tick();
+  const delivered = result(h, 1).content.find(c => c.text?.startsWith('## Computer Use\n')).text;
+  assert.equal(full.length - delivered.length, 201);
+  assert.equal(delivered.slice(delivered.indexOf('\n## Notes\n')), full.slice(full.indexOf('\n## Notes\n')));
+});
+test('a client ID collision cannot complete or impersonate the private warmup', async t => {
+  const h = harness(t, { warmRepl: true });
+  const warm = await beginOwnedWarm(h);
+  h.tool(warm.id, 'open_file', { app: 'Example', path: '/tmp/note.txt' }); await tick();
+  assert.ok(h.received.some(m => m.id === warm.id && (m.error || m.result?.isError)), 'collision is refused');
+  assert.equal(h.sent.filter(m => m.id === warm.id && m.method === 'tools/call').length, 1);
+  h.reply(warm.id, [text(ownedDocs)]); await tick();
+  h.call(1, 'await cua.getApp("Example")'); h.reply(1, [text('output')]);
+  assert.ok(result(h, 1).content.some(c => c.text === ownedDocs));
+});
+test('private warmup IDs avoid a prior client request that is still in flight', async t => {
+  const h = harness(t, { warmRepl: true });
+  h.tool('sleight-warm-1', 'unknown_tool');
+  const warm = await beginOwnedWarm(h);
+  assert.notEqual(warm.id, 'sleight-warm-1');
+  h.reply(warm.id, [text(ownedDocs)]); await tick();
+  h.call(1, 'await cua.getApp("Example")'); h.reply(1, [text('output')]);
+  assert.ok(result(h, 1).content.some(c => c.text === ownedDocs));
+});
+for (const overlap of ['open_file', 'unknown_tool', 'js_reset']) test(`warmup overlap from ${overlap} keeps full docs`, async t => {
+  const h = harness(t, { warmRepl: true });
+  const warm = await beginOwnedWarm(h);
+  h.tool(10, overlap, { app: 'Example', path: '/tmp/note.txt' }); await tick();
+  h.reply(warm.id, [text(ownedDocs)]); await tick();
+  h.call(1, 'await cua.getApp("Example")'); h.reply(1, [text('output')]);
+  assert.ok(result(h, 1).content.some(c => c.text === ownedDocs));
+});
+test('warmup ownership cannot cross a client kernel metadata change', async t => {
+  const h = harness(t, { warmRepl: true }); const warm = await beginOwnedWarm(h);
+  h.reply(warm.id, [text(ownedDocs)]); await tick();
+  h.send({ id: 1, method: 'tools/call', params: { name: 'js', arguments: { code: 'await cua.getApp("Example")' },
+    _meta: { 'codex/sandbox-state': { mode: 'other' } } } });
+  h.reply(1, [text('output')]);
+  assert.ok(result(h, 1).content.some(c => c.text === ownedDocs));
+});
+test('a failed write retries full guidance and keeps the projection eligible', async t => {
+  const clientOut = new PassThrough();
+  const write = clientOut.write.bind(clientOut); let fail = false;
+  clientOut.write = (line, callback) => {
+    if (fail && JSON.parse(line).id === 1) { fail = false; callback?.(Error('synthetic failed write')); return true; }
+    return write(line, callback);
+  };
+  const h = harness(t, { warmRepl: true, clientOut, dedupeRules: true }); const warm = await beginOwnedWarm(h);
+  h.reply(warm.id, [text(ownedDocs)]); await tick(); fail = true;
+  h.call(1, 'await cua.getApp("Example")'); h.reply(1, [text('first action output')]); await tick();
+  assert.equal(h.received.some(m => m.id === 1), false);
+  h.call(2, 'await app.getAXState()'); h.reply(2, [text('second output')]); await tick();
+  const out = result(h, 2);
+  assert.ok(out.content.some(c => c.text?.startsWith('## Computer Use\n') && ownedDocs.length - c.text.length === 201));
+  assert.match(body(out), /Keep the existing skill rules\./);
+  assert.doesNotMatch(body(out), /first action output/);
+});
+test('a temporarily closed client output retains guidance before any projection is spent', async t => {
+  const clientOut = new PassThrough(); let blocked = false;
+  Object.defineProperty(clientOut, 'writableEnded', { get: () => blocked });
+  const h = harness(t, { warmRepl: true, clientOut }); const warm = await beginOwnedWarm(h);
+  h.reply(warm.id, [text(ownedDocs)]); await tick();
+  h.call(1, 'await cua.getApp("Example")'); blocked = true; h.reply(1, [text('first output')]);
+  blocked = false; h.call(2, 'await app.getAXState()'); h.reply(2, [text('second output')]); await tick();
+  assert.ok(result(h, 2).content.some(c => c.text?.startsWith('## Computer Use\n') && ownedDocs.length - c.text.length === 201));
+  assert.match(body(result(h, 2)), /Keep the existing skill rules\./);
+  assert.doesNotMatch(body(result(h, 2)), /first output/);
+});
+test('Grok cap failures retain full guidance and do not consume documentation projection', async t => {
+  const h = harness(t, { warmRepl: true });
+  h.send({ id: -1, method: 'initialize', params: { clientInfo: { name: 'grok-shell-test' }, capabilities: {} } });
+  h.reply(-1, []); h.send({ method: 'notifications/initialized' }); await tick();
+  const warm = h.sent.find(m => String(m.id).startsWith('sleight-warm-'));
+  h.reply(warm.id, [text(ownedDocs)]); await tick();
+  h.call(1, 'await cua.getApp("Example")'); h.reply(1, [text('x'.repeat(30000))]); await tick();
+  const failure = result(h, 1);
+  assert.equal(failure.isError, true);
+  assert.ok(failure.content.some(c => c.text === ownedDocs), 'failure returns full docs when they fit');
+  h.call(2, 'await app.getAXState()'); h.reply(2, [text('small result')]); await tick();
+  assert.ok(result(h, 2).content.some(c => c.text?.startsWith('## Computer Use\n') && ownedDocs.length - c.text.length === 201));
+});
+for (const mode of ['request', 'env', 'error', 'warm-error', 'unknown-shape', 'duplicate'])
+  test(`owned warmup keeps full documentation or suppresses duplicate private delivery: ${mode}`, async t => {
+    const previous = process.env.SLEIGHT_ENGINE_DOCS;
+    if (mode === 'env') process.env.SLEIGHT_ENGINE_DOCS = 'full';
+    t.after(() => { if (previous === undefined) delete process.env.SLEIGHT_ENGINE_DOCS; else process.env.SLEIGHT_ENGINE_DOCS = previous; });
+    const h = harness(t, { warmRepl: true }); const warm = await beginOwnedWarm(h);
+    h.reply(warm.id, [text(ownedDocs), ...(mode === 'unknown-shape' ? [text('unexpected output')] : [])], mode === 'warm-error'); await tick();
+    if (mode === 'duplicate') h.reply(warm.id, [text(ownedDocs)]);
+    h.call(1, mode === 'request' ? 'await cua.rewriteDocumentation()' : 'await cua.getApp("Example")');
+    h.reply(1, [text('output')], mode === 'error'); await tick();
+    const doc = result(h, 1).content.find(c => c.text?.startsWith('## Computer Use\n'));
+    assert.ok(doc);
+    assert.equal(ownedDocs.length - doc.text.length, mode === 'duplicate' ? 201 : 0);
+    assert.equal(h.received.some(m => m.id === warm.id), false);
+  });
+test('owned documentation preserves the ordinary policy rewrites byte for byte', async t => {
+  const full = ownedDocs.slice(0, ownedDocs.indexOf('# Computer Use Confirmations Policy')) +
+    readFileSync(new URL('fixtures/engine-confirmations-policy.txt', import.meta.url), 'utf8');
+  const policy = value => value.slice(value.indexOf('# Computer Use Confirmations Policy'));
+  for (const confirmPayments of ['always', 'requested', 'never']) for (const rs of ['0', '1']) {
+    const baseline = harness(t, { confirmPayments, rs });
+    baseline.call(1, 'await cua.getApp("Example")'); baseline.reply(1, [text(full)]);
+    const expected = result(baseline, 1).content.find(c => c.text?.startsWith('## Computer Use\n')).text;
+    const h = harness(t, { warmRepl: true, confirmPayments, rs }); const warm = await beginOwnedWarm(h);
+    h.reply(warm.id, [text(full)]); await tick();
+    h.call(1, 'await cua.getApp("Example")'); h.reply(1, [text('output')]); await tick();
+    const delivered = result(h, 1).content.find(c => c.text?.startsWith('## Computer Use\n')).text;
+    assert.equal(expected.length - delivered.length, 201);
+    assert.equal(policy(delivered), policy(expected));
+  }
+});
 
 for (const isError of [false, true]) test(`const binding warnings disappear without changing the result verdict: ${isError}`, t => {
   const h = harness(t), image = { type: 'image', data: 'AA==', mimeType: 'image/png' };

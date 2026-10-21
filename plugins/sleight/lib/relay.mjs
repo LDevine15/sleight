@@ -111,6 +111,7 @@ import { offscreenNotes, withOffscreenNotes } from './offscreen-click.mjs';
 import { isBrowserRead } from './browser-read.mjs';
 import { tabCleanupCode, cleanupTabsBefore, cleanupTimeoutNote } from './browser-tab-cleanup.mjs';
 import { ReplWarmup, replSetupCode, browserWarmupUseCode } from './repl-warmup.mjs';
+import { documentationOrigin } from './documentation-origin.mjs';
 import { TabClickResults } from './tab-click-result.mjs';
 import { openedTabNote, tabReuseCode, readOpened, createdTabCall, parseOpenedPayload } from './tab-reuse.mjs';
 import { menuBarOnlyNote, offSpace, offSpaceNote, readFailureAdvice, savePanelNote } from './read-failure.mjs';
@@ -965,6 +966,11 @@ export function createRelay({
   let compactor = createReadCompactor({ leanCalls, prompt, compactAcquisition, compactReacquire, screenshotReads: textlessHint, readHints, routeSteering, undoReceipts, outcomes, actionNumbers: workflowDocs });
   const browserStale = createBrowserStaleGuard();
   let resultBudget = createResultBudget();
+  const docOrigin = documentationOrigin();
+  let documentationClientMeta = {};
+  const documentationContext = () => stableJson([engineEpoch, kernelEpoch, engineContext, documentationClientMeta,
+    computerSurface, browserChoice, confirmPayments, rs]);
+  const fullDocumentationCalls = new Set();
   const aliasNotices = createBrowserAliasNotices();
   // Whether the engine's js description is its computer-only one, from the last tool list.
   let computerSurface = false;
@@ -1132,6 +1138,7 @@ export function createRelay({
   let stopGeneration = 0;
   const callGenerations = new Map();
   function cancelInternalRequests(message) {
+    docOrigin.invalidate();
     const requests = [...internalRequests.values()];
     internalRequests.clear();
     for (const resolve of requests) resolve({ error: { message } });
@@ -1167,6 +1174,7 @@ export function createRelay({
       detachServer();
       serverIn = engine.serverIn; serverOut = engine.serverOut;
       engineEpoch++;
+      docOrigin.invalidate();
       engineCalls.clear();
       bindServer();
       stopCollected = false;
@@ -1314,7 +1322,9 @@ export function createRelay({
     setup: () => replSetupCode({ browserChoice, scope: `${sessionId}:${turnId}`, token: browserWarmToken, ...outcomeSetup }),
     abort: () => { browserWarmConfirmed = false; abortWarm(); },
     request: code => new Promise(resolve => {
-      const id = `sleight-warm-${nextInternalId++}`;
+      let id;
+      do { id = `sleight-warm-${nextInternalId++}`; }
+      while (pendingClients.has(id) || internalRequests.has(id) || callGenerations.has(id));
       privateWarmRequests.add(id);
       let pending = true;
       const finish = (reply, expired = false) => {
@@ -1324,6 +1334,7 @@ export function createRelay({
         clearTimeout(timer);
         abortWarm = () => {};
         if (expired) {
+          docOrigin.invalidate();
           internalRequests.set(id, reply => replWarmup.retainDocs(reply));
           forgetGuard();
         }
@@ -1343,11 +1354,14 @@ export function createRelay({
       };
       const timer = setTimeout(() => finish({}, true), 6000);
       timer.unref?.();
-      abortWarm = () => finish({});
+      abortWarm = () => { docOrigin.invalidate(); finish({}); };
       internalRequests.set(id, finish);
       guardCalls.set(id, guardGeneration);
-      toServer({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
-        arguments: { code, title: 'Prepare sleight REPL', timeout_ms: 5000 }, _meta: engineMeta() } });
+      const request = { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'js',
+        arguments: { code, title: 'Prepare sleight REPL', timeout_ms: 5000 }, _meta: engineMeta() } };
+      docOrigin.begin(request, documentationContext(), { appFree: !browserChoice &&
+        code === replSetupCode({ scope: `${sessionId}:${turnId}`, token: browserWarmToken, ...outcomeSetup }) });
+      toServer(request);
     }),
     resume: msg => closing || disposed ? leaseStop(msg, promptNotice('REPL preparation was stopped before this call ran.', prompt)) : handleClient(msg),
     refuse: msg => leaseStop(msg, promptNotice('REPL preparation was stopped before this call ran.', prompt)),
@@ -1369,7 +1383,7 @@ export function createRelay({
   const callSeqs = new Map();
   let docsShown = false;
   let deferredEngineDocs = [], clientJsDelivered = false, deferredRules;
-  let undeliveredGrokGuidance = [];
+  let undeliveredGuidance = [];
   const engineDocs = (content = [], embedded = false) => content.flatMap(item => {
     if (item.type !== 'text') return [];
     const start = item.text.search(/^(?:## Computer Use|# Other Browser APIs|# Computer Use Confirmations Policy|# Browser Safety|# API Reference)\n/m);
@@ -2271,6 +2285,7 @@ export function createRelay({
     if (serverIn.writableEnded || serverIn.destroyed) { trace('server-input-closed', { id: msg.id }); return; }
     if (msg.result?.action === 'accept' && closeKeyApp) closeRead?.keyPressed(closeKeyApp);
     trace('to-server', msg);
+    docOrigin.sent(msg, documentationContext());
     if (msg.method === 'tools/call' && msg.id !== undefined) engineCalls.add(msg.id);
     if (msg.method === 'tools/call' && msg.id !== undefined && msg.params.name !== TURN_END_TOOL) {
       callDetails.set(msg.id, msg.params.name + (msg.params.arguments?.title ? ': ' + msg.params.arguments.title : ''));
@@ -2450,7 +2465,13 @@ export function createRelay({
         { type: 'text', text: promptNotice('sleight reconnected after a ChatGPT engine update.', prompt) }];
       updateRetries.delete(msg.id); reconnectNotes.delete(msg.id);
     }
-    if (clientOut.writableEnded || clientOut.destroyed) { trace('client-output-closed', { id: msg.id }); return; }
+    if (clientOut.writableEnded || clientOut.destroyed) {
+      const guidance = (msg.result?.content ?? []).filter(item => ruleBlocks.trusted(item) || engineDocs([item], true).length).map(docOrigin.full);
+      ruleBlocks.retry(guidance);
+      for (const item of guidance) if (!undeliveredGuidance.some(c => c.text === item.text)) undeliveredGuidance.push(item);
+      if (msg.method === undefined) { resultBudget.finish(msg.id); fullDocumentationCalls.delete(msg.id); }
+      trace('client-output-closed', { id: msg.id }); return;
+    }
     if (receiptEnds.has(msg.id) && msg.method === undefined) {
       const receipt = receiptEnds.get(msg.id); receiptEnds.delete(msg.id);
       if (receipt && msg.result) msg.result = { ...msg.result,
@@ -2497,24 +2518,30 @@ export function createRelay({
       if (msg.error) msg = { jsonrpc: msg.jsonrpc, id: msg.id, result: { isError: true, content: [{ type: 'text', text: msg.error.message }] } };
       if (Array.isArray(msg.result?.content)) { msg.result.content = [deferredRules, ...msg.result.content]; deferredRules = undefined; }
     }
+    let documentationDelivery;
     if (modelVisible && Array.isArray(msg.result?.content)) {
+      if (undeliveredGuidance.length) {
+        msg.result.content = [...undeliveredGuidance, ...msg.result.content];
+        undeliveredGuidance = [];
+      }
       msg = { ...msg, result: { ...msg.result, content: resultBudget.apply(aliasNotices(dropRepeatedText(msg.result.content)),
         { id: msg.id, native: !!msg.result._meta?.['codex/toolSurface']?.app?.appId }) } };
       if (dedupeRules) msg.result.content = ruleBlocks.apply(msg.result.content);
       browserStale.observe(msg.result.content);
       saveReceipted ||= msg.result.content.some(c => c.type === 'text' && /\bsaved: observed [^\n]*; on disk: /.test(c.text ?? ''));
+      documentationDelivery = docOrigin.project(msg.result.content, { context: documentationContext(),
+        full: process.env.SLEIGHT_ENGINE_DOCS === 'full' || fullDocumentationCalls.has(msg.id), isError: !!msg.result.isError });
+      msg.result.content = documentationDelivery.content;
     }
+    if (msg.method === undefined) fullDocumentationCalls.delete(msg.id);
     if (msg.method === undefined) resultBudget.finish(msg.id);
     if (grokClient && Array.isArray(msg.result?.content)) {
       // Replay only guidance, never an image or action output. It already passed the docs and rule
       // transforms, whose once-per-session state advanced before the final serialized cap.
-      if (modelVisible && undeliveredGrokGuidance.length) {
-        msg.result.content = [...undeliveredGrokGuidance, ...msg.result.content];
-        undeliveredGrokGuidance = [];
-      }
       msg.result = grokResult(msg.result, () => {
-        const guidance = msg.result.content.filter(item => ruleBlocks.trusted(item) || engineDocs([item], true).length);
-        for (const item of guidance) if (!undeliveredGrokGuidance.some(c => c.text === item.text)) undeliveredGrokGuidance.push(item);
+        const guidance = msg.result.content.filter(item => ruleBlocks.trusted(item) || engineDocs([item], true).length).map(docOrigin.full);
+        ruleBlocks.retry(guidance);
+        for (const item of guidance) if (!undeliveredGuidance.some(c => c.text === item.text)) undeliveredGuidance.push(item);
         return guidance;
       });
     }
@@ -2524,9 +2551,17 @@ export function createRelay({
     try { actionLog?.reply(msg); } catch {}
     trace('to-client', msg);
     if (msg.method === undefined && msg.id !== undefined) onClientReply(msg);
-    clientOut.write(JSON.stringify(msg) + '\n', afterWrite ? error => {
-      if (!error && !disposed && !closing) afterWrite(msg);
-    } : undefined);
+    const retainedGuidance = modelVisible && Array.isArray(msg.result?.content)
+      ? msg.result.content.filter(item => ruleBlocks.trusted(item) || engineDocs([item], true).length) : [];
+    clientOut.write(JSON.stringify(msg) + '\n', error => {
+      const missing = docOrigin.settle(documentationDelivery, msg.result, error);
+      if (error) ruleBlocks.retry(retainedGuidance);
+      for (const item of [...missing, ...(error ? retainedGuidance : [])]) {
+        const full = docOrigin.full(item);
+        if (!undeliveredGuidance.some(c => c.text === full.text)) undeliveredGuidance.push(full);
+      }
+      if (!error && !disposed && !closing) afterWrite?.(msg);
+    });
   };
   const inputError = err => {
     trace('stream-error', { stream: 'server-input', error: err.message });
@@ -3040,6 +3075,19 @@ export function createRelay({
       return;
     }
     if (msg.method === 'initialize') codexClient = codexTurnClient(msg.params?.clientInfo);
+    if (msg.method === 'tools/call') {
+      if (docOrigin.owns(msg.id)) {
+        docOrigin.invalidate();
+        toClient({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: 'Request ID is reserved for private REPL preparation.' } });
+        return;
+      }
+      const nextMeta = { ...msg.params?._meta }; delete nextMeta[META_KEY];
+      if (stableJson(nextMeta) !== stableJson(documentationClientMeta)) docOrigin.invalidate();
+      documentationClientMeta = nextMeta;
+      if (msg.params?.name !== 'js') { docOrigin.sent(msg, documentationContext()); docOrigin.invalidate(); }
+      if (requestsFullDocumentation(msg.params?.arguments?.code ?? '') || /\bsleight\.nativeDocumentation\s*\(/.test(msg.params?.arguments?.code ?? ''))
+        fullDocumentationCalls.add(msg.id);
+    }
     if (actionLog && msg.method === undefined && msg.id !== undefined) try { actionLog.waitEnd('c:' + msg.id); } catch {}
     if (msg.method === 'tools/call' && msg.params?.name === TURN_START_TOOL && !modHost()) { codexTurnStart(msg); return; }
     // Stop and resume are the user's controls and work on every host. Only binding a turbo turn needs the mod. (A turbo
@@ -4497,6 +4545,10 @@ export function createRelay({
     observeServerMessage(msg);
   }
   function observeServerMessage(msg) {
+    docOrigin.reply(msg, documentationContext());
+    if (msg.method === 'elicitation/create' || msg.error || msg.result?.isError) docOrigin.invalidate();
+    // A completed warmup ID remains private, including duplicate engine replies.
+    if (msg.method === undefined && docOrigin.owns(msg.id) && !internalRequests.has(msg.id)) return;
     if (actionLog && msg.method === 'elicitation/create' && msg.id !== undefined) try { actionLog.waitStart('s:' + msg.id); } catch {}
     let certifiedRead; // { number, title } of this result's read, when its native window number is certified
     if (msg.method === undefined) {

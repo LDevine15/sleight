@@ -53,6 +53,12 @@ test('a bundle built from the recorded engine passes every static check', t => {
   assert.deepEqual(report.results.filter(r => r.status !== 'pass').map(r => r.id), ['workflow-rewrite']);
   assert.match(report.fingerprint, /^[0-9a-f]{64}$/);
 });
+test('the installed native API format has a separate conservative compatibility check', t => {
+  const report = analyzeBundle(bundle(temp(t), { edit: { [BUNDLE.coreDoc]: fixture('native-api-docs.txt') } }));
+  const check = report.results.find(r => r.id === 'documentation-format');
+  assert.equal(check?.status, 'pass');
+  assert.equal(check.removedCharacters, 201);
+});
 
 test('missing files, members and strings fail by sleight\'s names, never with engine text', t => {
   const root = temp(t);

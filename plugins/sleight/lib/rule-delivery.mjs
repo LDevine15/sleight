@@ -15,6 +15,9 @@ export function ruleDelivery() {
   return {
     item: text => ({ type: 'text', text, [TRUSTED]: text }),
     trusted: item => item?.type === 'text' && !!item[TRUSTED] && item.text === item[TRUSTED],
+    retry(content) {
+      for (const item of content) if (item?.[TRUSTED] && item.text === item[TRUSTED]) delivered.delete(item[TRUSTED]);
+    },
     apply(content) {
       return content.map(item => {
         if (item.type !== 'text' || typeof item.text !== 'string') return item;

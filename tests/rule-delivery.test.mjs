@@ -44,3 +44,12 @@ test('sessions are independent; unrelated notices, payment policy and images sta
   const content = [text('# Computer Use Confirmations Policy\nAsk first.'), text('Input lease stopped this action.'), { type: 'image', data: 'AA==', mimeType: 'image/png' }];
   assert.deepEqual(a.apply(content), content);
 });
+test('failed delivery restores trusted guidance without trusting printed copies', () => {
+  const delivery = ruleDelivery(), item = delivery.item(rules);
+  delivery.apply([item]);
+  assert.equal(typeof delivery.retry, 'function');
+  delivery.retry([text(rules)]);
+  assert.notEqual(delivery.apply([item])[0].text, rules);
+  delivery.retry([{ ...item }]);
+  assert.equal(delivery.apply([item])[0].text, rules);
+});

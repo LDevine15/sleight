@@ -23,6 +23,7 @@ import { DOCS_CODE, engineDocsText } from '../scripts/engine-docs.mjs';
 import { openClient, textOf } from './compat/client.mjs';
 import { PROBE_CODE, checkApiContract, checkPolicyRewrite, checkWorkflowRewrite, checkReplProbe, checkToolSurface, parseProbe } from './compat/contract.mjs';
 import { SAFE_VERSION, plistString } from './compat/static.mjs';
+import { collectionCertain, documentationBootstrapChecks } from './compat/documentation.mjs';
 
 const execute = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -141,7 +142,10 @@ export async function engineTier({ launcher = LAUNCHER, env = process.env, logs 
   if (server.error) return { version: ran.version, steps: [...steps, step('engine-session', 'fail', 'no engine to start', server.error)] };
   const surfaces = await launcherSurfaces(server, env, select);
   const raw = await rawEngineChecks(server, env, { open });
-  steps.push(...raw.steps, ...await launcherChecks(launcher, env, { open, surfaces }));
+  const bootstrap = await documentationBootstrapChecks(server, env, { open });
+  steps.push(...raw.steps, bootstrap);
+  if (!collectionCertain(bootstrap.cleanup)) return { version: ran.version, steps };
+  steps.push(...await launcherChecks(launcher, env, { open, surfaces }));
   try { steps.push(...await docsDiff(logs, ran.version, raw.docs, readOr(join(logs, 'compat-accepted'), undefined), run)); }
   catch (error) { steps.push(step('api-docs', 'warn', "the docs diff couldn't run", error.message)); }
   return { version: ran.version, steps };

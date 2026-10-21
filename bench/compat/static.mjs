@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { HELPER_REL, MODULES_REL, NODE_REL, NODE_REPL_REL, REPL_REL } from '../../plugins/sleight/lib/setup.mjs';
 import { engineJsVariant } from '../../plugins/sleight/lib/tool-description.mjs';
 import { API_MEMBERS, CUA_METHODS, checkApiContract, checkPolicyRewrite, checkWorkflowRewrite, jsDescriptionResult } from './contract.mjs';
+import { checkDocumentationFormat } from './documentation.mjs';
 
 const OAI = join(MODULES_REL, '@oai');
 export const BUNDLE = {
@@ -115,6 +116,7 @@ export function analyzeBundle(app) {
   const policy = existsSync(join(app, BUNDLE.policy)) ? read(app, BUNDLE.policy) : '';
   // The engine sends both files in one first result, so the headings are checked across both.
   results.push(...checkApiContract(`${coreDoc.trimEnd()}\n\n${policy}`));
+  results.push(checkDocumentationFormat(`${coreDoc.trimEnd()}\n\n${policy}`));
 
   const scripts = readdirSync(join(app, BUNDLE.tinysky)).filter(name => name.endsWith('.js')).map(name => read(app, join(BUNDLE.tinysky, name)));
   const macApp = existsSync(join(app, BUNDLE.tinysky, 'bind_mac_app.js')) ? read(app, join(BUNDLE.tinysky, 'bind_mac_app.js')) : '';
