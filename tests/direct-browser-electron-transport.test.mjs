@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { ElectronBroker, PipeTransport, transportMethodAllowed } from '../plugins/sleight/lib/direct-browser/electron/broker.mjs';
+import { createCDPFilter } from '../plugins/sleight/lib/direct-browser/cdp-filter.mjs';
+import { hostDependencies } from '../plugins/sleight/lib/direct-browser/electron-host-run.mjs';
+import { errorFrame } from '../plugins/sleight/lib/direct-browser/electron-host.mjs';
+import { recipe } from './fixtures/electron-graph.mjs';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function harness(options = {}) {
+function harness(options = {}, { targetInfos = new Map() } = {}) {
   const input = new PassThrough(), output = new PassThrough();
   const frames = [], hang = new Set();
   let sessions = 0;
@@ -20,7 +24,7 @@ function harness(options = {}) {
       if (request.method === 'Target.attachToTarget') send({ result: { sessionId: 'S' + (++sessions) } });
       else if (request.method === 'Target.getTargetInfo') {
         const targetId = request.params.targetId;
-        send({ result: { targetInfo: { targetId, type: targetId.startsWith('W') ? 'service_worker' : 'page',
+        send({ result: { targetInfo: targetInfos.get(targetId) ?? { targetId, type: targetId.startsWith('W') ? 'service_worker' : 'page',
           url: targetId.startsWith('D') ? 'devtools://devtools/inspector.html' : 'app://main/index.html' } } });
       }
       else if (request.method === 'Page.fail') send({ error: { code: -32000, message: 'no such node' } });
@@ -43,6 +47,438 @@ function harness(options = {}) {
 const ready = async options => { const h = harness(options); await h.broker.start({}); return h; };
 const methods = h => h.frames.map(frame => frame.method + (frame.sessionId ? '@' + frame.sessionId : ''));
 const attach = async (h, client, targetId = 'T1') => (await h.broker.transportSend(client, { method: 'Target.attachToTarget', params: { targetId, flatten: true } })).sessionId;
+
+async function ownedIframeFilter(t, brokerOptions = {}) {
+  const build = 'fixture@1', reviewed = { ...recipe, build, sha256: 'a'.repeat(64) };
+  const deps = hostDependencies({ registry: { recipes: [reviewed] }, builds: [build] });
+  const rootInfo = { targetId: 'T1', type: 'page', url: 'app://main/index.html' };
+  const childInfo = { targetId: 'F1', type: 'iframe', url: 'vscode-webview://fixture/index.html' };
+  const targetInfos = new Map([['T1', rootInfo], ['F1', childInfo]]);
+  const h = harness({ ...deps, ...brokerOptions }, { targetInfos });
+  await h.broker.start({ build });
+  const client = h.broker.connect('owned-iframe-test'), listeners = new Set();
+  const routed = (owner, frame) => { if (owner === client) for (const listener of listeners) listener(frame); };
+  h.broker.on('routed', routed);
+  const upstream = { sessionId: 'worker-root',
+    send: (method, params = {}, route) => h.broker.transportSend(client, { method, params,
+      ...(route === undefined || route === 'worker-root' ? {} : { sessionId: route }) }),
+    on(name, listener) { assert.equal(name, 'event'); listeners.add(listener); },
+    off(name, listener) { assert.equal(name, 'event'); listeners.delete(listener); } };
+  const filter = createCDPFilter({ session: upstream, app: {
+    admit: info => info.targetId === rootInfo.targetId && deps.admitTarget(info),
+    current: targetId => targetId === rootInfo.targetId && h.broker.state === 'ready' && h.broker.clients.has(client),
+  } });
+  t.after(async () => { await filter.dispose(); h.broker.detach(client); await tick(); h.broker.off('routed', routed); });
+  await filter.own('T1');
+  const parent = (await filter.session.send('Target.attachToTarget', { targetId: 'T1', flatten: true })).sessionId;
+  await filter.session.send('Target.setAutoAttach', { autoAttach: true, flatten: true }, parent);
+  h.output.write(JSON.stringify({ sessionId: parent, method: 'Target.attachedToTarget',
+    params: { sessionId: 'existing-iframe', targetInfo: childInfo, waitingForDebugger: false } }) + '\0');
+  await tick();
+  const emit = frame => h.output.write(JSON.stringify(frame) + '\0');
+  const addFrame = (sessionId, targetId, parentSession = parent, type = 'iframe') => {
+    const info = { targetId, ...(type === null ? {} : { type }), url: 'vscode-webview://fixture/index.html' };
+    targetInfos.set(targetId, { ...info, type: 'iframe' });
+    emit({ sessionId: parentSession, method: 'Target.attachedToTarget', params: { sessionId, targetInfo: info, waitingForDebugger: false } });
+  };
+  return { ...h, deps, client, filter, parent, childInfo, targetInfos, emit, addFrame };
+}
+const lastRequest = (h, method) => h.frames.findLast(frame => frame.method === method);
+const answer = (h, request, body) => h.emit({ id: request.id, ...(request.sessionId ? { sessionId: request.sessionId } : {}), ...body });
+const detachFrame = (h, sessionId = 'existing-iframe', parent = h.parent) => h.emit({ sessionId: parent,
+  method: 'Target.detachedFromTarget', params: { sessionId } });
+
+test('an owned auto-attached iframe retains a working existing route while top-level admission stays page-only', async t => {
+  const h = await ownedIframeFilter(t);
+  assert.equal(h.broker.routes.get(h.parent).client, h.client);
+  assert.equal(h.broker.routes.get(h.parent).targetId, 'T1');
+  assert.equal(h.broker.routes.get('existing-iframe').client, h.client);
+  assert.equal(h.broker.routes.get('existing-iframe').top, false);
+  assert.equal(await h.deps.admitTarget(h.childInfo), false, 'an iframe must never become a top-level app member');
+  assert.deepEqual(await h.filter.session.send('Runtime.evaluate', { expression: '1' }, 'existing-iframe'), { ok: true });
+  assert.equal(h.broker.state, 'ready');
+});
+
+test('an owned auto-attached iframe can acquire the private second session required by snapshot', async t => {
+  const h = await ownedIframeFilter(t);
+  const existing = await h.filter.session.send('Runtime.evaluate', { expression: '1' }, 'existing-iframe');
+  let read, refusal = null;
+  try { read = await h.filter.session.send('Target.attachToTarget', { targetId: 'F1', flatten: true }); }
+  catch (error) { refusal = error.message; }
+  assert.deepEqual({ existingRouteWorks: existing.ok, parentStillOwned: h.broker.routes.get(h.parent)?.client === h.client,
+    iframeStillOwned: h.broker.routes.get('existing-iframe')?.client === h.client,
+    privateAttachWritten: h.frames.some(frame => frame.method === 'Target.attachToTarget' && frame.params.targetId === 'F1'), refusal },
+  { existingRouteWorks: true, parentStillOwned: true, iframeStillOwned: true, privateAttachWritten: true, refusal: null },
+  'snapshot needs a private read session for the native iframe already owned through the live page route');
+  await h.filter.session.send('DOMSnapshot.captureSnapshot', { computedStyles: [] }, read.sessionId);
+  await h.filter.session.send('Target.detachFromTarget', { sessionId: read.sessionId });
+  assert.equal(h.broker.routes.has('existing-iframe'), true, 'collecting the private read keeps the original frame route');
+});
+
+test('derived iframe attachment supports nested native ancestry and preserves physical cleanup ownership', async t => {
+  const h = await ownedIframeFilter(t);
+  h.addFrame('nested-iframe', 'F2', 'existing-iframe');
+  const read = await h.filter.session.send('Target.attachToTarget', { targetId: 'F2', flatten: true });
+  assert.equal(h.broker.routes.get(read.sessionId).top, true, 'the secondary was physically attached from the root session');
+  assert.equal(Object.isFrozen(h.broker.routes.get(read.sessionId)), true);
+  await h.filter.session.send('DOMSnapshot.captureSnapshot', {}, read.sessionId);
+  h.broker.detach(h.client);
+  await tick();
+  assert.ok(h.frames.some(frame => frame.method === 'Target.detachFromTarget' && frame.params.sessionId === read.sessionId));
+});
+
+test('a secondary session retains physical worker cleanup ownership after its source authority is invalidated', async t => {
+  const h = await ownedIframeFilter(t), secondary = await attach(h, h.client, 'F1');
+  const other = h.broker.connect('other-client'), unrelated = await attach(h, other, 'T2');
+  detachFrame(h);
+  assert.equal(h.broker.routes.has(secondary), false, 'the secondary has no remaining input authority');
+  h.broker.detach(h.client);
+  await tick();
+  const detached = h.frames.filter(frame => frame.method === 'Target.detachFromTarget').map(frame => frame.params.sessionId);
+  assert.equal(detached.includes(secondary), true, 'the exact owned physical secondary must still be collected');
+  assert.equal(detached.includes(unrelated), false);
+  assert.equal(h.broker.routes.has(unrelated), true);
+});
+
+test('failed physical secondary collection retains ownership and leaves another client untouched', async t => {
+  const h = await ownedIframeFilter(t), secondary = await attach(h, h.client, 'F1');
+  const other = h.broker.connect('other-client'), unrelated = await attach(h, other, 'T2');
+  detachFrame(h); h.hang.add('Target.detachFromTarget');
+  const start = h.frames.length;
+  h.broker.detach(h.client); await tick();
+  for (const request of h.frames.slice(start).filter(frame => frame.method === 'Target.detachFromTarget'))
+    answer(h, request, request.params.sessionId === secondary ? { error: { code: -32000, message: 'cleanup refused' } } : { result: {} });
+  await tick();
+  assert.equal(h.broker.attachments.has(secondary), true);
+  assert.equal(h.broker.routes.has(unrelated), true);
+  assert.equal(h.broker.state, 'ready');
+  h.hang.delete('Target.detachFromTarget');
+  h.broker.detach(h.client); await tick();
+  assert.equal(h.broker.attachments.has(secondary), false, 'a later exact retry collects the retained physical session');
+});
+
+test('physical secondary ownership survives park and resume until the old worker cleanup is proved', async t => {
+  const h = await ownedIframeFilter(t), secondary = await attach(h, h.client, 'F1');
+  detachFrame(h);
+  h.broker.revoke('user revoked');
+  assert.equal(h.broker.attachments.has(secondary), true);
+  await h.broker.resume(async () => true);
+  h.broker.detach(h.client); await tick();
+  assert.equal(h.broker.attachments.has(secondary), false);
+  assert.equal(h.frames.some(frame => frame.method === 'Target.detachFromTarget' && frame.params.sessionId === secondary), true);
+});
+
+test('native detach proves retired physical secondary collection without another detach request', async t => {
+  const h = await ownedIframeFilter(t), secondary = await attach(h, h.client, 'F1');
+  detachFrame(h);
+  h.emit({ method: 'Target.detachedFromTarget', params: { sessionId: secondary, targetId: 'F1' } });
+  assert.equal(h.broker.attachments.has(secondary), false);
+  h.broker.detach(h.client); await tick();
+  assert.equal(h.frames.some(frame => frame.method === 'Target.detachFromTarget' && frame.params.sessionId === secondary), false);
+});
+
+test('scoped native target destruction proves retired physical secondary collection', async t => {
+  const h = await ownedIframeFilter(t), secondary = await attach(h, h.client, 'F1');
+  detachFrame(h);
+  h.emit({ sessionId: h.parent, method: 'Target.targetDestroyed', params: { targetId: 'F1' } });
+  assert.equal(h.broker.attachments.has(secondary), false);
+});
+
+for (const scope of ['browser', 'scoped']) {
+  test(`${scope} target crash revokes authority while retaining exact physical attachments for client cleanup`, async t => {
+    const h = await ownedIframeFilter(t), secondary = await attach(h, h.client, 'F1');
+    const other = h.broker.connect('other-client'), unrelated = await attach(h, other, 'T2');
+    const physical = h.broker.attachments.get(secondary);
+    h.emit({ ...(scope === 'scoped' ? { sessionId: h.parent } : {}), method: 'Target.targetCrashed', params: { targetId: 'F1' } });
+    assert.equal(h.broker.routes.has('existing-iframe'), false);
+    assert.equal(h.broker.routes.has(secondary), false);
+    assert.equal(h.broker.attachments.get(secondary) === physical, true, 'a crash does not prove debugger session detachment');
+    h.broker.detach(h.client); await tick();
+    assert.equal(h.broker.attachments.has(secondary), false);
+    assert.equal(h.frames.some(frame => frame.method === 'Target.detachFromTarget' && frame.params.sessionId === secondary), true);
+    assert.equal(h.broker.routes.has(unrelated), true);
+    assert.equal(h.broker.attachments.has(unrelated), true);
+    assert.equal(h.input.destroyed, false);
+  });
+}
+
+for (const ending of ['timeout', 'abort', 'timeout-after-revoke', 'abort-after-revoke']) {
+  test(`a dispatched attachment ${ending} without a returned SID parks non-resumably`, async t => {
+    const h = await ownedIframeFilter(t, { transport: { timeoutMs: 25 } }), controller = new AbortController();
+    const existing = h.broker.attachments.get(h.parent);
+    h.hang.add('Target.attachToTarget');
+    const pending = h.broker.transportSend(h.client, { method: 'Target.attachToTarget', params: { targetId: 'F1', flatten: true } },
+      { signal: controller.signal }).catch(error => error);
+    await tick();
+    assert.equal(lastRequest(h, 'Target.attachToTarget').params.targetId, 'F1');
+    if (ending.endsWith('after-revoke')) h.broker.revoke('user revoked');
+    if (ending.startsWith('abort')) controller.abort();
+    const error = await pending;
+    assert.equal(error.dispatched, true);
+    assert.deepEqual(errorFrame(error), { code: 'EFFECT_UNKNOWN', dispatched: true });
+    assert.equal(h.broker.state, 'parked');
+    assert.equal(h.broker.parkedBy.resumable, false);
+    await assert.rejects(h.broker.resume(async () => true), /not resumable/);
+    assert.equal(h.broker.attachments.get(h.parent), existing);
+    assert.equal(h.input.destroyed, false);
+    assert.equal(h.frames.filter(frame => frame.method === 'Target.attachToTarget' && frame.params.targetId === 'F1').length, 1);
+  });
+}
+
+for (const timing of ['before-call', 'queued-before-write']) {
+  test(`attachment cancellation ${timing} does not create an unknown attachment or park`, async t => {
+    const h = await ownedIframeFilter(t), controller = new AbortController();
+    if (timing === 'before-call') controller.abort();
+    else h.hang.add('Target.getTargetInfo');
+    const pending = h.broker.transportSend(h.client, { method: 'Target.attachToTarget', params: { targetId: 'F1', flatten: true } },
+      { signal: controller.signal }).catch(error => error);
+    if (timing === 'queued-before-write') {
+      await tick(); h.broker.pipe.blocked = true;
+      answer(h, lastRequest(h, 'Target.getTargetInfo'), { result: { targetInfo: h.childInfo } });
+      await tick(); assert.equal(h.broker.pipe.writes.size, 1);
+      controller.abort();
+    }
+    const error = await pending;
+    h.broker.pipe.blocked = false; h.broker.pipe.flush(); h.hang.delete('Target.getTargetInfo');
+    assert.notEqual(error.dispatched, true);
+    assert.equal(h.broker.state, 'ready');
+    assert.equal(h.broker.pendingAttaches.size, 0);
+    assert.equal(h.broker.attachments.size, 1);
+    assert.equal(h.frames.some(frame => frame.method === 'Target.attachToTarget' && frame.params.targetId === 'F1'), false);
+  });
+}
+
+test('retired physical secondaries consume the bounded ownership bank and block new attachment writes', async t => {
+  const h = await ownedIframeFilter(t, { maxRoutes: 3 });
+  const first = await attach(h, h.client, 'F1'); detachFrame(h);
+  h.addFrame('second-frame', 'F2');
+  const second = await attach(h, h.client, 'F2'); detachFrame(h, 'second-frame');
+  h.addFrame('third-frame', 'F3');
+  const before = h.frames.filter(frame => frame.method === 'Target.attachToTarget').length;
+  await assert.rejects(attach(h, h.client, 'F3'), /NOT_OWNED|full/);
+  assert.equal(h.frames.filter(frame => frame.method === 'Target.attachToTarget').length, before);
+  assert.equal(h.broker.attachments.has(first), true);
+  assert.equal(h.broker.attachments.has(second), true);
+  assert.equal(h.input.destroyed, false);
+});
+
+for (const cause of ['source-detach', 'ancestor-detach', 'destroy', 'crash', 'type-drift', 'scoped-destroy', 'scoped-crash']) {
+  test(`derived iframe attachment invalidates ${cause} descendants before forwarding native lifecycle`, async t => {
+    const h = await ownedIframeFilter(t);
+    h.addFrame('nested-iframe', 'F2', 'existing-iframe');
+    const read = await attach(h, h.client, 'F2');
+    const unrelated = await attach(h, h.client, 'T2');
+    let observed;
+    h.broker.on('routed', (_owner, frame) => {
+      if (frame.method === 'Target.detachedFromTarget' || frame.method === 'Target.targetDestroyed' ||
+          frame.method === 'Target.targetCrashed' || frame.method === 'Target.targetInfoChanged')
+        observed = ['existing-iframe', 'nested-iframe', read].map(id => h.broker.routes.has(id));
+    });
+    if (cause === 'source-detach') detachFrame(h);
+    else if (cause === 'ancestor-detach') h.emit({ method: 'Target.detachedFromTarget', params: { sessionId: h.parent } });
+    else if (cause === 'type-drift') h.emit({ method: 'Target.targetInfoChanged', params: { targetInfo: { ...h.childInfo, type: 'page' } } });
+    else h.emit({ ...(cause.startsWith('scoped-') ? { sessionId: h.parent } : {}),
+      method: cause.endsWith('destroy') ? 'Target.targetDestroyed' : 'Target.targetCrashed', params: { targetId: 'F1' } });
+    assert.deepEqual(observed, [false, false, false]);
+    assert.equal(h.broker.routes.has(unrelated), true);
+    await assert.rejects(h.broker.transportSend(h.client, { method: 'Runtime.evaluate', sessionId: read }), /NOT_OWNED/);
+  });
+}
+
+test('a sibling or child native detach cannot invalidate another route and its descendants', async t => {
+  const h = await ownedIframeFilter(t);
+  h.addFrame('sibling', 'F2'); h.addFrame('nested', 'F3', 'existing-iframe');
+  detachFrame(h, 'existing-iframe', 'sibling');
+  detachFrame(h, h.parent, 'nested');
+  h.emit({ sessionId: 'sibling', method: 'Target.targetDestroyed', params: { targetId: 'F1' } });
+  assert.equal(h.broker.routes.has(h.parent), true);
+  assert.equal(h.broker.routes.has('existing-iframe'), true);
+  assert.equal(h.broker.routes.has('nested'), true);
+});
+
+test('a native attach session collision cannot invalidate a foreign client or sibling route', async t => {
+  const h = await ownedIframeFilter(t), other = h.broker.connect('other-client');
+  const foreign = await attach(h, other, 'T2'), foreignRecord = h.broker.routes.get(foreign);
+  h.addFrame('sibling', 'F2'); h.addFrame('nested', 'F3', 'existing-iframe');
+  const siblingRecord = h.broker.routes.get('sibling');
+  for (const sessionId of [foreign, 'sibling']) h.emit({ sessionId: 'nested', method: 'Target.attachedToTarget',
+    params: { sessionId, targetInfo: { targetId: 'forged-target', type: 'iframe' } } });
+  assert.equal(h.broker.routes.get(foreign), foreignRecord);
+  assert.equal(h.broker.routes.get('sibling'), siblingRecord);
+  assert.equal(h.broker.state, 'ready');
+});
+
+for (const loss of ['route', 'source', 'client']) {
+  test(`a successful input reply racing ${loss} loss remains dispatched and uncertain`, async t => {
+    const h = await ownedIframeFilter(t);
+    const read = await attach(h, h.client, 'F1');
+    h.hang.add('Input.dispatchKeyEvent');
+    const route = loss === 'route' ? h.parent : read;
+    const pending = h.broker.transportSend(h.client, { method: 'Input.dispatchKeyEvent', params: { type: 'keyDown' }, sessionId: route }).catch(error => error);
+    await tick();
+    const request = lastRequest(h, 'Input.dispatchKeyEvent');
+    if (loss === 'client') h.broker.detach(h.client);
+    else if (loss === 'route') h.emit({ method: 'Target.detachedFromTarget', params: { sessionId: route } });
+    else detachFrame(h);
+    answer(h, request, { result: { ok: true } });
+    const error = await pending;
+    assert.equal(error.dispatched, true);
+    assert.deepEqual(errorFrame(error), { code: 'EFFECT_UNKNOWN', dispatched: true });
+    assert.equal(h.broker.state, 'parked');
+    assert.equal(h.frames.filter(frame => frame.method === 'Input.dispatchKeyEvent').length, 1);
+  });
+}
+
+test('a successful owned detach tolerates its expected native route disappearance before the reply', async t => {
+  const h = await ownedIframeFilter(t), read = await attach(h, h.client, 'F1');
+  h.hang.add('Target.detachFromTarget');
+  const pending = h.broker.transportSend(h.client, { method: 'Target.detachFromTarget', params: { sessionId: read } });
+  await tick();
+  const request = lastRequest(h, 'Target.detachFromTarget');
+  h.emit({ method: 'Target.detachedFromTarget', params: { sessionId: read } });
+  answer(h, request, { result: {} });
+  assert.deepEqual(await pending, {});
+  assert.equal(h.broker.routes.has('existing-iframe'), true);
+  assert.equal(h.broker.state, 'ready');
+  h.hang.delete('Target.detachFromTarget');
+});
+
+test('an old detach reply never collects a reused SID belonging to another client retired secondary', async t => {
+  const h = await ownedIframeFilter(t), original = await attach(h, h.client, 'F1');
+  const other = h.broker.connect('other-client'), otherParent = await attach(h, other, 'T2');
+  h.hang.add('Target.detachFromTarget');
+  const detached = h.broker.transportSend(h.client, { method: 'Target.detachFromTarget', params: { sessionId: original } }).catch(error => error);
+  await tick(); const oldRequest = lastRequest(h, 'Target.detachFromTarget');
+  h.emit({ method: 'Target.detachedFromTarget', params: { sessionId: original } });
+  h.addFrame('other-frame', 'F-other', otherParent);
+  h.hang.add('Target.attachToTarget');
+  const replacement = attach(h, other, 'F-other');
+  await tick();
+  answer(h, lastRequest(h, 'Target.attachToTarget'), { result: { sessionId: original } });
+  assert.equal(await replacement, original);
+  const physical = h.broker.attachments.get(original);
+  detachFrame(h, 'other-frame', otherParent);
+  assert.equal(h.broker.routes.has(original), false);
+  answer(h, oldRequest, { result: {} });
+  const error = await detached;
+  assert.equal(error.dispatched, true);
+  assert.equal(h.broker.attachments.get(original), physical);
+  assert.equal(physical.client, other);
+  h.hang.delete('Target.detachFromTarget'); h.hang.delete('Target.attachToTarget');
+});
+
+for (const kind of ['foreign-client', 'missing', 'missing-type', 'wrong-type', 'ambiguous', 'secondary-source', 'secondary-parent', 'cycle', 'depth']) {
+  test(`derived iframe attachment refuses ${kind} provenance`, async t => {
+    const h = await ownedIframeFilter(t);
+    let client = h.client, target = 'F1';
+    if (kind === 'foreign-client') client = h.broker.connect('other-client');
+    if (kind === 'missing') { target = 'F2'; h.targetInfos.set(target, { targetId: target, type: 'iframe' }); }
+    if (kind === 'missing-type' || kind === 'wrong-type') {
+      target = 'F2'; h.addFrame('bad-frame', target, h.parent, kind === 'missing-type' ? null : 'worker');
+    }
+    if (kind === 'ambiguous') h.addFrame('ambiguous-frame', 'F1');
+    if (kind === 'secondary-source' || kind === 'secondary-parent') {
+      const secondary = await attach(h, client, target);
+      if (kind === 'secondary-source') h.broker.routes.delete('existing-iframe');
+      else { h.addFrame('under-secondary', 'F2', secondary); target = 'F2'; }
+    }
+    if (kind === 'cycle') {
+      const cyclic = { ...h.broker.routes.get('existing-iframe'), parentSession: 'existing-iframe' };
+      cyclic.parent = cyclic; h.broker.routes.set('existing-iframe', Object.freeze(cyclic));
+    }
+    if (kind === 'depth') {
+      let parent = 'existing-iframe';
+      for (let i = 0; i < 129; i++) { const name = 'deep-' + i; target = 'F-deep-' + i; h.addFrame(name, target, parent); parent = name; }
+    }
+    const before = h.frames.filter(frame => frame.method === 'Target.attachToTarget').length;
+    await assert.rejects(attach(h, client, target), /NOT_OWNED/);
+    assert.equal(h.frames.filter(frame => frame.method === 'Target.attachToTarget').length, before);
+  });
+}
+
+test('derived iframe attachment rejects native target type changes without admitting it as a page', async t => {
+  const h = await ownedIframeFilter(t);
+  h.targetInfos.set('F1', { ...h.childInfo, type: 'page', url: 'app://main/changed.html' });
+  const before = h.frames.filter(frame => frame.method === 'Target.attachToTarget').length;
+  await assert.rejects(attach(h, h.client, 'F1'), /NOT_OWNED/);
+  assert.equal(h.frames.filter(frame => frame.method === 'Target.attachToTarget').length, before);
+});
+
+for (const loss of ['source', 'ancestor-record', 'client', 'reused-source', 'ambiguous-source']) {
+  test(`derived iframe attachment pins ${loss} authority while native target info is pending`, async t => {
+    const h = await ownedIframeFilter(t);
+    h.hang.add('Target.getTargetInfo');
+    const pending = attach(h, h.client, 'F1');
+    pending.catch(() => {});
+    await tick();
+    const query = lastRequest(h, 'Target.getTargetInfo');
+    if (loss === 'source' || loss === 'reused-source') detachFrame(h);
+    if (loss === 'ancestor-record') h.broker.routes.set(h.parent, Object.freeze({ ...h.broker.routes.get(h.parent) }));
+    if (loss === 'client') h.broker.detach(h.client);
+    if (loss === 'reused-source') h.addFrame('existing-iframe', 'F1');
+    if (loss === 'ambiguous-source') h.addFrame('ambiguous-iframe', 'F1');
+    answer(h, query, { result: { targetInfo: h.childInfo } });
+    await assert.rejects(pending, /NOT_OWNED|detached|parked/);
+    assert.equal(h.frames.some(frame => frame.method === 'Target.attachToTarget' && frame.params.targetId === 'F1'), false);
+  });
+}
+
+test('derived iframe attachment snapshots params before awaiting identity or target info', async t => {
+  const h = await ownedIframeFilter(t);
+  h.hang.add('Target.getTargetInfo');
+  const params = { targetId: 'F1', flatten: true };
+  const pending = h.broker.transportSend(h.client, { method: 'Target.attachToTarget', params });
+  await tick();
+  params.targetId = 'T-foreign';
+  answer(h, lastRequest(h, 'Target.getTargetInfo'), { result: { targetInfo: h.childInfo } });
+  assert.ok((await pending).sessionId);
+  assert.equal(lastRequest(h, 'Target.attachToTarget').params.targetId, 'F1');
+});
+
+test('derived iframe attachment rechecks source at the queued physical write', async t => {
+  const h = await ownedIframeFilter(t);
+  h.hang.add('Target.getTargetInfo');
+  const pending = attach(h, h.client, 'F1');
+  pending.catch(() => {});
+  await tick();
+  h.broker.pipe.blocked = true;
+  answer(h, lastRequest(h, 'Target.getTargetInfo'), { result: { targetInfo: h.childInfo } });
+  await tick();
+  assert.equal(h.broker.pipe.writes.size, 1);
+  detachFrame(h);
+  h.broker.pipe.blocked = false; h.broker.pipe.flush();
+  await assert.rejects(pending, /NOT_OWNED/);
+  assert.equal(h.frames.some(frame => frame.method === 'Target.attachToTarget' && frame.params.targetId === 'F1'), false);
+});
+
+for (const loss of ['source', 'client', 'collision', 'retired-collision', 'cleanup-failed']) {
+  test(`derived iframe attachment ${loss} after dispatch never publishes an orphan`, async t => {
+    const h = await ownedIframeFilter(t);
+    h.hang.add('Target.attachToTarget');
+    const pending = attach(h, h.client, 'F1');
+    pending.catch(() => {});
+    await tick();
+    const request = lastRequest(h, 'Target.attachToTarget');
+    assert.equal(request.params.targetId, 'F1');
+    if (loss === 'client') h.broker.detach(h.client); else detachFrame(h);
+    if (loss === 'cleanup-failed') h.hang.add('Target.detachFromTarget');
+    answer(h, request, { result: { sessionId: loss === 'collision' ? h.parent : loss === 'retired-collision' ? 'existing-iframe' : 'new-orphan' } });
+    if (loss === 'cleanup-failed') {
+      await tick(); const cleanup = lastRequest(h, 'Target.detachFromTarget');
+      assert.equal(cleanup.params.sessionId, 'new-orphan');
+      answer(h, cleanup, { error: { code: -32000, message: 'cleanup refused' } });
+    }
+    await assert.rejects(pending, /NOT_OWNED|parked|authority|detached/);
+    assert.equal(h.broker.routes.has('new-orphan'), false);
+    const detaches = h.frames.filter(frame => frame.method === 'Target.detachFromTarget').map(frame => frame.params.sessionId);
+    if (loss === 'collision' || loss === 'retired-collision') {
+      assert.equal(detaches.includes(loss === 'collision' ? h.parent : 'existing-iframe'), false);
+      assert.equal(h.broker.state, 'parked');
+    }
+    else assert.equal(detaches.includes('new-orphan'), true);
+    if (loss === 'cleanup-failed') { assert.equal(h.broker.state, 'parked'); assert.equal(h.broker.attachments.has('new-orphan'), true); }
+  });
+}
 
 test('the host fence matches the app filter: app-mode denials, a session on page commands, attach only to admitted targets', async () => {
   const h = await ready();

@@ -199,6 +199,9 @@ export class ElectronBroker extends EventEmitter {
     // sessionId -> { client, top }. Flat CDP session ids are capabilities, so a client may only
     // send on sessions its own attach created (or that an owned session auto-attached).
     this.routes = new Map();
+    // Physical root attachments outlive their input authority until native evidence proves collection.
+    this.attachments = new Map(); this.collectingAttachments = new WeakMap();
+    this.pendingAttaches = new Set();
     this.diagnostic = diagnostic;
     if (diagnostic) this.transportOptions = { ...transport, onQueueFailure: reason => this.queueFailure(reason), onCdpFailure: row => {
       const type = this.routes.get(row.sessionId)?.targetType ?? (row.sessionId === undefined ? 'browser' : 'unknown');
@@ -286,15 +289,14 @@ export class ElectronBroker extends EventEmitter {
   // Releasing a client drops its routes at once and detaches its top-level sessions in the app
   // afterwards (best effort), so a lost worker cannot leave a page paused behind its attachment.
   detach(client) {
-    if (!this.clients.delete(client)) return;
-    this.pipe?.cancelQueued('client detached during preparation', owner => owner === client);
+    if (this.clients.delete(client)) this.pipe?.cancelQueued('client detached during preparation', owner => owner === client);
     const owned = [...this.routes].filter(([, route]) => route.client === client);
     for (const [name] of owned) this.routes.delete(name);
     if (this.state !== 'ready') return;
-    for (const [name, route] of owned) {
-      if (!route.top) continue;
-      this.pipe.request('Target.detachFromTarget', { sessionId: name }).catch(error => {
-        this.receipt({ phase: 'unknown', event: 'client-detach-failed', reason: error.message });
+    for (const [name, attachment] of this.attachments) {
+      if (attachment.client !== client) continue;
+      this.collectAttachment(name, attachment).then(collected => {
+        if (!collected) this.receipt({ phase: 'unknown', event: 'client-detach-failed', reason: 'physical detach unconfirmed' });
       });
     }
   }
@@ -345,15 +347,82 @@ export class ElectronBroker extends EventEmitter {
     return this.receipt({ phase: 'verified', event: 'resumed', identity: this.identity });
   }
 
+  // A secondary read session is never an authority source. Native child records pin the exact parent record,
+  // so a detached/recreated session with the same spelling cannot revive a former chain.
+  routeCurrent(name, record, client, authority = false) {
+    const seen = new Set();
+    while (record) {
+      if (seen.has(record) || seen.size >= 128 || this.routes.get(name) !== record || record.client !== client ||
+          record.epoch !== this.epoch || !this.clients.has(client) || client.epoch !== this.epoch) return false;
+      seen.add(record);
+      if (record.provenance === 'direct') return record.targetType === 'page' && record.top === true;
+      if (record.provenance === 'secondary') {
+        if (authority) return false;
+        return this.sourceCurrent({ session: record.sourceSession, route: record.source }, client);
+      } else if (record.provenance === 'auto') {
+        if (authority && (record.targetType !== 'iframe' || !sessionPattern(record.targetId))) return false;
+        name = record.parentSession; record = record.parent;
+      } else return false;
+    }
+    return false;
+  }
+
+  attachmentSource(targetId, client) {
+    const candidates = [...this.routes].filter(([, route]) => route.client === client && route.targetId === targetId && route.provenance === 'auto');
+    if (!candidates.length) return undefined;
+    if (candidates.length !== 1) throw Error('CDP_TARGET_NOT_OWNED');
+    const [session, route] = candidates[0];
+    if (!this.sourceCurrent({ session, route }, client)) throw Error('CDP_TARGET_NOT_OWNED');
+    return Object.freeze({ session, route });
+  }
+
+  sourceCurrent(source, client) {
+    if (source.route?.targetType !== 'iframe' || !this.routeCurrent(source.session, source.route, client, true)) return false;
+    const matches = [...this.routes].filter(([, route]) => route.client === client && route.targetId === source.route.targetId && route.provenance === 'auto');
+    return matches.length === 1 && matches[0][0] === source.session && matches[0][1] === source.route;
+  }
+
+  observeSession(name) {
+    for (const attempt of this.pendingAttaches) {
+      if (attempt.known.has(name)) continue;
+      if (attempt.known.size >= this.maxRoutes * 2) attempt.uncertain = true;
+      else attempt.known.add(name);
+    }
+  }
+
+  routeDescends(record, ancestor) {
+    const seen = new Set();
+    while (record && !seen.has(record) && seen.size < 128) {
+      if (record === ancestor) return true;
+      seen.add(record); record = record.parent ?? record.source;
+    }
+    return false;
+  }
+
+  invalidateRoutes(names) {
+    const removed = new Set();
+    for (const name of names) { const record = this.routes.get(name); if (record) { removed.add(record); this.routes.delete(name); } }
+    // Each pass removes at least one bounded route; identity links cannot accidentally select a replacement record.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [name, record] of this.routes) if (removed.has(record.parent) || removed.has(record.source)) {
+        removed.add(record); this.routes.delete(name); changed = true;
+      }
+    }
+  }
+
   routeEvent(frame) {
     const params = frame.params;
     if (frame.sessionId === undefined) {
       // Browser-level events that name a session belong to that session's owner alone. A session no
       // client owns (or one whose params carry no usable id) reaches nobody.
       if (['Target.attachedToTarget', 'Target.detachedFromTarget', 'Target.receivedMessageFromTarget'].includes(frame.method)) {
-        const named = sessionPattern(params.sessionId) ? this.routes.get(params.sessionId) : undefined;
-        if (named) this.emit('routed', named.client, frame);
-        if (named && frame.method === 'Target.detachedFromTarget') this.routes.delete(params.sessionId);
+        const named = sessionPattern(params.sessionId) ? this.routes.get(params.sessionId) ?? this.attachments.get(params.sessionId)?.record : undefined;
+        if (!named || frame.method === 'Target.detachedFromTarget' && (!named.top ||
+            params.targetId !== undefined && params.targetId !== named.targetId)) return;
+        if (frame.method === 'Target.detachedFromTarget') { this.invalidateRoutes([params.sessionId]); this.attachments.delete(params.sessionId); }
+        this.emit('routed', named.client, frame);
         return;
       }
       // A target's lifecycle (created, changed, destroyed, crashed) goes only to the clients attached to it, so one
@@ -361,7 +430,17 @@ export class ElectronBroker extends EventEmitter {
       if (frame.method.startsWith('Target.')) {
         const targetId = params.targetInfo?.targetId ?? params.targetId;
         if (!sessionPattern(targetId)) return;
-        const owners = new Set([...this.routes.values()].filter(route => route.top && route.targetId === targetId).map(route => route.client));
+        const matching = [...this.routes].filter(([, route]) => route.targetId === targetId);
+        const owners = new Set(matching.map(([, route]) => route.client));
+        if (frame.method === 'Target.targetDestroyed' || frame.method === 'Target.targetCrashed') {
+          this.invalidateRoutes(matching.map(([name]) => name));
+          for (const [name, attachment] of this.attachments) if (attachment.record.targetId === targetId) {
+            owners.add(attachment.client);
+            if (frame.method === 'Target.targetDestroyed') this.attachments.delete(name);
+          }
+        }
+        else if (frame.method === 'Target.targetInfoChanged' && typeof params.targetInfo?.type === 'string')
+          this.invalidateRoutes(matching.filter(([, route]) => route.targetType !== params.targetInfo.type).map(([name]) => name));
         for (const client of owners) this.emit('routed', client, frame);
         return;
       }
@@ -370,11 +449,36 @@ export class ElectronBroker extends EventEmitter {
     const route = this.routes.get(frame.sessionId);
     if (!route) return; // A session that no client owns has no listener.
     if (frame.method === 'Target.attachedToTarget' && sessionPattern(params.sessionId)) {
+      this.observeSession(params.sessionId);
+      if (this.attachments.has(params.sessionId) && this.routes.get(params.sessionId) !== this.attachments.get(params.sessionId).record) return;
       if (this.routes.size >= this.maxRoutes) { this.park('route bank full'); return; }
-      if (!this.routes.has(params.sessionId)) this.routes.set(params.sessionId, { client: route.client, top: false, targetType: params.targetInfo?.type });
+      const previous = this.routes.get(params.sessionId);
+      if (previous) {
+        if (previous.client !== route.client || previous.provenance !== 'auto' || previous.parent !== route || previous.parentSession !== frame.sessionId) return;
+        if (previous.targetId !== params.targetInfo?.targetId || previous.targetType !== params.targetInfo?.type)
+          this.invalidateRoutes([params.sessionId]);
+        return;
+      }
+      this.routes.set(params.sessionId, Object.freeze({ client: route.client, top: false, targetId: params.targetInfo?.targetId,
+        targetType: params.targetInfo?.type, epoch: this.epoch, provenance: 'auto', parentSession: frame.sessionId, parent: route }));
+    } else if (frame.method === 'Target.detachedFromTarget') {
+      const named = this.routes.get(params.sessionId);
+      if (!named || named.parent !== route || named.parentSession !== frame.sessionId ||
+          params.targetId !== undefined && params.targetId !== named.targetId) return;
+      this.invalidateRoutes([params.sessionId]);
+    } else if (frame.method === 'Target.targetDestroyed' || frame.method === 'Target.targetCrashed' || frame.method === 'Target.targetInfoChanged') {
+      const targetId = params.targetInfo?.targetId ?? params.targetId;
+      if (!sessionPattern(targetId)) return;
+      const matching = [...this.routes].filter(([, record]) => record.client === route.client && record.targetId === targetId && this.routeDescends(record, route));
+      const physical = [...this.attachments].filter(([, attachment]) => attachment.client === route.client &&
+        attachment.record.targetId === targetId && this.routeDescends(attachment.record, route));
+      if (!matching.length && !physical.length) return;
+      if (frame.method !== 'Target.targetInfoChanged') this.invalidateRoutes(matching.map(([name]) => name));
+      else if (typeof params.targetInfo?.type === 'string')
+        this.invalidateRoutes(matching.filter(([, record]) => record.targetType !== params.targetInfo.type).map(([name]) => name));
+      if (frame.method === 'Target.targetDestroyed') for (const [name] of physical) this.attachments.delete(name);
     }
     this.emit('routed', route.client, frame);
-    if (frame.method === 'Target.detachedFromTarget' && sessionPattern(params.sessionId)) this.routes.delete(params.sessionId);
   }
 
   // The v3 path. Playwright's traffic arrives here through an authenticated channel. Semantic
@@ -386,59 +490,128 @@ export class ElectronBroker extends EventEmitter {
     if (this.state !== 'ready') throw new Error('broker parked');
     if (!this.clients.has(client) || client.epoch !== this.epoch) throw new Error('unauthenticated client');
     if (!transportCallAllowed(method, params, sessionId)) throw new Error('CDP_COMMAND_REFUSED');
+    const isAttach = method === 'Target.attachToTarget';
+    if (isAttach) params = Object.freeze({ targetId: params.targetId, flatten: params.flatten });
     if (sessionId !== undefined && (!sessionPattern(sessionId) || this.routes.get(sessionId)?.client !== client)) throw new Error('CDP_SESSION_NOT_OWNED');
     this.ownsParamSessions(client, params);
+    const source = isAttach ? this.attachmentSource(params.targetId, client) : undefined;
+    const routeRecord = this.routes.get(sessionId), paramRecords = new Map();
+    for (const key of ['sessionId', 'targetSessionId']) if (Object.hasOwn(params, key))
+      paramRecords.set(key, { name: params[key], record: this.routes.get(params[key]) });
     if (this.queued >= this.maxTransportQueue) { this.queueFailure('authorization queue'); throw new Error('authorization queue full'); }
     const epoch = this.epoch;
+    const assertCurrent = (afterReply = false) => {
+      if (epoch !== this.epoch || this.state !== 'ready') throw Error('broker parked during preparation');
+      if (!this.clients.has(client)) throw Error('client detached during preparation');
+      const expectedDetach = name => afterReply && method === 'Target.detachFromTarget' && params.sessionId === name && !this.routes.has(name) &&
+        (!this.attachments.has(name) || this.attachments.get(name).record === paramRecords.get('sessionId')?.record);
+      if (sessionId !== undefined && !expectedDetach(sessionId) && !this.routeCurrent(sessionId, routeRecord, client)) throw Error('CDP_SESSION_NOT_OWNED');
+      for (const [key, { name, record }] of paramRecords) if (params[key] !== name ||
+          !expectedDetach(name) && !this.routeCurrent(name, record, client)) throw Error('CDP_SESSION_NOT_OWNED');
+      if (source && !this.sourceCurrent(source, client)) throw Error('CDP_TARGET_NOT_OWNED');
+    };
+    assertCurrent();
     this.queued++;
     try {
       await this.fresh();
     } catch (error) {
       this.park(error.message); throw error;
     } finally { this.queued--; }
-    if (epoch !== this.epoch || this.state !== 'ready') throw new Error('broker parked during preparation');
-    if (!this.clients.has(client)) throw new Error('client detached during preparation');
-    if (sessionId !== undefined && this.routes.get(sessionId)?.client !== client) throw new Error('CDP_SESSION_NOT_OWNED');
-    this.ownsParamSessions(client, params);
+    assertCurrent();
     let attachedInfo;
-    if (method === 'Target.attachToTarget') {
-      attachedInfo = await this.admitted(params.targetId, client);
-      if (epoch !== this.epoch || this.state !== 'ready' || !this.clients.has(client)) throw new Error('broker parked during preparation');
+    if (isAttach) {
+      attachedInfo = await this.admitted(params.targetId, client, source, assertCurrent);
+      assertCurrent();
     }
     if (signal?.aborted) throw new Error('cancelled before dispatch');
+    const pipe = this.pipe;
+    if (isAttach && this.attachments.size + [...this.pendingAttaches].filter(value => value.reserved).length >= this.maxRoutes) throw Error('CDP_SESSION_NOT_OWNED');
+    const attempt = isAttach ? { pipe, known: new Set([...this.routes.keys(), ...this.attachments.keys()]), uncertain: false, reserved: true,
+      record: Object.freeze({ client, top: true, targetId: params.targetId, targetType: attachedInfo.type, epoch, provenance: 'unpublished' }) } : undefined;
+    if (attempt) this.pendingAttaches.add(attempt);
     try {
-      const result = await this.pipe.request(method, params, { signal, sessionId, owner: client, beforeWrite: () => {
-        if (epoch !== this.epoch || this.state !== 'ready') throw new Error('broker parked during preparation');
-        if (!this.clients.has(client)) throw new Error('client detached during preparation');
-        if (sessionId !== undefined && this.routes.get(sessionId)?.client !== client) throw new Error('CDP_SESSION_NOT_OWNED');
-        this.ownsParamSessions(client, params);
+      const result = await pipe.request(method, params, { signal, sessionId, owner: client, beforeWrite: () => {
+        assertCurrent();
         beforeWrite?.();
+        assertCurrent();
       } });
-      if (epoch !== this.epoch) throw Object.assign(new Error('authority changed in flight; effect unknown'), { dispatched: true });
-      if (method === 'Target.attachToTarget' && sessionPattern(result?.sessionId)) {
-        if (this.routes.size >= this.maxRoutes || this.routes.has(result.sessionId)) { this.park('route bank full'); throw new Error('CDP_SESSION_NOT_OWNED'); }
-        this.routes.set(result.sessionId, { client, top: sessionId === undefined, targetId: params.targetId, targetType: attachedInfo?.type });
-      } else if (method === 'Target.detachFromTarget' && sessionPattern(params.sessionId) && this.routes.get(params.sessionId)?.client === client) {
-        this.routes.delete(params.sessionId);
+      if (isAttach) {
+        try {
+          assertCurrent();
+          if (!sessionPattern(result?.sessionId) || attempt.uncertain || attempt.known.has(result.sessionId) ||
+              this.routes.size >= this.maxRoutes || this.routes.has(result.sessionId) || this.attachments.has(result.sessionId)) throw Error('CDP_SESSION_NOT_OWNED');
+        } catch (error) {
+          await this.collectUnpublishedAttach(result?.sessionId, client, attempt);
+          throw error;
+        }
+        this.routes.set(result.sessionId, Object.freeze({ client, top: sessionId === undefined, targetId: params.targetId,
+          targetType: attachedInfo.type, epoch, provenance: source ? 'secondary' : 'direct',
+          ...(source ? { sourceSession: source.session, source: source.route } : {}) }));
+        attempt.reserved = false;
+        this.attachments.set(result.sessionId, Object.freeze({ client, pipe, record: this.routes.get(result.sessionId) }));
+        this.observeSession(result.sessionId);
+      } else {
+        if (epoch !== this.epoch) throw Object.assign(new Error('authority changed in flight; effect unknown'), { dispatched: true });
+        try { assertCurrent(true); }
+        catch { throw Object.assign(Error('authority changed in flight; effect unknown'), { dispatched: true }); }
+        if (method === 'Target.detachFromTarget' && sessionPattern(params.sessionId)) { this.invalidateRoutes([params.sessionId]); this.attachments.delete(params.sessionId); }
       }
       return result;
     } catch (error) {
-      // Only a written command without an app answer has an unknown effect.
-      if (error.dispatched === true && error.cdp !== true && epoch === this.epoch) this.park(error.message, { resumable: !this.pipe.failed });
+      // An unanswered attach may have created an unnameable physical session. Only app collection can retire that risk,
+      // including when another revoke already changed the epoch. Ordinary input keeps its existing resume behavior.
+      if (error.dispatched === true && error.cdp !== true && (epoch === this.epoch || isAttach))
+        this.park(error.message, { resumable: !isAttach && !this.pipe.failed });
       throw error;
-    }
+    } finally { if (attempt) this.pendingAttaches.delete(attempt); }
   }
 
   // The target's own info from the app, judged by the parent's callback, before any attach is written.
-  async admitted(targetId, client) {
+  async admitted(targetId, client, source, assertCurrent = () => {}) {
     if (typeof this.admitTarget !== 'function') throw new Error('CDP_TARGET_NOT_OWNED');
     let info;
-    try { info = (await this.pipe.request('Target.getTargetInfo', { targetId }, { owner: client })).targetInfo; }
+    try { info = (await this.pipe.request('Target.getTargetInfo', { targetId }, { owner: client, beforeWrite: assertCurrent })).targetInfo; }
     catch (error) { if (error.cdp === true) throw new Error('CDP_TARGET_NOT_OWNED'); throw error; }
+    assertCurrent();
+    if (source) {
+      if (!plainObject(info) || info.targetId !== targetId || info.type !== 'iframe') throw Error('CDP_TARGET_NOT_OWNED');
+      return Object.freeze({ ...info });
+    }
     let admitted = false;
     try { admitted = plainObject(info) && info.targetId === targetId && await this.admitTarget(Object.freeze({ ...info })) === true; } catch { admitted = false; }
+    assertCurrent();
     if (!admitted) throw new Error('CDP_TARGET_NOT_OWNED');
-    return info;
+    return Object.freeze({ ...info });
+  }
+
+  async collectUnpublishedAttach(name, client, attempt) {
+    // A fresh native reply names exactly the new physical session. A collision is not proof: never detach it.
+    if (sessionPattern(name) && !attempt.uncertain && !attempt.known.has(name) && !this.routes.has(name) && !this.attachments.has(name) &&
+        this.pipe === attempt.pipe && !attempt.pipe.failed) {
+      const attachment = Object.freeze({ client, pipe: attempt.pipe, record: attempt.record });
+      attempt.reserved = false; this.attachments.set(name, attachment);
+      if (await this.collectAttachment(name, attachment)) return;
+    }
+    this.park('attachment cleanup unconfirmed');
+  }
+
+  collectAttachment(name, attachment) {
+    const pending = this.collectingAttachments.get(attachment);
+    if (pending) return pending;
+    const collect = (async () => {
+      try {
+        await attachment.pipe.request('Target.detachFromTarget', { sessionId: name }, { owner: attachment.client, beforeWrite: () => {
+          if (this.state !== 'ready' || this.pipe !== attachment.pipe || attachment.pipe.failed || this.attachments.get(name) !== attachment ||
+              this.routes.has(name) && this.routes.get(name) !== attachment.record) throw Error('CDP_SESSION_NOT_OWNED');
+        } });
+        if (this.attachments.get(name) === attachment) this.attachments.delete(name);
+        else if (this.attachments.has(name)) return false;
+        if (this.routes.get(name) === attachment.record) this.invalidateRoutes([name]);
+        return true;
+      } catch { return !this.attachments.has(name); }
+    })().finally(() => this.collectingAttachments.delete(attachment));
+    this.collectingAttachments.set(attachment, collect);
+    return collect;
   }
 
   // A flat session id inside params (Target.detachFromTarget, sendMessageToTarget, ...) is a capability
@@ -557,6 +730,7 @@ export class ElectronBroker extends EventEmitter {
       this.pipe?.fail(new Error('owned app collected'));
       this.child.input.end();
       this.child.output.destroy();
+      this.attachments.clear();
       this.state = 'collected';
       return this.receipt({ cleanup: 'removed', exitCode: this.exitCode });
     } catch (error) { return this.receipt({ cleanup: 'retained', reason: error.message }); }
