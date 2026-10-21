@@ -60,6 +60,7 @@ function quitElectron(request, api, clock) {
   target = api.running(pid);
   if (!target) return done('exited');
   identity(target);
+  if (request.allowForce === false) throw new Error('FIXTURE_NORMAL_QUIT_UNCONFIRMED');
   forced = true;
   target.forceTerminate();
   var forcedAt = clock.now();
@@ -266,10 +267,19 @@ function waitSeconds(seconds) {
 
 function run(argv) {
   var request = JSON.parse(argv[0]);
-  if (['quit', 'ready', 'table', 'launch', 'new-window'].indexOf(request.mode) === -1) throw new Error('Invalid editor request');
+  if (['quit', 'ready', 'table', 'launch', 'new-window', 'births'].indexOf(request.mode) === -1) throw new Error('Invalid editor request');
   var allowed = ['com.microsoft.VSCode', 'com.todesktop.230313mzl4w4u92', 'org.mozilla.firefox'];
   if (allowed.indexOf(request.bundle) === -1) throw new Error('Invalid editor quit request');
   var out = $.NSFileHandle.fileHandleWithStandardOutput;
+  if (request.mode === 'births') {
+    if (!Array.isArray(request.pids) || !request.pids.length || request.pids.length > 64 || request.pids.some(function (pid, index) {
+      return !(pid > 0 && pid <= 2147483647 && pid % 1 === 0) || request.pids.indexOf(pid) !== index;
+    })) throw new Error('Invalid process birth request');
+    out.writeData($(JSON.stringify({ stage: 'births', processes: request.pids.map(function (pid) {
+      return { pid: pid, pidBirth: processBirth(pid) };
+    }) }) + '\n').dataUsingEncoding($.NSUTF8StringEncoding));
+    return '';
+  }
   if (request.mode === 'launch') {
     out.writeData($(JSON.stringify({ stage: 'launch', process: nativeElectron().launch(request) }) + '\n').dataUsingEncoding($.NSUTF8StringEncoding));
     return '';

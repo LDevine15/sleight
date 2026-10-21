@@ -11,10 +11,10 @@ export function fakeIo(over = {}) {
     ownerCopies: async () => [], quarantined: async () => false, permission: async () => false, ...over };
 }
 
-// One card shown and answered at once, as the live worker logs it. temporary false offers Always allow.
+// One card requested and answered at once, as the live worker logs it. temporary false offers Always allow.
 export function logCard(cardLog, { kind = 'debugger', temporary = true, at = Date.now(), status = 'granted', scope = 'session' } = {}) {
   const id = `fake-${kind}-${at}-${Math.random().toString(36).slice(2, 6)}`;
-  cardLine(cardLog, { event: 'shown', id, kind, at, deadlineAt: at + CARD_TTL_MS, temporary, app: 'Visual Studio Code' });
+  cardLine(cardLog, { event: 'requested', id, kind, at, requestedAt: at, deadlineAt: at + CARD_TTL_MS, temporary, app: 'Visual Studio Code' });
   cardLine(cardLog, { event: 'answered', id, kind, at: at + 40, status, scope: kind === 'relaunch' ? null : scope });
 }
 

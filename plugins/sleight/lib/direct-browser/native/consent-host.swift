@@ -191,7 +191,7 @@ func appCardText(_ card: (kind: String, app: [String: Any], session: String, tur
         return ("Quit and reopen " + name + " for sleight?",
             "sleight will ask " + name + " to quit through its own Quit command, then reopen it on the same profile with the debugger connection. It may come to the front briefly. Unsaved work follows the app's own prompts, and sleight answers none of them. Cancel keeps " + name + " as it is. This approval is for this process only, once.\n\n" + identity)
     }
-    return ("Let sleight debug " + name + "?",
+    return ("Let sleight control " + name + "?",
         "The debugger lets sleight read the pages in " + name + " and operate them in the background, including anything open or signed in. This is separate from the app approval you already gave. Once ends with this turn, This session ends with the session, and Always allow stays until you revoke it for this build and profile.\n\n" + identity)
 }
 // END APP FRAME
@@ -438,6 +438,12 @@ final class ModalGuard {
 // The ask.js layout in the nonce-bound host. Protected actions retain GB12's native event guard.
 struct AskCard {
     let question: String, detail: String, host: String, icon: String, kind: String
+    let choices: [String]
+    var labels: [String] {
+        if kind == "app" || kind == "action" { return ["Don't Allow", kind == "app" ? "Allow" : "Allow Once"] }
+        let names = ["once": "Allow once", "session": "Allow this session", "always": "Always allow", "relaunch": "Quit and reopen", "cancel": "Cancel"]
+        return choices.map { names[$0] ?? "Cancel" }
+    }
 }
 func askCard(_ data: [String: Any], _ choices: [String]) -> AskCard? {
     guard Set(data.keys) == ["view", "operation", "presentation"],
@@ -456,7 +462,20 @@ func askCard(_ data: [String: Any], _ choices: [String]) -> AskCard? {
         guard view["scope"] as? String == "Allow for this Grok Bot session only",
             operation["scope"] as? String == "Allow for this Grok Bot session only", operation["request"] is String else { return nil }
     }
-    return AskCard(question: question, detail: detail, host: host, icon: icon, kind: kind)
+    return AskCard(question: question, detail: detail, host: host, icon: icon, kind: kind, choices: ["cancel", "once"])
+}
+
+func consentIconPath(_ icon: String = ProcessInfo.processInfo.environment["SLEIGHT_CONSENT_ICON"] ?? "") -> String {
+    // Only the trusted native launcher supplies this value, from its installed assets directory.
+    guard icon.hasPrefix("/"), icon.hasSuffix("/assets/icon.png") else { return "" }
+    return icon
+}
+func automaticCard(_ data: [String: Any], _ choices: [String]) -> AskCard? {
+    if data["presentation"] != nil { return askCard(data, choices) }
+    guard let card = appFrame(data, choices) else { return nil }
+    let words = appCardText(card)
+    return AskCard(question: words.title, detail: words.body, host: "sleight", icon: consentIconPath(), kind: card.kind,
+        choices: ["cancel"] + choices.filter { $0 != "cancel" })
 }
 
 final class AskCardPanel: NSObject {
@@ -465,8 +484,12 @@ final class AskCardPanel: NSObject {
     var actions: [ConsentInputAction] = []
     var timer: Timer?
     var finished = false
+    let choices: [String]
     init(_ card: AskCard, deadline: Double, answer: @escaping (String) -> Void) {
         self.answer = answer
+        choices = card.choices
+        let rows = (choices.count + 1) / 2
+        let buttonHeight = CGFloat(rows * 28 + (rows - 1) * 8)
         let width: CGFloat = 400, pad: CGFloat = 20, textX: CGFloat = 92, textWidth: CGFloat = 288
         func label(_ text: String, _ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor) -> NSTextField {
             let field = NSTextField(wrappingLabelWithString: text)
@@ -475,14 +498,14 @@ final class AskCardPanel: NSObject {
             field.frame.size = NSSize(width: textWidth, height: ceil(field.sizeThatFits(NSSize(width: textWidth, height: 10000)).height))
             return field
         }
-        let eyebrow = label("sleight · " + card.host + " computer use", 10, .medium, .tertiaryLabelColor)
+        let eyebrow = label(card.host == "sleight" ? "sleight · computer use" : "sleight · " + card.host + " computer use", 10, .medium, .tertiaryLabelColor)
         let title = label(card.question, 13, .semibold, .labelColor)
         let body = label(card.detail, 11, .regular, .secondaryLabelColor)
         let textHeight = eyebrow.frame.height + 2 + title.frame.height + 4 + body.frame.height
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         let area = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1024, height: 768)
-        let topHeight = min(max(56, textHeight), max(56, area.height - 180))
-        let height = pad + topHeight + 18 + 28 + 36 + pad
+        let topHeight = min(max(56, textHeight), max(56, area.height - 152 - buttonHeight))
+        let height = pad + topHeight + 18 + buttonHeight + 36 + pad
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
         super.init()
@@ -505,7 +528,8 @@ final class AskCardPanel: NSObject {
             frost.addSubview(content); panel.contentView = frost
         }
         let icon = NSImageView(frame: NSRect(x: pad, y: height - pad - 56, width: 56, height: 56))
-        icon.image = NSImage(contentsOfFile: card.icon); icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.image = NSImage(contentsOfFile: card.icon) ?? NSImage(systemSymbolName: "hand.raised.fill", accessibilityDescription: "sleight")
+        icon.imageScaling = .scaleProportionallyUpOrDown
         icon.wantsLayer = true; icon.layer?.cornerRadius = 12; icon.layer?.masksToBounds = true; content.addSubview(icon)
         let text = NSView(frame: NSRect(x: 0, y: 0, width: textWidth, height: textHeight))
         var y = textHeight
@@ -520,11 +544,12 @@ final class AskCardPanel: NSObject {
         let feedback = NSTextField(wrappingLabelWithString: "")
         feedback.frame = NSRect(x: textX, y: pad, width: textWidth, height: 32)
         feedback.font = .systemFont(ofSize: 10); feedback.textColor = .secondaryLabelColor; content.addSubview(feedback)
-        let labels = ["Don't Allow", card.kind == "app" ? "Allow" : "Allow Once"], choices = ["cancel", "once"]
-        for index in 0..<2 {
+        let labels = card.labels, choices = card.choices
+        for index in choices.indices {
             let button = NSButton(title: labels[index], target: self, action: #selector(press(_:)))
             button.tag = index
-            button.frame = NSRect(x: textX + CGFloat(index) * 148, y: pad + 36, width: 140, height: 28)
+            button.frame = NSRect(x: textX + CGFloat(index % 2) * 148,
+                y: pad + 36 + CGFloat(rows - 1 - index / 2) * 36, width: 140, height: 28)
             button.controlSize = .large
             if index == 0 { button.keyEquivalent = "\u{1b}" }
             // Return has no default action, as in ask.js.
@@ -542,7 +567,10 @@ final class AskCardPanel: NSObject {
         NSSound(named: "Glass")?.play()
     }
     func review() { panel.makeKeyAndOrderFront(nil) }
-    @objc func press(_ sender: NSButton) { finish(sender.tag == 1 ? "once" : "cancel") }
+    @objc func press(_ sender: NSButton) {
+        guard choices.indices.contains(sender.tag) else { return }
+        finish(choices[sender.tag])
+    }
     func finish(_ choice: String) {
         guard !finished else { return }
         close(); answer(choice)
@@ -601,11 +629,17 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var consentOpen = true, handOpen = true
     var activeAsk: (id: String, panel: AskCardPanel)?
     func closeAsk() { activeAsk?.panel.close(); activeAsk = nil }
+    func reviewAsk(_ id: String) -> Bool {
+        guard let frame = pending[id], let data = frame["data"] as? [String: Any],
+            let choices = frame["choices"] as? [String], automaticCard(data, choices) != nil else { return false }
+        if activeAsk?.id == id { activeAsk?.panel.review() } else { showNextAsk() }
+        return true
+    }
     func showNextAsk() {
         guard activeAsk == nil, !modal.active else { return }
         for id in pending.keys.sorted() {
-            guard let frame = pending[id], let data = frame["data"] as? [String: Any], data["presentation"] != nil,
-                let choices = frame["choices"] as? [String], let card = askCard(data, choices),
+            guard let frame = pending[id], let data = frame["data"] as? [String: Any],
+                let choices = frame["choices"] as? [String], let card = automaticCard(data, choices),
                 let deadline = frame["deadline"] as? Double else { continue }
             if deadline <= Date().timeIntervalSince1970 * 1000 { pending.removeValue(forKey: id); continue }
             let panel = AskCardPanel(card, deadline: deadline) { [weak self] choice in
@@ -869,27 +903,13 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let id = sender.representedObject as? String, let frame = pending[id],
             let data = frame["data"] as? [String: Any], let choices = frame["choices"] as? [String],
             pending[id] != nil else { return }
-        if data["presentation"] != nil {
-            if activeAsk?.id == id { activeAsk?.panel.review() } else { showNextAsk() }
-            return
-        }
+        if reviewAsk(id) { return }
         if let session = sessionFrame(data, choices) {
             let alert = NSAlert()
             alert.messageText = session.kind == "opt-in" ? "Enable sleight turbo for " + session.session : "Resume sleight turbo for " + session.session
             alert.informativeText = "This choice applies only to this session. Site permissions and action confirmations still apply."
             for choice in choices { alert.addButton(withTitle: choice.capitalized) }
             let result = personModal(alert, choices: choices, kind: session.kind).rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-            respond(id, result >= 0 && result < choices.count ? choices[result] : "cancel")
-            return
-        }
-        if let card = appFrame(data, choices) {
-            let alert = NSAlert()
-            let words = appCardText(card)
-            alert.messageText = words.title
-            alert.informativeText = words.body
-            let labels = ["once": "Allow once", "session": "Allow this session", "always": "Always allow", "relaunch": "Quit and reopen", "cancel": "Cancel"]
-            for choice in choices { alert.addButton(withTitle: labels[choice] ?? "Cancel") }
-            let result = personModal(alert, choices: choices, kind: card.kind).rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
             respond(id, result >= 0 && result < choices.count ? choices[result] : "cancel")
             return
         }

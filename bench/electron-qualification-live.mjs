@@ -23,6 +23,7 @@ import { editorIdentity, parseProcesses, profileProcesses } from './real-electro
 import { processExitConfirmed } from './real-fixture.mjs';
 import { createRunReaper, resolveRunPython } from './electron-run-cleanup.mjs';
 import { runOwned } from './preapproved-process.mjs';
+import { checkRunSignal } from './electron-run-cancellation.mjs';
 import { parkedReceipt } from '../plugins/sleight/lib/direct-browser/electron-host-reasons.mjs';
 
 const execute = promisify(execFile);
@@ -151,18 +152,19 @@ export function liveObserver({ spawnProcess = spawn, root }) {
   };
 }
 
-export function qualificationWorker({ forkProcess = fork, env = process.env, exitWaitMs = 3000 } = {}) {
-  const child = forkProcess(WORKER, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json',
+export function qualificationWorker({ forkProcess = fork, env = process.env, exitWaitMs = 3000, onUnsettled = () => {} } = {}) {
+  const child = forkProcess(WORKER, [], { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json',
     env: { ...env, SLEIGHT_TURBO_UNQUALIFIED: '1' } });
   const pending = new Map();
   let sequence = 0, lost;
   const exited = new Promise(resolve => child.once('exit', () => resolve(true)));
   child.on('message', msg => { const entry = pending.get(msg.id); if (entry) { pending.delete(msg.id); entry(msg); } });
-  child.on('exit', () => { lost = true; for (const entry of pending.values()) entry({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); pending.clear(); });
+  const lose = () => { if (lost) return; lost = true; if (pending.size) onUnsettled(); for (const entry of pending.values()) entry({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); pending.clear(); };
+  for (const event of ['exit', 'error', 'disconnect']) child.on(event, lose);
   const send = (op, extra = {}) => new Promise(resolve => {
-    if (lost) return resolve({ ok: false, error: 'V3_WORKER_UNAVAILABLE' });
+    if (lost) { onUnsettled(); return resolve({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); }
     const id = ++sequence; pending.set(id, resolve);
-    try { child.send({ id, op, ...extra }); } catch { pending.delete(id); resolve({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); }
+    try { child.send({ id, op, ...extra }, error => { if (error) lose(); }); } catch { lose(); }
   });
   let signalled = false;
   const kill = () => { if (!lost && !signalled) { signalled = true; child.kill('SIGKILL'); } };
@@ -174,21 +176,25 @@ export function qualificationWorker({ forkProcess = fork, env = process.env, exi
   }, get lost() { return lost; } };
 }
 
-export async function liveRuntime(options, { io, root: parentRoot, qualificationDiagnosticPath, python = 'python3' } = {}, deps = {}) {
+export async function liveRuntime(options, { io, root: parentRoot, qualificationDiagnosticPath, python = 'python3', lifecycle, signal } = {}, deps = {}) {
   const exec = deps.exec ?? execute;
   const missing = await missingContract(deps.load);
   if (missing.length) throw Error(`ELECTRON_RUNTIME_MISSING: ${missing.join(', ')}. Merge EPV3-4 to 7 first; nothing was launched`);
   if (process.platform !== 'darwin') throw Error('MACOS_REQUIRED');
   if (!io?.permission) throw Error('PERMISSION_OBSERVER_REQUIRED');
   python = await resolveRunPython(python, { exec });
+  checkRunSignal(signal);
   await io.permission(); // throws when codex-macos-inspect is missing, before anything starts
+  checkRunSignal(signal);
   const root = parentRoot ? mkdtempSync(join(parentRoot, 'seq-')) : createRunRoot();
   const observer = liveObserver({ spawnProcess: deps.spawn, root }), drivers = [];
-  return { observer, driverFor(app, extra = {}) { const driver = liveDriver(app, { root, exec, observer, python, qualificationDiagnosticPath, ...extra }); drivers.push(driver); return driver; },
+  return { observer, driverFor(app, extra = {}) { checkRunSignal(signal); const driver = liveDriver(app, { root, exec, observer, python, qualificationDiagnosticPath, lifecycle, signal, ...extra }); drivers.push(driver); return driver; },
     async close() {
+      if (lifecycle?.cleanupAllowed === false) throw Error('RUN_CANCELLATION_UNSETTLED');
       if (drivers.some(driver => !driver.cleanupConfirmed())) throw Error('DRIVER_CLEANUP_UNCONFIRMED');
-      const cleanup = await createRunReaper(root, { python, list: () => listProcesses(exec) }).reap();
+      const cleanup = await createRunReaper(root, { python, list: () => listProcesses(exec), lifecycle }).reap();
       if (!cleanup.confirmed) throw Error('RUN_PROCESS_EXIT_UNCONFIRMED');
+      if (lifecycle?.cleanupAllowed === false) throw Error('RUN_CANCELLATION_UNSETTLED');
       rmSync(root, { recursive: true, force: true });
     } };
 }
@@ -206,7 +212,7 @@ export function fixtureHelper(bundle, run = runOwned) {
 
 // forkWorker: the seam the unit tests use for a fake worker; the run forks electron-qualification-worker.mjs.
 // cardLog: the live runner's card log (electron-qualification-worker.mjs cardLine), passed to every worker.
-export function liveDriver(app, { root, exec, observer, forkWorker = qualificationWorker, cardLog, python = 'python3', qualificationDiagnosticPath, deps = {} }) {
+export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qualificationWorker, cardLog, python = 'python3', qualificationDiagnosticPath, lifecycle, signal, deps = {} }) {
   if (!BENCHMARK_ALLOWLIST.includes(app.bundleId)) throw Error('NOT_ON_BENCHMARK_ALLOWLIST');
   const base = mkdtempSync(join(root, app.key + '-'));
   const tempRoot = join(base, 'profiles'), stateDir = join(base, 'state'), registryPath = join(base, 'recipes.json');
@@ -220,12 +226,18 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
   let cleanupConfirmed = false;
   let found, build, recipe, active, current, last, otherFront, hostPid, appSecret;
   let hostIdentity;
-  const list = () => (deps.list ?? listProcesses)(exec);
+  let cleaning = false;
+  const boundary = () => { if (lifecycle?.cleanupAllowed === false) throw Error('RUN_CANCELLATION_UNSETTLED'); if (!cleaning) checkRunSignal(signal); };
+  const uncertainEffect = () => { if (lifecycle) { lifecycle.cleanupAllowed = false; lifecycle.unsettled = true; lifecycle.effectUnknown = true; } };
+  const exec = (...args) => { boundary(); return rawExec(...args); };
+  const inspect = (...args) => { boundary(); return helper(...args); };
+  const list = () => (deps.list ?? listProcesses)(rawExec);
   const sleep = deps.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const liveChild = w => !w.lost && w.child?.exitCode == null && w.child?.signalCode == null;
-  const reaper = createRunReaper(base, { python, list, pids: () => [...workers].filter(liveChild).map(w => workerBirths.get(w)).filter(Boolean), signal: (...args) => (deps.signal ?? process.kill)(...args), sleep });
+  const reaper = createRunReaper(base, { python, list, pids: () => [...workers].filter(liveChild).map(w => workerBirths.get(w)).filter(Boolean), signal: (...args) => (deps.signal ?? process.kill)(...args), sleep, lifecycle });
   const exited = (...args) => (deps.exited ?? processExitConfirmed)(...args);
-  const electron = deps.electron ?? fixtureHelper(app.bundleId);
+  const rawElectron = deps.electron ?? fixtureHelper(app.bundleId);
+  const electron = (...args) => { boundary(); return rawElectron(...args); };
 
   async function prepare() {
     if (recipe) return;
@@ -250,7 +262,13 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
   };
   // A turn in the given worker, or in a new one (a new consent instance, so a new card).
   async function spawnWorker() {
-    const w = forkWorker(); workers.add(w);
+    boundary();
+    const w = forkWorker({ onUnsettled: uncertainEffect }); workers.add(w);
+    for (const key of ['send', 'stop', 'kill']) {
+      if (typeof w[key] !== 'function') continue;
+      const original = w[key].bind(w);
+      w[key] = (...args) => { boundary(); return original(...args); };
+    }
     if (Number.isSafeInteger(w.child?.pid)) {
       const row = (await list()).find(row => row.pid === w.child.pid && row.ppid === process.pid && row.uid === process.getuid());
       if (liveChild(w) && row && Number.isFinite(row.startedAtMs)) workerBirths.set(w, Object.freeze({ pid: row.pid, startedAtMs: row.startedAtMs }));
@@ -265,11 +283,17 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
   }
   // The driver's own admin connection, once the workers' channels have closed (the host takes one administrator at a time).
   async function driverAdmin() {
-    if (deps.admin) return deps.admin();
+    boundary();
+    const guarded = admin => new Proxy(admin, { get(target, key) {
+      const value = target[key];
+      return typeof value !== 'function' ? value : (...args) => { if (key !== 'close') boundary(); else if (lifecycle?.cleanupAllowed === false) throw Error('RUN_CANCELLATION_UNSETTLED'); return value.apply(target, args); };
+    } });
+    if (deps.admin) return guarded(await deps.admin());
     const { ensureHost } = deps.ensureHost ? deps : await import(new URL('electron-admin.mjs', D));
     for (let i = 0; ; i++) {
-      try { return await ensureHost({ stateDir, registryPath, tempRoot, build: recipe.build, secret: appSecret, python, qualificationDiagnosticPath,
-        env: { ...process.env, SLEIGHT_TURBO_UNQUALIFIED: '1' } }); }
+      boundary();
+      try { return guarded(await ensureHost({ stateDir, registryPath, tempRoot, build: recipe.build, secret: appSecret, python, qualificationDiagnosticPath,
+        env: { ...process.env, SLEIGHT_TURBO_UNQUALIFIED: '1' } })); }
       catch (error) { if (error.message !== 'ELECTRON_HOST_FOREIGN' || i >= 20) throw error; await new Promise(resolve => setTimeout(resolve, 250)); }
     }
   }
@@ -357,7 +381,7 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
     identity: () => current ?? last ?? null,
     async connect({ consentWaitMs } = {}) {
       await prepare();
-      if (!otherFront) { const front = await helper({ mode: 'front' }, exec); if (!BENCHMARK_ALLOWLIST.includes(front.bundle)) otherFront = front; }
+      if (!otherFront) { const front = await inspect({ mode: 'front' }, exec); if (!BENCHMARK_ALLOWLIST.includes(front.bundle)) otherFront = front; }
       const started = performance.now();
       let w, reply;
       try { ({ w, reply } = await startWorker(consentWaitMs, session, active)); }
@@ -379,6 +403,7 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
     async restart(options) { await driver.quit(); return driver.connect(options); },
     async tool(name, args) {
       const started = performance.now(), reply = await (active ?? { send: async () => ({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }) }).send('call', { request: { name, arguments: args } });
+      if (signal?.aborted && (!reply.ok || reply.result?.isError) || /effect[ -]unknown/i.test(reply.result?.text ?? '')) uncertainEffect();
       const ms = Math.round(performance.now() - started);
       return reply.ok ? { ...reply.result, ms } : { text: reply.error, isError: true, ms };
     },
@@ -388,12 +413,12 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
         otherFront = await arrangeTerminal({ exec, sleep });
       }
       if (!otherFront) throw Error('NO_OTHER_APP: the app frontmost before launch was a fixture');
-      const front = await helper({ mode: 'front' }, exec);
-      if (front.front !== otherFront.front) await helper({ mode: 'activate', pid: otherFront.front, fixturePid: current?.pid ?? 0 }, exec);
+      const front = await inspect({ mode: 'front' }, exec);
+      if (front.front !== otherFront.front) await inspect({ mode: 'activate', pid: otherFront.front, fixturePid: current?.pid ?? 0 }, exec);
       return { pid: otherFront.front, bundle: otherFront.bundle };
     },
-    async ownerInstances() { const { pids } = await helper({ mode: 'pids', bundle: app.bundleId }, exec); return pids.filter(pid => !launched.some(l => l.pid === pid)).length; },
-    async windowOwners(ids) { return (await helper({ mode: 'owners', ids }, exec)).owners; },
+    async ownerInstances() { const { pids } = await inspect({ mode: 'pids', bundle: app.bundleId }, exec); return pids.filter(pid => !launched.some(l => l.pid === pid)).length; },
+    async windowOwners(ids) { return (await inspect({ mode: 'owners', ids }, exec)).owners; },
     async geometry() {
       const r = await active.send('receipt'), delta = r.receipt?.cells?.delta;
       return { delta, zoomLevel: r.recipe?.zoomLevel, scaleMatch: (r.receipt?.cells?.joined ?? 0) > 0 };
@@ -426,7 +451,7 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
         return result;
       } finally { await driver.frontApp({ bundle: 'com.apple.Terminal' }); }
     },
-    async nativeSheetCancel() { return helper({ mode: 'press', pid: current.pid, title: 'Cancel' }, exec); },
+    async nativeSheetCancel() { return inspect({ mode: 'press', pid: current.pid, title: 'Cancel' }, exec); },
     readFile: name => { try { return readFileSync(join(files.root, name), 'utf8'); } catch { return ''; } },
     async appAlive() {
       const target = launched.find(row => row.pid === current?.pid);
@@ -457,7 +482,7 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
       hostPid = status?.hostPid ?? hostPid;
       const host = (await listProcesses(exec)).find(p => p.pid === hostPid);
       if (!host || !host.args.includes(stateDir)) throw Error('HOST_PID_UNKNOWN: the host status gave no pid naming this run');
-      process.kill(hostPid, 'SIGKILL'); // the host this run started, matched by its state folder
+      boundary(); process.kill(hostPid, 'SIGKILL'); // the host this run started, matched by its state folder
       await active.stop(); active = undefined;
       // A temporary app has no pipe keeper. Give EOF time to reach it before probing unresolved ownership.
       await sleep(500);
@@ -482,10 +507,11 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
       w.kill();
       return { code: !reply.ok ? (/[A-Z_]{6,}/.exec(reply.error)?.[0] ?? reply.error) : reply.resolved ? null : 'ELECTRON_OWNERSHIP_UNRESOLVED', reason: reply.reason ?? null };
     },
-    async quitByPid() {
+    async quitByPid({ allowForce } = {}) {
       const identity = current ?? last, target = launched.find(row => row.pid === identity?.pid) ?? identity;
       if (!target?.pidBirth || !target.processStartedAtMs) throw Error('FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED');
-      await electron({ mode: 'quit', pid: target.pid, bundle: app.bundleId, appPath: found.path, pidBirth: target.pidBirth });
+      await electron({ mode: 'quit', pid: target.pid, bundle: app.bundleId, appPath: found.path, pidBirth: target.pidBirth,
+        ...(allowForce === false ? { allowForce: false } : {}) });
       return { exited: await exited(target.pid, target.processStartedAtMs) };
     },
     async collect() {
@@ -535,30 +561,43 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
       return { exited: appExited, quit, collected, ms: Math.round(performance.now() - started), censusLeft: left.length, profileRemoved: readdirSync(tempRoot).length === 0 };
     },
     async cleanup() {
+      const uncertain = () => ({ confirmed: false, appExited: false, workersExited: false, hostExited: false,
+        runProcessesExited: false, profileRemoved: false, errors: ['RUN_CANCELLATION_UNSETTLED'], retainedRoot: base });
+      if (lifecycle?.cleanupAllowed === false) return uncertain();
+      cleaning = true;
+      try {
       await reaper.scan();
       const errors = [];
       const workerExits = [];
-      for (const w of workers) {
-        try {
-          const gone = await w.stop();
-          workerExits.push({ pid: w.child?.pid ?? null, exited: gone === true });
-          if (gone) workers.delete(w);
-          else errors.push('WORKER_EXIT_UNCONFIRMED');
-        } catch (error) { errors.push(error.message); workerExits.push({ pid: w.child?.pid ?? null, exited: false }); }
-      }
-      active = undefined;
       // A host may have launched the app before selectAppConnection failed or IPC was lost.
       try { await driver.adoptRunning(); } catch (error) { errors.push(error.message); }
       for (const target of launched) {
+        if (lifecycle?.cleanupAllowed === false) return uncertain();
         const live = (await list()).find(p => p.pid === target.pid);
         if (!live) continue;
         if (live.startedAtMs !== target.startedAtMs || !live.args.includes(tempRoot + '/')) { errors.push('FIXTURE_LAUNCH_IDENTITY_CHANGED'); continue; }
-        try { current = target; if (!(await driver.quitByPid()).exited) errors.push('APP_EXIT_UNCONFIRMED'); } catch (error) { errors.push(error.message); }
+        if (lifecycle?.cleanupAllowed === false) return uncertain();
+        try { current = target; if (!(await driver.quitByPid({ allowForce: false })).exited) errors.push('APP_EXIT_UNCONFIRMED'); } catch (error) { errors.push(error.message); }
       }
       let left = await census();
       for (let i = 0; left.length && i < 40; i++) { await sleep(250); left = await census(); }
+      if (lifecycle?.cleanupAllowed === false) return uncertain();
+      // Worker/host control starts only after the app and its recorded descendants are absent.
+      if (!left.length && !errors.length) {
+        for (const w of workers) {
+          if (lifecycle?.cleanupAllowed === false) return uncertain();
+          try {
+            const gone = await w.stop();
+            workerExits.push({ pid: w.child?.pid ?? null, exited: gone === true });
+            if (gone) workers.delete(w);
+            else errors.push('WORKER_EXIT_UNCONFIRMED');
+          } catch (error) { errors.push(error.message); workerExits.push({ pid: w.child?.pid ?? null, exited: false }); }
+        }
+        active = undefined;
+      }
       let host = hostPid && (await list()).find(p => p.pid === hostPid);
-      if (host && !left.length) {
+      if (lifecycle?.cleanupAllowed === false) return uncertain();
+      if (host && !left.length && !errors.length) {
         if (host.startedAtMs !== hostIdentity?.startedAtMs || !host.args.includes(stateDir)) errors.push('HOST_IDENTITY_CHANGED');
         else {
           try { (deps.signal ?? process.kill)(hostPid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') errors.push(error.message); }
@@ -567,16 +606,19 @@ export function liveDriver(app, { root, exec, observer, forkWorker = qualificati
         }
       }
       left = await census();
+      if (lifecycle?.cleanupAllowed === false) return uncertain();
       const appExited = !left.length;
       const reaped = appExited && !errors.length ? await reaper.reap() : { confirmed: false, left: (await reaper.scan()).map(p => p.pid), errors: [] };
       errors.push(...reaped.errors);
       if (!reaped.confirmed) errors.push('RUN_PROCESS_EXIT_UNCONFIRMED');
-      const workersExited = workerExits.every(row => row.exited), confirmed = appExited && workersExited && !host && reaped.confirmed && !errors.length;
+      const workersExited = workers.size === 0 && workerExits.every(row => row.exited), confirmed = appExited && workersExited && !host && reaped.confirmed && !errors.length
+        && lifecycle?.cleanupAllowed !== false;
       cleanupConfirmed = confirmed;
       if (confirmed) rmSync(base, { recursive: true, force: true });
       return { confirmed, appExited, workersExited, workerExits, hostExited: !host, runProcessesExited: reaped.confirmed, profileRemoved: confirmed && !existsSync(base), left: [...new Set([...left.map(p => p.pid), ...reaped.left])], errors,
         ...(adoptionFailures.length ? { adoptionFailures } : {}),
         ...(!confirmed ? { retainedRoot: base } : {}) };
+      } finally { cleaning = false; }
     },
   };
   return driver;

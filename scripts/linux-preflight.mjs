@@ -40,15 +40,17 @@ export function runOwnedCommand(command, args, { signal, timeout = 120_000, log,
         stderr = (stderr + data.toString()).slice(-64 * 1024);
         if (log?.stderr) log.stderr(data.toString());
       });
-      child.once('error', () => {
-        if (!child.pid) finish({ status: null, collected: true });
+      child.once('error', error => {
+        if (!child.pid) finish({ status: null, collected: true,
+          errorCode: ['ENOENT', 'EACCES', 'EPERM', 'EMFILE', 'ENFILE'].includes(error?.code) ? error.code : 'other' });
         else stop();
       });
       child.once('close', (status, childSignal) => finish({ status: stopped ? null : status,
         signal: childSignal, cancelled: stopped, collected: true }));
       signal?.addEventListener('abort', stop, { once: true });
       if (signal?.aborted) stop();
-    } catch { finish({ status: null, collected: true }); }
+    } catch (error) { finish({ status: null, collected: true,
+      errorCode: ['ENOENT', 'EACCES', 'EPERM', 'EMFILE', 'ENFILE'].includes(error?.code) ? error.code : 'other' }); }
   });
 }
 
@@ -65,6 +67,7 @@ export function testCounts(output) {
 
 function validExecution(receipt, { commit, runId } = {}) {
   return receipt?.schemaVersion === 1 && receipt.platform === 'linux' && receipt.executed === true
+    && !Object.hasOwn(receipt, 'failure')
     && receipt.commit === commit && (!runId || receipt.runId === runId)
     && receipt.command?.length === 2 && receipt.command[0] === 'npm' && receipt.command[1] === 'test'
     && receipt.exitCode === 0 && receipt.installExitCode === 0 && Number.isSafeInteger(receipt.trackedFiles)
@@ -72,6 +75,35 @@ function validExecution(receipt, { commit, runId } = {}) {
     && ['tests', 'suites', 'pass', 'fail', 'cancelled', 'skipped', 'todo'].every(key => Number.isSafeInteger(receipt.counts?.[key]) && receipt.counts[key] >= 0)
     && receipt.counts.tests === receipt.counts.pass + receipt.counts.skipped
     && receipt.counts.fail === 0 && receipt.counts.cancelled === 0 && receipt.counts.todo === 0;
+}
+
+// The host accepts only these closed diagnostics, never container error text or extra fields.
+function closedFailure(value) {
+  if (!value || typeof value !== 'object' || typeof value.stage !== 'string' || typeof value.code !== 'string') return null;
+  const stages = {
+    prepare: ['exception'], 'config-create': ['exception'], 'config-cleanup': ['exception'],
+    'git-head': ['exception', 'child-failed', 'identity-mismatch'],
+    'git-tracked': ['exception', 'child-failed', 'invalid-tracked', 'empty-tracked'],
+    install: ['exception', 'child-failed'], test: ['exception', 'child-failed'], counts: ['invalid-counts'],
+  };
+  const errors = ['ENOENT', 'EACCES', 'EPERM', 'EEXIST', 'ENOTDIR', 'EISDIR', 'EINVAL', 'ENOSPC', 'EROFS',
+    'EMFILE', 'ENFILE', 'ERR_FS_CP_EEXIST', 'ERR_FS_CP_DIR_TO_NON_DIR', 'ERR_FS_CP_NON_DIR_TO_DIR',
+    'ERR_FS_CP_SOCKET', 'ERR_FS_CP_FIFO_PIPE', 'ERR_FS_CP_UNKNOWN', 'other'];
+  if (!Object.hasOwn(stages, value.stage) || !stages[value.stage].includes(value.code)) return null;
+  const result = { stage: value.stage, code: value.code };
+  if (value.code === 'child-failed') {
+    if (!(value.childExitCode === null || Number.isInteger(value.childExitCode) && value.childExitCode >= 0 && value.childExitCode <= 255)
+      || !['uncollected-child', 'unsafe-repository', 'not-repository', 'permission-denied', 'missing-object', 'other-stderr', 'no-stderr'].includes(value.reason)) return null;
+    result.childExitCode = value.childExitCode; result.reason = value.reason;
+  }
+  if (value.code === 'exception' && !errors.includes(value.errorCode)) return null;
+  for (const key of ['errorCode', 'cleanupErrorCode']) {
+    if (Object.hasOwn(value, key)) {
+      if (!errors.includes(value[key])) return null;
+      result[key] = value[key];
+    }
+  }
+  return result;
 }
 
 // Shared consumer: both A6 and the CLI require the real producer's complete success contract.
@@ -97,32 +129,67 @@ export async function runContainerChecks({ execute = runOwnedCommand, platform =
   const receipt = { schemaVersion: 1, platform, command: ['npm', 'test'], commit, runId,
     executed: false, exitCode: 1, installExitCode: null, counts: null, trackedFiles: 0 };
   if (platform !== 'linux' || !shaPattern.test(commit ?? '')) return receipt;
-  let config;
+  let config, stage = 'prepare';
+  const errorCode = error => ['ENOENT', 'EACCES', 'EPERM', 'EEXIST', 'ENOTDIR', 'EISDIR', 'EINVAL', 'ENOSPC', 'EROFS',
+    'EMFILE', 'ENFILE', 'ERR_FS_CP_EEXIST', 'ERR_FS_CP_DIR_TO_NON_DIR', 'ERR_FS_CP_NON_DIR_TO_DIR',
+    'ERR_FS_CP_SOCKET', 'ERR_FS_CP_FIFO_PIPE', 'ERR_FS_CP_UNKNOWN'].includes(error?.code) ? error.code : 'other';
+  const fail = (code, child, error) => {
+    receipt.exitCode ||= 1;
+    receipt.failure = { stage, code };
+    if (child) {
+      receipt.failure.childExitCode = Number.isInteger(child.status) ? child.status : null;
+      const text = typeof child.stderr === 'string' ? child.stderr : '';
+      receipt.failure.reason = child.collected === false ? 'uncollected-child'
+        : /detected dubious ownership|unsafe repository/i.test(text) ? 'unsafe-repository'
+        : /not a git repository/i.test(text) ? 'not-repository'
+        : /permission denied|operation not permitted/i.test(text) ? 'permission-denied'
+        : /bad object|invalid object name|unknown revision|ambiguous argument|needed a single revision|bad revision/i.test(text) ? 'missing-object'
+        : text.trim() ? 'other-stderr' : 'no-stderr';
+      if (child.errorCode) receipt.failure.errorCode = errorCode({ code: child.errorCode });
+    }
+    if (code === 'exception') receipt.failure.errorCode = errorCode(error);
+    return receipt;
+  };
   try {
     prepare();
+    stage = 'config-create';
     config = makeConfig();
     const options = { cwd: root, env: { ...env, CLAUDE_CONFIG_DIR: config, GIT_CONFIG_NOSYSTEM: '1',
       GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' } };
+    stage = 'git-head';
     const head = await execute('/usr/bin/git', ['rev-parse', '--verify', 'HEAD^{commit}'], options);
-    if (head.status !== 0 || head.stdout.trim() !== commit) return receipt;
+    if (head.status !== 0 || head.collected === false) return fail('child-failed', head);
+    if (head.stdout.trim() !== commit) return fail('identity-mismatch');
+    stage = 'git-tracked';
     const tracked = await execute('/usr/bin/git', ['ls-files', '-z'], options);
-    if (tracked.status !== 0 || !tracked.stdout.endsWith('\0')) return receipt;
+    if (tracked.status !== 0 || tracked.collected === false) return fail('child-failed', tracked);
+    if (!tracked.stdout.endsWith('\0')) return fail('invalid-tracked');
     receipt.trackedFiles = tracked.stdout.split('\0').filter(Boolean).length;
-    if (!receipt.trackedFiles) return receipt;
+    if (!receipt.trackedFiles) return fail('empty-tracked');
     const npmOptions = { ...options, timeout: 1_200_000, log: { stdout: log, stderr: log } };
+    stage = 'install';
     const install = await execute('npm', ['ci', '--ignore-scripts'], npmOptions);
     receipt.installExitCode = Number.isInteger(install.status) ? install.status : 1;
-    if (install.status !== 0) { receipt.exitCode = receipt.installExitCode || 1; return receipt; }
+    if (install.status !== 0 || install.collected === false) { receipt.exitCode = receipt.installExitCode || 1; return fail('child-failed', install); }
+    stage = 'test';
     const result = await execute('npm', ['test'], npmOptions);
     receipt.executed = true;
     receipt.exitCode = Number.isInteger(result.status) ? result.status : 1;
     receipt.counts = testCounts(result.stdout ?? '');
-    if (!receipt.counts || receipt.counts.fail || receipt.counts.cancelled || receipt.counts.todo) receipt.exitCode ||= 1;
-  } catch { receipt.exitCode = 1; }
+    if (result.status !== 0 || result.collected === false) fail('child-failed', result);
+    if (!receipt.counts || receipt.counts.fail || receipt.counts.cancelled || receipt.counts.todo) {
+      stage = 'counts';
+      if (!receipt.failure) fail('invalid-counts');
+    }
+  } catch (error) { receipt.exitCode = 1; fail('exception', null, error); }
   finally {
     if (config) {
       try { removeConfig(config); }
-      catch { receipt.exitCode = 1; }
+      catch (error) {
+        receipt.exitCode ||= 1;
+        if (receipt.failure) receipt.failure.cleanupErrorCode = errorCode(error);
+        else { stage = 'config-cleanup'; fail('exception', null, error); }
+      }
     }
   }
   return receipt;
@@ -214,6 +281,8 @@ export async function runLinuxPreflight({ worktree = fileURLToPath(new URL('..',
     const receipt = JSON.parse(tested.stdout);
     if (receipt?.schemaVersion === 1 && receipt.commit === commit && receipt.runId === runId) {
       for (const key of ['executed', 'installExitCode', 'counts', 'trackedFiles']) result[key] = receipt[key];
+      const failure = closedFailure(receipt.failure);
+      if (failure) result.failure = failure;
     }
     if (!validExecution(receipt, { commit, runId }) || tested.status !== 0) {
       result.exitCode = Number.isInteger(tested.status) && tested.status > 0 ? tested.status

@@ -11,7 +11,7 @@ import { createPythonAdapter } from '../plugins/sleight/lib/direct-browser/elect
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
-function world(t, { stuckWorker = false, stuckApp = false, reused = false, throws = false, host = false, stuckHost = false, observeLaunch = false, missingWindow = false, connectedBirth } = {}) {
+function world(t, { stuckWorker = false, stuckApp = false, reused = false, throws = false, host = false, stuckHost = false, observeLaunch = false, missingWindow = false, connectedBirth, lifecycle, signal } = {}) {
   const root = createRunRoot('eqcl-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const found = { path: '/fixture/Code.app', executable: '/fixture/Code.app/Contents/MacOS/Code' };
@@ -45,10 +45,40 @@ function world(t, { stuckWorker = false, stuckApp = false, reused = false, throw
   const observer = observeLaunch ? { firstWindowMs: (pid, since) => {
     assert.equal(pid, app.pid); assert.equal(since, app.launchedAtMs); return missingWindow ? null : 1234200;
   } } : {};
-  const driver = liveDriver(APPS.vscode, { root, exec, observer, forkWorker: () => w, python: '/run/python3', qualificationDiagnosticPath: '/run/diagnostic', deps });
+  const driver = liveDriver(APPS.vscode, { root, exec, observer, forkWorker: () => w, python: '/run/python3', qualificationDiagnosticPath: '/run/diagnostic', lifecycle, signal, deps });
   driver.frontApp = async () => { events.push('restore-front'); return { pid: 90, bundle: 'com.apple.Terminal' }; };
   return { root, driver, events, deps, app, w };
 }
+
+test('cancellation during preparation prevents the later worker start', async t => {
+  const controller = new AbortController(), { driver, deps, w } = world(t, { signal: controller.signal });
+  const inspect = deps.inspectBundle;
+  deps.inspectBundle = async () => { controller.abort(); return inspect(); };
+  w.send = () => assert.fail('no worker request after cancellation');
+  await assert.rejects(driver.connect({}), /RUN_INTERRUPTED/);
+});
+test('an accepted tool error after cancellation retains the app and pipe owners as effect unknown', async t => {
+  const controller = new AbortController(), lifecycle = { cleanupAllowed: true }, { driver, w, events } = world(t,
+    { connectedBirth: '1234.000000', signal: controller.signal, lifecycle, host: true });
+  await driver.connect({});
+  w.send = async () => { controller.abort(); return { ok: true, result: { text: 'Turbo is unavailable for this turn.', isError: true } }; };
+  await driver.tool('browser_act', {});
+  assert.equal(lifecycle.effectUnknown, true);
+  assert.equal((await driver.cleanup()).confirmed, false);
+  assert.equal(events.some(row => row.mode === 'quit'), false); assert.equal(events.includes('host-stop'), false);
+});
+
+test('an expired lifecycle during app identity lookup prevents native Quit and all later cleanup', async t => {
+  const lifecycle = { cleanupAllowed: true }, { driver, deps, events } = world(t, { lifecycle, host: true });
+  await driver.connect({});
+  const list = deps.list;
+  deps.list = async () => { lifecycle.cleanupAllowed = false; return list(); };
+  const receipt = await driver.cleanup();
+  assert.equal(receipt.confirmed, false);
+  assert.equal(events.some(e => e.mode === 'quit'), false);
+  assert.equal(events.includes('worker-stop'), false);
+  assert.equal(events.includes('host-stop'), false);
+});
 
 test('the host-loss census preserves ownership files for host reconciliation', async t => {
   const { driver } = world(t);
@@ -100,6 +130,31 @@ test('selection failure adopts the launched process before cleanup and confirms 
   assert.equal(cleanup.profileRemoved, true);
   assert.ok(events.find(event => event.mode === 'quit'));
   assert.ok(events.includes('worker-stop'));
+  assert.ok(events.findIndex(event => event.mode === 'quit') < events.indexOf('worker-stop'));
+  assert.equal(events.find(event => event.mode === 'quit').allowForce, false);
+});
+
+test('an unconfirmed app Quit leaves worker and host infrastructure intact', async t => {
+  const { driver, events } = world(t, { stuckApp: true, host: true });
+  await driver.connect({}); const receipt = await driver.cleanup();
+  assert.equal(receipt.confirmed, false);
+  assert.equal(events.includes('worker-stop'), false);
+  assert.equal(events.includes('host-stop'), false);
+});
+
+test('an expired cleanup lifecycle blocks reaper signals after its awaited identity check', async () => {
+  const lifecycle = { cleanupAllowed: true }, signals = [], rows = [{ pid: 88, uid: process.getuid(), ppid: 1,
+    startedAtMs: 1, args: `${process.execPath} /run/private/worker.mjs` }];
+  let calls = 0, resume;
+  const reaper = createRunReaper('/run/private', { python: '/run/python', lifecycle,
+    list: async () => { if (++calls === 2) await new Promise(resolve => { resume = resolve; }); return rows; },
+    signal: (...args) => signals.push(args), sleep: async () => {} });
+  const work = reaper.reap();
+  for (let attempt = 0; !resume && attempt < 20; attempt++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(typeof resume, 'function'); lifecycle.cleanupAllowed = false; resume();
+  const result = await work;
+  assert.equal(result.confirmed, false);
+  assert.deepEqual(signals, []);
 });
 
 test('the driver carries its Python and diagnostic options in worker and arm messages', async t => {

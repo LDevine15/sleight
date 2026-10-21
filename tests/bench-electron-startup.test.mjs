@@ -50,6 +50,7 @@ test('the qualification fork alone gets the unqualified override and stop waits 
   let forkOptions;
   const w = live.qualificationWorker({ env, forkProcess: (_file, _args, options) => { forkOptions = options; return child; } });
   assert.equal(forkOptions.env.SLEIGHT_TURBO_UNQUALIFIED, '1');
+  assert.equal(forkOptions.detached, true, 'the terminal signal reaches the runner, not its in-flight worker');
   assert.deepEqual(env, { PATH: '/fixture/bin' });
   let stopped = false;
   const stopping = w.stop().then(value => { stopped = true; return value; });
@@ -58,6 +59,23 @@ test('the qualification fork alone gets the unqualified override and stop waits 
   child.emit('exit', null, 'SIGKILL');
   assert.equal(await stopping, true);
   assert.deepEqual(sent, ['SIGKILL']);
+});
+
+test('losing a worker with an accepted request preserves effect uncertainty', async () => {
+  const child = new EventEmitter(), losses = [];
+  child.send = () => {}; child.kill = () => {};
+  const w = live.qualificationWorker({ forkProcess: () => child, onUnsettled: () => losses.push('unknown') });
+  const pending = w.send('call', { request: {} }); child.emit('exit', 1);
+  assert.equal((await pending).ok, false);
+  assert.deepEqual(losses, ['unknown']);
+});
+for (const loss of ['error', 'disconnect', 'send-error']) test(`worker ${loss} settles accepted work and latches uncertainty`, async () => {
+  const child = new EventEmitter(), losses = [];
+  child.send = (_message, callback) => { if (loss === 'send-error') queueMicrotask(() => callback(Error('closed IPC'))); }; child.kill = () => {};
+  const w = live.qualificationWorker({ forkProcess: () => child, onUnsettled: () => losses.push('unknown') });
+  const pending = w.send('call');
+  if (loss !== 'send-error') child.emit(loss, Error('closed IPC'));
+  assert.equal((await pending).ok, false); assert.deepEqual(losses, ['unknown']);
 });
 
 test('a signalled worker that never exits stays unconfirmed', async () => {

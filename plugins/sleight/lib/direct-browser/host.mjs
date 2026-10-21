@@ -64,6 +64,9 @@ function executable(name, receipt) {
   catch { throw Error('HOST_PACKAGE_MISMATCH'); }
 }
 export const environment = () => ({ PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' });
+// A cached binary's compile path is temporary. Resolve the card asset from the installed trusted JS package instead.
+export const consentEnvironment = () => ({ ...environment(),
+  SLEIGHT_CONSENT_ICON: fileURLToPath(new URL('../../assets/icon.png', import.meta.url)) });
 
 // A cold module cache rebuilds AppKit's modules: over 120 s at load 31 to 38 (2026-10-14), so first use allows 300 s.
 async function compileNative({ name, source, binary, moduleCache, signal }) {
@@ -343,7 +346,7 @@ export async function prepareHandHost({ cacheRoot = defaultHelperCache(), source
   return Object.freeze({ status: 'ready', spawn: ({ capture = 'hidden', consent = false } = {}) => {
     if (!['hidden', 'visible'].includes(capture) || typeof consent !== 'boolean') throw Error('HAND_CAPTURE_INVALID');
     return spawn(executable('consent-host', receipt), ['--hand', '--capture=' + capture, consent ? '--consent' : '--menu'],
-      { env: environment(), stdio: ['pipe', 'pipe', 'ignore', ...consent ? ['pipe', 'pipe'] : []] });
+      { env: consentEnvironment(), stdio: ['pipe', 'pipe', 'ignore', ...consent ? ['pipe', 'pipe'] : []] });
   } });
 }
 
@@ -357,7 +360,7 @@ export function createSharedUi(receipt, onLoss, { fds = [4, 5] } = {}) {
 
 export function createNativeUi(receipt, onLoss) {
   const path = executable('consent-host', receipt);
-  const child = spawn(path, [], { env: environment(), stdio: ['pipe', 'pipe', 'ignore'] });
+  const child = spawn(path, [], { env: consentEnvironment(), stdio: ['pipe', 'pipe', 'ignore'] });
   const channel = createUiChannel({ read: child.stdout, write: child.stdin, onLoss });
   child.on('error', () => channel.close()); child.on('close', () => channel.close());
   return channel;

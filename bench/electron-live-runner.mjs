@@ -9,7 +9,7 @@
 // and in <out>/CARD.json (what to click, where, and by when), and every card's latency lands in summary.json.
 // Cleanup ends only what this run launched. A cleanup it cannot confirm keeps the live lock and stops the run.
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -18,6 +18,7 @@ import { APPS, HOLD, LOCK, RELAUNCH_CELLS, relaunchCellsFor, runQualification, s
 import { createRunReaper, resolveRunPython } from './electron-run-cleanup.mjs';
 import { withQualificationDiagnostics } from './electron-diagnostics.mjs';
 import { createRunRoot, listProcesses, turboAcceptance } from './electron-qualification-live.mjs';
+import { cancellableDriver, checkRunSignal, installRunCancellation, settleRunOperation } from './electron-run-cancellation.mjs';
 
 const execute = promisify(execFile);
 const ARM_SERVER = fileURLToPath(new URL('./electron-arm-server.mjs', import.meta.url));
@@ -86,7 +87,7 @@ export async function preflight({ phases, io }) {
 
 // ---- cards
 export function parseCardLog(text) {
-  return String(text).split('\n').flatMap(line => { try { const e = JSON.parse(line); return e && typeof e.id === 'string' && ['shown', 'answered'].includes(e.event) ? [e] : []; } catch { return []; } });
+  return String(text).split('\n').flatMap(line => { try { const e = JSON.parse(line); return e && typeof e.id === 'string' && ['requested', 'shown', 'answered'].includes(e.event) ? [e] : []; } catch { return []; } });
 }
 /** The owner delegated these Sleight cards on benchmark VS Code copies (LAWS 2026-10-19). */
 export function cardInstruction(event) {
@@ -94,16 +95,21 @@ export function cardInstruction(event) {
   return { click: event.kind === 'relaunch' ? 'Quit and reopen' : event.temporary ? 'Allow this session' : 'Always allow', delegated: true, note };
 }
 const center = r => ({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });
-/** Screen points (global, top-left origin) for the three clicks: the glove, the menu row, the card's button. */
+/** Existing host-window and AX-button observations, including the styled modal panel. Menu locations are fallback only. */
 export function locateCard(geometry, click) {
   const windows = (geometry?.windows ?? []).filter(w => w.onScreen && w.width > 0 && w.height > 0), buttons = geometry?.buttons ?? [];
   const glove = windows.filter(w => w.layer === 25).sort((a, b) => b.x - a.x)[0];
   const menu = windows.find(w => w.layer === 101);
-  const alert = windows.filter(w => w.layer >= 0 && w.layer < 25 && w.width >= 200).sort((a, b) => b.width * b.height - a.width * a.height)[0];
-  const button = buttons.find(b => b.title === click), review = buttons.find(b => b.title === 'Review sleight request');
+  const matches = buttons.filter(b => b.title === click), button = matches.length === 1 ? matches[0] : null;
+  const contains = w => button && (button.pid === undefined || w.pid === undefined || button.pid === w.pid) &&
+    button.x >= w.x && button.y >= w.y && button.x + button.width <= w.x + w.width && button.y + button.height <= w.y + w.height;
+  const candidates = windows.filter(w => w.layer >= 0 && w.layer < 25 && w.width >= 200);
+  const alert = candidates.sort((a, b) => Number(!!contains(b)) - Number(!!contains(a)) ||
+    Number(b.layer === 8) - Number(a.layer === 8) || a.width * a.height - b.width * b.height)[0];
+  const review = buttons.find(b => b.title === 'Review sleight request');
   return { glove: glove ? center(glove) : null, menu: menu ? { x: menu.x, y: menu.y, width: menu.width, height: menu.height } : null,
     review: review ? center(review) : null, alert: alert ? { x: alert.x, y: alert.y, width: alert.width, height: alert.height } : null,
-    button: button ? center(button) : null, ax: geometry?.ax === true };
+    button: button && alert && contains(alert) && geometry?.ax === true ? center(button) : null, ax: geometry?.ax === true };
 }
 /** The consent hosts under this run: processes named consent-host whose parent chain reaches rootPid. */
 export function consentHostPids(rows, rootPid) {
@@ -115,7 +121,8 @@ export function parseTree(stdout) {
   return String(stdout).split('\n').map(line => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line)).filter(Boolean).map(([, pid, ppid, args]) => ({ pid: +pid, ppid: +ppid, args: args.trim() }));
 }
 const iso = ms => new Date(ms).toISOString();
-const where = (loc, click) => [
+const where = (loc, click) => loc.button ? `Click "${click}" in the automatic card at (${loc.button.x}, ${loc.button.y}).` :
+  'The card opens automatically. Request waiting; visibility is not confirmed. As a fallback, open ' + [
   loc.glove ? `the sleight glove in the menu bar at (${loc.glove.x}, ${loc.glove.y})` : 'the sleight glove in the menu bar (not located yet)',
   loc.review ? `"Review sleight request" at (${loc.review.x}, ${loc.review.y})` : '"Review sleight request" (the first row of its menu)',
   loc.button ? `"${click}" at (${loc.button.x}, ${loc.button.y})` : `"${click}" in the card that opens${loc.alert ? ` (card window at ${loc.alert.x}, ${loc.alert.y}, ${loc.alert.width} x ${loc.alert.height})` : ''}`,
@@ -123,48 +130,61 @@ const where = (loc, click) => [
 
 export function createCardWatcher({ cardLog, outDir, read = path => { try { return readFileSync(path, 'utf8'); } catch { return ''; } }, locate = async () => null,
   write = (path, text) => writeFileSync(path, text), remove = path => rmSync(path, { force: true }), log = console.log, now = Date.now }) {
-  const cards = [], pending = new Map();
+  const cards = [], pending = new Map(), matchingObservations = [];
+  let previousMatches = new Set();
   let consumed = 0;
   const cardFile = join(outDir, 'CARD.json');
-  async function refresh(card) {
-    let loc;
-    try { loc = locateCard(await locate(), card.click); } catch { loc = locateCard(null, card.click); }
-    const key = JSON.stringify(loc);
-    if (key !== card.lastKey) {
-      card.lastKey = key;
-      if (card.announced) log(`CARD ${card.n}: ${where(loc, card.click)}`);
+  function refresh(card, geometry, seen) {
+    const loc = locateCard(geometry, card.click);
+    if (loc.ax && loc.alert && loc.button) {
+      const key = JSON.stringify({ label: card.click, location: loc });
+      if (!seen.has(key) && !previousMatches.has(key)) {
+        matchingObservations.push({ observedAt: iso(now()), matchingButton: card.click, location: loc, correlation: 'uncorrelated' });
+        log(`MATCHING CARD (uncorrelated request): ${where(loc, card.click)}`);
+      }
+      seen.add(key);
     }
     const left = Math.max(0, Math.round((card.deadlineAt - now()) / 1000));
-    write(cardFile, JSON.stringify({ n: card.n, kind: card.kind, app: card.app, shownAt: iso(card.shownAt), answerBy: iso(card.deadlineAt), secondsLeft: left,
-      click: card.click, delegated: card.delegated, note: card.note, steps: where(loc, card.click), location: loc }, null, 2) + '\n');
+    write(cardFile, JSON.stringify({ n: card.n, kind: card.kind, app: card.app, requestedAt: iso(card.requestedAt),
+      answerBy: iso(card.deadlineAt), secondsLeft: left,
+      click: card.click, delegated: card.delegated, note: card.note, steps: where(loc, card.click),
+      location: loc, locationCorrelation: 'uncorrelated' }, null, 2) + '\n');
     return loc;
   }
   async function poll() {
     const events = parseCardLog(read(cardLog));
     for (const e of events.slice(consumed)) {
-      if (e.event === 'shown') {
-        const card = { n: cards.length + 1, id: e.id, kind: e.kind, app: e.app, temporary: e.temporary === true, shownAt: e.at, deadlineAt: e.deadlineAt ?? e.at + CARD_WINDOW_MS,
+      // Legacy 'shown' was emitted before requesting native UI. Preserve the original event without upgrading its evidence.
+      if (e.event === 'requested' || e.event === 'shown') {
+        if (cards.some(card => card.id === e.id)) continue;
+        const card = { n: cards.length + 1, id: e.id, kind: e.kind, app: e.app, temporary: e.temporary === true,
+          sourceEvent: e.event, ...(e.event === 'shown' && { legacyShownAt: e.at }), requestedAt: e.requestedAt ?? e.at,
+          deadlineAt: e.deadlineAt ?? e.at + CARD_WINDOW_MS,
           ...cardInstruction(e), status: 'pending' };
         cards.push(card); pending.set(e.id, card);
-        const loc = await refresh(card);
-        card.announced = true;
-        log(`CARD ${card.n} (${card.kind}, ${card.app}) shown ${iso(card.shownAt)}; answer by ${iso(card.deadlineAt)}. Click ${where(loc, card.click)}. ${card.note}`);
+        log(`CARD ${card.n} (${card.kind}, ${card.app}) requested ${iso(card.requestedAt)}; answer by ${iso(card.deadlineAt)}. ${where(locateCard(null, card.click), card.click)} ${card.note}`);
       } else {
         const card = pending.get(e.id);
         if (!card) continue;
         pending.delete(e.id);
-        Object.assign(card, { status: e.status, scope: e.scope ?? null, answeredAt: e.at, latencyMs: e.at - card.shownAt,
+        Object.assign(card, { status: e.status, scope: e.scope ?? null, answeredAt: e.at, latencyMs: e.at - card.requestedAt,
           inTime: e.status === 'granted' && e.at <= card.deadlineAt });
         if (!pending.size) remove(cardFile);
         log(`CARD ${card.n} answered: ${e.status}${e.scope ? ` (${e.scope})` : ''} after ${(card.latencyMs / 1000).toFixed(1)} s`);
       }
     }
     consumed = events.length;
-    for (const card of pending.values()) await refresh(card);
+    // Process the complete log batch before observing current UI. A current panel cannot identify a historical request.
+    let geometry = null;
+    if (pending.size) { try { geometry = await locate(); } catch {} }
+    const seen = new Set();
+    for (const card of pending.values()) refresh(card, geometry, seen);
+    previousMatches = seen;
   }
-  const summary = () => cards.map(({ lastKey, announced, ...card }) => ({ ...card, shownAt: iso(card.shownAt), deadlineAt: iso(card.deadlineAt),
+  const summary = () => cards.map(({ lastKey, announced, ...card }) => ({ ...card, requestedAt: iso(card.requestedAt),
+    ...(card.legacyShownAt !== undefined && { legacyShownAt: iso(card.legacyShownAt) }), deadlineAt: iso(card.deadlineAt),
     ...(card.answeredAt ? { answeredAt: iso(card.answeredAt) } : {}) }));
-  return { poll, cards, summary, pending: () => pending.size };
+  return { poll, cards, summary, observations: () => structuredClone(matchingObservations), pending: () => pending.size };
 }
 
 // ---- the arm
@@ -210,29 +230,35 @@ export function writeReceipt(dir, receipt, key) {
 /** Runs the chosen phases in order under one lock. deps supplies each phase (live or fake) and the run's io. */
 export async function runPhases({ options, deps }) {
   const { log, now, sleep, io } = deps, app = APPS.vscode, phases = [], started = now();
+  const signal = deps.signal, lifecycle = deps.lifecycle ?? { cleanupAllowed: true };
   const watcher = deps.watcher;
   const pump = deps.pump ?? (async work => {
     let done = false;
     const loop = (async () => { while (!done) { await watcher.poll().catch(() => {}); await sleep(500); } })();
     try { return await work; } finally { done = true; await loop; await watcher.poll().catch(() => {}); }
   });
-  const check = await deps.preflight({ phases: options.phases, io });
-  for (const p of check.problems) log(`preflight: ${p}`);
-  if (!check.ok) return { code: 2, summary: { version: 1, kind: 'electron-live-run', mode: options.mode, at: iso(started), preflight: check, phases: [], cards: [] } };
-  const expected = options.phases.filter(id => !check.skips[id]).flatMap(id => EXPECTED_CARDS[id].map(card => `${id}: ${card}`));
-  log(`cards to click, in order (each within 120 s of its CARD line): ${expected.join('; ')}`);
-  let held = await waitForHold(io, { now, sleep }), release, keep = false, cleanup;
-  release = await deps.lock();
+  let check, held = 0, release, keep = false, cleanup, interrupted = false;
   try {
+    checkRunSignal(signal);
+    check = await deps.preflight({ phases: options.phases, io }); checkRunSignal(signal);
+    for (const p of check.problems) log(`preflight: ${p}`);
+    if (!check.ok) return { code: 2, summary: { version: 1, kind: 'electron-live-run', mode: options.mode, at: iso(started), preflight: check, phases: [], cards: [] } };
+    const expected = options.phases.filter(id => !check.skips[id]).flatMap(id => EXPECTED_CARDS[id].map(card => `${id}: ${card}`));
+    log(`cards to click, in order (each within 120 s of its CARD line): ${expected.join('; ')}`);
+    held += await waitForHold(io, { now, sleep }, 30000, signal); checkRunSignal(signal);
+    release = await deps.lock(signal); checkRunSignal(signal);
     for (const id of options.phases) {
+      checkRunSignal(signal);
       if (check.skips[id]) { log(`${id}: skipped, ${check.skips[id]}`); phases.push({ id, status: 'skipped', reason: check.skips[id] }); continue; }
-      held += await waitForHold(io, { now, sleep });
+      held += await waitForHold(io, { now, sleep }, 30000, signal); checkRunSignal(signal);
       const t = now();
       log(`${id}: started ${iso(t)} (expected about ${Math.round(EXPECTED_MS[id] / 60000)} min plus card waits)`);
       let record;
       try {
-        const r = await pump(deps[id]({ app, options }));
+        const r = await pump(settleRunOperation(Promise.resolve().then(() => { checkRunSignal(signal); return deps[id]({ app, options, signal, lifecycle }); }),
+          { signal, lifecycle, graceMs: deps.cancelWaitMs ?? 60_000 }));
         record = phaseRecord(id, t, now, r);
+        if (signal?.aborted) { interrupted = true; record.interrupted = true; record.status = 'interrupted'; }
       } catch (error) { record = phaseRecord(id, t, now, { status: 'fail', error: String(error?.message ?? error).slice(0, 300), cleanup: { confirmed: false } }); }
       phases.push(record);
       record.error ??= record.failed?.[0];
@@ -240,53 +266,70 @@ export async function runPhases({ options, deps }) {
       if (record.cleanup?.confirmed !== true) { keep = true; log(`${id}: cleanup unconfirmed; the run stops and keeps ${LOCK}`); break; }
       if (record.status === 'fail') { log(`${id}: failed; later phases do not run`); break; }
       if (record.stopped) { log(`${id}: stopped (${record.stopped}); later phases do not run`); break; }
+      if (signal?.aborted) { interrupted = true; break; }
     }
+  } catch (error) {
+    if (!signal?.aborted) throw error;
+    interrupted = true;
   } finally {
-    if (!keep && deps.cleanup) {
-      try { cleanup = await deps.cleanup(); }
+    interrupted ||= signal?.aborted === true;
+    if (release && !keep && lifecycle.cleanupAllowed && deps.cleanup) {
+      try { cleanup = await settleRunOperation(deps.cleanup(), { signal, lifecycle, graceMs: deps.cancelWaitMs ?? 60_000 }); }
       catch { cleanup = { confirmed: false, errors: ['RUN_PROCESS_CENSUS_FAILED'] }; }
       if (cleanup.confirmed !== true) keep = true;
     }
-    if (!keep) await release();
+    if (!lifecycle.cleanupAllowed) keep = true;
   }
+  interrupted ||= signal?.aborted === true;
   const cards = watcher.summary();
+  const matchingCardObservations = watcher.observations?.() ?? [];
   const summary = { version: 1, kind: 'electron-live-run', mode: options.mode, at: iso(started), ms: now() - started, heldMs: held, build: deps.build?.() ?? null,
-    model: { id: options.model, effort: options.effort }, preflight: check, phases, cards, ...(cleanup ? { cleanup } : {}),
-    clicks: { total: cards.length, delegated: cards.filter(c => c.delegated).length, late: cards.filter(c => c.status !== 'pending' && !c.inTime).length,
+    model: { id: options.model, effort: options.effort }, preflight: check, phases, cards, matchingCardObservations,
+    ...(interrupted ? { interrupted: true, qualified: false } : {}), ...(lifecycle.unsettled ? { unsettled: true } : {}), ...(cleanup ? { cleanup } : {}),
+    ownership: { lock: release ? keep ? 'retained' : 'release-after-terminal-save' : 'not-acquired',
+      ...(lifecycle.effectUnknown ? { effectUnknown: true } : {}), ...(lifecycle.modelGroup ? { modelGroup: lifecycle.modelGroup } : {}) },
+    clicks: { total: cards.length, requested: cards.length, matchingCardObservations: matchingCardObservations.length,
+      accepted: cards.filter(c => c.status === 'granted').length,
+      delegated: cards.filter(c => c.delegated).length, late: cards.filter(c => c.status !== 'pending' && !c.inTime).length,
       unanswered: cards.filter(c => c.status === 'pending' || c.status === 'timeout').length } };
+  await deps.publish?.(summary);
+  if (release && !keep && lifecycle.cleanupAllowed) await release();
   const pass = phases.length > 0 && phases.every(p => p.status === 'pass' || p.status === 'skipped') && !keep;
-  return { code: pass ? 0 : 1, summary, keep };
+  return { code: interrupted ? 130 : pass ? 0 : 1, summary, keep, ...(lifecycle.unsettled ? { unsettled: true } : {}) };
 }
 
 // ---- live phases
-async function livePhases({ options, root, out, cardLog, exec, python, qualificationDiagnosticPath }) {
+async function livePhases({ options, root, out, cardLog, exec, python, qualificationDiagnosticPath, signal, lifecycle }) {
   const { liveRuntime, liveDriver } = await import('./electron-qualification-live.mjs');
   const { observePermission } = await import('./real-permission.mjs');
   const permission = () => observePermission({ stopOnLiveHold: false });
   const io = { exists: existsSync, permission };
   const clock = { now: Date.now, sleep: ms => delay(ms) };
-  const runOptions = { trials: options.trials, samples: options.samples, aliveWaitMs: options.aliveWaitMs, consentWaitMs: options.consentWaitMs, mode: 'live' };
+  const runOptions = { trials: options.trials, samples: options.samples, aliveWaitMs: options.aliveWaitMs, consentWaitMs: options.consentWaitMs, mode: 'live', signal, lifecycle };
   return {
     async qualify({ app }) {
-      const runtime = await liveRuntime(options, { io, clock, root, python });
+      const runtime = await liveRuntime(options, { io, clock, root, python, lifecycle, signal });
       try {
-        const driver = runtime.driverFor(app, { cardLog, qualificationDiagnosticPath });
+        const driver = runtime.driverFor(app, { cardLog, qualificationDiagnosticPath, lifecycle, signal });
         const receipt = await runQualification({ app, driver, observer: runtime.observer, io, clock, options: runOptions });
         return { status: receipt.qualified ? 'pass' : 'fail', receipt: writeReceipt(out, receipt, app.key), qualified: receipt.qualified,
           cells: `${receipt.cells.filter(c => c.status === 'pass').length}/${receipt.cells.length}`, failed: receipt.cells.filter(c => c.status === 'fail').map(c => `${c.id}: ${c.error}`),
           cleanup: receipt.cleanup, ...(receipt.stopped ? { stopped: receipt.stopped.reason } : {}) };
-      } finally { await runtime.close(); }
+      } finally { if (lifecycle.cleanupAllowed) await runtime.close(); }
     },
     async arm({ app }) {
       const { worldAgentSetup } = await import('./world/arms/browser.mjs');
       const { runOwned } = await import('./preapproved-process.mjs');
+      const { randomBytes } = await import('node:crypto');
+      const { createArmCancellation, runArmWithCancellation } = await import('./electron-arm-cancellation.mjs');
       const base = mkdtempSync(join(root, 'arm-')), armDir = join(base, 'claude');
       mkdirSync(armDir);
-      const driver = liveDriver(app, { root: base, exec, observer: null, cardLog, python, qualificationDiagnosticPath });
-      let result, grade, cleanup;
+      const driver = cancellableDriver(liveDriver(app, { root: base, exec, observer: null, cardLog, python, qualificationDiagnosticPath, lifecycle, signal }), signal);
+      let result, grade, cleanup, failure;
       try {
         await driver.prepare();
-        const config = driver.armConfig(), configPath = join(config.stateDir, 'arm.json');
+        const config = { ...driver.armConfig(), cancelNonce: randomBytes(32).toString('hex') }, configPath = join(config.stateDir, 'arm.json');
+        const control = createArmCancellation(config);
         writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
         const marker = 'arm' + Math.random().toString(36).slice(2, 8);
         const skill = readFileSync(new URL('../plugins/sleight/skills/drive-mac-apps/BROWSERS.turbo-v3.md', import.meta.url), 'utf8').trimEnd()
@@ -301,33 +344,36 @@ async function livePhases({ options, root, out, cardLog, exec, python, qualifica
           '--strict-mcp-config', '--mcp-config', mcpPath, '--settings', settingsPath, '--allowedTools', ARM_ALLOWED.join(','), '--tools', '', '--no-chrome', prompt];
         const t = Date.now();
         // The first tool call waits on the card and the launch, so Claude Code's tool timeout must outlast both.
-        const run = await runOwned(setup.command, args, { cwd: armDir, env: { ...setup.env, ANTHROPIC_SMALL_FAST_MODEL: options.model, MCP_TOOL_TIMEOUT: '600000' },
-          timeoutMs: options.armTimeoutMs });
+        const run = await runArmWithCancellation(modelSignal => runOwned(setup.command, args, { cwd: armDir, env: { ...setup.env, ANTHROPIC_SMALL_FAST_MODEL: options.model, MCP_TOOL_TIMEOUT: '600000' },
+          timeoutMs: options.armTimeoutMs, signal: modelSignal }), { control, signal, lifecycle });
         result = { ...parseStream(run.stdout), wallMs: Date.now() - t, exit: run.exit, timedOut: run.timedOut };
         const startupPath = join(config.stateDir, 'startup.jsonl');
         if (existsSync(startupPath)) result.startup = readFileSync(startupPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
         writeFileSync(join(out, `arm-${iso(t).replace(/[:.]/g, '-')}.jsonl`), String(scrubReceipt(run.stdout)));
         grade = gradeArm({ text: result.text, scratch: driver.readFile('a-scratch.txt'), marker });
-      } finally {
-        await driver.adoptRunning().catch(() => 0);
-        cleanup = await driver.cleanup().catch(error => ({ confirmed: false, error: error.message }));
-        if (cleanup.confirmed) rmSync(base, { recursive: true, force: true });
+      } catch (error) { failure = /^[A-Z][A-Z0-9_]+$/.test(error.message ?? '') ? error.message : 'ARM_FAILED'; }
+      finally {
+        if (lifecycle.cleanupAllowed) {
+          cleanup = await driver.cleanup().catch(error => ({ confirmed: false, error: error.message }));
+          if (cleanup.confirmed && lifecycle.cleanupAllowed) rmSync(base, { recursive: true, force: true });
+        } else cleanup = { confirmed: false, error: 'RUN_CANCELLATION_UNSETTLED' };
       }
       return { status: grade?.pass && !result?.isError ? 'pass' : 'fail', model: options.model, effort: options.effort, result: scrubReceipt({ ...result, text: result?.text?.slice(-600) }),
+        ...(failure ? { error: failure } : {}),
         ...(result?.startup?.length ? { error: `arm startup (${result.startup[0].stage}): ${result.startup[0].code}` } : {}), grade, cleanup: scrubReceipt(cleanup) };
     },
     async relaunch({ app }) {
       const { liveRelaunchDriver } = await import('./electron-relaunch-live.mjs');
-      const observerRuntime = await liveRuntime(options, { io, clock, root, python });
+      const observerRuntime = await liveRuntime(options, { io, clock, root, python, lifecycle, signal });
       try {
-        const driver = liveRelaunchDriver(app, { root, io, cardLog, python, qualificationDiagnosticPath });
+        const driver = liveRelaunchDriver(app, { root, io, cardLog, python, qualificationDiagnosticPath, signal, lifecycle });
         const receipt = await runQualification({ app, driver, observer: observerRuntime.observer, io, clock, cells: liveRelaunchCells(app), options: { ...runOptions, relaunch: true } });
         // Honest labels: the relaunch ran on the runner's clone with its own portable profile, never the owner's app or profile.
         receipt.profile = { ...receipt.profile, copy: 'benchmark clone with its own portable profile', owners: false };
         return { status: receipt.qualified ? 'pass' : 'fail', receipt: writeReceipt(out, receipt, app.key), qualified: receipt.qualified,
           cells: `${receipt.cells.filter(c => c.status === 'pass').length}/${receipt.cells.length}`, failed: receipt.cells.filter(c => c.status === 'fail').map(c => `${c.id}: ${c.error}`),
           cleanup: receipt.cleanup, ...(receipt.stopped ? { stopped: receipt.stopped.reason } : {}) };
-      } finally { await observerRuntime.close(); }
+      } finally { if (lifecycle.cleanupAllowed) await observerRuntime.close(); }
     },
   };
 }
@@ -344,19 +390,31 @@ async function liveIo(exec) {
   };
 }
 
-async function runMain(argv, deps, qualificationDiagnosticPath) {
+export async function runMain(argv, deps = {}, qualificationDiagnosticPath) {
   const options = parseRunnerArgs(argv), log = deps.log ?? console.log, exec = deps.exec ?? execute;
+  const signal = deps.signal, lifecycle = deps.lifecycle ?? { cleanupAllowed: true }, started = Date.now();
   const out = resolve(options.out ?? fileURLToPath(new URL(`./results/electron/${new Date().toISOString().slice(0, 10)}/`, import.meta.url)));
   mkdirSync(out, { recursive: true });
-  const root = createRunRoot('elr-'), cardLog = join(root, 'cards.jsonl');
+  const root = (deps.createRoot ?? createRunRoot)('elr-'), cardLog = join(root, 'cards.jsonl');
   writeFileSync(cardLog, '', { mode: 0o600 });
-  let result;
+  let result, savedPath;
+  const publish = async summary => {
+    const path = join(out, `live-run-${summary.at.replace(/[:.]/g, '-')}.json`), row = scrubReceipt(summary);
+    if (deps.writeSummary) await deps.writeSummary(path, row);
+    else {
+      const fd = openSync(path, 'wx', 0o600);
+      try { writeFileSync(fd, JSON.stringify(row, null, 2) + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
+      const directory = openSync(out, 'r'); try { fsyncSync(directory); } finally { closeSync(directory); }
+    }
+    savedPath = path;
+  };
   try {
     if (options.mode === 'dry-run') {
       const { fakeRunnerDeps } = await import('./electron-live-runner-fakes.mjs');
-      result = await runPhases({ options, deps: { ...fakeRunnerDeps({ cardLog, out }), log } });
+      result = await runPhases({ options, deps: { ...fakeRunnerDeps({ cardLog, out }), log, signal, lifecycle, publish } });
     } else {
-      const python = await resolveRunPython('python3', { exec });
+      checkRunSignal(signal);
+      const python = await (deps.resolvePython ?? resolveRunPython)('python3', { exec }); checkRunSignal(signal);
       const io = { ...await liveIo(exec), ...deps.io };
       const watcher = createCardWatcher({ cardLog, outDir: out, log, locate: async () => {
         const { helper } = await import('./electron-qualification-live.mjs');
@@ -365,18 +423,24 @@ async function runMain(argv, deps, qualificationDiagnosticPath) {
       } });
       const { acquireLiveLock } = await import('./live-lock.mjs');
       const commit = await exec('/usr/bin/git', ['-C', fileURLToPath(new URL('..', import.meta.url)), 'rev-parse', 'HEAD'], { timeout: 5000 }).then(r => r.stdout.trim(), () => null);
-      result = await runPhases({ options, deps: { log, now: Date.now, sleep: ms => delay(ms), io, watcher, preflight, build: () => ({ commit }),
-        lock: () => acquireLiveLock(LOCK, { wait: true, interval: 15000 }),
-        cleanup: () => createRunReaper(root, { python, list: () => listProcesses(exec) }).reap(), ...await livePhases({ options, root, out, cardLog, exec, python, qualificationDiagnosticPath }), ...deps.phases } });
+      result = await runPhases({ options, deps: { log, now: Date.now, sleep: ms => delay(ms), io, watcher, preflight, build: () => ({ commit }), signal, lifecycle, publish,
+        lock: signal => acquireLiveLock(LOCK, { wait: true, interval: 15000, signal }),
+        cleanup: () => createRunReaper(root, { python, list: () => listProcesses(exec), lifecycle }).reap(), ...await livePhases({ options, root, out, cardLog, exec, python, qualificationDiagnosticPath, signal, lifecycle }), ...deps.phases } });
     }
-    const path = join(out, `live-run-${result.summary.at.replace(/[:.]/g, '-')}.json`);
-    writeFileSync(path, JSON.stringify(scrubReceipt(result.summary), null, 2) + '\n');
-    log(`summary: ${path}`);
+  } catch {
+    result = { code: signal?.aborted ? 130 : 1, keep: true, ...(lifecycle.unsettled ? { unsettled: true } : {}),
+      summary: { version: 1, kind: 'electron-live-run', mode: options.mode, at: iso(started), phases: [], cards: [],
+        ...(signal?.aborted ? { interrupted: true, qualified: false } : {}), error: signal?.aborted ? 'RUN_INTERRUPTED' : 'RUN_FAILED',
+        cleanup: { confirmed: false }, retainedRoot: root } };
+  }
+  try {
+    if (!savedPath) await publish(result.summary);
+    log(`summary: ${savedPath}`);
     for (const p of result.summary.phases) log(`  ${p.id}: ${p.status}${p.cells ? ` (${p.cells} cells)` : ''}${p.grade ? ` (${p.grade.passed}/3 arm tasks)` : ''}`);
     const c = result.summary.clicks;
-    if (c) log(`  cards: ${c.total} shown, ${c.late} answered late or refused, ${c.unanswered} unanswered`);
+    if (c) log(`  cards: ${c.requested} requested, ${c.matchingCardObservations} uncorrelated matching-card observations, ${c.accepted} accepted, ${c.late} answered late or refused, ${c.unanswered} unanswered`);
   } finally {
-    if (!result?.keep) rmSync(root, { recursive: true, force: true });
+    if (result && savedPath && !result.keep && lifecycle.cleanupAllowed) rmSync(root, { recursive: true, force: true });
     else log(`run folder kept for the leftovers: ${root}`);
   }
   return result;
@@ -384,9 +448,20 @@ async function runMain(argv, deps, qualificationDiagnosticPath) {
 
 export async function main(argv = process.argv.slice(2), deps = {}) {
   const options = parseRunnerArgs(argv);
-  if (options.mode === 'dry-run') return (await runMain(argv, deps)).code;
-  const out = resolve(options.out ?? fileURLToPath(new URL(`./results/electron/${new Date().toISOString().slice(0, 10)}/`, import.meta.url)));
-  return (await withQualificationDiagnostics(out, path => runMain(argv, deps, path))).code;
+  const cancellation = installRunCancellation({ events: deps.signals ?? process });
+  const lifecycle = deps.lifecycle ?? { cleanupAllowed: true };
+  const scoped = { ...deps, lifecycle, signal: deps.signal ?? cancellation.signal }; let result;
+  try {
+    if (options.mode === 'dry-run') result = await runMain(argv, scoped);
+    else {
+      const out = resolve(options.out ?? fileURLToPath(new URL(`./results/electron/${new Date().toISOString().slice(0, 10)}/`, import.meta.url)));
+      result = await withQualificationDiagnostics(out, path => runMain(argv, scoped, path));
+    }
+    return result.code;
+  } finally {
+    // An unsettled worker/IPC operation may still own handles; returning a summary is not an exit proof.
+    if (result && !result.unsettled && lifecycle.cleanupAllowed) cancellation.dispose();
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -12,9 +12,10 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
 import { createProtocol } from './turbo/v3-protocol.mjs';
+import { createArmCancellation, createArmDrain } from './electron-arm-cancellation.mjs';
 
 const WORKER = fileURLToPath(new URL('./electron-qualification-worker.mjs', import.meta.url));
-const KEYS = ['allowlist', 'appSecret', 'bundleId', 'cardLog', 'name', 'python', 'qualificationDiagnosticPath', 'registryPath', 'session', 'stateDir', 'tempRoot', 'workspace'];
+const KEYS = ['allowlist', 'appSecret', 'bundleId', 'cancelNonce', 'cardLog', 'name', 'python', 'qualificationDiagnosticPath', 'registryPath', 'session', 'stateDir', 'tempRoot', 'workspace'];
 
 export function readArmConfig(path, { stat = lstatSync, read = readFileSync, uid = process.getuid() } = {}) {
   const s = stat(path);
@@ -31,19 +32,23 @@ export function forkWorker({ forkProcess = fork, env = process.env } = {}) {
   const pending = new Map();
   let sequence = 0, lost;
   child.on('message', msg => { const entry = pending.get(msg.id); if (entry) { pending.delete(msg.id); entry(msg); } });
-  child.on('exit', () => { lost = true; for (const entry of pending.values()) entry({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); pending.clear(); });
+  const lose = () => { if (lost) return; lost = true; for (const entry of pending.values()) entry({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); pending.clear(); };
+  for (const event of ['exit', 'error', 'disconnect']) child.on(event, lose);
   return {
     send: (op, extra = {}) => new Promise(done => {
       if (lost) return done({ ok: false, error: 'V3_WORKER_UNAVAILABLE' });
       const id = ++sequence; pending.set(id, done);
-      try { child.send({ id, op, ...extra }); } catch { pending.delete(id); done({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); }
+      try { child.send({ id, op, ...extra }, error => { if (error) lose(); }); } catch { lose(); }
     }),
     kill: () => { if (!lost) child.kill('SIGKILL'); },
   };
 }
 
 /** One arm session: the first call starts the worker's turn (the debugger card, the launch), later calls reuse it. */
-export async function createArmSession({ config, text, worker = forkWorker() }) {
+export async function createArmSession({ config, text, worker, createWorker = forkWorker, control }) {
+  if (control?.requested()) throw Error('ARM_CANCELLED');
+  worker ??= createWorker();
+  let uncertain = false, closing;
   const reply = await worker.send('start', { ...config, text });
   if (!reply.ok) {
     worker.kill();
@@ -52,24 +57,40 @@ export async function createArmSession({ config, text, worker = forkWorker() }) 
   return {
     identity: reply.identity,
     async call(request) {
-      const r = await worker.send('call', { request });
+      if (control?.requested()) return { text: 'Run cancelled; no further app calls are accepted.', isError: true };
+      let r;
+      try { r = await worker.send('call', { request }); }
+      catch (error) { uncertain = true; throw error; }
+      // Explicit errors may include unavailable/effect-unknown work. Never certify them as a clean drain.
+      if (!r.ok || r.result?.isError === true) uncertain = true;
       return r.ok ? { text: String(r.result?.text ?? ''), isError: r.result?.isError === true } : { text: 'Turbo is unavailable for this turn.', isError: true };
     },
     delivered() {}, // the worker marks every delivered result itself
-    async close() { await worker.send('end'); worker.kill(); return { revoked: true, cleanup: [] }; },
+    close() { return closing ??= (async () => {
+      const end = await worker.send('end');
+      if (uncertain || end.ok !== true || end.ended !== true || !Array.isArray(end.cleanup) || end.cleanup.length) throw Error('ARM_DRAIN_UNCONFIRMED');
+      worker.kill(); return { revoked: true, cleanup: [] };
+    })(); },
   };
 }
 
 async function main() {
   const config = readArmConfig(process.env.SLEIGHT_EQ_ARM_CONFIG ?? '');
-  const protocol = createProtocol({ start: () => createArmSession({ config, text: process.env.SLEIGHT_EQ_ARM_TASK ?? 'Electron arm task.' }),
+  const control = createArmCancellation(config);
+  let uncertain = false;
+  const protocol = createProtocol({ start: async () => {
+    try { return await createArmSession({ config, control, text: process.env.SLEIGHT_EQ_ARM_TASK ?? 'Electron arm task.' }); }
+    catch (error) { if (error.message !== 'ARM_CANCELLED') uncertain = true; throw error; }
+  },
     onStartupFailure: row => appendFileSync(join(config.stateDir, 'startup.jsonl'), JSON.stringify(row) + '\n', { mode: 0o600 }) });
   const lines = createInterface({ input: process.stdin });
+  const drain = createArmDrain({ protocol, control, uncertain: () => uncertain });
   let stopping;
-  const stop = () => stopping ??= protocol.close().catch(() => {}).finally(() => { lines.close(); process.stdin.destroy(); });
+  const stop = () => stopping ??= drain.stop().finally(() => { clearInterval(poll); lines.close(); process.stdin.destroy(); });
+  const poll = setInterval(() => { try { if (control.requested()) void stop(); } catch { uncertain = true; void stop(); } }, 50);
   for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.once(signal, stop);
   lines.on('line', line => {
-    try { void protocol.message(JSON.parse(line)).catch(() => stop()); }
+    try { void protocol.message(JSON.parse(line)).catch(() => { uncertain = true; return stop(); }); }
     catch { process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }) + '\n'); }
   });
   lines.once('close', stop);

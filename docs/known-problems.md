@@ -28,8 +28,8 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   that check, then refused one inventory entry as `non-window-or-stale` before any action or relaunch. Cleanup and
   helper collection completed. Its receipt was retained and the exact empty lock recovered. Finder setup, Go to Folder
   ancestry, respawn and cleanup need qualification, including the `cc-list-native` fixture. The `textedit-two-windows` fixture
-  remains parked unless its failure recurs. Both fixture
-  paths. Cancellation must stop owned setup work; cleanup must preserve baseline windows and retain the lock when
+  remains parked unless its failure recurs. For either fixture, cancellation must stop owned setup work.
+  Cleanup must preserve baseline windows and retain the lock when
   ownership or cleanup is uncertain. Receipts must exclude owner text, and timeout evidence must bind the same
   process instance. The offline recovery, ownership and app-absent cleanup changes passed tests and review.
   The owner approved exclusive Finder setup and the remaining window-focus assumption. Failed smokes and lock
@@ -38,9 +38,10 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   the final tree. Actual Node 24 Linux testing remains a release gate.
   The helper prepares the exact commit with usable Git metadata, mounts that snapshot read-only and tests a writable
   container copy with isolated dependencies. Offline tests cover its shared receipt contract and asynchronous cleanup;
-  actual Docker cancellation, child collection and container cleanup still need qualification. The Colima wrapper
+  cancellation during a test run still needs qualification. The Colima wrapper
   isolates VM state and Docker configuration and pins engine commands to its owned socket. VM startup and teardown
-  require their own confirmed result.
+  passed in the host attempt, including container removal. Both sandbox and host attempts stopped before npm,
+  so no Linux test result exists. Failure receipts now report the stage and a bounded error code without raw stderr.
 - Candidate and tagged-release preflights must verify the same clean final commit through completion, including
   the Linux receipt. These model-free checks do not require a quota reset. Candidate mode accepts an unreleased
   heading and keeps `releaseReady: false`. Release mode requires a dated heading and the intended tag at that exact
@@ -49,12 +50,23 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
 - The final-build driver has only offline proof. It rejected the historical `validation-140-final` bank because
   the task, prompt or harness changed. The architect must select compatible A evidence or collect a fresh A/B,
   then run three new rounds per selected group on the final integrated commit. Later merges require another run.
-- Workflow-documentation A/B and Electron qualification preparation have passed offline review and tests, with no
-  new live results or performance claim. Model-backed release passes, final-build A/B, workflow A/B and the Electron
+- Workflow-documentation A/B has offline test and review evidence. Electron live qualification did not complete:
+  one host attempt timed out waiting for a card with 0/22 cells complete, and a retry was interrupted after two
+  cards were accepted. Recovery quit that exact fixture through its normal Quit. Its host and adapter later
+  exited, and repeated process-absence checks permitted release of the exact lock. Recovery preserved the evidence.
+  Model-backed release passes, final-build A/B, workflow A/B and the Electron
   arm wait for the planned quota reset and an owner-approved away window. The owner approved a second benchmark
   VS Code window and bounded foreground during its host-loss launch. Electron still needs a turbo startup receipt
   matching the final plugin and Node runtime, plus live qualification. Interrupted Electron runs need separate
-  exit and lock-ownership evidence.
+  exit and lock-ownership evidence. The repaired runner closes admission on interruption and requires a checked
+  drain before cleanup. Unknown effects retain the app and pipe owners. Receipt publication precedes lock release.
+  Combined cancellation and recovery checks passed 286 tests. Live interruption of the repaired runner remains unqualified.
+- Electron debugger and relaunch requests now use the same automatic styled presenter as shell app approvals.
+  Their existing choices and input guards are preserved. The launcher supplies the installed icon path, and the
+  presenter plays Glass on initial display. Native compilation and policy checks passed; live appearance and
+  audible sound remain unverified. The helper remains an unbundled accessory process, so styling alone does not
+  establish computer-use discovery or input support. Qualification logs distinguish requests and answers from
+  uncorrelated observations of a visible matching card.
 - The first native reference uses origin captured during the existing isolated startup call. A live relay
   comparison on engine 26.1013.40934 reduced it from 19,743 to 19,542 characters while preserving policy and all
   text outside the API block. Unknown formats, metadata or changed context keep the full reference. The broader

@@ -34,14 +34,14 @@ done
 MODEL=$(node "$REPO/bench/fowl/accounting.mjs" --model-id "$MODEL")
 [ -z "$REAL" ] || [ -z "$DRY" ] || exec node "$REPO/bench/fowl/real-gate.mjs" "$@"
 [ -n "$REAL" ] || node "$REPO/bench/fowl/preflight.mjs" "$@"
-[ -d "$DIR/.git" ] || git clone -q https://github.com/argofowl/FowlBrowser "$DIR"
+[ -d "$DIR/.git" ] || /usr/bin/git clone -q https://github.com/argofowl/FowlBrowser "$DIR"
 cd "$DIR"
 # The clone is this benchmark's own cache: when its tracked files differ from the current patch (an older
 # patch, or nothing applied), put them back to the pin and apply the patch.
-if ! git diff | cmp -s - "$REPO/bench/fowl/sleight-surface.patch"; then
-  git checkout -q -- . && git checkout -q "$PIN" && git apply "$REPO/bench/fowl/sleight-surface.patch"
+if ! /usr/bin/git diff | cmp -s - "$REPO/bench/fowl/sleight-surface.patch"; then
+  /usr/bin/git checkout -q -- . && /usr/bin/git checkout -q "$PIN" && /usr/bin/git apply "$REPO/bench/fowl/sleight-surface.patch"
 fi
-[ "$(git rev-parse --short HEAD)" = "$PIN" ] || { echo "rounds.sh: $DIR is not at $PIN" >&2; exit 1; }
+[ "$(/usr/bin/git rev-parse --short HEAD)" = "$PIN" ] || { echo "rounds.sh: $DIR is not at $PIN" >&2; exit 1; }
 if [ -n "$REAL" ]; then
   exec env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
     SLEIGHT_REPO="$REPO" ${SLEIGHT_TRACE:+SLEIGHT_TRACE="$SLEIGHT_TRACE"} ${SLEIGHT_TS3:+SLEIGHT_TS3="$SLEIGHT_TS3"} ${SLEIGHT_FS:+SLEIGHT_FS="$SLEIGHT_FS"} ${SLEIGHT_RS+SLEIGHT_RS="$SLEIGHT_RS"} \

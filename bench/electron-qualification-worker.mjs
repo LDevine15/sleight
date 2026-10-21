@@ -5,7 +5,7 @@
 // The debugger card appears in sleight's own consent window and only the user's click answers it; nothing here presses it.
 // Grants go to a grant store in the run's temporary state folder, never the owner's. Engine approval is the benchmark
 // allowlist (LAWS). Killing this process is the worker-loss cell; the app and its pipe belong to the resident host.
-// For the live runner (electron-live-runner.mjs): each card shown and answered is a line in msg.cardLog, so the person
+// For the live runner (electron-live-runner.mjs): each request and answer is a line in msg.cardLog, so the person
 // who clicks learns when the card is up and what to choose. msg.profile 'user' runs the relaunch flow on the runner's
 // benchmark copy (msg.home names the profile identity). msg.rehost reconnects to the host after the host-loss cell.
 import { randomUUID } from 'node:crypto';
@@ -44,11 +44,12 @@ export async function prepareWorker(msg, { loadModule = load } = {}) {
     const card = {}, relaunchCard = {};
     // Observes the cards; the reply still comes only from the native window's authenticated click.
     const watched = (kind, target, ask) => async (...args) => {
-      const shownAt = performance.now(), id = `${process.pid}-${++cards}`, at = Date.now();
-      target.shown = true;
-      cardLine(msg.cardLog, { event: 'shown', id, kind, at, deadlineAt: at + CARD_TTL_MS, temporary: args[0]?.temporary === true, app: String(args[0]?.name ?? '') });
+      const requestedAt = performance.now(), id = `${process.pid}-${++cards}`, at = Date.now();
+      target.requested = true;
+      target.requestedAt = at;
+      cardLine(msg.cardLog, { event: 'requested', id, kind, at, requestedAt: at, deadlineAt: at + CARD_TTL_MS, temporary: args[0]?.temporary === true, app: String(args[0]?.name ?? '') });
       const result = await ask(...args);
-      Object.assign(target, { ms: Math.round(performance.now() - shownAt), status: cardStatus(result?.status),
+      Object.assign(target, { ms: Math.round(performance.now() - requestedAt), status: cardStatus(result?.status),
         scope: result?.grant?.scope ?? null, by: ['granted', 'approved'].includes(result?.status) ? 'user' : null });
       cardLine(msg.cardLog, { event: 'answered', id, kind, at: Date.now(), status: target.status, scope: target.scope });
       return result;
@@ -128,7 +129,7 @@ const ops = {
     if (msg.rehost) b.host = await connectHost(msg);
     for (const target of [b.card, b.relaunchCard]) {
       for (const key of Object.keys(target)) delete target[key];
-      Object.assign(target, { shown: false, existing: false, by: null, status: null, scope: null, ms: null });
+      Object.assign(target, { requested: false, shown: null, existing: false, by: null, status: null, scope: null, ms: null });
     }
     const started = performance.now();
     turn = await select(msg, b);
@@ -154,10 +155,10 @@ const ops = {
     const b = await setup(msg), row = { busy: 0, other: 0, cards: 0 };
     for (let i = 0; i < msg.count; i++) {
       const saved = { ...b.card };
-      b.card.shown = false;
+      b.card.requested = false;
       try { const extra = await select({ ...msg, session: 'v3' + randomUUID().replaceAll('-', '') }, b); await b.runtimeMod.releaseAppConnection(extra.connection); row.other++; }
       catch (error) { if (/ELECTRON_BUSY/.test(error.message)) row.busy++; else row.other++; }
-      if (b.card.shown) row.cards++;
+      if (b.card.requested) row.cards++;
       Object.assign(b.card, saved);
     }
     return { row };
@@ -199,8 +200,8 @@ const ops = {
 if (process.send) process.on('message', async msg => {
   const reply = value => process.send?.({ id: msg.id, ...value });
   try { reply({ ok: true, ...await (ops[msg.op] ?? (() => { throw Error('UNKNOWN_OP'); }))(msg) }); }
-  catch (error) { reply({ ok: false, error: String(error?.message ?? error).slice(0, 300), stage: error.stage ?? 'app-select', ...(base?.card.shown || base?.card.existing ? { card: { ...base.card } } : {}),
+  catch (error) { reply({ ok: false, error: String(error?.message ?? error).slice(0, 300), stage: error.stage ?? 'app-select', ...(base?.card.requested || base?.card.existing ? { card: { ...base.card } } : {}),
     ...(base?.host?.admin?.pid ? { hostPid: base.host.admin.pid } : {}),
-    ...(base?.relaunchCard.shown ? { relaunchCard: { ...base.relaunchCard } } : {}) }); }
+    ...(base?.relaunchCard.requested ? { relaunchCard: { ...base.relaunchCard } } : {}) }); }
 });
 if (process.send) process.on('disconnect', () => process.exit(0));

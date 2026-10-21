@@ -444,7 +444,8 @@ for (const role of ['AXSheet', 'AXDialog', '', 'private-owner-title']) test(`inv
   });
   assert.throws(f.run, error => {
     const detail = /^AX[A-Za-z][A-Za-z0-9]*$/.test(role) ? ` role=${role}` : '';
-    assert.equal(error.message, `Finder fixture window inventory unconfirmed [reason=non-window-or-stale count=2 index=1${detail}]`);
+    const roleState = !role ? 'empty' : role === 'AXSheet' || role === 'AXDialog' ? 'known-nonwindow' : 'other-string';
+    assert.equal(error.message, `Finder fixture window inventory unconfirmed [reason=non-window-or-stale count=2 index=1${detail} axCode=0 roleReadCode=0 roleState=${roleState} roleNativeType=unavailable roleNativeWindowEqual=unavailable roleDeepWindowEqual=unavailable]`);
     return true;
   });
   assert.deepEqual(reads, ['AXRole', 'AXRole']);

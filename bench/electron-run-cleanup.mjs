@@ -26,7 +26,7 @@ export async function resolveRunPython(python, { exec, realpath = realpathSync }
 
 export function createRunReaper(root, { list, pids = () => [], uid = process.getuid(), python,
   binaries = [process.execPath, '/usr/bin/osascript', python].filter(Boolean),
-  signal = process.kill, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  signal = process.kill, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), lifecycle }) {
   const owned = new Map();
   const namesRoot = row => row.uid === uid && binaries.some(binary => row.args === binary || row.args.startsWith(binary + ' ')) &&
     row.args.split(/\s+/).some(token => token === root || token.startsWith(root + '/'));
@@ -47,23 +47,31 @@ export function createRunReaper(root, { list, pids = () => [], uid = process.get
     return rows.filter(row => row.uid === uid && owned.has(row.pid) && owned.get(row.pid) === row.startedAtMs);
   }
   return { scan, async reap() {
+    const allowed = () => lifecycle?.cleanupAllowed !== false;
+    const blocked = left => ({ confirmed: false, left: left.map(row => row.pid), errors: ['RUN_CANCELLATION_UNSETTLED'] });
+    if (!allowed()) return blocked([]);
     // Without the launch executable an orphan adapter could be omitted from an apparently empty census.
     if (!absoluteExecutable(python)) return { confirmed: false, left: [], errors: ['RUN_PYTHON_UNRESOLVED'] };
     const errors = [], signalled = new Set();
     let left = await scan();
+    if (!allowed()) return blocked(left);
     for (const kind of ['SIGTERM', 'SIGKILL']) {
       for (let i = 0; left.length && i < 40; i++) {
         for (const row of left) {
+          if (!allowed()) return blocked(left);
           const key = `${row.pid}:${row.startedAtMs}:${kind}`;
           if (signalled.has(key)) continue;
           // Recheck the incarnation immediately before signaling a recorded PID.
           const fresh = (await list()).find(p => p.pid === row.pid);
+          if (!allowed()) return blocked(left);
           if (!fresh || fresh.uid !== uid || fresh.startedAtMs !== row.startedAtMs) continue;
           signalled.add(key);
           try { signal(row.pid, kind); } catch (error) { if (error.code !== 'ESRCH') errors.push('RUN_PROCESS_SIGNAL_FAILED'); }
         }
         await sleep(250);
+        if (!allowed()) return blocked(left);
         left = await scan();
+        if (!allowed()) return blocked(left);
       }
     }
     return { confirmed: left.length === 0 && errors.length === 0, left: left.map(row => row.pid), errors };

@@ -20,6 +20,9 @@ const finderEnums = {
   reason: ['three AXWindows timeouts', 'malformed-list', 'missing-element', 'failed-self-identity', 'non-window-or-stale', 'duplicate-identity'],
   identityReason: ['target-unavailable', 'bundle-mismatch', 'pid-invalid', 'start-unavailable', 'pid-changed', 'start-changed', 'terminated'],
   role: ['AXWindow', 'AXSheet', 'AXDialog', 'AXGroup', 'AXButton'], phase: ['cleanup', 'observation'],
+  roleReadCode: [0, -25212, -25202, 'other'], roleState: ['nil', 'empty', 'known-nonwindow', 'other-string', 'nonstring'],
+  roleNativeType: ['cf-string', 'other', 'unavailable'], roleNativeWindowEqual: ['yes', 'no', 'unavailable'],
+  roleDeepWindowEqual: ['yes', 'no', 'unavailable'],
   command: ['new-window', 'go-to-folder'], menuCancelMethod: ['AXCancel'],
 };
 const finderNumbers = new Set(['pid', 'fromPid', 'toPid', 'startedAtMs', 'fromStartedAtMs', 'toStartedAtMs',
@@ -55,7 +58,17 @@ export function finderFailureDiagnostic(error) {
     const match = new RegExp('(?: |\\[)' + key + '=(\\d+)(?=[ \\]])').exec(text);
     if (match && Number.isSafeInteger(Number(match[1]))) diagnostic[key] = Number(match[1]);
   }
-  if (/axCode=-25202(?=[ \]])/.test(text)) diagnostic.axCode = -25202;
+  const axCode = /(?: |\[)axCode=(-?\d+)(?=[ \]])/.exec(text);
+  if (axCode && Number.isSafeInteger(Number(axCode[1]))) diagnostic.axCode = Number(axCode[1]);
+  const roleReadCode = /(?: |\[)roleReadCode=(0|-25212|-25202|other)(?=[ \]])/.exec(text);
+  if (roleReadCode) diagnostic.roleReadCode = roleReadCode[1] === 'other' ? 'other' : Number(roleReadCode[1]);
+  const roleState = /(?: |\[)roleState=(nil|empty|known-nonwindow|other-string|nonstring)(?=[ \]])/.exec(text);
+  if (roleState) diagnostic.roleState = roleState[1];
+  for (const [key, values] of [['roleNativeType', 'cf-string|other|unavailable'], ['roleNativeWindowEqual', 'yes|no|unavailable'],
+    ['roleDeepWindowEqual', 'yes|no|unavailable']]) {
+    const match = new RegExp('(?: |\\[)' + key + '=(' + values + ')(?=[ \\]])').exec(text);
+    if (match) diagnostic[key] = match[1];
+  }
   const ax = /AX fixture read failed: (-25204|-25205|-25202) \((AXWindows|AXFocusedWindow|AXRole|AXValue)\)/.exec(text);
   if (ax) { diagnostic.code = Number(ax[1]); diagnostic.attribute = ax[2]; }
   return diagnostic;

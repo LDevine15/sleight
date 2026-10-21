@@ -16,14 +16,15 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { BENCHMARK_ALLOWLIST, SELECTORS, prepareWorkspace, refOf, tabsOf } from './electron-qualification.mjs';
-import { assertHostPath, helper as qualificationHelper, listProcesses, parseCodesign, recipeFromBundle } from './electron-qualification-live.mjs';
+import { assertHostPath, helper as qualificationHelper, listProcesses, parseCodesign, recipeFromBundle, qualificationWorker } from './electron-qualification-live.mjs';
 import { editorIdentity } from './real-electron.mjs';
 import { processExitConfirmed } from './real-fixture.mjs';
 import { runOwned } from './preapproved-process.mjs';
+import { checkRunSignal } from './electron-run-cancellation.mjs';
+import { createRunReaper } from './electron-run-cleanup.mjs';
 
 const execute = promisify(execFile);
 const QUIT_HELPER = fileURLToPath(new URL('./real-electron.js', import.meta.url));
-const WORKER = fileURLToPath(new URL('./electron-qualification-worker.mjs', import.meta.url));
 const D = new URL('../plugins/sleight/lib/direct-browser/', import.meta.url);
 const SHIPPED_REGISTRY = new URL('electron/recipes.json', D);
 
@@ -57,24 +58,8 @@ async function sha256(path) {
   for await (const chunk of createReadStream(path)) hash.update(chunk);
   return hash.digest('hex');
 }
-function forkedWorker() {
-  return import('node:child_process').then(({ fork }) => {
-    const child = fork(WORKER, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'json',
-      env: { ...process.env, SLEIGHT_TURBO_UNQUALIFIED: '1' } });
-    const pending = new Map();
-    let sequence = 0, lost;
-    child.on('message', msg => { const entry = pending.get(msg.id); if (entry) { pending.delete(msg.id); entry(msg); } });
-    child.on('exit', () => { lost = true; for (const entry of pending.values()) entry({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); pending.clear(); });
-    const send = (op, extra = {}) => new Promise(resolve => {
-      if (lost) return resolve({ ok: false, error: 'V3_WORKER_UNAVAILABLE' });
-      const id = ++sequence; pending.set(id, resolve);
-      try { child.send({ id, op, ...extra }); } catch { pending.delete(id); resolve({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }); }
-    });
-    return { child, send, kill: () => { if (!lost) child.kill('SIGKILL'); } };
-  });
-}
 const realDeps = () => ({
-  exec: execute, helper: qualificationHelper, list: listProcesses, forkWorker: forkedWorker, exited: processExitConfirmed,
+  exec: execute, helper: qualificationHelper, list: listProcesses, forkWorker: qualificationWorker, exited: processExitConfirmed,
   electron: async request => {
     const r = await runOwned('/usr/bin/osascript', ['-l', 'JavaScript', QUIT_HELPER, JSON.stringify(request)], { timeoutMs: (request.waitMs ?? 30000) + 20000 });
     if (r.exit?.code !== 0) throw Error(`ELECTRON_HELPER_FAILED: ${String(r.stderr ?? '').trim().split('\n').at(-1)?.slice(0, 200)}`);
@@ -87,14 +72,39 @@ const realDeps = () => ({
   kill: (pid, signal) => process.kill(pid, signal),
 });
 
-export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'python3', qualificationDiagnosticPath, deps: given = {} }) {
+export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'python3', qualificationDiagnosticPath, lifecycle, signal, deps: given = {} }) {
   if (!BENCHMARK_ALLOWLIST.includes(app.bundleId)) throw Error('NOT_ON_BENCHMARK_ALLOWLIST');
   const d = { ...realDeps(), ...given };
+  let cleaning = false;
+  const boundary = () => { if (lifecycle?.cleanupAllowed === false) throw Error('RUN_CANCELLATION_UNSETTLED'); if (!cleaning) checkRunSignal(signal); };
+  const uncertainEffect = () => { if (lifecycle) { lifecycle.cleanupAllowed = false; lifecycle.unsettled = true; lifecycle.effectUnknown = true; } };
+  for (const key of ['exec', 'helper', 'electron', 'kill']) {
+    const original = d[key]; d[key] = (...args) => { boundary(); return original(...args); };
+  }
+  const createWorker = d.forkWorker;
+  d.forkWorker = async () => {
+    boundary(); const worker = await createWorker({ onUnsettled: uncertainEffect });
+    for (const key of ['send', 'kill', 'stop']) if (typeof worker[key] === 'function') {
+      const original = worker[key].bind(worker); worker[key] = (...args) => { boundary(); return original(...args); };
+    }
+    return worker;
+  };
   const base = mkdtempSync(join(root, 'relaunch-'));
   const appsDir = join(base, 'apps'), home = join(base, 'home'), stateDir = join(base, 'state'), tempRoot = join(base, 'profiles'), registryPath = join(base, 'recipes.json');
   const copyPath = join(appsDir, basename(app.path));
   const session = 'v3' + createHash('sha256').update(base).digest('hex').slice(0, 32);
   const workers = new Set(), launched = [];
+  const reaper = createRunReaper(base, { python, list: () => d.list(d.exec), signal: (...args) => d.kill(...args), sleep: d.sleep, lifecycle });
+  const appProcesses = new Map();
+  const appCensus = async () => {
+    const rows = await d.list(d.exec);
+    for (const row of rows) if (row.uid === process.getuid() && (row.args.startsWith(copyPath + '/') || row.args.includes(appsDir + '/'))) appProcesses.set(row.pid, row.startedAtMs);
+    for (let changed = true; changed;) { changed = false;
+      for (const row of rows) if (row.uid === process.getuid() && !appProcesses.has(row.pid) && appProcesses.has(row.ppid) &&
+        rows.some(parent => parent.pid === row.ppid && parent.startedAtMs === appProcesses.get(row.ppid))) { appProcesses.set(row.pid, row.startedAtMs); changed = true; }
+    }
+    return rows.filter(row => row.uid === process.getuid() && appProcesses.get(row.pid) === row.startedAtMs);
+  };
   let files, recipe, build, portable, seeded, appSecret, active, current, last, otherFront, hostPid;
 
   const owners = async () => (await d.helper({ mode: 'pids', bundle: app.bundleId }, d.exec)).pids;
@@ -173,9 +183,10 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
   }
   // The root is a real path (the runner resolves it), so the copy's path is what NSRunningApplication reports.
   const realCopy = () => copyPath;
-  const quitCopy = (pid, waitMs) => d.electron({ mode: 'quit', pid, bundle: app.bundleId, appPath: realCopy(), waitMs });
+  const quitCopy = (pid, waitMs, allowForce) => d.electron({ mode: 'quit', pid, bundle: app.bundleId, appPath: realCopy(), waitMs, ...(allowForce === false ? { allowForce: false } : {}) });
   const tool = async (name, args) => {
     const started = d.now(), reply = await (active ?? { send: async () => ({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }) }).send('call', { request: { name, arguments: args } });
+    if (signal?.aborted && (!reply.ok || reply.result?.isError) || /effect[ -]unknown/i.test(reply.result?.text ?? '')) uncertainEffect();
     const ms = Math.round(d.now() - started);
     return reply.ok ? { ...reply.result, ms } : { text: reply.error, isError: true, ms };
   };
@@ -261,24 +272,44 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
     },
     async appAlive() { return alive(current?.pid); },
     async cleanup() {
-      const errors = [];
-      for (const w of workers) { try { await w.send('end'); } catch {} w.kill(); }
-      workers.clear(); active = undefined;
-      // The copy first, through its own Quit (forced after the wait), matched by pid and the copy's bundle path.
-      for (const { pid } of launched) {
-        if (!await alive(pid)) continue;
-        try { await quitCopy(pid, 20000); } catch (error) { errors.push(String(error.message).slice(0, 200)); }
-      }
-      // Then this run's host, adapter and keeper: every process whose arguments name the run's folder.
-      const mine = async () => (await d.list(d.exec)).filter(p => p.pid !== process.pid && p.args.includes(base + '/'));
-      for (const p of await mine()) { try { d.kill(p.pid, 'SIGTERM'); } catch {} }
-      let left = await mine();
-      for (let i = 0; left.length && i < 20; i++) { await d.sleep(250); left = await mine(); }
-      for (const p of left) { try { d.kill(p.pid, 'SIGKILL'); } catch {} }
-      if (left.length) { await d.sleep(500); left = await mine(); }
-      if (!left.length) rmSync(base, { recursive: true, force: true });
-      const removed = !existsSync(base);
-      return { confirmed: !left.length && removed && !errors.length, appExited: !left.length, profileRemoved: removed, left: left.map(p => p.pid), errors };
+      const uncertain = () => ({ confirmed: false, appExited: false, profileRemoved: false, errors: ['RUN_CANCELLATION_UNSETTLED'], retainedRoot: base });
+      if (lifecycle?.cleanupAllowed === false) return uncertain();
+      cleaning = true;
+      try {
+        const errors = [];
+        await reaper.scan();
+        const before = await appCensus();
+        for (const row of before.filter(row => row.args.startsWith(copyPath + '/'))) {
+          boundary();
+          try { await quitCopy(row.pid, 20000, false); } catch (error) { errors.push(String(error.message).slice(0, 200)); }
+        }
+        let apps = await appCensus(); boundary();
+        for (let i = 0; apps.length && i < 40; i++) { await d.sleep(250); boundary(); apps = await appCensus(); boundary(); }
+        // Never use infrastructure signals to finish a refused app Quit or its unresolved descendants.
+        if (apps.length || errors.length) return { confirmed: false, appExited: false, profileRemoved: false, left: apps.map(row => row.pid), errors, retainedRoot: base };
+        for (const w of workers) {
+          boundary();
+          try {
+            const end = await w.send('end'); boundary();
+            if (end.ok !== true || end.ended !== true || !Array.isArray(end.cleanup) || end.cleanup.length) throw Error('WORKER_DRAIN_UNCONFIRMED');
+            if (w.stop) { if (!await w.stop()) throw Error('WORKER_EXIT_UNCONFIRMED'); }
+            else w.kill();
+          } catch (error) { errors.push(error.message); }
+        }
+        boundary();
+        if (errors.length) return { confirmed: false, appExited: true, profileRemoved: false, errors, retainedRoot: base };
+        workers.clear(); active = undefined;
+        const owned = await reaper.scan(); boundary();
+        const cleanup = owned.length ? await reaper.reap() : { confirmed: true, left: [], errors: [] };
+        boundary();
+        if (cleanup.confirmed) rmSync(base, { recursive: true, force: true });
+        const removed = !existsSync(base);
+        return { confirmed: cleanup.confirmed && removed, appExited: true, profileRemoved: removed, left: cleanup.left, errors: cleanup.errors,
+          ...(!removed ? { retainedRoot: base } : {}) };
+      } catch (error) {
+        if (lifecycle?.cleanupAllowed === false) return uncertain();
+        return { confirmed: false, appExited: false, profileRemoved: false, errors: [String(error.message).slice(0, 200)], retainedRoot: base };
+      } finally { cleaning = false; }
     },
   };
   return driver;

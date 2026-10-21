@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cancellableDriver, checkRunSignal, interruptibleWait } from './electron-run-cancellation.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parkedReceipt } from '../plugins/sleight/lib/direct-browser/electron-host-reasons.mjs';
 
@@ -95,8 +96,8 @@ export const CELLS = Object.freeze([
     const r = c.state.connected = await c.driver.connect({ consentWaitMs: c.options.consentWaitMs });
     c.consent(r.card, 'consent-card');
     if (r.error) throw Object.assign(Error(r.error), { stage: r.stage });
-    if (r.card.error && !r.card.shown && !r.card.existing) fail(r.card.error);
-    if (!r.card.shown && !r.card.existing) fail('CONSENT_CARD_NOT_SHOWN');
+    if (r.card.error && !r.card.requested && !r.card.shown && !r.card.existing) fail(r.card.error);
+    if (!r.card.requested && !r.card.shown && !r.card.existing) fail('CONSENT_CARD_NOT_REQUESTED');
     if (r.card.status !== 'granted') { c.state.noConnection = true; fail(r.card.status === 'timeout' ? 'CONSENT_NEEDS_OWNER: no click on the debugger card within '
       + Math.round(c.options.consentWaitMs / 1000) + ' s; the harness never clicks it' : 'CONSENT_' + String(r.card.status).toUpperCase()); }
     return { number: r.card.ms, unit: 'ms', detail: { by: r.card.by, scope: r.card.scope, qualification: r.qualification ?? null } };
@@ -428,7 +429,7 @@ export const RELAUNCH_CELLS = Object.freeze([
     const before = c.driver.identity(), next = await c.driver.nextTurn();
     c.consent(next.card, 'relaunch-reuse');
     const after = c.driver.identity();
-    if (next.launched || next.card?.shown) fail('REUSE_ASKED_OR_LAUNCHED');
+    if (next.launched || next.card?.requested || next.card?.shown) fail('REUSE_ASKED_OR_LAUNCHED');
     if (after.pid !== before.pid || after.pidBirth !== before.pidBirth) fail('RECONNECT_IDENTITY_CHANGED');
     return { detail: { card: false, launched: false } };
   } },
@@ -459,9 +460,10 @@ export const relaunchCellsFor = app => RELAUNCH_CELLS.filter(cell => !cell.apps 
 export const requiredCells = (app, { relaunch = false } = {}) => (relaunch ? relaunchCellsFor(app) : cellsFor(app)).map(cell => cell.id);
 const appFor = bundleId => Object.values(APPS).find(app => app.bundleId === bundleId);
 
-export async function waitForHold(io, clock, intervalMs = 30000) {
+export async function waitForHold(io, clock, intervalMs = 30000, signal) {
   let held = 0;
-  while (io.exists(HOLD)) { await clock.sleep(intervalMs); held += intervalMs; }
+  checkRunSignal(signal);
+  while (io.exists(HOLD)) { await interruptibleWait(clock.sleep(intervalMs), signal); checkRunSignal(signal); held += intervalMs; }
   return held;
 }
 
@@ -469,7 +471,8 @@ function context({ app, driver, clock, options, state, timings, consentLog }) {
   const c = {
     app, driver, options, state, timings, windows: [], now: clock.now, sleep: ms => clock.sleep(ms),
     tab: () => state.tab ?? fail('NO_APP_TAB'),
-    consent(card, cell) { if (card) consentLog.push({ cell, shown: !!card.shown, by: card.by ?? null, status: card.status ?? null, scope: card.scope ?? null, ms: card.ms ?? null }); },
+    consent(card, cell) { if (card) consentLog.push({ cell, requested: card.requested === true || card.shown === true,
+      shown: card.shown ?? null, requestedAt: card.requestedAt ?? null, by: card.by ?? null, status: card.status ?? null, scope: card.scope ?? null, ms: card.ms ?? null }); },
     async tool(name, args) {
       if (!TOOLS.has(name)) fail('NOT_A_TURBO_TOOL');
       const r = await driver.tool(name, args), id = driver.identity();
@@ -599,6 +602,9 @@ async function runCell(cell, c, { driver, observer, clock }) {
 
 export async function runQualification({ app, driver, observer, io, clock, cells, options = {} }) {
   const opts = { trials: 10, samples: 20, coldSamples: 5, aliveWaitMs: 60000, consentWaitMs: 120000, mode: 'live', relaunch: false, ...options };
+  const signal = opts.signal, originalClock = clock;
+  driver = cancellableDriver(driver, signal);
+  clock = { ...clock, sleep: ms => interruptibleWait(originalClock.sleep(ms), signal) };
   cells ??= opts.relaunch ? relaunchCellsFor(app) : cellsFor(app);
   // A relaunch run is on the owner's own profile by design; every other run is the benchmark's temporary one (LAWS).
   const receipt = { version: 1, kind: opts.relaunch ? 'electron-relaunch' : 'electron-qualification', mode: opts.mode, at: new Date(clock.now()).toISOString(),
@@ -608,10 +614,11 @@ export async function runQualification({ app, driver, observer, io, clock, cells
   const state = { launchFindings: receipt.launchFindings }, c = context({ app, driver, clock, options: opts, state, timings: receipt.timings, consentLog: receipt.consent.cards });
   let stopped;
   const stop = async before => { const prompt = await io.permission(); if (prompt) stopped = { reason: 'permission-prompt', process: prompt.process, title: prompt.title, before }; return !!prompt; };
-  await observer.start?.();
   try {
+    checkRunSignal(signal); await observer.start?.(); checkRunSignal(signal);
     for (const cell of cells) {
-      if (!stopped) receipt.heldMs += await waitForHold(io, clock);
+      checkRunSignal(signal);
+      if (!stopped) receipt.heldMs += await waitForHold(io, clock, 30000, signal);
       if (stopped?.reason === 'startup-failed') { receipt.cells.push({ id: cell.id, status: 'skipped', reason: 'STARTUP_FAILED' }); continue; }
       if (stopped || await stop(cell.id)) { receipt.cells.push({ id: cell.id, status: 'stopped' }); continue; }
       if (state.noConnection) { receipt.cells.push({ id: cell.id, status: 'skipped', reason: 'NO_CONNECTION' }); continue; }
@@ -619,14 +626,21 @@ export async function runQualification({ app, driver, observer, io, clock, cells
       c.windows = [];
       const record = await runCell(cell, c, { driver, observer, clock });
       receipt.cells.push(record);
+      checkRunSignal(signal);
       if (['consent-card', 'connect', 'relaunch-card'].includes(cell.id) && record.status === 'fail')
         stopped = { reason: 'startup-failed', before: cell.id, error: record.error, ...(record.stage ? { stage: record.stage } : {}) };
     }
     if (!stopped) await stop('cleanup');
+  } catch (error) {
+    if (!signal?.aborted) throw error;
+    receipt.interrupted = true; stopped = { reason: 'interrupted' };
   } finally {
     // Cleanup quits and removes only what this run launched; the owner's instances are never addressed.
-    try { receipt.cleanup = await driver.cleanup(); } catch (error) { receipt.cleanup = { confirmed: false, error: String(error?.message ?? error) }; }
-    await observer.stop?.();
+    if (opts.lifecycle?.cleanupAllowed === false) receipt.cleanup = { confirmed: false, error: 'RUN_CANCELLATION_UNSETTLED' };
+    else {
+      try { receipt.cleanup = await driver.cleanup(); } catch (error) { receipt.cleanup = { confirmed: false, error: String(error?.message ?? error) }; }
+      if (opts.lifecycle?.cleanupAllowed !== false) await observer.stop?.();
+    }
   }
   if (stopped) receipt.stopped = stopped;
   Object.assign(receipt.app, driver.build?.() ?? {});
@@ -677,6 +691,7 @@ export function validateReceipt(receipt, { required = requiredCells(appFor(recei
   if (receipt?.profile?.temporary !== (receipt?.kind !== 'electron-relaunch')) errors.push('ISOLATION_FAILED');
   if (receipt?.consent?.harnessClicks !== undefined && receipt.consent.harnessClicks !== false) errors.push('HARNESS_CLICKED_CONSENT');
   if (receipt?.mode === 'dry-run') unqualified.push('DRY_RUN');
+  if (receipt?.interrupted === true) unqualified.push('RUN_INTERRUPTED');
   if (receipt?.app?.fake === true) unqualified.push('FAKE_DRIVER');
   if (receipt?.stopped) unqualified.push('STOPPED:' + receipt.stopped.reason);
   let qualified = errors.length === 0 && unqualified.length === 0;

@@ -3,6 +3,7 @@
 ObjC.import('AppKit');
 ObjC.import('ApplicationServices');
 ObjC.import('CoreGraphics');
+ObjC.import('CoreFoundation');
 
 function waitForLaunch(seconds) {
   var deadline = $.NSDate.dateWithTimeIntervalSinceNow(seconds === undefined ? 0.1 : seconds);
@@ -174,14 +175,29 @@ function finderMenuDiagnostics(items, api) {
   }, []);
 }
 
+function roleReadFields(detail) {
+  var fields = [];
+  if (!detail) return fields;
+  if (typeof detail.axCode === 'number' && isFinite(detail.axCode) && Math.floor(detail.axCode) === detail.axCode)
+    fields.push('axCode=' + detail.axCode);
+  if ([0, -25212, -25202, 'other'].indexOf(detail.roleReadCode) !== -1) fields.push('roleReadCode=' + detail.roleReadCode);
+  if (['nil', 'empty', 'known-nonwindow', 'other-string', 'nonstring'].indexOf(detail.roleState) !== -1)
+    fields.push('roleState=' + detail.roleState);
+  if (['cf-string', 'other', 'unavailable'].indexOf(detail.roleNativeType) !== -1) fields.push('roleNativeType=' + detail.roleNativeType);
+  ['roleNativeWindowEqual', 'roleDeepWindowEqual'].forEach(function (key) {
+    if (['yes', 'no', 'unavailable'].indexOf(detail[key]) !== -1) fields.push(key + '=' + detail[key]);
+  });
+  return fields;
+}
+
 function windowInventoryError(message, reason, count, index, detail) {
   var fields = ['reason=' + reason];
   if (typeof count === 'number' && isFinite(count)) fields.push('count=' + count);
   if (index !== undefined) fields.push('index=' + index);
   if (detail) {
     if (detail.duplicateIndex !== undefined) fields.push('duplicateIndex=' + detail.duplicateIndex);
-    if (typeof detail.role === 'string' && /^AX[A-Za-z][A-Za-z0-9]*$/.test(detail.role)) fields.push('role=' + detail.role);
-    if (detail.axCode === -25202) fields.push('axCode=-25202');
+    if (['AXWindow', 'AXSheet', 'AXDialog', 'AXGroup', 'AXButton'].indexOf(detail.role) !== -1) fields.push('role=' + detail.role);
+    fields = fields.concat(roleReadFields(detail));
   }
   return new Error(message + ' [' + fields.join(' ') + ']');
 }
@@ -1024,12 +1040,43 @@ function recoverFixtureApplications(request, api, clock) {
 
 function nativeAX(state, clock) {
   var placementBound = false, retainedWindows = [], discardedWindows = [], unsupportedTitle = {};
-  function read(element, attribute, titleOptional) {
+  function roleValueDiagnostic(nativeValue, object) {
+    var diagnostic = { roleNativeType: 'unavailable', roleNativeWindowEqual: 'unavailable', roleDeepWindowEqual: 'unavailable' };
+    try { if (!nativeValue || !object || (object.isNil && object.isNil())) return diagnostic; }
+    catch (error) { return diagnostic; }
+    try {
+      var type = Number($.CFGetTypeID(nativeValue)), stringType = Number($.CFStringGetTypeID());
+      if (isFinite(type) && type > 0 && isFinite(stringType) && stringType > 0)
+        diagnostic.roleNativeType = type === stringType ? 'cf-string' : 'other';
+    } catch (error) {}
+    if (diagnostic.roleNativeType === 'cf-string') {
+      try {
+        var equal = Number($.CFEqual(nativeValue, $('AXWindow')));
+        if (equal === 0 || equal === 1) diagnostic.roleNativeWindowEqual = equal === 1 ? 'yes' : 'no';
+      } catch (error) {}
+    }
+    try {
+      var deep = ObjC.deepUnwrap(object);
+      if (typeof deep === 'string') diagnostic.roleDeepWindowEqual = deep === 'AXWindow' ? 'yes' : 'no';
+    } catch (error) {}
+    return diagnostic;
+  }
+  function refusedRoleCapture(capture) {
+    if (!capture) return;
+    var diagnostic = capture.roleValueProbe ? capture.roleValueProbe() : roleValueDiagnostic(null, null);
+    delete capture.roleValueProbe;
+    Object.assign(capture, diagnostic);
+  }
+  function read(element, attribute, titleOptional, capture) {
     var operation = function () {
       if (clock && clock.check) clock.check();
       if (state && state.officeWaiting && clock.now() >= state.officeDeadline) throw officeDeadlineError(state);
       var value = Ref();
       var code = Number($.AXUIElementCopyAttributeValue(element, $(attribute), value));
+      if (capture) {
+        capture.axCode = code;
+        capture.roleReadCode = [0, -25212, -25202].indexOf(code) !== -1 ? code : 'other';
+      }
       if (code === -25205 && attribute === 'AXTitle' && titleOptional) return unsupportedTitle;
       // These optional attributes can remain unsupported on a valid app
       // window. Their absence allows the existing nonce-title identity fallback.
@@ -1040,12 +1087,25 @@ function nativeAX(state, clock) {
       }
       if (code === -25212 || (code === -25205 && !(state && (state.setup || state.cleanup || state.observation)))) return null;
       if (code !== 0) throw Object.assign(new Error('AX fixture read failed: ' + code + ' (' + attribute + ')'), { code: code, attribute: attribute });
-      return ObjC.castRefToObject(value[0]);
+      var nativeValue = value[0], object = ObjC.castRefToObject(nativeValue);
+      if (capture) capture.roleValueProbe = function () { return roleValueDiagnostic(nativeValue, object); };
+      return object;
     };
     if (state && (state.cleanup || state.observation)) return cleanupRead(operation, state, clock);
     return state && state.officeWaiting ? operation() : setupRead(operation, state, clock);
   }
-  function text(element, attribute) { var value = read(element, attribute); return value ? String(ObjC.unwrap(value)) : ''; }
+  function text(element, attribute, capture) {
+    var value = read(element, attribute, undefined, capture), raw = value ? ObjC.unwrap(value) : value;
+    var result = value ? String(raw) : '';
+    if (capture) {
+      if (raw == null) capture.roleState = 'nil';
+      else if (typeof raw !== 'string') capture.roleState = 'nonstring';
+      else if (!raw) capture.roleState = 'empty';
+      else if (['AXSheet', 'AXDialog', 'AXGroup', 'AXButton'].indexOf(raw) !== -1) capture.roleState = 'known-nonwindow';
+      else if (raw !== 'AXWindow') capture.roleState = 'other-string';
+    }
+    return result;
+  }
   var textOf = text;
   function children(element, attribute) {
     var values = read(element, attribute || 'AXChildren'), result = [];
@@ -1351,13 +1411,21 @@ function nativeAX(state, clock) {
     // true or false only when the app's window list was read; undefined when it couldn't be.
     listed: listed,
     exists: function (window, diagnostic) {
+      var capture = diagnostic ? {} : undefined;
       try {
-        var role = text(window, 'AXRole');
+        var role = text(window, 'AXRole', capture);
         if (diagnostic) diagnostic.role = role;
-        return role === 'AXWindow';
+        if (role === 'AXWindow') return true;
+        refusedRoleCapture(capture);
+        if (diagnostic) Object.assign(diagnostic, capture);
+        return false;
       }
       catch (error) {
+        refusedRoleCapture(capture);
+        if (diagnostic) Object.assign(diagnostic, capture);
         if (error.code === -25202) { if (diagnostic) diagnostic.axCode = error.code; return false; }
+        var fields = roleReadFields(capture);
+        if (fields.length) error.message += ' [' + fields.join(' ') + ']';
         throw error;
       }
     },

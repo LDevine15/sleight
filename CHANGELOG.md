@@ -27,7 +27,8 @@
   mounts it read-only and installs locked Linux dependencies in a writable container copy before running the suite.
   It awaits child collection and confirms container cleanup after cancellation. An optional Colima wrapper keeps
   VM state and Docker configuration private, mounts only the prepared checkout, and verifies VM teardown.
-  Actual Linux execution remains a release gate.
+  Sandbox and host attempts stopped before npm. Host VM and container cleanup was confirmed, but Linux tests
+  and cancellation during a test run remain unqualified. Failure receipts now report the stage and a bounded code.
 - The preflight script checks versions, CHANGELOG and tag agreement, placeholders, private release-note data,
   history findings and Linux test evidence through the shared helper and receipt contract. Candidate mode accepts
   an unreleased heading and keeps `releaseReady: false`. Both modes verify the same clean commit through completion.
@@ -37,7 +38,7 @@
   It rejects native evidence with hygiene failures and output banks that overlap reused A evidence.
   Final-build measurements need compatible evidence.
 
-### Grok Bot approvals
+### Grok Bot and Electron approvals
 
 - Shell approvals open a styled sleight card with its icon. The glove reopens that card. Identical shell
   retries join a call waiting for approval and execute once. Verified app approvals honor preapprovals and session
@@ -55,6 +56,16 @@
   card and icon, accepted the owner's Allow, and a same-session repeat asked no further question. The owner heard
   no sound. Cold-start behavior after the fix, sound, menu overflow, transport and shared-host operation still
   need qualification, including GL9 and Calculator/TextEdit card counts through Grok Bot's priya.
+- Electron debugger and relaunch requests use the same automatic styled presenter, with the installed icon and
+  initial-display sound. Menu review reopens the panel quietly. Existing choices and input guards are preserved;
+  relaunch remains a separate decision with its foreground warning. Native compilation and policy checks passed.
+  Live appearance and audible sound remain unverified. Qualification logs separate requests and answers from
+  uncorrelated observations of a matching card.
+- The benchmark runner stops accepting work on interruption and waits for accepted operations to settle.
+  Uncertain effects retain the app, its pipe owners, evidence and lock. Release requires a completed drain,
+  confirmed cleanup and a saved terminal receipt. Offline cancellation and recovery checks passed;
+  live interruption of the repaired runner remains unqualified. The earlier interrupted fixture was recovered
+  through its normal Quit, followed by verified process exit and lock release.
 
 ### Finder fixtures and ghost hand
 
@@ -64,7 +75,8 @@
 - Finder smoke receipts record setup, foreground samples and cleanup. Inventory refusals include diagnostic
   details when available. Finder process identity uses the kernel's exact birth time when AppKit has no launch date.
   The live retry passed identity checks, then stopped at the window-inventory guard before any action or relaunch.
-  The cleanup repair passed offline tests and review. The inventory failure remains unresolved. Setup, cancellation,
+  The cleanup repair passed offline tests and review. Failure diagnostics now preserve closed metadata from the
+  existing role read, without adding probes or relaxing the window guard. The inventory failure remains unresolved. Setup, cancellation,
   cleanup ownership, lock retention and receipt privacy still need live qualification. The owner approved exclusive
   setup and the remaining window-focus assumption.
 - GH8 remains blocked on supported action events for engine-persisted Always allow grants and correct retry/paste

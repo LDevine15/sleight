@@ -138,14 +138,15 @@ test('the card watcher announces a card with its deadline, follows the card wind
   cardLine('relative.jsonl', { event: 'shown', id: 'x' }); // ignored: not an absolute card log
   await w.poll();
   assert.equal(w.pending(), 1);
-  assert.match(logs[0], /^CARD 1 \(debugger, Visual Studio Code\) shown .*answer by .*Click the sleight glove in the menu bar \(not located yet\).*"Always allow"/);
+  assert.match(logs[0], /^CARD 1 \(debugger, Visual Studio Code\) requested .*answer by .*card opens automatically.*fallback.*sleight glove in the menu bar \(not located yet\).*"Always allow"/);
   const card = files.get(join(dir, 'CARD.json'));
   assert.equal(card.secondsLeft, 120);
   assert.equal(card.delegated, true);
   t0 += 30000;
-  geometry = { ax: true, windows: [{ layer: 25, onScreen: true, x: 1200, y: 0, width: 30, height: 24 }], buttons: [{ title: 'Always allow', x: 700, y: 500, width: 100, height: 30 }] };
+  geometry = { ax: true, windows: [{ layer: 25, onScreen: true, x: 1200, y: 0, width: 30, height: 24 },
+    { layer: 8, onScreen: true, x: 500, y: 300, width: 420, height: 260 }], buttons: [{ title: 'Always allow', x: 700, y: 500, width: 100, height: 30 }] };
   await w.poll();
-  assert.match(logs.at(-1), /^CARD 1: the sleight glove in the menu bar at \(1215, 12\).*"Always allow" at \(750, 515\)/);
+  assert.match(logs.at(-1), /^MATCHING CARD \(uncorrelated request\): Click "Always allow" in the automatic card at \(750, 515\)/);
   assert.equal(files.get(join(dir, 'CARD.json')).secondsLeft, 90);
   cardLine(cardLog, { event: 'answered', id: 'a', kind: 'debugger', at: t0 + 1500, status: 'granted', scope: 'always' });
   await w.poll();
@@ -242,7 +243,7 @@ test('the dry run passes every phase on fakes, models seven cards, and qualifies
   assert.deepEqual(summary.cards.map(c => c.click), [...Array(5).fill('Allow this session'), 'Always allow', 'Quit and reopen']);
   assert.deepEqual(Object.values(EXPECTED_CARDS).flat().map(card => card.split(' (')[0]), summary.cards.map(c => c.click), 'the announced plan matches the model');
   assert.match(logs.find(l => l.startsWith('cards to click')), /qualify: Allow this session \(first launch\).*relaunch: Quit and reopen/);
-  assert.deepEqual(summary.clicks, { total: 7, delegated: 7, late: 0, unanswered: 0 });
+  assert.deepEqual(summary.clicks, { total: 7, requested: 7, matchingCardObservations: 0, accepted: 7, delegated: 7, late: 0, unanswered: 0 });
   for (const p of summary.phases.filter(p => p.receipt)) assert.equal(JSON.parse(readFileSync(p.receipt, 'utf8')).qualified, false);
 });
 
@@ -306,6 +307,7 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
     }
     if (op === 'status') return { ok: true, status: { hostPid: 450 } };
     if (op === 'collect') return { ok: true, status: { ownership: 'free', broker: 'collected' } };
+    if (op === 'end') return { ok: true, ended: true, cleanup: [] };
     return { ok: true };
   }, kill() {} };
   const deps = {
@@ -329,6 +331,51 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
   };
   return { app, root, deps, w };
 }
+
+test('cancellation after cloning cannot launch a relaunch fixture', async t => {
+  const { app, root, deps, w } = relaunchWorld(t), controller = new AbortController(), exec = deps.exec;
+  deps.exec = async (...args) => { const r = await exec(...args); if (args[0] === '/bin/cp') controller.abort(); return r; };
+  const driver = liveRelaunchDriver(app, { root, deps, signal: controller.signal });
+  await assert.rejects(driver.relaunch(), /RUN_INTERRUPTED/);
+  assert.deepEqual(w.electron, []);
+});
+
+test('an unconfirmed relaunch app Quit retains its pipe owners and clone', async t => {
+  const { app, root, deps, w } = relaunchWorld(t), electron = deps.electron;
+  deps.electron = async request => {
+    if (request.mode === 'quit') { assert.equal(request.allowForce, false); return { reason: 'deadline' }; }
+    return electron(request);
+  };
+  const driver = liveRelaunchDriver(app, { root, deps }); await driver.relaunch();
+  const result = await driver.cleanup();
+  assert.equal(result.confirmed, false); assert.equal(existsSync(driver.paths().base), true);
+  assert.deepEqual(w.kills, []);
+});
+
+test('a grace deadline reached during relaunch Quit prevents later signals and clone removal', async t => {
+  const { app, root, deps, w } = relaunchWorld(t), lifecycle = { cleanupAllowed: true }, electron = deps.electron;
+  deps.electron = async request => { const r = await electron(request); if (request.mode === 'quit') lifecycle.cleanupAllowed = false; return r; };
+  const driver = liveRelaunchDriver(app, { root, deps, lifecycle }); await driver.relaunch();
+  const result = await driver.cleanup();
+  assert.equal(result.confirmed, false); assert.equal(existsSync(driver.paths().base), true); assert.deepEqual(w.kills, []);
+});
+test('cancellation inside relaunch host-loss stops its next internal tool and host signal', async t => {
+  const { app, root, deps, w } = relaunchWorld(t), controller = new AbortController(), create = deps.forkWorker;
+  let armed = false, calls = 0;
+  deps.forkWorker = async options => { const worker = await create(options), send = worker.send;
+    worker.send = async (...args) => { const result = await send(...args); if (armed && args[0] === 'call') { calls++; controller.abort(); } return result; }; return worker; };
+  const driver = liveRelaunchDriver(app, { root, deps, signal: controller.signal }); await driver.relaunch(); armed = true;
+  await assert.rejects(driver.hostLoss(), /RUN_INTERRUPTED/);
+  assert.equal(calls, 1); assert.deepEqual(w.kills, []);
+});
+test('reparented relaunch app descendants keep the clone and host infrastructure', async t => {
+  const { app, root, deps, w } = relaunchWorld(t), driver = liveRelaunchDriver(app, { root, deps, python: '/run/python3' });
+  await driver.relaunch();
+  w.procs.push({ pid: 401, ppid: 400, uid: process.getuid(), startedAtMs: 5, args: '/fixture/renderer' });
+  const result = await driver.cleanup();
+  assert.equal(result.confirmed, false); assert.ok(result.left.includes(401));
+  assert.equal(existsSync(driver.paths().base), true); assert.deepEqual(w.kills, []);
+});
 
 test('the live relaunch driver runs every relaunch cell on its own clone, and never touches the owner\'s process', async t => {
   const { app, root, deps, w } = relaunchWorld(t);
@@ -426,7 +473,7 @@ test('the arm server reads only a private config, and forwards each tool call to
   assert.deepEqual(readArmConfig(path), config);
   const sent = [];
   const worker = { async send(op, extra) { sent.push([op, extra?.request?.name ?? extra?.text]); return op === 'start' ? { ok: true, identity: { pid: 1 } }
-    : op === 'call' ? { ok: true, result: { text: 'tab list', isError: false } } : { ok: true }; }, kill() { sent.push(['kill']); } };
+    : op === 'call' ? { ok: true, result: { text: 'tab list', isError: false } } : { ok: true, ended: true, cleanup: [] }; }, kill() { sent.push(['kill']); } };
   const session = await createArmSession({ config, text: 'task', worker });
   assert.deepEqual(await session.call({ name: 'browser_tabs', arguments: { do: 'list' } }), { text: 'tab list', isError: false });
   await session.close();
@@ -437,9 +484,9 @@ test('the arm server reads only a private config, and forwards each tool call to
   await assert.rejects(createArmSession({ config, text: 't', worker: hostRefused }), error => error.message === 'STATE_DIR_TOO_LONG' && error.stage === 'app-host');
 });
 
-test('the worker logs each card it shows and its answer, and the card helper only reads', () => {
+test('the worker logs each card request and its answer, and the card helper only reads', () => {
   const worker = readFileSync(new URL('../bench/electron-qualification-worker.mjs', import.meta.url), 'utf8');
-  for (const part of ["watched('debugger'", "watched('relaunch'", "event: 'shown'", "event: 'answered'", 'deadlineAt: at + CARD_TTL_MS']) assert.ok(worker.includes(part), part);
+  for (const part of ["watched('debugger'", "watched('relaunch'", "event: 'requested'", "event: 'answered'", 'deadlineAt: at + CARD_TTL_MS']) assert.ok(worker.includes(part), part);
   const helper = readFileSync(new URL('../bench/electron-qualification.js', import.meta.url), 'utf8');
   const card = helper.slice(helper.indexOf('card: function'), helper.indexOf('pressInSheet: function'));
   assert.doesNotMatch(card, /AXPress|PerformAction|activate|CGEventPost/);
