@@ -336,6 +336,69 @@ test('direct-launch quit checks kernel birth without requiring an AppKit launch 
   assert.deepEqual(actions, ['terminate']);
 });
 
+// 2026-10-22 03:00Z: VS Code's NSRunningApplication entry lost its bundle id 0.2 s into its own exit, after terminate was
+// accepted, and the helper refused the Quit as a changed identity (pid 5727, bundle ''). An empty bundle id is the same pid
+// unregistered: waited for, never a different identity, and acted on only with the birth a full match pinned.
+test('editor quit waits through an unregistered entry of the same pid and birth, and still refuses any real difference', () => {
+  const { quitElectron } = editorHelper(), birth = '1234.000123';
+  const app = { pid: 900, bundle: QUIT.bundle, path: QUIT.appPath, pidBirth: birth };
+  const unregistered = { pid: 900, bundle: '', path: '', pidBirth: birth };
+  const run = (reads, request = { ...QUIT, pidBirth: birth }) => {
+    const actions = [], api = { running: () => { const next = reads.length > 1 ? reads.shift() : reads[0]; return next && { ...next,
+      terminate: () => { actions.push('terminate'); return true; }, forceTerminate: () => { actions.push('force'); return true; } }; },
+      dontSave: () => { actions.push('dontSave'); return []; }, press: () => assert.fail('no sheet') };
+    const { clock, events } = helperClock();
+    try { return { receipt: quitElectron(request, api, clock), actions, events }; }
+    catch (error) { return { error, actions, events }; }
+  };
+  // Exiting: terminate accepted, then the entry loses its bundle id, then the pid is gone.
+  let r = run([app, unregistered, unregistered, null]);
+  assert.equal(r.receipt.reason, 'exited');
+  assert.equal(r.receipt.unregisteredReads, 2);
+  assert.deepEqual(r.actions.filter(a => a !== 'dontSave'), ['terminate']);
+  assert.equal(r.actions.filter(a => a === 'dontSave').length, 0, 'no sheet is looked for on an unregistered entry');
+  // The same without a requested birth: the first full match pins the kernel birth.
+  r = run([app, unregistered, null], QUIT);
+  assert.equal(r.receipt.reason, 'exited');
+  // Starting: no Quit until the bundle id is registered.
+  r = run([unregistered, unregistered, app, null]);
+  assert.equal(r.receipt.reason, 'exited');
+  assert.deepEqual(r.actions, ['terminate']);
+  r = run([unregistered]);
+  assert.match(r.error.message, /not registered; quit refused \(pid 900, no bundle id after 1 seconds\)/);
+  assert.deepEqual(r.actions, []);
+  r = run([unregistered, null]);
+  assert.equal(r.receipt.reason, 'already-exited');
+  // Never a stand-in for another program: a different birth, path or bundle still refuses at once.
+  for (const [other, field] of [[{ ...unregistered, pidBirth: '1234.000999' }, 'birth'], [{ ...unregistered, path: '/Applications/Other.app' }, 'path'],
+    [{ ...app, bundle: 'com.example.Other' }, 'bundle'], [{ ...app, pid: 901 }, 'pid']]) {
+    r = run([app, other]);
+    assert.match(r.error.message, new RegExp(`identity changed; quit refused \\(pid 90[01], ${field}\\)`), field);
+    assert.deepEqual(r.actions, ['terminate'], field);
+    r = run([other]);
+    assert.match(r.error.message, /identity changed/, field);
+    assert.deepEqual(r.actions, [], field);
+  }
+  // Still there at the deadline: force only with the pinned birth, never on an unregistered entry whose birth is unproved.
+  r = run([app, unregistered]);
+  assert.equal(r.receipt, undefined);
+  assert.deepEqual(r.actions, ['terminate', 'force']);
+  r = run([app, { ...unregistered, pidBirth: null }]);
+  assert.match(r.error.message, /birth unproved; force quit refused/);
+  assert.deepEqual(r.actions, ['terminate']);
+});
+
+test('editor readiness polls an unregistered entry of the same pid and names it when it never registers', () => {
+  const { waitReady } = editorHelper(), request = { ...QUIT, pidBirth: '1234.000123' };
+  const app = { pid: 900, bundle: QUIT.bundle, path: QUIT.appPath, pidBirth: '1234.000123' }, unregistered = { ...app, bundle: '', path: '' };
+  let reads = 0, counted = 0;
+  const api = { running: () => ++reads <= 2 ? unregistered : app, windowCount: () => { counted++; return 1; } };
+  assert.equal(waitReady(request, api, helperClock().clock).windows, 1);
+  assert.equal(counted, 1, 'windows are counted only once the entry is registered');
+  assert.throws(() => waitReady(request, { running: () => unregistered, windowCount: () => 1 }, helperClock().clock), /not registered within 1 seconds/);
+  assert.throws(() => waitReady(request, { running: () => ({ ...unregistered, pidBirth: '1234.000999' }), windowCount: () => 1 }, helperClock().clock), /\(birth\)/);
+});
+
 test('native editor birth decodes kernel microseconds and refuses short, zombie or wrong-pid replies', () => {
   const helper = editorHelper();
   helper.ObjC.unwrap = value => value;

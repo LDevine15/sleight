@@ -420,7 +420,7 @@ export const RELAUNCH_CELLS = Object.freeze([
   { id: 'relaunch-card', measures: 'the debugger card, then the relaunch card naming the running process; only the owner clicks', async run(c) {
     const r = c.state.relaunched = await c.driver.relaunch({ consentWaitMs: c.options.consentWaitMs });
     c.consent(r.card.debugger, 'relaunch-card'); c.consent(r.card.relaunch, 'relaunch-card');
-    if (r.error) fail(r.error);
+    if (r.error) throw Object.assign(Error(r.error), r.detail ? { detail: r.detail } : {});
     if (r.card.relaunch.status !== 'granted') { c.state.noConnection = true; fail(r.card.relaunch.status === 'timeout' ? 'CONSENT_NEEDS_OWNER: no click on the relaunch card' : 'RELAUNCH_' + String(r.card.relaunch.status).toUpperCase()); }
     if (r.before.pid === r.pid) fail('SAME_PROCESS: the app was not reopened');
     return { number: r.ms, unit: 'ms', detail: { before: { windows: r.before.windows } } };
@@ -479,11 +479,13 @@ export const RELAUNCH_CELLS = Object.freeze([
     // the user's until they quit it, and ownership is then freed).
     const r = await c.driver.hostLoss({ consentWaitMs: c.options.consentWaitMs });
     c.consent(r.card?.debugger, 'relaunch-host-loss'); c.consent(r.card?.relaunch, 'relaunch-host-loss');
-    if (typeof r.appSurvived !== 'boolean' || !['kept', 'lost', 'none'].includes(r.unsaved) || typeof r.prompt !== 'boolean' || typeof r.restarted !== 'string') fail('HOST_LOSS_UNMEASURED');
-    if (!r.appSurvived) fail('APP_QUIT_ON_HOST_LOSS');
-    if (r.unsaved === 'lost') fail('UNSAVED_WORK_LOST');
-    if (!['reattached', 'released'].includes(r.restarted)) fail('HOST_LOSS_NOT_RECOVERED');
-    return { number: 1, unit: 'app survived', detail: { appSurvived: true, unsaved: r.unsaved, prompt: r.prompt, restarted: r.restarted } };
+    // The driver's closed host-loss detail (electron-relaunch-live.mjs hostLoss): counts, booleans and fixed reasons only.
+    const refuse = code => { throw Object.assign(Error(code), { detail: r.detail ?? { stage: 'host-loss' } }); };
+    if (typeof r.appSurvived !== 'boolean' || !['kept', 'lost', 'none'].includes(r.unsaved) || typeof r.prompt !== 'boolean' || typeof r.restarted !== 'string') refuse('HOST_LOSS_UNMEASURED');
+    if (!r.appSurvived) refuse('APP_QUIT_ON_HOST_LOSS');
+    if (r.unsaved === 'lost') refuse('UNSAVED_WORK_LOST');
+    if (!['reattached', 'released'].includes(r.restarted)) refuse('HOST_LOSS_NOT_RECOVERED');
+    return { number: 1, unit: 'app survived', detail: { appSurvived: true, unsaved: r.unsaved, prompt: r.prompt, restarted: r.restarted, ...(r.keptBy ? { keptBy: r.keptBy } : {}) } };
   } },
 ].map(cell => Object.freeze(cell)));
 

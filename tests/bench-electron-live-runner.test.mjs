@@ -14,7 +14,7 @@ import { fakeIo, fakeRunnerDeps } from '../bench/electron-live-runner-fakes.mjs'
 import { CARD_TTL_MS, cardLine } from '../bench/electron-cards.mjs';
 import { APPS, RELAUNCH_CELLS, runQualification } from '../bench/electron-qualification.mjs';
 import { fakeObserver } from '../bench/electron-qualification-fakes.mjs';
-import { SEED_SETTINGS, liveRelaunchDriver, portableName, quitOutcome, restartOutcome } from '../bench/electron-relaunch-live.mjs';
+import { SEED_SETTINGS, codeOf, helperReason, liveRelaunchDriver, portableName, quitOutcome, restartOutcome } from '../bench/electron-relaunch-live.mjs';
 import { createArmSession, readArmConfig } from '../bench/electron-arm-server.mjs';
 import { createRunReaper } from '../bench/electron-run-cleanup.mjs';
 
@@ -260,6 +260,12 @@ test('the portable folder name follows the build, and a build with a target is r
   assert.throws(() => portableName({ applicationName: '../x' }), /PRODUCT_UNREADABLE/);
   assert.equal(quitOutcome('ELECTRON_RELAUNCH_QUIT_PENDING: Visual Studio Code is still open'), 'running');
   assert.equal(quitOutcome('ELECTRON_DEBUGGER_REQUIRED'), 'unknown');
+  assert.equal(helperReason('Error: Launched editor identity changed; quit refused (pid 5727, bundle ) (-2700)'), 'identity-changed', 'the pre-fix message');
+  assert.equal(helperReason('Error: Launched editor identity changed before readiness (path)'), 'ready-identity-path');
+  assert.equal(helperReason('Error: Launched editor not registered; quit refused (pid 9, no bundle id after 5 seconds)'), 'not-registered');
+  assert.equal(helperReason('something else entirely'), 'other');
+  assert.equal(codeOf('ELECTRON_OWNERSHIP_UNRESOLVED: held'), 'ELECTRON_OWNERSHIP_UNRESOLVED');
+  assert.equal(codeOf('ref x1 is not on the page now'), null);
   const before = { pid: 4, pidBirth: 'b' };
   assert.equal(restartOutcome({ ok: true, identity: { pid: 4, pidBirth: 'b' } }, before, true), 'reattached');
   assert.equal(restartOutcome({ ok: false, error: 'ELECTRON_OWNERSHIP_UNRESOLVED' }, before, true), 'released');
@@ -284,7 +290,8 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
     throw Error('unexpected ' + file);
   };
   let stateDir;
-  const tabs = 't' + '0'.repeat(31) + '1 Visual Studio Code window 7 joined join 1';
+  // w.afterRehostTabs: the tab list once the host restarted (a different window, or parked).
+  const tabs = () => (w.rehosted && w.afterRehostTabs) || 't' + '0'.repeat(31) + '1 Visual Studio Code window 7 joined join 1';
   // VS Code 1.141.0 as the 2026-10-22 live reads showed it: a row click opens a preview tab and leaves focus in the tree;
   // the tab click focuses the zero-area editor, whose only actionable ref is the keyboard-only one a find read lists.
   // A plain read stops at the 8000-character cut, before any editor line.
@@ -292,7 +299,7 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
   const rows = () => [`- treeitem "a-scratch.txt"${w.scratchOpen ? ' [selected]' : ''} [level=1] [ref=e2]:`,
     ...(w.scratchOpen ? [`- tab "${editor}" [selected] [ref=e5]:`] : [])];
   const editorRows = () => [...(w.scratchOpen ? [`- textbox "${editor}"${w.editorActive ? ' [active]' : ''}`] : []),
-    ...(w.typed ? [`- generic [ref=e9] [partly offscreen]: ${JSON.stringify(w.typed)}`] : []),
+    ...(w.typed && !w.hideTyped ? [`- generic [ref=e9] [partly offscreen]: ${JSON.stringify(w.typed)}`] : []),
     ...(w.editorActive && !w.keyboardRefWithheld ? [`- textbox "${editor}" [active] [keyboard-only] [ref=x1]: "[redacted]"`] : [])];
   const read = find => {
     const head = '# Visual Studio Code 1.141.0 (pid 400) window 7 epoch 1, join 1 joined';
@@ -304,7 +311,9 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
     for (const s of steps) {
       if (s.do === 'click' && s.ref === 'e2') w.scratchOpen = true;
       else if (s.do === 'click' && s.ref === 'e5' && w.scratchOpen) w.editorActive = true;
-      else if (s.do === 'type' && s.ref === 'x1' && w.editorActive && !w.keyboardRefWithheld) w.typed += s.text;
+      else if (s.do === 'type' && s.ref === 'x1' && w.editorActive && !w.keyboardRefWithheld) { if (!w.typingLost) w.typed += s.text; }
+      // w.saveWrites: Meta+S writes the buffer to the fixture file, as VS Code's save does.
+      else if (s.do === 'press' && s.key === 'Meta+S' && w.saveWrites) writeFileSync(join(w.base, 'workspace', 'a-scratch.txt'), w.typed);
       else if (s.do !== 'press') return { text: `ref ${s.ref} is not on the page now`, isError: true };
     }
     return { text: '1 ok', isError: false };
@@ -313,7 +322,9 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
     if (op === 'start') {
       w.starts.push({ profile: extra.profile, home: extra.home, rehost: !!extra.rehost, cardLog: extra.cardLog,
         python: extra.python, qualificationDiagnosticPath: extra.qualificationDiagnosticPath });
-      stateDir = extra.stateDir;
+      stateDir = extra.stateDir; w.base = join(extra.registryPath, '..');
+      // w.dropOnRehost: the editor loses its unsaved buffer when the host restarts.
+      if (extra.rehost) { w.rehosted = true; if (w.dropOnRehost) w.typed = ''; }
       if (!w.procs.some(p => p.pid === 450)) w.procs.push({ pid: 450, ppid: 1, uid: process.getuid(), startedAtMs: 2, args: `${process.execPath} electron-host-run.mjs --state-dir ${stateDir} --temp-root x` });
       if (!w.procs.some(p => p.pid === 400)) { w.procs = w.procs.filter(p => p.pid !== 300); w.procs.push({ pid: 400, ppid: 1, uid: process.getuid(), startedAtMs: 3, args: `${extra.registryPath.replace('recipes.json', 'apps')}/Visual Studio Code.app/Contents/MacOS/Code` }); }
       const first = w.starts.length === 1;
@@ -323,7 +334,7 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
     }
     if (op === 'call') {
       const { name, arguments: a } = extra.request;
-      if (name === 'browser_tabs') return { ok: true, result: { text: tabs, isError: false } };
+      if (name === 'browser_tabs') return { ok: true, result: { text: tabs(), isError: false } };
       if (name === 'browser_read') return { ok: true, result: { text: read(a.find), isError: false } };
       if (name === 'browser_act') return { ok: true, result: act(a.steps) };
     }
@@ -476,6 +487,94 @@ test('relaunch host-loss without an actionable editor fails EDITOR_NOT_FOUND wit
   const text = JSON.stringify(cell.detail);
   assert.ok(!text.includes(driver.paths().base) && !text.includes('/') && !text.includes('Visual Studio Code'), 'no path or window title');
 });
+
+// The 2026-10-22 03:00Z failure left UNSAVED_WORK_LOST with no detail. Each host-loss outcome now carries closed facts:
+// counts, booleans and fixed reasons, never the marker, a path or a window title.
+const closedHostLoss = (cell, driver) => {
+  const text = JSON.stringify(cell.detail);
+  assert.ok(!text.includes(driver.paths().base) && !text.includes('/') && !text.includes('Visual Studio Code') && !/"hl[a-z0-9]{6}"/.test(text), text);
+  assert.equal(cell.detail.typed.length, 8, 'the marker length only');
+};
+
+test('relaunch host-loss that loses the buffer on the restart fails UNSAVED_WORK_LOST with closed detail of every step', async t => {
+  const { byId, driver } = await relaunchRun(t, ({ w }) => { w.dropOnRehost = true; });
+  const cell = byId['relaunch-host-loss'];
+  assert.equal(cell.error, 'UNSAVED_WORK_LOST');
+  closedHostLoss(cell, driver);
+  const d = cell.detail;
+  assert.equal(d.stage, 'host-loss-verify');
+  assert.deepEqual([d.typed.ok, d.typed.keyboardOnlyRef, d.window.known], [true, true, true]);
+  assert.deepEqual([d.beforeKill.seen, d.beforeKill.onDisk, d.beforeKill.cut, d.beforeKill.tabSelected], [true, false, false, true]);
+  assert.deepEqual(d.host, { appSurvived: true, restarted: 'reattached', replyOk: true, code: null, replyStage: null, samePid: true, sameBirth: true, relaunchRequested: false });
+  assert.deepEqual([d.after.tabFound, d.after.sameWindow, d.after.seen, d.after.cut, d.after.tabSelected, d.after.textboxes, d.after.editorRef],
+    [true, true, false, false, true, 2, true]);
+  assert.ok(d.after.reads > 1, 'the find read after the restart is retried before the verdict');
+  assert.deepEqual(d.save, { ok: true, code: null, onDisk: false });
+  assert.deepEqual([d.keptBy, d.reason], [null, null]);
+});
+
+test('relaunch host-loss whose typing never landed is unmeasured, not lost, and says so', async t => {
+  const { byId, driver } = await relaunchRun(t, ({ w }) => { w.typingLost = true; });
+  const cell = byId['relaunch-host-loss'];
+  assert.equal(cell.error, 'HOST_LOSS_UNMEASURED');
+  closedHostLoss(cell, driver);
+  assert.deepEqual([cell.detail.typed.ok, cell.detail.beforeKill.seen, cell.detail.after.seen, cell.detail.reason], [true, false, false, 'typed-text-not-seen']);
+});
+
+test('relaunch host-loss never verifies through another window or a parked tab after the restart', async t => {
+  for (const [tabs, sameWindow] of [['t' + '0'.repeat(31) + '2 Visual Studio Code window 8 joined join 1', false],
+    ['t' + '0'.repeat(31) + '1 Visual Studio Code window 7 parked join 2', false]]) {
+    const { byId, driver } = await relaunchRun(t, ({ w }) => { w.afterRehostTabs = tabs; });
+    const cell = byId['relaunch-host-loss'];
+    assert.equal(cell.error, 'HOST_LOSS_UNMEASURED', tabs);
+    closedHostLoss(cell, driver);
+    assert.deepEqual([cell.detail.after.tabFound, cell.detail.after.sameWindow, cell.detail.save, cell.detail.reason], [false, sameWindow, null, 'no-joined-tab-after-restart']);
+  }
+});
+
+test('relaunch host-loss counts the marker the save wrote after the restart as kept when no find row shows it', async t => {
+  const { byId } = await relaunchRun(t, ({ w }) => { w.hideTyped = true; w.saveWrites = true; });
+  const cell = byId['relaunch-host-loss'];
+  assert.equal(cell.status, 'pass', JSON.stringify(cell));
+  assert.equal(cell.detail.keptBy, 'disk');
+  // A buffer the editor dropped saves nothing new, so the same setup with the drop fails as before.
+  const lost = (await relaunchRun(t, ({ w }) => { w.hideTyped = true; w.saveWrites = true; w.dropOnRehost = true; })).byId['relaunch-host-loss'];
+  assert.equal(lost.error, 'HOST_LOSS_UNMEASURED');
+  assert.deepEqual([lost.detail.save.onDisk, lost.detail.reason], [false, 'typed-text-not-seen']);
+});
+
+test('relaunch user-quit names the connected birth to the helper and a helper refusal carries closed detail', async t => {
+  const birth = '1792638040.154823';
+  const withBirth = ({ deps }) => {
+    const create = deps.forkWorker;
+    deps.forkWorker = async options => {
+      const worker = await create(options), send = worker.send.bind(worker);
+      return { ...worker, send: async (op, extra = {}) => {
+        const reply = await send(op, extra);
+        return op === 'start' && reply.ok ? { ...reply, identity: { ...reply.identity, pidBirth: birth } } : reply;
+      } };
+    };
+  };
+  const passed = await relaunchRun(t, withBirth);
+  assert.equal(passed.byId['relaunch-user-quit'].status, 'pass', JSON.stringify(passed.byId['relaunch-user-quit']));
+  const quit = passed.w.electron.filter(r => r.mode === 'quit' && r.pid === 400)[0];
+  assert.equal(quit.pidBirth, birth);
+  const { byId, driver } = await relaunchRun(t, world => {
+    withBirth(world);
+    const electron = world.deps.electron;
+    world.deps.electron = async request => {
+      if (request.mode === 'quit' && request.pid === 400 && !request.allowForce && request.allowForce !== false)
+        throw Error('ELECTRON_HELPER_FAILED: ' + driverPathFree + ': execution error: Error: Error: Launched editor identity changed; quit refused (pid 400, bundle) (-2700)');
+      return electron(request);
+    };
+  });
+  const cell = byId['relaunch-user-quit'];
+  assert.match(cell.error, /^ELECTRON_HELPER_FAILED/);
+  assert.deepEqual(cell.detail, { stage: 'user-quit-helper', expected: 'the relaunched app quit by its pid, bundle, path and birth', reason: 'quit-identity-bundle',
+    birthPinned: true, turnEnded: true, appAliveAfter: true });
+  assert.ok(!JSON.stringify(cell.detail).includes(driver.paths().base));
+});
+const driverPathFree = 'real-electron.js';
 
 test('a settings change during host-loss fails relaunch-user-quit PROFILE_CHANGED with when and which seed keys changed, closed', async t => {
   const { byId, driver } = await relaunchRun(t, ({ deps }) => {

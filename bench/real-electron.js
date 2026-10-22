@@ -40,43 +40,76 @@ function expectedPath(request, api) {
   return typeof api.canonicalPath === 'function' ? api.canonicalPath(request.appPath) : request.appPath;
 }
 
-// request: { pid, bundle, appPath, waitMs }. api: running(pid) -> null | { pid, bundle, path, terminate(), forceTerminate() },
-// dontSave(pid) -> buttons, press(button). clock: now(), wait(ms), emit(value).
+// How long a live pid may stay without a LaunchServices bundle id before its Quit is refused.
+var REGISTRATION_WAIT_MS = 5000;
+
+// request: { pid, bundle, appPath, waitMs, pidBirth? }. api: running(pid) -> null | { pid, bundle, path, pidBirth, terminate(),
+// forceTerminate() }, dontSave(pid) -> buttons, press(button). clock: now(), wait(ms), emit(value).
+// An entry with an empty bundle id and no path is the same pid not (yet, or no longer) registered with LaunchServices:
+// 2026-10-22 03:00Z, VS Code's entry lost its bundle id 0.2 s into its own exit, after terminate was accepted. It is never a
+// different identity, and never acted on unless its kernel birth equals the one a fully matching read pinned.
 function quitElectron(request, api, clock) {
   var pid = Number(request.pid), started = clock.now(), waitMs = request.waitMs > 0 ? request.waitMs : 20000;
-  var accepted = false, presses = 0, forced = false;
+  var accepted = false, presses = 0, forced = false, unregisteredReads = 0, pinned = null;
   if (!(pid > 0) || !request.bundle || !request.appPath) throw new Error('Invalid editor quit request');
   var appPath = expectedPath(request, api);
+  function refuse(actual, field) {
+    throw new Error('Launched editor identity changed; quit refused (pid ' + actual + ', ' + field + ')');
+  }
+  // 'same' (every field matches), or 'unregistered' (empty bundle id, same pid, no conflicting birth). Anything else throws.
   function identity(target) {
-    var actual = target.pid === -1 ? pid : target.pid;
+    var actual = target.pid === -1 ? pid : target.pid, birth = typeof target.pidBirth === 'string' && target.pidBirth ? target.pidBirth : null;
     // A reused pid belongs to some other program, and the owner's own instance has a different pid: never quit either.
-    if (actual !== pid || target.bundle !== request.bundle || target.path !== appPath ||
-        request.launchedAtMs !== undefined && target.launchedAtMs !== request.launchedAtMs ||
-        request.pidBirth !== undefined && target.pidBirth !== request.pidBirth) {
-      throw new Error('Launched editor identity changed; quit refused (pid ' + actual + ', bundle ' + target.bundle + ')');
+    if (actual !== pid) refuse(actual, 'pid');
+    if (birth && (request.pidBirth !== undefined && birth !== request.pidBirth || pinned && birth !== pinned)) refuse(actual, 'birth');
+    if (!target.bundle) {
+      if (target.path && target.path !== appPath) refuse(actual, 'path');
+      unregisteredReads++;
+      return 'unregistered';
     }
+    if (target.bundle !== request.bundle) refuse(actual, 'bundle');
+    if (target.path !== appPath) refuse(actual, 'path');
+    if (request.launchedAtMs !== undefined && target.launchedAtMs !== request.launchedAtMs) refuse(actual, 'launch date');
+    if (request.pidBirth !== undefined && birth !== request.pidBirth) refuse(actual, 'birth');
+    if (birth) pinned = birth;
+    return 'same';
+  }
+  // An action on an unregistered entry needs the birth a fully matching read pinned.
+  function actionable(target) {
+    var kind = identity(target);
+    return kind === 'same' || !!pinned && target.pidBirth === pinned;
   }
   function done(reason) {
-    var receipt = { stage: 'quit', reason: reason, accepted: accepted, presses: presses, forced: forced, elapsedMs: clock.now() - started };
+    var receipt = { stage: 'quit', reason: reason, accepted: accepted, presses: presses, forced: forced, elapsedMs: clock.now() - started,
+      unregisteredReads: unregisteredReads };
     clock.emit(receipt);
     return receipt;
   }
   var target = api.running(pid);
   if (!target) return done('already-exited');
-  identity(target);
+  // Before the Quit: a live pid without its bundle id yet is waited for, boundedly, and only a full match is terminated.
+  var registrationWait = Math.min(waitMs, REGISTRATION_WAIT_MS);
+  while (identity(target) !== 'same') {
+    if (clock.now() - started >= registrationWait)
+      throw new Error('Launched editor not registered; quit refused (pid ' + pid + ', no bundle id after ' + Math.round(registrationWait / 1000) + ' seconds)');
+    clock.wait(100);
+    target = api.running(pid);
+    if (!target) return done('already-exited');
+  }
   accepted = !!target.terminate();
   while (clock.now() - started < waitMs) {
     target = api.running(pid);
     if (!target) return done('exited');
-    identity(target);
     // The fixture profile is throwaway, so its own Don't Save sheet is answered. Anything else waits for the forced end.
-    var buttons = api.dontSave(pid);
-    if (buttons.length === 1 && presses < 3) { api.press(buttons[0]); presses++; }
+    if (identity(target) === 'same') {
+      var buttons = api.dontSave(pid);
+      if (buttons.length === 1 && presses < 3) { api.press(buttons[0]); presses++; }
+    }
     clock.wait(100);
   }
   target = api.running(pid);
   if (!target) return done('exited');
-  identity(target);
+  if (!actionable(target)) throw new Error('Launched editor not registered and its birth unproved; force quit refused (pid ' + pid + ')');
   if (request.allowForce === false) throw new Error('FIXTURE_NORMAL_QUIT_UNCONFIRMED');
   forced = true;
   target.forceTerminate();
@@ -100,12 +133,16 @@ function waitReady(request, api, clock) {
     var target = api.running(pid);
     if (!target) throw new Error('Launched editor exited before its window opened');
     // The field that differed is a fixed name, so the receipt says which check refused without carrying the path.
-    var changed = (target.pid === -1 ? pid : target.pid) !== pid ? 'pid' : target.bundle !== request.bundle ? 'bundle' :
-      target.path !== appPath ? 'path' : request.pidBirth !== undefined && target.pidBirth !== request.pidBirth ? 'birth' : '';
+    // A live pid with no bundle id yet is not ready and not another app: it is polled like a missing window.
+    var unregistered = !target.bundle && !target.path;
+    var changed = (target.pid === -1 ? pid : target.pid) !== pid ? 'pid' :
+      request.pidBirth !== undefined && target.pidBirth && target.pidBirth !== request.pidBirth ? 'birth' : unregistered ? '' :
+      target.bundle !== request.bundle ? 'bundle' : target.path !== appPath ? 'path' : request.pidBirth !== undefined && target.pidBirth !== request.pidBirth ? 'birth' : '';
     if (changed) throw new Error('Launched editor identity changed before readiness (' + changed + ')');
-    var windows = api.windowCount(pid);
+    var windows = unregistered ? 0 : api.windowCount(pid);
     if (windows > 0) { var receipt = { stage: 'ready', windows: windows, elapsedMs: clock.now() - started }; clock.emit(receipt); return receipt; }
-    if (clock.now() - started >= waitMs) throw new Error('Launched editor window did not open within ' + Math.round(waitMs / 1000) + ' seconds');
+    if (clock.now() - started >= waitMs) throw new Error(unregistered ? 'Launched editor not registered within ' + Math.round(waitMs / 1000) + ' seconds'
+      : 'Launched editor window did not open within ' + Math.round(waitMs / 1000) + ' seconds');
     clock.wait(200);
   }
 }

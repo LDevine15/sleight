@@ -953,6 +953,7 @@ test('relaunch cells name what each app decides, run dry on both apps, and a liv
   const r2 = await runQualification({ app: APPS.vscode, driver: unmeasured, observer: fakeObserver({ now: clock().now }), io: quietIo(), clock: clock(),
     cells: RELAUNCH_CELLS.filter(cell => cell.id === 'relaunch-host-loss'), options: { mode: 'dry-run', relaunch: true } });
   assert.equal(r2.cells[0].error, 'HOST_LOSS_UNMEASURED');
+  assert.deepEqual(r2.cells[0].detail, { stage: 'host-loss' }, 'a driver without detail still names the stage');
   for (const [loss, code] of [[{ appSurvived: false, unsaved: 'lost', prompt: false, restarted: 'released' }, 'APP_QUIT_ON_HOST_LOSS'],
     [{ appSurvived: true, unsaved: 'lost', prompt: false, restarted: 'reattached' }, 'UNSAVED_WORK_LOST'],
     [{ appSurvived: true, unsaved: 'kept', prompt: false, restarted: 'unresolved' }, 'HOST_LOSS_NOT_RECOVERED']]) {
@@ -960,6 +961,7 @@ test('relaunch cells name what each app decides, run dry on both apps, and a liv
     const r3 = await runQualification({ app: APPS.vscode, driver: failing, observer: fakeObserver({ now: clock().now }), io: quietIo(), clock: clock(),
       cells: RELAUNCH_CELLS.filter(cell => cell.id === 'relaunch-host-loss'), options: { mode: 'dry-run', relaunch: true } });
     assert.equal(r3.cells[0].error, code);
+    assert.equal(r3.cells[0].detail.stage, 'host-loss');
   }
   // An app that refuses or still asks at the deadline fails its quit cell, and the run is not qualified.
   const c = clock(), driver = fakeDriver({ now: c.now, relaunchQuit: 'running' });

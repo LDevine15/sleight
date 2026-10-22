@@ -69,6 +69,44 @@ export function restartOutcome(reply, before, appSurvived) {
   return appSurvived && /OWNERSHIP_UNRESOLVED/.test(String(reply?.error)) ? 'released' : 'failed';
 }
 
+// Closed failure detail: an error code with fixed-name facts only (counts, booleans, enums), never paths or page text.
+const closedError = (code, detail) => Object.assign(Error(code), { detail });
+/** The leading error code of a worker reply or tool error, or null. */
+export const codeOf = text => /^[A-Z][A-Z0-9_]{2,63}\b/.exec(String(text ?? ''))?.[0] ?? null;
+const stageOf = stage => typeof stage === 'string' && /^[a-z][a-z-]{0,31}$/.test(stage) ? stage : null;
+/** The editor helper's refusal (real-electron.js) as a fixed reason. */
+export function helperReason(message) {
+  const text = String(message ?? '');
+  const field = /identity changed(?: before readiness \(|; quit refused \(pid \d+, )(pid|bundle|path|birth|launch date)\)/.exec(text)?.[1];
+  if (field) return /before readiness/.test(text) ? `ready-identity-${field.replace(' ', '-')}` : `quit-identity-${field.replace(' ', '-')}`;
+  return [[/identity changed/, 'identity-changed'], [/not registered and its birth unproved/, 'force-unregistered'], [/not registered/, 'not-registered'],
+    [/still running five seconds after force/, 'force-deadline'], [/FIXTURE_NORMAL_QUIT_UNCONFIRMED/, 'normal-quit-unconfirmed'],
+    [/exited before its window/, 'exited-before-window'], [/did not open within/, 'window-timeout'], [/Fixture app launch failed/, 'launch-failed'],
+    [/Invalid editor/, 'invalid-request']].find(([pattern]) => pattern.test(text))?.[1] ?? 'other';
+}
+/** Closed facts from one find read of the scratch editor: whether a content row holds the marker, the read's cut, the tab's
+ *  state and textbox counts. Never the read's text. */
+export function editorFacts(text, marker) {
+  const lines = String(text).split('\n'), content = lines.filter(line => !line.startsWith('#'));
+  const tabs = content.filter(line => SELECTORS.scratchTab.test(line));
+  const boxes = content.filter(line => /textbox/.test(line) && (line.includes(SCRATCH) || /Editor content/i.test(line)));
+  return { seen: !!marker && content.some(line => line.includes(marker)), cut: /^# Cut:/m.test(String(text)),
+    tabOpen: tabs.length > 0, tabSelected: tabs.some(line => /\[selected\]/.test(line)),
+    tabPreview: tabs.length ? tabs.some(line => line.includes(`tab "${SCRATCH}, preview`)) : null,
+    tabDirty: tabs.length ? tabs.some(line => new RegExp(`tab "${SCRATCH.replace('.', '\\.')}[^"]*(?:modified|unsaved|dirty)`, 'i').test(line)) : null,
+    textboxes: boxes.length, actionable: boxes.filter(line => refOf(line, /textbox/)).length, editorRef: !!editorRefOf(text, SCRATCH) };
+}
+/** host-loss: kept when a content row shows the marker after the restart, or when the save after it wrote the marker that
+ *  was not on disk before the kill. Otherwise lost only when every precondition held; else unverified with the first gap. */
+export function hostLossVerdict({ replyOk, beforeKill, after, save }) {
+  if (after?.seen) return { unsaved: 'kept', keptBy: 'find', reason: null };
+  if (save?.ok && save.onDisk && beforeKill && !beforeKill.onDisk) return { unsaved: 'kept', keptBy: 'disk', reason: null };
+  const reason = !replyOk ? 'host-not-reattached' : !after?.tabFound ? 'no-joined-tab-after-restart' : !beforeKill?.seen ? 'typed-text-not-seen'
+    : beforeKill.onDisk ? 'saved-before-kill' : after.cut ? 'verification-read-cut' : !after.tabSelected ? 'scratch-tab-not-selected'
+    : !save?.ok ? 'save-failed' : null;
+  return { unsaved: reason ? 'unverified' : 'lost', keptBy: null, reason };
+}
+
 async function sha256(path) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk);
@@ -78,7 +116,11 @@ const realDeps = () => ({
   exec: execute, helper: qualificationHelper, list: listProcesses, forkWorker: qualificationWorker, exited: processExitConfirmed,
   electron: async request => {
     const r = await runOwned('/usr/bin/osascript', ['-l', 'JavaScript', QUIT_HELPER, JSON.stringify(request)], { timeoutMs: (request.waitMs ?? 30000) + 20000 });
-    if (r.exit?.code !== 0) throw Error(`ELECTRON_HELPER_FAILED: ${String(r.stderr ?? '').trim().split('\n').at(-1)?.slice(0, 200)}`);
+    if (r.exit?.code !== 0) {
+      const last = String(r.stderr ?? '').trim().split('\n').at(-1)?.slice(0, 200);
+      throw closedError(`ELECTRON_HELPER_FAILED: ${last}`, { stage: 'electron-helper', mode: request.mode, exit: Number.isSafeInteger(r.exit?.code) ? r.exit.code : null,
+        signal: typeof r.exit?.signal === 'string' && /^SIG[A-Z0-9]{1,8}$/.test(r.exit.signal) ? r.exit.signal : null, reason: helperReason(last) });
+    }
     return String(r.stdout).trim().split('\n').map(line => { try { return JSON.parse(line); } catch { return undefined; } }).filter(Boolean).at(-1);
   },
   derive: async (process) => (await import(new URL('electron-identity.mjs', D))).deriveAppInstance(process),
@@ -128,25 +170,26 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
     if (recipe) return;
     assertHostPath(stateDir);
     const source = await editorIdentity(app.path, { exec: d.exec });
-    if (source.bundle !== app.bundleId) throw Error(`${app.path} is ${source.bundle}, not ${app.bundleId}`);
-    if ((await owners()).length) throw Error('OWNER_APP_RUNNING: the relaunch cells need the owner\'s own copy closed; the runner never quits it');
+    if (source.bundle !== app.bundleId) throw closedError(`${app.path} is ${source.bundle}, not ${app.bundleId}`, { stage: 'prepare-source', expected: 'the installed bundle carries the app\'s bundle id' });
+    const running = (await owners()).length;
+    if (running) throw closedError('OWNER_APP_RUNNING: the relaunch cells need the owner\'s own copy closed; the runner never quits it', { stage: 'prepare-owner', running });
     // A quarantined source would be translocated, and a translocated copy has no portable folder beside it.
     const quarantined = await d.exec('/usr/bin/xattr', ['-p', 'com.apple.quarantine', app.path], { timeout: 5000 }).then(() => true, () => false);
-    if (quarantined) throw Error('SOURCE_QUARANTINED: the installed bundle carries a quarantine flag; the runner leaves it as it is');
+    if (quarantined) throw closedError('SOURCE_QUARANTINED: the installed bundle carries a quarantine flag; the runner leaves it as it is', { stage: 'prepare-source', quarantined: true });
     mkdirSync(appsDir, { recursive: true }); mkdirSync(home); mkdirSync(tempRoot); mkdirSync(stateDir, { mode: 0o700 });
     await d.exec('/bin/cp', ['-cR', app.path, appsDir + '/'], { timeout: 120000 }); // an APFS clone: no second copy on disk
     const copy = await editorIdentity(copyPath, { exec: d.exec });
-    if (copy.bundle !== app.bundleId || !copy.path.startsWith(base + '/')) throw Error('COPY_IDENTITY_CHANGED');
+    if (copy.bundle !== app.bundleId || !copy.path.startsWith(base + '/')) throw closedError('COPY_IDENTITY_CHANGED', { stage: 'prepare-copy', bundleMatches: copy.bundle === app.bundleId, inRunFolder: copy.path.startsWith(base + '/') });
     portable = join(appsDir, portableName(JSON.parse(readFileSync(join(copy.path, 'Contents/Resources/app/product.json'), 'utf8'))));
     mkdirSync(join(portable, 'user-data', 'User'), { recursive: true });
     seeded = JSON.stringify(SEED_SETTINGS, null, 2) + '\n';
     writeFileSync(join(portable, 'user-data', 'User', 'settings.json'), seeded);
     files = prepareWorkspace(join(base, 'workspace'));
     const digest = await sha256(copy.executable);
-    if (digest !== await sha256(source.executable)) throw Error('COPY_DIFFERS_FROM_SOURCE');
+    if (digest !== await sha256(source.executable)) throw closedError('COPY_DIFFERS_FROM_SOURCE', { stage: 'prepare-copy', expected: 'the clone\'s executable hashes like the source\'s' });
     // The shipped recipe's userProfile (its support folder name and empty arguments) is what the relaunch reopens with.
     const shipped = JSON.parse(readFileSync(SHIPPED_REGISTRY, 'utf8')).recipes.find(r => r.bundleId === app.bundleId)?.userProfile;
-    if (!shipped) throw Error('ELECTRON_USER_PROFILE_UNSUPPORTED');
+    if (!shipped) throw closedError('ELECTRON_USER_PROFILE_UNSUPPORTED', { stage: 'prepare-recipe', expected: 'a shipped userProfile for the bundle' });
     const derived = await d.derive({ bundle: copy.path, executable: copy.executable, profile: join(home, 'Library/Application Support', shipped.supportDir), temporary: false, pid: 1, pidBirth: 'recipe' });
     const signed = parseCodesign((await d.exec('/usr/bin/codesign', ['-dv', '--verbose=4', copy.path], { timeout: 20000 })).stderr);
     build = { version: derived.version, sha256: digest, signer: signed.signer, team: derived.signer, cdhash: derived.cdhash, runtime: derived.runtime, copy: true, portable: true };
@@ -193,13 +236,15 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
     try { await d.electron({ mode: 'ready', pid: opened.pid, bundle: app.bundleId, appPath: realCopy(), waitMs: 30000, ...birth }); }
     catch (error) {
       // A launch that never became ready is quit at once (the helper rechecks pid, bundle, path and birth), as below.
-      await quitCopy(opened.pid, 20000, undefined, birth).catch(() => {});
-      throw error;
+      const quit = await quitCopy(opened.pid, 20000, undefined, birth).then(() => 'quit', () => 'refused');
+      throw Object.assign(error, { detail: { ...(error.detail ?? {}), stage: 'copy-ready', reason: error.detail?.reason ?? helperReason(error.message),
+        birthPinned: !!birth.pidBirth, quit } });
     }
     for (const started = d.now(); !engaged(); await d.sleep(250)) {
       if (d.now() - started > 20000) {
-        await quitCopy(opened.pid, 20000).catch(() => {});
-        throw Error('PORTABLE_NOT_ENGAGED: the copy wrote no logs in its portable folder; it was quit at once');
+        const quit = await quitCopy(opened.pid, 20000).then(() => 'quit', () => 'refused');
+        throw closedError('PORTABLE_NOT_ENGAGED: the copy wrote no logs in its portable folder; it was quit at once',
+          { stage: 'copy-engage', expected: 'logs in the portable folder within 20 seconds', userData: existsSync(join(portable, 'user-data')), quit });
       }
     }
     markSettings('engaged');
@@ -215,8 +260,12 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
     const ms = Math.round(d.now() - started);
     return reply.ok ? { ...reply.result, ms } : { text: reply.error, isError: true, ms };
   };
-  const read = async (tab, extra = {}) => { const r = await tool('browser_read', { tab, ...extra }); if (r.isError) throw Error(String(r.text).split('\n')[0]); return r.text; };
-  const joinedTab = async () => tabsOf((await tool('browser_tabs', { do: 'list' })).text).find(row => !row.parked)?.tab;
+  const read = async (tab, extra = {}, stage = 'read') => {
+    const r = await tool('browser_read', { tab, ...extra });
+    if (r.isError) throw closedError(String(r.text).split('\n')[0], { stage, find: extra.find !== undefined, code: codeOf(r.text) });
+    return r.text;
+  };
+  const tabRows = async () => { const r = await tool('browser_tabs', { do: 'list' }); return r.isError ? [] : tabsOf(r.text); };
   // Whether the copy's settings still equal the seed at each stage, so a PROFILE_CHANGED receipt says when it changed.
   const settingsPath = () => join(portable, 'user-data', 'User', 'settings.json');
   const settingsText = () => { try { return readFileSync(settingsPath(), 'utf8'); } catch { return null; } };
@@ -245,14 +294,14 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
       seen[key] = true;
       if (r.isError) throw closed('SCRATCH_CLICK_FAILED');
     };
-    const editorRef = async () => editorRefOf(scan(await read(tab, { find: 'Editor content|' + SCRATCH })), SCRATCH);
-    const first = scan(await read(tab, { find: SCRATCH }));
+    const editorRef = async () => editorRefOf(scan(await read(tab, { find: 'Editor content|' + SCRATCH }, 'host-loss-editor')), SCRATCH);
+    const first = scan(await read(tab, { find: SCRATCH }, 'host-loss-editor'));
     let ref = editorRefOf(first, SCRATCH);
     if (ref) return ref;
     let tabRef = refOf(first, SELECTORS.scratchTab);
     if (!tabRef) {
       await click(refOf(first, SELECTORS.scratch) ?? (() => { throw closed('SCRATCH_ROW_NOT_FOUND'); })(), 'rowClicked');
-      tabRef = await until(async () => refOf(scan(await read(tab, { find: SCRATCH })), SELECTORS.scratchTab));
+      tabRef = await until(async () => refOf(scan(await read(tab, { find: SCRATCH }, 'host-loss-editor')), SELECTORS.scratchTab));
     }
     if (tabRef) await click(tabRef, 'tabClicked');
     ref = await until(editorRef);
@@ -274,7 +323,9 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
       const started = d.now(), reply = await turn();
       const ms = Math.round(d.now() - started), prompt = !!(await io.permission?.());
       const card = { debugger: reply.card ?? { shown: false, status: 'refused', error: reply.error }, relaunch: reply.relaunchCard ?? { shown: false, status: 'refused', error: reply.error } };
-      if (!reply.ok) return { card, before, ms, quit: { outcome: quitOutcome(reply.error), ms: null, prompt }, error: reply.error, pipe: false, profile: { temporary: false } };
+      if (!reply.ok) return { card, before, ms, quit: { outcome: quitOutcome(reply.error), ms: null, prompt }, error: reply.error, pipe: false, profile: { temporary: false },
+        detail: { stage: 'relaunch-turn', code: codeOf(reply.error), replyStage: stageOf(reply.stage), outcome: quitOutcome(reply.error),
+          debuggerCard: card.debugger.status ?? null, relaunchCard: card.relaunch.status ?? null, prompt } };
       const listeners = await d.exec('/usr/sbin/lsof', ['-nP', '-a', '-p', String(reply.identity.pid), '-iTCP', '-sTCP:LISTEN', '-t'], { timeout: 10000 })
         .then(r => String(r.stdout).trim().split('\n').filter(Boolean).length, error => (error.code === 1 ? 0 : -1));
       const rows = tabsOf((await tool('browser_tabs', { do: 'list' })).text);
@@ -286,49 +337,85 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
     },
     async nextTurn() {
       const before = current, reply = await turn();
-      if (!reply.ok) throw Error(reply.error);
+      if (!reply.ok) throw closedError(reply.error, { stage: 'reuse-turn', code: codeOf(reply.error), replyStage: stageOf(reply.stage),
+        cardRequested: reply.card?.requested === true, relaunchRequested: reply.relaunchCard?.requested === true });
       return { card: reply.card, launched: reply.identity.pid !== before?.pid || reply.identity.pidBirth !== before?.pidBirth };
     },
     // Runs before user-quit (the live order), on the app the relaunch reopened: an unsaved line, sleight's host killed, the
     // keeper holding the pipe, then the next turn's restarted host. The buffer is saved at the end so the Quit asks nothing.
+    // Each step leaves closed facts in detail, so a failed run says which step broke: whether the typing landed (a find read
+    // before the kill, and the file on disk still without it), whether the restarted host reattached and the same window
+    // joined again, what the find read after the restart showed, and whether the save after it wrote the marker.
     async hostLoss() {
-      const before = current ?? (() => { throw Error('NOT_RELAUNCHED'); })();
+      const before = current ?? (() => { throw closedError('NOT_RELAUNCHED', { stage: 'host-loss', expected: 'the app the relaunch cell reopened' }); })();
       const marker = 'hl' + Math.random().toString(36).slice(2, 8);
       markSettings('hostLossStart');
-      let tab = await joinedTab() ?? (() => { throw Object.assign(Error('NO_JOINED_APP_TAB'), { detail: { stage: 'host-loss-tab', expected: 'one joined app tab' } }); })();
-      const editor = await scratchEditor(tab);
-      const typed = await tool('browser_act', { tab, steps: [{ do: 'type', ref: editor, text: marker }], observe: 'none' });
-      if (typed.isError) throw Object.assign(Error('HOST_LOSS_TYPE_FAILED'), { detail: { stage: 'host-loss-type', expected: 'the marker typed into the scratch editor',
-        keyboardOnlyRef: /^x\d+$/.test(editor) } });
+      const onDisk = () => { try { return readFileSync(files.scratch, 'utf8').includes(marker); } catch { return false; } };
+      const detail = { stage: 'host-loss-verify', expected: 'the typed marker in the scratch editor of the same window after the restarted host reattached',
+        typed: { length: marker.length }, window: {}, beforeKill: null, host: null, after: null, save: null, keptBy: null, reason: null };
+      // A find for the marker, the editor and its tab, polled until a content row shows the marker or the time runs out.
+      const look = async (tab, timeoutMs, stage) => {
+        let facts, reads = 0;
+        try { await until(async () => { facts = editorFacts(await read(tab, { find: [marker, 'Editor content', SCRATCH].join('|') }, stage), marker); reads++; return facts.seen; }, timeoutMs); }
+        catch (error) { if (error.detail) error.detail = { ...detail, stage, readError: error.detail, reads }; throw error; }
+        return { ...facts, reads };
+      };
+      const start = (await tabRows()).find(row => !row.parked) ??
+        (() => { throw closedError('NO_JOINED_APP_TAB', { stage: 'host-loss-tab', expected: 'one joined app tab' }); })();
+      detail.window.known = Number.isSafeInteger(start.window) && start.window > 0;
+      const editor = await scratchEditor(start.tab);
+      const typed = await tool('browser_act', { tab: start.tab, steps: [{ do: 'type', ref: editor, text: marker }], observe: 'none' });
+      Object.assign(detail.typed, { keyboardOnlyRef: /^x\d+$/.test(editor), ok: !typed.isError, code: typed.isError ? codeOf(typed.text) : null });
+      if (typed.isError) throw closedError('HOST_LOSS_TYPE_FAILED', { ...detail, stage: 'host-loss-type', expected: 'the marker typed into the scratch editor',
+        keyboardOnlyRef: /^x\d+$/.test(editor) });
+      detail.beforeKill = { ...await look(start.tab, 3000, 'host-loss-before-kill'), onDisk: onDisk() };
       const status = (await active.send('status')).status;
       hostPid = status?.hostPid ?? hostPid;
       const host = (await d.list(d.exec)).find(p => p.pid === hostPid);
-      if (!host || !host.args.includes(stateDir)) throw Object.assign(Error('HOST_PID_UNKNOWN: the host status gave no pid naming this run'),
-        { detail: { stage: 'host-loss-host', expected: 'a live host whose arguments name this run\'s state folder', hostPid: Number.isSafeInteger(hostPid), hostFound: !!host } });
+      if (!host || !host.args.includes(stateDir)) throw closedError('HOST_PID_UNKNOWN: the host status gave no pid naming this run',
+        { ...detail, stage: 'host-loss-host', expected: 'a live host whose arguments name this run\'s state folder', hostPid: Number.isSafeInteger(hostPid), hostFound: !!host });
       d.kill(hostPid, 'SIGKILL'); // the host this run started, matched by its state folder
       await d.sleep(10000);
       const appSurvived = await alive(before.pid), prompt = !!(await io.permission?.());
       const reply = await turn({ rehost: true });
       const restarted = restartOutcome(reply, before, appSurvived);
-      let unsaved = 'unverified';
+      detail.host = { appSurvived, restarted, replyOk: reply.ok === true, code: reply.ok ? null : codeOf(reply.error), replyStage: reply.ok ? null : stageOf(reply.stage),
+        samePid: reply.identity?.pid === before.pid, sameBirth: reply.identity?.pidBirth === before.pidBirth, relaunchRequested: reply.relaunchCard?.requested === true };
       if (reply.ok) {
-        tab = await joinedTab();
-        // A find, since the editor's text lies past a plain read's cut; only content rows count, never a header line.
-        const text = tab ? await read(tab, { find: marker }) : '';
-        unsaved = String(text).split('\n').some(line => !line.startsWith('#') && line.includes(marker)) ? 'kept' : 'lost';
-        if (tab) await tool('browser_act', { tab, steps: [{ do: 'press', key: 'Meta+S' }], observe: 'none' });
+        // The window the marker went to, joined again under the restarted host; a different window never stands in for it.
+        let rows = [];
+        const row = await until(async () => { rows = await tabRows(); return rows.find(r => !r.parked && (!detail.window.known || r.window === start.window)) ?? null; }, 10000);
+        detail.after = { tabFound: !!row, sameWindow: detail.window.known ? !!row : null, joinedTabs: rows.filter(r => !r.parked).length,
+          parkedTabs: rows.filter(r => r.parked).length, windows: new Set(rows.map(r => r.window).filter(Boolean)).size };
+        if (row) {
+          Object.assign(detail.after, await look(row.tab, 5000, 'host-loss-after'));
+          const saved = await tool('browser_act', { tab: row.tab, steps: [{ do: 'press', key: 'Meta+S' }], observe: 'none' });
+          detail.save = { ok: !saved.isError, code: saved.isError ? codeOf(saved.text) : null, onDisk: !saved.isError && !!await until(async () => onDisk(), 3000) };
+        }
       }
+      const verdict = hostLossVerdict({ replyOk: reply.ok === true, beforeKill: detail.beforeKill, after: detail.after, save: detail.save });
+      Object.assign(detail, { keptBy: verdict.keptBy, reason: verdict.reason });
       markSettings('hostLossEnd');
-      return { card: { debugger: reply.card, relaunch: reply.relaunchCard }, appSurvived, unsaved, prompt, restarted, ms: null };
+      return { card: { debugger: reply.card, relaunch: reply.relaunchCard }, appSurvived, unsaved: verdict.unsaved, prompt, restarted, ms: null,
+        ...(verdict.keptBy ? { keptBy: verdict.keptBy } : {}), detail };
     },
     // Stands in for the owner's own Quit: the app's Quit (NSRunningApplication terminate), the host's collect, the profile kept.
+    // The Quit names the connected process's kernel birth, so the helper can tell the same pid leaving LaunchServices during
+    // its own exit (an empty bundle id, 2026-10-22 03:00Z) from another program.
     async userQuit({ waitMs = 60000 } = {}) {
-      const target = current ?? (() => { throw Error('NOT_RELAUNCHED'); })();
+      const target = current ?? (() => { throw closedError('NOT_RELAUNCHED', { stage: 'user-quit', expected: 'the app the relaunch cell reopened' }); })();
       const started = d.now();
       const before = settingsText();
       markSettings('userQuitStart');
-      await active?.send('end');
-      const r = await quitCopy(target.pid, waitMs);
+      const ended = await active?.send('end');
+      const birth = /^[1-9]\d*\.\d{6}$/.test(target.pidBirth ?? '') ? { pidBirth: target.pidBirth } : {};
+      let r;
+      try { r = await quitCopy(target.pid, waitMs, undefined, birth); }
+      catch (error) {
+        const appAlive = await alive(target.pid).catch(() => null);
+        throw Object.assign(error, { detail: { ...(error.detail ?? {}), stage: 'user-quit-helper', expected: 'the relaunched app quit by its pid, bundle, path and birth',
+          reason: error.detail?.reason ?? helperReason(error.message), birthPinned: !!birth.pidBirth, turnEnded: ended?.ok === true, appAliveAfter: appAlive } });
+      }
       const exited = await d.exited(target.pid);
       const c = exited ? await active?.send('collect') : undefined;
       const userData = existsSync(join(portable, 'user-data')), after = userData ? settingsText() : null;
@@ -340,7 +427,7 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
         ms: Math.round(d.now() - started), forced: r?.forced === true, presses: r?.presses ?? 0 };
     },
     async frontApp() {
-      if (!otherFront) throw Error('NO_OTHER_APP: the app frontmost before launch was a fixture');
+      if (!otherFront) throw closedError('NO_OTHER_APP: the app frontmost before launch was a fixture', { stage: 'front-app', expected: 'a non-fixture app frontmost before launch' });
       const front = await d.helper({ mode: 'front' }, d.exec);
       if (front.front !== otherFront.front) await d.helper({ mode: 'activate', pid: otherFront.front, fixturePid: current?.pid ?? 0 }, d.exec);
       return { pid: otherFront.front, bundle: otherFront.bundle };
