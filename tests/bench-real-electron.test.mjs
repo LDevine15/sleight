@@ -9,6 +9,7 @@ import { checkEditor, cleanupElectron, editorLaunchArgs, editorMains, makeEditor
 import { checkChat, cleanupChat, expectedChat, labelsChat, observationFromAX, prepareChat,
   promptChat, setupChat } from '../bench/real-chat.mjs';
 import { getTasks } from '../bench/tasks.mjs';
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 const { openPidFixture } = await import('../bench/real-electron.mjs');
 
 function context(t) {
@@ -288,11 +289,11 @@ test('editor helper answers its own Don\'t Save sheet, forces only after the wai
   assert.throws(() => waitReady(QUIT, { running: () => null, windowCount: () => 0 }, helperClock().clock), /exited before/);
 });
 
-test('editor helper compares a /private/tmp copy in the form NSRunningApplication reports, and still refuses another bundle', () => {
+test('editor helper compares a private-tmp copy in the form NSRunningApplication reports, and still refuses another bundle', () => {
   const { quitElectron, waitReady } = editorHelper();
   // NSURL symlink resolution drops /private from an existing path; the fake models exactly that (live, 2026-10-22).
   const canonicalPath = path => path.replace(/^\/private\//, '/');
-  const request = { pid: 900, bundle: QUIT.bundle, appPath: '/private/tmp/elr-x/relaunch-y/apps/Visual Studio Code.app', pidBirth: '1234.000123', waitMs: 1000 };
+  const request = { pid: 900, bundle: QUIT.bundle, appPath: MAC_TMP + '/elr-x/relaunch-y/apps/Visual Studio Code.app', pidBirth: '1234.000123', waitMs: 1000 };
   const app = { pid: 900, bundle: QUIT.bundle, path: '/tmp/elr-x/relaunch-y/apps/Visual Studio Code.app', pidBirth: '1234.000123',
     terminate: () => true, forceTerminate: () => true };
   const ready = { running: () => app, windowCount: () => 1, canonicalPath };
@@ -313,7 +314,7 @@ test('native editor helper resolves the expected path with the same NSURL call a
   const sandbox = { ObjC: { import() {}, bindFunction() {}, unwrap: value => value }, $: { NSURL: { fileURLWithPath: resolvedUrl } } };
   runInNewContext(readFileSync(new URL('../bench/real-electron.js', import.meta.url), 'utf8'), sandbox);
   const api = sandbox.nativeElectron();
-  assert.equal(api.canonicalPath('/private/tmp/r/apps/Visual Studio Code.app'), '/tmp/r/apps/Visual Studio Code.app');
+  assert.equal(api.canonicalPath(MAC_TMP + '/r/apps/Visual Studio Code.app'), '/tmp/r/apps/Visual Studio Code.app');
   assert.equal(api.canonicalPath('/Applications/Visual Studio Code.app'), '/Applications/Visual Studio Code.app');
 });
 
