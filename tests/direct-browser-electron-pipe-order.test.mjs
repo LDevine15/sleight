@@ -212,16 +212,66 @@ test('EOF behind a queued reply fails that request instead of resolving it late'
   await assert.rejects(second, /pipe EOF/);
 });
 
-test('the inbound queue is bounded and overflow fails the transport', async () => {
-  const input = new PassThrough(), output = new PassThrough(), faults = [];
-  const pipe = new PipeTransport({ input, output, maxInboundRecords: 3 });
+test('a burst of 4200 events behind a reply pauses the output, then delivers every event in order without a fault', async () => {
+  const input = new PassThrough(), output = new PassThrough(), events = [], faults = [], flow = [];
+  const pipe = new PipeTransport({ input, output }); // on('data') resumes the stream once; record only what follows
+  const pause = output.pause.bind(output), resume = output.resume.bind(output);
+  output.pause = () => { flow.push('pause'); return pause(); };
+  output.resume = () => { flow.push('resume'); return resume(); };
+  pipe.on('event', frame => events.push(frame.params.i));
+  pipe.on('fault', error => faults.push(error.message));
+  const answered = pipe.request('Page.getFrameTree');
+  const wire = Buffer.from(record({ id: 1, result: {} }) + Array.from({ length: 4200 }, (_, i) => record({ method: 'Runtime.consoleAPICalled', params: { i } })).join(''));
+  for (let at = 0; at < wire.length; at += 65536) output.write(wire.subarray(at, at + 65536)); // one tick, 64 KB chunks
+  assert.deepEqual(flow, ['pause'], 'the FIFO passed high water inside the burst');
+  await answered;
+  for (let i = 0; i < 50 && events.length < 4200; i++) await tick();
+  assert.deepEqual(faults, []);
+  assert.equal(events.length, 4200);
+  assert.deepEqual(events, Array.from({ length: 4200 }, (_, i) => i));
+  assert.deepEqual(flow, ['pause', 'resume']);
+  assert.equal(output.isPaused(), false);
+  assert.equal(pipe.inbound.length + pipe.chunks.length, 0);
+});
+
+test('an output that ignores pause hits the hard inbound bound and fails the transport', async () => {
+  const input = new PassThrough(), output = new EventEmitter(), faults = [];
+  const pipe = new PipeTransport({ input, output, inboundHighWater: 2, maxInboundBytes: 400 });
   pipe.on('fault', error => faults.push(error.message));
   const waiting = pipe.request('Page.one'), other = pipe.request('Page.two');
-  waiting.catch(() => {});
-  output.write(record({ id: 1, result: {} }) + Array.from({ length: 4 }, (_, i) => record({ method: 'Page.ev', params: { i } })).join(''));
+  output.emit('data', Buffer.from(record({ id: 1, result: {} })));
+  for (let i = 0; i < 20 && !faults.length; i++) output.emit('data', Buffer.from(record({ method: 'Page.ev', params: { i } })));
   assert.deepEqual(faults, ['inbound queue full']);
+  assert.deepEqual(await waiting, {});
   await assert.rejects(other, /inbound queue full/);
-  assert.throws(() => new PipeTransport({ input, output, maxInboundRecords: 0 }), /invalid pipe bound/);
+  assert.throws(() => new PipeTransport({ input, output, inboundHighWater: 0 }), /invalid pipe bound/);
+});
+
+test('a request a listener makes while the rest of its chunk is unparsed waits until that rest is dispatched', async () => {
+  const input = new PassThrough(), output = new PassThrough(), order = [];
+  const pipe = new PipeTransport({ input, output });
+  input.on('data', data => order.push('write ' + JSON.parse(String(data).split('\0')[0]).method));
+  pipe.on('event', frame => {
+    order.push('event ' + frame.params.tag);
+    if (frame.params.tag === 'a') pipe.request('Input.dispatchKeyEvent', { type: 'keyDown' }).catch(() => {});
+  });
+  output.write(record({ method: 'Page.ev', params: { tag: 'a' } }) + record({ method: 'Target.detachedFromTarget', params: { tag: 'b' } }) +
+    record({ method: 'Page.ev', params: { tag: 'c' } }));
+  assert.deepEqual(order, ['event a', 'event b', 'event c', 'write Input.dispatchKeyEvent']);
+  pipe.fail(new Error('done'));
+});
+
+test('a nested receive from a listener keeps wire order: the outer chunk finishes first', async () => {
+  // A PassThrough holds a write made inside its own 'data' handler until the handler returns, so it never nests.
+  // This output emits synchronously, as a stream may, so the inner chunk arrives while b is still unparsed.
+  const input = new PassThrough(), output = new EventEmitter(), order = [];
+  const pipe = new PipeTransport({ input, output });
+  pipe.on('event', frame => {
+    order.push(frame.params.tag);
+    if (frame.params.tag === 'a') output.emit('data', Buffer.from(record({ method: 'Page.ev', params: { tag: 'c' } })));
+  });
+  output.emit('data', Buffer.from(record({ method: 'Page.ev', params: { tag: 'a' } }) + record({ method: 'Page.ev', params: { tag: 'b' } })));
+  assert.deepEqual(order, ['a', 'b', 'c']);
 });
 
 test('through the real host and worker connection, a coalesced reply+event reaches Playwright reply first', async t => {

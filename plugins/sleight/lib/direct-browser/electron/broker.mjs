@@ -46,19 +46,21 @@ export function transportMethodAllowed(method) {
 
 export class PipeTransport extends EventEmitter {
   // firstId: the id before the first command's. CDP ids are 32-bit; the pipe keeper's own command uses 2**31 - 2.
-  // maxInboundRecords/maxInboundBytes bound the received records waiting behind a reply (see receive).
+  // Received records waiting behind a reply (see receive): past inboundHighWater records or inboundHighWaterBytes the
+  // output is paused, and resumed below half of each. maxInboundBytes is the fail-safe for a stream that ignores pause.
   constructor({ input, output, maxFrameBytes = 1024 * 1024, maxPending = 256, maxQueuedBytes = 8 * 1024 * 1024, timeoutMs = 5000, firstId = 0,
-    maxInboundRecords = 4096, maxInboundBytes = maxQueuedBytes, onCdpFailure, onQueueFailure }) {
+    inboundHighWater = 1024, inboundHighWaterBytes = 1024 * 1024, maxInboundBytes = 32 * 1024 * 1024, onCdpFailure, onQueueFailure }) {
     super();
-    for (const value of [maxFrameBytes, maxPending, maxQueuedBytes, timeoutMs, maxInboundRecords, maxInboundBytes]) {
+    for (const value of [maxFrameBytes, maxPending, maxQueuedBytes, timeoutMs, inboundHighWater, inboundHighWaterBytes, maxInboundBytes]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error('invalid pipe bound');
     }
     if (maxPending > 256) throw new Error('invalid pipe bound');
     if (!Number.isSafeInteger(firstId) || firstId < 0 || firstId > 2 ** 30) throw new Error('invalid pipe bound');
-    Object.assign(this, { input, output, maxFrameBytes, maxPending, maxQueuedBytes, timeoutMs, maxInboundRecords, maxInboundBytes, onCdpFailure, onQueueFailure });
+    Object.assign(this, { input, output, maxFrameBytes, maxPending, maxQueuedBytes, timeoutMs, inboundHighWater, inboundHighWaterBytes, maxInboundBytes, onCdpFailure, onQueueFailure });
     this.pending = new Map(); this.routes = new Map(); this.writes = new Map(); this.sequence = firstId; this.buffer = Buffer.alloc(0);
     this.failed = false; this.blocked = false; this.queuedBytes = 0; this.drainVersion = 0; this.inFlight = new Set();
     this.inbound = []; this.inboundBytes = 0; this.gate = undefined; this.receiving = false; this.dispatching = false;
+    this.chunks = []; this.chunkBytes = 0; this.chunkOffset = 0; this.paused = false;
     output.on('data', chunk => this.receive(chunk));
     output.on('end', () => this.fail(new Error('pipe EOF')));
     output.on('error', error => this.fail(error));
@@ -125,8 +127,9 @@ export class PipeTransport extends EventEmitter {
     if (this.flushing) return;
     this.flushing = true;
     try {
-      // A received record not yet dispatched (a detach, a crash) may revoke the route a queued write uses: it goes first.
-      while (!this.failed && !this.blocked && this.writes.size && !this.receiving && !this.inbound.length) {
+      // A received record not yet dispatched (a detach, a crash, one still unparsed in its chunk) may revoke the route a
+      // queued write uses: it goes first.
+      while (!this.failed && !this.blocked && this.writes.size && !this.inbound.length && !this.chunks.length) {
         const [id, entry] = this.writes.entries().next().value;
         this.removeWrite(id); entry.write();
       }
@@ -146,21 +149,36 @@ export class PipeTransport extends EventEmitter {
   // A reply only resolves a Promise, and its consumers (transportSend's continuation, the host's .then that
   // forwards it to the worker) run in later microtasks; so after a reply the next record waits for setImmediate,
   // or an event right behind it on the wire would reach the worker first. Playwright installs its Runtime
-  // listeners in Page.getFrameTree's .then, so such an event (the MAIN context) was lost. Records from later
-  // chunks join the same FIFO, and writes wait while it holds anything (see flush).
+  // listeners in Page.getFrameTree's .then, so such an event (the MAIN context) was lost. Chunks wait in arrival
+  // order (a listener's reentrant receive() included), parsing stops at the FIFO's high water with the output
+  // paused, and writes wait while anything received is undispatched (see flush).
   receive(chunk) {
     if (this.failed) return;
-    const outer = this.receiving; // a listener's reentrant receive() must not end the outer one's write hold
+    this.chunks.push(chunk); this.chunkBytes += chunk.length;
+    if (this.chunkBytes + this.inboundBytes > this.maxInboundBytes) {
+      this.queueFailure('inbound bound');
+      return this.fail(new Error('inbound queue full'));
+    }
+    this.parse();
+  }
+
+  parse() {
+    if (this.receiving) return; // the running loop reaches an appended chunk after the current one
     this.receiving = true;
     try {
-      // Slice before buffering: one oversized chunk cannot allocate an unbounded bank.
-      let start = 0;
-      while (start < chunk.length && !this.failed) {
-        const end = chunk.indexOf(0, start);
+      while (!this.failed && this.chunks.length) {
+        if (this.inbound.length >= this.inboundHighWater || this.inboundBytes >= this.inboundHighWaterBytes) {
+          if (!this.paused) { this.paused = true; this.output.pause?.(); }
+          break;
+        }
+        // Slice before buffering: one oversized chunk cannot allocate an unbounded bank.
+        const chunk = this.chunks[0], start = this.chunkOffset, end = chunk.indexOf(0, start);
         const stop = end < 0 ? chunk.length : end;
         if (this.buffer.length + stop - start > this.maxFrameBytes) return this.fail(new Error('inbound frame too large'));
         this.buffer = Buffer.concat([this.buffer, chunk.subarray(start, stop)]);
-        if (end < 0) return;
+        if (end < 0 || end + 1 === chunk.length) { this.chunks.shift(); this.chunkBytes -= chunk.length; this.chunkOffset = 0; }
+        else this.chunkOffset = end + 1;
+        if (end < 0) continue;
         let message;
         try {
           message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(this.buffer));
@@ -171,16 +189,14 @@ export class PipeTransport extends EventEmitter {
               message.sessionId !== undefined && !sessionPattern(message.sessionId))) throw new Error('invalid pipe event');
         } catch (error) { return this.fail(error); }
         const bytes = this.buffer.length + 1;
-        this.buffer = Buffer.alloc(0); start = end + 1;
-        if (this.inbound.length >= this.maxInboundRecords || this.inboundBytes + bytes > this.maxInboundBytes) {
-          this.queueFailure('inbound bound');
-          return this.fail(new Error('inbound queue full'));
-        }
+        this.buffer = Buffer.alloc(0);
         this.inbound.push({ message, bytes }); this.inboundBytes += bytes;
         this.dispatchInbound();
       }
     } finally {
-      this.receiving = outer;
+      this.receiving = false;
+      if (this.paused && !this.failed && !this.chunks.length && this.inbound.length <= this.inboundHighWater / 2 &&
+          this.inboundBytes <= this.inboundHighWaterBytes / 2) { this.paused = false; this.output.resume?.(); }
       this.flush();
     }
   }
@@ -205,7 +221,7 @@ export class PipeTransport extends EventEmitter {
         if (!finish) continue; // a late reply to a request already finished (timeout, cancel) changes nothing
         finish(message.error ? Object.assign(new Error(message.error.message || 'CDP error'), { dispatched: true, cdp: true, code: message.error.code }) : null, message.result);
         // Even with nothing queued yet: a stream can emit buffered chunks back to back in one task.
-        this.gate = setImmediate(() => { this.gate = undefined; this.dispatchInbound(); this.flush(); });
+        this.gate = setImmediate(() => { this.gate = undefined; this.dispatchInbound(); this.parse(); });
       }
     } finally { this.dispatching = false; }
   }
@@ -215,7 +231,7 @@ export class PipeTransport extends EventEmitter {
     this.failed = true; this.buffer = Buffer.alloc(0);
     // Synchronous: nothing received but not yet dispatched is delivered after a fault.
     if (this.gate !== undefined) clearImmediate(this.gate);
-    this.gate = undefined; this.inbound = []; this.inboundBytes = 0;
+    this.gate = undefined; this.inbound = []; this.inboundBytes = 0; this.chunks = []; this.chunkBytes = 0; this.chunkOffset = 0;
     for (const finish of [...this.pending.values()]) finish(new Error(error.message));
     // Never destroy/end the last writer on revoke, timeout or malformed input.
     this.emit('fault', error);
