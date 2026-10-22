@@ -123,7 +123,8 @@ export async function runHandoffs({
     try { untitledBefore = snapshotDownloads(icloud); }
     // Advisory: an unreadable iCloud folder is reported, never counted as a failed arm.
     catch (err) { console.error(`Untitled snapshot skipped: ${err.message}`); }
-    const started = Date.now() - 1;
+    // Linux stamps files from a coarse kernel clock that can trail Date.now() by a few milliseconds, so allow 50 ms.
+    const started = Date.now() - 50;
     const serve = 'node ' + quote(join(DIR, 'site/server.mjs')) + ' --download-name ' + downloadName;
     // One task at a time: native steps share one Mac, and sleight's input lease lets one session type into an
     // app at a time, so two TextEdit tasks started together waited on each other (2026-10-12).

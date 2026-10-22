@@ -419,7 +419,8 @@ test('the validation family carries no claim or scorer wording, and a bank\'s na
   const { record, studies } = collectBank(readBank(dirty));
   const scrubbed = JSON.stringify([record, studies]);
   assert.equal(scrubbed.includes(homedir()), false);
-  assert.equal(scrubbed.toLowerCase().includes(owner.toLowerCase()), false);
+  // A username such as root or runner is also an ordinary word in bank data, so check the copied name itself.
+  assert.equal(scrubbed.includes(`${owner}-bank`), false);
   assert.match(record.id, /^\[owner\]-bank$/);
   const safari = studies.find(s => s.group === 'race-safari');
   assert.deepEqual([safari.browser, safari.runner], ['~/Browsers/Safari', '~/runner']);
