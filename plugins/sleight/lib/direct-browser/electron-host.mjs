@@ -377,11 +377,17 @@ export async function createElectronHost({
   // A restarted host takes the app back from its keeper: the sealed record of a user-profile launch, the launch's key
   // (from this parent's secret), the recovered launch record, and the same process. Nothing is sent to the app here, and
   // any failure leaves the app and its keeper as they were. Returns 'reattached' or why not.
+  // The parent authorizes the record's launch spec first, as for a start: its answer is what tells it which reviewed recipe
+  // the adopted app runs, and its target admission and Quit name nothing before that (electron-host-run.mjs). Without it the
+  // restarted host refused every attach (live, 2026-10-22 03:14Z: zero tabs after the reattach).
   async function adopt(found) {
     const r = found.record;
     if (!r || r.state !== 'running' || r.mode !== 'user' || typeof r.keeper !== 'string') return 'no-keeper';
     if (found.lock?.state?.nonce !== r.nonce) return 'journal-contradicts-disk';
     if (!adminKey) return 'keeper-key-unavailable';
+    let authorized = false;
+    try { authorized = typeof authorizeLaunch === 'function' && await authorizeLaunch(Object.freeze({ build: r.build, profile: 'user' })) === true; } catch {}
+    if (!authorized) return 'launch-unauthorized';
     let held;
     try { held = await connectKeeper({ socketPath: keeperPath, key: keeperKey(adminKey, r.keeper), nonce: r.keeper }); }
     catch (error) { return { KEEPER_REFUSED: 'keeper-refused', KEEPER_UNREACHABLE: 'keeper-gone' }[error.message] ?? 'keeper-mismatch'; }

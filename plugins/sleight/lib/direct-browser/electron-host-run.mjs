@@ -42,6 +42,7 @@ export function hostDependencies({ registry, builds, run } = {}) {
   return Object.freeze({
     // Satisfied by an admin start that names a reviewed registry build of this host (the worker checked the debugger grant first).
     // The user's own profile needs the recipe's reviewed userProfile; the worker checked the user's relaunch click first.
+    // A restarted host asks the same for the launch its journal records before it takes the app back from the keeper.
     async authorizeLaunch(spec) {
       const recipe = reviewed(spec?.build);
       const keys = Object.keys(spec ?? {}).sort().join();
@@ -52,7 +53,7 @@ export function hostDependencies({ registry, builds, run } = {}) {
     // Tickets and resume are reachable only through the authenticated admin channel: the parent asked.
     authorizeIssue: async () => true,
     resumeAuthority: async () => true,
-    // The app's own target info, classified against the launched recipe. Nothing is admitted before a launch.
+    // The app's own target info, classified against the launched (or reattached) recipe. Nothing is admitted before either.
     admitTarget: async info => !!launched && classifyTarget(info, launched).kind === 'member',
     requestQuit: identity => launched ? quitThroughApp(identity, launched.executable, run ? { run } : {}) : Promise.reject(Error('QUIT_TARGET_INVALID')),
   });

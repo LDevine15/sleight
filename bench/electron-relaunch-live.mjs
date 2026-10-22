@@ -96,6 +96,14 @@ export function editorFacts(text, marker) {
     tabDirty: tabs.length ? tabs.some(line => new RegExp(`tab "${SCRATCH.replace('.', '\\.')}[^"]*(?:modified|unsaved|dirty)`, 'i').test(line)) : null,
     textboxes: boxes.length, actionable: boxes.filter(line => refOf(line, /textbox/)).length, editorRef: !!editorRefOf(text, SCRATCH) };
 }
+/** host-loss: the restarted turn's dry run (electron-capabilities.mjs qualify), as codes and counts, so zero tabs after the
+ *  restart says which step joined nothing (the 2026-10-22 03:14Z run had only the empty list). Null without a receipt. */
+export function qualifyFacts(receipt) {
+  if (!receipt || typeof receipt !== 'object') return null;
+  const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+  return { qualified: receipt.qualified === true, failed: codeOf(receipt.failed), stage: stageOf(receipt.failedStage),
+    targets: count(receipt.cells?.targets), joined: count(receipt.cells?.joined) };
+}
 /** host-loss: kept when a content row shows the marker after the restart, or when the save after it wrote the marker that
  *  was not on disk before the kill. Otherwise lost only when every precondition held; else unverified with the first gap. */
 export function hostLossVerdict({ replyOk, beforeKill, after, save }) {
@@ -380,7 +388,8 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
       const reply = await turn({ rehost: true });
       const restarted = restartOutcome(reply, before, appSurvived);
       detail.host = { appSurvived, restarted, replyOk: reply.ok === true, code: reply.ok ? null : codeOf(reply.error), replyStage: reply.ok ? null : stageOf(reply.stage),
-        samePid: reply.identity?.pid === before.pid, sameBirth: reply.identity?.pidBirth === before.pidBirth, relaunchRequested: reply.relaunchCard?.requested === true };
+        samePid: reply.identity?.pid === before.pid, sameBirth: reply.identity?.pidBirth === before.pidBirth, relaunchRequested: reply.relaunchCard?.requested === true,
+        qualify: qualifyFacts(reply.receipt) };
       if (reply.ok) {
         // The window the marker went to, joined again under the restarted host; a different window never stands in for it.
         let rows = [];

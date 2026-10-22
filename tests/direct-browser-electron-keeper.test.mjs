@@ -14,6 +14,8 @@ import { ElectronBroker } from '../plugins/sleight/lib/direct-browser/electron/b
 import { connectKeeper, createElectronHost, createPythonAdapter } from '../plugins/sleight/lib/direct-browser/electron-host.mjs';
 import { createElectronConnection } from '../plugins/sleight/lib/direct-browser/electron-connection.mjs';
 import { connectAdmin } from '../plugins/sleight/lib/direct-browser/electron-admin.mjs';
+import { hostDependencies } from '../plugins/sleight/lib/direct-browser/electron-host-run.mjs';
+import { createAppTargets } from '../plugins/sleight/lib/direct-browser/electron-targets.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const launch = join(here, '../plugins/sleight/lib/direct-browser/electron/launch.py'), fake = join(here, 'fixtures/fake-electron.py');
@@ -184,6 +186,60 @@ test('when a reattached host dies too, the keeper detaches its sessions and the 
     assert.deepEqual(await third.broker.pipe.request('Fake.sessions'), { sessions: [] });
     assert.equal((await third.broker.pipe.request('Browser.getVersion')).pid, started.pid);
   } finally { second?._crashForTest(); third?._crashForTest(); await sleep(100); e.cleanup(); }
+});
+
+// The restarted host with the parent's own callbacks (electron-host-run.mjs hostDependencies), as ensureHost runs it. Live on
+// 2026-10-22 03:14Z the reattached host had no launched recipe, so it refused every attach (CDP_TARGET_NOT_OWNED): the
+// worker's geometry read failed for every page, the page registry joined nothing, and browser_tabs listed zero tabs.
+const reviewedRegistry = e => {
+  const registry = JSON.parse(readFileSync(e.registryPath, 'utf8'));
+  return { recipes: registry.recipes.map(recipe => ({ ...recipe, schemes: ['app'] })) };
+};
+test('a reattached host admits the app\'s own pages again: the worker attaches, reads a window\'s geometry, and Quit names the app', { skip }, async () => {
+  const e = environment(), secret = randomBytes(32);
+  let second;
+  try {
+    const { child, started } = await hostProcess(e, { secret });
+    process.kill(child.pid, 'SIGKILL');
+    await until(() => !alive(child.pid), 'host gone');
+    const quits = [], deps = hostDependencies({ registry: reviewedRegistry(e), builds: [BUILD], run: async args => { quits.push(args[4]); return 'sent'; } });
+    second = await realHost(e, { adminSecret: secret, ...deps });
+    assert.equal(second.status().ownership.state, 'owned', JSON.stringify(second.status()));
+    await second.resume();
+    const connection = await worker(second);
+    const { identity } = connection;
+    assert.deepEqual([identity.pid, identity.birth], [started.pid, started.birth], 'the same process, reattached');
+    const targets = createAppTargets({ upstream: connection.session, identity, expected: { pid: started.pid, pidBirth: started.birth },
+      recipe: { schemes: ['app'] }, verify: async () => true });
+    await targets.start();
+    assert.deepEqual(targets.members().map(row => row.targetId), ['T1', 'T2']);
+    assert.deepEqual(await targets.geometry('T1'), { x: 0, y: 25, width: 800, height: 600, scale: 2, visible: true },
+      'the page registry joins a window only after this read');
+    assert.equal(await deps.requestQuit({ pid: started.pid, birth: started.birth }), 'sent', 'the app\'s own Quit has its executable');
+    assert.deepEqual(quits, [String(started.pid)]);
+    targets.stop();
+    await connection.disconnect();
+  } finally { second?._crashForTest(); await sleep(100); e.cleanup(); }
+});
+
+test('a restarted host whose parent refuses the recorded build leaves the app and its keeper as they were', { skip }, async () => {
+  const e = environment(), secret = randomBytes(32);
+  let refused, second;
+  try {
+    const { child, started } = await hostProcess(e, { secret });
+    process.kill(child.pid, 'SIGKILL');
+    await until(() => !alive(child.pid), 'host gone');
+    refused = await realHost(e, { adminSecret: secret, authorizeLaunch: async () => false });
+    assert.equal(refused.status().ownership.state, 'unresolved');
+    assert.equal(refused.status().ownership.lastAttempt, 'launch-unauthorized');
+    assert.equal(refused.broker, undefined, 'no broker took the pipe');
+    refused._crashForTest(); refused = undefined;
+    await sleep(300);
+    assert.equal(alive(started.pid), true); assert.equal(alive(started.keeper), true);
+    second = await realHost(e, { adminSecret: secret, ...hostDependencies({ registry: reviewedRegistry(e), builds: [BUILD], run: async () => 'sent' }) });
+    await second.resume();
+    assert.equal((await second.broker.pipe.request('Browser.getVersion')).pid, started.pid, 'the next approved host still reattaches');
+  } finally { refused?._crashForTest(); second?._crashForTest(); await sleep(100); e.cleanup(); }
 });
 
 // Every attach a foreign process can try: the keeper's socket, its answer while the host lives, and after the host's death a

@@ -56,7 +56,8 @@ def fake_host():
     import subprocess
     import threading
     lock, flood = threading.Lock(), {'sent': 0, 'done': False}
-    # Flat sessions by id, as Chromium keeps them for the pipe's client: target T1 and T2 are pages.
+    # Flat sessions by id, as Chromium keeps them for the pipe's client: target T1 and T2 are pages. A session answers the
+    # geometry read of electron-targets.mjs (frame tree, isolated world, evaluate).
     sessions = {}
 
     def send(message):
@@ -120,6 +121,16 @@ def fake_host():
             elif method == 'Target.getTargets':
                 result = {'targetInfos': [{'targetId': target, 'type': 'page', 'title': '', 'url': 'app://main/', 'attached': target in sessions.values()}
                                           for target in ('T1', 'T2')]}
+            elif method == 'Target.getTargetInfo' and request.get('params', {}).get('targetId') in ('T1', 'T2'):
+                target = request['params']['targetId']
+                result = {'targetInfo': {'targetId': target, 'type': 'page', 'title': '', 'url': 'app://main/', 'attached': target in sessions.values()}}
+            elif method == 'Page.getFrameTree' and request.get('sessionId') in sessions:
+                result = {'frameTree': {'frame': {'id': 'F' + sessions[request['sessionId']]}}}
+            elif method == 'Page.createIsolatedWorld' and request.get('sessionId') in sessions:
+                result = {'executionContextId': 7}
+            elif method == 'Runtime.evaluate' and request.get('sessionId') in sessions:
+                # The geometry read (electron-targets.mjs geometryExpression): one 800 x 600 window at scale 2.
+                result = {'result': {'type': 'object', 'value': {'x': 0, 'y': 25, 'width': 800, 'height': 600, 'scale': 2, 'visible': True}}}
             elif method == 'Target.detachFromTarget':
                 named = [key for key, target in sessions.items() if key == request['params'].get('sessionId') or target == request['params'].get('targetId')]
                 if len(named) != 1:

@@ -330,7 +330,8 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
       const first = w.starts.length === 1;
       return { ok: true, identity: { pid: 400, pidBirth: 'b400', instance: 'i1', epoch: 1 }, hostPid: 450,
         card: first ? { shown: true, status: 'granted', scope: 'always', by: 'user' } : { shown: false, existing: true, status: 'granted', scope: 'always', by: 'existing' },
-        relaunchCard: first ? { shown: true, status: 'granted', by: 'user' } : { shown: false }, relaunch: first ? { quitMs: 800, launchMs: 1200, wasFront: false, activated: false } : null };
+        relaunchCard: first ? { shown: true, status: 'granted', by: 'user' } : { shown: false }, relaunch: first ? { quitMs: 800, launchMs: 1200, wasFront: false, activated: false } : null,
+        ...(extra.rehost && w.rehostReceipt ? { receipt: w.rehostReceipt } : {}) };
     }
     if (op === 'call') {
       const { name, arguments: a } = extra.request;
@@ -505,7 +506,7 @@ test('relaunch host-loss that loses the buffer on the restart fails UNSAVED_WORK
   assert.equal(d.stage, 'host-loss-verify');
   assert.deepEqual([d.typed.ok, d.typed.keyboardOnlyRef, d.window.known], [true, true, true]);
   assert.deepEqual([d.beforeKill.seen, d.beforeKill.onDisk, d.beforeKill.cut, d.beforeKill.tabSelected], [true, false, false, true]);
-  assert.deepEqual(d.host, { appSurvived: true, restarted: 'reattached', replyOk: true, code: null, replyStage: null, samePid: true, sameBirth: true, relaunchRequested: false });
+  assert.deepEqual(d.host, { appSurvived: true, restarted: 'reattached', replyOk: true, code: null, replyStage: null, samePid: true, sameBirth: true, relaunchRequested: false, qualify: null });
   assert.deepEqual([d.after.tabFound, d.after.sameWindow, d.after.seen, d.after.cut, d.after.tabSelected, d.after.textboxes, d.after.editorRef],
     [true, true, false, false, true, 2, true]);
   assert.ok(d.after.reads > 1, 'the find read after the restart is retried before the verdict');
@@ -530,6 +531,17 @@ test('relaunch host-loss never verifies through another window or a parked tab a
     closedHostLoss(cell, driver);
     assert.deepEqual([cell.detail.after.tabFound, cell.detail.after.sameWindow, cell.detail.save, cell.detail.reason], [false, sameWindow, null, 'no-joined-tab-after-restart']);
   }
+});
+
+test('relaunch host-loss with zero tabs after the restart names the restarted turn\'s dry-run step, codes and counts only', async t => {
+  // The 2026-10-22 03:14Z live shape: the host reattached the same process, and the list after it was empty.
+  const { byId, driver } = await relaunchRun(t, ({ w }) => { w.afterRehostTabs = 'No app windows are joined.';
+    w.rehostReceipt = { qualified: false, failed: 'ELECTRON_QUALIFY_NO_JOIN', failedStage: 'join', cells: { targets: 1, joined: 0, parked: [] }, instance: { pid: 400 } }; });
+  const cell = byId['relaunch-host-loss'];
+  assert.equal(cell.error, 'HOST_LOSS_UNMEASURED');
+  closedHostLoss(cell, driver);
+  assert.deepEqual(cell.detail.host.qualify, { qualified: false, failed: 'ELECTRON_QUALIFY_NO_JOIN', stage: 'join', targets: 1, joined: 0 });
+  assert.deepEqual([cell.detail.after.joinedTabs, cell.detail.after.windows, cell.detail.reason], [0, 0, 'no-joined-tab-after-restart']);
 });
 
 test('relaunch host-loss counts the marker the save wrote after the restart as kept when no find row shows it', async t => {
