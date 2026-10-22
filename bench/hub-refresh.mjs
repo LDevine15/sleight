@@ -3,11 +3,13 @@
 // bench/run.mjs, bench/fowl/rounds.sh, bench/validation/validation-140.mjs and bench/validation/remeasure.mjs call it at the end.
 //   node bench/hub-refresh.mjs [--exit <code>] [--saved <folder>] [--dry-run] [--no-hub] [--wt <dir>] [--out <dir>] [--bank <dir>] [--timeout-ms <n>]
 // It skips, with one log line, when the pass did not succeed (--exit other than 0), saved nothing (--saved names a missing folder),
-// was a dry run, was started with --no-hub or SLEIGHT_NO_HUB=1 (tests and A/B runs that must not publish), or when a live round is
-// running (/tmp/sleight-live.lock) or another project's timed window is open (/tmp/sleight-hold). A hub error, a crash or a timeout
-// logs one line and the exit status stays 0, so the pass is never failed or held up by the hub. It never waits for a lock.
+// was a dry run, was started with --no-hub or SLEIGHT_NO_HUB=1 (tests and A/B runs that must not publish), a live round holds
+// /tmp/sleight-live.lock, or another project's timed window is open (/tmp/sleight-hold). It also refuses, whatever the flags say,
+// when this checkout is not on a Git branch or is a validation or A/B staging root (the structural guard for callers that forget
+// --no-hub). A hub error, a crash or a timeout logs one line and the exit status stays 0, so the pass is never failed or held up
+// by the hub. It never waits for a lock.
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,11 +17,27 @@ import { fileURLToPath } from 'node:url';
 export const LIVE_LOCK = '/tmp/sleight-live.lock';
 export const HOLD = '/tmp/sleight-hold';
 export const DEFAULT_TIMEOUT_MS = 120_000;
-const HUB = join(dirname(fileURLToPath(import.meta.url)), 'results-hub.mjs');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const HUB = join(ROOT, 'bench', 'results-hub.mjs');
 
-// Why the hub should not run now, or null when it should.
-export function skipReason({ exitCode = 0, saved, dryRun = false, noHub = false, env = process.env, exists = existsSync, lock = LIVE_LOCK, hold = HOLD } = {}) {
+// A checkout the hub must never rewrite, whatever the flags say: a detached HEAD (a pinned build under validation or an A/B), a
+// staging root the validation drivers make (/tmp/lane-vp1-*, /tmp/lane-ab-*), or an A/B worktree (ab-old, ab-new). Returns the
+// reason, or null for a checkout on a branch.
+const STAGING = /(?:^|\/)(?:lane-(?:vp|ab)[a-z0-9]*-[^/]*|ab-(?:old|new))(?:\/|$)/;
+export function checkoutBlock({ root = ROOT, git = (...args) => spawnSync('/usr/bin/git', ['-C', root, ...args], { encoding: 'utf8' }), real = path => realpathSync(path) } = {}) {
+  let path = root;
+  try { path = real(root); } catch { /* an unreadable path is judged by its name */ }
+  if (STAGING.test(path)) return `${path.split('/').pop()} is a validation or A/B staging checkout`;
+  const head = git('symbolic-ref', '-q', 'HEAD');
+  if (head.error || head.status !== 0) return 'the checkout is on a detached HEAD or has no Git branch';
+  return null;
+}
+
+// Why the hub should not run now, or null when it should. `checkout` is checkoutBlock()'s answer; tests pass null or a reason.
+export function skipReason({ exitCode = 0, saved, dryRun = false, noHub = false, env = process.env, exists = existsSync, lock = LIVE_LOCK, hold = HOLD, checkout } = {}) {
   if (noHub || /^(1|true|yes)$/i.test(env.SLEIGHT_NO_HUB ?? '')) return 'no-hub flag or SLEIGHT_NO_HUB';
+  const blocked = checkout === undefined ? checkoutBlock() : checkout;
+  if (blocked) return blocked;
   if (dryRun) return 'dry run';
   if (exitCode !== 0) return `the pass did not succeed (exit ${exitCode})`;
   if (saved !== undefined && !exists(saved)) return 'the pass saved no results folder';
@@ -46,6 +64,23 @@ export function refreshHub({ hubArgs = [], timeoutMs = DEFAULT_TIMEOUT_MS, run =
   }
 }
 
+// The validation and re-measure drivers refuse a changed pinned checkout. A hub refresh rewrites docs/results and the README's
+// generated blocks, so changes there are tolerated only while the tree matches what `results-hub --render-only` renders from its own
+// data files (`--check` exits 0). Any other edit to those paths, and every change elsewhere, still counts. `status` is the text of
+// `git status --porcelain`, trimmed or not; `fresh` answers whether the hub output is consistent, and runs only if such a path changed.
+export const isHubPath = path => path === 'README.md' || path.startsWith('docs/results/');
+export function pendingChanges(status, fresh) {
+  const lines = String(status).split('\n').filter(Boolean);
+  const hubOnly = line => !/ -> /.test(line) && isHubPath(line.replace(/^[ MADRCTU?!]{1,2}\s/, '').replace(/^"|"$/g, ''));
+  if (!lines.some(hubOnly)) return lines;
+  const consistent = fresh();
+  return lines.filter(line => !(consistent && hubOnly(line)));
+}
+export function hubIsFresh(root = ROOT, run = spawnSync) {
+  const check = run(process.execPath, [join(root, 'bench', 'results-hub.mjs'), '--render-only', '--check'], { cwd: root, encoding: 'utf8', timeout: 60_000 });
+  return check.status === 0;
+}
+
 function parse(argv) {
   const out = { hubArgs: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -62,9 +97,9 @@ function parse(argv) {
   return out;
 }
 
-export function main(argv = process.argv.slice(2), log = console.log) {
+export function main(argv = process.argv.slice(2), log = console.log, extra = {}) {
   let result;
-  try { result = refreshHub(parse(argv)); }
+  try { result = refreshHub({ ...parse(argv), ...extra }); }
   catch (error) { result = { status: 'failed', line: `hub: refresh failed (${oneLine(error.message)})` }; }
   log(result.line);
   return 0;

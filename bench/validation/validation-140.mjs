@@ -12,6 +12,7 @@ import { loadRound } from '../fowl/race-score.mjs';
 import { getTasks } from '../tasks.mjs';
 import { webBrowsers } from '../real-fixture.mjs';
 import { readEngine } from '../engine-version.mjs';
+import { hubIsFresh, pendingChanges } from '../hub-refresh.mjs';
 
 const DEFAULT_OUT = join(EVIDENCE, 'validation-140-runs');
 
@@ -611,9 +612,9 @@ async function execute(plan, onlyGroups, { resume = false } = {}) {
   if (plan.blockers.length) throw Error(plan.blockers.join('\n'));
   if (!/^[a-f0-9]{40}$/.test(plan.aBuild ?? '') || !/^[a-f0-9]{40}$/.test(plan.bBuild)) throw Error('Build pin missing');
   const driverBuild = git('rev-parse', 'HEAD').trim();
-  // The hub refresh after a pass rewrites docs/results and the README's generated blocks (bench/hub-refresh.mjs), so a resumed or
-  // completion run does not count them as changes to the pinned build.
-  if (git('status', '--porcelain', '--untracked-files=no', '--', '.', ':(exclude)docs/results', ':(exclude)README.md').trim()) throw Error('Run from the clean, pinned B build or compatible driver');
+  // The hub refresh after a pass rewrites docs/results and the README's generated blocks (bench/hub-refresh.mjs). A resumed or
+  // completion run tolerates those paths only while they match what `results-hub --render-only` renders from the tree's own data.
+  if (pendingChanges(git('status', '--porcelain', '--untracked-files=no'), () => hubIsFresh(ROOT)).length) throw Error('Run from the clean, pinned B build or compatible driver');
   if (resume) driverCompatibility(plan.bBuild, driverBuild);
   else if (driverBuild !== plan.bBuild) throw Error('Run from the clean, pinned B build');
   if (harness(plan.bBuild).hash !== plan.harnessHash) throw Error('Current harness hash differs from the plan');

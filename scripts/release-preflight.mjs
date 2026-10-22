@@ -142,8 +142,9 @@ export async function preflight({ root = process.cwd(), mode = 'release', tag, v
   try { hub = await runner({ step: 'hub' }); }
   catch { fail('hub', 'runner-error'); return result; }
   if (hub?.status !== 0) {
-    if (hub?.status === 1) fail('hub', 'stale-output');
-    else fail('hub', 'command-failed', { exitCode: Number.isInteger(hub?.status) ? hub.status : null });
+    // --check prints a "would change" line for each stale file and exits 1. A crash exits 1 with no such line, or with another status.
+    if (hub?.status === 1 && typeof hub.stdout === 'string' && /^would change /m.test(hub.stdout)) fail('hub', 'stale-output');
+    else fail('hub', 'hub-error', { exitCode: Number.isInteger(hub?.status) ? hub.status : null });
     return result;
   }
   const history = await run('history', { range: `${base}..${head}` });

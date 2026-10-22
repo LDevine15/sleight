@@ -58,8 +58,8 @@ home path, email, common phone format and supplied-term checks. Findings contain
 
 The benchmark hub check runs before the history scan. It renders every page, chart, `explore.html` and the README's
 generated blocks from `docs/results/data` in memory, with `node bench/results-hub.mjs --render-only --check`, and compares
-the result with the files in the tree. Any difference fails with `hub` and `stale-output`, and the fix is
-`node bench/results-hub.mjs --render-only` followed by a commit. The generator must be tracked, like the other helpers.
+the result with the files in the tree. A stale file fails with `hub` and `stale-output`, and the fix is
+`node bench/results-hub.mjs --render-only` followed by a commit. A generator crash or a failed run fails with `hub` and `hub-error`. The generator must be tracked, like the other helpers.
 
 The history base defaults to the local `origin/main`. Use `--history-base REF` to select
 another local base. A missing base or one outside HEAD's ancestry fails. The existing

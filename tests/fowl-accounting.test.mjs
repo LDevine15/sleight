@@ -123,5 +123,5 @@ test('the standalone dry plan is side-effect free and rounds.sh uses it before i
   const wrapper = readFileSync(new URL('../bench/fowl/rounds.sh', import.meta.url), 'utf8');
   assert.ok(wrapper.indexOf('--plan') < wrapper.indexOf('[ -d "$DIR/.git" ]'));
   assert.match(wrapper, /node tools\/rounds.mjs --effort medium "\$@"/, 'ordinary dry-run still reaches the patched runner');
-  assert.match(wrapper, /--model "\$MODEL"( \|\| RC=\$\?)?\s*$/m);
+  assert.match(wrapper, /--model "\$MODEL"( &| && RC=0 \|\| RC=\$\?)?\s*$/m);
 });

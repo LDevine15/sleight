@@ -579,12 +579,15 @@ function logSpan(file) {
   return stamps.length ? dateRange(stamps[0], stamps.at(-1)) : null;
 }
 
+// Where a bank was read: under the home folder it shows as ~/..., and anywhere else only the folder's name shows.
+const bankSource = dir => (resolve(dir).startsWith(homedir() + '/') ? tilde(dir) : scrub(basename(dir)));
+
 // A folder is a bank when its plan.json has the shape one of the two runners writes. `result` is null while it has no score or
 // comparison file yet (an aborted attempt, or a run in progress).
 export function readBank(dir) {
   const plan = tryJson(join(dir, 'plan.json'));
   if (!plan || typeof plan !== 'object') return null;
-  const id = basename(dir);
+  const id = scrub(basename(dir));
   if (plan.kind === 'final-build-remeasure' && Array.isArray(plan.groups)) {
     const comparison = tryJson(join(dir, 'comparison.json'));
     return { id, dir, kind: 'remeasure', plan, file: comparison ? 'comparison.json' : null, result: comparison ?? null };
@@ -627,19 +630,20 @@ function bankStudy(bank, group, tables, extra) {
     if (tables.A?.[task]) runs.push(...rowsFromCell(tables.A[task], task, BUILD_A, bank.file));
     if (tables.B?.[task]) runs.push(...rowsFromCell(tables.B[task], task, BUILD_B, bank.file));
   }
-  const { cells, verdict, table } = cellsFor(runs, tasks, arms, BUILD_B);
+  // Only the cells are kept. cellsFor's claim wording, totals and loss rule are for claims against other tools, not a build against itself.
+  const { cells } = cellsFor(runs, tasks, arms, BUILD_B);
   const model = group.model ? [scrub(group.model)] : [];
   return {
     id: `${bank.id}-${scrub(group.id)}`, family: 'validation', title: `${bank.id}, ${scrub(group.id)}`, bank: bank.id, kind: bank.kind, group: scrub(group.id),
-    date: extra.date, browser: group.browser ?? null, runner: group.runner ?? null, me: BUILD_B, arms, tasks,
+    date: extra.date, browser: group.browser ? scrub(group.browser) : null, runner: group.runner ? scrub(group.runner) : null, me: BUILD_B, arms, tasks,
     models: model.length ? { [BUILD_A]: model, [BUILD_B]: model } : {}, effort: plan.effort ? [scrub(plan.effort)] : [],
     engine: plan.engine ? scrub(plan.engine) : null, builds: { [BUILD_A]: [shaOf(extra.aBuild)], [BUILD_B]: [shaOf(extra.bBuild)] },
-    aRounds: extra.aRounds, runs, cells, verdict: summarizeVerdict(table, verdict, tasks, arms, BUILD_B),
+    aRounds: extra.aRounds, runs, cells,
   };
 }
 
 export function collectBank(bank) {
-  const { plan, result } = bank, record = { id: bank.id, kind: bank.kind, source: tilde(bank.dir), file: bank.file };
+  const { plan, result } = bank, record = { id: bank.id, kind: bank.kind, source: bankSource(bank.dir), file: bank.file };
   const span = logSpan(join(bank.dir, bank.kind === 'remeasure' ? 'remeasure.log' : 'validate-140.log'));
   if (!result) return { record: { ...record, complete: false, engine: plan.engine ? scrub(plan.engine) : null, planned: plan.groups.length, pending: true }, studies: [] };
   const studies = [], incomplete = [];
@@ -1165,7 +1169,7 @@ export const FAMILIES = [
   { id: 'browser-turbo', page: 'browser-turbo.md', title: 'Chrome and Helium: turbo against FowlBrowser', what: 'Turbo in Chrome and Helium, in the real-window race and the earlier gate rounds.' },
   { id: 'browser-race', page: 'browser-race.md', title: 'Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo', what: 'sleight\'s engine path in Safari and Firefox against Codex, LCU, Cua and Peekaboo.' },
   { id: 'ab-tests', page: 'ab-tests.md', title: 'Experiments', what: 'sleight against sleight, for skill, wording, tool and turbo changes.' },
-  { id: 'validation', page: 'validation.md', title: 'Validation: build A against build B', what: 'sleight against its own earlier build on the same tasks, from the validation and re-measure banks.' },
+  { id: 'validation', self: true, page: 'validation.md', title: 'Validation: build A against build B', what: 'sleight against its own earlier build on the same tasks, from the validation and re-measure banks.' },
   { id: 'release-passes', page: 'release-passes.md', title: 'Release passes and the earlier head-to-heads', what: 'The per-release regression passes and the first native head-to-heads.' },
 ];
 const family = id => FAMILIES.find(fam => fam.id === id);
@@ -1328,7 +1332,7 @@ export function readmeBlocks(all) {
 // Explore data: every study flattened into indexed tables so the page stays small.
 
 export function exploreData(all) {
-  const families = FAMILIES.map(f => ({ id: f.id, title: f.title, page: f.page }));
+  const families = FAMILIES.map(f => ({ id: f.id, title: f.title, page: f.page, ...(f.self ? { self: true } : {}) }));
   const studies = [];
   const add = (family, study, extra = {}) => studies.push({ family, ...study, ...extra });
   add('native-claim', all['native-claim'].studies[0]);

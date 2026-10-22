@@ -36,7 +36,7 @@ race() { # browser off|on|on-prompt round
   while [ $try -lt 60 ]; do
     try=$((try + 1)); gate
     echo "$(basename "$out") start $(now)" >> "$LOG"; rm -rf "$out"
-    env DISABLE_AUTOUPDATER=1 SLEIGHT_BROWSER_CORE=$core AS3_WINDOW_PROMPT=$prompt SLEIGHT_TRACE="$out.trace" "$RUNNER" --world --real-browser "$1" \
+    env DISABLE_AUTOUPDATER=1 SLEIGHT_NO_HUB=1 SLEIGHT_BROWSER_CORE=$core AS3_WINDOW_PROMPT=$prompt SLEIGHT_TRACE="$out.trace" "$RUNNER" --world --real-browser "$1" \
       --surface sleight --model haiku --effort high --tasks "$TASKS" --out "$out" > "$out.log" 2>&1
     rc=$?
     # Another round took the lock or the hold came on between the wait and the start, or Safari was still open: wait again.

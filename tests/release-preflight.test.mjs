@@ -253,14 +253,16 @@ test('stale benchmark hub output fails with its own code, before history and Lin
   assert.equal(JSON.stringify(result).includes(identity.username), false);
 });
 
-test('a hub check that cannot run, or a runner that throws, fails closed without exception text', async () => {
-  for (const hub of [() => ({ status: 2, stdout: '' }), () => ({ status: null, signal: 'SIGTERM' }), () => { throw Error(identity.home); }]) {
+test('a hub check that crashes or cannot run is a hub-error, never stale-output, and a runner that throws fails closed without exception text', async () => {
+  for (const [hub, code] of [[() => ({ status: 1, stdout: '', stderr: `Error: boom at ${identity.home}` }), 'hub-error'],
+    [() => ({ status: 2, stdout: 'would change README.md' }), 'hub-error'], [() => ({ status: null, signal: 'SIGTERM' }), 'hub-error'],
+    [() => ({ status: 1 }), 'hub-error'], [() => { throw Error(identity.home); }, 'runner-error']]) {
     const { options, calls } = fixture({ hub });
     const result = await preflight(options);
     assert.equal(result.ok, false);
     assert.equal(result.failures.length, 1);
     assert.equal(result.failures[0].check, 'hub');
-    assert.notEqual(result.failures[0].code, 'stale-output');
+    assert.equal(result.failures[0].code, code);
     assert.equal(steps(calls).includes('history'), false);
     assert.equal(JSON.stringify(result).includes(identity.home), false);
   }
@@ -282,6 +284,13 @@ test('the committed hub output is fresh, and a data file that moved on without i
     assert.equal(stale.status, 1);
     assert.match(stale.stdout, /would change data\/validation\.json/);
     assert.match(stale.stdout, /would change validation\.md/);
+    // A crash is not a stale tree: no "would change" line, so the preflight reports it as hub-error.
+    const empty = mkdtempSync(join(tmpdir(), 'hub-crash-'));
+    try {
+      const crashed = run('--out', empty);
+      assert.equal(crashed.status, 1);
+      assert.doesNotMatch(crashed.stdout, /^would change /m);
+    } finally { rmSync(empty, { recursive: true, force: true }); }
   } finally { rmSync(copy, { recursive: true, force: true }); }
 });
 

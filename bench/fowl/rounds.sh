@@ -56,13 +56,18 @@ if ! /usr/bin/git diff | cmp -s - "$REPO/bench/fowl/sleight-surface.patch"; then
 fi
 [ "$(/usr/bin/git rev-parse --short HEAD)" = "$PIN" ] || { echo "rounds.sh: $DIR is not at $PIN" >&2; exit 1; }
 if [ -n "$REAL" ]; then
-  RC=0
-  trap 'exit 130' INT TERM HUP
+  # RC is 1 until the runner is seen to succeed, so a round that is killed never reads as a pass in hub_refresh.
+  RC=1
+  # The runner is a background child, so a TERM, INT or HUP to this shell is passed on to it, and this shell waits for its cleanup.
+  stop_child() { kill -"$1" "$CHILD" 2>/dev/null || true; wait "$CHILD" 2>/dev/null || true; exit 130; }
+  trap 'stop_child INT' INT; trap 'stop_child TERM' TERM; trap 'stop_child HUP' HUP
   env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
     SLEIGHT_REPO="$REPO" ${SLEIGHT_TRACE:+SLEIGHT_TRACE="$SLEIGHT_TRACE"} ${SLEIGHT_TS3:+SLEIGHT_TS3="$SLEIGHT_TS3"} ${SLEIGHT_FS:+SLEIGHT_FS="$SLEIGHT_FS"} ${SLEIGHT_RS+SLEIGHT_RS="$SLEIGHT_RS"} \
     ${SLEIGHT_BENCH_HAND:+SLEIGHT_BENCH_HAND="$SLEIGHT_BENCH_HAND"} ${SLEIGHT_BROWSER_CORE:+SLEIGHT_BROWSER_CORE="$SLEIGHT_BROWSER_CORE"} ${AS3_WINDOW_PROMPT:+AS3_WINDOW_PROMPT="$AS3_WINDOW_PROMPT"} \
     ${SLEIGHT_WORKFLOW_DOCS:+SLEIGHT_WORKFLOW_DOCS="$SLEIGHT_WORKFLOW_DOCS"} ${SLEIGHT_LB12:+SLEIGHT_LB12="$SLEIGHT_LB12"} ${SLEIGHT_MT:+SLEIGHT_MT="$SLEIGHT_MT"} \
-    ${SLEIGHT_MC1:+SLEIGHT_MC1="$SLEIGHT_MC1"} node tools/rounds.mjs "$@" --model "$MODEL" || RC=$?
+    ${SLEIGHT_MC1:+SLEIGHT_MC1="$SLEIGHT_MC1"} node tools/rounds.mjs "$@" --model "$MODEL" &
+  CHILD=$!
+  wait "$CHILD" && RC=0 || RC=$?
   hub_refresh
   exit "$RC"
 fi
@@ -88,10 +93,10 @@ trap 'rmdir /tmp/sleight-live.lock; [ "$AUTH" = api ] && [ -n "$OUT" ] && [ -d "
 # the start before the round so an interrupted round keeps it. Real-browser rounds record it in real-gate.mjs. A round without
 # --out writes to FowlBrowser's own temporary folder and records no version.
 [ -z "$OUT" ] || node "$REPO/bench/engine-version.mjs" record "$OUT" || echo "rounds.sh: engine version at the start not recorded in $OUT" >&2
-RC=0
+RC=1
 env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
   CLAUDE_CONFIG_DIR="$HOME/Library/Caches/sleight-bench/fowl-claude-config" \
   SLEIGHT_REPO="$REPO" SLEIGHT_TRACE="${SLEIGHT_TRACE:-}" SLEIGHT_PROMPT="${SLEIGHT_PROMPT:-}" SLEIGHT_ENGINE_DOCS="${SLEIGHT_ENGINE_DOCS:-}" ${KEY:+ANTHROPIC_API_KEY="$KEY"} \
-  node tools/rounds.mjs --effort medium "$@" --model "$MODEL" || RC=$?
+  node tools/rounds.mjs --effort medium "$@" --model "$MODEL" && RC=0 || RC=$?
 [ -z "$OUT" ] || [ ! -d "$OUT" ] || node "$REPO/bench/engine-version.mjs" record "$OUT" --end || echo "rounds.sh: engine version at the end not recorded in $OUT" >&2
 exit "$RC"

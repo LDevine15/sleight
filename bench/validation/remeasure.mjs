@@ -8,6 +8,7 @@ import { ROOT, sha } from './audit-140.mjs';
 import { buildHarnessEvidence, harnessAt, verifyRunPins, readReceipt, readRows, safeResult,
   roundCommand, child, verifyEngine, waitGate, waitForRoundApps, stopGuard } from './validation-140.mjs';
 import { score } from '../claim-score.mjs';
+import { hubIsFresh, pendingChanges } from '../hub-refresh.mjs';
 
 const json = file => JSON.parse(readFileSync(file, 'utf8'));
 const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v)
@@ -169,9 +170,10 @@ export function makeRemeasurePlan({ baseline, tasks, build, engine, out, reposit
 }
 
 export function verifyFinalBuild(plan) {
+  // docs/results and the README are tolerated only while they match what `results-hub --render-only` renders from the tree's own data.
   if (git(plan.repository, 'rev-parse', 'HEAD') !== plan.build ||
-    git(plan.repository, 'status', '--porcelain', '--untracked-files=all', '--', '.',
-      ':(exclude)node_modules', ':(exclude).vale', ':(exclude)bench/results', ':(exclude)docs/results', ':(exclude)README.md'))
+    pendingChanges(git(plan.repository, 'status', '--porcelain', '--untracked-files=all', '--', '.',
+      ':(exclude)node_modules', ':(exclude).vale', ':(exclude)bench/results'), () => hubIsFresh(plan.repository)).length)
     throw Error('Final build HEAD changed or working tree is dirty');
   if (harnessAt(plan.build, plan.repository).hash !== plan.harnessHash ||
     git(plan.repository, 'rev-parse', `${plan.build}:plugins`) !== plan.pluginTree) throw Error('Final build provenance changed');

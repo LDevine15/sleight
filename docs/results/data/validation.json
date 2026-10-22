@@ -138,31 +138,7 @@
     {"task":"ao-moss-color","arm":"build-A","runs":3,"passes":3,"expected":11.591,"median":9.647,"min":9.338,"max":15.787,"p90":null},
     {"task":"ao-cheapest-mug","arm":"build-B","runs":3,"passes":3,"expected":13.09,"median":13.884,"min":11.359,"max":14.027,"p90":null},
     {"task":"ao-cheapest-mug","arm":"build-A","runs":3,"passes":3,"expected":11.846,"median":12.036,"min":10.197,"max":13.304,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 2 of 5",
-    "lowest": ["smoke-red","ao-moss-color"],
-    "reasons": [
-     "build-B has the lowest expected time on 2 of 5; \"fastest\" needs 3",
-     "build-B's total 111 s is not the lowest: build-A 106 s",
-     "5 runs missing on 4 pair(s) within 20%: survey-p09/build-A (build-B 3/5, build-A 3/5); survey-p10/build-A (build-B 3/5, build-A 3/5); ao-moss-color/build-A (build-B 3/5, build-A 3/5); ao-cheapest-mug/build-A (build-B 3/5, build-A 3/5)"
-    ],
-    "totals": {"build-B":110.867,"build-A":106.223},
-    "fastest": {"build-B":["smoke-red","ao-moss-color"],"build-A":["survey-p09","survey-p10","ao-cheapest-mug"]},
-    "lost": [
-     {"task":"survey-p09","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"survey-p10","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"ao-moss-color","by":[{"arm":"build-A","lowerExpected":false,"fasterRun":true}]},
-     {"task":"ao-cheapest-mug","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]}
-    ],
-    "topUps": [
-     {"task":"survey-p09","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"survey-p10","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"ao-moss-color","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"ao-cheapest-mug","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}
-    ]
-   }
+   ]
   },
   {
    "id": "validation-140-final-as3-safari",
@@ -225,30 +201,7 @@
     {"task":"ao-moss-color","arm":"build-A","runs":3,"passes":3,"expected":16.229,"median":14.164,"min":12.707,"max":21.815,"p90":null},
     {"task":"ao-cheapest-mug","arm":"build-B","runs":3,"passes":3,"expected":18.703,"median":19.509,"min":15.351,"max":21.249,"p90":null},
     {"task":"ao-cheapest-mug","arm":"build-A","runs":3,"passes":3,"expected":15.952,"median":16.138,"min":13.986,"max":17.733,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 2 of 5",
-    "lowest": ["survey-p10","ao-moss-color"],
-    "reasons": [
-     "build-B has the lowest expected time on 2 of 5; \"fastest\" needs 3",
-     "build-B's total 144 s is not the lowest: build-A 137 s",
-     "5 runs missing on 4 pair(s) within 20%: smoke-red/build-A (build-B 3/5, build-A 3/5); survey-p09/build-A (build-B 3/5, build-A 3/5); survey-p10/build-A (build-B 3/5, build-A 3/5); ao-cheapest-mug/build-A (build-B 3/5, build-A 3/5)"
-    ],
-    "totals": {"build-B":143.782,"build-A":136.681},
-    "fastest": {"build-B":["survey-p10","ao-moss-color"],"build-A":["smoke-red","survey-p09","ao-cheapest-mug"]},
-    "lost": [
-     {"task":"smoke-red","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"survey-p09","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"ao-cheapest-mug","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]}
-    ],
-    "topUps": [
-     {"task":"smoke-red","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"survey-p09","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"survey-p10","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"ao-cheapest-mug","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}
-    ]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-calendar-ambiguous-firefox",
@@ -279,21 +232,7 @@
    "cells": [
     {"task":"cc-calendar-ambiguous-firefox","arm":"build-B","runs":3,"passes":3,"expected":5.1,"median":5.2,"min":4.6,"max":5.5,"p90":null},
     {"task":"cc-calendar-ambiguous-firefox","arm":"build-A","runs":3,"passes":3,"expected":4.167,"median":4.3,"min":3.8,"max":4.4,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 0 of 1",
-    "lowest": [],
-    "reasons": [
-     "build-B has the lowest expected time on 0 of 1; \"fastest\" needs 1",
-     "build-B's total 5 s is not the lowest: build-A 4 s",
-     "5 runs missing on 1 pair(s) within 20%: cc-calendar-ambiguous-firefox/build-A (build-B 3/5, build-A 3/5)"
-    ],
-    "totals": {"build-B":5.1,"build-A":4.167},
-    "fastest": {"build-B":[],"build-A":["cc-calendar-ambiguous-firefox"]},
-    "lost": [{"task":"cc-calendar-ambiguous-firefox","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]}],
-    "topUps": [{"task":"cc-calendar-ambiguous-firefox","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-calendar-ambiguous-safari",
@@ -324,17 +263,7 @@
    "cells": [
     {"task":"cc-calendar-ambiguous-safari","arm":"build-B","runs":3,"passes":3,"expected":5.333,"median":5.5,"min":5,"max":5.5,"p90":null},
     {"task":"cc-calendar-ambiguous-safari","arm":"build-A","runs":3,"passes":3,"expected":6.133,"median":6.2,"min":5.6,"max":6.6,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 1 of 1",
-    "lowest": ["cc-calendar-ambiguous-safari"],
-    "reasons": ["5 runs missing on 1 pair(s) within 20%: cc-calendar-ambiguous-safari/build-A (build-B 3/5, build-A 3/5)"],
-    "totals": {"build-B":5.333,"build-A":6.133},
-    "fastest": {"build-B":["cc-calendar-ambiguous-safari"],"build-A":[]},
-    "lost": [],
-    "topUps": [{"task":"cc-calendar-ambiguous-safari","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-calendar-firefox",
@@ -365,17 +294,7 @@
    "cells": [
     {"task":"cc-calendar-firefox","arm":"build-B","runs":3,"passes":3,"expected":19.967,"median":18.3,"min":15,"max":26.6,"p90":null},
     {"task":"cc-calendar-firefox","arm":"build-A","runs":3,"passes":3,"expected":15.3,"median":14.6,"min":13.2,"max":18.1,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 0 of 1",
-    "lowest": [],
-    "reasons": ["build-B has the lowest expected time on 0 of 1; \"fastest\" needs 1","build-B's total 20 s is not the lowest: build-A 15 s"],
-    "totals": {"build-B":19.967,"build-A":15.3},
-    "fastest": {"build-B":[],"build-A":["cc-calendar-firefox"]},
-    "lost": [{"task":"cc-calendar-firefox","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]}],
-    "topUps": []
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-calendar-safari",
@@ -406,17 +325,7 @@
    "cells": [
     {"task":"cc-calendar-safari","arm":"build-B","runs":3,"passes":3,"expected":12.133,"median":12.6,"min":9.7,"max":14.1,"p90":null},
     {"task":"cc-calendar-safari","arm":"build-A","runs":3,"passes":3,"expected":12.933,"median":12.2,"min":11.9,"max":14.7,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 1 of 1",
-    "lowest": ["cc-calendar-safari"],
-    "reasons": ["5 runs missing on 1 pair(s) within 20%: cc-calendar-safari/build-A (build-B 3/5, build-A 3/5)"],
-    "totals": {"build-B":12.133,"build-A":12.933},
-    "fastest": {"build-B":["cc-calendar-safari"],"build-A":[]},
-    "lost": [],
-    "topUps": [{"task":"cc-calendar-safari","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-dropdown-firefox",
@@ -447,17 +356,7 @@
    "cells": [
     {"task":"cc-dropdown-firefox","arm":"build-B","runs":3,"passes":3,"expected":17.133,"median":16.2,"min":15.3,"max":19.9,"p90":null},
     {"task":"cc-dropdown-firefox","arm":"build-A","runs":3,"passes":3,"expected":21.2,"median":20.8,"min":20.8,"max":22,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 1 of 1",
-    "lowest": ["cc-dropdown-firefox"],
-    "reasons": ["5 runs missing on 1 pair(s) within 20%: cc-dropdown-firefox/build-A (build-B 3/5, build-A 3/5)"],
-    "totals": {"build-B":17.133,"build-A":21.2},
-    "fastest": {"build-B":["cc-dropdown-firefox"],"build-A":[]},
-    "lost": [],
-    "topUps": [{"task":"cc-dropdown-firefox","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-dropdown-safari",
@@ -488,17 +387,7 @@
    "cells": [
     {"task":"cc-dropdown-safari","arm":"build-B","runs":3,"passes":3,"expected":16.567,"median":16.2,"min":15.9,"max":17.6,"p90":null},
     {"task":"cc-dropdown-safari","arm":"build-A","runs":3,"passes":3,"expected":18.2,"median":16.5,"min":15.9,"max":22.2,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 1 of 1",
-    "lowest": ["cc-dropdown-safari"],
-    "reasons": ["5 runs missing on 1 pair(s) within 20%: cc-dropdown-safari/build-A (build-B 3/5, build-A 3/5)"],
-    "totals": {"build-B":16.567,"build-A":18.2},
-    "fastest": {"build-B":["cc-dropdown-safari"],"build-A":[]},
-    "lost": [],
-    "topUps": [{"task":"cc-dropdown-safari","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-dropdown-slow-firefox",
@@ -529,21 +418,7 @@
    "cells": [
     {"task":"cc-dropdown-slow-firefox","arm":"build-B","runs":3,"passes":3,"expected":25.967,"median":27.3,"min":22.6,"max":28,"p90":null},
     {"task":"cc-dropdown-slow-firefox","arm":"build-A","runs":3,"passes":3,"expected":22.6,"median":23.1,"min":21.2,"max":23.5,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 0 of 1",
-    "lowest": [],
-    "reasons": [
-     "build-B has the lowest expected time on 0 of 1; \"fastest\" needs 1",
-     "build-B's total 26 s is not the lowest: build-A 23 s",
-     "5 runs missing on 1 pair(s) within 20%: cc-dropdown-slow-firefox/build-A (build-B 3/5, build-A 3/5)"
-    ],
-    "totals": {"build-B":25.967,"build-A":22.6},
-    "fastest": {"build-B":[],"build-A":["cc-dropdown-slow-firefox"]},
-    "lost": [{"task":"cc-dropdown-slow-firefox","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]}],
-    "topUps": [{"task":"cc-dropdown-slow-firefox","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-dropdown-slow-safari",
@@ -574,21 +449,7 @@
    "cells": [
     {"task":"cc-dropdown-slow-safari","arm":"build-B","runs":3,"passes":3,"expected":21.133,"median":21.6,"min":19.7,"max":22.1,"p90":null},
     {"task":"cc-dropdown-slow-safari","arm":"build-A","runs":3,"passes":3,"expected":17.733,"median":16.2,"min":14.1,"max":22.9,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 0 of 1",
-    "lowest": [],
-    "reasons": [
-     "build-B has the lowest expected time on 0 of 1; \"fastest\" needs 1",
-     "build-B's total 21 s is not the lowest: build-A 18 s",
-     "5 runs missing on 1 pair(s) within 20%: cc-dropdown-slow-safari/build-A (build-B 3/5, build-A 3/5)"
-    ],
-    "totals": {"build-B":21.133,"build-A":17.733},
-    "fastest": {"build-B":[],"build-A":["cc-dropdown-slow-safari"]},
-    "lost": [{"task":"cc-dropdown-slow-safari","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]}],
-    "topUps": [{"task":"cc-dropdown-slow-safari","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-list-firefox",
@@ -619,17 +480,7 @@
    "cells": [
     {"task":"cc-list-firefox","arm":"build-B","runs":3,"passes":3,"expected":34.033,"median":32.1,"min":31.8,"max":38.2,"p90":null},
     {"task":"cc-list-firefox","arm":"build-A","runs":3,"passes":3,"expected":25.133,"median":28.1,"min":18.5,"max":28.8,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 0 of 1",
-    "lowest": [],
-    "reasons": ["build-B has the lowest expected time on 0 of 1; \"fastest\" needs 1","build-B's total 34 s is not the lowest: build-A 25 s"],
-    "totals": {"build-B":34.033,"build-A":25.133},
-    "fastest": {"build-B":[],"build-A":["cc-list-firefox"]},
-    "lost": [{"task":"cc-list-firefox","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]}],
-    "topUps": []
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-list-native",
@@ -660,17 +511,7 @@
    "cells": [
     {"task":"cc-list-native","arm":"build-B","runs":3,"passes":3,"expected":39.467,"median":39,"min":21,"max":58.4,"p90":null},
     {"task":"cc-list-native","arm":"build-A","runs":3,"passes":3,"expected":57.233,"median":54.5,"min":48.5,"max":68.7,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "fastest",
-    "lowest": ["cc-list-native"],
-    "reasons": [],
-    "totals": {"build-B":39.467,"build-A":57.233},
-    "fastest": {"build-B":["cc-list-native"],"build-A":[]},
-    "lost": [],
-    "topUps": []
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-list-pop-up-firefox",
@@ -701,17 +542,7 @@
    "cells": [
     {"task":"cc-list-pop-up-firefox","arm":"build-B","runs":3,"passes":3,"expected":18.267,"median":17.7,"min":16.2,"max":20.9,"p90":null},
     {"task":"cc-list-pop-up-firefox","arm":"build-A","runs":3,"passes":3,"expected":19.8,"median":15.2,"min":13,"max":31.2,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 1 of 1",
-    "lowest": ["cc-list-pop-up-firefox"],
-    "reasons": ["5 runs missing on 1 pair(s) within 20%: cc-list-pop-up-firefox/build-A (build-B 3/5, build-A 3/5)"],
-    "totals": {"build-B":18.267,"build-A":19.8},
-    "fastest": {"build-B":["cc-list-pop-up-firefox"],"build-A":[]},
-    "lost": [{"task":"cc-list-pop-up-firefox","by":[{"arm":"build-A","lowerExpected":false,"fasterRun":true}]}],
-    "topUps": [{"task":"cc-list-pop-up-firefox","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-list-pop-up-safari",
@@ -742,17 +573,7 @@
    "cells": [
     {"task":"cc-list-pop-up-safari","arm":"build-B","runs":3,"passes":3,"expected":14.267,"median":14.3,"min":13.7,"max":14.8,"p90":null},
     {"task":"cc-list-pop-up-safari","arm":"build-A","runs":3,"passes":3,"expected":14.8,"median":15,"min":13.1,"max":16.3,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 1 of 1",
-    "lowest": ["cc-list-pop-up-safari"],
-    "reasons": ["5 runs missing on 1 pair(s) within 20%: cc-list-pop-up-safari/build-A (build-B 3/5, build-A 3/5)"],
-    "totals": {"build-B":14.267,"build-A":14.8},
-    "fastest": {"build-B":["cc-list-pop-up-safari"],"build-A":[]},
-    "lost": [{"task":"cc-list-pop-up-safari","by":[{"arm":"build-A","lowerExpected":false,"fasterRun":true}]}],
-    "topUps": [{"task":"cc-list-pop-up-safari","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-list-safari",
@@ -783,17 +604,7 @@
    "cells": [
     {"task":"cc-list-safari","arm":"build-B","runs":3,"passes":3,"expected":16.933,"median":16.8,"min":15.7,"max":18.3,"p90":null},
     {"task":"cc-list-safari","arm":"build-A","runs":3,"passes":3,"expected":20.1,"median":21.3,"min":17.6,"max":21.4,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 1 of 1",
-    "lowest": ["cc-list-safari"],
-    "reasons": ["5 runs missing on 1 pair(s) within 20%: cc-list-safari/build-A (build-B 3/5, build-A 3/5)"],
-    "totals": {"build-B":16.933,"build-A":20.1},
-    "fastest": {"build-B":["cc-list-safari"],"build-A":[]},
-    "lost": [],
-    "topUps": [{"task":"cc-list-safari","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-new-tab-firefox",
@@ -824,17 +635,7 @@
    "cells": [
     {"task":"cc-new-tab-firefox","arm":"build-B","runs":3,"passes":3,"expected":12.667,"median":11.8,"min":11.7,"max":14.5,"p90":null},
     {"task":"cc-new-tab-firefox","arm":"build-A","runs":3,"passes":3,"expected":14.5,"median":13.8,"min":13.7,"max":16,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 1 of 1",
-    "lowest": ["cc-new-tab-firefox"],
-    "reasons": ["5 runs missing on 1 pair(s) within 20%: cc-new-tab-firefox/build-A (build-B 3/5, build-A 3/5)"],
-    "totals": {"build-B":12.667,"build-A":14.5},
-    "fastest": {"build-B":["cc-new-tab-firefox"],"build-A":[]},
-    "lost": [],
-    "topUps": [{"task":"cc-new-tab-firefox","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}]
-   }
+   ]
   },
   {
    "id": "validation-140-final-cc-new-tab-safari",
@@ -865,17 +666,7 @@
    "cells": [
     {"task":"cc-new-tab-safari","arm":"build-B","runs":3,"passes":3,"expected":11.633,"median":11.2,"min":10.6,"max":13.1,"p90":null},
     {"task":"cc-new-tab-safari","arm":"build-A","runs":3,"passes":3,"expected":15.367,"median":15.6,"min":14.2,"max":16.3,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "fastest",
-    "lowest": ["cc-new-tab-safari"],
-    "reasons": [],
-    "totals": {"build-B":11.633,"build-A":15.367},
-    "fastest": {"build-B":["cc-new-tab-safari"],"build-A":[]},
-    "lost": [],
-    "topUps": []
-   }
+   ]
   },
   {
    "id": "validation-140-final-native",
@@ -1061,36 +852,7 @@
     {"task":"word-brief","arm":"build-A","runs":3,"passes":3,"expected":102.7,"median":97,"min":77.8,"max":133.3,"p90":null},
     {"task":"textedit-notes-table","arm":"build-B","runs":3,"passes":1,"expected":356.3,"median":133.7,"min":133.7,"max":133.7,"p90":null},
     {"task":"textedit-notes-table","arm":"build-A","runs":3,"passes":3,"expected":114.933,"median":131.8,"min":64.1,"max":148.9,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 4 of 10",
-    "lowest": ["textedit-two-windows","textedit-window-drag","textedit-replace-save","word-brief"],
-    "reasons": [
-     "build-B has the lowest expected time on 4 of 10; \"fastest\" needs 6",
-     "5 runs missing on 4 pair(s) within 20%: textedit-edit/build-A (build-B 3/5, build-A 3/5); textedit-two-windows/build-A (build-B 3/5, build-A 3/5); textedit-replace-save/build-A (build-B 3/5, build-A 3/5); word-memo/build-A (build-B 3/5, build-A 3/5)"
-    ],
-    "totals": {"build-B":937.783,"build-A":null},
-    "fastest": {
-     "build-B": ["textedit-two-windows","textedit-window-drag","textedit-replace-save","word-brief"],
-     "build-A": ["textedit-edit","finder-rename","finder-create-folder","textedit-insert-line","word-memo","textedit-notes-table"]
-    },
-    "lost": [
-     {"task":"textedit-edit","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":false}]},
-     {"task":"finder-rename","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"finder-create-folder","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"textedit-replace-save","by":[{"arm":"build-A","lowerExpected":false,"fasterRun":true}]},
-     {"task":"textedit-insert-line","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":false}]},
-     {"task":"word-memo","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"textedit-notes-table","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]}
-    ],
-    "topUps": [
-     {"task":"textedit-edit","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"textedit-two-windows","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"textedit-replace-save","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"word-memo","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}
-    ]
-   }
+   ]
   },
   {
    "id": "validation-140-final-race-firefox",
@@ -1222,38 +984,7 @@
     {"task":"wikipedia","arm":"build-A","runs":3,"passes":3,"expected":14.677,"median":13.806,"min":12.633,"max":17.592,"p90":null},
     {"task":"mdn","arm":"build-B","runs":3,"passes":3,"expected":12.701,"median":12.144,"min":11.962,"max":13.996,"p90":null},
     {"task":"mdn","arm":"build-A","runs":3,"passes":3,"expected":16.001,"median":15.744,"min":13.943,"max":18.315,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 10 of 12",
-    "lowest": ["form-travel","form-settings","form-checkout","shipping-link","size-guide","handoff","inject-order","inject-mail","wikipedia","mdn"],
-    "reasons": [
-     "5 runs missing on 9 pair(s) within 20%: form-checkout/build-A (build-B 3/5, build-A 3/5); form-settings-helium/build-A (build-B 3/5, build-A 3/5); shipping-link/build-A (build-B 3/5, build-A 3/5); size-guide/build-A (build-B 3/5, build-A 3/5); demoid/build-A (build-B 3/5, build-A 3/5); handoff/build-A (build-B 3/5, build-A 3/5); inject-order/build-A (build-B 3/5, build-A 3/5); inject-mail/build-A (build-B 3/5, build-A 3/5); wikipedia/build-A (build-B 3/5, build-A 3/5)"
-    ],
-    "totals": {"build-B":425.563,"build-A":476.779},
-    "fastest": {
-     "build-B": ["form-travel","form-settings","form-checkout","shipping-link","size-guide","handoff","inject-order","inject-mail","wikipedia","mdn"],
-     "build-A": ["form-settings-helium","demoid"]
-    },
-    "lost": [
-     {"task":"form-settings-helium","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"demoid","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":false}]},
-     {"task":"inject-order","by":[{"arm":"build-A","lowerExpected":false,"fasterRun":true}]},
-     {"task":"inject-mail","by":[{"arm":"build-A","lowerExpected":false,"fasterRun":true}]},
-     {"task":"wikipedia","by":[{"arm":"build-A","lowerExpected":false,"fasterRun":true}]}
-    ],
-    "topUps": [
-     {"task":"form-checkout","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"form-settings-helium","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"shipping-link","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"size-guide","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"demoid","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"handoff","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"inject-order","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"inject-mail","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"wikipedia","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}
-    ]
-   }
+   ]
   },
   {
    "id": "validation-140-final-race-safari",
@@ -1403,46 +1134,7 @@
     {"task":"wikipedia","arm":"build-A","runs":3,"passes":3,"expected":16.84,"median":17.032,"min":16.054,"max":17.433,"p90":null},
     {"task":"mdn","arm":"build-B","runs":3,"passes":3,"expected":15.629,"median":14.363,"min":12.952,"max":19.573,"p90":null},
     {"task":"mdn","arm":"build-A","runs":3,"passes":3,"expected":14.784,"median":14.328,"min":13.983,"max":16.04,"p90":null}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 4 of 12",
-    "lowest": ["form-travel","form-checkout","form-settings-helium","shipping-link"],
-    "reasons": [
-     "build-B has the lowest expected time on 4 of 12; \"fastest\" needs 7",
-     "build-B's total 938 s is not the lowest: build-A 582 s",
-     "5 runs missing on 9 pair(s) within 20%: form-travel/build-A (build-B 3/5, build-A 3/5); form-checkout/build-A (build-B 3/5, build-A 3/5); form-settings-helium/build-A (build-B 3/5, build-A 3/5); shipping-link/build-A (build-B 3/5, build-A 3/5); size-guide/build-A (build-B 3/5, build-A 3/5); demoid/build-A (build-B 3/5, build-A 3/5); handoff/build-A (build-B 3/5, build-A 3/5); inject-order/build-A (build-B 3/5, build-A 3/5); mdn/build-A (build-B 3/5, build-A 3/5)"
-    ],
-    "totals": {"build-B":938.129,"build-A":581.572},
-    "fastest": {
-     "build-B": ["form-travel","form-checkout","form-settings-helium","shipping-link"],
-     "build-A": ["form-settings","size-guide","demoid","handoff","inject-order","inject-mail","wikipedia","mdn"]
-    },
-    "lost": [
-     {"task":"form-travel","by":[{"arm":"build-A","lowerExpected":false,"fasterRun":true}]},
-     {"task":"form-settings","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"form-checkout","by":[{"arm":"build-A","lowerExpected":false,"fasterRun":true}]},
-     {"task":"form-settings-helium","by":[{"arm":"build-A","lowerExpected":false,"fasterRun":true}]},
-     {"task":"size-guide","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":false}]},
-     {"task":"demoid","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"handoff","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":false}]},
-     {"task":"inject-order","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"inject-mail","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"wikipedia","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"mdn","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":false}]}
-    ],
-    "topUps": [
-     {"task":"form-travel","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"form-checkout","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"form-settings-helium","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"shipping-link","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"size-guide","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"demoid","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"handoff","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"inject-order","arm":"build-A","short":["build-B 3/5","build-A 3/5"]},
-     {"task":"mdn","arm":"build-A","short":["build-B 3/5","build-A 3/5"]}
-    ]
-   }
+   ]
   },
   {
    "id": "validation-140-final-release-haiku",
@@ -1635,32 +1327,7 @@
     {"task":"wikipedia","arm":"build-A","runs":5,"passes":5,"expected":5.484,"median":5.617,"min":4.954,"max":6.02,"p90":6.02},
     {"task":"mdn","arm":"build-B","runs":5,"passes":5,"expected":6.836,"median":6.029,"min":5.6,"max":10.473,"p90":10.473},
     {"task":"mdn","arm":"build-A","runs":5,"passes":5,"expected":5.628,"median":5.03,"min":4.773,"max":6.751,"p90":6.751}
-   ],
-   "verdict": {
-    "me": "build-B",
-    "wording": "completed every task, fastest on 3 of 13",
-    "lowest": ["shipping-link","mobile","inject-order"],
-    "reasons": ["build-B has the lowest expected time on 3 of 13; \"fastest\" needs 7","build-B's total 242 s is not the lowest: build-A 226 s"],
-    "totals": {"build-B":242.298,"build-A":225.903},
-    "fastest": {
-     "build-B": ["shipping-link","mobile","inject-order"],
-     "build-A": ["form-travel","form-settings","form-checkout","form-settings-helium","size-guide","demoid","handoff","inject-mail","wikipedia","mdn"]
-    },
-    "lost": [
-     {"task":"form-travel","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"form-settings","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"form-checkout","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"form-settings-helium","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"shipping-link","by":[{"arm":"build-A","lowerExpected":false,"fasterRun":true}]},
-     {"task":"size-guide","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"demoid","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"handoff","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"inject-mail","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"wikipedia","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]},
-     {"task":"mdn","by":[{"arm":"build-A","lowerExpected":true,"fasterRun":true}]}
-    ],
-    "topUps": []
-   }
+   ]
   }
  ]
 }

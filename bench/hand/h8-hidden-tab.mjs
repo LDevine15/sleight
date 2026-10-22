@@ -61,7 +61,7 @@ export function traceLines(dirs) {
 
 export function roundCommand({ out, only = 'demoid', model = 'haiku' }) {
   return { command: join(ROOT, 'bench/fowl/rounds.sh'), args: ['--world', '--real-browser', 'chrome', '--surface', 'sleight-turbo', '--model', model,
-    '--effort', 'high', '--only', only, '--out', out], env: { DISABLE_AUTOUPDATER: '1', SLEIGHT_BENCH_HAND: '1', SLEIGHT_TRACE: `${out}.trace` } };
+    '--effort', 'high', '--only', only, '--out', out], env: { DISABLE_AUTOUPDATER: '1', SLEIGHT_NO_HUB: '1', SLEIGHT_BENCH_HAND: '1', SLEIGHT_TRACE: `${out}.trace` } };
 }
 
 async function main(argv) {

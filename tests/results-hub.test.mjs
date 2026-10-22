@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import vm from 'node:vm';
 import { claim, score } from '../bench/claim-score.mjs';
@@ -378,6 +378,51 @@ test('explore.html runs, fills its filters, draws charts per task and switches f
   nodes['f-result'].listeners.change[0]({ target: { value: '' } });
   nodes.theme.listeners.click[0]();
   assert.equal(document.documentElement.attrs['data-theme'], 'light');
+});
+
+test('explore.html keeps the sleight-against-itself family out of All families and labels it where it is picked', () => {
+  const html = page('explore.html');
+  const script = /<script>([\s\S]*)<\/script>/.exec(html)[1];
+  const ids = [...html.matchAll(/id="([^"]+)"/g)].map(m => m[1]);
+  const nodes = Object.fromEntries(ids.map(id => [id, new FakeNode(id)]));
+  const document = { documentElement: new FakeNode('html'), getElementById: id => nodes[id], createElement: tag => new FakeNode(tag),
+    createElementNS: (_ns, tag) => new FakeNode(tag), createTextNode: text => Object.assign(new FakeNode('#text'), { text }) };
+  vm.runInNewContext(script, { document, localStorage: { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } }, window: { innerWidth: 390 }, console });
+  const options = id => nodes[id].children.map(child => [child.attrs.value, child.text ?? child.children?.[0]?.text]);
+  const label = options('f-family').find(([value]) => value === 'validation')[1];
+  assert.match(label, /\(sleight against itself\)$/);
+  nodes['f-family'].listeners.change[0]({ target: { value: '' } });
+  assert.equal(options('f-arm').some(([value]) => /^build-/.test(value)), false, 'All families lists only the real arms');
+  assert.equal(options('f-study').some(([, text]) => /remeasure|validation-/.test(text ?? '')), false);
+  nodes['f-family'].listeners.change[0]({ target: { value: 'validation' } });
+  assert.deepEqual(options('f-arm').map(([value]) => value).filter(Boolean).sort(), ['build-A', 'build-B']);
+});
+
+test('the validation family carries no claim or scorer wording, and a bank\'s names and paths are scrubbed', t => {
+  const { wt } = fixtureWt(t);
+  const data = collectValidation({ wt });
+  const text = JSON.stringify(data);
+  for (const study of data.studies) for (const key of ['verdict', 'wording', 'reasons', 'lost', 'fastest', 'totals', 'topUps']) assert.equal(key in study, false, key);
+  assert.equal(/wording|fastest|"lowest"|completed every task/.test(text), false);
+  assert.equal(data.banks.find(b => b.id === 'validation-x').source, 'validation-x', 'a bank outside the home folder shows only its folder name');
+  const committedData = readJson(join(OUT, 'data/validation.json'));
+  assert.ok(committedData.banks.every(b => b.source.startsWith('~/') || !b.source.includes('/')));
+  assert.equal(JSON.stringify(committedData).match(/wording|"verdict"|completed every task/), null);
+  assert.equal(page('validation.md').match(/Scorer wording|completed every task|fastest on \d+ of/), null);
+  // The id, browser and runner are scrubbed like every other string copied from a bank.
+  const owner = userInfo().username;
+  const dirty = join(wt, `${owner}-bank`);
+  cpSync(join(wt, 'race-1017/validation-x'), dirty, { recursive: true });
+  const plan = readJson(join(dirty, 'plan.json'));
+  plan.groups[1].browser = `${homedir()}/Browsers/Safari`; plan.groups[1].runner = `${homedir()}/runner`;
+  writeFileSync(join(dirty, 'plan.json'), JSON.stringify(plan));
+  const { record, studies } = collectBank(readBank(dirty));
+  const scrubbed = JSON.stringify([record, studies]);
+  assert.equal(scrubbed.includes(homedir()), false);
+  assert.equal(scrubbed.toLowerCase().includes(owner.toLowerCase()), false);
+  assert.match(record.id, /^\[owner\]-bank$/);
+  const safari = studies.find(s => s.group === 'race-safari');
+  assert.deepEqual([safari.browser, safari.runner], ['~/Browsers/Safari', '~/runner']);
 });
 
 test('pages name each arm\'s engine version with its UTC dates once the data carries them, and flag engine arms on different versions', () => {
