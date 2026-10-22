@@ -285,8 +285,30 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
   };
   let stateDir;
   const tabs = 't' + '0'.repeat(31) + '1 Visual Studio Code window 7 joined join 1';
-  const read = () => ['# Visual Studio Code 1.141.0 (pid 400) window 7 epoch 1, join 1 joined', '- treeitem "a-scratch.txt" [ref=e2]',
-    '- textbox "a-scratch.txt, Editor content" [ref=e3]', `- text: ${w.typed}`].join('\n');
+  // VS Code 1.141.0 as the 2026-10-22 live reads showed it: a row click opens a preview tab and leaves focus in the tree;
+  // the tab click focuses the zero-area editor, whose only actionable ref is the keyboard-only one a find read lists.
+  // A plain read stops at the 8000-character cut, before any editor line.
+  const editor = 'a-scratch.txt, preview';
+  const rows = () => [`- treeitem "a-scratch.txt"${w.scratchOpen ? ' [selected]' : ''} [level=1] [ref=e2]:`,
+    ...(w.scratchOpen ? [`- tab "${editor}" [selected] [ref=e5]:`] : [])];
+  const editorRows = () => [...(w.scratchOpen ? [`- textbox "${editor}"${w.editorActive ? ' [active]' : ''}`] : []),
+    ...(w.typed ? [`- generic [ref=e9] [partly offscreen]: ${JSON.stringify(w.typed)}`] : []),
+    ...(w.editorActive && !w.keyboardRefWithheld ? [`- textbox "${editor}" [active] [keyboard-only] [ref=x1]: "[redacted]"`] : [])];
+  const read = find => {
+    const head = '# Visual Studio Code 1.141.0 (pid 400) window 7 epoch 1, join 1 joined';
+    if (find === undefined) return [head, ...rows(), '# Cut: more rows omitted. Continue with ref="c1".'].join('\n');
+    const terms = String(find).toLowerCase().split('|'), hits = [...rows(), ...editorRows()].filter(line => terms.some(term => line.toLowerCase().includes(term)));
+    return [head, ...(hits.length ? hits : ['# No matching content.'])].join('\n');
+  };
+  const act = steps => {
+    for (const s of steps) {
+      if (s.do === 'click' && s.ref === 'e2') w.scratchOpen = true;
+      else if (s.do === 'click' && s.ref === 'e5' && w.scratchOpen) w.editorActive = true;
+      else if (s.do === 'type' && s.ref === 'x1' && w.editorActive && !w.keyboardRefWithheld) w.typed += s.text;
+      else if (s.do !== 'press') return { text: `ref ${s.ref} is not on the page now`, isError: true };
+    }
+    return { text: '1 ok', isError: false };
+  };
   const worker = { async send(op, extra = {}) {
     if (op === 'start') {
       w.starts.push({ profile: extra.profile, home: extra.home, rehost: !!extra.rehost, cardLog: extra.cardLog,
@@ -302,8 +324,8 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
     if (op === 'call') {
       const { name, arguments: a } = extra.request;
       if (name === 'browser_tabs') return { ok: true, result: { text: tabs, isError: false } };
-      if (name === 'browser_read') return { ok: true, result: { text: read(), isError: false } };
-      if (name === 'browser_act') { for (const s of a.steps) if (s.do === 'type') w.typed += s.text; return { ok: true, result: { text: '1 ok', isError: false } }; }
+      if (name === 'browser_read') return { ok: true, result: { text: read(a.find), isError: false } };
+      if (name === 'browser_act') return { ok: true, result: act(a.steps) };
     }
     if (op === 'status') return { ok: true, status: { hostPid: 450 } };
     if (op === 'collect') return { ok: true, status: { ownership: 'free', broker: 'collected' } };
@@ -319,6 +341,9 @@ function relaunchWorld(t, { ownerRunning = false, quarantined = false } = {}) {
       w.electron.push(request);
       if (request.mode === 'launch') {
         mkdirSync(join(request.appPath, '..', 'code-portable-data', 'user-data', 'logs'), { recursive: true });
+        // VS Code 1.141.0's configuration migration at startup, seen in the 2026-10-22 02:32Z run's retained profile.
+        const settings = join(request.appPath, '..', 'code-portable-data', 'user-data', 'User', 'settings.json');
+        if (existsSync(settings)) writeFileSync(settings, readFileSync(settings, 'utf8').replace('"extensions.autoUpdate": false', '"extensions.autoUpdate": "off"'));
         w.procs.push({ pid: 300, ppid: 1, uid: process.getuid(), startedAtMs: 4, args: request.appPath + '/Contents/MacOS/Code ' + request.target });
         return { stage: 'launch', process: { pid: 300, bundle: request.bundle, path: request.appPath, launchedAtMs: 1000 } };
       }
@@ -420,6 +445,63 @@ test('the live relaunch driver runs every relaunch cell on its own clone, and ne
   assert.equal(receipt.cleanup.confirmed, true);
   assert.equal(existsSync(base), false, 'the clone, its portable profile and the state are gone');
   assert.equal(SEED_SETTINGS['security.workspace.trust.enabled'], false, 'the restored window shows no trust prompt');
+});
+
+const relaunchRun = async (t, setup) => {
+  const world = relaunchWorld(t); setup?.(world);
+  const driver = liveRelaunchDriver(world.app, { root: world.root, io: { permission: async () => false }, deps: world.deps });
+  let n = 0;
+  const clock = { now: () => (n += 5), sleep: async ms => { n += ms; } };
+  const receipt = await runQualification({ app: world.app, driver, observer: fakeObserver({ now: clock.now, fixturePid: () => 400 }), io: { exists: () => false, permission: async () => false },
+    clock, cells: liveRelaunchCells(world.app), options: { relaunch: true, mode: 'live', consentWaitMs: 120000 } });
+  return { ...world, driver, receipt, byId: Object.fromEntries(receipt.cells.map(cell => [cell.id, cell])) };
+};
+
+test('relaunch host-loss reaches the 1.141 editor through its tab and a find read, and seeds the migrated autoUpdate form', async t => {
+  const { w, byId } = await relaunchRun(t);
+  assert.equal(byId['relaunch-host-loss'].status, 'pass', JSON.stringify(byId['relaunch-host-loss']));
+  assert.ok(w.scratchOpen && w.editorActive && /^hl[a-z0-9]+$/.test(w.typed), 'the marker went to the keyboard-only editor ref after the tab click');
+  assert.equal(byId['relaunch-user-quit'].status, 'pass', JSON.stringify(byId['relaunch-user-quit']));
+  assert.equal(SEED_SETTINGS['extensions.autoUpdate'], 'off', 'the form VS Code 1.141.0 writes back, so its startup migration leaves the seed alone');
+});
+
+test('relaunch host-loss without an actionable editor fails EDITOR_NOT_FOUND with closed detail', async t => {
+  const { byId, driver } = await relaunchRun(t, ({ w }) => { w.keyboardRefWithheld = true; });
+  const cell = byId['relaunch-host-loss'];
+  assert.equal(cell.error, 'EDITOR_NOT_FOUND');
+  assert.equal(cell.detail.stage, 'host-loss-editor');
+  assert.match(cell.detail.expected, /selected a-scratch\.txt tab and one actionable editor textbox/);
+  assert.deepEqual({ ...cell.detail.seen, reads: cell.detail.seen.reads > 2 }, { tabOpen: true, tabSelected: true, rowClicked: true, tabClicked: true,
+    textboxes: 1, actionable: 0, active: 1, keyboardOnly: 0, reads: true, cut: false });
+  const text = JSON.stringify(cell.detail);
+  assert.ok(!text.includes(driver.paths().base) && !text.includes('/') && !text.includes('Visual Studio Code'), 'no path or window title');
+});
+
+test('a settings change during host-loss fails relaunch-user-quit PROFILE_CHANGED with when and which seed keys changed, closed', async t => {
+  const { byId, driver } = await relaunchRun(t, ({ deps }) => {
+    const create = deps.forkWorker;
+    deps.forkWorker = async options => {
+      const worker = await create(options), send = worker.send.bind(worker);
+      return { ...worker, send: async (op, extra = {}) => {
+        if (op === 'start' && extra.rehost) {
+          const settings = join(extra.registryPath, '..', 'apps', 'code-portable-data', 'user-data', 'User', 'settings.json');
+          const value = JSON.parse(readFileSync(settings, 'utf8'));
+          writeFileSync(settings, JSON.stringify({ ...value, 'workbench.tips.enabled': true, 'update.mode': [MAC_USERS + 'someone', 'x'].join(''),
+            'files.hotExit': undefined, 'window.title': 'private' }, null, 2) + '\n');
+        }
+        return send(op, extra);
+      } };
+    };
+  });
+  assert.equal(byId['relaunch-host-loss'].status, 'pass');
+  const cell = byId['relaunch-user-quit'];
+  assert.equal(cell.error, 'PROFILE_CHANGED');
+  assert.deepEqual(cell.detail, { stage: 'user-quit-profile', expected: 'the seeded settings file, byte for byte', userData: true, settings: true, parsed: true,
+    changedBeforeQuit: true, changedByQuit: false,
+    changed: [{ key: 'update.mode', expected: 'none', seen: 'string' }, { key: 'workbench.tips.enabled', expected: false, seen: true },
+      { key: 'files.hotExit', expected: 'onExitAndWindowClose', missing: true }],
+    added: 1, matchesSeedAt: { engaged: true, relaunched: true, hostLossStart: true, hostLossEnd: false, userQuitStart: false, userQuitEnd: false } });
+  assert.ok(!JSON.stringify(cell.detail).includes(MAC_USERS) && !JSON.stringify(cell.detail).includes(driver.paths().base));
 });
 
 test('with the owner\'s VS Code running or a quarantined source, the relaunch driver clones nothing and quits nothing', async t => {

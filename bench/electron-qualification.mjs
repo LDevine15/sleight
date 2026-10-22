@@ -58,7 +58,7 @@ export function refOf(text, pattern) {
   return null;
 }
 const escaped = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-function editorRefOf(text, name) {
+export function editorRefOf(text, name) {
   const tab = new RegExp('tab "' + escaped(name) + '(?:"|,)');
   const lines = String(text).split('\n');
   if (!lines.some(line => tab.test(line) && /\[selected\]/.test(line))) return null;
@@ -465,9 +465,11 @@ export const RELAUNCH_CELLS = Object.freeze([
   } },
   { id: 'relaunch-user-quit', measures: 'the owner\'s own Quit later: the app exits with the pipe attached, the host collects, the profile stays as it was', async run(c) {
     const r = await c.driver.userQuit({ waitMs: c.options.consentWaitMs });
-    if (!r.exited) fail('APP_QUIT_UNCONFIRMED');
-    if (!r.collected || !r.recordRemoved) fail('LAUNCH_RECORD_LEFT');
-    if (!r.profileUntouched) fail('PROFILE_CHANGED');
+    const quit = { stage: 'user-quit', exited: r.exited === true, collected: r.collected === true, recordRemoved: r.recordRemoved === true, forced: r.forced === true };
+    if (!r.exited) throw Object.assign(Error('APP_QUIT_UNCONFIRMED'), { detail: { ...quit, expected: 'the app exited after its Quit' } });
+    if (!r.collected || !r.recordRemoved) throw Object.assign(Error('LAUNCH_RECORD_LEFT'), { detail: { ...quit, expected: 'the host collected and freed the launch record' } });
+    // The driver's closed settings comparison (electron-relaunch-live.mjs settingsChange): seed key names and short values only.
+    if (!r.profileUntouched) throw Object.assign(Error('PROFILE_CHANGED'), { detail: r.profile ?? { stage: 'user-quit-profile', expected: 'the seeded settings file, byte for byte' } });
     return { number: r.ms, unit: 'ms', detail: { collected: true, recordRemoved: true, profileUntouched: true } };
   } },
   { id: 'relaunch-host-loss', measures: 'when sleight\'s host dies, the owner\'s app keeps running with its unsaved work, and the restarted host reattaches or releases it', async run(c) {

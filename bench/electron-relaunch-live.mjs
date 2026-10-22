@@ -15,7 +15,7 @@ import { basename, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { BENCHMARK_ALLOWLIST, SELECTORS, prepareWorkspace, refOf, tabsOf } from './electron-qualification.mjs';
+import { BENCHMARK_ALLOWLIST, SELECTORS, editorRefOf, prepareWorkspace, refOf, tabsOf } from './electron-qualification.mjs';
 import { assertHostPath, helper as qualificationHelper, listProcesses, parseCodesign, recipeFromBundle, qualificationWorker } from './electron-qualification-live.mjs';
 import { editorIdentity } from './real-electron.mjs';
 import { processExitConfirmed } from './real-fixture.mjs';
@@ -29,8 +29,24 @@ const D = new URL('../plugins/sleight/lib/direct-browser/', import.meta.url);
 const SHIPPED_REGISTRY = new URL('electron/recipes.json', D);
 
 // The copy's own settings: no trust prompt, welcome page, updates or telemetry on the restored window.
+// extensions.autoUpdate is seeded in the form VS Code 1.141.0 migrates false to at startup ("off"): the 2026-10-22 02:32Z
+// run's retained profile showed that one rewrite, which failed relaunch-user-quit's byte-for-byte check at 02:47Z.
 export const SEED_SETTINGS = Object.freeze({ 'security.workspace.trust.enabled': false, 'workbench.startupEditor': 'none', 'update.mode': 'none',
-  'telemetry.telemetryLevel': 'off', 'extensions.autoUpdate': false, 'workbench.tips.enabled': false, 'files.hotExit': 'onExitAndWindowClose' });
+  'telemetry.telemetryLevel': 'off', 'extensions.autoUpdate': 'off', 'workbench.tips.enabled': false, 'files.hotExit': 'onExitAndWindowClose' });
+const SCRATCH = 'a-scratch.txt';
+
+/** Closed detail for a settings file that no longer equals the seed: seed key names and short scalar values only, never
+ *  free text or paths. before is the file as user-quit found it, after as the Quit left it (null when absent). */
+export function settingsChange(seed, before, after, { userData = true, matchesSeedAt = {} } = {}) {
+  const parse = text => { try { const v = JSON.parse(text); return v && typeof v === 'object' && !Array.isArray(v) ? v : undefined; } catch { return undefined; } };
+  const shown = v => typeof v === 'boolean' || Number.isFinite(v) || typeof v === 'string' && /^[A-Za-z0-9._-]{0,32}$/.test(v) ? v : v === null ? null : typeof v;
+  const expected = parse(seed) ?? {}, seen = after == null ? undefined : parse(after);
+  const changed = seen ? Object.keys(expected).filter(key => JSON.stringify(seen[key]) !== JSON.stringify(expected[key]))
+    .map(key => ({ key, expected: shown(expected[key]), ...(key in seen ? { seen: shown(seen[key]) } : { missing: true }) })) : [];
+  return { stage: 'user-quit-profile', expected: 'the seeded settings file, byte for byte', userData, settings: after != null, parsed: !!seen,
+    changedBeforeQuit: before !== seed, changedByQuit: before !== after, changed, added: seen ? Object.keys(seen).filter(key => !(key in expected)).length : 0,
+    matchesSeedAt };
+}
 
 /** The portable-data folder name the app reads beside its bundle, or a refusal when the build has no portable mode. */
 export function portableName(product) {
@@ -186,6 +202,7 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
         throw Error('PORTABLE_NOT_ENGAGED: the copy wrote no logs in its portable folder; it was quit at once');
       }
     }
+    markSettings('engaged');
     return opened;
   }
   // The root is a real path (the runner resolves it). NSRunningApplication may report it without /private; the helper
@@ -198,8 +215,50 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
     const ms = Math.round(d.now() - started);
     return reply.ok ? { ...reply.result, ms } : { text: reply.error, isError: true, ms };
   };
-  const read = async tab => { const r = await tool('browser_read', { tab }); if (r.isError) throw Error(String(r.text).split('\n')[0]); return r.text; };
+  const read = async (tab, extra = {}) => { const r = await tool('browser_read', { tab, ...extra }); if (r.isError) throw Error(String(r.text).split('\n')[0]); return r.text; };
   const joinedTab = async () => tabsOf((await tool('browser_tabs', { do: 'list' })).text).find(row => !row.parked)?.tab;
+  // Whether the copy's settings still equal the seed at each stage, so a PROFILE_CHANGED receipt says when it changed.
+  const settingsPath = () => join(portable, 'user-data', 'User', 'settings.json');
+  const settingsText = () => { try { return readFileSync(settingsPath(), 'utf8'); } catch { return null; } };
+  const matchesSeedAt = {};
+  const markSettings = stage => { if (portable && seeded) matchesSeedAt[stage] = settingsText() === seeded; };
+  const until = async (test, timeoutMs = 5000) => {
+    for (const started = d.now(); ; await d.sleep(100)) { const value = await test(); if (value) return value; if (d.now() - started >= timeoutMs) return null; }
+  };
+  // The scratch file's editor as VS Code 1.141.0 exposes it (2026-10-22 live reads): a row click opens a preview tab and
+  // may leave focus in the tree; a tab click focuses the zero-area editor, whose one actionable ref is the keyboard-only
+  // ref a find read lists. A plain read stops at its 8000-character cut before the editor, so every lookup here is a find.
+  async function scratchEditor(tab) {
+    const seen = { tabOpen: false, tabSelected: false, rowClicked: false, tabClicked: false, textboxes: 0, actionable: 0, active: 0, keyboardOnly: 0, reads: 0, cut: false };
+    const closed = code => Object.assign(Error(code), { detail: { stage: 'host-loss-editor',
+      expected: 'a selected a-scratch.txt tab and one actionable editor textbox (named or active keyboard-only)', seen: { ...seen } } });
+    const scan = text => {
+      const lines = String(text).split('\n'), tabs = lines.filter(line => SELECTORS.scratchTab.test(line));
+      const boxes = lines.filter(line => /textbox/.test(line) && (line.includes(SCRATCH) || /Editor content/i.test(line)));
+      Object.assign(seen, { tabOpen: tabs.length > 0, tabSelected: tabs.some(line => /\[selected\]/.test(line)), textboxes: boxes.length,
+        actionable: boxes.filter(line => refOf(line, /textbox/)).length, active: boxes.filter(line => /\[active\]/.test(line)).length,
+        keyboardOnly: boxes.filter(line => /\[keyboard-only\]/.test(line)).length, reads: seen.reads + 1, cut: seen.cut || /^# Cut:/m.test(text) });
+      return text;
+    };
+    const click = async (ref, key) => {
+      const r = await tool('browser_act', { tab, steps: [{ do: 'click', ref }], observe: 'none' });
+      seen[key] = true;
+      if (r.isError) throw closed('SCRATCH_CLICK_FAILED');
+    };
+    const editorRef = async () => editorRefOf(scan(await read(tab, { find: 'Editor content|' + SCRATCH })), SCRATCH);
+    const first = scan(await read(tab, { find: SCRATCH }));
+    let ref = editorRefOf(first, SCRATCH);
+    if (ref) return ref;
+    let tabRef = refOf(first, SELECTORS.scratchTab);
+    if (!tabRef) {
+      await click(refOf(first, SELECTORS.scratch) ?? (() => { throw closed('SCRATCH_ROW_NOT_FOUND'); })(), 'rowClicked');
+      tabRef = await until(async () => refOf(scan(await read(tab, { find: SCRATCH })), SELECTORS.scratchTab));
+    }
+    if (tabRef) await click(tabRef, 'tabClicked');
+    ref = await until(editorRef);
+    if (!ref) throw closed('EDITOR_NOT_FOUND');
+    return ref;
+  }
 
   const driver = {
     build: () => build ?? {},
@@ -219,6 +278,7 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
       const listeners = await d.exec('/usr/sbin/lsof', ['-nP', '-a', '-p', String(reply.identity.pid), '-iTCP', '-sTCP:LISTEN', '-t'], { timeout: 10000 })
         .then(r => String(r.stdout).trim().split('\n').filter(Boolean).length, error => (error.code === 1 ? 0 : -1));
       const rows = tabsOf((await tool('browser_tabs', { do: 'list' })).text);
+      markSettings('relaunched');
       // Nothing was unsaved in the copy before its Quit (it had no pipe to type through); host-loss measures unsaved work.
       return { card, before, pid: reply.identity.pid, pidBirth: reply.identity.pidBirth, ms, quit: { outcome: 'exited', ms: reply.relaunch?.quitMs ?? null, prompt },
         launchMs: reply.relaunch?.launchMs ?? null, unsaved: 'none', pipe: true, profile: { temporary: false }, tcpListeners: listeners,
@@ -234,16 +294,17 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
     async hostLoss() {
       const before = current ?? (() => { throw Error('NOT_RELAUNCHED'); })();
       const marker = 'hl' + Math.random().toString(36).slice(2, 8);
-      let tab = await joinedTab() ?? (() => { throw Error('NO_JOINED_APP_TAB'); })();
-      const scratch = refOf(await read(tab), SELECTORS.scratch) ?? (() => { throw Error('SCRATCH_ROW_NOT_FOUND'); })();
-      await tool('browser_act', { tab, steps: [{ do: 'click', ref: scratch }], observe: 'none' });
-      const editor = refOf(await read(tab), SELECTORS.editor) ?? (() => { throw Error('EDITOR_NOT_FOUND'); })();
+      markSettings('hostLossStart');
+      let tab = await joinedTab() ?? (() => { throw Object.assign(Error('NO_JOINED_APP_TAB'), { detail: { stage: 'host-loss-tab', expected: 'one joined app tab' } }); })();
+      const editor = await scratchEditor(tab);
       const typed = await tool('browser_act', { tab, steps: [{ do: 'type', ref: editor, text: marker }], observe: 'none' });
-      if (typed.isError) throw Error(String(typed.text).split('\n')[0]);
+      if (typed.isError) throw Object.assign(Error('HOST_LOSS_TYPE_FAILED'), { detail: { stage: 'host-loss-type', expected: 'the marker typed into the scratch editor',
+        keyboardOnlyRef: /^x\d+$/.test(editor) } });
       const status = (await active.send('status')).status;
       hostPid = status?.hostPid ?? hostPid;
       const host = (await d.list(d.exec)).find(p => p.pid === hostPid);
-      if (!host || !host.args.includes(stateDir)) throw Error('HOST_PID_UNKNOWN: the host status gave no pid naming this run');
+      if (!host || !host.args.includes(stateDir)) throw Object.assign(Error('HOST_PID_UNKNOWN: the host status gave no pid naming this run'),
+        { detail: { stage: 'host-loss-host', expected: 'a live host whose arguments name this run\'s state folder', hostPid: Number.isSafeInteger(hostPid), hostFound: !!host } });
       d.kill(hostPid, 'SIGKILL'); // the host this run started, matched by its state folder
       await d.sleep(10000);
       const appSurvived = await alive(before.pid), prompt = !!(await io.permission?.());
@@ -252,24 +313,30 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
       let unsaved = 'unverified';
       if (reply.ok) {
         tab = await joinedTab();
-        const text = tab ? await read(tab) : '';
-        unsaved = text.includes(marker) ? 'kept' : 'lost';
+        // A find, since the editor's text lies past a plain read's cut; only content rows count, never a header line.
+        const text = tab ? await read(tab, { find: marker }) : '';
+        unsaved = String(text).split('\n').some(line => !line.startsWith('#') && line.includes(marker)) ? 'kept' : 'lost';
         if (tab) await tool('browser_act', { tab, steps: [{ do: 'press', key: 'Meta+S' }], observe: 'none' });
       }
+      markSettings('hostLossEnd');
       return { card: { debugger: reply.card, relaunch: reply.relaunchCard }, appSurvived, unsaved, prompt, restarted, ms: null };
     },
     // Stands in for the owner's own Quit: the app's Quit (NSRunningApplication terminate), the host's collect, the profile kept.
     async userQuit({ waitMs = 60000 } = {}) {
       const target = current ?? (() => { throw Error('NOT_RELAUNCHED'); })();
       const started = d.now();
+      const before = settingsText();
+      markSettings('userQuitStart');
       await active?.send('end');
       const r = await quitCopy(target.pid, waitMs);
       const exited = await d.exited(target.pid);
       const c = exited ? await active?.send('collect') : undefined;
-      const settings = join(portable, 'user-data', 'User', 'settings.json');
-      const profileUntouched = existsSync(join(portable, 'user-data')) && existsSync(settings) && readFileSync(settings, 'utf8') === seeded;
+      const userData = existsSync(join(portable, 'user-data')), after = userData ? settingsText() : null;
+      markSettings('userQuitEnd');
+      const profileUntouched = userData && after === seeded;
       current = undefined;
       return { exited, collected: c?.ok === true && c.status?.broker !== 'ready', recordRemoved: c?.status?.ownership === 'free', profileUntouched,
+        ...(!profileUntouched ? { profile: settingsChange(seeded, before, after, { userData, matchesSeedAt: { ...matchesSeedAt } }) } : {}),
         ms: Math.round(d.now() - started), forced: r?.forced === true, presses: r?.presses ?? 0 };
     },
     async frontApp() {
