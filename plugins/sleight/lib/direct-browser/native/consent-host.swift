@@ -439,6 +439,52 @@ final class ModalGuard {
 }
 // END MODAL GUARD
 
+// BEGIN FOCUS RETURN
+// The click that answers a card activates this accessory host (the card is a titled panel), and the host then stays active
+// with no window. When it later exits, macOS activates another app, and in the Electron qualification (2026-10-22) that was
+// the VS Code copy the card was about: in front 1034 of 1039 samples once the worker and its host exited. So when a card
+// closes, the host hands activation back to the app that was in front when the card appeared, if the host itself, the
+// card's app or no app holds it. An app the person moved to stays in front, and the card's app is never activated.
+final class FocusReturn {
+    let host: pid_t
+    let frontmost: () -> pid_t?, hostActive: () -> Bool, running: (pid_t) -> Bool
+    let pids: (String) -> [pid_t], activate: (pid_t) -> Void
+    private(set) var previous: pid_t?
+    private var target: (pid: pid_t?, bundle: String?)?
+    init(host: pid_t, frontmost: @escaping () -> pid_t?, hostActive: @escaping () -> Bool, running: @escaping (pid_t) -> Bool,
+        pids: @escaping (String) -> [pid_t], activate: @escaping (pid_t) -> Void) {
+        self.host = host; self.frontmost = frontmost; self.hostActive = hostActive; self.running = running
+        self.pids = pids; self.activate = activate
+    }
+    // A card is about to show. In front is the host itself only right after an earlier card, whose record stands.
+    func presenting(_ data: [String: Any]) {
+        if let front = frontmost(), front != host { previous = front }
+        target = cardTarget(data)
+    }
+    // A card closed: answered, timed out or aborted. Returns the pid it activated.
+    @discardableResult func dismissed() -> pid_t? {
+        guard let card = target else { return nil }
+        target = nil
+        var targets = Set(card.bundle.map(pids) ?? [])
+        if let pid = card.pid { targets.insert(pid) }
+        guard let previous = previous, previous != host, !targets.contains(previous), running(previous) else { return nil }
+        // While the host is active the workspace's frontmost app can still name the previous one, so activity decides.
+        if !hostActive() {
+            let front = frontmost()
+            guard front == nil || targets.contains(front!) else { return nil }
+        }
+        activate(previous)
+        return previous
+    }
+}
+// The app a debugger or relaunch card is about: its pid (none before launch) and bundle. Other cards name no app.
+func cardTarget(_ data: [String: Any]) -> (pid: pid_t?, bundle: String?)? {
+    guard let app = data["app"] as? [String: Any] else { return (nil, nil) }
+    let pid = (app["pid"] as? NSNumber).map { $0.int32Value }.flatMap { $0 > 0 ? $0 : nil }
+    return (pid, app["bundleId"] as? String)
+}
+// END FOCUS RETURN
+
 // BEGIN ASK CARD
 // The ask.js layout in the nonce-bound host. Protected actions retain GB12's native event guard.
 struct AskCard {
@@ -713,7 +759,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var input: FileHandle? = FileHandle.standardInput, output = FileHandle.standardOutput, shared = false
     var consentOpen = true, handOpen = true
     var activeAsk: (id: String, panel: AskCardPanel)?
-    func closeAsk() { activeAsk?.panel.close(); activeAsk = nil }
+    func closeAsk() { activeAsk?.panel.close(); activeAsk = nil; focus.dismissed() }
     func reviewAsk(_ id: String) -> Bool {
         guard let frame = pending[id], let data = frame["data"] as? [String: Any],
             let choices = frame["choices"] as? [String], automaticCard(data, choices) != nil else { return false }
@@ -729,13 +775,21 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if deadline <= Date().timeIntervalSince1970 * 1000 { pending.removeValue(forKey: id); continue }
             let panel = AskCardPanel(card, deadline: deadline) { [weak self] choice in
                 guard let self = self, self.activeAsk?.id == id else { return }
-                self.activeAsk = nil; self.respond(id, choice); self.showNextAsk()
+                self.activeAsk = nil; self.focus.dismissed(); self.respond(id, choice); self.showNextAsk()
             }
-            activeAsk = (id, panel); panel.show(); return
+            activeAsk = (id, panel); focus.presenting(data); panel.show(); return
         }
         rebuildMenu()
     }
     let modal = ModalGuard()
+    let focus = FocusReturn(host: getpid(), frontmost: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
+        hostActive: { NSApp.isActive }, running: { NSRunningApplication(processIdentifier: $0)?.isTerminated == false },
+        pids: { NSRunningApplication.runningApplications(withBundleIdentifier: $0).map { $0.processIdentifier } },
+        activate: { pid in
+            guard let app = NSRunningApplication(processIdentifier: pid) else { return }
+            if #available(macOS 14.0, *) { NSApp.yieldActivation(to: app); _ = app.activate(from: .current, options: []) }
+            else { _ = app.activate(options: []) }
+        })
     func personModal(_ alert: NSAlert, choices: [String], kind: String) -> NSApplication.ModalResponse {
         let actions = consentInputActions(alert, choices: choices, kind: kind)
         let result = withExtendedLifetime(actions) { modal.run(abort: { NSApp.abortModal() }) { alert.runModal() } }

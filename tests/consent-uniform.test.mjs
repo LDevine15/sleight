@@ -54,10 +54,16 @@ final class AskCardPanel {
     func close() { Self.closes += 1 }
 }
 final class Modal { var active = false }
+final class Focus {
+    var presented: [String] = [], dismissals = 0
+    func presenting(_ data: [String: Any]) { presented.append(data["kind"] as? String ?? "") }
+    @discardableResult func dismissed() -> Int32? { dismissals += 1; return nil }
+}
 final class Host {
     var pending: [String: [String: Any]] = [:]
     var activeAsk: (id: String, panel: AskCardPanel)?
     let modal = Modal()
+    let focus = Focus()
     var answers: [String] = []
     func rebuildMenu() {}
     func respond(_ id: String, _ choice: String) { pending.removeValue(forKey: id); answers.append(choice) }
@@ -123,6 +129,8 @@ precondition(host.activeAsk == nil && AskCardPanel.shows == 2)
 host.modal.active = false; host.showNextAsk(); precondition(AskCardPanel.shows == 3)
 host.closeAsk(); host.pending.removeAll(); host.showNextAsk()
 precondition(host.activeAsk == nil && AskCardPanel.closes == 1 && AskCardPanel.shows == 3)
+// Each shown card records the app in front first; each answer and the abort hand activation back.
+precondition(host.focus.presented == ["debugger", "relaunch", "debugger"] && host.focus.dismissals == 3)
 print("pass")
 `);
   const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', join(dir, 'cache'), swift, '-o', binary], { encoding: 'utf8', timeout: 120000 });
