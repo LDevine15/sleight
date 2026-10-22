@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { acceptedInstalledPackage, INSTALLED_ENTRIES, readInstalledConfig } from '../plugins/sleight/lib/direct-browser/installed-config.mjs';
 import { packageFiles } from '../plugins/sleight/lib/direct-browser/session-host.mjs';
-import { detectBrowser, doctorLines, ensureTurboConfig, executableProblem, inspectConfig, statusLines, turboCommand, turboDiagnosis, writeConfigFile }
-  from '../plugins/sleight/lib/direct-browser/turbo-setup.mjs';
+import { detectBrowser, doctorLines, ensureTurboConfig, executableProblem, inspectConfig, moveCommand, ownerPath, readOwner, statusLines, turboCommand,
+  turboDiagnosis, writeConfigFile } from '../plugins/sleight/lib/direct-browser/turbo-setup.mjs';
+import { createHash } from 'node:crypto';
 import { ensureInstalledTurbo, prepareInstalledStartup, doctor } from '../plugins/sleight/lib/launch.mjs';
 import { applicationName } from '../plugins/sleight/lib/direct-browser/worker.mjs';
 import { writableTreeSkip } from './requirements.mjs';
@@ -32,8 +33,8 @@ function world(t, { chrome = false, helium = false, chromeMode = 0o755 } = {}) {
   const configPath = join(home, 'Library/Application Support/sleight/turbo.json');
   return { root, home, apps, configPath, install, base: { configPath, home, apps, pluginRoot: realPlugin } };
 }
-function pluginCopy(t, root) {
-  const copy = join(root, 'plugin'); cpSync(realPlugin, copy, { recursive: true });
+function pluginCopy(t, root, name = 'plugin') {
+  const copy = join(root, name); cpSync(realPlugin, copy, { recursive: true });
   return copy;
 }
 
@@ -330,10 +331,118 @@ test('writes are atomic: no partial file, no temp leftovers, the old file surviv
   const circular = {}; circular.self = circular;
   assert.throws(() => writeConfigFile(w.configPath, circular), /circular|cyclic/i);
   assert.equal(readFileSync(w.configPath, 'utf8'), before);
-  assert.deepEqual(readdirSync(dir), ['turbo.json']);
+  assert.deepEqual(readdirSync(dir).sort(), ['turbo-owner.json', 'turbo.json']);
   writeConfigFile(w.configPath, { version: 1, enabled: false });
-  assert.deepEqual(readdirSync(dir), ['turbo.json']);
+  assert.deepEqual(readdirSync(dir).sort(), ['turbo-owner.json', 'turbo.json']);
   assert.equal(lstatSync(w.configPath).mode & 0o777, 0o600);
+});
+
+// Two copies of sleight on one Mac: the owner's install and a dev build, or an update while an older session still runs.
+// B differs from A by one line, so A's receipt is package-changed for B. B sits in a folder with a space to check the quoting.
+function twoCopies(t, options = { chrome: true, helium: true }) {
+  const w = world(t, options), a = pluginCopy(t, w.root, 'install'), b = pluginCopy(t, w.root, 'dev build');
+  writeFileSync(join(b, 'lib/relay.mjs'), readFileSync(join(b, 'lib/relay.mjs'), 'utf8') + '\n// dev build\n');
+  const version = JSON.parse(readFileSync(join(realPlugin, '.claude-plugin/plugin.json'), 'utf8')).version;
+  return { w, a, b, version, A: { ...w.base, pluginRoot: a }, B: { ...w.base, pluginRoot: b }, bytes: () => readFileSync(w.configPath, 'utf8') };
+}
+
+test('two live copies starting in turns never flip the receipt; the second names the turbo on that moves it', t => {
+  const { w, a, b, version, A, B, bytes } = twoCopies(t);
+  assert.equal(ensureTurboConfig(A).action, 'wrote');
+  const written = bytes(), owner = readOwner(w.configPath);
+  assert.equal(owner.pluginRoot, a); assert.equal(owner.sleight, version); assert.equal(owner.version, 1);
+  assert.equal(owner.sha256, createHash('sha256').update(readFileSync(w.configPath)).digest('hex'));
+  const sidecar = lstatSync(ownerPath(w.configPath));
+  assert.equal(sidecar.mode & 0o777, 0o600); assert.equal(sidecar.uid, process.getuid()); assert.ok(sidecar.isFile() && !sidecar.isSymbolicLink());
+  const ownerBytes = readFileSync(ownerPath(w.configPath), 'utf8');
+  for (let round = 0; round < 3; round++) {
+    const second = ensureTurboConfig(B);
+    assert.equal(second.action, 'skipped'); assert.equal(second.state, 'stale'); assert.equal(second.reason, 'RECEIPT_FOR_OTHER_PACKAGE');
+    assert.equal(second.owner, a);
+    assert.equal(second.message, `turbo stays off in this copy of sleight: turbo.json's receipt belongs to sleight ${version} at ${a}, which is ` +
+      `still installed. To move turbo to this copy, run '${b}/bin/sleight-mcp' turbo on --browser chrome (the other copy then stays off until its own turbo on).`);
+    assert.equal(ensureTurboConfig(A).action, 'none');
+    assert.equal(bytes(), written); assert.equal(readFileSync(ownerPath(w.configPath), 'utf8'), ownerBytes);
+  }
+  assert.equal(acceptedInstalledPackage(readInstalledConfig(w.configPath), { pluginRoot: a }).current(), true);
+  const d = turboDiagnosis({ ...B, helperCache: join(w.root, 'cache') });
+  assert.equal(d.reason, 'RECEIPT_FOR_OTHER_PACKAGE');
+  assert.match(doctorLines(d).join('\n'), new RegExp(`PROBLEM +config: the receipt belongs to sleight ${version.replaceAll('.', '\\.')} at .*install, which is still installed\\n +fix: '.*dev build/bin/sleight-mcp' turbo on --browser chrome moves turbo to this copy`));
+  assert.doesNotMatch(doctorLines(d).join('\n'), /start a new Claude Code session/);
+  assert.match(statusLines(d).join('\n'), /turbo +off \(the receipt belongs to sleight .* at .*install; '.*dev build\/bin\/sleight-mcp' turbo on --browser chrome moves it here\)/);
+  assert.equal(turboDiagnosis({ ...A, helperCache: join(w.root, 'cache') }).owner, undefined);
+});
+
+test('the move command keeps a browser the user chose and leaves a plain path unquoted', t => {
+  const { w, a, A, B } = twoCopies(t);
+  assert.equal(turboCommand(['on', '--browser', 'helium'], { ...A, out() {} }), 0);
+  assert.match(ensureTurboConfig(B).message, /turbo on --browser helium \(/);
+  assert.equal(moveCommand(a), `${a}/bin/sleight-mcp turbo on`);
+  assert.equal(moveCommand(join(w.root, "it's")), `'${w.root}/it'\\''s/bin/sleight-mcp' turbo on`);
+});
+
+test('turbo on is what moves the receipt between live copies, and the copy it left then waits', t => {
+  const { w, a, b, A, B } = twoCopies(t);
+  ensureTurboConfig(A);
+  assert.equal(turboCommand(['on', '--browser', 'chrome'], { ...B, out() {} }), 0);
+  assert.equal(readOwner(w.configPath).pluginRoot, b);
+  assert.equal(acceptedInstalledPackage(readInstalledConfig(w.configPath), { pluginRoot: b }).current(), true);
+  const before = readFileSync(w.configPath, 'utf8');
+  const left = ensureTurboConfig(A);
+  assert.equal(left.reason, 'RECEIPT_FOR_OTHER_PACKAGE'); assert.equal(left.owner, b);
+  assert.ok(left.message.includes(`run ${a}/bin/sleight-mcp turbo on --browser chrome`), left.message);
+  assert.equal(ensureTurboConfig(B).action, 'none'); assert.equal(readFileSync(w.configPath, 'utf8'), before);
+  assert.equal(turboCommand(['on', '--browser', 'chrome'], { ...A, out() {} }), 0);
+  assert.equal(readOwner(w.configPath).pluginRoot, a); assert.equal(ensureTurboConfig(B).reason, 'RECEIPT_FOR_OTHER_PACKAGE');
+});
+
+test('a normal update still takes the receipt over: the old copy is gone, orphaned or changed', t => {
+  for (const retire of [root => rmSync(root, { recursive: true, force: true }), root => writeFileSync(join(root, '.orphaned_at'), '1792529263995'),
+    root => writeFileSync(join(root, 'lib/relay.mjs'), '// a later version in place\n')]) {
+    const { w, b, A, B } = twoCopies(t);
+    ensureTurboConfig(A); retire(A.pluginRoot);
+    const updated = ensureTurboConfig(B);
+    assert.equal(updated.action, 'wrote'); assert.equal(updated.reason, 'package-changed');
+    assert.equal(readOwner(w.configPath).pluginRoot, b);
+    assert.equal(acceptedInstalledPackage(readInstalledConfig(w.configPath), { pluginRoot: b }).current(), true);
+  }
+});
+
+test('a tampered, missing or out-of-date sidecar falls back to rewriting the receipt', t => {
+  const { w, a, b, A, B } = twoCopies(t), sidecar = ownerPath(w.configPath);
+  const edit = change => { const data = JSON.parse(readFileSync(sidecar, 'utf8')); change(data); writeFileSync(sidecar, JSON.stringify(data), { mode: 0o600 }); };
+  const cases = {
+    missing: () => rmSync(sidecar),
+    'group-readable': () => chmodSync(sidecar, 0o644),
+    linked: () => { const real = join(w.root, 'elsewhere.json'); writeFileSync(real, readFileSync(sidecar), { mode: 0o600 }); rmSync(sidecar); symlinkSync(real, sidecar); },
+    'other bytes': () => edit(data => { data.sha256 = '0'.repeat(64); }),
+    'extra key': () => edit(data => { data.accepted = true; }),
+    'relative root': () => edit(data => { data.pluginRoot = 'install'; }),
+    'not JSON': () => writeFileSync(sidecar, '{', { mode: 0o600 }),
+    // A 1.4.0 server rewrites turbo.json without a sidecar, so the sidecar it left no longer matches the file's bytes.
+    'turbo.json rewritten without it': () => writeConfigFile(w.configPath, { ...JSON.parse(readFileSync(w.configPath, 'utf8')), profileRoot: join(w.home, 'p') }),
+  };
+  for (const [name, tamper] of Object.entries(cases)) {
+    assert.equal(turboCommand(['on', '--browser', 'chrome'], { ...A, out() {} }), 0, name);
+    assert.equal(readOwner(w.configPath)?.pluginRoot, a, name);
+    tamper();
+    const result = ensureTurboConfig(B);
+    assert.equal(result.action, 'wrote', name); assert.equal(result.reason, 'package-changed', name);
+    assert.equal(readOwner(w.configPath)?.pluginRoot, b, name);
+    assert.equal(lstatSync(sidecar).isSymbolicLink(), false, name);
+  }
+  assert.equal(readFileSync(join(w.root, 'elsewhere.json'), 'utf8').includes(a), true, 'a linked sidecar is replaced, never written through');
+});
+
+test('a node change for the same copy still rewrites, and the sidecar follows the rewrite', t => {
+  const { w, a, A } = twoCopies(t);
+  ensureTurboConfig(A);
+  const data = JSON.parse(readFileSync(w.configPath, 'utf8')); data.receipt.node = 'v0.0.1';
+  writeConfigFile(w.configPath, data);
+  const result = ensureTurboConfig(A);
+  assert.equal(result.action, 'wrote'); assert.equal(result.reason, 'node-changed');
+  assert.equal(readOwner(w.configPath).pluginRoot, a);
+  assert.equal(readOwner(w.configPath).sha256, createHash('sha256').update(readFileSync(w.configPath)).digest('hex'));
 });
 
 test('status and doctor report each state with the one fix', { skip: checkoutSkip }, t => {
@@ -353,7 +462,8 @@ test('status and doctor report each state with the one fix', { skip: checkoutSki
   assert.equal(d.port, true); assert.match(text, /ok +remote debugging: on/); assert.doesNotMatch(text, /turn on remote debugging/);
   assert.match(statusLines(d).join('\n'), /remote debugging +on/);
   const copy = pluginCopy(t, w.root), stale = { ...w.base, pluginRoot: copy };
-  ensureTurboConfig(stale); writeFileSync(join(copy, 'lib/relay.mjs'), 'changed\n');
+  // The copy takes the receipt first: a receipt the unchanged real package issued would name a live other copy.
+  turboCommand(['on', '--browser', 'helium'], { ...stale, out() {} }); writeFileSync(join(copy, 'lib/relay.mjs'), 'changed\n');
   assert.match(doctorLines(turboDiagnosis(stale)).join('\n'), /PROBLEM +config: receipt stale \(plugin files changed\)\n +fix: start a new Claude Code session/);
   turboCommand(['off'], { ...w.base, out() {} });
   assert.match(doctorLines(turboDiagnosis(w.base)).join('\n'), /you turned turbo off\n +fix: sleight-mcp turbo on/);
