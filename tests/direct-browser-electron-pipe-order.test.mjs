@@ -149,6 +149,28 @@ test('an Input command issued while a detach waits in the inbound queue is refus
   assert.equal(h.broker.routes.has(h.page), false);
 });
 
+// The revoke cell's sequence under the pipe-order gate: the next typed step is held because records wait behind a reply,
+// and the revocation lands before they are dispatched. The held input is refused undispatched and never written.
+test('an Input command held behind queued inbound records is never written once a revoke lands', async () => {
+  const h = await heldCommand();
+  let input, held;
+  const chained = h.pending.then(async () => {
+    input = h.consumer.send('Input.insertText', { text: 'rv1 ' }, h.page);
+    input.catch(() => {});
+    for (let i = 0; i < 50 && !h.broker.pipe.writes.size; i++) await Promise.resolve();
+    held = h.broker.pipe.writes.size;
+    h.broker.revoke('revoked');
+    return input.catch(error => error);
+  });
+  h.chunk(h.reply(h.request, { frameTree: {} }), contextCreated(h.page, 'main'));
+  const error = await chained;
+  assert.equal(held, 1, 'the input waited in the write queue behind the queued event');
+  assert.equal(error.dispatched, false);
+  await settle();
+  assert.equal(h.frames.some(frame => frame.method === 'Input.insertText'), false, 'no input reached the app after the revoke');
+  assert.deepEqual([h.broker.state, h.broker.parkedBy.reason], ['parked', 'revoked']);
+});
+
 test('a request made while inbound records are queued is written only after they are dispatched', async () => {
   const h = await heldCommand();
   const seen = [];

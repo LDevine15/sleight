@@ -46,7 +46,10 @@ export function fakeDriver({ now = Date.now, app = APPS.vscode, overlay = { pres
     if (readJoin !== joinNo) return error(`ELECTRON_STALE_READ: the app window changed since your last read (join ${joinNo}); read again before input`);
     const lines = [];
     for (const [i, step] of steps.entries()) {
-      if (revoked) { lines.push(`${i + 1} ${step.do}: not sent. ELECTRON_PARKED: revoked`); break; }
+      if (revoked) {
+        lines.unshift(`ELECTRON_PARKED: revoked. The app connection was parked during this batch: ${i} of ${steps.length} steps ran, step ${i + 1} was not sent. Read before continuing; do not replay input blindly.`);
+        return { text: lines.join('\n'), isError: true, ms: 5 };
+      }
       if (['reload', 'back', 'forward', 'navigate'].includes(step.do)) return error('ELECTRON_NATIVE_HANDOFF: reload, back, forward and navigate would reload the app window; nothing was sent');
       if (step.do === 'press' && REFUSED_KEYS.has(step.key)) return error('ELECTRON_APP_KEY_REFUSED: this key quits, closes, hides or resizes the app window; use the app itself');
       if (step.do === 'type' && step.ref === 'e5') return error('ELECTRON_TERMINAL_REFUSED: input to a terminal is refused on turbo, as the engine refuses it');

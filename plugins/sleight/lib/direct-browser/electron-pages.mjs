@@ -19,11 +19,13 @@ const parkReason = error => {
   return 'identity';
 };
 
-export function createAppPageRegistry({ browser, filter, targets, join, fence, owner, timeoutMs = 5000 } = {}) {
+// connectionParked() names the host's reason once it parked this session's app connection (electron-connection.mjs parked),
+// so a page stopped by a revocation says "revoked" rather than the failed read that followed it.
+export function createAppPageRegistry({ browser, filter, targets, join, fence, owner, timeoutMs = 5000, connectionParked = () => undefined } = {}) {
   if (typeof browser?.contexts !== 'function' || typeof filter?.own !== 'function' || typeof filter?.release !== 'function' ||
       typeof targets?.geometry !== 'function' || typeof targets?.sync !== 'function' || typeof targets?.grant !== 'function' || typeof join?.resolve !== 'function' ||
       typeof join?.check !== 'function' || typeof fence?.acquire !== 'function' || typeof owner !== 'string' ||
-      !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) fail('ELECTRON_PAGES_REQUIRED');
+      !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000 || typeof connectionParked !== 'function') fail('ELECTRON_PAGES_REQUIRED');
   // kept: targets this session released to the user (keep or handoff) at that epoch, never re-admitted this turn.
   const records = new Map(), byTarget = new Map(), kept = new Map(), metadata = new WeakMap(), claimed = new WeakSet(), tasks = new Set();
   let ended = false, refreshing = Promise.resolve(), cleanup;
@@ -35,6 +37,9 @@ export function createAppPageRegistry({ browser, filter, targets, join, fence, o
   };
   const parkedError = entry => Error('ELECTRON_PARKED: ' + entry.parked + '. The app window needs native handling or a fresh read; nothing was sent.');
   const park = (entry, reason) => { if (!entry.revoked && !entry.released) entry.parked = reason; };
+  const lost = () => { try { const reason = connectionParked(); return typeof reason === 'string' && reason ? reason : undefined; } catch { return 'host failure'; } };
+  // The host parked the whole connection: every later check names that reason, before any other evidence.
+  const parkLost = entry => { const reason = lost(); if (!reason) return false; if (entry.parked !== reason) { entry.parked = null; park(entry, reason); } return true; };
 
   const offRevoke = targets.onRevoke((targetId, epoch) => {
     // Synchronous: the route goes before any later command can use it.
@@ -121,7 +126,7 @@ export function createAppPageRegistry({ browser, filter, targets, join, fence, o
   // The checks right before a mutation: instance fence, target epoch, a fresh unique join to the same window.
   async function fenceEntry(entry) {
     tab(entry.tab);
-    if (entry.parked) throw parkedError(entry);
+    if (parkLost(entry) || entry.parked) throw parkedError(entry);
     // The host fence caches a 30 s lease; after an idle pause it must ask the host again before the synchronous check.
     if (typeof fence.renew === 'function') { await fence.renew(); tab(entry.tab); }
     if (!fence.acquire(owner)) fail('ELECTRON_BUSY: another session is acting in this app; nothing was sent');
@@ -132,9 +137,11 @@ export function createAppPageRegistry({ browser, filter, targets, join, fence, o
       await join.check(entry.targetId, entry.window, geometry);
     } catch (error) {
       tab(entry.tab);
-      park(entry, parkReason(error)); throw parkedError(entry);
+      if (!parkLost(entry)) park(entry, parkReason(error));
+      throw parkedError(entry);
     }
     tab(entry.tab);
+    if (parkLost(entry)) throw parkedError(entry);
     if (join.generation() !== start) { park(entry, 'native-change'); throw parkedError(entry); }
     if (entry.parked) throw parkedError(entry);
   }
@@ -154,6 +161,8 @@ export function createAppPageRegistry({ browser, filter, targets, join, fence, o
 
   const api = {
     tab, idle,
+    // The host's reason for parking this session's app connection, or undefined while it stands.
+    connectionParked: lost,
     // The entry for the page object snapshot() was handed (EPV3-4's read header); none once released or revoked.
     entryOf(page) {
       for (const entry of records.values()) if (entry.page === page && !entry.released && !entry.revoked) return entry;

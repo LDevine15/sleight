@@ -234,7 +234,9 @@ export async function selectAppConnection({ bundleId, session, turn, apps, ui, c
     // 9. The host's fence lease, cached for the registry's synchronous check.
     await fence.renew();
     // 10. The app's existing renderers, seeded; nothing is created.
-    parts.pages = d.createAppPageRegistry({ browser: parts.browser, filter: parts.filter, targets: parts.targets, join: parts.join, fence, owner: session });
+    const provider = parts.provider;
+    parts.pages = d.createAppPageRegistry({ browser: parts.browser, filter: parts.filter, targets: parts.targets, join: parts.join, fence, owner: session,
+      connectionParked: () => provider.parked?.reason });
     await parts.pages.seed();
     if (launchedNow) await waitForWindows(parts.pages, restoreWaitMs);
     // Whether macOS brought the reopened app forward. Recorded only: sleight never activates or hides anything to undo it.

@@ -24,7 +24,7 @@ const shadowRoot = host => ({ nodeType: 11, host, parentNode: null });
 const chain = (depth, top) => { let node = top; for (let i = 0; i < depth; i++) node = element({}, node); return node; };
 const terminalInShadow = () => element({}, element({}, shadowRoot(element({ class: 'xterm xterm-dom-renderer-owner-1' }, element({ class: 'pane-body' })))));
 
-async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, onSleep, onSnapshot, wrapPages = pages => pages, acknowledged = () => true } = {}) {
+async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, onSleep, onSnapshot, wrapPages = pages => pages, acknowledged = () => true, connectionParked } = {}) {
   assert.equal(typeof handoff.createAppRunners, 'function', 'EPV3-5 must provide createAppRunners');
   const f = fakeUpstream([target('a')]); f.geometry.set('a', { ...rect(0, 0), scale: 2, visible: true });
   const w = fakeWindows([nativeWindow(11, rect(0, 0))]);
@@ -33,7 +33,8 @@ async function world({ check = rulesCheck, dom = {}, inspect = {}, onClick, onSl
   const join = createNativeJoin({ app, approved: () => true, readWindows: w.read, now: () => 1000 });
   const filter = createCDPFilter({ session: f.session, app: targets.filterHooks });
   const pw = fakeBrowser(filter); await pw.browser.ready();
-  const registry = createAppPageRegistry({ browser: pw.browser, filter, targets, join, fence: createInstanceFence(), owner: 'session-a', timeoutMs: 500 });
+  const registry = createAppPageRegistry({ browser: pw.browser, filter, targets, join, fence: createInstanceFence(), owner: 'session-a', timeoutMs: 500,
+    ...(connectionParked ? { connectionParked } : {}) });
   await registry.seed();
   const [row] = await registry.list(), entry = registry.tab(row.tab), page = entry.page;
   const sends = [], invalidated = [], reads = [], waits = [];
@@ -476,4 +477,43 @@ test('a payment click inside an app page still asks through the rules, with its 
   assert.match(result.lines[1], /^2 click e7: not run: confirmation required/);
   assert.equal(result.confirmation.step, 2);
   assert.deepEqual(seen.at(-1), { kind: 'click', payment: true });
+});
+
+// The live revoke cell (2026-10-22T01:10Z): six typed markers with 250 ms waits, and the host revoked the session while the
+// second marker was in flight. The trusted gate refused it ("evidence is unavailable"), the batch read failed, and the result
+// came back isError false with no parked wording. A batch the host stopped by parking the connection is an error that names
+// the reason and how far it got; no step after the revocation is sent.
+test('a revocation that lands mid-batch returns ELECTRON_PARKED: revoked as an error, with how many steps ran', async t => {
+  let parked, typed = 0;
+  const unavailable = 'Trusted turn or target evidence is unavailable. Use the engine browser path.';
+  const check = (ctx, kind, target) => {
+    if (kind === 'type' && ++typed === 2) parked = 'revoked'; // the host's parked frame arrives while step 3 is in its gate
+    return parked ? { verdict: 'refuse', message: unavailable } : rulesCheck(ctx, kind, target);
+  };
+  const s = await world({ check, connectionParked: () => parked,
+    onSnapshot: () => { if (parked) throw Error('Target page, context or browser has been closed'); } });
+  t.after(() => s.filter.dispose());
+  const markers = Array.from({ length: 6 }, (_, i) => `rvtest${i}`);
+  const steps = markers.flatMap(text => [{ do: 'type', ref: 'e1', text: text + ' ' }, { do: 'wait', ms: 250 }]);
+  const dispatcher = createToolDispatcher({ pages: s.registry, snapshot: s.runners.read, runSteps: s.runners.runSteps, fillFields: s.runners.fillFields });
+  const result = await dispatcher.call({ name: 'browser_act', arguments: { tab: s.entry.tab, steps, observe: 'none' } });
+  assert.equal(result.isError, true);
+  const lines = result.text.split('\n');
+  assert.equal(lines[0], 'ELECTRON_PARKED: revoked. The app connection was parked during this batch: 2 of 12 steps ran, step 3 was not sent, ' +
+    'and steps 4 to 12 were not sent. Read before continuing; do not replay input blindly.');
+  assert.match(result.text, /^3 type e1: not run: Trusted turn or target evidence is unavailable/m);
+  assert.match(result.text, /^12 wait: not reached$/m);
+  assert.deepEqual(s.sends, [['fill', 'e1', 'rvtest0 ']], 'only the step before the revocation was sent, once');
+  assert.equal(s.entry.parked, 'revoked');
+  // The next call meets the park before any input.
+  const next = await dispatcher.call({ name: 'browser_act', arguments: { tab: s.entry.tab, steps: [{ do: 'press', key: 'Escape' }] } });
+  assert.equal(next.isError, true);
+  assert.match(next.text, /^ELECTRON_PARKED: revoked\./);
+  assert.deepEqual(s.sends, [['fill', 'e1', 'rvtest0 ']]);
+});
+
+test('a revocation before the first step refuses the batch as parked, nothing sent', async t => {
+  const s = await world({ connectionParked: () => 'revoked' }); t.after(() => s.filter.dispose());
+  await assert.rejects(s.act([{ do: 'type', ref: 'e1', text: 'x' }, { do: 'wait', ms: 250 }]), notRun(/^ELECTRON_PARKED: revoked\. .*nothing was sent/));
+  assert.deepEqual(s.sends, []);
 });

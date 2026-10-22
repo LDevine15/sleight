@@ -12,6 +12,7 @@ import net from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
 import { createCDPFilter } from './cdp-filter.mjs';
 import { cdpReason, protocolCode } from './electron-cdp-errors.mjs';
+import { hostReason } from './electron-host-reasons.mjs';
 import { CHANNEL_VERSION, DEFAULT_MAX_FRAME_BYTES, FrameReader, HANDSHAKE_MAX_BYTES, bare, deriveChannel, macEqual, opener, plainJson,
   randomToken, sealer, validToken } from './electron-channel.mjs';
 
@@ -66,6 +67,9 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
   const ingress = [], queuedReplies = new Set();
   let ingressBytes = 0, drain;
   let lossNotified = false;
+  // Why the host parked this channel (its 'parked' frame), as a fixed host reason, so a batch it stopped can say so.
+  let parked;
+  const notePark = message => { parked ??= Object.freeze({ reason: hostReason(message.reason), resumable: message.resumable === true }); };
   const sessionId = 'r' + randomBytes(24).toString('hex');
 
   function notifyLoss() {
@@ -104,7 +108,7 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
       }
     } else if (message.op === 'parked') {
       // Revoked, or the app connection parked: stop at once. The host keeps the app's pipe.
-      fence('CDP_HOST_PARKED');
+      notePark(message); fence('CDP_HOST_PARKED');
     } else fail('ELECTRON_PROTOCOL');
   }
 
@@ -126,7 +130,7 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
   function acceptFrame(message, bytes) {
     if (fenced) return;
     // Authentication has already happened. Validate and fence now, even when earlier normal records are queued.
-    if (message.op === 'parked') { fence('CDP_HOST_PARKED'); return; }
+    if (message.op === 'parked') { notePark(message); fence('CDP_HOST_PARKED'); return; }
     if (message.op === 'reply') {
       if (!pending.has(message.id) || queuedReplies.has(message.id) || Object.hasOwn(message, 'result') === Object.hasOwn(message, 'error')) fail('ELECTRON_PROTOCOL');
     } else if (message.op === 'event') {
@@ -281,6 +285,8 @@ export async function createElectronConnection({ handle: rawHandle, connect = pa
     get browserIncarnation() { return browserIncarnation; },
     get selectedBrowser() { return selectedBrowser; },
     get identity() { return identity; },
+    // { reason, resumable } once the host parked this channel (revoke, disconnect, a pipe fault); undefined before.
+    get parked() { return parked; },
     // app: electron-targets.mjs's filterHooks. The filter runs in app mode either way, so without hooks it owns nothing,
     // and a Chrome-style owned list (which would skip admission) is refused.
     createFilter(options = {}) {

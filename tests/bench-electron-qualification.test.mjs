@@ -804,7 +804,7 @@ test('the live disconnect cell passes only when the disconnect itself refuses th
 test('revocation recovery uses a fresh live-worker turn and the unique original native window without replay', async t => {
   const { liveDriver } = await import('../bench/electron-qualification-live.mjs');
   const cell = CELLS.find(row => row.id === 'revoke');
-  async function attempt({ changedIdentity = {}, rows, oldAnswers = false, batchText = 'ELECTRON_PARKED: revoked', replay = false,
+  async function attempt({ changedIdentity = {}, rows, oldAnswers = false, batchText = 'ELECTRON_PARKED: revoked. The app connection was parked during this batch', batchError = true, replay = false,
     beforeRows, beforeIdentity = identity,
     reconnectCard = { shown: false, existing: true, status: 'granted', by: 'existing', scope: 'session' } } = {}) {
     const calls = [], ops = [], cards = [], turns = [];
@@ -819,7 +819,7 @@ test('revocation recovery uses a fresh live-worker turn and the unique original 
         return { ok: true, identity: generation === 1 ? beforeIdentity : { ...identity, ...changedIdentity },
           card: generation === 1 ? { status: 'granted' } : reconnectCard, launch: {}, connectMs: 1 };
       }
-      if (op === 'revoke') { turn.dead = true; finishBatch?.({ ok: true, result: { text: batchText, isError: false } }); return { ok: true }; }
+      if (op === 'revoke') { turn.dead = true; finishBatch?.({ ok: true, result: { text: batchText, isError: batchError } }); return { ok: true }; }
       if (op === 'resume') return { ok: true }; // The host resumes; this turn's provider channel stays fenced.
       if (op !== 'call') return { ok: true };
       const { name, arguments: args } = message.request;
@@ -900,9 +900,12 @@ test('revocation recovery uses a fresh live-worker turn and the unique original 
     assert.equal(r.turns.length, 1);
   });
   await t.test('unavailable alone does not broaden the required batch parked report', async () => {
-    const r = await attempt({ batchText: 'Turbo is unavailable for this turn. Use the engine browser path.' });
+    // The 2026-10-22T01:10Z live reply: a plain result whose stopped step said "evidence is unavailable".
+    const r = await attempt({ batchText: '3 type e1143: not run: Trusted turn or target evidence is unavailable. Use the engine browser path.', batchError: false });
     assert.equal(r.error?.message, 'REVOKE_NOT_REPORTED');
     assert.deepEqual(r.error?.detail, { isError: false, parkedReported: false, unavailableReported: true });
+    const plain = await attempt({ batchError: false });
+    assert.equal(plain.error?.message, 'REVOKE_NOT_REPORTED', 'the park wording counts only on an error result');
     assert.equal(r.turns.length, 1, 'report the actual batch result before recovery can hide it');
     assert.equal(r.calls.some(call => call.name === 'browser_read'), false);
   });

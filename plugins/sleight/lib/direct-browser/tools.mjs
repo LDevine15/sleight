@@ -195,6 +195,8 @@ export function createToolDispatcher({ browser, pages, snapshot, runSteps, fillF
               }
               return await finish(lines, observed?.text, parent, observed);
             });
+            // An app batch the host stopped by parking the connection (electron-handoff.mjs): an error, with what ran, and no page.
+            if (typeof result.parked === 'string') return textResult(result.lines.join('\n'), true);
             await assertEndpointRead(entry.page, endpoint);
             const lines = [...result.lines, ...blocked().filter(line => !result.lines.includes(line))];
             // A step that landed on a blocked site: what ran, then the user's line, and nothing of the page.

@@ -344,6 +344,8 @@ test('revocation parks the app connection, ends every channel, and a command del
   release();
   await assert.rejects(delayed, /APP_PARKED|CLOSED|PARKED/);
   await until(() => lostA === 1 && lostB === 1, 'both workers told');
+  // Each worker keeps the host's fixed reason, so a batch the revocation stopped can name it (electron-handoff.mjs).
+  assert.deepEqual([a.connection.parked, b.connection.parked], [{ reason: 'user revoked', resumable: true }, { reason: 'user revoked', resumable: true }]);
   assert.ok(!methods(h).includes('Input.dispatchKeyEvent'), 'the delayed key press was never sent');
   assert.equal(h.app.input.destroyed, false, 'the writer stays open');
   assert.equal(h.host.status().broker.parked.resumable, true);

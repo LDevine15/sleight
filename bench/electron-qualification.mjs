@@ -300,7 +300,8 @@ export const CELLS = Object.freeze([
     await c.sleep(300);
     await c.driver.revoke();
     const r = await pending;
-    const parkedReported = /ELECTRON_PARKED|parked|revoked/i.test(r.text);
+    // The product reports a batch the host stopped as an error naming the park (electron-handoff.mjs parkedSummary).
+    const parkedReported = r.isError === true && /ELECTRON_PARKED: revoked\b/.test(r.text);
     if (!parkedReported) throw Object.assign(Error('REVOKE_NOT_REPORTED'), { detail: {
       isError: !!r.isError, parkedReported, unavailableReported: /unavailable/i.test(r.text),
     } });

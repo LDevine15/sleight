@@ -62,6 +62,15 @@ const SCROLL_KEY = /(?:^|\+)(?:PageUp|PageDown|Home|End|Arrow(?:Up|Down|Left|Rig
 const scrolls = step => step.do === 'scroll' || step.do === 'press' && SCROLL_KEY.test(step.key);
 const failedLine = result => result?.lines?.some(line => /: not run:|effect unconfirmed;/.test(line));
 const sentLine = (n, kind, reason) => `${n} ${kind}: sent. The app window then ${reason}. Read before continuing.`;
+// A batch the host stopped by parking the app connection (a revocation, a disconnect, a pipe fault) is an error that says so
+// and how far it got: the steps before the stopped one ran, the stopped one is reported by its own line, none after it was sent.
+function parkedSummary(reason, lines, stoppedAt, total) {
+  const own = lines.filter(line => line.startsWith(stoppedAt + ' '));
+  const stopped = own.some(line => /: not run:/.test(line)) ? 'was not sent'
+    : own.some(line => /effect unconfirmed;/.test(line)) || !own.length ? 'may have been sent (effect unconfirmed)' : 'was sent';
+  return `ELECTRON_PARKED: ${reason}. The app connection was parked during this batch: ${stoppedAt - 1} of ${total} steps ran, step ${stoppedAt} ${stopped}` +
+    (stoppedAt < total ? `, and steps ${stoppedAt + 1} to ${total} were not sent` : '') + '. Read before continuing; do not replay input blindly.';
+}
 
 function staticRefusal(step) {
   if (NAVIGATION.has(step.do)) return APP_REFUSALS.navigation;
@@ -159,7 +168,11 @@ export function createAppRunners({ pages, invalidateRefs, check, snapshot, inspe
         });
       } catch (error) {
         if (phase === 'pre' || phase === 'running' && error.notRun) {
-          if (index === 0) { error.notRun = true; throw error; }
+          if (index === 0) {
+            const reason = pages.connectionParked?.();
+            if (reason && !/^ELECTRON_PARKED: /.test(error.message)) throw refused(APP_REFUSALS.parked.replace('<reason>', clean(reason)));
+            error.notRun = true; throw error;
+          }
           lines.push(`${n} ${step.do}: not run: ${clean(error.message)}`);
         } else if (phase === 'running') lines.push(`${n} ${step.do}: effect unconfirmed; read before retrying.`);
         else {
@@ -179,6 +192,8 @@ export function createAppRunners({ pages, invalidateRefs, check, snapshot, inspe
       if (result.stoppedAt !== null && result.stoppedAt !== undefined) { stoppedAt = n; break; }
     }
     if (stoppedAt !== null) for (let i = stoppedAt; i < steps.length; i++) lines.push(`${i + 1} ${steps[i].do}: not reached`);
+    const parked = stoppedAt !== null ? pages.connectionParked?.() : undefined;
+    if (parked) return { lines: [parkedSummary(clean(parked), lines, stoppedAt, steps.length), ...lines], stoppedAt, observe: undefined, parked: clean(parked) };
     return { lines, stoppedAt, observe, ...(confirmation ? { confirmation } : {}) };
   }
   // The per-step runner labels its one step "1 <do>"; in the batch it is step n.
