@@ -153,8 +153,22 @@ function newWindow(request, api, clock) {
   }
   if (before.length === 2) return done(before, false);
   deadline();
+  // One exact File item or nothing. The census holds counts and fixed enums only and runs after the refusal is decided.
+  function menuFailure(phase, reason, values, owner) {
+    var census = null;
+    try { census = api.menuCensus ? api.menuCensus(pid, owner) : null; } catch (_) { census = null; }
+    clock.emit({ stage: 'new-window-failure', menu: { phase: phase, reason: reason,
+      count: Math.min(values.length, 65), elapsedMs: Math.max(0, Math.min(clock.now() - started, waitMs)), census: census } });
+    throw new Error('WINDOW_SETUP_MENU_AMBIGUOUS');
+  }
   var files = api.fileMenus(pid);
-  if (files.length !== 1) throw new Error('WINDOW_SETUP_MENU_AMBIGUOUS');
+  // Zero may be a transient AX read (menu bar not answering yet). Poll only reads, re-prove identity each round,
+  // and never act on more than one. Two or more is final at once.
+  while (!files.length && clock.now() - started < Math.min(waitMs, 1000)) {
+    clock.wait(50); deadline(); identity(); deadline(); files = api.fileMenus(pid);
+  }
+  deadline();
+  if (files.length !== 1) menuFailure('file-menu', files.length ? 'multiple' : 'none', files);
   deadline(); identity(); deadline(); menu = files[0];
   try {
     if (!api.press(menu)) throw new Error('WINDOW_SETUP_PRESS_FAILED');
@@ -164,7 +178,7 @@ function newWindow(request, api, clock) {
       clock.wait(50); deadline(); identity(); deadline(); items = api.newWindowItems(menu);
     }
     deadline();
-    if (items.length !== 1) throw new Error('WINDOW_SETUP_MENU_AMBIGUOUS');
+    if (items.length !== 1) menuFailure('new-window-item', items.length ? 'multiple' : 'none', items, menu);
     identity(); deadline();
     if (!api.press(items[0])) throw new Error('WINDOW_SETUP_PRESS_FAILED');
     deadline();
@@ -205,6 +219,18 @@ function nativeElectron() {
     return items;
   }
   function text(element, name) { var value = attribute(element, name); return value ? unwrap(value) : ''; }
+  // An attribute read that keeps the AX status as a fixed enum, so "no menu bar" and "AX refused" stay apart.
+  function statusClass(status) {
+    return status === 0 ? 'ok' : status === -25212 ? 'no-value' : status === -25204 ? 'cannot-complete' :
+      status === -25211 ? 'api-disabled' : status === -25205 ? 'unsupported' : status === -25202 ? 'invalid-element' : 'other';
+  }
+  function read(element, name) {
+    var value = Ref(), status = Number($.AXUIElementCopyAttributeValue(element, $(name), value));
+    return { status: statusClass(status), value: status === 0 ? ObjC.castRefToObject(value[0]) : null };
+  }
+  function listOf(array) { var items = []; for (var i = 0; i < Number(array.count); i++) items.push(array.objectAtIndex(i)); return items; }
+  // AXEnabled is absent on some items, which counts as enabled; only an explicit false disables.
+  function enabled(element) { var got = read(element, 'AXEnabled'); if (got.status !== 'ok') return true; var plain = ObjC.unwrap(got.value); return plain !== false && plain !== 0; }
   function buttons(element, depth, found) {
     if (text(element, 'AXRole') === 'AXButton' && DONT_SAVE.indexOf(text(element, 'AXTitle')) !== -1) found.push(element);
     if (depth > 0) list(element, 'AXChildren').forEach(function (child) { buttons(child, depth - 1, found); });
@@ -220,19 +246,60 @@ function nativeElectron() {
   }
   return {
     trusted: function () { return !!$.AXIsProcessTrusted(); },
+    // Exact identity: this process's own menu bar, role AXMenuBarItem, title exactly "File", enabled.
+    // The element comes from AXUIElementCreateApplication(pid), so the owning process is fixed by construction.
     fileMenus: function (pid) {
       var bar = attribute($.AXUIElementCreateApplication(pid), 'AXMenuBar');
       return bar ? list(bar, 'AXChildren').filter(function (item) {
-        return text(item, 'AXRole') === 'AXMenuBarItem' && text(item, 'AXTitle') === 'File';
+        return text(item, 'AXRole') === 'AXMenuBarItem' && text(item, 'AXTitle') === 'File' && enabled(item);
       }) : [];
     },
+    // Exact identity: AXMenuItem titled exactly "New Window", enabled, a direct item of this File item's own AXMenu.
+    // Submenus are never entered, so "New Window with Profile" children cannot match.
     newWindowItems: function (menu) {
       var found = [];
-      function walk(item, depth) {
-        if (text(item, 'AXRole') === 'AXMenuItem' && text(item, 'AXTitle') === 'New Window') found.push(item);
-        if (depth > 0) list(item, 'AXChildren').forEach(function (child) { walk(child, depth - 1); });
+      list(menu, 'AXChildren').forEach(function (popup) {
+        if (text(popup, 'AXRole') !== 'AXMenu') return;
+        list(popup, 'AXChildren').forEach(function (item) {
+          if (text(item, 'AXRole') === 'AXMenuItem' && text(item, 'AXTitle') === 'New Window' && enabled(item)) found.push(item);
+        });
+      });
+      return found;
+    },
+    // Failure-only diagnostics: counts, booleans and fixed enums. No title, path or document text leaves this function.
+    menuCensus: function (pid, menu) {
+      var bar = read($.AXUIElementCreateApplication(pid), 'AXMenuBar'), out = { barStatus: bar.status, bar: null, popup: null };
+      if (bar.value) {
+        var kids = read(bar.value, 'AXChildren'), rows = kids.value ? listOf(kids.value) : [];
+        var exact = 0, fileLike = 0, disabledExact = 0, items = 0;
+        rows.forEach(function (row) {
+          if (text(row, 'AXRole') !== 'AXMenuBarItem') return;
+          items++; var title = text(row, 'AXTitle');
+          if (title === 'File') { exact++; if (!enabled(row)) disabledExact++; }
+          else if (/file/i.test(title)) fileLike++;
+        });
+        out.bar = { childrenStatus: kids.status, children: Math.min(rows.length, 65), menuBarItems: Math.min(items, 65),
+          exactFile: Math.min(exact, 65), disabledExactFile: Math.min(disabledExact, 65), fileLike: Math.min(fileLike, 65) };
       }
-      walk(menu, 3); return found;
+      if (menu) {
+        var popups = read(menu, 'AXChildren'), pops = popups.value ? listOf(popups.value) : [];
+        var menus = 0, rowsTotal = 0, exactNew = 0, disabledNew = 0, prefixed = 0, separators = 0, cmdN = 0, status = 'ok';
+        pops.forEach(function (popup) {
+          if (text(popup, 'AXRole') !== 'AXMenu') return;
+          menus++; var children = read(popup, 'AXChildren'); if (children.status !== 'ok') status = children.status;
+          (children.value ? listOf(children.value) : []).forEach(function (item) {
+            rowsTotal++; var role = text(item, 'AXRole'), title = text(item, 'AXTitle');
+            if (role !== 'AXMenuItem') return;
+            if (title === 'New Window') { exactNew++; if (!enabled(item)) disabledNew++; if (text(item, 'AXMenuItemCmdChar').toLowerCase() === 'n') cmdN++; }
+            else if (title.indexOf('New Window') === 0) prefixed++;
+            else if (title === '') separators++;
+          });
+        });
+        out.popup = { childrenStatus: popups.status, popupStatus: status, popups: Math.min(menus, 65), rows: Math.min(rowsTotal, 65),
+          exactNewWindow: Math.min(exactNew, 65), disabledExactNewWindow: Math.min(disabledNew, 65),
+          newWindowPrefixed: Math.min(prefixed, 65), untitled: Math.min(separators, 65), exactWithCmdN: Math.min(cmdN, 65) };
+      }
+      return out;
     },
     cancelMenu: function (menu) { try { $.AXUIElementPerformAction(menu, $('AXCancel')); } catch (_) {} },
     windowIds: function (pid, expectedBirth) {

@@ -388,3 +388,74 @@ test('the native setup helper is owned and collected before success; unproved co
     assert.deepEqual(w.events.at(-1), { restored: 'com.apple.Terminal' });
   }
 });
+
+// Menu ambiguity: the refusal stays exact, never picks among entries, and leaves a closed census.
+const menuRows = events => events.filter(event => typeof event === 'object' && event.stage === 'new-window-failure');
+for (const [name, options, phase, reason, count] of [
+  ['two File items', { files: [{}, {}] }, 'file-menu', 'multiple', 2],
+  ['two New Window items', { items: [{}, {}] }, 'new-window-item', 'multiple', 2],
+]) test(`menu ambiguity (${name}) presses nothing and reports a closed census`, () => {
+  const w = nativeWorld(options);
+  w.api.menuCensus = () => ({ barStatus: 'ok', bar: null, popup: null });
+  assert.throws(w.run, /WINDOW_SETUP_MENU_AMBIGUOUS/);
+  const [row] = menuRows(w.events);
+  assert.equal(menuRows(w.events).length, 1);
+  assert.deepEqual({ phase: row.menu.phase, reason: row.menu.reason, count: row.menu.count }, { phase, reason, count });
+  assert.equal(w.events.includes('new-window'), false, 'no item may be pressed');
+  if (phase === 'file-menu') assert.equal(w.events.includes('file'), false, 'no File item may be pressed');
+});
+test('a File menu that is absent at first is polled with identity rechecks, then pressed only when exactly one appears', () => {
+  const w = nativeWorld(), real = [{}]; let reads = 0;
+  w.api.fileMenus = () => ++reads < 4 ? [] : (w.api.fileMenus.files = real);
+  w.api.press = item => { w.events.push(item === real[0] ? 'file' : 'new-window'); return true; };
+  assert.equal(w.run().created, true);
+  assert.equal(reads, 4);
+});
+test('a File menu absent for the whole bounded poll reports none and presses nothing', () => {
+  const w = nativeWorld({ files: [] }); w.request.waitMs = 5000;
+  assert.throws(w.run, /WINDOW_SETUP_MENU_AMBIGUOUS/);
+  const [row] = menuRows(w.events);
+  assert.deepEqual({ reason: row.menu.reason, count: row.menu.count, census: row.menu.census }, { reason: 'none', count: 0, census: null });
+  assert.ok(row.menu.elapsedMs >= 1000);
+  assert.equal(w.events.some(event => event === 'file' || event === 'new-window'), false);
+});
+test('a failing census never replaces the refusal', () => {
+  const w = nativeWorld({ files: [{}, {}] });
+  w.api.menuCensus = () => { throw new Error('private'); };
+  assert.throws(w.run, /WINDOW_SETUP_MENU_AMBIGUOUS/);
+  assert.equal(menuRows(w.events)[0].menu.census, null);
+});
+
+// Offline JXA bridge for the exact menu identity and the closed census (no live AX read is proved by this).
+function nativeMenus(barItems) {
+  const list = rows => ({ count: rows.length, objectAtIndex: i => rows[i] }), app = { AXMenuBar: { AXChildren: list(barItems) } };
+  const $ = value => value;
+  Object.assign($, { AXUIElementCreateApplication: () => app,
+    AXUIElementCopyAttributeValue(element, name, ref) { if (!(name in element)) return -25205; ref[0] = element[name]; return 0; } });
+  const sandbox = { $, Ref: () => [], ObjC: { import() {}, bindFunction() {}, unwrap: value => value, deepUnwrap: value => value, castRefToObject: value => value } };
+  runInNewContext(readFileSync(new URL('../bench/real-electron.js', import.meta.url), 'utf8'), sandbox);
+  return { native: sandbox.nativeElectron(), list };
+}
+test('native menu identity is exact and its census holds counts and enums only', () => {
+  const { native, list } = nativeMenus([]);
+  const row = (role, title, extra = {}) => ({ AXRole: role, AXTitle: title, ...extra });
+  const popup = items => ({ AXRole: 'AXMenu', AXChildren: list(items) });
+  const file = items => row('AXMenuBarItem', 'File', { AXChildren: list([popup(items)]) });
+  const menus = items => nativeMenus(items).native;
+  const nw = extra => row('AXMenuItem', 'New Window', extra);
+  let n = menus([row('AXMenuBarItem', 'Code'), file([row('AXMenuItem', 'New File'), nw({ AXMenuItemCmdChar: 'N' }), row('AXMenuItem', 'New Window with Profile'), row('AXMenuItem', '')])]);
+  const files = n.fileMenus(501);
+  assert.equal(files.length, 1);
+  assert.equal(n.newWindowItems(files[0]).length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(n.menuCensus(501, files[0]))), { barStatus: 'ok',
+    bar: { childrenStatus: 'ok', children: 2, menuBarItems: 2, exactFile: 1, disabledExactFile: 0, fileLike: 0 },
+    popup: { childrenStatus: 'ok', popupStatus: 'ok', popups: 1, rows: 4, exactNewWindow: 1, disabledExactNewWindow: 0, newWindowPrefixed: 1, untitled: 1, exactWithCmdN: 1 } });
+  n = menus([file([nw(), nw({ AXEnabled: false })])]);
+  assert.equal(n.newWindowItems(n.fileMenus(501)[0]).length, 1, 'a disabled duplicate is not a candidate');
+  n = menus([file([nw(), nw()])]);
+  assert.equal(n.newWindowItems(n.fileMenus(501)[0]).length, 2, 'two enabled exact items stay two and are refused upstream');
+  n = menus([row('AXMenuBarItem', 'File…'), row('AXMenuBarItem', 'Fichier')]);
+  assert.equal(n.fileMenus(501).length, 0, 'near titles never match');
+  assert.deepEqual(JSON.parse(JSON.stringify(n.menuCensus(501))).bar.fileLike, 1);
+  assert.equal(menus([file([]), file([])]).fileMenus(501).length, 2);
+});

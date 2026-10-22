@@ -219,11 +219,49 @@ function fixtureCensus(rows, request, code) {
       c.reason === 'unavailable' && (c.count !== null || c.originalPresent !== null)) return null;
   return { phase: c.phase, reason: c.reason, count: c.count, originalPresent: c.originalPresent };
 }
+// WINDOW_SETUP_MENU_AMBIGUOUS keeps counts and fixed enums only; any other shape drops the whole diagnostic.
+const AX_STATUS = ['ok', 'no-value', 'cannot-complete', 'api-disabled', 'unsupported', 'invalid-element', 'other'];
+const MENU_SHAPES = Object.freeze({
+  bar: { childrenStatus: AX_STATUS, children: 65, menuBarItems: 65, exactFile: 65, disabledExactFile: 65, fileLike: 65 },
+  popup: { childrenStatus: AX_STATUS, popupStatus: AX_STATUS, popups: 65, rows: 65, exactNewWindow: 65,
+    disabledExactNewWindow: 65, newWindowPrefixed: 65, untitled: 65, exactWithCmdN: 65 },
+});
+function closedFields(value, shape) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const keys = Object.keys(shape);
+  if (Object.keys(value).length !== keys.length || !keys.every(key => Object.hasOwn(value, key))) return null;
+  const out = {};
+  for (const key of keys) {
+    const v = value[key], rule = shape[key];
+    if (Array.isArray(rule) ? !rule.includes(v) : !(Number.isInteger(v) && v >= 0 && v <= rule)) return null;
+    out[key] = v;
+  }
+  return out;
+}
+function fixtureMenuCensus(rows, request, code) {
+  if (request.mode !== 'new-window' || code !== 'WINDOW_SETUP_MENU_AMBIGUOUS') return null;
+  const failures = rows.filter(row => row?.stage === 'new-window-failure');
+  if (failures.length !== 1) return null;
+  const m = failures[0].menu;
+  if (!m || !['file-menu', 'new-window-item'].includes(m.phase) || !['none', 'multiple'].includes(m.reason) ||
+      !(Number.isInteger(m.count) && m.count >= 0 && m.count <= 65) || m.reason === 'none' && m.count !== 0 ||
+      m.reason === 'multiple' && m.count < 2 || !(Number.isInteger(m.elapsedMs) && m.elapsedMs >= 0 && m.elapsedMs <= 10000)) return null;
+  const census = m.census == null ? null : (() => {
+    const c = m.census;
+    if (!c || typeof c !== 'object' || Array.isArray(c) || Object.keys(c).sort().join() !== 'bar,barStatus,popup' || !AX_STATUS.includes(c.barStatus)) return undefined;
+    const bar = c.bar === null ? null : closedFields(c.bar, MENU_SHAPES.bar);
+    const popup = c.popup === null ? null : closedFields(c.popup, MENU_SHAPES.popup);
+    return bar === undefined || c.bar !== null && !bar || c.popup !== null && !popup ? undefined : { barStatus: c.barStatus, bar, popup };
+  })();
+  if (census === undefined) return null;
+  return { phase: m.phase, reason: m.reason, count: m.count, elapsedMs: m.elapsedMs, census };
+}
 function fixtureHelperFailure(request, result, row, rows = []) {
   const codes = [...new Set(String(result?.stderr ?? '').match(/\bWINDOW_SETUP_[A-Z_]+\b/g) ?? [])];
   const exitCode = result?.exit?.code, exitSignal = result?.exit?.signal;
   const code = codes.length === 1 && WINDOW_SETUP_CODES.has(codes[0]) ? codes[0] : null;
   const census = fixtureCensus(rows, request, code);
+  const menu = fixtureMenuCensus(rows, request, code);
   // Never copy helper output, exception text, paths or arbitrary native error codes into the receipt.
   return Object.assign(Error('FIXTURE_HELPER_UNCONFIRMED'), { detail: { helper: {
     expectedStage: FIXTURE_STAGES.has(request.mode) ? request.mode : null,
@@ -231,7 +269,7 @@ function fixtureHelperFailure(request, result, row, rows = []) {
     groupClean: typeof result?.groupClean === 'boolean' ? result.groupClean : null,
     exitCode: Number.isInteger(exitCode) && exitCode >= -2147483648 && exitCode <= 2147483647 ? exitCode : null,
     exitSignal: typeof exitSignal === 'string' && Object.hasOwn(osConstants.signals, exitSignal) ? exitSignal : null,
-    code, ...(census ? { census } : {}),
+    code, ...(census ? { census } : {}), ...(menu ? { menu } : {}),
   } } });
 }
 export function fixtureHelper(bundle, run = runOwned) {

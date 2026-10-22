@@ -218,3 +218,27 @@ test('a successful four-key refusal that fails the 5 px pointer gate retains the
   ]);
   assert.equal(receipt.qualified, false);
 });
+
+const menuCensus = { barStatus: 'ok',
+  bar: { childrenStatus: 'ok', children: 9, menuBarItems: 9, exactFile: 0, disabledExactFile: 0, fileLike: 0 }, popup: null };
+const menuRow = (menu) => JSON.stringify({ stage: 'new-window-failure', menu, privateText });
+const menuFailure = menu => fixtureHelper(APPS.vscode.bundleId, async () => ({ groupClean: true, exit: { code: 1 }, stdout: menuRow(menu),
+  stderr: 'Error: WINDOW_SETUP_MENU_AMBIGUOUS' }))({ mode: 'new-window' }).then(() => assert.fail('must refuse'), error => error);
+test('menu ambiguity keeps its closed census through the helper failure and drops private text', async () => {
+  const menu = { phase: 'file-menu', reason: 'none', count: 0, elapsedMs: 1000, census: menuCensus };
+  const error = await menuFailure(menu);
+  assert.deepEqual(error.detail.helper.menu, menu);
+  assert.doesNotMatch(JSON.stringify(error.detail), /private-owner|private-content/);
+});
+for (const [label, menu] of [
+  ['extra field', { phase: 'file-menu', reason: 'none', count: 0, elapsedMs: 5, census: { ...menuCensus, title: 'File' } }],
+  ['title string in a count', { phase: 'file-menu', reason: 'none', count: 0, elapsedMs: 5, census: { ...menuCensus, bar: { ...menuCensus.bar, exactFile: 'File' } } }],
+  ['unknown status', { phase: 'file-menu', reason: 'none', count: 0, elapsedMs: 5, census: { ...menuCensus, barStatus: privateText } }],
+  ['none with a count', { phase: 'file-menu', reason: 'none', count: 2, elapsedMs: 5, census: null }],
+  ['multiple with one', { phase: 'new-window-item', reason: 'multiple', count: 1, elapsedMs: 5, census: null }],
+  ['unknown phase', { phase: privateText, reason: 'none', count: 0, elapsedMs: 5, census: null }],
+]) test(`menu ambiguity drops a census with ${label}`, async () => {
+  const error = await menuFailure(menu);
+  assert.equal(error.detail.helper.code, 'WINDOW_SETUP_MENU_AMBIGUOUS');
+  assert.equal(Object.hasOwn(error.detail.helper, 'menu'), false);
+});
