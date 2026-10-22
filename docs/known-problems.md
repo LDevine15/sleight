@@ -116,6 +116,11 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   screen-sharing users need a physical keyboard or pointer for these cards. A typed-confirmation alternative is planned
   after 1.4.0. Plain session-only app approvals can still use the host's prompts. Decline and Cancel remain available.
 
+- When a card or menu-bar alert closes, sleight returns activation to the app that was in front just before the card
+  was clicked. This also happens when a card times out or is aborted while the card's own app is in front, even if
+  the person switched to that app themselves. The card's app itself is never activated. Only fake-driven tests cover
+  this (2026-10-22). No live run has confirmed it yet.
+
 - On the engine path, Haiku 5.5 stopped before Create account in 18 of 24 requested sign-up runs
   (AS-3, 2026-10-19). The engine listed account creation under Always confirm, even if pre-approved,
   while sleight's requested-form rule covered only [9] and [10]. The owner ruled on 2026-10-19 that a

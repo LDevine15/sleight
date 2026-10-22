@@ -13,81 +13,111 @@ import { swiftModuleCache } from '../bench/swift-cache.mjs';
 // activation back when a card closes. These tests drive the decision with fakes; nothing is shown or activated.
 const source = readFileSync(new URL('../plugins/sleight/lib/direct-browser/native/consent-host.swift', import.meta.url), 'utf8');
 
-test('a card records who was in front before it shows and hands activation back on every close', () => {
+test('cards and alerts record who was in front, follow the person to the activating click, and hand activation back', () => {
   assert.match(source, /activeAsk = \(id, panel\); focus\.presenting\(data\); panel\.show\(\); return/);
   assert.match(source, /self\.activeAsk = nil; self\.focus\.dismissed\(\); self\.respond\(id, choice\); self\.showNextAsk\(\)/);
-  assert.match(source, /func closeAsk\(\) \{ activeAsk\?\.panel\.close\(\); activeAsk = nil; focus\.dismissed\(\) \}/);
+  assert.match(source, /func closeAsk\(\) \{ guard let ask = activeAsk else \{ return \}; ask\.panel\.close\(\); activeAsk = nil; focus\.dismissed\(\) \}/);
+  assert.match(source, /addObserver\(forName: NSApplication\.willBecomeActiveNotification, object: nil, queue: nil\) \{ \[weak self\] _ in\s*self\?\.focus\.hostActivating\(\)/);
+  // All three menu-bar alerts (turbo off, session opt-in or resume, action confirm) go through personModal, which restores.
+  assert.equal((source.match(/personModal\(alert, choices:/g) ?? []).length, 3);
+  assert.match(source, /focus\.presenting\(\[:\]\)\n\s*let result = withExtendedLifetime\(actions\) \{ modal\.run\(abort: \{ NSApp\.abortModal\(\) \}\) \{ alert\.runModal\(\) \} \}\n\s*focus\.dismissed\(\)/);
+  // A recorded app is checked by pid, bundle and launch date.
+  assert.match(source, /AppIdentity\(pid: pid, bundle: app\.bundleIdentifier, launched: app\.launchDate\?\.timeIntervalSince1970\)/);
   // Showing stays as it was: no activation, the same sound. GB12's guard is untouched.
   assert.match(source, /func show\(\) \{\s*panel.makeKeyAndOrderFront\(nil\)\s*NSSound\(named: "Glass"\)\?\.play\(\)\s*\}/);
   const block = source.match(/\/\/ BEGIN FOCUS RETURN\n([\s\S]*?)\/\/ END FOCUS RETURN/)?.[1];
   assert.ok(block, 'focus return absent');
-  assert.doesNotMatch(block, /CGEvent|AXUIElement|NSApp|NSRunningApplication|NSWorkspace/, 'the decision itself touches no system state');
+  assert.doesNotMatch(block, /CGEvent|AXUIElement|NSApp\.|NSRunningApplication\(|NSWorkspace\./, 'the decision itself touches no system state');
   assert.doesNotMatch(source, /activate\(ignoringOtherApps|activateIgnoringOtherApps/);
 });
 
-test('Swift focus return with fakes: back to the person\'s app, never the card\'s app, never over the person\'s own switch', { skip: macCommandSkip('xcrun') }, t => {
+test('Swift focus return with fakes: back to the person\'s latest app, never the card\'s app, never over the person\'s own switch', { skip: macCommandSkip('xcrun') }, t => {
   const block = source.match(/\/\/ BEGIN FOCUS RETURN\n([\s\S]*?)\/\/ END FOCUS RETURN/)[1];
   const dir = registerTemp(t, trackTemp(realpathSync(mkdtempSync(join(tmpdir(), 'sleight-focus-return-')))));
   const swift = join(dir, 'main.swift'), binary = join(dir, 'fixture');
   writeFileSync(swift, 'import Foundation\n' + block + `
 func check(_ ok: Bool, _ what: String) { if !ok { print("FAIL " + what); exit(1) } }
-// pids: host 50, Terminal 100, Safari 200, the VS Code fixture 300 (a second copy 301 shares its bundle).
-var front: pid_t? = 100, active = false, alive: Set<pid_t> = [50, 100, 200, 300, 301], activated: [pid_t] = []
+// pids: host 50, Terminal 100, Safari 200, the VS Code fixture 300 (a second copy 301 shares its bundle), Notes 400.
+let base: [pid_t: AppIdentity] = [50: AppIdentity(pid: 50, bundle: nil, launched: 1), 100: AppIdentity(pid: 100, bundle: "com.apple.Terminal", launched: 1),
+  200: AppIdentity(pid: 200, bundle: "com.apple.Safari", launched: 1), 300: AppIdentity(pid: 300, bundle: "com.microsoft.VSCode", launched: 1),
+  301: AppIdentity(pid: 301, bundle: "com.microsoft.VSCode", launched: 2), 400: AppIdentity(pid: 400, bundle: "com.apple.Notes", launched: 1)]
+var front: pid_t? = 100, active = false, apps = base, activated: [pid_t] = []
 func make() -> FocusReturn {
-    FocusReturn(host: 50, frontmost: { front }, hostActive: { active }, running: { alive.contains($0) },
-        pids: { $0 == "com.microsoft.VSCode" ? [300, 301] : [] }, activate: { activated.append($0) })
+    FocusReturn(host: 50, frontmost: { front }, identify: { apps[$0] }, hostActive: { active }, activate: { activated.append($0) })
 }
 let vscode: [String: Any] = ["kind": "debugger", "app": ["bundleId": "com.microsoft.VSCode", "pid": NSNumber(value: 300)]]
 let unlaunched: [String: Any] = ["kind": "debugger", "app": ["bundleId": "com.microsoft.VSCode", "pid": NSNumber(value: 0)]]
-let session: [String: Any] = ["kind": "opt-in", "session": "s1", "epoch": 1]
-func reset() { front = 100; active = false; alive = [50, 100, 200, 300, 301]; activated = [] }
+let notes: [String: Any] = ["kind": "debugger", "app": ["bundleId": "com.apple.Notes", "pid": NSNumber(value: 400)]]
+let alert: [String: Any] = [:]
+func reset() { front = 100; active = false; apps = base; activated = [] }
+// The click: willBecomeActive fires with the person's app still in front, then the host is active.
+func click(_ focus: FocusReturn) { focus.hostActivating(); front = 50; active = true }
 
-// The receipts' case: the click activates the host; the card closes; Terminal comes back, before any host exit.
-reset(); var focus = make(); focus.presenting(vscode); front = 50; active = true
+// The receipts' case: the click activates the host; the card closes; Terminal comes back before any host exit.
+reset(); var focus = make(); focus.presenting(vscode); click(focus)
 check(focus.dismissed() == 100 && activated == [100], "click then close returns to Terminal")
-// The workspace can still report Terminal while the host is active: activity decides, and Terminal comes back.
+// The person switched to Safari after the card appeared, then clicked it: Safari, their latest choice, comes back.
+reset(); focus = make(); focus.presenting(vscode); front = 200; click(focus)
+check(focus.dismissed() == 200 && activated == [200], "latest app before the click")
+// The workspace still reports Terminal while the host is active: activity decides.
 reset(); focus = make(); focus.presenting(vscode); active = true
 check(focus.dismissed() == 100, "stale frontmost while the host is active")
-// The fixture took over while the card was up (or no app holds it): Terminal comes back.
+// The fixture took over while the card was up, or no app holds activation: Terminal comes back (the accepted trade-off).
 reset(); focus = make(); focus.presenting(vscode); front = 300
 check(focus.dismissed() == 100, "fixture in front")
 reset(); focus = make(); focus.presenting(vscode); front = 301
 check(focus.dismissed() == 100, "another copy of the card's app in front")
 reset(); focus = make(); focus.presenting(vscode); front = nil
 check(focus.dismissed() == 100, "no app in front")
-// The person moved to Safari and the host is not active: Safari stays.
+// The person moved to Safari and never clicked the card: Safari stays.
 reset(); focus = make(); focus.presenting(vscode); front = 200
 check(focus.dismissed() == nil && activated.isEmpty, "the person's own switch stands")
 // Nothing took over (a card that timed out unclicked): no call at all.
 reset(); focus = make(); focus.presenting(vscode)
 check(focus.dismissed() == nil && activated.isEmpty, "Terminal still in front")
-// The person was in the card's app, by pid or by bundle (before launch): never activated.
-reset(); front = 300; focus = make(); focus.presenting(vscode); active = true
-check(focus.dismissed() == nil && activated.isEmpty, "previous is the card's app")
-reset(); front = 301; focus = make(); focus.presenting(unlaunched); active = true
-check(focus.dismissed() == nil && activated.isEmpty, "previous shares the card's bundle")
-// The previous app quit meanwhile: nothing to return to.
-reset(); focus = make(); focus.presenting(vscode); active = true; alive.remove(100)
+// The person was in the card's app, by pid or by bundle (before launch): never recorded, never activated.
+reset(); front = 300; focus = make(); focus.presenting(vscode); click(focus)
+check(focus.previous == nil && focus.dismissed() == nil && activated.isEmpty, "previous is the card's app")
+reset(); front = 301; focus = make(); focus.presenting(unlaunched); click(focus)
+check(focus.previous == nil && focus.dismissed() == nil && activated.isEmpty, "previous shares the card's bundle")
+// The recorded app quit, or its pid now belongs to a relaunched copy: nothing to return to.
+reset(); focus = make(); focus.presenting(vscode); click(focus); apps[100] = nil
 check(focus.dismissed() == nil && activated.isEmpty, "previous app gone")
-// A card about no app still returns activation.
-reset(); focus = make(); focus.presenting(session); active = true
-check(focus.dismissed() == 100, "session card")
-// Back-to-back cards: the second shows while the host is still in front, so the first card's record stands.
-reset(); focus = make(); focus.presenting(vscode); front = 50; active = true
+reset(); focus = make(); focus.presenting(vscode); click(focus); apps[100] = AppIdentity(pid: 100, bundle: "com.apple.Terminal", launched: 9)
+check(focus.dismissed() == nil && activated.isEmpty, "pid reused by a later launch")
+reset(); focus = make(); focus.presenting(vscode); click(focus); apps[100] = AppIdentity(pid: 100, bundle: "com.example.other", launched: 1)
+check(focus.dismissed() == nil && activated.isEmpty, "pid reused by another app")
+// Menu-bar alerts name no app and still return activation; runModal activates the host the same way.
+reset(); focus = make(); focus.presenting(alert); click(focus)
+check(focus.dismissed() == 100, "alert")
+// An alert over an open card: activation returns once, when the last closes.
+reset(); focus = make(); focus.presenting(vscode); focus.presenting(alert); click(focus)
+check(focus.dismissed() == nil && focus.open == 1, "alert closes first")
+check(focus.dismissed() == 100 && activated == [100], "card closes last")
+// Queued cards with a lagging frontmost: after the first answer the workspace still names the host, then the fixture.
+reset(); focus = make(); focus.presenting(vscode); click(focus)
 check(focus.dismissed() == 100, "first card")
-focus.presenting(vscode)
-check(focus.previous == 100 && focus.dismissed() == 100 && activated == [100, 100], "second card keeps Terminal")
-// One close per card: an abort after the answer, or a close with no card, does nothing.
-check(focus.dismissed() == nil && activated.count == 2, "second close")
+active = false; focus.presenting(vscode); check(focus.previous == AppIdentity(pid: 100, bundle: "com.apple.Terminal", launched: 1), "host not recorded")
+front = 300; click(focus); check(focus.previous?.pid == 100, "fixture not recorded")
+check(focus.dismissed() == 100 && activated == [100, 100], "second card keeps Terminal")
+// A queued card about another app while the frontmost still names the first card's app: that app is not recorded either.
+reset(); focus = make(); focus.presenting(vscode); click(focus); check(focus.dismissed() == 100, "vscode card")
+front = 300; active = false; focus.presenting(notes); check(focus.previous?.pid == 100, "closed card's app not recorded")
+click(focus); check(focus.dismissed() == 100, "notes card returns to Terminal")
+// Once focus has returned, the next card records afresh.
+front = 200; focus.presenting(notes); check(focus.previous?.pid == 200, "fresh record after return")
+_ = focus.dismissed()
+// One close per card: a close with no card open does nothing.
 reset(); focus = make(); active = true
 check(focus.dismissed() == nil && activated.isEmpty, "no card shown")
-// The host never activates itself.
+focus.hostActivating(); check(focus.previous == nil, "no record without a card")
+// The host never records itself.
 reset(); front = 50; focus = make(); focus.presenting(vscode); active = true
 check(focus.previous == nil && focus.dismissed() == nil && activated.isEmpty, "no previous app recorded")
 // The card's target: pid only when launched.
 check(cardTarget(vscode)?.pid == 300 && cardTarget(vscode)?.bundle == "com.microsoft.VSCode", "launched target")
 check(cardTarget(unlaunched)?.pid == nil && cardTarget(unlaunched)?.bundle == "com.microsoft.VSCode", "unlaunched target")
-check(cardTarget(session)?.pid == nil && cardTarget(session)?.bundle == nil, "no target")
+check(cardTarget(alert) == nil, "no target")
 print("pass")
 `);
   const built = spawnSync('/usr/bin/xcrun', ['swiftc', '-module-cache-path', swiftModuleCache(), swift, '-o', binary], { encoding: 'utf8', timeout: 180000 });

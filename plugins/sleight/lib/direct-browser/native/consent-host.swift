@@ -440,46 +440,65 @@ final class ModalGuard {
 // END MODAL GUARD
 
 // BEGIN FOCUS RETURN
-// The click that answers a card activates this accessory host (the card is a titled panel), and the host then stays active
-// with no window. When it later exits, macOS activates another app, and in the Electron qualification (2026-10-22) that was
-// the VS Code copy the card was about: in front 1034 of 1039 samples once the worker and its host exited. So when a card
-// closes, the host hands activation back to the app that was in front when the card appeared, if the host itself, the
-// card's app or no app holds it. An app the person moved to stays in front, and the card's app is never activated.
+// The click that answers a card activates this accessory host (the card is a titled panel, and runModal activates it for an
+// alert), and the host then stays active with no window. When it later exits, macOS activates another app, and in the
+// Electron qualification (2026-10-22) that was the VS Code copy the card was about: in front 1034 of 1039 samples once the
+// worker and its host exited. So when the last card closes, the host hands activation back to the person's latest app: the
+// one in front just before the host activated, or else when the card appeared. It does so only if the host itself, the
+// card's app or no app holds activation, and it never activates the card's app or a relaunched copy of a recorded one.
+// Accepted trade-off: a card that times out or is aborted while the card's own app is in front returns focus too, even if
+// the person chose that app themselves.
+struct AppIdentity: Equatable { let pid: pid_t; let bundle: String?; let launched: Double? }
+struct CardTargets {
+    var pids: Set<pid_t> = [], bundles: Set<String> = []
+    mutating func add(_ data: [String: Any]) {
+        guard let target = cardTarget(data) else { return }
+        if let pid = target.pid { pids.insert(pid) }
+        if let bundle = target.bundle { bundles.insert(bundle) }
+    }
+    mutating func merge(_ other: CardTargets) { pids.formUnion(other.pids); bundles.formUnion(other.bundles) }
+    func contains(_ app: AppIdentity) -> Bool { pids.contains(app.pid) || app.bundle.map { bundles.contains($0) } == true }
+}
 final class FocusReturn {
     let host: pid_t
-    let frontmost: () -> pid_t?, hostActive: () -> Bool, running: (pid_t) -> Bool
-    let pids: (String) -> [pid_t], activate: (pid_t) -> Void
-    private(set) var previous: pid_t?
-    private var target: (pid: pid_t?, bundle: String?)?
-    init(host: pid_t, frontmost: @escaping () -> pid_t?, hostActive: @escaping () -> Bool, running: @escaping (pid_t) -> Bool,
-        pids: @escaping (String) -> [pid_t], activate: @escaping (pid_t) -> Void) {
-        self.host = host; self.frontmost = frontmost; self.hostActive = hostActive; self.running = running
-        self.pids = pids; self.activate = activate
+    let frontmost: () -> pid_t?, identify: (pid_t) -> AppIdentity?, hostActive: () -> Bool, activate: (pid_t) -> Void
+    private(set) var previous: AppIdentity?
+    private(set) var open = 0
+    // The apps the open cards are about, and those of the cards closed since the last record.
+    private var targets = CardTargets(), recent = CardTargets()
+    init(host: pid_t, frontmost: @escaping () -> pid_t?, identify: @escaping (pid_t) -> AppIdentity?, hostActive: @escaping () -> Bool,
+        activate: @escaping (pid_t) -> Void) {
+        self.host = host; self.frontmost = frontmost; self.identify = identify; self.hostActive = hostActive; self.activate = activate
     }
-    // A card is about to show. In front is the host itself only right after an earlier card, whose record stands.
-    func presenting(_ data: [String: Any]) {
-        if let front = frontmost(), front != host { previous = front }
-        target = cardTarget(data)
+    // Activation moves asynchronously, so right after a card closes the frontmost app can still name this host or the card's
+    // app. Neither is ever recorded: the earlier record carries over until another app is in front.
+    private func record() {
+        guard let pid = frontmost(), pid != host, let app = identify(pid), !targets.contains(app), !recent.contains(app) else { return }
+        previous = app; recent = CardTargets()
     }
-    // A card closed: answered, timed out or aborted. Returns the pid it activated.
+    // A card or alert is about to show.
+    func presenting(_ data: [String: Any]) { open += 1; targets.add(data); record() }
+    // NSApplication.willBecomeActiveNotification: the app in front now is the person's latest choice.
+    func hostActivating() { if open > 0 { record() } }
+    // A card or alert closed: answered, timed out or aborted. Returns the pid it activated.
     @discardableResult func dismissed() -> pid_t? {
-        guard let card = target else { return nil }
-        target = nil
-        var targets = Set(card.bundle.map(pids) ?? [])
-        if let pid = card.pid { targets.insert(pid) }
-        guard let previous = previous, previous != host, !targets.contains(previous), running(previous) else { return nil }
-        // While the host is active the workspace's frontmost app can still name the previous one, so activity decides.
-        if !hostActive() {
-            let front = frontmost()
-            guard front == nil || targets.contains(front!) else { return nil }
+        guard open > 0 else { return nil }
+        open -= 1
+        guard open == 0 else { return nil }
+        let closed = targets
+        targets = CardTargets(); recent.merge(closed)
+        guard let previous = previous, !closed.contains(previous), identify(previous.pid) == previous else { return nil }
+        // While the host is active the workspace's frontmost app can lag, so activity decides.
+        if !hostActive(), let pid = frontmost(), pid != host {
+            guard let app = identify(pid), closed.contains(app) else { return nil }
         }
-        activate(previous)
-        return previous
+        activate(previous.pid)
+        return previous.pid
     }
 }
 // The app a debugger or relaunch card is about: its pid (none before launch) and bundle. Other cards name no app.
 func cardTarget(_ data: [String: Any]) -> (pid: pid_t?, bundle: String?)? {
-    guard let app = data["app"] as? [String: Any] else { return (nil, nil) }
+    guard let app = data["app"] as? [String: Any] else { return nil }
     let pid = (app["pid"] as? NSNumber).map { $0.int32Value }.flatMap { $0 > 0 ? $0 : nil }
     return (pid, app["bundleId"] as? String)
 }
@@ -759,7 +778,7 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var input: FileHandle? = FileHandle.standardInput, output = FileHandle.standardOutput, shared = false
     var consentOpen = true, handOpen = true
     var activeAsk: (id: String, panel: AskCardPanel)?
-    func closeAsk() { activeAsk?.panel.close(); activeAsk = nil; focus.dismissed() }
+    func closeAsk() { guard let ask = activeAsk else { return }; ask.panel.close(); activeAsk = nil; focus.dismissed() }
     func reviewAsk(_ id: String) -> Bool {
         guard let frame = pending[id], let data = frame["data"] as? [String: Any],
             let choices = frame["choices"] as? [String], automaticCard(data, choices) != nil else { return false }
@@ -783,16 +802,28 @@ final class ConsentHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     let modal = ModalGuard()
     let focus = FocusReturn(host: getpid(), frontmost: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
-        hostActive: { NSApp.isActive }, running: { NSRunningApplication(processIdentifier: $0)?.isTerminated == false },
-        pids: { NSRunningApplication.runningApplications(withBundleIdentifier: $0).map { $0.processIdentifier } },
+        identify: { pid in
+            guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { return nil }
+            return AppIdentity(pid: pid, bundle: app.bundleIdentifier, launched: app.launchDate?.timeIntervalSince1970)
+        },
+        hostActive: { NSApp.isActive },
         activate: { pid in
             guard let app = NSRunningApplication(processIdentifier: pid) else { return }
             if #available(macOS 14.0, *) { NSApp.yieldActivation(to: app); _ = app.activate(from: .current, options: []) }
             else { _ = app.activate(options: []) }
         })
+    override init() {
+        super.init()
+        // Posted on the main thread before the activating click is handled; nil queue runs it there and then.
+        NotificationCenter.default.addObserver(forName: NSApplication.willBecomeActiveNotification, object: nil, queue: nil) { [weak self] _ in
+            self?.focus.hostActivating()
+        }
+    }
     func personModal(_ alert: NSAlert, choices: [String], kind: String) -> NSApplication.ModalResponse {
         let actions = consentInputActions(alert, choices: choices, kind: kind)
+        focus.presenting([:])
         let result = withExtendedLifetime(actions) { modal.run(abort: { NSApp.abortModal() }) { alert.runModal() } }
+        focus.dismissed()
         // A shell card received during the modal waits until its run loop has ended.
         DispatchQueue.main.async { self.showNextAsk() }
         return result
