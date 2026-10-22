@@ -114,7 +114,8 @@ export function createPaymentCard({ open = openConsentHost, prepare = open === o
         ui.present(id,
           { view: { clientSession: escapeLabel(session), origin: escapeLabel(site || 'this page'), ...(request === undefined ? {} : { scope }) },
             ...(styled ? { presentation: { ...styled, question: cardText(styled.question), detail: cardText(styled.detail) } } : {}),
-            operation: request === undefined ? { site: site || 'this page', amount: shown ?? 'no amount shown', button: control }
+            operation: request === undefined
+              ? { site: cardText(site || 'this page'), amount: cardText(shown ?? 'no amount shown'), button: control === undefined ? undefined : cardText(control) }
               : { request: bounded, scope } },
           ['once', 'cancel'], event => {
             if (closed || context?.signal?.aborted) { cancel(); return; }

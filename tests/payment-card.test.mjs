@@ -68,6 +68,21 @@ test('shell payment stops get a styled protected action with bounded terms', asy
   await card.close();
 });
 
+test('engine payment cards escape directional controls in the site, amount and button', async () => {
+  let shown;
+  const card = createPaymentCard({ open: async () => ({
+    present: (_id, data, _choices, answer) => { shown = data; answer({ choice: 'once' }); },
+    authenticate: () => true,
+  }) });
+  assert.equal(await card.ask({ session: 'Claude Code', site: 'shop\u2066.test', shown: '$1\u202d0', control: 'Pay\u202e' + 'x'.repeat(4096) }), 'once');
+  assert.equal(shown.operation.site, 'shop\\u2066.test');
+  assert.equal(shown.operation.amount, '$1\\u202d0');
+  assert.match(shown.operation.button, /^Pay\\u202e/);
+  assert.ok(Buffer.byteLength(shown.operation.button) <= 2048);
+  assert.doesNotMatch(JSON.stringify(shown.operation), /[\u202a-\u202e\u2066-\u2069]/);
+  await card.close();
+});
+
 test('different apps or sessions never share a pending payment decision', async () => {
   const shown = [];
   const card = createPaymentCard({ open: async () => ({
