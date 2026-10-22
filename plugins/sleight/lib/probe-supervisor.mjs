@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { isMainModule } from './main-module.mjs';
 
 // Keep the native probe behind a pipe-owning process that survives caller loss long enough to reap it.
 export function superviseProbe(child, { input, output, owner, deadlineMs = 35000, oneShot = false }) {
@@ -68,7 +69,7 @@ export function probePlan(mode, input) {
     : { command: '/usr/bin/osascript', args: jxa, deadlineMs, oneShot };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   const { command, args, deadlineMs, oneShot } = probePlan(process.argv[2], process.argv.slice(3));
   const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'ignore'] });
   const result = await superviseProbe(child, { input: process.stdin, output: process.stdout, owner: process, deadlineMs, oneShot }).done;

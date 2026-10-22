@@ -2,9 +2,9 @@
 import { readFileSync, statSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { isMainModule } from './main-module.mjs';
 
 export function resolveInstall(home = userInfo().homedir) {
   const registry = JSON.parse(readFileSync(join(home, '.claude/plugins/installed_plugins.json'), 'utf8'));
@@ -34,4 +34,4 @@ export async function launchRoutine(id, { home = userInfo().homedir, notify = no
     return 1;
   }
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await launchRoutine(process.argv[2]);
+if (isMainModule(import.meta.url)) process.exitCode = await launchRoutine(process.argv[2]);

@@ -55,6 +55,7 @@ import { hostLabel, hostName } from './host-label.mjs';
 import { createPaymentCard } from './payment-card.mjs';
 import { codexTurnClient } from './codex-turn.mjs';
 import { doctorVersionLine } from './version.mjs';
+import { isMainModule } from './main-module.mjs';
 
 const PLUGIN_DIR = ['plugins', 'cache', 'openai-bundled', 'unified-computer-use'];
 const SERVER_KEY = 'cua_repl';
@@ -1378,7 +1379,7 @@ export function allowCommand(args, { list = listPreapproved, remove = removePrea
   return 2;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   if (['session', 'js', 'js_reset', 'open_file', 'select_window', 'drag'].includes(process.argv[2])) {
     try { process.exitCode = await (await import('./socket-bridge.mjs')).socketCommand(process.argv.slice(2)); }
     catch (err) { process.stderr.write(`sleight: ${err.message}\n`); process.exitCode = 1; }

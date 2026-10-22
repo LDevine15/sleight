@@ -24,11 +24,12 @@ If you're installing for someone else, follow the host's commands below and stop
 - clicking Allow or Always allow on the first approval card for each app,
 - turning on Chrome's remote debugging at `chrome://inspect/#remote-debugging` and allowing Chrome's prompt, for turbo.
 
-At each step, tell the user what to do and wait. Don't run `sudo` or `sleight-mcp setup`, and don't script System Settings
+At each step, tell the user what to do and wait. End with the steps that remain for the user, the first approval card for
+each app included. Don't run `sudo` or `sleight-mcp setup`, and don't script System Settings
 or work around a prompt or approval card. Run each command below on its own. You may inspect setup with `--dry-run`.
 
 Always allow, payment and sleight consent buttons accept only a person's click or key press. VoiceOver, Switch Control,
-Voice Control and screen-sharing users need a physical keyboard or pointer for these cards in 1.4.0.
+Voice Control and screen-sharing users need a physical keyboard or pointer for these cards.
 See [accessibility limits and the planned alternative](docs/known-problems.md#protected-consent-input).
 
 ## Requirements

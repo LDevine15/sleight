@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.2 (2026-10-22)
+
+- sleight starts when its plugin folder is reached through a symlink, such as a symlinked `~/.claude`. Before, the
+  launcher compared the script path as typed with the resolved module path, so it exited silently with status 0,
+  and sleight never appeared. The launcher and the six other entry points with the same check now compare resolved
+  paths.
+- INSTALL's agent notes ask the installing agent to end with the steps left for the user, the first approval card for
+  each app included. A public install test on 2026-10-22 had Codex install and enable 1.4.1 in 3 of 3 runs, and every
+  final message left out the approval card.
+
 ## 1.4.1 (2026-10-22)
 
 ### Electron turbo

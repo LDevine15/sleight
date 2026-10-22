@@ -3,7 +3,7 @@ import { appendFileSync, closeSync, constants, mkdirSync, openSync, readFileSync
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { readInstalledConfig, readInstalledConfigFile, acceptedInstalledPackage, installedConfigPath } from './installed-config.mjs';
 import { browserTools, validateToolCall, createToolDispatcher } from './tools.mjs';
 import { createV3TurnBinding, createV3Context } from './v3-context.mjs';
@@ -11,6 +11,7 @@ import { browserApplicationName } from './browsers.mjs';
 import { readHandConfig } from '../hand/settings.mjs';
 import { createPermissionCheck, stampUse } from '../permissions.mjs';
 import { validHostLabel } from '../host-label.mjs';
+import { isMainModule } from '../main-module.mjs';
 
 const bridges = new WeakSet(), frontends = new WeakSet();
 export const isV3Bridge = value => !!value && bridges.has(value);
@@ -708,7 +709,7 @@ export async function startInstalledV3Worker({ channel }, dependencies = {}) {
 }
 async function installedMain() { return startInstalledV3Worker({ channel: process }, { used: key => stampUse(key) }); }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.send) {
+if (isMainModule(import.meta.url) && process.send) {
   installedMain().catch(error => { if (process.connected) {
     process.send(unavailableFrame(error));
     process.disconnect();

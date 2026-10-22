@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { isAbsolute, normalize } from 'node:path';
 import { createElectronHost, createPythonAdapter } from './electron-host.mjs';
+import { isMainModule } from '../main-module.mjs';
 
 const fail = code => { throw Error(code); };
 const options = new Set(['--state-dir', '--registry', '--temp-root', '--builds', '--python', '--adapter-script', '--broker-module', '--admin-fd', '--startup-fd']);
@@ -62,7 +63,7 @@ export async function runHostEntry({ argv, deps = {}, output = process.stdout } 
   return host;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   process.stderr.write('The Electron host entry is inert on its own. A trusted parent imports runHostEntry() and supplies launch approval.\n');
   process.exit(2);
 }

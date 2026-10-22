@@ -1,6 +1,5 @@
-import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
 import { brokerRequest } from './lease-broker.mjs';
+import { isMainModule } from './main-module.mjs';
 
 export async function runBrokerCLI({ input = process.stdin, output = process.stdout, directory, now } = {}) {
   let reply, status = 0;
@@ -25,7 +24,7 @@ export async function runBrokerCLI({ input = process.stdin, output = process.std
   return status;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   if (process.argv.length > 2) {
     process.stdout.write(JSON.stringify({ ok: false, error: 'Lease broker: pass one JSON request on stdin, with no arguments.' }) + '\n');
     process.exitCode = 1;

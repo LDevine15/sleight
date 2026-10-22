@@ -6,11 +6,11 @@
 // was started for, an attached target is a page of that recipe, and quit goes through the app's own Quit.
 import { execFile } from 'node:child_process';
 import { closeSync, fstatSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { qualificationDiagnostic } from './electron-diagnostics.mjs';
 import { classifyTarget } from './electron-targets.mjs';
 import { readRecipeRegistry } from './electron-recipes.mjs';
 import { parseHostArguments, runHostEntry } from './electron-host-entry.mjs';
+import { isMainModule } from '../main-module.mjs';
 
 const fail = code => { throw Error(code); };
 
@@ -113,7 +113,7 @@ async function main(argv) {
   host.events.on('parked', () => { setTimeout(() => { rule.check().catch(() => {}); }, 1000); });
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   main(process.argv.slice(2)).catch(error => {
     const code = /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'HOST_START_FAILED';
     try { process.stdout.write(JSON.stringify({ ready: false, code }) + '\n'); } catch { /* parent gone */ }
