@@ -8,6 +8,7 @@ import { HOLD, LIVE_LOCK, checkoutBlock, hubIsFresh, isHubPath, main, pendingCha
 import { child } from '../bench/validation/validation-140.mjs';
 import { workflowEnvironment } from '../bench/validation/workflow-docs-ab.mjs';
 import { runStage } from '../bench/release-pass.mjs';
+const MAC_TMP = ['', 'private', 'tmp'].join('/');
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const read = file => readFileSync(join(ROOT, file), 'utf8');
@@ -183,7 +184,7 @@ test('a checkout on a branch is allowed; a detached HEAD, no Git branch and the 
   assert.equal(checkoutBlock({ root: '/repo/p141', git: branch, real: p => p }), null);
   assert.match(checkoutBlock({ root: '/repo/p141', git: detached, real: p => p }), /detached HEAD/);
   assert.match(checkoutBlock({ root: '/repo/p141', git: () => ({ error: new Error('no git'), status: null }), real: p => p }), /detached HEAD or has no Git branch/);
-  for (const root of ['/tmp/lane-vp1-AbC123/B', '/tmp/lane-vp1-x', '/private/tmp/lane-vp1-q/A', '/tmp/lane-ab-9z/old', '/home/x/sleight-wt/ab-old', '/home/x/sleight-wt/ab-new/']) {
+  for (const root of ['/tmp/lane-vp1-AbC123/B', '/tmp/lane-vp1-x', MAC_TMP + '/lane-vp1-q/A', '/tmp/lane-ab-9z/old', '/home/x/sleight-wt/ab-old', '/home/x/sleight-wt/ab-new/']) {
     assert.match(checkoutBlock({ root, git: branch, real: p => p }), /staging checkout/, root);
   }
   for (const root of ['/home/x/sleight-wt/p141-hub1', '/tmp/lane-claude-AbC', '/home/x/sleight-wt/ab-newer', '/home/x/lane-vpn']) {

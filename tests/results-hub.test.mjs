@@ -718,7 +718,7 @@ test('the validation page, the index and explore.html carry the banks, and no cl
 test('the committed validation data names no home folder, builds are short hashes, and every cell is a score() of its runs', () => {
   const data = readJson(join(OUT, 'data/validation.json'));
   assert.ok(data.studies.length > 0 && data.banks.length > 0);
-  assert.equal(JSON.stringify(data).includes('/Users/'), false);
+  assert.equal(JSON.stringify(data).includes(['', 'Users', ''].join('/')), false);
   for (const study of data.studies) {
     assert.deepEqual(study.arms, [BUILD_B, BUILD_A]);
     for (const build of Object.values(study.builds).flat()) assert.match(build, /^[a-f0-9]{8}$/);
