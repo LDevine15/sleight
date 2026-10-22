@@ -2,7 +2,7 @@
 const reasons = new Set([
   'pipe queue full', 'authorization queue full', 'client queue full', 'pipe unavailable', 'pipe queue timeout', 'pipe write failed',
   'pipe timeout; effect unknown', 'cancelled; effect unknown', 'cancelled before dispatch',
-  'pipe EOF', 'inbound frame too large', 'outbound frame too large', 'invalid pipe message',
+  'pipe EOF', 'inbound frame too large', 'inbound queue full', 'outbound frame too large', 'invalid pipe message',
   'invalid pipe reply', 'invalid pipe event', 'child exited', 'adapter lost', 'host restarted',
   'route bank full', 'grant bank full', 'app identity changed', 'incomplete process census',
   'descendant incarnation missing', 'app identity changed during authorization',
