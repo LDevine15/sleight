@@ -639,7 +639,11 @@ compaction, so it cannot isolate wording alone. That A/B has not run live.
   mid-session, and so turn turbo off for a running session, hasn't been measured.
 - With two sleight copies on one Mac, a 1.4.0 server still rewrites turbo.json's receipt for itself at every start,
   so the other copy fails HOST_PACKAGE_MISMATCH until every running session is on 1.4.1. From 1.4.1 a start leaves
-  another installed copy's receipt alone, and that copy's `turbo on` moves it.
+  the receipt alone when its owner copy is still installed and has the same or a higher plugin.json version, and that
+  copy's `turbo on` moves it. A start from a newer version takes the receipt over from an older one, whatever
+  Claude Code's `.orphaned_at` marker says, so `turbo on` run in the older copy lasts only until the newer copy next
+  starts. If turbo-owner.json can't be written, the start result and `turbo on` say so, and a second copy can rewrite
+  the receipt at its own start.
 - A drag install into /Applications by an admin leaves Chrome's executable mode 775, group admin, and macOS App
   Management blocks `chmod` on another app's bundle. Turbo accepts such a group-writable executable only for qualified
   Chrome (Google's Team ID EQHXZ8M8AV) or Helium (imput's, S4Q33XPHB4) at its place in /Applications or

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { trackTemp } from '../scripts/temp-leftovers.mjs';
 import { acceptedInstalledPackage, INSTALLED_ENTRIES, readInstalledConfig } from '../plugins/sleight/lib/direct-browser/installed-config.mjs';
 import { packageFiles } from '../plugins/sleight/lib/direct-browser/session-host.mjs';
-import { detectBrowser, doctorLines, ensureTurboConfig, executableProblem, inspectConfig, moveCommand, ownerPath, readOwner, statusLines, turboCommand,
+import { compareVersions, detectBrowser, doctorLines, ensureTurboConfig, executableProblem, inspectConfig, moveCommand, ownerPath, readOwner, statusLines, turboCommand,
   turboDiagnosis, writeConfigFile } from '../plugins/sleight/lib/direct-browser/turbo-setup.mjs';
 import { createHash } from 'node:crypto';
 import { ensureInstalledTurbo, prepareInstalledStartup, doctor } from '../plugins/sleight/lib/launch.mjs';
@@ -408,6 +408,80 @@ test('a normal update still takes the receipt over: the old copy is gone, orphan
   }
 });
 
+const setVersion = (root, version) => {
+  const file = join(root, '.claude-plugin/plugin.json'), manifest = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...manifest, version }, null, 2) + '\n');
+};
+
+test('the newer copy wins: a lower-version owner is replaced with no .orphaned_at marker, and the doctor stops naming it', t => {
+  const { w, b, A, B } = twoCopies(t);
+  setVersion(A.pluginRoot, '1.4.0'); setVersion(b, '1.4.1');
+  ensureTurboConfig(A);
+  assert.equal(existsSync(join(A.pluginRoot, '.orphaned_at')), false);
+  assert.equal(turboDiagnosis({ ...B, helperCache: join(w.root, 'cache') }).owner, undefined);
+  const updated = ensureTurboConfig(B);
+  assert.equal(updated.action, 'wrote'); assert.equal(updated.reason, 'package-changed');
+  assert.equal(readOwner(w.configPath).pluginRoot, b); assert.equal(readOwner(w.configPath).sleight, '1.4.1');
+  assert.equal(acceptedInstalledPackage(readInstalledConfig(w.configPath), { pluginRoot: b }).current(), true);
+  // The older copy now sees a newer owner and leaves it.
+  assert.equal(ensureTurboConfig(A).reason, 'RECEIPT_FOR_OTHER_PACKAGE');
+  assert.equal(ensureTurboConfig(B).action, 'none');
+});
+
+test('versions compare as semver, not as text: 1.10.0 is newer than 1.9.0 and a prerelease is older than its release', t => {
+  const { b, A, B } = twoCopies(t);
+  setVersion(A.pluginRoot, '1.9.0'); setVersion(b, '1.10.0');
+  ensureTurboConfig(A);
+  assert.equal(ensureTurboConfig(B).action, 'wrote');
+  const rc = twoCopies(t);
+  setVersion(rc.A.pluginRoot, '1.4.1-rc.1'); setVersion(rc.b, '1.4.1');
+  ensureTurboConfig(rc.A);
+  assert.equal(ensureTurboConfig(rc.B).action, 'wrote');
+  assert.equal(compareVersions('1.4.1-rc.2', '1.4.1-rc.10') < 0, true);
+  assert.equal(compareVersions('1.4.1+build.5', '1.4.1'), 0);
+  assert.equal(compareVersions('1.4', '1.4.0'), 0);
+  assert.equal(compareVersions('1.4.1', 'dev'), null);
+});
+
+test('two copies at the same version never flip, whichever starts first and whatever build text follows the version', t => {
+  const { w, a, b, A, B } = twoCopies(t);
+  setVersion(A.pluginRoot, '1.4.1'); setVersion(b, '1.4.1+dev.2');
+  ensureTurboConfig(A);
+  const written = readFileSync(w.configPath, 'utf8');
+  for (let round = 0; round < 3; round++) {
+    const second = ensureTurboConfig(B);
+    assert.equal(second.reason, 'RECEIPT_FOR_OTHER_PACKAGE'); assert.equal(second.owner, a);
+    assert.equal(ensureTurboConfig(A).action, 'none');
+  }
+  assert.equal(readFileSync(w.configPath, 'utf8'), written);
+});
+
+test('a higher-version owner is left alone and named in the message', t => {
+  const { w, a, A, B } = twoCopies(t);
+  setVersion(A.pluginRoot, '2.0.0'); setVersion(B.pluginRoot, '1.4.1');
+  ensureTurboConfig(A);
+  const written = readFileSync(w.configPath, 'utf8'), result = ensureTurboConfig(B);
+  assert.equal(result.action, 'skipped'); assert.equal(result.reason, 'RECEIPT_FOR_OTHER_PACKAGE'); assert.equal(result.owner, a);
+  assert.match(result.message, new RegExp(`belongs to sleight 2\\.0\\.0 at ${a.replaceAll('.', '\\.')}, which is still installed`));
+  assert.equal(readFileSync(w.configPath, 'utf8'), written);
+  assert.equal(readOwner(w.configPath).pluginRoot, a);
+});
+
+test('a sidecar that cannot be written is reported in the start result and by turbo on, and the receipt still stands', t => {
+  const w = world(t, { chrome: true }), sidecar = ownerPath(w.configPath);
+  mkdirSync(sidecar, { recursive: true }); writeFileSync(join(sidecar, 'keep'), 'x');
+  const result = ensureTurboConfig(w.base);
+  assert.equal(result.action, 'wrote'); assert.equal(result.ownerWritten, false);
+  assert.match(result.message, /turbo is on with Google Chrome\..*turbo-owner\.json note .* could not be saved/);
+  assert.equal(inspectConfig(w.base).state, 'current');
+  const lines = []; assert.equal(turboCommand(['on', '--browser', 'chrome'], { ...w.base, out: text => lines.push(text) }), 0);
+  assert.match(lines.join(''), /turbo-owner\.json note .* could not be saved/);
+  rmSync(sidecar, { recursive: true });
+  rmSync(w.configPath);
+  const healthy = ensureTurboConfig(w.base);
+  assert.equal(healthy.action, 'wrote'); assert.equal(healthy.ownerWritten, true); assert.doesNotMatch(healthy.message, /turbo-owner/);
+});
+
 test('a tampered, missing or out-of-date sidecar falls back to rewriting the receipt', t => {
   const { w, a, b, A, B } = twoCopies(t), sidecar = ownerPath(w.configPath);
   const edit = change => { const data = JSON.parse(readFileSync(sidecar, 'utf8')); change(data); writeFileSync(sidecar, JSON.stringify(data), { mode: 0o600 }); };
@@ -419,6 +493,9 @@ test('a tampered, missing or out-of-date sidecar falls back to rewriting the rec
     'extra key': () => edit(data => { data.accepted = true; }),
     'relative root': () => edit(data => { data.pluginRoot = 'install'; }),
     'not JSON': () => writeFileSync(sidecar, '{', { mode: 0o600 }),
+    'malformed version text': () => edit(data => { data.sleight = '1.4.0 \n; rm -rf'; }),
+    'version that is not text': () => edit(data => { data.sleight = 140; }),
+    'over-long root': () => edit(data => { data.pluginRoot = '/' + 'a'.repeat(2000); }),
     // A 1.4.0 server rewrites turbo.json without a sidecar, so the sidecar it left no longer matches the file's bytes.
     'turbo.json rewritten without it': () => writeConfigFile(w.configPath, { ...JSON.parse(readFileSync(w.configPath, 'utf8')), profileRoot: join(w.home, 'p') }),
   };

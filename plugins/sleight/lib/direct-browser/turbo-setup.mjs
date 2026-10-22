@@ -134,11 +134,38 @@ export function inspectConfig({ configPath = installedConfigPath(), pluginRoot =
 export const ownerPath = configPath => join(dirname(configPath), 'turbo-owner.json');
 const OWNER_KEYS = ['pluginRoot', 'sha256', 'sleight', 'version'];
 
+const VERSION_TEXT = /^[\w.+-]{1,64}$/;
+const MAX_ROOT_LENGTH = 1024;
+
 function pluginVersion(pluginRoot) {
   try {
     const { version } = JSON.parse(readFileSync(join(pluginRoot, '.claude-plugin/plugin.json'), 'utf8'));
-    return typeof version === 'string' && /^[\w.+-]{1,64}$/.test(version) ? version : null;
+    return typeof version === 'string' && VERSION_TEXT.test(version) ? version : null;
   } catch { return null; }
+}
+
+/** Semver order of two version texts: negative when a < b, null when either is not a dotted number with optional prerelease. */
+export function compareVersions(a, b) {
+  const parse = text => {
+    const m = /^(\d+(?:\.\d+){0,3})(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/.exec(text ?? '');
+    return m && { core: m[1].split('.').map(Number), pre: m[2]?.split('.') };
+  };
+  const x = parse(a), y = parse(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < Math.max(x.core.length, y.core.length); i++) {
+    const d = (x.core[i] ?? 0) - (y.core[i] ?? 0);
+    if (d) return d;
+  }
+  if (!x.pre || !y.pre) return x.pre ? -1 : y.pre ? 1 : 0;
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    const p = x.pre[i], q = y.pre[i];
+    if (p === undefined || q === undefined) return p === undefined ? -1 : 1;
+    const pn = /^\d+$/.test(p), qn = /^\d+$/.test(q);
+    if (pn && qn) { if (Number(p) !== Number(q)) return Number(p) - Number(q); }
+    else if (pn !== qn) return pn ? -1 : 1;
+    else if (p !== q) return p < q ? -1 : 1;
+  }
+  return 0;
 }
 
 /** The sidecar, under the same checks as turbo.json. Anything missing or off reads as no owner, which keeps today's rewrite. */
@@ -149,31 +176,38 @@ export function readOwner(configPath, uid = process.getuid()) {
     if (!stat.isFile() || stat.isSymbolicLink() || realpathSync(path) !== path || stat.uid !== uid || (stat.mode & 0o777) !== 0o600 || stat.size > 8192) return undefined;
     const data = JSON.parse(readFileSync(path, 'utf8'));
     if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).sort().join() !== OWNER_KEYS.join() || data.version !== 1 ||
-        data.sleight !== null && typeof data.sleight !== 'string' || typeof data.pluginRoot !== 'string' || !isAbsolute(data.pluginRoot) ||
+        data.sleight !== null && !(typeof data.sleight === 'string' && VERSION_TEXT.test(data.sleight)) || typeof data.pluginRoot !== 'string' ||
+        data.pluginRoot.length > MAX_ROOT_LENGTH || !isAbsolute(data.pluginRoot) ||
         normalize(data.pluginRoot) !== data.pluginRoot || typeof data.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(data.sha256)) return undefined;
     return data;
   } catch { return undefined; }
 }
 
 // A link or other entry in the sidecar's place is removed (never followed) and the write tried once more. A sidecar that
-// still can't be written leaves the receipt valid and only loses the protection, so it never fails the write.
+// still can't be written leaves the receipt valid and only loses the protection, so it never fails the write; the result
+// says whether the sidecar is in place so the caller can tell the person.
 function writeOwner(configPath, pluginRoot, uid) {
   const path = ownerPath(configPath), write = () => writeConfigFile(path,
     { version: 1, sleight: pluginVersion(pluginRoot), pluginRoot, sha256: sha256Hex(readFileSync(configPath)) }, uid);
-  try { write(); } catch {
+  try { write(); return true; } catch {
     try { unlinkSync(path); } catch {}
-    try { write(); } catch {}
+    try { write(); return true; } catch { return false; }
   }
 }
+const OWNER_UNWRITTEN = 'The turbo-owner.json note that keeps another copy of sleight from rewriting this receipt could not be saved, so a second copy on this Mac may rewrite it at its own start.';
 
 /** The copy that issued turbo.json's receipt, when that is another copy still installed and unchanged: the sidecar matches
- *  the file's bytes and the receipt still validates against that copy's folder. Claude Code keeps an updated plugin's old
- *  version folder and marks it .orphaned_at, so such a copy counts as gone and the new one takes the receipt over. */
+ *  the file's bytes and the receipt still validates against that copy's folder. The newer copy wins: an owner with a lower
+ *  plugin.json version than this copy never counts, so an update takes the receipt over even when Claude Code's .orphaned_at
+ *  marker on the old version folder is missing. Same or higher version, or a version that can't be compared, leaves it,
+ *  unless that marker is there (a hint that only ever hands the receipt over, never withholds it). */
 export function liveOtherOwner({ configPath, pluginRoot, data, uid = process.getuid() }) {
   const owner = readOwner(configPath, uid);
   if (!owner || owner.pluginRoot === pluginRoot) return undefined;
   try {
-    if (sha256Hex(readFileSync(configPath)) !== owner.sha256 || existsSync(join(owner.pluginRoot, '.orphaned_at'))) return undefined;
+    if (sha256Hex(readFileSync(configPath)) !== owner.sha256) return undefined;
+    const order = compareVersions(pluginVersion(owner.pluginRoot) ?? owner.sleight, pluginVersion(pluginRoot));
+    if (order !== null && order < 0 || existsSync(join(owner.pluginRoot, '.orphaned_at'))) return undefined;
     acceptedInstalledPackage(data, { pluginRoot: owner.pluginRoot });
     return owner;
   } catch { return undefined; }
@@ -195,8 +229,7 @@ function store(configPath, pluginRoot, browser, uid) {
   writeConfigFile(configPath, data, uid);
   // A format round trip through the real reader, not its connect-time qualification gate.
   try { readInstalledConfig(configPath, { SLEIGHT_TURBO_UNQUALIFIED: '1' }); } catch (error) { try { unlinkSync(configPath); } catch {} throw error; }
-  writeOwner(configPath, pluginRoot, uid);
-  return data;
+  return { data, ownerWritten: writeOwner(configPath, pluginRoot, uid) };
 }
 
 const reuseBrowser = (data, home, apps, problem) => {
@@ -227,9 +260,10 @@ export function ensureTurboConfig({ configPath = installedConfigPath(), pluginRo
     const chosen = browser ? detectBrowser({ home, apps, browser, uid }) : reuseBrowser(seen.data, home, apps, problem) ?? detectBrowser({ home, apps, uid });
     if (!chosen.ok) return done({ action: 'skipped', state: seen.state, reason: chosen.code, message: `turbo stays off: ${chosen.message}` });
     if (!chosen.qualified) return done({ action: 'skipped', state: seen.state, reason: 'BROWSER_UNQUALIFIED', message: `turbo stays off: ${unqualifiedMessage(chosen)}` });
-    store(configPath, pluginRoot, chosen, uid);
-    return done({ action: 'wrote', state: seen.state, reason: seen.reason, browser: chosen.name,
-      message: `turbo is on with ${chosen.name}. Turn on remote debugging in it once (${chosen.inspectURL}); sleight-mcp turbo off turns turbo off.` });
+    const { ownerWritten } = store(configPath, pluginRoot, chosen, uid);
+    return done({ action: 'wrote', state: seen.state, reason: seen.reason, browser: chosen.name, ownerWritten,
+      message: `turbo is on with ${chosen.name}. Turn on remote debugging in it once (${chosen.inspectURL}); sleight-mcp turbo off turns turbo off.` +
+        (ownerWritten ? '' : ` ${OWNER_UNWRITTEN}`) });
   } catch (error) {
     return done({ action: 'failed', state: 'failed', reason: /^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : 'TURBO_SETUP_FAILED',
       message: `turbo stays off: could not write turbo.json (${/^[A-Z][A-Z0-9_]{0,127}$/.test(error?.message) ? error.message : error?.code ?? 'TURBO_SETUP_FAILED'}). The engine path is used.` });
@@ -360,9 +394,10 @@ export function turboCommand(args, { out = text => process.stdout.write(text), c
     if (requested && !requested.qualified && env.SLEIGHT_TURBO_UNQUALIFIED !== '1') { out(`turbo stays off: ${unqualifiedMessage(requested)}\n`); return 1; }
     const chosen = detectBrowser({ home, apps, browser, uid });
     if (!chosen.ok) { out(`turbo stays off: ${chosen.message}\n`); return 1; }
-    try { store(configPath, pluginRoot, chosen, uid); } catch (error) { out(`turbo on failed: ${/^[A-Z][A-Z0-9_]+$/.test(error?.message) ? error.message : error?.code ?? 'TURBO_SETUP_FAILED'}\n`); return 1; }
+    let stored;
+    try { stored = store(configPath, pluginRoot, chosen, uid); } catch (error) { out(`turbo on failed: ${/^[A-Z][A-Z0-9_]+$/.test(error?.message) ? error.message : error?.code ?? 'TURBO_SETUP_FAILED'}\n`); return 1; }
     const d = diagnose({ configPath, pluginRoot, home, apps });
-    out(`turbo is on with ${chosen.name}.\n` + (d.port === true ? 'Remote debugging is on. Start a new Claude Code session.\n'
+    out(`turbo is on with ${chosen.name}.\n` + (stored.ownerWritten ? '' : `${OWNER_UNWRITTEN}\n`) + (d.port === true ? 'Remote debugging is on. Start a new Claude Code session.\n'
       : `Next: turn on remote debugging in ${chosen.name} once (${chosen.inspectURL}), then start a new Claude Code session.\n`));
     return 0;
   }
