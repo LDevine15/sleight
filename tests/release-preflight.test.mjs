@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
@@ -19,6 +20,7 @@ function processBoundary(root, overrides = {}) {
   const calls = [];
   const execute = async (command, args, options) => {
     calls.push({ command, args, options });
+    if (command === process.execPath && args[0] === 'bench/results-hub.mjs') return ok('');
     if (command === process.execPath && args[0] === 'scripts/release-history-scan.mjs') {
       return ok('Release history scan: 0 added line(s) contain private identity data.\n');
     }
@@ -96,7 +98,7 @@ test('actual release checks all manifests, tag, history and Linux, then rechecks
   assert.equal(result.ok, true);
   assert.equal(result.releaseReady, true);
   assert.equal(result.head, head);
-  assert.deepEqual(steps(calls), ['status', 'head', 'status', 'head', 'tag', 'base', 'ancestor', 'sources', 'history', 'linux', 'status', 'head', 'tag']);
+  assert.deepEqual(steps(calls), ['status', 'head', 'status', 'head', 'tag', 'base', 'ancestor', 'sources', 'hub', 'history', 'linux', 'status', 'head', 'tag']);
   assert.equal(calls.find(c => c.step === 'history').range, `${base}..${head}`);
 });
 
@@ -211,7 +213,7 @@ test('missing or malformed source files fail with fixed locations, never excepti
 });
 
 test('each command failure stops all subsequent execution and preserves its exit status', async () => {
-  for (const step of ['status', 'head', 'tag', 'base', 'ancestor', 'sources', 'history', 'linux']) {
+  for (const step of ['status', 'head', 'tag', 'base', 'ancestor', 'sources', 'hub', 'history', 'linux']) {
     const { options, calls } = fixture({ [step]: () => ({ status: 17, stdout: identity.home, stderr: identity.username }) });
     const result = await preflight(options);
     assert.equal(result.ok, false, step);
@@ -239,6 +241,57 @@ test('history findings stop before Linux even if a broken scanner exits zero', a
     stdout: `${identity.home}:7 private\nRelease history scan: 1 added line(s) contain private identity data.\n` }) });
   assert.equal((await preflight(options)).ok, false);
   assert.equal(steps(calls).includes('linux'), false);
+});
+
+test('stale benchmark hub output fails with its own code, before history and Linux, and never echoes runner output', async () => {
+  const { options, calls } = fixture({ hub: () => ({ status: 1, stdout: `would change ${identity.home}/docs/results/native-claim.md`, stderr: identity.username }) });
+  const result = await preflight(options);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.failures, [{ check: 'hub', code: 'stale-output' }]);
+  assert.equal(steps(calls).at(-1), 'hub');
+  assert.equal(JSON.stringify(result).includes(identity.home), false);
+  assert.equal(JSON.stringify(result).includes(identity.username), false);
+});
+
+test('a hub check that crashes or cannot run is a hub-error, never stale-output, and a runner that throws fails closed without exception text', async () => {
+  for (const [hub, code] of [[() => ({ status: 1, stdout: '', stderr: `Error: boom at ${identity.home}` }), 'hub-error'],
+    [() => ({ status: 2, stdout: 'would change README.md' }), 'hub-error'], [() => ({ status: null, signal: 'SIGTERM' }), 'hub-error'],
+    [() => ({ status: 1 }), 'hub-error'], [() => { throw Error(identity.home); }, 'runner-error']]) {
+    const { options, calls } = fixture({ hub });
+    const result = await preflight(options);
+    assert.equal(result.ok, false);
+    assert.equal(result.failures.length, 1);
+    assert.equal(result.failures[0].check, 'hub');
+    assert.equal(result.failures[0].code, code);
+    assert.equal(steps(calls).includes('history'), false);
+    assert.equal(JSON.stringify(result).includes(identity.home), false);
+  }
+});
+
+test('the committed hub output is fresh, and a data file that moved on without its pages fails the same check', () => {
+  const hub = new URL('../bench/results-hub.mjs', import.meta.url).pathname;
+  const run = (...extra) => spawnSync(process.execPath, [hub, '--render-only', '--check', ...extra], { encoding: 'utf8' });
+  assert.equal(run().status, 0, run().stdout);
+  const results = new URL('../docs/results', import.meta.url).pathname;
+  const copy = mkdtempSync(join(tmpdir(), 'hub-stale-'));
+  try {
+    cpSync(results, copy, { recursive: true });
+    assert.equal(run('--out', copy).status, 0);
+    const file = join(copy, 'data/validation.json'), data = JSON.parse(readFileSync(file, 'utf8'));
+    data.studies[0].cells[0].expected += 1;
+    writeFileSync(file, JSON.stringify(data));
+    const stale = run('--out', copy);
+    assert.equal(stale.status, 1);
+    assert.match(stale.stdout, /would change data\/validation\.json/);
+    assert.match(stale.stdout, /would change validation\.md/);
+    // A crash is not a stale tree: no "would change" line, so the preflight reports it as hub-error.
+    const empty = mkdtempSync(join(tmpdir(), 'hub-crash-'));
+    try {
+      const crashed = run('--out', empty);
+      assert.equal(crashed.status, 1);
+      assert.doesNotMatch(crashed.stdout, /^would change /m);
+    } finally { rmSync(empty, { recursive: true, force: true }); }
+  } finally { rmSync(copy, { recursive: true, force: true }); }
 });
 
 test('Linux receipt must confirm Linux npm test success, not a plan or local Mac result', async () => {
@@ -306,7 +359,7 @@ test('reviewed runner owns fixed Git/history argv and throwaway config cleanup',
     return { status: 0, stdout: '' };
   } });
   for (const request of [{ step: 'status' }, { step: 'head' }, { step: 'tag', tag: 'v1.4.1' },
-    { step: 'base', ref: 'origin/main' }, { step: 'ancestor', base, head }, { step: 'sources' },
+    { step: 'base', ref: 'origin/main' }, { step: 'ancestor', base, head }, { step: 'sources' }, { step: 'hub' },
     { step: 'history', range: `${base}..${head}` }]) await runner(request);
   for (const { command, args, options } of calls) {
     assert.equal(options.cwd, '/fixture');
@@ -323,7 +376,8 @@ test('reviewed runner owns fixed Git/history argv and throwaway config cleanup',
     ['rev-parse', '--verify', 'refs/tags/v1.4.1^{commit}'],
     ['rev-parse', '--verify', 'origin/main^{commit}'],
     ['merge-base', '--is-ancestor', base, head],
-    ['ls-files', '--error-unmatch', '--', 'scripts/release-history-scan.mjs', 'scripts/linux-preflight.mjs'],
+    ['ls-files', '--error-unmatch', '--', 'scripts/release-history-scan.mjs', 'scripts/linux-preflight.mjs', 'bench/results-hub.mjs'],
+    ['bench/results-hub.mjs', '--render-only', '--check'],
     ['scripts/release-history-scan.mjs', `${base}..${head}`],
   ]);
   assert.equal(new Set(calls.map(c => c.options.env.CLAUDE_CONFIG_DIR)).size, calls.length);
@@ -459,6 +513,7 @@ async function colimaFixture(t, overrides = {}) {
   for (const name of ['release-history-scan', 'linux-preflight', ...(overrides.missingHelper ? [] : ['linux-preflight-colima'])]) {
     f.files.set(`scripts/${name}.mjs`, '// tracked fixture source\n');
   }
+  f.files.set('bench/results-hub.mjs', '// tracked fixture source\n');
   const env = { PATH: process.env.PATH, HOME: termsBank, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
   const git = async args => {
     const result = await runOwnedCommand('/usr/bin/git', args, { cwd: root, env });
@@ -475,6 +530,7 @@ async function colimaFixture(t, overrides = {}) {
       return runOwnedCommand(command, originalArgs, options);
     }
     if (command === process.execPath) {
+      if (originalArgs[0] === 'bench/results-hub.mjs') return ok('');
       assert.equal(originalArgs[0], 'scripts/release-history-scan.mjs');
       return ok('Release history scan: 0 added line(s) contain private identity data.\n');
     }
@@ -552,7 +608,7 @@ test('explicit Docker runtime keeps the original fixed source gate and Docker ro
   const { options, boundary } = fixture();
   const runner = createReviewedRunner(options.root, { execute: boundary.execute, linuxRuntime: 'docker' });
   await runner({ step: 'sources' });
-  assert.deepEqual(boundary.calls[0].args, ['ls-files', '--error-unmatch', '--', 'scripts/release-history-scan.mjs', 'scripts/linux-preflight.mjs']);
+  assert.deepEqual(boundary.calls[0].args, ['ls-files', '--error-unmatch', '--', 'scripts/release-history-scan.mjs', 'scripts/linux-preflight.mjs', 'bench/results-hub.mjs']);
   assert.equal((await runner({ step: 'linux', head })).status, 0);
   assert.equal(boundary.calls.some(call => call.command === 'colima'), false);
 });
@@ -564,7 +620,7 @@ test('A6 Colima CLI owns actual producers, requires tracked helper and rechecks 
   assert.equal(result.ok, true); assert.equal(result.releaseReady, false); assert.equal(result.linux.commit, f.commit);
   assert.equal(output.join('').includes(f.root), false);
   const sources = f.calls.find(call => call.args[0] === 'ls-files' && call.args.includes('--error-unmatch'));
-  assert.deepEqual(sources.args, ['ls-files', '--error-unmatch', '--', 'scripts/release-history-scan.mjs', 'scripts/linux-preflight.mjs', 'scripts/linux-preflight-colima.mjs']);
+  assert.deepEqual(sources.args, ['ls-files', '--error-unmatch', '--', 'scripts/release-history-scan.mjs', 'scripts/linux-preflight.mjs', 'bench/results-hub.mjs', 'scripts/linux-preflight-colima.mjs']);
   assert.ok(f.calls.some(call => call.command === 'colima' && call.args[0] === 'delete'));
   assert.deepEqual(f.calls.slice(-2).map(call => call.args), [
     ['status', '--porcelain=v1', '--untracked-files=all'], ['rev-parse', '--verify', 'HEAD^{commit}'],

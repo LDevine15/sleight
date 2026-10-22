@@ -95,7 +95,7 @@ test('H8: hidden-tab skips and no draws pass; a draw fails; no hand events say w
   assert.equal(hiddenTabVerdict(readHandEvents([line('hand-skipped', { op: 'click', reason: 'covered' })])).verdict, 'inconclusive');
   const plan = roundCommand({ out: '/o/r1' });
   assert.deepEqual(plan.args, ['--world', '--real-browser', 'chrome', '--surface', 'sleight-turbo', '--model', 'haiku', '--effort', 'high', '--only', 'demoid', '--out', '/o/r1']);
-  assert.deepEqual(plan.env, { DISABLE_AUTOUPDATER: '1', SLEIGHT_BENCH_HAND: '1', SLEIGHT_TRACE: '/o/r1.trace' });
+  assert.deepEqual(plan.env, { DISABLE_AUTOUPDATER: '1', SLEIGHT_NO_HUB: '1', SLEIGHT_BENCH_HAND: '1', SLEIGHT_TRACE: '/o/r1.trace' });
 });
 
 test('H8: --run refuses without --owner-away before it checks or starts anything; reading a trace needs no flag', async () => {

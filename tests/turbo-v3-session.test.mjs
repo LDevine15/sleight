@@ -32,7 +32,7 @@ test('MTb isolated rounds command forwards the model-time switch and strips unre
   const source = readFileSync(new URL('../bench/fowl/rounds.sh', import.meta.url), 'utf8');
   // Execute only the real gate's env-isolation command, replacing its benchmark payload with an environment reader.
   // The rest of rounds.sh owns profiles, Git state and a live lock and must never run in this offline test.
-  const command = source.match(/  exec env -i[\s\S]*?node tools\/rounds\.mjs "\$@" --model "\$MODEL"/)[0]
+  const command = source.match(/  (?:exec )?env -i[\s\S]*?node tools\/rounds\.mjs "\$@" --model "\$MODEL"/)[0]
     .replace('node tools/rounds.mjs "$@" --model "$MODEL"', '"$1" -e \'process.stdout.write(JSON.stringify({mt:process.env.SLEIGHT_MT,lb12:process.env.SLEIGHT_LB12,unrelated:process.env.MTB_UNRELATED}))\'');
   for (const mode of [undefined, '0', '1']) {
     const env = { ...process.env, SLEIGHT_LB12: '0', MTB_UNRELATED: 'must not cross' };

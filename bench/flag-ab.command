@@ -34,7 +34,7 @@ while IFS=$'\t' read -r -u 3 round arm side runs tasks flag; do
     touch $PAUSE; echo "paused before $name: ${left}still running; quit it, then rm $PAUSE" >> $LOG
   done
   echo "$name $(date -u +%H:%M:%S)" >> $LOG
-  env DISABLE_AUTOUPDATER=1 ${=flag} node bench/run.mjs --suite world --arm sleight --tasks $tasks --runs $runs \
+  env DISABLE_AUTOUPDATER=1 SLEIGHT_NO_HUB=1 ${=flag} node bench/run.mjs --suite world --arm sleight --tasks $tasks --runs $runs \
     --model claude-haiku-5-5 --effort high --owner-away < /dev/null > $O/$name.log 2>&1
   code=$?
   results=$(sed -n 's/^results: //p' $O/$name.log | tail -1); stops=$(grep -c '^STOP:' $O/$name.log)

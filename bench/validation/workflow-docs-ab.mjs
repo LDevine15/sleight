@@ -85,7 +85,7 @@ export function workflowEnvironment(side, host = process.env) {
   if (!['docs0', 'default'].includes(side)) throw Error('Unknown WF3 side');
   return { ...Object.fromEntries(['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'TERM']
     .filter(key => typeof host[key] === 'string').map(key => [key, host[key]])),
-    DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1', SLEIGHT_BENCH_HAND: '0',
+    DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1', SLEIGHT_BENCH_HAND: '0', SLEIGHT_NO_HUB: '1',
     SLEIGHT_TURBO: '0', SLEIGHT_SURFACES: 'computer',
     ...(side === 'docs0' ? { SLEIGHT_WORKFLOW_DOCS: '0' } : {}) };
 }

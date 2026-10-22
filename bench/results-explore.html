@@ -158,7 +158,7 @@ const $ = id => document.getElementById(id);
 const el = (tag, attrs = {}, text) => { const node = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v); if (text !== undefined) node.textContent = text; return node; };
 const svgEl = (tag, attrs = {}) => { const node = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v); return node; };
 const f1 = v => (v === null || v === undefined ? '' : (Math.round(v * 10) / 10).toFixed(1));
-const ARM = { sleight: 'sleight', 'sleight-turbo': 'sleight turbo', lcu: 'LCU', codex: 'Codex', cua: 'Cua', peekaboo: 'Peekaboo', 'claude-cu': 'Claude computer use', fowlbrowser: 'FowlBrowser', 'claude-in-chrome': 'Claude in Chrome', 'codex-sleight': 'sleight inside Codex', 'codex-sleight-sol': 'sleight inside Codex (Sol)', 'codex-sol': 'Codex (Sol)' };
+const ARM = { sleight: 'sleight', 'sleight-turbo': 'sleight turbo', lcu: 'LCU', codex: 'Codex', cua: 'Cua', peekaboo: 'Peekaboo', 'claude-cu': 'Claude computer use', fowlbrowser: 'FowlBrowser', 'claude-in-chrome': 'Claude in Chrome', 'codex-sleight': 'sleight inside Codex', 'codex-sleight-sol': 'sleight inside Codex (Sol)', 'codex-sol': 'Codex (Sol)', 'build-A': 'build A (earlier sleight)', 'build-B': 'build B (new sleight)' };
 const armName = a => ARM[a] || a;
 // The Markdown pages, with their method sections, on github.com (the Pages copy of this folder serves them as plain text).
 const MD_BASE = 'https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/';
@@ -194,10 +194,13 @@ function fillSelect(id, options, value, allLabel) {
   select.value = options.some(([v]) => v === value) || (allLabel && value === '') ? value : (allLabel ? '' : (options[0] ? options[0][0] : ''));
   return select.value;
 }
-const studyMatches = (s) => (!state.family || s.family === state.family) && (!state.browser || (s.browser || '').split(', ').includes(state.browser));
+// Families marked self compare sleight with its own earlier build. They show only when picked, never under All families.
+const selfFamily = Object.fromEntries(DATA.families.map(f => [f.id, !!f.self]));
+const inFamilyFilter = (s) => (state.family ? s.family === state.family : !selfFamily[s.family]);
+const studyMatches = (s) => inFamilyFilter(s) && (!state.browser || (s.browser || '').split(', ').includes(state.browser));
 function refreshFilters() {
-  state.family = fillSelect('f-family', DATA.families.map(f => [f.id, f.title]), state.family, 'All families');
-  const inFamily = studies.map((s, i) => [s, i]).filter(([s]) => !state.family || s.family === state.family);
+  state.family = fillSelect('f-family', DATA.families.map(f => [f.id, f.self ? `${f.title} (sleight against itself)` : f.title]), state.family, 'All families');
+  const inFamily = studies.map((s, i) => [s, i]).filter(([s]) => inFamilyFilter(s));
   state.browser = fillSelect('f-browser', [...new Set(inFamily.flatMap(([s]) => (s.browser || '').split(', ').filter(Boolean)))].sort().map(b => [b, b]), state.browser, 'All browsers');
   const pool = inFamily.filter(([s]) => studyMatches(s));
   state.study = fillSelect('f-study', pool.map(([s, i]) => [String(i), `${s.title} (${s.date})`]), state.study, 'All studies matching');

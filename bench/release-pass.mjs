@@ -222,6 +222,9 @@ function summary(rows) {
 // The child runner owns its process tree and live-lock receipt. Interrupt is forwarded.
 export function runStage(stage, { root }) {
   const env = Object.fromEntries(['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG'].filter(k => process.env[k]).map(k => [k, process.env[k]]));
+  // No stage refreshes the hub, and nothing refreshes it after the pass either: the pass publishes its evidence under
+  // docs/benchmarks/<date>-release-pass, which the hub doesn't read, so a refresh here would collect nothing new (bench/hub-refresh.mjs).
+  env.SLEIGHT_NO_HUB = '1';
   return new Promise((resolveRun, reject) => {
     const child = spawn(stage.command, stage.commandArgs, { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', interrupted = false;

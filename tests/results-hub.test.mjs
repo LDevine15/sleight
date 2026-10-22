@@ -3,16 +3,17 @@ const MAC_USERS = ['', 'Users', ''].join('/');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import vm from 'node:vm';
 import { claim, score } from '../bench/claim-score.mjs';
 import { engineMix, summarizeEngines } from '../bench/engine-version.mjs';
 import { chartCaption } from '../bench/results-charts.mjs';
 import {
-  FAMILIES, NAV, README_BLOCKS, cellText, cellsFor, collectJsonAbs, collectRace, collectReleases, collectRunnerStudies, dateRange, lossRule, parseRunnerReport,
-  ownerPass, publicVoice, readmeBlocks, render, renderNav, renderNavHtml, renderReadme, scoreClaimDir, scrub, scrubPaths, spliceReadme, taskMatrix, variantOf,
+  BUILD_A, BUILD_B, FAMILIES, NAV, README_BLOCKS, cellText, cellsFor, collectBank, collectJsonAbs, collectRace, collectReleases, collectRunnerStudies, collectValidation,
+  compareTasks, dateRange, exploreData, findBanks, listRaceRounds, lossRule, parseRunnerReport, ownerPass, publicVoice, raceDirs, readBank, readmeBlocks, render, renderNav,
+  renderNavHtml, renderReadme, rowsFromCell, scoreClaimDir, scrub, scrubPaths, spliceReadme, taskMatrix, variantOf,
 } from '../bench/results-hub.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
@@ -379,6 +380,51 @@ test('explore.html runs, fills its filters, draws charts per task and switches f
   assert.equal(document.documentElement.attrs['data-theme'], 'light');
 });
 
+test('explore.html keeps the sleight-against-itself family out of All families and labels it where it is picked', () => {
+  const html = page('explore.html');
+  const script = /<script>([\s\S]*)<\/script>/.exec(html)[1];
+  const ids = [...html.matchAll(/id="([^"]+)"/g)].map(m => m[1]);
+  const nodes = Object.fromEntries(ids.map(id => [id, new FakeNode(id)]));
+  const document = { documentElement: new FakeNode('html'), getElementById: id => nodes[id], createElement: tag => new FakeNode(tag),
+    createElementNS: (_ns, tag) => new FakeNode(tag), createTextNode: text => Object.assign(new FakeNode('#text'), { text }) };
+  vm.runInNewContext(script, { document, localStorage: { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } }, window: { innerWidth: 390 }, console });
+  const options = id => nodes[id].children.map(child => [child.attrs.value, child.text ?? child.children?.[0]?.text]);
+  const label = options('f-family').find(([value]) => value === 'validation')[1];
+  assert.match(label, /\(sleight against itself\)$/);
+  nodes['f-family'].listeners.change[0]({ target: { value: '' } });
+  assert.equal(options('f-arm').some(([value]) => /^build-/.test(value)), false, 'All families lists only the real arms');
+  assert.equal(options('f-study').some(([, text]) => /remeasure|validation-/.test(text ?? '')), false);
+  nodes['f-family'].listeners.change[0]({ target: { value: 'validation' } });
+  assert.deepEqual(options('f-arm').map(([value]) => value).filter(Boolean).sort(), ['build-A', 'build-B']);
+});
+
+test('the validation family carries no claim or scorer wording, and a bank\'s names and paths are scrubbed', t => {
+  const { wt } = fixtureWt(t);
+  const data = collectValidation({ wt });
+  const text = JSON.stringify(data);
+  for (const study of data.studies) for (const key of ['verdict', 'wording', 'reasons', 'lost', 'fastest', 'totals', 'topUps']) assert.equal(key in study, false, key);
+  assert.equal(/wording|fastest|"lowest"|completed every task/.test(text), false);
+  assert.equal(data.banks.find(b => b.id === 'validation-x').source, 'validation-x', 'a bank outside the home folder shows only its folder name');
+  const committedData = readJson(join(OUT, 'data/validation.json'));
+  assert.ok(committedData.banks.every(b => b.source.startsWith('~/') || !b.source.includes('/')));
+  assert.equal(JSON.stringify(committedData).match(/wording|"verdict"|completed every task/), null);
+  assert.equal(page('validation.md').match(/Scorer wording|completed every task|fastest on \d+ of/), null);
+  // The id, browser and runner are scrubbed like every other string copied from a bank.
+  const owner = userInfo().username;
+  const dirty = join(wt, `${owner}-bank`);
+  cpSync(join(wt, 'race-1017/validation-x'), dirty, { recursive: true });
+  const plan = readJson(join(dirty, 'plan.json'));
+  plan.groups[1].browser = `${homedir()}/Browsers/Safari`; plan.groups[1].runner = `${homedir()}/runner`;
+  writeFileSync(join(dirty, 'plan.json'), JSON.stringify(plan));
+  const { record, studies } = collectBank(readBank(dirty));
+  const scrubbed = JSON.stringify([record, studies]);
+  assert.equal(scrubbed.includes(homedir()), false);
+  assert.equal(scrubbed.toLowerCase().includes(owner.toLowerCase()), false);
+  assert.match(record.id, /^\[owner\]-bank$/);
+  const safari = studies.find(s => s.group === 'race-safari');
+  assert.deepEqual([safari.browser, safari.runner], ['~/Browsers/Safari', '~/runner']);
+});
+
 test('pages name each arm\'s engine version with its UTC dates once the data carries them, and flag engine arms on different versions', () => {
   const all = committed(), before = render(all);
   const study = all['browser-race'].studies.find(s => s.latest);
@@ -531,4 +577,164 @@ test('the README\'s generated blocks match the data, and every number in the cla
     const text = line.replace(/^- \[[^\]]+\]\([^)]+\): /, '').replace(/\.$/, '');
     assert.ok(landing.includes(text), `the landing holds "${text.slice(0, 50)}"`);
   }
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Validation and re-measure banks (family "validation"): fixtures only, no Mac folders.
+
+const cell = (runs, passes = runs) => ({ runs, passes, mean: 0, median: 0, expected: 0 });
+const HOME_FIXTURE = join(homedir(), 'fixture-bank');
+function fixtureWt(t) {
+  const wt = mkdtempSync(join(tmpdir(), 'hub-wt-'));
+  t.after(() => rmSync(wt, { recursive: true, force: true }));
+  const write = (path, value) => { mkdirSync(join(wt, path, '..'), { recursive: true }); writeFileSync(join(wt, path), typeof value === 'string' ? value : JSON.stringify(value)); };
+  const aBuild = 'a'.repeat(40), bBuild = 'b'.repeat(40);
+  const plan = { schema: 1, aBuild, bBuild, engine: '26.1013.40934', groups: [
+    { id: 'native', runner: 'native', tasks: ['t-one', 't-two'], model: 'claude-haiku-5-5', rounds: 3 },
+    { id: 'race-safari', runner: 'browser', browser: 'safari', tasks: ['t-three'], model: 'claude-haiku-5-5', rounds: 3 },
+    { id: 'release-opus', runner: 'browser', browser: 'chrome', tasks: ['t-four'], model: 'claude-opus-5-5', rounds: 1 }], rounds: [] };
+  const old = { complete: false, groups: [] };
+  write('race-1017/validation-x/plan.json', plan);
+  // score.json is superseded by score-2.json.
+  write('race-1017/validation-x/score.json', old);
+  write('race-1017/validation-x/score-2.json', { complete: false, groups: [
+    { id: 'native', complete: true, deferred: false, errors: [], aRounds: ['a1', 'a2', 'a3'], table: {
+      A: { 't-one': cell([10, 12, 14]), 't-two': cell([20, 20, 30], [20, 20]) },
+      B: { 't-one': cell([9, 11, 13]), 't-two': cell([20, 25, 28], [20, 25, 28]) } } },
+    { id: 'race-safari', complete: true, deferred: false, errors: [], aRounds: ['a1'], table: {
+      A: { 't-three': cell([50, 60, 70]) }, B: { 't-three': cell([55, 65, 75], [55, 65]) } } },
+    { id: 'release-opus', complete: false, deferred: true, errors: [`DEFERRED release-opus: waits ${HOME_FIXTURE}`], aRounds: [], table: {} }] });
+  write('race-1017/validation-x/validate-140.log', '2026-10-20T12:11:09.000Z run-start {}\n2026-10-20T18:11:09.000Z done {}\n');
+  write('race-1017/validation-try1/plan.json', plan);                     // an aborted attempt: a plan and no score
+  write('race-1017/evidence-replay/plan.json', { schema: 1, rounds: [] }); // another tool's plan.json
+  write('remeasure-x/plan.json', { schema: 1, kind: 'final-build-remeasure', aBuild, baselineBuild: bBuild, build: 'c'.repeat(40), engine: '26.1013.40934', effort: 'high',
+    groups: [{ id: 'native', runner: 'native', model: 'claude-haiku-5-5', tasks: ['t-one'] }] });
+  write('remeasure-x/comparison.json', { build: 'c'.repeat(40), baselineBuild: bBuild, engine: '26.1013.40934', passed: false, complete: true, groups: [
+    { id: 'native', aRounds: [{ n: 1 }, { n: 2 }, { n: 3 }], passed: false, tasks: [{ task: 't-one', a: cell([10, 12, 14]), b: cell([30, 31, 32], [30, 31]) }] }] });
+  write('remeasure-x/remeasure.log', '2026-10-21T01:00:00.000Z round-start {}\n2026-10-21T02:30:00.000Z done {}\n');
+  return { wt, aBuild, bBuild };
+}
+
+test('a validation score table keeps failed runs as the times with no matching pass, duplicates included', () => {
+  const rows = rowsFromCell({ runs: [20, 20, 30, 40], passes: [20, 30] }, 'task', BUILD_A, 'score.json');
+  assert.deepEqual(rows.map(r => [r.seconds, r.passed]), [[20, true], [20, false], [30, true], [40, false]]);
+  assert.ok(rows.every(r => r.arm === BUILD_A && r.task === 'task' && r.file === 'score.json'));
+  assert.deepEqual(rows.filter(r => r.passed).length, 2);
+});
+
+test('banks are found under the worktrees folder one or two folders down, and a plan that is not a bank is ignored', t => {
+  const { wt } = fixtureWt(t);
+  assert.deepEqual(findBanks(wt).map(b => [b.id, b.kind, b.file]), [['remeasure-x', 'remeasure', 'comparison.json'], ['validation-try1', 'validation', null], ['validation-x', 'validation', 'score-2.json']]);
+  assert.equal(readBank(join(wt, 'race-1017/evidence-replay')), null);
+  const elsewhere = mkdtempSync(join(tmpdir(), 'hub-bank-')); t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  cpSync(join(wt, 'remeasure-x'), join(elsewhere, 'out-bank'), { recursive: true });
+  assert.deepEqual(findBanks(wt, [join(elsewhere, 'out-bank')]).map(b => b.id), ['out-bank', 'remeasure-x', 'validation-try1', 'validation-x']);
+});
+
+test('a validation bank becomes studies of build B against build A, scored like every other family, with scrubbed text', t => {
+  const { wt, aBuild, bBuild } = fixtureWt(t);
+  const { record, studies } = collectBank(readBank(join(wt, 'race-1017/validation-x')));
+  assert.deepEqual(studies.map(s => s.id), ['validation-x-native', 'validation-x-race-safari']);
+  assert.deepEqual(record.incomplete, [{ group: 'release-opus', deferred: true, why: 'DEFERRED release-opus: waits ~/fixture-bank' }]);
+  assert.equal(record.date, '2026-10-20, 12:11 to 18:11 UTC');
+  assert.deepEqual([record.aBuild, record.bBuild, record.engine, record.complete], [aBuild.slice(0, 8), bBuild.slice(0, 8), '26.1013.40934', false]);
+  const study = studies[0];
+  assert.deepEqual([study.family, study.me, study.arms, study.tasks, study.models[BUILD_B], study.aRounds], ['validation', BUILD_B, [BUILD_B, BUILD_A], ['t-one', 't-two'], ['claude-haiku-5-5'], 3]);
+  const table = score(study.runs.map(r => ({ arm: r.arm, task: r.task, seconds: r.seconds, passed: r.passed })));
+  for (const c of study.cells) {
+    assert.equal(c.runs, table[c.arm][c.task].runs.length);
+    assert.equal(c.expected, Math.round(table[c.arm][c.task].expected * 1000) / 1000);
+  }
+  assert.equal(study.cells.find(c => c.task === 't-two' && c.arm === BUILD_A).passes, 2);
+  assert.equal(JSON.stringify([record, studies]).includes(homedir()), false);
+});
+
+test('a re-measure bank gives build A the stored rounds and build B the final build, with its gate result', t => {
+  const { wt } = fixtureWt(t);
+  const { record, studies } = collectBank(readBank(join(wt, 'remeasure-x')));
+  assert.deepEqual([record.kind, record.passed, record.complete, record.date, record.baselineBuild], ['remeasure', false, true, '2026-10-21, 01:00 to 02:30 UTC', 'b'.repeat(8)]);
+  assert.equal(record.bBuild, 'c'.repeat(8));
+  assert.deepEqual(studies.map(s => [s.id, s.effort, s.aRounds]), [['remeasure-x-native', ['high'], 3]]);
+  const [row] = compareTasks(studies[0]);
+  assert.deepEqual([row.slower, row.lowerRate, row.marked], [true, true, true]);
+});
+
+test('a bank without a score is listed as pending and adds no study', t => {
+  const { wt } = fixtureWt(t);
+  const { record, studies } = collectBank(readBank(join(wt, 'race-1017/validation-try1')));
+  assert.deepEqual([record.pending, record.planned, studies], [true, 3, []]);
+});
+
+test('the build B marks follow the re-measure gate: slower, lower pass rate, or never passed', () => {
+  const mk = (a, b) => ({ tasks: ['t'], cells: [{ task: 't', arm: BUILD_A, ...a }, { task: 't', arm: BUILD_B, ...b }] });
+  const cellOf = (expected, passes, runs = 3) => ({ expected, passes, runs });
+  assert.equal(compareTasks(mk(cellOf(10, 3), cellOf(10, 3)))[0].marked, false);
+  assert.equal(compareTasks(mk(cellOf(10, 3), cellOf(9, 3)))[0].marked, false);
+  assert.deepEqual(compareTasks(mk(cellOf(10, 3), cellOf(11, 3)))[0].slower, true);
+  assert.deepEqual(compareTasks(mk(cellOf(10, 3), cellOf(9, 2)))[0].lowerRate, true);
+  const never = compareTasks(mk(cellOf(10, 3), cellOf(null, 0)))[0];
+  assert.deepEqual([never.slower, never.lowerRate, never.delta], [true, true, null]);
+  assert.equal(compareTasks(mk(cellOf(null, 0), cellOf(9, 3)))[0].marked, false);
+});
+
+test('collecting again keeps banks whose folder is gone and replaces a bank that is found', t => {
+  const { wt } = fixtureWt(t);
+  const first = collectValidation({ wt });
+  const empty = mkdtempSync(join(tmpdir(), 'hub-empty-')); t.after(() => rmSync(empty, { recursive: true, force: true }));
+  assert.deepEqual(collectValidation({ wt: empty, kept: first }), first);
+  assert.deepEqual(collectValidation({ wt, kept: first }), first);
+  const stale = structuredClone(first);
+  stale.banks.find(b => b.id === 'validation-x').bBuild = 'stale';
+  stale.studies.find(s => s.bank === 'validation-x').tasks = ['stale'];
+  stale.banks.push({ id: 'old-bank', kind: 'validation', complete: true, groups: 1 });
+  const merged = collectValidation({ wt, kept: stale });
+  assert.deepEqual(merged.banks.map(b => b.id), ['old-bank', 'remeasure-x', 'validation-try1', 'validation-x']);
+  assert.equal(merged.banks.find(b => b.id === 'validation-x').bBuild, 'b'.repeat(8));
+  assert.deepEqual(merged.studies.find(s => s.bank === 'validation-x').tasks, ['t-one', 't-two']);
+});
+
+test('the validation page, the index and explore.html carry the banks, and no claim page mentions build A', t => {
+  const { wt } = fixtureWt(t);
+  const all = { ...committed(), validation: collectValidation({ wt }) };
+  const files = render(all);
+  const pageText = files['validation.md'];
+  assert.match(pageText, /^\[Benchmarks\]\(README\.md\) · .*· Validation · /);
+  assert.match(pageText, /## validation-x/);
+  assert.match(pageText, /## remeasure-x/);
+  assert.match(pageText, /Its gate did not pass/);
+  assert.match(pageText, /\| `t-one` \| 12\.0 \(3\/3\) \| 11\.0 \(3\/3\) \| -8\.3% \| no \|/);
+  assert.match(pageText, /\| `t-two` \| 35\.0 \(2\/3\) \| 24\.3 \(3\/3\) \| -30\.5% \| no \|/);
+  assert.match(pageText, /Build A had 1 round on/);
+  assert.match(pageText, /slower and lower pass rate/);
+  assert.match(pageText, /Banks without a score \(1\)/);
+  assert.match(pageText, /`release-opus` \| deferred/);
+  assert.equal(pageText.includes(homedir()), false);
+  assert.match(files['README.md'], /\[Validation: build A against build B\]\(validation\.md\)/);
+  assert.match(files['index.html'], /validation\.md/);
+  assert.ok(exploreData(all).studies.some(s => s.family === 'validation' && s.id === 'validation-x-native'));
+  for (const name of ['native-claim.md', 'app-claim.md', 'browser-race.md', 'browser-turbo.md']) assert.equal(files[name].includes('build-A'), false, name);
+});
+
+test('the committed validation data names no home folder, builds are short hashes, and every cell is a score() of its runs', () => {
+  const data = readJson(join(OUT, 'data/validation.json'));
+  assert.ok(data.studies.length > 0 && data.banks.length > 0);
+  assert.equal(JSON.stringify(data).includes('/Users/'), false);
+  for (const study of data.studies) {
+    assert.deepEqual(study.arms, [BUILD_B, BUILD_A]);
+    for (const build of Object.values(study.builds).flat()) assert.match(build, /^[a-f0-9]{8}$/);
+    const table = score(study.runs.map(r => ({ arm: r.arm, task: r.task, seconds: r.seconds, passed: r.passed })));
+    for (const c of study.cells) assert.equal(c.passes, table[c.arm][c.task].passes.length, `${study.id} ${c.task}`);
+  }
+});
+
+test('race folders are the dated race-MMDD folders, and a round name found twice is read from the first folder', t => {
+  const wt = mkdtempSync(join(tmpdir(), 'hub-race-')); t.after(() => rmSync(wt, { recursive: true, force: true }));
+  for (const dir of ['race-1017', 'race-1022', 'race-131', 'race-old', 'race-fx', 'validation-1017']) mkdirSync(join(wt, dir));
+  for (const [dir, round] of [['race-1017', 'chrome-a-r1'], ['race-1022', 'chrome-a-r1'], ['race-1022', 'safari-b-r1'], ['race-1022', 'notes']]) mkdirSync(join(wt, dir, round));
+  writeFileSync(join(wt, 'race-1022/safari-b-r1/results.json'), '[]');
+  assert.deepEqual(raceDirs(wt).map(d => d.slice(wt.length + 1)), ['race-1017', 'race-1022']);
+  const rounds = listRaceRounds(raceDirs(wt));
+  assert.deepEqual(rounds.map(r => [r.name, r.dir.slice(wt.length + 1), r.done]), [['chrome-a-r1', 'race-1017/chrome-a-r1', false], ['safari-b-r1', 'race-1022/safari-b-r1', true]]);
+  assert.deepEqual(listRaceRounds(join(wt, 'race-1017')).map(r => r.name), ['chrome-a-r1']);
+  assert.deepEqual(listRaceRounds(join(wt, 'missing')), []);
 });
