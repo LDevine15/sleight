@@ -5,6 +5,16 @@
 Rebuild the results pages from the committed data with `node bench/results-hub.mjs --render-only`.
 Use `node bench/results-hub.mjs --render-only --check` to check for stale pages.
 
+Collect and render once after a finished pass with `node bench/results-hub.mjs`, or run `node bench/hub-refresh.mjs`, which does the
+same and logs one line. The runners call it themselves after a successful, saved pass: `bench/run.mjs`, `bench/fowl/rounds.sh` (the browser
+race rounds), `bench/validation/validation-140.mjs` and `bench/validation/remeasure.mjs`. It skips while `/tmp/sleight-live.lock` or
+`/tmp/sleight-hold` exists, never fails or waits for the pass, and stops with `--no-hub` or `SLEIGHT_NO_HUB=1`. The rounds a validation or
+A/B runner starts for itself always run with `SLEIGHT_NO_HUB=1`. Refreshing rewrites `docs/results` and the README's generated blocks in the
+checkout that ran the pass, so commit the result. `node scripts/release-preflight.mjs` fails when those files are stale relative to
+`docs/results/data`. Validation and re-measure banks (`plan.json` with `score.json` or `comparison.json`) get their own page, `validation.md`;
+the race folders are the dated `race-MMDD` folders under `~/Projects/sleight-wt`, and the native and app claim folders stay pinned in the
+hub, so a new claim pass appears only after someone points the hub at its folder.
+
 Results are published at [sleight benchmarks](https://land-o-clusters.github.io/sleight/results/) and the
 [interactive explorer](https://land-o-clusters.github.io/sleight/results/explore.html).
 

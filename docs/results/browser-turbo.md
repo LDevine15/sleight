@@ -1,4 +1,4 @@
-[Benchmarks](README.md) · [Native](native-claim.md) · [Apps](app-claim.md) · Chrome and Helium · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
+[Benchmarks](README.md) · [Native](native-claim.md) · [Apps](app-claim.md) · Chrome and Helium · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · [Validation](validation.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
 
 # Chrome and Helium: turbo against FowlBrowser
 
@@ -835,4 +835,4 @@ Per task over all rounds, expected seconds, then passes/runs under the published
 
 [data/browser-turbo.json](data/browser-turbo.json) has every counted run and the scored cells, and the [interactive page](https://land-o-clusters.github.io/sleight/results/explore.html) charts them. Each arm table lists the ChatGPT engine versions its runs used, with their UTC dates. Rebuild every page with `node bench/results-hub.mjs`.
 
-[Benchmarks](README.md) · [Native](native-claim.md) · [Apps](app-claim.md) · Chrome and Helium · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
+[Benchmarks](README.md) · [Native](native-claim.md) · [Apps](app-claim.md) · Chrome and Helium · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · [Validation](validation.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)

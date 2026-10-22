@@ -15,6 +15,19 @@ set -eu
 PIN=8b68924
 DIR="$HOME/Library/Caches/sleight-bench/fowlbrowser"
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
+# --no-hub (or SLEIGHT_NO_HUB=1) keeps a round from refreshing the benchmark hub when it ends. Tests and A/B runs that must not
+# publish pass it. The flag is removed here, so no runner below sees it.
+NOHUB="${SLEIGHT_NO_HUB:-}"
+n=$#
+while [ "$n" -gt 0 ]; do
+  a="$1"; shift; n=$((n - 1))
+  if [ "$a" = --no-hub ]; then NOHUB=1; else set -- "$@" "$a"; fi
+done
+# Once, after a round that saved results to --out (bench/hub-refresh.mjs decides: exit status, live lock, --no-hub). It logs one
+# line, never waits and never changes this script's exit status.
+hub_refresh() {
+  [ -z "$OUT" ] || node "$REPO/bench/hub-refresh.mjs" --exit "${RC:-1}" --saved "$OUT" ${NOHUB:+--no-hub} || true
+}
 for a in "$@"; do
   [ "$a" != --plan ] || exec node "$REPO/bench/fowl/accounting.mjs" "$@"
 done
@@ -43,11 +56,15 @@ if ! /usr/bin/git diff | cmp -s - "$REPO/bench/fowl/sleight-surface.patch"; then
 fi
 [ "$(/usr/bin/git rev-parse --short HEAD)" = "$PIN" ] || { echo "rounds.sh: $DIR is not at $PIN" >&2; exit 1; }
 if [ -n "$REAL" ]; then
-  exec env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
+  RC=0
+  trap 'exit 130' INT TERM HUP
+  env -i HOME="$HOME" USER="$USER" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-en_US.UTF-8}" \
     SLEIGHT_REPO="$REPO" ${SLEIGHT_TRACE:+SLEIGHT_TRACE="$SLEIGHT_TRACE"} ${SLEIGHT_TS3:+SLEIGHT_TS3="$SLEIGHT_TS3"} ${SLEIGHT_FS:+SLEIGHT_FS="$SLEIGHT_FS"} ${SLEIGHT_RS+SLEIGHT_RS="$SLEIGHT_RS"} \
     ${SLEIGHT_BENCH_HAND:+SLEIGHT_BENCH_HAND="$SLEIGHT_BENCH_HAND"} ${SLEIGHT_BROWSER_CORE:+SLEIGHT_BROWSER_CORE="$SLEIGHT_BROWSER_CORE"} ${AS3_WINDOW_PROMPT:+AS3_WINDOW_PROMPT="$AS3_WINDOW_PROMPT"} \
     ${SLEIGHT_WORKFLOW_DOCS:+SLEIGHT_WORKFLOW_DOCS="$SLEIGHT_WORKFLOW_DOCS"} ${SLEIGHT_LB12:+SLEIGHT_LB12="$SLEIGHT_LB12"} ${SLEIGHT_MT:+SLEIGHT_MT="$SLEIGHT_MT"} \
-    ${SLEIGHT_MC1:+SLEIGHT_MC1="$SLEIGHT_MC1"} node tools/rounds.mjs "$@" --model "$MODEL"
+    ${SLEIGHT_MC1:+SLEIGHT_MC1="$SLEIGHT_MC1"} node tools/rounds.mjs "$@" --model "$MODEL" || RC=$?
+  hub_refresh
+  exit "$RC"
 fi
 # Every Claude arm runs on the owner's account login, never the API credit (owner, 2026-10-15, LAWS). Browser Use
 # needs an API key by design, so it runs only in a round of its own (computer use keeps its login beside it), and the
@@ -66,7 +83,7 @@ fi
 [ "$AUTH" = account ] || node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const m=new Date().toISOString().slice(0,7);process.exit((j.unpriced||j.month===m&&j.usd>=190)?1:0)' "$SPEND" || { echo "rounds.sh: API spend is at or over 190 USD, or a round's token cost needs reconciliation" >&2; exit 1; }
 mkdir /tmp/sleight-live.lock || { echo "rounds.sh: the live lock is held" >&2; exit 1; }
 trap 'rmdir /tmp/sleight-live.lock' EXIT; trap 'exit 130' INT TERM HUP
-trap 'rmdir /tmp/sleight-live.lock; [ "$AUTH" = api ] && [ -n "$OUT" ] && [ -d "$OUT" ] && node "$REPO/bench/fowl/add-spend.mjs" "$OUT" "$SPEND"' EXIT
+trap 'rmdir /tmp/sleight-live.lock; [ "$AUTH" = api ] && [ -n "$OUT" ] && [ -d "$OUT" ] && node "$REPO/bench/fowl/add-spend.mjs" "$OUT" "$SPEND"; hub_refresh' EXIT
 # The ChatGPT engine version and UTC time at the start and end go into the --out folder as engine.json (bench/engine-version.mjs),
 # the start before the round so an interrupted round keeps it. Real-browser rounds record it in real-gate.mjs. A round without
 # --out writes to FowlBrowser's own temporary folder and records no version.

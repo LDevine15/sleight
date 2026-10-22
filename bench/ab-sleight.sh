@@ -25,7 +25,7 @@ for r in $(seq 1 $ROUNDS); do
   for side in $order; do
     echo "round $r $side $(date -u +%H:%M:%S)"
     flags=(); [[ $side == new ]] && flags=(${=NEW_ENV})
-    (cd $HOME/Projects/sleight-wt/ab-$side && env $flags node bench/run.mjs --suite world --arm sleight --tasks $TASKS --runs 1 \
+    (cd $HOME/Projects/sleight-wt/ab-$side && env SLEIGHT_NO_HUB=1 $flags node bench/run.mjs --suite world --arm sleight --tasks $TASKS --runs 1 \
       --model claude-haiku-5-5 --effort high --owner-away) > $HOME/Projects/sleight-wt/ab-$side-r$r.log 2>&1
     echo "round $r $side exit $?"
   done

@@ -171,7 +171,7 @@ export function makeRemeasurePlan({ baseline, tasks, build, engine, out, reposit
 export function verifyFinalBuild(plan) {
   if (git(plan.repository, 'rev-parse', 'HEAD') !== plan.build ||
     git(plan.repository, 'status', '--porcelain', '--untracked-files=all', '--', '.',
-      ':(exclude)node_modules', ':(exclude).vale', ':(exclude)bench/results'))
+      ':(exclude)node_modules', ':(exclude).vale', ':(exclude)bench/results', ':(exclude)docs/results', ':(exclude)README.md'))
     throw Error('Final build HEAD changed or working tree is dirty');
   if (harnessAt(plan.build, plan.repository).hash !== plan.harnessHash ||
     git(plan.repository, 'rev-parse', `${plan.build}:plugins`) !== plan.pluginTree) throw Error('Final build provenance changed');
@@ -196,7 +196,7 @@ export function compareRemeasure(plan, bRows) {
 
 // Offline tests replace only host/process boundaries. The same plan, pins, receipts and scorer run.
 export async function runRemeasure(plan, { run = child, gate = waitGate, apps = waitForRoundApps, engine = verifyEngine } = {}) {
-  const overrides = Object.keys(process.env).filter(k => /^(SLEIGHT_|AS3_|BENCH_ARM_HOME$)/.test(k));
+  const overrides = Object.keys(process.env).filter(k => k !== 'SLEIGHT_NO_HUB' && /^(SLEIGHT_|AS3_|BENCH_ARM_HOME$)/.test(k));
   if (overrides.length) throw Error(`Unset benchmark overrides first: ${overrides.join(', ')}`);
   verifyInputs(plan); verifyFinalBuild(plan);
   if (existsSync(plan.out)) throw Error('Re-measure output already exists');
@@ -253,7 +253,7 @@ export async function main(args = process.argv.slice(2)) {
   for (let n = 0; n < args.length; n++) {
     const key = args[n];
     if (Object.hasOwn(o, key)) throw Error(`Duplicate option: ${key}`);
-    if (['--run', '--owner-away'].includes(key)) o[key] = true;
+    if (['--run', '--owner-away', '--no-hub'].includes(key)) o[key] = true;
     else if (['--baseline', '--tasks', '--build', '--engine', '--out'].includes(key) && args[n + 1] && !args[n + 1].startsWith('--')) o[key] = args[++n];
     else throw Error(`Unknown or incomplete option: ${key}`);
   }
@@ -262,6 +262,8 @@ export async function main(args = process.argv.slice(2)) {
   if (!o['--run']) { console.log(JSON.stringify(plan, null, 2)); return 0; }
   const result = await runRemeasure(plan);
   console.log(JSON.stringify(result, null, 2));
+  // A completed comparison is a saved result whether or not its gate passed; a stopped run threw before this point.
+  console.log((await import('../hub-refresh.mjs')).refreshHub({ saved: plan.out, noHub: !!o['--no-hub'], hubArgs: ['--bank', plan.out] }).line);
   return result.passed ? 0 : 1;
 }
 

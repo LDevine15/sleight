@@ -150,7 +150,7 @@ function options(args) {
   const out = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (['--plan', '--run', '--score', '--owner-away', '--resume'].includes(a)) {
+    if (['--plan', '--run', '--score', '--owner-away', '--resume', '--no-hub'].includes(a)) {
       if (out[a.slice(2)]) throw Error(`Duplicate option: ${a}`);
       out[a.slice(2)] = true;
     }
@@ -508,7 +508,7 @@ export async function child(command, args, cwd, log, extraEnv = {}) {
   const config = mkdtempSync('/tmp/lane-claude-');
   try {
     return await new Promise((done, fail) => {
-      const p = spawn(command, args, { cwd, env: { ...process.env, ...extraEnv, CLAUDE_CONFIG_DIR: config, DISABLE_AUTOUPDATER: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      const p = spawn(command, args, { cwd, env: { ...process.env, ...extraEnv, CLAUDE_CONFIG_DIR: config, DISABLE_AUTOUPDATER: '1', SLEIGHT_NO_HUB: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
       p.stdout.on('data', data => appendFileSync(log, data)); p.stderr.on('data', data => appendFileSync(log, data));
       p.once('error', fail); p.once('close', (code, signal) => done({ code, signal }));
       // Remain in the caller's foreground process group. The terminal's Ctrl-C reaches this child too.
@@ -611,12 +611,14 @@ async function execute(plan, onlyGroups, { resume = false } = {}) {
   if (plan.blockers.length) throw Error(plan.blockers.join('\n'));
   if (!/^[a-f0-9]{40}$/.test(plan.aBuild ?? '') || !/^[a-f0-9]{40}$/.test(plan.bBuild)) throw Error('Build pin missing');
   const driverBuild = git('rev-parse', 'HEAD').trim();
-  if (git('status', '--porcelain', '--untracked-files=no').trim()) throw Error('Run from the clean, pinned B build or compatible driver');
+  // The hub refresh after a pass rewrites docs/results and the README's generated blocks (bench/hub-refresh.mjs), so a resumed or
+  // completion run does not count them as changes to the pinned build.
+  if (git('status', '--porcelain', '--untracked-files=no', '--', '.', ':(exclude)docs/results', ':(exclude)README.md').trim()) throw Error('Run from the clean, pinned B build or compatible driver');
   if (resume) driverCompatibility(plan.bBuild, driverBuild);
   else if (driverBuild !== plan.bBuild) throw Error('Run from the clean, pinned B build');
   if (harness(plan.bBuild).hash !== plan.harnessHash) throw Error('Current harness hash differs from the plan');
   // No inherited tuning switches: validate exactly the product defaults on both builds.
-  const inherited = Object.keys(process.env).filter(k => k !== 'SLEIGHT_VALIDATION_DATA' && /^(SLEIGHT_|AS3_|BENCH_ARM_HOME$)/.test(k));
+  const inherited = Object.keys(process.env).filter(k => !['SLEIGHT_VALIDATION_DATA', 'SLEIGHT_NO_HUB'].includes(k) && /^(SLEIGHT_|AS3_|BENCH_ARM_HOME$)/.test(k));
   if (inherited.length) throw Error(`Unset benchmark overrides first: ${inherited.join(', ')}`);
   let selection = selectRun(plan, onlyGroups, { resume, driverBuild });
   if (!selection.completion) {
@@ -763,7 +765,10 @@ export async function main(args = process.argv.slice(2)) {
     ? JSON.parse(readFileSync(join(resolve(o.out), 'plan.json'))).deferredGroups : undefined);
   const plan = makePlan(audit, { out: o.out, engine: o.engine, classification, deferGroups });
   if (!o.run) { console.log(JSON.stringify(plan, null, 2)); return 0; }
-  await execute(plan, o['only-groups']?.split(',').map(id => id.trim()), { resume: !!o.resume }); return 0;
+  await execute(plan, o['only-groups']?.split(',').map(id => id.trim()), { resume: !!o.resume });
+  // Once, after a pass that saved its score. A hub error is one log line and never changes the exit status.
+  console.log((await import('../hub-refresh.mjs')).refreshHub({ saved: plan.out, noHub: !!o['no-hub'], hubArgs: ['--bank', plan.out] }).line);
+  return 0;
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try { process.exitCode = await main(); }

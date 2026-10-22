@@ -66,6 +66,7 @@ import { dragMethodAudit } from './world/method-check.mjs';
 import { benchHand } from './hand/bench-hand.mjs';
 import { analyticsArm, writeAnalyticsMcp } from './analytics-validation.mjs';
 import { actionLogPath } from '../plugins/sleight/lib/action-outcomes.mjs';
+import { refreshHub } from './hub-refresh.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TIMEOUT_MS = 5 * 60 * 1000;
@@ -946,3 +947,9 @@ if (!isDryRun && !privatePass) {
   }
 }
 if (!isDryRun) console.log(`\nresults: ${privatePass ? scrub(file) : file}`);
+// Once, after a saved pass that succeeded: collect and render the benchmark hub (bench/hub-refresh.mjs). It skips while a live round
+// holds the lock, on --no-hub or SLEIGHT_NO_HUB=1, and a hub error is one log line that never changes this exit status. The private
+// mail pass is never published.
+if (!isDryRun && !isSetupOnly && !hygieneDryRun && !privatePass) {
+  console.log(refreshHub({ exitCode: process.exitCode ?? 0, saved: file, noHub: process.argv.includes('--no-hub') }).line);
+}

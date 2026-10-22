@@ -91,7 +91,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
     auth = { mode: suite === 'world' ? 'api' : 'login', env: {}, unset: [], spent: 0, capUsd: 200 };
     if (suite === 'world') keySource = 'ANTHROPIC_API_KEY';
   }
-  const calls = [], saved = [], envs = [], tailScopes = [], directories = [];
+  const calls = [], saved = [], envs = [], tailScopes = [], directories = [], hubRefreshes = [];
   const logs = [], driverOptions = [], codexRuns = [], files = new Map(), commands = [], codexConfigs = [], contexts = [];
   const temp = mkdtempSync(join(tmpdir(), 'bench-run-test-'));
   const lockPath = join(temp, 'live.lock'), holdPath = join(temp, 'sleight-hold');
@@ -165,6 +165,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
       if (command === 'id') return privateMail ? 'Owner Example' : ownerName;
       calls.push('tap check'); return JSON.stringify(taps);
     },
+    refreshHub: options => { hubRefreshes.push(options); return { line: 'hub: fixture' }; },
     getTasks: () => tasks ?? [task], BENCH_APPS, REAL_APPS, WORLD_APPS, worldPassApps,
     selectSuiteTasks, assertShopSmokeRuns,
     closeBenchTextEdit: options => { calls.push('TextEdit tail'); tailScopes.push(options); },
@@ -215,7 +216,7 @@ async function runner({ hygieneResult = { leftWindows: [], errors: [] }, hygiene
   try { await runInNewContext(`(async () => { ${source}\n})()`, sandbox); } catch (caught) { error = caught; }
   finally { rmSync(temp, { recursive: true, force: true }); }
   const plan = logs.filter(text => typeof text === 'string' && text.startsWith('{')).map(text => JSON.parse(text)).at(-1);
-  return { calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, codexConfigs, files, commands, contexts, lockPath, exitCode: sandbox.process.exitCode, engineReadCount };
+  return { hubRefreshes, calls, saved, plan, envs, tailScopes, directories, error, logs, driverOptions, codexRuns, codexConfigs, files, commands, contexts, lockPath, exitCode: sandbox.process.exitCode, engineReadCount };
 }
 
 test('confirmed fixtures release the outer lock exactly once after cleanup tails and daemon stop', async () => {
@@ -1592,4 +1593,16 @@ test('private hygiene logs and saved results omit window titles and document pat
   assert.equal(typeof options.log, 'function');
   options.log('leftWindows title=private-secret document=/private-secret');
   assert.equal(JSON.stringify(result.logs).includes('private-secret'), false);
+});
+
+test('a saved, successful pass refreshes the benchmark hub once, and --no-hub, dry runs, setup and the private mail pass do not', async () => {
+  const done = await runner({ arm: 'cua', drive: true, outcome: { passed: true } });
+  assert.equal(done.error, undefined);
+  assert.equal(done.hubRefreshes.length, 1);
+  assert.deepEqual([done.hubRefreshes[0].exitCode, done.hubRefreshes[0].noHub, typeof done.hubRefreshes[0].saved], [0, false, 'string']);
+  assert.ok(done.logs.includes('hub: fixture'));
+  assert.deepEqual((await runner({ arm: 'cua', drive: true, outcome: { passed: true }, extraArgs: ['--no-hub'] })).hubRefreshes.map(r => r.noHub), [true]);
+  assert.equal((await runner({ suite: 'world', arm: 'sleight', dryRun: true })).hubRefreshes.length, 0);
+  assert.equal((await runner({ setupOnly: true })).hubRefreshes.length, 0);
+  assert.equal((await runner({ privateMail: true, drive: true, outcome: { passed: true } })).hubRefreshes.length, 0);
 });

@@ -94,6 +94,7 @@ Release validation for 1.4.0 (2026-10-20, Haiku 5.5 at high effort, engine 26.10
 - [Chrome and Helium: turbo against FowlBrowser](docs/results/browser-turbo.md): in Chrome, the lowest expected time on 10 of 13 and a total of 258.9 s against FowlBrowser's 447.8 s (`sleight-turbo-rel130`). In Helium, the lowest expected time on 11 of 13 and a total of 241.8 s against FowlBrowser's 338.3 s (`sleight-turbo-b5`). 14 gate studies. Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19.
 - [Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo](docs/results/browser-race.md): in Safari sleight is fastest on 11 of 12 tasks, the only arm with a total (592.1 s) (`sleight-b10`, 2026-10-18). In Firefox sleight is fastest on 11 of 12 tasks, with a total of 557.1 s (`sleight-b10`, 2026-10-18). Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19.
 - [Experiments](docs/results/ab-tests.md): 17 studies with run data. The catalog has 95 benchmark write-ups and includes studies without structured run data.
+- [Validation: build A against build B](docs/results/validation.md): 1 scored bank: 1 validation, 0 re-measure. 6 more have no score file. 21 A/B groups in all. Build B has a higher expected time or a lower pass rate than build A on 37 of 72 task comparisons. Newest scored bank: validation-140-final (2026-10-20).
 - [Release passes and the earlier head-to-heads](docs/results/release-passes.md): 7 release passes (2026-10-05 to 2026-10-09), 115 results files in all.
 
 <picture>

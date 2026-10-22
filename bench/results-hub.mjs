@@ -6,11 +6,14 @@
 //   render:  reads only those data files and writes the index (README.md, index.html), one Markdown page per family, the chart
 //            images in img/, explore.html with the data inlined (fetch from file:// fails in browsers), and the three generated
 //            blocks of the repo's README.md (between the hub:claim, hub:headline and hub:benchmarks markers).
+// Validation and re-measure banks (bench/validation) are found under the worktrees folder, one or two folders down, and --bank adds a
+// folder anywhere; they get their own page (validation.md) because they compare two sleight builds and no other tool.
 // Scores come from the scorers themselves: bench/claim-score.mjs for the claims and every per-task table, and
 // bench/fowl/race-score.mjs for the browser race rounds. Nothing in the output depends on the clock. Every arm's numbers name the
 // ChatGPT engine versions they ran on with their UTC dates, read from the results or inferred from the checked-in timeline
 // (bench/engine-versions.json; run `node bench/engine-version.mjs refresh` on the benchmark Mac before collecting).
-//   node bench/results-hub.mjs [--wt ~/Projects/sleight-wt] [--out docs/results] [--render-only] [--check] [--exclude-covered]
+//   node bench/results-hub.mjs [--wt ~/Projects/sleight-wt] [--out docs/results] [--render-only] [--check] [--exclude-covered] [--bank <folder>]...
+// The runners run collect and render once after a successful pass through bench/hub-refresh.mjs (--no-hub or SLEIGHT_NO_HUB=1 stops it).
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
@@ -210,12 +213,16 @@ const ROUND_NAME = /^(chrome|helium|safari|firefox)-(.+?)-r(\d+)(f?)(?:-([a-z][a
 const cap = word => word[0].toUpperCase() + word.slice(1);
 const sleightArmFor = browser => (['firefox', 'safari'].includes(browser) ? 'sleight' : 'sleight-turbo');
 
+// The race folders are the dated race-MMDD folders under the worktrees folder (race-1017). A new race folder is picked up by name, and
+// a round name that appears in two folders is read from the first.
+export const raceDirs = wt => subdirs(wt).filter(dir => /^race-\d{4}$/.test(basename(dir)));
+
 export function listRaceRounds(raceDir) {
-  if (!isDir(raceDir)) return [];
-  return readdirSync(raceDir).sort().filter(name => ROUND_NAME.test(name) && isDir(join(raceDir, name))).map(name => {
+  const seen = new Set();
+  return [].concat(raceDir).filter(isDir).flatMap(dir => readdirSync(dir).sort().filter(name => ROUND_NAME.test(name) && isDir(join(dir, name))).map(name => {
     const [, browser, label, round, rerun, suffix] = ROUND_NAME.exec(name);
-    return { name, dir: join(raceDir, name), browser, label, round: Number(round), rerun: rerun === 'f', suffix: suffix ?? null, done: existsSync(join(raceDir, name, 'results.json')) };
-  });
+    return { name, dir: join(dir, name), browser, label, round: Number(round), rerun: rerun === 'f', suffix: suffix ?? null, done: existsSync(join(dir, name, 'results.json')) };
+  })).filter(round => !seen.has(round.name) && seen.add(round.name));
 }
 
 function roundFacts(dir) {
@@ -314,7 +321,7 @@ export function collectRace({ raceDir, browsers, family, title, timeline = loadT
   }
   // The newest complete set per browser leads its page.
   for (const study of studies) study.latest = !studies.some(other => other.browser === study.browser && other !== study && (other.started ?? '') > (study.started ?? ''));
-  return { family, title, source: { race: tilde(raceDir), browsers }, inProgress, excludedRounds, partial, cover, minRuns: 3, studies };
+  return { family, title, source: { race: [].concat(raceDir).map(tilde).join(', '), browsers }, inProgress, excludedRounds, partial, cover, minRuns: 3, studies };
 }
 
 // Which answer patterns the study's numbers used: the ones saved with each run. Tasks whose patterns in the current task file differ
@@ -542,6 +549,139 @@ export function collectReleases({ timeline = loadTimeline() } = {}) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+// Collect: validation and re-measure banks. A bank is one runner's output folder. bench/validation/validation-140.mjs writes
+// plan.json, a receipt per round and score.json (score-2.json after a second scoring); bench/validation/remeasure.mjs writes
+// plan.json and comparison.json. Both compare two sleight builds on the same tasks, build A against build B, so they get a family
+// and a page of their own and never enter a claim table. Strings copied from a bank are scrubbed like every other family's.
+
+const SCORE_FILE = /^score(?:-(\d+))?\.json$/;
+const subdirs = dir => {
+  try { return readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules').map(e => join(dir, e.name)).sort(); }
+  catch { return []; }
+};
+const shaOf = value => (/^[a-f0-9]{7,64}$/.test(value ?? '') ? value.slice(0, 8) : scrub(value ?? '').slice(0, 40) || null);
+
+// The newest score file in a validation bank: score.json, then score-2.json and up.
+function latestScore(dir) {
+  let best;
+  for (const name of readdirSync(dir)) {
+    const match = SCORE_FILE.exec(name);
+    if (match && (!best || Number(match[1] ?? 1) > best.n)) best = { name, n: Number(match[1] ?? 1) };
+  }
+  return best?.name;
+}
+
+// First and last timestamp of a runner's log, whose lines start with an ISO time.
+function logSpan(file) {
+  let text;
+  try { text = readFileSync(file, 'utf8'); } catch { return null; }
+  const stamps = [...text.matchAll(/^(\d{4}-\d\d-\d\dT\d\d:\d\d)/gm)].map(match => match[1]);
+  return stamps.length ? dateRange(stamps[0], stamps.at(-1)) : null;
+}
+
+// A folder is a bank when its plan.json has the shape one of the two runners writes. `result` is null while it has no score or
+// comparison file yet (an aborted attempt, or a run in progress).
+export function readBank(dir) {
+  const plan = tryJson(join(dir, 'plan.json'));
+  if (!plan || typeof plan !== 'object') return null;
+  const id = basename(dir);
+  if (plan.kind === 'final-build-remeasure' && Array.isArray(plan.groups)) {
+    const comparison = tryJson(join(dir, 'comparison.json'));
+    return { id, dir, kind: 'remeasure', plan, file: comparison ? 'comparison.json' : null, result: comparison ?? null };
+  }
+  if (plan.schema === 1 && Array.isArray(plan.groups) && Array.isArray(plan.rounds) && plan.aBuild && plan.bBuild) {
+    const file = latestScore(dir), result = file ? tryJson(join(dir, file)) : null;
+    return { id, dir, kind: 'validation', plan, file: result ? file : null, result: result?.groups ? result : null };
+  }
+  return null;
+}
+
+// Banks sit directly under the worktrees folder or one folder down (race-1017/validation-140-final).
+// `extra` names bank folders anywhere else, such as the --out a runner was given.
+export function findBanks(wt, extra = []) {
+  const banks = [], seen = new Set();
+  for (const dir of [...extra.map(dir => resolve(dir)), ...subdirs(wt).flatMap(first => [first, ...subdirs(first)])]) {
+    const bank = readBank(dir);
+    if (bank && !seen.has(bank.id)) { seen.add(bank.id); banks.push(bank); }
+  }
+  return banks.sort((a, b) => (a.id < b.id ? -1 : 1));
+}
+
+// A score table cell keeps the run times and the passing ones. A failed run is a time in `runs` with no match in `passes`.
+export function rowsFromCell(cell, task, arm, file) {
+  const left = [...(cell.passes ?? [])];
+  return (cell.runs ?? []).filter(Number.isFinite).map(seconds => {
+    const at = left.indexOf(seconds), passed = at >= 0;
+    if (passed) left.splice(at, 1);
+    return { task, arm, run: null, round: null, seconds: round1(seconds), passed, problem: passed ? null : 'failed (the score file keeps no reason)', file };
+  });
+}
+
+export const BUILD_A = 'build-A', BUILD_B = 'build-B';
+
+function bankStudy(bank, group, tables, extra) {
+  const { plan } = bank, arms = [BUILD_B, BUILD_A];
+  const tasks = (group.tasks ?? []).filter(task => tables.A?.[task] || tables.B?.[task]);
+  const runs = [];
+  for (const task of tasks) {
+    if (tables.A?.[task]) runs.push(...rowsFromCell(tables.A[task], task, BUILD_A, bank.file));
+    if (tables.B?.[task]) runs.push(...rowsFromCell(tables.B[task], task, BUILD_B, bank.file));
+  }
+  const { cells, verdict, table } = cellsFor(runs, tasks, arms, BUILD_B);
+  const model = group.model ? [scrub(group.model)] : [];
+  return {
+    id: `${bank.id}-${scrub(group.id)}`, family: 'validation', title: `${bank.id}, ${scrub(group.id)}`, bank: bank.id, kind: bank.kind, group: scrub(group.id),
+    date: extra.date, browser: group.browser ?? null, runner: group.runner ?? null, me: BUILD_B, arms, tasks,
+    models: model.length ? { [BUILD_A]: model, [BUILD_B]: model } : {}, effort: plan.effort ? [scrub(plan.effort)] : [],
+    engine: plan.engine ? scrub(plan.engine) : null, builds: { [BUILD_A]: [shaOf(extra.aBuild)], [BUILD_B]: [shaOf(extra.bBuild)] },
+    aRounds: extra.aRounds, runs, cells, verdict: summarizeVerdict(table, verdict, tasks, arms, BUILD_B),
+  };
+}
+
+export function collectBank(bank) {
+  const { plan, result } = bank, record = { id: bank.id, kind: bank.kind, source: tilde(bank.dir), file: bank.file };
+  const span = logSpan(join(bank.dir, bank.kind === 'remeasure' ? 'remeasure.log' : 'validate-140.log'));
+  if (!result) return { record: { ...record, complete: false, engine: plan.engine ? scrub(plan.engine) : null, planned: plan.groups.length, pending: true }, studies: [] };
+  const studies = [], incomplete = [];
+  if (bank.kind === 'remeasure') {
+    const aBuild = plan.aBuild, bBuild = result.build ?? plan.build;
+    for (const group of result.groups ?? []) {
+      const tables = { A: {}, B: {} };
+      for (const row of group.tasks ?? []) { tables.A[row.task] = row.a; tables.B[row.task] = row.b; }
+      studies.push(bankStudy(bank, { id: group.id, tasks: (group.tasks ?? []).map(row => row.task), model: plan.groups.find(g => g.id === group.id)?.model,
+        browser: plan.groups.find(g => g.id === group.id)?.browser, runner: plan.groups.find(g => g.id === group.id)?.runner }, tables,
+      { date: span, aBuild, bBuild, aRounds: (group.aRounds ?? []).length }));
+    }
+    return { record: { ...record, complete: result.complete === true, passed: result.passed === true, date: span, aBuild: shaOf(aBuild), bBuild: shaOf(bBuild),
+      baselineBuild: shaOf(result.baselineBuild ?? plan.baselineBuild), engine: scrub(result.engine ?? plan.engine ?? ''), groups: studies.length, incomplete }, studies };
+  }
+  for (const group of result.groups) {
+    const planned = plan.groups.find(g => g.id === group.id) ?? { id: group.id, tasks: Object.keys(group.table?.B ?? {}) };
+    if (!group.complete) {
+      incomplete.push({ group: scrub(group.id), deferred: group.deferred === true, why: scrub((group.errors ?? [])[0] ?? 'rounds missing').slice(0, 160) });
+      continue;
+    }
+    studies.push(bankStudy(bank, planned, group.table ?? {}, { date: span, aBuild: plan.aBuild, bBuild: plan.bBuild, aRounds: (group.aRounds ?? []).length }));
+  }
+  return { record: { ...record, complete: result.complete === true, date: span, aBuild: shaOf(plan.aBuild), bBuild: shaOf(plan.bBuild), engine: scrub(plan.engine ?? ''),
+    groups: studies.length, incomplete }, studies };
+}
+
+// Every bank under the worktrees folder. A bank already in `kept` (the data file in the repo) stays when its folder is gone from
+// this Mac, and a collected bank replaces its kept entry.
+export function collectValidation({ wt, kept, banks: extra = [] }) {
+  const banks = findBanks(wt, extra).map(collectBank);
+  const found = new Set(banks.map(bank => bank.record.id));
+  const old = kept ? {
+    records: (kept.banks ?? []).filter(record => !found.has(record.id)),
+    studies: (kept.studies ?? []).filter(study => !found.has(study.bank)),
+  } : { records: [], studies: [] };
+  const records = [...banks.map(bank => bank.record), ...old.records].sort((a, b) => (a.id < b.id ? -1 : 1));
+  const studies = [...banks.flatMap(bank => bank.studies), ...old.studies].sort((a, b) => (a.id < b.id ? -1 : 1));
+  return { family: 'validation', title: 'Validation and re-measure banks', banks: records, studies };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 // Rendering helpers.
 
 const DASH = 'n/a';
@@ -553,7 +693,7 @@ const list = items => items.map(item => `- ${item}`).join('\n');
 const joinAnd = items => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
 const ARM_NAMES = { sleight: 'sleight', 'sleight-turbo': 'sleight turbo', lcu: 'LCU', codex: 'Codex', cua: 'Cua', peekaboo: 'Peekaboo', 'claude-cu': 'Claude computer use',
   fowlbrowser: 'FowlBrowser', 'claude-in-chrome': 'Claude in Chrome', 'codex-sleight': 'sleight inside Codex', 'codex-sleight-sol': 'sleight inside Codex (Sol)',
-  'codex-sol': 'Codex (Sol)' };
+  'codex-sol': 'Codex (Sol)', 'build-A': 'build A (earlier)', 'build-B': 'build B (new)' };
 const armName = arm => ARM_NAMES[arm] ?? arm;
 // Apply to prose and labels before Markdown rendering, so recorded paths and command flags keep their names.
 export const publicVoice = text => String(text).replace(/\bowner\b/gi, word => word === 'Owner' ? 'Tester' : 'tester');
@@ -630,7 +770,7 @@ export const PAGES_URL = 'https://land-o-clusters.github.io/sleight/results/';
 export const REPO_RESULTS = 'https://github.com/Land-o-Clusters/sleight/blob/main/docs/results/';
 export const NAV = [
   { page: 'native-claim.md', label: 'Native' }, { page: 'app-claim.md', label: 'Apps' }, { page: 'browser-turbo.md', label: 'Chrome and Helium' },
-  { page: 'browser-race.md', label: 'Safari and Firefox' }, { page: 'ab-tests.md', label: 'Experiments' }, { page: 'release-passes.md', label: 'Releases' },
+  { page: 'browser-race.md', label: 'Safari and Firefox' }, { page: 'ab-tests.md', label: 'Experiments' }, { page: 'validation.md', label: 'Validation' }, { page: 'release-passes.md', label: 'Releases' },
   { page: 'insights.md', label: 'Insights' }, { page: 'explore.html', label: 'Interactive', href: `${PAGES_URL}explore.html` },
 ];
 
@@ -929,6 +1069,93 @@ function renderReleasePage(all, id) {
   return md.trimEnd() + '\n\n' + pageFooter(fam.page, { data: id, dataText: 'contains every run of the release passes and of the two head-to-heads on this page, plus the totals of every file' });
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// The validation page: sleight's build B against its earlier build A, never against another tool.
+
+// The re-measure gate's rule, applied to every task: B is marked when its expected time is higher than A's (or B never passed), or
+// its pass rate is lower. The marks are not a significance test; the spread table shows the runs behind each cell.
+export function compareTasks(study) {
+  const cell = (task, arm) => study.cells.find(c => c.task === task && c.arm === arm);
+  return study.tasks.map(task => {
+    const a = cell(task, BUILD_A), b = cell(task, BUILD_B);
+    const slower = !!a && !!b && a.expected != null && (b.expected == null || b.expected > a.expected);
+    const lowerRate = !!a && !!b && b.passes / b.runs < a.passes / a.runs;
+    const delta = a?.expected != null && b?.expected != null ? (b.expected - a.expected) / a.expected : null;
+    return { task, a, b, delta, slower, lowerRate, marked: slower || lowerRate };
+  });
+}
+const pct = value => (value == null ? DASH : `${value > 0 ? '+' : ''}${(Math.round(value * 1000) / 10).toFixed(1)}%`);
+const bankKind = kind => (kind === 'remeasure' ? 're-measure' : 'validation');
+
+function validationHeadline(data) {
+  const scored = data.banks.filter(bank => !bank.pending), unscored = data.banks.length - scored.length;
+  if (!scored.length) return 'No validation bank has a score yet';
+  const rows = data.studies.flatMap(compareTasks);
+  const newest = scored.filter(bank => bank.date).sort((a, b) => (a.date < b.date ? -1 : 1)).at(-1) ?? scored.at(-1);
+  const count = kind => scored.filter(bank => bank.kind === kind).length;
+  return `${scored.length} scored ${scored.length === 1 ? 'bank' : 'banks'}: ${count('validation')} validation, ${count('remeasure')} re-measure. ` +
+    `${unscored ? `${unscored} more ${unscored === 1 ? 'has' : 'have'} no score file. ` : ''}${data.studies.length} A/B groups in all. Build B has a higher expected time or a lower pass rate than build A on ` +
+    `${rows.filter(row => row.marked).length} of ${rows.length} task comparisons. Newest scored bank: ${newest.id}${newest.date ? ` (${newest.date.slice(0, 10)})` : ''}`;
+}
+
+function bankSection(data, bank) {
+  const studies = data.studies.filter(study => study.bank === bank.id);
+  const out = [`## ${bank.id}\n`];
+  const facts = [`${bankKind(bank.kind)} bank`, bank.date, bank.engine ? `ChatGPT engine ${code(bank.engine)}` : null,
+    bank.aBuild ? `build A ${code(bank.aBuild)}` : null, bank.bBuild ? `build B ${code(bank.bBuild)}` : null].filter(Boolean);
+  out.push(`${upFirst(facts.join(', '))}.${bank.kind === 'remeasure' ? ` Its gate ${bank.passed ? 'passed' : 'did not pass'}.` : ''}` +
+    `${bank.complete ? '' : ' The bank is not complete.'}\n`);
+  if (!studies.length) { out.push(`No group in this bank has a complete score${bank.pending ? ' (the bank has no score file)' : ''}.\n`); return out.join('\n'); }
+  out.push(mdTable(['Group', 'Browser', 'Tasks', 'Build B marked on', 'Passes A', 'Passes B'], studies.map(study => {
+    const rows = compareTasks(study), runs = arm => study.runs.filter(run => run.arm === arm);
+    return [code(study.group), study.browser ?? DASH, study.tasks.length, `${rows.filter(row => row.marked).length} of ${rows.length}`,
+      `${runs(BUILD_A).filter(r => r.passed).length}/${runs(BUILD_A).length}`, `${runs(BUILD_B).filter(r => r.passed).length}/${runs(BUILD_B).length}`];
+  })) + '\n');
+  if (bank.incomplete?.length) {
+    out.push('Groups left out of the comparison:\n\n' + mdTable(['Group', 'State', 'Why'], bank.incomplete.map(item => [code(item.group), item.deferred ? 'deferred' : 'incomplete', code(item.why)])) + '\n');
+  }
+  for (const study of studies) {
+    const rows = compareTasks(study);
+    const mark = row => (!row.marked ? 'no' : row.slower && row.lowerRate ? 'slower and lower pass rate' : row.slower ? 'slower' : 'lower pass rate');
+    out.push(details(`${study.group}: ${rows.filter(row => row.marked).length} of ${rows.length} tasks marked`, [
+      `Each cell is expected seconds, then passes/runs. Build A had ${study.aRounds || 'no'} round${study.aRounds === 1 ? '' : 's'}${study.models[BUILD_B] ? ` on ${study.models[BUILD_B].map(code).join(', ')}` : ''}.`,
+      mdTable(['Task', 'Build A', 'Build B', 'Change in expected time', 'Marked'], rows.map(row => [code(row.task), cellText(row.a), cellText(row.b), pct(row.delta), mark(row)])),
+      armTable(study, { builds: true }),
+      'Passing runs, median [fastest to slowest]:\n\n' + spreadTable(study),
+    ].join('\n\n')));
+  }
+  return out.join('\n');
+}
+
+export function renderValidationPage(all, id) {
+  const data = all[id], fam = family(id);
+  const out = [pageHead(fam.page, fam.title)];
+  out.push('These banks compare two builds of sleight on the same tasks, build A (an earlier build, usually the last release) against build B (the build under test). ' +
+    'No other tool is in these tables, and they never count toward a claim. A mark means build B has a higher expected time than build A, or a lower pass rate. ' +
+    'It is not a significance test.\n');
+  out.push(`${validationHeadline(data)}.\n`);
+  out.push(details('Method', list([
+    SCORING,
+    'The validation runner (`bench/validation/validation-140.mjs`) alternates the two builds round by round on one Mac with the tester away, and scores both with the claim scorer. ' +
+      'Where an earlier round of build A passed its identity checks (prompts, harness, model, engine), the runner reuses it and counts it in build A\'s rounds.',
+    'The re-measure runner (`bench/validation/remeasure.mjs`) runs 3 rounds of the final build against the stored build A rounds. Its gate needs build B to have no higher expected time and no lower pass rate on every selected task.',
+    'A score file keeps each run\'s seconds and whether it passed, and not the failure reason. Each bank\'s folder keeps the receipts and logs.',
+  ])));
+  const banks = data.banks.filter(bank => !bank.pending);
+  if (!banks.length) out.push('No bank has a score yet.\n');
+  for (const bank of banks) out.push(bankSection(data, bank));
+  const pending = data.banks.filter(bank => bank.pending);
+  if (pending.length) {
+    out.push(details(`Banks without a score (${pending.length})`, 'These folders have a plan and no score file, so they are aborted attempts or runs still going.\n\n' +
+      mdTable(['Bank', 'Kind', 'Groups planned'], pending.map(bank => [code(bank.id), bankKind(bank.kind), bank.planned ?? DASH]))));
+  }
+  out.push(`[data/${id}.json](data/${id}.json) has every counted run and the scored cells, and the [interactive page](${PAGES_URL}explore.html) charts them. ` +
+    'Rebuild every page with `node bench/results-hub.mjs`.\n');
+  out.push(renderNav(fam.page) + '\n');
+  return out.join('\n');
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------
 // Index.
 
@@ -938,6 +1165,7 @@ export const FAMILIES = [
   { id: 'browser-turbo', page: 'browser-turbo.md', title: 'Chrome and Helium: turbo against FowlBrowser', what: 'Turbo in Chrome and Helium, in the real-window race and the earlier gate rounds.' },
   { id: 'browser-race', page: 'browser-race.md', title: 'Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo', what: 'sleight\'s engine path in Safari and Firefox against Codex, LCU, Cua and Peekaboo.' },
   { id: 'ab-tests', page: 'ab-tests.md', title: 'Experiments', what: 'sleight against sleight, for skill, wording, tool and turbo changes.' },
+  { id: 'validation', page: 'validation.md', title: 'Validation: build A against build B', what: 'sleight against its own earlier build on the same tasks, from the validation and re-measure banks.' },
   { id: 'release-passes', page: 'release-passes.md', title: 'Release passes and the earlier head-to-heads', what: 'The per-release regression passes and the first native head-to-heads.' },
 ];
 const family = id => FAMILIES.find(fam => fam.id === id);
@@ -958,7 +1186,7 @@ function engineBrief(studies) {
   return parts.length ? joinAnd(parts) : 'no arm here drives the engine with a known version';
 }
 const headlineStudies = (id, data) => (id === 'browser-race' ? data.studies.filter(s => s.latest) : id === 'browser-turbo' ? data.race.studies.filter(s => s.latest)
-  : id === 'ab-tests' ? data.studies : id === 'release-passes' ? [] : data.studies);
+  : id === 'ab-tests' ? data.studies : id === 'release-passes' || id === 'validation' ? [] : data.studies);
 
 const upFirst = text => text.charAt(0).toUpperCase() + text.slice(1);
 const lowFirst = text => text.charAt(0).toLowerCase() + text.slice(1);
@@ -1000,6 +1228,7 @@ function headlineFor(id, data) {
     return lowFirst(race.join('. ')) + `. ${data.gates.length} gate studies. ${upFirst(engine)}`;
   }
   if (id === 'ab-tests') return `${data.studies.length} studies with run data. The catalog has ${data.catalog.length} benchmark write-ups and includes studies without structured run data`;
+  if (id === 'validation') return validationHeadline(data);
   if (id === 'release-passes') {
     const releases = data.files.filter(f => f.kind === 'release');
     return `${releases.length} release passes (${releases[0]?.date} to ${releases.at(-1)?.date}), ${data.files.length} results files in all`;
@@ -1024,7 +1253,7 @@ function renderIndex(all) {
     'The full rules are in [LAWS](../status/LAWS.md), and the tasks and harnesses in [benchmark.md](../benchmark.md).',
   ]) + '\n');
   out.push(details('Rebuild', '```sh\nnode bench/results-hub.mjs                # collect from the raw folders this Mac has, then render\nnode bench/results-hub.mjs --render-only  # render from docs/results/data only\nnode bench/results-hub.mjs --check        # exit 1 if a page, data file or README block would change\n```\n\n' +
-    'The raw claim and race folders live outside the repo, in `~/Projects/sleight-wt/app-claim` and `~/Projects/sleight-wt/race-1017`. On a Mac without them, the generator keeps the data files already here. `--wt <dir>` points it at another copy.'));
+    'The raw claim, race and validation folders live outside the repo, in `~/Projects/sleight-wt/app-claim`, `~/Projects/sleight-wt/race-1017` and the banks under `~/Projects/sleight-wt` (any folder with a validation or re-measure `plan.json`). On a Mac without them, the generator keeps the data files already here. `--wt <dir>` points it at another copy. The benchmark runners run the collect and render once after a successful pass (`bench/hub-refresh.mjs`), and `--no-hub` or `SLEIGHT_NO_HUB=1` stops that.'));
   out.push(engineFooter(FAMILIES.flatMap(fam => headlineStudies(fam.id, all[fam.id]))) + '\n');
   return out.join('\n');
 }
@@ -1108,6 +1337,7 @@ export function exploreData(all) {
   for (const s of all['browser-turbo'].gates) add('browser-turbo', s, { title: `Gate: ${s.id}` });
   for (const s of all['browser-race'].studies) add('browser-race', s);
   for (const s of all['ab-tests'].studies) add('ab-tests', s, { title: `A/B: ${s.id}` });
+  for (const s of all.validation.studies) add('validation', s, { title: `${bankKind(s.kind)}: ${s.title}` });
   const releaseRuns = all['release-passes'].runs;
   for (const name of all['release-passes'].releaseInputs) {
     const runs = releaseRuns.filter(run => run.file === name);
@@ -1146,12 +1376,12 @@ export function pretty(value, indent = '') {
 }
 const json = value => pretty(value) + '\n';
 
-export function collect({ wt, out, excludeCovered = false }) {
+export function collect({ wt, out, excludeCovered = false, banks: extraBanks = [] }) {
   const dataDir = join(out, 'data');
   const keep = id => { const file = join(dataDir, `${id}.json`); return existsSync(file) ? readJson(file) : undefined; };
   const claimDir = join(wt, 'app-claim');
   const timeline = loadTimeline();
-  const raceDir = join(wt, 'race-1017');
+  const raceDir = raceDirs(wt);
   const all = {};
   const notes = [];
   if (isDir(join(claimDir, 'native-results-1018b'))) {
@@ -1162,7 +1392,7 @@ export function collect({ wt, out, excludeCovered = false }) {
       since: '2026-10-18T02-39', sinceNote: 'the first app-task claim pass', timeline });
   } else { all['app-claim'] = keep('app-claim'); notes.push('app-claim: raw folder missing, kept the data file'); }
   const gates = collectRunnerStudies();
-  if (isDir(raceDir)) {
+  if (raceDir.length) {
     all['browser-race'] = collectRace({ raceDir, browsers: ['safari', 'firefox'], family: 'browser-race', title: 'Safari and Firefox race', timeline, excludeCovered });
     const turboRace = collectRace({ raceDir, browsers: ['chrome', 'helium'], family: 'browser-turbo', title: 'Chrome and Helium race', timeline, excludeCovered });
     all['browser-turbo'] = { family: 'browser-turbo', title: 'Browser turbo against FowlBrowser', race: turboRace, gates: gates.filter(s => s.family === 'browser-turbo'),
@@ -1178,6 +1408,9 @@ export function collect({ wt, out, excludeCovered = false }) {
   all['ab-tests'] = { family: 'ab-tests', title: 'A/B tests and tuning experiments', studies: [...collectJsonAbs(), ...gates.filter(s => s.family === 'ab-tests')].sort((a, b) => (a.date + a.id < b.date + b.id ? -1 : 1)),
     catalog, coveredWriteUps };
   all['release-passes'] = collectReleases({ timeline });
+  const banks = collectValidation({ wt, kept: keep('validation'), banks: extraBanks });
+  if (banks.banks.length) all.validation = banks;
+  else { all.validation = keep('validation'); notes.push('validation: no bank on this Mac, kept the data file'); }
   for (const [id, data] of Object.entries(all)) if (!data) throw new Error(`${id}: no raw folder and no data file in ${dataDir}`);
   return { all, notes };
 }
@@ -1192,6 +1425,7 @@ export function render(all) {
   files['browser-turbo.md'] = renderTurboPage(all, 'browser-turbo');
   files['browser-race.md'] = renderRacePage(all, 'browser-race');
   files['ab-tests.md'] = renderAbPage(all, 'ab-tests');
+  files['validation.md'] = renderValidationPage(all, 'validation');
   files['release-passes.md'] = renderReleasePage(all, 'release-passes');
   files['README.md'] = renderIndex(all);
   for (const [name, text] of Object.entries(charts.renderCharts(all))) files[name] = text;
@@ -1222,6 +1456,7 @@ export function renderReadme(all, text = existsSync(join(ROOT, 'README.md')) ? r
 }
 
 function argValue(argv, name) { const i = argv.indexOf(name); return i < 0 ? undefined : argv[i + 1]; }
+const argValues = (argv, name) => argv.flatMap((arg, i) => (arg === name && argv[i + 1] ? [argv[i + 1]] : []));
 
 export function main(argv = process.argv.slice(2)) {
   const wt = resolve(argValue(argv, '--wt') ?? join(homedir(), 'Projects/sleight-wt'));
@@ -1229,7 +1464,7 @@ export function main(argv = process.argv.slice(2)) {
   let all, notes = [];
   if (argv.includes('--render-only')) {
     all = Object.fromEntries(FAMILIES.map(f => [f.id, readJson(join(out, 'data', `${f.id}.json`))]));
-  } else ({ all, notes } = collect({ wt, out, excludeCovered: argv.includes('--exclude-covered') }));
+  } else ({ all, notes } = collect({ wt, out, excludeCovered: argv.includes('--exclude-covered'), banks: argValues(argv, '--bank') }));
   const files = render(all);
   const readmeFile = join(ROOT, 'README.md');
   const readme = renderReadme({ ...all, 'engine-compat': readJson(join(out, 'data/engine-compat.json')) });

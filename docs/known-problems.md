@@ -973,6 +973,13 @@ compaction, so it cannot isolate wording alone. That A/B has not run live.
 
 ## Benchmark environment
 
+- The hub refresh after a pass (`bench/hub-refresh.mjs`) reads the native and app claim folders that `bench/results-hub.mjs` names
+  (`app-claim/native-results-1018b` and `app-claim/results-1018`), so a new claim pass appears only after someone points the hub at its
+  folder. The race folders are found by name (`race-MMDD` under `~/Projects/sleight-wt`), so rounds saved anywhere else stay out. Validation
+  and re-measure banks are found by their `plan.json` and need a `score.json` or `comparison.json`, and the score file doesn't keep
+  failure reasons. The refresh also rewrites tracked files (`docs/results`, the README's generated blocks) in the checkout that ran the pass. We have
+  not run it after a live pass yet, only in tests with the hub faked, and the full collect took 8.7 s on this Mac on 2026-10-21.
+
 - The agent-install test (`bench/agent-install.mjs`) confines writes, exec and Apple events, not reads. Its sandbox profile
   refuses reads of the owner's host configs and credentials folders (`~/.claude`, `~/.codex*`, `~/.cursor`, `~/.ssh`, `~/.aws`,
   `~/.gnupg`, `~/.netrc`, `~/.config/gh`). Any other file the owner's account can read, the arm can read too. Claude Code's hook

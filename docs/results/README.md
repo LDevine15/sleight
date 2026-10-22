@@ -1,4 +1,4 @@
-Benchmarks · [Native](native-claim.md) · [Apps](app-claim.md) · [Chrome and Helium](browser-turbo.md) · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
+Benchmarks · [Native](native-claim.md) · [Apps](app-claim.md) · [Chrome and Helium](browser-turbo.md) · [Safari and Firefox](browser-race.md) · [Experiments](ab-tests.md) · [Validation](validation.md) · [Releases](release-passes.md) · [Insights](insights.md) · [Interactive](https://land-o-clusters.github.io/sleight/results/explore.html)
 
 # Benchmark results
 
@@ -27,6 +27,7 @@ The [interactive page](https://land-o-clusters.github.io/sleight/results/explore
 | [Chrome and Helium: turbo against FowlBrowser](browser-turbo.md) | Turbo in Chrome and Helium, in the real-window race and the earlier gate rounds. | Chrome: lowest expected time on 10 of 13 tasks, total 258.9 s. Helium: lowest expected time on 11 of 13 tasks, total 241.8 s. | [json](data/browser-turbo.json) |
 | [Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo](browser-race.md) | sleight's engine path in Safari and Firefox against Codex, LCU, Cua and Peekaboo. | Safari: fastest on 11 of 12 tasks, the only arm with a total (592.1 s). Firefox: fastest on 11 of 12 tasks, with a total of 557.1 s. | [json](data/browser-race.json) |
 | [Experiments](ab-tests.md) | sleight against sleight, for skill, wording, tool and turbo changes. | 17 studies with run data. The catalog has 95 benchmark write-ups and includes studies without structured run data. | [json](data/ab-tests.json) |
+| [Validation: build A against build B](validation.md) | sleight against its own earlier build on the same tasks, from the validation and re-measure banks. | 1 scored bank: 1 validation, 0 re-measure. 6 more have no score file. 21 A/B groups in all. Build B has a higher expected time or a lower pass rate than build A on 37 of 72 task comparisons. Newest scored bank: validation-140-final (2026-10-20). | [json](data/validation.json) |
 | [Release passes and the earlier head-to-heads](release-passes.md) | The per-release regression passes and the first native head-to-heads. | 7 release passes (2026-10-05 to 2026-10-09), 115 results files in all. | [json](data/release-passes.json) |
 
 [Insights](insights.md) covers what the runs taught us about run-to-run variation, Haiku against Opus, which tuning paid off, and engine quirks.
@@ -38,6 +39,7 @@ The [interactive page](https://land-o-clusters.github.io/sleight/results/explore
 - [Chrome and Helium: turbo against FowlBrowser](browser-turbo.md): in Chrome, the lowest expected time on 10 of 13 and a total of 258.9 s against FowlBrowser's 447.8 s (`sleight-turbo-rel130`). In Helium, the lowest expected time on 11 of 13 and a total of 241.8 s against FowlBrowser's 338.3 s (`sleight-turbo-b5`). 14 gate studies. Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19.
 - [Safari and Firefox: the engine path against Codex, LCU, Cua and Peekaboo](browser-race.md): in Safari sleight is fastest on 11 of 12 tasks, the only arm with a total (592.1 s) (`sleight-b10`, 2026-10-18). In Firefox sleight is fastest on 11 of 12 tasks, with a total of 557.1 s (`sleight-b10`, 2026-10-18). Engine 26.1007.71326, 2026-10-18 and engine 26.1013.40934, 2026-10-19.
 - [Experiments](ab-tests.md): 17 studies with run data. The catalog has 95 benchmark write-ups and includes studies without structured run data.
+- [Validation: build A against build B](validation.md): 1 scored bank: 1 validation, 0 re-measure. 6 more have no score file. 21 A/B groups in all. Build B has a higher expected time or a lower pass rate than build A on 37 of 72 task comparisons. Newest scored bank: validation-140-final (2026-10-20).
 - [Release passes and the earlier head-to-heads](release-passes.md): 7 release passes (2026-10-05 to 2026-10-09), 115 results files in all.
 
 </details>
@@ -57,7 +59,7 @@ node bench/results-hub.mjs --render-only  # render from docs/results/data only
 node bench/results-hub.mjs --check        # exit 1 if a page, data file or README block would change
 ```
 
-The raw claim and race folders live outside the repo, in `~/Projects/sleight-wt/app-claim` and `~/Projects/sleight-wt/race-1017`. On a Mac without them, the generator keeps the data files already here. `--wt <dir>` points it at another copy.
+The raw claim, race and validation folders live outside the repo, in `~/Projects/sleight-wt/app-claim`, `~/Projects/sleight-wt/race-1017` and the banks under `~/Projects/sleight-wt` (any folder with a validation or re-measure `plan.json`). On a Mac without them, the generator keeps the data files already here. `--wt <dir>` points it at another copy. The benchmark runners run the collect and render once after a successful pass (`bench/hub-refresh.mjs`), and `--no-hub` or `SLEIGHT_NO_HUB=1` stops that.
 
 </details>
 
