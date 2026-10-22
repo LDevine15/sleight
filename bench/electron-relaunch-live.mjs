@@ -172,7 +172,14 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
     if (!matches(opened))
       throw Object.assign(Error(`COPY_LAUNCH_IDENTITY_MISMATCH: pid ${opened.pid}, expected ${realCopy()}, got ${opened.path ?? 'no path'} (${opened.bundle ?? 'no bundle'})`), { detail });
     launched.push({ pid: opened.pid });
-    await d.electron({ mode: 'ready', pid: opened.pid, bundle: app.bundleId, appPath: realCopy(), waitMs: 30000 });
+    // The launch's own kernel birth, when it reported one, pins readiness and the quit below to this exact process.
+    const birth = /^[1-9]\d*\.\d{6}$/.test(opened.pidBirth ?? '') ? { pidBirth: opened.pidBirth } : {};
+    try { await d.electron({ mode: 'ready', pid: opened.pid, bundle: app.bundleId, appPath: realCopy(), waitMs: 30000, ...birth }); }
+    catch (error) {
+      // A launch that never became ready is quit at once (the helper rechecks pid, bundle, path and birth), as below.
+      await quitCopy(opened.pid, 20000, undefined, birth).catch(() => {});
+      throw error;
+    }
     for (const started = d.now(); !engaged(); await d.sleep(250)) {
       if (d.now() - started > 20000) {
         await quitCopy(opened.pid, 20000).catch(() => {});
@@ -181,9 +188,10 @@ export function liveRelaunchDriver(app, { root, io = {}, cardLog, python = 'pyth
     }
     return opened;
   }
-  // The root is a real path (the runner resolves it), so the copy's path is what NSRunningApplication reports.
+  // The root is a real path (the runner resolves it). NSRunningApplication may report it without /private; the helper
+  // resolves this path the same way before comparing (real-electron.js expectedPath).
   const realCopy = () => copyPath;
-  const quitCopy = (pid, waitMs, allowForce) => d.electron({ mode: 'quit', pid, bundle: app.bundleId, appPath: realCopy(), waitMs, ...(allowForce === false ? { allowForce: false } : {}) });
+  const quitCopy = (pid, waitMs, allowForce, extra = {}) => d.electron({ mode: 'quit', pid, bundle: app.bundleId, appPath: realCopy(), waitMs, ...extra, ...(allowForce === false ? { allowForce: false } : {}) });
   const tool = async (name, args) => {
     const started = d.now(), reply = await (active ?? { send: async () => ({ ok: false, error: 'V3_WORKER_UNAVAILABLE' }) }).send('call', { request: { name, arguments: args } });
     if (signal?.aborted && (!reply.ok || reply.result?.isError) || /effect[ -]unknown/i.test(reply.result?.text ?? '')) uncertainEffect();

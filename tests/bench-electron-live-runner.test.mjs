@@ -359,6 +359,24 @@ test('a grace deadline reached during relaunch Quit prevents later signals and c
   const result = await driver.cleanup();
   assert.equal(result.confirmed, false); assert.equal(existsSync(driver.paths().base), true); assert.deepEqual(w.kills, []);
 });
+test('a relaunch copy that fails readiness is quit at once by its launch birth, and cleanup confirms', async t => {
+  const { app, root, deps, w } = relaunchWorld(t), electron = deps.electron;
+  deps.electron = async request => {
+    if (request.mode === 'ready') { w.electron.push(request); throw Error('ELECTRON_HELPER_FAILED: Launched editor identity changed before readiness (path)'); }
+    const r = await electron(request);
+    return request.mode === 'launch' ? { ...r, process: { ...r.process, pidBirth: '1000.000123' } } : r;
+  };
+  const driver = liveRelaunchDriver(app, { root, deps });
+  await assert.rejects(driver.relaunch(), /identity changed before readiness \(path\)/);
+  const ready = w.electron.find(r => r.mode === 'ready'), quit = w.electron.find(r => r.mode === 'quit');
+  assert.equal(ready.pidBirth, '1000.000123');
+  assert.deepEqual([quit.pid, quit.pidBirth, quit.appPath, 'allowForce' in quit], [300, '1000.000123', ready.appPath, false]);
+  assert.ok(!w.procs.some(p => p.pid === 300), 'the failed launch was collected before cleanup');
+  const result = await driver.cleanup();
+  assert.equal(result.confirmed, true, JSON.stringify(result));
+  assert.equal(existsSync(driver.paths().base), false);
+  assert.deepEqual(w.kills, []);
+});
 test('cancellation inside relaunch host-loss stops its next internal tool and host signal', async t => {
   const { app, root, deps, w } = relaunchWorld(t), controller = new AbortController(), create = deps.forkWorker;
   let armed = false, calls = 0;

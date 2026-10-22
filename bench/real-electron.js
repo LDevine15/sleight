@@ -33,16 +33,24 @@ function axPair(value, type) {
 
 var DONT_SAVE = ["Don't Save", 'Don’t Save'];
 
+// The expected bundle path in the same form running() reports. NSURL symlink resolution drops a leading /private
+// from an existing path, so a copy under realpath('/tmp') (/private/tmp/...) comes back as /tmp/... (2026-10-22 relaunch).
+// Both sides resolve to the same existing file; a different bundle still differs.
+function expectedPath(request, api) {
+  return typeof api.canonicalPath === 'function' ? api.canonicalPath(request.appPath) : request.appPath;
+}
+
 // request: { pid, bundle, appPath, waitMs }. api: running(pid) -> null | { pid, bundle, path, terminate(), forceTerminate() },
 // dontSave(pid) -> buttons, press(button). clock: now(), wait(ms), emit(value).
 function quitElectron(request, api, clock) {
   var pid = Number(request.pid), started = clock.now(), waitMs = request.waitMs > 0 ? request.waitMs : 20000;
   var accepted = false, presses = 0, forced = false;
   if (!(pid > 0) || !request.bundle || !request.appPath) throw new Error('Invalid editor quit request');
+  var appPath = expectedPath(request, api);
   function identity(target) {
     var actual = target.pid === -1 ? pid : target.pid;
     // A reused pid belongs to some other program, and the owner's own instance has a different pid: never quit either.
-    if (actual !== pid || target.bundle !== request.bundle || target.path !== request.appPath ||
+    if (actual !== pid || target.bundle !== request.bundle || target.path !== appPath ||
         request.launchedAtMs !== undefined && target.launchedAtMs !== request.launchedAtMs ||
         request.pidBirth !== undefined && target.pidBirth !== request.pidBirth) {
       throw new Error('Launched editor identity changed; quit refused (pid ' + actual + ', bundle ' + target.bundle + ')');
@@ -87,12 +95,14 @@ function quitElectron(request, api, clock) {
 function waitReady(request, api, clock) {
   var pid = Number(request.pid), started = clock.now(), waitMs = request.waitMs > 0 ? request.waitMs : 30000;
   if (!(pid > 0) || !request.bundle || !request.appPath) throw new Error('Invalid editor readiness request');
+  var appPath = expectedPath(request, api);
   while (true) {
     var target = api.running(pid);
     if (!target) throw new Error('Launched editor exited before its window opened');
-    if ((target.pid === -1 ? pid : target.pid) !== pid || target.bundle !== request.bundle || target.path !== request.appPath) {
-      throw new Error('Launched editor identity changed before readiness');
-    }
+    // The field that differed is a fixed name, so the receipt says which check refused without carrying the path.
+    var changed = (target.pid === -1 ? pid : target.pid) !== pid ? 'pid' : target.bundle !== request.bundle ? 'bundle' :
+      target.path !== appPath ? 'path' : request.pidBirth !== undefined && target.pidBirth !== request.pidBirth ? 'birth' : '';
+    if (changed) throw new Error('Launched editor identity changed before readiness (' + changed + ')');
     var windows = api.windowCount(pid);
     if (windows > 0) { var receipt = { stage: 'ready', windows: windows, elapsedMs: clock.now() - started }; clock.emit(receipt); return receipt; }
     if (clock.now() - started >= waitMs) throw new Error('Launched editor window did not open within ' + Math.round(waitMs / 1000) + ' seconds');
@@ -110,10 +120,11 @@ function newWindow(request, api, clock) {
       typeof root !== 'string' || root.charAt(0) !== '/' || /(?:^|\/)\.\.?(?:\/|$)|[\0\r\n]/.test(root) ||
       typeof profile !== 'string' || profile.indexOf(root + '/') !== 0 || /(?:^|\/)\.\.?(?:\/|$)|[\0\r\n]/.test(profile))
     throw new Error('WINDOW_SETUP_REQUEST');
+  var appPath = expectedPath(request, api);
   function identity() {
     var target = api.running(pid);
     if (!target || target.pid !== pid || target.pidBirth !== request.pidBirth ||
-        target.bundle !== request.bundle || target.path !== request.appPath) throw new Error('WINDOW_SETUP_IDENTITY_CHANGED');
+        target.bundle !== request.bundle || target.path !== appPath) throw new Error('WINDOW_SETUP_IDENTITY_CHANGED');
   }
   function deadline() {
     if (clock.now() - started >= waitMs) throw new Error('WINDOW_SETUP_TIMEOUT');
@@ -236,15 +247,17 @@ function nativeElectron() {
     if (depth > 0) list(element, 'AXChildren').forEach(function (child) { buttons(child, depth - 1, found); });
     return found;
   }
+  function resolved(url) { return url && !url.isNil() ? unwrap(url.URLByResolvingSymlinksInPath.path) : ''; }
   function describe(app) {
-    var url = app.bundleURL;
     return { pid: Number(app.processIdentifier), bundle: unwrap(app.bundleIdentifier),
-      path: url && !url.isNil() ? unwrap(url.URLByResolvingSymlinksInPath.path) : '',
+      path: resolved(app.bundleURL),
       launchedAtMs: app.launchDate && !app.launchDate.isNil() ? Number(app.launchDate.timeIntervalSince1970) * 1000 : null,
       pidBirth: processBirth(Number(app.processIdentifier)),
       terminate: function () { return !!app.terminate; }, forceTerminate: function () { return !!app.forceTerminate; } };
   }
   return {
+    // The same resolution describe() applies to bundleURL, for the request's expected path.
+    canonicalPath: function (path) { return resolved($.NSURL.fileURLWithPath(path)); },
     trusted: function () { return !!$.AXIsProcessTrusted(); },
     // Exact identity: this process's own menu bar, role AXMenuBarItem, title exactly "File", enabled.
     // The element comes from AXUIElementCreateApplication(pid), so the owning process is fixed by construction.
