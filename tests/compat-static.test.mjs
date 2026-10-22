@@ -14,7 +14,8 @@ const plist = version => `<?xml version="1.0" encoding="UTF-8"?>\n<plist version
 
 function temp(t) {
   const dir = trackTemp(mkdtempSync(join(tmpdir(), 'sleight-compat-static-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // A download stopped at its size limit can still be opening its file when the test ends, so retry the removal.
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
   return dir;
 }
 
