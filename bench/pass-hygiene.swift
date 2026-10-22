@@ -9,7 +9,9 @@ func attr(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
     return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
 }
 func identity(_ app: NSRunningApplication) -> [String: Any]? {
-    guard let start = app.launchDate?.timeIntervalSince1970, let bundle = app.bundleIdentifier else { return nil }
+    // A browser the benchmark starts from its executable has no AppKit launch date, so use the kernel's start time.
+    guard let bundle = app.bundleIdentifier,
+          let start = app.launchDate?.timeIntervalSince1970 ?? processInfo(app.processIdentifier)?["start"] as? Double else { return nil }
     return ["pid": Int(app.processIdentifier), "start": start, "bundle": bundle, "name": app.localizedName ?? ""]
 }
 func processInfo(_ pid: Int32) -> [String: Any]? {
