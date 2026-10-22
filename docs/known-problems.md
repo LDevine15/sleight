@@ -65,6 +65,11 @@ refuses terminals and OpenAI's own apps. See [approvals and guards](#approvals-a
   heading and keeps `releaseReady: false`. Release mode requires a dated heading and the intended tag at that exact
   commit. Private terms need an external file and human review. A generic Linux account's history scan does not
   prove the owner's identity was checked. Publication remains a separate owner decision.
+<a id="native-harness-in-141"></a>
+- The 1.4.1 benchmark harness makes native tasks slower. The 1.4.0 plugin's mean total on 8 native held-out tasks was
+  420.7 s on the 1.4.0 harness (5 runs) and 515.8 s on the 1.4.1 harness (3 runs), with more model calls on
+  textedit-two-windows, word-brief and textedit-notes-table. The cause is not found yet. The harness's fixture setup
+  changed most (Finder ownership and recovery). Native results from the two harnesses are not comparable until then.
 - The final-build driver has only offline proof. It rejected the historical `validation-140-final` bank because
   the task, prompt or harness changed. The architect must select compatible A evidence or collect a fresh A/B,
   then run three new rounds per selected group on the final integrated commit. Later merges require another run.

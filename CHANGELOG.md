@@ -1,120 +1,91 @@
 # Changelog
 
-## 1.4.1 (unreleased)
+## 1.4.1 (2026-10-22)
 
-### README and documentation
+### Electron turbo
 
-- The first native reference can reuse documentation captured during the existing isolated startup call.
-  On the qualified engine format, it removes 201 characters of API whitespace and preserves the policy and
-  surrounding text. Unknown formats and uncertain origin keep the full reference. A live relay comparison
-  passed on engine 26.1013.40934. Latency and token savings have not been measured.
-- The README has a three-line native benchmark summary. Full methods, model and engine versions, run counts and
-  earlier comparisons remain in the results pages. A Turbo section shows the published Chrome and Helium results
-  and gives commands to turn it on and off.
-- Requirements state that the ChatGPT desktop app is required in `/Applications`. A ChatGPT account or sign-in
-  isn't required. Published documentation has been reviewed for clarity while retaining its measurements and caveats.
-- An offline tool prepares a comparison GIF from approved recordings with measured clocks and reviewed pixel
-  redaction. It refuses outputs of 5,000,000 bytes or more. The storyboard awaits owner-approved captures after
-  the Haiku quota reset, followed by review before publication.
+- Electron turbo passed live qualification for the first time. One combined run on build ff8be8b0 (2026-10-22)
+  passed qualification 22/22 and relaunch 9/9, with a person answering all 6 approval cards in 1.1 to 3.3 s.
+  Earlier attempts on the way there scored 13/22, 20/22 and 21/22.
+- A reply and the events that follow it now reach the worker in the order the app sent them. Before, a worker could
+  see an event ahead of its reply and lose the main page's execution context.
+- A revoke during a batch is reported as an error: `ELECTRON_PARKED: revoked, N of M steps ran`. Before, the batch
+  returned an ordinary result.
+- Relaunch compares the app's path after canonicalising `/private/tmp` and `/tmp`, quits a copy that fails
+  readiness, and treats an empty bundle id during the app's exit as not yet registered. A host that restarts and
+  reattaches now authorizes the recorded launch, so it admits the app's pages again (before, the worker saw zero tabs).
 
-### Version and release checks
+### Approvals and cards
 
-- Plugin manifests and the Claude and Cursor marketplace entries report 1.4.1. Codex's marketplace reads the
-  plugin manifest. Doctor prints the installed version, and offline checks compare it with the manifests and
-  newest numeric CHANGELOG heading.
-- A test-path guard rejects hardcoded macOS temporary and home paths. Offline fixtures use the platform temporary
-  directory where their ownership checks permit it. A Node 24 Docker preflight prepares an exact-commit Git snapshot,
-  mounts it read-only and installs locked Linux dependencies in a writable container copy before running the suite.
-  Docker's init process reaps orphaned children, and Git and npm use a disposable home. The preflight awaits
-  child collection and confirms container cleanup after cancellation. An optional Colima wrapper keeps
-  VM state and Docker configuration private, mounts only the prepared checkout, and verifies VM teardown.
-  Copy preparation failures report bounded diagnostics,
-  including destination state and a relative-path hash for recognized collisions. Docker starts outside the copy
-  destination so the guarded copy can create it. The overwrite guard is unchanged.
-- The preflight script checks versions, CHANGELOG and tag agreement, placeholders, private release-note data,
-  history findings and Linux test evidence through the shared helper and receipt contract. Candidate mode accepts
-  an unreleased heading and keeps `releaseReady: false`. Both modes verify the same clean commit through completion.
-  Release mode requires a dated heading and the intended tag at that exact commit. These checks run without a model.
-- A validation driver reruns named tasks' original groups three times on the final integrated build. It compares
-  the selected tasks with compatible recorded A rounds and fails on a higher expected time or lower pass rate.
-  It rejects native evidence with hygiene failures and output banks that overlap reused A evidence.
-  Final-build measurements need compatible evidence.
+- When an approval card closes, the card host returns focus to the app that was in front, so the benchmark app no
+  longer takes focus after the person's click. A person's own app switch wins.
+- Cards use one horizontal button row sized to their choices. Electron cards keep the app name, version, bundle and
+  permission explanation visible, with technical identity fields under Details.
+- Permission buttons read Don't allow, Allow once, Allow this session and Always allow, and each card offers only
+  its supported scopes. Restart cards keep Cancel and Quit and reopen.
+- Shell approvals open a styled sleight card with its icon, and the glove reopens it. Identical shell retries join
+  the call that is waiting and run once. Action and payment requests still ask, and each gets its own decision.
+- The engine path's payment card escapes directional controls in the site, amount and button it shows, as the
+  request and styled fields already do.
+- Cards appear even while their host is inactive, and decisions are bound to pending request IDs. An owned
+  fake-card run refused Accessibility, PID-posted and spoofed-HID input, then accepted a physical click.
+- Grok Bot approvals show one styled card with its sound, once (the owner checked a Chess request on 2026-10-22,
+  and a same-session repeat asked nothing). Menu overflow, transport and shared-host operation still need
+  qualification.
 
-### Grok Bot and Electron approvals
+### Turbo receipt
 
-- Approval cards use one horizontal button row, with width based on their choices. The ordinary card's extra
-  bottom space is removed. Electron cards keep the app name, version, bundle and permission explanation visible;
-  technical identity fields open under Details. Feedback takes space only when present. Choices, sound and
-  physical-input checks are unchanged. Small displays keep long content scrollable.
-- Permission labels state their scope with Allow once, Allow this session and Always allow. Refusal says Don't allow.
-  The buttons run from refusal through increasing scope, and each card offers only its supported scopes.
-  Restart cards keep Cancel and Quit and reopen.
-- The isolated Electron workspace enables VS Code's accessible editor. A failed lookup reports its known
-  accessibility warning without targeting an unnamed textbox. Native setup failures retain bounded helper
-  diagnostics, and background failures retain their measured samples. Qualification thresholds are unchanged.
+- A server no longer replaces the turbo receipt of another live copy of sleight. The copy with the newer plugin
+  version takes the receipt, doctor and status report which copy holds it, and a failed write of the ownership
+  sidecar is reported. Before, a new Claude Code session started from a 1.4.0 checkout overwrote a 1.4.1 receipt.
 
-- Electron's internal admin client can await peer closure before reconnecting, avoiding a false foreign-host
-  refusal while the previous connection closes. Errors and timeout report an unconfirmed close. Concurrent
-  administrators and incorrect secrets remain refused.
+### Documentation and results
 
-- Shell approvals open a styled sleight card with its icon. The glove reopens that card. Identical shell
-  retries join a call waiting for approval and execute once. Verified app approvals honor preapprovals and session
-  grants. Action and payment confirmations still ask.
-- Distinct action and payment requests get separate decisions even when their terms match. The guard probe
-  collects the synthetic fixture before starting a separate physical-click fixture, so delayed synthetic
-  acceptance cannot count as the person's answer.
-- Approval cards are visible while their accessory host is inactive. A combined owned fake-card run refused
-  Accessibility, PID-posted and spoofed-HID input, collected that fixture, then accepted the owner's physical
-  click in a fresh fixture. All seven lifecycle checks and cleanup passed, and all five children exited 0.
-- Cold helper compilation now shares startup preparation with the pending shell request. The original call budget
-  reserves 120 seconds for the person's answer. Expired requests cannot present a late card, and session shutdown
-  waits for compiler collection. A valid cached helper still works without an available toolchain.
-- A real Chess request through Grok Bot failed before the cold helper was ready. One explicit retry showed the
-  card and icon, accepted the owner's Allow, and a same-session repeat asked no further question. The owner heard
-  no sound. On 2026-10-21, the owner reported a fresh Grok Bot Chess request succeeded with one normal card and
-  normal sound. A same-session repeat asked no further question. Menu overflow, transport and shared-host operation
-  still need qualification, including GL9 and Calculator/TextEdit card counts through Grok Bot's priya.
-- Electron debugger and relaunch requests use the same automatic styled presenter, with the installed icon and
-  initial-display sound. Menu review reopens the panel quietly. Existing choices and input guards are preserved;
-  relaunch remains a separate decision with its foreground warning. Native compilation and policy checks passed.
-  The owner rejected the live Electron layout on 2026-10-21. The revised layout awaits its live retry.
-  Qualification logs separate requests and answers from uncorrelated observations of a matching card.
-- The benchmark runner stops accepting work on interruption and waits for accepted operations to settle.
-  Uncertain effects retain the app, its pipe owners, evidence and lock. Release requires a completed drain,
-  confirmed cleanup and a saved terminal receipt. Offline cancellation and recovery checks passed;
-  the 2026-10-21 interruption collected the fixture and workers, removed its profile and released the lock.
-  That attempt completed 9 of 18 qualification cells and did not run relaunch, so it does not qualify Electron.
-  The earlier interrupted fixture was recovered through its normal Quit, followed by verified process exit and lock release.
+- The README has a three-line native benchmark summary and a Turbo section with the published Chrome and Helium
+  results and commands to turn it on and off. It states that the ChatGPT desktop app is required in `/Applications`
+  and that no ChatGPT sign-in is.
+- The benchmark hub (charts, hub pages, interactive page and README results) refreshes after each completed
+  benchmark pass. The release preflight fails on a stale hub.
+- The first native reference can reuse documentation captured during startup, which removes 201 characters of
+  API whitespace on the qualified engine format. Latency and token savings are not measured.
+- An offline tool prepares a comparison GIF from approved recordings and refuses outputs of 5,000,000 bytes or more.
 
-### Finder fixtures and ghost hand
+### Release and benchmark tooling
 
-- The Finder recovery candidate requires three bounded AXWindows timeouts on the same process before one relaunch,
-  then waits at most 30 seconds for readiness. Folder setup retains exactly one proven new window and uses its
-  Go to Folder sheet. Uncertain window ownership stops setup and keeps cleanup unconfirmed.
-- Finder smoke receipts record setup, foreground samples and cleanup. Inventory refusals include diagnostic
-  details when available. Finder process identity uses the kernel's exact birth time when AppKit has no launch date.
-  Native calibration corrected role-type diagnostics. Setup and cleanup preserve the complete baseline inventory,
-  including inert scroll areas, with stable reference identities and exact roles. Only new windows can become
-  fixture candidates. The latest smoke failed after menu selection and before retaining a window identity;
-  automated window cleanup remains unconfirmed. The owner closed irrelevant windows on 2026-10-21, after which
-  a durable owner-release receipt permitted removal of the exact empty lock. The evidence remains retained. Setup, cancellation,
-  cleanup ownership, lock retention and receipt privacy still need live qualification. The owner approved exclusive
-  setup and the remaining window-focus assumption.
-- Finder failures preserve fixed reason categories and bounded native error metadata before stderr masking.
-  Separate setup, cleanup and menu-cleanup diagnostics exclude owner text. They cannot recover the earlier
-  discarded error or identify its unretained window.
-- GH8 remains blocked on supported action events for engine-persisted Always allow grants and correct retry/paste
-  correlation. The partial pacing change stays unmerged. Existing visible-hand behavior and its off default remain unchanged.
+- Plugin manifests and the Claude and Cursor marketplace entries report 1.4.1 (the 1.4.0 release carried a manifest
+  still saying 1.3.1). Doctor prints the installed version, and offline checks compare it with the manifests and
+  the newest CHANGELOG heading.
+- An offline preflight for releases checks versions, tag, placeholders, private release-note data, history and Linux
+  test evidence. A Node 24 Docker preflight (optionally through Colima) runs the suite on locked Linux dependencies.
+  A test-path guard rejects hardcoded macOS temporary and home paths.
+- A validation driver reruns named tasks three times on the final build and fails on a higher expected time or lower
+  pass rate than the recorded A rounds. A workflow-documentation A/B driver has offline evidence only.
+- The benchmark runner waits for accepted operations to settle on interruption and keeps the app, evidence and
+  lock when an effect is uncertain.
 
-### Benchmark preparation
+### Not qualified
 
-- A workflow-documentation A/B driver pins both sides to the same build, alternates the flag and stops on native
-  permission refusals, including refusals followed by a passing outcome. It has only offline test and review evidence.
-- Electron qualification preparation uses one resolved Python executable for launch and cleanup, and private
-  diagnostics in relaunch workers. Its approved native setup creates a second benchmark VS Code window before
-  measurement, with process and profile checks. The host-loss launch has the same bounded foreground allowance
-  as the initial benchmark launch. Model-backed runs wait for the planned quota reset and an owner-approved away
-  window. No performance improvement is claimed for either preparation.
+- An Electron browser fill stopped by a revoke still returns a plain result instead of the revoke error. The
+  reattach review's lower-severity findings are deferred to 1.4.2.
+- Finder fixture setup, cancellation and cleanup ownership have no live qualification. The latest Finder smoke failed
+  before retaining a window identity.
+- GH8 (visible-hand pacing) is blocked on supported action events for engine-persisted Always allow grants. The
+  partial change is unmerged and the hand's off default is unchanged.
+- Grok Bot still needs qualification for menu overflow, transport, shared-host operation and card counts through
+  its shell.
+
+### Validation
+
+Run on 2026-10-22 with Haiku 5.5 at high effort on engine 26.1016.51333. Both builds ran the same 1.4.1 benchmark
+harness for the native comparison.
+
+- Chrome turbo, 13 tasks, 3 runs a side: both builds passed 39 of 39. Total expected time was 213.0 s for 1.4.0 and
+  218.9 s for 1.4.1, with 1.4.1 faster on 6 of the 13 tasks.
+- Native held-out tasks, 8 of the 10 (the two Finder tasks are out while the Finder fixture is unqualified): the
+  mean total was 515.8 s for 1.4.0 (3 runs, 18 of 24 passed) and 501.7 s for 1.4.1 (7 runs, 42 of 56 passed).
+- One Opus 5.5 round of the 13 Chrome tasks on 1.4.1 passed 13 of 13 in 237.3 s.
+- The 1.4.1 harness itself makes native tasks slower: 1.4.0 measured 420.7 s on its own harness (5 runs). Results
+  from the two harnesses are not comparable until that is found.
 
 ## 1.4.0 (2026-10-20)
 
