@@ -8,10 +8,11 @@ func attr(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
     var value: CFTypeRef?
     return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
 }
-func identity(_ app: NSRunningApplication) -> [String: Any]? {
-    // A browser the benchmark starts from its executable has no AppKit launch date, so use the kernel's start time.
-    guard let bundle = app.bundleIdentifier,
-          let start = app.launchDate?.timeIntervalSince1970 ?? processInfo(app.processIdentifier)?["start"] as? Double else { return nil }
+func identity(_ app: NSRunningApplication, kernelFallback: Bool = false) -> [String: Any]? {
+    // The cover check's snapshot also counts regular apps without an AppKit launch date, such as a browser the benchmark
+    // starts from its executable, using the kernel's start time. Hygiene snapshots keep the AppKit-only identity.
+    let kernelStart = kernelFallback && app.activationPolicy == .regular ? processInfo(app.processIdentifier)?["start"] as? Double : nil
+    guard let bundle = app.bundleIdentifier, let start = app.launchDate?.timeIntervalSince1970 ?? kernelStart else { return nil }
     return ["pid": Int(app.processIdentifier), "start": start, "bundle": bundle, "name": app.localizedName ?? ""]
 }
 func processInfo(_ pid: Int32) -> [String: Any]? {
@@ -71,7 +72,7 @@ func snapshot(_ includeFloating: Bool) throws -> [String: Any] {
     guard let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
         throw failure("CGWindowList unavailable")
     }
-    let apps = NSWorkspace.shared.runningApplications.compactMap(identity)
+    let apps = NSWorkspace.shared.runningApplications.compactMap { identity($0, kernelFallback: includeFloating) }
     var rows: [[String: Any]] = []
     var axWindows: [Int: [AXUIElement]] = [:]
     if AXIsProcessTrusted() {
