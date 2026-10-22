@@ -46,16 +46,19 @@ export function transportMethodAllowed(method) {
 
 export class PipeTransport extends EventEmitter {
   // firstId: the id before the first command's. CDP ids are 32-bit; the pipe keeper's own command uses 2**31 - 2.
-  constructor({ input, output, maxFrameBytes = 1024 * 1024, maxPending = 256, maxQueuedBytes = 8 * 1024 * 1024, timeoutMs = 5000, firstId = 0, onCdpFailure, onQueueFailure }) {
+  // maxInboundRecords/maxInboundBytes bound the received records waiting behind a reply (see receive).
+  constructor({ input, output, maxFrameBytes = 1024 * 1024, maxPending = 256, maxQueuedBytes = 8 * 1024 * 1024, timeoutMs = 5000, firstId = 0,
+    maxInboundRecords = 4096, maxInboundBytes = maxQueuedBytes, onCdpFailure, onQueueFailure }) {
     super();
-    for (const value of [maxFrameBytes, maxPending, maxQueuedBytes, timeoutMs]) {
+    for (const value of [maxFrameBytes, maxPending, maxQueuedBytes, timeoutMs, maxInboundRecords, maxInboundBytes]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error('invalid pipe bound');
     }
     if (maxPending > 256) throw new Error('invalid pipe bound');
     if (!Number.isSafeInteger(firstId) || firstId < 0 || firstId > 2 ** 30) throw new Error('invalid pipe bound');
-    Object.assign(this, { input, output, maxFrameBytes, maxPending, maxQueuedBytes, timeoutMs, onCdpFailure, onQueueFailure });
+    Object.assign(this, { input, output, maxFrameBytes, maxPending, maxQueuedBytes, timeoutMs, maxInboundRecords, maxInboundBytes, onCdpFailure, onQueueFailure });
     this.pending = new Map(); this.routes = new Map(); this.writes = new Map(); this.sequence = firstId; this.buffer = Buffer.alloc(0);
     this.failed = false; this.blocked = false; this.queuedBytes = 0; this.drainVersion = 0; this.inFlight = new Set();
+    this.inbound = []; this.inboundBytes = 0; this.gate = undefined; this.receiving = false; this.dispatching = false;
     output.on('data', chunk => this.receive(chunk));
     output.on('end', () => this.fail(new Error('pipe EOF')));
     output.on('error', error => this.fail(error));
@@ -122,7 +125,8 @@ export class PipeTransport extends EventEmitter {
     if (this.flushing) return;
     this.flushing = true;
     try {
-      while (!this.failed && !this.blocked && this.writes.size) {
+      // A received record not yet dispatched (a detach, a crash) may revoke the route a queued write uses: it goes first.
+      while (!this.failed && !this.blocked && this.writes.size && !this.receiving && !this.inbound.length) {
         const [id, entry] = this.writes.entries().next().value;
         this.removeWrite(id); entry.write();
       }
@@ -138,42 +142,80 @@ export class PipeTransport extends EventEmitter {
     for (const entry of [...this.writes.values()]) if (matches(entry.owner)) entry.finish(new Error(reason));
   }
 
+  // Received records go through one FIFO in wire order. Events dispatch synchronously until a reply is dispatched.
+  // A reply only resolves a Promise, and its consumers (transportSend's continuation, the host's .then that
+  // forwards it to the worker) run in later microtasks; so after a reply the next record waits for setImmediate,
+  // or an event right behind it on the wire would reach the worker first. Playwright installs its Runtime
+  // listeners in Page.getFrameTree's .then, so such an event (the MAIN context) was lost. Records from later
+  // chunks join the same FIFO, and writes wait while it holds anything (see flush).
   receive(chunk) {
     if (this.failed) return;
-    // Slice before buffering: one oversized chunk cannot allocate an unbounded bank.
-    let start = 0;
-    while (start < chunk.length) {
-      const end = chunk.indexOf(0, start);
-      const stop = end < 0 ? chunk.length : end;
-      if (this.buffer.length + stop - start > this.maxFrameBytes) return this.fail(new Error('inbound frame too large'));
-      this.buffer = Buffer.concat([this.buffer, chunk.subarray(start, stop)]);
-      if (end < 0) return;
-      try {
-        const message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(this.buffer));
-        if (!message || typeof message !== 'object' || Array.isArray(message)) throw new Error('invalid pipe message');
-        if (Object.hasOwn(message, 'id')) {
-          const finish = this.pending.get(message.id);
-          // A reply belongs to exactly the route its request used, and carries a result or an error, never both or neither.
-          if (finish && (!this.inFlight.has(message.id) || message.sessionId !== this.routes.get(message.id) ||
-              Object.hasOwn(message, 'result') === Object.hasOwn(message, 'error'))) throw new Error('invalid pipe reply');
-          finish?.(message.error ? Object.assign(new Error(message.error.message || 'CDP error'), { dispatched: true, cdp: true, code: message.error.code }) : null, message.result);
-        } else {
+    const outer = this.receiving; // a listener's reentrant receive() must not end the outer one's write hold
+    this.receiving = true;
+    try {
+      // Slice before buffering: one oversized chunk cannot allocate an unbounded bank.
+      let start = 0;
+      while (start < chunk.length && !this.failed) {
+        const end = chunk.indexOf(0, start);
+        const stop = end < 0 ? chunk.length : end;
+        if (this.buffer.length + stop - start > this.maxFrameBytes) return this.fail(new Error('inbound frame too large'));
+        this.buffer = Buffer.concat([this.buffer, chunk.subarray(start, stop)]);
+        if (end < 0) return;
+        let message;
+        try {
+          message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(this.buffer));
+          if (!message || typeof message !== 'object' || Array.isArray(message)) throw new Error('invalid pipe message');
           // Private NUL transport event -> the v3 session event shape {method, params, sessionId?}.
-          if (typeof message.method !== 'string' || !methodPattern.test(message.method) ||
+          if (!Object.hasOwn(message, 'id') && (typeof message.method !== 'string' || !methodPattern.test(message.method) ||
               message.params !== undefined && !plainObject(message.params) ||
-              message.sessionId !== undefined && !sessionPattern(message.sessionId)) throw new Error('invalid pipe event');
+              message.sessionId !== undefined && !sessionPattern(message.sessionId))) throw new Error('invalid pipe event');
+        } catch (error) { return this.fail(error); }
+        const bytes = this.buffer.length + 1;
+        this.buffer = Buffer.alloc(0); start = end + 1;
+        if (this.inbound.length >= this.maxInboundRecords || this.inboundBytes + bytes > this.maxInboundBytes) {
+          this.queueFailure('inbound bound');
+          return this.fail(new Error('inbound queue full'));
+        }
+        this.inbound.push({ message, bytes }); this.inboundBytes += bytes;
+        this.dispatchInbound();
+      }
+    } finally {
+      this.receiving = outer;
+      this.flush();
+    }
+  }
+
+  dispatchInbound() {
+    if (this.dispatching) return; // a listener's reentrant receive() leaves its records to this loop
+    this.dispatching = true;
+    try {
+      while (!this.failed && this.gate === undefined && this.inbound.length) {
+        const { message, bytes } = this.inbound.shift();
+        this.inboundBytes -= bytes;
+        if (!Object.hasOwn(message, 'id')) {
           // A throwing listener must not turn into a pipe fault.
           try { this.emit('event', Object.freeze({ method: message.method, params: message.params ?? {},
             ...(message.sessionId === undefined ? {} : { sessionId: message.sessionId }) })); } catch { /* listener error */ }
+          continue;
         }
-      } catch (error) { return this.fail(error); }
-      this.buffer = Buffer.alloc(0); start = end + 1;
-    }
+        const finish = this.pending.get(message.id);
+        // A reply belongs to exactly the route its request used, and carries a result or an error, never both or neither.
+        if (finish && (!this.inFlight.has(message.id) || message.sessionId !== this.routes.get(message.id) ||
+            Object.hasOwn(message, 'result') === Object.hasOwn(message, 'error'))) return this.fail(new Error('invalid pipe reply'));
+        if (!finish) continue; // a late reply to a request already finished (timeout, cancel) changes nothing
+        finish(message.error ? Object.assign(new Error(message.error.message || 'CDP error'), { dispatched: true, cdp: true, code: message.error.code }) : null, message.result);
+        // Even with nothing queued yet: a stream can emit buffered chunks back to back in one task.
+        this.gate = setImmediate(() => { this.gate = undefined; this.dispatchInbound(); this.flush(); });
+      }
+    } finally { this.dispatching = false; }
   }
 
   fail(error) {
     if (this.failed) return;
     this.failed = true; this.buffer = Buffer.alloc(0);
+    // Synchronous: nothing received but not yet dispatched is delivered after a fault.
+    if (this.gate !== undefined) clearImmediate(this.gate);
+    this.gate = undefined; this.inbound = []; this.inboundBytes = 0;
     for (const finish of [...this.pending.values()]) finish(new Error(error.message));
     // Never destroy/end the last writer on revoke, timeout or malformed input.
     this.emit('fault', error);

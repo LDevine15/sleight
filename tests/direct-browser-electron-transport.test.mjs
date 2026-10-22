@@ -9,6 +9,8 @@ import { errorFrame } from '../plugins/sleight/lib/direct-browser/electron-host.
 import { recipe } from './fixtures/electron-graph.mjs';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
+// Back-to-back replies (one per cleanup detach) are dispatched one setImmediate apart: wait until every answer is in.
+const settled = async h => { for (let i = 0; i < 50 && (i === 0 || h.broker.pipe.pending.size || h.broker.pipe.gate !== undefined); i++) await tick(); };
 
 function harness(options = {}, { targetInfos = new Map() } = {}) {
   const input = new PassThrough(), output = new PassThrough();
@@ -46,7 +48,13 @@ function harness(options = {}, { targetInfos = new Map() } = {}) {
 }
 const ready = async options => { const h = harness(options); await h.broker.start({}); return h; };
 const methods = h => h.frames.map(frame => frame.method + (frame.sessionId ? '@' + frame.sessionId : ''));
-const attach = async (h, client, targetId = 'T1') => (await h.broker.transportSend(client, { method: 'Target.attachToTarget', params: { targetId, flatten: true } })).sessionId;
+// The pipe holds records that follow a reply until a setImmediate after it (wire order, see PipeTransport.receive);
+// the tick lets an event the test writes next arrive the way a later pipe chunk does.
+const attach = async (h, client, targetId = 'T1') => {
+  const { sessionId } = await h.broker.transportSend(client, { method: 'Target.attachToTarget', params: { targetId, flatten: true } });
+  await tick();
+  return sessionId;
+};
 
 async function ownedIframeFilter(t, brokerOptions = {}) {
   const build = 'fixture@1', reviewed = { ...recipe, build, sha256: 'a'.repeat(64) };
@@ -163,7 +171,7 @@ test('physical secondary ownership survives park and resume until the old worker
   h.broker.revoke('user revoked');
   assert.equal(h.broker.attachments.has(secondary), true);
   await h.broker.resume(async () => true);
-  h.broker.detach(h.client); await tick();
+  h.broker.detach(h.client); await settled(h);
   assert.equal(h.broker.attachments.has(secondary), false);
   assert.equal(h.frames.some(frame => frame.method === 'Target.detachFromTarget' && frame.params.sessionId === secondary), true);
 });
@@ -193,7 +201,7 @@ for (const scope of ['browser', 'scoped']) {
     assert.equal(h.broker.routes.has('existing-iframe'), false);
     assert.equal(h.broker.routes.has(secondary), false);
     assert.equal(h.broker.attachments.get(secondary) === physical, true, 'a crash does not prove debugger session detachment');
-    h.broker.detach(h.client); await tick();
+    h.broker.detach(h.client); await settled(h);
     assert.equal(h.broker.attachments.has(secondary), false);
     assert.equal(h.frames.some(frame => frame.method === 'Target.detachFromTarget' && frame.params.sessionId === secondary), true);
     assert.equal(h.broker.routes.has(unrelated), true);
