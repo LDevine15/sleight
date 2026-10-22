@@ -11,7 +11,7 @@ import { createPythonAdapter } from '../plugins/sleight/lib/direct-browser/elect
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
-function world(t, { stuckWorker = false, stuckApp = false, reused = false, throws = false, host = false, stuckHost = false, observeLaunch = false, missingWindow = false, connectedBirth, lifecycle, signal, onSleep } = {}) {
+function world(t, { stuckWorker = false, stuckApp = false, reused = false, throws = false, host = false, stuckHost = false, observeLaunch = false, missingWindow = false, connectedBirth, lifecycle, signal, onSleep, nativeTable } = {}) {
   const root = createRunRoot('eqcl-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const found = { path: '/fixture/Code.app', executable: '/fixture/Code.app/Contents/MacOS/Code' };
@@ -28,7 +28,7 @@ function world(t, { stuckWorker = false, stuckApp = false, reused = false, throw
       { pid: 600, startedAtMs: 1000, args: `${found.executable} --user-data-dir=/owner/profile` },
     ] : []), ...(config && hostRunning ? [{ pid: 701, uid: process.getuid(), startedAtMs: 1200000, args: `${process.execPath} --state-dir ${config.stateDir}` }] : [])],
     electron: async request => {
-      if (request.mode === 'table') { tableRead = true; return { processes: running ? [app] : [] }; }
+      if (request.mode === 'table') { tableRead = true; return nativeTable ? nativeTable(app) : { processes: running ? [app] : [] }; }
       events.push(request);
       assert.equal(request.pid, 501);
       assert.equal(request.appPath, found.path);
@@ -218,6 +218,206 @@ test('owned launch restores foreground while a slow worker start still awaits qu
   assert.equal((await connected).error, 'ELECTRON_UNQUALIFIED');
   assert.equal(events.filter(event => event === 'restore-front').length, 1);
   assert.equal((await driver.cleanup()).confirmed, true);
+});
+
+test('pending startup revisits a stable unadopted process until its native row arrives before restoring', async t => {
+  let reads = 0;
+  const { driver, events, w } = world(t, { observeLaunch: true,
+    nativeTable: app => ({ processes: ++reads <= 2 ? [{ ...app, pid: 999 }] : [app] }) });
+  const release = holdStart(w), connected = driver.connect({}).then(value => ({ value }), error => ({ error }));
+  try {
+    await new Promise(setImmediate);
+    assert.ok(reads >= 3, 'empty exact-PID candidate sets must be revisited while startup is pending');
+    assert.equal(driver.identity().pid, 501);
+    assert.deepEqual(driver.fixturePids(), [501]);
+    assert.equal(events.filter(event => event === 'restore-front').length, 1);
+    assert.deepEqual(driver.launchWindows(), [{ pid: 501, execMs: 1234000, firstWindowMs: 1234200, endMs: 1236200 }]);
+  } finally { release(); await connected; }
+  assert.equal((await connected).value.error, 'ELECTRON_UNQUALIFIED');
+  assert.equal((await driver.cleanup()).confirmed, true);
+});
+
+test('a pending absent native row remains owned but unadopted and fails strictly when startup settles', async t => {
+  let reads = 0, release;
+  const { driver, events, w } = world(t, { observeLaunch: true,
+    nativeTable: () => { reads++; return { processes: [] }; },
+    onSleep: ms => { if (ms === 50 && reads >= 2) release(); } });
+  release = holdStart(w);
+  const connected = driver.connect({}).then(value => ({ value }), error => ({ error }));
+  await new Promise(setImmediate);
+  release();
+  const { error } = await connected;
+  assert.ok(reads >= 3, 'settlement requires a final strict native census');
+  assert.equal(error.message, 'FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED');
+  assert.deepEqual(error.detail.adoption, { process: { pid: 501, startedAtMs: 1234000 }, stable: true, native: [] });
+  assert.deepEqual(driver.fixturePids(), [501]);
+  assert.equal(driver.identity(), null);
+  assert.equal(events.includes('restore-front'), false);
+  assert.deepEqual(driver.launchWindows(), []);
+  assert.equal((await driver.cleanup()).confirmed, false);
+});
+
+test('ordinary adoption stays strict while the startup monitor is waiting for native registration', async t => {
+  let resume;
+  const paused = new Promise(resolve => { resume = resolve; });
+  const { driver, events, w } = world(t, { observeLaunch: true, nativeTable: () => ({ processes: [] }),
+    onSleep: ms => ms === 50 ? paused : undefined });
+  const release = holdStart(w), connected = driver.connect({}).then(value => ({ value }), error => ({ error }));
+  try {
+    await new Promise(setImmediate);
+    assert.deepEqual(driver.fixturePids(), [501]);
+    assert.equal(driver.identity(), null);
+    await assert.rejects(driver.adoptRunning(), error => {
+      assert.equal(error.message, 'FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED');
+      assert.deepEqual(error.detail.adoption.native, []);
+      return true;
+    });
+    assert.equal(events.includes('restore-front'), false);
+  } finally { release(); resume(); await connected; }
+});
+
+for (const [name, nativeTable, reused] of [
+  ['foreign bundle', app => ({ processes: [{ ...app, bundle: 'fixture.other' }] })],
+  ['foreign path', app => ({ processes: [{ ...app, path: '/fixture/Other.app' }] })],
+  ['mismatched birth', app => ({ processes: [{ ...app, pidBirth: '5678.000000' }] })],
+  ['multiple candidates', app => ({ processes: [app, app] })],
+  ['missing processes field', () => ({})],
+  ['null processes field', () => ({ processes: null })],
+  ['malformed native entry', () => ({ processes: [{}] })],
+  ['null native entry', () => ({ processes: [null] })],
+  ['invalid unrelated PID', app => ({ processes: [{ ...app, pid: -1 }] })],
+  ['unproved unrelated birth', app => ({ processes: [{ ...app, pid: 999, pidBirth: null }] })],
+  ['unstable process with absent native row', () => ({ processes: [] }), true],
+  ['native read failure', () => { throw Error('NATIVE_TABLE_FAILED'); }],
+]) test(`pending native absence tolerance never swallows ${name}`, async t => {
+  let reads = 0;
+  const { driver, events, w } = world(t, { observeLaunch: true, reused,
+    nativeTable: app => { reads++; return nativeTable(app); } });
+  const release = holdStart(w), connected = driver.connect({}).then(value => ({ value }), error => ({ error }));
+  await new Promise(setImmediate);
+  assert.equal(reads, 1, 'a non-absence refusal stops monitoring immediately');
+  assert.equal(events.includes('restore-front'), false);
+  release();
+  const { error } = await connected;
+  assert.equal(error.message, name === 'native read failure' ? 'NATIVE_TABLE_FAILED' : 'FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED');
+  if (name !== 'native read failure') assert.ok(error.detail.adoption);
+});
+
+test('pending absence rechecks run cancellation after the native census and before deferring', async t => {
+  const controller = new AbortController(); let reads = 0;
+  const { driver, events, w } = world(t, { observeLaunch: true, signal: controller.signal,
+    nativeTable: () => { reads++; controller.abort(); return { processes: [] }; } });
+  const release = holdStart(w), connected = driver.connect({}).then(value => ({ value }), error => ({ error }));
+  await new Promise(setImmediate);
+  assert.equal(reads, 1);
+  assert.equal(events.includes('restore-front'), false);
+  release();
+  assert.match((await connected).error.message, /RUN_INTERRUPTED/);
+});
+
+test('native absence is not deferred if startup settles while the native census is awaiting', async t => {
+  let reads = 0, release;
+  const { driver, events, w } = world(t, { observeLaunch: true,
+    nativeTable: async () => { reads++; release(); await new Promise(setImmediate); return { processes: [] }; } });
+  release = holdStart(w);
+  const error = await driver.connect({}).then(() => null, error => error);
+  assert.equal(reads, 1);
+  assert.equal(error.message, 'FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED');
+  assert.deepEqual(error.detail.adoption.native, []);
+  assert.equal(events.includes('restore-front'), false);
+});
+
+test('pending registration pins the original executable/profile argument vector across fresh censuses', async t => {
+  let reads = 0, changed = false;
+  const { driver, events, deps, w } = world(t, { observeLaunch: true,
+    nativeTable: app => ({ processes: ++reads === 1 ? [] : [app] }),
+    onSleep: ms => { if (ms === 50) changed = true; } });
+  const list = deps.list;
+  deps.list = async () => (await list()).map(row => changed && row.pid === 501 ? { ...row, args: row.args + ' --changed-argv' } : row);
+  const release = holdStart(w), connected = driver.connect({}).then(value => ({ value }), error => ({ error }));
+  await new Promise(setImmediate);
+  release();
+  const { error } = await connected;
+  assert.equal(reads, 2);
+  assert.equal(error.message, 'FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED');
+  assert.equal(error.detail.adoption.stable, false);
+  assert.equal(events.includes('restore-front'), false);
+});
+
+test('settlement strict adoption preserves the deferred candidate argument provenance', async t => {
+  let reads = 0, changed = false, release;
+  const { driver, events, deps, w } = world(t, { observeLaunch: true,
+    nativeTable: app => ({ processes: ++reads === 1 ? [] : [app] }),
+    onSleep: ms => { if (ms === 50) { changed = true; release(); } } });
+  const list = deps.list;
+  deps.list = async () => (await list()).map(row => changed && row.pid === 501 ? { ...row, args: row.args + ' --changed-at-settlement' } : row);
+  release = holdStart(w);
+  const error = await driver.connect({}).then(() => null, error => error);
+  assert.equal(reads, 2);
+  assert.equal(error.message, 'FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED');
+  assert.equal(error.detail.adoption.stable, false);
+  assert.equal(events.includes('restore-front'), false);
+});
+
+for (const change of ['executable', 'profile', 'pid']) test(`pending registration never adopts a replacement ${change} as a fresh baseline`, async t => {
+  let reads = 0, changed = false;
+  const { driver, events, deps, w } = world(t, { observeLaunch: true,
+    nativeTable: app => ({ processes: ++reads === 1 ? [] : [app] }),
+    onSleep: ms => { if (ms === 50) changed = true; } });
+  const list = deps.list;
+  deps.list = async () => (await list()).map(row => {
+    if (!changed || row.pid !== 501) return row;
+    return change === 'pid' ? { ...row, pid: 502 } : { ...row, args: change === 'executable'
+      ? row.args.replace('/fixture/Code.app/Contents/MacOS/Code', '/fixture/Other.app/Contents/MacOS/Other')
+      : row.args.replace('--user-data-dir=', '--unowned-profile=') };
+  });
+  const release = holdStart(w), connected = driver.connect({}).then(value => ({ value }), error => ({ error }));
+  await new Promise(setImmediate);
+  release();
+  const { error } = await connected;
+  assert.equal(reads, 1, 'replacement must be refused before another native query');
+  assert.equal(error.message, 'FIXTURE_LAUNCH_IDENTITY_CHANGED');
+  assert.equal(error.detail.adoption.process.pid, 501);
+  assert.equal(error.detail.adoption.stable, false);
+  assert.equal(events.includes('restore-front'), false);
+});
+
+test('an adopted identity losing its native row is never treated as pending registration', async t => {
+  let reads = 0;
+  const { driver, events, w } = world(t, { observeLaunch: true,
+    nativeTable: app => ({ processes: ++reads === 1 ? [app] : [] }) });
+  const release = holdStart(w), connected = driver.connect({}).then(value => ({ value }), error => ({ error }));
+  await new Promise(setImmediate);
+  assert.equal(reads, 2, 'pre-restoration revalidation must refuse the known row loss');
+  assert.equal(events.includes('restore-front'), false);
+  release();
+  const { error } = await connected;
+  assert.equal(error.message, 'FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED');
+  assert.deepEqual(error.detail.adoption.native, []);
+});
+
+for (const change of ['disappears', 'loses root match']) test(`a deferred second main that ${change} during first-window observation still requires final strict validation`, async t => {
+  let waitingForWindow = false, changed = false;
+  const { driver, events, deps, observer, w } = world(t, { observeLaunch: true,
+    nativeTable: app => ({ processes: [app] }),
+    onSleep: ms => { if (ms === 50 && waitingForWindow) changed = true; } });
+  const list = deps.list;
+  deps.list = async () => {
+    const rows = await list(), first = rows.find(row => row.pid === 501);
+    if (!first || changed && change === 'disappears') return rows;
+    return [...rows, { ...first, pid: 502, startedAtMs: 1235000,
+      args: changed ? first.args.replace('--user-data-dir=', '--unowned-profile=') : first.args.replace('/owned/', '/second/') }];
+  };
+  observer.firstWindowMs = () => { waitingForWindow = true; return changed ? 1234200 : null; };
+  const release = holdStart(w), connected = driver.connect({}).then(value => ({ value }), error => ({ error }));
+  try {
+    await new Promise(setImmediate);
+    assert.deepEqual(driver.fixturePids(), [501, 502], 'both root-owned mains were observed before the second main changed');
+    assert.equal(events.filter(event => event === 'restore-front').length, 1, 'the first proved main completed observation');
+  } finally { release(); }
+  const { error } = await connected;
+  assert.equal(error?.message, 'FIXTURE_LAUNCH_IDENTITY_CHANGED');
+  assert.deepEqual(error.detail.adoption, { process: { pid: 502, startedAtMs: 1235000 }, stable: false, native: [] });
 });
 
 for (const valid of [true, false]) test(`owned main appearing after 200 prelaunch polls ${valid ? 'restores before reply' : 'still requires exact native identity'}`, async t => {

@@ -259,6 +259,7 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
   const observedBirths = new Map();
   const workerBirths = new Map();
   const observedLaunches = new Set();
+  const deferredNativeProvenance = new Map();
   let cleanupConfirmed = false;
   let found, build, recipe, active, current, last, otherFront, hostPid, appSecret;
   let hostIdentity;
@@ -373,7 +374,7 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
     // that request settles so a late approval cannot exhaust a separate prelaunch polling budget.
     while (!startup.settled) {
       boundary();
-      await driver.adoptRunning();
+      await driver.adoptRunning(undefined, startup.native);
       const target = launched.at(-1);
       if (target && !observedLaunches.has(target.pid)) {
         await observeFixtureLaunch({ settled: () => startup.settled });
@@ -396,10 +397,16 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
       allowlist: [...BENCHMARK_ALLOWLIST], python, qualificationDiagnosticPath, workspace: files.root, ...(cardLog ? { cardLog } : {}) }),
     // The arm's worker launched the app, not this driver: the main process naming this run's temporary root joins the
     // launched list, so cleanup quits it like its own. Nothing else is adopted.
-    async adoptRunning(expected) {
+    async adoptRunning(expected, pendingNative) {
       await reaper.scan();
       const all = await list(), mains = profileProcesses(all, tempRoot).filter(p => found && p.args.startsWith(found.executable + ' ') &&
         p.args.includes(`--user-data-dir=${tempRoot}/`));
+      for (const [pid, prior] of pendingNative?.candidates ?? []) {
+        if (mains.some(p => p.pid === pid)) continue;
+        const adoption = { process: { pid, startedAtMs: prior.startedAtMs }, stable: false, native: [] };
+        adoptionFailures.push(adoption);
+        throw Object.assign(Error('FIXTURE_LAUNCH_IDENTITY_CHANGED'), { detail: { adoption } });
+      }
       if (expected && !mains.some(p => p.pid === expected.pid && p.startedAtMs === expected.startedAtMs)) {
         throw Error('FIXTURE_LAUNCH_IDENTITY_CHANGED');
       }
@@ -414,27 +421,46 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
       if (mains.length) {
         const table = await electron({ mode: 'table', bundle: app.bundleId });
         const after = await list();
+        const validTable = Array.isArray(table?.processes) && table.processes.every(row => row && !Array.isArray(row) &&
+          Number.isSafeInteger(row.pid) && row.pid > 0 && row.bundle === app.bundleId && typeof row.path === 'string' && row.path.length > 0 &&
+          typeof row.pidBirth === 'string' && /^[1-9]\d*\.\d{6}$/.test(row.pidBirth) &&
+          (row.launchedAtMs === null || Number.isFinite(row.launchedAtMs) && row.launchedAtMs > 0)) &&
+          new Set(table.processes.map(row => row.pid)).size === table.processes.length;
         for (const p of mains) {
-          const candidates = table.processes?.filter(row => row.pid === p.pid) ?? [];
+          const candidates = Array.isArray(table?.processes) ? table.processes.filter(row => row?.pid === p.pid) : [];
           const row = candidates.length === 1 ? candidates[0] : null;
+          const prior = deferredNativeProvenance.get(p.pid);
           const stable = Number.isFinite(p.startedAtMs) && observedBirths.get(p.pid) === p.startedAtMs &&
+            (!prior || prior.startedAtMs === p.startedAtMs && prior.args === p.args) &&
             after.some(next => next.pid === p.pid && next.startedAtMs === p.startedAtMs && next.args === p.args);
           const birthKnown = typeof row?.pidBirth === 'string' && /^[1-9]\d*\.\d{6}$/.test(row.pidBirth) &&
             Number(row.pidBirth.split('.')[0]) * 1000 === p.startedAtMs;
           // Bracket the native lookup with the executable/profile census and join kernel birth at ps's second resolution.
           // launchDate belongs to LaunchServices and can be null for this direct pipe launch.
+          const known = launched.find(l => l.pid === p.pid);
+          if (pendingNative && stable && !known && validTable && candidates.length === 0) {
+            boundary();
+            // Registration can lag exec. Retain census ownership without granting native identity;
+            // only an unsettled start may revisit this exact process on a fresh strict census.
+            if (pendingNative.isPending()) {
+              const provenance = { startedAtMs: p.startedAtMs, args: p.args };
+              pendingNative.candidates.set(p.pid, provenance);
+              deferredNativeProvenance.set(p.pid, provenance);
+              continue;
+            }
+          }
           if (!stable || !row || row.bundle !== app.bundleId || row.path !== found.path || !birthKnown) {
             const adoption = { process: { pid: p.pid, startedAtMs: p.startedAtMs }, stable,
               native: candidates.map(({ pid, bundle, path, launchedAtMs, pidBirth }) => ({ pid, bundle, path, launchedAtMs, pidBirth })) };
             adoptionFailures.push(adoption);
             throw Object.assign(Error('FIXTURE_LAUNCH_IDENTITY_UNCONFIRMED'), { detail: { adoption } });
           }
-          const known = launched.find(l => l.pid === p.pid);
           if (known && (known.pidBirth !== row.pidBirth ||
             known.startedAtMs !== undefined && known.startedAtMs !== p.startedAtMs)) throw Error('FIXTURE_LAUNCH_IDENTITY_CHANGED');
           const identity = { pid: p.pid, pidBirth: row.pidBirth, processStartedAtMs: Number(row.pidBirth) * 1000, startedAtMs: p.startedAtMs };
           if (known) Object.assign(known, identity);
           else launched.push(identity);
+          pendingNative?.candidates.delete(p.pid);
         }
         last = current ?? launched.find(l => l.pid === mains[0].pid);
       }
@@ -459,15 +485,17 @@ export function liveDriver(app, { root, exec: rawExec, observer, forkWorker = qu
       let w, reply;
       if (app.key === 'vscode' && observer.firstWindowMs) {
         const startup = { settled: false };
+        startup.native = { isPending: () => !startup.settled, candidates: new Map() };
         const worker = startWorker(consentWaitMs, session, active).finally(() => { startup.settled = true; });
         // Observe the owned launch while consent/qualification still occupies the worker's start request.
         // Collect both outcomes before returning, including when either side fails first.
         const collection = (async () => {
           const outcomes = await Promise.allSettled([worker, monitorFixtureLaunch(startup)]);
           const errors = outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
-          if (outcomes[1].status === 'fulfilled' && !outcomes[1].value && lifecycle?.cleanupAllowed !== false) {
+          if (outcomes[1].status === 'fulfilled' && (!outcomes[1].value || startup.native.candidates.size > 0) &&
+              lifecycle?.cleanupAllowed !== false) {
             try {
-              await driver.adoptRunning();
+              await driver.adoptRunning(undefined, startup.native);
               // A launch may become visible only as start settles. Check its current evidence once;
               // no fresh polling may continue after the worker has settled.
               await observeFixtureLaunch({ settled: () => true });
