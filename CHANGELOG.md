@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.3 (unreleased)
+## 1.4.3 (2026-10-28)
 
 - ChatGPT's engine 26.1023.50603 starts its server with `--import <file URL>` before the script. The doctor, setup and
   an engine restart now find the script past node's options. On that engine, 1.4.2's doctor and setup report `MISSING
