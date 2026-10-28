@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.3 (unreleased)
+
+- ChatGPT's engine 26.1023.50603 starts its server with `--import <file URL>` before the script. The doctor, setup and
+  an engine restart now find the script past node's options. On that engine, 1.4.2's doctor and setup report `MISSING
+  server script: --import` and exit 1. By reading the code (not run live), a 1.4.2 session that was running when the
+  engine updated fails each later call while it reconnects, until Claude Code restarts sleight.
+
 ## 1.4.2 (2026-10-22)
 
 - sleight starts when its plugin folder is reached through a symlink, such as a symlinked `~/.claude`. Before, the
